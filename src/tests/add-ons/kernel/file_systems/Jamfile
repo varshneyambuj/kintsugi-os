@@ -1,0 +1,11 @@
+SubDir HAIKU_TOP src tests add-ons kernel file_systems ;
+
+HaikuSubInclude bfs ;
+HaikuSubInclude btrfs ;
+HaikuSubInclude cdda ;
+HaikuSubInclude iso9660 ;
+HaikuSubInclude shared ;
+HaikuSubInclude udf ;
+HaikuSubInclude ufs2 ;
+HaikuSubInclude userlandfs ;
+HaikuSubInclude xfs ;
