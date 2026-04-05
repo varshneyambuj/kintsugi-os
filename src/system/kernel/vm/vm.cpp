@@ -1,12 +1,42 @@
 /*
- * Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
+/**
+ * @file vm.cpp
+ * @brief Core virtual memory manager — area management, mapping, and page faults.
+ *
+ * Implements the high-level VM API: vm_map_physical_memory, vm_create_anonymous_area,
+ * vm_map_file, vm_delete_area, vm_resize_area, vm_protect_area, vm_get_area_info,
+ * and the page-fault handler (vm_page_fault). Manages VMArea and VMAddressSpace
+ * objects, coordinates with VMCache for page management, and handles copy-on-write.
+ *
+ * @see VMCache.cpp, VMAddressSpace.cpp, vm_page.cpp
+ */
 
 #include <vm/vm.h>
 
@@ -404,6 +434,16 @@ private:
 //	#pragma mark - page mappings allocation
 
 
+/**
+ * @brief Allocate per-CPU slab caches for vm_page_mapping objects.
+ *
+ * Creates a power-of-two number of object caches (one per logical CPU, rounded
+ * down) so that page-mapping allocations can be spread across caches to reduce
+ * contention. The global mask @c sPageMappingsMask is set so that a page number
+ * can be used to select the appropriate cache with a cheap bitwise AND.
+ *
+ * @note Called once during vm_init(); not thread-safe on its own.
+ */
 static void
 create_page_mappings_object_caches()
 {
@@ -434,6 +474,12 @@ create_page_mappings_object_caches()
 }
 
 
+/**
+ * @brief Return the slab cache that should be used for the given physical page.
+ *
+ * @param page Physical page number used to index into the cache array.
+ * @return Pointer to the selected @c object_cache.
+ */
 static object_cache*
 page_mapping_object_cache_for(page_num_t page)
 {
@@ -441,6 +487,13 @@ page_mapping_object_cache_for(page_num_t page)
 }
 
 
+/**
+ * @brief Allocate a vm_page_mapping object from the appropriate slab cache.
+ *
+ * @param page  Physical page number — used to select the per-CPU cache.
+ * @param flags Allocation flags (e.g. @c CACHE_DONT_WAIT_FOR_MEMORY).
+ * @return Newly allocated mapping, or @c NULL on allocation failure.
+ */
 static vm_page_mapping*
 allocate_page_mapping(page_num_t page, uint32 flags = 0)
 {
@@ -449,6 +502,13 @@ allocate_page_mapping(page_num_t page, uint32 flags = 0)
 }
 
 
+/**
+ * @brief Free a vm_page_mapping object back to the appropriate slab cache.
+ *
+ * @param page    Physical page number — selects the target cache.
+ * @param mapping The mapping object to free.
+ * @param flags   Free flags (e.g. @c CACHE_DONT_WAIT_FOR_MEMORY).
+ */
 void
 vm_free_page_mapping(page_num_t page, vm_page_mapping* mapping, uint32 flags)
 {
@@ -459,8 +519,15 @@ vm_free_page_mapping(page_num_t page, vm_page_mapping* mapping, uint32 flags)
 //	#pragma mark -
 
 
-/*!	The page's cache must be locked.
-*/
+/**
+ * @brief Increment the wired count of a page, also updating the mapped-pages counter.
+ *
+ * If the page is currently unmapped, @c gMappedPagesCount is incremented
+ * atomically before the wired count is raised.
+ *
+ * @param page The page whose wired count is to be incremented.
+ * @note The page's cache must be locked by the caller.
+ */
 static inline void
 increment_page_wired_count(vm_page* page)
 {
@@ -470,8 +537,15 @@ increment_page_wired_count(vm_page* page)
 }
 
 
-/*!	The page's cache must be locked.
-*/
+/**
+ * @brief Decrement the wired count of a page, updating the mapped-pages counter.
+ *
+ * The wired count is decremented first; if the page becomes unmapped as a
+ * result, @c gMappedPagesCount is decremented atomically.
+ *
+ * @param page The page whose wired count is to be decremented.
+ * @note The page's cache must be locked by the caller.
+ */
 static inline void
 decrement_page_wired_count(vm_page* page)
 {
@@ -481,6 +555,13 @@ decrement_page_wired_count(vm_page* page)
 }
 
 
+/**
+ * @brief Compute the virtual address at which a cache page is mapped in an area.
+ *
+ * @param area The VMArea that maps the page.
+ * @param page The page whose virtual address is needed.
+ * @return Virtual address of the page within @a area.
+ */
 static inline addr_t
 virtual_page_address(VMArea* area, vm_page* page)
 {
@@ -489,6 +570,13 @@ virtual_page_address(VMArea* area, vm_page* page)
 }
 
 
+/**
+ * @brief Test whether a cache page falls within an area's cache offset range.
+ *
+ * @param area The VMArea to test against.
+ * @param page The page to check.
+ * @return @c true if the page's cache offset falls within the area's range.
+ */
 static inline bool
 is_page_in_area(VMArea* area, vm_page* page)
 {
@@ -498,7 +586,18 @@ is_page_in_area(VMArea* area, vm_page* page)
 }
 
 
-//! You need to have the address space locked when calling this function
+/**
+ * @brief Look up an area by ID within a given address space.
+ *
+ * Searches the global areas hash table and verifies that the found area
+ * belongs to @a addressSpace.
+ *
+ * @param addressSpace The address space the area must belong to.
+ * @param id           The area ID to look up.
+ * @return Pointer to the VMArea, or @c NULL if not found or belonging to
+ *         a different address space.
+ * @note The caller must hold the address space lock (read or write).
+ */
 static VMArea*
 lookup_area(VMAddressSpace* addressSpace, area_id id)
 {
@@ -514,6 +613,15 @@ lookup_area(VMAddressSpace* addressSpace, area_id id)
 }
 
 
+/**
+ * @brief Return the byte size of the page-protections array for a given area size.
+ *
+ * Each page uses 4 bits (only the three user protection bits are stored),
+ * so two pages fit in one byte.
+ *
+ * @param areaSize Total byte size of the area.
+ * @return Number of bytes required for the page-protections array.
+ */
 static inline size_t
 area_page_protections_size(size_t areaSize)
 {
@@ -523,6 +631,18 @@ area_page_protections_size(size_t areaSize)
 }
 
 
+/**
+ * @brief Allocate and initialise a per-page protection array for an area.
+ *
+ * The array stores three user-protection bits per page (read/write/execute).
+ * All entries are initialised from the area's current protection flags, and
+ * those flags are then cleared from @c area->protection so that the array
+ * takes precedence.
+ *
+ * @param area The area for which to allocate the protection array.
+ * @retval B_OK         Array allocated and initialised.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 static status_t
 allocate_area_page_protections(VMArea* area)
 {
@@ -545,6 +665,14 @@ allocate_area_page_protections(VMArea* area)
 }
 
 
+/**
+ * @brief Reallocate a page-protections array to match a new area size.
+ *
+ * @param pageProtections Existing array (may be @c NULL to allocate fresh).
+ * @param areaSize        New area size in bytes.
+ * @param allocationFlags Heap allocation flags.
+ * @return Pointer to the reallocated array, or @c NULL on failure.
+ */
 static inline uint8*
 realloc_area_page_protections(uint8* pageProtections, size_t areaSize,
 	uint32 allocationFlags)
@@ -554,6 +682,16 @@ realloc_area_page_protections(uint8* pageProtections, size_t areaSize,
 }
 
 
+/**
+ * @brief Store the protection bits for a single page in the area's array.
+ *
+ * Only the three user bits (B_READ_AREA / B_WRITE_AREA / B_EXECUTE_AREA) are
+ * stored; kernel bits are derived on read.
+ *
+ * @param area        The area owning the page-protections array.
+ * @param pageAddress Virtual address of the page (must be page-aligned).
+ * @param protection  Protection flags to store.
+ */
 static inline void
 set_area_page_protection(VMArea* area, addr_t pageAddress, uint32 protection)
 {
@@ -567,6 +705,17 @@ set_area_page_protection(VMArea* area, addr_t pageAddress, uint32 protection)
 }
 
 
+/**
+ * @brief Retrieve the effective protection flags for a single page.
+ *
+ * If the area has a per-page protection array the value is read from it and
+ * the corresponding kernel-read/write bits are derived.  Otherwise the area's
+ * global protection is returned.
+ *
+ * @param area        The area owning the page.
+ * @param pageAddress Virtual address of the page.
+ * @return Combined user and kernel protection flags for the page.
+ */
 static inline uint32
 get_area_page_protection(VMArea* area, addr_t pageAddress)
 {
@@ -594,9 +743,16 @@ get_area_page_protection(VMArea* area, addr_t pageAddress)
 }
 
 
-/*! Computes the committed size an area's cache ought to have,
-	based on the area's page_protections and any pages already present.
-*/
+/**
+ * @brief Compute the number of pages that should be committed in an area's cache.
+ *
+ * Accounts for per-page protections (if present) and pages that already exist
+ * in the cache or its backing store, to avoid over-committing memory.
+ *
+ * @param area The area for which to compute the commitment.
+ * @return Number of pages (not bytes) that the cache should have committed.
+ * @note The area's cache must be locked by the caller.
+ */
 static inline size_t
 compute_area_page_commitment(VMArea* area)
 {
@@ -637,6 +793,16 @@ compute_area_page_commitment(VMArea* area)
 }
 
 
+/**
+ * @brief Test whether an area is the sole user of its anonymous RAM cache.
+ *
+ * Returns @c true only when the cache is a RAM cache with exactly this area
+ * mapped and no consumers (i.e. no COW children).
+ *
+ * @param area The area to test.
+ * @return @c true if the area is the only user of its cache.
+ * @note The area's cache must be locked by the caller.
+ */
 static bool
 is_area_only_cache_user(VMArea* area)
 {
@@ -647,10 +813,24 @@ is_area_only_cache_user(VMArea* area)
 }
 
 
-/*!	The caller must have reserved enough pages the translation map
-	implementation might need to map this page.
-	The page's cache must be locked.
-*/
+/**
+ * @brief Map a physical page into a virtual area at the given address.
+ *
+ * For @c B_NO_LOCK areas a vm_page_mapping is allocated and inserted into both
+ * the page's and the area's mapping lists.  For wired areas the wired count of
+ * the page is incremented instead.  If the page was previously in the CACHED or
+ * INACTIVE state it is promoted to ACTIVE.
+ *
+ * @param area        The VMArea into which the page is mapped.
+ * @param page        The physical page to map.
+ * @param address     The virtual address at which to map the page.
+ * @param protection  Page-table protection flags.
+ * @param reservation Pre-reserved pages for the translation map backend.
+ * @retval B_OK        Page mapped successfully.
+ * @retval B_NO_MEMORY Could not allocate a page-mapping object.
+ * @note The page's cache must be locked by the caller.
+ * @note The caller must have reserved enough pages for the translation map.
+ */
 static status_t
 map_page(VMArea* area, vm_page* page, addr_t address, uint32 protection,
 	vm_page_reservation* reservation)
@@ -712,7 +892,14 @@ map_page(VMArea* area, vm_page* page, addr_t address, uint32 protection,
 }
 
 
-/*!	The caller must hold the lock of the page's cache. */
+/**
+ * @brief Unmap a single page from an area's translation map.
+ *
+ * @param area           The area from which to unmap the page.
+ * @param virtualAddress The virtual address of the page to unmap.
+ * @return @c true if a mapping was present and removed, @c false otherwise.
+ * @note The caller must hold the lock of the page's cache.
+ */
 static inline bool
 unmap_page(VMArea* area, addr_t virtualAddress)
 {
@@ -721,7 +908,14 @@ unmap_page(VMArea* area, addr_t virtualAddress)
 }
 
 
-/*!	The caller must hold the lock of all mapped pages' caches. */
+/**
+ * @brief Unmap a contiguous range of pages from an area's translation map.
+ *
+ * @param area The area from which to unmap pages.
+ * @param base Start virtual address (must be page-aligned).
+ * @param size Number of bytes to unmap (must be a multiple of B_PAGE_SIZE).
+ * @note The caller must hold the locks of all mapped pages' caches.
+ */
 static inline void
 unmap_pages(VMArea* area, addr_t base, size_t size)
 {
@@ -729,6 +923,19 @@ unmap_pages(VMArea* area, addr_t base, size_t size)
 }
 
 
+/**
+ * @brief Clip a [address, address+size) range to the bounds of an area.
+ *
+ * On success @a address and @a size are adjusted to the intersection, and
+ * @a offset receives the byte distance from the original @a address to the
+ * (possibly adjusted) start of the intersection.
+ *
+ * @param area    The area whose bounds define the clipping region.
+ * @param address In/out: start of the range, clipped on return.
+ * @param size    In/out: byte length of the range, clipped on return.
+ * @param offset  Out: byte offset from original address to clipped start.
+ * @return @c true if the range intersects the area, @c false if disjoint.
+ */
 static inline bool
 intersect_area(VMArea* area, addr_t& address, addr_t& size, addr_t& offset)
 {
@@ -757,14 +964,26 @@ intersect_area(VMArea* area, addr_t& address, addr_t& size, addr_t& offset)
 }
 
 
-/*!	Cuts a piece out of an area. If the given cut range covers the complete
-	area, it is deleted. If it covers the beginning or the end, the area is
-	resized accordingly. If the range covers some part in the middle of the
-	area, it is split in two; in this case the second area is returned via
-	\a _secondArea (the variable is left untouched in the other cases).
-	The address space must be write locked.
-	The caller must ensure that no part of the given range is wired.
-*/
+/**
+ * @brief Remove a sub-range from an existing area, possibly splitting it.
+ *
+ * If the cut range covers the entire area the area is deleted.  If it covers
+ * only the head or tail the area is resized.  If it cuts through the middle
+ * the area is split into two; the second (upper) area is returned via
+ * @a _secondArea (left untouched for head/tail/full cuts).
+ *
+ * @param addressSpace The address space containing the area.
+ * @param area         The area to cut.
+ * @param address      Start of the range to remove.
+ * @param size         Byte length of the range to remove.
+ * @param _secondArea  Out: the newly created upper area when splitting, or
+ *                     unchanged for other cases.  May be @c NULL.
+ * @param kernel       @c true if the operation is performed by the kernel.
+ * @retval B_OK        Operation completed.
+ * @retval B_NO_MEMORY Allocation of the second area or page-protections failed.
+ * @note The address space must be write-locked by the caller.
+ * @note The caller must ensure no part of the range is wired.
+ */
 static status_t
 cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 	addr_t size, VMArea** _secondArea, bool kernel)
@@ -1094,10 +1313,22 @@ cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 }
 
 
-/*!	Deletes or cuts all areas in the given address range.
-	The address space must be write-locked.
-	The caller must ensure that no part of the given range is wired.
-*/
+/**
+ * @brief Unmap (delete or cut) every area that overlaps a virtual address range.
+ *
+ * Iterates through all areas intersecting [address, address+size) and calls
+ * cut_area() on each.  Non-kernel callers are not permitted to unmap kernel
+ * areas.
+ *
+ * @param addressSpace The address space to modify.
+ * @param address      Start of the range to unmap (will be page-aligned).
+ * @param size         Byte length of the range to unmap.
+ * @param kernel       @c true if the operation is performed by the kernel.
+ * @retval B_OK          All overlapping areas cut or deleted.
+ * @retval B_NOT_ALLOWED A non-kernel caller attempted to unmap a kernel area.
+ * @note The address space must be write-locked by the caller.
+ * @note The caller must ensure no part of the range is wired.
+ */
 static status_t
 unmap_address_range(VMAddressSpace* addressSpace, addr_t address, addr_t size,
 	bool kernel)
@@ -1135,6 +1366,18 @@ unmap_address_range(VMAddressSpace* addressSpace, addr_t address, addr_t size,
 }
 
 
+/**
+ * @brief Discard (MADV_FREE) a range of pages within an area.
+ *
+ * Unmaps the pages and tells the cache to free them, allowing the physical
+ * memory to be reclaimed.  Only operates if the area is the sole user of a
+ * temporary anonymous RAM cache; otherwise it is a no-op.
+ *
+ * @param area    The area whose pages are to be discarded.
+ * @param address Start of the range to discard.
+ * @param size    Byte length of the range.
+ * @retval B_OK Always returned (operation silently skipped when not applicable).
+ */
 static status_t
 discard_area_range(VMArea* area, addr_t address, addr_t size)
 {
@@ -1184,6 +1427,15 @@ discard_area_range(VMArea* area, addr_t address, addr_t size)
 }
 
 
+/**
+ * @brief Discard pages across all areas that overlap a virtual address range.
+ *
+ * @param addressSpace The address space to iterate.
+ * @param address      Start of the range to discard.
+ * @param size         Byte length of the range.
+ * @param kernel       Unused; reserved for future permission checks.
+ * @retval B_OK All discardable ranges processed.
+ */
 static status_t
 discard_address_range(VMAddressSpace* addressSpace, addr_t address, addr_t size,
 	bool kernel)
@@ -1200,24 +1452,39 @@ discard_address_range(VMAddressSpace* addressSpace, addr_t address, addr_t size,
 }
 
 
-/*! \brief Creates an area backed by \a cache in \a addressSpace.
-
-	If \a mapping is \c REGION_PRIVATE_MAP, creates a new cache for private copies
-	of pages.
-
-	If \a cache's commitment is too small, it tries to commit more, unless
-	\c CREATE_AREA_DONT_COMMIT_MEMORY is specified.
-
-	You need to hold the lock of the cache and the write lock of the address
-	space when calling this function.
-
-	\note In case of error, the cache will be temporarily unlocked.
-
-	If \a addressSpec is \c B_EXACT_ADDRESS and \c CREATE_AREA_UNMAP_ADDRESS_RANGE
-	is specified, the caller must ensure that no part of the specified address range
-	(base \c *_virtualAddress, size \a size) is wired. The cache will also be
-	temporarily unlocked.
-*/
+/**
+ * @brief Create an area backed by an existing VMCache in an address space.
+ *
+ * Allocates and inserts a VMArea into @a addressSpace, attaches it to @a cache
+ * at the given @a offset, and registers the area in the global areas map.
+ * If @a mapping is @c REGION_PRIVATE_MAP a new anonymous cache is interposed on
+ * top of @a cache so that private COW copies of pages can be written.
+ * Unless @c CREATE_AREA_DONT_COMMIT_MEMORY is set, the cache's commitment is
+ * grown to cover the area.
+ * If @a addressSpec is @c B_EXACT_ADDRESS and @c CREATE_AREA_UNMAP_ADDRESS_RANGE
+ * is set, any existing areas overlapping the target range are removed (the cache
+ * lock is temporarily dropped for this).
+ *
+ * @param addressSpace         The address space into which the area is inserted.
+ * @param cache                The backing VMCache (must be locked by caller).
+ * @param offset               Byte offset into @a cache where the area starts.
+ * @param areaName             Name string for the new area.
+ * @param size                 Size of the area in bytes (must be page-aligned).
+ * @param wiring               Wiring type (B_NO_LOCK, B_FULL_LOCK, etc.).
+ * @param protection           Page-protection flags.
+ * @param protectionMax        Maximum page-protection flags (for shared mappings).
+ * @param mapping              @c REGION_NO_PRIVATE_MAP or @c REGION_PRIVATE_MAP.
+ * @param flags                Creation flags (CREATE_AREA_*).
+ * @param addressRestrictions  Address and address-specification constraints.
+ * @param kernel               @c true if called on behalf of the kernel.
+ * @param _area                Out: pointer to the newly created VMArea.
+ * @param _virtualAddress      Out: virtual base address of the new area.
+ * @retval B_OK        Area created successfully.
+ * @retval B_NO_MEMORY Memory allocation failed.
+ * @retval B_BAD_VALUE @a size or @a offset is invalid.
+ * @note The caller must hold the cache lock and the address space write lock.
+ * @note In case of error the cache may be temporarily unlocked.
+ */
 static status_t
 map_backing_store(VMAddressSpace* addressSpace, VMCache* cache, off_t offset,
 	const char* areaName, addr_t size, int wiring, int protection,
@@ -1477,6 +1744,18 @@ wait_if_address_range_is_wired(VMAddressSpace* addressSpace, addr_t base,
 }
 
 
+/**
+ * @brief Block a kernel virtual address range by creating a null-cache area.
+ *
+ * Creates a non-readable, non-writable guard area in the kernel address space
+ * to prevent accidental use of the given virtual range.
+ *
+ * @param name    Descriptive name for the blocked range.
+ * @param address Start of the range to block.
+ * @param size    Byte size of the range.
+ * @retval B_OK        Range blocked.
+ * @retval B_NO_MEMORY Could not create the guard area.
+ */
 status_t
 vm_block_address_range(const char* name, void* address, addr_t size)
 {
@@ -1514,6 +1793,15 @@ vm_block_address_range(const char* name, void* address, addr_t size)
 }
 
 
+/**
+ * @brief Release a previously reserved virtual address range.
+ *
+ * @param team    ID of the team whose address space contains the reservation.
+ * @param address Start of the reserved range.
+ * @param size    Byte size of the reserved range.
+ * @retval B_OK         Reservation released.
+ * @retval B_BAD_TEAM_ID @a team is not valid.
+ */
 status_t
 vm_unreserve_address_range(team_id team, void* address, addr_t size)
 {
@@ -1528,6 +1816,21 @@ vm_unreserve_address_range(team_id team, void* address, addr_t size)
 }
 
 
+/**
+ * @brief Reserve a virtual address range in a team's address space.
+ *
+ * Marks the range as reserved so that subsequent area allocations with
+ * B_ANY_ADDRESS will not use it.
+ *
+ * @param team         Team ID whose address space is modified.
+ * @param _address     In/out: desired address; updated to the reserved address.
+ * @param addressSpec  Address specification (B_ANY_ADDRESS, B_EXACT_ADDRESS, …).
+ * @param size         Byte size of the range to reserve.
+ * @param flags        Reservation flags (e.g. RESERVED_AVOID_BASE).
+ * @retval B_OK         Range reserved.
+ * @retval B_BAD_VALUE  @a size is zero.
+ * @retval B_BAD_TEAM_ID @a team is not valid.
+ */
 status_t
 vm_reserve_address_range(team_id team, void** _address, uint32 addressSpec,
 	addr_t size, uint32 flags)
@@ -1550,13 +1853,29 @@ vm_reserve_address_range(team_id team, void** _address, uint32 addressSpec,
 }
 
 
-/*! \brief Creates an anonymous area in \a team's address space.
-
-	A new cache (marked \c temporary) will be created for it.
-
-	See \c create_area and \c map_backing_store for more information on the
-	behavior of the various options.
-*/
+/**
+ * @brief Create an anonymous (RAM-backed) area in a team's address space.
+ *
+ * Allocates a new temporary VMCache (marked @c temporary) and calls
+ * map_backing_store() to insert the area.  Physical pages are not allocated
+ * until first access unless @a wiring is B_FULL_LOCK, B_CONTIGUOUS, etc.
+ * Guard pages (unmapped at the stack end) are supported via @a guardSize.
+ *
+ * @param team                       ID of the team that owns the area.
+ * @param name                       Name of the area.
+ * @param size                       Size in bytes (will be page-aligned).
+ * @param wiring                     Wiring policy (B_NO_LOCK, B_FULL_LOCK, …).
+ * @param protection                 Page-protection flags.
+ * @param flags                      Creation flags (CREATE_AREA_*).
+ * @param guardSize                  Size of the guard region in bytes.
+ * @param virtualAddressRestrictions Virtual address placement constraints.
+ * @param physicalAddressRestrictions Physical address constraints (for CONTIGUOUS).
+ * @param kernel                     @c true if called by the kernel.
+ * @param _address                   Out: virtual base address of the new area.
+ * @return Area ID (>= 0) on success, or a negative error code.
+ * @retval B_BAD_VALUE  @a size is zero or smaller than @a guardSize.
+ * @retval B_NO_MEMORY  Could not reserve or allocate memory.
+ */
 area_id
 vm_create_anonymous_area(team_id team, const char *name, addr_t size,
 	uint32 wiring, uint32 protection, uint32 flags, addr_t guardSize,
@@ -1942,6 +2261,27 @@ err0:
 }
 
 
+/**
+ * @brief Map a contiguous range of physical memory into a team's address space.
+ *
+ * Creates a device-cache area that covers the physical range.  The physical
+ * address is aligned down to a page boundary; the virtual pointer returned via
+ * @a _address is adjusted by the same page offset so it points to the exact
+ * byte requested.  The memory type defaults to uncached unless a B_MEMORY_TYPE
+ * flag is embedded in @a addressSpec.
+ *
+ * @param team            ID of the team that owns the area.
+ * @param name            Name of the area.
+ * @param _address        In/out: desired/received virtual address.
+ * @param addressSpec     Address specification, optionally ORed with a memory type.
+ * @param size            Byte size to map.
+ * @param protection      Page-protection flags.
+ * @param physicalAddress Physical base address to map.
+ * @param alreadyWired    If @c true the mapping already exists; just fix protection.
+ * @return Area ID on success, or a negative error code.
+ * @retval B_BAD_TEAM_ID  @a team is not valid.
+ * @retval B_NO_MEMORY    Could not create the device cache.
+ */
 area_id
 vm_map_physical_memory(team_id team, const char* name, void** _address,
 	uint32 addressSpec, addr_t size, uint32 protection,
@@ -2053,11 +2393,28 @@ vm_map_physical_memory(team_id team, const char* name, void** _address,
 }
 
 
-/*!	Don't use!
-	TODO: This function was introduced to map physical page vecs to
-	contiguous virtual memory in IOBuffer::GetNextVirtualVec(). It does
-	use a device cache and does not track vm_page::wired_count!
-*/
+/**
+ * @brief Map a scatter-gather list of physical page vectors into contiguous virtual memory.
+ *
+ * Maps each physical segment described by @a vecs sequentially into a single
+ * contiguous virtual area backed by a device cache.  All base addresses and
+ * lengths in @a vecs must be page-aligned.
+ *
+ * @warning This function does NOT track @c vm_page::wired_count; prefer
+ *          vm_map_physical_memory() for ordinary use.
+ *
+ * @param team        ID of the team.
+ * @param name        Name of the new area.
+ * @param _address    In/out: desired/received virtual base address.
+ * @param addressSpec Address specification.
+ * @param _size       Out: total byte size of the mapped area.
+ * @param protection  Page-protection flags.
+ * @param vecs        Array of physical base/length pairs.
+ * @param vecCount    Number of entries in @a vecs.
+ * @return Area ID on success, or a negative error code.
+ * @retval B_BAD_VALUE     @a vecCount is zero or a vec is not page-aligned.
+ * @retval B_NOT_SUPPORTED A memory-type flag was embedded in @a addressSpec.
+ */
 area_id
 vm_map_physical_memory_vecs(team_id team, const char* name, void** _address,
 	uint32 addressSpec, addr_t* _size, uint32 protection,
@@ -2156,6 +2513,23 @@ vm_map_physical_memory_vecs(team_id team, const char* name, void** _address,
 }
 
 
+/**
+ * @brief Create a null area — a virtual address range with no backing pages.
+ *
+ * Accessing any page within this area will trigger a fault that is not
+ * resolved, so it acts as a guard region.  Useful for stack guard pages or
+ * address-space sentinels.
+ *
+ * @param team        ID of the owning team (kernel only).
+ * @param name        Name of the area.
+ * @param address     In/out: desired/received virtual address.
+ * @param addressSpec Address specification.
+ * @param size        Byte size (will be page-aligned).
+ * @param flags       Creation flags (CREATE_AREA_*).
+ * @return Area ID on success, or a negative error code.
+ * @retval B_BAD_TEAM_ID @a team is not valid.
+ * @retval B_NO_MEMORY   Null cache creation failed.
+ */
 area_id
 vm_create_null_area(team_id team, const char* name, void** address,
 	uint32 addressSpec, addr_t size, uint32 flags)
@@ -2208,9 +2582,15 @@ vm_create_null_area(team_id team, const char* name, void** address,
 }
 
 
-/*!	Creates the vnode cache for the specified \a vnode.
-	The vnode has to be marked busy when calling this function.
-*/
+/**
+ * @brief Create a vnode-backed VMCache for the given vnode.
+ *
+ * @param vnode The vnode for which to create the cache.
+ * @param cache Out: pointer to the newly created VMCache.
+ * @retval B_OK        Cache created.
+ * @retval B_NO_MEMORY Allocation failed.
+ * @note The vnode must be marked busy when calling this function.
+ */
 status_t
 vm_create_vnode_cache(struct vnode* vnode, struct VMCache** cache)
 {
@@ -2218,8 +2598,19 @@ vm_create_vnode_cache(struct vnode* vnode, struct VMCache** cache)
 }
 
 
-/*!	\a cache must be locked. The area's address space must be read-locked.
-*/
+/**
+ * @brief Pre-map up to @a maxCount active pages from a cache into an area.
+ *
+ * Iterates over pages in the cache that fall within the area's offset range
+ * and maps them read-only as a prefetch optimization.  Busy or inactive pages
+ * are skipped.
+ *
+ * @param area        The target area.
+ * @param cache       The cache whose pages are pre-mapped (must be locked).
+ * @param reservation Page reservation for translation-map backend pages.
+ * @param maxCount    Maximum number of pages to pre-map.
+ * @note @a cache must be locked.  The area's address space must be read-locked.
+ */
 static void
 pre_map_area_pages(VMArea* area, VMCache* cache,
 	vm_page_reservation* reservation, int32 maxCount)
@@ -2249,10 +2640,30 @@ pre_map_area_pages(VMArea* area, VMCache* cache,
 }
 
 
-/*!	Will map the file specified by \a fd to an area in memory.
-	The file will be mirrored beginning at the specified \a offset. The
-	\a offset and \a size arguments have to be page aligned.
-*/
+/**
+ * @brief Internal implementation for mapping a file (or anonymous memory) into an address space.
+ *
+ * If @a fd is negative, an anonymous area is created instead.  Otherwise the
+ * vnode cache for the open file descriptor is located and map_backing_store() is
+ * called.  Up to 1 MB of pages per past-full-fault cycle may be pre-mapped for
+ * read-accessible mappings.
+ *
+ * @param team               ID of the target team.
+ * @param name               Area name.
+ * @param _address           In/out: desired/received virtual address.
+ * @param addressSpec        Address specification.
+ * @param size               Byte size to map (page-aligned).
+ * @param protection         Page-protection flags.
+ * @param mapping            REGION_NO_PRIVATE_MAP or REGION_PRIVATE_MAP.
+ * @param unmapAddressRange  If @c true, unmap any existing mappings in range.
+ * @param fd                 Open file descriptor, or -1 for anonymous.
+ * @param offset             Byte offset into the file (must be page-aligned).
+ * @param kernel             @c true if called by the kernel.
+ * @return Area ID on success, or a negative error code.
+ * @retval B_BAD_VALUE  @a offset is not page-aligned, or cache bounds mismatch.
+ * @retval EACCES       File descriptor has insufficient access for the mapping.
+ * @retval EBADF        @a fd is not valid.
+ */
 static area_id
 _vm_map_file(team_id team, const char* name, void** _address,
 	uint32 addressSpec, size_t size, uint32 protection, uint32 mapping,
@@ -2424,6 +2835,23 @@ _vm_map_file(team_id team, const char* name, void** _address,
 }
 
 
+/**
+ * @brief Map a file into a team's address space (kernel-level mmap equivalent).
+ *
+ * Thin wrapper around _vm_map_file() with @c kernel = @c true.
+ *
+ * @param aid              Team ID.
+ * @param name             Area name.
+ * @param address          In/out: desired/received virtual address.
+ * @param addressSpec      Address specification.
+ * @param size             Byte size to map.
+ * @param protection       Page-protection flags.
+ * @param mapping          REGION_NO_PRIVATE_MAP or REGION_PRIVATE_MAP.
+ * @param unmapAddressRange If @c true, existing mappings in range are removed.
+ * @param fd               File descriptor.
+ * @param offset           Byte offset into the file.
+ * @return Area ID on success, or a negative error code.
+ */
 area_id
 vm_map_file(team_id aid, const char* name, void** address, uint32 addressSpec,
 	addr_t size, uint32 protection, uint32 mapping, bool unmapAddressRange,
@@ -2434,6 +2862,17 @@ vm_map_file(team_id aid, const char* name, void** address, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Acquire a lock on an area's VMCache and return a reference to it.
+ *
+ * Atomically reads the area's cache pointer, locks it, and acquires a
+ * reference.  Retries if the cache is replaced while locking (which can happen
+ * during COW split).
+ *
+ * @param area The area whose cache is to be locked.
+ * @return Locked VMCache with an incremented reference count.
+ * @note Call vm_area_put_locked_cache() to release the lock and reference.
+ */
 VMCache*
 vm_area_get_locked_cache(VMArea* area)
 {
@@ -2462,6 +2901,11 @@ vm_area_get_locked_cache(VMArea* area)
 }
 
 
+/**
+ * @brief Release the lock and reference obtained via vm_area_get_locked_cache().
+ *
+ * @param cache The cache to unlock and dereference.
+ */
 void
 vm_area_put_locked_cache(VMCache* cache)
 {
@@ -2469,6 +2913,26 @@ vm_area_put_locked_cache(VMCache* cache)
 }
 
 
+/**
+ * @brief Clone an existing area into a (possibly different) address space.
+ *
+ * For a shared clone (@c REGION_NO_PRIVATE_MAP), both areas point to the same
+ * cache.  For a private clone (@c REGION_PRIVATE_MAP) a new anonymous cache is
+ * interposed, providing COW semantics.  If the source area uses B_FULL_LOCK all
+ * pages are immediately mapped into the clone.
+ *
+ * @param team       ID of the target team.
+ * @param name       Name for the cloned area.
+ * @param address    In/out: desired/received virtual address.
+ * @param addressSpec Address specification.
+ * @param protection  Page-protection flags for the clone.
+ * @param mapping    REGION_NO_PRIVATE_MAP or REGION_PRIVATE_MAP.
+ * @param sourceID   Area ID of the area to clone.
+ * @param kernel     @c true if called by the kernel.
+ * @return Area ID of the clone on success, or a negative error code.
+ * @retval B_NOT_ALLOWED Insufficient permissions to clone the source area.
+ * @retval B_BAD_VALUE   Source area does not exist.
+ */
 area_id
 vm_clone_area(team_id team, const char* name, void** address,
 	uint32 addressSpec, uint32 protection, uint32 mapping, area_id sourceID,
@@ -2649,11 +3113,18 @@ vm_clone_area(team_id team, const char* name, void** address,
 }
 
 
-/*!	Changes all clones of an area (but not the area itself) to use a different cache
-	(and thus no longer be clones of this area.)
-
-	The target cache must be locked.
-*/
+/**
+ * @brief Redirect all clones of an area to a different VMCache.
+ *
+ * Every area that shares the same cache as @a areaId (except @a areaId itself)
+ * is atomically moved to @a toCache.  This is used when an area becomes private
+ * and its former clones must diverge.
+ *
+ * @param areaId  ID of the reference area (not moved itself).
+ * @param toCache The new cache to which clones are transferred (must be locked).
+ * @retval B_OK Always (individual area failures are not propagated).
+ * @note The target cache must be locked by the caller.
+ */
 status_t
 vm_change_cache_of_clones(area_id areaId, struct VMCache* toCache)
 {
@@ -2718,8 +3189,17 @@ vm_change_cache_of_clones(area_id areaId, struct VMCache* toCache)
 }
 
 
-/*!	Changes all clones of an area (but not the area itself) to be null areas.
-*/
+/**
+ * @brief Convert all clones of an area to null (unreadable) areas.
+ *
+ * Creates a new null cache and moves all clones of @a areaId to it so that
+ * accessing those clones triggers a fault.  Used when an area's backing
+ * storage is revoked.
+ *
+ * @param areaId The reference area whose clones are nullified.
+ * @retval B_OK        Conversion successful.
+ * @retval B_NO_MEMORY Could not create the null cache.
+ */
 status_t
 vm_change_clones_to_null_areas(area_id areaId)
 {
@@ -2739,18 +3219,21 @@ vm_change_clones_to_null_areas(area_id areaId)
 }
 
 
-/*!	Deletes the specified area of the given address space.
-
-	The address space must be write-locked.
-	The caller must ensure that the area does not have any wired ranges.
-
-	\param addressSpace The address space containing the area.
-	\param area The area to be deleted.
-	\param deletingAddressSpace \c true, if the address space is in the process
-		of being deleted.
-	\param alreadyRemoved \c true, if the area was already removed from the global
-		areas map (and thus had its ID deallocated.)
-*/
+/**
+ * @brief Unmap and destroy an area within an address space.
+ *
+ * Removes the area from the global areas map (unless @a alreadyRemoved is set),
+ * unmaps all its virtual pages, optionally writes back modified pages, removes
+ * the area from its cache, and frees all associated resources.
+ *
+ * @param addressSpace         The address space containing the area.
+ * @param area                 The area to delete.
+ * @param deletingAddressSpace @c true if the whole address space is being torn down.
+ * @param alreadyRemoved       @c true if the area was already removed from the
+ *                             global areas map.
+ * @note The address space must be write-locked.
+ * @note The caller must ensure the area has no wired ranges.
+ */
 static void
 delete_area(VMAddressSpace* addressSpace, VMArea* area,
 	bool deletingAddressSpace, bool alreadyRemoved)
@@ -2798,6 +3281,19 @@ delete_area(VMAddressSpace* addressSpace, VMArea* area,
 }
 
 
+/**
+ * @brief Public interface to delete an area owned by a team.
+ *
+ * Acquires the address-space write lock, waits until the area has no wired
+ * ranges, then calls delete_area().  Non-kernel callers are not permitted to
+ * delete kernel areas.
+ *
+ * @param team   ID of the team that owns the area.
+ * @param id     The area ID to delete.
+ * @param kernel @c true if called by the kernel.
+ * @retval B_OK          Area deleted.
+ * @retval B_NOT_ALLOWED Non-kernel caller attempted to delete a kernel area.
+ */
 status_t
 vm_delete_area(team_id team, area_id id, bool kernel)
 {
@@ -2827,21 +3323,23 @@ vm_delete_area(team_id team, area_id id, bool kernel)
 }
 
 
-/*!	Creates a new cache on top of given cache, moves all areas from
-	the old cache to the new one, and changes the protection of all affected
-	areas' pages to read-only. If requested, wired pages are moved up to the
-	new cache and copies are added to the old cache in their place.
-	Preconditions:
-	- The given cache must be locked.
-	- All of the cache's areas' address spaces must be read locked.
-	- Either the cache must not have any wired ranges or a page reservation for
-	  all wired pages must be provided, so they can be copied.
-
-	\param lowerCache The cache on top of which a new cache shall be created.
-	\param wiredPagesReservation If \c NULL there must not be any wired pages
-		in \a lowerCache. Otherwise as many pages must be reserved as the cache
-		has wired page. The wired pages are copied in this case.
-*/
+/**
+ * @brief Set up copy-on-write for a cache by interposing a new anonymous cache.
+ *
+ * Creates an anonymous upper cache above @a lowerCache, moves all mapped areas
+ * to it, and remaps existing pages read-only so that writes will trigger a COW
+ * copy into the upper cache.  Wired pages (if any) are physically copied into
+ * the upper cache and a fresh copy is placed into @a lowerCache.
+ *
+ * @param lowerCache             The cache to place below the COW layer.
+ * @param wiredPagesReservation  Pre-reserved pages for copying wired pages;
+ *                               must be @c NULL only if the cache has no wired
+ *                               pages.
+ * @retval B_OK        COW layer set up.
+ * @retval B_NO_MEMORY Could not create the upper cache.
+ * @note @a lowerCache must be locked.
+ * @note All address spaces that contain areas of @a lowerCache must be read-locked.
+ */
 static status_t
 vm_copy_on_write_area(VMCache* lowerCache,
 	vm_page_reservation* wiredPagesReservation)
@@ -2989,6 +3487,21 @@ vm_copy_on_write_area(VMCache* lowerCache,
 }
 
 
+/**
+ * @brief Create a copy of an area in a target team's address space.
+ *
+ * For a shared source area the clone references the same cache.  For a private
+ * (non-shared) writable area vm_copy_on_write_area() is called to set up COW
+ * before the clone is created.
+ *
+ * @param team       ID of the target team.
+ * @param name       Name for the copy.
+ * @param _address   In/out: desired/received virtual address.
+ * @param addressSpec Address specification.
+ * @param sourceID   Area ID to copy.
+ * @return Area ID of the copy on success, or a negative error code.
+ * @retval B_NO_MEMORY Reservation or cache creation failed.
+ */
 area_id
 vm_copy_area(team_id team, const char* name, void** _address,
 	uint32 addressSpec, area_id sourceID)
@@ -3131,6 +3644,21 @@ vm_copy_area(team_id team, const char* name, void** _address,
 }
 
 
+/**
+ * @brief Change the page-protection flags of an area.
+ *
+ * If the area is being made writable and it has consumers, vm_copy_on_write_area()
+ * is called to set up a COW layer first.  If the area is being made read-only
+ * and it has a temporary source cache, the commitment may be reduced.
+ * Per-page protection arrays are dropped (they become stale after a bulk change).
+ *
+ * @param areaID        The area whose protection is to be changed.
+ * @param newProtection New page-protection flags.
+ * @param kernel        @c true if called by the kernel.
+ * @retval B_OK          Protection updated.
+ * @retval B_NOT_ALLOWED Insufficient permissions to change this area.
+ * @retval B_NO_MEMORY   COW layer setup failed.
+ */
 status_t
 vm_set_area_protection(area_id areaID, uint32 newProtection,
 	bool kernel)
@@ -3317,6 +3845,15 @@ vm_set_area_protection(area_id areaID, uint32 newProtection,
 }
 
 
+/**
+ * @brief Translate a virtual address to a physical address for a team.
+ *
+ * @param team  ID of the team whose address space is queried.
+ * @param vaddr Virtual address to translate.
+ * @param paddr Out: physical address corresponding to @a vaddr.
+ * @retval B_OK         Translation successful.
+ * @retval B_BAD_TEAM_ID @a team is not valid.
+ */
 status_t
 vm_get_page_mapping(team_id team, addr_t vaddr, phys_addr_t* paddr)
 {
@@ -3336,8 +3873,16 @@ vm_get_page_mapping(team_id team, addr_t vaddr, phys_addr_t* paddr)
 }
 
 
-/*!	The page's cache must be locked.
-*/
+/**
+ * @brief Test whether any mapping of a page has the modified bit set.
+ *
+ * Checks the in-memory @c modified flag and then queries every translation
+ * map entry that maps this page.
+ *
+ * @param page The page to test.
+ * @return @c true if the page has been modified in any mapping.
+ * @note The page's cache must be locked by the caller.
+ */
 bool
 vm_test_map_modification(vm_page* page)
 {
@@ -3364,8 +3909,16 @@ vm_test_map_modification(vm_page* page)
 }
 
 
-/*!	The page's cache must be locked.
-*/
+/**
+ * @brief Clear the accessed and/or modified bits in all mappings of a page.
+ *
+ * Clears the requested flags in every translation map entry that maps @a page,
+ * and also clears the corresponding in-memory fields of @a page.
+ *
+ * @param page  The page whose mapping flags are to be cleared.
+ * @param flags Bitmask of flags to clear (PAGE_ACCESSED, PAGE_MODIFIED).
+ * @note The page's cache must be locked by the caller.
+ */
 void
 vm_clear_map_flags(vm_page* page, uint32 flags)
 {
@@ -3387,12 +3940,15 @@ vm_clear_map_flags(vm_page* page, uint32 flags)
 }
 
 
-/*!	Removes all mappings from a page.
-	After you've called this function, the page is unmapped from memory and
-	the page's \c accessed and \c modified flags have been updated according
-	to the state of the mappings.
-	The page's cache must be locked.
-*/
+/**
+ * @brief Remove every virtual mapping of a physical page.
+ *
+ * After this call the page is fully unmapped.  The page's @c accessed and
+ * @c modified flags are updated to reflect the state of the removed mappings.
+ *
+ * @param page The page to unmap from all address spaces.
+ * @note The page's cache must be locked by the caller.
+ */
 void
 vm_remove_all_page_mappings(vm_page* page)
 {
@@ -3405,6 +3961,17 @@ vm_remove_all_page_mappings(vm_page* page)
 }
 
 
+/**
+ * @brief Clear the accessed bit in every mapping of a page and return the count.
+ *
+ * Iterates through all mappings, clears the accessed (and collects modified)
+ * flags, and returns how many mappings had the accessed bit set including the
+ * in-memory @c accessed field.
+ *
+ * @param page The page to process.
+ * @return Number of mappings (including the page struct) that had accessed=1.
+ * @note The page's cache must be locked by the caller.
+ */
 int32
 vm_clear_page_mapping_accessed_flags(struct vm_page *page)
 {
@@ -3435,17 +4002,18 @@ vm_clear_page_mapping_accessed_flags(struct vm_page *page)
 }
 
 
-/*!	Removes all mappings of a page and/or clears the accessed bits of the
-	mappings.
-	The function iterates through the page mappings and removes them until
-	encountering one that has been accessed. From then on it will continue to
-	iterate, but only clear the accessed flag of the mapping. The page's
-	\c modified bit will be updated accordingly, the \c accessed bit will be
-	cleared.
-	\return The number of mapping accessed bits encountered, including the
-		\c accessed bit of the page itself. If \c 0 is returned, all mappings
-		of the page have been removed.
-*/
+/**
+ * @brief Remove all mappings of a page if it has not been accessed recently.
+ *
+ * Removes each mapping in turn.  If an accessed mapping is encountered the
+ * removal stops and the function switches to only clearing the accessed bit in
+ * all remaining mappings.  The page's @c modified bit is updated throughout.
+ *
+ * @param page The page to process (must have WiredCount == 0).
+ * @return Number of accessed bits found (including the page's own @c accessed
+ *         field).  A return value of @c 0 means all mappings were removed.
+ * @note The page's cache must be locked by the caller.
+ */
 int32
 vm_remove_all_page_mappings_if_unaccessed(struct vm_page *page)
 {
@@ -3471,14 +4039,16 @@ vm_remove_all_page_mappings_if_unaccessed(struct vm_page *page)
 }
 
 
-/*!	Deletes all areas and reserved regions in the given address space.
-
-	The caller must ensure that none of the areas has any wired ranges.
-
-	\param addressSpace The address space.
-	\param deletingAddressSpace \c true, if the address space is in the process
-		of being deleted.
-*/
+/**
+ * @brief Delete all areas and reserved ranges in an address space.
+ *
+ * Removes all areas from the global areas map atomically, then tears down
+ * each area.  Used during team exit to reclaim the entire address space.
+ *
+ * @param addressSpace         The address space to clean up.
+ * @param deletingAddressSpace @c true if the address space is being deleted.
+ * @note The caller must ensure none of the areas has wired ranges.
+ */
 void
 vm_delete_areas(struct VMAddressSpace* addressSpace, bool deletingAddressSpace)
 {
@@ -3509,6 +4079,17 @@ vm_delete_areas(struct VMAddressSpace* addressSpace, bool deletingAddressSpace)
 }
 
 
+/**
+ * @brief Return the area ID that contains a given virtual address.
+ *
+ * Chooses the current user address space for user addresses and the kernel
+ * address space for kernel addresses.  Non-kernel callers are denied access to
+ * kernel-only areas.
+ *
+ * @param address Virtual address to look up.
+ * @param kernel  @c true if called by the kernel.
+ * @return Area ID, or @c B_ERROR / @c B_BAD_TEAM_ID on failure.
+ */
 static area_id
 vm_area_for(addr_t address, bool kernel)
 {
@@ -3538,9 +4119,16 @@ vm_area_for(addr_t address, bool kernel)
 }
 
 
-/*!	Frees physical pages that were used during the boot process.
-	\a end is inclusive.
-*/
+/**
+ * @brief Unmap and free physical pages in a virtual address range.
+ *
+ * Queries the translation map for each page, frees the backing physical page
+ * if present, then unmaps the range and unreserves the freed memory.
+ *
+ * @param map   The kernel translation map.
+ * @param start Start of the virtual address range.
+ * @param end   End of the virtual address range (inclusive).
+ */
 static void
 unmap_and_free_physical_pages(VMTranslationMap* map, addr_t start, addr_t end)
 {
@@ -3572,6 +4160,15 @@ unmap_and_free_physical_pages(VMTranslationMap* map, addr_t start, addr_t end)
 }
 
 
+/**
+ * @brief Release physical memory occupied by unused boot-loader virtual ranges.
+ *
+ * Scans the kernel address space and frees any virtual pages within
+ * [start, start+size) that are not covered by a known VMArea.
+ *
+ * @param start Base of the virtual range to inspect.
+ * @param size  Byte length of the range.
+ */
 void
 vm_free_unused_boot_loader_range(addr_t start, addr_t size)
 {
@@ -3629,6 +4226,15 @@ vm_free_unused_boot_loader_range(addr_t start, addr_t size)
 }
 
 
+/**
+ * @brief Create VMArea objects for the text and data segments of a preloaded image.
+ *
+ * Called during early boot for the kernel image and every module preloaded by
+ * the boot loader.  Both areas use B_ALREADY_WIRED so no physical pages are
+ * re-allocated.
+ *
+ * @param _image Pointer to the preloaded ELF image descriptor.
+ */
 static void
 create_preloaded_image_areas(struct preloaded_image* _image)
 {
@@ -3666,10 +4272,14 @@ create_preloaded_image_areas(struct preloaded_image* _image)
 }
 
 
-/*!	Frees all previously kernel arguments areas from the kernel_args structure.
-	Any boot loader resources contained in that arguments must not be accessed
-	anymore past this point.
-*/
+/**
+ * @brief Free all VMArea objects that cover the kernel_args ranges.
+ *
+ * After this call the memory formerly occupied by kernel arguments is reclaimed
+ * and must not be accessed.
+ *
+ * @param args Pointer to the kernel_args structure.
+ */
 void
 vm_free_kernel_args(kernel_args* args)
 {
@@ -3683,6 +4293,14 @@ vm_free_kernel_args(kernel_args* args)
 }
 
 
+/**
+ * @brief Create VMArea objects for all kernel_args memory ranges.
+ *
+ * Each range in @c args->kernel_args_range receives an area with
+ * B_ALREADY_WIRED so that the VM tracks those pages.
+ *
+ * @param args Pointer to the kernel_args structure.
+ */
 static void
 allocate_kernel_args(kernel_args* args)
 {
@@ -3698,6 +4316,11 @@ allocate_kernel_args(kernel_args* args)
 }
 
 
+/**
+ * @brief Release virtual address reservations made for boot-loader ranges.
+ *
+ * @param args Pointer to the kernel_args structure.
+ */
 static void
 unreserve_boot_loader_ranges(kernel_args* args)
 {
@@ -3711,6 +4334,14 @@ unreserve_boot_loader_ranges(kernel_args* args)
 }
 
 
+/**
+ * @brief Reserve virtual address ranges used by the boot loader.
+ *
+ * Prevents the VM from reusing virtual addresses that the boot loader already
+ * allocated but that haven't yet been given proper VMArea objects.
+ *
+ * @param args Pointer to the kernel_args structure.
+ */
 static void
 reserve_boot_loader_ranges(kernel_args* args)
 {
@@ -3736,6 +4367,17 @@ reserve_boot_loader_ranges(kernel_args* args)
 }
 
 
+/**
+ * @brief Allocate a virtual address range during early boot.
+ *
+ * Searches the gaps between existing virtual_allocated_range entries in
+ * @a args for a suitably sized and aligned slot.
+ *
+ * @param args      Kernel args with the virtual allocation map.
+ * @param size      Byte size to allocate (will be page-aligned).
+ * @param alignment Required alignment (must be a multiple of B_PAGE_SIZE, or 0).
+ * @return Base virtual address of the allocated range, or @c 0 on failure.
+ */
 static addr_t
 allocate_early_virtual(kernel_args* args, size_t size, addr_t alignment)
 {
@@ -3793,6 +4435,13 @@ allocate_early_virtual(kernel_args* args, size_t size, addr_t alignment)
 }
 
 
+/**
+ * @brief Check whether a physical address falls within any known physical memory range.
+ *
+ * @param args    Kernel args containing the physical memory map.
+ * @param address Physical byte address to test.
+ * @return @c true if @a address is within at least one physical memory range.
+ */
 static bool
 is_page_in_physical_memory_range(kernel_args* args, phys_addr_t address)
 {
@@ -3807,6 +4456,17 @@ is_page_in_physical_memory_range(kernel_args* args, phys_addr_t address)
 }
 
 
+/**
+ * @brief Allocate a physical page during early boot (before the page allocator).
+ *
+ * Expands one of the existing physical_allocated_range entries or creates a
+ * new range.  On 64-bit systems, pages above 4 GB are preferred to keep the
+ * low 4 GB available for 32-bit drivers.
+ *
+ * @param args       Kernel args with the physical allocation map.
+ * @param maxAddress Upper bound on the physical address (0 means no limit).
+ * @return Physical page number, or @c 0 if allocation failed.
+ */
 page_num_t
 vm_allocate_early_physical_page(kernel_args* args, phys_addr_t maxAddress)
 {
@@ -3948,9 +4608,20 @@ vm_allocate_early_physical_page(kernel_args* args, phys_addr_t maxAddress)
 }
 
 
-/*!	This one uses the kernel_args' physical and virtual memory ranges to
-	allocate some pages before the VM is completely up.
-*/
+/**
+ * @brief Allocate and map pages during early boot before the VM is fully initialized.
+ *
+ * Finds a suitable virtual range via allocate_early_virtual(), allocates
+ * physical pages via vm_allocate_early_physical_page(), and maps each one
+ * through the architecture's early translation-map facility.
+ *
+ * @param args         Kernel args with virtual/physical allocation maps.
+ * @param virtualSize  Byte size of the virtual region.
+ * @param physicalSize Byte size of the physical region (clamped to @a virtualSize).
+ * @param attributes   Page-table attributes for the mapping.
+ * @param alignment    Required virtual-address alignment.
+ * @return Base virtual address of the allocation, or @c 0 on failure.
+ */
 addr_t
 vm_allocate_early(kernel_args* args, size_t virtualSize, size_t physicalSize,
 	uint32 attributes, addr_t alignment)
@@ -3985,7 +4656,18 @@ vm_allocate_early(kernel_args* args, size_t virtualSize, size_t physicalSize,
 }
 
 
-/*!	The main entrance point to initialize the VM. */
+/**
+ * @brief Phase 1 VM initialization — called very early during kernel startup.
+ *
+ * Initializes the translation map, page tables, physical page allocator, slab
+ * allocator, heap, VMCache subsystem, the global areas hash map, the kernel
+ * address space, and creates VMArea objects for all memory that is already in
+ * use (kernel image, preloaded modules, CPU stacks, kernel args).  Also sets
+ * up page-mapping object caches and the kernel debugger VM commands.
+ *
+ * @param args Pointer to the kernel_args structure provided by the boot loader.
+ * @retval B_OK Initialization successful.
+ */
 status_t
 vm_init(kernel_args* args)
 {
@@ -4097,6 +4779,16 @@ vm_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Phase 2 VM initialization — called after the semaphore subsystem is ready.
+ *
+ * Frees unused boot-loader memory ranges, unreserves boot-loader virtual
+ * reservations, and completes semaphore-dependent initialization of the
+ * translation map, slab, and heap.
+ *
+ * @param args Pointer to the kernel_args structure.
+ * @retval B_OK Always.
+ */
 status_t
 vm_init_post_sem(kernel_args* args)
 {
@@ -4118,6 +4810,15 @@ vm_init_post_sem(kernel_args* args)
 }
 
 
+/**
+ * @brief Phase 3 VM initialization — called after the threading subsystem is ready.
+ *
+ * Completes page-daemon, slab, deferred-free, and heap initialization that
+ * requires threads to be operational.
+ *
+ * @param args Pointer to the kernel_args structure.
+ * @retval B_OK Always (returns heap_init_post_thread() result).
+ */
 status_t
 vm_init_post_thread(kernel_args* args)
 {
@@ -4128,6 +4829,14 @@ vm_init_post_thread(kernel_args* args)
 }
 
 
+/**
+ * @brief Phase 4 VM initialization — called after kernel modules are loaded.
+ *
+ * Delegates to the architecture-specific post-modules VM initialization.
+ *
+ * @param args Pointer to the kernel_args structure.
+ * @retval B_OK Always (returns arch result).
+ */
 status_t
 vm_init_post_modules(kernel_args* args)
 {
@@ -4135,6 +4844,12 @@ vm_init_post_modules(kernel_args* args)
 }
 
 
+/**
+ * @brief Allow page faults for the current thread.
+ *
+ * Increments the current thread's @c page_faults_allowed counter.  Must be
+ * balanced by a call to forbid_page_faults().
+ */
 void
 permit_page_faults()
 {
@@ -4142,6 +4857,12 @@ permit_page_faults()
 }
 
 
+/**
+ * @brief Disallow page faults for the current thread.
+ *
+ * Decrements the current thread's @c page_faults_allowed counter.  Must be
+ * balanced with a prior call to permit_page_faults().
+ */
 void
 forbid_page_faults()
 {
@@ -4149,6 +4870,23 @@ forbid_page_faults()
 }
 
 
+/**
+ * @brief Top-level page fault handler — dispatches to vm_soft_fault().
+ *
+ * Determines the correct address space, calls vm_soft_fault() to resolve the
+ * fault (demand paging or COW), and handles the result.  On kernel faults that
+ * cannot be resolved the thread's @c fault_handler is invoked; otherwise a
+ * kernel panic is triggered.  User-mode faults that cannot be resolved deliver
+ * SIGSEGV to the faulting thread.
+ *
+ * @param address      The virtual address that caused the fault.
+ * @param faultAddress The instruction pointer at the time of the fault.
+ * @param isWrite      @c true if the fault was caused by a write access.
+ * @param isExecute    @c true if the fault was caused by an instruction fetch.
+ * @param isUser       @c true if the fault occurred in user mode.
+ * @param newIP        Out: if non-zero on return, the handler redirects the IP here.
+ * @retval B_HANDLED_INTERRUPT Always (even when the fault is propagated as a signal).
+ */
 status_t
 vm_page_fault(addr_t address, addr_t faultAddress, bool isWrite, bool isExecute,
 	bool isUser, addr_t* newIP)
@@ -4314,18 +5052,22 @@ struct PageFaultContext {
 };
 
 
-/*!	Gets the page that should be mapped into the area.
-	Returns an error code other than \c B_OK, if the page couldn't be found or
-	paged in. The locking state of the address space and the caches is undefined
-	in that case.
-	Returns \c B_OK with \c context.restart set to \c true, if the functions
-	had to unlock the address space and all caches and is supposed to be called
-	again.
-	Returns \c B_OK with \c context.restart set to \c false, if the page was
-	found. It is returned in \c context.page. The address space will still be
-	locked as well as all caches starting from the top cache to at least the
-	cache the page lives in.
-*/
+/**
+ * @brief Locate or allocate the page needed to resolve a page fault.
+ *
+ * Walks the cache chain from the top cache downward looking for the page at
+ * @c context.cacheOffset.  If the page is busy the function unlocks everything
+ * and returns with @c context.restart set to @c true.  If the page lives in
+ * the backing store it is read in (unlocking all locks temporarily) and also
+ * sets @c context.restart.  If no page is found a clean page is allocated in
+ * the top cache.  For a write fault on a lower-cache page, a copy is made into
+ * the top cache (COW).
+ *
+ * @param context The fault context (address space and cache chain must be locked).
+ * @retval B_OK              Page located (check @c context.restart and @c context.page).
+ * @retval B_BUSY            Page is busy and the caller must not wait.
+ * @retval other             I/O or allocation error; locking state is undefined.
+ */
 static status_t
 fault_get_page(PageFaultContext& context)
 {
@@ -4460,17 +5202,25 @@ fault_get_page(PageFaultContext& context)
 }
 
 
-/*!	Makes sure the address in the given address space is mapped.
-
-	\param addressSpace The address space.
-	\param originalAddress The address. Doesn't need to be page aligned.
-	\param isWrite If \c true the address shall be write-accessible.
-	\param isUser If \c true the access is requested by a userland team.
-	\param wirePage On success, if non \c NULL, the wired count of the page
-		mapped at the given address is incremented and the page is returned
-		via this parameter.
-	\return \c B_OK on success, another error code otherwise.
-*/
+/**
+ * @brief Resolve a page fault by mapping the missing or write-protected page.
+ *
+ * Reserves physical pages, locks the address space, validates access
+ * permissions, and calls fault_get_page() in a retry loop until the page is
+ * successfully mapped.  Optionally wires the page (for lock_memory_etc()).
+ *
+ * @param addressSpace    The address space where the fault occurred.
+ * @param originalAddress The faulting address (need not be page-aligned).
+ * @param isWrite         @c true if the access was a write.
+ * @param isExecute       @c true if the access was an instruction fetch.
+ * @param isUser          @c true if the access originated in user mode.
+ * @param wirePage        If non-@c NULL, the resolved page's wired count is
+ *                        incremented and the page is stored here.
+ * @retval B_OK               Page mapped (and optionally wired).
+ * @retval B_BAD_ADDRESS      Address is not covered by any area.
+ * @retval B_PERMISSION_DENIED Access mode is not allowed by the area protection.
+ * @retval B_NO_MEMORY        Page allocation or mapping failed.
+ */
 static status_t
 vm_soft_fault(VMAddressSpace* addressSpace, addr_t originalAddress,
 	bool isWrite, bool isExecute, bool isUser, vm_page** wirePage)
@@ -4722,12 +5472,27 @@ vm_soft_fault(VMAddressSpace* addressSpace, addr_t originalAddress,
 }
 
 
+/**
+ * @brief Map a physical page temporarily into the kernel address space.
+ *
+ * @param paddr   Physical address to map.
+ * @param _vaddr  Out: virtual address at which the page is accessible.
+ * @param _handle Out: opaque handle for vm_put_physical_page().
+ * @retval B_OK Always (panics on failure).
+ */
 status_t
 vm_get_physical_page(phys_addr_t paddr, addr_t* _vaddr, void** _handle)
 {
 	return sPhysicalPageMapper->GetPage(paddr, _vaddr, _handle);
 }
 
+/**
+ * @brief Release a temporary physical-page mapping obtained via vm_get_physical_page().
+ *
+ * @param vaddr  Virtual address previously returned by vm_get_physical_page().
+ * @param handle Opaque handle from vm_get_physical_page().
+ * @retval B_OK Always.
+ */
 status_t
 vm_put_physical_page(addr_t vaddr, void* handle)
 {
@@ -4735,6 +5500,17 @@ vm_put_physical_page(addr_t vaddr, void* handle)
 }
 
 
+/**
+ * @brief Map a physical page temporarily, pinned to the current CPU.
+ *
+ * Must only be called with interrupts disabled; use vm_put_physical_page_current_cpu()
+ * to release.
+ *
+ * @param paddr   Physical address to map.
+ * @param _vaddr  Out: virtual address of the mapping.
+ * @param _handle Out: opaque handle for the release call.
+ * @retval B_OK Always.
+ */
 status_t
 vm_get_physical_page_current_cpu(phys_addr_t paddr, addr_t* _vaddr,
 	void** _handle)
@@ -4742,6 +5518,13 @@ vm_get_physical_page_current_cpu(phys_addr_t paddr, addr_t* _vaddr,
 	return sPhysicalPageMapper->GetPageCurrentCPU(paddr, _vaddr, _handle);
 }
 
+/**
+ * @brief Release a CPU-pinned temporary physical-page mapping.
+ *
+ * @param vaddr  Virtual address from vm_get_physical_page_current_cpu().
+ * @param handle Opaque handle from vm_get_physical_page_current_cpu().
+ * @retval B_OK Always.
+ */
 status_t
 vm_put_physical_page_current_cpu(addr_t vaddr, void* handle)
 {
@@ -4749,12 +5532,29 @@ vm_put_physical_page_current_cpu(addr_t vaddr, void* handle)
 }
 
 
+/**
+ * @brief Kernel-debugger safe variant of vm_get_physical_page().
+ *
+ * May be called from the kernel debugger where normal locking is unavailable.
+ *
+ * @param paddr   Physical address to map.
+ * @param _vaddr  Out: virtual address of the mapping.
+ * @param _handle Out: opaque handle for vm_put_physical_page_debug().
+ * @retval B_OK Always.
+ */
 status_t
 vm_get_physical_page_debug(phys_addr_t paddr, addr_t* _vaddr, void** _handle)
 {
 	return sPhysicalPageMapper->GetPageDebug(paddr, _vaddr, _handle);
 }
 
+/**
+ * @brief Kernel-debugger safe variant of vm_put_physical_page().
+ *
+ * @param vaddr  Virtual address from vm_get_physical_page_debug().
+ * @param handle Opaque handle from vm_get_physical_page_debug().
+ * @retval B_OK Always.
+ */
 status_t
 vm_put_physical_page_debug(addr_t vaddr, void* handle)
 {
@@ -4762,6 +5562,15 @@ vm_put_physical_page_debug(addr_t vaddr, void* handle)
 }
 
 
+/**
+ * @brief Return the amount of available memory while holding the available-memory lock.
+ *
+ * When swap is enabled, returns the minimum of the RAM pool and the combined
+ * RAM+swap pool so that neither is over-committed.
+ *
+ * @return Available memory in bytes.
+ * @note The caller must hold @c sAvailableMemoryLock.
+ */
 static off_t
 vm_available_memory_locked()
 {
@@ -4775,6 +5584,14 @@ vm_available_memory_locked()
 }
 
 
+/**
+ * @brief Fill in the VM-related fields of a system_info structure.
+ *
+ * Populates @c needed_memory and @c free_memory; swap information is obtained
+ * via swap_get_info().
+ *
+ * @param info Pointer to the system_info struct to populate.
+ */
 void
 vm_get_info(system_info* info)
 {
@@ -4786,6 +5603,11 @@ vm_get_info(system_info* info)
 }
 
 
+/**
+ * @brief Return the total number of page faults handled since boot.
+ *
+ * @return Cumulative page fault count.
+ */
 uint32
 vm_num_page_faults(void)
 {
@@ -4793,6 +5615,13 @@ vm_num_page_faults(void)
 }
 
 
+/**
+ * @brief Return the amount of free physical memory (and swap, if enabled).
+ *
+ * Thread-safe; acquires @c sAvailableMemoryLock internally.
+ *
+ * @return Available memory in bytes.
+ */
 off_t
 vm_available_memory(void)
 {
@@ -4801,9 +5630,14 @@ vm_available_memory(void)
 }
 
 
-/*!	Like vm_available_memory(), but only for use in the kernel
-	debugger.
-*/
+/**
+ * @brief Kernel-debugger variant of vm_available_memory().
+ *
+ * Reads @c sAvailableMemory without acquiring any locks; safe only from the
+ * kernel debugger where preemption and interrupts are disabled.
+ *
+ * @return Available RAM in bytes.
+ */
 off_t
 vm_available_memory_debug(void)
 {
@@ -4811,6 +5645,11 @@ vm_available_memory_debug(void)
 }
 
 
+/**
+ * @brief Return free memory minus the amount currently needed by pending allocations.
+ *
+ * @return Free memory minus needed memory, in bytes.
+ */
 off_t
 vm_available_not_needed_memory(void)
 {
@@ -4819,9 +5658,13 @@ vm_available_not_needed_memory(void)
 }
 
 
-/*!	Like vm_available_not_needed_memory(), but only for use in the kernel
-	debugger.
-*/
+/**
+ * @brief Kernel-debugger variant of vm_available_not_needed_memory().
+ *
+ * Lock-free; safe only from the kernel debugger.
+ *
+ * @return Free memory minus needed memory, in bytes.
+ */
 off_t
 vm_available_not_needed_memory_debug(void)
 {
@@ -4829,6 +5672,11 @@ vm_available_not_needed_memory_debug(void)
 }
 
 
+/**
+ * @brief Return the amount of free virtual address space remaining in the kernel.
+ *
+ * @return Free kernel address space in bytes.
+ */
 size_t
 vm_kernel_address_space_left(void)
 {
@@ -4836,6 +5684,12 @@ vm_kernel_address_space_left(void)
 }
 
 
+/**
+ * @brief Release a physical memory reservation made by vm_try_reserve_memory().
+ *
+ * @param amount Byte count to return to the available-memory pool (must be
+ *               a multiple of B_PAGE_SIZE).
+ */
 void
 vm_unreserve_memory(size_t amount)
 {
@@ -4867,6 +5721,21 @@ vm_unreserve_memory_or_swap(size_t amount)
 #endif
 
 
+/**
+ * @brief Try to reserve @a amount bytes from a memory pool within a timeout.
+ *
+ * Uses a fast read-lock path for obvious success, then falls back to a
+ * write-lock path with up to three low-resource callbacks before giving up.
+ *
+ * @param pool            Reference to the pool counter to decrement.
+ * @param resource        Low-resource resource type for the callback.
+ * @param amount          Bytes to reserve (must be page-aligned).
+ * @param priority        Reservation priority (VM_PRIORITY_*).
+ * @param absoluteTimeout Absolute system-time deadline in microseconds.
+ * @retval B_OK        Memory reserved.
+ * @retval B_NO_MEMORY Timeout expired with insufficient memory.
+ * @note The caller must not hold @c sAvailableMemoryLock on entry.
+ */
 static status_t
 vm_try_reserve_internal(off_t& pool, uint32 resource,
 	size_t amount, int priority, bigtime_t absoluteTimeout)
@@ -4924,6 +5793,18 @@ vm_try_reserve_internal(off_t& pool, uint32 resource,
 }
 
 
+/**
+ * @brief Try to reserve physical memory with a relative timeout.
+ *
+ * Decrements the available-memory (and, when swap is enabled, the
+ * available-memory-and-swap) counters by @a amount.
+ *
+ * @param amount   Bytes to reserve (must be page-aligned).
+ * @param priority Reservation priority (VM_PRIORITY_USER/SYSTEM/VIP).
+ * @param timeout  Relative timeout in microseconds (0 = non-blocking).
+ * @retval B_OK        Memory reserved.
+ * @retval B_NO_MEMORY Reservation failed within the timeout.
+ */
 status_t
 vm_try_reserve_memory(size_t amount, int priority, bigtime_t timeout)
 {
@@ -4964,6 +5845,20 @@ vm_try_reserve_memory_or_swap(size_t amount, int priority, bigtime_t timeout)
 #endif
 
 
+/**
+ * @brief Change the memory type (UC/WC/WB/…) of an area and its physical pages.
+ *
+ * Updates both the translation-map protection entries and the architecture's
+ * physical memory type table.  If setting the physical type fails, the
+ * translation map is reverted to the old type.
+ *
+ * @param id           Area ID.
+ * @param physicalBase Physical base address of the area's backing memory.
+ * @param type         New memory type (B_UNCACHED_MEMORY, B_WRITE_COMBINING_MEMORY, …).
+ * @retval B_OK   Memory type updated.
+ * @retval other  Architecture-specific error; area and translation map reverted.
+ * @note The caller is responsible for serialising concurrent calls to this function.
+ */
 status_t
 vm_set_area_memory_type(area_id id, phys_addr_t physicalBase, uint32 type)
 {
@@ -5003,11 +5898,16 @@ vm_set_area_memory_type(area_id id, phys_addr_t physicalBase, uint32 type)
 }
 
 
-/*!	This function enforces some protection properties:
-	 - kernel areas must be W^X (after kernel startup)
-	 - if B_WRITE_AREA is set, B_KERNEL_WRITE_AREA is set as well
-	 - if B_READ_AREA has been set, B_KERNEL_READ_AREA is also set
-*/
+/**
+ * @brief Normalise and enforce protection flag invariants.
+ *
+ * Enforces the following rules:
+ * - Kernel areas must satisfy W^X (writable XOR executable) after kernel startup.
+ * - B_WRITE_AREA implies B_KERNEL_WRITE_AREA.
+ * - B_READ_AREA implies B_KERNEL_READ_AREA.
+ *
+ * @param protection In/out: the protection bitmask to fix.
+ */
 static void
 fix_protection(uint32* protection)
 {
@@ -5026,6 +5926,19 @@ fix_protection(uint32* protection)
 }
 
 
+/**
+ * @brief Validate a team ID and normalise protection flags.
+ *
+ * Resolves @c B_CURRENT_TEAM to the actual team ID and calls fix_protection().
+ * Also verifies that the architecture supports the requested combination of
+ * protection bits.
+ *
+ * @param team       In/out: team ID (@c B_CURRENT_TEAM is resolved).
+ * @param protection In/out: protection flags to validate and normalise.
+ * @retval B_OK          Validation passed.
+ * @retval B_BAD_TEAM_ID @a team is not valid.
+ * @retval B_NOT_SUPPORTED Architecture does not support the protection flags.
+ */
 static status_t
 check_protection(team_id& team, uint32* protection)
 {
@@ -5043,6 +5956,16 @@ check_protection(team_id& team, uint32* protection)
 }
 
 
+/**
+ * @brief Populate an area_info struct from a VMArea.
+ *
+ * Copies the area's name, ID, base address, size, protection, wiring, team,
+ * RAM page count, and copy count into @a info.
+ *
+ * @param area  The source VMArea.
+ * @param info  Destination area_info buffer.
+ * @param size  Size of @a info in bytes (unused; reserved for future extension).
+ */
 static void
 fill_area_info(struct VMArea* area, area_info* info, size_t size)
 {
@@ -5069,6 +5992,21 @@ fill_area_info(struct VMArea* area, area_info* info, size_t size)
 }
 
 
+/**
+ * @brief Resize an area (and all areas sharing its cache) to a new size.
+ *
+ * Grows or shrinks the area's VMCache and all associated VMArea objects.
+ * Unmaps pages beyond the new size when shrinking.  Resizes the per-page
+ * protection array if present.  Only anonymous RAM caches may be resized.
+ *
+ * @param areaID  Area to resize.
+ * @param newSize New byte size (must be a multiple of B_PAGE_SIZE).
+ * @param kernel  @c true if called by the kernel.
+ * @retval B_OK          Resize successful.
+ * @retval B_BAD_VALUE   @a newSize is not page-aligned.
+ * @retval B_NOT_ALLOWED Cache type is not RAM, or insufficient permissions.
+ * @retval B_ERROR       Not all areas in the cache could be resized.
+ */
 static status_t
 vm_resize_area(area_id areaID, size_t newSize, bool kernel)
 {
@@ -5231,6 +6169,14 @@ vm_resize_area(area_id areaID, size_t newSize, bool kernel)
 }
 
 
+/**
+ * @brief Fill a range of physical memory with a byte value.
+ *
+ * @param address Physical address to start filling.
+ * @param value   Byte value to write.
+ * @param length  Number of bytes to fill.
+ * @retval B_OK Always (panics on internal failure).
+ */
 status_t
 vm_memset_physical(phys_addr_t address, int value, phys_size_t length)
 {
@@ -5238,6 +6184,15 @@ vm_memset_physical(phys_addr_t address, int value, phys_size_t length)
 }
 
 
+/**
+ * @brief Copy data from physical memory to a virtual address.
+ *
+ * @param to     Destination virtual address.
+ * @param from   Source physical address.
+ * @param length Number of bytes to copy.
+ * @param user   @c true if @a to is a user-space address.
+ * @retval B_OK Always (panics on internal failure).
+ */
 status_t
 vm_memcpy_from_physical(void* to, phys_addr_t from, size_t length, bool user)
 {
@@ -5245,6 +6200,15 @@ vm_memcpy_from_physical(void* to, phys_addr_t from, size_t length, bool user)
 }
 
 
+/**
+ * @brief Copy data from a virtual address to physical memory.
+ *
+ * @param to     Destination physical address.
+ * @param _from  Source virtual address.
+ * @param length Number of bytes to copy.
+ * @param user   @c true if @a _from is a user-space address.
+ * @retval B_OK Always (panics on internal failure).
+ */
 status_t
 vm_memcpy_to_physical(phys_addr_t to, const void* _from, size_t length,
 	bool user)
@@ -5253,6 +6217,12 @@ vm_memcpy_to_physical(phys_addr_t to, const void* _from, size_t length,
 }
 
 
+/**
+ * @brief Copy one physical page to another physical page.
+ *
+ * @param to   Destination physical page address (page-aligned).
+ * @param from Source physical page address (page-aligned).
+ */
 void
 vm_memcpy_physical_page(phys_addr_t to, phys_addr_t from)
 {
@@ -5260,8 +6230,16 @@ vm_memcpy_physical_page(phys_addr_t to, phys_addr_t from)
 }
 
 
-/** Validate that a memory range is either fully in kernel space, or fully in
- *  userspace */
+/**
+ * @brief Validate that a memory range does not cross the kernel/user boundary.
+ *
+ * Also checks for address overflow.
+ *
+ * @param addr Start of the range.
+ * @param size Byte length of the range.
+ * @return @c true if the range is fully in kernel space or fully in user space
+ *         and does not overflow.
+ */
 static inline bool
 validate_memory_range(const void* addr, size_t size)
 {
@@ -5279,6 +6257,18 @@ validate_memory_range(const void* addr, size_t size)
 //	#pragma mark - kernel public API
 
 
+/**
+ * @brief Safely copy data between kernel and user memory (or within either).
+ *
+ * Validates that neither range crosses the kernel/user boundary before
+ * delegating to the architecture's user-memory copy primitive.
+ *
+ * @param to   Destination address.
+ * @param from Source address.
+ * @param size Number of bytes to copy.
+ * @retval B_OK         Copy succeeded.
+ * @retval B_BAD_ADDRESS Either range spans the kernel/user boundary or overflows.
+ */
 status_t
 user_memcpy(void* to, const void* from, size_t size)
 {
@@ -5292,15 +6282,18 @@ user_memcpy(void* to, const void* from, size_t size)
 }
 
 
-/*!	\brief Copies at most (\a size - 1) characters from the string in \a from to
-	the string in \a to, NULL-terminating the result.
-
-	\param to Pointer to the destination C-string.
-	\param from Pointer to the source C-string.
-	\param size Size in bytes of the string buffer pointed to by \a to.
-
-	\return strlen(\a from).
-*/
+/**
+ * @brief Copy at most (size-1) characters from a user/kernel string, always NUL-terminating.
+ *
+ * Handles the case where @a from is near the user-address ceiling by capping
+ * the copy length before overflow occurs.
+ *
+ * @param to   Destination buffer.
+ * @param from Source string.
+ * @param size Capacity of @a to in bytes.
+ * @return Length of @a from (like strlcpy), or a negative error code.
+ * @retval B_BAD_ADDRESS Range crosses the kernel/user boundary or overflows.
+ */
 ssize_t
 user_strlcpy(char* to, const char* from, size_t size)
 {
@@ -5331,6 +6324,15 @@ user_strlcpy(char* to, const char* from, size_t size)
 }
 
 
+/**
+ * @brief Safely fill a memory range with a byte value (kernel/user safe).
+ *
+ * @param s     Start of the range to fill.
+ * @param c     Byte value.
+ * @param count Number of bytes to fill.
+ * @retval B_OK         Fill succeeded.
+ * @retval B_BAD_ADDRESS Range crosses the kernel/user boundary or overflows.
+ */
 status_t
 user_memset(void* s, char c, size_t count)
 {
@@ -5344,18 +6346,22 @@ user_memset(void* s, char c, size_t count)
 }
 
 
-/*!	Wires a single page at the given address.
-
-	\param team The team whose address space the address belongs to. Supports
-		also \c B_CURRENT_TEAM. If the given address is a kernel address, the
-		parameter is ignored.
-	\param address address The virtual address to wire down. Does not need to
-		be page aligned.
-	\param writable If \c true the page shall be writable.
-	\param info On success the info is filled in, among other things
-		containing the physical address the given virtual one translates to.
-	\return \c B_OK, when the page could be wired, another error code otherwise.
-*/
+/**
+ * @brief Wire (pin) a single virtual page to a physical page.
+ *
+ * Marks the enclosing area range as wired, increments the wired count of the
+ * mapped page, and fills in @a info.  If the page is not yet mapped,
+ * vm_soft_fault() is called to map it first.
+ *
+ * @param team     Team ID owning the address (@c B_CURRENT_TEAM supported).
+ *                 Ignored for kernel addresses.
+ * @param address  Virtual address to wire (need not be page-aligned).
+ * @param writable @c true to wire with write access.
+ * @param info     Out: wiring info including the physical address.
+ * @retval B_OK        Page wired.
+ * @retval B_BAD_ADDRESS Address is not covered by any area.
+ * @retval B_ERROR     Could not obtain the address space.
+ */
 status_t
 vm_wire_page(team_id team, addr_t address, bool writable,
 	VMPageWiringInfo* info)
@@ -5450,10 +6456,14 @@ vm_wire_page(team_id team, addr_t address, bool writable,
 }
 
 
-/*!	Unwires a single page previously wired via vm_wire_page().
-
-	\param info The same object passed to vm_wire_page() before.
-*/
+/**
+ * @brief Unpin a page previously pinned by vm_wire_page().
+ *
+ * Decrements the page's wired count and removes the wired range from the
+ * enclosing area.
+ *
+ * @param info The wiring info returned by a prior vm_wire_page() call.
+ */
 void
 vm_unwire_page(VMPageWiringInfo* info)
 {
@@ -5507,6 +6517,23 @@ vm_unwire_page(VMPageWiringInfo* info)
 		into memory").
 	\return \c B_OK on success, another error code otherwise.
 */
+/**
+ * @brief Wire down an address range in a team's address space.
+ *
+ * Acquires a reference to the address space, adds wired ranges to every area
+ * intersecting [address, address+numBytes), and increments the wired count of
+ * every page in the range.  Pages not yet mapped are resolved via
+ * vm_soft_fault().  A matching unlock_memory_etc() call must be made later
+ * with identical parameters.
+ *
+ * @param team     Team ID (or @c B_CURRENT_TEAM).
+ * @param address  Start of the range to wire.
+ * @param numBytes Byte length of the range.
+ * @param flags    Flags; @c B_READ_DEVICE means wire for writing (DMA from device).
+ * @retval B_OK         Range wired.
+ * @retval B_BAD_ADDRESS Part of the range is not covered by any area.
+ * @retval B_NO_MEMORY   Could not allocate wired-range structures.
+ */
 status_t
 lock_memory_etc(team_id team, void* address, size_t numBytes, uint32 flags)
 {
@@ -5654,6 +6681,16 @@ lock_memory_etc(team_id team, void* address, size_t numBytes, uint32 flags)
 }
 
 
+/**
+ * @brief Wire down an address range in the current team's address space.
+ *
+ * Wrapper around lock_memory_etc() with @c B_CURRENT_TEAM.
+ *
+ * @param address  Start of the range.
+ * @param numBytes Byte length.
+ * @param flags    Flags (see lock_memory_etc()).
+ * @retval B_OK On success.
+ */
 status_t
 lock_memory(void* address, size_t numBytes, uint32 flags)
 {
@@ -5661,11 +6698,20 @@ lock_memory(void* address, size_t numBytes, uint32 flags)
 }
 
 
-/*!	Unwires an address range previously wired with lock_memory_etc().
-
-	Note that a call to this function must balance a previous lock_memory_etc()
-	call with exactly the same parameters.
-*/
+/**
+ * @brief Unwire an address range previously wired with lock_memory_etc().
+ *
+ * Decrements the wired count of every page in the range and removes the wired
+ * range records from each area.  Releases the address space reference acquired
+ * by lock_memory_etc().  Must be called with the same parameters as the
+ * matching lock_memory_etc() call.
+ *
+ * @param team     Team ID (or @c B_CURRENT_TEAM).
+ * @param address  Start of the range.
+ * @param numBytes Byte length.
+ * @param flags    Flags (same as the matching lock_memory_etc() call).
+ * @retval B_OK Always (individual page failures panic).
+ */
 status_t
 unlock_memory_etc(team_id team, void* address, size_t numBytes, uint32 flags)
 {
@@ -5790,6 +6836,16 @@ unlock_memory_etc(team_id team, void* address, size_t numBytes, uint32 flags)
 }
 
 
+/**
+ * @brief Unwire an address range in the current team's address space.
+ *
+ * Wrapper around unlock_memory_etc() with @c B_CURRENT_TEAM.
+ *
+ * @param address  Start of the range.
+ * @param numBytes Byte length.
+ * @param flags    Flags.
+ * @retval B_OK Always.
+ */
 status_t
 unlock_memory(void* address, size_t numBytes, uint32 flags)
 {
@@ -5797,14 +6853,22 @@ unlock_memory(void* address, size_t numBytes, uint32 flags)
 }
 
 
-/*!	Similar to get_memory_map(), but also allows to specify the address space
-	for the memory in question and has a saner semantics.
-	Returns \c B_OK when the complete range could be translated or
-	\c B_BUFFER_OVERFLOW, if the provided array wasn't big enough. In either
-	case the actual number of entries is written to \c *_numEntries. Any other
-	error case indicates complete failure; \c *_numEntries will be set to \c 0
-	in this case.
-*/
+/**
+ * @brief Translate a virtual address range to a table of physical_entry records.
+ *
+ * Iterates through each page in the range, queries the translation map, and
+ * merges contiguous physical ranges.
+ *
+ * @param team        Team ID of the address space to query.
+ * @param address     Start of the virtual range.
+ * @param numBytes    Byte length.
+ * @param table       Output array of physical_entry records.
+ * @param _numEntries In: capacity of @a table; Out: number of entries written.
+ * @retval B_OK              Full range translated.
+ * @retval B_BUFFER_OVERFLOW @a table was too small; @a *_numEntries is the
+ *                           number of entries that were written.
+ * @retval B_BAD_ADDRESS     An unmapped page was encountered.
+ */
 status_t
 get_memory_map_etc(team_id team, const void* address, size_t numBytes,
 	physical_entry* table, uint32* _numEntries)
@@ -5930,6 +6994,12 @@ __get_memory_map_haiku(const void* address, size_t numBytes,
 }
 
 
+/**
+ * @brief Kernel public API: return the area ID that contains @a address.
+ *
+ * @param address Virtual address to look up.
+ * @return Area ID, or a negative error code.
+ */
 area_id
 area_for(void* address)
 {
@@ -5937,6 +7007,14 @@ area_for(void* address)
 }
 
 
+/**
+ * @brief Kernel public API: find an area by name.
+ *
+ * Searches the global areas hash table by name.  Returns the first match.
+ *
+ * @param name The area name to search for.
+ * @return Area ID, or @c B_NAME_NOT_FOUND if no match exists.
+ */
 area_id
 find_area(const char* name)
 {
@@ -5944,6 +7022,15 @@ find_area(const char* name)
 }
 
 
+/**
+ * @brief Kernel public API: fill an area_info struct for a given area ID.
+ *
+ * @param id   The area to query.
+ * @param info Destination area_info buffer.
+ * @param size Must equal sizeof(area_info).
+ * @retval B_OK          Struct populated.
+ * @retval B_BAD_VALUE   @a size is wrong or @a info is @c NULL.
+ */
 status_t
 _get_area_info(area_id id, area_info* info, size_t size)
 {
@@ -5961,6 +7048,20 @@ _get_area_info(area_id id, area_info* info, size_t size)
 }
 
 
+/**
+ * @brief Kernel public API: iterate over all areas in a team's address space.
+ *
+ * Uses @a cookie as a virtual address cursor.  Pass 0 to start; the function
+ * sets @c *cookie to @c -1 when iteration is complete.
+ *
+ * @param team   Team to iterate over.
+ * @param cookie In/out: iteration cursor.
+ * @param info   Destination area_info buffer.
+ * @param size   Must equal sizeof(area_info).
+ * @retval B_OK            Next area found and @a info populated.
+ * @retval B_ENTRY_NOT_FOUND Iteration complete.
+ * @retval B_BAD_TEAM_ID   @a team is not valid.
+ */
 status_t
 _get_next_area_info(team_id team, ssize_t* cookie, area_info* info, size_t size)
 {
@@ -5990,6 +7091,13 @@ _get_next_area_info(team_id team, ssize_t* cookie, area_info* info, size_t size)
 }
 
 
+/**
+ * @brief Kernel public API: change the protection of an area.
+ *
+ * @param area          Area ID.
+ * @param newProtection New protection flags.
+ * @retval B_OK On success.
+ */
 status_t
 set_area_protection(area_id area, uint32 newProtection)
 {
@@ -5997,6 +7105,13 @@ set_area_protection(area_id area, uint32 newProtection)
 }
 
 
+/**
+ * @brief Kernel public API: resize an area.
+ *
+ * @param areaID  Area to resize.
+ * @param newSize New size in bytes (must be page-aligned).
+ * @retval B_OK On success.
+ */
 status_t
 resize_area(area_id areaID, size_t newSize)
 {
@@ -6004,9 +7119,20 @@ resize_area(area_id areaID, size_t newSize)
 }
 
 
-/*!	Transfers the specified area to a new team. The caller must be the owner
-	of the area.
-*/
+/**
+ * @brief Transfer ownership of an area to another team.
+ *
+ * Clones the area into the target team's address space, then deletes the
+ * original.  The caller must own the area.
+ *
+ * @param id          Area to transfer.
+ * @param _address    In/out: desired/received virtual address in target space.
+ * @param addressSpec Address specification for the clone.
+ * @param target      ID of the receiving team.
+ * @param kernel      @c true if called by the kernel.
+ * @return Area ID of the clone in the target team, or a negative error code.
+ * @retval B_NOT_ALLOWED Caller does not own the area or area is kernel-only.
+ */
 area_id
 transfer_area(area_id id, void** _address, uint32 addressSpec, team_id target,
 	bool kernel)
@@ -6061,6 +7187,16 @@ __map_physical_memory_haiku(const char* name, phys_addr_t physicalAddress,
 }
 
 
+/**
+ * @brief Kernel public API: clone an area into the kernel address space.
+ *
+ * @param name        Name for the clone.
+ * @param _address    In/out: desired/received virtual address.
+ * @param addressSpec Address specification.
+ * @param protection  Protection flags.
+ * @param source      Source area ID.
+ * @return Area ID of the clone, or a negative error code.
+ */
 area_id
 clone_area(const char* name, void** _address, uint32 addressSpec,
 	uint32 protection, area_id source)
@@ -6073,6 +7209,23 @@ clone_area(const char* name, void** _address, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Extended kernel API to create an anonymous area with full restrictions.
+ *
+ * Delegates directly to vm_create_anonymous_area() with @c kernel = @c true.
+ *
+ * @param team                       Owning team ID.
+ * @param name                       Area name.
+ * @param size                       Size in bytes.
+ * @param lock                       Wiring policy.
+ * @param protection                 Page-protection flags.
+ * @param flags                      Creation flags.
+ * @param guardSize                  Guard region size.
+ * @param virtualAddressRestrictions Virtual placement constraints.
+ * @param physicalAddressRestrictions Physical constraints.
+ * @param _address                   Out: virtual base address.
+ * @return Area ID on success, or a negative error code.
+ */
 area_id
 create_area_etc(team_id team, const char* name, size_t size, uint32 lock,
 	uint32 protection, uint32 flags, uint32 guardSize,
@@ -6100,6 +7253,12 @@ __create_area_haiku(const char* name, void** _address, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Kernel public API: delete an area from the kernel address space.
+ *
+ * @param area Area ID to delete.
+ * @retval B_OK On success.
+ */
 status_t
 delete_area(area_id area)
 {
@@ -6110,6 +7269,16 @@ delete_area(area_id area)
 //	#pragma mark - Userland syscalls
 
 
+/**
+ * @brief Syscall: reserve a virtual address range in the current team's address space.
+ *
+ * @param userAddress In/out user pointer to the desired/received address.
+ * @param addressSpec Address specification.
+ * @param size        Byte size to reserve.
+ * @retval B_OK On success.
+ * @retval B_BAD_ADDRESS @a userAddress is not a valid user pointer.
+ * @retval B_BAD_VALUE   @a addressSpec is kernel-only.
+ */
 status_t
 _user_reserve_address_range(addr_t* userAddress, uint32 addressSpec,
 	addr_t size)
@@ -6143,6 +7312,13 @@ _user_reserve_address_range(addr_t* userAddress, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Syscall: release a virtual address range reservation.
+ *
+ * @param address Start of the reserved range.
+ * @param size    Byte size.
+ * @retval B_OK On success.
+ */
 status_t
 _user_unreserve_address_range(addr_t address, addr_t size)
 {
@@ -6151,6 +7327,12 @@ _user_unreserve_address_range(addr_t address, addr_t size)
 }
 
 
+/**
+ * @brief Syscall: return the area ID that contains a user virtual address.
+ *
+ * @param address User virtual address.
+ * @return Area ID, or a negative error code.
+ */
 area_id
 _user_area_for(void* address)
 {
@@ -6158,6 +7340,13 @@ _user_area_for(void* address)
 }
 
 
+/**
+ * @brief Syscall: find an area by name (user version).
+ *
+ * @param userName User pointer to a NUL-terminated area name.
+ * @return Area ID, or a negative error code.
+ * @retval B_BAD_ADDRESS @a userName is not a valid user pointer.
+ */
 area_id
 _user_find_area(const char* userName)
 {
@@ -6171,6 +7360,18 @@ _user_find_area(const char* userName)
 }
 
 
+/**
+ * @brief Syscall: fill an area_info struct for a given area ID (user version).
+ *
+ * Enforces that non-root callers may only query areas owned by their own uid.
+ * Strips kernel-only flags before copying to userland.
+ *
+ * @param area     Area ID.
+ * @param userInfo User pointer to an area_info buffer.
+ * @retval B_OK On success.
+ * @retval B_BAD_ADDRESS @a userInfo is not a valid user pointer.
+ * @retval B_NOT_ALLOWED Caller lacks permission to query the area.
+ */
 status_t
 _user_get_area_info(area_id area, area_info* userInfo)
 {
@@ -6198,6 +7399,17 @@ _user_get_area_info(area_id area, area_info* userInfo)
 }
 
 
+/**
+ * @brief Syscall: iterate over all areas in a team's address space (user version).
+ *
+ * @param team       Team to iterate over.
+ * @param userCookie User pointer to the iteration cookie (pass 0 to start).
+ * @param userInfo   User pointer to the area_info buffer to fill.
+ * @retval B_OK              Next area returned.
+ * @retval B_ENTRY_NOT_FOUND Iteration complete.
+ * @retval B_BAD_ADDRESS     User pointers are invalid.
+ * @retval B_NOT_ALLOWED     Caller lacks permission.
+ */
 status_t
 _user_get_next_area_info(team_id team, ssize_t* userCookie, area_info* userInfo)
 {
@@ -6231,6 +7443,14 @@ _user_get_next_area_info(team_id team, ssize_t* userCookie, area_info* userInfo)
 }
 
 
+/**
+ * @brief Syscall: mprotect — change the protection of a user area.
+ *
+ * @param area          Area ID.
+ * @param newProtection New protection flags (only user flags accepted).
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE Kernel-only flags were specified.
+ */
 status_t
 _user_set_area_protection(area_id area, uint32 newProtection)
 {
@@ -6241,6 +7461,13 @@ _user_set_area_protection(area_id area, uint32 newProtection)
 }
 
 
+/**
+ * @brief Syscall: resize a user area.
+ *
+ * @param area    Area ID.
+ * @param newSize New size in bytes.
+ * @retval B_OK On success.
+ */
 status_t
 _user_resize_area(area_id area, size_t newSize)
 {
@@ -6248,6 +7475,17 @@ _user_resize_area(area_id area, size_t newSize)
 }
 
 
+/**
+ * @brief Syscall: transfer an area to another team (user version).
+ *
+ * @param area        Area ID to transfer.
+ * @param userAddress User pointer to the desired/received virtual address.
+ * @param addressSpec Address specification.
+ * @param target      Receiving team ID.
+ * @return New area ID, or a negative error code.
+ * @retval B_BAD_VALUE @a addressSpec is kernel-only.
+ * @retval B_BAD_ADDRESS @a userAddress is not a valid user pointer.
+ */
 area_id
 _user_transfer_area(area_id area, void** userAddress, uint32 addressSpec,
 	team_id target)
@@ -6275,6 +7513,18 @@ _user_transfer_area(area_id area, void** userAddress, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Syscall: clone an area into the current team's address space (user version).
+ *
+ * @param userName   User pointer to the area name string.
+ * @param userAddress User pointer to the desired/received address.
+ * @param addressSpec Address specification.
+ * @param protection  Page-protection flags (user flags only).
+ * @param sourceArea  Source area ID.
+ * @return New area ID, or a negative error code.
+ * @retval B_BAD_VALUE @a addressSpec is kernel-only or protection flags invalid.
+ * @retval B_BAD_ADDRESS User pointers are invalid.
+ */
 area_id
 _user_clone_area(const char* userName, void** userAddress, uint32 addressSpec,
 	uint32 protection, area_id sourceArea)
@@ -6312,6 +7562,19 @@ _user_clone_area(const char* userName, void** userAddress, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Syscall: create an anonymous area in the current team's address space.
+ *
+ * @param userName    User pointer to the area name string.
+ * @param userAddress User pointer to the desired/received address.
+ * @param addressSpec Address specification.
+ * @param size        Size in bytes.
+ * @param lock        Wiring policy.
+ * @param protection  Page-protection flags (user flags only).
+ * @return Area ID on success, or a negative error code.
+ * @retval B_BAD_VALUE @a addressSpec or @a protection has kernel-only flags.
+ * @retval B_BAD_ADDRESS User pointers are invalid or address is in kernel space.
+ */
 area_id
 _user_create_area(const char* userName, void** userAddress, uint32 addressSpec,
 	size_t size, uint32 lock, uint32 protection)
@@ -6355,6 +7618,15 @@ _user_create_area(const char* userName, void** userAddress, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Syscall: delete a user-created area.
+ *
+ * Only areas created by the calling team may be deleted.
+ *
+ * @param area Area ID to delete.
+ * @retval B_OK On success.
+ * @retval B_NOT_ALLOWED Caller does not own the area.
+ */
 status_t
 _user_delete_area(area_id area)
 {
@@ -6368,6 +7640,22 @@ _user_delete_area(area_id area)
 
 // TODO: create a BeOS style call for this!
 
+/**
+ * @brief Syscall: mmap — map a file or anonymous memory into the user address space.
+ *
+ * @param userName         User pointer to the area name string.
+ * @param userAddress      User pointer to the desired/received virtual address.
+ * @param addressSpec      Address specification.
+ * @param size             Byte size.
+ * @param protection       Page-protection flags (user flags only).
+ * @param mapping          REGION_NO_PRIVATE_MAP or REGION_PRIVATE_MAP.
+ * @param unmapAddressRange If @c true, unmap overlapping ranges first.
+ * @param fd               File descriptor, or -1 for anonymous.
+ * @param offset           Byte offset into the file.
+ * @return Area ID on success, or a negative error code.
+ * @retval B_BAD_VALUE Invalid @a addressSpec or the address range is invalid.
+ * @retval B_BAD_ADDRESS User pointers are invalid or address is in kernel space.
+ */
 area_id
 _user_map_file(const char* userName, void** userAddress, uint32 addressSpec,
 	size_t size, uint32 protection, uint32 mapping, bool unmapAddressRange,
@@ -6409,6 +7697,15 @@ _user_map_file(const char* userName, void** userAddress, uint32 addressSpec,
 }
 
 
+/**
+ * @brief Syscall: munmap — unmap a range of user virtual memory.
+ *
+ * @param _address Start of the range (must be page-aligned).
+ * @param size     Byte size.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE Range is empty, overflows, or is not page-aligned.
+ * @retval B_BAD_ADDRESS Range includes kernel addresses.
+ */
 status_t
 _user_unmap_memory(void* _address, size_t size)
 {
@@ -6439,6 +7736,21 @@ _user_unmap_memory(void* _address, size_t size)
 }
 
 
+/**
+ * @brief Syscall: mprotect — change page protections for a user address range.
+ *
+ * Sets per-page protections for each page in the range, allocating a
+ * per-page protection array for each area that doesn't already have one.
+ * Also adjusts cache commitments and remaps mapped pages as needed.
+ *
+ * @param _address  Start of the range (must be page-aligned).
+ * @param size      Byte size (will be page-aligned).
+ * @param protection New protection flags.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE Address or size is not page-aligned.
+ * @retval ENOMEM Part of the range is not covered by user areas.
+ * @retval B_NOT_ALLOWED Area is kernel-only or protection exceeds maximum.
+ */
 status_t
 _user_set_memory_protection(void* _address, size_t size, uint32 protection)
 {
@@ -6638,6 +7950,16 @@ _user_set_memory_protection(void* _address, size_t size, uint32 protection)
 }
 
 
+/**
+ * @brief Syscall: msync — flush modified pages of a memory-mapped file range.
+ *
+ * @param _address Start of the range (must be page-aligned).
+ * @param size     Byte size (will be page-aligned).
+ * @param flags    MS_SYNC (synchronous) or MS_ASYNC.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE Address not aligned, or conflicting flags.
+ * @retval ENOMEM Range is not fully covered by mapped areas.
+ */
 status_t
 _user_sync_memory(void* _address, size_t size, uint32 flags)
 {
@@ -6717,6 +8039,19 @@ _user_sync_memory(void* _address, size_t size, uint32 flags)
 }
 
 
+/**
+ * @brief Syscall: madvise — provide usage hints for a user address range.
+ *
+ * Currently handles MADV_FREE (discard pages) fully; other advice values are
+ * accepted but have no effect.
+ *
+ * @param _address Start of the range (must be page-aligned).
+ * @param size     Byte size (will be page-aligned).
+ * @param advice   Advice constant (MADV_NORMAL, MADV_FREE, etc.).
+ * @retval B_OK    Advice applied or silently ignored.
+ * @retval B_BAD_VALUE Address not aligned or unknown advice.
+ * @retval B_NO_MEMORY Range is not fully in user space.
+ */
 status_t
 _user_memory_advice(void* _address, size_t size, uint32 advice)
 {
@@ -6761,6 +8096,18 @@ _user_memory_advice(void* _address, size_t size, uint32 advice)
 }
 
 
+/**
+ * @brief Syscall: query the protection and wiring of a user virtual address.
+ *
+ * @param teamID     Team ID to query (@c B_CURRENT_TEAM supported).
+ * @param address    Virtual address.
+ * @param _protected Out: protection flags.
+ * @param _lock      Out: wiring type.
+ * @retval B_OK On success.
+ * @retval B_BAD_ADDRESS Output pointers are not valid user addresses.
+ * @retval B_NOT_ALLOWED Non-root caller querying another user's team.
+ * @retval B_NO_MEMORY Address is not covered by any area.
+ */
 status_t
 _user_get_memory_properties(team_id teamID, const void* address,
 	uint32* _protected, uint32* _lock)
@@ -6796,6 +8143,20 @@ _user_get_memory_properties(team_id teamID, const void* address,
 }
 
 
+/**
+ * @brief Enable or disable swapping for a user address range.
+ *
+ * Wires the range, then iterates over every anonymous VMCache that backs it
+ * and calls SetCanSwapPages().  The range is unwired after the operation.
+ *
+ * @param _address  Start of the range (must be page-aligned).
+ * @param size      Byte size.
+ * @param swappable @c true to allow swapping; @c false to pin in RAM.
+ * @retval B_OK     Operation applied.
+ * @retval EINVAL   Range is not page-aligned, is in kernel space, or is backed
+ *                  by a non-anonymous cache.
+ * @note No-op if swap support is compiled out.
+ */
 static status_t
 user_set_memory_swappable(const void* _address, size_t size, bool swappable)
 {
@@ -6866,6 +8227,13 @@ user_set_memory_swappable(const void* _address, size_t size, bool swappable)
 }
 
 
+/**
+ * @brief Syscall: mlock — prevent a user address range from being swapped out.
+ *
+ * @param _address Start of the range.
+ * @param size     Byte size.
+ * @retval B_OK On success.
+ */
 status_t
 _user_mlock(const void* _address, size_t size)
 {
@@ -6873,6 +8241,14 @@ _user_mlock(const void* _address, size_t size)
 }
 
 
+/**
+ * @brief Syscall: munlock — allow a previously mlock()ed range to be swapped.
+ *
+ * @param _address Start of the range.
+ * @param size     Byte size.
+ * @retval B_OK On success.
+ * @note If multiple clones of an area were mlock()ed, the first munlock() unlocks all.
+ */
 status_t
 _user_munlock(const void* _address, size_t size)
 {

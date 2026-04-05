@@ -1,10 +1,41 @@
 /*
- * Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file VMKernelAddressSpace.cpp
+ * @brief Virtual address space management for the kernel.
+ *
+ * Implements the kernel address space using a red-black tree of free address
+ * ranges (Range objects). Optimizes kernel area placement for speed and
+ * minimizes fragmentation. Handles insertion, removal, and resizing of
+ * VMKernelArea objects within the kernel's virtual address range.
+ *
+ * @see VMUserAddressSpace.cpp, VMKernelArea.cpp
  */
 
 
@@ -37,6 +68,16 @@
 #endif
 
 
+/**
+ * @brief Computes floor(log2(value)).
+ *
+ * Returns the index of the highest set bit in @p value, which is equivalent
+ * to floor(log2(value)). Used to determine the free-list bucket index for a
+ * range of a given size.
+ *
+ * @param value The value whose base-2 logarithm is computed. Must be > 0.
+ * @return The index of the highest set bit (0-based), or -1 if value is 0.
+ */
 static int
 ld(size_t value)
 {
@@ -50,13 +91,19 @@ ld(size_t value)
 }
 
 
-/*!	Verifies that an area with the given aligned base and size fits into
-	the spot defined by base and limit and checks for overflows.
-	\param base Minimum base address valid for the area.
-	\param alignedBase The base address of the range to check.
-	\param size The size of the area.
-	\param limit The last (inclusive) addresss of the range to check.
-*/
+/**
+ * @brief Checks whether a candidate range fits within the allowed spot.
+ *
+ * Verifies that @p alignedBase is at least @p base, that the range
+ * [@p alignedBase, @p alignedBase + @p size - 1] does not overflow, and that
+ * the range's last address does not exceed @p limit.
+ *
+ * @param base       Minimum permissible base address.
+ * @param alignedBase Candidate aligned start address of the area.
+ * @param size       Size of the area in bytes.
+ * @param limit      Maximum permissible last (inclusive) address.
+ * @return @c true if the range fits, @c false otherwise.
+ */
 static inline bool
 is_valid_spot(addr_t base, addr_t alignedBase, addr_t size, addr_t limit)
 {
@@ -68,6 +115,21 @@ is_valid_spot(addr_t base, addr_t alignedBase, addr_t size, addr_t limit)
 // #pragma mark - VMKernelAddressSpace
 
 
+/**
+ * @brief Constructs the kernel address space object.
+ *
+ * Initialises the base class VMAddressSpace for the given team @p id over the
+ * virtual range [@p base, @p base + @p size - 1]. The slab object caches for
+ * areas and ranges are left NULL until InitObject() is called.
+ *
+ * @param id   Team identifier that owns this address space (typically the
+ *             kernel team ID).
+ * @param base First valid virtual address of the kernel address space.
+ * @param size Total byte size of the kernel virtual address range.
+ *
+ * @note Must be followed by a successful call to InitObject() before the
+ *       address space can be used.
+ */
 VMKernelAddressSpace::VMKernelAddressSpace(team_id id, addr_t base, size_t size)
 	:
 	VMAddressSpace(id, base, size, "kernel address space"),
@@ -77,12 +139,34 @@ VMKernelAddressSpace::VMKernelAddressSpace(team_id id, addr_t base, size_t size)
 }
 
 
+/**
+ * @brief Destructor — intentionally panics.
+ *
+ * The kernel address space must never be deleted. Reaching this destructor
+ * indicates a serious kernel bug, so a panic is triggered immediately.
+ */
 VMKernelAddressSpace::~VMKernelAddressSpace()
 {
 	panic("deleting the kernel aspace!\n");
 }
 
 
+/**
+ * @brief Initialises slab caches and the initial free range covering the
+ *        entire kernel address space.
+ *
+ * Creates two slab object caches (one for VMKernelArea objects, one for Range
+ * objects), allocates the free-list array sized to cover all possible
+ * power-of-two page buckets within the address space, and inserts a single
+ * free Range spanning [fBase, fEndAddress].
+ *
+ * @return @c B_OK on success.
+ * @retval B_NO_MEMORY if any allocation (cache creation, free-list array, or
+ *         initial Range) fails.
+ *
+ * @note Must be called exactly once, immediately after construction, before
+ *       any other method is invoked.
+ */
 status_t
 VMKernelAddressSpace::InitObject()
 {
@@ -118,6 +202,16 @@ VMKernelAddressSpace::InitObject()
 }
 
 
+/**
+ * @brief Returns the first VMArea in the kernel address space.
+ *
+ * Walks the ordered range list from the head and returns the area pointer of
+ * the first Range whose type is RANGE_AREA.
+ *
+ * @return Pointer to the first VMArea, or @c NULL if there are none.
+ *
+ * @note Caller must hold at least the address space read lock.
+ */
 inline VMArea*
 VMKernelAddressSpace::FirstArea() const
 {
@@ -128,6 +222,18 @@ VMKernelAddressSpace::FirstArea() const
 }
 
 
+/**
+ * @brief Returns the VMArea immediately following @p _area in address order.
+ *
+ * Starting from the Range associated with @p _area, advances through the
+ * range list until the next RANGE_AREA entry is found.
+ *
+ * @param _area The current area whose successor is requested. Must not be
+ *              @c NULL and must belong to this address space.
+ * @return Pointer to the next VMArea, or @c NULL if @p _area is the last one.
+ *
+ * @note Caller must hold at least the address space read lock.
+ */
 inline VMArea*
 VMKernelAddressSpace::NextArea(VMArea* _area) const
 {
@@ -139,6 +245,19 @@ VMKernelAddressSpace::NextArea(VMArea* _area) const
 }
 
 
+/**
+ * @brief Allocates a new VMKernelArea object from the slab cache.
+ *
+ * Delegates to VMKernelArea::Create(), passing the address space pointer,
+ * area attributes, the area slab cache, and the allocation flags.
+ *
+ * @param name            Descriptive name for the area.
+ * @param wiring          Wiring type (e.g. B_NO_LOCK, B_FULL_LOCK).
+ * @param protection      Page-level protection flags.
+ * @param allocationFlags Slab allocation flags (e.g. CACHE_DONT_WAIT_FOR_MEMORY).
+ * @return Pointer to the newly created VMKernelArea cast as VMArea, or @c NULL
+ *         on allocation failure.
+ */
 VMArea*
 VMKernelAddressSpace::CreateArea(const char* name, uint32 wiring,
 	uint32 protection, uint32 allocationFlags)
@@ -148,6 +267,17 @@ VMKernelAddressSpace::CreateArea(const char* name, uint32 wiring,
 }
 
 
+/**
+ * @brief Returns a VMKernelArea object to its slab cache.
+ *
+ * Casts @p _area to VMKernelArea and releases the object back to
+ * @c fAreaObjectCache.
+ *
+ * @param _area           The area to delete. Must have been created by
+ *                        CreateArea() on this address space.
+ * @param allocationFlags Slab deallocation flags forwarded to
+ *                        object_cache_delete().
+ */
 void
 VMKernelAddressSpace::DeleteArea(VMArea* _area, uint32 allocationFlags)
 {
@@ -158,6 +288,19 @@ VMKernelAddressSpace::DeleteArea(VMArea* _area, uint32 allocationFlags)
 }
 
 
+/**
+ * @brief Looks up the VMArea that contains @p address.
+ *
+ * Searches the range tree for the closest range at or below @p address and
+ * verifies that the range is of type RANGE_AREA and that @p address actually
+ * falls within the area's base/size.
+ *
+ * @param address Virtual address to look up.
+ * @return Pointer to the containing VMKernelArea, or @c NULL if no area
+ *         contains @p address.
+ *
+ * @note Caller must hold the address space read lock.
+ */
 //! You must hold the address space's read lock.
 VMArea*
 VMKernelAddressSpace::LookupArea(addr_t address) const
@@ -171,6 +314,19 @@ VMKernelAddressSpace::LookupArea(addr_t address) const
 }
 
 
+/**
+ * @brief Finds the VMArea closest to @p address in the given direction.
+ *
+ * Walks the range tree starting at the closest range to @p address, moving
+ * in the direction indicated by @p less, until a RANGE_AREA range is found.
+ *
+ * @param address Virtual address used as the search anchor.
+ * @param less    If @c true, search for the closest area whose base is less
+ *                than or equal to @p address; if @c false, greater or equal.
+ * @return Pointer to the closest matching VMArea, or @c NULL.
+ *
+ * @note Caller must hold the address space read lock.
+ */
 //! You must hold the address space's read lock.
 VMArea*
 VMKernelAddressSpace::FindClosestArea(addr_t address, bool less) const
@@ -183,6 +339,30 @@ VMKernelAddressSpace::FindClosestArea(addr_t address, bool less) const
 }
 
 
+/**
+ * @brief Inserts an area into the kernel address space.
+ *
+ * Allocates a virtual address range of @p size bytes according to
+ * @p addressRestrictions, assigns it to @p _area, and updates bookkeeping.
+ * On success @p *_address receives the area's base address and fFreeSpace is
+ * decremented accordingly.
+ *
+ * @param _area                 The VMKernelArea to insert. Must have been
+ *                              created by CreateArea().
+ * @param size                  Requested size in bytes (will be page-rounded
+ *                              internally).
+ * @param addressRestrictions   Address specification and alignment constraints.
+ * @param allocationFlags       Slab allocation flags for internal Range splits.
+ * @param[out] _address         Receives the assigned virtual base address if
+ *                              not @c NULL.
+ * @return @c B_OK on success.
+ * @retval B_BAD_VALUE if B_EXACT_ADDRESS is requested but the spot is occupied
+ *                     or misaligned.
+ * @retval B_NO_MEMORY if no suitable virtual range is available or an
+ *                     internal allocation fails.
+ *
+ * @note Caller must hold the address space write lock.
+ */
 /*!	This inserts the area you pass into the address space.
 	It will also set the "_address" argument to its base address when
 	the call succeeds.
@@ -223,6 +403,19 @@ VMKernelAddressSpace::InsertArea(VMArea* _area, size_t size,
 }
 
 
+/**
+ * @brief Removes an area from the kernel address space.
+ *
+ * Frees the virtual range held by @p _area (coalescing with any adjacent free
+ * ranges) and adds the freed bytes back to fFreeSpace.
+ *
+ * @param _area           The area to remove. Must currently be inserted in
+ *                        this address space.
+ * @param allocationFlags Slab deallocation flags forwarded during Range
+ *                        coalescing.
+ *
+ * @note Caller must hold the address space write lock.
+ */
 //! You must hold the address space's write lock.
 void
 VMKernelAddressSpace::RemoveArea(VMArea* _area, uint32 allocationFlags)
@@ -240,6 +433,21 @@ VMKernelAddressSpace::RemoveArea(VMArea* _area, uint32 allocationFlags)
 }
 
 
+/**
+ * @brief Tests whether an area can be resized to @p newSize bytes.
+ *
+ * If @p newSize is smaller than or equal to the current size the answer is
+ * always @c true. For growth, checks that the immediately following Range is
+ * not another area and that the free (or non-base-reserved) space after the
+ * area is sufficient.
+ *
+ * @param area    The area to query.
+ * @param newSize The desired new size in bytes.
+ * @return @c true if ResizeArea() would succeed, @c false otherwise.
+ *
+ * @note Does not modify any state. Does not require a lock (but the caller
+ *       should hold at least the read lock for a stable answer).
+ */
 bool
 VMKernelAddressSpace::CanResizeArea(VMArea* area, size_t newSize)
 {
@@ -263,6 +471,25 @@ VMKernelAddressSpace::CanResizeArea(VMArea* area, size_t newSize)
 }
 
 
+/**
+ * @brief Resizes an area to @p newSize bytes by adjusting the tail boundary.
+ *
+ * For shrinking, the freed tail is either merged with a subsequent free Range
+ * or turned into a new free Range. For growing, the immediately following free
+ * or non-base-reserved Range is consumed (wholly or partially).
+ *
+ * @param _area           The area to resize.
+ * @param newSize         New size in bytes. Must be page-aligned; must not
+ *                        exceed available space if growing.
+ * @param allocationFlags Slab allocation flags used when new Range objects
+ *                        must be allocated.
+ * @return @c B_OK on success.
+ * @retval B_BAD_VALUE if @p newSize is larger than the available adjacent
+ *                     space or if no suitable following range exists.
+ * @retval B_NO_MEMORY if a new Range object cannot be allocated.
+ *
+ * @note Caller must hold the address space write lock.
+ */
 status_t
 VMKernelAddressSpace::ResizeArea(VMArea* _area, size_t newSize,
 	uint32 allocationFlags)
@@ -331,6 +558,22 @@ VMKernelAddressSpace::ResizeArea(VMArea* _area, size_t newSize,
 }
 
 
+/**
+ * @brief Shrinks an area from its head (lower address) end.
+ *
+ * Reduces the area's size by @p (range->size - @p newSize) bytes from the
+ * beginning: the freed prefix is either merged with a preceding free Range or
+ * becomes a new free Range, and the area's base address advances accordingly.
+ *
+ * @param _area           The area to shrink.
+ * @param newSize         New (smaller) size in bytes.
+ * @param allocationFlags Slab allocation flags for potential new Range.
+ * @return @c B_OK on success.
+ * @retval B_BAD_VALUE if @p newSize is larger than the current area size.
+ * @retval B_NO_MEMORY if a new Range object cannot be allocated.
+ *
+ * @note Caller must hold the address space write lock.
+ */
 status_t
 VMKernelAddressSpace::ShrinkAreaHead(VMArea* _area, size_t newSize,
 	uint32 allocationFlags)
@@ -378,6 +621,19 @@ VMKernelAddressSpace::ShrinkAreaHead(VMArea* _area, size_t newSize,
 }
 
 
+/**
+ * @brief Shrinks an area from its tail (higher address) end.
+ *
+ * Delegates to ResizeArea(), which handles tail shrinking as a special case
+ * of resizing.
+ *
+ * @param area            The area to shrink.
+ * @param newSize         New (smaller) size in bytes.
+ * @param allocationFlags Slab allocation flags forwarded to ResizeArea().
+ * @return Return value of ResizeArea().
+ *
+ * @note Caller must hold the address space write lock.
+ */
 status_t
 VMKernelAddressSpace::ShrinkAreaTail(VMArea* area, size_t newSize,
 	uint32 allocationFlags)
@@ -386,6 +642,24 @@ VMKernelAddressSpace::ShrinkAreaTail(VMArea* area, size_t newSize,
 }
 
 
+/**
+ * @brief Reserves a virtual address range without mapping an area into it.
+ *
+ * Allocates a Range of type RANGE_RESERVED to prevent the address range from
+ * being handed out by subsequent InsertArea() calls. Increments the address
+ * space reference count via Get().
+ *
+ * @param size                  Size of the range to reserve in bytes.
+ * @param addressRestrictions   Placement and alignment constraints.
+ * @param flags                 Reservation flags (e.g. RESERVED_AVOID_BASE).
+ * @param allocationFlags       Slab allocation flags for internal Range splits.
+ * @param[out] _address         Receives the reserved base address if not NULL.
+ * @return @c B_OK on success.
+ * @retval B_BAD_TEAM_ID if the address space is being deleted.
+ * @retval B_NO_MEMORY / B_BAD_VALUE from _AllocateRange().
+ *
+ * @note Caller must hold the address space write lock.
+ */
 status_t
 VMKernelAddressSpace::ReserveAddressRange(size_t size,
 	const virtual_address_restrictions* addressRestrictions,
@@ -419,6 +693,23 @@ VMKernelAddressSpace::ReserveAddressRange(size_t size,
 }
 
 
+/**
+ * @brief Releases all reserved ranges that overlap [@p address, @p address+@p size).
+ *
+ * Iterates through the range tree starting at @p address and frees every
+ * RANGE_RESERVED range whose last address is within the specified region.
+ * Free ranges are skipped during iteration because _FreeRange() may coalesce
+ * them. Decrements the address space reference count via Put() for each freed
+ * reservation.
+ *
+ * @param address         Start of the address region to unreserve.
+ * @param size            Length of the region in bytes.
+ * @param allocationFlags Slab deallocation flags forwarded to _FreeRange().
+ * @return @c B_OK always (errors are ignored silently).
+ * @retval B_BAD_TEAM_ID if the address space is being deleted.
+ *
+ * @note Caller must hold the address space write lock.
+ */
 status_t
 VMKernelAddressSpace::UnreserveAddressRange(addr_t address, size_t size,
 	uint32 allocationFlags)
@@ -455,6 +746,19 @@ VMKernelAddressSpace::UnreserveAddressRange(addr_t address, size_t size,
 }
 
 
+/**
+ * @brief Releases all reserved ranges in the kernel address space.
+ *
+ * Iterates the entire range list from the head, freeing every RANGE_RESERVED
+ * range encountered. Free ranges are skipped during iteration to avoid
+ * iterator invalidation caused by _FreeRange() coalescing. Decrements the
+ * address space reference count via Put() for each freed reservation.
+ *
+ * @param allocationFlags Slab deallocation flags forwarded to _FreeRange().
+ *
+ * @note Caller must hold the address space write lock. Intended for use during
+ *       address space teardown.
+ */
 void
 VMKernelAddressSpace::UnreserveAllAddressRanges(uint32 allocationFlags)
 {
@@ -479,6 +783,17 @@ VMKernelAddressSpace::UnreserveAllAddressRanges(uint32 allocationFlags)
 }
 
 
+/**
+ * @brief Dumps the kernel address space state to the kernel debugger.
+ *
+ * Calls the base-class VMAddressSpace::Dump() and then iterates the
+ * ordered range list, printing one line per Range with its type (area,
+ * reserved, or free), base address, size, and—for areas—name and
+ * protection flags.
+ *
+ * @note Safe to call from the kernel debugger (KDL) without any locks, as
+ *       it only reads state.
+ */
 void
 VMKernelAddressSpace::Dump() const
 {
@@ -517,6 +832,20 @@ VMKernelAddressSpace::Dump() const
 }
 
 
+/**
+ * @brief Inserts @p range into the free list whose bucket covers @p size.
+ *
+ * The bucket index is computed as ld(@p size) - PAGE_SHIFT. The Range is
+ * appended to that bucket's list without further checks.
+ *
+ * @param range Pointer to the Range to insert. Must not already be in a free
+ *              list.
+ * @param size  Size value used to determine the free-list bucket. Typically
+ *              equal to @c range->size.
+ *
+ * @note Internal helper. Caller is responsible for correct @p size and for
+ *       updating range->type before calling.
+ */
 inline void
 VMKernelAddressSpace::_FreeListInsertRange(Range* range, size_t size)
 {
@@ -528,6 +857,20 @@ VMKernelAddressSpace::_FreeListInsertRange(Range* range, size_t size)
 }
 
 
+/**
+ * @brief Removes @p range from the free list whose bucket covers @p size.
+ *
+ * The bucket index is computed as ld(@p size) - PAGE_SHIFT. The Range is
+ * removed from that bucket's list.
+ *
+ * @param range Pointer to the Range to remove. Must be present in the free
+ *              list corresponding to @p size.
+ * @param size  Size value used to locate the free-list bucket. Must match the
+ *              size that was passed to _FreeListInsertRange() for this range.
+ *
+ * @note Internal helper. The caller must remove the Range from the free list
+ *       before modifying its size.
+ */
 inline void
 VMKernelAddressSpace::_FreeListRemoveRange(Range* range, size_t size)
 {
@@ -539,6 +882,19 @@ VMKernelAddressSpace::_FreeListRemoveRange(Range* range, size_t size)
 }
 
 
+/**
+ * @brief Inserts @p range into the range list and tree, and (if free) its
+ *        free-list bucket.
+ *
+ * Finds the correct sorted position in fRangeList using fRangeTree, inserts
+ * there, inserts into fRangeTree, then—if range->type is RANGE_FREE—calls
+ * _FreeListInsertRange().
+ *
+ * @param range Pointer to the fully initialised Range to insert. Must not
+ *              overlap any existing range.
+ *
+ * @note Internal helper. Does not modify fFreeSpace or the change counter.
+ */
 void
 VMKernelAddressSpace::_InsertRange(Range* range)
 {
@@ -561,6 +917,20 @@ VMKernelAddressSpace::_InsertRange(Range* range)
 }
 
 
+/**
+ * @brief Removes @p range from the range list, tree, and (if free) its
+ *        free-list bucket.
+ *
+ * Removes the range from fRangeTree and fRangeList. If range->type is
+ * RANGE_FREE, also removes it from the corresponding free-list bucket via
+ * _FreeListRemoveRange().
+ *
+ * @param range Pointer to the Range to remove. Must currently be present in
+ *              both the range list and tree.
+ *
+ * @note Internal helper. Does not delete the Range object; the caller is
+ *       responsible for returning it to fRangesObjectCache.
+ */
 void
 VMKernelAddressSpace::_RemoveRange(Range* range)
 {
@@ -578,6 +948,31 @@ VMKernelAddressSpace::_RemoveRange(Range* range)
 }
 
 
+/**
+ * @brief Allocates a virtual address Range satisfying the given constraints.
+ *
+ * Rounds @p size up to the next page boundary, selects the allocation
+ * strategy from @p addressRestrictions->address_specification, and delegates
+ * to _FindFreeRange() to locate a suitable candidate. The found range is
+ * split as necessary (head, tail, or both) to produce an exact-fit Range
+ * for the allocation, and the leftover pieces are re-inserted as new free
+ * or reserved Ranges. The allocated Range is removed from its free-list
+ * bucket and returned in @p _range.
+ *
+ * @param addressRestrictions   Placement constraints (address, spec, alignment).
+ * @param size                  Requested allocation size in bytes.
+ * @param allowReservedRange    If @c true, reserved ranges may be used as
+ *                              allocation targets (used by InsertArea() for
+ *                              B_EXACT_ADDRESS).
+ * @param allocationFlags       Slab allocation flags for splitting Range objects.
+ * @param[out] _range           On success receives the allocated Range pointer.
+ * @return @c B_OK on success.
+ * @retval B_BAD_VALUE if B_EXACT_ADDRESS is specified and the address is not
+ *                     page-aligned or the spot is unavailable.
+ * @retval B_NO_MEMORY if no suitable range exists or a split allocation fails.
+ *
+ * @note Internal method. Caller must hold the address space write lock.
+ */
 status_t
 VMKernelAddressSpace::_AllocateRange(
 	const virtual_address_restrictions* addressRestrictions,
@@ -696,6 +1091,35 @@ VMKernelAddressSpace::_AllocateRange(
 }
 
 
+/**
+ * @brief Finds a free (or optionally reserved) Range that can satisfy an
+ *        allocation request.
+ *
+ * Implements the core placement policy for the kernel address space:
+ * - B_BASE_ADDRESS: linear scan from @p start, falls through to B_ANY_ADDRESS
+ *   if no match is found.
+ * - B_ANY_ADDRESS / B_ANY_KERNEL_ADDRESS / B_ANY_KERNEL_BLOCK_ADDRESS: O(1)
+ *   free-list search starting at the smallest bucket guaranteed to hold @p size,
+ *   followed by a reserved-range scan if @p allowReservedRange is set.
+ * - B_EXACT_ADDRESS: single tree lookup; the range must cover the exact spot
+ *   and must be free (or reserved when @p allowReservedRange is set).
+ *
+ * @param start              Minimum base address (used for B_BASE_ADDRESS and
+ *                           as a lower bound in B_ANY_* modes).
+ * @param size               Allocation size in bytes (already page-rounded).
+ * @param alignment          Required alignment of the returned base address.
+ * @param addressSpec        One of B_EXACT_ADDRESS, B_BASE_ADDRESS,
+ *                           B_ANY_ADDRESS, B_ANY_KERNEL_ADDRESS,
+ *                           B_ANY_KERNEL_BLOCK_ADDRESS.
+ * @param allowReservedRange If @c true, reserved ranges are also considered.
+ * @param[out] _foundAddress On success receives the aligned base address
+ *                           within the returned Range where the allocation
+ *                           should be placed.
+ * @return Pointer to the selected Range, or @c NULL if no suitable range
+ *         was found.
+ *
+ * @note Internal method. Caller must hold the address space write lock.
+ */
 VMKernelAddressSpace::Range*
 VMKernelAddressSpace::_FindFreeRange(addr_t start, size_t size,
 	size_t alignment, uint32 addressSpec, bool allowReservedRange,
@@ -814,6 +1238,23 @@ TRACE("    -> reserved range not allowed\n");
 }
 
 
+/**
+ * @brief Frees a Range back to the free pool, coalescing adjacent free ranges.
+ *
+ * Marks @p range as RANGE_FREE and merges it with any immediately preceding
+ * or following free Range to minimise fragmentation. The merged result is
+ * inserted into the appropriate free-list bucket. Surplus Range objects
+ * (consumed during merging) are returned to fRangesObjectCache.
+ *
+ * @param range           The Range to free. Must currently be of type
+ *                        RANGE_AREA or RANGE_RESERVED.
+ * @param allocationFlags Slab deallocation flags forwarded to
+ *                        object_cache_delete().
+ *
+ * @note Internal method. Does not update fFreeSpace; callers (RemoveArea,
+ *       UnreserveAddressRange, etc.) are responsible for that. Caller must
+ *       hold the address space write lock.
+ */
 void
 VMKernelAddressSpace::_FreeRange(Range* range, uint32 allocationFlags)
 {
@@ -862,6 +1303,28 @@ VMKernelAddressSpace::_FreeRange(Range* range, uint32 allocationFlags)
 
 #ifdef PARANOIA_CHECKS
 
+/**
+ * @brief Validates the internal consistency of the address space data
+ *        structures (paranoia mode only).
+ *
+ * Performs a comprehensive structural audit:
+ * - Verifies fRangeTree structural integrity via CheckTree().
+ * - Walks fRangeList and fRangeTree in parallel, ensuring they contain the
+ *   same Ranges in the same order.
+ * - Checks that each Range starts exactly where the previous one ended,
+ *   covering the complete address space without gaps.
+ * - Ensures no two adjacent Ranges are both of type RANGE_FREE (they should
+ *   have been coalesced).
+ * - Ensures all Range sizes are nonzero and page-aligned.
+ * - Validates each free-list bucket: all entries are of type RANGE_FREE,
+ *   present in the range tree, and in the correct bucket for their size.
+ *
+ * Triggers a kernel panic with a descriptive message on the first detected
+ * inconsistency.
+ *
+ * @note Compiled in only when PARANOIA_CHECKS is defined. Called via the
+ *       PARANOIA_CHECK_STRUCTURES() macro after every mutating operation.
+ */
 void
 VMKernelAddressSpace::_CheckStructures() const
 {

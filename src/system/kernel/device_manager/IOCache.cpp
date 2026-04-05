@@ -1,6 +1,37 @@
 /*
- * Copyright 2010-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file IOCache.cpp
+ * @brief I/O cache layer between the scheduler and storage devices.
+ *
+ * IOCache sits between the I/O scheduler and the physical device. It
+ * caches disk blocks in VM pages to avoid redundant device I/O for
+ * repeatedly accessed data. Manages page life cycle and handles cache
+ * hits/misses for block-level reads.
+ *
+ * @see IOSchedulerSimple.cpp, dma_resources.cpp
  */
 
 
@@ -38,6 +69,18 @@ struct IOCache::Operation : IOOperation {
 };
 
 
+/**
+ * @brief Constructs an IOCache instance, validates the cache line size, and
+ *        initialises internal serialisation state.
+ *
+ * @param resource      The DMAResource used for uncached (pass-through) I/O
+ *                      operations; must not be @c NULL.
+ * @param cacheLineSize Size in bytes of a single cache line; must be a power-of-2
+ *                      multiple of B_PAGE_SIZE. A non-conforming value causes a
+ *                      kernel panic.
+ * @note Call Init() after construction before scheduling any requests.
+ *       The cache is not operational until Init() returns B_OK.
+ */
 IOCache::IOCache(DMAResource* resource, size_t cacheLineSize)
 	:
 	IOScheduler(resource),
@@ -69,6 +112,14 @@ IOCache::IOCache(DMAResource* resource, size_t cacheLineSize)
 }
 
 
+/**
+ * @brief Destroys the IOCache, releasing its kernel area, page/vec arrays, and
+ *        serialisation mutex.
+ *
+ * @note No requests must be in flight when the destructor runs. The mapping
+ *       reservation is returned before the area is deleted to avoid a
+ *       reservation leak.
+ */
 IOCache::~IOCache()
 {
 	if (fArea >= 0) {
@@ -83,6 +134,21 @@ IOCache::~IOCache()
 }
 
 
+/**
+ * @brief Completes IOCache initialisation by creating the cache-line mapping
+ *        area, reserving translation-map pages, and allocating per-line working
+ *        arrays.
+ *
+ * @param name Human-readable name forwarded to the parent IOScheduler::Init()
+ *             and used when naming the kernel area.
+ * @retval B_OK        Initialisation succeeded; the cache is ready for use.
+ * @retval B_NO_MEMORY The fPages or fVecs array could not be allocated.
+ * @retval other       Error returned by vm_create_null_area() or
+ *                     IOScheduler::Init().
+ * @note Must be called exactly once after construction, before any calls to
+ *       ScheduleRequest(). Acquires no locks itself but the created area belongs
+ *       to B_SYSTEM_TEAM.
+ */
 status_t
 IOCache::Init(const char* name)
 {
@@ -125,6 +191,15 @@ IOCache::Init(const char* name)
 }
 
 
+/**
+ * @brief Updates the logical device capacity, discarding any stale cached data
+ *        that lies beyond the new boundary.
+ *
+ * @param deviceCapacity New device size in bytes.
+ * @note Acquires both @c fSerializationLock and the VMCache lock to atomically
+ *       update capacity and prevent racing transfers from caching out-of-bounds
+ *       data.
+ */
 void
 IOCache::SetDeviceCapacity(off_t deviceCapacity)
 {
@@ -138,6 +213,13 @@ IOCache::SetDeviceCapacity(off_t deviceCapacity)
 }
 
 
+/**
+ * @brief Invalidates the entire page cache in response to a media-change event.
+ *
+ * @note Acquires both @c fSerializationLock and the VMCache lock; all cached
+ *       pages are freed. Any I/O requests that are issued after this call will
+ *       incur cache misses and read fresh data from the device.
+ */
 void
 IOCache::MediaChanged()
 {
@@ -155,6 +237,20 @@ IOCache::MediaChanged()
 }
 
 
+/**
+ * @brief Schedules an IORequest for execution through the cache, serialising
+ *        all concurrent requests in FIFO order.
+ *
+ * @param request The IORequest to process; its status and transferred-byte
+ *                count are set before this function returns.
+ * @retval B_OK   The request completed successfully (possibly with partial
+ *                transfer indicated via SetTransferredBytes()).
+ * @retval other  Error code from memory locking or the internal _DoRequest()
+ *                path; the request is notified with the same error.
+ * @note Virtual-address buffers are locked into memory before the serialisation
+ *       lock is acquired and unlocked after it is released. All I/O through this
+ *       entry point is fully synchronous from the caller's perspective.
+ */
 status_t
 IOCache::ScheduleRequest(IORequest* request)
 {
@@ -193,6 +289,13 @@ IOCache::ScheduleRequest(IORequest* request)
 }
 
 
+/**
+ * @brief Aborts a previously scheduled IORequest with the given status code.
+ *
+ * @param request The request to abort.
+ * @param status  Error code to report as the request's final status.
+ * @note Currently unimplemented (stub).
+ */
 void
 IOCache::AbortRequest(IORequest* request, status_t status)
 {
@@ -200,6 +303,15 @@ IOCache::AbortRequest(IORequest* request, status_t status)
 }
 
 
+/**
+ * @brief Callback invoked by the DMA layer when a single IOOperation finishes.
+ *
+ * @param operation        The completed operation.
+ * @param status           Completion status from the hardware.
+ * @param transferredBytes Number of bytes actually transferred.
+ * @note Notifies the per-operation ConditionVariable so that the thread blocked
+ *       in _DoOperation() can wake up and continue processing.
+ */
 void
 IOCache::OperationCompleted(IOOperation* operation, status_t status,
 	generic_size_t transferredBytes)
@@ -215,6 +327,12 @@ IOCache::OperationCompleted(IOOperation* operation, status_t status,
 }
 
 
+/**
+ * @brief Prints a brief diagnostic summary of this IOCache to the kernel
+ *        debugger console.
+ *
+ * @note Must only be called from kernel debugger context (kprintf is used).
+ */
 void
 IOCache::Dump() const
 {
@@ -223,6 +341,18 @@ IOCache::Dump() const
 }
 
 
+/**
+ * @brief Drives the cache-aware transfer loop for a complete IORequest by
+ *        iterating over cache lines that intersect the request range.
+ *
+ * @param request             The IORequest to service.
+ * @param[out] _bytesTransferred Receives the total number of bytes successfully
+ *                            transferred to or from the request buffer.
+ * @retval B_OK               All intersecting cache lines were processed.
+ * @retval B_BAD_VALUE        @a request has a negative or out-of-range offset.
+ * @retval other              Error returned by _TransferRequestLine().
+ * @note The caller must hold @c fSerializationLock for the duration of this call.
+ */
 status_t
 IOCache::_DoRequest(IORequest* request, generic_size_t& _bytesTransferred)
 {
@@ -265,6 +395,23 @@ IOCache::_DoRequest(IORequest* request, generic_size_t& _bytesTransferred)
 }
 
 
+/**
+ * @brief Handles a single cache-line worth of I/O for @a request, populating
+ *        missing pages from the device and copying data to or from the request.
+ *
+ * @param request        The parent IORequest being served.
+ * @param lineOffset     Device byte offset of the start of the cache line.
+ * @param lineSize       Size of the cache line in bytes.
+ * @param requestOffset  Device byte offset within the cache line where the
+ *                       request's data begins.
+ * @param requestLength  Number of bytes of request data that fall within this
+ *                       cache line.
+ * @retval B_OK          The cache line was processed and request data copied.
+ * @retval other         Error from page allocation, device read, or copy.
+ * @note The caller must hold @c fSerializationLock. On page-reservation failure
+ *       the function automatically falls back to an uncached pass-through
+ *       transfer via _TransferRequestLineUncached().
+ */
 status_t
 IOCache::_TransferRequestLine(IORequest* request, off_t lineOffset,
 	size_t lineSize, off_t requestOffset, size_t requestLength)
@@ -431,6 +578,22 @@ IOCache::_TransferRequestLine(IORequest* request, off_t lineOffset,
 }
 
 
+/**
+ * @brief Performs a direct (uncached) transfer for a portion of @a request,
+ *        bypassing the page cache by driving IOOperations through the DMAResource.
+ *
+ * @param request        The parent IORequest.
+ * @param lineOffset     Device byte offset of the cache line (used to advance
+ *                       the request to the correct position).
+ * @param requestOffset  Exact device byte offset where the uncached transfer
+ *                       should begin.
+ * @param requestLength  Number of bytes to transfer without caching.
+ * @retval B_OK          All bytes in the specified range were transferred.
+ * @retval B_BAD_VALUE   The request has already advanced past @a requestOffset.
+ * @retval other         Error from DMAResource::TranslateNext() or _DoOperation().
+ * @note The caller must hold @c fSerializationLock. Each IOOperation is recycled
+ *       via DMAResource::RecycleBuffer() after completion.
+ */
 status_t
 IOCache::_TransferRequestLineUncached(IORequest* request, off_t lineOffset,
 	off_t requestOffset, size_t requestLength)
@@ -488,6 +651,19 @@ IOCache::_TransferRequestLineUncached(IORequest* request, off_t lineOffset,
 }
 
 
+/**
+ * @brief Submits a single IOOperation to the underlying I/O callback and waits
+ *        synchronously for its completion, retrying if the operation is not yet
+ *        finished.
+ *
+ * @param operation The IOOperation to execute; its finishedCondition must have
+ *                  been initialised by the caller.
+ * @retval B_OK     The operation completed successfully.
+ * @retval other    Error from the I/O callback or from waiting on the condition.
+ * @note Blocks the calling thread until OperationCompleted() signals the
+ *       condition variable. The loop handles the case where the operation
+ *       requires multiple rounds (operation.Finish() returns false).
+ */
 status_t
 IOCache::_DoOperation(Operation& operation)
 {
@@ -516,6 +692,22 @@ IOCache::_DoOperation(Operation& operation)
 }
 
 
+/**
+ * @brief Issues a physical read or write for a contiguous sub-range of the
+ *        @c fPages array, building an IORequest from the pages' physical addresses.
+ *
+ * @param firstPage Index into @c fPages of the first page to transfer.
+ * @param pageCount Number of pages to transfer.
+ * @param isWrite   @c true for a write (pages to device); @c false for a read
+ *                  (device to pages).
+ * @param isVIP     If @c true, the synthetic IORequest is tagged with
+ *                  @c B_VIP_IO_REQUEST.
+ * @retval B_OK     All pages were transferred successfully.
+ * @retval other    Error from IORequest::Init(), DMAResource::TranslateNext(),
+ *                  or _DoOperation().
+ * @note The caller must hold @c fSerializationLock. Physically adjacent pages
+ *       are coalesced into a single scatter-gather vec to reduce DMA overhead.
+ */
 status_t
 IOCache::_TransferPages(size_t firstPage, size_t pageCount, bool isWrite,
 	bool isVIP)
@@ -595,6 +787,16 @@ IOCache::_TransferPages(size_t firstPage, size_t pageCount, bool isWrite,
 	may not have a cache.
 	\c fCache must not be locked.
 */
+/**
+ * @brief Frees all non-NULL pages in a sub-range of @c fPages, removing them
+ *        from @c fCache if they are still cached.
+ *
+ * @param firstPage Zero-based index into @c fPages of the first page to discard.
+ * @param pageCount Number of pages to examine and potentially free.
+ * @note All pages in the range must be in @c PAGE_STATE_UNUSED state.
+ *       @c fCache must not be locked by the caller; this function acquires the
+ *       VMCache lock internally.
+ */
 void
 IOCache::_DiscardPages(size_t firstPage, size_t pageCount)
 {
@@ -626,6 +828,17 @@ IOCache::_DiscardPages(size_t firstPage, size_t pageCount)
 	must belong to \c cache and have state \c PAGE_STATE_UNUSED.
 	\c fCache must not be locked.
 */
+/**
+ * @brief Promotes all pages in a sub-range of @c fPages from @c PAGE_STATE_UNUSED
+ *        to @c PAGE_STATE_CACHED, making them eligible for eviction by the VM.
+ *
+ * @param firstPage Zero-based index into @c fPages of the first page to cache.
+ * @param pageCount Number of consecutive pages to promote.
+ * @note There must be no @c NULL entries in the specified range. Every page must
+ *       belong to @c fCache and be in @c PAGE_STATE_UNUSED. @c fCache must not
+ *       be locked by the caller; this function acquires the VMCache lock
+ *       internally.
+ */
 void
 IOCache::_CachePages(size_t firstPage, size_t pageCount)
 {
@@ -658,6 +871,25 @@ IOCache::_CachePages(size_t firstPage, size_t pageCount)
 		\a request, otherwise the other way around.
 	\return \c B_OK, if copying went fine, another error code otherwise.
 */
+/**
+ * @brief Copies data between the cache pages mapped in @c fArea and an IORequest
+ *        buffer in either direction.
+ *
+ * @param request              The IORequest supplying or receiving the data.
+ * @param pagesRelativeOffset  Byte offset relative to @c fPages[0] at which
+ *                             copying begins within the mapped area.
+ * @param requestOffset        Device byte offset corresponding to the start of
+ *                             the copy within the request.
+ * @param requestLength        Number of bytes to copy.
+ * @param toRequest            @c true to copy from cache pages into @a request
+ *                             (read path); @c false to copy from @a request into
+ *                             cache pages (write path).
+ * @retval B_OK                All bytes were copied successfully.
+ * @retval other               Error from _MapPages() or IORequest::CopyData().
+ * @note Pages are mapped into @c fArea for the duration of the copy and then
+ *       unmapped via _UnmapPages(). The mapping uses the pre-reserved
+ *       @c fMappingReservation to avoid blocking on page allocation.
+ */
 status_t
 IOCache::_CopyPages(IORequest* request, size_t pagesRelativeOffset,
 	off_t requestOffset, size_t requestLength, bool toRequest)
@@ -739,6 +971,19 @@ IOCache::_CopyPages(IORequest* request, size_t pagesRelativeOffset,
 		to map.
 	\return \c B_OK, if mapping went fine, another error code otherwise.
 */
+/**
+ * @brief Maps a contiguous index range of @c fPages into the kernel area
+ *        @c fArea so that their contents are accessible via @c fAreaBase.
+ *
+ * @param firstPage @c fPages-relative index of the first page to map.
+ * @param endPage   @c fPages-relative index one past the last page to map.
+ * @retval B_OK     All pages were mapped successfully.
+ * @note Every mapped page must be in @c PAGE_STATE_UNUSED. The translation map
+ *       is locked for the entire loop; therefore this call must complete quickly.
+ *       gMappedPagesCount is intentionally not incremented because the pages
+ *       remain in PAGE_STATE_UNUSED and are only mapped transiently.
+ *       Must be balanced by a call to _UnmapPages().
+ */
 status_t
 IOCache::_MapPages(size_t firstPage, size_t endPage)
 {
@@ -774,6 +1019,15 @@ IOCache::_MapPages(size_t firstPage, size_t endPage)
 	\param endPage The \c fPages relative index of the page after the last page
 		to unmap.
 */
+/**
+ * @brief Removes the kernel-area mappings that were installed by _MapPages() for
+ *        the given page index range.
+ *
+ * @param firstPage @c fPages-relative index of the first page to unmap.
+ * @param endPage   @c fPages-relative index one past the last page to unmap.
+ * @note Must be called once for every successful _MapPages() call, passing the
+ *       same @a firstPage / @a endPage values.
+ */
 void
 IOCache::_UnmapPages(size_t firstPage, size_t endPage)
 {

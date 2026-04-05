@@ -1,6 +1,36 @@
 /*
- * Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file scheduler_thread.cpp
+ * @brief Per-thread scheduler data and quantum length calculations.
+ *
+ * Manages the scheduler-specific state stored on each Thread object, including
+ * quantum length tables indexed by priority. Used by both the low-latency and
+ * power-saving scheduler modes.
+ *
+ * @see scheduler_cpu.cpp, scheduler.cpp
  */
 
 #include "scheduler_thread.h"
@@ -15,6 +45,13 @@ const int32 kMaximumQuantumLengthsCount	= 20;
 static bigtime_t sMaximumQuantumLengths[kMaximumQuantumLengthsCount];
 
 
+/**
+ * @brief Initialize base per-thread scheduler fields to their default values.
+ *
+ * Resets timing counters, penalty fields, enqueue flags, and computes the
+ * initial effective priority and base quantum from the current quantum table.
+ * Called by both Init() overloads before any core-specific setup.
+ */
 void
 ThreadData::_InitBase()
 {
@@ -42,6 +79,14 @@ ThreadData::_InitBase()
 }
 
 
+/**
+ * @brief Select the best core for this thread to run on.
+ *
+ * Delegates to the current scheduler mode's choose_core() callback.
+ * Must only be called in a multi-core configuration (asserts !gSingleCore).
+ *
+ * @return Pointer to the chosen CoreEntry.
+ */
 inline CoreEntry*
 ThreadData::_ChooseCore() const
 {
@@ -52,6 +97,18 @@ ThreadData::_ChooseCore() const
 }
 
 
+/**
+ * @brief Select the best CPU within @p core for this thread.
+ *
+ * Tries to reuse the thread's previous CPU if it belongs to @p core and its
+ * current priority is lower than the thread's effective priority. Otherwise
+ * picks the lowest-priority CPU from the core heap. Sets @p rescheduleNeeded
+ * to true when the chosen CPU needs to be preempted.
+ *
+ * @param core              The core whose CPUs are considered.
+ * @param rescheduleNeeded  Set to true if the chosen CPU must reschedule.
+ * @return Pointer to the chosen CPUEntry.
+ */
 inline CPUEntry*
 ThreadData::_ChooseCPU(CoreEntry* core, bool& rescheduleNeeded) const
 {
@@ -95,6 +152,11 @@ ThreadData::_ChooseCPU(CoreEntry* core, bool& rescheduleNeeded) const
 }
 
 
+/**
+ * @brief Construct a ThreadData object bound to @p thread.
+ *
+ * @param thread The kernel Thread this object tracks scheduler state for.
+ */
 ThreadData::ThreadData(Thread* thread)
 	:
 	fThread(thread)
@@ -102,6 +164,14 @@ ThreadData::ThreadData(Thread* thread)
 }
 
 
+/**
+ * @brief Initialize ThreadData for a newly created thread, inheriting load
+ *        hints from the currently running thread.
+ *
+ * Calls _InitBase(), leaves fCore as NULL, and copies the needed-load estimate
+ * and penalty values from the current thread so the new thread starts with
+ * reasonable defaults.
+ */
 void
 ThreadData::Init()
 {
@@ -122,6 +192,14 @@ ThreadData::Init()
 }
 
 
+/**
+ * @brief Initialize ThreadData for a thread that is pinned to a specific core.
+ *
+ * Calls _InitBase(), assigns @p core as the home core, marks the thread as
+ * ready, and clears the needed-load estimate.
+ *
+ * @param core The CoreEntry the thread will be pinned to.
+ */
 void
 ThreadData::Init(CoreEntry* core)
 {
@@ -133,6 +211,12 @@ ThreadData::Init(CoreEntry* core)
 }
 
 
+/**
+ * @brief Print scheduler state for this thread to the kernel debugger.
+ *
+ * Outputs priority penalties, effective priority, time used, quantum,
+ * stolen time, load, sleep timestamps, and cache-affinity status via kprintf.
+ */
 void
 ThreadData::Dump() const
 {
@@ -158,6 +242,17 @@ ThreadData::Dump() const
 }
 
 
+/**
+ * @brief Resolve the final core and CPU assignment for this thread.
+ *
+ * Validates any CPU-affinity mask against caller-supplied hints, then fills in
+ * whichever of @p targetCore / @p targetCPU is missing. Updates the thread's
+ * fCore and adjusts load accounting if the thread is migrating between cores.
+ *
+ * @param targetCore  In/out: preferred core, or NULL to let the scheduler pick.
+ * @param targetCPU   In/out: preferred CPU, or NULL to let the scheduler pick.
+ * @return true if the chosen CPU needs to reschedule immediately.
+ */
 bool
 ThreadData::ChooseCoreAndCPU(CoreEntry*& targetCore, CPUEntry*& targetCPU)
 {
@@ -200,6 +295,15 @@ ThreadData::ChooseCoreAndCPU(CoreEntry*& targetCore, CPUEntry*& targetCPU)
 }
 
 
+/**
+ * @brief Compute the effective quantum length for this thread.
+ *
+ * For real-time threads the base quantum is returned unchanged. For normal
+ * threads the quantum is capped by sMaximumQuantumLengths, which enforces a
+ * scheduling latency bound based on the number of threads sharing the core.
+ *
+ * @return Quantum length in microseconds.
+ */
 bigtime_t
 ThreadData::ComputeQuantum() const
 {
@@ -219,6 +323,15 @@ ThreadData::ComputeQuantum() const
 }
 
 
+/**
+ * @brief Detach this thread from its current core assignment.
+ *
+ * If @p running is true, or the thread is not in the B_THREAD_READY state,
+ * fReady is cleared. If fReady ends up false, fCore is set to NULL so the
+ * thread will be reassigned on its next enqueue.
+ *
+ * @param running true if the thread is currently executing (not merely ready).
+ */
 void
 ThreadData::UnassignCore(bool running)
 {
@@ -232,6 +345,18 @@ ThreadData::UnassignCore(bool running)
 }
 
 
+/**
+ * @brief Rebuild the global quantum-length lookup tables from the current
+ *        scheduler mode parameters.
+ *
+ * Fills sQuantumLengths[] for every valid thread priority using a piecewise
+ * linear interpolation between the mode's base quantum and its two multiplier
+ * levels. Also fills sMaximumQuantumLengths[] which caps the quantum by the
+ * required maximum scheduling latency divided by the number of runnable
+ * threads.
+ *
+ * Must be called whenever gCurrentMode changes.
+ */
 /* static */ void
 ThreadData::ComputeQuantumLengths()
 {
@@ -270,6 +395,11 @@ ThreadData::ComputeQuantumLengths()
 }
 
 
+/**
+ * @brief Return the combined priority penalty applied to this thread.
+ *
+ * @return Total priority penalty (fPriorityPenalty).
+ */
 inline int32
 ThreadData::_GetPenalty() const
 {
@@ -278,6 +408,13 @@ ThreadData::_GetPenalty() const
 }
 
 
+/**
+ * @brief Recompute fNeededLoad based on recent CPU usage measurements.
+ *
+ * Uses compute_load() to derive an updated load estimate. If the load has
+ * changed, propagates the delta to the owning CoreEntry via ChangeLoad().
+ * Must not be called for idle threads.
+ */
 void
 ThreadData::_ComputeNeededLoad()
 {
@@ -293,6 +430,14 @@ ThreadData::_ComputeNeededLoad()
 }
 
 
+/**
+ * @brief Recompute fEffectivePriority and fBaseQuantum from current penalties.
+ *
+ * Idle threads are clamped to B_IDLE_PRIORITY. Real-time threads keep their
+ * nominal priority. Normal threads subtract the combined penalty and apply the
+ * additional modular penalty, then look up the corresponding base quantum in
+ * sQuantumLengths[].
+ */
 void
 ThreadData::_ComputeEffectivePriority() const
 {
@@ -316,6 +461,20 @@ ThreadData::_ComputeEffectivePriority() const
 }
 
 
+/**
+ * @brief Linearly interpolate a quantum length within a priority band.
+ *
+ * Maps @p priority from the range [@p minPriority, @p maxPriority] to a
+ * quantum in the range [@p minQuantum, @p maxQuantum]. Higher priority yields
+ * a shorter quantum.
+ *
+ * @param maxQuantum  Quantum assigned at @p minPriority (longest).
+ * @param minQuantum  Quantum assigned at @p maxPriority (shortest).
+ * @param maxPriority Upper bound of the priority band.
+ * @param minPriority Lower bound of the priority band.
+ * @param priority    The priority value to scale.
+ * @return Interpolated quantum length in microseconds.
+ */
 /* static */ bigtime_t
 ThreadData::_ScaleQuantum(bigtime_t maxQuantum, bigtime_t minQuantum,
 	int32 maxPriority, int32 minPriority, int32 priority)
@@ -331,7 +490,12 @@ ThreadData::_ScaleQuantum(bigtime_t maxQuantum, bigtime_t minQuantum,
 }
 
 
+/**
+ * @brief Virtual destructor for ThreadProcessing.
+ *
+ * Ensures correct destruction of subclasses used as thread post-processing
+ * callbacks during core removal.
+ */
 ThreadProcessing::~ThreadProcessing()
 {
 }
-

@@ -1,9 +1,40 @@
 /*
- * Copyright 2004-2018, Haiku, Inc.
- * Copyright 2003-2004, Ingo Weinhold, bonefish@cs.tu-berlin.de.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2018, Haiku, Inc. All rights reserved.
+ *   Copyright 2003-2004, Ingo Weinhold, bonefish@cs.tu-berlin.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file KDiskDeviceManager.cpp
+ * @brief Central registry and manager for all disk devices and partition tables.
+ *
+ * KDiskDeviceManager maintains the set of known KDiskDevice objects, scans
+ * for new devices, loads the appropriate partitioning system and file system
+ * add-ons, and provides the query interface used by devfs and user-space
+ * disk management tools. Acts as the entry point for all disk device
+ * discovery and partition modification operations.
+ *
+ * @see KDiskDevice.cpp, KPartition.cpp, KDiskSystem.cpp
+ */
 
 #include "KDiskDevice.h"
 #include "KDiskDeviceManager.h"
@@ -241,6 +272,16 @@ public:
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the KDiskDeviceManager and perform initial disk system scan.
+ *
+ * Initialises the internal device, partition, disk-system and obsolete-partition
+ * containers, registers the notification service, rescans all known disk
+ * systems, and spawns the background media-checker daemon thread.
+ *
+ * @note Not thread-safe with respect to CreateDefault()/DeleteDefault().
+ *       Call only once, via CreateDefault().
+ */
 KDiskDeviceManager::KDiskDeviceManager()
 	:
 	fDevices(new(nothrow) DeviceMap),
@@ -272,6 +313,16 @@ KDiskDeviceManager::KDiskDeviceManager()
 }
 
 
+/**
+ * @brief Destroy the KDiskDeviceManager and release all held resources.
+ *
+ * Signals the media-checker daemon to stop, removes all node monitors,
+ * unregisters and deletes every known device, warns about any lingering
+ * partitions, unloads all disk systems, and unregisters the notification
+ * service before freeing the internal containers.
+ *
+ * @note Not thread-safe; call only via DeleteDefault().
+ */
 KDiskDeviceManager::~KDiskDeviceManager()
 {
 	fTerminating = true;
@@ -326,6 +377,14 @@ KDiskDeviceManager::~KDiskDeviceManager()
 }
 
 
+/**
+ * @brief Check whether the manager was constructed successfully.
+ *
+ * Verifies that all internal containers were allocated without error.
+ *
+ * @retval B_OK           All containers are valid and the manager is usable.
+ * @retval B_NO_MEMORY    One or more containers failed to allocate.
+ */
 status_t
 KDiskDeviceManager::InitCheck() const
 {
@@ -340,6 +399,17 @@ KDiskDeviceManager::InitCheck() const
 /*!	This creates the system's default DiskDeviceManager.
 	The creation is not thread-safe, and shouldn't be done more than once.
 */
+/**
+ * @brief Create the process-wide singleton KDiskDeviceManager instance.
+ *
+ * Allocates and initialises sDefaultManager if it does not yet exist.
+ * This function is not thread-safe and must be called exactly once during
+ * kernel initialisation.
+ *
+ * @retval B_OK        The singleton was created (or already existed).
+ * @retval B_NO_MEMORY Allocation of the manager object failed.
+ * @retval other       InitCheck() of the new instance returned an error.
+ */
 status_t
 KDiskDeviceManager::CreateDefault()
 {
@@ -357,6 +427,12 @@ KDiskDeviceManager::CreateDefault()
 /*!	This deletes the default DiskDeviceManager. The deletion is not
 	thread-safe either, you should make sure that it's called only once.
 */
+/**
+ * @brief Destroy the process-wide singleton KDiskDeviceManager instance.
+ *
+ * Deletes sDefaultManager and resets the pointer to NULL.  Not thread-safe;
+ * call only once during kernel shutdown after all disk I/O has ceased.
+ */
 void
 KDiskDeviceManager::DeleteDefault()
 {
@@ -365,6 +441,12 @@ KDiskDeviceManager::DeleteDefault()
 }
 
 
+/**
+ * @brief Return a pointer to the singleton KDiskDeviceManager instance.
+ *
+ * @return Pointer to the default manager, or NULL if CreateDefault() has not
+ *         been called yet.
+ */
 KDiskDeviceManager*
 KDiskDeviceManager::Default()
 {
@@ -372,6 +454,15 @@ KDiskDeviceManager::Default()
 }
 
 
+/**
+ * @brief Acquire the manager's recursive write lock.
+ *
+ * Wraps recursive_lock_lock().  The same thread may call Lock() multiple
+ * times; each call must be balanced by a corresponding Unlock().
+ *
+ * @retval true  The lock was acquired successfully.
+ * @retval false The lock could not be acquired (system error).
+ */
 bool
 KDiskDeviceManager::Lock()
 {
@@ -379,6 +470,12 @@ KDiskDeviceManager::Lock()
 }
 
 
+/**
+ * @brief Release one level of the manager's recursive write lock.
+ *
+ * Must be called once for every successful call to Lock() made by the
+ * current thread.
+ */
 void
 KDiskDeviceManager::Unlock()
 {
@@ -386,6 +483,12 @@ KDiskDeviceManager::Unlock()
 }
 
 
+/**
+ * @brief Return the user-space notification service for disk device events.
+ *
+ * @return Reference to the DiskNotifications service used to broadcast
+ *         B_DEVICE_UPDATE messages to registered listeners.
+ */
 DefaultUserNotificationService&
 KDiskDeviceManager::Notifications()
 {
@@ -393,6 +496,14 @@ KDiskDeviceManager::Notifications()
 }
 
 
+/**
+ * @brief Broadcast a disk-device event to all registered notification listeners.
+ *
+ * @param event     The KMessage describing the event (must contain at minimum
+ *                  the "event" and "id" fields).
+ * @param eventMask Bitmask of B_DEVICE_REQUEST_* flags that filters which
+ *                  listeners receive the notification.
+ */
 void
 KDiskDeviceManager::Notify(const KMessage& event, uint32 eventMask)
 {
@@ -400,6 +511,15 @@ KDiskDeviceManager::Notify(const KMessage& event, uint32 eventMask)
 }
 
 
+/**
+ * @brief Find a registered KDiskDevice by its device-node path.
+ *
+ * Iterates over all known devices and returns the first one whose path
+ * matches @p path exactly.  The manager must be locked by the caller.
+ *
+ * @param path  Absolute path to the raw device node (e.g. "/dev/disk/ata/0/master/raw").
+ * @return      Pointer to the matching KDiskDevice, or NULL if not found.
+ */
 KDiskDevice*
 KDiskDeviceManager::FindDevice(const char* path)
 {
@@ -411,6 +531,18 @@ KDiskDeviceManager::FindDevice(const char* path)
 }
 
 
+/**
+ * @brief Find a registered KDiskDevice by partition or device ID.
+ *
+ * Looks up the partition with the given @p id and returns its owning device.
+ * If @p deviceOnly is true the returned device's own ID must equal @p id,
+ * i.e. the id must refer to the device partition itself, not a child.
+ * The manager must be locked by the caller.
+ *
+ * @param id         Partition or device ID to look up.
+ * @param deviceOnly If true, only succeed when @p id equals the device ID.
+ * @return           Pointer to the owning KDiskDevice, or NULL if not found.
+ */
 KDiskDevice*
 KDiskDeviceManager::FindDevice(partition_id id, bool deviceOnly)
 {
@@ -423,6 +555,18 @@ KDiskDeviceManager::FindDevice(partition_id id, bool deviceOnly)
 }
 
 
+/**
+ * @brief Find a registered KPartition by its device-node path.
+ *
+ * Iterates every known partition and compares its resolved path against
+ * @p path.  The manager must be locked by the caller.
+ *
+ * @param path  Absolute path to the partition node.
+ * @return      Pointer to the matching KPartition, or NULL if not found.
+ *
+ * @note This is an O(n) linear scan; optimisation may be needed for systems
+ *       with very large partition counts.
+ */
 KPartition*
 KDiskDeviceManager::FindPartition(const char* path)
 {
@@ -444,6 +588,14 @@ KDiskDeviceManager::FindPartition(const char* path)
 }
 
 
+/**
+ * @brief Find a registered KPartition by its numeric partition ID.
+ *
+ * Performs a direct map lookup.  The manager must be locked by the caller.
+ *
+ * @param id  The partition_id to look up.
+ * @return    Pointer to the matching KPartition, or NULL if not found.
+ */
 KPartition*
 KDiskDeviceManager::FindPartition(partition_id id)
 {
@@ -455,6 +607,15 @@ KDiskDeviceManager::FindPartition(partition_id id)
 }
 
 
+/**
+ * @brief Find a registered KFileDiskDevice by the path of its backing file.
+ *
+ * Iterates all known devices, dynamic-casts each to KFileDiskDevice, and
+ * compares the file path.  The manager must be locked by the caller.
+ *
+ * @param filePath  Absolute path of the image file backing the device.
+ * @return          Pointer to the matching KFileDiskDevice, or NULL if not found.
+ */
 KFileDiskDevice*
 KDiskDeviceManager::FindFileDevice(const char* filePath)
 {
@@ -469,6 +630,20 @@ KDiskDeviceManager::FindFileDevice(const char* filePath)
 }
 
 
+/**
+ * @brief Register and return a KDiskDevice for the given device path,
+ *        creating the device entry if it does not yet exist.
+ *
+ * Looks up the device at @p path.  If not found and the path looks like a
+ * raw disk node under /dev/disk, CreateDevice() is called once before
+ * retrying.  On success the device's reference count is incremented.
+ *
+ * @param path  Absolute path to the raw device node.
+ * @return      Registered KDiskDevice pointer, or NULL on failure.
+ *
+ * @note The caller is responsible for calling Unregister() on the returned
+ *       device when done.
+ */
 KDiskDevice*
 KDiskDeviceManager::RegisterDevice(const char* path)
 {
@@ -490,6 +665,21 @@ KDiskDeviceManager::RegisterDevice(const char* path)
 }
 
 
+/**
+ * @brief Register and return a KDiskDevice by partition or device ID.
+ *
+ * Locates the device that owns the partition identified by @p id.  If
+ * @p deviceOnly is true the id must refer to the device itself.  On success
+ * the device's reference count is incremented.
+ *
+ * @param id         The partition_id (or device id) to look up.
+ * @param deviceOnly If true, only return the device when @p id is the
+ *                   device's own partition id.
+ * @return           Registered KDiskDevice pointer, or NULL if not found.
+ *
+ * @note The caller is responsible for calling Unregister() on the returned
+ *       device when done.
+ */
 KDiskDevice*
 KDiskDeviceManager::RegisterDevice(partition_id id, bool deviceOnly)
 {
@@ -503,6 +693,19 @@ KDiskDeviceManager::RegisterDevice(partition_id id, bool deviceOnly)
 }
 
 
+/**
+ * @brief Register and return the next KDiskDevice in iteration order.
+ *
+ * Advances the iteration cookie @p cookie and registers the device at the
+ * new position, incrementing its reference count.
+ *
+ * @param[in,out] cookie  Iteration cookie; initialise to 0 before the first call.
+ * @return                Registered KDiskDevice pointer, or NULL when the
+ *                        iteration is exhausted.
+ *
+ * @note The caller is responsible for calling Unregister() on each returned
+ *       device.
+ */
 KDiskDevice*
 KDiskDeviceManager::RegisterNextDevice(int32* cookie)
 {
@@ -519,6 +722,19 @@ KDiskDeviceManager::RegisterNextDevice(int32* cookie)
 }
 
 
+/**
+ * @brief Register and return a KPartition by device-node path, creating the
+ *        parent device if necessary.
+ *
+ * Mirrors the behaviour of RegisterDevice(const char*) but operates at the
+ * partition level.  On success the partition's reference count is incremented.
+ *
+ * @param path  Absolute path to the partition node.
+ * @return      Registered KPartition pointer, or NULL on failure.
+ *
+ * @note The caller is responsible for calling Unregister() on the returned
+ *       partition when done.
+ */
 KPartition*
 KDiskDeviceManager::RegisterPartition(const char* path)
 {
@@ -540,6 +756,17 @@ KDiskDeviceManager::RegisterPartition(const char* path)
 }
 
 
+/**
+ * @brief Register and return a KPartition by its numeric partition ID.
+ *
+ * On success the partition's reference count is incremented.
+ *
+ * @param id  The partition_id to look up.
+ * @return    Registered KPartition pointer, or NULL if not found.
+ *
+ * @note The caller is responsible for calling Unregister() on the returned
+ *       partition when done.
+ */
 KPartition*
 KDiskDeviceManager::RegisterPartition(partition_id id)
 {
@@ -553,6 +780,17 @@ KDiskDeviceManager::RegisterPartition(partition_id id)
 }
 
 
+/**
+ * @brief Register and return a KFileDiskDevice by the path of its backing file.
+ *
+ * On success the device's reference count is incremented.
+ *
+ * @param filePath  Absolute path of the image file backing the virtual device.
+ * @return          Registered KFileDiskDevice pointer, or NULL if not found.
+ *
+ * @note The caller is responsible for calling Unregister() on the returned
+ *       device when done.
+ */
 KFileDiskDevice*
 KDiskDeviceManager::RegisterFileDevice(const char* filePath)
 {
@@ -566,6 +804,20 @@ KDiskDeviceManager::RegisterFileDevice(const char* filePath)
 }
 
 
+/**
+ * @brief Register a device by ID and acquire a read lock on it.
+ *
+ * Calls RegisterDevice() and then attempts to read-lock the returned device.
+ * On failure the device is unregistered before returning NULL.
+ *
+ * @param id         The partition_id (or device id) to look up.
+ * @param deviceOnly If true, only match when @p id is the device's own id.
+ * @return           Read-locked, registered KDiskDevice pointer, or NULL on
+ *                   failure.
+ *
+ * @note The caller must call device->ReadUnlock() and device->Unregister()
+ *       when done.
+ */
 KDiskDevice*
 KDiskDeviceManager::ReadLockDevice(partition_id id, bool deviceOnly)
 {
@@ -581,6 +833,20 @@ KDiskDeviceManager::ReadLockDevice(partition_id id, bool deviceOnly)
 }
 
 
+/**
+ * @brief Register a device by ID and acquire a write lock on it.
+ *
+ * Calls RegisterDevice() and then attempts to write-lock the returned device.
+ * On failure the device is unregistered before returning NULL.
+ *
+ * @param id         The partition_id (or device id) to look up.
+ * @param deviceOnly If true, only match when @p id is the device's own id.
+ * @return           Write-locked, registered KDiskDevice pointer, or NULL on
+ *                   failure.
+ *
+ * @note The caller must call device->WriteUnlock() and device->Unregister()
+ *       when done.
+ */
 KDiskDevice*
 KDiskDeviceManager::WriteLockDevice(partition_id id, bool deviceOnly)
 {
@@ -596,6 +862,20 @@ KDiskDeviceManager::WriteLockDevice(partition_id id, bool deviceOnly)
 }
 
 
+/**
+ * @brief Register a partition by ID and acquire a read lock on its device.
+ *
+ * Registers the partition, then registers and read-locks the owning device.
+ * After locking, verifies that the partition still belongs to the same device
+ * to guard against races.  All resources are cleaned up on any failure.
+ *
+ * @param id  The partition_id to look up.
+ * @return    Registered KPartition pointer with its device read-locked, or
+ *            NULL on failure.
+ *
+ * @note The caller must call device->ReadUnlock(), device->Unregister(), and
+ *       partition->Unregister() when done.
+ */
 KPartition*
 KDiskDeviceManager::ReadLockPartition(partition_id id)
 {
@@ -625,6 +905,20 @@ KDiskDeviceManager::ReadLockPartition(partition_id id)
 }
 
 
+/**
+ * @brief Register a partition by ID and acquire a write lock on its device.
+ *
+ * Registers the partition, then registers and write-locks the owning device.
+ * After locking, verifies that the partition still belongs to the same device
+ * to guard against races.  All resources are cleaned up on any failure.
+ *
+ * @param id  The partition_id to look up.
+ * @return    Registered KPartition pointer with its device write-locked, or
+ *            NULL on failure.
+ *
+ * @note The caller must call device->WriteUnlock(), device->Unregister(), and
+ *       partition->Unregister() when done.
+ */
 KPartition*
 KDiskDeviceManager::WriteLockPartition(partition_id id)
 {
@@ -654,6 +948,19 @@ KDiskDeviceManager::WriteLockPartition(partition_id id)
 }
 
 
+/**
+ * @brief Scan a single partition synchronously for disk systems and child
+ *        partitions.
+ *
+ * Write-locks the partition's device and then delegates to _ScanPartition().
+ *
+ * @param partition  The KPartition to scan; must not be NULL.
+ * @retval B_OK      Scan completed successfully.
+ * @retval B_ERROR   Could not acquire the device write lock or manager lock.
+ *
+ * @note Locking the DDM while scanning is not ideal; see the in-code TODO for
+ *       a planned improvement.
+ */
 status_t
 KDiskDeviceManager::ScanPartition(KPartition* partition)
 {
@@ -670,6 +977,24 @@ KDiskDeviceManager::ScanPartition(KPartition* partition)
 }
 
 
+/**
+ * @brief Create and register a KDiskDevice for the given device path.
+ *
+ * If a device at @p path is already known its ID is returned immediately and
+ * @p newlyCreated is set to false.  Otherwise a new KDiskDevice is allocated,
+ * initialised, added to the manager, synchronously scanned for partitions, and
+ * a B_DEVICE_ADDED notification is sent.
+ *
+ * @param path          Absolute path to the raw device node.
+ * @param[out] newlyCreated  Set to true when a new device was created, false
+ *                           when an existing device was found.  May be NULL.
+ * @return              The partition_id of the device (>= 0) on success,
+ *                      or a negative error code on failure.
+ *
+ * @retval B_BAD_VALUE  @p path was NULL.
+ * @retval B_NO_MEMORY  Device allocation or insertion failed.
+ * @retval B_ERROR      Could not acquire the manager lock.
+ */
 partition_id
 KDiskDeviceManager::CreateDevice(const char* path, bool* newlyCreated)
 {
@@ -727,6 +1052,17 @@ KDiskDeviceManager::CreateDevice(const char* path, bool* newlyCreated)
 }
 
 
+/**
+ * @brief Remove and destroy the KDiskDevice registered at the given path.
+ *
+ * Finds the device by @p path, write-locks it, removes it from the manager,
+ * and sends a B_DEVICE_REMOVED notification.
+ *
+ * @param path  Absolute path to the raw device node.
+ * @retval B_OK             The device was removed successfully.
+ * @retval B_ENTRY_NOT_FOUND No device is registered at @p path.
+ * @retval B_ERROR          Could not acquire the device write lock.
+ */
 status_t
 KDiskDeviceManager::DeleteDevice(const char* path)
 {
@@ -744,6 +1080,24 @@ KDiskDeviceManager::DeleteDevice(const char* path)
 }
 
 
+/**
+ * @brief Create and register a file-backed virtual disk device.
+ *
+ * Normalises @p filePath, checks whether a KFileDiskDevice for that file
+ * already exists (returning its ID without creating a duplicate), then
+ * allocates, initialises, and scans a new KFileDiskDevice.  On success a
+ * B_DEVICE_ADDED notification is sent.
+ *
+ * @param filePath       Absolute path to the disk image file.
+ * @param[out] newlyCreated  Set to true when a new device was created, false
+ *                           when an existing device was found.  May be NULL.
+ * @return               The partition_id of the device (>= 0) on success,
+ *                       or a negative error code on failure.
+ *
+ * @retval B_BAD_VALUE   @p filePath was NULL.
+ * @retval B_NO_MEMORY   Device allocation or insertion failed.
+ * @retval B_ERROR       Could not acquire the manager lock.
+ */
 partition_id
 KDiskDeviceManager::CreateFileDevice(const char* filePath, bool* newlyCreated)
 {
@@ -806,6 +1160,16 @@ KDiskDeviceManager::CreateFileDevice(const char* filePath, bool* newlyCreated)
 }
 
 
+/**
+ * @brief Remove and destroy the file-backed virtual device at the given path.
+ *
+ * Finds the KFileDiskDevice by @p filePath, registers it, write-locks it,
+ * and removes it from the manager.
+ *
+ * @param filePath  Absolute path to the disk image file.
+ * @retval B_OK     The device was removed successfully.
+ * @retval B_ERROR  Device not found, lock not acquired, or removal failed.
+ */
 status_t
 KDiskDeviceManager::DeleteFileDevice(const char* filePath)
 {
@@ -820,6 +1184,18 @@ KDiskDeviceManager::DeleteFileDevice(const char* filePath)
 }
 
 
+/**
+ * @brief Remove and destroy the file-backed virtual device with the given ID.
+ *
+ * Registers the device with @p id, confirms it is a KFileDiskDevice whose own
+ * partition id matches @p id, write-locks it, and removes it.
+ *
+ * @param id  The partition_id of the file-backed device to remove.
+ * @retval B_OK             Removal succeeded.
+ * @retval B_ENTRY_NOT_FOUND The device is not a KFileDiskDevice or the id
+ *                          belongs to a child partition, not the device itself.
+ * @retval B_ERROR          Lock not acquired or removal failed.
+ */
 status_t
 KDiskDeviceManager::DeleteFileDevice(partition_id id)
 {
@@ -836,6 +1212,13 @@ KDiskDeviceManager::DeleteFileDevice(partition_id id)
 }
 
 
+/**
+ * @brief Return the number of KDiskDevice objects currently registered.
+ *
+ * The manager must be locked by the caller.
+ *
+ * @return The count of registered devices.
+ */
 int32
 KDiskDeviceManager::CountDevices()
 {
@@ -843,6 +1226,15 @@ KDiskDeviceManager::CountDevices()
 }
 
 
+/**
+ * @brief Return the next KDiskDevice in the iteration sequence.
+ *
+ * Finds the device whose ID is greater than or equal to @p *cookie and
+ * advances the cookie past it.  The manager must be locked by the caller.
+ *
+ * @param[in,out] cookie  Iteration state; initialise to 0 before the first call.
+ * @return                Pointer to the next KDiskDevice, or NULL when exhausted.
+ */
 KDiskDevice*
 KDiskDeviceManager::NextDevice(int32* cookie)
 {
@@ -859,6 +1251,16 @@ KDiskDeviceManager::NextDevice(int32* cookie)
 }
 
 
+/**
+ * @brief Record that a new KPartition has been added to the manager's registry.
+ *
+ * Inserts @p partition into the global partition map keyed by its ID.
+ * Called by KDiskDevice when a new partition object is constructed.
+ *
+ * @param partition  The newly created KPartition; must not be NULL.
+ * @retval true   Insertion succeeded.
+ * @retval false  @p partition was NULL or the map insertion failed.
+ */
 bool
 KDiskDeviceManager::PartitionAdded(KPartition* partition)
 {
@@ -866,6 +1268,18 @@ KDiskDeviceManager::PartitionAdded(KPartition* partition)
 }
 
 
+/**
+ * @brief Mark a KPartition as removed and move it to the obsolete set.
+ *
+ * Prepares @p partition for removal, removes it from the active partition map,
+ * inserts it into fObsoletePartitions, and marks it obsolete.  The partition
+ * is not deleted here; call DeletePartition() once all references are released.
+ *
+ * @param partition  The KPartition to remove; must not be NULL.
+ * @retval true   The partition was successfully moved to the obsolete set.
+ * @retval false  @p partition was NULL, PrepareForRemoval() failed, or the
+ *                map removal failed.
+ */
 bool
 KDiskDeviceManager::PartitionRemoved(KPartition* partition)
 {
@@ -881,6 +1295,17 @@ KDiskDeviceManager::PartitionRemoved(KPartition* partition)
 }
 
 
+/**
+ * @brief Delete an obsolete KPartition once all references to it are gone.
+ *
+ * Verifies that @p partition is obsolete, has no outstanding references, and
+ * passes PrepareForDeletion(), then removes it from fObsoletePartitions and
+ * frees it.
+ *
+ * @param partition  The KPartition to delete; must not be NULL.
+ * @retval true   The partition was deleted.
+ * @retval false  Preconditions were not met; the partition was not deleted.
+ */
 bool
 KDiskDeviceManager::DeletePartition(KPartition* partition)
 {
@@ -895,6 +1320,17 @@ KDiskDeviceManager::DeletePartition(KPartition* partition)
 }
 
 
+/**
+ * @brief Find a registered KDiskSystem by name or pretty name.
+ *
+ * Iterates all known disk systems comparing their name (or pretty name when
+ * @p byPrettyName is true) against @p name.  The manager must be locked.
+ *
+ * @param name          The module name or pretty name to search for.
+ * @param byPrettyName  If true, compare against KDiskSystem::PrettyName()
+ *                      instead of KDiskSystem::Name().
+ * @return              Pointer to the matching KDiskSystem, or NULL if not found.
+ */
 KDiskSystem*
 KDiskDeviceManager::FindDiskSystem(const char* name, bool byPrettyName)
 {
@@ -911,6 +1347,14 @@ KDiskDeviceManager::FindDiskSystem(const char* name, bool byPrettyName)
 }
 
 
+/**
+ * @brief Find a registered KDiskSystem by its numeric disk-system ID.
+ *
+ * Performs a direct map lookup.  The manager must be locked by the caller.
+ *
+ * @param id  The disk_system_id to look up.
+ * @return    Pointer to the matching KDiskSystem, or NULL if not found.
+ */
 KDiskSystem*
 KDiskDeviceManager::FindDiskSystem(disk_system_id id)
 {
@@ -921,6 +1365,13 @@ KDiskDeviceManager::FindDiskSystem(disk_system_id id)
 }
 
 
+/**
+ * @brief Return the number of KDiskSystem objects currently registered.
+ *
+ * The manager must be locked by the caller.
+ *
+ * @return The count of registered disk systems.
+ */
 int32
 KDiskDeviceManager::CountDiskSystems()
 {
@@ -928,6 +1379,15 @@ KDiskDeviceManager::CountDiskSystems()
 }
 
 
+/**
+ * @brief Return the next KDiskSystem in the iteration sequence.
+ *
+ * Finds the disk system whose ID is greater than or equal to @p *cookie and
+ * advances the cookie past it.  The manager must be locked by the caller.
+ *
+ * @param[in,out] cookie  Iteration state; initialise to 0 before the first call.
+ * @return                Pointer to the next KDiskSystem, or NULL when exhausted.
+ */
 KDiskSystem*
 KDiskDeviceManager::NextDiskSystem(int32* cookie)
 {
@@ -944,6 +1404,18 @@ KDiskDeviceManager::NextDiskSystem(int32* cookie)
 }
 
 
+/**
+ * @brief Find a disk system by name and increment its load count.
+ *
+ * Looks up the disk system and calls Load() on it.  Returns NULL if the
+ * system is not found or Load() fails.  The manager is locked internally.
+ *
+ * @param name          Module or pretty name of the disk system.
+ * @param byPrettyName  If true, match against the pretty name.
+ * @return              Loaded KDiskSystem pointer, or NULL on failure.
+ *
+ * @note The caller must call Unload() on the returned system when done.
+ */
 KDiskSystem*
 KDiskDeviceManager::LoadDiskSystem(const char* name, bool byPrettyName)
 {
@@ -957,6 +1429,17 @@ KDiskDeviceManager::LoadDiskSystem(const char* name, bool byPrettyName)
 }
 
 
+/**
+ * @brief Find a disk system by numeric ID and increment its load count.
+ *
+ * Looks up the disk system and calls Load() on it.  Returns NULL if the
+ * system is not found or Load() fails.  The manager is locked internally.
+ *
+ * @param id  The disk_system_id to load.
+ * @return    Loaded KDiskSystem pointer, or NULL on failure.
+ *
+ * @note The caller must call Unload() on the returned system when done.
+ */
 KDiskSystem*
 KDiskDeviceManager::LoadDiskSystem(disk_system_id id)
 {
@@ -970,6 +1453,18 @@ KDiskDeviceManager::LoadDiskSystem(disk_system_id id)
 }
 
 
+/**
+ * @brief Iterate to the next disk system and increment its load count.
+ *
+ * Advances @p cookie and loads the disk system at the new position.
+ * Returns NULL if the iteration is exhausted or Load() fails.
+ *
+ * @param[in,out] cookie  Iteration state; initialise to 0 before the first call.
+ * @return                Loaded KDiskSystem pointer, or NULL when exhausted or
+ *                        on load failure.
+ *
+ * @note The caller must call Unload() on each returned system when done.
+ */
 KDiskSystem*
 KDiskDeviceManager::LoadNextDiskSystem(int32* cookie)
 {
@@ -988,6 +1483,21 @@ KDiskDeviceManager::LoadNextDiskSystem(int32* cookie)
 }
 
 
+/**
+ * @brief Perform the boot-time device and partition scan.
+ *
+ * First scans the /dev/disk tree to discover all raw device nodes and register
+ * the corresponding KDiskDevice objects.  Then iterates over every registered
+ * device, write-locks it, and calls _ScanPartition() to identify partition
+ * tables and file systems.  Scanning continues even if individual devices fail
+ * so that a single bad device does not block the rest.
+ *
+ * @retval B_OK     All devices were scanned (individual partition errors are
+ *                  recorded but do not prevent B_OK from being returned if at
+ *                  least one device succeeded).
+ * @retval B_ERROR  The initial /dev/disk scan or a critical locking step failed.
+ * @retval other    The status code of the last partition scan error encountered.
+ */
 status_t
 KDiskDeviceManager::InitialDeviceScan()
 {
@@ -1021,6 +1531,17 @@ KDiskDeviceManager::InitialDeviceScan()
 }
 
 
+/**
+ * @brief Start device monitoring and trigger a second device scan.
+ *
+ * Calls InitialDeviceScan() to ensure devfs is fully populated, installs
+ * the DiskSystemWatcher for module events on the file-system and
+ * partitioning-system prefixes, and enables node monitoring on the entire
+ * /dev/disk hierarchy via _AddRemoveMonitoring().
+ *
+ * @retval B_OK   Monitoring was started successfully.
+ * @retval other  Return value of _AddRemoveMonitoring() on failure.
+ */
 status_t
 KDiskDeviceManager::StartMonitoring()
 {
@@ -1040,6 +1561,21 @@ KDiskDeviceManager::StartMonitoring()
 }
 
 
+/**
+ * @brief Enumerate and register all disk systems of one type (file systems or
+ *        partitioning systems) that are not yet known to the manager.
+ *
+ * Opens the module list for the appropriate prefix, iterates every module
+ * name, skips those already registered, creates the corresponding KDiskSystem
+ * subclass, and records newly added systems in @p addedSystems.
+ *
+ * @param[out] addedSystems  Map populated with every newly added KDiskSystem.
+ * @param fileSystems        If true, enumerate file-system modules; otherwise
+ *                           enumerate partitioning-system modules.
+ * @retval B_OK        Enumeration completed (some systems may have failed to
+ *                     initialise individually).
+ * @retval B_NO_MEMORY Could not open the module list.
+ */
 status_t
 KDiskDeviceManager::_RescanDiskSystems(DiskSystemMap& addedSystems,
 	bool fileSystems)
@@ -1083,6 +1619,20 @@ KDiskDeviceManager::_RescanDiskSystems(DiskSystemMap& addedSystems,
 /*!	Rescan the existing disk systems. This is called after the boot device
 	has become available.
 */
+/**
+ * @brief Rescan all partitioning and file-system disk systems and re-scan
+ *        existing devices with any newly discovered systems.
+ *
+ * Called after the boot device becomes available so that add-ons loaded from
+ * the boot volume are picked up.  Locks the manager, rescans both module
+ * prefixes, then iterates all registered devices and runs _ScanPartition()
+ * restricted to the newly added systems.
+ *
+ * @retval B_OK    Rescan completed (individual errors are accumulated but
+ *                 B_OK is returned unless a critical lock step fails).
+ * @retval B_ERROR A required lock could not be acquired.
+ * @retval other   Status of the last failing _ScanPartition() call.
+ */
 status_t
 KDiskDeviceManager::RescanDiskSystems()
 {
@@ -1118,6 +1668,15 @@ KDiskDeviceManager::RescanDiskSystems()
 }
 
 
+/**
+ * @brief Allocate and register a new KPartitioningSystem add-on by module name.
+ *
+ * @param name  Module name of the partitioning system (e.g. "partitioning_systems/intel").
+ * @retval B_OK        The partitioning system was created and added.
+ * @retval B_BAD_VALUE @p name was NULL.
+ * @retval B_NO_MEMORY Allocation of the KPartitioningSystem failed.
+ * @retval other       _AddDiskSystem() initialisation error.
+ */
 status_t
 KDiskDeviceManager::_AddPartitioningSystem(const char* name)
 {
@@ -1131,6 +1690,15 @@ KDiskDeviceManager::_AddPartitioningSystem(const char* name)
 }
 
 
+/**
+ * @brief Allocate and register a new KFileSystem add-on by module name.
+ *
+ * @param name  Module name of the file system (e.g. "file_systems/bfs").
+ * @retval B_OK        The file system was created and added.
+ * @retval B_BAD_VALUE @p name was NULL.
+ * @retval B_NO_MEMORY Allocation of the KFileSystem failed.
+ * @retval other       _AddDiskSystem() initialisation error.
+ */
 status_t
 KDiskDeviceManager::_AddFileSystem(const char* name)
 {
@@ -1145,6 +1713,18 @@ KDiskDeviceManager::_AddFileSystem(const char* name)
 }
 
 
+/**
+ * @brief Initialise and insert a KDiskSystem into the disk-system registry.
+ *
+ * Calls Init() on @p diskSystem and, if successful, inserts it into
+ * fDiskSystems.  Deletes the object on any error.
+ *
+ * @param diskSystem  Heap-allocated KDiskSystem to register; ownership is
+ *                    transferred on success, or the object is deleted on failure.
+ * @retval B_OK        The disk system was initialised and registered.
+ * @retval B_BAD_VALUE @p diskSystem was NULL.
+ * @retval other       Init() or map insertion error; @p diskSystem was deleted.
+ */
 status_t
 KDiskDeviceManager::_AddDiskSystem(KDiskSystem* diskSystem)
 {
@@ -1164,6 +1744,17 @@ KDiskDeviceManager::_AddDiskSystem(KDiskSystem* diskSystem)
 }
 
 
+/**
+ * @brief Add a KDiskDevice to the manager's device and partition maps.
+ *
+ * Calls PartitionAdded() for the device (which registers it as a partition)
+ * and then inserts it into fDevices.  Rolls back the PartitionAdded() call
+ * if the device map insertion fails.
+ *
+ * @param device  The KDiskDevice to add; must not be NULL.
+ * @retval true   The device was added successfully.
+ * @retval false  @p device was NULL or a map insertion failed.
+ */
 bool
 KDiskDeviceManager::_AddDevice(KDiskDevice* device)
 {
@@ -1176,6 +1767,16 @@ KDiskDeviceManager::_AddDevice(KDiskDevice* device)
 }
 
 
+/**
+ * @brief Remove a KDiskDevice from the manager and send a removal notification.
+ *
+ * Removes the device from fDevices, calls PartitionRemoved() to move it to the
+ * obsolete set, and sends a B_DEVICE_REMOVED event via _NotifyDeviceEvent().
+ *
+ * @param device  The KDiskDevice to remove; must not be NULL.
+ * @retval true   The device was removed and the notification sent.
+ * @retval false  @p device was NULL or removal from the maps failed.
+ */
 bool
 KDiskDeviceManager::_RemoveDevice(KDiskDevice* device)
 {
@@ -1194,6 +1795,22 @@ KDiskDeviceManager::_RemoveDevice(KDiskDevice* device)
 /*!
 	The device must be write locked, the manager must be locked.
 */
+/**
+ * @brief Recompute the busy/descendant-busy flags for all partitions on a device.
+ *
+ * Clears all busy flags, then re-derives them from the set of in-progress or
+ * scheduled jobs in every job queue associated with @p device.  Finally
+ * propagates busy flags downward (parent busy implies child busy) and upward
+ * (child busy implies parent descendant-busy).
+ *
+ * @param device  The KDiskDevice whose partition tree should be updated;
+ *                must be write-locked and must not be NULL.
+ * @retval B_OK        Update completed.
+ * @retval B_BAD_VALUE @p device was NULL.
+ *
+ * @note This function is currently disabled (#if 0) pending reimplementation
+ *       of the job-queue subsystem.
+ */
 status_t
 KDiskDeviceManager::_UpdateBusyPartitions(KDiskDevice *device)
 {
@@ -1254,6 +1871,20 @@ KDiskDeviceManager::_UpdateBusyPartitions(KDiskDevice *device)
 #endif
 
 
+/**
+ * @brief Recursively scan a path for raw device nodes and register them.
+ *
+ * If @p path is a directory, iterates its entries recursively.  If it is a
+ * regular file whose name ends in "/raw", creates a KDiskDevice for it (unless
+ * one already exists).
+ *
+ * @param path  Absolute path to scan; may be a directory or a device node.
+ * @retval B_OK           At least one device was found and registered.
+ * @retval B_ENTRY_NOT_FOUND No device node was found under @p path.
+ * @retval B_NO_MEMORY    KDiskDevice allocation or map insertion failed.
+ * @retval B_ERROR        The path is a non-raw file.
+ * @retval other          errno from lstat/opendir, or device initialisation error.
+ */
 status_t
 KDiskDeviceManager::_Scan(const char* path)
 {
@@ -1315,6 +1946,21 @@ KDiskDeviceManager::_Scan(const char* path)
 /*!
 	The device must be write locked, the manager must be locked.
 */
+/**
+ * @brief Dispatch a synchronous or asynchronous partition scan for @p partition.
+ *
+ * If @p async is false (the only currently supported mode), delegates directly
+ * to the two-argument _ScanPartition() overload.  Asynchronous scanning via
+ * job queues is stubbed out with #if 0.
+ *
+ * @param partition      The KPartition to scan; device must be write-locked and
+ *                       manager must be locked.
+ * @param async          Reserved; must be false (async path is disabled).
+ * @param restrictScan   If non-NULL, only disk systems present in this map are
+ *                       tried during identification.  NULL means try all.
+ * @retval B_OK          Scan completed successfully.
+ * @retval B_BAD_VALUE   @p partition was NULL.
+ */
 status_t
 KDiskDeviceManager::_ScanPartition(KPartition* partition, bool async,
 	DiskSystemMap* restrictScan)
@@ -1360,6 +2006,24 @@ KDiskDeviceManager::_ScanPartition(KPartition* partition, bool async,
 }
 
 
+/**
+ * @brief Identify the best-matching disk system for @p partition and scan it.
+ *
+ * Publishes the partition device node if not yet published, then iterates
+ * @p restrictScan (or fDiskSystems if NULL) calling Identify() on each system.
+ * The system returning the highest priority wins and its Scan() is called.  If
+ * children already exist only they are recursively scanned, not the parent.
+ * Partitions with invalid geometry (negative offset, zero block size, or
+ * non-positive size) are rejected with B_BAD_DATA.
+ *
+ * @param partition    The KPartition to identify and scan; its device must be
+ *                     write-locked and the manager must be locked.
+ * @param restrictScan If non-NULL, limit identification to systems in this map.
+ * @retval B_OK        Scan succeeded (or partition already has children).
+ * @retval B_BAD_VALUE @p partition was NULL.
+ * @retval B_BAD_DATA  Partition geometry is invalid.
+ * @retval other       Error returned by PublishDevice() or Scan().
+ */
 status_t
 KDiskDeviceManager::_ScanPartition(KPartition* partition,
 	DiskSystemMap* restrictScan)
@@ -1466,6 +2130,20 @@ KDiskDeviceManager::_ScanPartition(KPartition* partition,
 }
 
 
+/**
+ * @brief Recursively add or remove a node monitor for a directory tree.
+ *
+ * Stats @p path; if it is a directory, adds or removes a B_WATCH_DIRECTORY
+ * listener on it (using fDeviceWatcher) and recurses into every subdirectory.
+ * Non-directory entries and the "." / ".." pseudo-entries are skipped.
+ *
+ * @param path  Absolute path to the root of the tree to monitor.
+ * @param add   If true, install node monitors; if false, remove them.
+ * @retval B_OK             Monitoring was updated for at least one directory.
+ * @retval B_ENTRY_NOT_FOUND @p path is not a directory.
+ * @retval other            errno from lstat/opendir, or add_node_listener /
+ *                          remove_node_listener error.
+ */
 status_t
 KDiskDeviceManager::_AddRemoveMonitoring(const char* path, bool add)
 {
@@ -1510,6 +2188,17 @@ KDiskDeviceManager::_AddRemoveMonitoring(const char* path, bool add)
 }
 
 
+/**
+ * @brief Background thread body: poll all registered devices for media changes.
+ *
+ * Runs until fTerminating is set.  Each iteration walks every registered
+ * device, checks for media insertion/removal and media-changed events, and
+ * for each change uninitialises the media, optionally re-scans partitions
+ * (on media change), and sends the appropriate B_DEVICE_MEDIA_CHANGED
+ * notification.  Sleeps one second between iterations.
+ *
+ * @retval 0  Always returns 0 when fTerminating becomes true.
+ */
 status_t
 KDiskDeviceManager::_CheckMediaStatus()
 {
@@ -1555,6 +2244,14 @@ KDiskDeviceManager::_CheckMediaStatus()
 }
 
 
+/**
+ * @brief Kernel thread entry point for the media-status polling daemon.
+ *
+ * Casts @p self to KDiskDeviceManager* and forwards to _CheckMediaStatus().
+ *
+ * @param self  Pointer to the KDiskDeviceManager instance (passed as void*).
+ * @return      Return value of _CheckMediaStatus().
+ */
 status_t
 KDiskDeviceManager::_CheckMediaStatusDaemon(void* self)
 {
@@ -1562,6 +2259,17 @@ KDiskDeviceManager::_CheckMediaStatusDaemon(void* self)
 }
 
 
+/**
+ * @brief Send a B_DEVICE_UPDATE notification message for @p device.
+ *
+ * Builds a KMessage containing the event opcode, device ID, and device path,
+ * then forwards it to fNotifications with the given event mask.
+ *
+ * @param device  The KDiskDevice that triggered the event; must not be NULL.
+ * @param event   One of the B_DEVICE_ADDED / B_DEVICE_REMOVED /
+ *                B_DEVICE_MEDIA_CHANGED constants.
+ * @param mask    Bitmask of B_DEVICE_REQUEST_* flags passed to Notify().
+ */
 void
 KDiskDeviceManager::_NotifyDeviceEvent(KDiskDevice* device, int32 event,
 	uint32 mask)
@@ -1575,4 +2283,3 @@ KDiskDeviceManager::_NotifyDeviceEvent(KDiskDevice* device, int32 event,
 
 	fNotifications->Notify(message, mask);
 }
-

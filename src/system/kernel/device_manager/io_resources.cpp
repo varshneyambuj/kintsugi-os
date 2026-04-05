@@ -1,8 +1,30 @@
 /*
- * Copyright 2004-2008, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Copyright 2002-2004, Thomas Kurschel. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2008, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Copyright 2002-2004, Thomas Kurschel. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file io_resources.cpp
+ * @brief I/O resource management — allocation and freeing of ISA I/O port, memory, and DMA resources.
  */
 
 
@@ -30,18 +52,30 @@ static ResourceTypeList sPortList;
 static ResourceTypeList sDMAChannelList;
 
 
+/**
+ * @brief Default constructor — zero-initialises all resource fields.
+ */
 io_resource_private::io_resource_private()
 {
 	_Init();
 }
 
 
+/**
+ * @brief Destructor — releases the resource if it was previously acquired.
+ */
 io_resource_private::~io_resource_private()
 {
 	Release();
 }
 
 
+/**
+ * @brief Resets all resource descriptor fields to zero.
+ *
+ * Sets type, base, and length to 0, marking this object as holding no
+ * resource. Called both at construction and after Release().
+ */
 void
 io_resource_private::_Init()
 {
@@ -51,6 +85,22 @@ io_resource_private::_Init()
 }
 
 
+/**
+ * @brief Claims ownership of an I/O resource range, failing if it overlaps
+ *        an existing allocation.
+ *
+ * Validates the supplied @p resource descriptor, copies its fields into this
+ * object, selects the appropriate type-keyed list (memory, port, or DMA
+ * channel), checks for range overlap with all existing allocations, and — if
+ * no conflict is found — inserts this object into the list.
+ *
+ * @param resource  The resource descriptor describing the type, base address,
+ *                  and length to acquire.
+ * @retval B_OK                   Resource was acquired successfully.
+ * @retval B_BAD_VALUE            @p resource failed the validity check.
+ * @retval B_RESOURCE_UNAVAILABLE The requested range overlaps an existing
+ *                                allocation.
+ */
 status_t
 io_resource_private::Acquire(const io_resource& resource)
 {
@@ -99,6 +149,13 @@ io_resource_private::Acquire(const io_resource& resource)
 }
 
 
+/**
+ * @brief Removes this resource from its type list and resets all fields.
+ *
+ * If this object currently holds no resource (type == 0) the call is a
+ * no-op. Otherwise the object is unlinked from the appropriate global list
+ * and _Init() is called to zero the descriptor fields.
+ */
 void
 io_resource_private::Release()
 {
@@ -121,6 +178,18 @@ io_resource_private::Release()
 }
 
 
+/**
+ * @brief Checks whether an io_resource descriptor contains coherent values.
+ *
+ * Applies type-specific range and alignment constraints:
+ * - @c B_IO_MEMORY: base + length must not overflow.
+ * - @c B_IO_PORT: base and length must each fit in a @c uint16 and the
+ *   range must not overflow.
+ * - @c B_ISA_DMA_CHANNEL: base (channel number) must be <= 8.
+ *
+ * @param resource  The resource descriptor to validate.
+ * @return @c true if @p resource is well-formed; @c false otherwise.
+ */
 /*static*/ bool
 io_resource_private::_IsValid(const io_resource& resource)
 {
@@ -143,6 +212,13 @@ io_resource_private::_IsValid(const io_resource& resource)
 //	#pragma mark -
 
 
+/**
+ * @brief Initialises the global I/O resource tracking lists.
+ *
+ * Placement-constructs sMemoryList, sPortList, and sDMAChannelList. Must be
+ * called once during device-manager initialisation before any
+ * io_resource_private objects are used.
+ */
 void
 dm_init_io_resources(void)
 {

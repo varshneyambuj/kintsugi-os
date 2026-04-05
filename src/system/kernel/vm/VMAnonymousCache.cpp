@@ -1,18 +1,47 @@
 /*
- * Copyright 2008, Zhao Shuai, upczhsh@163.com.
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Copyright 2011-2012 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Hamish Morrison, hamish@lavabit.com
- *		Alexander von Gluck IV, kallisti5@unixzen.com
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008, Zhao Shuai, upczhsh@163.com.
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2011-2012 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors (Haiku):
+ *       Hamish Morrison, hamish@lavabit.com
+ *       Alexander von Gluck IV, kallisti5@unixzen.com
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file VMAnonymousCache.cpp
+ * @brief Anonymous virtual memory cache with optional swap backing.
+ *
+ * VMAnonymousCache backs anonymous memory mappings (heap, stack, MAP_ANONYMOUS).
+ * Pages start in RAM; under memory pressure they can be written to a swap file
+ * and later faulted back in. Implements copy-on-write by sharing pages with
+ * a source cache until a write fault triggers a private copy.
+ *
+ * @see VMAnonymousNoSwapCache.cpp, VMCache.cpp
  */
 
 
@@ -229,6 +258,14 @@ private:
 #endif
 
 
+/**
+ * @brief Kernel debugger command that prints swap file and usage statistics.
+ *
+ * @param argc Argument count from the debugger command line.
+ * @param argv Argument vector from the debugger command line.
+ * @retval 0 Always returns 0.
+ * @note Safe to call from the kernel debugger; does not acquire any locks.
+ */
 static int
 dump_swap_info(int argc, char** argv)
 {
@@ -260,6 +297,19 @@ dump_swap_info(int argc, char** argv)
 }
 
 
+/**
+ * @brief Allocate @a count contiguous swap slots from the active swap file.
+ *
+ * Iterates over all registered swap files until it finds one with enough
+ * contiguous free slots. If a swap file is more than 90% full the allocator
+ * round-robins to the next file.
+ *
+ * @param count Number of contiguous page slots to allocate.
+ * @return First slot index of the allocated run, or SWAP_SLOT_NONE when
+ *         no swap file has sufficient space or @a count exceeds BITMAP_RADIX.
+ * @note Acquires sSwapFileListLock internally; must not be called with that
+ *       lock already held.
+ */
 static swap_addr_t
 swap_slot_alloc(uint32 count)
 {
@@ -312,6 +362,13 @@ swap_slot_alloc(uint32 count)
 }
 
 
+/**
+ * @brief Find the swap_file that owns the given global slot index.
+ *
+ * @param slotIndex Global swap slot address to look up.
+ * @return Pointer to the owning swap_file, or NULL (after panic) if not found.
+ * @note Caller must hold sSwapFileListLock.
+ */
 static swap_file*
 find_swap_file(swap_addr_t slotIndex)
 {
@@ -329,6 +386,16 @@ find_swap_file(swap_addr_t slotIndex)
 }
 
 
+/**
+ * @brief Return @a count contiguous swap slots starting at @a slotIndex.
+ *
+ * Locates the owning swap file for @a slotIndex and marks those slots free
+ * in its radix bitmap.
+ *
+ * @param slotIndex First global slot index to free; no-op if SWAP_SLOT_NONE.
+ * @param count     Number of contiguous slots to release.
+ * @note Acquires sSwapFileListLock internally.
+ */
 static void
 swap_slot_dealloc(swap_addr_t slotIndex, uint32 count)
 {
@@ -343,6 +410,16 @@ swap_slot_dealloc(swap_addr_t slotIndex, uint32 count)
 }
 
 
+/**
+ * @brief Reserve up to @a amount bytes of swap space from the global pool.
+ *
+ * Atomically decrements sAvailableSwapSpace by the requested amount, or by
+ * whatever remains if the pool is smaller.
+ *
+ * @param amount Bytes of swap space to reserve.
+ * @return Actual number of bytes reserved (may be less than @a amount).
+ * @note Acquires sAvailableSwapSpaceLock internally.
+ */
 static off_t
 swap_space_reserve(off_t amount)
 {
@@ -359,6 +436,12 @@ swap_space_reserve(off_t amount)
 }
 
 
+/**
+ * @brief Return previously reserved swap space back to the global pool.
+ *
+ * @param amount Bytes to return; silently ignored when zero.
+ * @note Acquires sAvailableSwapSpaceLock internally.
+ */
 static void
 swap_space_unreserve(off_t amount)
 {
@@ -371,6 +454,18 @@ swap_space_unreserve(off_t amount)
 }
 
 
+/**
+ * @brief Kernel daemon callback that resizes the swap hash table when needed.
+ *
+ * Called periodically by the resource-resizer daemon. Determines the required
+ * table size, drops the write lock to perform the allocation, then tries to
+ * commit the resize. Retries if another thread raced and changed the required
+ * size while the lock was released.
+ *
+ * @param data   Unused user data pointer (always NULL).
+ * @param iteration Daemon iteration counter (unused).
+ * @note Acquires and releases sSwapHashLock (write) internally.
+ */
 static void
 swap_hash_resizer(void*, int)
 {
@@ -445,6 +540,16 @@ private:
 // #pragma mark -
 
 
+/**
+ * @brief Destructor — releases all swap slots and committed memory held by
+ *        this anonymous cache.
+ *
+ * Frees the no-swap bitmap, walks the entire virtual range to release any
+ * swap slots, returns reserved swap space, and unreserves RAM commitment.
+ *
+ * @note The cache lock must NOT be held by the caller; the destructor is
+ *       invoked only when the last reference is dropped.
+ */
 VMAnonymousCache::~VMAnonymousCache()
 {
 	delete fNoSwapPages;
@@ -456,6 +561,23 @@ VMAnonymousCache::~VMAnonymousCache()
 }
 
 
+/**
+ * @brief Initialise a newly allocated VMAnonymousCache.
+ *
+ * Sets up overcommit policy, pre-committed page count, guard-page size, and
+ * zeroes all swap-related accounting fields before delegating to VMCache::Init.
+ *
+ * @param canOvercommit         Allow the cache to commit memory lazily on fault.
+ * @param numPrecommittedPages  Number of pages pre-committed without a fault
+ *                              (capped at 255).
+ * @param numGuardPages         Number of guard pages at the low/high end of the
+ *                              mapping (stack overflow detection).
+ * @param allocationFlags       Flags forwarded to the slab allocator.
+ * @retval B_OK          Initialisation succeeded.
+ * @retval B_NO_MEMORY   Underlying VMCache::Init failed to allocate resources.
+ * @note Must be called exactly once after object construction and before any
+ *       other method.
+ */
 status_t
 VMAnonymousCache::Init(bool canOvercommit, int32 numPrecommittedPages,
 	int32 numGuardPages, uint32 allocationFlags)
@@ -482,6 +604,21 @@ VMAnonymousCache::Init(bool canOvercommit, int32 numPrecommittedPages,
 }
 
 
+/**
+ * @brief Mark a page range as swappable or non-swappable.
+ *
+ * Lazily allocates fNoSwapPages (a Bitmap) on the first call that disables
+ * swapping. Each page in [@a base, @a base + @a size) is set or cleared in
+ * the bitmap according to @a canSwap. The bitmap is freed when no non-swappable
+ * pages remain.
+ *
+ * @param base    Byte offset within the cache of the first page to configure.
+ * @param size    Length in bytes of the range to configure.
+ * @param canSwap @c true to permit swapping; @c false to prohibit it.
+ * @retval B_OK        Range configured successfully.
+ * @retval B_NO_MEMORY Failed to allocate or resize the no-swap bitmap.
+ * @note The cache lock must be held by the caller.
+ */
 status_t
 VMAnonymousCache::SetCanSwapPages(off_t base, size_t size, bool canSwap)
 {
@@ -518,6 +655,20 @@ VMAnonymousCache::SetCanSwapPages(off_t base, size_t size, bool canSwap)
 }
 
 
+/**
+ * @brief Free all swap slots allocated for pages in the byte range
+ *        [@a fromOffset, @a toOffset).
+ *
+ * Iterates page-by-page through the swap hash table, skipping entire
+ * swap blocks that have no allocated slots. Busy pages can optionally be
+ * skipped (their swap space is leaked) to avoid deadlocks during teardown.
+ *
+ * @param fromOffset    Start byte offset of the range (inclusive).
+ * @param toOffset      End byte offset of the range (exclusive).
+ * @param skipBusyPages When @c true, pages with @c busy set are not freed.
+ * @note Acquires sSwapHashLock (write) on each iteration; the cache lock
+ *       must be held by the caller.
+ */
 void
 VMAnonymousCache::_FreeSwapPageRange(off_t fromOffset, off_t toOffset,
 	bool skipBusyPages)
@@ -580,6 +731,19 @@ VMAnonymousCache::_FreeSwapPageRange(off_t fromOffset, off_t toOffset,
 }
 
 
+/**
+ * @brief Resize the cache to @a newSize bytes, freeing swap slots for
+ *        truncated pages.
+ *
+ * Resizes fNoSwapPages if present, frees swap slots for any pages beyond
+ * @a newSize, then delegates to VMCache::Resize for the page-tree update.
+ *
+ * @param newSize  New cache size in bytes.
+ * @param priority VM priority used by VMCache::Resize for memory reservation.
+ * @retval B_OK        Resize succeeded.
+ * @retval B_NO_MEMORY Insufficient memory to resize fNoSwapPages.
+ * @note The cache lock must be held by the caller.
+ */
 status_t
 VMAnonymousCache::Resize(off_t newSize, int priority)
 {
@@ -594,6 +758,19 @@ VMAnonymousCache::Resize(off_t newSize, int priority)
 }
 
 
+/**
+ * @brief Move the cache's virtual base to @a newBase, releasing swap slots
+ *        for pages that fall below the new base.
+ *
+ * Shifts fNoSwapPages by the page-count difference between the old and new
+ * base before freeing the now-unreachable swap range.
+ *
+ * @param newBase  New virtual base offset in bytes.
+ * @param priority VM priority forwarded to VMCache::Rebase.
+ * @retval B_OK        Rebase succeeded.
+ * @retval B_NO_MEMORY VMCache::Rebase could not satisfy memory requirements.
+ * @note The cache lock must be held by the caller.
+ */
 status_t
 VMAnonymousCache::Rebase(off_t newBase, int priority)
 {
@@ -607,6 +784,19 @@ VMAnonymousCache::Rebase(off_t newBase, int priority)
 }
 
 
+/**
+ * @brief Discard pages and their swap slots in the range
+ *        [@a offset, @a offset + @a size).
+ *
+ * Frees swap slots for the discarded range via _FreeSwapPageRange, then calls
+ * VMCache::Discard to remove the physical pages. For overcommitting caches the
+ * committed size is reduced by the amount actually discarded.
+ *
+ * @param offset  Byte offset within the cache of the first page to discard.
+ * @param size    Length in bytes of the range to discard.
+ * @return Number of bytes actually discarded, or a negative error code.
+ * @note The cache lock must be held by the caller.
+ */
 ssize_t
 VMAnonymousCache::Discard(off_t offset, off_t size)
 {
@@ -621,6 +811,24 @@ VMAnonymousCache::Discard(off_t offset, off_t size)
 /*!	Moves the swap pages for the given range from the source cache into this
 	cache. Both caches must be locked.
 */
+/**
+ * @brief Adopt pages and swap slots from @a _source in the given byte range.
+ *
+ * Transfers swap blocks from the source VMAnonymousCache to this cache for
+ * the byte range [@a offset, @a offset + @a size), re-keyed to @a newOffset
+ * in the consumer. For overcommitting caches the corresponding RAM commitment
+ * is also transferred.
+ *
+ * @param _source    Source VMCache; must be a VMAnonymousCache.
+ * @param offset     Byte offset in @a _source of the first page to adopt.
+ * @param size       Length in bytes of the range to adopt.
+ * @param newOffset  Byte offset in this cache where adopted pages land.
+ * @retval B_OK        All pages and swap slots adopted successfully.
+ * @retval B_NO_MEMORY Could not allocate a new swap block for the consumer.
+ * @retval B_ERROR     @a _source is not a VMAnonymousCache (triggers panic).
+ * @note Both the source and consumer cache locks must be held by the caller.
+ *       sSwapHashLock (write) is acquired internally.
+ */
 status_t
 VMAnonymousCache::Adopt(VMCache* _source, off_t offset, off_t size,
 	off_t newOffset)
@@ -733,6 +941,12 @@ VMAnonymousCache::Adopt(VMCache* _source, off_t offset, off_t size,
 }
 
 
+/**
+ * @brief Return the current committed size of this cache in bytes.
+ *
+ * @return fCommittedSize — the amount of RAM (or swap) reserved for this cache.
+ * @note The cache lock should be held by the caller for a consistent read.
+ */
 off_t
 VMAnonymousCache::Commitment() const
 {
@@ -740,6 +954,11 @@ VMAnonymousCache::Commitment() const
 }
 
 
+/**
+ * @brief Query whether this cache was created with overcommit enabled.
+ *
+ * @return @c true if the cache may commit memory lazily on page fault.
+ */
 bool
 VMAnonymousCache::CanOvercommit()
 {
@@ -747,6 +966,23 @@ VMAnonymousCache::CanOvercommit()
 }
 
 
+/**
+ * @brief Commit or release physical memory (RAM or swap) for this cache.
+ *
+ * For overcommitting caches a real reservation is deferred until Fault().
+ * Only a small pre-committed region is reserved eagerly, and only on the
+ * first call. For non-overcommitting caches the difference between @a size
+ * and fCommittedSize is reserved or released immediately.
+ *
+ * @param size     Desired total committed size in bytes.
+ * @param priority VM priority (e.g. VM_PRIORITY_USER, VM_PRIORITY_SYSTEM)
+ *                 used when reserving memory.
+ * @retval B_OK        Commitment adjusted to @a size.
+ * @retval B_NO_MEMORY Insufficient physical memory or swap to honour the
+ *                     request.
+ * @note The cache lock must be held by the caller (AssertLocked is called
+ *       internally).
+ */
 status_t
 VMAnonymousCache::Commit(off_t size, int priority)
 {
@@ -790,6 +1026,19 @@ VMAnonymousCache::Commit(off_t size, int priority)
 }
 
 
+/**
+ * @brief Transfer @a commitment bytes of committed memory from cache @a _from
+ *        to this cache without touching the global reservations.
+ *
+ * Used when splitting or cloning mappings so that the total committed memory
+ * in the system remains unchanged.
+ *
+ * @param _from      Source VMAnonymousCache that currently owns the commitment.
+ * @param commitment Bytes of committed memory to transfer; must not exceed
+ *                   @a _from->fCommittedSize.
+ * @note Both cache locks must be held by the caller (AssertLocked is called on
+ *       both caches internally).
+ */
 void
 VMAnonymousCache::TakeCommitmentFrom(VMCache* _from, off_t commitment)
 {
@@ -803,6 +1052,18 @@ VMAnonymousCache::TakeCommitmentFrom(VMCache* _from, off_t commitment)
 }
 
 
+/**
+ * @brief Check whether the backing store (swap) has data for the page at
+ *        @a offset.
+ *
+ * Fast path: returns @c false immediately if no swap space has been allocated
+ * for this cache at all. Otherwise queries the swap hash table for the page's
+ * slot index.
+ *
+ * @param offset Byte offset within the cache to query.
+ * @return @c true if the page at @a offset has a valid swap slot assigned.
+ * @note Acquires sSwapHashLock (read) internally via _SwapBlockGetAddress.
+ */
 bool
 VMAnonymousCache::StoreHasPage(off_t offset)
 {
@@ -816,6 +1077,17 @@ VMAnonymousCache::StoreHasPage(off_t offset)
 }
 
 
+/**
+ * @brief Debug-only variant of StoreHasPage that bypasses the fast path.
+ *
+ * Directly looks up the swap hash table without the fAllocatedSwapSize guard,
+ * intended for use from the kernel debugger where normal locking is not
+ * available.
+ *
+ * @param offset Byte offset within the cache to query.
+ * @return @c true if the swap hash table records a slot for this page.
+ * @note Must only be called from the kernel debugger.
+ */
 bool
 VMAnonymousCache::DebugStoreHasPage(off_t offset)
 {
@@ -829,6 +1101,24 @@ VMAnonymousCache::DebugStoreHasPage(off_t offset)
 }
 
 
+/**
+ * @brief Read one or more pages from swap into the provided I/O vectors.
+ *
+ * Groups contiguous swap slots into a single vfs_read_pages call for
+ * efficiency. Each group of consecutive slots is dispatched in one I/O
+ * operation.
+ *
+ * @param offset    Byte offset within the cache of the first page to read.
+ * @param vecs      Array of generic I/O vectors to fill.
+ * @param count     Number of entries in @a vecs.
+ * @param flags     I/O flags forwarded to vfs_read_pages.
+ * @param _numBytes In/out: on entry the maximum number of bytes to read; on
+ *                  exit the number of bytes actually read.
+ * @retval B_OK    All pages read successfully.
+ * @retval other   VFS error code from the underlying vfs_read_pages call.
+ * @note The cache lock must be held by the caller. Swap slots must already be
+ *       assigned (i.e. StoreHasPage returned @c true) for each requested page.
+ */
 status_t
 VMAnonymousCache::Read(off_t offset, const generic_io_vec* vecs, size_t count,
 	uint32 flags, generic_size_t* _numBytes)
@@ -861,6 +1151,27 @@ VMAnonymousCache::Read(off_t offset, const generic_io_vec* vecs, size_t count,
 }
 
 
+/**
+ * @brief Synchronously write one or more pages to swap.
+ *
+ * Deallocates any existing swap slots for the affected pages, then reserves
+ * new swap space and writes the data. Slot allocation is attempted in
+ * power-of-two decreasing chunk sizes until successful. On failure the
+ * fAllocatedSwapSize counter is corrected and the partially allocated slots
+ * are released.
+ *
+ * @param offset    Byte offset within the cache of the first page to write.
+ * @param vecs      Array of generic I/O vectors containing the page data.
+ * @param count     Number of entries in @a vecs.
+ * @param flags     I/O flags forwarded to vfs_write_pages.
+ * @param _numBytes In/out: on entry the number of bytes to write; on exit the
+ *                  number of bytes actually written.
+ * @retval B_OK    All pages written to swap successfully.
+ * @retval B_ERROR Insufficient unreserved swap space.
+ * @retval other   VFS error code from the underlying vfs_write_pages call.
+ * @note Acquires and releases the cache lock internally around accounting
+ *       updates. The caller must NOT hold the cache lock.
+ */
 status_t
 VMAnonymousCache::Write(off_t offset, const generic_io_vec* vecs, size_t count,
 	uint32 flags, generic_size_t* _numBytes)
@@ -957,6 +1268,28 @@ VMAnonymousCache::Write(off_t offset, const generic_io_vec* vecs, size_t count,
 }
 
 
+/**
+ * @brief Initiate an asynchronous write of a single page to swap.
+ *
+ * Allocates a swap slot if the page does not already have one, constructs a
+ * WriteCallback to record the slot assignment on I/O completion, and submits
+ * the write via vfs_asynchronous_write_pages. If allocation or callback
+ * construction fails the original @a _callback is invoked with an error so
+ * the caller is never left waiting indefinitely.
+ *
+ * @param offset     Byte offset within the cache of the page to write.
+ * @param vecs       I/O vector array (must contain exactly one entry).
+ * @param count      Number of I/O vectors (must be 1).
+ * @param numBytes   Number of bytes to write (must be <= B_PAGE_SIZE).
+ * @param flags      I/O flags; B_VIP_IO_REQUEST selects a higher-priority
+ *                   heap allocation for the callback object.
+ * @param _callback  Completion callback invoked when the I/O finishes.
+ * @retval B_OK        I/O submitted successfully.
+ * @retval B_NO_MEMORY Could not allocate the WriteCallback object.
+ * @retval B_ERROR     No unreserved swap space available for a new slot.
+ * @note The cache lock must NOT be held on entry; it is acquired internally
+ *       when updating fAllocatedSwapSize and fReservedSwapSize.
+ */
 status_t
 VMAnonymousCache::WriteAsync(off_t offset, const generic_io_vec* vecs,
 	size_t count, generic_size_t numBytes, uint32 flags,
@@ -1018,6 +1351,19 @@ VMAnonymousCache::WriteAsync(off_t offset, const generic_io_vec* vecs,
 }
 
 
+/**
+ * @brief Determine whether the page at @a offset may currently be written to
+ *        swap.
+ *
+ * Returns @c false for pages explicitly marked non-swappable via
+ * SetCanSwapPages(). Otherwise returns @c true when reserved or already
+ * swapped, or when there is still unreserved global swap space remaining.
+ *
+ * @param offset Byte offset within the cache of the page to check.
+ * @return @c true if the page is eligible for swap-out.
+ * @note This is an optimistic check; a later Write() may still fail if the
+ *       remaining swap space was concurrently exhausted.
+ */
 bool
 VMAnonymousCache::CanWritePage(off_t offset)
 {
@@ -1037,6 +1383,12 @@ VMAnonymousCache::CanWritePage(off_t offset)
 }
 
 
+/**
+ * @brief Return the maximum number of pages that may be written in a single
+ *        async write operation.
+ *
+ * @return Always 1; WriteAsync is currently limited to single-page I/O.
+ */
 int32
 VMAnonymousCache::MaxPagesPerAsyncWrite() const
 {
@@ -1044,6 +1396,23 @@ VMAnonymousCache::MaxPagesPerAsyncWrite() const
 }
 
 
+/**
+ * @brief Handle a page fault for an anonymous mapping.
+ *
+ * First checks for a guard-page violation (stack overflow). Then, for
+ * overcommitting caches, tries to reserve one page of RAM or swap on demand.
+ * Pre-committed page credits are consumed before attempting a real reservation.
+ * Returning B_BAD_HANDLER tells vm_soft_fault() to proceed with its normal
+ * zero-fill or COW logic.
+ *
+ * @param aspace  Address space in which the fault occurred; used to determine
+ *                allocation priority (kernel vs. user).
+ * @param offset  Byte offset within the cache at which the fault occurred.
+ * @retval B_BAD_HANDLER Normal completion — vm_soft_fault() should continue.
+ * @retval B_BAD_ADDRESS Guard page hit (stack overflow).
+ * @retval B_NO_MEMORY   Cannot reserve the required page of memory.
+ * @note The cache lock must be held by the caller.
+ */
 status_t
 VMAnonymousCache::Fault(struct VMAddressSpace* aspace, off_t offset)
 {
@@ -1089,6 +1458,21 @@ VMAnonymousCache::Fault(struct VMAddressSpace* aspace, off_t offset)
 }
 
 
+/**
+ * @brief Merge the source cache into this (consumer) cache after COW is no
+ *        longer needed.
+ *
+ * Called when the source cache has only one consumer left and the area is not
+ * shared. Transfers fCommittedSize from the source, trims any excess
+ * commitment, moves swap pages via _MergeSwapPages, and finally merges the
+ * physical page trees. Uses the faster _MergePagesSmallerConsumer path when
+ * the consumer has fewer pages than the source.
+ *
+ * @param _source Source VMCache to merge into this cache; must be a
+ *                VMAnonymousCache.
+ * @note Both cache locks must be held. Triggers a panic if @a _source is not
+ *       a VMAnonymousCache.
+ */
 void
 VMAnonymousCache::Merge(VMCache* _source)
 {
@@ -1124,6 +1508,14 @@ VMAnonymousCache::Merge(VMCache* _source)
 }
 
 
+/**
+ * @brief Acquire an unreferenced store reference (no-op for anonymous caches).
+ *
+ * Anonymous caches do not require a persistent backing-store reference, so
+ * this method always succeeds immediately.
+ *
+ * @retval B_OK Always.
+ */
 status_t
 VMAnonymousCache::AcquireUnreferencedStoreRef()
 {
@@ -1132,6 +1524,15 @@ VMAnonymousCache::AcquireUnreferencedStoreRef()
 }
 
 
+/**
+ * @brief Return this cache object to the anonymous-cache object cache.
+ *
+ * Called by the last VMCache::ReleaseRef when the reference count reaches
+ * zero. Delegates to object_cache_delete on gAnonymousCacheObjectCache.
+ *
+ * @note Must not be called directly; it is invoked by the VMCache reference-
+ *       counting machinery.
+ */
 void
 VMAnonymousCache::DeleteObject()
 {
@@ -1139,6 +1540,19 @@ VMAnonymousCache::DeleteObject()
 }
 
 
+/**
+ * @brief Record swap slot assignments for @a count pages starting at
+ *        @a startPageIndex.
+ *
+ * Looks up (or allocates) the swap_block covering each page in the range and
+ * stores the corresponding slot index. If the object cache is temporarily
+ * exhausted the function drops and re-acquires sSwapHashLock and retries.
+ *
+ * @param startPageIndex First page index in the cache to record.
+ * @param startSlotIndex First swap slot index assigned to @a startPageIndex.
+ * @param count          Number of consecutive pages/slots to record.
+ * @note Acquires sSwapHashLock (write) internally.
+ */
 void
 VMAnonymousCache::_SwapBlockBuild(off_t startPageIndex,
 	swap_addr_t startSlotIndex, uint32 count)
@@ -1185,6 +1599,18 @@ VMAnonymousCache::_SwapBlockBuild(off_t startPageIndex,
 }
 
 
+/**
+ * @brief Clear swap slot records for @a count pages starting at
+ *        @a startPageIndex.
+ *
+ * Walks the affected swap_blocks, sets each slot to SWAP_SLOT_NONE, and frees
+ * any block whose used count drops to zero.
+ *
+ * @param startPageIndex First page index whose swap record should be cleared.
+ * @param count          Number of consecutive page records to clear.
+ * @note Acquires sSwapHashLock (write) internally. The corresponding physical
+ *       swap slots must be freed separately via swap_slot_dealloc.
+ */
 void
 VMAnonymousCache::_SwapBlockFree(off_t startPageIndex, uint32 count)
 {
@@ -1214,6 +1640,13 @@ VMAnonymousCache::_SwapBlockFree(off_t startPageIndex, uint32 count)
 }
 
 
+/**
+ * @brief Look up the swap slot index assigned to page @a pageIndex.
+ *
+ * @param pageIndex Page index (cache offset >> PAGE_SHIFT) to look up.
+ * @return The swap slot index, or SWAP_SLOT_NONE if no slot is assigned.
+ * @note Acquires sSwapHashLock (read) internally.
+ */
 swap_addr_t
 VMAnonymousCache::_SwapBlockGetAddress(off_t pageIndex)
 {
@@ -1232,6 +1665,20 @@ VMAnonymousCache::_SwapBlockGetAddress(off_t pageIndex)
 }
 
 
+/**
+ * @brief Merge source pages into the consumer when the consumer has fewer
+ *        pages (optimised path).
+ *
+ * Moves each consumer page to the source (freeing any shadowed source page),
+ * then bulk-moves all source pages back to the consumer. This avoids an O(n)
+ * scan of the larger source tree.
+ *
+ * @param source Source VMAnonymousCache whose pages are being merged into
+ *               this cache.
+ * @note Both cache locks must be held. Some pages may be busy during the move;
+ *       this is safe because all pages will belong to the consumer once the
+ *       lock is released.
+ */
 void
 VMAnonymousCache::_MergePagesSmallerConsumer(VMAnonymousCache* source)
 {
@@ -1269,6 +1716,19 @@ VMAnonymousCache::_MergePagesSmallerConsumer(VMAnonymousCache* source)
 }
 
 
+/**
+ * @brief Merge swap pages from @a source into this (consumer) cache.
+ *
+ * For each swap block in the source, any source swap page that is shadowed by
+ * a consumer page or consumer swap page is freed. Remaining source swap pages
+ * are transferred to the consumer by re-keying the source swap block or by
+ * copying individual slot entries into an existing consumer block.
+ *
+ * @param source Source VMAnonymousCache whose swap pages are merged into this
+ *               cache.
+ * @note Both cache locks must be held. sSwapHashLock (write) is acquired
+ *       per swap-block iteration.
+ */
 void
 VMAnonymousCache::_MergeSwapPages(VMAnonymousCache* source)
 {
@@ -1433,6 +1893,22 @@ private:
 };
 
 
+/**
+ * @brief Register a file or block device as an active swap area.
+ *
+ * Opens @a path with O_NOCACHE, validates that it is a regular file, character
+ * device, or block device with at least one page of capacity, then allocates a
+ * swap_file descriptor and a radix bitmap for slot tracking. The file is
+ * appended to sSwapFileList and its capacity is added to sAvailableSwapSpace.
+ *
+ * @param path Filesystem path of the swap file or device.
+ * @retval B_OK           Swap file registered and available for use.
+ * @retval B_BAD_VALUE    @a path is not a supported file type or is too small.
+ * @retval B_NO_MEMORY    Allocation of the swap_file or radix_bitmap failed.
+ * @retval errno          An OS error returned by open() or fstat().
+ * @note Must not be called at interrupt level. Acquires sSwapFileListLock and
+ *       sAvailableSwapSpaceLock internally.
+ */
 status_t
 swap_file_add(const char* path)
 {
@@ -1511,6 +1987,20 @@ swap_file_add(const char* path)
 }
 
 
+/**
+ * @brief Unregister and remove a previously added swap file.
+ *
+ * Locates the swap_file by resolving @a path to a vnode, verifies that all
+ * of its slots are free, reserves back the equivalent RAM, removes the entry
+ * from sSwapFileList, truncates the file to zero, and closes the descriptor.
+ *
+ * @param path Filesystem path of the swap file to remove.
+ * @retval B_OK        Swap file successfully deregistered and closed.
+ * @retval B_ERROR     @a path is not a registered swap file, or the file still
+ *                     has pages in use.
+ * @retval B_NO_MEMORY Could not reserve back the equivalent RAM.
+ * @note Acquires sSwapFileListLock and sAvailableSwapSpaceLock internally.
+ */
 status_t
 swap_file_delete(const char* path)
 {
@@ -1560,6 +2050,17 @@ swap_file_delete(const char* path)
 }
 
 
+/**
+ * @brief Initialise the swap subsystem during early kernel boot.
+ *
+ * Creates the sSwapBlockCache object cache, initialises the swap hash table
+ * and its reader-writer lock, registers the periodic hash resizer daemon,
+ * initialises the swap file list and available-space tracking, and registers
+ * the "swap" kernel debugger command.
+ *
+ * @note Called once during kernel initialisation before any swap files are
+ *       added. Must not be called again.
+ */
 void
 swap_init(void)
 {
@@ -1602,6 +2103,21 @@ swap_init(void)
 }
 
 
+/**
+ * @brief Create and register the default swap file after kernel modules are
+ *        loaded.
+ *
+ * Reads virtual_memory driver settings to determine whether swap is enabled,
+ * automatic or manually configured, the target device, and the desired size.
+ * For automatic swap the size is proportional to physical RAM (doubled when
+ * RAM is under 1 GB, capped at 25% of free space on the target device). For
+ * manual swap the configured partition is located via PartitionScorer. The
+ * swap file is created (or resized) at the determined path and registered with
+ * swap_file_add().
+ *
+ * @note Called once, after all disk-device modules have been initialised.
+ *       Silently returns if booted from a read-only device.
+ */
 void
 swap_init_post_modules()
 {
@@ -1781,7 +2297,20 @@ swap_init_post_modules()
 }
 
 
-//! Used by page daemon to free swap space.
+/**
+ * @brief Free the swap slot of a single physical page (called by the page
+ *        daemon).
+ *
+ * If @a page belongs to a VMAnonymousCache and has a swap slot assigned,
+ * deallocates that slot and removes the record from the swap hash table,
+ * allowing the daemon to reclaim the page from RAM without data loss.
+ *
+ * @param page Physical page whose swap slot should be freed.
+ * @return @c true  if a swap slot was found and freed.
+ * @return @c false if @a page does not belong to a VMAnonymousCache or has no
+ *                  swap slot.
+ * @note Called with the page's cache lock held by the page daemon.
+ */
 bool
 swap_free_page_swap_space(vm_page* page)
 {
@@ -1801,6 +2330,13 @@ swap_free_page_swap_space(vm_page* page)
 }
 
 
+/**
+ * @brief Return the total number of swap slots across all registered swap
+ *        files.
+ *
+ * @return Total page-sized slot count summed over all swap_file entries.
+ * @note Acquires sSwapFileListLock internally.
+ */
 uint32
 swap_total_swap_pages()
 {
@@ -1821,6 +2357,16 @@ swap_total_swap_pages()
 #endif	// ENABLE_SWAP_SUPPORT
 
 
+/**
+ * @brief Populate the swap-related fields of a system_info structure.
+ *
+ * Accumulates max_swap_pages and free_swap_pages from all registered swap
+ * files. When swap support is compiled out both fields are set to zero.
+ *
+ * @param info Pointer to the system_info structure to fill; the swap fields
+ *             are updated in place (not zeroed first).
+ * @note Acquires sSwapFileListLock internally when ENABLE_SWAP_SUPPORT is set.
+ */
 void
 swap_get_info(system_info* info)
 {
@@ -1836,4 +2382,3 @@ swap_get_info(system_info* info)
 	info->free_swap_pages = 0;
 #endif
 }
-

@@ -1,9 +1,40 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2008-2017, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008-2017, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file IORequest.cpp
+ * @brief Kernel I/O request — the unit of work passed through the I/O stack.
+ *
+ * IORequest represents a single read or write operation submitted by the VFS
+ * or block cache. It carries the target address, buffer (user or kernel),
+ * offset, and length. As it passes through the I/O scheduler, DMA resource
+ * manager, and device driver, sub-requests (IOOperation) are created and
+ * completed until the whole request is satisfied.
+ *
+ * @see IOSchedulerSimple.cpp, dma_resources.cpp, IOCache.cpp
+ */
 
 #include "IORequest.h"
 
@@ -68,6 +99,9 @@ struct virtual_vec_cookie {
 // #pragma mark -
 
 
+/**
+ * @brief Default constructor — initialises parent pointer and pending status.
+ */
 IORequestChunk::IORequestChunk()
 	:
 	fParent(NULL),
@@ -76,6 +110,9 @@ IORequestChunk::IORequestChunk()
 }
 
 
+/**
+ * @brief Destructor — no owned resources at this base level.
+ */
 IORequestChunk::~IORequestChunk()
 {
 }
@@ -84,6 +121,15 @@ IORequestChunk::~IORequestChunk()
 //	#pragma mark -
 
 
+/**
+ * @brief Allocates a new IOBuffer capable of holding @p count scatter/gather
+ *        vectors.
+ *
+ * @param count  Number of generic_io_vec slots to reserve.
+ * @param vip    When true, allocates from the VIP heap so the allocation
+ *               succeeds even under memory pressure.
+ * @return Pointer to the new IOBuffer, or NULL on allocation failure.
+ */
 IOBuffer*
 IOBuffer::Create(uint32 count, bool vip)
 {
@@ -104,6 +150,10 @@ IOBuffer::Create(uint32 count, bool vip)
 }
 
 
+/**
+ * @brief Frees this IOBuffer, selecting the correct heap tier based on the
+ *        VIP flag set at creation time.
+ */
 void
 IOBuffer::Delete()
 {
@@ -111,6 +161,17 @@ IOBuffer::Delete()
 }
 
 
+/**
+ * @brief Copies a caller-supplied vector array into the buffer and trims the
+ *        first and last vecs to honour sub-block offsets.
+ *
+ * @param firstVecOffset  Bytes to skip at the start of the first vec.
+ * @param lastVecSize     Byte count to retain in the last vec (0 = keep all).
+ * @param vecs            Source scatter/gather vector array.
+ * @param count           Number of elements in @p vecs.
+ * @param length          Total logical byte length represented by the vecs.
+ * @param flags           I/O request flags (e.g. B_PHYSICAL_IO_REQUEST).
+ */
 void
 IOBuffer::SetVecs(generic_size_t firstVecOffset, generic_size_t lastVecSize,
 	const generic_io_vec* vecs, uint32 count, generic_size_t length, uint32 flags)
@@ -139,6 +200,17 @@ IOBuffer::SetVecs(generic_size_t firstVecOffset, generic_size_t lastVecSize,
 }
 
 
+/**
+ * @brief Returns the next virtual iovec for iterating over the buffer's
+ *        contents, mapping physical pages on demand when necessary.
+ *
+ * @param _cookie  Opaque iteration state; pass a NULL pointer on the first
+ *                 call; the function allocates and updates it automatically.
+ * @param vector   Filled with the base address and length of the next chunk.
+ * @retval B_OK           A valid iovec was written to @p vector.
+ * @retval B_BAD_INDEX    All vecs have been exhausted.
+ * @retval B_NO_MEMORY    Could not allocate the iteration cookie.
+ */
 status_t
 IOBuffer::GetNextVirtualVec(void*& _cookie, iovec& vector)
 {
@@ -213,6 +285,12 @@ IOBuffer::GetNextVirtualVec(void*& _cookie, iovec& vector)
 }
 
 
+/**
+ * @brief Releases all resources associated with a virtual-vec iteration
+ *        cookie obtained from GetNextVirtualVec().
+ *
+ * @param _cookie  Cookie to free; may be NULL (no-op in that case).
+ */
 void
 IOBuffer::FreeVirtualVecCookie(void* _cookie)
 {
@@ -226,6 +304,15 @@ IOBuffer::FreeVirtualVecCookie(void* _cookie)
 }
 
 
+/**
+ * @brief Locks all virtual memory regions described by the buffer's vecs so
+ *        that the pages cannot be swapped out during the I/O transfer.
+ *
+ * @param team     Team whose address space the vecs belong to.
+ * @param isWrite  True if the I/O is a write (pages must be writable).
+ * @retval B_OK        All pages successfully locked.
+ * @retval B_BAD_VALUE Memory was already locked.
+ */
 status_t
 IOBuffer::LockMemory(team_id team, bool isWrite)
 {
@@ -248,6 +335,14 @@ IOBuffer::LockMemory(team_id team, bool isWrite)
 }
 
 
+/**
+ * @brief Unlocks the first @p count vecs; used internally to roll back a
+ *        partially completed LockMemory() on error.
+ *
+ * @param team    Team whose address space the vecs belong to.
+ * @param count   Number of leading vecs to unlock.
+ * @param isWrite Whether the original lock was for a write operation.
+ */
 void
 IOBuffer::_UnlockMemory(team_id team, size_t count, bool isWrite)
 {
@@ -258,6 +353,13 @@ IOBuffer::_UnlockMemory(team_id team, size_t count, bool isWrite)
 }
 
 
+/**
+ * @brief Unlocks all previously locked memory regions and clears the locked
+ *        flag.
+ *
+ * @param team    Team whose address space the vecs belong to.
+ * @param isWrite Whether the original lock was for a write operation.
+ */
 void
 IOBuffer::UnlockMemory(team_id team, bool isWrite)
 {
@@ -271,6 +373,10 @@ IOBuffer::UnlockMemory(team_id team, bool isWrite)
 }
 
 
+/**
+ * @brief Prints a human-readable summary of the IOBuffer to the kernel
+ *        debugger console.
+ */
 void
 IOBuffer::Dump() const
 {
@@ -292,6 +398,14 @@ IOBuffer::Dump() const
 // #pragma mark -
 
 
+/**
+ * @brief Records the final status of the operation and accumulates the number
+ *        of bytes that were actually transferred relative to the original
+ *        (untranslated) range.
+ *
+ * @param status           Completion status code.
+ * @param completedLength  Bytes completed in the (possibly translated) range.
+ */
 void
 IOOperation::SetStatus(status_t status, generic_size_t completedLength)
 {
@@ -314,6 +428,21 @@ IOOperation::SetStatus(status_t status, generic_size_t completedLength)
 }
 
 
+/**
+ * @brief Advances the operation through its multi-phase execution state
+ *        machine and, when the final phase completes, copies any bounce-buffer
+ *        data back to the caller's buffer.
+ *
+ * For partial writes the sequence is:
+ *   1. PHASE_READ_BEGIN — read the first partial block so its unmodified
+ *      prefix is preserved in the bounce buffer.
+ *   2. PHASE_READ_END   — read the last partial block for the same reason.
+ *   3. PHASE_DO_ALL     — perform the actual write with complete blocks.
+ *
+ * @return true if the operation is fully finished and should be retired;
+ *         false if another phase is pending and the driver should be
+ *         re-invoked.
+ */
 bool
 IOOperation::Finish()
 {
@@ -433,8 +562,18 @@ IOOperation::Finish()
 }
 
 
-/*!	Note: SetPartial() must be called first!
-*/
+/**
+ * @brief Binds the operation to @p request, pre-fills bounce-buffer segments
+ *        for write operations, sets the initial execution phase, and registers
+ *        the operation with the parent request.
+ *
+ * SetPartial() must be called before Prepare() so that the partial-begin and
+ * partial-end flags are already set.
+ *
+ * @param request  The owning IORequest; must not be NULL.
+ * @retval B_OK        Preparation succeeded.
+ * @retval B_NO_MEMORY A bounce-buffer copy failed due to an address fault.
+ */
 status_t
 IOOperation::Prepare(IORequest* request)
 {
@@ -532,6 +671,13 @@ IOOperation::Prepare(IORequest* request)
 }
 
 
+/**
+ * @brief Sets both the translated and original offset/length to the same
+ *        values, establishing the initial range for a new operation.
+ *
+ * @param offset  Device byte offset where the operation starts.
+ * @param length  Number of bytes covered by the operation.
+ */
 void
 IOOperation::SetOriginalRange(off_t offset, generic_size_t length)
 {
@@ -540,6 +686,13 @@ IOOperation::SetOriginalRange(off_t offset, generic_size_t length)
 }
 
 
+/**
+ * @brief Updates the translated (DMA-aligned) offset and length without
+ *        touching the original range.
+ *
+ * @param offset  New translated device byte offset.
+ * @param length  New translated byte count.
+ */
 void
 IOOperation::SetRange(off_t offset, generic_size_t length)
 {
@@ -548,6 +701,15 @@ IOOperation::SetRange(off_t offset, generic_size_t length)
 }
 
 
+/**
+ * @brief Returns the device byte offset appropriate for the current execution
+ *        phase.
+ *
+ * During PHASE_READ_END the offset is adjusted to point at the last partial
+ * block rather than the start of the operation.
+ *
+ * @return Device offset in bytes.
+ */
 off_t
 IOOperation::Offset() const
 {
@@ -555,6 +717,15 @@ IOOperation::Offset() const
 }
 
 
+/**
+ * @brief Returns the transfer length appropriate for the current execution
+ *        phase.
+ *
+ * Single-block phases (READ_BEGIN / READ_END) return fBlockSize; the full
+ * phase returns fLength.
+ *
+ * @return Number of bytes to transfer in the current phase.
+ */
 generic_size_t
 IOOperation::Length() const
 {
@@ -562,6 +733,12 @@ IOOperation::Length() const
 }
 
 
+/**
+ * @brief Returns a pointer to the first DMA scatter/gather vec that applies
+ *        to the current execution phase.
+ *
+ * @return Pointer into the DMA buffer's vec array.
+ */
 generic_io_vec*
 IOOperation::Vecs() const
 {
@@ -576,6 +753,12 @@ IOOperation::Vecs() const
 }
 
 
+/**
+ * @brief Returns the number of scatter/gather vecs active in the current
+ *        execution phase.
+ *
+ * @return Vec count for the current phase.
+ */
 uint32
 IOOperation::VecCount() const
 {
@@ -591,6 +774,15 @@ IOOperation::VecCount() const
 }
 
 
+/**
+ * @brief Records whether this operation covers a partial first block, a
+ *        partial last block, or both.
+ *
+ * Must be called before Prepare().
+ *
+ * @param partialBegin  True if the first block is only partially written.
+ * @param partialEnd    True if the last block is only partially written.
+ */
 void
 IOOperation::SetPartial(bool partialBegin, bool partialEnd)
 {
@@ -600,6 +792,12 @@ IOOperation::SetPartial(bool partialBegin, bool partialEnd)
 }
 
 
+/**
+ * @brief Returns true when this operation is performing the actual write
+ *        phase (PHASE_DO_ALL) of a write request.
+ *
+ * @return true if this is an active write phase, false otherwise.
+ */
 bool
 IOOperation::IsWrite() const
 {
@@ -607,6 +805,11 @@ IOOperation::IsWrite() const
 }
 
 
+/**
+ * @brief Returns true when the parent request is a read operation.
+ *
+ * @return true if the parent IORequest is a read.
+ */
 bool
 IOOperation::IsRead() const
 {
@@ -614,6 +817,11 @@ IOOperation::IsRead() const
 }
 
 
+/**
+ * @brief Trims the DMA buffer's vec array to cover only the block(s) needed
+ *        for the current phase (READ_BEGIN or READ_END), saving the original
+ *        vec length so it can be restored later.
+ */
 void
 IOOperation::_PrepareVecs()
 {
@@ -651,6 +859,16 @@ IOOperation::_PrepareVecs()
 }
 
 
+/**
+ * @brief Copies the partial first-block data between the caller's buffer and
+ *        the bounce buffer.
+ *
+ * @param isWrite          Direction: true copies from caller to bounce buffer,
+ *                         false copies from bounce buffer to caller.
+ * @param singleBlockOnly  Set to true on return if the entire original range
+ *                         fits within a single block.
+ * @retval B_OK  Copy succeeded.
+ */
 status_t
 IOOperation::_CopyPartialBegin(bool isWrite, bool& singleBlockOnly)
 {
@@ -675,6 +893,14 @@ IOOperation::_CopyPartialBegin(bool isWrite, bool& singleBlockOnly)
 }
 
 
+/**
+ * @brief Copies the partial last-block data between the caller's buffer and
+ *        the bounce buffer.
+ *
+ * @param isWrite  Direction: true copies from caller to bounce buffer,
+ *                 false copies from bounce buffer to caller.
+ * @retval B_OK  Copy succeeded.
+ */
 status_t
 IOOperation::_CopyPartialEnd(bool isWrite)
 {
@@ -697,6 +923,10 @@ IOOperation::_CopyPartialEnd(bool isWrite)
 }
 
 
+/**
+ * @brief Prints a detailed description of the IOOperation to the kernel
+ *        debugger console.
+ */
 void
 IOOperation::Dump() const
 {
@@ -729,6 +959,10 @@ IOOperation::Dump() const
 // #pragma mark -
 
 
+/**
+ * @brief Default constructor — initialises the request lock and finished
+ *        condition variable.
+ */
 IORequest::IORequest()
 	:
 	fIsNotified(false),
@@ -742,6 +976,9 @@ IORequest::IORequest()
 }
 
 
+/**
+ * @brief Destructor — deletes all child sub-requests and frees the IOBuffer.
+ */
 IORequest::~IORequest()
 {
 	mutex_lock(&fLock);
@@ -752,6 +989,13 @@ IORequest::~IORequest()
 }
 
 
+/**
+ * @brief Allocates a new IORequest from the appropriate heap tier.
+ *
+ * @param vip  When true, allocates from the VIP heap so the allocation
+ *             succeeds even under severe memory pressure.
+ * @return Pointer to the new IORequest, or NULL on failure.
+ */
 /* static */ IORequest*
 IORequest::Create(bool vip)
 {
@@ -761,6 +1005,20 @@ IORequest::Create(bool vip)
 }
 
 
+/**
+ * @brief Convenience initialiser for single-vector requests.
+ *
+ * Wraps the provided flat buffer address in a single generic_io_vec and
+ * delegates to the multi-vector Init() overload.
+ *
+ * @param offset  Byte offset within the target file or device.
+ * @param buffer  Base address of the data buffer.
+ * @param length  Number of bytes to transfer.
+ * @param write   True for write, false for read.
+ * @param flags   Request flags (e.g. B_VIP_IO_REQUEST, B_PHYSICAL_IO_REQUEST).
+ * @retval B_OK        Initialisation succeeded.
+ * @retval B_NO_MEMORY Could not allocate the internal IOBuffer.
+ */
 status_t
 IORequest::Init(off_t offset, generic_addr_t buffer, generic_size_t length,
 	bool write, uint32 flags)
@@ -774,6 +1032,23 @@ IORequest::Init(off_t offset, generic_addr_t buffer, generic_size_t length,
 }
 
 
+/**
+ * @brief Full initialiser for scatter/gather requests.
+ *
+ * Creates and populates the internal IOBuffer, records thread/team ownership,
+ * and resets all iteration and accounting fields.
+ *
+ * @param offset          Byte offset within the target file or device.
+ * @param firstVecOffset  Bytes to skip at the beginning of the first vec.
+ * @param lastVecSize     Byte count to keep from the last vec (0 = keep all).
+ * @param vecs            Scatter/gather vector array.
+ * @param count           Number of elements in @p vecs.
+ * @param length          Total logical byte length of the transfer.
+ * @param write           True for write, false for read.
+ * @param flags           Request flags.
+ * @retval B_OK        Initialisation succeeded.
+ * @retval B_NO_MEMORY Could not allocate the internal IOBuffer.
+ */
 status_t
 IORequest::Init(off_t offset, generic_size_t firstVecOffset,
 	generic_size_t lastVecSize, const generic_io_vec* vecs, size_t count,
@@ -813,6 +1088,21 @@ IORequest::Init(off_t offset, generic_size_t firstVecOffset,
 }
 
 
+/**
+ * @brief Creates a child IORequest that covers a contiguous sub-range of this
+ *        request's buffer and registers it as a pending child.
+ *
+ * The sub-request shares the parent's scatter/gather vecs (no copy) and
+ * inherits team/thread ownership.
+ *
+ * @param parentOffset  Byte offset within the parent's logical range at which
+ *                      the sub-request begins.
+ * @param offset        Device offset for the sub-request.
+ * @param length        Byte length of the sub-request.
+ * @param _subRequest   Receives the newly created sub-request on success.
+ * @retval B_OK        Sub-request created and linked successfully.
+ * @retval B_NO_MEMORY Allocation of the sub-request failed.
+ */
 status_t
 IORequest::CreateSubRequest(off_t parentOffset, off_t offset,
 	generic_size_t length, IORequest*& _subRequest)
@@ -877,6 +1167,10 @@ IORequest::CreateSubRequest(off_t parentOffset, off_t offset,
 }
 
 
+/**
+ * @brief Destroys all child sub-requests and resets the pending-children
+ *        counter to zero.
+ */
 void
 IORequest::DeleteSubRequests()
 {
@@ -886,6 +1180,12 @@ IORequest::DeleteSubRequests()
 }
 
 
+/**
+ * @brief Registers a callback to be invoked when the request finishes.
+ *
+ * @param callback  Function pointer called on completion.
+ * @param cookie    Opaque value forwarded as the first argument to @p callback.
+ */
 void
 IORequest::SetFinishedCallback(io_request_finished_callback callback,
 	void* cookie)
@@ -895,6 +1195,13 @@ IORequest::SetFinishedCallback(io_request_finished_callback callback,
 }
 
 
+/**
+ * @brief Registers a callback that is called when the request needs to be
+ *        iterated (e.g. to restart a partial transfer).
+ *
+ * @param callback  Iteration callback function pointer.
+ * @param cookie    Opaque value forwarded to @p callback.
+ */
 void
 IORequest::SetIterationCallback(io_request_iterate_callback callback,
 	void* cookie)
@@ -904,6 +1211,13 @@ IORequest::SetIterationCallback(io_request_iterate_callback callback,
 }
 
 
+/**
+ * @brief Returns the currently registered finished callback and its cookie.
+ *
+ * @param _cookie  If non-NULL, receives the cookie associated with the
+ *                 callback.
+ * @return The registered io_request_finished_callback, or NULL if none.
+ */
 io_request_finished_callback
 IORequest::FinishedCallback(void** _cookie) const
 {
@@ -913,6 +1227,15 @@ IORequest::FinishedCallback(void** _cookie) const
 }
 
 
+/**
+ * @brief Blocks the calling thread until the request has been notified as
+ *        finished.
+ *
+ * @param flags    Wait flags passed to ConditionVariableEntry::Wait().
+ * @param timeout  Maximum time to wait in microseconds.
+ * @retval B_OK         The request completed successfully.
+ * @retval B_TIMED_OUT  The timeout expired before completion.
+ */
 status_t
 IORequest::Wait(uint32 flags, bigtime_t timeout)
 {
@@ -934,6 +1257,15 @@ IORequest::Wait(uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Drives the request to completion: handles iteration, unlocks locked
+ *        memory, fires the finished callback, and notifies the parent
+ *        request.
+ *
+ * If an iteration callback is registered and the transfer is incomplete, it
+ * is invoked to continue the request before the final notification is sent.
+ * This method may delete the request if the B_DELETE_IO_REQUEST flag is set.
+ */
 void
 IORequest::NotifyFinished()
 {
@@ -1008,10 +1340,15 @@ IORequest::NotifyFinished()
 }
 
 
-/*!	Returns whether this request or any of it's ancestors has a finished or
-	notification callback. Used to decide whether NotifyFinished() can be called
-	synchronously.
-*/
+/**
+ * @brief Returns whether this request or any ancestor has a finished or
+ *        iteration callback registered.
+ *
+ * Used to determine whether NotifyFinished() must be dispatched to a
+ * separate thread rather than called synchronously.
+ *
+ * @return true if at least one callback is registered in the ancestor chain.
+ */
 bool
 IORequest::HasCallbacks() const
 {
@@ -1022,6 +1359,15 @@ IORequest::HasCallbacks() const
 }
 
 
+/**
+ * @brief Atomically sets the request status and immediately triggers the
+ *        finished notification chain.
+ *
+ * If the request status has already been set (i.e. it is no longer the
+ * sentinel value 1) this call is a no-op.
+ *
+ * @param status  The completion status to record (e.g. B_OK or an error).
+ */
 void
 IORequest::SetStatusAndNotify(status_t status)
 {
@@ -1038,6 +1384,13 @@ IORequest::SetStatusAndNotify(status_t status)
 }
 
 
+/**
+ * @brief Called by an IOOperation when it has finished executing; updates
+ *        transfer accounting and triggers NotifyFinished() when the last
+ *        child operation completes.
+ *
+ * @param operation  The operation that has just finished.
+ */
 void
 IORequest::OperationFinished(IOOperation* operation)
 {
@@ -1075,6 +1428,17 @@ IORequest::OperationFinished(IOOperation* operation)
 }
 
 
+/**
+ * @brief Called by a child sub-request when it finishes; propagates status
+ *        and triggers NotifyFinished() when the last pending child is done.
+ *
+ * @param request              The sub-request that finished.
+ * @param status               Completion status of the sub-request.
+ * @param partialTransfer      True if the sub-request transferred fewer bytes
+ *                             than requested.
+ * @param transferEndOffset    Byte offset relative to this request's start at
+ *                             which the sub-request's transfer ended.
+ */
 void
 IORequest::SubRequestFinished(IORequest* request, status_t status,
 	bool partialTransfer, generic_size_t transferEndOffset)
@@ -1108,6 +1472,10 @@ IORequest::SubRequestFinished(IORequest* request, status_t status,
 }
 
 
+/**
+ * @brief Resets the request status back to the "in progress" sentinel (1) so
+ *        that the request can be resubmitted.
+ */
 void
 IORequest::SetUnfinished()
 {
@@ -1116,6 +1484,13 @@ IORequest::SetUnfinished()
 }
 
 
+/**
+ * @brief Directly sets the transferred-bytes count and the partial-transfer
+ *        flag, bypassing the normal child-notification accounting.
+ *
+ * @param partialTransfer   True if fewer bytes were transferred than requested.
+ * @param transferredBytes  Number of bytes successfully transferred.
+ */
 void
 IORequest::SetTransferredBytes(bool partialTransfer,
 	generic_size_t transferredBytes)
@@ -1130,6 +1505,15 @@ IORequest::SetTransferredBytes(bool partialTransfer,
 }
 
 
+/**
+ * @brief Controls whether child sub-requests call NotifyFinished() on this
+ *        request when they complete.
+ *
+ * Setting this to true is useful when the caller wants to batch child
+ * completions and drive the parent notification manually.
+ *
+ * @param suppress  True to suppress automatic notifications from children.
+ */
 void
 IORequest::SetSuppressChildNotifications(bool suppress)
 {
@@ -1137,6 +1521,13 @@ IORequest::SetSuppressChildNotifications(bool suppress)
 }
 
 
+/**
+ * @brief Advances the iteration cursor by @p bySize bytes, updating the
+ *        current vec index/offset and the remaining-bytes / transfer-size
+ *        counters.
+ *
+ * @param bySize  Number of bytes to advance.
+ */
 void
 IORequest::Advance(generic_size_t bySize)
 {
@@ -1159,6 +1550,11 @@ IORequest::Advance(generic_size_t bySize)
 }
 
 
+/**
+ * @brief Returns the first child sub-request, or NULL if there are none.
+ *
+ * @return Pointer to the first IORequest child, or NULL.
+ */
 IORequest*
 IORequest::FirstSubRequest()
 {
@@ -1166,6 +1562,14 @@ IORequest::FirstSubRequest()
 }
 
 
+/**
+ * @brief Returns the child sub-request that follows @p previous in the
+ *        children list.
+ *
+ * @param previous  A sub-request previously returned by FirstSubRequest() or
+ *                  NextSubRequest().
+ * @return The next sibling sub-request, or NULL if @p previous was the last.
+ */
 IORequest*
 IORequest::NextSubRequest(IORequest* previous)
 {
@@ -1175,6 +1579,12 @@ IORequest::NextSubRequest(IORequest* previous)
 }
 
 
+/**
+ * @brief Appends an IOOperation to the children list and increments the
+ *        pending-children counter.
+ *
+ * @param operation  The operation to add.
+ */
 void
 IORequest::AddOperation(IOOperation* operation)
 {
@@ -1185,6 +1595,12 @@ IORequest::AddOperation(IOOperation* operation)
 }
 
 
+/**
+ * @brief Removes an IOOperation from the children list without decrementing
+ *        the pending-children counter or triggering any notification.
+ *
+ * @param operation  The operation to remove.
+ */
 void
 IORequest::RemoveOperation(IOOperation* operation)
 {
@@ -1194,6 +1610,16 @@ IORequest::RemoveOperation(IOOperation* operation)
 }
 
 
+/**
+ * @brief Copies data from the request's buffer into @p buffer (read-out
+ *        direction).
+ *
+ * @param offset  Logical byte offset within the request's range.
+ * @param buffer  Destination buffer in kernel memory.
+ * @param size    Number of bytes to copy.
+ * @retval B_OK        Copy succeeded.
+ * @retval B_BAD_VALUE The requested range falls outside the request's bounds.
+ */
 status_t
 IORequest::CopyData(off_t offset, void* buffer, size_t size)
 {
@@ -1201,6 +1627,16 @@ IORequest::CopyData(off_t offset, void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Copies data from @p buffer into the request's buffer (write-in
+ *        direction).
+ *
+ * @param buffer  Source buffer in kernel memory.
+ * @param offset  Logical byte offset within the request's range.
+ * @param size    Number of bytes to copy.
+ * @retval B_OK        Copy succeeded.
+ * @retval B_BAD_VALUE The requested range falls outside the request's bounds.
+ */
 status_t
 IORequest::CopyData(const void* buffer, off_t offset, size_t size)
 {
@@ -1208,6 +1644,17 @@ IORequest::CopyData(const void* buffer, off_t offset, size_t size)
 }
 
 
+/**
+ * @brief Zeroes a sub-range of the request's buffer, selecting the
+ *        appropriate clear function based on whether the buffer is physical,
+ *        user-space virtual, or kernel virtual.
+ *
+ * @param offset  Logical byte offset within the request's range to start
+ *                clearing.
+ * @param size    Number of bytes to zero.
+ * @retval B_OK        Clear succeeded.
+ * @retval B_BAD_VALUE The range falls outside the request's bounds.
+ */
 status_t
 IORequest::ClearData(off_t offset, generic_size_t size)
 {
@@ -1262,6 +1709,21 @@ IORequest::ClearData(off_t offset, generic_size_t size)
 }
 
 
+/**
+ * @brief Internal workhorse that performs the actual vec-by-vec copy between
+ *        a bounce buffer and the request's scatter/gather buffer.
+ *
+ * Selects between physical, user-space, and simple copy helpers based on the
+ * buffer type and the owning team.
+ *
+ * @param _buffer  Bounce-buffer address in kernel memory.
+ * @param offset   Logical byte offset within the request's range.
+ * @param size     Number of bytes to transfer.
+ * @param copyIn   True to copy from the request buffer into @p _buffer
+ *                 (read direction); false for the opposite direction.
+ * @retval B_OK        Transfer succeeded.
+ * @retval B_BAD_VALUE The range falls outside the request's bounds.
+ */
 status_t
 IORequest::_CopyData(void* _buffer, off_t offset, size_t size, bool copyIn)
 {
@@ -1318,6 +1780,17 @@ IORequest::_CopyData(void* _buffer, off_t offset, size_t size, bool copyIn)
 }
 
 
+/**
+ * @brief Copies between a bounce buffer and a virtual (kernel or user)
+ *        address, using user_memcpy() when the destination is in user space.
+ *
+ * @param bounceBuffer  Kernel-space bounce buffer.
+ * @param external      Virtual address to copy to/from.
+ * @param size          Number of bytes.
+ * @param team          Unused; present for function-pointer uniformity.
+ * @param copyIn        True to copy from @p external into @p bounceBuffer.
+ * @retval B_OK  Copy succeeded.
+ */
 /* static */ status_t
 IORequest::_CopySimple(void* bounceBuffer, generic_addr_t external, size_t size,
 	team_id team, bool copyIn)
@@ -1342,6 +1815,17 @@ IORequest::_CopySimple(void* bounceBuffer, generic_addr_t external, size_t size,
 }
 
 
+/**
+ * @brief Copies between a bounce buffer and a physical address using
+ *        vm_memcpy_from_physical() / vm_memcpy_to_physical().
+ *
+ * @param bounceBuffer  Kernel-virtual bounce buffer.
+ * @param external      Physical address to copy to/from.
+ * @param size          Number of bytes.
+ * @param team          Unused; present for function-pointer uniformity.
+ * @param copyIn        True to copy from physical memory into @p bounceBuffer.
+ * @retval B_OK  Copy succeeded.
+ */
 /* static */ status_t
 IORequest::_CopyPhysical(void* bounceBuffer, generic_addr_t external,
 	size_t size, team_id team, bool copyIn)
@@ -1353,6 +1837,19 @@ IORequest::_CopyPhysical(void* bounceBuffer, generic_addr_t external,
 }
 
 
+/**
+ * @brief Copies between a bounce buffer and a user-space virtual address
+ *        by resolving the user pages through get_memory_map_etc() and then
+ *        calling _CopyPhysical() on each physical entry.
+ *
+ * @param _bounceBuffer  Kernel-space bounce buffer.
+ * @param _external      User-space virtual base address.
+ * @param size           Total number of bytes to copy.
+ * @param team           Team whose address space @p _external belongs to.
+ * @param copyIn         True to copy from user space into @p _bounceBuffer.
+ * @retval B_OK           Copy succeeded.
+ * @retval B_BAD_ADDRESS  Could not resolve the user-space address.
+ */
 /* static */ status_t
 IORequest::_CopyUser(void* _bounceBuffer, generic_addr_t _external, size_t size,
 	team_id team, bool copyIn)
@@ -1390,6 +1887,14 @@ IORequest::_CopyUser(void* _bounceBuffer, generic_addr_t _external, size_t size,
 }
 
 
+/**
+ * @brief Zeroes a kernel-virtual memory region using memset().
+ *
+ * @param external  Kernel virtual address to zero.
+ * @param size      Number of bytes to zero.
+ * @param team      Unused; present for function-pointer uniformity.
+ * @retval B_OK  Always succeeds.
+ */
 /*static*/ status_t
 IORequest::_ClearDataSimple(generic_addr_t external, generic_size_t size,
 	team_id team)
@@ -1399,6 +1904,14 @@ IORequest::_ClearDataSimple(generic_addr_t external, generic_size_t size,
 }
 
 
+/**
+ * @brief Zeroes a physical memory region via vm_memset_physical().
+ *
+ * @param external  Physical address to zero.
+ * @param size      Number of bytes to zero.
+ * @param team      Unused; present for function-pointer uniformity.
+ * @retval B_OK  On success.
+ */
 /*static*/ status_t
 IORequest::_ClearDataPhysical(generic_addr_t external, generic_size_t size,
 	team_id team)
@@ -1407,6 +1920,17 @@ IORequest::_ClearDataPhysical(generic_addr_t external, generic_size_t size,
 }
 
 
+/**
+ * @brief Zeroes a user-space virtual memory region by resolving its physical
+ *        pages through get_memory_map_etc() and calling _ClearDataPhysical()
+ *        on each entry.
+ *
+ * @param _external  User-space virtual base address to zero.
+ * @param size       Number of bytes to zero.
+ * @param team       Team whose address space @p _external belongs to.
+ * @retval B_OK           Succeeded.
+ * @retval B_BAD_ADDRESS  Could not resolve the user-space address.
+ */
 /*static*/ status_t
 IORequest::_ClearDataUser(generic_addr_t _external, generic_size_t size,
 	team_id team)
@@ -1441,6 +1965,11 @@ IORequest::_ClearDataUser(generic_addr_t _external, generic_size_t size,
 }
 
 
+/**
+ * @brief Prints a comprehensive dump of the IORequest's state to the kernel
+ *        debugger console, including buffer, offset, flags, children, and
+ *        iteration state.
+ */
 void
 IORequest::Dump() const
 {

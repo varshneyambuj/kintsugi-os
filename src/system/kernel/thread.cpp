@@ -1,15 +1,43 @@
 /*
- * Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
- * Copyright 2005-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
+ *   Copyright 2005-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
-
-/*! Threading routines */
+/**
+ * @file thread.cpp
+ * @brief Kernel thread lifecycle management — creation, scheduling, and termination.
+ *
+ * Implements thread creation (spawn_kernel_thread, _kern_spawn_thread),
+ * thread exit (thread_exit), blocking/unblocking, priority management,
+ * thread info queries, and the per-thread kernel/user stack setup.
+ * Thread objects are ref-counted and stored in a global hash table.
+ *
+ * @see team.cpp, scheduler/scheduler.cpp, sem.cpp
+ */
 
 
 #include <thread.h>
@@ -169,6 +197,18 @@ static spinlock sCachedKernelStacksLock = B_SPINLOCK_INITIALIZER;
 static DoublyLinkedList<CachedKernelStack> sCachedKernelStacks;
 
 
+/**
+ * @brief Allocate a kernel stack from the cache, renaming its area.
+ *
+ * Removes the head entry from the cached kernel stack list and renames
+ * its underlying VMArea to @p name.  Panics if the cache is empty.
+ *
+ * @param name   Name to assign to the kernel stack area.
+ * @param base   Receives the base address of the allocated stack.
+ * @param top    Receives the top address of the allocated stack.
+ * @retval >= 0  area_id of the allocated stack area.
+ * @retval B_NO_MEMORY  Cache was empty (also triggers panic).
+ */
 static area_id
 allocate_kernel_stack(const char* name, addr_t* base, addr_t* top)
 {
@@ -190,6 +230,17 @@ allocate_kernel_stack(const char* name, addr_t* base, addr_t* top)
 }
 
 
+/**
+ * @brief Return a kernel stack area to the cache.
+ *
+ * Places the stack described by @p areaID / @p base / @p top back onto the
+ * head of the cached kernel stack list and renames the area to
+ * "cached kstack".
+ *
+ * @param areaID  area_id of the kernel stack area being freed.
+ * @param base    Base address of the kernel stack.
+ * @param top     Top address of the kernel stack.
+ */
 static void
 free_kernel_stack(area_id areaID, addr_t base, addr_t top)
 {
@@ -211,6 +262,18 @@ free_kernel_stack(area_id areaID, addr_t base, addr_t top)
 }
 
 
+/**
+ * @brief Object-cache constructor callback: allocate one kernel stack area.
+ *
+ * Creates a fully-locked VMArea for a kernel stack (plus guard pages) and
+ * immediately hands it to free_kernel_stack() so it enters the cache.
+ * Called by the slab allocator when a new slab of Thread objects is prepared.
+ *
+ * @param cookie  Unused cookie passed by the object cache.
+ * @param object  Unused pointer to the object being constructed.
+ * @retval B_OK   Stack area was created and cached successfully.
+ * @retval < B_OK An area creation error occurred.
+ */
 static status_t
 create_kernel_stack(void* cookie, void* object)
 {
@@ -239,6 +302,16 @@ create_kernel_stack(void* cookie, void* object)
 }
 
 
+/**
+ * @brief Object-cache destructor callback: delete one cached kernel stack.
+ *
+ * Removes the head entry from the cached stack list and deletes its
+ * underlying VMArea.  Called by the slab allocator when a slab of Thread
+ * objects is destroyed.
+ *
+ * @param cookie  Unused cookie passed by the object cache.
+ * @param object  Unused pointer to the object being destroyed.
+ */
 static void
 destroy_kernel_stack(void* cookie, void* object)
 {
@@ -260,6 +333,18 @@ destroy_kernel_stack(void* cookie, void* object)
 		  \code < 0 \endcode a fresh one is allocated.
 	\param cpu The CPU the thread shall be assigned.
 */
+/**
+ * @brief Construct a Thread object and insert it (invisible) into the hash table.
+ *
+ * Initialises all fields to safe defaults, allocates synchronisation
+ * primitives (mutex, spinlocks), copies or generates the thread name, and
+ * inserts the new thread into @c sThreadHash with @c visible = false so it
+ * is not yet discoverable.
+ *
+ * @param name      Human-readable name for the thread (may be NULL).
+ * @param threadID  Desired thread ID, or -1 to allocate a fresh one.
+ * @param cpu       CPU structure the thread is pinned to (may be NULL).
+ */
 Thread::Thread(const char* name, thread_id threadID, struct cpu_ent* cpu)
 	:
 	flags(0),
@@ -328,6 +413,17 @@ Thread::Thread(const char* name, thread_id threadID, struct cpu_ent* cpu)
 }
 
 
+/**
+ * @brief Destroy a Thread object, releasing all remaining resources.
+ *
+ * Deletes the user stack area (if any), user timers, kernel stack, pending
+ * signals, inter-thread messaging semaphores, and the exit semaphore.
+ * Also calls scheduler_on_thread_destroy() and removes the thread from the
+ * global hash table.
+ *
+ * @note The thread must already have exited (or never been started) before
+ *       the destructor runs.
+ */
 Thread::~Thread()
 {
 	// Delete resources that should actually be deleted by the thread itself,
@@ -362,6 +458,19 @@ Thread::~Thread()
 }
 
 
+/**
+ * @brief Allocate and fully initialise a new Thread object.
+ *
+ * Convenience factory that combines construction and Thread::Init() into
+ * a single call.  On success the caller receives a reference-counted
+ * Thread pointer.
+ *
+ * @param name     Human-readable name for the new thread.
+ * @param _thread  Receives the newly created Thread on success.
+ * @retval B_OK       Thread created successfully.
+ * @retval B_NO_MEMORY Allocation failed.
+ * @retval other      Init() returned an error.
+ */
 /*static*/ status_t
 Thread::Create(const char* name, Thread*& _thread)
 {
@@ -380,6 +489,16 @@ Thread::Create(const char* name, Thread*& _thread)
 }
 
 
+/**
+ * @brief Look up a thread by ID and return a referenced pointer to it.
+ *
+ * If @p id refers to the calling thread, AcquireReference() is called on
+ * it directly.  Otherwise the global hash table is searched under a read
+ * spinlock.
+ *
+ * @param id  ID of the thread to find.
+ * @return    Referenced Thread pointer, or NULL if not found.
+ */
 /*static*/ Thread*
 Thread::Get(thread_id id)
 {
@@ -397,6 +516,17 @@ Thread::Get(thread_id id)
 }
 
 
+/**
+ * @brief Look up a thread by ID, acquire a reference, and lock it.
+ *
+ * Combines Thread::Get() with locking, re-checking that the thread is still
+ * present in the hash table after the lock is acquired (to avoid a TOCTOU
+ * race).  Returns NULL if the thread has been removed between the lookup and
+ * the lock.
+ *
+ * @param id  ID of the thread to find and lock.
+ * @return    Referenced and locked Thread pointer, or NULL if not found.
+ */
 /*static*/ Thread*
 Thread::GetAndLock(thread_id id)
 {
@@ -432,6 +562,16 @@ Thread::GetAndLock(thread_id id)
 }
 
 
+/**
+ * @brief Look up a thread by ID without acquiring a reference (debug only).
+ *
+ * Intended exclusively for use inside the kernel debugger where normal
+ * locking and reference counting are not available.
+ *
+ * @param id  ID of the thread to find.
+ * @return    Raw Thread pointer (unreferenced), or NULL if not found.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ Thread*
 Thread::GetDebug(thread_id id)
 {
@@ -439,6 +579,14 @@ Thread::GetDebug(thread_id id)
 }
 
 
+/**
+ * @brief Check whether a thread with the given ID currently exists.
+ *
+ * Performs a hash-table lookup under a read spinlock.
+ *
+ * @param id  Thread ID to check.
+ * @return    true if the thread is in the hash table, false otherwise.
+ */
 /*static*/ bool
 Thread::IsAlive(thread_id id)
 {
@@ -447,6 +595,12 @@ Thread::IsAlive(thread_id id)
 }
 
 
+/**
+ * @brief Allocate a Thread object from the slab cache.
+ *
+ * @param size  Size requested by the C++ runtime (ignored; slab controls size).
+ * @return      Pointer to raw memory for the Thread object.
+ */
 void*
 Thread::operator new(size_t size)
 {
@@ -454,6 +608,16 @@ Thread::operator new(size_t size)
 }
 
 
+/**
+ * @brief Placement new — return the supplied pointer unchanged.
+ *
+ * Used when constructing idle threads into pre-allocated storage
+ * (e.g. @c sIdleThreads[]).
+ *
+ * @param size     Size of the object (unused).
+ * @param pointer  Pre-allocated memory to construct the object into.
+ * @return         @p pointer unchanged.
+ */
 void*
 Thread::operator new(size_t, void* pointer)
 {
@@ -461,6 +625,12 @@ Thread::operator new(size_t, void* pointer)
 }
 
 
+/**
+ * @brief Return a Thread object to the slab cache.
+ *
+ * @param pointer  Pointer to the Thread object being freed.
+ * @param size     Size of the object (unused by the slab allocator).
+ */
 void
 Thread::operator delete(void* pointer, size_t size)
 {
@@ -468,6 +638,19 @@ Thread::operator delete(void* pointer, size_t size)
 }
 
 
+/**
+ * @brief Finish initialisation of a newly constructed Thread.
+ *
+ * Creates the exit semaphore, message write/read semaphores, and calls
+ * arch_thread_init_thread_struct() and scheduler_on_thread_create().
+ * Must be called once, right after construction, before the thread is
+ * inserted into any team or made runnable.
+ *
+ * @param idleThread  Pass true when initialising an idle thread to suppress
+ *                    scheduler bookkeeping that is inappropriate for idles.
+ * @retval B_OK    Initialisation succeeded.
+ * @retval < B_OK  A semaphore or architecture init call failed.
+ */
 status_t
 Thread::Init(bool idleThread)
 {
@@ -501,6 +684,13 @@ Thread::Init(bool idleThread)
 
 /*!	Checks whether the thread is still in the thread hash table.
 */
+/**
+ * @brief Check whether this thread instance is still live (instance method).
+ *
+ * Searches the hash table for a Thread whose ID matches @c this->id.
+ *
+ * @return true if the thread is still registered in the hash table.
+ */
 bool
 Thread::IsAlive() const
 {
@@ -510,6 +700,13 @@ Thread::IsAlive() const
 }
 
 
+/**
+ * @brief Reset signal-related state after an exec().
+ *
+ * Clears the alternate signal stack and the sigsuspend mask override.
+ * The pending signal set and signal block mask are intentionally preserved
+ * across exec() as required by POSIX.
+ */
 void
 Thread::ResetSignalsOnExec()
 {
@@ -534,6 +731,18 @@ Thread::ResetSignalsOnExec()
 	\return \c B_OK, if the timer was added successfully, another error code
 		otherwise.
 */
+/**
+ * @brief Add a user timer to this thread, enforcing the per-team limit.
+ *
+ * If the timer has no ID it is treated as user-defined and the team's
+ * user-defined timer count is checked and incremented.
+ *
+ * @param timer  Timer to add.  If @c timer->ID() < 0 it will be assigned
+ *               a new user-defined ID.
+ * @retval B_OK   Timer added successfully.
+ * @retval EAGAIN The per-team user-defined timer limit was reached.
+ * @note The caller must hold the thread's lock.
+ */
 status_t
 Thread::AddUserTimer(UserTimer* timer)
 {
@@ -555,6 +764,16 @@ Thread::AddUserTimer(UserTimer* timer)
 	\param timer The timer to be removed.
 
 */
+/**
+ * @brief Remove a user timer from this thread.
+ *
+ * Removes the timer from the internal list and, if it is user-defined
+ * (ID >= USER_TIMER_FIRST_USER_DEFINED_ID), decrements the team's
+ * user-defined timer count.
+ *
+ * @param timer  Timer to remove.
+ * @note The caller must hold the thread's lock.
+ */
 void
 Thread::RemoveUserTimer(UserTimer* timer)
 {
@@ -572,6 +791,14 @@ Thread::RemoveUserTimer(UserTimer* timer)
 	\param userDefinedOnly If \c true, only the user-defined timers are deleted,
 		otherwise all timers are deleted.
 */
+/**
+ * @brief Delete all (or all user-defined) user timers of the thread.
+ *
+ * @param userDefinedOnly  If true, only timers with IDs >=
+ *                         USER_TIMER_FIRST_USER_DEFINED_ID are removed;
+ *                         otherwise all timers are removed.
+ * @note The caller must hold the thread's lock.
+ */
 void
 Thread::DeleteUserTimers(bool userDefinedOnly)
 {
@@ -581,6 +808,12 @@ Thread::DeleteUserTimers(bool userDefinedOnly)
 }
 
 
+/**
+ * @brief Deactivate all CPU-time user timers associated with this thread.
+ *
+ * Iterates the fCPUTimeUserTimers list and calls Deactivate() on each
+ * entry, stopping any running CPU-time interval timers.
+ */
 void
 Thread::DeactivateCPUTimeUserTimers()
 {
@@ -592,6 +825,12 @@ Thread::DeactivateCPUTimeUserTimers()
 // #pragma mark - ThreadListIterator
 
 
+/**
+ * @brief Construct a ThreadListIterator and register it with the hash table.
+ *
+ * Inserts an iterator entry into the global thread hash table so that
+ * concurrent structural modifications can be handled safely.
+ */
 ThreadListIterator::ThreadListIterator()
 {
 	// queue the entry
@@ -600,6 +839,9 @@ ThreadListIterator::ThreadListIterator()
 }
 
 
+/**
+ * @brief Destroy the ThreadListIterator and unregister it from the hash table.
+ */
 ThreadListIterator::~ThreadListIterator()
 {
 	// remove the entry
@@ -608,6 +850,14 @@ ThreadListIterator::~ThreadListIterator()
 }
 
 
+/**
+ * @brief Advance to and return the next thread in the global list.
+ *
+ * Acquires a reference on the returned Thread.  Returns NULL when the
+ * iteration is exhausted.
+ *
+ * @return Referenced pointer to the next Thread, or NULL if done.
+ */
 Thread*
 ThreadListIterator::Next()
 {
@@ -624,6 +874,20 @@ ThreadListIterator::Next()
 // #pragma mark - ThreadCreationAttributes
 
 
+/**
+ * @brief Initialise ThreadCreationAttributes for a kernel thread.
+ *
+ * Sets sensible defaults for all fields and configures the kernel entry
+ * point and argument.  The @p team parameter defaults to the kernel team
+ * when < 0.
+ *
+ * @param function  Kernel entry function for the thread.
+ * @param name      Human-readable thread name.
+ * @param priority  Scheduling priority.
+ * @param arg       Argument passed to @p function.
+ * @param team      Team ID that will own the thread (< 0 for kernel team).
+ * @param thread    Optional pre-existing Thread object to reuse (may be NULL).
+ */
 ThreadCreationAttributes::ThreadCreationAttributes(thread_func function,
 	const char* name, int32 priority, void* arg, team_id team,
 	Thread* thread)
@@ -657,6 +921,22 @@ ThreadCreationAttributes::ThreadCreationAttributes(thread_func function,
 	\return \c B_OK, if the initialization went fine, another error code
 		otherwise.
 */
+/**
+ * @brief Populate ThreadCreationAttributes from a userland thread_creation_attributes struct.
+ *
+ * Copies the userland structure, validates all pointer fields, copies the
+ * thread name into @p nameBuffer, and fills in kernel-only fields (team,
+ * signal mask, fork args) from the current thread's context.
+ *
+ * @param userAttributes  Pointer to the userland structure (must be a
+ *                        valid user-space address).
+ * @param nameBuffer      Caller-supplied buffer of at least B_OS_NAME_LENGTH
+ *                        bytes used to hold the copied name string.
+ * @retval B_OK          Structure initialised successfully.
+ * @retval B_BAD_ADDRESS A pointer field was NULL or pointed outside
+ *                       user-space.
+ * @retval B_BAD_VALUE   stack_size was out of the allowed range.
+ */
 status_t
 ThreadCreationAttributes::InitFromUserAttributes(
 	const thread_creation_attributes* userAttributes, char* nameBuffer)
@@ -704,6 +984,16 @@ ThreadCreationAttributes::InitFromUserAttributes(
 	The caller must hold the team's lock, the thread's lock, and the scheduler
 	lock.
 */
+/**
+ * @brief Insert a thread into a team's thread list.
+ *
+ * Appends @p thread to @p team's thread_list, increments the thread count,
+ * and, if this is the first thread, sets it as the main thread.
+ *
+ * @param team    Team to insert the thread into.
+ * @param thread  Thread to insert.
+ * @note Caller must hold the team lock, the thread lock, and the scheduler lock.
+ */
 static void
 insert_thread_into_team(Team *team, Thread *thread)
 {
@@ -722,6 +1012,15 @@ insert_thread_into_team(Team *team, Thread *thread)
 	The caller must hold the team's lock, the thread's lock, and the scheduler
 	lock.
 */
+/**
+ * @brief Remove a thread from a team's thread list.
+ *
+ * Removes @p thread from @p team's thread_list and decrements the thread count.
+ *
+ * @param team    Team to remove the thread from.
+ * @param thread  Thread to remove.
+ * @note Caller must hold the team lock, the thread lock, and the scheduler lock.
+ */
 static void
 remove_thread_from_team(Team *team, Thread *thread)
 {
@@ -730,6 +1029,21 @@ remove_thread_from_team(Team *team, Thread *thread)
 }
 
 
+/**
+ * @brief Transition a new user thread into userland for the first time.
+ *
+ * Initialises TLS, the user_thread struct, and default TLS slots, then
+ * either restores a fork frame (for fork()ed threads) or calls
+ * arch_thread_enter_userspace() to jump to the userland entry point.
+ * Only returns on error.
+ *
+ * @param thread  The thread entering userland (must be the current thread).
+ * @param args    Entry arguments including the userland entry address,
+ *                arguments, pthread descriptor, and optional fork args.
+ * @retval B_OK          Never returned on the normal (fork restore) path.
+ * @retval B_BAD_ADDRESS A TLS copy to userland failed.
+ * @retval other         arch_thread_enter_userspace() error.
+ */
 static status_t
 enter_userspace(Thread* thread, UserThreadEntryArguments* args)
 {
@@ -790,6 +1104,20 @@ enter_userspace(Thread* thread, UserThreadEntryArguments* args)
 }
 
 
+/**
+ * @brief Enter userland on behalf of the current thread as part of a new team.
+ *
+ * Called from team creation paths to transition the first (main) thread of a
+ * newly exec()'ed or spawned team into user space.  Constructs a minimal
+ * UserThreadEntryArguments and delegates to enter_userspace().
+ *
+ * @param thread         The current kernel thread that will become the
+ *                       new team's main userland thread.
+ * @param entryFunction  Userland entry point address.
+ * @param argument1      First argument for the userland entry function.
+ * @param argument2      Second argument for the userland entry function.
+ * @return               Result of enter_userspace() — only returns on error.
+ */
 status_t
 thread_enter_userspace_new_team(Thread* thread, addr_t entryFunction,
 	void* argument1, void* argument2)
@@ -809,6 +1137,18 @@ thread_enter_userspace_new_team(Thread* thread, addr_t entryFunction,
 }
 
 
+/**
+ * @brief Universal thread entry trampoline executed on every new thread's first schedule.
+ *
+ * Called by the architecture-specific context-switch code when a thread
+ * runs for the very first time.  Releases the scheduler lock, enables
+ * interrupts, calls the optional kernel entry function, optionally enters
+ * userland, and finally calls thread_exit().
+ *
+ * @param _args  Pointer to a ThreadEntryArguments (or UserThreadEntryArguments)
+ *               that was copied onto the thread's kernel stack by
+ *               init_thread_kernel_stack().
+ */
 static void
 common_thread_entry(void* _args)
 {
@@ -853,6 +1193,19 @@ common_thread_entry(void* _args)
 		to the entry function.
 	\param dataSize The size of \a data.
  */
+/**
+ * @brief Copy entry arguments onto a thread's kernel stack and set up the initial frame.
+ *
+ * Copies @p dataSize bytes from @p data onto the thread's kernel stack
+ * (with 16-byte alignment) and calls arch_thread_init_kthread_stack() so
+ * that the thread will start executing common_thread_entry() with a pointer
+ * to the copied data.
+ *
+ * @param thread    Thread whose kernel stack is being prepared.
+ * @param data      Entry argument block to copy (ThreadEntryArguments or
+ *                  UserThreadEntryArguments).
+ * @param dataSize  Size of the entry argument block in bytes.
+ */
 static void
 init_thread_kernel_stack(Thread* thread, const void* data, size_t dataSize)
 {
@@ -888,6 +1241,25 @@ init_thread_kernel_stack(Thread* thread, const void* data, size_t dataSize)
 }
 
 
+/**
+ * @brief Create and map a user-space stack area for a thread.
+ *
+ * If @p _stackBase is non-NULL it must point to an already-mapped region of
+ * at least MIN_USER_STACK_SIZE bytes; TLS_SIZE is subtracted from the
+ * available size.  Otherwise a new area is created in USER_STACK_REGION with
+ * appropriate guard pages.
+ *
+ * @param team            Team that owns the stack area.
+ * @param thread          Thread that will own the stack.
+ * @param _stackBase      Caller-supplied base address, or NULL to auto-allocate.
+ * @param stackSize       Requested stack size (0 for default).
+ * @param additionalSize  Extra bytes appended after the stack (for TLS etc.).
+ * @param guardSize       Guard page size in bytes.
+ * @param nameBuffer      B_OS_NAME_LENGTH buffer used to build the area name.
+ * @retval B_OK        Stack created and thread fields updated.
+ * @retval B_BAD_VALUE @p stackSize is below MIN_USER_STACK_SIZE.
+ * @retval < B_OK      Area creation failed.
+ */
 static status_t
 create_thread_user_stack(Team* team, Thread* thread, void* _stackBase,
 	size_t stackSize, size_t additionalSize, size_t guardSize,
@@ -959,6 +1331,19 @@ create_thread_user_stack(Team* team, Thread* thread, void* _stackBase,
 }
 
 
+/**
+ * @brief Public wrapper to create a user stack for a thread with default guard size.
+ *
+ * Delegates to create_thread_user_stack() using USER_STACK_GUARD_SIZE.
+ *
+ * @param team            Team that owns the stack.
+ * @param thread          Thread that will use the stack.
+ * @param stackBase       Caller-supplied base address, or NULL to auto-allocate.
+ * @param stackSize       Requested stack size (0 for default).
+ * @param additionalSize  Extra bytes appended after the stack.
+ * @retval B_OK           Stack created successfully.
+ * @retval < B_OK         Stack creation failed.
+ */
 status_t
 thread_create_user_stack(Team* team, Thread* thread, void* stackBase,
 	size_t stackSize, size_t additionalSize)
@@ -978,6 +1363,24 @@ thread_create_user_stack(Team* team, Thread* thread, void* stackBase,
 	\return The ID of the newly created thread (>= 0) or an error code on
 		failure.
 */
+/**
+ * @brief Allocate, configure, and register a new kernel or user thread.
+ *
+ * This is the central thread-creation routine.  It allocates (or reuses) a
+ * Thread object, sets its priority and state, allocates a kernel stack,
+ * optionally allocates a user stack, initialises the kernel stack frame,
+ * inserts the thread into its owning team, and notifies listeners.
+ *
+ * @param attributes  Fully populated ThreadCreationAttributes describing the
+ *                    new thread (name, priority, entry point, team, etc.).
+ * @param kernel      true to create a kernel-only thread; false to create a
+ *                    thread that can run in userland.
+ * @retval >= 0       Thread ID of the newly created (suspended) thread.
+ * @retval B_BAD_TEAM_ID   The specified team does not exist or is shutting down.
+ * @retval B_NO_MORE_THREADS The global thread limit has been reached.
+ * @retval B_NO_MEMORY Allocation failure.
+ * @retval < B_OK     Other error from stack or timer initialisation.
+ */
 thread_id
 thread_create_thread(const ThreadCreationAttributes& attributes, bool kernel)
 {
@@ -1188,6 +1591,16 @@ thread_create_thread(const ThreadCreationAttributes& attributes, bool kernel)
 }
 
 
+/**
+ * @brief Kernel thread that performs final cleanup for exited threads.
+ *
+ * Waits on @c sUndertakerCondition for entries posted by thread_exit(),
+ * then removes each dying thread from the kernel team and releases its
+ * last reference, allowing the Thread destructor to run.
+ *
+ * @param args  Unused.
+ * @return      Never returns (B_OK placeholder).
+ */
 static status_t
 undertaker(void* /*args*/)
 {
@@ -1255,6 +1668,14 @@ undertaker(void* /*args*/)
 	\return The ID of the semaphore the thread is currently waiting on or \c -1,
 		if it isn't waiting on a semaphore.
 */
+/**
+ * @brief Return the semaphore ID the thread is currently blocked on (informational).
+ *
+ * @param thread  Thread to inspect.
+ * @return        The sem_id the thread is waiting on, or -1 if it is not
+ *                blocked on a semaphore.
+ * @note The caller must hold the scheduler lock.
+ */
 static sem_id
 get_thread_wait_sem(Thread* thread)
 {
@@ -1269,6 +1690,17 @@ get_thread_wait_sem(Thread* thread)
 /*!	Fills the thread_info structure with information from the specified thread.
 	The caller must hold the thread's lock and the scheduler lock.
 */
+/**
+ * @brief Populate a thread_info structure from a Thread object.
+ *
+ * Copies the thread ID, team ID, name, state, priority, stack boundaries,
+ * and accumulated CPU times into @p info.
+ *
+ * @param thread  Source thread.
+ * @param info    Destination thread_info structure to fill.
+ * @param size    Size of the thread_info structure (for forward compatibility).
+ * @note The caller must hold the thread's lock and the scheduler lock.
+ */
 static void
 fill_thread_info(Thread *thread, thread_info *info, size_t size)
 {
@@ -1322,6 +1754,23 @@ fill_thread_info(Thread *thread, thread_info *info, size_t size)
 }
 
 
+/**
+ * @brief Send a data message to another thread, with flags.
+ *
+ * Acquires the target thread's write semaphore, copies the payload, and
+ * releases the read semaphore to wake any waiting receiver.
+ *
+ * @param id          Target thread ID.
+ * @param code        Integer message code delivered with the data.
+ * @param buffer      Pointer to the data payload (may be a user address).
+ * @param bufferSize  Size of the payload in bytes (0 is allowed).
+ * @param flags       Semaphore acquisition flags (e.g. B_KILL_CAN_INTERRUPT).
+ * @retval B_OK             Message delivered.
+ * @retval B_BAD_THREAD_ID  Target thread not found or already exited.
+ * @retval B_NO_MEMORY      Payload allocation failed or size too large.
+ * @retval B_INTERRUPTED    Acquisition was interrupted by a signal.
+ * @retval B_BAD_DATA       user_memcpy of the payload failed.
+ */
 static status_t
 send_data_etc(thread_id id, int32 code, const void *buffer, size_t bufferSize,
 	int32 flags)
@@ -1385,6 +1834,20 @@ send_data_etc(thread_id id, int32 code, const void *buffer, size_t bufferSize,
 }
 
 
+/**
+ * @brief Receive a data message sent to the current thread, with flags.
+ *
+ * Blocks (subject to @p flags) until a message is available, copies at most
+ * @p bufferSize bytes to @p buffer, sets @p _sender to the sender's thread ID,
+ * and returns the message code.
+ *
+ * @param _sender     Receives the sender's thread ID.
+ * @param buffer      Destination buffer for the message payload
+ *                    (may be a user address).
+ * @param bufferSize  Maximum bytes to copy into @p buffer.
+ * @param flags       Semaphore acquisition flags.
+ * @return            Message code on success, or a negative error code.
+ */
 static int32
 receive_data_etc(thread_id *_sender, void *buffer, size_t bufferSize,
 	int32 flags)
@@ -1422,6 +1885,18 @@ receive_data_etc(thread_id *_sender, void *buffer, size_t bufferSize,
 }
 
 
+/**
+ * @brief Kernel-internal implementation of getrlimit().
+ *
+ * Fills @p rlp for the requested @p resource.  Supports RLIMIT_AS,
+ * RLIMIT_CORE, RLIMIT_DATA, RLIMIT_NOFILE, RLIMIT_NOVMON, and RLIMIT_STACK.
+ *
+ * @param resource  POSIX resource identifier (e.g. RLIMIT_STACK).
+ * @param rlp       Destination rlimit structure; must be non-NULL.
+ * @retval B_OK     Limit returned successfully.
+ * @retval EINVAL   Unknown or unsupported resource.
+ * @retval B_BAD_ADDRESS @p rlp is NULL.
+ */
 static status_t
 common_getrlimit(int resource, struct rlimit * rlp)
 {
@@ -1463,6 +1938,18 @@ common_getrlimit(int resource, struct rlimit * rlp)
 }
 
 
+/**
+ * @brief Kernel-internal implementation of setrlimit().
+ *
+ * Applies the limit described by @p rlp for @p resource.  Only
+ * RLIMIT_CORE (to 0/0), RLIMIT_NOFILE, and RLIMIT_NOVMON are supported.
+ *
+ * @param resource  POSIX resource identifier.
+ * @param rlp       New limit to apply; must be non-NULL.
+ * @retval B_OK     Limit applied successfully.
+ * @retval EINVAL   Unsupported resource or invalid value.
+ * @retval B_BAD_ADDRESS @p rlp is NULL.
+ */
 static status_t
 common_setrlimit(int resource, const struct rlimit * rlp)
 {
@@ -1488,6 +1975,26 @@ common_setrlimit(int resource, const struct rlimit * rlp)
 }
 
 
+/**
+ * @brief Common implementation for snooze(), snooze_etc(), and _user_snooze_etc().
+ *
+ * Puts the current thread to sleep for the specified @p timeout on the given
+ * @p clockID.  Supports CLOCK_REALTIME and CLOCK_MONOTONIC with relative or
+ * absolute timeouts.  If interrupted, the remaining time is written to
+ * @p _remainingTime when non-NULL.
+ *
+ * @param timeout         Sleep duration or absolute wake time.
+ * @param clockID         POSIX clock to use (CLOCK_REALTIME or CLOCK_MONOTONIC).
+ * @param flags           B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT /
+ *                        B_TIMEOUT_REAL_TIME_BASE flags.
+ * @param _remainingTime  If non-NULL and the sleep was interrupted, receives
+ *                        the remaining time.
+ * @retval B_OK           Sleep completed normally (or timed out as requested).
+ * @retval B_INTERRUPTED  Sleep was interrupted by a signal.
+ * @retval B_BAD_VALUE    clockID was CLOCK_THREAD_CPUTIME_ID.
+ * @retval ENOTSUP        clockID is not supported for sleeping.
+ * @note Must be called with interrupts enabled.
+ */
 static status_t
 common_snooze_etc(bigtime_t timeout, clockid_t clockID, uint32 flags,
 	bigtime_t* _remainingTime)
@@ -1555,6 +2062,15 @@ common_snooze_etc(bigtime_t timeout, clockid_t clockID, uint32 flags,
 //	#pragma mark - debugger calls
 
 
+/**
+ * @brief Debugger command: demote all (or one) real-time threads to normal priority.
+ *
+ * Usage: unreal [<id>]
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector.
+ * @return      0 always.
+ */
 static int
 make_thread_unreal(int argc, char **argv)
 {
@@ -1583,6 +2099,15 @@ make_thread_unreal(int argc, char **argv)
 }
 
 
+/**
+ * @brief Debugger command: set the scheduling priority of a thread.
+ *
+ * Usage: priority <prio> [<id>]
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector.
+ * @return      0 always.
+ */
 static int
 set_thread_prio(int argc, char **argv)
 {
@@ -1622,6 +2147,15 @@ set_thread_prio(int argc, char **argv)
 }
 
 
+/**
+ * @brief Debugger command: send SIGSTOP to a thread (suspend it).
+ *
+ * Usage: suspend [<id>]
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector.
+ * @return      0 always.
+ */
 static int
 make_thread_suspended(int argc, char **argv)
 {
@@ -1657,6 +2191,15 @@ make_thread_suspended(int argc, char **argv)
 }
 
 
+/**
+ * @brief Debugger command: enqueue a suspended/sleeping/waiting thread back into the run queue.
+ *
+ * Usage: resume <id>
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector (must include a thread ID).
+ * @return      0 always.
+ */
 static int
 make_thread_resumed(int argc, char **argv)
 {
@@ -1693,6 +2236,17 @@ make_thread_resumed(int argc, char **argv)
 }
 
 
+/**
+ * @brief Debugger command: drop a userland thread into the userland debugger.
+ *
+ * Usage: drop [<id>]
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector.
+ * @return      0 always.
+ * @note Uses _user_debug_thread() which performs locking — use with caution
+ *       from the kernel debugger.
+ */
 static int
 drop_into_debugger(int argc, char **argv)
 {
@@ -1724,6 +2278,16 @@ drop_into_debugger(int argc, char **argv)
 /*!	Returns a user-readable string for a thread state.
 	Only for use in the kernel debugger.
 */
+/**
+ * @brief Return a human-readable string for a thread state (debugger use only).
+ *
+ * Handles sub-states for B_THREAD_WAITING (snooze, receive, etc.).
+ *
+ * @param thread  Thread whose wait sub-state may refine the output (may be NULL).
+ * @param state   Raw thread state value.
+ * @return        Static string describing the state.
+ * @note Must only be called from the kernel debugger.
+ */
 static const char *
 state_to_text(Thread *thread, int32 state)
 {
@@ -1766,6 +2330,9 @@ state_to_text(Thread *thread, int32 state)
 }
 
 
+/**
+ * @brief Print the column header for the compact thread list table (debugger).
+ */
 static void
 print_thread_list_table_head()
 {
@@ -1776,6 +2343,15 @@ print_thread_list_table_head()
 }
 
 
+/**
+ * @brief Print debug information for a single thread.
+ *
+ * In short mode (@p shortInfo = true) prints a single compact table row.
+ * In long mode prints all fields of the Thread structure.
+ *
+ * @param thread     Thread to dump.
+ * @param shortInfo  true for the compact one-line format, false for verbose.
+ */
 static void
 _dump_thread_info(Thread *thread, bool shortInfo)
 {
@@ -1964,6 +2540,15 @@ _dump_thread_info(Thread *thread, bool shortInfo)
 }
 
 
+/**
+ * @brief Debugger command: dump detailed or compact info about one or more threads.
+ *
+ * Usage: thread [-s] [<id|address|name>...]
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector.
+ * @return      0 always.
+ */
 static int
 dump_thread_info(int argc, char **argv)
 {
@@ -2009,6 +2594,16 @@ dump_thread_info(int argc, char **argv)
 }
 
 
+/**
+ * @brief Debugger command: list threads filtered by state, team, semaphore, or call address.
+ *
+ * Handles the "threads", "ready", "running", "waiting", "realtime", and
+ * "calling" debugger commands.
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector (argv[0] selects the filter mode).
+ * @return      0 always.
+ */
 static int
 dump_thread_list(int argc, char **argv)
 {
@@ -2071,6 +2666,14 @@ dump_thread_list(int argc, char **argv)
 }
 
 
+/**
+ * @brief Restore the saved signal mask if THREAD_FLAGS_OLD_SIGMASK is set.
+ *
+ * Called during the kernel-exit path to apply a signal mask that was stashed
+ * before a sigsuspend() or similar operation.
+ *
+ * @param thread  Thread whose signal mask may need restoring.
+ */
 static void
 update_thread_sigmask_on_exit(Thread* thread)
 {
@@ -2084,6 +2687,22 @@ update_thread_sigmask_on_exit(Thread* thread)
 //	#pragma mark - private kernel API
 
 
+/**
+ * @brief Terminate the current thread, notify waiters, and hand off to the undertaker.
+ *
+ * Performs all cleanup required when a thread finishes execution:
+ * - Boosts priority to expedite cleanup.
+ * - Frees user timers and user_thread for non-main threads.
+ * - Shuts down the entire team if this is the main thread (including killing
+ *   all sibling threads and notifying the parent with SIGCHLD).
+ * - Moves the thread to the kernel team while its stack is still valid.
+ * - Destroys debug info, messaging semaphores, and the exit semaphore.
+ * - Posts an UndertakerEntry and calls scheduler_reschedule() with
+ *   THREAD_STATE_FREE_ON_RESCHED — never returns.
+ *
+ * @note Must be called with interrupts enabled.
+ * @note This function never returns.
+ */
 void
 thread_exit(void)
 {
@@ -2431,6 +3050,15 @@ thread_exit(void)
 	Only tracks time for now.
 	Interrupts are disabled.
 */
+/**
+ * @brief Record the transition of the current thread from user space into the kernel.
+ *
+ * Accumulates elapsed user-space time and marks the thread as being in the
+ * kernel.  Called by interrupt/syscall entry stubs with interrupts disabled.
+ *
+ * @param now  Current system time (passed in to avoid a second system_time() call).
+ * @note Interrupts must be disabled on entry.
+ */
 void
 thread_at_kernel_entry(bigtime_t now)
 {
@@ -2454,6 +3082,15 @@ thread_at_kernel_entry(bigtime_t now)
 	The function may not return. This e.g. happens when the thread has received
 	a deadly signal.
 */
+/**
+ * @brief Handle the transition of the current thread from the kernel back to user space.
+ *
+ * Processes pending signals, disables interrupts, applies any saved signal
+ * mask change, and accumulates kernel time.  May not return if a fatal signal
+ * is delivered.
+ *
+ * @note Interrupts must be enabled on entry; they will be disabled on return.
+ */
 void
 thread_at_kernel_exit(void)
 {
@@ -2480,6 +3117,14 @@ thread_at_kernel_exit(void)
 	and no debugging shall be done.
 	Interrupts must be disabled.
 */
+/**
+ * @brief Fast kernel-exit path used when no signals are pending.
+ *
+ * Applies any saved signal mask change and accumulates kernel time without
+ * going through the full signal-handling path.
+ *
+ * @note Interrupts must be disabled on entry.
+ */
 void
 thread_at_kernel_exit_no_signals(void)
 {
@@ -2499,6 +3144,13 @@ thread_at_kernel_exit_no_signals(void)
 }
 
 
+/**
+ * @brief Reset per-thread state in preparation for an exec() call.
+ *
+ * Deletes user-defined timers, cancels the real-time pre-defined timer,
+ * clears user stack and user_thread pointers, resets signal state, and
+ * zeroes the CPU-time clock offset so the new image starts from time 0.
+ */
 void
 thread_reset_for_exec(void)
 {
@@ -2528,6 +3180,16 @@ thread_reset_for_exec(void)
 }
 
 
+/**
+ * @brief Allocate the next available unique thread ID.
+ *
+ * Scans @c sNextThreadID forward (with wrap-around past INT_MAX) until an
+ * ID not present in @c sThreadHash is found.
+ *
+ * @return  A thread_id that is not currently in use.
+ * @note    The caller must hold @c sThreadHashLock in write mode, or call
+ *          this function only while the thread hash write lock is held.
+ */
 thread_id
 allocate_thread_id()
 {
@@ -2549,6 +3211,11 @@ allocate_thread_id()
 }
 
 
+/**
+ * @brief Peek at the next thread ID that would be allocated (without consuming it).
+ *
+ * @return  The value of @c sNextThreadID under a read lock.
+ */
 thread_id
 peek_next_thread_id()
 {
@@ -2562,6 +3229,13 @@ peek_next_thread_id()
 	state, and if it has a higher priority than the other ready threads, it
 	still has a good chance to continue.
 */
+/**
+ * @brief Voluntarily yield the CPU to other ready threads.
+ *
+ * Sets the has_yielded flag and requests a reschedule to B_THREAD_READY,
+ * allowing lower-priority threads a chance to run.  If no other thread is
+ * ready, the calling thread may resume immediately.
+ */
 void
 thread_yield(void)
 {
@@ -2576,6 +3250,15 @@ thread_yield(void)
 }
 
 
+/**
+ * @brief Iterate over all threads in the hash table and invoke a callback.
+ *
+ * Holds the thread hash write lock while iterating; the callback must not
+ * attempt to acquire the same lock.
+ *
+ * @param function  Callback invoked for every live thread.
+ * @param data      Opaque pointer forwarded to @p function.
+ */
 void
 thread_map(void (*function)(Thread* thread, void* data), void* data)
 {
@@ -2590,6 +3273,19 @@ thread_map(void (*function)(Thread* thread, void* data), void* data)
 
 /*!	Kernel private thread creation function.
 */
+/**
+ * @brief Create and register a kernel thread in the specified team.
+ *
+ * Convenience wrapper around thread_create_thread() for kernel threads.
+ *
+ * @param function  Kernel-space entry function.
+ * @param name      Thread name.
+ * @param priority  Scheduling priority.
+ * @param arg       Argument passed to @p function.
+ * @param team      Team ID that will own the thread.
+ * @retval >= 0  Thread ID of the newly created (suspended) thread.
+ * @retval < 0   Error from thread_create_thread().
+ */
 thread_id
 spawn_kernel_thread_etc(thread_func function, const char *name, int32 priority,
 	void *arg, team_id team)
@@ -2600,6 +3296,26 @@ spawn_kernel_thread_etc(thread_func function, const char *name, int32 priority,
 }
 
 
+/**
+ * @brief Wait for a thread to exit, with timeout and flags.
+ *
+ * Locates the thread, registers a death-entry waiter, resumes the thread if
+ * it is suspended, then blocks on the exit semaphore until the thread exits,
+ * the timeout fires, or the wait is interrupted.  If the thread has already
+ * exited, its death entry is found in the team's dead-thread or dead-children
+ * list.
+ *
+ * @param id           Thread ID to wait for.
+ * @param flags        Standard timeout/interrupt flags
+ *                     (B_RELATIVE_TIMEOUT, B_CAN_INTERRUPT, etc.).
+ * @param timeout      Timeout value in microseconds (0 for none).
+ * @param _returnCode  If non-NULL, receives the thread's exit status.
+ * @retval B_OK            Thread exited; @p _returnCode filled.
+ * @retval B_BAD_THREAD_ID No such thread and no death entry found.
+ * @retval EDEADLK         @p id is the calling thread's own ID.
+ * @retval B_INTERRUPTED   Wait was interrupted.
+ * @retval B_TIMED_OUT     Timeout expired before the thread exited.
+ */
 status_t
 wait_for_thread_etc(thread_id id, uint32 flags, bigtime_t timeout,
 	status_t *_returnCode)
@@ -2701,6 +3417,15 @@ wait_for_thread_etc(thread_id id, uint32 flags, bigtime_t timeout,
 }
 
 
+/**
+ * @brief Register a select_info for the B_EVENT_INVALID event on a thread.
+ *
+ * @param id      Thread ID to monitor.
+ * @param info    select_info structure to register.
+ * @param kernel  true if the caller is kernel code (unused currently).
+ * @retval B_OK            Registered successfully.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ */
 status_t
 select_thread(int32 id, struct select_info* info, bool kernel)
 {
@@ -2727,6 +3452,15 @@ select_thread(int32 id, struct select_info* info, bool kernel)
 }
 
 
+/**
+ * @brief Deregister a previously registered select_info from a thread.
+ *
+ * @param id      Thread ID from which to deregister.
+ * @param info    select_info structure to remove.
+ * @param kernel  true if the caller is kernel code (unused currently).
+ * @retval B_OK            Deregistered (or already gone).
+ * @retval B_BAD_THREAD_ID Thread not found.
+ */
 status_t
 deselect_thread(int32 id, struct select_info* info, bool kernel)
 {
@@ -2756,6 +3490,11 @@ deselect_thread(int32 id, struct select_info* info, bool kernel)
 }
 
 
+/**
+ * @brief Return the maximum number of threads allowed system-wide.
+ *
+ * @return  Value of @c sMaxThreads.
+ */
 int32
 thread_max_threads(void)
 {
@@ -2763,6 +3502,11 @@ thread_max_threads(void)
 }
 
 
+/**
+ * @brief Return the number of threads currently in use.
+ *
+ * @return  Value of @c sUsedThreads (read under the hash read lock).
+ */
 int32
 thread_used_threads(void)
 {
@@ -2774,6 +3518,14 @@ thread_used_threads(void)
 /*!	Returns a user-readable string for a thread state.
 	Only for use in the kernel debugger.
 */
+/**
+ * @brief Public wrapper exposing state_to_text() for use outside this file.
+ *
+ * @param thread  Thread whose wait sub-state may refine the string (may be NULL).
+ * @param state   Raw thread state value.
+ * @return        Human-readable state string.
+ * @note For kernel debugger use only.
+ */
 const char*
 thread_state_to_text(Thread* thread, int32 state)
 {
@@ -2781,6 +3533,15 @@ thread_state_to_text(Thread* thread, int32 state)
 }
 
 
+/**
+ * @brief Retrieve the effective I/O priority of a thread.
+ *
+ * If the thread's io_priority is negative the CPU scheduling priority is
+ * returned instead.
+ *
+ * @param id  Thread ID.
+ * @return    I/O priority value, or B_BAD_THREAD_ID if the thread is not found.
+ */
 int32
 thread_get_io_priority(thread_id id)
 {
@@ -2800,6 +3561,11 @@ thread_get_io_priority(thread_id id)
 }
 
 
+/**
+ * @brief Set the I/O priority of the current thread.
+ *
+ * @param priority  New I/O priority value (negative means "use CPU priority").
+ */
 void
 thread_set_io_priority(int32 priority)
 {
@@ -2810,6 +3576,18 @@ thread_set_io_priority(int32 priority)
 }
 
 
+/**
+ * @brief Initialise the kernel thread subsystem.
+ *
+ * Sets up the global thread hash table, the slab object cache (which also
+ * pre-populates the kernel stack cache via create_kernel_stack), the
+ * architecture thread layer, idle threads for each CPU, the undertaker
+ * thread, and all kernel debugger commands related to threads.
+ *
+ * @param args  Kernel boot arguments (used for CPU count).
+ * @retval B_OK  Initialisation completed successfully.
+ * @note Panics on any critical failure rather than returning an error.
+ */
 status_t
 thread_init(kernel_args *args)
 {
@@ -2954,6 +3732,17 @@ thread_init(kernel_args *args)
 }
 
 
+/**
+ * @brief Per-CPU pre-boot initialisation: wire the idle thread to its CPU.
+ *
+ * Sets the cpu pointer on the not-yet-fully-initialised idle thread for
+ * @p cpuNum so that get_current_cpu() and related helpers work correctly
+ * during early boot before thread_init() completes.
+ *
+ * @param args    Kernel boot arguments (unused here).
+ * @param cpuNum  Zero-based CPU index being initialised.
+ * @retval B_OK  Always.
+ */
 status_t
 thread_preboot_init_percpu(struct kernel_args *args, int32 cpuNum)
 {
@@ -2969,6 +3758,15 @@ thread_preboot_init_percpu(struct kernel_args *args, int32 cpuNum)
 //	#pragma mark - thread blocking API
 
 
+/**
+ * @brief Timer callback that unblocks a thread with B_TIMED_OUT status.
+ *
+ * Installed as a one-shot timer by thread_block_with_timeout().  Clears
+ * @c timer->user_data to signal the timer fired before the wait returned.
+ *
+ * @param timer  The kernel timer that fired; user_data points to the Thread.
+ * @return       B_HANDLED_INTERRUPT.
+ */
 static int32
 thread_block_timeout(timer* timer)
 {
@@ -2996,6 +3794,18 @@ thread_block_timeout(timer* timer)
 		successful while another error code indicates a failure (what that means
 		depends on the client code).
 */
+/**
+ * @brief Block the current thread on the scheduler lock (internal).
+ *
+ * If the wait status is still 1 (meaning no one has unblocked us yet) this
+ * function checks for pending interruptible signals and, if none, calls
+ * scheduler_reschedule(B_THREAD_WAITING).
+ *
+ * @param thread  The current thread (must equal thread_get_current_thread()).
+ * @return        The status code set by thread_unblock_locked() or
+ *                B_INTERRUPTED if a signal was pending.
+ * @note The caller must hold @c thread->scheduler_lock.
+ */
 static inline status_t
 thread_block_locked(Thread* thread)
 {
@@ -3016,6 +3826,11 @@ thread_block_locked(Thread* thread)
 	The function acquires the scheduler lock and calls thread_block_locked().
 	See there for more information.
 */
+/**
+ * @brief Block the current thread, acquiring the scheduler lock internally.
+ *
+ * @return  Status code from thread_block_locked().
+ */
 status_t
 thread_block()
 {
@@ -3050,6 +3865,20 @@ thread_block()
 		another error code indicates a failure (what that means depends on the
 		client code).
 */
+/**
+ * @brief Block the current thread with a timeout.
+ *
+ * Installs a kernel timer for the specified timeout (if any), calls
+ * thread_block_locked(), then cancels the timer if it did not fire.
+ *
+ * @param timeoutFlags  B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT /
+ *                      B_TIMEOUT_REAL_TIME_BASE flags.
+ * @param timeout       Timeout duration or absolute deadline in microseconds.
+ * @retval B_OK         Unblocked successfully before the timeout.
+ * @retval B_TIMED_OUT  Timeout expired.
+ * @retval B_INTERRUPTED Wait was interrupted by a signal.
+ * @note The caller must not hold the scheduler lock.
+ */
 status_t
 thread_block_with_timeout(uint32 timeoutFlags, bigtime_t timeout)
 {
@@ -3097,6 +3926,12 @@ thread_block_with_timeout(uint32 timeoutFlags, bigtime_t timeout)
 	Acquires the scheduler lock and calls thread_unblock_locked().
 	See there for more information.
 */
+/**
+ * @brief Unblock a thread, acquiring the scheduler lock internally.
+ *
+ * @param thread  Thread to unblock.
+ * @param status  Status code to set as the wait result (e.g. B_OK, B_INTERRUPTED).
+ */
 void
 thread_unblock(Thread* thread, status_t status)
 {
@@ -3108,6 +3943,20 @@ thread_unblock(Thread* thread, status_t status)
 /*!	Unblocks a userland-blocked thread.
 	The caller must not hold any locks.
 */
+/**
+ * @brief Unblock a thread that is blocked via the userland _user_block_thread() syscall.
+ *
+ * Reads wait_status from the thread's user_thread structure; if > 0 the
+ * thread is still waiting and is unblocked with @p status.
+ *
+ * @param threadID  ID of the thread to unblock.
+ * @param status    Status code to deliver to the blocked thread.
+ * @retval B_OK            Thread unblocked (or already unblocked).
+ * @retval B_BAD_THREAD_ID Thread not found.
+ * @retval B_NOT_ALLOWED   Thread has no user_thread (is a kernel thread).
+ * @retval B_BAD_ADDRESS   user_memcpy of wait_status failed.
+ * @note The caller must not hold any locks.
+ */
 static status_t
 user_unblock_thread(thread_id threadID, status_t status)
 {
@@ -3145,6 +3994,18 @@ user_unblock_thread(thread_id threadID, status_t status)
 }
 
 
+/**
+ * @brief Check whether the calling thread is allowed to manipulate another thread.
+ *
+ * Kernel callers always pass; userland callers must be in the same team as
+ * the target, be root, or share the same real UID.  Kernel team threads are
+ * never accessible from userland.
+ *
+ * @param currentThread  The thread attempting the operation.
+ * @param thread         The thread being operated on.
+ * @param kernel         true if the call originates from kernel code.
+ * @return               true if the operation is permitted.
+ */
 static bool
 thread_check_permissions(const Thread* currentThread, const Thread* thread,
 	bool kernel)
@@ -3164,6 +4025,19 @@ thread_check_permissions(const Thread* currentThread, const Thread* thread,
 }
 
 
+/**
+ * @brief Send a signal to a thread, checking permissions.
+ *
+ * @param id          Target thread ID.
+ * @param number      Signal number to send.
+ * @param signalCode  SI_* signal code (e.g. SI_USER).
+ * @param errorCode   errno value associated with the signal.
+ * @param kernel      true if the caller is kernel code.
+ * @retval B_OK            Signal sent.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ * @retval B_BAD_VALUE     @p id is <= 0.
+ * @retval B_NOT_ALLOWED   Permission check failed.
+ */
 static status_t
 thread_send_signal(thread_id id, uint32 number, int32 signalCode,
 	int32 errorCode, bool kernel)
@@ -3189,6 +4063,15 @@ thread_send_signal(thread_id id, uint32 number, int32 signalCode,
 //	#pragma mark - public kernel API
 
 
+/**
+ * @brief Set the exit status of the current thread and initiate thread termination.
+ *
+ * For user threads, sets the team exit info if this is the main thread and
+ * sends SIGKILLTHR to itself.  For kernel threads, calls thread_exit()
+ * directly.
+ *
+ * @param returnValue  Exit status code to store in thread->exit.status.
+ */
 void
 exit_thread(status_t returnValue)
 {
@@ -3223,6 +4106,13 @@ exit_thread(status_t returnValue)
 }
 
 
+/**
+ * @brief Send the kill signal to a thread, optionally checking permissions.
+ *
+ * @param id      Target thread ID.
+ * @param kernel  true if the caller is kernel code (bypasses permission check).
+ * @return        Result of thread_send_signal().
+ */
 static status_t
 thread_kill_thread(thread_id id, bool kernel)
 {
@@ -3230,6 +4120,12 @@ thread_kill_thread(thread_id id, bool kernel)
 }
 
 
+/**
+ * @brief Kill a thread by ID (kernel API, no permission check).
+ *
+ * @param id  Thread ID to kill.
+ * @return    B_OK on success, or an error code.
+ */
 status_t
 kill_thread(thread_id id)
 {
@@ -3237,6 +4133,15 @@ kill_thread(thread_id id)
 }
 
 
+/**
+ * @brief Send a data message to another thread (kernel API, non-blocking variant).
+ *
+ * @param thread      Target thread ID.
+ * @param code        Integer message code.
+ * @param buffer      Pointer to the message payload.
+ * @param bufferSize  Size of the payload in bytes.
+ * @return            B_OK on success, or an error code.
+ */
 status_t
 send_data(thread_id thread, int32 code, const void *buffer, size_t bufferSize)
 {
@@ -3244,6 +4149,14 @@ send_data(thread_id thread, int32 code, const void *buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Receive a data message sent to the current thread (kernel API).
+ *
+ * @param sender      Receives the sender's thread ID.
+ * @param buffer      Destination buffer for the message payload.
+ * @param bufferSize  Maximum bytes to copy.
+ * @return            Message code, or a negative error code.
+ */
 int32
 receive_data(thread_id *sender, void *buffer, size_t bufferSize)
 {
@@ -3251,6 +4164,13 @@ receive_data(thread_id *sender, void *buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Check whether a thread has a pending data message.
+ *
+ * @param id      Thread ID to inspect.
+ * @param kernel  true if the caller is kernel code (relaxes team check).
+ * @return        true if a message is pending.
+ */
 static bool
 thread_has_data(thread_id id, bool kernel)
 {
@@ -3278,6 +4198,12 @@ thread_has_data(thread_id id, bool kernel)
 }
 
 
+/**
+ * @brief Check whether the specified thread has a pending data message (kernel API).
+ *
+ * @param thread  Thread ID to inspect.
+ * @return        true if a message is pending.
+ */
 bool
 has_data(thread_id thread)
 {
@@ -3285,6 +4211,16 @@ has_data(thread_id thread)
 }
 
 
+/**
+ * @brief Fill a thread_info structure for the thread with the given ID.
+ *
+ * @param id    Thread ID to query.
+ * @param info  Destination thread_info structure.
+ * @param size  Must equal sizeof(thread_info).
+ * @retval B_OK            Structure filled.
+ * @retval B_BAD_VALUE     @p info is NULL, @p size is wrong, or @p id < 0.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ */
 status_t
 _get_thread_info(thread_id id, thread_info *info, size_t size)
 {
@@ -3307,6 +4243,16 @@ _get_thread_info(thread_id id, thread_info *info, size_t size)
 }
 
 
+/**
+ * @brief Iterate over all threads in a team, returning one thread_info per call.
+ *
+ * @param teamID   Team ID whose threads are being enumerated.
+ * @param _cookie  In/out iteration cookie; set to 0 before the first call.
+ * @param info     Destination thread_info structure.
+ * @param size     Must equal sizeof(thread_info).
+ * @retval B_OK       Structure filled; advance @p _cookie for the next call.
+ * @retval B_BAD_VALUE Iteration complete, or invalid arguments.
+ */
 status_t
 _get_next_thread_info(team_id teamID, int32 *_cookie, thread_info *info,
 	size_t size)
@@ -3371,6 +4317,15 @@ _get_next_thread_info(team_id teamID, int32 *_cookie, thread_info *info,
 }
 
 
+/**
+ * @brief Find a thread by name, returning its ID.
+ *
+ * If @p name is NULL, returns the calling thread's ID.  Scans the global
+ * hash table under a read spinlock.
+ *
+ * @param name  Thread name to search for, or NULL for the current thread.
+ * @return      Thread ID, or B_NAME_NOT_FOUND if no match.
+ */
 thread_id
 find_thread(const char* name)
 {
@@ -3396,6 +4351,19 @@ find_thread(const char* name)
 }
 
 
+/**
+ * @brief Rename a thread.
+ *
+ * Only threads within the same team as the calling thread may be renamed.
+ * Notifies THREAD_NAME_CHANGED listeners after the rename.
+ *
+ * @param id    Thread ID to rename.
+ * @param name  New name string (must be non-NULL).
+ * @retval B_OK            Thread renamed.
+ * @retval B_BAD_VALUE     @p name is NULL.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ * @retval B_NOT_ALLOWED   Target thread belongs to a different team.
+ */
 status_t
 rename_thread(thread_id id, const char* name)
 {
@@ -3427,6 +4395,19 @@ rename_thread(thread_id id, const char* name)
 }
 
 
+/**
+ * @brief Change the scheduling priority of a thread, with permission checking.
+ *
+ * Clamps @p priority to [THREAD_MIN_SET_PRIORITY, THREAD_MAX_SET_PRIORITY]
+ * before applying.  Idle threads cannot be reprioritised.
+ *
+ * @param id       Thread ID.
+ * @param priority New scheduling priority.
+ * @param kernel   true if the caller is kernel code (bypasses permission check).
+ * @retval B_OK            Priority changed.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ * @retval B_NOT_ALLOWED   Permission denied or target is an idle thread.
+ */
 static status_t
 thread_set_thread_priority(thread_id id, int32 priority, bool kernel)
 {
@@ -3452,6 +4433,13 @@ thread_set_thread_priority(thread_id id, int32 priority, bool kernel)
 }
 
 
+/**
+ * @brief Set the scheduling priority of a thread (kernel API, no permission check).
+ *
+ * @param id       Thread ID.
+ * @param priority New scheduling priority.
+ * @return         Result of thread_set_thread_priority().
+ */
 status_t
 set_thread_priority(thread_id id, int32 priority)
 {
@@ -3459,6 +4447,14 @@ set_thread_priority(thread_id id, int32 priority)
 }
 
 
+/**
+ * @brief Sleep for a given duration on the specified clock (kernel API).
+ *
+ * @param timeout   Sleep duration or absolute deadline in microseconds.
+ * @param timebase  POSIX clock ID (e.g. B_SYSTEM_TIMEBASE / CLOCK_MONOTONIC).
+ * @param flags     B_RELATIVE_TIMEOUT or B_ABSOLUTE_TIMEOUT.
+ * @return          B_OK on normal completion, or an error/interrupt code.
+ */
 status_t
 snooze_etc(bigtime_t timeout, int timebase, uint32 flags)
 {
@@ -3467,6 +4463,12 @@ snooze_etc(bigtime_t timeout, int timebase, uint32 flags)
 
 
 /*!	snooze() for internal kernel use only; doesn't interrupt on signals. */
+/**
+ * @brief Sleep for a relative duration (kernel-only, not interruptible by signals).
+ *
+ * @param timeout  Duration to sleep in microseconds.
+ * @return         B_OK on normal completion.
+ */
 status_t
 snooze(bigtime_t timeout)
 {
@@ -3477,6 +4479,13 @@ snooze(bigtime_t timeout)
 /*!	snooze_until() for internal kernel use only; doesn't interrupt on
 	signals.
 */
+/**
+ * @brief Sleep until an absolute time on the given clock (kernel-only).
+ *
+ * @param timeout   Absolute wake-up time in microseconds.
+ * @param timebase  POSIX clock ID.
+ * @return          B_OK on normal completion.
+ */
 status_t
 snooze_until(bigtime_t timeout, int timebase)
 {
@@ -3484,6 +4493,13 @@ snooze_until(bigtime_t timeout, int timebase)
 }
 
 
+/**
+ * @brief Wait for a thread to exit (kernel API, no timeout, no flags).
+ *
+ * @param thread       Thread ID to wait for.
+ * @param _returnCode  Receives the thread's exit status (may be NULL).
+ * @return             B_OK, or an error code from wait_for_thread_etc().
+ */
 status_t
 wait_for_thread(thread_id thread, status_t *_returnCode)
 {
@@ -3491,6 +4507,13 @@ wait_for_thread(thread_id thread, status_t *_returnCode)
 }
 
 
+/**
+ * @brief Suspend a thread via SIGSTOP, with permission checking.
+ *
+ * @param id      Thread ID.
+ * @param kernel  true if the caller is kernel code.
+ * @return        Result of thread_send_signal().
+ */
 static status_t
 thread_suspend_thread(thread_id id, bool kernel)
 {
@@ -3498,6 +4521,12 @@ thread_suspend_thread(thread_id id, bool kernel)
 }
 
 
+/**
+ * @brief Suspend a thread (kernel API, no permission check).
+ *
+ * @param id  Thread ID to suspend.
+ * @return    B_OK on success, or an error code.
+ */
 status_t
 suspend_thread(thread_id id)
 {
@@ -3505,6 +4534,17 @@ suspend_thread(thread_id id)
 }
 
 
+/**
+ * @brief Resume a thread via SIGNAL_CONTINUE_THREAD, with permission checking.
+ *
+ * Using the kernel-internal SIGNAL_CONTINUE_THREAD retains BeOS compatibility
+ * in that the combination of suspend_thread()/resume_thread() interrupts
+ * threads waiting on semaphores.
+ *
+ * @param id      Thread ID.
+ * @param kernel  true if the caller is kernel code.
+ * @return        Result of thread_send_signal().
+ */
 static status_t
 thread_resume_thread(thread_id id, bool kernel)
 {
@@ -3515,6 +4555,12 @@ thread_resume_thread(thread_id id, bool kernel)
 }
 
 
+/**
+ * @brief Resume a thread (kernel API, no permission check).
+ *
+ * @param id  Thread ID to resume.
+ * @return    B_OK on success, or an error code.
+ */
 status_t
 resume_thread(thread_id id)
 {
@@ -3522,6 +4568,19 @@ resume_thread(thread_id id)
 }
 
 
+/**
+ * @brief Create and register a kernel thread in the kernel team.
+ *
+ * Convenience wrapper around thread_create_thread() that targets the
+ * kernel team.
+ *
+ * @param function  Kernel entry function.
+ * @param name      Thread name.
+ * @param priority  Scheduling priority.
+ * @param arg       Argument passed to @p function.
+ * @retval >= 0  Thread ID of the newly created (suspended) thread.
+ * @retval < 0   Error from thread_create_thread().
+ */
 thread_id
 spawn_kernel_thread(thread_func function, const char *name, int32 priority,
 	void *arg)
@@ -3532,6 +4591,13 @@ spawn_kernel_thread(thread_func function, const char *name, int32 priority,
 }
 
 
+/**
+ * @brief POSIX getrlimit() — retrieve a resource limit.
+ *
+ * @param resource  POSIX resource identifier.
+ * @param rlp       Destination rlimit structure.
+ * @return          0 on success, -1 on error (errno set).
+ */
 int
 getrlimit(int resource, struct rlimit * rlp)
 {
@@ -3545,6 +4611,13 @@ getrlimit(int resource, struct rlimit * rlp)
 }
 
 
+/**
+ * @brief POSIX setrlimit() — set a resource limit.
+ *
+ * @param resource  POSIX resource identifier.
+ * @param rlp       New resource limit to apply.
+ * @return          0 on success, -1 on error (errno set).
+ */
 int
 setrlimit(int resource, const struct rlimit * rlp)
 {
@@ -3561,6 +4634,11 @@ setrlimit(int resource, const struct rlimit * rlp)
 //	#pragma mark - syscalls
 
 
+/**
+ * @brief Syscall: exit the current thread with the given return value.
+ *
+ * @param returnValue  Exit status to store in thread->exit.status.
+ */
 void
 _user_exit_thread(status_t returnValue)
 {
@@ -3568,6 +4646,12 @@ _user_exit_thread(status_t returnValue)
 }
 
 
+/**
+ * @brief Syscall: kill (send SIGKILLTHR to) a thread by ID.
+ *
+ * @param thread  Target thread ID.
+ * @return        B_OK on success, or an error code.
+ */
 status_t
 _user_kill_thread(thread_id thread)
 {
@@ -3575,6 +4659,21 @@ _user_kill_thread(thread_id thread)
 }
 
 
+/**
+ * @brief Syscall: register a cancel function and send SIGNAL_CANCEL_THREAD.
+ *
+ * The cancel function is stored on the target thread and will be called
+ * when the thread processes the cancellation signal.  Only threads within
+ * the calling team may be cancelled.
+ *
+ * @param threadID        Target thread ID.
+ * @param cancelFunction  Userland cancel function pointer (must be a valid
+ *                        user-space address).
+ * @retval B_OK            Cancel signal sent.
+ * @retval B_BAD_VALUE     @p cancelFunction is NULL or not a user address.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ * @retval B_NOT_ALLOWED   Thread belongs to a different team.
+ */
 status_t
 _user_cancel_thread(thread_id threadID, void (*cancelFunction)(int))
 {
@@ -3603,6 +4702,12 @@ _user_cancel_thread(thread_id threadID, void (*cancelFunction)(int))
 }
 
 
+/**
+ * @brief Syscall: resume a suspended thread (with permission check).
+ *
+ * @param thread  Thread ID to resume.
+ * @return        B_OK on success, or an error code.
+ */
 status_t
 _user_resume_thread(thread_id thread)
 {
@@ -3610,6 +4715,12 @@ _user_resume_thread(thread_id thread)
 }
 
 
+/**
+ * @brief Syscall: suspend a thread (with permission check).
+ *
+ * @param thread  Thread ID to suspend.
+ * @return        B_OK on success, or an error code.
+ */
 status_t
 _user_suspend_thread(thread_id thread)
 {
@@ -3617,6 +4728,14 @@ _user_suspend_thread(thread_id thread)
 }
 
 
+/**
+ * @brief Syscall: rename a thread, copying the name from userland.
+ *
+ * @param thread    Thread ID to rename.
+ * @param userName  User-space pointer to the new name string.
+ * @retval B_OK          Thread renamed.
+ * @retval B_BAD_ADDRESS @p userName is not a valid user-space address.
+ */
 status_t
 _user_rename_thread(thread_id thread, const char *userName)
 {
@@ -3633,6 +4752,13 @@ _user_rename_thread(thread_id thread, const char *userName)
 }
 
 
+/**
+ * @brief Syscall: set the scheduling priority of a thread (with permission check).
+ *
+ * @param thread      Thread ID.
+ * @param newPriority New priority value.
+ * @return            New priority, or an error code.
+ */
 int32
 _user_set_thread_priority(thread_id thread, int32 newPriority)
 {
@@ -3640,6 +4766,16 @@ _user_set_thread_priority(thread_id thread, int32 newPriority)
 }
 
 
+/**
+ * @brief Syscall: create a new userland thread from a userland thread_creation_attributes.
+ *
+ * Copies and validates the userland attributes, calls thread_create_thread(),
+ * and notifies the debugger of the new thread.
+ *
+ * @param userAttributes  User-space pointer to thread_creation_attributes.
+ * @retval >= 0  Thread ID of the new thread.
+ * @retval < 0   Error from attribute validation or thread_create_thread().
+ */
 thread_id
 _user_spawn_thread(thread_creation_attributes* userAttributes)
 {
@@ -3661,6 +4797,21 @@ _user_spawn_thread(thread_creation_attributes* userAttributes)
 }
 
 
+/**
+ * @brief Syscall: sleep for a duration, with restart support on interruption.
+ *
+ * Converts relative timeouts to absolute ones (to survive clock changes),
+ * calls common_snooze_etc(), and, if interrupted, stores restart parameters
+ * and requests a syscall restart.
+ *
+ * @param timeout           Sleep duration or absolute deadline.
+ * @param timebase          POSIX clock ID.
+ * @param flags             B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT etc.
+ * @param userRemainingTime If non-NULL and interrupted, receives remaining time.
+ * @retval B_OK          Sleep completed normally.
+ * @retval B_INTERRUPTED Sleep was interrupted; syscall restart was requested.
+ * @retval B_BAD_ADDRESS @p userRemainingTime is not a valid user address.
+ */
 status_t
 _user_snooze_etc(bigtime_t timeout, int timebase, uint32 flags,
 	bigtime_t* userRemainingTime)
@@ -3743,6 +4894,9 @@ _user_snooze_etc(bigtime_t timeout, int timebase, uint32 flags,
 }
 
 
+/**
+ * @brief Syscall: voluntarily yield the CPU.
+ */
 void
 _user_thread_yield(void)
 {
@@ -3750,6 +4904,15 @@ _user_thread_yield(void)
 }
 
 
+/**
+ * @brief Syscall: get thread_info for a thread by ID, copying to userland.
+ *
+ * @param id       Thread ID to query.
+ * @param userInfo User-space destination pointer for the thread_info struct.
+ * @retval B_OK          Info copied to userland.
+ * @retval B_BAD_ADDRESS @p userInfo is not a valid user-space address.
+ * @retval other         Error from _get_thread_info().
+ */
 status_t
 _user_get_thread_info(thread_id id, thread_info *userInfo)
 {
@@ -3769,6 +4932,16 @@ _user_get_thread_info(thread_id id, thread_info *userInfo)
 }
 
 
+/**
+ * @brief Syscall: iterate over threads in a team, returning one thread_info per call.
+ *
+ * @param team        Team ID.
+ * @param userCookie  User-space in/out iteration cookie (set to 0 initially).
+ * @param userInfo    User-space destination for the thread_info struct.
+ * @retval B_OK          Info copied; advance cookie for the next call.
+ * @retval B_BAD_ADDRESS A pointer is not a valid user address.
+ * @retval B_BAD_VALUE   Iteration complete.
+ */
 status_t
 _user_get_next_thread_info(team_id team, int32 *userCookie,
 	thread_info *userInfo)
@@ -3793,6 +4966,13 @@ _user_get_next_thread_info(team_id team, int32 *userCookie,
 }
 
 
+/**
+ * @brief Syscall: find a thread by name, copying the name from userland.
+ *
+ * @param userName  User-space pointer to the name string, or NULL for the
+ *                  current thread.
+ * @return          Thread ID, or B_BAD_ADDRESS / B_NAME_NOT_FOUND on error.
+ */
 thread_id
 _user_find_thread(const char *userName)
 {
@@ -3809,6 +4989,18 @@ _user_find_thread(const char *userName)
 }
 
 
+/**
+ * @brief Syscall: wait for a thread to exit, with timeout and restart support.
+ *
+ * @param id               Thread ID to wait for.
+ * @param flags            Standard timeout/interrupt flags.
+ * @param timeout          Timeout value in microseconds.
+ * @param userReturnCode   User-space pointer to receive the thread's exit status.
+ * @retval B_OK            Thread exited; exit status copied to userland.
+ * @retval B_BAD_ADDRESS   @p userReturnCode is not a valid user address.
+ * @retval B_INTERRUPTED   Wait was interrupted.
+ * @retval B_TIMED_OUT     Timeout expired.
+ */
 status_t
 _user_wait_for_thread_etc(thread_id id, uint32 flags, bigtime_t timeout, status_t *userReturnCode)
 {
@@ -3831,6 +5023,12 @@ _user_wait_for_thread_etc(thread_id id, uint32 flags, bigtime_t timeout, status_
 }
 
 
+/**
+ * @brief Syscall: check whether a thread has a pending data message.
+ *
+ * @param thread  Thread ID.
+ * @return        true if a message is pending.
+ */
 bool
 _user_has_data(thread_id thread)
 {
@@ -3838,6 +5036,16 @@ _user_has_data(thread_id thread)
 }
 
 
+/**
+ * @brief Syscall: send a data message to another thread from userland.
+ *
+ * @param thread      Target thread ID.
+ * @param code        Integer message code.
+ * @param buffer      User-space pointer to the message payload.
+ * @param bufferSize  Size of the payload in bytes.
+ * @retval B_OK           Message sent.
+ * @retval B_BAD_ADDRESS  @p buffer is not a valid user address.
+ */
 status_t
 _user_send_data(thread_id thread, int32 code, const void *buffer,
 	size_t bufferSize)
@@ -3851,6 +5059,15 @@ _user_send_data(thread_id thread, int32 code, const void *buffer,
 }
 
 
+/**
+ * @brief Syscall: receive a data message sent to the current thread from userland.
+ *
+ * @param _userSender  User-space pointer to receive the sender's thread ID.
+ * @param buffer       User-space destination buffer for the message payload.
+ * @param bufferSize   Maximum bytes to copy.
+ * @retval >= 0        Message code; sender ID written to @p _userSender.
+ * @retval B_BAD_ADDRESS A pointer is not a valid user address.
+ */
 status_t
 _user_receive_data(thread_id *_userSender, void *buffer, size_t bufferSize)
 {
@@ -3873,6 +5090,20 @@ _user_receive_data(thread_id *_userSender, void *buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Syscall: block the current thread until explicitly unblocked or timed out.
+ *
+ * Reads the wait_status from the thread's user_thread structure; if already
+ * set (<=0) returns immediately.  Otherwise calls thread_block_with_timeout()
+ * and reconciles the result with any concurrent unblock from another thread.
+ *
+ * @param flags    B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT / B_CAN_INTERRUPT flags.
+ * @param timeout  Timeout duration or absolute deadline in microseconds.
+ * @retval B_OK          Unblocked by another thread.
+ * @retval B_TIMED_OUT   Timeout expired.
+ * @retval B_INTERRUPTED Wait was interrupted by a signal.
+ * @retval B_BAD_ADDRESS user_thread->wait_status is not accessible.
+ */
 status_t
 _user_block_thread(uint32 flags, bigtime_t timeout)
 {
@@ -3929,6 +5160,14 @@ _user_block_thread(uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Syscall: unblock a single thread that is blocked via _user_block_thread().
+ *
+ * @param threadID  Thread ID to unblock.
+ * @param status    Status code to deliver to the blocked thread.
+ * @retval B_OK            Thread unblocked; reschedule requested if needed.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ */
 status_t
 _user_unblock_thread(thread_id threadID, status_t status)
 {
@@ -3941,6 +5180,19 @@ _user_unblock_thread(thread_id threadID, status_t status)
 }
 
 
+/**
+ * @brief Syscall: unblock up to 128 userland-blocked threads in a single call.
+ *
+ * Copies a list of thread IDs from userland and calls user_unblock_thread()
+ * for each, then triggers a reschedule if any were unblocked.
+ *
+ * @param userThreads  User-space array of thread IDs.
+ * @param count        Number of thread IDs in @p userThreads (max 128).
+ * @param status       Status code to deliver to each unblocked thread.
+ * @retval B_OK          All unblock attempts completed.
+ * @retval B_BAD_ADDRESS @p userThreads is not a valid user address.
+ * @retval B_BAD_VALUE   @p count exceeds the maximum.
+ */
 status_t
 _user_unblock_threads(thread_id* userThreads, uint32 count, status_t status)
 {
@@ -3969,6 +5221,13 @@ _user_unblock_threads(thread_id* userThreads, uint32 count, status_t status)
 // TODO: the following two functions don't belong here
 
 
+/**
+ * @brief Syscall: getrlimit() — retrieve a resource limit, copying to userland.
+ *
+ * @param resource  POSIX resource identifier.
+ * @param urlp      User-space destination rlimit pointer.
+ * @return          0 on success, EINVAL or B_BAD_ADDRESS on error.
+ */
 int
 _user_getrlimit(int resource, struct rlimit *urlp)
 {
@@ -3995,6 +5254,13 @@ _user_getrlimit(int resource, struct rlimit *urlp)
 }
 
 
+/**
+ * @brief Syscall: setrlimit() — set a resource limit, copying from userland.
+ *
+ * @param resource            POSIX resource identifier.
+ * @param userResourceLimit   User-space source rlimit pointer.
+ * @return                    0 on success, EINVAL or B_BAD_ADDRESS on error.
+ */
 int
 _user_setrlimit(int resource, const struct rlimit *userResourceLimit)
 {
@@ -4012,6 +5278,11 @@ _user_setrlimit(int resource, const struct rlimit *userResourceLimit)
 }
 
 
+/**
+ * @brief Syscall: return the CPU number the current thread is running on.
+ *
+ * @return  Zero-based CPU index.
+ */
 int
 _user_get_cpu()
 {
@@ -4020,6 +5291,20 @@ _user_get_cpu()
 }
 
 
+/**
+ * @brief Syscall: retrieve the CPU affinity mask of a thread.
+ *
+ * Copies the CPUSet affinity mask to a userland buffer.  If @p id is 0 the
+ * current thread is used.
+ *
+ * @param id       Thread ID (0 for current thread).
+ * @param userMask User-space destination buffer for the CPUSet.
+ * @param size     Size of the user buffer in bytes.
+ * @retval B_OK          Mask copied.
+ * @retval B_BAD_VALUE   @p userMask is NULL or @p id < 0.
+ * @retval B_BAD_ADDRESS @p userMask is not a valid user address.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ */
 status_t
 _user_get_thread_affinity(thread_id id, void* userMask, size_t size)
 {
@@ -4047,6 +5332,23 @@ _user_get_thread_affinity(thread_id id, void* userMask, size_t size)
 	return B_OK;
 }
 
+/**
+ * @brief Syscall: set the CPU affinity mask of a thread.
+ *
+ * Copies a CPUSet from userland, validates that at least one online CPU is
+ * included, and stores the mask on the target thread.  If the thread is
+ * currently running on a CPU excluded by the new mask, thread_yield() is
+ * called to force a migration.
+ *
+ * @param id       Thread ID (0 for current thread).
+ * @param userMask User-space source buffer containing the new CPUSet.
+ * @param size     Size of the user buffer (must be >= sizeof(CPUSet)).
+ * @retval B_OK            Mask applied.
+ * @retval B_BAD_VALUE     @p userMask is NULL, @p id < 0, @p size is too
+ *                         small, or the mask excludes all online CPUs.
+ * @retval B_BAD_ADDRESS   @p userMask is not a valid user address.
+ * @retval B_BAD_THREAD_ID Thread not found.
+ */
 status_t
 _user_set_thread_affinity(thread_id id, const void* userMask, size_t size)
 {

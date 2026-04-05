@@ -1,9 +1,39 @@
 /*
- * Copyright 2010, Ingo Weinhold <ingo_weinhold@gmx.de>.
- * Copyright 2008-2010, Axel Dörfler. All Rights Reserved.
- * Copyright 2007, Hugo Santos. All Rights Reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008-2010, Axel Dörfler. All Rights Reserved.
+ *   Copyright 2007, Hugo Santos. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file Slab.cpp
+ * @brief Core slab allocator implementation — slab lifecycle and object recycling.
+ *
+ * Manages the allocation and freeing of slabs (contiguous memory regions
+ * holding fixed-size objects). Implements the slow-path alloc/free that is
+ * called when the per-CPU depot has no cached objects. Also handles slab
+ * creation via MemoryManager and object constructor/destructor callbacks.
+ *
+ * @see MemoryManager.cpp, ObjectCache.cpp, ObjectDepot.cpp
  */
 
 
@@ -251,6 +281,12 @@ class Reserve : public ObjectCacheTraceEntry {
 // #pragma mark -
 
 
+/**
+ * @brief Prints a single slab's metadata to the kernel debugger.
+ *
+ * @param slab Pointer to the slab to display.
+ * @note Intended for use from the kernel debugger only.
+ */
 static void
 dump_slab(::slab* slab)
 {
@@ -259,6 +295,18 @@ dump_slab(::slab* slab)
 }
 
 
+/**
+ * @brief Kernel debugger command: list all registered object caches.
+ *
+ * Iterates sObjectCaches and prints a one-line summary for each cache
+ * including name, object size, alignment, memory usage, and flags.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return Always returns 0.
+ * @note Registered as the "slabs" debugger command. Safe to call only from
+ *       the kernel debugger context.
+ */
 static int
 dump_slabs(int argc, char* argv[])
 {
@@ -281,6 +329,20 @@ dump_slabs(int argc, char* argv[])
 }
 
 
+/**
+ * @brief Kernel debugger command: dump detailed information about one object
+ *        cache.
+ *
+ * Parses the cache address from argv[1] and prints all cache fields plus
+ * per-slab listings for the empty, partial, and full slab lists, followed by
+ * a dump of the associated object depot (if the cache uses one).
+ *
+ * @param argc Argument count; must be >= 2.
+ * @param argv Argument vector; argv[1] must be a valid object cache address.
+ * @return Always returns 0.
+ * @note Registered as the "slab_cache" debugger command. Safe to call only
+ *       from the kernel debugger context.
+ */
 static int
 dump_cache_info(int argc, char* argv[])
 {
@@ -338,6 +400,21 @@ dump_cache_info(int argc, char* argv[])
 }
 
 
+/**
+ * @brief Kernel debugger command: identify and display the object cache that
+ *        owns a given allocation address.
+ *
+ * Resolves the object cache for the address given in argv[1] via
+ * MemoryManager::DebugObjectCacheForAddress(), then identifies whether the
+ * object's slab is on the empty, partial, or full list.
+ *
+ * @param argc Argument count; must be >= 2.
+ * @param argv Argument vector; argv[1] must be any address within an object
+ *             cache allocation.
+ * @return 0 on success, 1 if the address could not be resolved to a cache.
+ * @note Registered as the "slab_object" debugger command. Safe to call only
+ *       from the kernel debugger context.
+ */
 static int
 dump_object_info(int argc, char* argv[])
 {
@@ -534,6 +611,20 @@ private:
 
 }	// unnamed namespace
 
+/**
+ * @brief Looks up or creates a caller_info entry for the given caller address.
+ *
+ * Searches sCallerInfoTable for an existing entry matching @p caller. If none
+ * is found and a free slot is available, a new entry is initialised and
+ * returned.
+ *
+ * @param caller The instruction address of the allocating caller.
+ * @return Pointer to the matching caller_info entry, or NULL if the table is
+ *         full.
+ * @note Only available when SLAB_ALLOCATION_TRACKING_AVAILABLE is enabled.
+ *       Not thread-safe; assumes single-threaded access from the debugger
+ *       command context.
+ */
 static caller_info*
 get_caller_info(addr_t caller)
 {
@@ -556,6 +647,14 @@ get_caller_info(addr_t caller)
 }
 
 
+/**
+ * @brief qsort comparator that orders caller_info entries by descending
+ *        allocation size.
+ *
+ * @param _a Pointer to the first caller_info.
+ * @param _b Pointer to the second caller_info.
+ * @return Positive if a's size is smaller than b's (sort descending).
+ */
 static int
 caller_info_compare_size(const void* _a, const void* _b)
 {
@@ -565,6 +664,14 @@ caller_info_compare_size(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief qsort comparator that orders caller_info entries by descending
+ *        allocation count.
+ *
+ * @param _a Pointer to the first caller_info.
+ * @param _b Pointer to the second caller_info.
+ * @return Positive if a's count is smaller than b's (sort descending).
+ */
 static int
 caller_info_compare_count(const void* _a, const void* _b)
 {
@@ -576,6 +683,18 @@ caller_info_compare_count(const void* _a, const void* _b)
 
 #if SLAB_OBJECT_CACHE_ALLOCATION_TRACKING
 
+/**
+ * @brief Iterates every object slot in a slab and invokes the tracking
+ *        callback for each one.
+ *
+ * @param cache    Pointer to the owning ObjectCache.
+ * @param slab     Pointer to the slab whose objects are to be analysed.
+ * @param callback Callback object whose ProcessTrackingInfo() is called for
+ *                 each object.
+ * @retval true  All objects were processed successfully.
+ * @retval false ProcessTrackingInfo() returned false, requesting early exit.
+ * @note Only compiled when SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is enabled.
+ */
 static bool
 analyze_allocation_callers(ObjectCache* cache, slab* slab,
 	AllocationTrackingCallback& callback)
@@ -591,6 +710,16 @@ analyze_allocation_callers(ObjectCache* cache, slab* slab,
 }
 
 
+/**
+ * @brief Iterates every slab in a slab list and analyses allocation callers.
+ *
+ * @param cache     Pointer to the owning ObjectCache.
+ * @param slabList  Reference to the slab list to iterate.
+ * @param callback  Callback object invoked for each object in each slab.
+ * @retval true  All slabs and objects were processed successfully.
+ * @retval false Early exit was requested by the callback.
+ * @note Only compiled when SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is enabled.
+ */
 static bool
 analyze_allocation_callers(ObjectCache* cache, const SlabList& slabList,
 	AllocationTrackingCallback& callback)
@@ -605,6 +734,18 @@ analyze_allocation_callers(ObjectCache* cache, const SlabList& slabList,
 }
 
 
+/**
+ * @brief Analyses allocation callers for all live objects in an ObjectCache.
+ *
+ * Iterates the cache's full and partial slab lists (which hold live objects)
+ * and invokes the callback for each object.
+ *
+ * @param cache    Pointer to the ObjectCache to analyse.
+ * @param callback Callback object invoked for each live object.
+ * @retval true  All objects were processed.
+ * @retval false Early exit was requested by the callback.
+ * @note Only compiled when SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is enabled.
+ */
 static bool
 analyze_allocation_callers(ObjectCache* cache,
 	AllocationTrackingCallback& callback)
@@ -616,6 +757,24 @@ analyze_allocation_callers(ObjectCache* cache,
 #endif	// SLAB_OBJECT_CACHE_ALLOCATION_TRACKING
 
 
+/**
+ * @brief Kernel debugger command: print all live slab allocations, optionally
+ *        filtered by cache, slab, address, team, or thread.
+ *
+ * Accepts multiple optional flags to narrow the output:
+ *   --stacktrace  Print stack traces where available.
+ *   -a <addr>     Show only the allocation at exactly <addr>.
+ *   -o <cache>    Restrict to the given object cache address.
+ *   -s <slab>     Restrict to the given slab address (or containing slab).
+ *   --team <id>   Filter by team ID.
+ *   --thread <id> Filter by thread ID.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return Always returns 0.
+ * @note Only meaningful when SLAB_ALLOCATION_TRACKING_AVAILABLE is enabled.
+ *       Safe to call only from the kernel debugger context.
+ */
 static int
 dump_allocation_infos(int argc, char **argv)
 {
@@ -739,6 +898,22 @@ dump_allocation_infos(int argc, char **argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: summarise live slab allocations grouped by
+ *        call site.
+ *
+ * Collects allocation tracking info from all caches (or a single specified
+ * cache), aggregates counts and byte totals per unique caller address, sorts
+ * the result by size (default) or count ("-c"), and prints a ranked table.
+ * With "-d <caller>" prints individual allocations for that call site instead.
+ * "-r" resets tracking info after collection.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector; see function body for supported flags.
+ * @return Always returns 0.
+ * @note Only meaningful when SLAB_ALLOCATION_TRACKING_AVAILABLE is enabled.
+ *       Safe to call only from the kernel debugger context.
+ */
 static int
 dump_allocations_per_caller(int argc, char **argv)
 {
@@ -859,6 +1034,19 @@ dump_allocations_per_caller(int argc, char **argv)
 #endif	// SLAB_ALLOCATION_TRACKING_AVAILABLE
 
 
+/**
+ * @brief Records a tracing entry for a successful object allocation.
+ *
+ * When SLAB_OBJECT_CACHE_TRACING is enabled, emits a tracing event for the
+ * allocation. When SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is also enabled,
+ * associates the tracing entry with the object's tracking slot under the
+ * cache lock.
+ *
+ * @param cache  Pointer to the ObjectCache from which the object was allocated.
+ * @param flags  Allocation flags used for the allocation.
+ * @param object Pointer to the newly allocated object.
+ * @note No-op unless SLAB_OBJECT_CACHE_TRACING is enabled at compile time.
+ */
 void
 add_alloc_tracing_entry(ObjectCache* cache, uint32 flags, void* object)
 {
@@ -876,6 +1064,16 @@ add_alloc_tracing_entry(ObjectCache* cache, uint32 flags, void* object)
 // #pragma mark -
 
 
+/**
+ * @brief Wakes the MemoryManager maintenance thread to perform deferred work.
+ *
+ * Acquires sMaintenanceLock and broadcasts on sMaintenanceCondition so that
+ * the object_cache_maintainer thread will wake and call
+ * MemoryManager::PerformMaintenance() on its next iteration.
+ *
+ * @note Safe to call from any kernel context, including interrupt handlers
+ *       (sMaintenanceLock is a plain mutex, not a spinlock).
+ */
 void
 request_memory_manager_maintenance()
 {
@@ -887,6 +1085,17 @@ request_memory_manager_maintenance()
 // #pragma mark -
 
 
+/**
+ * @brief Destroys an object cache and releases all of its slabs.
+ *
+ * Drains the depot, panics if any full or partial slabs remain (indicating a
+ * leak), returns all empty slabs via ReturnSlab(), and calls the cache's
+ * virtual Delete() method.
+ *
+ * @param cache Pointer to the object_cache to destroy.
+ * @note Must be called without cache->lock held. Caller must ensure no
+ *       concurrent allocations or frees are in progress.
+ */
 static void
 delete_object_cache_internal(object_cache* cache)
 {
@@ -909,6 +1118,16 @@ delete_object_cache_internal(object_cache* cache)
 }
 
 
+/**
+ * @brief Schedules the maintenance thread to grow the object cache to its
+ *        minimum reserve.
+ *
+ * Sets cache->maintenance_resize and, if the cache is not already queued for
+ * maintenance, adds it to sMaintenanceQueue and wakes the maintainer.
+ *
+ * @param cache Pointer to the ObjectCache whose reserve needs increasing.
+ * @note Acquires sMaintenanceLock internally. Safe to call with cache->lock held.
+ */
 static void
 increase_object_reserve(ObjectCache* cache)
 {
@@ -926,6 +1145,26 @@ increase_object_reserve(ObjectCache* cache)
 
 /*!	Makes sure that \a objectCount objects can be allocated.
 */
+/**
+ * @brief Ensures that at least @p objectCount free objects are available in
+ *        the cache, allocating new slabs as needed.
+ *
+ * If another thread is currently resizing the cache, this function waits on
+ * that thread's resize condition (unless CACHE_DONT_WAIT_FOR_MEMORY is set).
+ * After waiting or if the cache already has enough free objects, returns
+ * immediately. Otherwise allocates slabs via ObjectCache::CreateSlab() until
+ * the required number of free objects is available.
+ *
+ * @param cache       Pointer to the ObjectCache to resize.
+ * @param objectCount Minimum number of free objects required.
+ * @param flags       Allocation flags; CACHE_DONT_WAIT_FOR_MEMORY skips the
+ *                    wait for concurrent resizers.
+ * @retval B_OK        The cache now has at least @p objectCount free objects.
+ * @retval B_WOULD_BLOCK The calling thread is already performing a resize for
+ *                    this cache (re-entrancy guard).
+ * @retval B_NO_MEMORY A new slab could not be allocated.
+ * @note Must be called with cache->lock held.
+ */
 static status_t
 object_cache_reserve_internal(ObjectCache* cache, size_t objectCount,
 	uint32 flags)
@@ -992,6 +1231,22 @@ object_cache_reserve_internal(ObjectCache* cache, size_t objectCount,
 }
 
 
+/**
+ * @brief Low-memory callback that trims empty slabs from all object caches.
+ *
+ * Called by the low-resource manager when memory is scarce. Iterates every
+ * registered object cache, optionally calls its reclaimer, drains its depot,
+ * and returns empty slabs back to the MemoryManager according to the resource
+ * pressure level.
+ *
+ * @param dummy     Unused cookie (registered as NULL).
+ * @param resources Bitmask of low resource types (pages, memory, address space).
+ * @param level     B_NO_LOW_RESOURCE, B_LOW_RESOURCE_NOTE,
+ *                  B_LOW_RESOURCE_WARNING, or B_LOW_RESOURCE_CRITICAL.
+ * @note Runs in the context of the low-resource manager thread. Must not
+ *       acquire sObjectCacheListLock for the duration of slab return operations
+ *       to avoid priority inversion.
+ */
 static void
 object_cache_low_memory(void* dummy, uint32 resources, int32 level)
 {
@@ -1087,6 +1342,20 @@ object_cache_low_memory(void* dummy, uint32 resources, int32 level)
 }
 
 
+/**
+ * @brief Kernel thread that services object cache maintenance requests.
+ *
+ * Runs as a dedicated kernel thread ("object cache resizer"). Waits on
+ * sMaintenanceCondition for work to appear in sMaintenanceQueue. For each
+ * queued cache it either deletes it (if maintenance_delete is set) or calls
+ * object_cache_reserve_internal() to satisfy its minimum object reserve. Also
+ * drives MemoryManager::PerformMaintenance() when needed.
+ *
+ * @param unused Unused thread argument.
+ * @return B_OK (never actually reached; the thread loops forever).
+ * @note Runs at B_URGENT_PRIORITY. Do not call directly; spawned by
+ *       slab_init_post_thread().
+ */
 static status_t
 object_cache_maintainer(void*)
 {
@@ -1154,6 +1423,17 @@ object_cache_maintainer(void*)
 // #pragma mark - public API
 
 
+/**
+ * @brief Creates an object cache with default alignment and no magazine limits.
+ *
+ * Convenience wrapper around create_object_cache_etc() that supplies zeroes for
+ * alignment, maximum byte usage, magazine capacity, and max magazine count.
+ *
+ * @param name        Human-readable name for the cache (used in debug output).
+ * @param object_size Size in bytes of each object managed by the cache.
+ * @param flags       Cache creation flags (e.g., CACHE_NO_DEPOT).
+ * @return Pointer to the new object_cache, or NULL on failure.
+ */
 object_cache*
 create_object_cache(const char* name, size_t object_size, uint32 flags)
 {
@@ -1162,6 +1442,28 @@ create_object_cache(const char* name, size_t object_size, uint32 flags)
 }
 
 
+/**
+ * @brief Creates a fully configured object cache.
+ *
+ * Selects either SmallObjectCache (object <= 256 bytes) or HashedObjectCache
+ * (object > 256 bytes), initialises it, and adds it to the global cache list.
+ * When DEBUG_HEAPS and GUARDED_HEAP_CAN_REPLACE_OBJECT_CACHES are both set,
+ * certain caches may be backed by the guarded heap instead.
+ *
+ * @param name               Human-readable name for the cache.
+ * @param objectSize         Size in bytes of each managed object.
+ * @param alignment          Required alignment of each object (0 = default).
+ * @param maximum            Maximum total bytes the cache may consume (0 = unlimited).
+ * @param magazineCapacity   Number of object slots per depot magazine (0 = default).
+ * @param maxMagazineCount   Maximum full magazines in the depot (0 = default).
+ * @param flags              Cache creation flags.
+ * @param cookie             Opaque pointer forwarded to constructor/destructor/reclaimer.
+ * @param constructor        Called after an object is allocated from a new slab.
+ * @param destructor         Called before an object's slab memory is released.
+ * @param reclaimer          Called by the low-memory handler to reclaim objects.
+ * @return Pointer to the new object_cache, or NULL if objectSize is 0 or
+ *         memory allocation fails.
+ */
 object_cache*
 create_object_cache_etc(const char* name, size_t objectSize, size_t alignment,
 	size_t maximum, size_t magazineCapacity, size_t maxMagazineCount,
@@ -1209,6 +1511,18 @@ create_object_cache_etc(const char* name, size_t objectSize, size_t alignment,
 }
 
 
+/**
+ * @brief Deletes an object cache and releases all resources.
+ *
+ * Removes the cache from the global list, then either schedules deferred
+ * deletion (if the maintenance thread is currently working on the cache) or
+ * calls delete_object_cache_internal() immediately.
+ *
+ * @param cache Pointer to the object_cache to delete.
+ * @note The caller must ensure no further alloc/free calls are made against
+ *       @p cache after this function returns (or is scheduled for deferred
+ *       deletion).
+ */
 void
 delete_object_cache(object_cache* cache)
 {
@@ -1249,6 +1563,18 @@ delete_object_cache(object_cache* cache)
 }
 
 
+/**
+ * @brief Sets the minimum number of free objects the cache must always keep
+ *        reserved.
+ *
+ * Updates cache->min_object_reserve and schedules the maintenance thread to
+ * grow the cache immediately if the current free count is below the new value.
+ *
+ * @param cache       Pointer to the target object_cache.
+ * @param objectCount New minimum reserve object count.
+ * @retval B_OK Always (or immediately if the guarded-heap path is active).
+ * @note Acquires cache->lock internally.
+ */
 status_t
 object_cache_set_minimum_reserve(object_cache* cache, size_t objectCount)
 {
@@ -1270,6 +1596,21 @@ object_cache_set_minimum_reserve(object_cache* cache, size_t objectCount)
 }
 
 
+/**
+ * @brief Allocates one object from the object cache (public API, fast + slow path).
+ *
+ * First attempts to obtain a cached object from the per-CPU depot
+ * (object_depot_obtain()). If the depot is empty, acquires cache->lock and
+ * allocates from a partial or empty slab, growing the cache if necessary.
+ * Records a tracing entry on success.
+ *
+ * @param cache Pointer to the object_cache from which to allocate.
+ * @param flags Allocation flags (e.g., CACHE_DONT_SLEEP, CACHE_DONT_WAIT_FOR_MEMORY).
+ * @return Pointer to the allocated object (filled with 0xcc in debug builds),
+ *         or NULL if allocation failed.
+ * @note This is the primary public allocation entry point. Preemptible; may
+ *       sleep unless CACHE_DONT_SLEEP is specified.
+ */
 void*
 object_cache_alloc(object_cache* cache, uint32 flags)
 {
@@ -1347,6 +1688,21 @@ object_cache_alloc(object_cache* cache, uint32 flags)
 }
 
 
+/**
+ * @brief Frees an object back to its object cache (public API, fast + slow path).
+ *
+ * If the cache uses a depot, stores the object in the per-CPU magazine via
+ * object_depot_store(). Otherwise acquires cache->lock and returns the object
+ * directly to its slab via ReturnObjectToSlab(). Handles NULL gracefully.
+ *
+ * When PARANOID_KERNEL_FREE is enabled, checks for double-free by looking for
+ * the 0xdeadbeef fill pattern and searching the depot before proceeding.
+ *
+ * @param cache  Pointer to the object_cache the object belongs to.
+ * @param object Pointer to the object to free (may be NULL; no-op in that case).
+ * @param flags  Flags forwarded to the depot store or slab return operations.
+ * @note This is the primary public free entry point. Preemptible.
+ */
 void
 object_cache_free(object_cache* cache, void* object, uint32 flags)
 {
@@ -1397,6 +1753,19 @@ object_cache_free(object_cache* cache, void* object, uint32 flags)
 }
 
 
+/**
+ * @brief Pre-populates an object cache so that at least @p objectCount objects
+ *        can be allocated without triggering slab growth.
+ *
+ * Acquires cache->lock and delegates to object_cache_reserve_internal().
+ *
+ * @param cache       Pointer to the target object_cache.
+ * @param objectCount Number of free objects to ensure are available.
+ * @param flags       Allocation flags (e.g., CACHE_DONT_WAIT_FOR_MEMORY).
+ * @retval B_OK        Reserve satisfied.
+ * @retval B_NO_MEMORY Could not allocate the required slabs.
+ * @note May sleep waiting for memory unless CACHE_DONT_WAIT_FOR_MEMORY is set.
+ */
 status_t
 object_cache_reserve(object_cache* cache, size_t objectCount, uint32 flags)
 {
@@ -1415,6 +1784,15 @@ object_cache_reserve(object_cache* cache, size_t objectCount, uint32 flags)
 }
 
 
+/**
+ * @brief Returns the total number of bytes currently allocated from the
+ *        MemoryManager on behalf of this cache.
+ *
+ * @param cache             Pointer to the target object_cache.
+ * @param _allocatedMemory  Out: set to cache->usage (bytes of slab memory
+ *                          currently held by the cache).
+ * @note Acquires cache->lock internally.
+ */
 void
 object_cache_get_usage(object_cache* cache, size_t* _allocatedMemory)
 {
@@ -1423,6 +1801,17 @@ object_cache_get_usage(object_cache* cache, size_t* _allocatedMemory)
 }
 
 
+/**
+ * @brief Performs early slab allocator initialisation during kernel boot.
+ *
+ * Calls MemoryManager::Init() to set up the memory manager with the early
+ * kernel_args memory map, and placement-constructs the global object cache list.
+ *
+ * @param args Pointer to the kernel_args structure provided by the bootloader.
+ * @note Called very early in boot, before VM areas exist. Must not allocate
+ *       memory through normal means. No locking is needed as only one CPU is
+ *       active at this stage.
+ */
 void
 slab_init(kernel_args* args)
 {
@@ -1432,6 +1821,16 @@ slab_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Completes slab allocator initialisation after VM areas are available.
+ *
+ * Calls MemoryManager::InitPostArea() so that the memory manager can move its
+ * bootstrap structures into proper VM areas. Also registers all slab-related
+ * kernel debugger commands.
+ *
+ * @note Called during the area-init phase of kernel startup. No locking
+ *       required; runs single-threaded.
+ */
 void
 slab_init_post_area()
 {
@@ -1480,6 +1879,16 @@ slab_init_post_area()
 }
 
 
+/**
+ * @brief Registers the low-memory handler for slab trimming after semaphores
+ *        are available.
+ *
+ * Registers object_cache_low_memory() with the low-resource manager so that
+ * the slab allocator can return memory under page, memory, and address-space
+ * pressure. Called during the semaphore-init phase of kernel startup.
+ *
+ * @note No locking required; runs single-threaded during kernel init.
+ */
 void
 slab_init_post_sem()
 {
@@ -1489,6 +1898,17 @@ slab_init_post_sem()
 }
 
 
+/**
+ * @brief Spawns the object cache maintenance thread after threading is
+ *        available.
+ *
+ * Placement-constructs the MaintenanceQueue, initialises the
+ * sMaintenanceCondition, and spawns the "object cache resizer" kernel thread
+ * at B_URGENT_PRIORITY to service cache resize and deletion requests.
+ *
+ * @note Panics if the maintenance thread cannot be spawned. Must be called
+ *       exactly once, during the threading-init phase of kernel startup.
+ */
 void
 slab_init_post_thread()
 {

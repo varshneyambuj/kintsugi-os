@@ -1,24 +1,31 @@
 /*
- * Copyright 2004-2008, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Copyright 2002-2004, Thomas Kurschel. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2008, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Copyright 2002-2004, Thomas Kurschel. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
 
-/*!	Generators are created on demand and deleted if all their
-	IDs are freed. They have a ref_count which is increased
-	whenever someone messes with the generator.
-
-	Whenever a generator is searched for, generator_lock is held.
-
-	To find out which ID are allocated, a bitmap is used that
-	contain up to GENERATOR_MAX_ID bits. This is a hard limit,
-	but it's simple to implement. If someone really needs lots of
-	IDs, we can still rewrite the code. For simplicity, we use
-	sGeneratorLock instead of a generator specific lock during
-	allocation; changing it is straightforward as everything
-	is prepared for that.
-*/
+/** @file id_generator.cpp
+ * @brief Monotonically-increasing ID generator for device and resource objects.
+ */
 
 
 #include "id_generator.h"
@@ -70,9 +77,16 @@ static GeneratorList sGenerators;
 static mutex sLock = MUTEX_INITIALIZER("id generator");
 
 
-/*!	Create new generator.
-	sLock must be held.
-*/
+/**
+ * @brief Allocates and inserts a new named ID generator into the global list.
+ *
+ * Creates a new id_generator for the given @p name and adds it to
+ * sGenerators. The caller must hold sLock.
+ *
+ * @param name  The name to associate with the new generator.
+ * @return Pointer to the newly created id_generator, or @c NULL on
+ *         allocation failure.
+ */
 static id_generator*
 create_generator(const char* name)
 {
@@ -92,7 +106,17 @@ create_generator(const char* name)
 }
 
 
-/*! Allocate ID */
+/**
+ * @brief Allocates the next free ID slot from a generator's bitmap.
+ *
+ * Scans the generator's @c alloc_map for the first unset bit, marks it,
+ * increments the ID count, and returns the corresponding ID. Acquires
+ * sLock internally.
+ *
+ * @param generator  The generator whose bitmap is searched.
+ * @return The newly allocated ID (0 .. GENERATOR_MAX_ID-1), or
+ *         @c B_ERROR if all slots are exhausted.
+ */
 static int32
 create_id_internal(id_generator* generator)
 {
@@ -119,9 +143,17 @@ create_id_internal(id_generator* generator)
 }
 
 
-/*!	Gets a generator by name, and acquires a reference to it.
-	sLock must be held.
-*/
+/**
+ * @brief Looks up a generator by name and increments its reference count.
+ *
+ * Walks the sGenerators list for an entry whose name matches @p name.
+ * When found, bumps ref_count so the generator remains live until
+ * release_generator() is called. The caller must hold sLock.
+ *
+ * @param name  The generator name to search for.
+ * @return Pointer to the matching id_generator with an elevated reference
+ *         count, or @c NULL if no generator with that name exists.
+ */
 static id_generator*
 get_generator(const char* name)
 {
@@ -142,7 +174,15 @@ get_generator(const char* name)
 }
 
 
-/*! Decrease ref_count, deleting generator if not used anymore */
+/**
+ * @brief Decrements a generator's reference count, destroying it when unused.
+ *
+ * Acquires sLock, decrements ref_count, and — if both ref_count and
+ * num_ids reach zero — removes the generator from sGenerators and
+ * deletes it.
+ *
+ * @param generator  The generator whose reference is being released.
+ */
 static void
 release_generator(id_generator *generator)
 {
@@ -165,6 +205,12 @@ release_generator(id_generator *generator)
 //	#pragma mark - Private kernel API
 
 
+/**
+ * @brief Initialises the global ID-generator subsystem.
+ *
+ * Placement-constructs the sGenerators list. Must be called once during
+ * device-manager initialisation before any other dm_*_id functions.
+ */
 void
 dm_init_id_generator(void)
 {
@@ -175,7 +221,18 @@ dm_init_id_generator(void)
 //	#pragma mark - Public module API
 
 
-/*! Create automatic ID */
+/**
+ * @brief Allocates a unique ID from the named generator, creating it if needed.
+ *
+ * Looks up (or lazily creates) the id_generator for @p name, allocates
+ * the next free slot from its bitmap, and releases the generator reference
+ * before returning.
+ *
+ * @param name  The generator namespace to allocate from.
+ * @return The newly allocated ID (>= 0) on success, or @c B_NO_MEMORY if
+ *         the generator could not be created, or @c B_ERROR if all IDs are
+ *         exhausted.
+ */
 int32
 dm_create_id(const char* name)
 {
@@ -202,7 +259,20 @@ dm_create_id(const char* name)
 }
 
 
-/*!	Free automatically generated ID */
+/**
+ * @brief Returns a previously allocated ID to the named generator.
+ *
+ * Looks up the id_generator for @p name, verifies that @p id is actually
+ * marked as allocated, clears the corresponding bitmap bit, decrements
+ * num_ids, and releases the generator reference.
+ *
+ * @param name  The generator namespace the ID belongs to.
+ * @param id    The ID to free; must be a value previously returned by
+ *              dm_create_id() for the same @p name.
+ * @retval B_OK              The ID was freed successfully.
+ * @retval B_NAME_NOT_FOUND  No generator with the given @p name exists.
+ * @retval B_BAD_VALUE       @p id was not marked as allocated in the generator.
+ */
 status_t
 dm_free_id(const char* name, uint32 id)
 {

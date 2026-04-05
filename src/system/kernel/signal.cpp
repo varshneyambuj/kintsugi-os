@@ -1,15 +1,42 @@
 /*
- * Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
- * Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
- * Copyright 2011-2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2002, Angelo Mottola, a.mottola@libero.it.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
+ *   Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Copyright 2011-2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2002, Angelo Mottola, a.mottola@libero.it.
+ *   Distributed under the terms of the MIT License.
  */
 
-
-/*! POSIX signals handling routines */
+/**
+ * @file signal.cpp
+ * @brief POSIX signal delivery, masking, and handler dispatch.
+ *
+ * Implements signal sending (send_signal_to_thread, send_signal_to_team),
+ * signal masking (sigprocmask), the signal handler dispatch path called on
+ * return from kernel mode, and all signal-related syscalls. Handles both
+ * real-time and standard signal queuing with proper priority ordering.
+ *
+ * @see thread.cpp, team.cpp, ksignal.h
+ */
 
 
 #include <ksignal.h>
@@ -141,6 +168,14 @@ static const struct {
 };
 
 
+/**
+ * @brief Returns the human-readable name string for a signal number.
+ *
+ * @param number The signal number to look up.
+ * @return A pointer to the signal name string, or "invalid" if the number
+ *         exceeds @c __MAX_SIGNO.
+ * @note The returned pointer is into a static read-only table; do not free it.
+ */
 static inline const char*
 signal_name(uint32 number)
 {
@@ -221,6 +256,12 @@ QueuedSignalsCounter::Increment()
 // #pragma mark - Signal
 
 
+/**
+ * @brief Default constructor — creates an uninitialised, non-pending Signal.
+ *
+ * @note The signal has no associated QueuedSignalsCounter and is not pending.
+ *       Callers must call SetTo() or use another constructor before sending.
+ */
 Signal::Signal()
 	:
 	fCounter(NULL),
@@ -229,6 +270,15 @@ Signal::Signal()
 }
 
 
+/**
+ * @brief Copy constructor — creates a non-pending copy of @a other.
+ *
+ * @param other The signal to copy fields from. The new signal shares no
+ *              counter reference with @a other and starts in a non-pending
+ *              state.
+ * @note The fCounter of the copy is NULL; it is set by CreateQueuable() when
+ *       the signal is placed on a queue.
+ */
 Signal::Signal(const Signal& other)
 	:
 	fCounter(NULL),
@@ -246,6 +296,16 @@ Signal::Signal(const Signal& other)
 }
 
 
+/**
+ * @brief Constructs a fully specified Signal with sender information.
+ *
+ * @param number        The POSIX signal number (e.g. SIGKILL).
+ * @param signalCode    The SI_* origin code (e.g. SI_USER, SI_QUEUE).
+ * @param errorCode     An errno value associated with the signal, or 0.
+ * @param sendingProcess The PID of the process originating the signal.
+ * @note The effective UID is captured from the current thread's team at
+ *       construction time.
+ */
 Signal::Signal(uint32 number, int32 signalCode, int32 errorCode,
 	pid_t sendingProcess)
 	:
@@ -264,6 +324,12 @@ Signal::Signal(uint32 number, int32 signalCode, int32 errorCode,
 }
 
 
+/**
+ * @brief Destructor — releases the team's QueuedSignalsCounter reference.
+ *
+ * @note If the signal was never associated with a counter (e.g. stack-allocated
+ *       signals), this is a no-op.
+ */
 Signal::~Signal()
 {
 	if (fCounter != NULL)
@@ -312,6 +378,14 @@ Signal::CreateQueuable(const Signal& signal, bool queuingRequired,
 	return B_OK;
 }
 
+/**
+ * @brief Reinitialises this signal as a plain SI_USER signal for @a number.
+ *
+ * @param number The signal number to assign.
+ * @note All sender fields are taken from the current thread's team. This
+ *       is used to cheaply (re-)initialise stack-allocated signal buffers
+ *       inside PendingSignals::DequeueSignal().
+ */
 void
 Signal::SetTo(uint32 number)
 {
@@ -329,6 +403,12 @@ Signal::SetTo(uint32 number)
 }
 
 
+/**
+ * @brief Returns the scheduling priority of this signal.
+ *
+ * @return The integer priority from the @c kSignalInfos table; higher values
+ *         are dequeued before lower values during signal dispatch.
+ */
 int32
 Signal::Priority() const
 {
@@ -336,6 +416,12 @@ Signal::Priority() const
 }
 
 
+/**
+ * @brief Marks the signal as handled and releases the caller's reference.
+ *
+ * @note After this call the signal object may be destroyed; the caller must
+ *       not access it again.
+ */
 void
 Signal::Handled()
 {
@@ -343,6 +429,12 @@ Signal::Handled()
 }
 
 
+/**
+ * @brief Called by BReferenceable when the last reference is dropped.
+ *
+ * Deletes the signal object. If interrupts are disabled the deletion is
+ * deferred to a context where memory allocation is safe.
+ */
 void
 Signal::LastReferenceReleased()
 {
@@ -356,6 +448,9 @@ Signal::LastReferenceReleased()
 // #pragma mark - PendingSignals
 
 
+/**
+ * @brief Default constructor — creates an empty pending-signal set.
+ */
 PendingSignals::PendingSignals()
 	:
 	fQueuedSignalsMask(0),
@@ -364,6 +459,9 @@ PendingSignals::PendingSignals()
 }
 
 
+/**
+ * @brief Destructor — discards all pending signals and releases their references.
+ */
 PendingSignals::~PendingSignals()
 {
 	Clear();
@@ -385,6 +483,12 @@ PendingSignals::HighestSignalPriority(sigset_t nonBlocked) const
 }
 
 
+/**
+ * @brief Removes and releases all pending signals from both the queue and
+ *        the unqueued mask.
+ *
+ * @note The caller must hold the owning team's @c signal_lock.
+ */
 void
 PendingSignals::Clear()
 {
@@ -419,6 +523,13 @@ PendingSignals::AddSignal(Signal* signal)
 }
 
 
+/**
+ * @brief Removes a specific queued signal and updates the queued mask.
+ *
+ * @param signal The signal to remove. Must currently be in the queue.
+ * @note The caller retains the reference that was on the signal; this function
+ *       does not call Handled().
+ */
 void
 PendingSignals::RemoveSignal(Signal* signal)
 {
@@ -428,6 +539,15 @@ PendingSignals::RemoveSignal(Signal* signal)
 }
 
 
+/**
+ * @brief Removes all pending signals whose numbers are set in @a mask.
+ *
+ * Releases references of removed queued signals and clears the corresponding
+ * bits in both the queued and unqueued masks.
+ *
+ * @param mask Bitmask of signal numbers to remove (use SIGNAL_TO_MASK()).
+ * @note The caller must hold the owning team's @c signal_lock.
+ */
 void
 PendingSignals::RemoveSignals(sigset_t mask)
 {
@@ -551,6 +671,14 @@ PendingSignals::_GetHighestPrioritySignal(sigset_t nonBlocked,
 }
 
 
+/**
+ * @brief Rebuilds fQueuedSignalsMask by iterating the live queue.
+ *
+ * Called after one or more signals have been removed from the queue to keep
+ * the mask accurate.
+ *
+ * @note The caller must hold the owning team's @c signal_lock.
+ */
 void
 PendingSignals::_UpdateQueuedSignalMask()
 {
@@ -752,10 +880,13 @@ class SigSuspendDone : public AbstractTraceEntry {
 // #pragma mark -
 
 
-/*!	Updates the given thread's Thread::flags field according to what signals are
-	pending.
-	The caller must hold \c team->signal_lock.
-*/
+/**
+ * @brief Updates @a thread's THREAD_FLAGS_SIGNALS_PENDING flag based on its
+ *        current signal block mask.
+ *
+ * @param thread The thread whose flags are to be refreshed.
+ * @note The caller must hold @c team->signal_lock.
+ */
 static void
 update_thread_signals_flag(Thread* thread)
 {
@@ -767,10 +898,14 @@ update_thread_signals_flag(Thread* thread)
 }
 
 
-/*!	Updates the current thread's Thread::flags field according to what signals
-	are pending.
-	The caller must hold \c team->signal_lock.
-*/
+/**
+ * @brief Updates the current thread's THREAD_FLAGS_SIGNALS_PENDING flag.
+ *
+ * Convenience wrapper around update_thread_signals_flag() for the common
+ * case where the thread to update is the running thread.
+ *
+ * @note The caller must hold @c team->signal_lock.
+ */
 static void
 update_current_thread_signals_flag()
 {
@@ -778,10 +913,13 @@ update_current_thread_signals_flag()
 }
 
 
-/*!	Updates all of the given team's threads' Thread::flags fields according to
-	what signals are pending.
-	The caller must hold \c signal_lock.
-*/
+/**
+ * @brief Updates the THREAD_FLAGS_SIGNALS_PENDING flag for every thread in
+ *        @a team.
+ *
+ * @param team The team whose threads are to be updated.
+ * @note The caller must hold @c signal_lock.
+ */
 static void
 update_team_threads_signal_flag(Team* team)
 {
@@ -792,17 +930,21 @@ update_team_threads_signal_flag(Team* team)
 }
 
 
-/*!	Notifies the user debugger about a signal to be handled.
-
-	The caller must not hold any locks.
-
-	\param thread The current thread.
-	\param signal The signal to be handled.
-	\param handler The installed signal handler for the signal.
-	\param deadly Indicates whether the signal is deadly.
-	\return \c true, if the signal shall be handled, \c false, if it shall be
-		ignored.
-*/
+/**
+ * @brief Notifies the user-space debugger about a signal that is about to be
+ *        handled and returns whether the signal should proceed.
+ *
+ * Checks per-thread debugger ignore masks first, then delivers a
+ * @c B_THREAD_DEBUG_HANDLE_SIGNAL event to the debugger if one is attached.
+ *
+ * @param thread  The current (receiving) thread.
+ * @param signal  The signal being dispatched.
+ * @param handler The installed @c struct sigaction for this signal.
+ * @param deadly  @c true if the signal would terminate the process.
+ * @return @c true if the signal should be handled normally; @c false if the
+ *         debugger has consumed the signal and it should be ignored.
+ * @note The caller must not hold any locks; this function may block.
+ */
 static bool
 notify_debugger(Thread* thread, Signal* signal, struct sigaction& handler,
 	bool deadly)
@@ -838,19 +980,22 @@ notify_debugger(Thread* thread, Signal* signal, struct sigaction& handler,
 }
 
 
-/*!	Removes and returns a signal with the highest priority in \a nonBlocked that
-	is pending in the given thread or its team.
-	After dequeuing the signal the Thread::flags field of the affected threads
-	are updated.
-	The caller gets a reference to the returned signal, if any.
-	The caller must hold \c team->signal_lock.
-	\param thread The thread.
-	\param nonBlocked The mask of non-blocked signals.
-	\param buffer If the signal is not queued this buffer is returned. In this
-		case the method acquires a reference to \a buffer, so that the caller
-		gets a reference also in this case.
-	\return The removed signal or \c NULL, if all signals are blocked.
-*/
+/**
+ * @brief Removes and returns the highest-priority non-blocked pending signal
+ *        from @a thread or its team, updating the relevant flags afterwards.
+ *
+ * The highest-priority signal is chosen between those pending on the thread
+ * and those pending on the team. The caller receives a reference to the
+ * returned signal.
+ *
+ * @param thread     The thread for which to dequeue a signal.
+ * @param nonBlocked Mask of signals that are not blocked by the thread.
+ * @param buffer     Stack-allocated fallback Signal used for unqueued signals;
+ *                   a reference is acquired on it in that case.
+ * @return The dequeued Signal (with a reference), or @c NULL if all pending
+ *         signals are blocked.
+ * @note The caller must hold @c team->signal_lock.
+ */
 static Signal*
 dequeue_thread_or_team_signal(Thread* thread, sigset_t nonBlocked,
 	Signal& buffer)
@@ -870,6 +1015,22 @@ dequeue_thread_or_team_signal(Thread* thread, sigset_t nonBlocked,
 }
 
 
+/**
+ * @brief Constructs the architecture-specific signal handler stack frame for
+ *        @a thread and prepares it to execute the user-space handler.
+ *
+ * Fills a @c signal_frame_data structure with signal info, ucontext, and
+ * handler details, then delegates to arch_setup_signal_frame() to push the
+ * frame onto the user stack and redirect execution.
+ *
+ * @param thread      The thread that will execute the signal handler.
+ * @param action      The @c struct sigaction describing the handler.
+ * @param signal      The signal being delivered.
+ * @param signalMask  The signal mask to restore when the handler returns.
+ * @retval B_OK       Frame set up successfully.
+ * @note This function modifies the thread's saved register state so that it
+ *       returns to the signal handler rather than to the interrupted code.
+ */
 static status_t
 setup_signal_frame(Thread* thread, struct sigaction* action, Signal* signal,
 	sigset_t signalMask)
@@ -921,14 +1082,24 @@ setup_signal_frame(Thread* thread, struct sigaction* action, Signal* signal,
 }
 
 
-/*! Actually handles pending signals -- i.e. the thread will exit, a custom
-	signal handler is prepared, or whatever the signal demands.
-	The function will not return, when a deadly signal is encountered. The
-	function will suspend the thread indefinitely, when a stop signal is
-	encountered.
-	Interrupts must be enabled.
-	\param thread The current thread.
-*/
+/**
+ * @brief Dequeues and processes all non-blocked pending signals for the
+ *        current thread.
+ *
+ * This is the central signal dispatch function. It is called from the
+ * kernel-to-user return path. For each non-blocked pending signal it:
+ * - Handles kernel-internal signals (SIGKILL, SIGSTOP, SIGCONT, etc.)
+ *   directly without user-space involvement.
+ * - Notifies any attached debugger.
+ * - Sets up a user-space signal handler frame via setup_signal_frame()
+ *   and returns, causing execution to divert to the handler.
+ * The function may call thread_exit() (never returning) for deadly signals.
+ *
+ * @param thread The current thread (must equal thread_get_current_thread()).
+ * @note Interrupts must be enabled on entry.
+ * @note The function acquires and releases team lock and signal_lock
+ *       internally as needed.
+ */
 void
 handle_signals(Thread* thread)
 {
@@ -1298,10 +1469,16 @@ handle_signals(Thread* thread)
 }
 
 
-/*!	Checks whether the given signal is blocked for the given team (i.e. all of
-	its threads).
-	The caller must hold the team's lock and \c signal_lock.
-*/
+/**
+ * @brief Returns whether the given signal is blocked by every thread in
+ *        @a team (i.e. the signal is team-wide blocked).
+ *
+ * @param team   The team to check.
+ * @param signal The signal number to test.
+ * @return @c true if every thread's @c sig_block_mask includes @a signal;
+ *         @c false if at least one thread would receive it.
+ * @note The caller must hold the team's lock and @c signal_lock.
+ */
 bool
 is_team_signal_blocked(Team* team, int signal)
 {
@@ -1317,13 +1494,16 @@ is_team_signal_blocked(Team* team, int signal)
 }
 
 
-/*!	Gets (guesses) the current thread's currently used stack from the given
-	stack pointer.
-	Fills in \a stack with either the signal stack or the thread's user stack.
-	\param address A stack pointer address to be used to determine the used
-		stack.
-	\param stack Filled in by the function.
-*/
+/**
+ * @brief Determines which user stack (@a thread's signal stack or normal user
+ *        stack) corresponds to the given stack pointer @a address.
+ *
+ * @param address A stack pointer value used to identify the active stack.
+ * @param stack   Output parameter filled with the base, size, and flags of
+ *                the identified stack.
+ * @note If the address falls outside the signal stack (or no signal stack is
+ *       enabled), the normal user stack is returned unconditionally.
+ */
 void
 signal_get_user_stack(addr_t address, stack_t* stack)
 {
@@ -1344,10 +1524,13 @@ signal_get_user_stack(addr_t address, stack_t* stack)
 }
 
 
-/*!	Checks whether any non-blocked signal is pending for the current thread.
-	The caller must hold \c team->signal_lock.
-	\param thread The current thread.
-*/
+/**
+ * @brief Returns @c true if any non-blocked signal is pending for @a thread.
+ *
+ * @param thread The thread to check.
+ * @return @c true when at least one pending signal is not masked.
+ * @note The caller must hold @c team->signal_lock.
+ */
 static bool
 has_signals_pending(Thread* thread)
 {
@@ -1355,11 +1538,16 @@ has_signals_pending(Thread* thread)
 }
 
 
-/*!	Checks whether the current user has permission to send a signal to the given
-	target team.
-
-	\param team The target team.
-*/
+/**
+ * @brief Checks whether the calling thread has permission to send a signal to
+ *        @a team.
+ *
+ * Root (UID 0) may signal any team. Otherwise the caller's effective UID must
+ * match the target team's effective UID.
+ *
+ * @param team The target team.
+ * @return @c true if the caller is permitted, @c false otherwise.
+ */
 static bool
 has_permission_to_signal(Team* team)
 {
@@ -1372,24 +1560,27 @@ has_permission_to_signal(Team* team)
 }
 
 
-/*!	Delivers a signal to the \a thread, but doesn't handle the signal -- it just
-	makes sure the thread gets the signal, i.e. unblocks it if needed.
-
-	The caller must hold \c team->signal_lock.
-
-	\param thread The thread the signal shall be delivered to.
-	\param signalNumber The number of the signal to be delivered. If \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-	\param signal If non-NULL the signal to be queued (has number
-		\a signalNumber in this case). The caller transfers an object reference
-		to this function. If \c NULL an unqueued signal will be delivered to the
-		thread.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Enqueues or records a signal on @a thread and wakes or interrupts the
+ *        thread as required, but does not invoke the handler.
+ *
+ * This is the low-level, locked signal delivery primitive. It enqueues the
+ * signal on the thread's pending-signal list (or records it in the unqueued
+ * mask), then performs any wakeup/interrupt action needed for special signals
+ * (SIGKILL, SIGCONT, SIGSTOP, etc.).
+ *
+ * @param thread       The target thread.
+ * @param signalNumber The signal number. Pass @c 0 to perform only permission
+ *                     checks without actually queuing a signal.
+ * @param signal       If non-NULL, the pre-allocated Signal object to enqueue
+ *                     (ownership is transferred). If NULL an unqueued signal
+ *                     record is used instead.
+ * @param flags        Bitwise OR of delivery flags:
+ *                     - @c B_CHECK_PERMISSION: verify caller has permission.
+ * @retval B_OK        Signal delivered (or no-op for signal number 0).
+ * @retval EPERM       Permission check failed.
+ * @note The caller must hold @c team->signal_lock. Interrupts must be enabled.
+ */
 status_t
 send_signal_to_thread_locked(Thread* thread, uint32 signalNumber,
 	Signal* signal, uint32 flags)
@@ -1520,22 +1711,23 @@ send_signal_to_thread_locked(Thread* thread, uint32 signalNumber,
 }
 
 
-/*!	Sends the given signal to the given thread.
-
-	\param thread The thread the signal shall be sent to.
-	\param signal The signal to be delivered. If the signal's number is \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-		The given object will be copied. The caller retains ownership.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Sends @a signal to @a thread, acquiring necessary locks internally.
+ *
+ * Clones the signal for queuing (subject to the team's queuing limit), acquires
+ * the team's signal lock, calls send_signal_to_thread_locked(), and optionally
+ * triggers rescheduling.
+ *
+ * @param thread  The target thread (caller holds a reference).
+ * @param signal  Signal to deliver; the object is copied and the caller retains
+ *                ownership of the original. A signal number of @c 0 performs
+ *                only permission checks.
+ * @param flags   Delivery flags (B_CHECK_PERMISSION, B_DO_NOT_RESCHEDULE,
+ *                SIGNAL_FLAG_QUEUING_REQUIRED).
+ * @retval B_OK   Signal successfully delivered.
+ * @note Interrupts must be enabled on entry. Must not be called with
+ *       @c signal_lock held.
+ */
 status_t
 send_signal_to_thread(Thread* thread, const Signal& signal, uint32 flags)
 {
@@ -1565,22 +1757,18 @@ send_signal_to_thread(Thread* thread, const Signal& signal, uint32 flags)
 }
 
 
-/*!	Sends the given signal to the thread with the given ID.
-
-	\param threadID The ID of the thread the signal shall be sent to.
-	\param signal The signal to be delivered. If the signal's number is \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-		The given object will be copied. The caller retains ownership.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Sends @a signal to the thread identified by @a threadID.
+ *
+ * Looks up the thread by ID (returning @c B_BAD_THREAD_ID if not found) and
+ * delegates to send_signal_to_thread().
+ *
+ * @param threadID The ID of the target thread.
+ * @param signal   Signal to deliver; copied, caller retains ownership.
+ * @param flags    Delivery flags passed through to send_signal_to_thread().
+ * @retval B_OK             Signal delivered.
+ * @retval B_BAD_THREAD_ID  No thread with that ID exists.
+ */
 status_t
 send_signal_to_thread_id(thread_id threadID, const Signal& signal, uint32 flags)
 {
@@ -1593,27 +1781,23 @@ send_signal_to_thread_id(thread_id threadID, const Signal& signal, uint32 flags)
 }
 
 
-/*!	Sends the given signal to the given team.
-
-	The caller must hold \c signal_lock.
-
-	\param team The team the signal shall be sent to.
-	\param signalNumber The number of the signal to be delivered. If \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-	\param signal If non-NULL the signal to be queued (has number
-		\a signalNumber in this case). The caller transfers an object reference
-		to this function. If \c NULL an unqueued signal will be delivered to the
-		thread.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Enqueues or records @a signal on @a team and wakes affected threads,
+ *        but does not dispatch the handler.
+ *
+ * This is the low-level locked team-delivery primitive. For SIGKILL/SIGKILLTHR
+ * it additionally pokes the main thread; for SIGCONT it resumes all suspended
+ * threads; for stop signals it fans the signal out to all threads.
+ *
+ * @param team         The target team.
+ * @param signalNumber The signal number; 0 for permission-check only.
+ * @param signal       Pre-allocated Signal to enqueue (ownership transferred),
+ *                     or NULL for an unqueued record.
+ * @param flags        Delivery flags (B_CHECK_PERMISSION, B_DO_NOT_RESCHEDULE).
+ * @retval B_OK        Signal delivered.
+ * @retval EPERM       Permission check failed or target is the kernel team.
+ * @note The caller must hold @c team->signal_lock.
+ */
 status_t
 send_signal_to_team_locked(Team* team, uint32 signalNumber, Signal* signal,
 	uint32 flags)
@@ -1732,22 +1916,20 @@ send_signal_to_team_locked(Team* team, uint32 signalNumber, Signal* signal,
 }
 
 
-/*!	Sends the given signal to the given team.
-
-	\param team The team the signal shall be sent to.
-	\param signal The signal to be delivered. If the signal's number is \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-		The given object will be copied. The caller retains ownership.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Sends @a signal to @a team, acquiring the signal lock internally.
+ *
+ * Clones the signal for queuing, acquires @c team->signal_lock, calls
+ * send_signal_to_team_locked(), and optionally triggers rescheduling.
+ *
+ * @param team   The target team.
+ * @param signal Signal to deliver; copied, caller retains ownership.
+ * @param flags  Delivery flags (B_CHECK_PERMISSION, B_DO_NOT_RESCHEDULE,
+ *               SIGNAL_FLAG_QUEUING_REQUIRED).
+ * @retval B_OK  Signal delivered.
+ * @note Interrupts must be enabled. Must not be called with @c signal_lock
+ *       held.
+ */
 status_t
 send_signal_to_team(Team* team, const Signal& signal, uint32 flags)
 {
@@ -1773,22 +1955,17 @@ send_signal_to_team(Team* team, const Signal& signal, uint32 flags)
 }
 
 
-/*!	Sends the given signal to the team with the given ID.
-
-	\param teamID The ID of the team the signal shall be sent to.
-	\param signal The signal to be delivered. If the signal's number is \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-		The given object will be copied. The caller retains ownership.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Sends @a signal to the team identified by @a teamID.
+ *
+ * Looks up the team by ID and delegates to send_signal_to_team().
+ *
+ * @param teamID The numeric team (process) ID.
+ * @param signal Signal to deliver; copied, caller retains ownership.
+ * @param flags  Delivery flags passed through to send_signal_to_team().
+ * @retval B_OK            Signal delivered.
+ * @retval B_BAD_TEAM_ID   No team with that ID exists.
+ */
 status_t
 send_signal_to_team_id(team_id teamID, const Signal& signal, uint32 flags)
 {
@@ -1802,24 +1979,21 @@ send_signal_to_team_id(team_id teamID, const Signal& signal, uint32 flags)
 }
 
 
-/*!	Sends the given signal to the given process group.
-
-	The caller must hold the process group's lock. Interrupts must be enabled.
-
-	\param group The the process group the signal shall be sent to.
-	\param signal The signal to be delivered. If the signal's number is \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-		The given object will be copied. The caller retains ownership.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Sends @a signal to every team in the process group @a group.
+ *
+ * Iterates over all teams in the group and calls send_signal_to_team() on
+ * each. The overall call fails only if sending to the very first team fails.
+ *
+ * @param group  The process group to signal (caller must hold its lock).
+ * @param signal Signal to deliver; copied per team, caller retains ownership.
+ * @param flags  Delivery flags; @c B_DO_NOT_RESCHEDULE is set internally and
+ *               rescheduling is performed once at the end unless the caller
+ *               also set that flag.
+ * @retval B_OK  Signal delivered to the first team (and best-effort to others).
+ * @note The caller must hold the process group lock. Interrupts must be
+ *       enabled.
+ */
 status_t
 send_signal_to_process_group_locked(ProcessGroup* group, const Signal& signal,
 	uint32 flags)
@@ -1847,25 +2021,20 @@ send_signal_to_process_group_locked(ProcessGroup* group, const Signal& signal,
 }
 
 
-/*!	Sends the given signal to the process group specified by the given ID.
-
-	The caller must not hold any process group, team, or thread lock. Interrupts
-	must be enabled.
-
-	\param groupID The ID of the process group the signal shall be sent to.
-	\param signal The signal to be delivered. If the signal's number is \c 0, no
-		actual signal will be delivered. Only delivery checks will be performed.
-		The given object will be copied. The caller retains ownership.
-	\param flags A bitwise combination of any number of the following:
-		- \c B_CHECK_PERMISSION: Check the caller's permission to send the
-			target thread the signal.
-		- \c B_DO_NOT_RESCHEDULE: If clear and a higher level thread has been
-			woken up, the scheduler will be invoked. If set that will not be
-			done explicitly, but rescheduling can still happen, e.g. when the
-			current thread's time slice runs out.
-	\return \c B_OK, when the signal was delivered successfully, another error
-		code otherwise.
-*/
+/**
+ * @brief Sends @a signal to the process group identified by @a groupID.
+ *
+ * Looks up the process group by ID, acquires its lock, and delegates to
+ * send_signal_to_process_group_locked().
+ *
+ * @param groupID  The process group ID (positive).
+ * @param signal   Signal to deliver; copied, caller retains ownership.
+ * @param flags    Delivery flags passed through.
+ * @retval B_OK            Signal delivered.
+ * @retval B_BAD_TEAM_ID   No process group with that ID exists.
+ * @note The caller must not hold any process group, team, or thread lock.
+ *       Interrupts must be enabled.
+ */
 status_t
 send_signal_to_process_group(pid_t groupID, const Signal& signal, uint32 flags)
 {
@@ -1892,6 +2061,24 @@ send_signal_to_process_group(pid_t groupID, const Signal& signal, uint32 flags)
 }
 
 
+/**
+ * @brief Internal helper that constructs a Signal and routes it to the correct
+ *        target based on the sign and value of @a id.
+ *
+ * Interprets @a id using kill(2) semantics when @c SIGNAL_FLAG_SEND_TO_THREAD
+ * is not set, and thread-directed semantics otherwise:
+ * - @c id > 0  — specific thread or team
+ * - @c id == 0 — current thread or team
+ * - @c id == -1 — all permitted teams (partially implemented)
+ * - @c id < -1  — process group with ID @c -id
+ *
+ * @param id           Target identifier (see above).
+ * @param signalNumber Signal number (0–MAX_SIGNAL_NUMBER).
+ * @param userValue    Application-defined value attached to the signal.
+ * @param flags        Delivery flags.
+ * @retval B_OK        Signal delivered.
+ * @retval B_BAD_VALUE Signal number out of range.
+ */
 static status_t
 send_signal_internal(pid_t id, uint signalNumber, union sigval userValue,
 	uint32 flags)
@@ -1930,6 +2117,18 @@ send_signal_internal(pid_t id, uint signalNumber, union sigval userValue,
 }
 
 
+/**
+ * @brief Public kernel API — sends a signal with extended flags.
+ *
+ * Thin wrapper around send_signal_internal() with a null @c sigval.
+ *
+ * @param id           Target identifier (kill(2) semantics when positive or
+ *                     negative; 0 targets the current thread).
+ * @param signalNumber Signal number (0–MAX_SIGNAL_NUMBER).
+ * @param flags        Delivery flags (e.g. B_CHECK_PERMISSION,
+ *                     B_DO_NOT_RESCHEDULE, SIGNAL_FLAG_QUEUING_REQUIRED).
+ * @return 0 on success, a negative error code otherwise.
+ */
 int
 send_signal_etc(pid_t id, uint signalNumber, uint32 flags)
 {
@@ -1941,6 +2140,16 @@ send_signal_etc(pid_t id, uint signalNumber, uint32 flags)
 }
 
 
+/**
+ * @brief Public kernel API — sends a signal with default flags.
+ *
+ * Equivalent to send_signal_etc() with @c flags = 0. The BeBook notes this
+ * function is available to drivers even though it is not formally exported.
+ *
+ * @param threadID Target thread ID.
+ * @param signal   Signal number.
+ * @return 0 on success, a negative error code otherwise.
+ */
 int
 send_signal(pid_t threadID, uint signal)
 {
@@ -1950,6 +2159,18 @@ send_signal(pid_t threadID, uint signal)
 }
 
 
+/**
+ * @brief Internal implementation of sigprocmask() — examines or changes the
+ *        calling thread's signal block mask.
+ *
+ * @param how    @c SIG_BLOCK, @c SIG_UNBLOCK, or @c SIG_SETMASK.
+ * @param set    New mask (or NULL to leave it unchanged).
+ * @param oldSet If non-NULL, receives the previous mask.
+ * @retval B_OK        Mask updated (or read) successfully.
+ * @retval B_BAD_VALUE @a how is not a valid operation.
+ * @note Acquires @c team->signal_lock internally. Non-blockable signals are
+ *       silently filtered out of @a set.
+ */
 static int
 sigprocmask_internal(int how, const sigset_t* set, sigset_t* oldSet)
 {
@@ -1986,6 +2207,15 @@ sigprocmask_internal(int how, const sigset_t* set, sigset_t* oldSet)
 }
 
 
+/**
+ * @brief POSIX sigprocmask() — examines or changes the calling thread's signal
+ *        block mask, setting @c errno on failure.
+ *
+ * @param how    @c SIG_BLOCK, @c SIG_UNBLOCK, or @c SIG_SETMASK.
+ * @param set    Pointer to the new mask, or NULL.
+ * @param oldSet Pointer to receive the old mask, or NULL.
+ * @return 0 on success, -1 on failure with @c errno set.
+ */
 int
 sigprocmask(int how, const sigset_t* set, sigset_t* oldSet)
 {
@@ -1993,8 +2223,22 @@ sigprocmask(int how, const sigset_t* set, sigset_t* oldSet)
 }
 
 
-/*!	\brief Like sigaction(), but returning the error instead of setting errno.
-*/
+/**
+ * @brief Internal implementation of sigaction() — installs or queries the
+ *        signal handler for @a signal in the current team.
+ *
+ * If a new action is provided and it is SIG_IGN (or SIG_DFL for a default-
+ * ignore signal), any pending instances of the signal are removed from the
+ * team and all its threads.
+ *
+ * @param signal    Signal number (1–MAX_SIGNAL_NUMBER, must be blockable).
+ * @param act       New action to install, or NULL to query only.
+ * @param oldAction If non-NULL, receives the previous action.
+ * @retval B_OK        Action installed (or queried) successfully.
+ * @retval B_BAD_VALUE Invalid signal number or attempt to change a
+ *                     non-blockable signal.
+ * @note Acquires the team lock and signal lock internally as needed.
+ */
 static status_t
 sigaction_internal(int signal, const struct sigaction* act,
 	struct sigaction* oldAction)
@@ -2040,6 +2284,15 @@ sigaction_internal(int signal, const struct sigaction* act,
 }
 
 
+/**
+ * @brief POSIX sigaction() — installs or queries a signal handler, setting
+ *        @c errno on failure.
+ *
+ * @param signal    Signal number.
+ * @param act       New action, or NULL.
+ * @param oldAction Receives old action if non-NULL.
+ * @return 0 on success, -1 with @c errno set on failure.
+ */
 int
 sigaction(int signal, const struct sigaction* act, struct sigaction* oldAction)
 {
@@ -2047,12 +2300,24 @@ sigaction(int signal, const struct sigaction* act, struct sigaction* oldAction)
 }
 
 
-/*!	Wait for the specified signals, and return the information for the retrieved
-	signal in \a info.
-	The \c flags and \c timeout combination must either define an infinite
-	timeout (no timeout flags set), an absolute timeout (\c B_ABSOLUTE_TIMEOUT
-	set), or a relative timeout \code <= 0 \endcode (\c B_RELATIVE_TIMEOUT set).
-*/
+/**
+ * @brief Waits for one of the signals in @a set to become pending, then
+ *        dequeues it and fills @a info.
+ *
+ * Temporarily unblocks the requested signals so they can interrupt the wait.
+ * If a non-blocked signal arrives before one of the requested signals, the
+ * function returns @c B_INTERRUPTED so the caller can handle it.
+ *
+ * @param set     Set of signals to wait for (non-blockable signals ignored).
+ * @param info    Filled with the dequeued signal's information on success.
+ * @param flags   Timeout flags (@c B_ABSOLUTE_TIMEOUT, @c B_RELATIVE_TIMEOUT,
+ *                @c B_CAN_INTERRUPT are added internally).
+ * @param timeout Absolute or relative timeout value in microseconds.
+ * @retval B_OK         A requested signal was received.
+ * @retval B_WOULD_BLOCK Timed out before any signal arrived (POSIX: EAGAIN).
+ * @retval B_INTERRUPTED A non-requested, non-blocked signal is pending.
+ * @note Interrupts must be enabled. Must be called from a thread context.
+ */
 static status_t
 sigwait_internal(const sigset_t* set, siginfo_t* info, uint32 flags,
 	bigtime_t timeout)
@@ -2149,9 +2414,19 @@ sigwait_internal(const sigset_t* set, siginfo_t* info, uint32 flags,
 }
 
 
-/*!	Replace the current signal block mask and wait for any event to happen.
-	Before returning, the original signal block mask is reinstantiated.
-*/
+/**
+ * @brief Replaces the current thread's signal block mask and suspends it until
+ *        a signal arrives, then restores the original mask.
+ *
+ * Implements POSIX sigsuspend(). Sets the block mask to @a _mask, sleeps
+ * until interrupted by a signal, records the original mask so that
+ * handle_signals() can restore it after the handler returns, then always
+ * returns @c B_INTERRUPTED (as required by POSIX).
+ *
+ * @param _mask  The temporary signal mask to apply during the suspension.
+ * @retval B_INTERRUPTED Always; the syscall layer maps this to @c EINTR.
+ * @note Acquires @c team->signal_lock internally. Interrupts must be enabled.
+ */
 static status_t
 sigsuspend_internal(const sigset_t* _mask)
 {
@@ -2195,6 +2470,15 @@ sigsuspend_internal(const sigset_t* _mask)
 }
 
 
+/**
+ * @brief Internal implementation of sigpending() — returns the set of signals
+ *        that are both pending and blocked for the current thread.
+ *
+ * @param set Output parameter filled with the pending-and-blocked signal mask.
+ * @retval B_OK        Set retrieved successfully.
+ * @retval B_BAD_VALUE @a set is NULL.
+ * @note Acquires @c team->signal_lock internally.
+ */
 static status_t
 sigpending_internal(sigset_t* set)
 {
@@ -2214,29 +2498,26 @@ sigpending_internal(sigset_t* set)
 // #pragma mark - syscalls
 
 
-/*!	Sends a signal to a thread, process, or process group.
-	\param id Specifies the ID of the target:
-		- \code id > 0 \endcode: If \a toThread is \c true, the target is the
-			thread with ID \a id, otherwise the team with the ID \a id.
-		- \code id == 0 \endcode: If toThread is \c true, the target is the
-			current thread, otherwise the current team.
-		- \code id == -1 \endcode: The target are all teams the current team has
-			permission to send signals to. Currently not implemented correctly.
-		- \code id < -1 \endcode: The target are is the process group with ID
-			\c -id.
-	\param signalNumber The signal number. \c 0 to just perform checks, but not
-		actually send any signal.
-	\param userUserValue A user value to be associated with the signal. Might be
-		ignored unless signal queuing is forced. Can be \c NULL.
-	\param flags A bitwise or of any number of the following:
-		- \c SIGNAL_FLAG_QUEUING_REQUIRED: Signal queuing is required. Fail
-			instead of falling back to unqueued signals, when queuing isn't
-			possible.
-		- \c SIGNAL_FLAG_SEND_TO_THREAD: Interpret the the given ID as a
-			\c thread_id rather than a \c team_id. Ignored when the \a id is
-			\code < 0 \endcode -- then the target is a process group.
-	\return \c B_OK on success, another error code otherwise.
-*/
+/**
+ * @brief Syscall entry point — sends a signal from user space.
+ *
+ * Validates and copies the optional @a userUserValue from user space, then
+ * dispatches to send_signal_internal() (thread/group targets) or
+ * send_signal_to_team_id() (team/kill targets).
+ *
+ * @param id             Target identifier (kill(2) semantics for teams;
+ *                       negative = process group; 0 = current team).
+ * @param signalNumber   Signal number (0–MAX_SIGNAL_NUMBER).
+ * @param userUserValue  Optional user-space pointer to a @c sigval; may be
+ *                       NULL.
+ * @param flags          User-supplied flags filtered to
+ *                       SIGNAL_FLAG_QUEUING_REQUIRED |
+ *                       SIGNAL_FLAG_SEND_TO_THREAD; @c B_CHECK_PERMISSION is
+ *                       always added.
+ * @retval B_OK          Signal delivered.
+ * @retval B_BAD_ADDRESS @a userUserValue is not a valid user address.
+ * @retval B_BAD_VALUE   Signal number out of range.
+ */
 status_t
 _user_send_signal(int32 id, uint32 signalNumber,
 	const union sigval* userUserValue, uint32 flags)
@@ -2278,6 +2559,20 @@ _user_send_signal(int32 id, uint32 signalNumber,
 }
 
 
+/**
+ * @brief Syscall entry point — changes the calling thread's signal block mask
+ *        from user space (sigprocmask).
+ *
+ * Safely copies @a userSet and @a userOldSet to/from user space and delegates
+ * to sigprocmask_internal().
+ *
+ * @param how        @c SIG_BLOCK, @c SIG_UNBLOCK, or @c SIG_SETMASK.
+ * @param userSet    User-space pointer to the new mask, or NULL.
+ * @param userOldSet User-space pointer to receive the old mask, or NULL.
+ * @retval B_OK          Mask updated.
+ * @retval B_BAD_ADDRESS A pointer is not a valid user address.
+ * @retval B_BAD_VALUE   @a how is invalid.
+ */
 status_t
 _user_set_signal_mask(int how, const sigset_t *userSet, sigset_t *userOldSet)
 {
@@ -2302,6 +2597,21 @@ _user_set_signal_mask(int how, const sigset_t *userSet, sigset_t *userOldSet)
 }
 
 
+/**
+ * @brief Syscall entry point — installs or queries a signal handler from user
+ *        space (sigaction).
+ *
+ * Copies @a userAction and @a userOldAction to/from user space and delegates
+ * to sigaction_internal().
+ *
+ * @param signal        Signal number.
+ * @param userAction    User-space pointer to the new @c sigaction, or NULL.
+ * @param userOldAction User-space pointer to receive the old @c sigaction, or
+ *                      NULL.
+ * @retval B_OK          Action installed/queried.
+ * @retval B_BAD_ADDRESS A pointer is not a valid user address.
+ * @retval B_BAD_VALUE   Invalid signal number.
+ */
 status_t
 _user_sigaction(int signal, const struct sigaction *userAction,
 	struct sigaction *userOldAction)
@@ -2328,6 +2638,22 @@ _user_sigaction(int signal, const struct sigaction *userAction,
 }
 
 
+/**
+ * @brief Syscall entry point — waits for a signal from user space (sigwaitinfo
+ *        / sigtimedwait).
+ *
+ * Copies @a userSet from user space, calls sigwait_internal(), and copies
+ * the resulting @c siginfo_t back to @a userInfo. Handles syscall restart if
+ * interrupted by an unrelated signal.
+ *
+ * @param userSet  User-space pointer to the set of signals to wait for.
+ * @param userInfo User-space pointer to receive signal info (optional).
+ * @param flags    Timeout flags (@c B_ABSOLUTE_TIMEOUT / @c B_RELATIVE_TIMEOUT).
+ * @param timeout  Timeout value in microseconds.
+ * @retval B_OK          A requested signal was received.
+ * @retval B_WOULD_BLOCK Timed out.
+ * @retval B_BAD_ADDRESS A pointer is not a valid user address.
+ */
 status_t
 _user_sigwait(const sigset_t *userSet, siginfo_t *userInfo, uint32 flags,
 	bigtime_t timeout)
@@ -2363,6 +2689,18 @@ _user_sigwait(const sigset_t *userSet, siginfo_t *userInfo, uint32 flags,
 }
 
 
+/**
+ * @brief Syscall entry point — suspends the calling thread until a signal
+ *        arrives (sigsuspend).
+ *
+ * Copies @a userMask from user space and delegates to sigsuspend_internal().
+ * Always returns @c B_INTERRUPTED (EINTR) per POSIX.
+ *
+ * @param userMask User-space pointer to the temporary signal mask.
+ * @retval B_INTERRUPTED  Always (indicates a signal was received).
+ * @retval B_BAD_VALUE    @a userMask is NULL.
+ * @retval B_BAD_ADDRESS  @a userMask is not a valid user address.
+ */
 status_t
 _user_sigsuspend(const sigset_t *userMask)
 {
@@ -2379,6 +2717,17 @@ _user_sigsuspend(const sigset_t *userMask)
 }
 
 
+/**
+ * @brief Syscall entry point — retrieves the set of pending blocked signals
+ *        (sigpending).
+ *
+ * Calls sigpending_internal() and copies the result to user space.
+ *
+ * @param userSet User-space pointer to receive the pending signal mask.
+ * @retval B_OK          Set retrieved and copied successfully.
+ * @retval B_BAD_VALUE   @a userSet is NULL.
+ * @retval B_BAD_ADDRESS @a userSet is not a valid user address.
+ */
 status_t
 _user_sigpending(sigset_t *userSet)
 {
@@ -2399,6 +2748,24 @@ _user_sigpending(sigset_t *userSet)
 }
 
 
+/**
+ * @brief Syscall entry point — installs or removes the per-thread alternate
+ *        signal stack (sigaltstack).
+ *
+ * Copies @a newUserStack from user space, validates it, and updates the
+ * current thread's signal stack fields. Copies the old stack info to
+ * @a oldUserStack if requested.
+ *
+ * @param newUserStack User-space pointer to a @c stack_t describing the new
+ *                     alternate stack, or NULL to leave it unchanged.
+ * @param oldUserStack User-space pointer to receive the previous @c stack_t,
+ *                     or NULL.
+ * @retval B_OK          Stack installed/queried.
+ * @retval B_BAD_ADDRESS A pointer is not a valid user address.
+ * @retval B_BAD_VALUE   Invalid flags or stack pointer.
+ * @retval B_NO_MEMORY   Requested stack is smaller than MINSIGSTKSZ.
+ * @retval B_NOT_ALLOWED The thread is currently executing on the signal stack.
+ */
 status_t
 _user_set_signal_stack(const stack_t* newUserStack, stack_t* oldUserStack)
 {
@@ -2455,27 +2822,27 @@ _user_set_signal_stack(const stack_t* newUserStack, stack_t* oldUserStack)
 }
 
 
-/*!	Restores the environment of a function that was interrupted by a signal
-	handler call.
-	This syscall is invoked when a signal handler function returns. It
-	deconstructs the signal handler frame and restores the stack and register
-	state of the function that was interrupted by a signal. The syscall is
-	therefore somewhat unusual, since it does not return to the calling
-	function, but to someplace else. In case the signal interrupted a syscall,
-	it will appear as if the syscall just returned. That is also the reason, why
-	this syscall returns an int64, since it needs to return the value the
-	interrupted syscall returns, which is potentially 64 bits wide.
-
-	\param userSignalFrameData The signal frame data created for the signal
-		handler. Potentially some data (e.g. registers) have been modified by
-		the signal handler.
-	\return In case the signal interrupted a syscall, the return value of that
-		syscall. Otherwise (i.e. in case of a (hardware) interrupt/exception)
-		the value might need to be tailored such that after a return to userland
-		the interrupted environment is identical to the interrupted one (unless
-		explicitly modified). E.g. for x86 to achieve that, the return value
-		must contain the eax|edx values of the interrupted environment.
-*/
+/**
+ * @brief Syscall entry point — restores the thread state after a signal
+ *        handler returns.
+ *
+ * This syscall is invoked by the signal trampoline when a user-space signal
+ * handler returns. It deconstructs the signal handler frame, restores the
+ * pre-signal register state, signal mask, and syscall-restart flags.
+ *
+ * The syscall is unusual in that it does not return to its caller but instead
+ * resumes execution at the point that was interrupted by the signal. It
+ * returns an @c int64 because it may need to carry the 64-bit return value of
+ * an interrupted syscall back to user space.
+ *
+ * @param userSignalFrameData User-space pointer to the @c signal_frame_data
+ *                            that was set up by setup_signal_frame(). The
+ *                            signal handler may have modified some fields
+ *                            (e.g. the saved register context).
+ * @return The return value of the interrupted syscall (or the value needed to
+ *         reconstruct the interrupted environment for hardware faults).
+ * @note If the frame data cannot be read from user space, the thread is killed.
+ */
 int64
 _user_restore_signal_frame(struct signal_frame_data* userSignalFrameData)
 {

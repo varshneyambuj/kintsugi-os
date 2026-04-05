@@ -1,14 +1,42 @@
 /*
- * Copyright 2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2015, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Mark-Jan Bastian. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2015, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001, Mark-Jan Bastian. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
-
-/*!	Ports for IPC */
+/**
+ * @file port.cpp
+ * @brief Kernel message ports — unidirectional IPC with buffered message queues.
+ *
+ * Implements the Haiku port API (create_port, write_port_etc, read_port_etc,
+ * delete_port, find_port, etc.). Ports are named, bounded message queues
+ * owned by teams. Writing blocks when full; reading blocks when empty.
+ * Ports are automatically deleted when their owning team exits.
+ *
+ * @see sem.cpp, team.cpp
+ */
 
 
 #include <port.h>
@@ -485,6 +513,13 @@ PortNotificationService::PortNotificationService()
 }
 
 
+/**
+ * @brief Sends a port monitor notification event to all registered listeners.
+ *
+ * @param opcode  The notification opcode (e.g., PORT_ADDED, PORT_REMOVED).
+ * @param port    The ID of the port that triggered the event.
+ * @note  Called with no locks held; safe to invoke from any context.
+ */
 void
 PortNotificationService::Notify(uint32 opcode, port_id port)
 {
@@ -501,6 +536,15 @@ PortNotificationService::Notify(uint32 opcode, port_id port)
 //	#pragma mark - debugger commands
 
 
+/**
+ * @brief Kernel debugger command: prints a table of all active ports.
+ *
+ * @param argc  Argument count from the debugger command parser.
+ * @param argv  Argument vector; optional filters: "team <id>", "owner <id>",
+ *              or "name <substring>".
+ * @return Always returns 0.
+ * @note  Runs in the kernel debugger context; no locking is performed.
+ */
 static int
 dump_port_list(int argc, char** argv)
 {
@@ -534,6 +578,13 @@ dump_port_list(int argc, char** argv)
 }
 
 
+/**
+ * @brief Prints detailed information about a single port to the kernel debugger.
+ *
+ * @param port  Pointer to the Port structure to display.
+ * @note  Runs in the kernel debugger context; sets debugger variables
+ *        _port, _portID, and _owner for subsequent commands.
+ */
 static void
 _dump_port_info(Port* port)
 {
@@ -561,6 +612,16 @@ _dump_port_info(Port* port)
 }
 
 
+/**
+ * @brief Kernel debugger command: prints detailed information for a specific port.
+ *
+ * @param argc  Argument count from the debugger command parser.
+ * @param argv  Argument vector; accepts a numeric port ID, an address
+ *              (prefixed with "address"), a name (prefixed with "name"), or a
+ *              condition variable address (prefixed with "condition").
+ * @return Always returns 0.
+ * @note  Runs in the kernel debugger context; no locking is performed.
+ */
 static int
 dump_port_info(int argc, char** argv)
 {
@@ -613,9 +674,14 @@ dump_port_info(int argc, char** argv)
 // #pragma mark - internal helper functions
 
 
-/*!	Notifies the port's select events.
-	The port must be locked.
-*/
+/**
+ * @brief Fires select events on a port's registered select_info list.
+ *
+ * @param port    Pointer to the port whose select listeners are notified.
+ * @param events  Bitmask of events to signal (e.g., B_EVENT_READ, B_EVENT_WRITE,
+ *                B_EVENT_INVALID).
+ * @note  The port's lock must be held by the caller before invoking this function.
+ */
 static void
 notify_port_select_events(Port* port, uint16 events)
 {
@@ -624,6 +690,15 @@ notify_port_select_events(Port* port, uint16 events)
 }
 
 
+/**
+ * @brief Looks up a port by ID, locks it, and returns a reference to it.
+ *
+ * @param id  The port_id to look up.
+ * @return    A BReference to the locked Port on success, or an empty
+ *            BReference if the port does not exist or has been deleted.
+ * @note  On success, the caller must unlock portRef->lock when done.
+ *        Only ports in the kActive state are returned.
+ */
 static BReference<Port>
 get_locked_port(port_id id) GCC_2_NRV(portRef)
 {
@@ -645,6 +720,15 @@ get_locked_port(port_id id) GCC_2_NRV(portRef)
 }
 
 
+/**
+ * @brief Looks up a port by ID and returns a reference without locking it.
+ *
+ * @param id  The port_id to look up.
+ * @return    A BReference to the Port (in any state), or an empty BReference
+ *            if the port is not found in the hash table.
+ * @note  The returned port is not locked; the caller must synchronize access
+ *        independently. Used when only a reference (not exclusive access) is needed.
+ */
 static BReference<Port>
 get_port(port_id id) GCC_2_NRV(portRef)
 {
@@ -658,7 +742,13 @@ get_port(port_id id) GCC_2_NRV(portRef)
 }
 
 
-/*!	You need to own the port's lock when calling this function */
+/**
+ * @brief Returns whether a port has been closed (no further writes allowed).
+ *
+ * @param port  Pointer to the Port to test.
+ * @return      true if the port is closed (capacity == 0), false otherwise.
+ * @note  The caller must hold the port's lock before calling this function.
+ */
 static inline bool
 is_port_closed(Port* port)
 {
@@ -666,6 +756,13 @@ is_port_closed(Port* port)
 }
 
 
+/**
+ * @brief Frees a port_message and returns its space to the global quota.
+ *
+ * @param message  Pointer to the port_message to free; must not be NULL.
+ * @note  Decrements sTotalSpaceCommited atomically and wakes any threads
+ *        blocked in get_port_message() waiting for quota to become available.
+ */
 static void
 put_port_message(port_message* message)
 {
@@ -678,6 +775,26 @@ put_port_message(port_message* message)
 }
 
 
+/**
+ * @brief Allocates and initializes a port_message, blocking if the global
+ *        message-buffer quota is exhausted.
+ *
+ * @param code        The integer message code to embed in the new message.
+ * @param bufferSize  Size in bytes of the message payload buffer to allocate.
+ * @param flags       Wait flags forwarded to ConditionVariableEntry::Wait()
+ *                    (e.g., B_RELATIVE_TIMEOUT, B_ABSOLUTE_TIMEOUT).
+ * @param timeout     Timeout value in microseconds used together with @p flags.
+ * @param _message    On success, set to a pointer to the newly allocated
+ *                    port_message; unchanged on failure.
+ * @param port        Reference to the owning Port; used to re-validate the
+ *                    port after blocking waits for quota space.
+ * @retval B_OK           Message allocated successfully; *_message is valid.
+ * @retval B_WOULD_BLOCK  Quota exhausted and B_RELATIVE_TIMEOUT with timeout <= 0.
+ * @retval B_TIMED_OUT    Wait for quota space timed out.
+ * @retval B_BAD_PORT_ID  The port was closed or deleted while waiting.
+ * @note  Must be called with the port's lock held. The lock may be released
+ *        and re-acquired internally while waiting for quota space.
+ */
 /*! Port must be locked. */
 static status_t
 get_port_message(int32 code, size_t bufferSize, uint32 flags, bigtime_t timeout,
@@ -750,10 +867,14 @@ get_port_message(int32 code, size_t bufferSize, uint32 flags, bigtime_t timeout,
 }
 
 
-/*!	Fills the port_info structure with information from the specified
-	port.
-	The port's lock must be held when called.
-*/
+/**
+ * @brief Fills a port_info structure with a snapshot of a port's current state.
+ *
+ * @param port  Pointer to the source Port; must not be NULL.
+ * @param info  Pointer to the port_info structure to populate.
+ * @param size  Size of the port_info structure (for future compatibility).
+ * @note  The port's lock must be held by the caller before invoking this function.
+ */
 static void
 fill_port_info(Port* port, port_info* info, size_t size)
 {
@@ -768,6 +889,19 @@ fill_port_info(Port* port, port_info* info, size_t size)
 }
 
 
+/**
+ * @brief Copies the payload of a port_message into the caller's buffer.
+ *
+ * @param message     Pointer to the source port_message.
+ * @param _code       If non-NULL, receives the message's integer code.
+ * @param buffer      Destination buffer for the message payload.
+ * @param bufferSize  Size of @p buffer in bytes; copy is truncated if smaller
+ *                    than the message payload.
+ * @param userCopy    If true, uses user_memcpy() (safe for user-space addresses);
+ *                    otherwise uses memcpy().
+ * @return            Number of bytes actually copied on success, or a negative
+ *                    error code if user_memcpy() fails.
+ */
 static ssize_t
 copy_port_message(port_message* message, int32* _code, void* buffer,
 	size_t bufferSize, bool userCopy)
@@ -792,6 +926,15 @@ copy_port_message(port_message* message, int32* _code, void* buffer,
 }
 
 
+/**
+ * @brief Wakes all threads waiting on a port and fires B_EVENT_INVALID select events.
+ *
+ * @param port  Pointer to the Port to uninitialize; must be locked by the caller.
+ * @note  This is the final teardown step performed after a port has been logically
+ *        and physically deleted. After this call, all blocked read_port() and
+ *        write_port() callers will receive B_BAD_PORT_ID. Fires PORT_REMOVED
+ *        notification to the port monitor service.
+ */
 static void
 uninit_port(Port* port)
 {
@@ -808,6 +951,17 @@ uninit_port(Port* port)
 }
 
 
+/**
+ * @brief Atomically marks a port as logically deleted (kDeleted state).
+ *
+ * @param port  Pointer to the Port to logically delete; the caller must hold
+ *              at least one reference to ensure the Port object remains valid.
+ * @retval B_OK           The port was successfully transitioned to kDeleted.
+ * @retval B_BAD_PORT_ID  The port was already in the kDeleted state.
+ * @note  This is the linearization point for port deletion. Physical removal
+ *        from hash tables and the team port list must follow separately.
+ *        Spins briefly if the port is still in kUnused state (being created).
+ */
 /*! Caller must ensure there is still a reference to the port. (Either by
  *  holding a reference itself or by holding a lock on one of the data
  *  structures in which it is referenced.)
@@ -847,6 +1001,16 @@ delete_port_logical(Port* port)
 //	#pragma mark - private kernel API
 
 
+/**
+ * @brief Deletes all ports owned by a team; called when the team exits.
+ *
+ * @param team  Pointer to the Team whose ports are to be deleted.
+ * @note  Iterates the team's port_list, logically deletes each port, removes
+ *        all entries from the global hash tables, then calls uninit_port() on
+ *        each to wake blocked threads and fire removal notifications.
+ *        This function acquires and releases sTeamListLock and sPortsLock
+ *        internally; it must not be called with either lock already held.
+ */
 /*! This function deletes all the ports that are owned by the passed team.
 */
 void
@@ -904,6 +1068,11 @@ delete_owned_ports(Team* team)
 }
 
 
+/**
+ * @brief Returns the configured maximum number of ports allowed system-wide.
+ *
+ * @return The value of sMaxPorts (default 4096).
+ */
 int32
 port_max_ports(void)
 {
@@ -911,6 +1080,11 @@ port_max_ports(void)
 }
 
 
+/**
+ * @brief Returns the current number of ports in use system-wide.
+ *
+ * @return The value of sUsedPorts.
+ */
 int32
 port_used_ports(void)
 {
@@ -918,6 +1092,13 @@ port_used_ports(void)
 }
 
 
+/**
+ * @brief Returns the byte offset of the team_link field within a Port struct.
+ *
+ * @return Byte offset used when walking team port lists via list_get_next_item().
+ * @note  Uses a NULL-pointer cast workaround because offsetof() cannot be used
+ *        on a class with a vtable in older GCC versions.
+ */
 size_t
 port_team_link_offset()
 {
@@ -928,6 +1109,16 @@ port_team_link_offset()
 }
 
 
+/**
+ * @brief Initializes the kernel port subsystem.
+ *
+ * @param args  Pointer to the kernel_args structure (unused by this function).
+ * @retval B_OK       Initialization succeeded.
+ * @retval B_NO_MEMORY Failed to initialize the port hash table or name hash table.
+ * @note  Must be called once during kernel startup before any port operations.
+ *        Registers the "ports" and "port" debugger commands and the port
+ *        notification service.
+ */
 status_t
 port_init(kernel_args *args)
 {
@@ -973,6 +1164,21 @@ port_init(kernel_args *args)
 //	#pragma mark - public kernel API
 
 
+/**
+ * @brief Creates a new named message port with a bounded message queue.
+ *
+ * @param queueLength  Maximum number of messages the port can hold at once;
+ *                     must be in the range [1, MAX_QUEUE_LENGTH].
+ * @param name         Human-readable name for the port; copied internally.
+ *                     If NULL, the port is named "unnamed port".
+ * @return             A valid port_id (>= 0) on success, or a negative error code.
+ * @retval B_BAD_VALUE    @p queueLength is out of range.
+ * @retval B_NO_MEMORY    Allocation of the Port structure failed.
+ * @retval B_NO_MORE_PORTS The system-wide port limit has been reached.
+ * @retval B_BAD_TEAM_ID  The calling thread has no associated team.
+ * @note  The new port is owned by the calling thread's team. Port creation is
+ *        linearized via an atomic state transition from kUnused to kActive.
+ */
 port_id
 create_port(int32 queueLength, const char* name)
 {
@@ -1058,6 +1264,17 @@ create_port(int32 queueLength, const char* name)
 }
 
 
+/**
+ * @brief Closes a port, preventing any further messages from being written to it.
+ *
+ * @param id  The port_id of the port to close.
+ * @retval B_OK           The port was successfully closed.
+ * @retval B_BAD_PORT_ID  The port does not exist or the subsystem is inactive.
+ * @note  After closing, existing queued messages can still be read. All threads
+ *        currently blocked in read_port() or write_port() on this port are
+ *        woken with B_BAD_PORT_ID. Registered select() events are fired with
+ *        B_EVENT_INVALID.
+ */
 status_t
 close_port(port_id id)
 {
@@ -1088,6 +1305,19 @@ close_port(port_id id)
 }
 
 
+/**
+ * @brief Deletes a port and releases all associated resources.
+ *
+ * @param id  The port_id of the port to delete.
+ * @retval B_OK           The port was successfully deleted.
+ * @retval B_BAD_PORT_ID  The port does not exist, was already deleted, or the
+ *                        subsystem is inactive.
+ * @note  Port deletion proceeds in two phases: first a logical delete
+ *        (atomic state transition to kDeleted), then physical removal from
+ *        the global hash tables and the owning team's port list. All threads
+ *        blocked on the port are woken via uninit_port(). A PORT_REMOVED
+ *        notification is sent to the port monitor service.
+ */
 status_t
 delete_port(port_id id)
 {
@@ -1139,6 +1369,20 @@ delete_port(port_id id)
 }
 
 
+/**
+ * @brief Registers a select_info structure to receive events on a port.
+ *
+ * @param id    The port_id to watch.
+ * @param info  Pointer to the select_info structure describing the events of
+ *              interest (B_EVENT_READ, B_EVENT_WRITE, B_EVENT_INVALID).
+ * @param kernel  If false, access to kernel-owned ports is denied.
+ * @retval B_OK           Registration succeeded; pending events notified immediately.
+ * @retval B_BAD_PORT_ID  The port does not exist or has already been closed.
+ * @retval B_NOT_ALLOWED  A user-space caller attempted to select on a kernel port.
+ * @note  The port is locked during registration. If the relevant events are
+ *        already pending at registration time, notify_select_events() is called
+ *        immediately.
+ */
 status_t
 select_port(int32 id, struct select_info* info, bool kernel)
 {
@@ -1185,6 +1429,18 @@ select_port(int32 id, struct select_info* info, bool kernel)
 }
 
 
+/**
+ * @brief Deregisters a select_info structure from a port.
+ *
+ * @param id    The port_id from which to deregister.
+ * @param info  Pointer to the select_info structure to remove from the port's
+ *              linked list; matched by pointer identity.
+ * @param kernel  Reserved; not used by the current implementation.
+ * @retval B_OK           Deregistration succeeded (or info was not registered).
+ * @retval B_BAD_PORT_ID  The port does not exist.
+ * @note  If info->selected_events is zero the function returns B_OK immediately
+ *        without touching the port.
+ */
 status_t
 deselect_port(int32 id, struct select_info* info, bool kernel)
 {
@@ -1211,6 +1467,16 @@ deselect_port(int32 id, struct select_info* info, bool kernel)
 }
 
 
+/**
+ * @brief Looks up a port by name and returns its port_id.
+ *
+ * @param name  The exact name of the port to find; must not be NULL.
+ * @return      The port_id of the matching active port on success.
+ * @retval B_NAME_NOT_FOUND  No active port with the given name exists.
+ * @retval B_BAD_VALUE       @p name is NULL.
+ * @note  Holds sPortsLock (read) for the duration of the hash lookup.
+ *        Only ports in the kActive state are returned.
+ */
 port_id
 find_port(const char* name)
 {
@@ -1235,6 +1501,17 @@ find_port(const char* name)
 }
 
 
+/**
+ * @brief Fills a port_info structure with information about the specified port.
+ *
+ * @param id    The port_id of the port to query.
+ * @param info  Pointer to the port_info structure to populate; must not be NULL.
+ * @param size  Must equal sizeof(port_info); used for structure-size validation.
+ * @retval B_OK           Success; @p info has been populated.
+ * @retval B_BAD_VALUE    @p info is NULL or @p size does not match sizeof(port_info).
+ * @retval B_BAD_PORT_ID  The port does not exist or the subsystem is inactive.
+ * @note  Acquires the port's lock internally; safe to call from any context.
+ */
 status_t
 _get_port_info(port_id id, port_info* info, size_t size)
 {
@@ -1259,6 +1536,21 @@ _get_port_info(port_id id, port_info* info, size_t size)
 }
 
 
+/**
+ * @brief Iterates over the ports owned by a team and fills a port_info struct.
+ *
+ * @param teamID   The team whose ports are being enumerated.
+ * @param _cookie  In/out iteration cookie; pass 0 for the first call and
+ *                 preserve the updated value for subsequent calls.
+ * @param info     Pointer to the port_info structure to populate.
+ * @param size     Must equal sizeof(port_info).
+ * @retval B_OK           Success; @p info populated and @p *_cookie advanced.
+ * @retval B_BAD_VALUE    Invalid arguments (@p info, @p _cookie, or @p size).
+ * @retval B_BAD_PORT_ID  No more ports available for the given team.
+ * @retval B_BAD_TEAM_ID  The specified team does not exist.
+ * @note  Closed ports are skipped during iteration. Acquires sTeamListLock
+ *        and then the individual port lock internally.
+ */
 status_t
 _get_next_port_info(team_id teamID, int32* _cookie, struct port_info* info,
 	size_t size)
@@ -1311,6 +1603,14 @@ _get_next_port_info(team_id teamID, int32* _cookie, struct port_info* info,
 }
 
 
+/**
+ * @brief Returns the size of the next queued message without consuming it.
+ *
+ * @param id  The port_id to query.
+ * @return    Size in bytes of the next message's payload, or a negative error code.
+ * @note      Equivalent to port_buffer_size_etc(id, 0, 0); blocks indefinitely
+ *            if the port is empty.
+ */
 ssize_t
 port_buffer_size(port_id id)
 {
@@ -1318,6 +1618,17 @@ port_buffer_size(port_id id)
 }
 
 
+/**
+ * @brief Returns the size of the next queued message with optional timeout.
+ *
+ * @param id       The port_id to query.
+ * @param flags    Wait flags (e.g., B_RELATIVE_TIMEOUT, B_ABSOLUTE_TIMEOUT,
+ *                 B_CAN_INTERRUPT).
+ * @param timeout  Timeout in microseconds; interpreted according to @p flags.
+ * @return         Size in bytes of the next message's payload, or a negative
+ *                 error code (e.g., B_TIMED_OUT, B_BAD_PORT_ID).
+ * @note  Delegates to _get_port_message_info_etc() and returns only the size field.
+ */
 ssize_t
 port_buffer_size_etc(port_id id, uint32 flags, bigtime_t timeout)
 {
@@ -1327,6 +1638,25 @@ port_buffer_size_etc(port_id id, uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Returns extended message info (size, sender credentials) for the
+ *        next queued message, blocking if the port is empty.
+ *
+ * @param id        The port_id to query.
+ * @param info      Pointer to a port_message_info structure to populate with
+ *                  the message's size, sender UID, GID, and team ID.
+ * @param infoSize  Must equal sizeof(port_message_info).
+ * @param flags     Wait flags (e.g., B_RELATIVE_TIMEOUT, B_ABSOLUTE_TIMEOUT,
+ *                  B_CAN_INTERRUPT, B_KILL_CAN_INTERRUPT).
+ * @param timeout   Timeout in microseconds; interpreted according to @p flags.
+ * @retval B_OK           Success; @p info has been populated.
+ * @retval B_BAD_VALUE    @p info is NULL or @p infoSize is wrong.
+ * @retval B_BAD_PORT_ID  The port does not exist or is closed with no messages.
+ * @retval B_WOULD_BLOCK  Port is empty and B_RELATIVE_TIMEOUT with timeout <= 0.
+ * @retval B_TIMED_OUT    The wait timed out.
+ * @note  The message is not consumed; read_port_etc() must be called to dequeue it.
+ *        Fires a read_condition notification to re-wake other waiting readers.
+ */
 status_t
 _get_port_message_info_etc(port_id id, port_message_info* info,
 	size_t infoSize, uint32 flags, bigtime_t timeout)
@@ -1406,6 +1736,15 @@ _get_port_message_info_etc(port_id id, port_message_info* info,
 }
 
 
+/**
+ * @brief Returns the number of messages currently queued in a port.
+ *
+ * @param id  The port_id to query.
+ * @return    The number of queued messages (>= 0) on success, or a negative
+ *            error code (B_BAD_PORT_ID) if the port is invalid.
+ * @note  Acquires the port's lock briefly; the count may change immediately
+ *        after the lock is released.
+ */
 ssize_t
 port_count(port_id id)
 {
@@ -1425,6 +1764,17 @@ port_count(port_id id)
 }
 
 
+/**
+ * @brief Dequeues one message from a port, blocking indefinitely if empty.
+ *
+ * @param port        The port_id to read from.
+ * @param msgCode     Receives the integer message code of the dequeued message.
+ * @param buffer      Destination buffer for the message payload.
+ * @param bufferSize  Size in bytes of @p buffer.
+ * @return            Number of bytes copied into @p buffer on success, or a
+ *                    negative error code.
+ * @note  Equivalent to read_port_etc(port, msgCode, buffer, bufferSize, 0, 0).
+ */
 ssize_t
 read_port(port_id port, int32* msgCode, void* buffer, size_t bufferSize)
 {
@@ -1432,6 +1782,29 @@ read_port(port_id port, int32* msgCode, void* buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Dequeues one message from a port with optional flags and timeout.
+ *
+ * @param id          The port_id to read from.
+ * @param _code       If non-NULL, receives the integer message code.
+ * @param buffer      Destination buffer for the message payload.
+ * @param bufferSize  Size in bytes of @p buffer; payload is truncated if larger.
+ * @param flags       Wait flags and behavior modifiers:
+ *                    - B_CAN_INTERRUPT / B_KILL_CAN_INTERRUPT
+ *                    - B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT
+ *                    - PORT_FLAG_USE_USER_MEMCPY (internal: use user_memcpy)
+ *                    - B_PEEK_PORT_MESSAGE (internal: peek without consuming)
+ * @param timeout     Timeout in microseconds; interpreted according to @p flags.
+ * @return            Number of bytes copied into @p buffer on success, or a
+ *                    negative error code.
+ * @retval B_BAD_PORT_ID  The port does not exist or is closed with no messages.
+ * @retval B_BAD_VALUE    @p buffer is NULL but @p bufferSize > 0, or timeout < 0.
+ * @retval B_WOULD_BLOCK  Port is empty and B_RELATIVE_TIMEOUT with timeout <= 0.
+ * @retval B_TIMED_OUT    The wait timed out.
+ * @note  Blocks if the port is empty until a message arrives or the timeout
+ *        expires. After dequeuing, one write slot is freed and a waiting writer
+ *        is notified. B_EVENT_WRITE is fired on registered select_info entries.
+ */
 ssize_t
 read_port_etc(port_id id, int32* _code, void* buffer, size_t bufferSize,
 	uint32 flags, bigtime_t timeout)
@@ -1533,6 +1906,18 @@ read_port_etc(port_id id, int32* _code, void* buffer, size_t bufferSize,
 }
 
 
+/**
+ * @brief Enqueues a single-vector message on a port.
+ *
+ * @param id          The port_id to write to.
+ * @param msgCode     Integer message code to attach to the message.
+ * @param buffer      Pointer to the message payload.
+ * @param bufferSize  Size in bytes of @p buffer.
+ * @retval B_OK           Message successfully enqueued.
+ * @retval B_BAD_PORT_ID  The port does not exist or is closed.
+ * @retval B_BAD_VALUE    @p bufferSize exceeds PORT_MAX_MESSAGE_SIZE.
+ * @note  Delegates to writev_port_etc() with a single iovec and no timeout flags.
+ */
 status_t
 write_port(port_id id, int32 msgCode, const void* buffer, size_t bufferSize)
 {
@@ -1542,6 +1927,23 @@ write_port(port_id id, int32 msgCode, const void* buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Enqueues a message on a port with optional flags and timeout.
+ *
+ * @param id          The port_id to write to.
+ * @param msgCode     Integer message code to attach to the message.
+ * @param buffer      Pointer to the message payload.
+ * @param bufferSize  Size in bytes of @p buffer.
+ * @param flags       Wait flags (e.g., B_RELATIVE_TIMEOUT, B_ABSOLUTE_TIMEOUT,
+ *                    B_CAN_INTERRUPT, PORT_FLAG_USE_USER_MEMCPY).
+ * @param timeout     Timeout in microseconds; interpreted according to @p flags.
+ * @retval B_OK           Message successfully enqueued.
+ * @retval B_BAD_PORT_ID  The port does not exist or is closed.
+ * @retval B_BAD_VALUE    @p bufferSize exceeds PORT_MAX_MESSAGE_SIZE.
+ * @retval B_WOULD_BLOCK  Port is full and B_RELATIVE_TIMEOUT with timeout <= 0.
+ * @retval B_TIMED_OUT    The wait for a free slot timed out.
+ * @note  Delegates to writev_port_etc() with a single iovec.
+ */
 status_t
 write_port_etc(port_id id, int32 msgCode, const void* buffer,
 	size_t bufferSize, uint32 flags, bigtime_t timeout)
@@ -1552,6 +1954,29 @@ write_port_etc(port_id id, int32 msgCode, const void* buffer,
 }
 
 
+/**
+ * @brief Enqueues a scatter-gather message on a port with optional timeout.
+ *
+ * @param id          The port_id to write to.
+ * @param msgCode     Integer message code for the message.
+ * @param msgVecs     Array of iovec descriptors describing the payload segments.
+ * @param vecCount    Number of entries in @p msgVecs.
+ * @param bufferSize  Total payload size in bytes (sum of all iovec lengths to use);
+ *                    must not exceed PORT_MAX_MESSAGE_SIZE.
+ * @param flags       Wait flags (B_CAN_INTERRUPT, B_KILL_CAN_INTERRUPT,
+ *                    B_RELATIVE_TIMEOUT, B_ABSOLUTE_TIMEOUT,
+ *                    PORT_FLAG_USE_USER_MEMCPY).
+ * @param timeout     Timeout in microseconds; relative timeouts are converted to
+ *                    absolute internally to survive multiple wait steps.
+ * @retval B_OK           Message successfully enqueued.
+ * @retval B_BAD_PORT_ID  The port does not exist or is closed.
+ * @retval B_BAD_VALUE    @p bufferSize exceeds PORT_MAX_MESSAGE_SIZE.
+ * @retval B_WOULD_BLOCK  Port is full and B_RELATIVE_TIMEOUT with timeout <= 0.
+ * @retval B_TIMED_OUT    The wait for a free slot timed out.
+ * @note  Blocks if the port queue is full until a slot is freed or the timeout
+ *        expires. Sender credentials (UID, GID, team) are recorded in the message.
+ *        B_EVENT_READ is fired on registered select_info entries after enqueue.
+ */
 status_t
 writev_port_etc(port_id id, int32 msgCode, const iovec* msgVecs,
 	size_t vecCount, size_t bufferSize, uint32 flags, bigtime_t timeout)
@@ -1687,6 +2112,19 @@ error:
 }
 
 
+/**
+ * @brief Transfers ownership of a port to a different team.
+ *
+ * @param id         The port_id of the port to reassign.
+ * @param newTeamID  The team_id of the new owning team.
+ * @retval B_OK           Ownership successfully transferred.
+ * @retval B_BAD_PORT_ID  The port does not exist or has been deleted.
+ * @retval B_BAD_TEAM_ID  The target team does not exist.
+ * @note  Acquires both the old and new team's port-list locks in a consistent
+ *        order (lower index first) to avoid deadlocks. The port's team_link is
+ *        moved atomically under those locks. The port's own lock is also held
+ *        for the duration of the state check.
+ */
 status_t
 set_port_owner(port_id id, team_id newTeamID)
 {
@@ -1748,6 +2186,15 @@ set_port_owner(port_id id, team_id newTeamID)
 //	#pragma mark - syscalls
 
 
+/**
+ * @brief Syscall wrapper: creates a port with a name supplied from user space.
+ *
+ * @param queueLength  Maximum number of messages the port may hold at once.
+ * @param userName     User-space pointer to the NUL-terminated port name, or NULL.
+ * @return             A valid port_id on success, or a negative error code.
+ * @retval B_BAD_ADDRESS  @p userName is not a valid user-space address.
+ * @note  Copies the name into a kernel buffer before calling create_port().
+ */
 port_id
 _user_create_port(int32 queueLength, const char *userName)
 {
@@ -1764,6 +2211,12 @@ _user_create_port(int32 queueLength, const char *userName)
 }
 
 
+/**
+ * @brief Syscall wrapper: closes a port.
+ *
+ * @param id  The port_id of the port to close.
+ * @return    B_OK on success, or a negative error code from close_port().
+ */
 status_t
 _user_close_port(port_id id)
 {
@@ -1771,6 +2224,12 @@ _user_close_port(port_id id)
 }
 
 
+/**
+ * @brief Syscall wrapper: deletes a port.
+ *
+ * @param id  The port_id of the port to delete.
+ * @return    B_OK on success, or a negative error code from delete_port().
+ */
 status_t
 _user_delete_port(port_id id)
 {
@@ -1778,6 +2237,14 @@ _user_delete_port(port_id id)
 }
 
 
+/**
+ * @brief Syscall wrapper: finds a port by name supplied from user space.
+ *
+ * @param userName  User-space pointer to the NUL-terminated port name.
+ * @return          The matching port_id on success, or a negative error code.
+ * @retval B_BAD_VALUE    @p userName is NULL.
+ * @retval B_BAD_ADDRESS  @p userName is not a valid user-space address.
+ */
 port_id
 _user_find_port(const char *userName)
 {
@@ -1793,6 +2260,15 @@ _user_find_port(const char *userName)
 }
 
 
+/**
+ * @brief Syscall wrapper: retrieves port_info for the given port into user space.
+ *
+ * @param id        The port_id to query.
+ * @param userInfo  User-space pointer to a port_info structure to populate.
+ * @retval B_OK           Success; @p userInfo has been updated.
+ * @retval B_BAD_VALUE    @p userInfo is NULL.
+ * @retval B_BAD_ADDRESS  @p userInfo is not a valid user-space address.
+ */
 status_t
 _user_get_port_info(port_id id, struct port_info *userInfo)
 {
@@ -1815,6 +2291,17 @@ _user_get_port_info(port_id id, struct port_info *userInfo)
 }
 
 
+/**
+ * @brief Syscall wrapper: iterates over a team's ports and returns one port_info
+ *        per call into user space.
+ *
+ * @param team        The team_id whose ports are enumerated.
+ * @param userCookie  User-space pointer to the int32 iteration cookie.
+ * @param userInfo    User-space pointer to the port_info structure to populate.
+ * @retval B_OK           Success; @p userInfo and @p userCookie updated.
+ * @retval B_BAD_VALUE    Either pointer argument is NULL.
+ * @retval B_BAD_ADDRESS  Either pointer is not a valid user-space address.
+ */
 status_t
 _user_get_next_port_info(team_id team, int32 *userCookie,
 	struct port_info *userInfo)
@@ -1841,6 +2328,15 @@ _user_get_next_port_info(team_id team, int32 *userCookie,
 }
 
 
+/**
+ * @brief Syscall wrapper: returns the size of the next queued message with timeout.
+ *
+ * @param port     The port_id to query.
+ * @param flags    Wait flags forwarded to port_buffer_size_etc().
+ * @param timeout  Timeout in microseconds.
+ * @return         Size in bytes of the next message's payload, or a negative error code.
+ * @note  Handles syscall restart semantics via syscall_restart_handle_timeout_pre/post.
+ */
 ssize_t
 _user_port_buffer_size_etc(port_id port, uint32 flags, bigtime_t timeout)
 {
@@ -1853,6 +2349,12 @@ _user_port_buffer_size_etc(port_id port, uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Syscall wrapper: returns the number of queued messages in a port.
+ *
+ * @param port  The port_id to query.
+ * @return      Number of queued messages, or a negative error code.
+ */
 ssize_t
 _user_port_count(port_id port)
 {
@@ -1860,6 +2362,13 @@ _user_port_count(port_id port)
 }
 
 
+/**
+ * @brief Syscall wrapper: transfers port ownership to another team.
+ *
+ * @param port  The port_id to transfer.
+ * @param team  The target team_id.
+ * @return      B_OK on success, or a negative error code from set_port_owner().
+ */
 status_t
 _user_set_port_owner(port_id port, team_id team)
 {
@@ -1867,6 +2376,21 @@ _user_set_port_owner(port_id port, team_id team)
 }
 
 
+/**
+ * @brief Syscall wrapper: dequeues one message from a port into user space.
+ *
+ * @param port        The port_id to read from.
+ * @param userCode    User-space pointer to receive the message code; may be NULL.
+ * @param userBuffer  User-space pointer to the destination buffer.
+ * @param bufferSize  Size of @p userBuffer in bytes.
+ * @param flags       Wait flags forwarded to read_port_etc().
+ * @param timeout     Timeout in microseconds.
+ * @return            Number of bytes copied on success, or a negative error code.
+ * @retval B_BAD_VALUE    @p userBuffer is NULL but @p bufferSize != 0.
+ * @retval B_BAD_ADDRESS  @p userCode or @p userBuffer is not a valid user address.
+ * @note  Uses PORT_FLAG_USE_USER_MEMCPY so that payload is copied directly into
+ *        user space. Handles syscall restart semantics.
+ */
 ssize_t
 _user_read_port_etc(port_id port, int32 *userCode, void *userBuffer,
 	size_t bufferSize, uint32 flags, bigtime_t timeout)
@@ -1893,6 +2417,20 @@ _user_read_port_etc(port_id port, int32 *userCode, void *userBuffer,
 }
 
 
+/**
+ * @brief Syscall wrapper: enqueues a single-buffer message from user space.
+ *
+ * @param port        The port_id to write to.
+ * @param messageCode Integer message code.
+ * @param userBuffer  User-space pointer to the message payload.
+ * @param bufferSize  Size of @p userBuffer in bytes.
+ * @param flags       Wait flags forwarded to writev_port_etc().
+ * @param timeout     Timeout in microseconds.
+ * @retval B_OK           Message enqueued successfully.
+ * @retval B_BAD_VALUE    @p userBuffer is NULL but @p bufferSize != 0.
+ * @retval B_BAD_ADDRESS  @p userBuffer is not a valid user-space address.
+ * @note  Uses PORT_FLAG_USE_USER_MEMCPY; handles syscall restart semantics.
+ */
 status_t
 _user_write_port_etc(port_id port, int32 messageCode, const void *userBuffer,
 	size_t bufferSize, uint32 flags, bigtime_t timeout)
@@ -1913,6 +2451,23 @@ _user_write_port_etc(port_id port, int32 messageCode, const void *userBuffer,
 }
 
 
+/**
+ * @brief Syscall wrapper: enqueues a scatter-gather message from user space.
+ *
+ * @param port        The port_id to write to.
+ * @param messageCode Integer message code.
+ * @param userVecs    User-space pointer to an array of iovec descriptors.
+ * @param vecCount    Number of entries in @p userVecs; must not exceed IOV_MAX.
+ * @param bufferSize  Total payload size in bytes.
+ * @param flags       Wait flags forwarded to writev_port_etc().
+ * @param timeout     Timeout in microseconds.
+ * @retval B_OK           Message enqueued successfully.
+ * @retval B_BAD_VALUE    @p userVecs is NULL but @p bufferSize != 0, or
+ *                        @p vecCount exceeds IOV_MAX.
+ * @retval B_NO_MEMORY    Failed to allocate the kernel-side iovec copy buffer.
+ * @note  Copies the iovec array from user space via get_iovecs_from_user() before
+ *        forwarding to writev_port_etc(). Handles syscall restart semantics.
+ */
 status_t
 _user_writev_port_etc(port_id port, int32 messageCode, const iovec *userVecs,
 	size_t vecCount, size_t bufferSize, uint32 flags, bigtime_t timeout)
@@ -1942,6 +2497,19 @@ _user_writev_port_etc(port_id port, int32 messageCode, const iovec *userVecs,
 }
 
 
+/**
+ * @brief Syscall wrapper: retrieves extended message info into user space.
+ *
+ * @param port      The port_id to query.
+ * @param userInfo  User-space pointer to a port_message_info structure.
+ * @param infoSize  Must equal sizeof(port_message_info).
+ * @param flags     Wait flags forwarded to _get_port_message_info_etc().
+ * @param timeout   Timeout in microseconds.
+ * @retval B_OK           Success; @p userInfo populated.
+ * @retval B_BAD_VALUE    @p userInfo is NULL or @p infoSize is wrong.
+ * @retval B_BAD_ADDRESS  @p userInfo is not a valid user-space address.
+ * @note  Handles syscall restart semantics.
+ */
 status_t
 _user_get_port_message_info_etc(port_id port, port_message_info *userInfo,
 	size_t infoSize, uint32 flags, bigtime_t timeout)

@@ -1,6 +1,32 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file FileDevice.cpp
+ * @brief Device implementation that exposes a regular file as a block device.
+ *
+ * @see FileDevice.h
  */
 
 
@@ -17,8 +43,10 @@
 #include <vfs.h>
 
 
+/** @brief Logical block size used when computing geometry and truncating file size. */
 static const uint32 kBlockSize = 512;
 
+/** @brief Raw HVIF icon data for the virtual file-backed block device. */
 static const uint8 kDeviceIcon[] = {
 	0x6e, 0x63, 0x69, 0x66, 0x08, 0x05, 0x00, 0x04, 0x00, 0x54, 0x02, 0x00,
 	0x06, 0x02, 0x3b, 0x01, 0x9b, 0x3a, 0xa2, 0x35, 0xbc, 0x24, 0x3e, 0x3c,
@@ -57,15 +85,29 @@ static const uint8 kDeviceIcon[] = {
 };
 
 
+/**
+ * @brief Per-open-instance state for a FileDevice.
+ *
+ * Wraps the kernel file descriptor that was opened against the underlying
+ * regular file. The destructor automatically closes the FD so callers do not
+ * need to manage it explicitly.
+ */
 struct FileDevice::Cookie {
 	int	fd;
 
+	/**
+	 * @brief Constructs a Cookie owning the given file descriptor.
+	 * @param fd  A valid (>= 0) file descriptor, or -1 if none.
+	 */
 	Cookie(int fd)
 		:
 		fd(fd)
 	{
 	}
 
+	/**
+	 * @brief Destructor. Closes the file descriptor if it is valid.
+	 */
 	~Cookie()
 	{
 		if (fd >= 0)
@@ -74,6 +116,12 @@ struct FileDevice::Cookie {
 };
 
 
+/**
+ * @brief Default constructor. Leaves the device in an uninitialised state.
+ *
+ * fFD is set to -1 (no open file) and fFileSize to 0. Init() must be called
+ * before the device can be used.
+ */
 FileDevice::FileDevice()
 	:
 	fFD(-1),
@@ -82,6 +130,9 @@ FileDevice::FileDevice()
 }
 
 
+/**
+ * @brief Destructor. Closes the internal file descriptor if it is still open.
+ */
 FileDevice::~FileDevice()
 {
 	if (fFD >= 0)
@@ -89,6 +140,18 @@ FileDevice::~FileDevice()
 }
 
 
+/**
+ * @brief Opens and validates the backing file, caching its block-aligned size.
+ *
+ * Opens @p path read-only (O_NOTRAVERSE prevents following the final symlink),
+ * stats the resulting descriptor to confirm it is a regular file, and records
+ * the block-aligned size for later use in geometry calculations.
+ *
+ * @param path  Absolute path to the regular file that will back this device.
+ * @retval B_OK          The file was opened and validated successfully.
+ * @retval B_BAD_TYPE    @p path does not refer to a regular file.
+ * @return errno         Any POSIX error returned by open() or fstat().
+ */
 status_t
 FileDevice::Init(const char* path)
 {
@@ -109,6 +172,14 @@ FileDevice::Init(const char* path)
 }
 
 
+/**
+ * @brief Called by the device manager to activate this device.
+ *
+ * Always returns @c B_OK because no additional hardware initialisation is
+ * required beyond what Init() already performed.
+ *
+ * @return @c B_OK always.
+ */
 status_t
 FileDevice::InitDevice()
 {
@@ -116,12 +187,23 @@ FileDevice::InitDevice()
 }
 
 
+/**
+ * @brief Called by the device manager to deactivate this device.
+ *
+ * No-op for FileDevice; all resources are released in the destructor.
+ */
 void
 FileDevice::UninitDevice()
 {
 }
 
 
+/**
+ * @brief Notifies the device that it has been removed from the device tree.
+ *
+ * Self-deletes this FileDevice instance because a file-backed device has no
+ * persistent hardware reference that would keep it alive after removal.
+ */
 void
 FileDevice::Removed()
 {
@@ -129,6 +211,11 @@ FileDevice::Removed()
 }
 
 
+/**
+ * @brief FileDevice does not support select — always returns @c false.
+ *
+ * @return @c false always.
+ */
 bool
 FileDevice::HasSelect() const
 {
@@ -136,6 +223,11 @@ FileDevice::HasSelect() const
 }
 
 
+/**
+ * @brief FileDevice does not support deselect — always returns @c false.
+ *
+ * @return @c false always.
+ */
 bool
 FileDevice::HasDeselect() const
 {
@@ -143,6 +235,11 @@ FileDevice::HasDeselect() const
 }
 
 
+/**
+ * @brief FileDevice supports synchronous read — always returns @c true.
+ *
+ * @return @c true always.
+ */
 bool
 FileDevice::HasRead() const
 {
@@ -150,6 +247,11 @@ FileDevice::HasRead() const
 }
 
 
+/**
+ * @brief FileDevice supports synchronous write — always returns @c true.
+ *
+ * @return @c true always.
+ */
 bool
 FileDevice::HasWrite() const
 {
@@ -157,6 +259,13 @@ FileDevice::HasWrite() const
 }
 
 
+/**
+ * @brief FileDevice does not yet support asynchronous I/O — always returns @c false.
+ *
+ * TODO: Support asynchronous I/O via do_fd_io().
+ *
+ * @return @c false always.
+ */
 bool
 FileDevice::HasIO() const
 {
@@ -165,6 +274,23 @@ FileDevice::HasIO() const
 }
 
 
+/**
+ * @brief Opens a new per-client instance of the file-backed device.
+ *
+ * Obtains a vnode reference for the internal file descriptor, opens it with
+ * the requested mode, and allocates a Cookie that owns the resulting FD.
+ * The caller receives the Cookie pointer through @p _cookie.
+ *
+ * @param path      The device path as presented to the device manager (unused
+ *                  by this implementation; the backing file is fixed at Init() time).
+ * @param openMode  Open flags (O_RDONLY, O_RDWR, etc.) to pass to vfs_open_vnode().
+ * @param _cookie   Out-parameter: receives a pointer to the allocated Cookie on
+ *                  success.
+ * @retval B_OK        The device was opened successfully.
+ * @retval B_NO_MEMORY Cookie allocation failed.
+ * @return Negative   Any error returned by vfs_get_vnode_from_fd() or
+ *                    vfs_open_vnode().
+ */
 status_t
 FileDevice::Open(const char* path, int openMode, void** _cookie)
 {
@@ -193,6 +319,20 @@ FileDevice::Open(const char* path, int openMode, void** _cookie)
 }
 
 
+/**
+ * @brief Reads data from the backing file at the specified offset.
+ *
+ * Uses pread() on the cookie's file descriptor so that the operation is
+ * position-independent and thread-safe relative to other opens.
+ *
+ * @param _cookie  Per-open Cookie returned by Open().
+ * @param pos      Byte offset within the file at which to begin reading.
+ * @param buffer   Destination buffer for the data.
+ * @param _length  On entry the maximum number of bytes to read; on return the
+ *                 number of bytes actually read (0 on error).
+ * @retval B_OK   Read completed successfully (check *_length for byte count).
+ * @return errno  Any POSIX error returned by pread().
+ */
 status_t
 FileDevice::Read(void* _cookie, off_t pos, void* buffer, size_t* _length)
 {
@@ -209,6 +349,20 @@ FileDevice::Read(void* _cookie, off_t pos, void* buffer, size_t* _length)
 }
 
 
+/**
+ * @brief Writes data to the backing file at the specified offset.
+ *
+ * Uses pwrite() on the cookie's file descriptor so that the operation is
+ * position-independent and thread-safe relative to other opens.
+ *
+ * @param _cookie  Per-open Cookie returned by Open().
+ * @param pos      Byte offset within the file at which to begin writing.
+ * @param buffer   Source buffer containing the data to write.
+ * @param _length  On entry the number of bytes to write; on return the number
+ *                 of bytes actually written (0 on error).
+ * @retval B_OK   Write completed successfully (check *_length for byte count).
+ * @return errno  Any POSIX error returned by pwrite().
+ */
 status_t
 FileDevice::Write(void* _cookie, off_t pos, const void* buffer, size_t* _length)
 {
@@ -225,6 +379,19 @@ FileDevice::Write(void* _cookie, off_t pos, const void* buffer, size_t* _length)
 }
 
 
+/**
+ * @brief Asynchronous I/O entry point — currently unsupported.
+ *
+ * The correct implementation would call do_fd_io() on the cookie's FD, but
+ * that function relies on either the @c io() or @c {read,write}_pages() hooks
+ * of the underlying filesystem, which cannot be guaranteed. This method
+ * therefore always returns @c B_UNSUPPORTED until the VFS layer provides a
+ * reliable fallback.
+ *
+ * @param _cookie  Per-open Cookie returned by Open().
+ * @param request  The IORequest to service.
+ * @return @c B_UNSUPPORTED always.
+ */
 status_t
 FileDevice::IO(void* _cookie, io_request* request)
 {
@@ -241,6 +408,22 @@ FileDevice::IO(void* _cookie, io_request* request)
 }
 
 
+/**
+ * @brief Copies a typed result value into a caller-supplied buffer.
+ *
+ * This helper is used by Control() to write ioctl result values into either
+ * user-space or kernel-space buffers in a type-safe manner. The buffer-size
+ * check is intentionally omitted to accommodate callers (e.g. BFS) that do
+ * not pass a length argument.
+ *
+ * @tparam ResultType  The type of the value to copy.
+ * @param result  The value to copy into @p buffer.
+ * @param buffer  Destination buffer (user or kernel address space).
+ * @param length  Size of @p buffer as reported by the caller (used for
+ *                documentation purposes; the size check is elided).
+ * @retval B_OK          The value was copied successfully.
+ * @retval B_BAD_ADDRESS @p buffer is NULL or user_memcpy() failed.
+ */
 template<typename ResultType>
 static status_t
 set_ioctl_result(const ResultType& result, void* buffer, size_t length)
@@ -261,6 +444,24 @@ set_ioctl_result(const ResultType& result, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Handles device control (ioctl) operations for the file-backed block device.
+ *
+ * Supports the standard block-device ioctl set including geometry queries,
+ * icon retrieval, media status, cache flush, and I/O mode selection. Unknown
+ * or unsupported operations return @c B_BAD_VALUE.
+ *
+ * @param _cookie  Per-open Cookie returned by Open().
+ * @param op       The ioctl operation code (B_GET_GEOMETRY, B_GET_DEVICE_SIZE, etc.).
+ * @param buffer   In/out buffer whose layout depends on @p op.
+ * @param length   Size of @p buffer in bytes.
+ * @retval B_OK          The operation completed successfully.
+ * @retval B_BAD_VALUE   @p op is not recognised or is inapplicable to this device,
+ *                       or @p length is incorrect for B_GET_VECTOR_ICON.
+ * @retval B_BAD_ADDRESS A user-space buffer pointer was invalid.
+ * @retval B_UNSUPPORTED The operation is known but not yet implemented (B_GET_ICON).
+ * @return errno         For B_FLUSH_DRIVE_CACHE, the error from fsync() if it fails.
+ */
 status_t
 FileDevice::Control(void* _cookie, int32 op, void* buffer, size_t length)
 {
@@ -365,6 +566,16 @@ FileDevice::Control(void* _cookie, int32 op, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Event-select stub — not yet supported by FileDevice.
+ *
+ * TODO: Implement using select_fd().
+ *
+ * @param _cookie  Per-open Cookie returned by Open().
+ * @param event    The event to monitor.
+ * @param sync     The selectsync object to notify.
+ * @return @c B_UNSUPPORTED always.
+ */
 status_t
 FileDevice::Select(void* _cookie, uint8 event, selectsync* sync)
 {
@@ -373,6 +584,16 @@ FileDevice::Select(void* _cookie, uint8 event, selectsync* sync)
 }
 
 
+/**
+ * @brief Event-deselect stub — not yet supported by FileDevice.
+ *
+ * TODO: Implement using deselect_fd().
+ *
+ * @param cookie  Per-open Cookie returned by Open().
+ * @param event   The event that was previously selected.
+ * @param sync    The selectsync object passed to Select().
+ * @return @c B_UNSUPPORTED always.
+ */
 status_t
 FileDevice::Deselect(void* cookie, uint8 event, selectsync* sync)
 {
@@ -381,6 +602,17 @@ FileDevice::Deselect(void* cookie, uint8 event, selectsync* sync)
 }
 
 
+/**
+ * @brief Closes a previously opened instance of this device.
+ *
+ * Currently a no-op. A full implementation should close the cookie's FD here
+ * so that blocking operations on the underlying file can be interrupted.
+ *
+ * TODO: Close the FD to unblock pending operations.
+ *
+ * @param cookie  Per-open Cookie returned by Open().
+ * @return @c B_OK always.
+ */
 status_t
 FileDevice::Close(void* cookie)
 {
@@ -391,6 +623,15 @@ FileDevice::Close(void* cookie)
 }
 
 
+/**
+ * @brief Releases the per-open Cookie allocated during Open().
+ *
+ * Deletes the Cookie object, which in turn closes its file descriptor via
+ * the Cookie destructor.
+ *
+ * @param _cookie  The Cookie pointer to delete.
+ * @return @c B_OK always.
+ */
 status_t
 FileDevice::Free(void* _cookie)
 {

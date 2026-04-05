@@ -1,7 +1,38 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2008, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file dma_resources.cpp
+ * @brief DMA resource management — splitting I/O requests to satisfy DMA constraints.
+ *
+ * DMAResource takes a generic IORequest and splits it into DMABuffer objects
+ * that comply with the hardware DMA constraints (address range, alignment,
+ * boundary, scatter-gather limits). Handles bounce-buffer allocation for
+ * transfers that cannot be done directly.
+ *
+ * @see IORequest.cpp, IOSchedulerSimple.cpp
  */
 
 
@@ -29,6 +60,14 @@ extern device_manager_info gDeviceManagerModule;
 const phys_size_t kMaxBounceBufferSize = 4 * B_PAGE_SIZE;
 
 
+/**
+ * @brief Allocates a new DMABuffer with room for @a count scatter-gather vectors.
+ *
+ * @param count Number of generic_io_vec slots to pre-allocate.
+ * @return Pointer to the newly allocated DMABuffer, or @c NULL on allocation failure.
+ * @note The returned buffer is not yet associated with a bounce buffer; call
+ *       SetBounceBuffer() before use if bounce memory is required.
+ */
 DMABuffer*
 DMABuffer::Create(size_t count)
 {
@@ -43,6 +82,11 @@ DMABuffer::Create(size_t count)
 }
 
 
+/**
+ * @brief Overrides the number of valid scatter-gather vectors in this buffer.
+ *
+ * @param count New vector count; must not exceed the capacity set at creation.
+ */
 void
 DMABuffer::SetVecCount(uint32 count)
 {
@@ -50,6 +94,14 @@ DMABuffer::SetVecCount(uint32 count)
 }
 
 
+/**
+ * @brief Appends a new scatter-gather vector to the buffer.
+ *
+ * @param base Physical base address of the memory region.
+ * @param size Byte length of the memory region.
+ * @note The caller must ensure that fVecCount has not already reached the
+ *       buffer's capacity before calling this function.
+ */
 void
 DMABuffer::AddVec(generic_addr_t base, generic_size_t size)
 {
@@ -59,6 +111,15 @@ DMABuffer::AddVec(generic_addr_t base, generic_size_t size)
 }
 
 
+/**
+ * @brief Tests whether the scatter-gather entry at @a index resides inside the
+ *        associated bounce buffer.
+ *
+ * @param index Zero-based index into the vector array.
+ * @return @c true if the entry at @a index falls within the bounce buffer's
+ *         physical address range; @c false if the index is out of range or no
+ *         bounce buffer is attached.
+ */
 bool
 DMABuffer::UsesBounceBufferAt(uint32 index)
 {
@@ -71,6 +132,12 @@ DMABuffer::UsesBounceBufferAt(uint32 index)
 }
 
 
+/**
+ * @brief Prints a human-readable description of this DMABuffer to the kernel
+ *        debugger console.
+ *
+ * @note Must only be called from kernel debugger context (kprintf is used).
+ */
 void
 DMABuffer::Dump() const
 {
@@ -91,6 +158,12 @@ DMABuffer::Dump() const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a DMAResource with zeroed state and initialises the
+ *        internal mutex.
+ *
+ * @note Call Init() before using any other method on the object.
+ */
 DMAResource::DMAResource()
 	:
 	fBlockSize(0),
@@ -100,6 +173,13 @@ DMAResource::DMAResource()
 }
 
 
+/**
+ * @brief Destroys the DMAResource, releasing its mutex and scratch vector array.
+ *
+ * @note DMABuffer and DMABounceBuffer objects are currently not freed here
+ *       (see in-source TODO). Callers must ensure that no DMA operations are
+ *       in flight when the destructor runs.
+ */
 DMAResource::~DMAResource()
 {
 	mutex_lock(&fLock);
@@ -110,6 +190,23 @@ DMAResource::~DMAResource()
 }
 
 
+/**
+ * @brief Initialises the DMAResource by reading DMA constraint attributes from
+ *        a device node and forwarding them to the restrictions-based overload.
+ *
+ * @param node         Device node whose attributes describe the hardware DMA
+ *                     constraints (alignment, boundary, address range, segment
+ *                     count, transfer size).
+ * @param blockSize    Physical block size of the device; used to derive
+ *                     segment-size restrictions from block-count attributes.
+ * @param bufferCount  Number of DMABuffer objects to pre-allocate.
+ * @param bounceBufferCount Number of DMABounceBuffer objects to pre-allocate.
+ * @retval B_OK        Initialisation succeeded.
+ * @retval B_NO_MEMORY Scratch vector or buffer allocation failed.
+ * @note This overload queries optional node attributes; missing attributes are
+ *       treated as "no restriction" and filled in by the restrictions-based
+ *       overload.
+ */
 status_t
 DMAResource::Init(device_node* node, generic_size_t blockSize,
 	uint32 bufferCount, uint32 bounceBufferCount)
@@ -155,6 +252,21 @@ DMAResource::Init(device_node* node, generic_size_t blockSize,
 }
 
 
+/**
+ * @brief Initialises the DMAResource from an explicit @c dma_restrictions
+ *        structure, pre-allocating DMA and bounce buffers.
+ *
+ * @param restrictions Hardware DMA constraints; zero fields are filled in with
+ *                     safe defaults (e.g. max_segment_count defaults to 16).
+ * @param blockSize    Physical block size; set to 1 if the device is not
+ *                     block-oriented.
+ * @param bufferCount  Number of DMABuffer objects to pre-allocate.
+ * @param bounceBufferCount Number of DMABounceBuffer objects to pre-allocate.
+ * @retval B_OK        Initialisation succeeded.
+ * @retval B_NO_MEMORY A buffer or scratch-vector allocation failed.
+ * @note The @c fLock mutex must not be held when calling this function.
+ *       @c blockSize must be a power of two and must be >= @c restrictions.alignment.
+ */
 status_t
 DMAResource::Init(const dma_restrictions& restrictions,
 	generic_size_t blockSize, uint32 bufferCount, uint32 bounceBufferCount)
@@ -225,6 +337,14 @@ DMAResource::Init(const dma_restrictions& restrictions,
 }
 
 
+/**
+ * @brief Allocates a single DMABuffer sized for the maximum scatter-gather
+ *        segment count configured for this resource.
+ *
+ * @param[out] _buffer Receives the pointer to the newly allocated DMABuffer.
+ * @retval B_OK        Allocation succeeded.
+ * @retval B_NO_MEMORY Heap allocation failed.
+ */
 status_t
 DMAResource::CreateBuffer(DMABuffer** _buffer)
 {
@@ -237,6 +357,17 @@ DMAResource::CreateBuffer(DMABuffer** _buffer)
 }
 
 
+/**
+ * @brief Allocates a physically contiguous bounce buffer area that satisfies
+ *        the DMA address and alignment restrictions of this resource.
+ *
+ * @param[out] _buffer Receives the pointer to the newly created DMABounceBuffer.
+ * @retval B_OK        The bounce buffer area was created successfully.
+ * @retval B_NO_MEMORY Object allocation failed.
+ * @retval other       @c create_area_etc() or @c get_memory_map() error code.
+ * @note The area is created in the B_SYSTEM_TEAM address space with contiguous
+ *       physical backing and is mapped with kernel read/write permissions.
+ */
 status_t
 DMAResource::CreateBounceBuffer(DMABounceBuffer** _buffer)
 {
@@ -284,6 +415,15 @@ DMAResource::CreateBounceBuffer(DMABounceBuffer** _buffer)
 }
 
 
+/**
+ * @brief Clamps @a length so that the resulting physical range does not cross
+ *        a DMA boundary and does not exceed the maximum segment size.
+ *
+ * @param base   Physical start address of the segment being evaluated.
+ * @param length In/out: desired segment length; reduced in place if necessary.
+ * @note This is an inline hot-path helper called once per scatter-gather
+ *       vector during TranslateNext().
+ */
 inline void
 DMAResource::_RestrictBoundaryAndSegmentSize(generic_addr_t base,
 	generic_addr_t& length)
@@ -300,6 +440,19 @@ DMAResource::_RestrictBoundaryAndSegmentSize(generic_addr_t base,
 }
 
 
+/**
+ * @brief Removes @a toCut bytes from the tail of @a buffer, returning any
+ *        reclaimed bounce-buffer space to the available pool.
+ *
+ * @param buffer                The DMABuffer whose trailing vectors are trimmed.
+ * @param physicalBounceBuffer  In/out: next free physical address in the bounce
+ *                              buffer; decremented by the reclaimed amount.
+ * @param bounceLeft            In/out: remaining free bytes in the bounce buffer;
+ *                              incremented by the reclaimed amount.
+ * @param toCut                 Number of bytes to remove from the tail.
+ * @note Vectors are removed or shortened from last to first until the full
+ *       @a toCut quota has been satisfied.
+ */
 void
 DMAResource::_CutBuffer(DMABuffer& buffer, phys_addr_t& physicalBounceBuffer,
 	phys_size_t& bounceLeft, generic_size_t toCut)
@@ -343,6 +496,26 @@ DMAResource::_CutBuffer(DMABuffer& buffer, phys_addr_t& physicalBounceBuffer,
 	TODO: is that what we want here?
 	\return >0 the number of bytes added to the buffer.
 */
+/**
+ * @brief Appends up to @a length bytes of bounce-buffer space as one or more
+ *        scatter-gather vectors in @a buffer.
+ *
+ * @param buffer                DMABuffer that receives the new bounce-buffer vec(s).
+ * @param physicalBounceBuffer  In/out: next free physical address in the bounce
+ *                              buffer; advanced by the number of bytes consumed.
+ * @param bounceLeft            In/out: remaining free bytes in the bounce buffer;
+ *                              decremented by the number of bytes consumed.
+ * @param length                Desired number of bytes to add from the bounce buffer.
+ * @param fixedLength           If @c true, the function returns 0 (failure) rather
+ *                              than a partial result when the full @a length cannot
+ *                              be satisfied.
+ * @return Number of bytes actually appended to @a buffer (>0 on success, 0 on
+ *         failure). Partial additions may have occurred even on a 0 return; use
+ *         _CutBuffer() to roll them back.
+ * @note Boundary and segment-size restrictions are enforced on each new vec.
+ *       The caller must hold @c fLock when this function is called as part of
+ *       TranslateNext().
+ */
 phys_size_t
 DMAResource::_AddBounceBuffer(DMABuffer& buffer,
 	phys_addr_t& physicalBounceBuffer, phys_size_t& bounceLeft,
@@ -401,6 +574,27 @@ DMAResource::_AddBounceBuffer(DMABuffer& buffer,
 }
 
 
+/**
+ * @brief Translates the next portion of @a request into a DMA-ready IOOperation,
+ *        respecting all hardware DMA constraints and inserting bounce-buffer
+ *        segments as needed.
+ *
+ * @param request              The in-flight IORequest to translate; its internal
+ *                             vec/offset state is advanced on success.
+ * @param operation            Output IOOperation populated with the DMABuffer and
+ *                             range information for the translated segment.
+ * @param maxOperationLength   Maximum number of bytes this operation may cover;
+ *                             pass 0 for no additional limit beyond the hardware
+ *                             restrictions.
+ * @retval B_OK                Translation succeeded; @a operation is ready to submit.
+ * @retval B_BUSY              No DMABuffer or bounce buffer currently available in
+ *                             the pool; the caller should retry later.
+ * @retval B_BAD_VALUE         The request geometry cannot be satisfied (e.g. a
+ *                             partial-begin that exhausts the bounce buffer).
+ * @note Acquires @c fLock for the duration of the translation. Virtual-address
+ *       buffers are walked through get_memory_map_etc() to build a physical
+ *       scatter-gather list before DMA checks are applied.
+ */
 status_t
 DMAResource::TranslateNext(IORequest* request, IOOperation* operation,
 	generic_size_t maxOperationLength)
@@ -749,6 +943,15 @@ DMAResource::TranslateNext(IORequest* request, IOOperation* operation,
 }
 
 
+/**
+ * @brief Returns a DMABuffer (and its optional bounce buffer) to the resource's
+ *        free pool so that it can be reused by a subsequent TranslateNext() call.
+ *
+ * @param buffer The DMABuffer to recycle; a @c NULL argument is silently ignored.
+ * @note Acquires @c fLock internally. The caller must not hold @c fLock when
+ *       calling this function. After this call @a buffer must not be accessed
+ *       again.
+ */
 void
 DMAResource::RecycleBuffer(DMABuffer* buffer)
 {
@@ -764,6 +967,13 @@ DMAResource::RecycleBuffer(DMABuffer* buffer)
 }
 
 
+/**
+ * @brief Returns @c true when the hardware DMA constraints require bounce
+ *        buffers (i.e. not all of physical RAM satisfies alignment, address
+ *        range, or block-size requirements).
+ *
+ * @return @c true if bounce buffers must be allocated; @c false otherwise.
+ */
 bool
 DMAResource::_NeedsBoundsBuffers() const
 {

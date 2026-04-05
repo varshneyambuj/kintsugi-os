@@ -1,6 +1,37 @@
 /*
- * Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file VMTranslationMap.cpp
+ * @brief Architecture-independent base for page-table management.
+ *
+ * VMTranslationMap is the abstract interface for mapping virtual addresses
+ * to physical pages in the hardware page tables. Concrete implementations
+ * live in arch/x86/ (and other arch directories). This file provides the
+ * default implementations and the physical-page reference-counting helpers.
+ *
+ * @see arch/x86/arch_vm_translation_map.cpp
  */
 
 
@@ -17,6 +48,13 @@
 // #pragma mark - VMTranslationMap
 
 
+/**
+ * @brief Construct a VMTranslationMap and initialise the recursive lock.
+ *
+ * Sets the initial mapping count to zero and initialises @c fLock as a
+ * recursive lock named "translation map". Concrete architecture-specific
+ * subclasses must call this constructor.
+ */
 VMTranslationMap::VMTranslationMap()
 	:
 	fMapCount(0)
@@ -25,17 +63,38 @@ VMTranslationMap::VMTranslationMap()
 }
 
 
+/**
+ * @brief Destroy a VMTranslationMap and release the recursive lock.
+ *
+ * Destroys the recursive lock acquired by the constructor. All mapped pages
+ * must have been removed by the architecture-specific subclass before the
+ * destructor chain reaches this point.
+ */
 VMTranslationMap::~VMTranslationMap()
 {
 	recursive_lock_destroy(&fLock);
 }
 
 
-/*!	Unmaps a range of pages of an area.
-
-	The default implementation just iterates over all virtual pages of the
-	range and calls UnmapPage(). This is obviously not particularly efficient.
-*/
+/**
+ * @brief Unmap a contiguous range of virtual pages belonging to an area.
+ *
+ * The default implementation iterates over every page-sized address in
+ * [\a base, \a base + \a size) and calls UnmapPage() for each one that has
+ * a present translation. This is not particularly efficient; architecture
+ * ports should override this method when a bulk TLB shootdown is cheaper.
+ *
+ * @param area                    The VMArea that owns the virtual range.
+ * @param base                    First virtual address to unmap; must be
+ *                                page-aligned.
+ * @param size                    Number of bytes to unmap; must be a multiple
+ *                                of B_PAGE_SIZE.
+ * @param updatePageQueue         If @c true, move freed pages to the
+ *                                appropriate page queue.
+ * @param deletingAddressSpace    If @c true, the owning address space is being
+ *                                torn down; some architectures may skip TLB
+ *                                invalidation in this case.
+ */
 void
 VMTranslationMap::UnmapPages(VMArea* area, addr_t base, size_t size,
 	bool updatePageQueue, bool deletingAddressSpace)
@@ -67,24 +126,32 @@ VMTranslationMap::UnmapPages(VMArea* area, addr_t base, size_t size,
 }
 
 
-/*!	Unmaps all of an area's pages.
-
-	If \a deletingAddressSpace is \c true, the address space the area belongs to
-	is in the process of being destroyed and isn't used by anyone anymore. For
-	some architectures this can be used for optimizations (e.g. not unmapping
-	pages or at least not needing to invalidate TLB entries).
-
-	If \a ignoreTopCachePageFlags is \c true, the area is in the process of
-	being destroyed and its top cache is otherwise unreferenced. I.e. all mapped
-	pages that live in the top cache area going to be freed and the page
-	accessed and modified flags don't need to be propagated.
-
-	The default implementation iterates over all mapping objects, and calls
-	UnmapPage() (with \c _flags specified to avoid calls to PageUnmapped).
-	It skips unmapping pages owned by the top cache if \a deletingAddressSpace
-	is \c true, or if \a ignoreTopCachePageFlags is set. This behavior should
-	be sufficient for most (if not all) architectures.
-*/
+/**
+ * @brief Unmap all pages belonging to a VMArea and free the mapping objects.
+ *
+ * Handles both device and wired areas (delegating to UnmapPages()) and the
+ * common case of demand-paged areas. For the common case the function:
+ *  -# Acquires the translation map lock.
+ *  -# Iterates over all vm_page_mapping objects for the area, removing each
+ *     from both the page and area mapping lists.
+ *  -# Calls UnmapPage() (with a flags output to avoid calling PageUnmapped)
+ *     for pages that must remain visible to other address spaces.
+ *  -# Propagates accessed/modified bits back to each vm_page.
+ *  -# Requeues fully-unmapped pages to the appropriate page queue.
+ *  -# Releases the lock, then frees all mapping objects.
+ *
+ * If \a deletingAddressSpace is @c true, the address space is already dead;
+ * if \a ignoreTopCachePageFlags is additionally @c true, all top-cache pages
+ * are about to be freed and their accessed/dirty flags need not be saved.
+ *
+ * @param area                    The VMArea whose pages are to be unmapped.
+ * @param deletingAddressSpace    Pass @c true when the address space is being
+ *                                destroyed, enabling possible TLB short-cuts.
+ * @param ignoreTopCachePageFlags Pass @c true when the top cache of the area
+ *                                is also being destroyed, so that
+ *                                accessed/modified flag propagation can be
+ *                                skipped for those pages.
+ */
 void
 VMTranslationMap::UnmapArea(VMArea* area, bool deletingAddressSpace,
 	bool ignoreTopCachePageFlags)
@@ -164,13 +231,20 @@ VMTranslationMap::UnmapArea(VMArea* area, bool deletingAddressSpace,
 }
 
 
-/*!	Print mapping information for a virtual address.
-	The method navigates the paging structures and prints all relevant
-	information on the way.
-	The method is invoked from a KDL command. The default implementation is a
-	no-op.
-	\param virtualAddress The virtual address to look up.
-*/
+/**
+ * @brief Print paging-structure information for a virtual address (KDL helper).
+ *
+ * Navigates the hardware paging structures for \a virtualAddress and prints
+ * all relevant intermediate entries to the kernel debugger output. The
+ * default implementation prints a "not implemented" message; architecture
+ * ports should override this method.
+ *
+ * @note This method is intended to be called only from a KDL command and
+ *       must not acquire locks.
+ *
+ * @param virtualAddress The virtual address whose mapping information is to
+ *                       be printed.
+ */
 void
 VMTranslationMap::DebugPrintMappingInfo(addr_t virtualAddress)
 {
@@ -180,18 +254,25 @@ VMTranslationMap::DebugPrintMappingInfo(addr_t virtualAddress)
 }
 
 
-/*!	Find virtual addresses mapped to the given physical address.
-	For each virtual address the method finds, it invokes the callback object's
-	HandleVirtualAddress() method. When that method returns \c true, the search
-	is terminated and \c true is returned.
-	The method is invoked from a KDL command. The default implementation is a
-	no-op.
-	\param physicalAddress The physical address to search for.
-	\param callback Callback object to be notified of each found virtual
-		address.
-	\return \c true, if for a found virtual address the callback's
-		HandleVirtualAddress() returned \c true, \c false otherwise.
-*/
+/**
+ * @brief Search for all virtual addresses mapped to a given physical address
+ *        (KDL helper).
+ *
+ * For each virtual address that maps \a physicalAddress the method invokes
+ * \a callback.HandleVirtualAddress(). The search stops as soon as the
+ * callback returns @c true. The default implementation prints a "not
+ * implemented" message and returns @c false; architecture ports should
+ * override this method.
+ *
+ * @note Intended to be called only from a KDL command; must not acquire locks.
+ *
+ * @param physicalAddress The physical address to search for.
+ * @param callback        Callback object notified for each virtual address
+ *                        found; returning @c true from
+ *                        HandleVirtualAddress() terminates the search.
+ * @return @c true if the callback returned @c true for any virtual address,
+ *         @c false otherwise.
+ */
 bool
 VMTranslationMap::DebugGetReverseMappingInfo(phys_addr_t physicalAddress,
 	ReverseMappingInfoCallback& callback)
@@ -203,14 +284,32 @@ VMTranslationMap::DebugGetReverseMappingInfo(phys_addr_t physicalAddress,
 }
 
 
-/*!	Called by UnmapPage() after performing the architecture specific part.
-	Looks up the page, updates its flags, removes the page-area mapping, and
-	requeues the page, if necessary.
-
-	If \c mappingsQueue is unspecified, then it unlocks the map and frees the
-	page-area mapping. If \c mappingsQueue is specified, then it adds the removed
-	mapping to the queue and does NOT unlock the map.
-*/
+/**
+ * @brief Post-unmap page bookkeeping called by architecture-specific
+ *        UnmapPage() implementations.
+ *
+ * After the architecture-specific portion of an UnmapPage() call has removed
+ * the hardware translation entry, this helper:
+ *  -# Retrieves the vm_page for \a pageNumber.
+ *  -# Propagates the \a accessed and \a modified flags to the page.
+ *  -# Removes the vm_page_mapping object from both the page and area mapping
+ *     lists (or decrements the wired count for wired areas).
+ *  -# If \a mappingsQueue is @c NULL, unlocks the translation map and
+ *     immediately frees the mapping object; otherwise appends it to
+ *     \a mappingsQueue and leaves the map locked.
+ *  -# Requeues a fully-unmapped page to the appropriate page queue when
+ *     \a updatePageQueue is @c true.
+ *
+ * @param area            The VMArea from which the page was unmapped.
+ * @param pageNumber      Physical page number that was unmapped.
+ * @param accessed        Whether the hardware accessed bit was set.
+ * @param modified        Whether the hardware dirty bit was set.
+ * @param updatePageQueue If @c true, move a fully-unmapped page to the
+ *                        correct page queue.
+ * @param mappingsQueue   Optional queue to collect mapping objects for batch
+ *                        freeing. When non-NULL the translation map lock is
+ *                        NOT released by this function.
+ */
 void
 VMTranslationMap::PageUnmapped(VMArea* area, page_num_t pageNumber,
 	bool accessed, bool modified, bool updatePageQueue, VMAreaMappings* mappingsQueue)
@@ -287,10 +386,22 @@ VMTranslationMap::PageUnmapped(VMArea* area, page_num_t pageNumber,
 }
 
 
-/*!	Called by ClearAccessedAndModified() after performing the architecture
-	specific part.
-	Looks up the page and removes the page-area mapping.
-*/
+/**
+ * @brief Post-unmap bookkeeping for ClearAccessedAndModified() callers.
+ *
+ * Called by architecture-specific ClearAccessedAndModified() implementations
+ * after the hardware accessed/modified bits have been cleared without a full
+ * page unmap. Removes the vm_page_mapping object from the page and area
+ * mapping lists (or decrements the wired count), unlocks the translation map,
+ * and decrements the global mapped-pages counter if the page is now fully
+ * unmapped.
+ *
+ * @note Because this is called by the page daemon, CACHE_DONT_LOCK_KERNEL_SPACE
+ *       is always passed to vm_free_page_mapping() to prevent deadlocks.
+ *
+ * @param area       The VMArea associated with the mapping being cleared.
+ * @param pageNumber Physical page number whose mapping object is to be removed.
+ */
 void
 VMTranslationMap::UnaccessedPageUnmapped(VMArea* area, page_num_t pageNumber)
 {
@@ -334,7 +445,18 @@ VMTranslationMap::UnaccessedPageUnmapped(VMArea* area, page_num_t pageNumber)
 }
 
 
-/*!	Invokes arch_cpu_user_tlb_invalidate() on the specified CPUs. */
+/**
+ * @brief Invalidate user-space TLB entries on one or more CPUs.
+ *
+ * Broadcasts a user-TLB invalidation ICI (inter-CPU interrupt) to all CPUs
+ * in \a cpus except the calling CPU, then performs the invalidation locally
+ * on the calling CPU (with interrupts disabled). If \a cpus does not include
+ * the current CPU, only the broadcast is issued.
+ *
+ * @param cpus    Bitmask of CPUs on which the TLB invalidation must occur.
+ * @param context Architecture-specific context token (e.g., address-space ID
+ *                or CR3 value) passed through to arch_cpu_user_tlb_invalidate().
+ */
 void
 VMTranslationMap::InvalidateUserTLB(CPUSet cpus, intptr_t context)
 {
@@ -354,7 +476,20 @@ VMTranslationMap::InvalidateUserTLB(CPUSet cpus, intptr_t context)
 }
 
 
-/*!	Invokes arch_cpu_invalidate_tlb_list() on the specified CPUs. */
+/**
+ * @brief Invalidate a specific list of virtual addresses in the TLB on one
+ *        or more CPUs.
+ *
+ * Broadcasts an SMP_MSG_INVALIDATE_PAGE_LIST ICI to all CPUs in \a cpus
+ * except the calling CPU, then calls arch_cpu_invalidate_tlb_list() locally
+ * for the calling CPU (if present in \a cpus).
+ *
+ * @param cpus         Bitmask of CPUs that must process the invalidation.
+ * @param context      Architecture-specific context token forwarded to
+ *                     arch_cpu_invalidate_tlb_list().
+ * @param invalidPages Array of virtual addresses to invalidate.
+ * @param count        Number of entries in \a invalidPages.
+ */
 void
 VMTranslationMap::InvalidateTLBList(CPUSet cpus, intptr_t context,
 	addr_t* invalidPages, int32 count)
@@ -377,6 +512,12 @@ VMTranslationMap::InvalidateTLBList(CPUSet cpus, intptr_t context,
 // #pragma mark - ReverseMappingInfoCallback
 
 
+/**
+ * @brief Virtual destructor for ReverseMappingInfoCallback.
+ *
+ * Ensures correct destruction of concrete callback subclasses when deleted
+ * through a base-class pointer.
+ */
 VMTranslationMap::ReverseMappingInfoCallback::~ReverseMappingInfoCallback()
 {
 }
@@ -385,11 +526,24 @@ VMTranslationMap::ReverseMappingInfoCallback::~ReverseMappingInfoCallback()
 // #pragma mark - VMPhysicalPageMapper
 
 
+/**
+ * @brief Construct a VMPhysicalPageMapper.
+ *
+ * Base constructor for the physical-page mapper abstraction. Architecture
+ * ports subclass this to provide temporary mappings of physical pages into
+ * the kernel virtual address space.
+ */
 VMPhysicalPageMapper::VMPhysicalPageMapper()
 {
 }
 
 
+/**
+ * @brief Destroy a VMPhysicalPageMapper.
+ *
+ * Virtual destructor ensuring proper cleanup of architecture-specific
+ * subclass resources.
+ */
 VMPhysicalPageMapper::~VMPhysicalPageMapper()
 {
 }

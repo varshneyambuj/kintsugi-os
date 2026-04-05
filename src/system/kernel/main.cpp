@@ -1,14 +1,39 @@
 /*
- * Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
- * Copyright 2002-2020, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
+ *   Copyright 2002-2020, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
-
-/*! This is main - initializes the kernel and launches the launch_daemon */
+/**
+ * @file main.cpp
+ * @brief Kernel entry point — initializes all kernel subsystems and launches the launch_daemon.
+ *
+ * _start() is called by the bootloader with a kernel_args struct. It initializes the
+ * architecture layer, memory, scheduling, and all kernel subsystems in order, then
+ * spawns main2() as the first kernel thread, which completes system startup.
+ */
 
 
 #include <string.h>
@@ -85,6 +110,16 @@ static uint32 sCpuRendezvous3;
 static int32 main2(void *);
 
 
+/**
+ * @brief Initialize per-CPU state on each non-boot processor.
+ *
+ * Invoked via call_all_cpus_sync() after the boot CPU has completed early
+ * initialization. Skips CPU 0 (the boot processor) so that it is not
+ * re-initialized.
+ *
+ * @param args       Pointer to the global kernel_args structure.
+ * @param currentCPU Logical index of the CPU executing this callback.
+ */
 static void
 non_boot_cpu_init(void* args, int currentCPU)
 {
@@ -94,6 +129,25 @@ non_boot_cpu_init(void* args, int currentCPU)
 }
 
 
+/**
+ * @brief Primary kernel entry point called by the bootloader on every CPU.
+ *
+ * On the boot CPU (currentCPU == 0) this function drives the complete kernel
+ * initialization sequence: architecture platform, VM, scheduling, drivers, and
+ * all other subsystems. It then spawns main2() as the first kernel thread,
+ * enables the scheduler, wakes up the AP CPUs, and falls into the idle loop.
+ *
+ * On application processors the function synchronizes with the boot CPU via
+ * rendezvous barriers, runs per-CPU SMP initialization, starts the scheduler,
+ * enables interrupts, and enters the idle loop.
+ *
+ * @param bootKernelArgs Pointer to the kernel_args struct provided by the
+ *                       bootloader. The struct is copied to static storage
+ *                       before the bootloader's memory is reclaimed.
+ * @param currentCPU     Logical index (0-based) of the CPU executing _start().
+ * @return               Never returns under normal operation; returns -1 if
+ *                       the kernel_args version or size does not match.
+ */
 extern "C" int
 _start(kernel_args *bootKernelArgs, int currentCPU)
 {
@@ -288,6 +342,18 @@ _start(kernel_args *bootKernelArgs, int currentCPU)
 }
 
 
+/**
+ * @brief Second-stage kernel initialization thread; completes system startup.
+ *
+ * Spawned as the first kernel thread by _start() and scheduled once the
+ * scheduler is running. Initializes the remaining kernel subsystems that
+ * require a thread context (ports, VFS, device manager, swap, modules), mounts
+ * the boot file system, frees the kernel args ranges, and finally loads and
+ * resumes the launch_daemon process to hand off to user space.
+ *
+ * @param unused Unused thread argument (always NULL).
+ * @return 0 on success; the thread exits normally after spawning launch_daemon.
+ */
 static int32
 main2(void* /*unused*/)
 {
@@ -407,4 +473,3 @@ main2(void* /*unused*/)
 
 	return 0;
 }
-

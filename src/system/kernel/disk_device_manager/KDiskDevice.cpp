@@ -1,9 +1,39 @@
 /*
- * Copyright 2006-2011, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file KDiskDevice.cpp
+ * @brief Kernel object representing a physical or virtual disk device.
+ *
+ * KDiskDevice is the root of the partition tree for a single disk. It wraps
+ * the underlying file descriptor or device node, provides the device path,
+ * geometry, and read/write capabilities, and owns the top-level KPartition
+ * that covers the entire device.
+ *
+ * @see KPartition.cpp, KDiskDeviceManager.cpp
+ */
 
 #include "KDiskDevice.h"
 
@@ -27,6 +57,14 @@
 #define OUT dprintf
 
 
+/**
+ * @brief Constructs a KDiskDevice with the given partition ID.
+ *
+ * Initialises the read/write lock, resets device state, sets the device
+ * pointer to itself, and sets the published name to "raw".
+ *
+ * @param id The partition_id to assign to this disk device.
+ */
 KDiskDevice::KDiskDevice(partition_id id)
 	:
 	KPartition(id),
@@ -42,12 +80,30 @@ KDiskDevice::KDiskDevice(partition_id id)
 }
 
 
+/**
+ * @brief Destroys the KDiskDevice, releasing all acquired resources.
+ *
+ * Calls Unset() to close the file descriptor and free the device path.
+ */
 KDiskDevice::~KDiskDevice()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Opens and initialises the disk device at the given path.
+ *
+ * Opens the device file read-only, queries its media status and geometry,
+ * updates the device flags, and initialises the partition data.
+ *
+ * @param path Null-terminated path to the device node (e.g. "/dev/disk/...").
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE  @a path is NULL.
+ * @retval B_NO_MEMORY  Memory allocation for the path copy failed.
+ * @retval errno        The open(2) system call failed.
+ * @retval other        GetMediaStatus() or GetGeometry() reported an error.
+ */
 status_t
 KDiskDevice::SetTo(const char* path)
 {
@@ -86,6 +142,12 @@ KDiskDevice::SetTo(const char* path)
 }
 
 
+/**
+ * @brief Resets the device to an uninitialised state.
+ *
+ * Closes the open file descriptor if one is held, resets the media status,
+ * clears the device ID and flags, frees the path string, and resets geometry.
+ */
 void
 KDiskDevice::Unset()
 {
@@ -104,6 +166,13 @@ KDiskDevice::Unset()
 }
 
 
+/**
+ * @brief Acquires the device read lock.
+ *
+ * Multiple concurrent readers are allowed. Blocks until the lock is acquired.
+ *
+ * @return @c true if the lock was acquired successfully, @c false otherwise.
+ */
 bool
 KDiskDevice::ReadLock()
 {
@@ -111,6 +180,9 @@ KDiskDevice::ReadLock()
 }
 
 
+/**
+ * @brief Releases the device read lock.
+ */
 void
 KDiskDevice::ReadUnlock()
 {
@@ -118,6 +190,14 @@ KDiskDevice::ReadUnlock()
 }
 
 
+/**
+ * @brief Acquires the device write lock.
+ *
+ * Exclusive access; blocks until all readers and any existing writer have
+ * released the lock.
+ *
+ * @return @c true if the lock was acquired successfully, @c false otherwise.
+ */
 bool
 KDiskDevice::WriteLock()
 {
@@ -125,6 +205,9 @@ KDiskDevice::WriteLock()
 }
 
 
+/**
+ * @brief Releases the device write lock.
+ */
 void
 KDiskDevice::WriteUnlock()
 {
@@ -132,6 +215,13 @@ KDiskDevice::WriteUnlock()
 }
 
 
+/**
+ * @brief Sets the partition/device ID, keeping the internal device data in sync.
+ *
+ * Forwards the call to KPartition::SetID() and also updates fDeviceData.id.
+ *
+ * @param id The new partition_id for this device.
+ */
 void
 KDiskDevice::SetID(partition_id id)
 {
@@ -140,6 +230,11 @@ KDiskDevice::SetID(partition_id id)
 }
 
 
+/**
+ * @brief No-op: disk devices are always published.
+ *
+ * @return B_OK always.
+ */
 status_t
 KDiskDevice::PublishDevice()
 {
@@ -149,6 +244,11 @@ KDiskDevice::PublishDevice()
 }
 
 
+/**
+ * @brief No-op: disk devices are always published.
+ *
+ * @return B_OK always.
+ */
 status_t
 KDiskDevice::UnpublishDevice()
 {
@@ -158,6 +258,11 @@ KDiskDevice::UnpublishDevice()
 }
 
 
+/**
+ * @brief No-op: disk devices are always published.
+ *
+ * @return B_OK always.
+ */
 status_t
 KDiskDevice::RepublishDevice()
 {
@@ -167,6 +272,11 @@ KDiskDevice::RepublishDevice()
 }
 
 
+/**
+ * @brief Sets the raw device flags (B_DISK_DEVICE_REMOVABLE, etc.).
+ *
+ * @param flags Bitmask of device flags to store.
+ */
 void
 KDiskDevice::SetDeviceFlags(uint32 flags)
 {
@@ -174,6 +284,11 @@ KDiskDevice::SetDeviceFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Returns the current device flags bitmask.
+ *
+ * @return The device flags stored in fDeviceData.flags.
+ */
 uint32
 KDiskDevice::DeviceFlags() const
 {
@@ -181,6 +296,11 @@ KDiskDevice::DeviceFlags() const
 }
 
 
+/**
+ * @brief Reports whether the media is read-only.
+ *
+ * @return @c true if the geometry marks the device as read-only.
+ */
 bool
 KDiskDevice::IsReadOnlyMedia() const
 {
@@ -188,6 +308,11 @@ KDiskDevice::IsReadOnlyMedia() const
 }
 
 
+/**
+ * @brief Reports whether the media is write-once (e.g. CD-R).
+ *
+ * @return @c true if the geometry marks the device as write-once.
+ */
 bool
 KDiskDevice::IsWriteOnce() const
 {
@@ -195,6 +320,11 @@ KDiskDevice::IsWriteOnce() const
 }
 
 
+/**
+ * @brief Reports whether the media is removable (e.g. USB stick, CD).
+ *
+ * @return @c true if the geometry marks the device as removable.
+ */
 bool
 KDiskDevice::IsRemovable() const
 {
@@ -202,6 +332,13 @@ KDiskDevice::IsRemovable() const
 }
 
 
+/**
+ * @brief Reports whether media is currently present in the drive.
+ *
+ * Considers both B_OK and B_DEV_MEDIA_CHANGED as "has media".
+ *
+ * @return @c true if media is present.
+ */
 bool
 KDiskDevice::HasMedia() const
 {
@@ -209,6 +346,11 @@ KDiskDevice::HasMedia() const
 }
 
 
+/**
+ * @brief Reports whether the media has changed since the last check.
+ *
+ * @return @c true if fMediaStatus is B_DEV_MEDIA_CHANGED.
+ */
 bool
 KDiskDevice::MediaChanged() const
 {
@@ -216,6 +358,12 @@ KDiskDevice::MediaChanged() const
 }
 
 
+/**
+ * @brief Re-queries the driver for the current media status.
+ *
+ * Intended to be called periodically; a future improvement would allow the
+ * driver to push notifications instead of requiring polling.
+ */
 void
 KDiskDevice::UpdateMediaStatusIfNeeded()
 {
@@ -225,6 +373,13 @@ KDiskDevice::UpdateMediaStatusIfNeeded()
 }
 
 
+/**
+ * @brief Uninitialises the media contents and resets geometry and device flags.
+ *
+ * Called when the media is removed or becomes unavailable. Clears the
+ * partition tree contents, resets the geometry to a blank state, updates
+ * device flags to reflect the absent media, and re-initialises partition data.
+ */
 void
 KDiskDevice::UninitializeMedia()
 {
@@ -235,6 +390,13 @@ KDiskDevice::UninitializeMedia()
 }
 
 
+/**
+ * @brief Re-reads device geometry from the driver and updates internal state.
+ *
+ * If the ioctl fails the method returns immediately without modifying state.
+ * On success, device flags and partition data are refreshed to match the
+ * new geometry.
+ */
 void
 KDiskDevice::UpdateGeometry()
 {
@@ -246,6 +408,11 @@ KDiskDevice::UpdateGeometry()
 }
 
 
+/**
+ * @brief Returns the device path string (e.g. "/dev/disk/ata/0/master/raw").
+ *
+ * @return Pointer to the null-terminated device path, or NULL if not set.
+ */
 const char*
 KDiskDevice::Path() const
 {
@@ -253,6 +420,16 @@ KDiskDevice::Path() const
 }
 
 
+/**
+ * @brief Copies the device file name "raw" into the supplied buffer.
+ *
+ * The published name for a raw disk device is always "raw".
+ *
+ * @param buffer  Destination buffer to receive the name.
+ * @param size    Size of @a buffer in bytes.
+ * @return B_OK on success.
+ * @retval B_NAME_TOO_LONG  The buffer is too small to hold "raw".
+ */
 status_t
 KDiskDevice::GetFileName(char* buffer, size_t size) const
 {
@@ -262,6 +439,15 @@ KDiskDevice::GetFileName(char* buffer, size_t size) const
 }
 
 
+/**
+ * @brief Fills a KPath object with the full device path.
+ *
+ * @param path  Pointer to an initialised KPath to receive the path.
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE  @a path is NULL or failed its own InitCheck().
+ * @retval B_NO_INIT    SetTo() has not been called yet (path not set).
+ * @retval other        KPath::SetPath() error.
+ */
 status_t
 KDiskDevice::GetPath(KPath* path) const
 {
@@ -273,6 +459,11 @@ KDiskDevice::GetPath(KPath* path) const
 }
 
 
+/**
+ * @brief Returns the open file descriptor for the device node.
+ *
+ * @return The file descriptor, or -1 if the device is not open.
+ */
 int
 KDiskDevice::FD() const
 {
@@ -280,6 +471,11 @@ KDiskDevice::FD() const
 }
 
 
+/**
+ * @brief Returns a mutable pointer to the raw disk_device_data structure.
+ *
+ * @return Pointer to fDeviceData.
+ */
 disk_device_data*
 KDiskDevice::DeviceData()
 {
@@ -287,6 +483,11 @@ KDiskDevice::DeviceData()
 }
 
 
+/**
+ * @brief Returns a read-only pointer to the raw disk_device_data structure.
+ *
+ * @return Const pointer to fDeviceData.
+ */
 const disk_device_data*
 KDiskDevice::DeviceData() const
 {
@@ -294,6 +495,14 @@ KDiskDevice::DeviceData() const
 }
 
 
+/**
+ * @brief Serialises the partition portion of this device to a UserDataWriter.
+ *
+ * Delegates directly to KPartition::WriteUserData().
+ *
+ * @param writer  The UserDataWriter accumulating the output buffer.
+ * @param data    Pointer to the user_partition_data area to fill.
+ */
 void
 KDiskDevice::WriteUserData(UserDataWriter& writer, user_partition_data* data)
 {
@@ -301,6 +510,16 @@ KDiskDevice::WriteUserData(UserDataWriter& writer, user_partition_data* data)
 }
 
 
+/**
+ * @brief Serialises the full device (flags, path, and partition tree) to a
+ *        UserDataWriter for later copying to user space.
+ *
+ * Allocates a user_disk_device_data header, places the path string, records
+ * the relocation entry for the path pointer, then delegates the partition
+ * tree serialisation to KPartition::WriteUserData().
+ *
+ * @param writer  The UserDataWriter accumulating the output buffer.
+ */
 void
 KDiskDevice::WriteUserData(UserDataWriter& writer)
 {
@@ -318,6 +537,15 @@ KDiskDevice::WriteUserData(UserDataWriter& writer)
 }
 
 
+/**
+ * @brief Prints a human-readable dump of the device and its partition tree.
+ *
+ * Emits the device ID, path, media status, and device flags via dprintf.
+ * If media is present, also dumps the full partition tree.
+ *
+ * @param deep   If @c true, recursively dump child partitions.
+ * @param level  Indentation level (passed through to KPartition::Dump()).
+ */
 void
 KDiskDevice::Dump(bool deep, int32 level)
 {
@@ -329,6 +557,17 @@ KDiskDevice::Dump(bool deep, int32 level)
 }
 
 
+/**
+ * @brief Queries the driver for the current media status via ioctl.
+ *
+ * Falls back to querying the geometry: if the geometry ioctl succeeds and the
+ * device is non-removable, reports B_OK even when B_GET_MEDIA_STATUS fails.
+ *
+ * @param mediaStatus  Output pointer; receives the media status code.
+ * @return B_OK if the status could be determined.
+ * @retval errno  The B_GET_MEDIA_STATUS ioctl failed and the fallback also
+ *                failed or the device is removable.
+ */
 status_t
 KDiskDevice::GetMediaStatus(status_t* mediaStatus)
 {
@@ -352,6 +591,13 @@ KDiskDevice::GetMediaStatus(status_t* mediaStatus)
 }
 
 
+/**
+ * @brief Queries the driver for the device geometry via ioctl.
+ *
+ * @param geometry  Output pointer; receives the device_geometry structure.
+ * @return B_OK on success.
+ * @retval errno  The B_GET_GEOMETRY ioctl failed.
+ */
 status_t
 KDiskDevice::GetGeometry(device_geometry* geometry)
 {
@@ -361,6 +607,13 @@ KDiskDevice::GetGeometry(device_geometry* geometry)
 }
 
 
+/**
+ * @brief Synchronises fPartitionData fields with the current device geometry.
+ *
+ * Sets the partition block size, physical block size, offset, and total size
+ * derived from the geometry, marks the partition as a device, and attempts
+ * to retrieve and store the human-readable device name.
+ */
 void
 KDiskDevice::_InitPartitionData()
 {
@@ -380,6 +633,13 @@ KDiskDevice::_InitPartitionData()
 }
 
 
+/**
+ * @brief Resets the geometry to a safe blank state (no sectors, removable,
+ *        read-only, non-write-once, type B_DISK).
+ *
+ * Called when no media is present or the device is uninitialised, so that
+ * the partition data derived from geometry does not contain stale values.
+ */
 void
 KDiskDevice::_ResetGeometry()
 {
@@ -394,6 +654,13 @@ KDiskDevice::_ResetGeometry()
 }
 
 
+/**
+ * @brief Updates the device flags to reflect the current geometry and media
+ *        state.
+ *
+ * Sets or clears B_DISK_DEVICE_REMOVABLE, B_DISK_DEVICE_HAS_MEDIA,
+ * B_DISK_DEVICE_READ_ONLY, and B_DISK_DEVICE_WRITE_ONCE as appropriate.
+ */
 void
 KDiskDevice::_UpdateDeviceFlags()
 {

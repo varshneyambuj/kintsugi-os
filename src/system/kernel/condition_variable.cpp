@@ -1,7 +1,37 @@
 /*
- * Copyright 2007-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2019-2023, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2019-2023, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file condition_variable.cpp
+ * @brief Kernel condition variable implementation for thread synchronization.
+ *
+ * Provides ConditionVariable and ConditionVariableEntry used to block threads
+ * until a condition is met. Threads wait on a ConditionVariable and are woken
+ * when another thread calls NotifyOne() or NotifyAll().
+ *
+ * @see ConditionVariable, ConditionVariableEntry
  */
 
 #include <condition_variable.h>
@@ -50,12 +80,18 @@ static rw_spinlock sConditionVariableHashLock;
 // #pragma mark - ConditionVariableEntry
 
 
+/**
+ * @brief Default constructor; initialises the entry with no associated variable.
+ */
 ConditionVariableEntry::ConditionVariableEntry()
 	: fVariable(NULL)
 {
 }
 
 
+/**
+ * @brief Destructor; removes the entry from its variable if still attached.
+ */
 ConditionVariableEntry::~ConditionVariableEntry()
 {
 	// We can use an "unsafe" non-atomic access of fVariable here, since we only
@@ -65,6 +101,16 @@ ConditionVariableEntry::~ConditionVariableEntry()
 }
 
 
+/**
+ * @brief Looks up the condition variable for @p object and adds this entry to it.
+ *
+ * Acquires the hash read-lock, locates the published ConditionVariable keyed
+ * by @p object, and atomically links this entry into that variable's wait list.
+ *
+ * @param object  Non-NULL kernel object pointer used as the variable key.
+ * @return @c true if the variable was found and the entry was added;
+ *         @c false if no variable is published for @p object.
+ */
 bool
 ConditionVariableEntry::Add(const void* object)
 {
@@ -89,6 +135,12 @@ ConditionVariableEntry::Add(const void* object)
 }
 
 
+/**
+ * @brief Returns a pointer to the ConditionVariable this entry is waiting on.
+ *
+ * @return Pointer to the current ConditionVariable, or @c NULL if the entry
+ *         is not attached to any variable.
+ */
 ConditionVariable*
 ConditionVariableEntry::Variable() const
 {
@@ -96,6 +148,15 @@ ConditionVariableEntry::Variable() const
 }
 
 
+/**
+ * @brief Attaches this entry to @p variable, which must already be locked.
+ *
+ * Records the current thread, sets the wait status to STATUS_ADDED, appends
+ * the entry to the variable's list, and increments the entries reference count.
+ * Must be called with @p variable->fLock held and interrupts disabled.
+ *
+ * @param variable  The already-locked ConditionVariable to attach to.
+ */
 inline void
 ConditionVariableEntry::_AddToLockedVariable(ConditionVariable* variable)
 {
@@ -109,6 +170,13 @@ ConditionVariableEntry::_AddToLockedVariable(ConditionVariable* variable)
 }
 
 
+/**
+ * @brief Removes this entry from its associated ConditionVariable.
+ *
+ * Handles the race between a waiting thread removing itself and the variable's
+ * notify path clearing the entry. After this call returns, fVariable is NULL
+ * and the variable's fEntriesCount has been decremented exactly once.
+ */
 void
 ConditionVariableEntry::_RemoveFromVariable()
 {
@@ -161,6 +229,24 @@ ConditionVariableEntry::_RemoveFromVariable()
 }
 
 
+/**
+ * @brief Blocks the calling thread until the condition is signalled or the
+ *        operation times out.
+ *
+ * The thread must already have been added to a ConditionVariable via Add()
+ * before calling this overload. If @p flags includes B_RELATIVE_TIMEOUT and
+ * @p timeout is non-positive, the call returns immediately with B_WOULD_BLOCK.
+ *
+ * @param flags    Wait flags (e.g. B_RELATIVE_TIMEOUT, B_ABSOLUTE_TIMEOUT,
+ *                 B_CAN_INTERRUPT).
+ * @param timeout  Timeout in microseconds; ignored unless a timeout flag is set.
+ * @return The status code delivered by the notifying thread, or a timeout /
+ *         interrupt error from the scheduler.
+ * @retval B_OK             Woken normally by a notify call.
+ * @retval B_WOULD_BLOCK    Zero-or-negative relative timeout was requested.
+ * @retval B_TIMED_OUT      The timeout elapsed before the variable was signalled.
+ * @retval B_INTERRUPTED    The wait was interrupted by a signal.
+ */
 status_t
 ConditionVariableEntry::Wait(uint32 flags, bigtime_t timeout)
 {
@@ -212,6 +298,20 @@ ConditionVariableEntry::Wait(uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Convenience overload: adds the entry to the variable for @p object,
+ *        then immediately waits.
+ *
+ * Equivalent to calling Add(@p object) followed by Wait(@p flags, @p timeout).
+ * Returns B_ENTRY_NOT_FOUND immediately if no variable is published for
+ * @p object.
+ *
+ * @param object   Kernel object whose published condition variable to wait on.
+ * @param flags    Wait flags forwarded to Wait(uint32, bigtime_t).
+ * @param timeout  Timeout in microseconds forwarded to Wait(uint32, bigtime_t).
+ * @return Status code from Wait(), or B_ENTRY_NOT_FOUND.
+ * @retval B_ENTRY_NOT_FOUND  No condition variable is published for @p object.
+ */
 status_t
 ConditionVariableEntry::Wait(const void* object, uint32 flags,
 	bigtime_t timeout)
@@ -225,6 +325,15 @@ ConditionVariableEntry::Wait(const void* object, uint32 flags,
 // #pragma mark - ConditionVariable
 
 
+/**
+ * @brief Initialises the condition variable fields without publishing it.
+ *
+ * Sets up the object pointer, type string, entry list, entries count, and
+ * spinlock. Also fires scheduling-analysis and wait-object listener hooks.
+ *
+ * @param object      Kernel object this variable is associated with.
+ * @param objectType  Human-readable string describing the object type.
+ */
 void
 ConditionVariable::Init(const void* object, const char* objectType)
 {
@@ -240,6 +349,15 @@ ConditionVariable::Init(const void* object, const char* objectType)
 }
 
 
+/**
+ * @brief Initialises and registers the condition variable in the global hash.
+ *
+ * Calls Init() then inserts the variable into @c sConditionVariableHash so
+ * that threads can discover it via Add(const void*).
+ *
+ * @param object      Non-NULL kernel object pointer used as the hash key.
+ * @param objectType  Human-readable string describing the object type.
+ */
 void
 ConditionVariable::Publish(const void* object, const char* objectType)
 {
@@ -256,6 +374,14 @@ ConditionVariable::Publish(const void* object, const char* objectType)
 }
 
 
+/**
+ * @brief Removes the variable from the global hash and notifies any waiters.
+ *
+ * Acquires both the hash write-lock and the variable's own spinlock, removes
+ * the variable from the hash, then wakes all waiting entries with
+ * B_ENTRY_NOT_FOUND. After this call the variable must not be used as a
+ * publish target again without a fresh Publish() call.
+ */
 void
 ConditionVariable::Unpublish()
 {
@@ -284,6 +410,11 @@ ConditionVariable::Unpublish()
 }
 
 
+/**
+ * @brief Adds a pre-allocated entry to this condition variable.
+ *
+ * @param entry  Entry to attach; must not already be attached to a variable.
+ */
 void
 ConditionVariable::Add(ConditionVariableEntry* entry)
 {
@@ -292,6 +423,14 @@ ConditionVariable::Add(ConditionVariableEntry* entry)
 }
 
 
+/**
+ * @brief Allocates a temporary entry, adds it, and blocks until signalled.
+ *
+ * @param flags    Wait flags (e.g. B_CAN_INTERRUPT, B_RELATIVE_TIMEOUT).
+ * @param timeout  Timeout in microseconds; used only when a timeout flag is set.
+ * @return Status code from ConditionVariableEntry::Wait().
+ * @retval B_OK  The variable was signalled successfully.
+ */
 status_t
 ConditionVariable::Wait(uint32 flags, bigtime_t timeout)
 {
@@ -301,6 +440,19 @@ ConditionVariable::Wait(uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Releases @p lock, waits on the condition, then re-acquires @p lock.
+ *
+ * Provides the standard monitor-style wait: the mutex must be held before
+ * calling this function; it will be released while waiting and re-acquired
+ * before returning.
+ *
+ * @param lock     Mutex to release during the wait and re-acquire on wakeup.
+ * @param flags    Wait flags forwarded to ConditionVariableEntry::Wait().
+ * @param timeout  Timeout in microseconds; used only when a timeout flag is set.
+ * @return Status code from ConditionVariableEntry::Wait().
+ * @retval B_OK  The variable was signalled successfully.
+ */
 status_t
 ConditionVariable::Wait(mutex* lock, uint32 flags, bigtime_t timeout)
 {
@@ -313,6 +465,19 @@ ConditionVariable::Wait(mutex* lock, uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Fully unlocks @p lock, waits on the condition, then restores all
+ *        recursion levels.
+ *
+ * Records the current recursion depth, unlocks @p lock completely, waits,
+ * then re-locks @p lock the same number of times to restore the depth.
+ *
+ * @param lock     Recursive lock to release during the wait.
+ * @param flags    Wait flags forwarded to ConditionVariableEntry::Wait().
+ * @param timeout  Timeout in microseconds; used only when a timeout flag is set.
+ * @return Status code from ConditionVariableEntry::Wait().
+ * @retval B_OK  The variable was signalled successfully.
+ */
 status_t
 ConditionVariable::Wait(recursive_lock* lock, uint32 flags, bigtime_t timeout)
 {
@@ -332,6 +497,14 @@ ConditionVariable::Wait(recursive_lock* lock, uint32 flags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Static helper: wakes the first thread waiting on the variable
+ *        published for @p object.
+ *
+ * @param object  Kernel object whose published condition variable to signal.
+ * @param result  Status code delivered to the woken thread.
+ * @return The number of threads woken (0 or 1).
+ */
 /*static*/ int32
 ConditionVariable::NotifyOne(const void* object, status_t result)
 {
@@ -339,6 +512,14 @@ ConditionVariable::NotifyOne(const void* object, status_t result)
 }
 
 
+/**
+ * @brief Static helper: wakes all threads waiting on the variable published
+ *        for @p object.
+ *
+ * @param object  Kernel object whose published condition variable to signal.
+ * @param result  Status code delivered to each woken thread.
+ * @return The number of threads woken.
+ */
 /*static*/ int32
 ConditionVariable::NotifyAll(const void* object, status_t result)
 {
@@ -346,6 +527,15 @@ ConditionVariable::NotifyAll(const void* object, status_t result)
 }
 
 
+/**
+ * @brief Internal static notify dispatcher: looks up the variable for @p object
+ *        and delegates to _NotifyLocked().
+ *
+ * @param object  Kernel object key used to find the variable in the hash.
+ * @param all     If @c true, wake all waiters; otherwise wake only one.
+ * @param result  Status code delivered to woken threads.
+ * @return The number of threads woken, or 0 if no variable was found.
+ */
 /*static*/ int32
 ConditionVariable::_Notify(const void* object, bool all, status_t result)
 {
@@ -361,6 +551,14 @@ ConditionVariable::_Notify(const void* object, bool all, status_t result)
 }
 
 
+/**
+ * @brief Non-static instance notify: acquires the variable's own lock and
+ *        calls _NotifyLocked().
+ *
+ * @param all     If @c true, wake all waiting entries; otherwise wake one.
+ * @param result  Status code delivered to woken threads; must be <= B_OK.
+ * @return The number of threads woken.
+ */
 int32
 ConditionVariable::_Notify(bool all, status_t result)
 {
@@ -378,6 +576,19 @@ ConditionVariable::_Notify(bool all, status_t result)
 
 
 /*! Called with interrupts disabled and the condition variable's spinlock held.
+ */
+/**
+ * @brief Dequeues and unblocks waiting entries while the variable's lock is held.
+ *
+ * For each entry dequeued from fEntries, if the waiting thread is still active
+ * it is unblocked with @p result. If the thread has already begun removing
+ * itself, the function waits for the acknowledgement counter before continuing.
+ * Must be called with interrupts disabled and fLock held.
+ *
+ * @param all     If @c true, process every entry; if @c false, stop after
+ *                the first successfully unblocked thread.
+ * @param result  Status code to deliver to each woken thread.
+ * @return The number of threads actually unblocked.
  */
 int32
 ConditionVariable::_NotifyLocked(bool all, status_t result)
@@ -439,6 +650,10 @@ ConditionVariable::_NotifyLocked(bool all, status_t result)
 // #pragma mark -
 
 
+/**
+ * @brief Prints a summary table of all published condition variables to the
+ *        kernel debugger console.
+ */
 /*static*/ void
 ConditionVariable::ListAll()
 {
@@ -455,6 +670,12 @@ ConditionVariable::ListAll()
 }
 
 
+/**
+ * @brief Prints detailed state of this condition variable to the kernel debugger.
+ *
+ * Outputs the variable's address, associated object pointer and type string,
+ * and the thread IDs of all currently waiting entries.
+ */
 void
 ConditionVariable::Dump() const
 {
@@ -470,6 +691,18 @@ ConditionVariable::Dump() const
 }
 
 
+/**
+ * @brief Safely copies the object-type string of @p cvar into @p name.
+ *
+ * Uses debug_memcpy() and debug_strlcpy() to tolerate faults when the
+ * ConditionVariable structure may be corrupt (e.g. called from the debugger).
+ *
+ * @param cvar   Pointer to the ConditionVariable to inspect.
+ * @param name   Destination buffer for the type string.
+ * @param size   Size of the destination buffer in bytes.
+ * @return B_OK on success, or an error code if the memory access faulted.
+ * @retval B_OK  Type string was copied successfully.
+ */
 /*static*/ status_t
 ConditionVariable::DebugGetType(ConditionVariable* cvar, char* name, size_t size)
 {
@@ -484,6 +717,13 @@ ConditionVariable::DebugGetType(ConditionVariable* cvar, char* name, size_t size
 }
 
 
+/**
+ * @brief Kernel debugger command handler: lists all published condition variables.
+ *
+ * @param argc  Argument count (unused).
+ * @param argv  Argument vector (unused).
+ * @return Always 0.
+ */
 static int
 list_condition_variables(int argc, char** argv)
 {
@@ -492,6 +732,17 @@ list_condition_variables(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command handler: dumps one condition variable by address.
+ *
+ * Accepts either the address of a ConditionVariable object directly, or the
+ * address of the kernel object it was published for. Sets the debugger variables
+ * @c _cvar and @c _object on success.
+ *
+ * @param argc  Must be 2 (command name + address argument).
+ * @param argv  argv[1] is the address expression to parse.
+ * @return Always 0.
+ */
 static int
 dump_condition_variable(int argc, char** argv)
 {
@@ -526,6 +777,14 @@ dump_condition_variable(int argc, char** argv)
 // #pragma mark -
 
 
+/**
+ * @brief Module initialisation: sets up the global condition-variable hash and
+ *        registers kernel debugger commands.
+ *
+ * Initialises the hash table with kConditionVariableHashSize buckets and
+ * panics on allocation failure. Registers the @c cvar and @c cvars debugger
+ * commands.
+ */
 void
 condition_variable_init()
 {

@@ -1,7 +1,38 @@
 /*
- * Copyright 2010, Ingo Weinhold <ingo_weinhold@gmx.de>.
- * Copyright 2007, Hugo Santos. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2007, Hugo Santos. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file allocator.cpp
+ * @brief Kernel slab allocator entry points — create_object_cache and friends.
+ *
+ * Provides the public API for creating and destroying slab object caches
+ * (create_object_cache, create_object_cache_etc, delete_object_cache,
+ * object_cache_alloc, object_cache_free). Delegates to SmallObjectCache
+ * or HashedObjectCache depending on object size.
+ *
+ * @see Slab.cpp, ObjectCache.cpp
  */
 
 
@@ -60,6 +91,17 @@ static size_t sUsedBootStrapMemory = 0;
 RANGE_MARKER_FUNCTION_BEGIN(slab_allocator)
 
 
+/**
+ * @brief Map an allocation size to the index of the smallest fitting block cache.
+ *
+ * The block sizes are arranged in power-of-two-aligned tiers. This function
+ * performs a series of range checks to determine which tier contains the
+ * smallest block size that can satisfy @p size.
+ *
+ * @param size  Requested allocation size in bytes.
+ * @return      Non-negative index into @c sBlockCaches[], or @c -1 if @p size
+ *              exceeds the largest supported block size (16384 bytes).
+ */
 static int
 size_to_index(size_t size)
 {
@@ -88,6 +130,21 @@ size_to_index(size_t size)
 }
 
 
+/**
+ * @brief Allocate a raw memory block from the slab or memory manager.
+ *
+ * Selects the appropriate slab object cache using @c size_to_index(). If the
+ * requested size exceeds all caches, falls through to
+ * @c MemoryManager::AllocateRaw(). Alignment is handled by rounding @p size
+ * up to the next power-of-two that is >= @p alignment.
+ *
+ * @param size       Number of bytes to allocate.
+ * @param alignment  Required alignment in bytes; must be a power of two.
+ *                   Pass 0 or @c kMinObjectAlignment for default alignment.
+ * @param flags      Allocation flags (e.g. @c CACHE_DURING_BOOT,
+ *                   @c CACHE_DONT_WAIT_FOR_MEMORY).
+ * @return           Pointer to the allocated block, or @c NULL on failure.
+ */
 static void*
 block_alloc(size_t size, size_t alignment, uint32 flags)
 {
@@ -122,6 +179,18 @@ block_alloc(size_t size, size_t alignment, uint32 flags)
 }
 
 
+/**
+ * @brief Allocate a block during early boot before all caches are ready.
+ *
+ * Attempts to satisfy the request from an already-initialised slab cache.
+ * Large allocations (> @c SLAB_CHUNK_SIZE_SMALL) are routed directly to
+ * @c MemoryManager::AllocateRaw(). Small allocations with no ready cache use
+ * a linear bump allocator backed by a single raw chunk. Memory obtained from
+ * the bootstrap bump allocator is permanent and must never be freed.
+ *
+ * @param size  Number of bytes to allocate.
+ * @return      Pointer to the allocated block, or @c NULL on failure.
+ */
 void*
 block_alloc_early(size_t size)
 {
@@ -161,6 +230,17 @@ block_alloc_early(size_t size)
 }
 
 
+/**
+ * @brief Free a block that was previously allocated by @c block_alloc() or
+ *        @c block_alloc_early().
+ *
+ * Asks the memory manager to identify the owning cache. If a cache is
+ * returned, delegates to @c object_cache_free(); otherwise the memory manager
+ * has already reclaimed the raw pages.
+ *
+ * @param block  Pointer to the block to free. Silently ignores @c NULL.
+ * @param flags  Deallocation flags forwarded to the cache/memory manager.
+ */
 static void
 block_free(void* block, uint32 flags)
 {
@@ -178,6 +258,18 @@ block_free(void* block, uint32 flags)
 }
 
 
+/**
+ * @brief Initialise the kernel block allocator and all fixed-size slab caches.
+ *
+ * Creates one @c object_cache for each entry in @c kBlockSizes[]. Caches for
+ * objects larger than 2048 bytes have the depot disabled to avoid retaining
+ * excessive unused capacity. Power-of-two sized objects are aligned to their
+ * own size.
+ *
+ * @param args  Kernel boot arguments (unused in the non-debug path).
+ * @retval B_OK          All caches were created successfully.
+ * @retval (panic)       Panics immediately if any cache creation fails.
+ */
 #if DEBUG_HEAPS
 status_t
 slab_heap_init(struct kernel_args*, addr_t, size_t)
@@ -212,6 +304,14 @@ heap_init(struct kernel_args*)
 }
 
 
+/**
+ * @brief Post-semaphore initialisation hook for the slab heap.
+ *
+ * In test builds (TEST_ALL_CACHES_DURING_BOOT) exercises every block cache
+ * with a single alloc/free round. In production this is a no-op.
+ *
+ * @retval B_OK  Always succeeds.
+ */
 status_t
 SLAB_PUBLIC_NAME(heap_init_post_sem)()
 {
@@ -229,6 +329,17 @@ SLAB_PUBLIC_NAME(heap_init_post_sem)()
 // #pragma mark - public API
 
 
+/**
+ * @brief Public aligned-allocation entry point with flags.
+ *
+ * Thin wrapper around @c block_alloc() that filters @p flags to the
+ * allocation-relevant subset via @c CACHE_ALLOC_FLAGS.
+ *
+ * @param alignment  Required alignment in bytes (power of two).
+ * @param size       Number of bytes to allocate.
+ * @param flags      Caller-supplied flags; non-alloc bits are stripped.
+ * @return           Aligned pointer to allocated memory, or @c NULL on failure.
+ */
 void *
 SLAB_PUBLIC_NAME(memalign_etc)(size_t alignment, size_t size, uint32 flags)
 {
@@ -236,6 +347,16 @@ SLAB_PUBLIC_NAME(memalign_etc)(size_t alignment, size_t size, uint32 flags)
 }
 
 
+/**
+ * @brief Public free entry point with flags.
+ *
+ * If @c CACHE_DONT_LOCK_KERNEL_SPACE is set the free is deferred to avoid
+ * taking the kernel address-space lock; otherwise delegates to
+ * @c block_free().
+ *
+ * @param address  Pointer to the block to free.
+ * @param flags    Deallocation flags; controls deferred vs. immediate free.
+ */
 void
 SLAB_PUBLIC_NAME(free_etc)(void *address, uint32 flags)
 {
@@ -248,6 +369,22 @@ SLAB_PUBLIC_NAME(free_etc)(void *address, uint32 flags)
 }
 
 
+/**
+ * @brief Public realloc entry point with flags.
+ *
+ * Handles the four canonical realloc cases:
+ *   - @p newSize == 0: free @p address and return @c NULL.
+ *   - @p address == NULL: equivalent to @c block_alloc().
+ *   - same size: return @p address unchanged.
+ *   - otherwise: allocate a new block, copy the minimum of old and new sizes,
+ *     free the original block, and return the new pointer.
+ *
+ * @param address  Existing allocation to resize (may be @c NULL).
+ * @param newSize  Desired size in bytes.
+ * @param flags    Allocation/deallocation flags.
+ * @return         Pointer to the resized block, or @c NULL on failure or when
+ *                 @p newSize is 0.
+ */
 void*
 SLAB_PUBLIC_NAME(realloc_etc)(void* address, size_t newSize, uint32 flags)
 {
@@ -302,6 +439,12 @@ kernel_heap_implementation kernel_slab_heap = {
 #else
 
 
+/**
+ * @brief Standard C @c malloc() backed by the slab block allocator.
+ *
+ * @param size  Number of bytes to allocate.
+ * @return      Pointer to allocated memory, or @c NULL on failure.
+ */
 void*
 malloc(size_t size)
 {
@@ -309,6 +452,11 @@ malloc(size_t size)
 }
 
 
+/**
+ * @brief Standard C @c free() backed by the slab block allocator.
+ *
+ * @param address  Pointer to the block to free. @c NULL is silently ignored.
+ */
 void
 free(void* address)
 {
@@ -316,6 +464,13 @@ free(void* address)
 }
 
 
+/**
+ * @brief Standard C @c realloc() backed by the slab block allocator.
+ *
+ * @param address  Existing allocation to resize (may be @c NULL).
+ * @param newSize  Desired new size in bytes.
+ * @return         Pointer to the resized block, or @c NULL on failure.
+ */
 void*
 realloc(void* address, size_t newSize)
 {
@@ -323,6 +478,13 @@ realloc(void* address, size_t newSize)
 }
 
 
+/**
+ * @brief Standard C @c memalign() backed by the slab block allocator.
+ *
+ * @param alignment  Required alignment in bytes (power of two).
+ * @param size       Number of bytes to allocate.
+ * @return           Aligned pointer to allocated memory, or @c NULL on failure.
+ */
 void*
 memalign(size_t alignment, size_t size)
 {
@@ -330,6 +492,19 @@ memalign(size_t alignment, size_t size)
 }
 
 
+/**
+ * @brief POSIX @c posix_memalign() backed by the slab block allocator.
+ *
+ * Validates that @p alignment is a multiple of @c sizeof(void*) and a
+ * power of two, then allocates via @c block_alloc().
+ *
+ * @param[out] _pointer   Set to the allocated block on success.
+ * @param      alignment  Required alignment; must be a power of two and a
+ *                        multiple of @c sizeof(void*).
+ * @param      size       Number of bytes to allocate.
+ * @retval 0              Success.
+ * @retval B_BAD_VALUE    @p alignment is invalid or @p _pointer is @c NULL.
+ */
 int
 posix_memalign(void** _pointer, size_t alignment, size_t size)
 {
@@ -340,6 +515,11 @@ posix_memalign(void** _pointer, size_t alignment, size_t size)
 }
 
 
+/**
+ * @brief Post-thread initialisation hook for the heap — no-op in slab builds.
+ *
+ * @retval B_OK  Always succeeds.
+ */
 status_t
 heap_init_post_thread()
 {
@@ -356,6 +536,15 @@ RANGE_MARKER_FUNCTION_END(slab_allocator)
 #else	// USE_DEBUG_HEAPS_FOR_ALL_OBJECT_CACHES
 
 
+/**
+ * @brief Stub for early-boot block allocation when the slab allocator is disabled.
+ *
+ * Panics immediately; this path should never be reached when
+ * @c USE_DEBUG_HEAPS_FOR_ALL_OBJECT_CACHES is set.
+ *
+ * @param size  Unused allocation size.
+ * @return      Always @c NULL (after panic).
+ */
 void*
 block_alloc_early(size_t size)
 {

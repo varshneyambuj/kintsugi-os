@@ -1,8 +1,37 @@
 /*
- * Copyright 2008-2010, Axel Dörfler. All Rights Reserved.
- * Copyright 2007, Hugo Santos. All Rights Reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Axel Dörfler. All Rights Reserved.
+ *   Copyright 2007, Hugo Santos. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file ObjectCache.cpp
+ * @brief Base slab object cache — initialization, depot management, and stats.
+ *
+ * ObjectCache is the abstract base for SmallObjectCache and HashedObjectCache.
+ * Manages the per-CPU magazine depot (ObjectDepot) and provides the common
+ * Init/Destroy/Alloc/Free paths shared by both cache types.
+ *
+ * @see SmallObjectCache.cpp, HashedObjectCache.cpp, ObjectDepot.cpp
  */
 
 
@@ -22,6 +51,20 @@
 RANGE_MARKER_FUNCTION_BEGIN(SlabObjectCache)
 
 
+/**
+ * @brief Depot return-object callback that routes freed objects back to their slab.
+ *
+ * This function is registered with the @c ObjectDepot so that when a magazine
+ * is flushed the depot can return each object to the correct slab without
+ * knowing about the cache internals. The cache lock is acquired for the
+ * duration of the call.
+ *
+ * @param depot   The @c object_depot that is flushing a magazine (unused
+ *                directly; @p cookie identifies the owning cache).
+ * @param cookie  Pointer to the owning @c ObjectCache, cast from @c void*.
+ * @param object  The object being returned.
+ * @param flags   Flags forwarded to @c ReturnObjectToSlab().
+ */
 static void
 object_cache_return_object_wrapper(object_depot* depot, void* cookie,
 	void* object, uint32 flags)
@@ -36,11 +79,42 @@ object_cache_return_object_wrapper(object_depot* depot, void* cookie,
 // #pragma mark -
 
 
+/** @brief Trivial virtual destructor; resource teardown is in @c Init()'s inverse. */
 ObjectCache::~ObjectCache()
 {
 }
 
 
+/**
+ * @brief Initialise common @c ObjectCache fields and the per-CPU depot.
+ *
+ * Copies the cache name, aligns @p objectSize to at least @p alignment and
+ * @c kMinObjectAlignment, zeroes all counters, and — unless running on a
+ * single CPU or @c CACHE_NO_DEPOT is set — initialises the @c ObjectDepot
+ * with sensible magazine sizing defaults.
+ *
+ * @param name              Human-readable cache name (copied, truncated to fit).
+ * @param objectSize        Requested per-object size in bytes; raised to
+ *                          @c sizeof(slab_queue_link) if smaller.
+ * @param alignment         Required object alignment; raised to
+ *                          @c kMinObjectAlignment if smaller.
+ * @param maximum           Byte limit on total cache memory, or 0 for none.
+ * @param magazineCapacity  Objects per depot magazine; 0 selects an automatic
+ *                          value based on @p objectSize.
+ * @param maxMagazineCount  Maximum full magazines held in the depot; 0 selects
+ *                          half of @p magazineCapacity.
+ * @param flags             Cache creation flags (e.g. @c CACHE_NO_DEPOT,
+ *                          @c CACHE_DURING_BOOT).
+ * @param cookie            Opaque cookie forwarded to @p constructor and
+ *                          @p destructor.
+ * @param constructor       Per-object constructor callback; may be @c NULL.
+ * @param destructor        Per-object destructor callback; may be @c NULL.
+ * @param reclaimer         Memory-pressure reclaim callback; may be @c NULL.
+ * @retval B_OK             Initialisation succeeded.
+ * @retval (error)          Returned from @c object_depot_init() on depot
+ *                          initialisation failure; the mutex is also destroyed
+ *                          before returning.
+ */
 status_t
 ObjectCache::Init(const char* name, size_t objectSize, size_t alignment,
 	size_t maximum, size_t magazineCapacity, size_t maxMagazineCount,
@@ -117,6 +191,22 @@ ObjectCache::Init(const char* name, size_t objectSize, size_t alignment,
 }
 
 
+/**
+ * @brief Initialise a freshly-allocated slab for this cache.
+ *
+ * Partitions @p pages into @c (byteCount / object_size) objects, advances
+ * the colour cycle, runs the constructor for each object, fills each freed
+ * block with the debug pattern via @c fill_freed_block(), and pushes the
+ * per-object free links onto the slab's free list. If any constructor fails
+ * the already-constructed objects are destructed and @c NULL is returned.
+ *
+ * @param slab       The @c slab descriptor to populate (pre-allocated by the
+ *                   subclass).
+ * @param pages      Pointer to the raw memory region backing this slab.
+ * @param byteCount  Size of the backing region in bytes.
+ * @param flags      Flags for internal use (passed through to paranoia checks).
+ * @return           @p slab on success, or @c NULL if a constructor failed.
+ */
 slab*
 ObjectCache::InitSlab(slab* slab, void* pages, size_t byteCount, uint32 flags)
 {
@@ -172,6 +262,16 @@ ObjectCache::InitSlab(slab* slab, void* pages, size_t byteCount, uint32 flags)
 }
 
 
+/**
+ * @brief Tear down all objects in a slab and update cache-level counters.
+ *
+ * Calls the destructor for every object in the slab (whether or not they are
+ * currently allocated — callers must ensure the slab is fully empty before
+ * calling), decrements @c total_objects and @c usage, and removes the
+ * paranoia check set. Panics if @c slab->count != @c slab->size.
+ *
+ * @param slab  The fully-empty @c slab to uninitialise.
+ */
 void
 ObjectCache::UninitSlab(slab* slab)
 {
@@ -195,6 +295,20 @@ ObjectCache::UninitSlab(slab* slab)
 }
 
 
+/**
+ * @brief Return a single object to its slab and manage slab list membership.
+ *
+ * Validates that @p object falls within @p source's address range (in
+ * @c KDEBUG >= 1 builds), pushes the free link, and moves the slab between
+ * the @c partial / @c empty / (returned) states as appropriate:
+ *   - Completely full slab that now has one free slot: moved to @c partial.
+ *   - Completely empty slab: either moved to @c empty (if under pressure) or
+ *     returned to the memory manager via @c ReturnSlab().
+ *
+ * @param source  The slab that owns @p object. Panics if @c NULL.
+ * @param object  Pointer to the object being freed.
+ * @param flags   Flags forwarded to @c ReturnSlab() when the slab is released.
+ */
 void
 ObjectCache::ReturnObjectToSlab(slab* source, void* object, uint32 flags)
 {
@@ -245,6 +359,16 @@ ObjectCache::ReturnObjectToSlab(slab* source, void* object, uint32 flags)
 }
 
 
+/**
+ * @brief Return a pointer to the object at position @p index within @p source.
+ *
+ * Computes the address arithmetically using the slab's page base, colour
+ * offset, and the cache's @c object_size.
+ *
+ * @param source  The slab to index into.
+ * @param index   Zero-based object index within the slab.
+ * @return        Pointer to the object at @p index.
+ */
 void*
 ObjectCache::ObjectAtIndex(slab* source, int32 index) const
 {
@@ -254,6 +378,20 @@ ObjectCache::ObjectAtIndex(slab* source, int32 index) const
 
 #if PARANOID_KERNEL_FREE
 
+/**
+ * @brief Assert that @p object has not already been freed (double-free check).
+ *
+ * Acquires the cache lock, locates @p object's slab, checks that the slab
+ * belongs to either the @c partial or @c full list (not @c empty), and
+ * verifies that the free-link chain does not already contain @p object.
+ * Panics on any violation.
+ *
+ * Only compiled when @c PARANOID_KERNEL_FREE is defined.
+ *
+ * @param object  Pointer to the object to verify.
+ * @retval true   The object is live (not on the free list).
+ * @retval false  A violation was detected and @c panic() was called.
+ */
 bool
 ObjectCache::AssertObjectNotFreed(void* object)
 {
@@ -284,6 +422,21 @@ ObjectCache::AssertObjectNotFreed(void* object)
 
 #if SLAB_OBJECT_CACHE_ALLOCATION_TRACKING
 
+/**
+ * @brief Allocate and zero-initialise allocation tracking info for a slab.
+ *
+ * Allocates one @c AllocationTrackingInfo entry per object in the slab from
+ * raw memory and stores the pointer in @c slab->tracking.
+ *
+ * Only compiled when @c SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is defined.
+ *
+ * @param slab       The slab for which tracking info is being allocated.
+ * @param byteCount  Total byte count of the slab's object region; used to
+ *                   derive @c objectCount = byteCount / object_size.
+ * @param flags      Allocation flags forwarded to @c MemoryManager::AllocateRaw().
+ * @retval B_OK      Tracking info allocated and zeroed successfully.
+ * @retval (error)   Error code from @c MemoryManager::AllocateRaw().
+ */
 status_t
 ObjectCache::AllocateTrackingInfos(slab* slab, size_t byteCount, uint32 flags)
 {
@@ -301,6 +454,14 @@ ObjectCache::AllocateTrackingInfos(slab* slab, size_t byteCount, uint32 flags)
 }
 
 
+/**
+ * @brief Free the allocation tracking info associated with a slab.
+ *
+ * Only compiled when @c SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is defined.
+ *
+ * @param slab   The slab whose @c tracking pointer is to be freed.
+ * @param flags  Deallocation flags forwarded to @c MemoryManager::FreeRawOrReturnCache().
+ */
 void
 ObjectCache::FreeTrackingInfos(slab* slab, uint32 flags)
 {
@@ -308,6 +469,17 @@ ObjectCache::FreeTrackingInfos(slab* slab, uint32 flags)
 }
 
 
+/**
+ * @brief Return a pointer to the @c AllocationTrackingInfo for @p object.
+ *
+ * Locates the owning slab, then computes the index of @p object within the
+ * slab to index into the tracking array.
+ *
+ * Only compiled when @c SLAB_OBJECT_CACHE_ALLOCATION_TRACKING is defined.
+ *
+ * @param object  Pointer to an object managed by this cache.
+ * @return        Pointer to the corresponding @c AllocationTrackingInfo entry.
+ */
 AllocationTrackingInfo*
 ObjectCache::TrackingInfoFor(void* object) const
 {

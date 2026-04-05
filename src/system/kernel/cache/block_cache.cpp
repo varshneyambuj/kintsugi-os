@@ -1,6 +1,37 @@
 /*
- * Copyright 2004-2020, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2020, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file block_cache.cpp
+ * @brief Kernel block cache — device block buffering with transaction support.
+ *
+ * The block cache buffers raw device blocks in memory. It supports atomic
+ * transactions (block_cache_start_transaction, block_cache_end_transaction)
+ * that group writes for crash consistency, used by BFS and other journaling
+ * file systems. Dirty blocks are written back by a background flusher thread.
+ *
+ * @see file_cache.cpp, vnode_store.cpp
  */
 
 
@@ -151,6 +182,14 @@ typedef DoublyLinkedList<cache_listener,
 
 static object_cache* sCacheNotificationCache;
 
+/**
+ * @brief Allocates a cache_notification (or cache_listener) from the shared slab.
+ *
+ * @param size Requested allocation size; must be <= sizeof(cache_listener).
+ * @return Pointer to the allocated object, or NULL on failure.
+ * @note Uses a single object_cache sized for cache_listener to avoid runtime
+ *       type discrimination; the small extra size is an acceptable trade-off.
+ */
 void*
 cache_notification::operator new(size_t size)
 {
@@ -163,6 +202,11 @@ cache_notification::operator new(size_t size)
 	return object_cache_alloc(sCacheNotificationCache, 0);
 }
 
+/**
+ * @brief Returns a cache_notification back to the shared slab.
+ *
+ * @param block Pointer to the object previously returned by operator new.
+ */
 void
 cache_notification::operator delete(void* block)
 {
@@ -821,6 +865,13 @@ static void mark_block_unbusy_reading(block_cache* cache, cached_block* block);
 
 
 /*!	Checks whether or not this is an event that closes a transaction. */
+/**
+ * @brief Returns true if the given event mask includes a transaction-closing event.
+ *
+ * @param event Bitmask of TRANSACTION_* event flags to test.
+ * @retval true  The event closes the transaction (TRANSACTION_ABORTED or TRANSACTION_ENDED).
+ * @retval false The event does not close the transaction.
+ */
 static inline bool
 is_closing_event(int32 event)
 {
@@ -828,6 +879,13 @@ is_closing_event(int32 event)
 }
 
 
+/**
+ * @brief Returns true if the given event mask includes TRANSACTION_WRITTEN.
+ *
+ * @param event Bitmask of TRANSACTION_* event flags to test.
+ * @retval true  The event includes TRANSACTION_WRITTEN.
+ * @retval false The event does not include TRANSACTION_WRITTEN.
+ */
 static inline bool
 is_written_event(int32 event)
 {
@@ -839,6 +897,15 @@ is_written_event(int32 event)
 	event, and return that one in \a _event.
 	If there is no pending event anymore, it will return \c false.
 */
+/**
+ * @brief Atomically dequeues the lowest-priority pending event from a notification.
+ *
+ * @param notification The cache_notification whose events_pending field is scanned.
+ * @param _event       Output: set to the dequeued event bitmask on success.
+ * @retval true  More pending events remain after this call.
+ * @retval false No pending events remain (or this was the last one).
+ * @note Thread-safe via atomic_and on events_pending.
+ */
 static bool
 get_next_pending_event(cache_notification* notification, int32* _event)
 {
@@ -858,6 +925,12 @@ get_next_pending_event(cache_notification* notification, int32* _event)
 }
 
 
+/**
+ * @brief Drains all pending notifications for a single cache by calling their hooks.
+ *
+ * @param cache The block_cache whose pending_notifications list is processed.
+ * @note Must be called with sCachesLock held.
+ */
 static void
 flush_pending_notifications(block_cache* cache)
 {
@@ -899,6 +972,12 @@ flush_pending_notifications(block_cache* cache)
 	functions.
 	Must not be called with a cache lock held.
 */
+/**
+ * @brief Flushes all pending notifications across every registered block cache.
+ *
+ * @note Must NOT be called while any cache lock is held; acquires sCachesLock
+ *       internally.
+ */
 static void
 flush_pending_notifications()
 {
@@ -914,6 +993,16 @@ flush_pending_notifications()
 
 
 /*!	Initializes the \a notification as specified. */
+/**
+ * @brief Initializes a cache_notification with the supplied parameters.
+ *
+ * @param transaction  The transaction this notification is associated with,
+ *                     or NULL for a cache-level notification.
+ * @param notification The notification struct to initialize.
+ * @param events       Bitmask of TRANSACTION_* events to listen for.
+ * @param hook         Callback invoked when a matching event fires.
+ * @param data         Opaque user data passed verbatim to \a hook.
+ */
 static void
 set_notification(cache_transaction* transaction,
 	cache_notification &notification, int32 events,
@@ -931,6 +1020,12 @@ set_notification(cache_transaction* transaction,
 /*!	Makes sure the notification is deleted. It either deletes it directly,
 	when possible, or marks it for deletion if the notification is pending.
 */
+/**
+ * @brief Safely schedules deletion of a notification, deferring if events are pending.
+ *
+ * @param notification The notification to delete or mark for deferred deletion.
+ * @note Acquires sNotificationsLock internally; safe to call from any context.
+ */
 static void
 delete_notification(cache_notification* notification)
 {
@@ -949,6 +1044,15 @@ delete_notification(cache_notification* notification)
 	is \c true.
 	Triggers the notifier thread to run.
 */
+/**
+ * @brief Enqueues an event on a notification and wakes the notifier/writer thread.
+ *
+ * @param cache              The block_cache that owns the notification list.
+ * @param notification       The notification to post the event to.
+ * @param event              The TRANSACTION_* event bitmask to post.
+ * @param deleteNotification If true, the notification is deleted after delivery.
+ * @note Uses atomic_or on events_pending; safe to call while holding the cache lock.
+ */
 static void
 add_notification(block_cache* cache, cache_notification* notification,
 	int32 event, bool deleteNotification)
@@ -979,6 +1083,15 @@ add_notification(block_cache* cache, cache_notification* notification,
 	TRANSACTION_ABORTED), all listeners except those listening to
 	TRANSACTION_WRITTEN will be removed.
 */
+/**
+ * @brief Dispatches a transaction event to all matching listeners.
+ *
+ * @param cache       The block_cache that owns the transaction.
+ * @param transaction The transaction whose listeners are notified.
+ * @param event       The TRANSACTION_* event bitmask to dispatch.
+ * @note Listeners subscribed to closing events are removed after notification;
+ *       TRANSACTION_WRITTEN listeners persist until the write completes.
+ */
 static void
 notify_transaction_listeners(block_cache* cache, cache_transaction* transaction,
 	int32 event)
@@ -1008,6 +1121,14 @@ notify_transaction_listeners(block_cache* cache, cache_transaction* transaction,
 /*!	Removes and deletes all listeners that are still monitoring this
 	transaction.
 */
+/**
+ * @brief Removes and destroys every listener still attached to a transaction.
+ *
+ * @param cache       The block_cache that owns the transaction.
+ * @param transaction The transaction whose listener list is cleared.
+ * @note Each listener is passed to delete_notification(), which handles
+ *       deferred deletion if events are still pending.
+ */
 static void
 remove_transaction_listeners(block_cache* cache, cache_transaction* transaction)
 {
@@ -1021,6 +1142,19 @@ remove_transaction_listeners(block_cache* cache, cache_transaction* transaction)
 }
 
 
+/**
+ * @brief Adds or updates a transaction listener for the specified events.
+ *
+ * @param cache        The block_cache that owns the transaction.
+ * @param transaction  The transaction to attach the listener to.
+ * @param events       Bitmask of TRANSACTION_* events to subscribe to.
+ * @param hookFunction Callback invoked when a matching event fires.
+ * @param data         Opaque user data passed verbatim to \a hookFunction.
+ * @retval B_OK        Listener added or updated successfully.
+ * @retval B_NO_MEMORY Allocation of a new listener struct failed.
+ * @note If a listener with the same hook/data pair already exists its
+ *       event mask is widened rather than duplicated.
+ */
 static status_t
 add_transaction_listener(block_cache* cache, cache_transaction* transaction,
 	int32 events, transaction_notification_hook hookFunction, void* data)
@@ -1049,6 +1183,11 @@ add_transaction_listener(block_cache* cache, cache_transaction* transaction,
 //	#pragma mark - private transaction
 
 
+/**
+ * @brief Constructs a cache_transaction with zeroed block counts and an open state.
+ *
+ * @note The transaction ID is assigned by the caller after construction.
+ */
 cache_transaction::cache_transaction()
 {
 	num_blocks = 0;
@@ -1062,6 +1201,14 @@ cache_transaction::cache_transaction()
 }
 
 
+/**
+ * @brief Removes a transaction from the cache and frees its resources.
+ *
+ * @param cache       The block_cache that owns the transaction.
+ * @param transaction The transaction to destroy.
+ * @note All listeners are removed before the transaction object is deleted.
+ *       Updates cache->last_transaction if it points to the deleted transaction.
+ */
 static void
 delete_transaction(block_cache* cache, cache_transaction* transaction)
 {
@@ -1073,6 +1220,13 @@ delete_transaction(block_cache* cache, cache_transaction* transaction)
 }
 
 
+/**
+ * @brief Looks up a transaction by ID in the cache's transaction hash table.
+ *
+ * @param cache The block_cache to search.
+ * @param id    The transaction ID to look up.
+ * @return Pointer to the matching cache_transaction, or NULL if not found.
+ */
 static cache_transaction*
 lookup_transaction(block_cache* cache, int32 id)
 {
@@ -1080,18 +1234,38 @@ lookup_transaction(block_cache* cache, int32 id)
 }
 
 
+/**
+ * @brief Returns the hash value for a transaction (its numeric ID).
+ *
+ * @param transaction The cache_transaction to hash.
+ * @return The transaction's integer ID cast to size_t.
+ */
 size_t TransactionHash::Hash(cache_transaction* transaction) const
 {
 	return transaction->id;
 }
 
 
+/**
+ * @brief Compares a transaction ID key against a stored cache_transaction.
+ *
+ * @param key         The integer transaction ID to compare.
+ * @param transaction The transaction stored in the hash table slot.
+ * @retval true  The transaction's ID matches \a key.
+ * @retval false The transaction's ID does not match \a key.
+ */
 bool TransactionHash::Compare(int32 key, cache_transaction* transaction) const
 {
 	return transaction->id == key;
 }
 
 
+/**
+ * @brief Returns a reference to the intrusive hash-link pointer inside a transaction.
+ *
+ * @param value The cache_transaction whose link is requested.
+ * @return Reference to the value->next pointer used by BOpenHashTable.
+ */
 cache_transaction*& TransactionHash::GetLink(cache_transaction* value) const
 {
 	return value->next;
@@ -1101,6 +1275,16 @@ cache_transaction*& TransactionHash::GetLink(cache_transaction* value) const
 /*!	Writes back any changes made to blocks in \a transaction that are still
 	part of a previous transacton.
 */
+/**
+ * @brief Flushes blocks in \a transaction that still carry pending previous-transaction data.
+ *
+ * @param cache       The block_cache that owns the blocks.
+ * @param transaction The open transaction whose blocks may reference a previous transaction.
+ * @retval B_OK    All pending blocks were written successfully.
+ * @retval other   An I/O error occurred; the write was aborted.
+ * @note Must be called before ending or detaching a transaction so that the
+ *       previous transaction's dirty state is resolved.
+ */
 static status_t
 write_blocks_in_previous_transaction(block_cache* cache,
 	cache_transaction* transaction)
@@ -1122,6 +1306,14 @@ write_blocks_in_previous_transaction(block_cache* cache,
 //	#pragma mark - cached_block
 
 
+/**
+ * @brief Returns true if this block can currently be scheduled for write-back.
+ *
+ * @retval true  The block is not busy and either belongs to a previous
+ *               transaction or is dirty with no active transaction.
+ * @retval false The block is busy reading, busy writing, or is checked out
+ *               for writing (is_writing flag) without a previous transaction.
+ */
 bool
 cached_block::CanBeWritten() const
 {
@@ -1134,6 +1326,13 @@ cached_block::CanBeWritten() const
 //	#pragma mark - BlockWriter
 
 
+/**
+ * @brief Constructs a BlockWriter associated with the given cache.
+ *
+ * @param cache The block_cache for which blocks will be written.
+ * @param max   Maximum number of blocks this writer may accept before returning
+ *              false from Add(); defaults to SIZE_MAX (unlimited).
+ */
 BlockWriter::BlockWriter(block_cache* cache, size_t max)
 	:
 	fCache(cache),
@@ -1148,6 +1347,9 @@ BlockWriter::BlockWriter(block_cache* cache, size_t max)
 }
 
 
+/**
+ * @brief Destroys the BlockWriter and frees any heap-allocated block pointer array.
+ */
 BlockWriter::~BlockWriter()
 {
 	if (fBlocks != fBuffer)
@@ -1158,6 +1360,18 @@ BlockWriter::~BlockWriter()
 /*!	Adds the specified block to the to be written array. If no more blocks can
 	be added, false is returned, otherwise true.
 */
+/**
+ * @brief Enqueues a single cached_block for deferred write-back.
+ *
+ * @param block       The block to enqueue; must satisfy CanBeWritten().
+ * @param transaction Optional owning transaction used during synchronous
+ *                    fallback writes when the internal array must be flushed.
+ * @retval true  The block was accepted (or the array was flushed and the
+ *               block was then accepted).
+ * @retval false The per-writer maximum (fMax) has been reached.
+ * @note Marks the block busy_writing and increments busy_writing_count on
+ *       both the cache and any previous transaction.
+ */
 bool
 BlockWriter::Add(cached_block* block, cache_transaction* transaction)
 {
@@ -1204,6 +1418,16 @@ BlockWriter::Add(cached_block* block, cache_transaction* transaction)
 /*!	Adds all blocks of the specified transaction to the to be written array.
 	If no more blocks can be added, false is returned, otherwise true.
 */
+/**
+ * @brief Enqueues all writable blocks from a closed transaction.
+ *
+ * @param transaction  The closed transaction whose blocks should be written.
+ * @param hasLeftOvers Set to true if some blocks could not be added because
+ *                     they were already busy or the writer reached its limit.
+ * @retval true  All available blocks were accepted (more may remain).
+ * @retval false The writer's maximum was reached and no more blocks can be added.
+ * @note The transaction must be closed (open == false) before calling this.
+ */
 bool
 BlockWriter::Add(cache_transaction* transaction, bool& hasLeftOvers)
 {
@@ -1238,6 +1462,20 @@ BlockWriter::Add(cache_transaction* transaction, bool& hasLeftOvers)
 /*! Cache must be locked when calling this method, but it will be unlocked
 	while the blocks are written back.
 */
+/**
+ * @brief Sorts and writes all queued blocks to disk, then resets the internal queue.
+ *
+ * @param transaction Optional transaction pointer passed to _BlockDone() so it
+ *                    can be removed from the hash table without invalidating an
+ *                    outer iterator.
+ * @param canUnlock   If true (default), the cache write-lock is released while
+ *                    I/O is in progress and re-acquired afterwards.
+ * @retval B_OK    All blocks written without error.
+ * @retval other   The first I/O error encountered; all subsequent blocks in a
+ *                 failed iovec group are NULLed in the queue.
+ * @note The cache lock must be held (write) before calling; it is temporarily
+ *       released during actual disk I/O when canUnlock is true.
+ */
 status_t
 BlockWriter::Write(cache_transaction* transaction, bool canUnlock)
 {
@@ -1302,6 +1540,15 @@ BlockWriter::Write(cache_transaction* transaction, bool canUnlock)
 	delete transactions when they are no longer used, and \a deleteTransaction
 	is \c true.
 */
+/**
+ * @brief Convenience wrapper that writes a single cached_block synchronously.
+ *
+ * @param cache The block_cache that owns the block.
+ * @param block The block to write; must satisfy CanBeWritten().
+ * @retval B_OK    Block written successfully.
+ * @retval other   I/O error from the underlying writev_pos call.
+ * @note Constructs a temporary BlockWriter and calls Write() immediately.
+ */
 /*static*/ status_t
 BlockWriter::WriteBlock(block_cache* cache, cached_block* block)
 {
@@ -1312,6 +1559,13 @@ BlockWriter::WriteBlock(block_cache* cache, cached_block* block)
 }
 
 
+/**
+ * @brief Returns the data pointer that should be written to disk for a block.
+ *
+ * @param block The block whose write data is needed.
+ * @return block->original_data if a previous transaction needs to be resolved
+ *         first, otherwise block->current_data.
+ */
 void*
 BlockWriter::_Data(cached_block* block) const
 {
@@ -1321,6 +1575,15 @@ BlockWriter::_Data(cached_block* block) const
 }
 
 
+/**
+ * @brief Writes a contiguous range of blocks to disk using a single writev_pos call.
+ *
+ * @param blocks Pointer to an array of \a count consecutive cached_block pointers.
+ * @param count  Number of blocks to write (must be contiguous on disk).
+ * @retval B_OK       All bytes written.
+ * @retval B_IO_ERROR writev_pos returned an unexpected byte count.
+ * @retval errno      The system error code when writev_pos returns a negative value.
+ */
 status_t
 BlockWriter::_WriteBlocks(cached_block** blocks, uint32 count)
 {
@@ -1358,6 +1621,16 @@ BlockWriter::_WriteBlocks(cached_block** blocks, uint32 count)
 }
 
 
+/**
+ * @brief Finalizes a block after a write attempt, updating dirty state and transaction bookkeeping.
+ *
+ * @param block       The block that was written (may be NULL if write failed).
+ * @param transaction The transaction being iterated (used for safe hash removal).
+ * @note If the previous transaction's block count reaches zero its listeners are
+ *       notified with TRANSACTION_WRITTEN and the transaction is deleted.
+ *       Moves the block to the unused list when ref_count drops to zero and it
+ *       has no associated transactions.
+ */
 void
 BlockWriter::_BlockDone(cached_block* block,
 	cache_transaction* transaction)
@@ -1420,6 +1693,14 @@ BlockWriter::_BlockDone(cached_block* block,
 }
 
 
+/**
+ * @brief Clears the busy_writing flag on a block and notifies any waiters.
+ *
+ * @param block The block whose busy_writing flag is cleared.
+ * @note Decrements busy_writing_count on both the cache and the block's
+ *       previous_transaction (if any).  Wakes all threads waiting on
+ *       busy_writing_condition when the count reaches zero.
+ */
 void
 BlockWriter::_UnmarkWriting(cached_block* block)
 {
@@ -1437,6 +1718,13 @@ BlockWriter::_UnmarkWriting(cached_block* block)
 }
 
 
+/**
+ * @brief qsort comparator that orders cached_block pointers by ascending block_number.
+ *
+ * @param _blockA Pointer to a cached_block* element.
+ * @param _blockB Pointer to a cached_block* element.
+ * @return Negative, zero, or positive integer indicating relative order.
+ */
 /*static*/ int
 BlockWriter::_CompareBlocks(const void* _blockA, const void* _blockB)
 {
@@ -1455,6 +1743,14 @@ BlockWriter::_CompareBlocks(const void* _blockA, const void* _blockB)
 //	#pragma mark - BlockPrefetcher
 
 
+/**
+ * @brief Constructs a BlockPrefetcher for asynchronous read-ahead of \a numBlocks blocks.
+ *
+ * @param cache      The block_cache to prefetch into.
+ * @param blockNumber The first block number to prefetch.
+ * @param numBlocks  The number of consecutive blocks to prefetch.
+ * @note Allocates internal arrays; call Allocate() then ReadAsync() to begin I/O.
+ */
 BlockPrefetcher::BlockPrefetcher(block_cache* cache, off_t blockNumber, size_t numBlocks)
 	:
 	fCache(cache),
@@ -1467,6 +1763,9 @@ BlockPrefetcher::BlockPrefetcher(block_cache* cache, off_t blockNumber, size_t n
 }
 
 
+/**
+ * @brief Destroys the BlockPrefetcher and releases the internal block and I/O vector arrays.
+ */
 BlockPrefetcher::~BlockPrefetcher()
 {
 	delete[] fBlocks;
@@ -1479,6 +1778,15 @@ BlockPrefetcher::~BlockPrefetcher()
 	@post Blocks have been constructed (including allocating the current_data member)
 	but current_data is uninitialized.
 */
+/**
+ * @brief Allocates and inserts cached_block objects for the requested range.
+ *
+ * @retval B_OK       Blocks allocated successfully; NumAllocated() gives the count.
+ * @retval B_NO_MEMORY Could not allocate a block or its data buffer.
+ * @retval B_BAD_VALUE A requested block number is out of range.
+ * @note Truncates the range at the first block that is already in the cache.
+ *       Caller must hold the cache write lock.
+ */
 status_t
 BlockPrefetcher::Allocate()
 {
@@ -1533,6 +1841,17 @@ BlockPrefetcher::Allocate()
 /*!	Schedules reads from disk to cache.
 	\post The calling object will eventually be deleted by IOFinishedCallback.
 */
+/**
+ * @brief Submits an asynchronous I/O request to fill all allocated blocks from disk.
+ *
+ * @param cacheLocker A WriteLocker for the cache lock; it will be unlocked before
+ *                    submitting the I/O request.
+ * @retval B_OK     I/O request submitted; this object will be deleted by the callback.
+ * @retval other    IORequest::Init() failed; allocated blocks have been removed
+ *                  and this object must be deleted by the caller.
+ * @note The cache lock is released inside this call; the caller must not access
+ *       cache state after calling ReadAsync() returns B_OK.
+ */
 status_t
 BlockPrefetcher::ReadAsync(WriteLocker& cacheLocker)
 {
@@ -1569,6 +1888,15 @@ BlockPrefetcher::ReadAsync(WriteLocker& cacheLocker)
 }
 
 
+/**
+ * @brief Static I/O completion callback invoked by the I/O subsystem.
+ *
+ * @param cookie           Pointer to the BlockPrefetcher instance.
+ * @param request          The completed io_request (owned by the I/O subsystem).
+ * @param status           Completion status of the request.
+ * @param partialTransfer  True if fewer bytes than requested were transferred.
+ * @param bytesTransferred Number of bytes actually transferred.
+ */
 /*static*/ void
 BlockPrefetcher::_IOFinishedCallback(void* cookie, io_request* request, status_t status,
 	bool partialTransfer, generic_size_t bytesTransferred)
@@ -1579,6 +1907,13 @@ BlockPrefetcher::_IOFinishedCallback(void* cookie, io_request* request, status_t
 }
 
 
+/**
+ * @brief Handles I/O completion: marks blocks readable or discards them on error.
+ *
+ * @param status           Final I/O status code.
+ * @param bytesTransferred Number of bytes transferred by the I/O request.
+ * @note Acquires the cache write lock, updates block state, then deletes this object.
+ */
 void
 BlockPrefetcher::_IOFinished(status_t status, generic_size_t bytesTransferred)
 {
@@ -1606,6 +1941,13 @@ BlockPrefetcher::_IOFinished(status_t status, generic_size_t bytesTransferred)
 /*!	Cleans up blocks that were allocated for prefetching when an in-progress prefetch
 	is cancelled.
 */
+/**
+ * @brief Undoes partially completed prefetch allocations.
+ *
+ * @param unbusyCount Number of leading blocks whose busy_reading flag must be cleared.
+ * @param removeCount Total number of allocated blocks to remove from the cache and free.
+ * @note Caller must hold the cache write lock.
+ */
 void
 BlockPrefetcher::_RemoveAllocated(size_t unbusyCount, size_t removeCount)
 {
@@ -1637,6 +1979,16 @@ BlockPrefetcher::_RemoveAllocated(size_t unbusyCount, size_t removeCount)
 //	#pragma mark - block_cache
 
 
+/**
+ * @brief Constructs a block_cache for the given file descriptor and geometry.
+ *
+ * @param _fd       File descriptor for the underlying block device or file.
+ * @param numBlocks Total number of addressable blocks on the device.
+ * @param blockSize Size in bytes of each block.
+ * @param readOnly  If true, the cache will refuse write operations.
+ * @note Call Init() after construction to complete setup of hash tables and
+ *       the low-memory handler.
+ */
 block_cache::block_cache(int _fd, off_t numBlocks, size_t blockSize,
 		bool readOnly)
 	:
@@ -1660,6 +2012,12 @@ block_cache::block_cache(int _fd, off_t numBlocks, size_t blockSize,
 
 
 /*! Should be called with the cache's lock held. */
+/**
+ * @brief Destroys the block_cache, releasing the buffer object cache and the rw_lock.
+ *
+ * @note Must be called with the cache's write lock held.  Unregisters the
+ *       low-memory handler before freeing resources.
+ */
 block_cache::~block_cache()
 {
 	unregister_low_resource_handler(&_LowMemoryHandler, this);
@@ -1670,6 +2028,13 @@ block_cache::~block_cache()
 }
 
 
+/**
+ * @brief Completes block_cache initialization: sets up locks, condition variables, hash tables, and the low-memory handler.
+ *
+ * @retval B_OK       All subsystems initialized successfully.
+ * @retval B_NO_MEMORY buffer_cache, block hash, or transaction hash allocation failed.
+ * @retval other      register_low_resource_handler() failure.
+ */
 status_t
 block_cache::Init()
 {
@@ -1697,6 +2062,11 @@ block_cache::Init()
 }
 
 
+/**
+ * @brief Releases a block data buffer back to the per-cache object cache.
+ *
+ * @param buffer The buffer previously returned by Allocate(); no-op if NULL.
+ */
 void
 block_cache::Free(void* buffer)
 {
@@ -1705,6 +2075,12 @@ block_cache::Free(void* buffer)
 }
 
 
+/**
+ * @brief Allocates a single block-sized data buffer from the per-cache object cache.
+ *
+ * @return Pointer to a block_size-byte buffer, or NULL on failure.
+ * @note On allocation failure, evicts up to 100 unused blocks and retries once.
+ */
 void*
 block_cache::Allocate()
 {
@@ -1719,6 +2095,12 @@ block_cache::Allocate()
 }
 
 
+/**
+ * @brief Releases a cached_block and its data buffer back to the slab allocators.
+ *
+ * @param block The block to free; must have NULL original_data and parent_data.
+ * @note Panics in debug builds if original_data or parent_data is non-NULL.
+ */
 void
 block_cache::FreeBlock(cached_block* block)
 {
@@ -1738,6 +2120,14 @@ block_cache::FreeBlock(cached_block* block)
 
 
 /*! Allocates a new block for \a blockNumber, ready for use */
+/**
+ * @brief Allocates a new cached_block for the given block number, recycling unused blocks if needed.
+ *
+ * @param blockNumber The device block number to assign to the new block.
+ * @return Pointer to an initialized (but not yet populated) cached_block,
+ *         or NULL if both allocation and recycling fail.
+ * @note Does NOT insert the block into the hash table; the caller is responsible.
+ */
 cached_block*
 block_cache::NewBlock(off_t blockNumber)
 {
@@ -1794,6 +2184,12 @@ block_cache::NewBlock(off_t blockNumber)
 }
 
 
+/**
+ * @brief Releases a block's parent_data buffer and clears the parent_data pointer.
+ *
+ * @param block The block whose parent_data is to be freed; must be non-NULL.
+ * @note Only frees the buffer if parent_data != current_data (lazy allocation path).
+ */
 void
 block_cache::FreeBlockParentData(cached_block* block)
 {
@@ -1804,6 +2200,14 @@ block_cache::FreeBlockParentData(cached_block* block)
 }
 
 
+/**
+ * @brief Evicts up to \a count unused blocks from the cache that are at least \a minSecondsOld.
+ *
+ * @param count        Maximum number of blocks to remove.
+ * @param minSecondsOld Blocks accessed more recently than this threshold are skipped.
+ * @note Dirty unused blocks are flushed to disk before removal; the unused list is
+ *       sorted by last-access time so the scan terminates early when blocks are too fresh.
+ */
 void
 block_cache::RemoveUnusedBlocks(int32 count, int32 minSecondsOld)
 {
@@ -1841,6 +2245,11 @@ block_cache::RemoveUnusedBlocks(int32 count, int32 minSecondsOld)
 }
 
 
+/**
+ * @brief Removes a block from the hash table and frees all its resources.
+ *
+ * @param block The block to remove; must already be absent from the unused list.
+ */
 void
 block_cache::RemoveBlock(cached_block* block)
 {
@@ -1852,6 +2261,14 @@ block_cache::RemoveBlock(cached_block* block)
 /*!	Discards the block from a transaction (this method must not be called
 	for blocks not part of a transaction).
 */
+/**
+ * @brief Frees parent/original data and removes a discarded transaction block.
+ *
+ * @param block The block marked for discard; must have discard == true and
+ *              previous_transaction == NULL.
+ * @note This method is only valid for blocks that are currently part of an
+ *       active transaction.
+ */
 void
 block_cache::DiscardBlock(cached_block* block)
 {
@@ -1870,6 +2287,15 @@ block_cache::DiscardBlock(cached_block* block)
 }
 
 
+/**
+ * @brief Low-memory callback that evicts unused blocks proportional to memory pressure.
+ *
+ * @param data      Pointer to the block_cache instance registered with the handler.
+ * @param resources Bitmask of low-resource types that triggered the callback.
+ * @param level     Pressure level: B_LOW_RESOURCE_NOTE, WARNING, or CRITICAL.
+ * @note Acquires the cache write lock; silently returns if the lock cannot be
+ *       acquired (e.g., the cache is being deleted concurrently).
+ */
 void
 block_cache::_LowMemoryHandler(void* data, uint32 resources, int32 level)
 {
@@ -1921,6 +2347,13 @@ block_cache::_LowMemoryHandler(void* data, uint32 resources, int32 level)
 }
 
 
+/**
+ * @brief Retrieves and recycles the least-recently-used unused block for reuse.
+ *
+ * @return Pointer to a recycled cached_block (removed from the unused list and
+ *         hash table, with original/parent data freed), or NULL if the list is empty.
+ * @note Dirty unused blocks are written back synchronously before being recycled.
+ */
 cached_block*
 block_cache::_GetUnusedBlock()
 {
@@ -1959,6 +2392,13 @@ block_cache::_GetUnusedBlock()
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Marks a block as currently being read from disk and increments the cache read counter.
+ *
+ * @param cache The block_cache that owns the block.
+ * @param block The cached_block to mark as busy reading.
+ * @note The cache write lock must be held by the caller.
+ */
 static void
 mark_block_busy_reading(block_cache* cache, cached_block* block)
 {
@@ -1969,6 +2409,15 @@ mark_block_busy_reading(block_cache* cache, cached_block* block)
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Clears the busy_reading flag on a block and wakes any threads waiting for it.
+ *
+ * @param cache The block_cache that owns the block.
+ * @param block The cached_block whose busy_reading flag is cleared.
+ * @note The cache write lock must be held by the caller.
+ *       Broadcasts on busy_reading_condition when the global count reaches zero
+ *       or when this specific block had waiters.
+ */
 static void
 mark_block_unbusy_reading(block_cache* cache, cached_block* block)
 {
@@ -1986,6 +2435,15 @@ mark_block_unbusy_reading(block_cache* cache, cached_block* block)
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Blocks the caller until a specific block's in-progress read completes.
+ *
+ * @param cache The block_cache that owns the block.
+ * @param block The cached_block to wait for.
+ * @note Temporarily releases the cache write lock while waiting; the lock is
+ *       re-acquired before returning.  The block may have been replaced in the
+ *       hash table by the time this function returns.
+ */
 static void
 wait_for_busy_reading_block(block_cache* cache, cached_block* block)
 {
@@ -2004,6 +2462,13 @@ wait_for_busy_reading_block(block_cache* cache, cached_block* block)
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Blocks the caller until all in-progress block reads on the cache complete.
+ *
+ * @param cache The block_cache to wait on.
+ * @note Temporarily releases the cache write lock while waiting; re-acquires
+ *       it before returning.
+ */
 static void
 wait_for_busy_reading_blocks(block_cache* cache)
 {
@@ -2022,6 +2487,14 @@ wait_for_busy_reading_blocks(block_cache* cache)
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Blocks the caller until a specific block's in-progress write completes.
+ *
+ * @param cache The block_cache that owns the block.
+ * @param block The cached_block to wait for.
+ * @note Temporarily releases the cache write lock while waiting; re-acquires
+ *       it before returning.
+ */
 static void
 wait_for_busy_writing_block(block_cache* cache, cached_block* block)
 {
@@ -2040,6 +2513,13 @@ wait_for_busy_writing_block(block_cache* cache, cached_block* block)
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Blocks the caller until all in-progress block writes on the cache complete.
+ *
+ * @param cache The block_cache to wait on.
+ * @note Temporarily releases the cache write lock while waiting; re-acquires
+ *       it before returning.
+ */
 static void
 wait_for_busy_writing_blocks(block_cache* cache)
 {
@@ -2061,6 +2541,18 @@ wait_for_busy_writing_blocks(block_cache* cache)
 	In low memory situations, it will also free some blocks from that list,
 	but not necessarily the \a block it just released.
 */
+/**
+ * @brief Decrements a block's reference count and moves it to the unused list when it reaches zero.
+ *
+ * @param cache       The block_cache that owns the block.
+ * @param block       The cached_block to release.
+ * @param writeLocker Optional write-lock wrapper; if supplied and the lock is
+ *                    currently a read-lock, it will be upgraded to a write-lock
+ *                    before modifying shared state.
+ * @note In kernel mode with no active or previous transactions the fast path
+ *       avoids upgrading the lock via an atomic decrement and spinlock.
+ *       Discarded blocks are freed immediately when their ref_count reaches zero.
+ */
 static void
 put_cached_block(block_cache* cache, cached_block* block, WriteLocker* writeLocker = NULL)
 {
@@ -2133,6 +2625,14 @@ put_cached_block(block_cache* cache, cached_block* block, WriteLocker* writeLock
 }
 
 
+/**
+ * @brief Looks up a block by number and releases one reference.
+ *
+ * @param cache       The block_cache that owns the block.
+ * @param blockNumber The device block number to release.
+ * @param writeLocker Optional write-lock wrapper forwarded to put_cached_block().
+ * @note Panics if blockNumber is out of range or the block is not found.
+ */
 static void
 put_cached_block(block_cache* cache, off_t blockNumber, WriteLocker* writeLocker = NULL)
 {
@@ -2161,6 +2661,22 @@ put_cached_block(block_cache* cache, off_t blockNumber, WriteLocker* writeLocker
 		data. If \c true, the cache will be temporarily unlocked while the
 		block is read in.
 */
+/**
+ * @brief Fetches (or allocates) a cached_block for the given block number.
+ *
+ * @param cache        The block_cache to search.
+ * @param blockNumber  The device block number to retrieve.
+ * @param _allocated   Output: true if a new block struct was allocated.
+ * @param readBlock    If true and the block was not cached, read it from disk.
+ * @param _block       Output: pointer to the resulting cached_block.
+ * @retval B_OK        Block is ready; ref_count has been incremented.
+ * @retval B_BAD_VALUE blockNumber is out of range.
+ * @retval B_NO_MEMORY Could not allocate a new cached_block.
+ * @retval B_IO_ERROR  Disk read failed.
+ * @note The cache write lock must be held; it is temporarily released during
+ *       I/O and re-acquired before returning.  If a concurrent read was in
+ *       progress the function retries via a goto after the read completes.
+ */
 static status_t
 get_cached_block(block_cache* cache, off_t blockNumber, bool* _allocated,
 	bool readBlock, cached_block** _block)
@@ -2243,6 +2759,21 @@ retry:
 	This is the only method to insert a block into a transaction. It makes
 	sure that the previous block contents are preserved in that case.
 */
+/**
+ * @brief Prepares a block for writing, optionally within a transaction, performing COW as needed.
+ *
+ * @param cache         The block_cache to operate on.
+ * @param blockNumber   The device block number to make writable.
+ * @param transactionID The active transaction ID, or -1 for transactionless writes.
+ * @param cleared       If true, the block's content is zeroed instead of reading from disk.
+ * @param _block        Output: pointer to block->current_data ready for modification.
+ * @retval B_OK        Block is ready for modification; ref_count incremented.
+ * @retval B_BAD_VALUE blockNumber is out of range or transactionID is invalid/closed.
+ * @retval B_NO_MEMORY Could not allocate original_data or parent_data for COW.
+ * @note The cache write lock must be held on entry; it may be temporarily
+ *       released while copying data.  Panics if the block is already owned by
+ *       a different open transaction.
+ */
 static status_t
 get_writable_cached_block(block_cache* cache, off_t blockNumber,
 	int32 transactionID, bool cleared, void** _block)
@@ -2410,6 +2941,11 @@ get_writable_cached_block(block_cache* cache, off_t blockNumber,
 #if DEBUG_BLOCK_CACHE
 
 
+/**
+ * @brief Prints a compact one-line summary of a cached_block to the kernel debugger.
+ *
+ * @param block The cached_block to dump.
+ */
 static void
 dump_block(cached_block* block)
 {
@@ -2426,6 +2962,11 @@ dump_block(cached_block* block)
 }
 
 
+/**
+ * @brief Prints a detailed multi-line description of a cached_block to the kernel debugger.
+ *
+ * @param block The cached_block to dump.
+ */
 static void
 dump_block_long(cached_block* block)
 {
@@ -2472,6 +3013,13 @@ dump_block_long(cached_block* block)
 }
 
 
+/**
+ * @brief Kernel debugger command to dump a single cached_block by address.
+ *
+ * @param argc Argument count; must be 2.
+ * @param argv argv[1] is the hex address of the cached_block.
+ * @return 0 always.
+ */
 static int
 dump_cached_block(int argc, char** argv)
 {
@@ -2485,6 +3033,14 @@ dump_cached_block(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command to dump a block_cache and optionally its blocks and transactions.
+ *
+ * @param argc Argument count.
+ * @param argv argv[1] optionally contains flags (-b, -t); next arg is cache address;
+ *             optional final arg is a specific block number.
+ * @return 0 always.
+ */
 static int
 dump_cache(int argc, char** argv)
 {
@@ -2606,6 +3162,14 @@ dump_cache(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command to dump a cache_transaction and optionally its blocks.
+ *
+ * @param argc Argument count.
+ * @param argv Optional -b flag; then either a transaction pointer or a
+ *             cache-pointer + transaction-ID pair.
+ * @return 0 always.
+ */
 static int
 dump_transaction(int argc, char** argv)
 {
@@ -2681,6 +3245,13 @@ dump_transaction(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command that lists all registered block_cache addresses.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return 0 always.
+ */
 static int
 dump_caches(int argc, char** argv)
 {
@@ -2699,6 +3270,14 @@ dump_caches(int argc, char** argv)
 
 
 #if BLOCK_CACHE_BLOCK_TRACING >= 2
+/**
+ * @brief Kernel debugger command to dump traced block data across a range of trace entries.
+ *
+ * @param argc Argument count.
+ * @param argv Optional -c/-p/-o data selectors, then from/to entry indices,
+ *             optional offset and size within each block.
+ * @return 0 always.
+ */
 static int
 dump_block_data(int argc, char** argv)
 {
@@ -2812,6 +3391,15 @@ dump_block_data(int argc, char** argv)
 	deletion state.
 	Returns \c NULL when the end of the list is reached.
 */
+/**
+ * @brief Iterates through the global cache list, returning each cache write-locked in turn.
+ *
+ * @param last The cache returned by the previous call, or NULL to start iteration.
+ * @return The next block_cache with its write lock held, or NULL at the end of the list.
+ * @note The lock on \a last is released before acquiring the lock on the next cache.
+ *       A sentinel node (sMarkCache) is used to survive cache additions/removals
+ *       during iteration.
+ */
 static block_cache*
 get_next_locked_block_cache(block_cache* last)
 {
@@ -2839,6 +3427,16 @@ get_next_locked_block_cache(block_cache* last)
 	all caches.
 	Every two seconds, it will also write back up to 64 blocks per cache.
 */
+/**
+ * @brief Background kernel thread that flushes notifications and periodically writes dirty blocks.
+ *
+ * @param data Unused thread argument.
+ * @return B_OK (never actually returns; runs until the kernel exits).
+ * @note Sleeps on sEventSemaphore with a ~2 second timeout.  On timeout it
+ *       iterates all caches via get_next_locked_block_cache() and writes up to
+ *       64 blocks per cache using a BlockWriter.  Also fires TRANSACTION_IDLE
+ *       callbacks for open transactions idle longer than kTransactionIdleTime.
+ */
 static status_t
 block_notifier_and_writer(void* /*data*/)
 {
@@ -2950,6 +3548,13 @@ block_notifier_and_writer(void* /*data*/)
 
 
 /*!	Notify function for wait_for_notifications(). */
+/**
+ * @brief Transaction-written notification hook used by wait_for_notifications() to wake a waiter.
+ *
+ * @param transactionID The ID of the transaction that was written (unused).
+ * @param event         The notification event (expected TRANSACTION_WRITTEN).
+ * @param _cache        Pointer to the block_cache whose condition variable should be signalled.
+ */
 static void
 notify_sync(int32 transactionID, int32 event, void* _cache)
 {
@@ -2960,6 +3565,14 @@ notify_sync(int32 transactionID, int32 event, void* _cache)
 
 
 /*!	Must be called with the sCachesLock held. */
+/**
+ * @brief Checks whether a block_cache pointer is still registered in the global list.
+ *
+ * @param cache The block_cache pointer to validate.
+ * @retval true  The cache is present in sCaches.
+ * @retval false The cache has been removed (e.g., deleted concurrently).
+ * @note sCachesLock must be held by the caller.
+ */
 static bool
 is_valid_cache(block_cache* cache)
 {
@@ -2979,6 +3592,14 @@ is_valid_cache(block_cache* cache)
 	Safe to be called from the block writer/notifier thread.
 	You must not hold the \a cache lock when calling this function.
 */
+/**
+ * @brief Waits until all pending TRANSACTION_WRITTEN notifications for a cache have been delivered.
+ *
+ * @param cache The block_cache to wait on.
+ * @note Must NOT be called while holding the cache lock.
+ *       If called from the notifier/writer thread itself, notifications are
+ *       flushed directly without blocking.
+ */
 static void
 wait_for_notifications(block_cache* cache)
 {
@@ -3008,6 +3629,15 @@ wait_for_notifications(block_cache* cache)
 }
 
 
+/**
+ * @brief Initializes the global block cache subsystem.
+ *
+ * @retval B_OK       Subsystem initialized; background notifier/writer thread started.
+ * @retval B_NO_MEMORY Could not create the sBlockCache or sCacheNotificationCache slabs.
+ * @retval other      create_sem() or spawn_kernel_thread() failure.
+ * @note Must be called exactly once during kernel initialization before any
+ *       block_cache_create() call.
+ */
 status_t
 block_cache_init(void)
 {
@@ -3066,6 +3696,11 @@ block_cache_init(void)
 }
 
 
+/**
+ * @brief Returns the total number of bytes currently consumed by block data buffers across all caches.
+ *
+ * @return Aggregate memory usage in bytes; value is a snapshot and may lag slightly.
+ */
 size_t
 block_cache_used_memory(void)
 {
@@ -3077,6 +3712,15 @@ block_cache_used_memory(void)
 //	#pragma mark - public transaction API
 
 
+/**
+ * @brief Opens a new transaction on the given cache and returns its ID.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @retval >=0   The new transaction ID.
+ * @retval B_NO_MEMORY Could not allocate the cache_transaction object.
+ * @note Acquires the TransactionLocker (write lock + busy-write drain).
+ *       Panics if the previous transaction was left open.
+ */
 int32
 cache_start_transaction(void* _cache)
 {
@@ -3104,6 +3748,16 @@ cache_start_transaction(void* _cache)
 }
 
 
+/**
+ * @brief Flushes all blocks belonging to transaction \a id (and earlier closed transactions) to disk.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     Transaction ID up to and including which closed transactions are flushed.
+ * @retval B_OK  All targeted blocks written successfully.
+ * @retval other I/O error; the write was aborted.
+ * @note Loops until no transactions are busy-writing, then waits for all
+ *       TRANSACTION_WRITTEN notifications to be delivered before returning.
+ */
 status_t
 cache_sync_transaction(void* _cache, int32 id)
 {
@@ -3154,6 +3808,19 @@ cache_sync_transaction(void* _cache, int32 id)
 }
 
 
+/**
+ * @brief Closes an open transaction, freeing original data and moving blocks to the previous list.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     ID of the transaction to end.
+ * @param hook   Optional callback to register for TRANSACTION_WRITTEN; may be NULL.
+ * @param data   Opaque data passed to \a hook.
+ * @retval B_OK        Transaction closed successfully.
+ * @retval B_BAD_VALUE \a id does not refer to a known transaction.
+ * @retval B_NO_MEMORY Failed to add the TRANSACTION_WRITTEN listener.
+ * @note Writes back any blocks still part of a previous transaction before
+ *       closing.  Discarded blocks are freed immediately.
+ */
 status_t
 cache_end_transaction(void* _cache, int32 id,
 	transaction_notification_hook hook, void* data)
@@ -3221,6 +3888,17 @@ cache_end_transaction(void* _cache, int32 id,
 }
 
 
+/**
+ * @brief Aborts an open transaction, restoring all modified blocks to their pre-transaction state.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     ID of the transaction to abort.
+ * @retval B_OK        Transaction aborted and deleted.
+ * @retval B_BAD_VALUE \a id does not refer to a known transaction.
+ * @note Notifies listeners with TRANSACTION_ABORTED before reverting block
+ *       contents.  The transaction object is removed from the hash table and
+ *       destroyed.
+ */
 status_t
 cache_abort_transaction(void* _cache, int32 id)
 {
@@ -3273,6 +3951,19 @@ cache_abort_transaction(void* _cache, int32 id)
 	from its sub transaction.
 	The new transaction also gets a new transaction ID.
 */
+/**
+ * @brief Commits the parent portion of a sub-transaction and promotes the sub portion to a new transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     ID of the transaction that has an active sub-transaction.
+ * @param hook   Optional callback registered for TRANSACTION_WRITTEN on the parent.
+ * @param data   Opaque data for \a hook.
+ * @retval >=0       New transaction ID for the promoted sub-transaction.
+ * @retval B_BAD_VALUE \a id is invalid or the transaction has no sub-transaction.
+ * @retval B_NO_MEMORY Could not allocate the new transaction or register the listener.
+ * @note Closes the parent transaction (open = false) and inserts the new
+ *       transaction into the hash table.
+ */
 int32
 cache_detach_sub_transaction(void* _cache, int32 id,
 	transaction_notification_hook hook, void* data)
@@ -3377,6 +4068,17 @@ cache_detach_sub_transaction(void* _cache, int32 id,
 }
 
 
+/**
+ * @brief Reverts sub-transaction changes, restoring blocks to their parent-transaction state.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     ID of the transaction whose sub-transaction is aborted.
+ * @retval B_OK        Sub-transaction aborted; the parent transaction remains open.
+ * @retval B_BAD_VALUE \a id is invalid or the transaction has no sub-transaction.
+ * @note Fires TRANSACTION_ABORTED on listeners, then for each block either
+ *       reverts to original_data (parent unchanged) or restores parent_data
+ *       (parent had changes).  Clears has_sub_transaction and sub_num_blocks.
+ */
 status_t
 cache_abort_sub_transaction(void* _cache, int32 id)
 {
@@ -3462,6 +4164,17 @@ cache_abort_sub_transaction(void* _cache, int32 id)
 }
 
 
+/**
+ * @brief Creates a sub-transaction checkpoint within an existing open transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     ID of the open transaction to split.
+ * @retval B_OK        Sub-transaction started; subsequent writes track the sub-transaction separately.
+ * @retval B_BAD_VALUE \a id is invalid.
+ * @note Fires TRANSACTION_ENDED to mark the parent checkpoint, then lazily
+ *       sets parent_data = current_data for each block so that COW is deferred
+ *       until the block is next modified.
+ */
 status_t
 cache_start_sub_transaction(void* _cache, int32 id)
 {
@@ -3526,6 +4239,19 @@ cache_start_sub_transaction(void* _cache, int32 id)
 	is ended, aborted, written, or idle as specified by \a events.
 	The listener gets automatically removed when the transaction ends.
 */
+/**
+ * @brief Registers an event listener on an open transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     ID of the transaction to listen on.
+ * @param events Bitmask of TRANSACTION_* events to subscribe to.
+ * @param hook   Callback invoked when a matching event fires.
+ * @param data   Opaque user data passed verbatim to \a hook.
+ * @retval B_OK        Listener registered.
+ * @retval B_BAD_VALUE \a id does not refer to a known transaction.
+ * @retval B_NO_MEMORY Could not allocate a new listener.
+ * @note The listener is automatically removed on transaction close/abort.
+ */
 status_t
 cache_add_transaction_listener(void* _cache, int32 id, int32 events,
 	transaction_notification_hook hook, void* data)
@@ -3541,6 +4267,17 @@ cache_add_transaction_listener(void* _cache, int32 id, int32 events,
 }
 
 
+/**
+ * @brief Removes a previously registered transaction listener.
+ *
+ * @param _cache       Opaque pointer to the block_cache.
+ * @param id           ID of the transaction owning the listener.
+ * @param hookFunction The hook pointer used when the listener was registered.
+ * @param data         The data pointer used when the listener was registered.
+ * @retval B_OK             Listener found and removed.
+ * @retval B_BAD_VALUE      \a id does not refer to a known transaction.
+ * @retval B_ENTRY_NOT_FOUND No listener matched the hook/data pair.
+ */
 status_t
 cache_remove_transaction_listener(void* _cache, int32 id,
 	transaction_notification_hook hookFunction, void* data)
@@ -3572,6 +4309,20 @@ cache_remove_transaction_listener(void* _cache, int32 id,
 }
 
 
+/**
+ * @brief Iterates over blocks modified by an open transaction, advancing a caller-managed cookie.
+ *
+ * @param _cache         Opaque pointer to the block_cache.
+ * @param id             ID of the open transaction to iterate.
+ * @param mainOnly       If true, only blocks changed by the parent (not the sub) transaction are returned.
+ * @param _cookie        In/out cursor; initialize to 0 before the first call.
+ * @param _blockNumber   Output: block number of the current entry.
+ * @param _data          Output: current data pointer for the block.
+ * @param _unchangedData Output: pre-transaction (original) data pointer.
+ * @retval B_OK             Entry returned; advance \a _cookie for the next call.
+ * @retval B_BAD_VALUE      \a id is invalid or the transaction is not open.
+ * @retval B_ENTRY_NOT_FOUND No more blocks in the transaction.
+ */
 status_t
 cache_next_block_in_transaction(void* _cache, int32 id, bool mainOnly,
 	long* _cookie, off_t* _blockNumber, void** _data, void** _unchangedData)
@@ -3616,6 +4367,13 @@ cache_next_block_in_transaction(void* _cache, int32 id, bool mainOnly,
 }
 
 
+/**
+ * @brief Returns the total number of blocks currently tracked by a transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     Transaction ID to query.
+ * @return Number of blocks in the transaction, or B_BAD_VALUE if not found.
+ */
 int32
 cache_blocks_in_transaction(void* _cache, int32 id)
 {
@@ -3634,6 +4392,14 @@ cache_blocks_in_transaction(void* _cache, int32 id)
 	transaction does not have a sub transaction yet, this is the same value as
 	cache_blocks_in_transaction() would return.
 */
+/**
+ * @brief Returns the block count for the main (parent) portion of a transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     Transaction ID to query.
+ * @return main_num_blocks if a sub-transaction is active, otherwise num_blocks.
+ *         Returns B_BAD_VALUE if the transaction is not found.
+ */
 int32
 cache_blocks_in_main_transaction(void* _cache, int32 id)
 {
@@ -3651,6 +4417,13 @@ cache_blocks_in_main_transaction(void* _cache, int32 id)
 }
 
 
+/**
+ * @brief Returns the number of blocks modified exclusively within the sub-transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @param id     Transaction ID to query.
+ * @return sub_num_blocks for the transaction, or B_BAD_VALUE if not found.
+ */
 int32
 cache_blocks_in_sub_transaction(void* _cache, int32 id)
 {
@@ -3667,6 +4440,15 @@ cache_blocks_in_sub_transaction(void* _cache, int32 id)
 
 /*!	Check if block is in transaction
 */
+/**
+ * @brief Checks whether a specific block is currently part of the given transaction.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param id          Transaction ID to check against.
+ * @param blockNumber The device block number to look up.
+ * @retval true  The block exists, has an active transaction, and that transaction's ID matches \a id.
+ * @retval false Otherwise.
+ */
 bool
 cache_has_block_in_transaction(void* _cache, int32 id, off_t blockNumber)
 {
@@ -3683,6 +4465,15 @@ cache_has_block_in_transaction(void* _cache, int32 id, off_t blockNumber)
 //	#pragma mark - public block cache API
 
 
+/**
+ * @brief Destroys a block cache, optionally flushing all dirty blocks first.
+ *
+ * @param _cache      Opaque pointer to the block_cache to destroy.
+ * @param allowWrites If true, block_cache_sync() is called before teardown to
+ *                    flush dirty blocks; if false, dirty data is discarded.
+ * @note Waits for all in-progress reads and writes to complete before freeing
+ *       blocks and transactions.  All remaining transactions are aborted.
+ */
 void
 block_cache_delete(void* _cache, bool allowWrites)
 {
@@ -3723,6 +4514,17 @@ block_cache_delete(void* _cache, bool allowWrites)
 }
 
 
+/**
+ * @brief Creates and registers a new per-device block cache.
+ *
+ * @param fd        File descriptor for the block device or image file.
+ * @param numBlocks Total number of blocks on the device.
+ * @param blockSize Size of each block in bytes.
+ * @param readOnly  If true the cache refuses any write operations.
+ * @return Opaque handle to the new block_cache, or NULL on allocation failure.
+ * @note Adds the cache to the global sCaches list so that the background
+ *       notifier/writer thread picks it up automatically.
+ */
 void*
 block_cache_create(int fd, off_t numBlocks, size_t blockSize, bool readOnly)
 {
@@ -3743,6 +4545,15 @@ block_cache_create(int fd, off_t numBlocks, size_t blockSize, bool readOnly)
 }
 
 
+/**
+ * @brief Flushes all dirty blocks in the cache that are not part of an open transaction.
+ *
+ * @param _cache Opaque pointer to the block_cache.
+ * @retval B_OK  All eligible blocks written successfully.
+ * @retval other I/O error encountered during write-back.
+ * @note Waits for all TRANSACTION_WRITTEN notifications before returning so
+ *       that callers can rely on a fully consistent on-disk state.
+ */
 status_t
 block_cache_sync(void* _cache)
 {
@@ -3773,6 +4584,18 @@ block_cache_sync(void* _cache)
 }
 
 
+/**
+ * @brief Flushes dirty blocks in a specific address range of the cache.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber First block number of the range to flush.
+ * @param numBlocks   Number of consecutive blocks to flush.
+ * @retval B_OK       All eligible blocks in the range written successfully.
+ * @retval B_BAD_VALUE \a blockNumber is out of range.
+ * @retval other      I/O error during write-back.
+ * @note Only blocks that satisfy CanBeWritten() are flushed; blocks inside
+ *       open transactions are left untouched.
+ */
 status_t
 block_cache_sync_etc(void* _cache, off_t blockNumber, size_t numBlocks)
 {
@@ -3816,6 +4639,18 @@ block_cache_sync_etc(void* _cache, off_t blockNumber, size_t numBlocks)
 	might be reclaimed by the file cache in order to make sure they won't
 	interfere.
 */
+/**
+ * @brief Invalidates a range of cached blocks, flushing any pending previous-transaction data first.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber First block number to discard.
+ * @param numBlocks   Number of consecutive blocks to discard.
+ * @note Blocks that are in the unused list are freed immediately.  Blocks
+ *       that are still referenced are marked with discard = true so they are
+ *       freed when their reference count drops to zero.  Panics if a block
+ *       has already been modified by a sub-transaction within the current
+ *       transaction.
+ */
 void
 block_cache_discard(void* _cache, off_t blockNumber, size_t numBlocks)
 {
@@ -3862,6 +4697,18 @@ block_cache_discard(void* _cache, off_t blockNumber, size_t numBlocks)
 }
 
 
+/**
+ * @brief Performs a copy-on-write upgrade of a block without returning the data to the caller.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block to make writable.
+ * @param transaction The active transaction ID, or -1.
+ * @retval B_OK    Block COW'd and reference immediately released.
+ * @retval B_ERROR Cache is read-only.
+ * @retval other   Error from get_writable_cached_block().
+ * @note Useful when a file system needs to ensure a block is in a transaction
+ *       without needing the data pointer itself (e.g., journaling headers).
+ */
 status_t
 block_cache_make_writable(void* _cache, off_t blockNumber, int32 transaction)
 {
@@ -3886,6 +4733,18 @@ block_cache_make_writable(void* _cache, off_t blockNumber, int32 transaction)
 }
 
 
+/**
+ * @brief Acquires a writable reference to a block, returning the data pointer via an output parameter.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block number to acquire.
+ * @param transaction The active transaction ID, or -1.
+ * @param _block      Output: pointer to the writable block data buffer.
+ * @retval B_OK    Block acquired; *_block is valid until block_cache_put() is called.
+ * @retval B_ERROR Cache is read-only.
+ * @retval other   Error from get_writable_cached_block().
+ * @note The cache write lock is acquired internally; the caller must not hold it.
+ */
 status_t
 block_cache_get_writable_etc(void* _cache, off_t blockNumber,
 	int32 transaction, void** _block)
@@ -3903,6 +4762,16 @@ block_cache_get_writable_etc(void* _cache, off_t blockNumber,
 }
 
 
+/**
+ * @brief Acquires a writable reference to a block and returns its data pointer directly.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block number to acquire.
+ * @param transaction The active transaction ID, or -1.
+ * @return Pointer to the writable block data, or NULL on failure.
+ * @note Convenience wrapper around block_cache_get_writable_etc().
+ *       Call block_cache_put() when done.
+ */
 void*
 block_cache_get_writable(void* _cache, off_t blockNumber, int32 transaction)
 {
@@ -3915,6 +4784,16 @@ block_cache_get_writable(void* _cache, off_t blockNumber, int32 transaction)
 }
 
 
+/**
+ * @brief Acquires a reference to a zeroed-out (uninitialized from disk) writable block.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block number to allocate.
+ * @param transaction The active transaction ID, or -1.
+ * @return Pointer to a zero-filled writable data buffer, or NULL on failure.
+ * @note Use when writing a brand-new block that does not need its on-disk
+ *       contents — avoids a disk read.  Call block_cache_put() when done.
+ */
 void*
 block_cache_get_empty(void* _cache, off_t blockNumber, int32 transaction)
 {
@@ -3935,6 +4814,17 @@ block_cache_get_empty(void* _cache, off_t blockNumber, int32 transaction)
 }
 
 
+/**
+ * @brief Acquires a read-only reference to a block, reading it from disk if necessary.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block number to fetch.
+ * @param _block      Output: pointer to the read-only block data.
+ * @retval B_OK    Block is ready; *_block is valid until block_cache_put() is called.
+ * @retval other   Lookup, allocation, or I/O error.
+ * @note In kernel mode an optimistic read-lock fast path is attempted first;
+ *       a write-lock upgrade is performed only when needed (new block or concurrent read).
+ */
 status_t
 block_cache_get_etc(void* _cache, off_t blockNumber, const void** _block)
 {
@@ -3991,6 +4881,15 @@ block_cache_get_etc(void* _cache, off_t blockNumber, const void** _block)
 }
 
 
+/**
+ * @brief Acquires a read-only reference to a block and returns its data pointer directly.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block number to fetch.
+ * @return Pointer to the read-only block data, or NULL on failure.
+ * @note Convenience wrapper around block_cache_get_etc().
+ *       Call block_cache_put() when done.
+ */
 const void*
 block_cache_get(void* _cache, off_t blockNumber)
 {
@@ -4009,6 +4908,18 @@ block_cache_get(void* _cache, off_t blockNumber)
 	Note, you must only use this function on blocks that were acquired
 	writable!
 */
+/**
+ * @brief Sets or clears the dirty flag on a writable block.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The block to update.
+ * @param dirty       Desired dirty state.
+ * @param transaction The owning transaction ID (currently unused by implementation).
+ * @retval B_OK    Flag updated (or was already in the desired state).
+ * @retval B_BAD_VALUE Block not found in the cache.
+ * @note Setting dirty = true is not yet fully implemented and will panic.
+ *       Only call with dirty = false to un-dirty a previously writable block.
+ */
 status_t
 block_cache_set_dirty(void* _cache, off_t blockNumber, bool dirty,
 	int32 transaction)
@@ -4032,6 +4943,14 @@ block_cache_set_dirty(void* _cache, off_t blockNumber, bool dirty,
 }
 
 
+/**
+ * @brief Releases a reference to a cached block by number.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber The device block number to release.
+ * @note Acquires the cache read-lock for the fast path; upgrades to a write
+ *       lock if the block requires list or transaction bookkeeping.
+ */
 void
 block_cache_put(void* _cache, off_t blockNumber)
 {
@@ -4053,6 +4972,19 @@ block_cache_put(void* _cache, off_t blockNumber)
 	blocks actually scheduled.  Prefetching will stop short if the requested range includes a
 	block that is already cached.
 */
+/**
+ * @brief Schedules an asynchronous read-ahead for a range of blocks without acquiring references.
+ *
+ * @param _cache      Opaque pointer to the block_cache.
+ * @param blockNumber Index of the first block to prefetch.
+ * @param _numBlocks  In: number of blocks requested; out: number actually scheduled
+ *                    (may be less if a cached block was encountered in the range).
+ * @retval B_OK         I/O scheduled; \a *_numBlocks updated.
+ * @retval B_UNSUPPORTED When built for the userland FS server (no-op).
+ * @retval other        Allocation or IORequest error; \a *_numBlocks set to 0.
+ * @note Does not block; the blocks become available asynchronously.
+ *       No references are held by the caller after this call returns.
+ */
 status_t
 block_cache_prefetch(void* _cache, off_t blockNumber, size_t* _numBlocks)
 {

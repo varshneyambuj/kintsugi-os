@@ -1,10 +1,41 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file VMCache.cpp
+ * @brief Virtual memory cache — manages the page cache for VM areas.
+ *
+ * VMCache is the central object connecting VMArea objects to their backing
+ * pages. Each area maps into a cache (which may be a file cache, anonymous
+ * cache, or device cache). The cache owns the physical pages and handles
+ * page faults, page writing/reading, and cache consumer/source chains.
+ *
+ * @see VMAnonymousCache.cpp, VMArea.cpp, vm.cpp
  */
 
 
@@ -396,6 +427,13 @@ class RemovePage : public VMCacheTraceEntry {
 #if VM_CACHE_TRACING
 
 
+/**
+ * @brief Walk the trace log backwards to find the cache that owns an area.
+ *
+ * @param baseIterator Iterator positioned at the trace entry to start from.
+ * @param area         Pointer to the VMArea whose owning cache is sought.
+ * @return Pointer to the VMCache that last inserted @a area, or NULL if not found.
+ */
 static void*
 cache_stack_find_area_cache(const TraceEntryIterator& baseIterator, void* area)
 {
@@ -417,6 +455,13 @@ cache_stack_find_area_cache(const TraceEntryIterator& baseIterator, void* area)
 }
 
 
+/**
+ * @brief Walk the trace log backwards to find the source cache for a consumer.
+ *
+ * @param baseIterator Iterator positioned at the trace entry to start from.
+ * @param cache        Pointer to the consumer VMCache whose source is sought.
+ * @return Pointer to the source VMCache, or NULL if this cache was the root.
+ */
 static void*
 cache_stack_find_consumer(const TraceEntryIterator& baseIterator, void* cache)
 {
@@ -441,6 +486,15 @@ cache_stack_find_consumer(const TraceEntryIterator& baseIterator, void* cache)
 }
 
 
+/**
+ * @brief Kernel debugger command that prints the ancestor cache chain.
+ *
+ * Usage: cache_stack [area] <address> <tracing_entry_index>
+ *
+ * @param argc Number of command arguments.
+ * @param argv Command argument strings.
+ * @return 0 in all cases (debugger command convention).
+ */
 static int
 command_cache_stack(int argc, char** argv)
 {
@@ -502,6 +556,17 @@ command_cache_stack(int argc, char** argv)
 //	#pragma mark -
 
 
+/**
+ * @brief Initializes per-subsystem object caches used to allocate VM cache structures.
+ *
+ * Creates slab object caches for VMCacheRef, VMAnonymousCache,
+ * VMAnonymousNoSwapCache, VMVnodeCache, VMDeviceCache, and VMNullCache.
+ * Must be called once during early kernel initialization.
+ *
+ * @param args Kernel boot arguments (unused by this function).
+ * @retval B_OK        All object caches were created successfully.
+ * @retval B_NO_MEMORY At least one object cache allocation failed; kernel panics.
+ */
 status_t
 vm_cache_init(kernel_args* args)
 {
@@ -537,6 +602,12 @@ vm_cache_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Registers debugger commands that depend on the heap being available.
+ *
+ * Called after the heap is fully initialised. When VM_CACHE_TRACING is
+ * enabled this registers the "cache_stack" debugger command.
+ */
 void
 vm_cache_init_post_heap()
 {
@@ -554,6 +625,21 @@ vm_cache_init_post_heap()
 }
 
 
+/**
+ * @brief Acquires a locked reference to the VMCache that owns a physical page.
+ *
+ * Looks up the cache via the page's CacheRef, locks it, verifies the page
+ * still belongs to that cache, and returns the cache with its reference count
+ * incremented. The caller is responsible for calling ReleaseRef() and
+ * Unlock() when done.
+ *
+ * @param page     The physical page whose owning cache is requested.
+ * @param dontWait If true, the function returns NULL instead of blocking when
+ *                 the cache lock is contended.
+ * @return Pointer to the locked, ref-counted VMCache, or NULL if the page has
+ *         no cache or (when @a dontWait is true) the lock could not be acquired.
+ * @note Acquires and releases sCacheListLock internally.
+ */
 VMCache*
 vm_cache_acquire_locked_page_cache(vm_page* page, bool dontWait)
 {
@@ -596,6 +682,11 @@ vm_cache_acquire_locked_page_cache(vm_page* page, bool dontWait)
 // #pragma mark - VMCache
 
 
+/**
+ * @brief Constructs a VMCacheRef that back-references the owning VMCache.
+ *
+ * @param cache The VMCache that this ref object represents.
+ */
 VMCacheRef::VMCacheRef(VMCache* cache)
 	:
 	cache(cache)
@@ -606,6 +697,15 @@ VMCacheRef::VMCacheRef(VMCache* cache)
 // #pragma mark - VMCache
 
 
+/**
+ * @brief Returns true if this cache is eligible for merging with its sole consumer.
+ *
+ * A cache is mergeable when it has no areas, is temporary, and has exactly
+ * one consumer.
+ *
+ * @return true if the cache can be merged with its only consumer.
+ * @note The cache lock must be held by the caller.
+ */
 bool
 VMCache::_IsMergeable() const
 {
@@ -614,6 +714,11 @@ VMCache::_IsMergeable() const
 }
 
 
+/**
+ * @brief Default constructor — initialises the cache ref pointer to NULL.
+ *
+ * @note Call Init() before using this object.
+ */
 VMCache::VMCache()
 	:
 	fCacheRef(NULL)
@@ -621,6 +726,12 @@ VMCache::VMCache()
 }
 
 
+/**
+ * @brief Destructor — asserts invariants and frees the VMCacheRef object.
+ *
+ * Panics in debug builds if the reference count or page count is non-zero
+ * at destruction time.
+ */
 VMCache::~VMCache()
 {
 	ASSERT(fRefCount == 0 && page_count == 0);
@@ -629,6 +740,20 @@ VMCache::~VMCache()
 }
 
 
+/**
+ * @brief Initializes the VMCache fields and allocates its VMCacheRef.
+ *
+ * Must be called exactly once after construction. Sets up the mutex, zeroes
+ * all counters, and inserts the cache into the global debug cache list when
+ * DEBUG_CACHE_LIST is enabled.
+ *
+ * @param name            Human-readable name used to label the mutex.
+ * @param cacheType       One of the CACHE_TYPE_* constants identifying the
+ *                        backing-store type.
+ * @param allocationFlags Heap allocation flags (e.g. HEAP_DONT_WAIT_FOR_MEMORY).
+ * @retval B_OK        Initialisation succeeded.
+ * @retval B_NO_MEMORY Failed to allocate the VMCacheRef object.
+ */
 status_t
 VMCache::Init(const char* name, uint32 cacheType, uint32 allocationFlags)
 {
@@ -671,6 +796,18 @@ VMCache::Init(const char* name, uint32 cacheType, uint32 allocationFlags)
 }
 
 
+/**
+ * @brief Destroys the cache, freeing all pages and detaching from its source.
+ *
+ * Panics if the cache still has areas, consumers, or removed-but-still-busy
+ * pages. Frees every page in the page tree, removes the reference to the
+ * source cache, removes the cache from the global debug list, destroys the
+ * mutex, and finally calls DeleteObject() on the subclass.
+ *
+ * @note The cache must be locked and its reference count must have reached zero
+ *       before Delete() is invoked.  This is normally called automatically by
+ *       Unlock() when the last reference is released.
+ */
 void
 VMCache::Delete()
 {
@@ -729,6 +866,18 @@ VMCache::Delete()
 }
 
 
+/**
+ * @brief Unlocks the cache and, if eligible, merges it with its sole consumer.
+ *
+ * When the reference count is 1 and the cache is mergeable (_IsMergeable()),
+ * the method tries to acquire the consumer's lock and calls
+ * _MergeWithOnlyConsumer(). If the reference count drops to zero after any
+ * merge attempt, Delete() is called instead of releasing the mutex.
+ *
+ * @param consumerLocked Pass true if the sole consumer's lock is already held
+ *                       by the caller, to avoid a redundant lock acquisition.
+ * @note The cache must be locked when this is called.
+ */
 void
 VMCache::Unlock(bool consumerLocked)
 {
@@ -769,6 +918,13 @@ VMCache::Unlock(bool consumerLocked)
 }
 
 
+/**
+ * @brief Looks up a page by its byte offset within the cache.
+ *
+ * @param offset Byte offset into the cache; must be page-aligned.
+ * @return Pointer to the vm_page, or NULL if no page exists at @a offset.
+ * @note The cache lock must be held by the caller.
+ */
 vm_page*
 VMCache::LookupPage(off_t offset)
 {
@@ -785,6 +941,18 @@ VMCache::LookupPage(off_t offset)
 }
 
 
+/**
+ * @brief Inserts a physical page into the cache at the given byte offset.
+ *
+ * Sets the page's cache_offset, increments page_count, links the page to
+ * fCacheRef, and inserts it into the splay tree. Increments the wired-pages
+ * counter if the page is wired.
+ *
+ * @param page   The physical page to insert; must not already belong to a cache.
+ * @param offset Byte offset within the cache where the page should reside.
+ * @note The cache lock must be held. @a offset must be within
+ *       [virtual_base, virtual_end).
+ */
 void
 VMCache::InsertPage(vm_page* page, off_t offset)
 {
@@ -823,6 +991,15 @@ VMCache::InsertPage(vm_page* page, off_t offset)
 /*!	Frees a page that was removed by _FreePageRange(), but which was busy
 	and couldn't be freed then.
 */
+/**
+ * @brief Frees a page that was deferred because it was busy during range removal.
+ *
+ * Notifies any threads waiting on PAGE_EVENT_NOT_BUSY, removes the page from
+ * fRemovedBusyPages, and releases it back to the free pool.
+ *
+ * @param page The page previously placed on fRemovedBusyPages by _FreePageRange().
+ * @note The cache lock must be held.
+ */
 void
 VMCache::FreeRemovedPage(vm_page* page)
 {
@@ -838,6 +1015,15 @@ VMCache::FreeRemovedPage(vm_page* page)
 	really be in this cache or evil things will happen.
 	The cache lock must be held.
 */
+/**
+ * @brief Removes a physical page from this cache's page tree.
+ *
+ * Decrements page_count, clears the page's CacheRef, and removes it from
+ * the splay tree. Decrements the wired-pages counter if the page is wired.
+ *
+ * @param page The page to remove; must belong to this cache.
+ * @note The cache lock must be held.
+ */
 void
 VMCache::RemovePage(vm_page* page)
 {
@@ -864,6 +1050,17 @@ VMCache::RemovePage(vm_page* page)
 	at the given offset.
 	Both caches must be locked.
 */
+/**
+ * @brief Moves a page from its current cache into this cache at a new offset.
+ *
+ * Removes the page from its old cache, updates cache_offset, and inserts it
+ * here. Adjusts wired-page counts on both caches if necessary.
+ *
+ * @param page   The page to move.
+ * @param offset New byte offset within this cache for the page.
+ * @note Both this cache and the page's current cache must be locked.
+ *       @a offset must be within [virtual_base, virtual_end).
+ */
 void
 VMCache::MovePage(vm_page* page, off_t offset)
 {
@@ -897,6 +1094,14 @@ VMCache::MovePage(vm_page* page, off_t offset)
 /*!	Moves the given page from its current cache inserts it into this cache.
 	Both caches must be locked.
 */
+/**
+ * @brief Moves a page from its current cache into this cache, keeping its offset.
+ *
+ * Convenience overload that preserves the page's existing cache_offset.
+ *
+ * @param page The page to move; its cache_offset is retained.
+ * @note Both this cache and the page's current cache must be locked.
+ */
 void
 VMCache::MovePage(vm_page* page)
 {
@@ -907,6 +1112,17 @@ VMCache::MovePage(vm_page* page)
 /*!	Moves all pages from the given cache to this one.
 	Both caches must be locked. This cache must be empty.
 */
+/**
+ * @brief Atomically transfers the entire page tree from another cache into this one.
+ *
+ * Swaps the internal page trees, moves the page and wired-page counts, and
+ * re-links the VMCacheRef objects under sCacheListLock so that existing
+ * page-to-cache pointers remain valid.
+ *
+ * @param fromCache The source cache; must be locked. Must not equal this cache.
+ * @note This cache must be empty (page_count == 0) before the call. Both
+ *       caches must be locked.
+ */
 void
 VMCache::MoveAllPages(VMCache* fromCache)
 {
@@ -946,6 +1162,20 @@ VMCache::MoveAllPages(VMCache* fromCache)
 	\param relock If \c true, the cache will be locked when returning,
 		otherwise it won't be locked.
 */
+/**
+ * @brief Blocks the calling thread until one or more page events occur.
+ *
+ * Registers the current thread as a waiter for the specified events on
+ * @a page, then releases the cache lock and blocks. The cache is optionally
+ * re-locked before returning.
+ *
+ * @param page   The page to wait on; must belong to this cache.
+ * @param events Bitmask of PAGE_EVENT_* flags the caller is interested in.
+ * @param relock If true, the cache lock is re-acquired before returning.
+ * @note The cache must be locked when this function is called. The lock is
+ *       always released internally; if @a relock is false the caller must not
+ *       assume the lock is held on return.
+ */
 void
 VMCache::WaitForPageEvents(vm_page* page, uint32 events, bool relock)
 {
@@ -972,6 +1202,16 @@ VMCache::WaitForPageEvents(vm_page* page, uint32 events, bool relock)
 	This also grabs a reference to the source cache.
 	Assumes you have the cache and the consumer's lock held.
 */
+/**
+ * @brief Registers @a consumer as a consumer of this cache (copy-on-write source link).
+ *
+ * Sets consumer->source to this cache, appends the consumer to the consumers
+ * list, and increments both the reference count and the store reference.
+ *
+ * @param consumer The cache that will read pages from this one on fault.
+ * @note Both this cache and @a consumer must be locked. @a consumer must not
+ *       already have a source.
+ */
 void
 VMCache::AddConsumer(VMCache* consumer)
 {
@@ -993,6 +1233,14 @@ VMCache::AddConsumer(VMCache* consumer)
 /*!	Adds the \a area to this cache.
 	Assumes you have the locked the cache.
 */
+/**
+ * @brief Inserts a VMArea into this cache's area list.
+ *
+ * Appends @a area to the areas list and acquires a store reference.
+ *
+ * @param area The area to associate with this cache.
+ * @note The cache lock must be held.
+ */
 void
 VMCache::InsertAreaLocked(VMArea* area)
 {
@@ -1006,6 +1254,14 @@ VMCache::InsertAreaLocked(VMArea* area)
 }
 
 
+/**
+ * @brief Removes a VMArea from this cache's area list.
+ *
+ * Releases the store reference first (to preserve correct locking order with
+ * the VFS), then acquires the cache lock and removes @a area from the list.
+ *
+ * @param area The area to remove; must currently belong to this cache.
+ */
 void
 VMCache::RemoveArea(VMArea* area)
 {
@@ -1028,6 +1284,15 @@ VMCache::RemoveArea(VMArea* area)
 /*!	Takes the areas from \a fromCache to this cache. This cache must not
 	have areas yet. Both caches must be locked.
 */
+/**
+ * @brief Transfers all VMArea objects from @a fromCache into this cache.
+ *
+ * Updates each area's cache pointer, adjusts reference counts on both caches,
+ * and emits tracing events. This cache must have no existing areas.
+ *
+ * @param fromCache The source cache whose areas will be moved here.
+ * @note Both caches must be locked. This cache must be empty of areas.
+ */
 void
 VMCache::TakeAreasFrom(VMCache* fromCache)
 {
@@ -1048,6 +1313,12 @@ VMCache::TakeAreasFrom(VMCache* fromCache)
 }
 
 
+/**
+ * @brief Counts the number of areas mapped with write access, optionally ignoring one.
+ *
+ * @param ignoreArea An area to exclude from the count, or NULL to count all.
+ * @return Number of areas that have B_WRITE_AREA or B_KERNEL_WRITE_AREA set.
+ */
 uint32
 VMCache::CountWritableAreas(VMArea* ignoreArea) const
 {
@@ -1064,6 +1335,15 @@ VMCache::CountWritableAreas(VMArea* ignoreArea) const
 }
 
 
+/**
+ * @brief Writes all dirty pages in this cache back to the backing store.
+ *
+ * No-ops immediately for temporary caches. Otherwise acquires the cache lock,
+ * calls vm_page_write_modified_pages(), and releases the lock.
+ *
+ * @retval B_OK All modified pages were written successfully.
+ * @return Any error code propagated from vm_page_write_modified_pages().
+ */
 status_t
 VMCache::WriteModified()
 {
@@ -1084,6 +1364,18 @@ VMCache::WriteModified()
 	what's committed already.
 	Assumes you have the cache's lock held.
 */
+/**
+ * @brief Ensures that at least @a commitment bytes are committed in the backing store.
+ *
+ * If the current Commitment() is already at least @a commitment, this is a
+ * no-op. Otherwise Commit() is called to satisfy the new requirement.
+ *
+ * @param commitment Minimum number of bytes that must be committed.
+ * @param priority   Allocation priority passed to Commit().
+ * @retval B_OK Commitment is satisfied.
+ * @return Any error code returned by Commit().
+ * @note The cache lock must be held.
+ */
 status_t
 VMCache::SetMinimalCommitment(off_t commitment, int priority)
 {
@@ -1110,6 +1402,22 @@ VMCache::SetMinimalCommitment(off_t commitment, int priority)
 }
 
 
+/**
+ * @brief Frees pages in a range of the page tree, handling busy pages.
+ *
+ * Iterates from the iterator position forward, unmapping and freeing each
+ * page. Busy non-IO pages cause the method to wait and return true, signalling
+ * the caller to restart. Busy IO pages are marked so the IO subsystem will
+ * free them later.
+ *
+ * @param it        Iterator pointing to the first candidate page.
+ * @param toPage    If non-NULL, upper bound (exclusive) page number to free.
+ * @param freedPages If non-NULL, incremented for each page freed.
+ * @return true if iteration was interrupted by a busy page (caller should retry),
+ *         false when the range was fully processed.
+ * @note The cache lock must be held; it may be temporarily released while
+ *       waiting for a busy page.
+ */
 bool
 VMCache::_FreePageRange(VMCachePagesTree::Iterator it,
 	page_num_t* toPage = NULL, page_num_t* freedPages = NULL)
@@ -1168,6 +1476,21 @@ VMCache::_FreePageRange(VMCachePagesTree::Iterator it,
 	Note, this function may temporarily release the cache lock in case it
 	has to wait for busy pages.
 */
+/**
+ * @brief Resizes the cache's virtual address range to @a newSize bytes.
+ *
+ * Removes any pages that fall outside the new range, optionally zeroes the
+ * partial page at the new end, and calls Commit() to adjust the backing store.
+ * virtual_end is updated to @a newSize on success.
+ *
+ * @param newSize  New size of the cache in bytes (new virtual_end value).
+ * @param priority Allocation priority for Commit(), or a negative value to
+ *                 skip the Commit() call entirely.
+ * @retval B_OK Resize succeeded.
+ * @return Any error code from Commit().
+ * @note The cache lock must be held. The lock may be temporarily released
+ *       while waiting for busy pages.
+ */
 status_t
 VMCache::Resize(off_t newSize, int priority)
 {
@@ -1218,6 +1541,19 @@ VMCache::Resize(off_t newSize, int priority)
 	Note, this function may temporarily release the cache lock in case it
 	has to wait for busy pages.
 */
+/**
+ * @brief Moves the cache's virtual base address forward to @a newBase.
+ *
+ * Removes any pages below @a newBase, calls Commit() to adjust the backing
+ * store, and updates virtual_base.
+ *
+ * @param newBase  New base address in bytes; must be >= current virtual_base.
+ * @param priority Allocation priority for Commit(), or negative to skip it.
+ * @retval B_OK Rebase succeeded.
+ * @return Any error code from Commit().
+ * @note The cache lock must be held. The lock may be temporarily released
+ *       while waiting for busy pages.
+ */
 status_t
 VMCache::Rebase(off_t newBase, int priority)
 {
@@ -1249,6 +1585,20 @@ VMCache::Rebase(off_t newBase, int priority)
 /*!	Moves pages in the given range from the source cache into this cache. Both
 	caches must be locked.
 */
+/**
+ * @brief Adopts pages from @a source in the specified byte range, remapping offsets.
+ *
+ * Pages in [@a offset, @a offset + @a size) are moved from @a source into
+ * this cache. Each page's new offset is computed as
+ * (old_offset + newOffset - offset).
+ *
+ * @param source    Cache from which to adopt pages.
+ * @param offset    Starting byte offset in @a source.
+ * @param size      Number of bytes to adopt.
+ * @param newOffset Corresponding starting offset in this cache.
+ * @retval B_OK Always returns B_OK.
+ * @note Both caches must be locked.
+ */
 status_t
 VMCache::Adopt(VMCache* source, off_t offset, off_t size, off_t newOffset)
 {
@@ -1269,6 +1619,14 @@ VMCache::Adopt(VMCache* source, off_t offset, off_t size, off_t newOffset)
 
 
 /*! Discards pages in the given range. */
+/**
+ * @brief Discards (frees without writing back) all pages in a byte range.
+ *
+ * @param offset Starting byte offset within the cache.
+ * @param size   Number of bytes in the range to discard.
+ * @return Number of bytes actually discarded (multiple of B_PAGE_SIZE).
+ * @note The cache must be locked by the caller.
+ */
 ssize_t
 VMCache::Discard(off_t offset, off_t size)
 {
@@ -1283,6 +1641,19 @@ VMCache::Discard(off_t offset, off_t size)
 
 
 /*!	You have to call this function with the VMCache lock held. */
+/**
+ * @brief Writes back all modified pages and then removes every page from the cache.
+ *
+ * Loops until page_count reaches zero: first writing modified pages via
+ * vm_page_write_modified_pages(), then iterating the tree and freeing each
+ * non-busy, non-mapped page. Returns B_BUSY if a mapped page is encountered.
+ *
+ * @retval B_OK    All pages were successfully flushed and removed.
+ * @retval B_BUSY  A mapped page was found; caller should retry later.
+ * @return Any error from vm_page_write_modified_pages().
+ * @note The cache lock must be held throughout; it may be released temporarily
+ *       while waiting for busy pages.
+ */
 status_t
 VMCache::FlushAndRemoveAllPages()
 {
@@ -1327,6 +1698,14 @@ VMCache::FlushAndRemoveAllPages()
 }
 
 
+/**
+ * @brief Returns the number of bytes currently committed in the backing store.
+ *
+ * The base implementation always returns 0; subclasses with real backing
+ * stores override this.
+ *
+ * @return Committed size in bytes.
+ */
 off_t
 VMCache::Commitment() const
 {
@@ -1334,6 +1713,13 @@ VMCache::Commitment() const
 }
 
 
+/**
+ * @brief Returns whether this cache type supports overcommit.
+ *
+ * The base implementation returns false; anonymous caches may override this.
+ *
+ * @return true if the cache allows overcommitting physical memory.
+ */
 bool
 VMCache::CanOvercommit()
 {
@@ -1341,6 +1727,16 @@ VMCache::CanOvercommit()
 }
 
 
+/**
+ * @brief Commits @a size bytes of backing store for this cache.
+ *
+ * The base implementation panics — concrete subclasses must override this if
+ * they support committing memory.
+ *
+ * @param size     Number of bytes to commit.
+ * @param priority Allocation priority hint.
+ * @retval B_NOT_SUPPORTED Always (base class is not supposed to be called).
+ */
 status_t
 VMCache::Commit(off_t size, int priority)
 {
@@ -1349,6 +1745,15 @@ VMCache::Commit(off_t size, int priority)
 }
 
 
+/**
+ * @brief Transfers committed memory accounting from another cache to this one.
+ *
+ * The base implementation panics — concrete subclasses must override this
+ * when they track commitment separately.
+ *
+ * @param from       The cache from which to transfer commitment.
+ * @param commitment Number of bytes of commitment to transfer.
+ */
 void
 VMCache::TakeCommitmentFrom(VMCache* from, off_t commitment)
 {
@@ -1363,6 +1768,16 @@ VMCache::TakeCommitmentFrom(VMCache* from, off_t commitment)
 	partial page (assuming that no unexpected errors occur or the situation
 	changes in the meantime).
 */
+/**
+ * @brief Returns whether the backing store has data for the page at @a offset.
+ *
+ * Used during fault handling to determine whether a Read() would be useful
+ * before allocating a zero page. The base implementation always returns false
+ * because VMCache has no backing store.
+ *
+ * @param offset Byte offset within the cache (page-aligned).
+ * @return true if a Read() at @a offset would supply at least a partial page.
+ */
 bool
 VMCache::StoreHasPage(off_t offset)
 {
@@ -1372,6 +1787,19 @@ VMCache::StoreHasPage(off_t offset)
 }
 
 
+/**
+ * @brief Reads pages from the backing store into caller-supplied I/O vectors.
+ *
+ * The base implementation always returns B_ERROR; file-backed and device
+ * caches override this to perform the actual I/O.
+ *
+ * @param offset    Byte offset within the cache to start reading from.
+ * @param vecs      Array of generic_io_vec descriptors for the destination buffers.
+ * @param count     Number of entries in @a vecs.
+ * @param flags     I/O flags (e.g. B_PHYSICAL_IO_REQUEST).
+ * @param _numBytes In/out: requested byte count on entry, actual bytes read on exit.
+ * @retval B_ERROR  Base class — no backing store.
+ */
 status_t
 VMCache::Read(off_t offset, const generic_io_vec *vecs, size_t count,
 	uint32 flags, generic_size_t *_numBytes)
@@ -1380,6 +1808,19 @@ VMCache::Read(off_t offset, const generic_io_vec *vecs, size_t count,
 }
 
 
+/**
+ * @brief Writes pages from caller-supplied I/O vectors to the backing store.
+ *
+ * The base implementation always returns B_ERROR; file-backed and device
+ * caches override this to perform the actual I/O.
+ *
+ * @param offset    Byte offset within the cache to start writing to.
+ * @param vecs      Array of generic_io_vec descriptors for the source buffers.
+ * @param count     Number of entries in @a vecs.
+ * @param flags     I/O flags (e.g. B_PHYSICAL_IO_REQUEST).
+ * @param _numBytes In/out: requested byte count on entry, actual bytes written on exit.
+ * @retval B_ERROR  Base class — no backing store.
+ */
 status_t
 VMCache::Write(off_t offset, const generic_io_vec *vecs, size_t count,
 	uint32 flags, generic_size_t *_numBytes)
@@ -1388,6 +1829,20 @@ VMCache::Write(off_t offset, const generic_io_vec *vecs, size_t count,
 }
 
 
+/**
+ * @brief Initiates an asynchronous write, falling back to synchronous Write().
+ *
+ * Subclasses that support true async I/O should override this. The default
+ * implementation calls Write() synchronously and then invokes the callback.
+ *
+ * @param offset    Byte offset within the cache to write to.
+ * @param vecs      Source I/O vectors.
+ * @param count     Number of vectors.
+ * @param numBytes  Total byte count to write.
+ * @param flags     I/O flags.
+ * @param callback  Called with the result when I/O completes; may be NULL.
+ * @return Status code from the underlying Write() call.
+ */
 status_t
 VMCache::WriteAsync(off_t offset, const generic_io_vec* vecs, size_t count,
 	generic_size_t numBytes, uint32 flags, AsyncIOCallback* callback)
@@ -1410,6 +1865,15 @@ VMCache::WriteAsync(off_t offset, const generic_io_vec* vecs, size_t count,
 	@param offset The page offset.
 	@return \c true, if the page can be written, \c false otherwise.
 */
+/**
+ * @brief Returns whether a dirty page at @a offset can be written to the backing store.
+ *
+ * The base implementation returns false; writable caches override this.
+ *
+ * @param offset Byte offset of the page within the cache.
+ * @return true if the page at @a offset may be written back.
+ * @note The cache lock must be held.
+ */
 bool
 VMCache::CanWritePage(off_t offset)
 {
@@ -1417,6 +1881,17 @@ VMCache::CanWritePage(off_t offset)
 }
 
 
+/**
+ * @brief Handles a page fault for a missing page at @a offset.
+ *
+ * Called by the VM fault handler when a page is not present in this cache.
+ * The base implementation returns B_BAD_ADDRESS because VMCache has no
+ * backing store; subclasses (file, anonymous) override this to supply pages.
+ *
+ * @param aspace  The address space in which the fault occurred.
+ * @param offset  Byte offset within the cache of the missing page.
+ * @retval B_BAD_ADDRESS Base class — fault cannot be satisfied.
+ */
 status_t
 VMCache::Fault(struct VMAddressSpace *aspace, off_t offset)
 {
@@ -1424,6 +1899,17 @@ VMCache::Fault(struct VMAddressSpace *aspace, off_t offset)
 }
 
 
+/**
+ * @brief Merges pages from @a source into this cache (COW collapse optimisation).
+ *
+ * Iterates all pages in @a source that fall within this cache's virtual range.
+ * For each page that does not already exist in this cache, the page is moved
+ * up from @a source into this cache. Pages already present in this cache take
+ * precedence and the source's copy is left untouched.
+ *
+ * @param source The source (lower-level) cache to merge pages from.
+ * @note Both this cache and @a source must be locked.
+ */
 void
 VMCache::Merge(VMCache* source)
 {
@@ -1447,6 +1933,15 @@ VMCache::Merge(VMCache* source)
 }
 
 
+/**
+ * @brief Acquires a store reference without holding the cache lock.
+ *
+ * Used during cache construction before the cache is reachable by other
+ * threads. The base implementation always returns B_ERROR; subclasses with
+ * reference-counted backing stores must override this.
+ *
+ * @retval B_ERROR Base class — no backing store reference semantics.
+ */
 status_t
 VMCache::AcquireUnreferencedStoreRef()
 {
@@ -1454,12 +1949,24 @@ VMCache::AcquireUnreferencedStoreRef()
 }
 
 
+/**
+ * @brief Acquires a reference to the backing store.
+ *
+ * The base implementation is a no-op; file-backed caches (e.g. VMVnodeCache)
+ * override this to increment the vnode reference.
+ */
 void
 VMCache::AcquireStoreRef()
 {
 }
 
 
+/**
+ * @brief Releases a previously acquired reference to the backing store.
+ *
+ * The base implementation is a no-op; file-backed caches override this to
+ * decrement the vnode reference.
+ */
 void
 VMCache::ReleaseStoreRef()
 {
@@ -1469,6 +1976,15 @@ VMCache::ReleaseStoreRef()
 /*!	Kernel debugger version of StoreHasPage().
 	Does not do any locking.
 */
+/**
+ * @brief Kernel-debugger-safe version of StoreHasPage() — no locking.
+ *
+ * Calls StoreHasPage() directly. Safe to call from the kernel debugger
+ * provided the subclass implementation does not acquire locks.
+ *
+ * @param offset Byte offset within the cache to query.
+ * @return true if the backing store has data at @a offset.
+ */
 bool
 VMCache::DebugStoreHasPage(off_t offset)
 {
@@ -1480,6 +1996,15 @@ VMCache::DebugStoreHasPage(off_t offset)
 /*!	Kernel debugger version of LookupPage().
 	Does not do any locking.
 */
+/**
+ * @brief Kernel-debugger-safe page lookup — no locking.
+ *
+ * Performs a raw splay-tree lookup without acquiring the cache lock. Safe to
+ * call from the kernel debugger where locking is not possible.
+ *
+ * @param offset Byte offset within the cache (page-aligned).
+ * @return Pointer to the vm_page, or NULL if not present.
+ */
 vm_page*
 VMCache::DebugLookupPage(off_t offset)
 {
@@ -1487,6 +2012,16 @@ VMCache::DebugLookupPage(off_t offset)
 }
 
 
+/**
+ * @brief Prints a detailed description of the cache to the kernel debugger output.
+ *
+ * Prints reference count, source pointer, type, virtual range, temporariness,
+ * lock state, all associated areas, all consumers, and optionally every page
+ * in the page tree with its state.
+ *
+ * @param showPages If true, individual page entries are printed; otherwise
+ *                  only the total page count is shown.
+ */
 void
 VMCache::Dump(bool showPages) const
 {
@@ -1541,6 +2076,16 @@ VMCache::Dump(bool showPages) const
 	\param page The page for which events occurred.
 	\param events The mask of events that occurred.
 */
+/**
+ * @brief Wakes all threads waiting for the specified page events.
+ *
+ * Walks the fPageEventWaiters list, unblocks any waiter whose page and event
+ * mask intersect with @a page and @a events, and removes it from the list.
+ *
+ * @param page   The page for which events occurred.
+ * @param events Bitmask of PAGE_EVENT_* flags that have occurred.
+ * @note The cache lock must be held.
+ */
 void
 VMCache::_NotifyPageEvents(vm_page* page, uint32 events)
 {
@@ -1560,6 +2105,16 @@ VMCache::_NotifyPageEvents(vm_page* page, uint32 events)
 	The caller must hold both the cache's and the consumer's lock. The method
 	does release neither lock.
 */
+/**
+ * @brief Merges this cache into its sole consumer and detaches from the source chain.
+ *
+ * Removes the consumer from the consumers list, calls consumer->Merge(this)
+ * to pull up pages, re-wires the source link so the consumer points directly
+ * to this cache's source, and releases this cache's reference count.
+ *
+ * @note Both this cache's lock and the consumer's lock must be held. Neither
+ *       lock is released by this method.
+ */
 void
 VMCache::_MergeWithOnlyConsumer()
 {
@@ -1599,6 +2154,16 @@ VMCache::_MergeWithOnlyConsumer()
 	Assumes you have the consumer's cache lock held. This cache must not be
 	locked.
 */
+/**
+ * @brief Removes @a consumer from this cache's consumer list and releases its reference.
+ *
+ * Locks this cache, removes @a consumer from the consumers list, clears
+ * consumer->source, then releases the store reference and the ref count
+ * contributed by @a consumer.
+ *
+ * @param consumer The consumer cache to remove; its lock must be held by
+ *                 the caller. This cache must NOT be locked when called.
+ */
 void
 VMCache::_RemoveConsumer(VMCache* consumer)
 {
@@ -1626,6 +2191,23 @@ VMCache::_RemoveConsumer(VMCache* consumer)
 	// TODO: Move to own source file!
 
 
+/**
+ * @brief Factory method that creates an anonymous (swap-backed or no-swap) cache.
+ *
+ * Selects VMAnonymousCache when swap support is enabled and @a swappable is
+ * true; otherwise creates a VMAnonymousNoSwapCache.
+ *
+ * @param[out] _cache               Receives the newly created cache on success.
+ * @param      canOvercommit        Whether the cache may overcommit physical memory.
+ * @param      numPrecommittedPages Number of pages to pre-commit at creation time.
+ * @param      numGuardPages        Number of guard pages to reserve.
+ * @param      swappable            If true (and swap support is compiled in), use
+ *                                  a swap-backed anonymous cache.
+ * @param      priority             Allocation priority (e.g. VM_PRIORITY_USER).
+ * @retval B_OK        Cache created successfully.
+ * @retval B_NO_MEMORY Allocation of the cache object failed.
+ * @return Any error code propagated from the cache's Init() method.
+ */
 /*static*/ status_t
 VMCacheFactory::CreateAnonymousCache(VMCache*& _cache, bool canOvercommit,
 	int32 numPrecommittedPages, int32 numGuardPages, bool swappable,
@@ -1677,6 +2259,17 @@ VMCacheFactory::CreateAnonymousCache(VMCache*& _cache, bool canOvercommit,
 }
 
 
+/**
+ * @brief Factory method that creates a vnode-backed (file) cache.
+ *
+ * Allocates a VMVnodeCache and initialises it with the given vnode.
+ *
+ * @param[out] _cache  Receives the newly created cache on success.
+ * @param      vnode   The vnode that provides the backing store for this cache.
+ * @retval B_OK        Cache created successfully.
+ * @retval B_NO_MEMORY Allocation failed.
+ * @return Any error propagated from VMVnodeCache::Init().
+ */
 /*static*/ status_t
 VMCacheFactory::CreateVnodeCache(VMCache*& _cache, struct vnode* vnode)
 {
@@ -1702,6 +2295,17 @@ VMCacheFactory::CreateVnodeCache(VMCache*& _cache, struct vnode* vnode)
 }
 
 
+/**
+ * @brief Factory method that creates a device-mapped cache.
+ *
+ * Allocates a VMDeviceCache backed by a physical device at @a baseAddress.
+ *
+ * @param[out] _cache       Receives the newly created cache on success.
+ * @param      baseAddress  Physical base address of the device memory region.
+ * @retval B_OK        Cache created successfully.
+ * @retval B_NO_MEMORY Allocation failed.
+ * @return Any error propagated from VMDeviceCache::Init().
+ */
 /*static*/ status_t
 VMCacheFactory::CreateDeviceCache(VMCache*& _cache, addr_t baseAddress)
 {
@@ -1727,6 +2331,18 @@ VMCacheFactory::CreateDeviceCache(VMCache*& _cache, addr_t baseAddress)
 }
 
 
+/**
+ * @brief Factory method that creates a null (no backing store) cache.
+ *
+ * Allocates a VMNullCache, which satisfies faults with zero pages and has no
+ * persistent backing store.
+ *
+ * @param      priority  Allocation priority (e.g. VM_PRIORITY_USER).
+ * @param[out] _cache    Receives the newly created cache on success.
+ * @retval B_OK        Cache created successfully.
+ * @retval B_NO_MEMORY Allocation failed.
+ * @return Any error propagated from VMNullCache::Init().
+ */
 /*static*/ status_t
 VMCacheFactory::CreateNullCache(int priority, VMCache*& _cache)
 {

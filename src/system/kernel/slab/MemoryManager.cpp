@@ -1,6 +1,37 @@
 /*
- * Copyright 2010, Ingo Weinhold <ingo_weinhold@gmx.de>.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file MemoryManager.cpp
+ * @brief Low-level physical memory manager for the slab allocator.
+ *
+ * MemoryManager sits beneath the slab allocator and handles the allocation
+ * and freeing of raw memory areas (chunks and areas) that back slab caches.
+ * It interacts directly with the VM subsystem to map/unmap physical pages
+ * and maintains its own internal free lists to minimize VM overhead.
+ *
+ * @see Slab.cpp, ObjectCache.cpp
  */
 
 
@@ -447,6 +478,20 @@ _push(Type*& head, Type* object)
 // #pragma mark - MemoryManager
 
 
+/**
+ * @brief Perform early boot-time initialisation of the slab memory manager.
+ *
+ * Initialises the global mutex and read-write lock, stores the kernel_args
+ * pointer for early physical-memory allocation, constructs all free/partial
+ * meta-chunk lists, and sets up the area hash table using the static buffer.
+ * On DEBUG_HEAPS builds one area is pre-allocated so that the allocator is
+ * usable before InitPostArea() runs.
+ *
+ * @param args  Pointer to the kernel boot arguments; kept until InitPostArea()
+ *              converts early areas to real VM areas and sets it to NULL.
+ * @note Must be called from a single-threaded boot context before any slab
+ *       allocation is attempted.
+ */
 /*static*/ void
 MemoryManager::Init(kernel_args* args)
 {
@@ -480,6 +525,19 @@ MemoryManager::Init(kernel_args* args)
 }
 
 
+/**
+ * @brief Second boot phase: convert early areas to real VM areas and register
+ *        debugger commands.
+ *
+ * Iterates every area that was allocated via vm_allocate_early() and converts
+ * it to a proper VM area with create_area().  Unmaps pages that back free
+ * chunks so physical memory is returned to the page pool.  Marks maintenance
+ * as needed and installs the kernel debugger commands for slab introspection.
+ *
+ * @note Must be called after the VM area subsystem is fully operational.
+ *       Sets sKernelArgs to NULL, signalling that future allocations must use
+ *       the VM API.
+ */
 /*static*/ void
 MemoryManager::InitPostArea()
 {
@@ -551,6 +609,26 @@ MemoryManager::InitPostArea()
 }
 
 
+/**
+ * @brief Allocate a slab chunk for the given object cache.
+ *
+ * Acquires sLock, selects or allocates a meta chunk of the appropriate size,
+ * then maps the physical pages for the chunk into the kernel address space.
+ * On success the chunk's reference field is set to the owning cache pointer
+ * and @p _pages is filled with the mapped virtual address.
+ *
+ * @param cache   The object cache that will own this chunk.
+ * @param flags   Allocation flags (e.g. CACHE_DONT_WAIT_FOR_MEMORY,
+ *                CACHE_PRIORITY_VIP).
+ * @param _pages  Out-parameter set to the virtual base address of the
+ *                allocated chunk on success.
+ * @retval B_OK        Chunk allocated and mapped successfully.
+ * @retval B_NO_MEMORY No suitable meta chunk or VM area could be obtained.
+ * @retval B_WOULD_BLOCK CACHE_DONT_LOCK_KERNEL_SPACE is set and the
+ *                       allocator would need to block.
+ * @note Acquires and releases sLock internally; releases it around the
+ *       _MapChunk() call so interrupt latency is bounded.
+ */
 /*static*/ status_t
 MemoryManager::Allocate(ObjectCache* cache, uint32 flags, void*& _pages)
 {
@@ -595,6 +673,18 @@ MemoryManager::Allocate(ObjectCache* cache, uint32 flags, void*& _pages)
 }
 
 
+/**
+ * @brief Return a previously allocated slab chunk to the memory manager.
+ *
+ * Locates the meta chunk and chunk descriptor for @p pages, acquires sLock,
+ * and delegates to _FreeChunk() which unmaps the pages and updates all
+ * free-list bookkeeping.
+ *
+ * @param pages  Virtual base address of the chunk as returned by Allocate().
+ * @param flags  Flags that were used at allocation time (passed through to
+ *               _FreeChunk() and _UnmapChunk()).
+ * @note Caller must not hold sLock.  Interrupts must be enabled.
+ */
 /*static*/ void
 MemoryManager::Free(void* pages, uint32 flags)
 {
@@ -626,6 +716,27 @@ MemoryManager::Free(void* pages, uint32 flags)
 }
 
 
+/**
+ * @brief Allocate a raw (non-cache-backed) physically contiguous region.
+ *
+ * For requests larger than SLAB_CHUNK_SIZE_LARGE or aligned allocations a
+ * dedicated VM area is created directly.  Otherwise the request is rounded up
+ * to a multiple of SLAB_CHUNK_SIZE_SMALL, the best-fit chunk size (small or
+ * medium) is chosen, contiguous chunks are allocated from a meta chunk, and
+ * the pages are mapped.  The chunk's reference field encodes the exclusive end
+ * address so FreeRawOrReturnCache() can recover the size.
+ *
+ * @param size    Number of bytes requested; rounded up internally to a chunk
+ *                boundary.
+ * @param flags   Allocation flags (CACHE_DONT_WAIT_FOR_MEMORY,
+ *                CACHE_ALIGN_ON_SIZE, CACHE_DONT_LOCK_KERNEL_SPACE, etc.).
+ * @param _pages  Out-parameter filled with the virtual base address on success.
+ * @retval B_OK        Memory allocated and mapped successfully.
+ * @retval B_NO_MEMORY Insufficient physical or virtual memory.
+ * @retval B_WOULD_BLOCK CACHE_DONT_LOCK_KERNEL_SPACE set and blocking would
+ *                       be required for a large/aligned allocation.
+ * @note Must not be called with sLock held.
+ */
 /*static*/ status_t
 MemoryManager::AllocateRaw(size_t size, uint32 flags, void*& _pages)
 {
@@ -721,6 +832,24 @@ MemoryManager::AllocateRaw(size_t size, uint32 flags, void*& _pages)
 }
 
 
+/**
+ * @brief Free a raw allocation or return the owning ObjectCache for a
+ *        cache-backed chunk.
+ *
+ * Looks up the slab area for @p pages.  If the area is not found the address
+ * is assumed to belong to a large VM area created by AllocateRaw() and that
+ * area is deleted.  Otherwise the chunk's reference field is inspected: an
+ * even value means the chunk is cache-backed and the cache pointer is
+ * returned; an odd value means it was a raw allocation, which is unmapped and
+ * freed, and NULL is returned.
+ *
+ * @param pages  Virtual address of the allocation to free or query.
+ * @param flags  Must not include CACHE_DONT_LOCK_KERNEL_SPACE (panics if set).
+ * @return  Pointer to the owning ObjectCache if the chunk is cache-backed,
+ *          or NULL for raw allocations and large VM areas.
+ * @note Acquires sAreaTableLock for reading and sLock for the actual free.
+ *       Interrupts must be enabled.
+ */
 /*static*/ ObjectCache*
 MemoryManager::FreeRawOrReturnCache(void* pages, uint32 flags)
 {
@@ -789,6 +918,15 @@ MemoryManager::FreeRawOrReturnCache(void* pages, uint32 flags)
 }
 
 
+/**
+ * @brief Return the smallest acceptable chunk size that can satisfy @p size.
+ *
+ * Maps the requested byte count to SLAB_CHUNK_SIZE_SMALL, SLAB_CHUNK_SIZE_MEDIUM,
+ * or SLAB_CHUNK_SIZE_LARGE in ascending order.
+ *
+ * @param size  Minimum number of bytes required.
+ * @return  The smallest standard chunk size >= @p size.
+ */
 /*static*/ size_t
 MemoryManager::AcceptableChunkSize(size_t size)
 {
@@ -800,6 +938,23 @@ MemoryManager::AcceptableChunkSize(size_t size)
 }
 
 
+/**
+ * @brief Query the size and owning cache for an arbitrary slab allocation.
+ *
+ * Looks up the slab area for @p address.  If no slab area is found the kernel
+ * VM address space is searched for a matching VM area.  For slab-managed
+ * addresses the chunk reference is decoded: an even value identifies a
+ * cache-backed chunk (object_size is returned in @p _size), while an odd
+ * value identifies a raw allocation (raw byte count in @p _size).
+ *
+ * @param address  Virtual address within the allocation.
+ * @param _size    Out-parameter set to the allocation size in bytes, or 0 if
+ *                 the address is unrecognised.
+ * @return  Pointer to the owning ObjectCache, or NULL for raw or unrecognised
+ *          allocations.
+ * @note Acquires sAreaTableLock for reading.  Must not be called from
+ *       interrupt context.
+ */
 /*static*/ ObjectCache*
 MemoryManager::GetAllocationInfo(void* address, size_t& _size)
 {
@@ -841,6 +996,17 @@ MemoryManager::GetAllocationInfo(void* address, size_t& _size)
 }
 
 
+/**
+ * @brief Return the ObjectCache that owns the slab chunk at @p address.
+ *
+ * Looks up the slab area and decodes the chunk reference.  Returns NULL if
+ * the address does not fall in a known slab area or the chunk is a raw
+ * allocation.
+ *
+ * @param address  Virtual address within a slab-managed chunk.
+ * @return  Pointer to the owning ObjectCache, or NULL.
+ * @note Acquires sAreaTableLock for reading.
+ */
 /*static*/ ObjectCache*
 MemoryManager::CacheForAddress(void* address)
 {
@@ -865,6 +1031,17 @@ MemoryManager::CacheForAddress(void* address)
 }
 
 
+/**
+ * @brief Perform deferred heap maintenance: grow or shrink the free-area pool.
+ *
+ * Called from a dedicated maintenance thread.  Keeps the free-area count in
+ * the range [1, 2] by allocating a new area when the pool is empty or by
+ * freeing excess areas when more than two are idle.  Re-sets sMaintenanceNeeded
+ * if further work remains after one pass.
+ *
+ * @note Must be called with sLock NOT held; acquires it internally.
+ *       May block waiting for VM memory.
+ */
 /*static*/ void
 MemoryManager::PerformMaintenance()
 {
@@ -902,6 +1079,19 @@ MemoryManager::PerformMaintenance()
 
 #if SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING
 
+/**
+ * @brief Walk all live raw allocations and invoke a callback for each.
+ *
+ * Iterates every area, meta chunk, and chunk.  Skips free chunks and
+ * cache-backed chunks.  For each raw allocation, retrieves its tracking info
+ * and forwards it to @p callback.  Stops early if the callback returns false.
+ *
+ * @param callback  Functor implementing ProcessTrackingInfo(); called once per
+ *                  raw allocation.
+ * @return  true if all allocations were processed, false if the callback
+ *          requested early termination.
+ * @note Only available when SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING is set.
+ */
 /*static*/ bool
 MemoryManager::AnalyzeAllocationCallers(AllocationTrackingCallback& callback)
 {
@@ -941,6 +1131,18 @@ MemoryManager::AnalyzeAllocationCallers(AllocationTrackingCallback& callback)
 #endif	// SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING
 
 
+/**
+ * @brief Debugger-safe version of CacheForAddress() that skips locking.
+ *
+ * Looks up the slab area and chunk directly without acquiring any locks, so
+ * it is safe to call from the kernel debugger.  Returns NULL if the address
+ * is unrecognised, the meta chunk is unused, or the chunk is a raw allocation.
+ *
+ * @param address  Virtual address to query.
+ * @return  Pointer to the owning ObjectCache, or NULL.
+ * @note Must only be called from the kernel debugger (no lock held, no
+ *       interrupt-safe guarantee).
+ */
 /*static*/ ObjectCache*
 MemoryManager::DebugObjectCacheForAddress(void* address)
 {
@@ -971,6 +1173,28 @@ MemoryManager::DebugObjectCacheForAddress(void* address)
 }
 
 
+/**
+ * @brief Core chunk allocator: obtain @p chunkCount contiguous chunks of
+ *        @p chunkSize bytes from the appropriate meta-chunk free list.
+ *
+ * Tries to satisfy the request from existing partial meta chunks.  If none
+ * are available, pops a free area from the reserve, or — as a last resort —
+ * allocates a new area from the VM.  Multiple threads that simultaneously
+ * need a new area serialise via AllocationEntry condition variables to avoid
+ * redundant area allocations.
+ *
+ * @param chunkSize   Must be SLAB_CHUNK_SIZE_SMALL, SLAB_CHUNK_SIZE_MEDIUM,
+ *                    or SLAB_CHUNK_SIZE_LARGE.
+ * @param chunkCount  Number of contiguous chunks required (>= 1).
+ * @param flags       Allocation flags forwarded to _AllocateArea().
+ * @param _metaChunk  Out-parameter: the meta chunk from which chunks were taken.
+ * @param _chunk      Out-parameter: pointer to the first allocated Chunk.
+ * @retval B_OK        Chunks allocated; _metaChunk and _chunk are valid.
+ * @retval B_NO_MEMORY Could not grow the heap.
+ * @retval B_WOULD_BLOCK CACHE_DONT_LOCK_KERNEL_SPACE prevents blocking.
+ * @note Called with sLock held.  May temporarily release sLock to allocate a
+ *       new area.
+ */
 /*static*/ status_t
 MemoryManager::_AllocateChunks(size_t chunkSize, uint32 chunkCount,
 	uint32 flags, MetaChunk*& _metaChunk, Chunk*& _chunk)
@@ -1055,6 +1279,23 @@ MemoryManager::_AllocateChunks(size_t chunkSize, uint32 chunkCount,
 }
 
 
+/**
+ * @brief Allocate a run of @p chunkCount contiguous chunks from a meta chunk.
+ *
+ * Scans the partial meta-chunk list for a meta chunk whose contiguous free
+ * range is wide enough.  If none is found, a fresh meta chunk is taken from
+ * the short or complete free lists and prepared.  The matching chunk
+ * descriptors are unlinked from the free-chunk linked list and the meta
+ * chunk's usage counters and free-range fields are updated.
+ *
+ * @param metaChunkList  List to search and update (NULL for large chunks).
+ * @param chunkSize      Size class of each individual chunk.
+ * @param chunkCount     Number of contiguous chunks required.
+ * @param _metaChunk     Out-parameter: selected meta chunk.
+ * @param _chunk         Out-parameter: first chunk of the allocated run.
+ * @return  true on success, false if no suitable meta chunk was available.
+ * @note Called with sLock held.
+ */
 /*static*/ bool
 MemoryManager::_GetChunks(MetaChunkList* metaChunkList, size_t chunkSize,
 	uint32 chunkCount, MetaChunk*& _metaChunk, Chunk*& _chunk)
@@ -1136,6 +1377,22 @@ MemoryManager::_GetChunks(MetaChunkList* metaChunkList, size_t chunkSize,
 }
 
 
+/**
+ * @brief Allocate a single chunk from the given meta-chunk list.
+ *
+ * Picks the head of @p metaChunkList, or falls back to the free meta-chunk
+ * lists when the partial list is empty.  Pops one chunk from the meta chunk's
+ * free-chunk linked list, increments usage, and updates the contiguous free
+ * range.
+ *
+ * @param metaChunkList  Partial meta-chunk list for the requested size class
+ *                       (NULL for large chunks).
+ * @param chunkSize      Requested chunk size.
+ * @param _metaChunk     Out-parameter: meta chunk from which the chunk came.
+ * @param _chunk         Out-parameter: the allocated chunk descriptor.
+ * @return  true on success, false if no meta chunk was available.
+ * @note Called with sLock held.
+ */
 /*static*/ bool
 MemoryManager::_GetChunk(MetaChunkList* metaChunkList, size_t chunkSize,
 	MetaChunk*& _metaChunk, Chunk*& _chunk)
@@ -1194,6 +1451,26 @@ MemoryManager::_GetChunk(MetaChunkList* metaChunkList, size_t chunkSize,
 }
 
 
+/**
+ * @brief Return a single chunk to its meta chunk and perform cascading frees.
+ *
+ * Optionally unmaps the chunk's physical pages (if @p alreadyUnmapped is
+ * false), pushes the chunk descriptor back onto the meta chunk's free list,
+ * and adjusts the contiguous free range.  If the meta chunk becomes entirely
+ * free it is moved to the appropriate free meta-chunk list and, if the
+ * enclosing area has no live meta chunks, the area itself is freed via
+ * _FreeArea().
+ *
+ * @param area             The slab area containing the meta chunk.
+ * @param metaChunk        The meta chunk that owns @p chunk.
+ * @param chunk            The chunk descriptor to free.
+ * @param chunkAddress     Virtual base address of the chunk's mapped memory.
+ * @param alreadyUnmapped  If true, skip the _UnmapChunk() call (e.g. the
+ *                         caller failed mid-way through mapping).
+ * @param flags            Flags forwarded to _UnmapChunk() and _FreeArea().
+ * @note Called with sLock held.  Temporarily releases sLock around
+ *       _UnmapChunk() when unmapping is required.
+ */
 /*static*/ void
 MemoryManager::_FreeChunk(Area* area, MetaChunk* metaChunk, Chunk* chunk,
 	addr_t chunkAddress, bool alreadyUnmapped, uint32 flags)
@@ -1276,6 +1553,19 @@ MemoryManager::_FreeChunk(Area* area, MetaChunk* metaChunk, Chunk* chunk,
 }
 
 
+/**
+ * @brief Initialise a meta chunk's chunk descriptors for a given chunk size.
+ *
+ * Computes the usable base address and total size (accounting for the area
+ * administrative header in the first meta chunk), sets chunk size and count,
+ * links all chunk descriptors onto the free list in reverse order, and
+ * initialises the contiguous free range to span the whole meta chunk.
+ *
+ * @param metaChunk  The meta chunk to initialise; must belong to a valid Area.
+ * @param chunkSize  The chunk size class to use for this meta chunk
+ *                   (SLAB_CHUNK_SIZE_SMALL, _MEDIUM, or _LARGE).
+ * @note Called with sLock held.
+ */
 /*static*/ void
 MemoryManager::_PrepareMetaChunk(MetaChunk* metaChunk, size_t chunkSize)
 {
@@ -1304,6 +1594,17 @@ MemoryManager::_PrepareMetaChunk(MetaChunk* metaChunk, size_t chunkSize)
 }
 
 
+/**
+ * @brief Register a newly allocated area with the global data structures.
+ *
+ * Inserts the area into the hash table (under sAreaTableLock write lock) and
+ * adds its meta chunks to the global free lists: the first (short) meta chunk
+ * goes to sFreeShortMetaChunks; the remaining meta chunks go to
+ * sFreeCompleteMetaChunks.
+ *
+ * @param area  The fully initialised Area to register.
+ * @note Called with sLock held.  Briefly acquires sAreaTableLock for writing.
+ */
 /*static*/ void
 MemoryManager::_AddArea(Area* area)
 {
@@ -1321,6 +1622,24 @@ MemoryManager::_AddArea(Area* area)
 }
 
 
+/**
+ * @brief Allocate and initialise a new SLAB_AREA_SIZE VM area.
+ *
+ * During early boot (sKernelArgs != NULL) uses vm_allocate_early() to carve
+ * out physically contiguous memory.  After boot, creates a null (unmapped)
+ * VM area and maps only the administrative header pages.  The Area structure
+ * is embedded at SLAB_AREA_STRUCT_OFFSET within the allocation.  On return
+ * sLock is held by the caller.
+ *
+ * @param flags  Allocation flags: CACHE_PRIORITY_VIP selects VM_PRIORITY_VIP;
+ *               CACHE_DONT_WAIT_FOR_MEMORY prevents blocking on page
+ *               reservation.  CACHE_DONT_LOCK_KERNEL_SPACE must NOT be set
+ *               (asserted).
+ * @param _area  Out-parameter set to the newly allocated and initialised Area.
+ * @retval B_OK        Area allocated successfully; sLock is held on return.
+ * @retval B_NO_MEMORY vm_allocate_early() or create_area() failed.
+ * @note Temporarily releases sLock around the VM calls.
+ */
 /*static*/ status_t
 MemoryManager::_AllocateArea(uint32 flags, Area*& _area)
 {
@@ -1411,6 +1730,23 @@ MemoryManager::_AllocateArea(uint32 flags, Area*& _area)
 }
 
 
+/**
+ * @brief Release an entire slab area back to the VM subsystem.
+ *
+ * If @p areaRemoved is false, removes the area's meta chunks from free lists
+ * and unregisters it from the hash table first.  Maintains a small reserve:
+ * if fewer than two free areas exist, the area is pushed onto sFreeAreas
+ * instead of being deleted.  For areas that cannot be deleted immediately
+ * (early boot or CACHE_DONT_LOCK_KERNEL_SPACE), the area is also deferred to
+ * sFreeAreas and maintenance is requested.
+ *
+ * @param area         The area to free; must have usedMetaChunkCount == 0.
+ * @param areaRemoved  If true, meta chunks have already been removed from free
+ *                     lists and the area from the hash table by the caller.
+ * @param flags        Flags; CACHE_DONT_LOCK_KERNEL_SPACE defers deletion.
+ * @note Called with sLock held.  Temporarily releases sLock around
+ *       delete_area().
+ */
 /*static*/ void
 MemoryManager::_FreeArea(Area* area, bool areaRemoved, uint32 flags)
 {
@@ -1463,6 +1799,12 @@ MemoryManager::_FreeArea(Area* area, bool areaRemoved, uint32 flags)
 }
 
 
+/**
+ * @brief Push an area onto the front of the sFreeAreas singly-linked list.
+ *
+ * @param area  Area to push; must not already be on any list.
+ * @note Called with sLock held.
+ */
 /*static*/ inline void
 MemoryManager::_PushFreeArea(Area* area)
 {
@@ -1471,6 +1813,12 @@ MemoryManager::_PushFreeArea(Area* area)
 }
 
 
+/**
+ * @brief Pop the front area from the sFreeAreas singly-linked list.
+ *
+ * @return  Pointer to the popped Area, or NULL if sFreeAreas is empty.
+ * @note Called with sLock held.
+ */
 /*static*/ inline MemoryManager::Area*
 MemoryManager::_PopFreeArea()
 {
@@ -1482,6 +1830,28 @@ MemoryManager::_PopFreeArea()
 }
 
 
+/**
+ * @brief Map physical pages into the kernel address space for a chunk.
+ *
+ * Reserves virtual memory, allocates wired physical pages from the page pool,
+ * inserts them into the VM cache for @p vmArea, and maps them via the kernel
+ * translation map.  A NULL @p vmArea indicates an early-boot fully-mapped
+ * area; in that case the function returns B_OK immediately.
+ *
+ * @param vmArea                  The VM area into which pages will be mapped;
+ *                                NULL for early-boot areas.
+ * @param address                 Virtual base address of the region to map.
+ * @param size                    Number of bytes to map (must be page-aligned).
+ * @param reserveAdditionalMemory Extra bytes to reserve in the VM memory
+ *                                accounting (for translation-map overhead).
+ * @param flags                   CACHE_PRIORITY_VIP / CACHE_DONT_WAIT_FOR_MEMORY
+ *                                control memory reservation priority and
+ *                                blocking behaviour.
+ * @retval B_OK        Pages mapped successfully.
+ * @retval B_NO_MEMORY Virtual or physical memory reservation failed.
+ * @retval B_WOULD_BLOCK CACHE_DONT_WAIT_FOR_MEMORY set and pages unavailable.
+ * @note Must NOT be called with sLock held (acquires VM locks internally).
+ */
 /*static*/ status_t
 MemoryManager::_MapChunk(VMArea* vmArea, addr_t address, size_t size,
 	size_t reserveAdditionalMemory, uint32 flags)
@@ -1551,6 +1921,22 @@ MemoryManager::_MapChunk(VMArea* vmArea, addr_t address, size_t size,
 }
 
 
+/**
+ * @brief Unmap and free the physical pages backing a chunk's virtual range.
+ *
+ * Unmaps the virtual address range from the kernel translation map, decrements
+ * wired counts, removes the pages from the VM cache, and frees them back to
+ * the page pool.  Finally releases the corresponding virtual memory reservation.
+ * Returns B_ERROR immediately if @p vmArea is NULL (early-boot area).
+ *
+ * @param vmArea   The VM area that owns the mapping; NULL signals no-op.
+ * @param address  Virtual base address of the region to unmap.
+ * @param size     Number of bytes to unmap (must be page-aligned).
+ * @param flags    Currently unused; reserved for future priority hints.
+ * @retval B_OK    Pages unmapped and freed successfully.
+ * @retval B_ERROR vmArea is NULL; nothing was done.
+ * @note Must NOT be called with sLock held (acquires VM cache lock).
+ */
 /*static*/ status_t
 MemoryManager::_UnmapChunk(VMArea* vmArea, addr_t address, size_t size,
 	uint32 flags)
@@ -1600,6 +1986,18 @@ MemoryManager::_UnmapChunk(VMArea* vmArea, addr_t address, size_t size,
 }
 
 
+/**
+ * @brief Unmap pages backing free chunks in an early-boot fully-mapped area.
+ *
+ * Called during InitPostArea() to reclaim physical pages that were speculatively
+ * mapped during early boot but back chunks that are not yet in use.  Skips
+ * areas whose fullyMapped flag is already false.  Clears fullyMapped on
+ * completion.
+ *
+ * @param area  The Area whose unused pages should be unmapped.
+ * @note Calls _UnmapChunk() which must not be called with sLock held; ensure
+ *       sLock is not held by the caller.
+ */
 /*static*/ void
 MemoryManager::_UnmapFreeChunksEarly(Area* area)
 {
@@ -1649,6 +2047,17 @@ MemoryManager::_UnmapFreeChunksEarly(Area* area)
 }
 
 
+/**
+ * @brief Convert an early-boot vm_allocate_early() area to a real VM area.
+ *
+ * Uses create_area() with B_EXACT_ADDRESS and B_ALREADY_WIRED to register the
+ * physically-wired memory as a kernel VM area, then stores the resulting
+ * VMArea pointer in area->vmArea.  Panics on failure (out of memory).
+ *
+ * @param area  The early-boot Area to convert; area->vmArea must be NULL.
+ * @note Must be called after the VM area subsystem is operational
+ *       (i.e. from InitPostArea()).
+ */
 /*static*/ void
 MemoryManager::_ConvertEarlyArea(Area* area)
 {
@@ -1663,6 +2072,15 @@ MemoryManager::_ConvertEarlyArea(Area* area)
 }
 
 
+/**
+ * @brief Schedule a deferred heap maintenance pass if needed.
+ *
+ * Sets sMaintenanceNeeded and calls request_memory_manager_maintenance() to
+ * wake the maintenance thread, but only when the free-area reserve is outside
+ * the acceptable [1, 2] range and maintenance is not already pending.
+ *
+ * @note Called with sLock held.
+ */
 /*static*/ void
 MemoryManager::_RequestMaintenance()
 {
@@ -1674,6 +2092,17 @@ MemoryManager::_RequestMaintenance()
 }
 
 
+/**
+ * @brief Check whether a chunk descriptor appears in the meta chunk's free list.
+ *
+ * Walks the singly-linked freeChunks list of @p metaChunk looking for an
+ * exact pointer match with @p chunk.
+ *
+ * @param metaChunk  The meta chunk whose free list is searched.
+ * @param chunk      The chunk descriptor to search for.
+ * @return  true if @p chunk is found in the free list, false otherwise.
+ * @note Used only by paranoid consistency checks and the debugger dump.
+ */
 /*static*/ bool
 MemoryManager::_IsChunkInFreeList(const MetaChunk* metaChunk,
 	const Chunk* chunk)
@@ -1691,6 +2120,18 @@ MemoryManager::_IsChunkInFreeList(const MetaChunk* metaChunk,
 
 #if DEBUG_SLAB_MEMORY_MANAGER_PARANOID_CHECKS
 
+/**
+ * @brief Validate the internal consistency of a meta chunk.
+ *
+ * Checks that the meta chunk index, chunk size class, base address, chunk
+ * count, used-chunk count, free-range bounds, free-list structural integrity
+ * (no cycles, valid pointers), and cross-consistency between the free list
+ * length and usedChunkCount are all correct.  Calls panic() on any violation.
+ *
+ * @param metaChunk  The meta chunk to validate.
+ * @note Only compiled when DEBUG_SLAB_MEMORY_MANAGER_PARANOID_CHECKS is set.
+ *       Safe to call with sLock held.
+ */
 /*static*/ void
 MemoryManager::_CheckMetaChunk(MetaChunk* metaChunk)
 {
@@ -1809,6 +2250,19 @@ MemoryManager::_CheckMetaChunk(MetaChunk* metaChunk)
 #endif	// DEBUG_SLAB_MEMORY_MANAGER_PARANOID_CHECKS
 
 
+/**
+ * @brief Kernel debugger command: list all raw (non-cache-backed) allocations.
+ *
+ * Iterates all slab areas and meta chunks, printing one line per raw
+ * allocation (identified by an odd chunk reference != 1) with its area,
+ * meta-chunk index, chunk index, base address, and size in KB.  Prints a
+ * grand total at the end.
+ *
+ * @param argc  Argument count (unused; any args are silently ignored).
+ * @param argv  Argument vector (unused).
+ * @return  Always 0.
+ * @note Must only be called from the kernel debugger.  No locks are acquired.
+ */
 /*static*/ int
 MemoryManager::_DumpRawAllocations(int argc, char** argv)
 {
@@ -1852,6 +2306,13 @@ MemoryManager::_DumpRawAllocations(int argc, char** argv)
 }
 
 
+/**
+ * @brief Print the column header for the meta-chunk table output.
+ *
+ * @param printChunks  If true, print the extended header with cache and
+ *                     object-size columns; otherwise print the short header.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ void
 MemoryManager::_PrintMetaChunkTableHeader(bool printChunks)
 {
@@ -1861,6 +2322,20 @@ MemoryManager::_PrintMetaChunkTableHeader(bool printChunks)
 		kprintf("chunk        base\n");
 }
 
+/**
+ * @brief Dump the contents of a single meta chunk to the kernel debugger.
+ *
+ * Prints a summary line showing the meta-chunk index, base address, type
+ * (small/medium/large/empty), and used/total chunk counts.  If @p printChunks
+ * is true and the meta chunk is active, also prints one line per allocated
+ * chunk listing its cache pointer, object size, and cache name (or the raw
+ * allocation endpoint for raw chunks).
+ *
+ * @param metaChunk    The meta chunk to dump.
+ * @param printChunks  If true, print individual chunk detail lines.
+ * @param printHeader  If true, print the table column header first.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ void
 MemoryManager::_DumpMetaChunk(MetaChunk* metaChunk, bool printChunks,
 	bool printHeader)
@@ -1924,6 +2399,18 @@ MemoryManager::_DumpMetaChunk(MetaChunk* metaChunk, bool printChunks,
 }
 
 
+/**
+ * @brief Kernel debugger command: dump a single meta chunk by address.
+ *
+ * Parses one address argument and resolves it to a MetaChunk (either a direct
+ * MetaChunk pointer or an arbitrary object address within the area).  Delegates
+ * printing to the internal _DumpMetaChunk() overload.
+ *
+ * @param argc  Must be 2; prints usage and returns 0 otherwise.
+ * @param argv  argv[1] is the meta chunk or object address (decimal or hex).
+ * @return  0 on success, 0 on usage error.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ int
 MemoryManager::_DumpMetaChunk(int argc, char** argv)
 {
@@ -1954,6 +2441,17 @@ MemoryManager::_DumpMetaChunk(int argc, char** argv)
 }
 
 
+/**
+ * @brief Dump all meta chunks from a named MetaChunkList.
+ *
+ * Prints a label line followed by one entry per meta chunk via the internal
+ * _DumpMetaChunk() overload (without header).
+ *
+ * @param name           Label string printed before the list.
+ * @param metaChunkList  The list to iterate.
+ * @param printChunks    Forwarded to the per-chunk dump function.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ void
 MemoryManager::_DumpMetaChunks(const char* name, MetaChunkList& metaChunkList,
 	bool printChunks)
@@ -1967,6 +2465,18 @@ MemoryManager::_DumpMetaChunks(const char* name, MetaChunkList& metaChunkList,
 }
 
 
+/**
+ * @brief Kernel debugger command: list all non-full meta chunks.
+ *
+ * Dumps the free-complete, free-short, partial-small, and partial-medium
+ * meta-chunk lists.  Accepts an optional "-c" flag to also print individual
+ * chunk detail lines within each meta chunk.
+ *
+ * @param argc  Argument count.
+ * @param argv  argv[1] may optionally be "-c" to enable per-chunk output.
+ * @return  Always 0.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ int
 MemoryManager::_DumpMetaChunks(int argc, char** argv)
 {
@@ -1982,6 +2492,18 @@ MemoryManager::_DumpMetaChunks(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump a single slab area by address.
+ *
+ * Accepts an optional "-c" flag followed by an area base or object address.
+ * Resolves the address to an Area and prints all its meta chunks via
+ * _DumpMetaChunk(), including the table header for the first meta chunk.
+ *
+ * @param argc  Argument count; expects 2 (or 3 with "-c").
+ * @param argv  argv: [-c] <address>
+ * @return  0 on success, 0 on usage/parse error.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ int
 MemoryManager::_DumpArea(int argc, char** argv)
 {
@@ -2020,6 +2542,19 @@ MemoryManager::_DumpArea(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: list all active and free slab areas.
+ *
+ * Iterates the area hash table and prints per-area statistics (meta-chunk
+ * usage, small/medium/large chunk counts).  Then lists free areas and prints
+ * aggregate totals for small, medium, and large chunk usage together with
+ * total memory consumed and per-area administrative overhead.
+ *
+ * @param argc  Argument count (unused).
+ * @param argv  Argument vector (unused).
+ * @return  Always 0.
+ * @note Must only be called from the kernel debugger.
+ */
 /*static*/ int
 MemoryManager::_DumpAreas(int argc, char** argv)
 {
@@ -2103,6 +2638,18 @@ MemoryManager::_DumpAreas(int argc, char** argv)
 
 #if SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING
 
+/**
+ * @brief Record a stack-trace entry for a raw allocation.
+ *
+ * Writes the AllocationTrackingInfo trailer that follows the allocation in
+ * memory, associating it with the given kernel trace entry.
+ *
+ * @param allocation  Base address of the allocation.
+ * @param size        Size of the allocation in bytes (used to locate the
+ *                    trailing AllocationTrackingInfo).
+ * @param traceEntry  Pointer to the trace entry captured at allocation time.
+ * @note Only available when SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING is set.
+ */
 void
 MemoryManager::_AddTrackingInfo(void* allocation, size_t size,
 	AbstractTraceEntryWithStackTrace* traceEntry)
@@ -2111,6 +2658,3 @@ MemoryManager::_AddTrackingInfo(void* allocation, size_t size,
 }
 
 #endif // SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING
-
-
-RANGE_MARKER_FUNCTION_END(SlabMemoryManager)

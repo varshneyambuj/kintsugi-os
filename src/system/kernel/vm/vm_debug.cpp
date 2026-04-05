@@ -1,11 +1,41 @@
 /*
- * Copyright 2024, Haiku, Inc. All rights reserved.
- * Copyright 2010-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2024, Haiku, Inc. All rights reserved.
+ *   Copyright 2010-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file vm_debug.cpp
+ * @brief Kernel debugger commands for virtual memory inspection.
+ *
+ * Registers KDL (Kernel Debugger) commands that allow inspection of VM
+ * areas, address spaces, caches, translation maps, and physical pages at
+ * runtime. Used during crash debugging and kernel development.
+ *
+ * @see vm.cpp, VMAddressSpace.cpp
  */
 
 
@@ -35,6 +65,23 @@ static cache_info* sCacheInfoTable;
 #endif	// DEBUG_CACHE_LIST
 
 
+/**
+ * @brief KDL command: display raw memory in various widths.
+ *
+ * Handles the @c dl, @c dw, @c ds, @c db, and @c string KDL commands.
+ * Reads memory from a virtual or physical address and prints it in the
+ * requested unit width (8, 4, 2, or 1 bytes) or as a null-terminated string.
+ * When the @c -p / @c --physical flag is given, the target address is treated
+ * as a physical address; the read is constrained to a single page.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector. argv[0] is the command name; optional
+ *             @c -p/--physical flag may follow; then @c \<address\> and an
+ *             optional @c \<count\>.
+ * @return Always 0.
+ *
+ * @note Safe to call only from the KDL context. Interrupts are disabled.
+ */
 static int
 display_mem(int argc, char** argv)
 {
@@ -207,6 +254,20 @@ display_mem(int argc, char** argv)
 }
 
 
+/**
+ * @brief Recursively prints a VMCache tree at a given indentation level.
+ *
+ * Prints @p cache's address, optionally highlighting it with an arrow if it
+ * equals @p highlightCache, then recurses into each consumer cache with
+ * @p level incremented by one.
+ *
+ * @param cache          The VMCache node to print.
+ * @param level          Current indentation depth (0 = root).
+ * @param highlightCache Cache pointer to annotate with " <--"; may be NULL.
+ *
+ * @note KDL context only. No locks are taken; structure integrity is not
+ *       guaranteed if called outside the debugger.
+ */
 static void
 dump_cache_tree_recursively(VMCache* cache, int level,
 	VMCache* highlightCache)
@@ -227,6 +288,19 @@ dump_cache_tree_recursively(VMCache* cache, int level,
 }
 
 
+/**
+ * @brief KDL command: print the full VMCache ancestry tree for a given cache.
+ *
+ * Walks from the provided cache pointer up to the root source cache, then
+ * dumps the entire tree with dump_cache_tree_recursively(), highlighting the
+ * originally supplied cache.
+ *
+ * @param argc Argument count; must be 2.
+ * @param argv argv[1] is the hex address of the VMCache to inspect.
+ * @return Always 0.
+ *
+ * @note KDL context only. Interrupts are disabled.
+ */
 static int
 dump_cache_tree(int argc, char** argv)
 {
@@ -252,6 +326,14 @@ dump_cache_tree(int argc, char** argv)
 }
 
 
+/**
+ * @brief Converts a VMCache type constant to a human-readable string.
+ *
+ * @param type One of CACHE_TYPE_RAM, CACHE_TYPE_DEVICE, CACHE_TYPE_VNODE,
+ *             or CACHE_TYPE_NULL.
+ * @return Pointer to a static string naming the type, or @c "unknown" for
+ *         unrecognised values.
+ */
 const char*
 vm_cache_type_to_string(int32 type)
 {
@@ -273,6 +355,17 @@ vm_cache_type_to_string(int32 type)
 
 #if DEBUG_CACHE_LIST
 
+/**
+ * @brief Accumulates page and committed-memory counts for a cache subtree.
+ *
+ * Adds @p cache's page_count to @p info.page_count, and (for RAM caches) its
+ * committed size to @p info.committed. Then recurses into every consumer.
+ *
+ * @param cache The root of the cache subtree to accumulate.
+ * @param info  The cache_info structure to update in place.
+ *
+ * @note DEBUG_CACHE_LIST builds only. KDL context.
+ */
 static void
 update_cache_info_recursively(VMCache* cache, cache_info& info)
 {
@@ -288,6 +381,17 @@ update_cache_info_recursively(VMCache* cache, cache_info& info)
 }
 
 
+/**
+ * @brief Comparator for qsort: sorts cache_info entries by descending
+ *        page_count.
+ *
+ * @param _a Pointer to the first cache_info element.
+ * @param _b Pointer to the second cache_info element.
+ * @return Negative if @p _a should come first (larger page_count), positive
+ *         if @p _b should, 0 if equal.
+ *
+ * @note DEBUG_CACHE_LIST builds only.
+ */
 static int
 cache_info_compare_page_count(const void* _a, const void* _b)
 {
@@ -299,6 +403,17 @@ cache_info_compare_page_count(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief Comparator for qsort: sorts cache_info entries by descending
+ *        committed memory.
+ *
+ * @param _a Pointer to the first cache_info element.
+ * @param _b Pointer to the second cache_info element.
+ * @return Negative if @p _a should come first (larger committed), positive
+ *         if @p _b should, 0 if equal.
+ *
+ * @note DEBUG_CACHE_LIST builds only.
+ */
 static int
 cache_info_compare_committed(const void* _a, const void* _b)
 {
@@ -310,6 +425,21 @@ cache_info_compare_committed(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief Recursively prints a VMCache subtree with usage statistics.
+ *
+ * Prints one line per cache node showing its address, type, virtual range,
+ * page count, and (for RAM or top-level caches with non-zero commitment)
+ * committed memory. Area IDs attached to each cache are listed inline.
+ * At the root level (@p level == 0) the totals from @p info are appended.
+ *
+ * @param cache The VMCache node to print.
+ * @param info  Accumulated totals for the root cache tree (used for totals
+ *              display when @p level == 0).
+ * @param level Current indentation depth.
+ *
+ * @note DEBUG_CACHE_LIST builds only. KDL context.
+ */
 static void
 dump_caches_recursively(VMCache* cache, cache_info& info, int level)
 {
@@ -352,6 +482,22 @@ dump_caches_recursively(VMCache* cache, cache_info& info, int level)
 }
 
 
+/**
+ * @brief KDL command: list all VMCache trees sorted by resource usage.
+ *
+ * Iterates gDebugCacheList to collect all root caches, accumulates their
+ * subtree statistics into sCacheInfoTable, sorts by page count (default) or
+ * committed memory (@c -c flag), and prints each root tree using
+ * dump_caches_recursively(). Prints totals at the top.
+ *
+ * @param argc Argument count.
+ * @param argv Optional @c -c flag to sort by committed memory instead of
+ *             page count.
+ * @return Always 0.
+ *
+ * @note DEBUG_CACHE_LIST builds only. Requires sCacheInfoTable to be
+ *       allocated. KDL context only; interrupts are disabled.
+ */
 static int
 dump_caches(int argc, char** argv)
 {
@@ -422,6 +568,22 @@ dump_caches(int argc, char** argv)
 #endif	// DEBUG_CACHE_LIST
 
 
+/**
+ * @brief KDL command: dump a single VMCache's metadata and optionally its
+ *        pages.
+ *
+ * Accepts an optional @c -p flag to print all pages belonging to the cache.
+ * Calls VMCache::Dump() to perform the actual output and sets the KDL
+ * variable @c _sourceCache to the cache's source pointer for further
+ * inspection.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv argv[1] optionally @c -p or @c -s; last argument is the hex
+ *             address of the VMCache.
+ * @return Always 0.
+ *
+ * @note KDL context only. Interrupts are disabled.
+ */
 static int
 dump_cache(int argc, char** argv)
 {
@@ -463,6 +625,21 @@ dump_cache(int argc, char** argv)
 }
 
 
+/**
+ * @brief Prints detailed fields of a VMArea structure to the KDL output.
+ *
+ * Outputs all major fields of @p area: name, owner team, id, base, size,
+ * protection, per-page protections pointer, wiring, memory type, cache
+ * pointer and type, cache offset, and cache list links. If @p mappings is
+ * @c true, lists every vm_page_mapping pointer; otherwise prints the total
+ * mapping count.
+ *
+ * @param area     The VMArea whose fields are printed.
+ * @param mappings If @c true, enumerate all page mappings; otherwise count
+ *                 them.
+ *
+ * @note KDL context only. No locks required (debugger context).
+ */
 static void
 dump_area_struct(VMArea* area, bool mappings)
 {
@@ -500,6 +677,24 @@ dump_area_struct(VMArea* area, bool mappings)
 }
 
 
+/**
+ * @brief KDL command: search for and dump one or more VM areas.
+ *
+ * Supports four lookup modes selectable by keyword prefix:
+ * - @c id      — match by numeric area ID.
+ * - @c contains — match areas whose virtual range contains the address.
+ * - @c name    — match by area name string.
+ * - @c address — interpret the argument as a raw VMArea pointer (no search).
+ *
+ * With @c -m flag, page mappings are printed for each matched area.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv Optional @c -m flag, optional mode keyword, then the search
+ *             value (number or name).
+ * @return Always 0.
+ *
+ * @note KDL context only. Iterates VMAreas global tree without locking.
+ */
 static int
 dump_area(int argc, char** argv)
 {
@@ -567,6 +762,22 @@ dump_area(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command: print a one-line summary of all (or filtered) VM areas.
+ *
+ * Without arguments, lists every area in VMAreas. With one argument, filters
+ * by team ID (if the argument parses as a non-zero integer) or by a substring
+ * of the area name otherwise.
+ *
+ * Output columns: area pointer, area ID, base address, size, protection,
+ * wiring, and name.
+ *
+ * @param argc Argument count.
+ * @param argv Optional single argument: team ID or name substring.
+ * @return Always 0.
+ *
+ * @note KDL context only. Iterates VMAreas without locking.
+ */
 static int
 dump_area_list(int argc, char** argv)
 {
@@ -598,6 +809,18 @@ dump_area_list(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command: print currently available and total physical memory.
+ *
+ * Calls vm_available_memory_debug() and vm_page_num_pages() and prints the
+ * result in a human-readable "available / total bytes" format.
+ *
+ * @param argc Unused.
+ * @param argv Unused.
+ * @return Always 0.
+ *
+ * @note KDL context only. Safe to call without any locks.
+ */
 static int
 dump_available_memory(int argc, char** argv)
 {
@@ -607,6 +830,28 @@ dump_available_memory(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command: print virtual-to-physical (or reverse) mapping info.
+ *
+ * Without flags, looks up the translation-map entry for a virtual address in
+ * the current (or specified) team's address space via
+ * VMTranslationMap::DebugPrintMappingInfo().
+ *
+ * With @c -r, performs a reverse lookup: finds all virtual addresses that map
+ * to the given physical address across all address spaces (or just the one
+ * belonging to the specified thread's team).
+ *
+ * With @c -p, treats the argument as a @c vm_page pointer; derives the
+ * physical address automatically and performs a reverse lookup.
+ *
+ * @param argc Argument count.
+ * @param argv Flags @c -r / @c -p, then @c \<address\>, then optional
+ *             @c \<thread ID\>.
+ * @return Always 0.
+ *
+ * @note KDL context only. No locks are taken. Thread and team lookups use
+ *       debug-only accessors.
+ */
 static int
 dump_mapping_info(int argc, char** argv)
 {
@@ -767,6 +1012,37 @@ dump_mapping_info(int argc, char** argv)
 	\param copyToUnsafe If \c true, memory is copied from \a buffer to
 		\a unsafeMemory, the other way around otherwise.
 */
+/**
+ * @brief Copies memory to/from a potentially unmapped page via the cache chain.
+ *
+ * Resolves the physical page backing @p unsafeMemory by walking the area's
+ * VMCache chain (skipping caches that have paged the offset out to a store),
+ * then uses vm_memcpy_from_physical() or vm_memcpy_to_physical() to perform
+ * the transfer without requiring a virtual mapping.
+ *
+ * @param teamID        Team whose address space @p unsafeMemory belongs to.
+ *                      Use @c B_CURRENT_TEAM for the debugged thread's team.
+ *                      Kernel addresses always use the kernel address space.
+ * @param unsafeMemory  Start of the target/source range. The entire range
+ *                      [@p unsafeMemory, @p unsafeMemory + @p size) must lie
+ *                      within a single page.
+ * @param buffer        Kernel buffer to copy from (if @p copyToUnsafe) or
+ *                      into (if @c false).
+ * @param size          Number of bytes to copy. Must not cause the range to
+ *                      cross a page boundary.
+ * @param copyToUnsafe  @c true to write from @p buffer into the page;
+ *                      @c false to read from the page into @p buffer.
+ * @return @c B_OK on success.
+ * @retval B_BAD_VALUE   if @p size > B_PAGE_SIZE or the range crosses a page
+ *                       boundary.
+ * @retval B_BAD_ADDRESS if the address space or area cannot be found.
+ * @retval B_UNSUPPORTED if the physical page is not found in the cache chain,
+ *                       or if a copy-to is attempted but the page is not in
+ *                       the area's direct cache.
+ *
+ * @note Intended for use from the kernel debugger or low-level debug paths
+ *       where normal virtual-memory access is unsafe.
+ */
 status_t
 vm_debug_copy_page_memory(team_id teamID, void* unsafeMemory, void* buffer,
 	size_t size, bool copyToUnsafe)
@@ -833,6 +1109,23 @@ vm_debug_copy_page_memory(team_id teamID, void* unsafeMemory, void* buffer,
 }
 
 
+/**
+ * @brief Initialises the VM debugger subsystem and registers all KDL commands.
+ *
+ * Optionally allocates the sCacheInfoTable (if sufficient free pages are
+ * available, DEBUG_CACHE_LIST builds only), then registers every VM-related
+ * KDL command:
+ * - @c areas, @c area — area list and detail.
+ * - @c cache, @c cache_tree — VMCache inspection.
+ * - @c caches — sorted cache-tree list (DEBUG_CACHE_LIST only).
+ * - @c avail — available memory.
+ * - @c dl, @c dw, @c ds, @c db, @c string — raw memory display.
+ * - @c mapping — translation-map lookup.
+ *
+ * @note Called once during kernel boot, before the scheduler is running.
+ *       Must be called after the VM subsystem and slab allocator are
+ *       operational.
+ */
 void
 vm_debug_init()
 {

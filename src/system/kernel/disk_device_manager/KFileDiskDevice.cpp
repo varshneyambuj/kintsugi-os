@@ -1,6 +1,36 @@
 /*
- * Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file KFileDiskDevice.cpp
+ * @brief KDiskDevice subclass backed by a regular file instead of a physical device.
+ *
+ * KFileDiskDevice wraps an ordinary file as a virtual disk device, publishing
+ * it through devfs under /dev/disk/virtual/files/<id>/raw.  The geometry is
+ * derived from the file size assuming 512-byte sectors and a single track per
+ * head, scaling the head count to stay within the uint32 cylinder limit for
+ * files larger than roughly 2 TB.
  */
 
 
@@ -22,6 +52,14 @@
 static const char* kFileDevicesDir = "/dev/disk/virtual/files";
 
 
+/**
+ * @brief Constructs a KFileDiskDevice with the given partition/device ID.
+ *
+ * Sets the B_DISK_DEVICE_IS_FILE flag to indicate this is a file-backed
+ * virtual device.
+ *
+ * @param id The partition_id to assign to this device.
+ */
 KFileDiskDevice::KFileDiskDevice(partition_id id)
 	:
 	KDiskDevice(id),
@@ -31,12 +69,30 @@ KFileDiskDevice::KFileDiskDevice(partition_id id)
 }
 
 
+/**
+ * @brief Destructor. Unregisters the devfs entry and frees the file path.
+ */
 KFileDiskDevice::~KFileDiskDevice()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Associates this device with @a filePath and optionally creates a devfs
+ *        entry at @a devicePath.
+ *
+ * If @a devicePath is NULL a new virtual device entry is created under
+ * /dev/disk/virtual/files/<id>/raw.  The file must be a regular file; symbolic
+ * links and block devices are rejected.  After a successful call the device is
+ * fully initialised and ready for use.
+ *
+ * @param filePath   Absolute path to the backing regular file.
+ * @param devicePath Absolute devfs path for the device node, or NULL to auto-
+ *                   create one.
+ * @return B_OK on success, B_BAD_VALUE for invalid paths or non-regular files,
+ *         or another error code on failure.
+ */
 status_t
 KFileDiskDevice::SetTo(const char* filePath, const char* devicePath)
 {
@@ -98,6 +154,12 @@ KFileDiskDevice::SetTo(const char* filePath, const char* devicePath)
 }
 
 
+/**
+ * @brief Unregisters the devfs device entry and resets all state.
+ *
+ * Removes the virtual device node from devfs (if one was created), frees the
+ * stored file path string, and delegates further cleanup to KDiskDevice::Unset().
+ */
 void
 KFileDiskDevice::Unset()
 {
@@ -117,6 +179,11 @@ KFileDiskDevice::Unset()
 }
 
 
+/**
+ * @brief Returns the absolute path of the backing file.
+ * @return NUL-terminated path string, or NULL if the device has not been
+ *         initialised.
+ */
 const char*
 KFileDiskDevice::FilePath() const
 {
@@ -124,6 +191,15 @@ KFileDiskDevice::FilePath() const
 }
 
 
+/**
+ * @brief Checks whether the backing file is accessible and reports media status.
+ *
+ * Sets *mediaStatus to B_OK if the backing file exists and is a regular file,
+ * or to B_DEV_NO_MEDIA otherwise.
+ *
+ * @param mediaStatus Output parameter that receives the media status code.
+ * @return Always returns B_OK.
+ */
 status_t
 KFileDiskDevice::GetMediaStatus(status_t* mediaStatus)
 {
@@ -137,6 +213,17 @@ KFileDiskDevice::GetMediaStatus(status_t* mediaStatus)
 }
 
 
+/**
+ * @brief Computes a synthetic device geometry derived from the backing file size.
+ *
+ * Assumes 512-byte blocks.  The head count is set to the minimum value that
+ * keeps the cylinder count within a uint32, enabling support for files up to
+ * the theoretical maximum (limited by off_t).
+ *
+ * @param geometry Output structure to fill with computed geometry values.
+ * @return B_OK on success, B_BAD_VALUE if the file cannot be stat-ed or is not
+ *         a regular file.
+ */
 status_t
 KFileDiskDevice::GetGeometry(device_geometry* geometry)
 {
@@ -169,6 +256,17 @@ KFileDiskDevice::GetGeometry(device_geometry* geometry)
 }
 
 
+/**
+ * @brief Publishes the backing file as a virtual disk device in devfs.
+ *
+ * Strips the leading "/dev/" prefix from @a device before passing the path to
+ * devfs_publish_file_device().
+ *
+ * @param file   Absolute path to the backing file.
+ * @param device Absolute devfs path for the new device node (must start with
+ *               "/dev/").
+ * @return B_OK on success or an error code from devfs.
+ */
 status_t
 KFileDiskDevice::_RegisterDevice(const char* file, const char* device)
 {
@@ -177,6 +275,16 @@ KFileDiskDevice::_RegisterDevice(const char* file, const char* device)
 }
 
 
+/**
+ * @brief Removes a previously published virtual disk device from devfs.
+ *
+ * Strips the leading "/dev/" prefix from @a _device before passing the path to
+ * devfs_unpublish_file_device().
+ *
+ * @param _device Absolute devfs path of the device node to remove (must start
+ *                with "/dev/").
+ * @return B_OK on success or an error code from devfs.
+ */
 status_t
 KFileDiskDevice::_UnregisterDevice(const char* _device)
 {
@@ -185,6 +293,18 @@ KFileDiskDevice::_UnregisterDevice(const char* _device)
 }
 
 
+/**
+ * @brief Constructs the devfs directory path for the virtual device with the
+ *        given @a id.
+ *
+ * The resulting path is kFileDevicesDir/<id> (e.g.
+ * /dev/disk/virtual/files/42).
+ *
+ * @param id   Partition ID used as the directory name component.
+ * @param path KPath object to receive the constructed directory path.
+ * @return B_OK on success, B_BAD_VALUE if @a path is NULL, or the error from
+ *         KPath operations.
+ */
 status_t
 KFileDiskDevice::_GetDirectoryPath(partition_id id, KPath* path)
 {

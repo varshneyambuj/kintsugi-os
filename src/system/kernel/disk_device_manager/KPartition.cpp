@@ -1,9 +1,40 @@
 /*
- * Copyright 2009, Bryce Groff, bgroff@hawaii.edu.
- * Copyright 2004-2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Bryce Groff, bgroff@hawaii.edu.
+ *   Copyright 2004-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file KPartition.cpp
+ * @brief Kernel representation of a single partition on a disk device.
+ *
+ * KPartition stores the geometry (offset, size, block size), type, name,
+ * content type, parameters, and child partitions. It is the node type in
+ * the partition tree managed by KDiskDeviceManager. Provides the interface
+ * for partitioning system add-ons to create, delete, resize, and move
+ * partition entries.
+ *
+ * @see KDiskDevice.cpp, KDiskDeviceManager.cpp, KPartitioningSystem.cpp
  */
 
 
@@ -53,6 +84,15 @@ struct KPartition::ListenerSet : VectorSet<KPartitionListener*> {};
 int32 KPartition::sNextID = 0;
 
 
+/**
+ * @brief Construct a new KPartition with an optional explicit partition ID.
+ *
+ * Initialises all geometry fields to zero, sets the status to
+ * B_PARTITION_UNRECOGNIZED, marks the partition busy, and assigns a
+ * unique monotonically increasing ID if @p id is negative.
+ *
+ * @param id  Desired partition ID, or a negative value to auto-assign one.
+ */
 KPartition::KPartition(partition_id id)
 	:
 	fPartitionData(),
@@ -91,6 +131,13 @@ KPartition::KPartition(partition_id id)
 }
 
 
+/**
+ * @brief Destroy the KPartition, releasing all owned resources.
+ *
+ * Deletes the listener set, unloads the associated disk system, and frees
+ * all heap-allocated string fields (name, content name, type, parameters,
+ * content parameters).
+ */
 KPartition::~KPartition()
 {
 	delete fListeners;
@@ -103,6 +150,12 @@ KPartition::~KPartition()
 }
 
 
+/**
+ * @brief Increment the reference count of this partition.
+ *
+ * Must be paired with a corresponding call to Unregister(). The partition
+ * will not be deleted by the manager while any references are held.
+ */
 void
 KPartition::Register()
 {
@@ -110,6 +163,13 @@ KPartition::Register()
 }
 
 
+/**
+ * @brief Decrement the reference count and delete the partition if obsolete.
+ *
+ * When the reference count reaches zero and the partition has been marked
+ * obsolete, the KDiskDeviceManager is asked to perform the actual deletion
+ * under the manager lock.
+ */
 void
 KPartition::Unregister()
 {
@@ -123,6 +183,12 @@ KPartition::Unregister()
 }
 
 
+/**
+ * @brief Return the current reference count for this partition.
+ *
+ * @return Number of active Register() calls that have not yet been
+ *         balanced by Unregister().
+ */
 int32
 KPartition::CountReferences() const
 {
@@ -130,6 +196,13 @@ KPartition::CountReferences() const
 }
 
 
+/**
+ * @brief Mark this partition as obsolete so it is deleted when dereferenced.
+ *
+ * @note Once marked obsolete the flag cannot be cleared. The partition will
+ *       be destroyed by KDiskDeviceManager as soon as its reference count
+ *       drops to zero.
+ */
 void
 KPartition::MarkObsolete()
 {
@@ -137,6 +210,11 @@ KPartition::MarkObsolete()
 }
 
 
+/**
+ * @brief Query whether this partition has been marked obsolete.
+ *
+ * @return @c true if MarkObsolete() has been called, @c false otherwise.
+ */
 bool
 KPartition::IsObsolete() const
 {
@@ -144,6 +222,14 @@ KPartition::IsObsolete() const
 }
 
 
+/**
+ * @brief Prepare this partition for removal from the device tree.
+ *
+ * Recursively removes all children, uninitialises content, unpublishes the
+ * devfs node, and frees the partitioning-system and file-system cookies.
+ *
+ * @return @c true on success, @c false if removing a child partition failed.
+ */
 bool
 KPartition::PrepareForRemoval()
 {
@@ -158,6 +244,11 @@ KPartition::PrepareForRemoval()
 }
 
 
+/**
+ * @brief Prepare this partition for deletion (currently a no-op placeholder).
+ *
+ * @return Always @c true.
+ */
 bool
 KPartition::PrepareForDeletion()
 {
@@ -165,6 +256,17 @@ KPartition::PrepareForDeletion()
 }
 
 
+/**
+ * @brief Open the partition's underlying device node with the given flags.
+ *
+ * Resolves the devfs path for this partition and opens it with ::open().
+ *
+ * @param flags  POSIX open flags (e.g. O_RDONLY, O_RDWR).
+ * @param fd     Output parameter that receives the opened file descriptor.
+ * @retval B_OK          File descriptor opened successfully.
+ * @retval B_BAD_VALUE   @p fd is NULL.
+ * @retval errno         The ::open() call failed; the errno value is returned.
+ */
 status_t
 KPartition::Open(int flags, int* fd)
 {
@@ -186,6 +288,17 @@ KPartition::Open(int flags, int* fd)
 }
 
 
+/**
+ * @brief Publish this partition as a node under devfs.
+ *
+ * Constructs a partition_info descriptor and calls devfs_publish_partition().
+ * Does nothing (returns B_OK) if the partition is already published.
+ *
+ * @retval B_OK           Published successfully.
+ * @retval B_NO_MEMORY    Could not duplicate the node name string.
+ * @retval B_NAME_TOO_LONG The device path exceeded the partition_info buffer.
+ * @retval other          Error returned by devfs_publish_partition().
+ */
 status_t
 KPartition::PublishDevice()
 {
@@ -228,6 +341,15 @@ KPartition::PublishDevice()
 }
 
 
+/**
+ * @brief Remove this partition's node from devfs.
+ *
+ * Calls devfs_unpublish_partition() and frees the cached published name.
+ * Does nothing (returns B_OK) if the partition is not currently published.
+ *
+ * @retval B_OK    Unpublished successfully (or was not published).
+ * @retval other   Error returned by devfs_unpublish_partition().
+ */
 status_t
 KPartition::UnpublishDevice()
 {
@@ -256,6 +378,17 @@ KPartition::UnpublishDevice()
 }
 
 
+/**
+ * @brief Re-publish this partition under its current file name if it changed.
+ *
+ * Recursively republishes children first, then calls devfs_rename_partition()
+ * if the stored published name differs from the name computed by GetFileName().
+ * If the rename fails the partition is fully unpublished.
+ *
+ * @retval B_OK           The name is up to date or was renamed successfully.
+ * @retval B_NO_MEMORY    Could not allocate the new name string.
+ * @retval other          Error returned by devfs_rename_partition().
+ */
 status_t
 KPartition::RepublishDevice()
 {
@@ -298,6 +431,12 @@ KPartition::RepublishDevice()
 }
 
 
+/**
+ * @brief Query whether this partition currently has a devfs node.
+ *
+ * @return @c true if PublishDevice() has succeeded and UnpublishDevice() has
+ *         not been called since; @c false otherwise.
+ */
 bool
 KPartition::IsPublished() const
 {
@@ -305,6 +444,11 @@ KPartition::IsPublished() const
 }
 
 
+/**
+ * @brief Set or clear the B_PARTITION_BUSY flag on this partition.
+ *
+ * @param busy  @c true to add the busy flag, @c false to clear it.
+ */
 void
 KPartition::SetBusy(bool busy)
 {
@@ -315,6 +459,11 @@ KPartition::SetBusy(bool busy)
 }
 
 
+/**
+ * @brief Query whether the B_PARTITION_BUSY flag is set on this partition.
+ *
+ * @return @c true if the partition is currently busy.
+ */
 bool
 KPartition::IsBusy() const
 {
@@ -322,6 +471,15 @@ KPartition::IsBusy() const
 }
 
 
+/**
+ * @brief Query whether this partition (and optionally its descendants) is busy.
+ *
+ * When @p includeDescendants is @c true the entire sub-tree is visited; if any
+ * node is busy the method returns @c true immediately.
+ *
+ * @param includeDescendants  If @c true, also check all descendant partitions.
+ * @return @c true if at least one checked partition has the busy flag set.
+ */
 bool
 KPartition::IsBusy(bool includeDescendants)
 {
@@ -339,6 +497,17 @@ KPartition::IsBusy(bool includeDescendants)
 }
 
 
+/**
+ * @brief Atomically check that no partition in scope is busy and mark them busy.
+ *
+ * If any partition in the checked scope is already busy the method returns
+ * @c false without modifying any flags. Otherwise all partitions in scope are
+ * marked busy.
+ *
+ * @param includeDescendants  Extend the check and mark to the whole sub-tree.
+ * @return @c true if the busy flag was successfully acquired; @c false if any
+ *         partition was already busy.
+ */
 bool
 KPartition::CheckAndMarkBusy(bool includeDescendants)
 {
@@ -351,6 +520,11 @@ KPartition::CheckAndMarkBusy(bool includeDescendants)
 }
 
 
+/**
+ * @brief Set the B_PARTITION_BUSY flag on this partition and optionally descendants.
+ *
+ * @param includeDescendants  If @c true, mark all descendant partitions busy as well.
+ */
 void
 KPartition::MarkBusy(bool includeDescendants)
 {
@@ -369,6 +543,11 @@ KPartition::MarkBusy(bool includeDescendants)
 }
 
 
+/**
+ * @brief Clear the B_PARTITION_BUSY flag on this partition and optionally descendants.
+ *
+ * @param includeDescendants  If @c true, unmark all descendant partitions as well.
+ */
 void
 KPartition::UnmarkBusy(bool includeDescendants)
 {
@@ -387,6 +566,14 @@ KPartition::UnmarkBusy(bool includeDescendants)
 }
 
 
+/**
+ * @brief Set the byte offset of this partition from the beginning of the device.
+ *
+ * Fires an OffsetChanged notification to all registered listeners if the
+ * value actually changes.
+ *
+ * @param offset  New byte offset from device start.
+ */
 void
 KPartition::SetOffset(off_t offset)
 {
@@ -397,6 +584,11 @@ KPartition::SetOffset(off_t offset)
 }
 
 
+/**
+ * @brief Return the byte offset of this partition from the beginning of the device.
+ *
+ * @return Partition start offset in bytes.
+ */
 off_t
 KPartition::Offset() const
 {
@@ -404,6 +596,14 @@ KPartition::Offset() const
 }
 
 
+/**
+ * @brief Set the total size of this partition in bytes.
+ *
+ * Fires a SizeChanged notification to all registered listeners if the value
+ * actually changes.
+ *
+ * @param size  New partition size in bytes.
+ */
 void
 KPartition::SetSize(off_t size)
 {
@@ -414,6 +614,11 @@ KPartition::SetSize(off_t size)
 }
 
 
+/**
+ * @brief Return the total size of this partition in bytes.
+ *
+ * @return Partition size in bytes.
+ */
 off_t
 KPartition::Size() const
 {
@@ -421,6 +626,14 @@ KPartition::Size() const
 }
 
 
+/**
+ * @brief Set the usable content size reported by the disk system.
+ *
+ * Fires a ContentSizeChanged notification to all registered listeners if the
+ * value actually changes.
+ *
+ * @param size  New content size in bytes.
+ */
 void
 KPartition::SetContentSize(off_t size)
 {
@@ -431,6 +644,11 @@ KPartition::SetContentSize(off_t size)
 }
 
 
+/**
+ * @brief Return the usable content size of this partition in bytes.
+ *
+ * @return Content size in bytes as reported by the owning disk system.
+ */
 off_t
 KPartition::ContentSize() const
 {
@@ -438,6 +656,14 @@ KPartition::ContentSize() const
 }
 
 
+/**
+ * @brief Set the logical block size for this partition.
+ *
+ * Fires a BlockSizeChanged notification to all registered listeners if the
+ * value actually changes.
+ *
+ * @param blockSize  New logical block size in bytes.
+ */
 void
 KPartition::SetBlockSize(uint32 blockSize)
 {
@@ -448,6 +674,11 @@ KPartition::SetBlockSize(uint32 blockSize)
 }
 
 
+/**
+ * @brief Return the logical block size of this partition.
+ *
+ * @return Logical block size in bytes.
+ */
 uint32
 KPartition::BlockSize() const
 {
@@ -455,6 +686,14 @@ KPartition::BlockSize() const
 }
 
 
+/**
+ * @brief Return the physical block size of the underlying storage medium.
+ *
+ * The physical block size may differ from the logical block size for
+ * Advanced Format (4K-native) drives.
+ *
+ * @return Physical block size in bytes.
+ */
 uint32
 KPartition::PhysicalBlockSize() const
 {
@@ -462,6 +701,14 @@ KPartition::PhysicalBlockSize() const
 }
 
 
+/**
+ * @brief Set the physical block size of the underlying storage medium.
+ *
+ * Does not fire a change notification; callers that need listener
+ * notifications should fire them manually after calling this method.
+ *
+ * @param blockSize  New physical block size in bytes.
+ */
 void
 KPartition::SetPhysicalBlockSize(uint32 blockSize)
 {
@@ -470,6 +717,14 @@ KPartition::SetPhysicalBlockSize(uint32 blockSize)
 }
 
 
+/**
+ * @brief Set the zero-based index of this partition within its parent.
+ *
+ * Fires an IndexChanged notification to all registered listeners if the
+ * value actually changes.
+ *
+ * @param index  New zero-based sibling index.
+ */
 void
 KPartition::SetIndex(int32 index)
 {
@@ -480,6 +735,11 @@ KPartition::SetIndex(int32 index)
 }
 
 
+/**
+ * @brief Return the zero-based index of this partition within its parent.
+ *
+ * @return Sibling index, or -1 if the partition has no parent.
+ */
 int32
 KPartition::Index() const
 {
@@ -487,6 +747,16 @@ KPartition::Index() const
 }
 
 
+/**
+ * @brief Set the recognition status of this partition.
+ *
+ * Fires a StatusChanged notification to all registered listeners if the
+ * value actually changes.
+ *
+ * @param status  One of the B_PARTITION_* status constants
+ *                (e.g. B_PARTITION_UNRECOGNIZED, B_PARTITION_UNINITIALIZED,
+ *                B_PARTITION_OK).
+ */
 void
 KPartition::SetStatus(uint32 status)
 {
@@ -497,6 +767,11 @@ KPartition::SetStatus(uint32 status)
 }
 
 
+/**
+ * @brief Return the current recognition status of this partition.
+ *
+ * @return One of the B_PARTITION_* status constants.
+ */
 uint32
 KPartition::Status() const
 {
@@ -504,6 +779,11 @@ KPartition::Status() const
 }
 
 
+/**
+ * @brief Query whether this partition has status B_PARTITION_UNINITIALIZED.
+ *
+ * @return @c true if no disk system has initialised this partition's content.
+ */
 bool
 KPartition::IsUninitialized() const
 {
@@ -511,6 +791,14 @@ KPartition::IsUninitialized() const
 }
 
 
+/**
+ * @brief Replace the complete flags word for this partition.
+ *
+ * Fires a FlagsChanged notification to all registered listeners if the
+ * value actually changes.
+ *
+ * @param flags  New flags bitmask (combination of B_PARTITION_* flags).
+ */
 void
 KPartition::SetFlags(uint32 flags)
 {
@@ -521,6 +809,13 @@ KPartition::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Set one or more flag bits without clearing others.
+ *
+ * Fires a FlagsChanged notification only if at least one new bit is added.
+ *
+ * @param flags  Bitmask of flag bits to add.
+ */
 void
 KPartition::AddFlags(uint32 flags)
 {
@@ -531,6 +826,13 @@ KPartition::AddFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Clear one or more flag bits without affecting others.
+ *
+ * Fires a FlagsChanged notification only if at least one bit is actually cleared.
+ *
+ * @param flags  Bitmask of flag bits to clear.
+ */
 void
 KPartition::ClearFlags(uint32 flags)
 {
@@ -541,6 +843,11 @@ KPartition::ClearFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Return the current flags bitmask for this partition.
+ *
+ * @return Combination of B_PARTITION_* flag constants.
+ */
 uint32
 KPartition::Flags() const
 {
@@ -548,6 +855,11 @@ KPartition::Flags() const
 }
 
 
+/**
+ * @brief Query whether this partition contains a recognised file system.
+ *
+ * @return @c true if B_PARTITION_FILE_SYSTEM is set.
+ */
 bool
 KPartition::ContainsFileSystem() const
 {
@@ -555,6 +867,11 @@ KPartition::ContainsFileSystem() const
 }
 
 
+/**
+ * @brief Query whether this partition contains a partitioning system.
+ *
+ * @return @c true if B_PARTITION_PARTITIONING_SYSTEM is set.
+ */
 bool
 KPartition::ContainsPartitioningSystem() const
 {
@@ -562,6 +879,12 @@ KPartition::ContainsPartitioningSystem() const
 }
 
 
+/**
+ * @brief Query whether this partition is read-only.
+ *
+ * @return @c true if B_PARTITION_READ_ONLY is set, for example because the
+ *         underlying media is write-protected.
+ */
 bool
 KPartition::IsReadOnly() const
 {
@@ -569,6 +892,11 @@ KPartition::IsReadOnly() const
 }
 
 
+/**
+ * @brief Query whether this partition is currently mounted as a volume.
+ *
+ * @return @c true if B_PARTITION_MOUNTED is set (i.e. VolumeID() >= 0).
+ */
 bool
 KPartition::IsMounted() const
 {
@@ -576,6 +904,14 @@ KPartition::IsMounted() const
 }
 
 
+/**
+ * @brief Query whether any descendant partition is currently mounted.
+ *
+ * Walks the entire sub-tree with a visitor that stops at the first mounted
+ * descendant found.
+ *
+ * @return @c true if at least one descendant partition has the mounted flag set.
+ */
 bool
 KPartition::IsChildMounted()
 {
@@ -590,6 +926,11 @@ KPartition::IsChildMounted()
 }
 
 
+/**
+ * @brief Query whether this object represents the raw disk device itself.
+ *
+ * @return @c true if B_PARTITION_IS_DEVICE is set.
+ */
 bool
 KPartition::IsDevice() const
 {
@@ -597,6 +938,16 @@ KPartition::IsDevice() const
 }
 
 
+/**
+ * @brief Set the human-readable name of this partition entry.
+ *
+ * The name is typically assigned by the partitioning scheme (e.g. GPT
+ * partition name). Fires a NameChanged notification to all listeners.
+ *
+ * @param name  New NUL-terminated name string, or NULL to clear.
+ * @retval B_OK        Name updated successfully.
+ * @retval B_NO_MEMORY Heap allocation for the string copy failed.
+ */
 status_t
 KPartition::SetName(const char* name)
 {
@@ -606,6 +957,11 @@ KPartition::SetName(const char* name)
 }
 
 
+/**
+ * @brief Return the human-readable name of this partition entry.
+ *
+ * @return NUL-terminated name string, or NULL if not set.
+ */
 const char*
 KPartition::Name() const
 {
@@ -613,6 +969,15 @@ KPartition::Name() const
 }
 
 
+/**
+ * @brief Set the content (volume) name reported by the disk system.
+ *
+ * Fires a ContentNameChanged notification to all listeners.
+ *
+ * @param name  New NUL-terminated content name, or NULL to clear.
+ * @retval B_OK        Name updated successfully.
+ * @retval B_NO_MEMORY Heap allocation for the string copy failed.
+ */
 status_t
 KPartition::SetContentName(const char* name)
 {
@@ -622,6 +987,11 @@ KPartition::SetContentName(const char* name)
 }
 
 
+/**
+ * @brief Return the content (volume) name reported by the disk system.
+ *
+ * @return NUL-terminated content name string, or NULL if not set.
+ */
 const char*
 KPartition::ContentName() const
 {
@@ -629,6 +999,15 @@ KPartition::ContentName() const
 }
 
 
+/**
+ * @brief Set the partition type string (e.g. a GUID or MBR type code string).
+ *
+ * Fires a TypeChanged notification to all listeners.
+ *
+ * @param type  New NUL-terminated type string, or NULL to clear.
+ * @retval B_OK        Type updated successfully.
+ * @retval B_NO_MEMORY Heap allocation for the string copy failed.
+ */
 status_t
 KPartition::SetType(const char* type)
 {
@@ -638,6 +1017,11 @@ KPartition::SetType(const char* type)
 }
 
 
+/**
+ * @brief Return the partition type string.
+ *
+ * @return NUL-terminated type string, or NULL if not set.
+ */
 const char*
 KPartition::Type() const
 {
@@ -645,6 +1029,14 @@ KPartition::Type() const
 }
 
 
+/**
+ * @brief Return the content type MIME string supplied by the disk system.
+ *
+ * Unlike Type(), this is set automatically when a disk system is associated
+ * and reflects the detected file-system or partitioning-system identifier.
+ *
+ * @return NUL-terminated content type string, or NULL if no disk system is set.
+ */
 const char*
 KPartition::ContentType() const
 {
@@ -652,6 +1044,13 @@ KPartition::ContentType() const
 }
 
 
+/**
+ * @brief Return a mutable pointer to the raw partition_data structure.
+ *
+ * Intended for use by disk-system add-ons that need direct field access.
+ *
+ * @return Pointer to the internal partition_data.
+ */
 partition_data*
 KPartition::PartitionData()
 {
@@ -659,6 +1058,11 @@ KPartition::PartitionData()
 }
 
 
+/**
+ * @brief Return a read-only pointer to the raw partition_data structure.
+ *
+ * @return Const pointer to the internal partition_data.
+ */
 const partition_data*
 KPartition::PartitionData() const
 {
@@ -666,6 +1070,14 @@ KPartition::PartitionData() const
 }
 
 
+/**
+ * @brief Assign a new partition ID and notify listeners.
+ *
+ * Fires an IDChanged notification to all registered listeners if the value
+ * actually changes.
+ *
+ * @param id  New partition_id value.
+ */
 void
 KPartition::SetID(partition_id id)
 {
@@ -676,6 +1088,11 @@ KPartition::SetID(partition_id id)
 }
 
 
+/**
+ * @brief Return the unique numeric identifier of this partition.
+ *
+ * @return Partition ID as assigned at construction time or via SetID().
+ */
 partition_id
 KPartition::ID() const
 {
@@ -683,6 +1100,18 @@ KPartition::ID() const
 }
 
 
+/**
+ * @brief Build the leaf file name of this partition as it appears in devfs.
+ *
+ * For a direct child of the device the name is simply the decimal index.
+ * For deeper partitions the parent name is prepended with an underscore
+ * separator (e.g. "0_1" for the second child of partition 0).
+ *
+ * @param buffer  Output buffer to receive the NUL-terminated name.
+ * @param size    Size of @p buffer in bytes.
+ * @retval B_OK           Name written successfully.
+ * @retval B_NAME_TOO_LONG The generated name did not fit in @p buffer.
+ */
 status_t
 KPartition::GetFileName(char* buffer, size_t size) const
 {
@@ -706,6 +1135,17 @@ KPartition::GetFileName(char* buffer, size_t size) const
 }
 
 
+/**
+ * @brief Compute the full devfs path for this partition.
+ *
+ * Initialises @p path with the parent device path and replaces the leaf
+ * component with the name returned by GetFileName().
+ *
+ * @param path  Output KPath object to receive the full path.
+ * @retval B_OK         Path computed successfully.
+ * @retval B_BAD_VALUE  @p path is NULL, uninitialised, or Parent()/Index() invalid.
+ * @retval other        Error from KPath::SetPath(), GetFileName(), or ReplaceLeaf().
+ */
 status_t
 KPartition::GetPath(KPath* path) const
 {
@@ -729,6 +1169,18 @@ KPartition::GetPath(KPath* path) const
 }
 
 
+/**
+ * @brief Suggest a suitable VFS mount point path for this partition's volume.
+ *
+ * Uses the content name, falling back to the partition name, then
+ * "unnamed volume". Slashes in the name are replaced with dashes.
+ * Appends a numeric suffix if the path already exists in the filesystem.
+ *
+ * @param mountPoint  Output KPath object to receive the suggested path.
+ * @retval B_OK        Mount point path written successfully.
+ * @retval B_BAD_VALUE @p mountPoint is NULL or the partition has no file system.
+ * @retval B_NO_MEMORY Heap allocation for the path buffer failed.
+ */
 status_t
 KPartition::GetMountPoint(KPath* mountPoint) const
 {
@@ -775,6 +1227,16 @@ KPartition::GetMountPoint(KPath* mountPoint) const
 }
 
 
+/**
+ * @brief Associate or dissociate a mounted VFS volume with this partition.
+ *
+ * Stores the volume ID, updates the B_PARTITION_MOUNTED flag accordingly,
+ * and broadcasts a B_DEVICE_PARTITION_MOUNTED or B_DEVICE_PARTITION_UNMOUNTED
+ * notification through KDiskDeviceManager.
+ *
+ * @param volumeID  The dev_t of the newly mounted volume, or -1 to mark as
+ *                  unmounted.
+ */
 void
 KPartition::SetVolumeID(dev_t volumeID)
 {
@@ -803,6 +1265,11 @@ KPartition::SetVolumeID(dev_t volumeID)
 }
 
 
+/**
+ * @brief Return the dev_t of the VFS volume mounted on this partition.
+ *
+ * @return A valid dev_t if the partition is mounted, or -1 if unmounted.
+ */
 dev_t
 KPartition::VolumeID() const
 {
@@ -810,6 +1277,16 @@ KPartition::VolumeID() const
 }
 
 
+/**
+ * @brief Set the raw parameters string for this partition entry.
+ *
+ * The parameters string is an opaque, disk-system-defined configuration
+ * payload. Fires a ParametersChanged notification to all listeners.
+ *
+ * @param parameters  New NUL-terminated parameters string, or NULL to clear.
+ * @retval B_OK        Updated successfully.
+ * @retval B_NO_MEMORY Heap allocation for the string copy failed.
+ */
 status_t
 KPartition::SetParameters(const char* parameters)
 {
@@ -819,6 +1296,11 @@ KPartition::SetParameters(const char* parameters)
 }
 
 
+/**
+ * @brief Return the raw parameters string for this partition entry.
+ *
+ * @return NUL-terminated parameters string, or NULL if not set.
+ */
 const char*
 KPartition::Parameters() const
 {
@@ -826,6 +1308,15 @@ KPartition::Parameters() const
 }
 
 
+/**
+ * @brief Set the content parameters string supplied by the content disk system.
+ *
+ * Fires a ContentParametersChanged notification to all listeners.
+ *
+ * @param parameters  New NUL-terminated content parameters string, or NULL.
+ * @retval B_OK        Updated successfully.
+ * @retval B_NO_MEMORY Heap allocation for the string copy failed.
+ */
 status_t
 KPartition::SetContentParameters(const char* parameters)
 {
@@ -835,6 +1326,11 @@ KPartition::SetContentParameters(const char* parameters)
 }
 
 
+/**
+ * @brief Return the content parameters string supplied by the content disk system.
+ *
+ * @return NUL-terminated content parameters string, or NULL if not set.
+ */
 const char*
 KPartition::ContentParameters() const
 {
@@ -842,6 +1338,13 @@ KPartition::ContentParameters() const
 }
 
 
+/**
+ * @brief Bind this partition to its owning KDiskDevice.
+ *
+ * Also sets B_PARTITION_READ_ONLY if the device media is read-only.
+ *
+ * @param device  Pointer to the owning KDiskDevice, or NULL to detach.
+ */
 void
 KPartition::SetDevice(KDiskDevice* device)
 {
@@ -851,6 +1354,11 @@ KPartition::SetDevice(KDiskDevice* device)
 }
 
 
+/**
+ * @brief Return the KDiskDevice that owns this partition.
+ *
+ * @return Pointer to the owning KDiskDevice, or NULL if detached.
+ */
 KDiskDevice*
 KPartition::Device() const
 {
@@ -858,6 +1366,12 @@ KPartition::Device() const
 }
 
 
+/**
+ * @brief Return the direct parent partition of this partition.
+ *
+ * @return Pointer to the parent KPartition, or NULL if this partition is
+ *         a direct child of the device (or unattached).
+ */
 KPartition*
 KPartition::Parent() const
 {
@@ -865,6 +1379,19 @@ KPartition::Parent() const
 }
 
 
+/**
+ * @brief Insert a child partition at the given index.
+ *
+ * Registers the child with KDiskDeviceManager, updates sibling indices,
+ * publishes the partition to devfs, and fires a ChildAdded notification.
+ *
+ * @param partition  The KPartition to add; must not be NULL.
+ * @param index      Zero-based insertion index, or -1 to append.
+ * @retval B_OK         Child added successfully.
+ * @retval B_BAD_VALUE  @p index is out of range or @p partition is NULL.
+ * @retval B_NO_MEMORY  Manager could not register the new partition.
+ * @retval B_ERROR      Could not acquire the manager lock.
+ */
 status_t
 KPartition::AddChild(KPartition* partition, int32 index)
 {
@@ -905,6 +1432,21 @@ KPartition::AddChild(KPartition* partition, int32 index)
 }
 
 
+/**
+ * @brief Allocate a new KPartition and add it as a child at the given index.
+ *
+ * Combines allocation, geometry initialisation, and AddChild() in one call.
+ *
+ * @param id      Desired partition ID, or a negative value to auto-assign.
+ * @param index   Zero-based insertion index, or -1 to append.
+ * @param offset  Byte offset of the new partition from the device start.
+ * @param size    Size of the new partition in bytes.
+ * @param _child  Optional output pointer that receives the new KPartition.
+ * @retval B_OK        Child created and added successfully.
+ * @retval B_BAD_VALUE @p index is out of range.
+ * @retval B_NO_MEMORY Allocation of the KPartition object failed.
+ * @retval other       Error forwarded from AddChild().
+ */
 status_t
 KPartition::CreateChild(partition_id id, int32 index, off_t offset, off_t size,
 	KPartition** _child)
@@ -936,6 +1478,16 @@ KPartition::CreateChild(partition_id id, int32 index, off_t offset, off_t size,
 }
 
 
+/**
+ * @brief Remove the child at the given index from this partition.
+ *
+ * Unregisters the child from KDiskDeviceManager, repairs sibling indices,
+ * detaches parent/device pointers, and fires a ChildRemoved notification.
+ *
+ * @param index  Zero-based index of the child to remove.
+ * @return @c true on success; @c false if @p index is out of range or the
+ *         manager lock could not be acquired.
+ */
 bool
 KPartition::RemoveChild(int32 index)
 {
@@ -963,6 +1515,14 @@ KPartition::RemoveChild(int32 index)
 }
 
 
+/**
+ * @brief Remove a specific child partition by pointer.
+ *
+ * Looks up the child's index and delegates to RemoveChild(int32).
+ *
+ * @param child  Pointer to the child KPartition to remove.
+ * @return @c true on success; @c false if @p child is NULL or not found.
+ */
 bool
 KPartition::RemoveChild(KPartition* child)
 {
@@ -975,6 +1535,12 @@ KPartition::RemoveChild(KPartition* child)
 }
 
 
+/**
+ * @brief Remove all direct children of this partition in reverse index order.
+ *
+ * @return @c true if all children were removed successfully; @c false if any
+ *         individual removal failed.
+ */
 bool
 KPartition::RemoveAllChildren()
 {
@@ -987,6 +1553,12 @@ KPartition::RemoveAllChildren()
 }
 
 
+/**
+ * @brief Return the child partition at the given index.
+ *
+ * @param index  Zero-based child index.
+ * @return Pointer to the child KPartition, or NULL if @p index is out of range.
+ */
 KPartition*
 KPartition::ChildAt(int32 index) const
 {
@@ -995,6 +1567,11 @@ KPartition::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Return the number of direct children of this partition.
+ *
+ * @return Direct child count.
+ */
 int32
 KPartition::CountChildren() const
 {
@@ -1002,6 +1579,11 @@ KPartition::CountChildren() const
 }
 
 
+/**
+ * @brief Return the total number of partitions in this sub-tree, including self.
+ *
+ * @return One plus the recursive descendant count of all children.
+ */
 int32
 KPartition::CountDescendants() const
 {
@@ -1012,6 +1594,17 @@ KPartition::CountDescendants() const
 }
 
 
+/**
+ * @brief Walk the entire descendant sub-tree with a KPartitionVisitor.
+ *
+ * Performs a pre-order/post-order depth-first traversal. The walk stops
+ * early and returns the current partition if the visitor returns @c true
+ * from either VisitPre() or VisitPost().
+ *
+ * @param visitor  Pointer to the visitor object; must not be NULL.
+ * @return The first partition for which the visitor returned @c true, or
+ *         NULL if the traversal completed without early termination.
+ */
 KPartition*
 KPartition::VisitEachDescendant(KPartitionVisitor* visitor)
 {
@@ -1029,6 +1622,16 @@ KPartition::VisitEachDescendant(KPartitionVisitor* visitor)
 }
 
 
+/**
+ * @brief Associate a KDiskSystem (file system or partitioning system) with this partition.
+ *
+ * Unloads any previously associated disk system, loads the new one, updates
+ * the content_type field and the file-system / partitioning-system flags, and
+ * fires DiskSystemChanged and B_DEVICE_PARTITION_INITIALIZED notifications.
+ *
+ * @param diskSystem  Pointer to the KDiskSystem to associate, or NULL to clear.
+ * @param priority    Recognition priority reported by the disk system scanner.
+ */
 void
 KPartition::SetDiskSystem(KDiskSystem* diskSystem, float priority)
 {
@@ -1069,6 +1672,11 @@ KPartition::SetDiskSystem(KDiskSystem* diskSystem, float priority)
 }
 
 
+/**
+ * @brief Return the KDiskSystem currently associated with this partition's content.
+ *
+ * @return Pointer to the associated KDiskSystem, or NULL if none is set.
+ */
 KDiskSystem*
 KPartition::DiskSystem() const
 {
@@ -1076,6 +1684,14 @@ KPartition::DiskSystem() const
 }
 
 
+/**
+ * @brief Return the recognition priority of the currently associated disk system.
+ *
+ * A higher value means the disk system was more confident during scanning.
+ *
+ * @return Priority value passed to the last SetDiskSystem() call, or -1 if
+ *         no disk system is associated.
+ */
 float
 KPartition::DiskSystemPriority() const
 {
@@ -1083,6 +1699,14 @@ KPartition::DiskSystemPriority() const
 }
 
 
+/**
+ * @brief Return the disk system of the parent partition.
+ *
+ * Convenience wrapper that returns Parent()->DiskSystem() safely.
+ *
+ * @return Pointer to the parent's KDiskSystem, or NULL if there is no parent
+ *         or the parent has no disk system.
+ */
 KDiskSystem*
 KPartition::ParentDiskSystem() const
 {
@@ -1090,6 +1714,13 @@ KPartition::ParentDiskSystem() const
 }
 
 
+/**
+ * @brief Set the opaque cookie stored by the parent disk system for this entry.
+ *
+ * Fires a CookieChanged notification to all listeners if the value changes.
+ *
+ * @param cookie  New cookie value; may be NULL.
+ */
 void
 KPartition::SetCookie(void* cookie)
 {
@@ -1100,6 +1731,11 @@ KPartition::SetCookie(void* cookie)
 }
 
 
+/**
+ * @brief Return the opaque cookie stored by the parent disk system.
+ *
+ * @return Cookie pointer, or NULL if not set.
+ */
 void*
 KPartition::Cookie() const
 {
@@ -1107,6 +1743,13 @@ KPartition::Cookie() const
 }
 
 
+/**
+ * @brief Set the opaque cookie stored by the content disk system.
+ *
+ * Fires a ContentCookieChanged notification to all listeners if the value changes.
+ *
+ * @param cookie  New content cookie value; may be NULL.
+ */
 void
 KPartition::SetContentCookie(void* cookie)
 {
@@ -1117,6 +1760,11 @@ KPartition::SetContentCookie(void* cookie)
 }
 
 
+/**
+ * @brief Return the opaque cookie stored by the content disk system.
+ *
+ * @return Content cookie pointer, or NULL if not set.
+ */
 void*
 KPartition::ContentCookie() const
 {
@@ -1124,6 +1772,15 @@ KPartition::ContentCookie() const
 }
 
 
+/**
+ * @brief Register a KPartitionListener to receive change notifications.
+ *
+ * The listener set is created lazily on first use.
+ *
+ * @param listener  Non-NULL pointer to the listener to add.
+ * @return @c true if the listener was added; @c false if @p listener is NULL
+ *         or heap allocation for the set failed.
+ */
 bool
 KPartition::AddListener(KPartitionListener* listener)
 {
@@ -1140,6 +1797,14 @@ KPartition::AddListener(KPartitionListener* listener)
 }
 
 
+/**
+ * @brief Unregister a previously added KPartitionListener.
+ *
+ * If the listener set becomes empty after removal it is deleted.
+ *
+ * @param listener  Pointer to the listener to remove.
+ * @return @c true if the listener was found and removed; @c false otherwise.
+ */
 bool
 KPartition::RemoveListener(KPartitionListener* listener)
 {
@@ -1155,6 +1820,15 @@ KPartition::RemoveListener(KPartitionListener* listener)
 }
 
 
+/**
+ * @brief Record that one or more properties of this partition have changed.
+ *
+ * Sets or clears bits in the change-flags word, increments the change counter,
+ * and propagates B_PARTITION_CHANGED_DESCENDANTS up to the parent.
+ *
+ * @param flags       Bitmask of B_PARTITION_CHANGED_* bits to add.
+ * @param clearFlags  Bitmask of B_PARTITION_CHANGED_* bits to clear first.
+ */
 void
 KPartition::Changed(uint32 flags, uint32 clearFlags)
 {
@@ -1166,6 +1840,11 @@ KPartition::Changed(uint32 flags, uint32 clearFlags)
 }
 
 
+/**
+ * @brief Overwrite the entire change-flags word.
+ *
+ * @param flags  New change-flags bitmask.
+ */
 void
 KPartition::SetChangeFlags(uint32 flags)
 {
@@ -1173,6 +1852,11 @@ KPartition::SetChangeFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Return the current change-flags bitmask.
+ *
+ * @return Combination of B_PARTITION_CHANGED_* bits set since the last reset.
+ */
 uint32
 KPartition::ChangeFlags() const
 {
@@ -1180,6 +1864,14 @@ KPartition::ChangeFlags() const
 }
 
 
+/**
+ * @brief Return the monotonically increasing change counter.
+ *
+ * The counter is incremented on every call to Changed() and can be used by
+ * user-space clients to detect whether the partition has been modified.
+ *
+ * @return Current change counter value.
+ */
 int32
 KPartition::ChangeCounter() const
 {
@@ -1187,6 +1879,21 @@ KPartition::ChangeCounter() const
 }
 
 
+/**
+ * @brief Strip content-related state from this partition and reset it to uninitialized.
+ *
+ * Removes all children, force-unmounts any mounted volume, clears content
+ * name, content parameters, content size, and block size, unloads the disk
+ * system, resets the status to B_PARTITION_UNINITIALIZED, and clears
+ * file-system/partitioning-system flags. Optionally records all changes via
+ * Changed().
+ *
+ * @param logChanges  If @c true, call Changed() with the accumulated flags
+ *                    so the change is visible to user-space.
+ * @retval B_OK     Contents uninitialised successfully.
+ * @retval B_ERROR  Removing a child partition failed.
+ * @retval other    Error from vfs_unmount().
+ */
 status_t
 KPartition::UninitializeContents(bool logChanges)
 {
@@ -1263,6 +1970,14 @@ KPartition::UninitializeContents(bool logChanges)
 }
 
 
+/**
+ * @brief Store an arbitrary 32-bit value for use by scanning algorithms.
+ *
+ * This field is not persisted and is intended as scratch space during
+ * partition scanning passes.
+ *
+ * @param data  Value to store.
+ */
 void
 KPartition::SetAlgorithmData(uint32 data)
 {
@@ -1270,6 +1985,11 @@ KPartition::SetAlgorithmData(uint32 data)
 }
 
 
+/**
+ * @brief Return the algorithm scratch data previously stored with SetAlgorithmData().
+ *
+ * @return The stored 32-bit value (default zero).
+ */
 uint32
 KPartition::AlgorithmData() const
 {
@@ -1277,6 +1997,19 @@ KPartition::AlgorithmData() const
 }
 
 
+/**
+ * @brief Serialise this partition and its children into a UserDataWriter buffer.
+ *
+ * Writes all scalar fields, places all string fields through the writer
+ * (which handles relocation for user-space address fixup), and recurses
+ * into children. The @p data pointer may be NULL for a dry-run size
+ * calculation pass.
+ *
+ * @param writer  The UserDataWriter that manages the output buffer and
+ *                relocation table.
+ * @param data    Pointer to the user_partition_data structure to fill, or
+ *                NULL if only buffer space should be reserved.
+ */
 void
 KPartition::WriteUserData(UserDataWriter& writer, user_partition_data* data)
 {
@@ -1329,6 +2062,17 @@ KPartition::WriteUserData(UserDataWriter& writer, user_partition_data* data)
 }
 
 
+/**
+ * @brief Print a human-readable summary of this partition to the kernel log.
+ *
+ * Outputs geometry, flags, disk system, names, type, and parameters.
+ * If @p deep is @c true the dump recurses into all children with increased
+ * indentation.
+ *
+ * @param deep   If @c true, recursively dump child partitions as well.
+ * @param level  Current indentation level (0 for the root of the dump).
+ *               Values outside [0, 255] are silently ignored.
+ */
 void
 KPartition::Dump(bool deep, int32 level)
 {
@@ -1367,6 +2111,11 @@ KPartition::Dump(bool deep, int32 level)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition offset has changed.
+ *
+ * @param offset  The new byte offset value.
+ */
 void
 KPartition::FireOffsetChanged(off_t offset)
 {
@@ -1379,6 +2128,11 @@ KPartition::FireOffsetChanged(off_t offset)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition size has changed.
+ *
+ * @param size  The new size in bytes.
+ */
 void
 KPartition::FireSizeChanged(off_t size)
 {
@@ -1391,6 +2145,11 @@ KPartition::FireSizeChanged(off_t size)
 }
 
 
+/**
+ * @brief Notify all listeners that the content size has changed.
+ *
+ * @param size  The new content size in bytes.
+ */
 void
 KPartition::FireContentSizeChanged(off_t size)
 {
@@ -1403,6 +2162,11 @@ KPartition::FireContentSizeChanged(off_t size)
 }
 
 
+/**
+ * @brief Notify all listeners that the logical block size has changed.
+ *
+ * @param blockSize  The new logical block size in bytes.
+ */
 void
 KPartition::FireBlockSizeChanged(uint32 blockSize)
 {
@@ -1415,6 +2179,11 @@ KPartition::FireBlockSizeChanged(uint32 blockSize)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition's sibling index has changed.
+ *
+ * @param index  The new zero-based index within the parent's child list.
+ */
 void
 KPartition::FireIndexChanged(int32 index)
 {
@@ -1427,6 +2196,11 @@ KPartition::FireIndexChanged(int32 index)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition status has changed.
+ *
+ * @param status  The new status value (one of the B_PARTITION_* constants).
+ */
 void
 KPartition::FireStatusChanged(uint32 status)
 {
@@ -1439,6 +2213,11 @@ KPartition::FireStatusChanged(uint32 status)
 }
 
 
+/**
+ * @brief Notify all listeners that the flags bitmask has changed.
+ *
+ * @param flags  The new combined flags value.
+ */
 void
 KPartition::FireFlagsChanged(uint32 flags)
 {
@@ -1451,6 +2230,11 @@ KPartition::FireFlagsChanged(uint32 flags)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition name has changed.
+ *
+ * @param name  The new NUL-terminated partition name, or NULL.
+ */
 void
 KPartition::FireNameChanged(const char* name)
 {
@@ -1463,6 +2247,11 @@ KPartition::FireNameChanged(const char* name)
 }
 
 
+/**
+ * @brief Notify all listeners that the content name has changed.
+ *
+ * @param name  The new NUL-terminated content (volume) name, or NULL.
+ */
 void
 KPartition::FireContentNameChanged(const char* name)
 {
@@ -1475,6 +2264,11 @@ KPartition::FireContentNameChanged(const char* name)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition type string has changed.
+ *
+ * @param type  The new NUL-terminated type string, or NULL.
+ */
 void
 KPartition::FireTypeChanged(const char* type)
 {
@@ -1487,6 +2281,11 @@ KPartition::FireTypeChanged(const char* type)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition ID has changed.
+ *
+ * @param id  The new partition_id value.
+ */
 void
 KPartition::FireIDChanged(partition_id id)
 {
@@ -1499,6 +2298,11 @@ KPartition::FireIDChanged(partition_id id)
 }
 
 
+/**
+ * @brief Notify all listeners that the associated volume ID has changed.
+ *
+ * @param volumeID  The new dev_t volume ID, or -1 if unmounted.
+ */
 void
 KPartition::FireVolumeIDChanged(dev_t volumeID)
 {
@@ -1511,6 +2315,11 @@ KPartition::FireVolumeIDChanged(dev_t volumeID)
 }
 
 
+/**
+ * @brief Notify all listeners that the partition parameters string has changed.
+ *
+ * @param parameters  The new NUL-terminated parameters string, or NULL.
+ */
 void
 KPartition::FireParametersChanged(const char* parameters)
 {
@@ -1523,6 +2332,11 @@ KPartition::FireParametersChanged(const char* parameters)
 }
 
 
+/**
+ * @brief Notify all listeners that the content parameters string has changed.
+ *
+ * @param parameters  The new NUL-terminated content parameters string, or NULL.
+ */
 void
 KPartition::FireContentParametersChanged(const char* parameters)
 {
@@ -1535,6 +2349,12 @@ KPartition::FireContentParametersChanged(const char* parameters)
 }
 
 
+/**
+ * @brief Notify all listeners that a child partition has been added.
+ *
+ * @param child  Pointer to the newly added child KPartition.
+ * @param index  Zero-based index at which the child was inserted.
+ */
 void
 KPartition::FireChildAdded(KPartition* child, int32 index)
 {
@@ -1547,6 +2367,12 @@ KPartition::FireChildAdded(KPartition* child, int32 index)
 }
 
 
+/**
+ * @brief Notify all listeners that a child partition has been removed.
+ *
+ * @param child  Pointer to the removed child KPartition.
+ * @param index  Zero-based index the child occupied before removal.
+ */
 void
 KPartition::FireChildRemoved(KPartition* child, int32 index)
 {
@@ -1559,6 +2385,11 @@ KPartition::FireChildRemoved(KPartition* child, int32 index)
 }
 
 
+/**
+ * @brief Notify all listeners that the associated disk system has changed.
+ *
+ * @param diskSystem  Pointer to the new KDiskSystem, or NULL if cleared.
+ */
 void
 KPartition::FireDiskSystemChanged(KDiskSystem* diskSystem)
 {
@@ -1571,6 +2402,11 @@ KPartition::FireDiskSystemChanged(KDiskSystem* diskSystem)
 }
 
 
+/**
+ * @brief Notify all listeners that the parent-disk-system cookie has changed.
+ *
+ * @param cookie  The new cookie value.
+ */
 void
 KPartition::FireCookieChanged(void* cookie)
 {
@@ -1583,6 +2419,11 @@ KPartition::FireCookieChanged(void* cookie)
 }
 
 
+/**
+ * @brief Notify all listeners that the content-disk-system cookie has changed.
+ *
+ * @param cookie  The new content cookie value.
+ */
 void
 KPartition::FireContentCookieChanged(void* cookie)
 {
@@ -1595,6 +2436,17 @@ KPartition::FireContentCookieChanged(void* cookie)
 }
 
 
+/**
+ * @brief Update the sibling indices and re-publish devfs nodes for a range of children.
+ *
+ * When children are inserted or removed the indices of siblings in the
+ * affected range must be renumbered and their devfs names potentially
+ * updated. Iterates forward (start < end) or backward (start > end).
+ *
+ * @param start  Index of the first child to update.
+ * @param end    One-past-last index (exclusive) when iterating forward, or
+ *               exclusive lower bound when iterating backward.
+ */
 void
 KPartition::_UpdateChildIndices(int32 start, int32 end)
 {
@@ -1612,6 +2464,14 @@ KPartition::_UpdateChildIndices(int32 start, int32 end)
 }
 
 
+/**
+ * @brief Atomically allocate the next unique partition ID.
+ *
+ * Uses atomic_add on the class-static counter so that IDs remain unique
+ * across concurrent partition creation.
+ *
+ * @return A new, globally unique partition_id value.
+ */
 int32
 KPartition::_NextID()
 {

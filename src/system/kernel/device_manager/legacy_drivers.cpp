@@ -1,6 +1,37 @@
 /*
- * Copyright 2002-2011, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file legacy_drivers.cpp
+ * @brief Compatibility layer for loading and managing legacy Haiku/BeOS drivers.
+ *
+ * Loads old-style kernel drivers (those using the legacy driver API with
+ * publish_devices / find_device entry points) and exposes them through the
+ * new device manager framework. Handles driver scanning, loading, and the
+ * devfs publication of their device nodes.
+ *
+ * @see device_manager.cpp, devfs.cpp
  */
 
 
@@ -359,6 +390,25 @@ republish_driver(legacy_driver* driver)
 }
 
 
+/**
+ * @brief Load a legacy driver image and initialise it.
+ *
+ * Loads the kernel add-on image at driver->path (unless it is already mapped),
+ * validates the api_version symbol, resolves and calls init_hardware() and
+ * init_driver(), caches uninit_driver/uninit_hardware pointers, and finally
+ * calls republish_driver() to publish the driver's device nodes into devfs.
+ *
+ * @param driver  Pointer to the legacy_driver descriptor to load.
+ *                driver->image must be either a valid image_id (pre-loaded)
+ *                or a negative value (not yet loaded).
+ *
+ * @retval B_OK        Driver loaded and devices published successfully.
+ * @retval B_BAD_VALUE api_version out of range or mandatory symbols missing.
+ * @retval ENXIO       init_hardware() or init_driver() returned an error.
+ * @retval negative    load_kernel_add_on() or republish_driver() failed.
+ *
+ * @note Called with sLock held (recursive).
+ */
 static status_t
 load_driver(legacy_driver* driver)
 {
@@ -459,6 +509,21 @@ error1:
 }
 
 
+/**
+ * @brief Unload a currently loaded legacy driver image.
+ *
+ * Calls uninit_driver() and uninit_hardware() (if present), unloads the
+ * kernel add-on, and resets all image-related fields in the descriptor so
+ * the driver can be cleanly reloaded later.
+ *
+ * @param driver  Pointer to the legacy_driver descriptor to unload.
+ *                driver->image must be a valid (>= 0) image_id.
+ *
+ * @retval B_OK       Driver successfully unloaded.
+ * @retval B_NO_INIT  Driver was not loaded (driver->image < 0).
+ *
+ * @note Called with sLock held (recursive).
+ */
 static status_t
 unload_driver(legacy_driver* driver)
 {
@@ -787,16 +852,42 @@ handle_driver_events(void* /*_fs*/, int /*iteration*/)
 //	#pragma mark - DriverWatcher
 
 
+/**
+ * @brief Construct a DriverWatcher instance.
+ *
+ * Default constructor; no additional initialisation is required beyond the
+ * base NotificationListener class.
+ */
 DriverWatcher::DriverWatcher()
 {
 }
 
 
+/**
+ * @brief Destroy the DriverWatcher instance.
+ *
+ * Default destructor; no dynamic resources are owned by this object.
+ */
 DriverWatcher::~DriverWatcher()
 {
 }
 
 
+/**
+ * @brief Handle a node-monitor stat-change event for a watched driver file.
+ *
+ * Called by the notification subsystem when a watched driver binary is
+ * modified on disk.  If the modification-time field changed, the driver's
+ * binary_updated flag is set.  If no open device instances exist the driver
+ * event counter is incremented so handle_driver_events() will reload it on
+ * the next daemon tick; otherwise a diagnostic message is printed.
+ *
+ * @param service  The NotificationService that delivered the event (unused).
+ * @param event    The KMessage describing the FS notification event; must
+ *                 contain "opcode", "device", "node", and "fields" fields.
+ *
+ * @note Acquires sLock (recursive) internally.
+ */
 void
 DriverWatcher::EventOccurred(NotificationService& service,
 	const KMessage* event)
@@ -915,6 +1006,17 @@ dump_driver(int argc, char** argv)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a DirectoryIterator for the given path and optional sub-path.
+ *
+ * Delegates immediately to SetTo() so that the iterator is ready for use
+ * after construction.
+ *
+ * @param path      Base directory path, or NULL to use the default kernel
+ *                  driver directories derived from kDriverPaths.
+ * @param subPath   Optional sub-directory appended to each base path, or NULL.
+ * @param recursive If true, descend recursively into sub-directories.
+ */
 DirectoryIterator::DirectoryIterator(const char* path, const char* subPath,
 		bool recursive)
 	:
@@ -926,12 +1028,31 @@ DirectoryIterator::DirectoryIterator(const char* path, const char* subPath,
 }
 
 
+/**
+ * @brief Destroy the DirectoryIterator and release all held resources.
+ *
+ * Calls Unset() to close any open directory handle and free all path objects
+ * remaining on the internal stack.
+ */
 DirectoryIterator::~DirectoryIterator()
 {
 	Unset();
 }
 
 
+/**
+ * @brief (Re)initialise the iterator with a new set of search paths.
+ *
+ * Resets internal state via Unset(), then populates the path stack.  If
+ * @p path is NULL, the standard kernel driver directories (kDriverPaths) are
+ * enumerated in reverse order so that higher-priority paths are visited first.
+ * User add-ons are skipped when the B_SAFEMODE_DISABLE_USER_ADD_ONS safemode
+ * flag is set.
+ *
+ * @param path      Root directory to iterate, or NULL for defaults.
+ * @param subPath   Sub-directory to append, or NULL.
+ * @param recursive Whether to recurse into sub-directories.
+ */
 void
 DirectoryIterator::SetTo(const char* path, const char* subPath, bool recursive)
 {
@@ -960,6 +1081,20 @@ DirectoryIterator::SetTo(const char* path, const char* subPath, bool recursive)
 }
 
 
+/**
+ * @brief Advance to the next file or directory entry.
+ *
+ * Opens the next directory from the stack if necessary, skips "." and ".."
+ * entries, stats each entry, and—when fRecursive is true—pushes encountered
+ * sub-directories onto the path stack for later traversal.
+ *
+ * @param[out] path  Receives the full path of the next entry found.
+ * @param[out] stat  Receives the stat structure for the next entry found.
+ *
+ * @retval B_OK            A valid entry has been placed in @p path / @p stat.
+ * @retval B_ENTRY_NOT_FOUND All directories on the stack have been exhausted.
+ * @retval B_NO_MEMORY     Could not allocate a KPath for a sub-directory.
+ */
 status_t
 DirectoryIterator::GetNext(KPath& path, struct stat& stat)
 {
@@ -1009,6 +1144,13 @@ next_entry:
 }
 
 
+/**
+ * @brief Reset the iterator, closing any open directory and freeing all paths.
+ *
+ * Closes the current directory handle (if any), deletes the current base
+ * path, and pops and deletes all remaining KPath objects from the stack.
+ * After this call the iterator is in a clean, idle state.
+ */
 void
 DirectoryIterator::Unset()
 {
@@ -1026,6 +1168,16 @@ DirectoryIterator::Unset()
 }
 
 
+/**
+ * @brief Push a new search path onto the iterator's path stack.
+ *
+ * Allocates a KPath from @p basePath, optionally appends @p subPath, and
+ * pushes it onto fPaths.  Panics if memory cannot be allocated, as the
+ * driver scanning infrastructure requires this to succeed.
+ *
+ * @param basePath  The base directory path string to add.
+ * @param subPath   Optional sub-path to append, or NULL.
+ */
 void
 DirectoryIterator::AddPath(const char* basePath, const char* subPath)
 {
@@ -1042,16 +1194,44 @@ DirectoryIterator::AddPath(const char* basePath, const char* subPath)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a DirectoryWatcher instance.
+ *
+ * Default constructor; no additional initialisation is required beyond the
+ * base NotificationListener class.
+ */
 DirectoryWatcher::DirectoryWatcher()
 {
 }
 
 
+/**
+ * @brief Destroy the DirectoryWatcher instance.
+ *
+ * Default destructor; no dynamic resources are owned by this object.
+ */
 DirectoryWatcher::~DirectoryWatcher()
 {
 }
 
 
+/**
+ * @brief Handle a directory-change event for a watched driver directory.
+ *
+ * Called by the notification subsystem when an entry is created, removed, or
+ * moved within a watched driver directory.  Resolves the affected path via
+ * vfs_entry_ref_to_path() and posts a kAddDriver or kRemoveDriver event to
+ * sDriverEvents for deferred processing by handle_driver_events().
+ *
+ * B_ENTRY_MOVED events are decomposed into a create/remove pair based on
+ * whether the source and destination directories are both watched.
+ *
+ * @param service  The NotificationService that delivered the event (unused).
+ * @param event    The KMessage describing the FS notification event; must
+ *                 contain "opcode", "device", "directory", and "name" fields.
+ *
+ * @note Acquires sDriverEventsLock internally to post the event.
+ */
 void
 DirectoryWatcher::EventOccurred(NotificationService& service,
 	const KMessage* event)
@@ -1240,6 +1420,23 @@ probe_for_drivers(const char* type)
 //	#pragma mark - LegacyDevice
 
 
+/**
+ * @brief Construct a LegacyDevice wrapping a legacy driver's device entry.
+ *
+ * Allocates and zero-initialises a device_module_info structure and populates
+ * it via SetHooks().  Sets fDeviceData to @c this so that the AbstractModuleDevice
+ * infrastructure can retrieve the concrete instance, and duplicates @p path
+ * for local storage.
+ *
+ * @param driver  Owning legacy_driver descriptor, or NULL for hook-only devices
+ *                published via legacy_driver_publish().
+ * @param path    The devfs path under which this device will be published
+ *                (e.g. "disk/scsi/0/raw").  The string is duplicated.
+ * @param hooks   The device_hooks table exported by the legacy driver for this
+ *                device path.
+ *
+ * @note Call InitCheck() after construction to verify that allocations succeeded.
+ */
 LegacyDevice::LegacyDevice(legacy_driver* driver, const char* path,
 		device_hooks* hooks)
 	:
@@ -1259,6 +1456,12 @@ LegacyDevice::LegacyDevice(legacy_driver* driver, const char* path,
 }
 
 
+/**
+ * @brief Destroy the LegacyDevice and free allocated storage.
+ *
+ * Frees the device_module_info structure and the duplicated path string.
+ * The driver descriptor is not freed here; it is managed by the driver table.
+ */
 LegacyDevice::~LegacyDevice()
 {
 	free(fDeviceModule);
@@ -1266,6 +1469,12 @@ LegacyDevice::~LegacyDevice()
 }
 
 
+/**
+ * @brief Check whether construction succeeded.
+ *
+ * @retval B_OK       Both fDeviceModule and fPath were allocated successfully.
+ * @retval B_NO_MEMORY One or both allocations failed during construction.
+ */
 status_t
 LegacyDevice::InitCheck() const
 {
@@ -1273,6 +1482,21 @@ LegacyDevice::InitCheck() const
 }
 
 
+/**
+ * @brief Increment the device's open count and reload the driver if necessary.
+ *
+ * On the first open (fInitialized transitions from 0 to 1), checks whether the
+ * driver needs to be loaded or reloaded (binary updated or not yet loaded) and
+ * calls reload_driver() if so.  Increments driver->devices_used to prevent the
+ * driver from being unloaded while devices are open.
+ *
+ * Subsequent opens (fInitialized already > 0) return immediately.
+ *
+ * @retval B_OK    Device initialised (or already was); driver is loaded.
+ * @retval other   reload_driver() failed; the device must not be used.
+ *
+ * @note Acquires sLock (recursive) internally.
+ */
 status_t
 LegacyDevice::InitDevice()
 {
@@ -1295,6 +1519,15 @@ LegacyDevice::InitDevice()
 }
 
 
+/**
+ * @brief Decrement the device's open count and unload the driver when idle.
+ *
+ * On the last close (fInitialized transitions from 1 to 0), decrements
+ * driver->devices_used.  If the driver has no remaining open devices and no
+ * published device nodes, it is unloaded immediately.
+ *
+ * @note Acquires sLock (recursive) internally.
+ */
 void
 LegacyDevice::UninitDevice()
 {
@@ -1311,6 +1544,16 @@ LegacyDevice::UninitDevice()
 }
 
 
+/**
+ * @brief Remove this device from the driver's device list and free it.
+ *
+ * Removes the device from fDriver->devices (unless it was already removed by
+ * the driver republishing logic, indicated by fRemovedFromParent) and then
+ * deletes @c this.
+ *
+ * @note Acquires sLock (recursive) internally.
+ * @note After this call the object is deleted; the caller must not dereference it.
+ */
 void
 LegacyDevice::Removed()
 {
@@ -1323,6 +1566,23 @@ LegacyDevice::Removed()
 }
 
 
+/**
+ * @brief Handle ioctl-style control operations for this legacy device.
+ *
+ * Intercepts B_GET_DRIVER_FOR_DEVICE to return the file-system path of the
+ * driver image to the caller's user-space buffer.  All other operations are
+ * forwarded to AbstractModuleDevice::Control().
+ *
+ * @param _cookie  The per-open cookie returned by Open() (unused here).
+ * @param op       The ioctl opcode.
+ * @param buffer   User-space buffer for the result (for B_GET_DRIVER_FOR_DEVICE).
+ * @param length   Size of @p buffer in bytes.
+ *
+ * @retval B_OK     Operation succeeded.
+ * @retval ERANGE   @p length is non-zero but smaller than the driver path string
+ *                  (B_GET_DRIVER_FOR_DEVICE only).
+ * @retval other    Error from AbstractModuleDevice::Control() or user_strlcpy().
+ */
 status_t
 LegacyDevice::Control(void* _cookie, int32 op, void* buffer, size_t length)
 {
@@ -1337,6 +1597,21 @@ LegacyDevice::Control(void* _cookie, int32 op, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Update the device_hooks table and propagate to the module info structure.
+ *
+ * Stores @p hooks in fHooks and copies the close, free, control, read, and
+ * write function pointers to fDeviceModule.  For api_version >= 2 drivers, also
+ * sets up select (using a non-null sentinel to indicate support while the
+ * virtual Select() override routes to the actual hook) and deselect.
+ *
+ * @param hooks  New device_hooks table from the driver's find_device() call.
+ *               Must not be NULL.
+ *
+ * @note For api_version >= 2, the select field in fDeviceModule is set to an
+ *       invalid (sentinel) address; the virtual Select() method performs the
+ *       actual dispatch to hooks->select.
+ */
 void
 LegacyDevice::SetHooks(device_hooks* hooks)
 {
@@ -1368,6 +1643,19 @@ LegacyDevice::SetHooks(device_hooks* hooks)
 }
 
 
+/**
+ * @brief Open the legacy device via the driver's open hook.
+ *
+ * Delegates directly to the legacy driver's open function pointer, passing
+ * @p path, @p openMode, and @p _cookie unchanged.
+ *
+ * @param path      The devfs path being opened (as passed by the VFS).
+ * @param openMode  Open flags (O_RDONLY, O_WRONLY, etc.).
+ * @param _cookie   Output parameter for the per-open driver cookie.
+ *
+ * @retval B_OK    Device opened successfully; @p *_cookie is valid.
+ * @retval other   Error returned by the legacy driver's open hook.
+ */
 status_t
 LegacyDevice::Open(const char* path, int openMode, void** _cookie)
 {
@@ -1375,6 +1663,20 @@ LegacyDevice::Open(const char* path, int openMode, void** _cookie)
 }
 
 
+/**
+ * @brief Register a select event with the legacy driver.
+ *
+ * Calls the driver's select hook, adapting the new-API signature (no ref
+ * parameter) to the legacy three-argument form expected by api_version 2
+ * drivers.
+ *
+ * @param cookie  Per-open cookie returned by Open().
+ * @param event   The select event type (B_SELECT_READ, B_SELECT_WRITE, etc.).
+ * @param sync    The selectsync object to notify when the event occurs.
+ *
+ * @retval B_OK   Select registered successfully.
+ * @retval other  Error returned by the legacy driver's select hook.
+ */
 status_t
 LegacyDevice::Select(void* cookie, uint8 event, selectsync* sync)
 {
@@ -1385,6 +1687,22 @@ LegacyDevice::Select(void* cookie, uint8 event, selectsync* sync)
 //	#pragma mark - kernel private API
 
 
+/**
+ * @brief Register all pre-loaded legacy driver images from the boot arguments.
+ *
+ * Iterates over args->preloaded_images and, for each non-module image with a
+ * valid image_id, constructs the canonical driver path under
+ * B_SYSTEM_ADDONS_DIRECTORY/kernel/ and calls add_driver() to register and
+ * initialise it.  Images that fail to add are unloaded.
+ *
+ * This function is called once during early boot before the file system is
+ * fully available.
+ *
+ * @param args  Kernel boot arguments; the preloaded_images list is traversed.
+ *
+ * @note Does not return an error; failures are logged via dprintf and the
+ *       affected images are unloaded.
+ */
 extern "C" void
 legacy_driver_add_preloaded(kernel_args* args)
 {
@@ -1434,6 +1752,17 @@ legacy_driver_add_preloaded(kernel_args* args)
 }
 
 
+/**
+ * @brief Register a legacy driver by file-system path.
+ *
+ * Thin public wrapper around add_driver() that always asks for a fresh load
+ * (image_id == -1).
+ *
+ * @param path  Absolute path to the driver add-on image.
+ *
+ * @retval B_OK     Driver registered and loaded (or already known).
+ * @retval other    add_driver() / load_driver() error.
+ */
 extern "C" status_t
 legacy_driver_add(const char* path)
 {
@@ -1441,6 +1770,20 @@ legacy_driver_add(const char* path)
 }
 
 
+/**
+ * @brief Publish a device node backed only by a hooks table (no driver file).
+ *
+ * Creates a LegacyDevice with a NULL driver pointer and publishes it in devfs
+ * at @p path.  Used by subsystems that implement legacy-API devices in-kernel
+ * without a separate add-on image.
+ *
+ * @param path   devfs path at which to publish the device.
+ * @param hooks  Device hooks table to use.
+ *
+ * @retval B_OK        Device published.
+ * @retval B_NO_MEMORY Allocation of LegacyDevice failed.
+ * @retval other       InitCheck() or devfs_publish_device() error.
+ */
 extern "C" status_t
 legacy_driver_publish(const char* path, device_hooks* hooks)
 {
@@ -1460,6 +1803,21 @@ legacy_driver_publish(const char* path, device_hooks* hooks)
 }
 
 
+/**
+ * @brief Trigger a re-scan of a legacy driver's published device nodes.
+ *
+ * Looks up the driver by @p driverName in sDriverHash and calls
+ * republish_driver() to synchronise its devfs entries with the current
+ * output of its publish_devices() hook.
+ *
+ * @param driverName  The leaf name of the driver (e.g. "usb_hid").
+ *
+ * @retval B_OK             Republish completed (devices added/removed as needed).
+ * @retval B_ENTRY_NOT_FOUND No driver with that name is registered.
+ * @retval other            republish_driver() error.
+ *
+ * @note Acquires sLock (recursive) internally.
+ */
 extern "C" status_t
 legacy_driver_rescan(const char* driverName)
 {
@@ -1474,6 +1832,24 @@ legacy_driver_rescan(const char* driverName)
 }
 
 
+/**
+ * @brief Probe a device class sub-path and load all matching legacy drivers.
+ *
+ * Constructs the full "drivers/dev[/<subPath>]" type string and calls
+ * probe_for_drivers().  On the first invocation against a real boot volume,
+ * also starts file-system watchers on all standard kernel driver "bin"
+ * directories so that subsequent driver add/remove events are detected
+ * automatically.
+ *
+ * @param subPath  Device class path suffix (e.g. "disk/scsi"), or an empty
+ *                 string to probe the root device directory.
+ *
+ * @retval B_OK    Probe completed (zero or more drivers loaded).
+ * @retval other   probe_for_drivers() error.
+ *
+ * @note This is the primary entry point called by the device manager to
+ *       populate /dev with legacy driver nodes for a given bus/class.
+ */
 extern "C" status_t
 legacy_driver_probe(const char* subPath)
 {
@@ -1514,6 +1890,20 @@ legacy_driver_probe(const char* subPath)
 }
 
 
+/**
+ * @brief Initialise the legacy driver subsystem.
+ *
+ * Allocates and initialises the global DriverTable hash, the recursive sLock,
+ * the DriverWatcher and DriverEventList singletons, registers the
+ * handle_driver_events() kernel daemon (runs every ~1 second), and adds the
+ * "legacy_driver" and "legacy_device" kernel debugger commands.
+ *
+ * @retval B_OK       Subsystem initialised successfully.
+ * @retval B_NO_MEMORY DriverTable allocation or Init() failed.
+ *
+ * @note Must be called exactly once during kernel boot before any driver
+ *       scanning or publishing operations.
+ */
 extern "C" status_t
 legacy_driver_init(void)
 {

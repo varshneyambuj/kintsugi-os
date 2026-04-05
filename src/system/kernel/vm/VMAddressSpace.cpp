@@ -1,12 +1,42 @@
 /*
- * Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
+/**
+ * @file VMAddressSpace.cpp
+ * @brief Virtual memory address space management for kernel and user processes.
+ *
+ * VMAddressSpace represents the address space of a team (process). It maintains
+ * the collection of VMArea objects mapped into the space, handles creation and
+ * deletion of kernel/user address spaces, and provides the global address space
+ * registry.
+ *
+ * @see VMKernelAddressSpace, VMUserAddressSpace, VMArea
+ */
 
 #include <vm/VMAddressSpace.h>
 
@@ -83,6 +113,19 @@ VMAddressSpace* VMAddressSpace::sKernelAddressSpace;
 // #pragma mark - VMAddressSpace
 
 
+/**
+ * @brief Constructs an address space with the given identity and virtual range.
+ *
+ * Initialises the base address, end address, free-space counter, team ID,
+ * reference count (1), fault and change counters, translation map pointer,
+ * randomisation flag, and deletion flag. Also initialises the reader/writer
+ * lock named @p name.
+ *
+ * @param id    Team ID that owns this address space.
+ * @param base  Lowest valid virtual address in the space.
+ * @param size  Total size in bytes of the virtual address range.
+ * @param name  Human-readable name used for the rw_lock.
+ */
 VMAddressSpace::VMAddressSpace(team_id id, addr_t base, size_t size,
 	const char* name)
 	:
@@ -101,6 +144,13 @@ VMAddressSpace::VMAddressSpace(team_id id, addr_t base, size_t size,
 }
 
 
+/**
+ * @brief Destructor; acquires the write lock, deletes the translation map,
+ *        and destroys the rw_lock.
+ *
+ * The write lock is acquired to synchronise with any last readers, then
+ * released by rw_lock_destroy().
+ */
 VMAddressSpace::~VMAddressSpace()
 {
 	TRACE(("VMAddressSpace::~VMAddressSpace: called on aspace %" B_PRId32 "\n",
@@ -114,6 +164,16 @@ VMAddressSpace::~VMAddressSpace()
 }
 
 
+/**
+ * @brief Initialises the global address-space subsystem.
+ *
+ * Creates the hash table for all address spaces, allocates the initial kernel
+ * address space via Create(), and registers the @c aspaces and @c aspace
+ * kernel debugger commands.
+ *
+ * @return B_OK on success; panics and does not return on failure.
+ * @retval B_OK  Subsystem initialised successfully.
+ */
 /*static*/ status_t
 VMAddressSpace::Init()
 {
@@ -142,13 +202,14 @@ VMAddressSpace::Init()
 }
 
 
-/*! Deletes all areas in the specified address space, and the address
-	space by decreasing all reference counters. It also marks the
-	address space of being in deletion state, so that no more areas
-	can be created in it.
-	After this, the address space is not operational anymore, but might
-	still be in memory until the last reference has been released.
-*/
+/**
+ * @brief Marks the address space as deleting, removes all areas, and releases
+ *        the last reference.
+ *
+ * Sets fDeleting under the write lock so that new area creation is rejected,
+ * then calls vm_delete_areas() to tear down every VMArea, and finally Put()
+ * to drop the caller's reference (which may trigger destruction).
+ */
 void
 VMAddressSpace::RemoveAndPut()
 {
@@ -161,6 +222,15 @@ VMAddressSpace::RemoveAndPut()
 }
 
 
+/**
+ * @brief Post-construction initialisation hook for subclasses.
+ *
+ * The base implementation is a no-op. Subclasses override this to perform
+ * allocations that may fail, returning an error code rather than throwing.
+ *
+ * @return Always B_OK in the base class.
+ * @retval B_OK  No additional initialisation required.
+ */
 status_t
 VMAddressSpace::InitObject()
 {
@@ -168,6 +238,12 @@ VMAddressSpace::InitObject()
 }
 
 
+/**
+ * @brief Prints a summary of this address space to the kernel debugger console.
+ *
+ * Outputs the pointer, team ID, reference count, fault count, translation map
+ * pointer, base address, end address, and change count.
+ */
 void
 VMAddressSpace::Dump() const
 {
@@ -182,6 +258,24 @@ VMAddressSpace::Dump() const
 }
 
 
+/**
+ * @brief Allocates and fully initialises a new address space.
+ *
+ * Chooses VMKernelAddressSpace or VMUserAddressSpace depending on @p kernel,
+ * calls InitObject(), creates the architecture translation map, and inserts
+ * the new space into the global hash table.
+ *
+ * @param teamID         Team ID to assign to the new address space.
+ * @param base           Lowest virtual address in the range.
+ * @param size           Size in bytes of the virtual address range.
+ * @param kernel         If @c true, create a kernel address space;
+ *                       otherwise create a user address space.
+ * @param _addressSpace  Output: set to the newly created VMAddressSpace on
+ *                       success; unchanged on failure.
+ * @return Status code.
+ * @retval B_OK        Address space created and registered successfully.
+ * @retval B_NO_MEMORY Allocation of the address space object failed.
+ */
 /*static*/ status_t
 VMAddressSpace::Create(team_id teamID, addr_t base, size_t size, bool kernel,
 	VMAddressSpace** _addressSpace)
@@ -222,6 +316,13 @@ VMAddressSpace::Create(team_id teamID, addr_t base, size_t size, bool kernel,
 }
 
 
+/**
+ * @brief Returns the kernel address space with an incremented reference count.
+ *
+ * The kernel address space is never deleted, so no hash lookup is required.
+ *
+ * @return Pointer to the kernel VMAddressSpace (never NULL).
+ */
 /*static*/ VMAddressSpace*
 VMAddressSpace::GetKernel()
 {
@@ -231,6 +332,13 @@ VMAddressSpace::GetKernel()
 }
 
 
+/**
+ * @brief Returns the team ID of the currently executing thread's address space.
+ *
+ * @return The team ID of the current thread, or B_ERROR if there is no current
+ *         thread or it has no address space.
+ * @retval B_ERROR  No current thread or no address space is associated.
+ */
 /*static*/ team_id
 VMAddressSpace::CurrentID()
 {
@@ -243,6 +351,13 @@ VMAddressSpace::CurrentID()
 }
 
 
+/**
+ * @brief Returns the address space of the currently executing thread with an
+ *        incremented reference count.
+ *
+ * @return Pointer to the current VMAddressSpace, or NULL if the current thread
+ *         has no address space.
+ */
 /*static*/ VMAddressSpace*
 VMAddressSpace::GetCurrent()
 {
@@ -260,6 +375,16 @@ VMAddressSpace::GetCurrent()
 }
 
 
+/**
+ * @brief Looks up the address space for @p teamID and returns it with an
+ *        incremented reference count.
+ *
+ * Acquires the table read lock, performs the lookup, increments the reference
+ * count while the lock is still held, then releases the lock.
+ *
+ * @param teamID  Team ID to look up.
+ * @return Pointer to the VMAddressSpace, or NULL if not found.
+ */
 /*static*/ VMAddressSpace*
 VMAddressSpace::Get(team_id teamID)
 {
@@ -273,6 +398,11 @@ VMAddressSpace::Get(team_id teamID)
 }
 
 
+/**
+ * @brief Returns the first address space in the global table (debugger use only).
+ *
+ * @return Pointer to the first VMAddressSpace, or NULL if the table is empty.
+ */
 /*static*/ VMAddressSpace*
 VMAddressSpace::DebugFirst()
 {
@@ -280,6 +410,13 @@ VMAddressSpace::DebugFirst()
 }
 
 
+/**
+ * @brief Returns the address space that follows @p addressSpace in the global
+ *        table (debugger use only).
+ *
+ * @param addressSpace  Current position; passing NULL returns NULL immediately.
+ * @return Pointer to the next VMAddressSpace, or NULL if there is none.
+ */
 /*static*/ VMAddressSpace*
 VMAddressSpace::DebugNext(VMAddressSpace* addressSpace)
 {
@@ -293,6 +430,13 @@ VMAddressSpace::DebugNext(VMAddressSpace* addressSpace)
 }
 
 
+/**
+ * @brief Looks up an address space by team ID without reference counting
+ *        (debugger use only).
+ *
+ * @param teamID  Team ID to look up.
+ * @return Pointer to the VMAddressSpace, or NULL if not found.
+ */
 /*static*/ VMAddressSpace*
 VMAddressSpace::DebugGet(team_id teamID)
 {
@@ -300,6 +444,15 @@ VMAddressSpace::DebugGet(team_id teamID)
 }
 
 
+/**
+ * @brief Removes and deletes the address space for @p id if its reference count
+ *        has dropped to zero.
+ *
+ * Acquires the table write lock to check and optionally remove the entry, then
+ * deletes the object outside the lock if it was removed.
+ *
+ * @param id  Team ID of the address space to potentially delete.
+ */
 /*static*/ void
 VMAddressSpace::_DeleteIfUnreferenced(team_id id)
 {
@@ -319,6 +472,16 @@ VMAddressSpace::_DeleteIfUnreferenced(team_id id)
 }
 
 
+/**
+ * @brief Kernel debugger command handler: dumps a single address space by ID.
+ *
+ * Parses argv[1] as an integer team ID, looks up the corresponding address
+ * space, and calls Dump() on it.
+ *
+ * @param argc  Must be at least 2.
+ * @param argv  argv[1] is the team ID (decimal or hex).
+ * @return Always 0.
+ */
 /*static*/ int
 VMAddressSpace::_DumpCommand(int argc, char** argv)
 {
@@ -346,6 +509,17 @@ VMAddressSpace::_DumpCommand(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command handler: lists all registered address spaces.
+ *
+ * Iterates the global hash table and prints a one-line summary for each entry
+ * including its pointer, team ID, base, end address, area count, and total
+ * mapped area size.
+ *
+ * @param argc  Unused.
+ * @param argv  Unused.
+ * @return Always 0.
+ */
 /*static*/ int
 VMAddressSpace::_DumpListCommand(int argc, char** argv)
 {

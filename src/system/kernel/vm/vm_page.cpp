@@ -1,10 +1,41 @@
 /*
- * Copyright 2010-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file vm_page.cpp
+ * @brief Physical page allocator and page daemon (page scanner/reclaimer).
+ *
+ * Manages the global pool of physical pages through page queues (free, clear,
+ * modified, active, inactive). Implements vm_page_allocate_page,
+ * vm_page_free, the page writer (writes modified pages to their backing store),
+ * and the page daemon which trims working sets under memory pressure.
+ *
+ * @see vm.cpp, VMCache.cpp, VMPageQueue.cpp
  */
 
 
@@ -760,6 +791,12 @@ private:
 #endif	// VM_PAGE_ALLOCATION_TRACKING_AVAILABLE
 
 
+/**
+ * @brief Print a single page's address, state flags, usage count, wired count, and area mappings to the kernel debugger.
+ *
+ * @param page Pointer to the vm_page to display.
+ * @note Intended for use from the kernel debugger only; not safe for normal kernel context.
+ */
 static void
 list_page(vm_page* page)
 {
@@ -801,6 +838,14 @@ list_page(vm_page* page)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump all non-unused pages from the global page table.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger.
+ */
 static int
 dump_page_list(int argc, char **argv)
 {
@@ -817,6 +862,14 @@ dump_page_list(int argc, char **argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: locate which page queue contains a given vm_page pointer.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv argv[1] must be a hex address (0x...) of a vm_page struct.
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger.
+ */
 static int
 find_page(int argc, char **argv)
 {
@@ -866,6 +919,12 @@ find_page(int argc, char **argv)
 }
 
 
+/**
+ * @brief Convert a numeric page state constant to a human-readable string.
+ *
+ * @param state One of the PAGE_STATE_* constants.
+ * @return A static C string naming the state, or "unknown" if unrecognized.
+ */
 const char *
 page_state_to_string(int state)
 {
@@ -892,6 +951,17 @@ page_state_to_string(int state)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump detailed information about a single physical page.
+ *
+ * Accepts flags: -p (address is physical), -v (address is virtual in current
+ * thread's address space), -m (also search all address spaces for reverse mappings).
+ *
+ * @param argc Argument count.
+ * @param argv argv[1..] flags and the address of the page.
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger.
+ */
 static int
 dump_page_long(int argc, char **argv)
 {
@@ -1054,6 +1124,14 @@ dump_page_long(int argc, char **argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump summary and optionally full listing of a named page queue.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv argv[1] is the queue name or hex address; argv[2] (optional) "list" to enumerate entries.
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger.
+ */
 static int
 dump_page_queue(int argc, char **argv)
 {
@@ -1102,6 +1180,17 @@ dump_page_queue(int argc, char **argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: print detailed statistics for all page queues and counters.
+ *
+ * Reports per-state page counts, busy counts, longest free/cached runs,
+ * unsatisfied reservation waiters, and queue lengths.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger.
+ */
 static int
 dump_page_stats(int argc, char **argv)
 {
@@ -1222,6 +1311,17 @@ dump_page_stats(int argc, char **argv)
 
 #if VM_PAGE_ALLOCATION_TRACKING_AVAILABLE
 
+/**
+ * @brief Look up or create a caller_info entry for the given caller address.
+ *
+ * Searches the global sCallerInfoTable for an existing entry matching
+ * \a caller. If none is found and there is room, a new zero-count entry is
+ * inserted and returned.
+ *
+ * @param caller The return address identifying the allocation call site.
+ * @return Pointer to the matching caller_info, or NULL if the table is full.
+ * @note Must only be called from the kernel debugger.
+ */
 static caller_info*
 get_caller_info(addr_t caller)
 {
@@ -1243,6 +1343,13 @@ get_caller_info(addr_t caller)
 }
 
 
+/**
+ * @brief qsort comparator: sort caller_info entries by descending allocation count.
+ *
+ * @param _a Pointer to first caller_info.
+ * @param _b Pointer to second caller_info.
+ * @return Positive if a->count < b->count, negative if a->count > b->count, zero if equal.
+ */
 static int
 caller_info_compare_count(const void* _a, const void* _b)
 {
@@ -1252,6 +1359,19 @@ caller_info_compare_count(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief Kernel debugger command: show live page allocations grouped and sorted by call site.
+ *
+ * Iterates all page tracking infos, groups them by caller address, sorts by
+ * count (descending), and prints. With -d <caller> prints individual pages for
+ * that caller. With -r resets all tracking infos after collection.
+ *
+ * @param argc Argument count.
+ * @param argv argv[1..] optional flags: -d <caller_addr>, -r.
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger; only available when
+ *       VM_PAGE_ALLOCATION_TRACKING_AVAILABLE is defined.
+ */
 static int
 dump_page_allocations_per_caller(int argc, char** argv)
 {
@@ -1329,6 +1449,18 @@ dump_page_allocations_per_caller(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: print raw per-page allocation tracking info with optional filters.
+ *
+ * Supports filtering by page number (-p), team (--team), thread (--thread),
+ * and optionally printing stack traces (--stacktrace).
+ *
+ * @param argc Argument count.
+ * @param argv argv[1..] optional flags: --stacktrace, -p <page>, --team <id>, --thread <id>.
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger; only available when
+ *       VM_PAGE_ALLOCATION_TRACKING_AVAILABLE is defined.
+ */
 static int
 dump_page_allocation_infos(int argc, char** argv)
 {
@@ -1387,6 +1519,13 @@ dump_page_allocation_infos(int argc, char** argv)
 
 #ifdef TRACK_PAGE_USAGE_STATS
 
+/**
+ * @brief Record the usage count of a single page into the next-cycle usage histogram.
+ *
+ * @param page Pointer to the page whose usage_count is to be sampled.
+ * @note Only counts unwired pages. Must be called with appropriate exclusion
+ *       to avoid races on sNextPageUsage.
+ */
 static void
 track_page_usage(vm_page* page)
 {
@@ -1397,6 +1536,12 @@ track_page_usage(vm_page* page)
 }
 
 
+/**
+ * @brief Swap the current and next page-usage histograms and reset the next histogram to zero.
+ *
+ * Called once per page-daemon scan cycle to rotate usage statistics.
+ * @note Not thread-safe; must be called from the page daemon thread only.
+ */
 static void
 update_page_usage_stats()
 {
@@ -1418,6 +1563,15 @@ update_page_usage_stats()
 }
 
 
+/**
+ * @brief Kernel debugger command: print the distribution of page usage counts from the last scan.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @retval 0 Always.
+ * @note Must only be called from the kernel debugger; only available when
+ *       TRACK_PAGE_USAGE_STATS is defined.
+ */
 static int
 dump_page_usage_stats(int argc, char** argv)
 {
@@ -1449,6 +1603,12 @@ dump_page_usage_stats(int argc, char** argv)
 // #pragma mark - vm_page
 
 
+/**
+ * @brief Initialize the page's state field without emitting a tracing record.
+ *
+ * @param newState The initial PAGE_STATE_* value to assign.
+ * @note Use only during early boot before tracing is active.
+ */
 inline void
 vm_page::InitState(uint8 newState)
 {
@@ -1456,6 +1616,12 @@ vm_page::InitState(uint8 newState)
 }
 
 
+/**
+ * @brief Update the page's state field and emit a PAGE_STATE_TRACING record if enabled.
+ *
+ * @param newState The new PAGE_STATE_* value to assign.
+ * @note The page's cache must be locked before calling this if the page is cached.
+ */
 inline void
 vm_page::SetState(uint8 newState)
 {
@@ -1468,6 +1634,16 @@ vm_page::SetState(uint8 newState)
 // #pragma mark -
 
 
+/**
+ * @brief Snapshot the current free-page counters into a page_stats structure.
+ *
+ * Reads sUnreservedFreePages, sCachedPageQueue.Count(), and
+ * sUnsatisfiedPageReservations atomically enough for heuristic use.
+ *
+ * @param _pageStats Output structure to fill.
+ * @note No locking is performed; values may be stale by the time the caller
+ *       inspects them.
+ */
 static void
 get_page_stats(page_stats& _pageStats)
 {
@@ -1478,6 +1654,15 @@ get_page_stats(page_stats& _pageStats)
 }
 
 
+/**
+ * @brief Determine whether the page daemon should perform active (full) paging.
+ *
+ * Returns true when the combined free and cached pages fall below the target
+ * plus any unsatisfied reservations.
+ *
+ * @param pageStats A recently sampled page_stats snapshot.
+ * @return true if active reclaim is needed, false if memory is sufficient.
+ */
 static bool
 do_active_paging(const page_stats& pageStats)
 {
@@ -1492,6 +1677,17 @@ do_active_paging(const page_stats& pageStats)
 	\c sUnreservedFreePages, though.
 	\return The number of actually reserved pages.
 */
+/**
+ * @brief Atomically reserve up to \a count pages from sUnreservedFreePages,
+ *        leaving at least \a dontTouch pages untouched.
+ *
+ * Uses a compare-and-swap retry loop so no mutex is needed.
+ *
+ * @param count Maximum number of pages to reserve.
+ * @param dontTouch Minimum number of free pages that must remain untouched.
+ * @return The number of pages actually reserved (may be less than \a count).
+ * @note May be called from any context including interrupt handlers.
+ */
 static uint32
 reserve_some_pages(uint32 count, uint32 dontTouch)
 {
@@ -1512,6 +1708,15 @@ reserve_some_pages(uint32 count, uint32 dontTouch)
 }
 
 
+/**
+ * @brief Wake the highest-priority page-reservation waiter that can now be satisfied.
+ *
+ * Walks sPageReservationWaiters from head (highest priority) and attempts to
+ * reserve pages for each waiter in turn.  Stops as soon as a waiter cannot be
+ * fully satisfied.
+ *
+ * @note sPageDeficitLock must be held by the caller.
+ */
 static void
 wake_up_page_reservation_waiters()
 {
@@ -1540,6 +1745,14 @@ wake_up_page_reservation_waiters()
 }
 
 
+/**
+ * @brief Return \a count previously reserved pages to the unreserved pool and
+ *        wake any waiting reservers.
+ *
+ * @param count Number of pages to return.
+ * @note May be called from any context; sPageDeficitLock is acquired internally
+ *       only when there are unsatisfied reservations.
+ */
 static inline void
 unreserve_pages(uint32 count)
 {
@@ -1551,6 +1764,19 @@ unreserve_pages(uint32 count)
 }
 
 
+/**
+ * @brief Return a page to the free or clear queue, removing it from its current queue.
+ *
+ * Moves the page from whatever queue it currently belongs to into either the
+ * clear queue (if \a clear is true) or the free queue, and notifies waiters on
+ * the free-page condition variable.
+ *
+ * @param page  The page to free; must not be mapped and must not have a cache.
+ * @param clear If true, place the page on the clear queue; otherwise the free queue.
+ * @note The page's cache (if any) must have been removed before this call.
+ *       Caller must hold DEBUG_PAGE_ACCESS on the page.
+ *       sFreePageQueuesLock is acquired internally (read lock).
+ */
 static void
 free_page(vm_page* page, bool clear)
 {
@@ -1622,6 +1848,18 @@ free_page(vm_page* page, bool clear)
 	while the function is called. If the page has a cache, this can be done by
 	locking the cache.
 */
+/**
+ * @brief Move a page between page queues according to the requested new state.
+ *
+ * Removes the page from its current queue and appends it to the queue
+ * corresponding to \a pageState.  Also maintains sModifiedTemporaryPages for
+ * temporary-cache pages that transition to/from PAGE_STATE_MODIFIED.
+ *
+ * @param page      The page to move; must not be in a free or clear state.
+ * @param pageState Target PAGE_STATE_* value; must not be FREE or CLEAR.
+ * @note If the page has a cache, the cache must be locked by the caller.
+ *       Must not be called with sFreePageQueuesLock held.
+ */
 static void
 set_page_state(vm_page *page, int pageState)
 {
@@ -1723,6 +1961,15 @@ set_page_state(vm_page *page, int pageState)
 /*! Moves a previously modified page into a now appropriate queue.
 	The page queues must not be locked.
 */
+/**
+ * @brief Place a page that was previously modified into the most appropriate queue.
+ *
+ * Chooses active (if mapped), modified (if dirty), or cached (if clean and
+ * unmapped) and calls set_page_state() accordingly.
+ *
+ * @param page The page to requeue; must not be in the free or clear state.
+ * @note Page queues must not be locked. The page's cache must be locked.
+ */
 static void
 move_page_to_appropriate_queue(vm_page *page)
 {
@@ -1743,6 +1990,13 @@ move_page_to_appropriate_queue(vm_page *page)
 }
 
 
+/**
+ * @brief Zero-fill the physical memory backing a page.
+ *
+ * @param page The page to clear; its physical_page_number must be valid.
+ * @note May be called from a normal kernel thread context. Does not lock any
+ *       page queue.
+ */
 static void
 clear_page(struct vm_page *page)
 {
@@ -1751,6 +2005,20 @@ clear_page(struct vm_page *page)
 }
 
 
+/**
+ * @brief Mark a range of physical pages as in-use (wired or unused) during early boot.
+ *
+ * Removes pages from the free/clear queues and sets their state to
+ * PAGE_STATE_WIRED or PAGE_STATE_UNUSED.  Intended only for early boot
+ * when the page reservation policy is not yet enforced.
+ *
+ * @param startPage  Physical page number of the first page to mark.
+ * @param length     Number of pages to mark.
+ * @param wired      If true, pages are set to PAGE_STATE_WIRED; otherwise PAGE_STATE_UNUSED.
+ * @retval B_OK      Always (range clamping is performed silently).
+ * @note Must only be called during kernel startup (gKernelStartup == true).
+ *       Acquires sFreePageQueuesLock (write) internally.
+ */
 static status_t
 mark_page_range_in_use(page_num_t startPage, page_num_t length, bool wired)
 {
@@ -1824,6 +2092,17 @@ mark_page_range_in_use(page_num_t startPage, page_num_t length, bool wired)
 	Given enough time, it will clear out all pages from the free queue - we
 	could probably slow it down after having reached a certain threshold.
 */
+/**
+ * @brief Kernel thread: continuously move pages from the free queue to the clear queue.
+ *
+ * Wakes on sFreePageCondition, takes up to SCRUB_SIZE pages from sFreePageQueue,
+ * zero-fills them, and places them onto sClearPageQueue.  Sleeps at least
+ * 100 ms between runs.
+ *
+ * @param unused Ignored thread argument.
+ * @return Never returns (infinite loop); declared B_OK for signature compatibility.
+ * @note Runs as a dedicated kernel thread at B_LOWEST_ACTIVE_PRIORITY.
+ */
 static int32
 page_scrubber(void *unused)
 {
@@ -1905,6 +2184,14 @@ page_scrubber(void *unused)
 }
 
 
+/**
+ * @brief Initialize a dummy marker page for use as a cursor in page queue scans.
+ *
+ * Sets up a vm_page with no cache, state UNUSED, busy=true, so it can be
+ * inserted into a queue as a placeholder without being mistaken for a real page.
+ *
+ * @param marker Reference to the vm_page to initialize as a marker.
+ */
 static void
 init_page_marker(vm_page &marker)
 {
@@ -1920,6 +2207,12 @@ init_page_marker(vm_page &marker)
 }
 
 
+/**
+ * @brief Remove a marker page from whatever queue it currently occupies and reset its state.
+ *
+ * @param marker Reference to the marker vm_page previously inserted by init_page_marker().
+ * @note The marker's queue spinlock is acquired internally via RemoveUnlocked().
+ */
 static void
 remove_page_marker(struct vm_page &marker)
 {
@@ -1932,6 +2225,19 @@ remove_page_marker(struct vm_page &marker)
 }
 
 
+/**
+ * @brief Return the next non-busy page from the modified queue, rotating it to the tail.
+ *
+ * Peeks at the head of sModifiedPageQueue, requeues it to the tail (so the
+ * next call advances), decrements \a maxPagesToSee, and returns the page if
+ * it is not busy.
+ *
+ * @param maxPagesToSee In/out counter of how many pages may still be examined;
+ *                      decremented on each iteration.
+ * @return Pointer to the next non-busy modified page, or NULL when the queue
+ *         is exhausted or \a maxPagesToSee reaches zero.
+ * @note Acquires sModifiedPageQueue's spinlock internally.
+ */
 static vm_page*
 next_modified_page(page_num_t& maxPagesToSee)
 {
@@ -2041,6 +2347,16 @@ PageWriteWrapper::~PageWriteWrapper()
 
 /*!	The page's cache must be locked.
 */
+/**
+ * @brief Prepare a page for writeback: mark it busy and clear the dirty (modified) mapping flag.
+ *
+ * Associates this wrapper with \a page, sets page->busy and page->busy_io,
+ * and clears the PAGE_MODIFIED mapping flag so subsequent writes to the page
+ * can be detected.
+ *
+ * @param page The modified page to prepare; must not already be busy.
+ * @note The page's cache must be locked by the caller.
+ */
 void
 PageWriteWrapper::SetTo(vm_page* page)
 {
@@ -2078,6 +2394,19 @@ PageWriteWrapper::SetTo(vm_page* page)
 	\return \c true if the page was written successfully respectively could be
 		handled somehow, \c false otherwise.
 */
+/**
+ * @brief Finalize a page writeback: clear busy flags and move the page to an appropriate queue.
+ *
+ * On success the page is moved to the active or inactive queue via
+ * move_page_to_appropriate_queue().  On failure the page is marked modified
+ * and moved to a non-modified queue to avoid infinite retry loops.
+ * If busy_io was cleared externally the cache's FreeRemovedPage() is called.
+ *
+ * @param result B_OK if the I/O succeeded, an error code otherwise.
+ * @return true if the page was handled successfully, false if writeback failed.
+ * @note The page's cache must be locked by the caller.
+ *       Page queues must not be locked.
+ */
 bool
 PageWriteWrapper::Done(status_t result)
 {
@@ -2134,6 +2463,14 @@ PageWriteWrapper::Done(status_t result)
 
 /*!	The page's cache must be locked.
 */
+/**
+ * @brief Initialize this transfer to write the given page from a specific cache.
+ *
+ * @param run       The owning PageWriterRun, or NULL for a synchronous transfer.
+ * @param page      The first page to include in the transfer.
+ * @param maxPages  Maximum number of pages this transfer may aggregate (-1 for unlimited).
+ * @note The page's cache must be locked by the caller.
+ */
 void
 PageWriteTransfer::SetTo(PageWriterRun* run, vm_page* page, int32 maxPages)
 {
@@ -2152,6 +2489,17 @@ PageWriteTransfer::SetTo(PageWriterRun* run, vm_page* page, int32 maxPages)
 
 /*!	The page's cache must be locked.
 */
+/**
+ * @brief Try to append or prepend \a page to this transfer's I/O vector list.
+ *
+ * Succeeds only if \a page belongs to the same cache, is contiguous in both
+ * physical memory and cache offset with the existing run, and the page limit
+ * has not been reached.
+ *
+ * @param page The candidate page to add.
+ * @return true if the page was added, false if a new transfer must be started.
+ * @note The page's cache must be locked by the caller.
+ */
 bool
 PageWriteTransfer::AddPage(vm_page* page)
 {
@@ -2209,6 +2557,17 @@ PageWriteTransfer::AddPage(vm_page* page)
 }
 
 
+/**
+ * @brief Submit this transfer's I/O vectors to the cache for writing.
+ *
+ * For asynchronous runs delegates to VMCache::WriteAsync(); for synchronous
+ * use calls VMCache::Write() and updates the status immediately.
+ *
+ * @param flags Additional I/O flags (e.g. B_VIP_IO_REQUEST).
+ * @retval B_OK          I/O was scheduled (async) or completed successfully (sync).
+ * @retval B_ERROR       Fewer bytes than required were transferred (sync).
+ * @retval other errors  Forwarded from the cache write implementation.
+ */
 status_t
 PageWriteTransfer::Schedule(uint32 flags)
 {
@@ -2228,6 +2587,15 @@ PageWriteTransfer::Schedule(uint32 flags)
 }
 
 
+/**
+ * @brief Update the transfer's status, treating a short write as B_ERROR.
+ *
+ * A transfer is considered successful only if at least the last page has been
+ * partially written (i.e. transferred > (pageCount - 1) * PAGE_SIZE).
+ *
+ * @param status     Raw I/O status from the cache.
+ * @param transferred Number of bytes reported as transferred.
+ */
 void
 PageWriteTransfer::SetStatus(status_t status, size_t transferred)
 {
@@ -2240,6 +2608,15 @@ PageWriteTransfer::SetStatus(status_t status, size_t transferred)
 }
 
 
+/**
+ * @brief AsyncIOCallback implementation: called by the I/O subsystem when this transfer completes.
+ *
+ * Updates the transfer status and notifies the owning PageWriterRun.
+ *
+ * @param status           Final I/O status.
+ * @param partialTransfer  true if not all bytes were transferred.
+ * @param bytesTransferred Actual number of bytes transferred.
+ */
 void
 PageWriteTransfer::IOFinished(status_t status, bool partialTransfer,
 	generic_size_t bytesTransferred)
@@ -2249,6 +2626,13 @@ PageWriteTransfer::IOFinished(status_t status, bool partialTransfer,
 }
 
 
+/**
+ * @brief Allocate per-run wrapper and transfer arrays for up to \a maxPages pages.
+ *
+ * @param maxPages Maximum number of pages that can be batched in a single run.
+ * @retval B_OK        Arrays allocated successfully.
+ * @retval B_NO_MEMORY Heap allocation failed.
+ */
 status_t
 PageWriterRun::Init(uint32 maxPages)
 {
@@ -2266,6 +2650,11 @@ PageWriterRun::Init(uint32 maxPages)
 }
 
 
+/**
+ * @brief Reset wrapper and transfer counters so this run object can be reused.
+ *
+ * Does not free the underlying arrays; call Init() for that.
+ */
 void
 PageWriterRun::PrepareNextRun()
 {
@@ -2277,6 +2666,15 @@ PageWriterRun::PrepareNextRun()
 
 /*!	The page's cache must be locked.
 */
+/**
+ * @brief Add a modified page to this run's wrapper and transfer lists.
+ *
+ * Appends the page to the next available PageWriteWrapper and either extends
+ * the current PageWriteTransfer or starts a new one.
+ *
+ * @param page Modified page to schedule for write; must be locked (cache held).
+ * @note The page's cache must be locked by the caller.
+ */
 void
 PageWriterRun::AddPage(vm_page* page)
 {
@@ -2292,6 +2690,16 @@ PageWriterRun::AddPage(vm_page* page)
 /*!	Writes all pages previously added.
 	\return The number of pages that could not be written or otherwise handled.
 */
+/**
+ * @brief Dispatch all pending transfers asynchronously and wait for completion.
+ *
+ * Schedules every transfer with B_VIP_IO_REQUEST, then blocks until all
+ * async callbacks have fired.  Calls Done() on each wrapper to move pages to
+ * their post-write queues, and releases cache store/ref counts.
+ *
+ * @return Number of pages that could not be written or otherwise handled.
+ * @note Blocks the calling thread until all I/O completes.
+ */
 uint32
 PageWriterRun::Go()
 {
@@ -2343,6 +2751,17 @@ PageWriterRun::Go()
 }
 
 
+/**
+ * @brief Called by a PageWriteTransfer when its async I/O completes.
+ *
+ * Decrements the pending-transfer counter and signals fAllFinishedCondition
+ * when the last transfer has finished.
+ *
+ * @param transfer        The transfer that finished.
+ * @param status          Final I/O status of the transfer.
+ * @param partialTransfer Whether the transfer was only partially completed.
+ * @param bytesTransferred Actual number of bytes transferred.
+ */
 void
 PageWriterRun::PageWritten(PageWriteTransfer* transfer, status_t status,
 	bool partialTransfer, size_t bytesTransferred)
@@ -2358,6 +2777,19 @@ PageWriterRun::PageWritten(PageWriteTransfer* transfer, status_t status,
 	of modified pages low, so that more pages can be reused with
 	fewer costs.
 */
+/**
+ * @brief Kernel thread: drain the modified page queue by writing pages to their backing stores.
+ *
+ * Sleeps on sPageWriterCondition (or at most 3 seconds), collects up to 256
+ * modified pages per run, adjusts I/O priority based on memory pressure, and
+ * calls PageWriterRun::Go() to flush them.  Skips wired pages and, unless
+ * actively paging, also skips temporary-cache pages.
+ *
+ * @param unused Ignored thread argument.
+ * @retval B_OK Never; returns only on fatal init failure.
+ * @note Runs as a dedicated kernel thread at B_NORMAL_PRIORITY + 1.
+ *       Must not be called from any other context.
+ */
 status_t
 page_writer(void* /*unused*/)
 {
@@ -2564,6 +2996,16 @@ page_writer(void* /*unused*/)
 
 
 #if ENABLE_SWAP_SUPPORT
+/**
+ * @brief Free swap space associated with an active page if possible.
+ *
+ * Attempts to free the swap slot backing \a page in its temporary cache.
+ * If successful, marks the page modified so its data is not lost on reclaim.
+ *
+ * @param page An active page belonging to a temporary cache.
+ * @return true if swap space was freed, false otherwise.
+ * @note The page's cache must be locked. The page must be in PAGE_STATE_ACTIVE.
+ */
 static bool
 free_page_swap_space(vm_page *page)
 {
@@ -2585,6 +3027,16 @@ free_page_swap_space(vm_page *page)
 #endif
 
 
+/**
+ * @brief Find the next non-busy cached page, advancing the marker cursor.
+ *
+ * The \a marker must have been initialised with init_page_marker() before the
+ * first call.  On each call the marker is advanced past the last returned page.
+ *
+ * @param marker A cursor marker page previously set up by init_page_marker().
+ * @return Pointer to the next candidate cached page, or NULL if none remain.
+ * @note Acquires sCachedPageQueue's spinlock internally (InterruptsSpinLocker).
+ */
 static vm_page *
 find_cached_page_candidate(struct vm_page &marker)
 {
@@ -2623,6 +3075,18 @@ find_cached_page_candidate(struct vm_page &marker)
 }
 
 
+/**
+ * @brief Steal a single cached page by locking its cache and removing it.
+ *
+ * Acquires the page's cache lock, verifies the page is still a clean cached
+ * candidate, removes it from the cache and from sCachedPageQueue.
+ *
+ * @param page      A candidate page returned by find_cached_page_candidate().
+ * @param dontWait  If true, return false immediately rather than blocking on
+ *                  the cache lock.
+ * @return true if the page was successfully stolen (caller owns it), false otherwise.
+ * @note On success the caller must dispose of the page (e.g. add to free queue).
+ */
 static bool
 free_cached_page(vm_page *page, bool dontWait)
 {
@@ -2655,6 +3119,18 @@ free_cached_page(vm_page *page, bool dontWait)
 }
 
 
+/**
+ * @brief Free up to \a pagesToFree cached pages, returning them to the free queue.
+ *
+ * Iterates sCachedPageQueue using a marker cursor, stealing and freeing up to
+ * \a pagesToFree clean cached pages.  Notifies sFreePageCondition on completion.
+ *
+ * @param pagesToFree Maximum number of pages to free.
+ * @param dontWait    Passed through to free_cached_page(); if true, skips pages
+ *                    whose cache cannot be locked immediately.
+ * @return The number of pages actually freed.
+ * @note Page faults are forbidden during this function (forbid_page_faults()).
+ */
 static uint32
 free_cached_pages(uint32 pagesToFree, bool dontWait)
 {
@@ -2691,6 +3167,17 @@ free_cached_pages(uint32 pagesToFree, bool dontWait)
 }
 
 
+/**
+ * @brief Perform an idle (low-pressure) scan of the active page queue to age pages.
+ *
+ * Scans at most Count/kIdleRunsForFullQueue active pages per call, clearing
+ * accessed flags and advancing or decrementing usage counts.  Pages whose
+ * usage count drops to zero are moved to the inactive queue.  Also frees
+ * swap space from accessed temporary pages when swap support is enabled.
+ *
+ * @param pageStats Current page statistics snapshot (may be updated internally).
+ * @note Called from the page daemon thread only.
+ */
 static void
 idle_scan_active_pages(page_stats& pageStats)
 {
@@ -2768,6 +3255,19 @@ idle_scan_active_pages(page_stats& pageStats)
 }
 
 
+/**
+ * @brief Perform a full scan of the inactive page queue to reclaim pages under memory pressure.
+ *
+ * Examines every inactive page and moves unmodified ones to the cached queue,
+ * modified ones (up to \a maxToFlush derived from \a despairLevel) to the modified
+ * queue, and re-queues others.  Wakes the page writer if pages were sent to the
+ * modified queue.
+ *
+ * @param pageStats   Current page statistics snapshot.
+ * @param despairLevel Urgency level (higher = more aggressive flushing).
+ * @note Called from the page daemon thread only.
+ *       Acquires sInactivePageQueue's spinlock internally.
+ */
 static void
 full_scan_inactive_pages(page_stats& pageStats, int32 despairLevel)
 {
@@ -2902,6 +3402,18 @@ full_scan_inactive_pages(page_stats& pageStats, int32 despairLevel)
 }
 
 
+/**
+ * @brief Perform a full scan of the active page queue to deactivate pages under memory pressure.
+ *
+ * Determines how many pages must be moved to the inactive queue based on the
+ * current deficit, then walks the active queue clearing accessed flags and
+ * demoting pages whose usage count drops to zero.
+ *
+ * @param pageStats   Current page statistics snapshot.
+ * @param despairLevel Urgency level (currently unused but reserved for future use).
+ * @note Called from the page daemon thread only.
+ *       Acquires sActivePageQueue's spinlock internally.
+ */
 static void
 full_scan_active_pages(page_stats& pageStats, int32 despairLevel)
 {
@@ -2997,6 +3509,15 @@ full_scan_active_pages(page_stats& pageStats, int32 despairLevel)
 }
 
 
+/**
+ * @brief Page daemon idle-mode scan: top up the free pool and age the active queue.
+ *
+ * If the truly-free count falls below sFreePagesTarget, reclaims cached pages
+ * to compensate.  Then runs idle_scan_active_pages() to age active pages.
+ *
+ * @param pageStats Current page statistics; may be refreshed internally.
+ * @note Called from the page daemon thread only.
+ */
 static void
 page_daemon_idle_scan(page_stats& pageStats)
 {
@@ -3018,6 +3539,18 @@ page_daemon_idle_scan(page_stats& pageStats)
 }
 
 
+/**
+ * @brief Page daemon full-mode scan: aggressively reclaim inactive, cached, and active pages.
+ *
+ * Runs full_scan_inactive_pages(), then frees cached pages to satisfy
+ * reservations, then runs full_scan_active_pages().  Wakes reservation waiters
+ * via unreserve_pages() after reclaiming cached pages.
+ *
+ * @param pageStats   Current page statistics; refreshed between sub-scans.
+ * @param despairLevel Urgency level controlling how aggressively modified pages
+ *                    are flushed.
+ * @note Called from the page daemon thread only.
+ */
 static void
 page_daemon_full_scan(page_stats& pageStats, int32 despairLevel)
 {
@@ -3047,6 +3580,19 @@ page_daemon_full_scan(page_stats& pageStats, int32 despairLevel)
 }
 
 
+/**
+ * @brief Kernel thread: main page reclaim daemon loop.
+ *
+ * Evaluates current memory pressure on each wake-up.  When memory is
+ * sufficient performs an idle scan; when under pressure performs increasingly
+ * aggressive full scans with a rising despairLevel.  Waits on
+ * sPageDaemonCondition between iterations.
+ *
+ * @param unused Ignored thread argument.
+ * @retval B_OK Never; the function loops indefinitely.
+ * @note Runs as a dedicated kernel thread at B_NORMAL_PRIORITY.
+ *       Must not be called directly from any other context.
+ */
 static status_t
 page_daemon(void* /*unused*/)
 {
@@ -3087,6 +3633,23 @@ page_daemon(void* /*unused*/)
 
 /*!	Returns how many pages could *not* be reserved.
 */
+/**
+ * @brief Reserve \a missing pages at the given \a priority, waiting if necessary.
+ *
+ * Attempts to atomically decrement sUnreservedFreePages.  If insufficient pages
+ * are available, tries freeing cached pages.  If still insufficient and
+ * \a dontWait is false, blocks the calling thread on sPageReservationWaiters
+ * until the reservation is satisfied.  Higher-priority waiters can steal
+ * reservations from lower-priority ones.
+ *
+ * @param missing   Number of pages that still need to be reserved.
+ * @param priority  VM_PRIORITY_* constant controlling the dontTouch floor.
+ * @param dontWait  If true, return immediately with the unsatisfied count
+ *                  rather than blocking.
+ * @return Number of pages that could NOT be reserved (0 on full success).
+ * @note Must not be called with any VMCache lock held (may block).
+ *       Acquires sPageDeficitLock internally when blocking.
+ */
 static uint32
 reserve_pages(uint32 missing, int priority, bool dontWait)
 {
@@ -3184,6 +3747,21 @@ reserve_pages(uint32 missing, int priority, bool dontWait)
 	\param endPage End offset (in page size units) of the page range. The page
 		at this offset is not included.
 */
+/**
+ * @brief Write all modified pages of a VMCache in the range [firstPage, endPage) to disk.
+ *
+ * Iterates the cache's page tree, batches contiguous modified pages into
+ * PageWriteTransfer objects, and schedules synchronous writes.  The cache lock
+ * is temporarily released around each write.
+ *
+ * @param cache      The cache whose pages to write; must be locked on entry.
+ * @param firstPage  First page offset (in page units) of the range to write.
+ * @param endPage    Exclusive end page offset of the range to write.
+ * @retval B_OK Always (individual page errors are handled internally via
+ *              PageWriteWrapper::Done()).
+ * @note The VMCache lock is released and re-acquired around each write.
+ *       Must not be called from interrupt context.
+ */
 status_t
 vm_page_write_modified_page_range(struct VMCache* cache, uint32 firstPage,
 	uint32 endPage)
@@ -3293,6 +3871,16 @@ vm_page_write_modified_page_range(struct VMCache* cache, uint32 firstPage,
 /*!	You need to hold the VMCache lock when calling this function.
 	Note that the cache lock is released in this function.
 */
+/**
+ * @brief Write all modified pages of a VMCache to disk.
+ *
+ * Convenience wrapper around vm_page_write_modified_page_range() that
+ * covers the entire cache extent [0, virtual_end / PAGE_SIZE).
+ *
+ * @param cache The cache to write; must be locked by the caller.
+ * @retval B_OK Always.
+ * @note The VMCache lock is released and re-acquired internally.
+ */
 status_t
 vm_page_write_modified_pages(VMCache *cache)
 {
@@ -3305,6 +3893,16 @@ vm_page_write_modified_pages(VMCache *cache)
 	Note, however, that it might not do this immediately, and it can well
 	take several seconds until the page is actually written out.
 */
+/**
+ * @brief Ask the page writer to schedule a writeback of a single modified page.
+ *
+ * Requeues the page to the tail of sModifiedPageQueue and wakes the page
+ * writer condition variable.  The actual write may be delayed by several
+ * seconds.
+ *
+ * @param page A page in PAGE_STATE_MODIFIED.
+ * @note The page's cache must be locked.
+ */
 void
 vm_page_schedule_write_page(vm_page *page)
 {
@@ -3318,6 +3916,18 @@ vm_page_schedule_write_page(vm_page *page)
 
 /*!	Cache must be locked.
 */
+/**
+ * @brief Schedule writeback of all modified pages in a cache offset range.
+ *
+ * Iterates the cache's page tree from \a firstPage to \a endPage, requeuing
+ * each non-busy modified page to the tail of sModifiedPageQueue, then wakes
+ * the page writer.
+ *
+ * @param cache      The cache to scan; must be locked by the caller.
+ * @param firstPage  First page offset (in page units) of the range.
+ * @param endPage    Exclusive end page offset of the range.
+ * @note The cache lock must be held throughout.
+ */
 void
 vm_page_schedule_write_page_range(struct VMCache *cache, uint32 firstPage,
 	uint32 endPage)
@@ -3342,6 +3952,16 @@ vm_page_schedule_write_page_range(struct VMCache *cache, uint32 firstPage,
 }
 
 
+/**
+ * @brief Compute the total number of pages covered by physical memory ranges and set sNumPages.
+ *
+ * Derives sPhysicalPageOffset, sNumPages, sNonExistingPages (holes between
+ * ranges), and sIgnoredPages from kernel_args. Respects LIMIT_AVAILABLE_MEMORY
+ * if defined.
+ *
+ * @param args Pointer to the kernel boot arguments structure.
+ * @note Must be called before vm_page_init(); no locks are held or needed.
+ */
 void
 vm_page_init_num_pages(kernel_args *args)
 {
@@ -3378,6 +3998,19 @@ vm_page_init_num_pages(kernel_args *args)
 }
 
 
+/**
+ * @brief First-phase physical page allocator initialization: build the page table and free queues.
+ *
+ * Allocates the sPages array via vm_allocate_early(), initialises all page
+ * structures, places every page on sFreePageQueue, marks non-RAM and
+ * pre-allocated ranges, and computes sFreePagesTarget /
+ * sFreeOrCachedPagesTarget / sInactivePagesTarget.
+ *
+ * @param args Pointer to the kernel boot arguments structure.
+ * @retval B_OK Always.
+ * @note Must be called after vm_page_init_num_pages().
+ *       Runs during early kernel boot; no threads exist yet.
+ */
 status_t
 vm_page_init(kernel_args *args)
 {
@@ -3464,6 +4097,17 @@ vm_page_init(kernel_args *args)
 }
 
 
+/**
+ * @brief Second-phase page allocator initialization: create the page-structures area and register debugger commands.
+ *
+ * Wraps the sPages array in a named kernel area so it appears in the area
+ * table, and registers all vm_page-related kernel debugger commands.
+ *
+ * @param args Pointer to the kernel boot arguments (unused beyond signature).
+ * @retval B_OK Always.
+ * @note Must be called after the VM area infrastructure is available
+ *       (i.e. after vm_init_post_area()).
+ */
 status_t
 vm_page_init_post_area(kernel_args *args)
 {
@@ -3532,6 +4176,18 @@ vm_page_init_post_area(kernel_args *args)
 }
 
 
+/**
+ * @brief Third-phase page allocator initialization: start background kernel threads.
+ *
+ * Initialises sFreePageCondition and spawns three kernel threads:
+ *   - page_scrubber (B_LOWEST_ACTIVE_PRIORITY): zero-fills free pages.
+ *   - page_writer (B_NORMAL_PRIORITY + 1): writes modified pages to backing store.
+ *   - page_daemon (B_NORMAL_PRIORITY): reclaims pages under memory pressure.
+ *
+ * @param args Pointer to the kernel boot arguments (unused beyond signature).
+ * @retval B_OK Always.
+ * @note Must be called after the thread infrastructure is available.
+ */
 status_t
 vm_page_init_post_thread(kernel_args *args)
 {
@@ -3563,6 +4219,12 @@ vm_page_init_post_thread(kernel_args *args)
 }
 
 
+/**
+ * @brief Mark a single physical page as in-use (delegates to vm_mark_page_range_inuse()).
+ *
+ * @param page Physical page number to mark.
+ * @retval B_OK Always (range clamping is performed silently).
+ */
 status_t
 vm_mark_page_inuse(page_num_t page)
 {
@@ -3570,6 +4232,13 @@ vm_mark_page_inuse(page_num_t page)
 }
 
 
+/**
+ * @brief Mark a range of physical pages as in-use (non-wired).
+ *
+ * @param startPage Physical page number of the first page to mark.
+ * @param length    Number of pages to mark.
+ * @retval B_OK Always.
+ */
 status_t
 vm_mark_page_range_inuse(page_num_t startPage, page_num_t length)
 {
@@ -3579,6 +4248,15 @@ vm_mark_page_range_inuse(page_num_t startPage, page_num_t length)
 
 /*!	Unreserve pages previously reserved with vm_page_reserve_pages().
 */
+/**
+ * @brief Release a previously acquired page reservation.
+ *
+ * Returns \a reservation->count pages to the unreserved pool and resets
+ * the reservation count to zero.  Wakes any blocked reservation waiters.
+ *
+ * @param reservation The reservation to release; its count is set to 0 on return.
+ * @note Safe to call even if reservation->count is already 0.
+ */
 void
 vm_page_unreserve_pages(vm_page_reservation* reservation)
 {
@@ -3600,6 +4278,17 @@ vm_page_unreserve_pages(vm_page_reservation* reservation)
 	reached.
 	The caller must not hold any cache lock or the function might deadlock.
 */
+/**
+ * @brief Reserve exactly \a count free pages, blocking until all are available.
+ *
+ * Fills \a reservation->count on return.  If count is 0 the call is a no-op.
+ *
+ * @param reservation Output reservation structure; count is set to \a count on success.
+ * @param count       Number of pages to reserve.
+ * @param priority    VM_PRIORITY_* constant (USER, SYSTEM, or VIP) that controls
+ *                    which floor of reserved pages must not be touched.
+ * @note Must not be called with any VMCache lock held (may block indefinitely).
+ */
 void
 vm_page_reserve_pages(vm_page_reservation* reservation, uint32 count,
 	int priority)
@@ -3615,6 +4304,19 @@ vm_page_reserve_pages(vm_page_reservation* reservation, uint32 count,
 }
 
 
+/**
+ * @brief Try to reserve exactly \a count free pages without blocking.
+ *
+ * Attempts to reserve the pages but returns false immediately if they are not
+ * all available.  On failure, any partially reserved pages are returned to the
+ * pool.
+ *
+ * @param reservation Output reservation structure; count is set to \a count on success.
+ * @param count       Number of pages to reserve.
+ * @param priority    VM_PRIORITY_* constant controlling the dontTouch floor.
+ * @return true if all \a count pages were reserved, false otherwise.
+ * @note Does not block; safe to call with VMCache locks held.
+ */
 bool
 vm_page_try_reserve_pages(vm_page_reservation* reservation, uint32 count,
 	int priority)
@@ -3637,6 +4339,24 @@ vm_page_try_reserve_pages(vm_page_reservation* reservation, uint32 count,
 }
 
 
+/**
+ * @brief Allocate a single physical page from a previously established reservation.
+ *
+ * Removes a page from the free or clear queue (preferring clear if
+ * VM_PAGE_ALLOC_CLEAR is set), initialises it with the requested state and
+ * flags, and optionally zero-fills it.  Decrements the reservation count by 1.
+ *
+ * @param reservation A valid reservation with count > 0; decremented on return.
+ * @param flags       Allocation flags:
+ *                    - Low bits: target PAGE_STATE_* (must not be FREE or CLEAR).
+ *                    - VM_PAGE_ALLOC_BUSY: mark the page busy immediately.
+ *                    - VM_PAGE_ALLOC_CLEAR: prefer a pre-cleared page; zero-fill
+ *                      if a free page had to be used instead.
+ * @return Pointer to the allocated vm_page on success.
+ * @note Caller must hold a valid reservation. May panic if no page is available
+ *       despite the reservation (indicates a reservation accounting bug).
+ *       Acquires sFreePageQueuesLock (read, upgrading to write on contention).
+ */
 vm_page *
 vm_page_allocate_page(vm_page_reservation* reservation, uint32 flags)
 {
@@ -3721,6 +4441,17 @@ vm_page_allocate_page(vm_page_reservation* reservation, uint32 flags)
 }
 
 
+/**
+ * @brief Return a list of partially-allocated pages to the free/clear queues after a failed run allocation.
+ *
+ * Pages in \a freePages are returned to sFreePageQueue; pages in \a clearPages
+ * to sClearPageQueue.  Both lists are consumed.  Notifies sFreePageCondition.
+ *
+ * @param freePages  List of pages to return to the free queue (sorted ascending).
+ * @param clearPages List of pages to return to the clear queue (sorted ascending).
+ * @note sFreePageQueuesLock must NOT be held by the caller; the function uses
+ *       PrependUnlocked() which acquires the per-queue spinlock internally.
+ */
 static void
 allocate_page_run_cleanup(VMPageQueue::PageList& freePages,
 	VMPageQueue::PageList& clearPages)
@@ -3752,7 +4483,7 @@ allocate_page_run_cleanup(VMPageQueue::PageList& freePages,
 	will unlock regardless of whether it succeeds or fails.
 
 	If the function fails, it cleans up after itself, i.e. it will free all
-	pages it managed to allocate.
+	pages it manages to allocate.
 
 	\param start The start index (into \c sPages) of the run.
 	\param length The number of pages to allocate.
@@ -3765,6 +4496,24 @@ allocate_page_run_cleanup(VMPageQueue::PageList& freePages,
 	\return The index of the first page that could not be allocated. \a length
 		is returned when the function was successful.
 */
+/**
+ * @brief Attempt to allocate a physically contiguous run of \a length pages starting at sPages[\a start].
+ *
+ * Pulls free and clear pages out of their queues under the write lock, then
+ * releases the lock and steals any remaining cached pages individually.  On
+ * failure at any point, all acquired pages are returned via
+ * allocate_page_run_cleanup() and the function reports the failing index.
+ *
+ * @param start                Physical page index (into sPages[]) of the run start.
+ * @param length               Number of contiguous pages to allocate.
+ * @param flags                Allocation flags (state, VM_PAGE_ALLOC_BUSY, VM_PAGE_ALLOC_CLEAR).
+ * @param freeClearQueueLocker A write-locked WriteLocker for sFreePageQueuesLock;
+ *                             will be unlocked by this function regardless of outcome.
+ * @return \a length on full success; the index of the first page that could not
+ *         be allocated otherwise (0 .. length-1).
+ * @note The caller must hold sFreePageQueuesLock (write) on entry.
+ *       On return, sFreePageQueuesLock is always unlocked.
+ */
 static page_num_t
 allocate_page_run(page_num_t start, page_num_t length, uint32 flags,
 	WriteLocker& freeClearQueueLocker)
@@ -3931,6 +4680,24 @@ allocate_page_run(page_num_t start, page_num_t length, uint32 flags,
 	\return The first page of the allocated page run on success; \c NULL
 		when the allocation failed.
 */
+/**
+ * @brief Allocate a physically contiguous run of \a length pages satisfying address constraints.
+ *
+ * Internally reserves \a length pages at \a priority, then scans the physical
+ * page array for a contiguous run meeting the low/high address, alignment, and
+ * boundary restrictions.  First attempts free/clear pages only; if that fails,
+ * retries including cached pages.
+ *
+ * @param flags        Allocation flags (state, VM_PAGE_ALLOC_BUSY, VM_PAGE_ALLOC_CLEAR).
+ * @param length       Number of contiguous pages required.
+ * @param restrictions Physical address constraints (low_address, high_address,
+ *                     alignment, boundary); zero fields are ignored.
+ * @param priority     VM_PRIORITY_* for the internal page reservation.
+ * @return Pointer to the first vm_page of the allocated run, or NULL on failure.
+ * @note Blocks until \a length pages are reserved.  Acquires
+ *       sFreePageQueuesLock (write) internally.
+ *       Must not be called with any VMCache lock held.
+ */
 vm_page*
 vm_page_allocate_page_run(uint32 flags, page_num_t length,
 	const physical_address_restrictions* restrictions, int priority)
@@ -4046,6 +4813,13 @@ vm_page_allocate_page_run(uint32 flags, page_num_t length,
 }
 
 
+/**
+ * @brief Return the vm_page at the given raw index into the sPages array.
+ *
+ * @param index Zero-based index into sPages[].
+ * @return Pointer to the corresponding vm_page.
+ * @note No bounds checking is performed.
+ */
 vm_page *
 vm_page_at_index(int32 index)
 {
@@ -4053,6 +4827,16 @@ vm_page_at_index(int32 index)
 }
 
 
+/**
+ * @brief Look up the vm_page descriptor for a given physical page number.
+ *
+ * Translates \a pageNumber to an index into sPages[], accounting for
+ * sPhysicalPageOffset.
+ *
+ * @param pageNumber Physical page number (physical address >> PAGE_SHIFT).
+ * @return Pointer to the vm_page, or NULL if the page number is outside the
+ *         managed range.
+ */
 vm_page *
 vm_lookup_page(page_num_t pageNumber)
 {
@@ -4067,6 +4851,12 @@ vm_lookup_page(page_num_t pageNumber)
 }
 
 
+/**
+ * @brief Test whether a vm_page pointer refers to a dummy/sentinel page outside the managed array.
+ *
+ * @param page The page pointer to test.
+ * @return true if \a page is outside sPages[0..sNumPages), false if it is a real managed page.
+ */
 bool
 vm_page_is_dummy(struct vm_page *page)
 {
@@ -4086,6 +4876,21 @@ vm_page_is_dummy(struct vm_page *page)
 		incremented, thus allowing to allocate another page for the freed one at
 		a later time.
 */
+/**
+ * @brief Free a page that has been removed from its cache, optionally recycling the slot into a reservation.
+ *
+ * Removes the page from any queue it is in and places it on the free queue.
+ * If \a reservation is non-NULL the reservation count is incremented by 1
+ * (so the caller can immediately re-use the slot); otherwise the page is
+ * returned to the unreserved pool.
+ *
+ * @param cache       The cache the page previously belonged to, or NULL.
+ *                    The page must already have been removed from the cache.
+ * @param page        The page to free; must not be in FREE or CLEAR state.
+ * @param reservation Optional reservation to recycle the freed page into.
+ * @note The page must have been removed from its cache and must not be mapped.
+ *       Caller must hold DEBUG_PAGE_ACCESS on the page.
+ */
 void
 vm_page_free_etc(VMCache* cache, vm_page* page,
 	vm_page_reservation* reservation)
@@ -4104,6 +4909,14 @@ vm_page_free_etc(VMCache* cache, vm_page* page,
 }
 
 
+/**
+ * @brief Move a page to the specified queue state (public wrapper around set_page_state()).
+ *
+ * @param page      The page to transition; must not be in FREE or CLEAR state.
+ * @param pageState Target PAGE_STATE_* value; must not be FREE or CLEAR.
+ * @note The page's cache must be locked if the page has one.
+ *       Page queues must not be locked.
+ */
 void
 vm_page_set_state(vm_page *page, int pageState)
 {
@@ -4118,6 +4931,14 @@ vm_page_set_state(vm_page *page, int pageState)
 	depending on \a tail.
 	The page must have a cache and the cache must be locked!
 */
+/**
+ * @brief Move a page to the head or tail of its current queue without changing its state.
+ *
+ * @param page The page to requeue; must have a cache, and that cache must be locked.
+ * @param tail If true, move to the tail; if false, move to the head.
+ * @note The page's cache must be locked.
+ *       Panics if called on a page in the FREE or CLEAR state.
+ */
 void
 vm_page_requeue(struct vm_page *page, bool tail)
 {
@@ -4157,6 +4978,11 @@ vm_page_requeue(struct vm_page *page, bool tail)
 }
 
 
+/**
+ * @brief Return the total number of physical pages managed by the allocator, excluding non-existing holes.
+ *
+ * @return sNumPages - sNonExistingPages.
+ */
 page_num_t
 vm_page_num_pages(void)
 {
@@ -4164,6 +4990,13 @@ vm_page_num_pages(void)
 }
 
 
+/**
+ * @brief Return the number of immediately allocatable pages (free + cached).
+ *
+ * Sums sUnreservedFreePages and the cached queue count, clamped to zero.
+ *
+ * @return Number of available free and cached pages, or 0 if the count is negative.
+ */
 page_num_t
 vm_page_num_free_pages(void)
 {
@@ -4172,6 +5005,11 @@ vm_page_num_free_pages(void)
 }
 
 
+/**
+ * @brief Return the number of truly unreserved free pages (excludes cached pages).
+ *
+ * @return sUnreservedFreePages clamped to zero.
+ */
 page_num_t
 vm_page_num_unused_pages(void)
 {
@@ -4180,6 +5018,17 @@ vm_page_num_unused_pages(void)
 }
 
 
+/**
+ * @brief Fill a system_info structure with current page and memory statistics.
+ *
+ * Populates info->max_pages, info->used_pages, info->cached_pages,
+ * info->block_cache_pages, info->page_faults, and info->ignored_pages.
+ * Block-cache pages are classified as cached rather than used.
+ *
+ * @param info Pointer to the system_info structure to fill.
+ * @note No locking is performed; values are best-effort snapshots and may be
+ *       slightly inconsistent if page state changes during the call.
+ */
 void
 vm_page_get_stats(system_info *info)
 {
@@ -4235,6 +5084,14 @@ vm_page_get_stats(system_info *info)
 	The value is inclusive, i.e. in case of a 32 bit phys_addr_t 0xffffffff
 	means the that the last page ends at exactly 4 GB.
 */
+/**
+ * @brief Return the highest inclusive physical address belonging to the last managed page.
+ *
+ * For a 32-bit phys_addr_t, a return value of 0xffffffff means the last page
+ * ends exactly at 4 GB.
+ *
+ * @return (sPhysicalPageOffset + sNumPages) * B_PAGE_SIZE - 1.
+ */
 phys_addr_t
 vm_page_max_address()
 {

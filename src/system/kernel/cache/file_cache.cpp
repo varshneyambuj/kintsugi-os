@@ -1,8 +1,38 @@
 /*
- * Copyright 2004-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file file_cache.cpp
+ * @brief VFS file cache — page-cache-backed buffered file I/O.
+ *
+ * Implements the kernel file cache used for buffered reads and writes.
+ * File data is stored in VM pages managed by a VMCache per vnode. On a
+ * cache miss, pages are faulted in via the vnode store. Dirty pages are
+ * written back by the page writer or on explicit flush.
+ *
+ * @see vnode_store.cpp, file_map.cpp, block_cache.cpp
+ */
 
 #include "vnode_store.h"
 
@@ -114,6 +144,16 @@ static generic_io_vec sZeroVecs[kZeroVecCount];
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a PrecacheIO object for an asynchronous read-ahead operation.
+ *
+ * @param ref    The file cache reference whose VMCache will receive the pages.
+ * @param offset Byte offset in the file at which the read-ahead begins (page-aligned).
+ * @param size   Number of bytes to prefetch.
+ *
+ * @note Acquires both a reference and a store-ref on the underlying VMCache so
+ *       the cache cannot be destroyed before IOFinished() is called.
+ */
 PrecacheIO::PrecacheIO(file_cache_ref* ref, off_t offset, generic_size_t size)
 	:
 	fRef(ref),
@@ -130,6 +170,12 @@ PrecacheIO::PrecacheIO(file_cache_ref* ref, off_t offset, generic_size_t size)
 }
 
 
+/**
+ * @brief Destroy the PrecacheIO object and release VMCache references.
+ *
+ * @note Frees the page and I/O-vector arrays and drops the store-ref and
+ *       reference that were acquired in the constructor.
+ */
 PrecacheIO::~PrecacheIO()
 {
 	delete[] fPages;
@@ -139,6 +185,18 @@ PrecacheIO::~PrecacheIO()
 }
 
 
+/**
+ * @brief Allocate physical pages and build the I/O-vector list for the read-ahead.
+ *
+ * @param reservation Pre-reserved page pool from which pages are drawn.
+ * @retval B_OK       Pages were allocated and inserted into the cache successfully.
+ * @retval B_BAD_VALUE fPageCount is zero.
+ * @retval B_NO_MEMORY Heap allocation for the page or vec arrays failed.
+ *
+ * @note All allocated pages are marked busy (busy_io = true) and inserted into
+ *       the VMCache before the function returns. The caller must subsequently
+ *       call ReadAsync() or free the pages manually on error.
+ */
 status_t
 PrecacheIO::Prepare(vm_page_reservation* reservation)
 {
@@ -172,6 +230,14 @@ PrecacheIO::Prepare(vm_page_reservation* reservation)
 }
 
 
+/**
+ * @brief Issue the asynchronous read request to the VFS layer.
+ *
+ * @note This function transfers ownership of the PrecacheIO object to the I/O
+ *       subsystem; the object will be deleted automatically inside IOFinished()
+ *       once the transfer completes. The caller must not access the object after
+ *       this call returns.
+ */
 void
 PrecacheIO::ReadAsync()
 {
@@ -182,6 +248,18 @@ PrecacheIO::ReadAsync()
 }
 
 
+/**
+ * @brief Async I/O completion callback — mark transferred pages accessible and
+ *        free pages that failed.
+ *
+ * @param status           Overall I/O status returned by the lower layer.
+ * @param partialTransfer  True when fewer bytes than requested were transferred.
+ * @param bytesTransferred Number of bytes actually read from the device.
+ *
+ * @note Acquires the VMCache lock internally. Pages for which busy_io was
+ *       cleared externally (e.g. by cache shrinking) are released via
+ *       FreeRemovedPage(). This function deletes @c this before returning.
+ */
 void
 PrecacheIO::IOFinished(status_t status, bool partialTransfer,
 	generic_size_t bytesTransferred)
@@ -241,6 +319,20 @@ PrecacheIO::IOFinished(status_t status, bool partialTransfer,
 //	#pragma mark -
 
 
+/**
+ * @brief Append a physical address range to a generic_io_vec array, merging
+ *        adjacent ranges where possible.
+ *
+ * @param vecs    Array of I/O vectors to update.
+ * @param index   Current number of valid entries; incremented on a new entry.
+ * @param max     Capacity of @p vecs; triggers a kernel panic if exceeded.
+ * @param address Physical base address of the range to add.
+ * @param size    Length of the range in bytes.
+ *
+ * @note If the new range is contiguous with the last existing vector the
+ *       last vector's length is extended in place rather than creating a new
+ *       entry.  Panics if @p index would overflow @p max.
+ */
 static void
 add_to_iovec(generic_io_vec* vecs, uint32 &index, uint32 max,
 	generic_addr_t address, generic_size_t size)
@@ -261,6 +353,14 @@ add_to_iovec(generic_io_vec* vecs, uint32 &index, uint32 max,
 }
 
 
+/**
+ * @brief Return whether the last recorded access pattern for a cache ref is
+ *        sequential.
+ *
+ * @param ref The file cache reference to inspect.
+ * @return true if the current slot in the access ring buffer is non-zero
+ *         (indicating a previous sequential access was recorded).
+ */
 static inline bool
 access_is_sequential(file_cache_ref* ref)
 {
@@ -268,6 +368,18 @@ access_is_sequential(file_cache_ref* ref)
 }
 
 
+/**
+ * @brief Record a file access in the sequential-access ring buffer.
+ *
+ * @param ref     The file cache reference whose ring buffer is updated.
+ * @param offset  Starting byte offset of the access.
+ * @param bytes   Number of bytes accessed.
+ * @param isWrite True for a write access; the offset is stored as a negative
+ *                value to distinguish it from reads.
+ *
+ * @note If the access does not continue exactly from the previous end offset
+ *       the previous slot is zeroed to break the sequential-access heuristic.
+ */
 static inline void
 push_access(file_cache_ref* ref, off_t offset, generic_size_t bytes,
 	bool isWrite)
@@ -291,6 +403,20 @@ push_access(file_cache_ref* ref, off_t offset, generic_size_t bytes,
 }
 
 
+/**
+ * @brief Reserve VM pages for an upcoming I/O operation, evicting cache pages
+ *        under memory pressure if the access pattern is sequential.
+ *
+ * @param ref          The file cache reference whose cache may be trimmed.
+ * @param reservation  Output reservation structure filled by this function.
+ * @param reservePages Number of pages to reserve.
+ * @param isWrite      True if the reservation is for a write operation; affects
+ *                     which eviction strategy is used under low memory.
+ *
+ * @note Under low memory this function may release cached (unmodified) pages
+ *       from the vnode cache, or wait for modified pages to be written back,
+ *       before delegating to vm_page_reserve_pages().
+ */
 static void
 reserve_pages(file_cache_ref* ref, vm_page_reservation* reservation,
 	size_t reservePages, bool isWrite)
@@ -340,6 +466,22 @@ reserve_pages(file_cache_ref* ref, vm_page_reservation* reservation,
 }
 
 
+/**
+ * @brief Read pages from the vnode into physical memory and zero any bytes
+ *        beyond the end of the file that were not filled by the read.
+ *
+ * @param ref       The file cache reference identifying the vnode and cache.
+ * @param cookie    VFS cookie forwarded to vfs_read_pages().
+ * @param offset    File offset at which to start reading.
+ * @param vecs      Array of physical I/O vectors describing the target pages.
+ * @param count     Number of valid entries in @p vecs.
+ * @param flags     Flags forwarded to vfs_read_pages() (e.g. B_PHYSICAL_IO_REQUEST).
+ * @param _numBytes In: maximum bytes to read. Out: bytes actually transferred.
+ * @retval B_OK     Read completed (possibly with a short transfer that was zeroed).
+ *
+ * @note Any tail bytes in the last physical page that were not covered by the
+ *       vnode data are explicitly zeroed so callers never see stale memory.
+ */
 static inline status_t
 read_pages_and_clear_partial(file_cache_ref* ref, void* cookie, off_t offset,
 	const generic_io_vec* vecs, size_t count, uint32 flags,
@@ -381,6 +523,27 @@ read_pages_and_clear_partial(file_cache_ref* ref, void* cookie, off_t offset,
 	The cache_ref lock must be held when calling this function; during
 	operation it will unlock the cache, though.
 */
+/**
+ * @brief Fault pages into the VMCache by reading from the backing vnode store
+ *        and optionally copy the data to a caller-supplied buffer.
+ *
+ * @param ref          The file cache reference (cache lock must be held on entry).
+ * @param cookie       VFS cookie forwarded to the read helper.
+ * @param offset       Page-aligned file offset at which to start the read.
+ * @param pageOffset   Byte offset within the first page (0 to B_PAGE_SIZE-1).
+ * @param buffer       Kernel or user virtual address to copy read data into.
+ * @param bufferSize   Number of bytes the caller wants copied into @p buffer.
+ * @param useBuffer    When false, pages are populated but no copy is performed.
+ * @param reservation  Page reservation used to allocate new cache pages.
+ * @param reservePages Number of pages to re-reserve after the read for the next
+ *                     iteration.
+ * @retval B_OK        Pages were read, inserted into the cache, and (if
+ *                     @p useBuffer is true) copied to @p buffer.
+ *
+ * @note The cache lock is dropped while I/O is in flight and re-acquired before
+ *       returning.  On read failure all pages allocated by this call are
+ *       removed from the cache and freed.
+ */
 static status_t
 read_into_cache(file_cache_ref* ref, void* cookie, off_t offset,
 	int32 pageOffset, addr_t buffer, size_t bufferSize, bool useBuffer,
@@ -479,6 +642,26 @@ read_into_cache(file_cache_ref* ref, void* cookie, off_t offset,
 }
 
 
+/**
+ * @brief Read data directly from the vnode into a caller-supplied buffer,
+ *        bypassing the page cache entirely.
+ *
+ * @param ref          The file cache reference identifying the vnode.
+ * @param cookie       VFS cookie forwarded to vfs_read_pages().
+ * @param offset       Page-aligned file offset to read from.
+ * @param pageOffset   Intra-page byte offset added to @p offset for the actual
+ *                     read position.
+ * @param buffer       Destination address for the data.
+ * @param bufferSize   Number of bytes to read.
+ * @param useBuffer    When false the function returns immediately with B_OK
+ *                     without issuing any I/O.
+ * @param reservation  Page reservation to restore after the bypass read.
+ * @param reservePages Number of pages to re-reserve via reserve_pages().
+ * @retval B_OK        Data was read successfully (or @p useBuffer was false).
+ *
+ * @note The VMCache lock is dropped for the duration of the I/O and
+ *       re-acquired before returning.
+ */
 static status_t
 read_from_file(file_cache_ref* ref, void* cookie, off_t offset,
 	int32 pageOffset, addr_t buffer, size_t bufferSize, bool useBuffer,
@@ -516,6 +699,26 @@ read_from_file(file_cache_ref* ref, void* cookie, off_t offset,
 	though, if only a partial page gets written.
 	The same restrictions apply.
 */
+/**
+ * @brief Allocate cache pages, fill them from @p buffer, and mark them dirty
+ *        for writeback (or write through immediately if write-through is active).
+ *
+ * @param ref          The file cache reference (cache lock must be held on entry).
+ * @param cookie       VFS cookie used for partial-page read-modify-write cycles.
+ * @param offset       Page-aligned file offset at which to begin writing.
+ * @param pageOffset   Byte offset within the first page to start the write.
+ * @param buffer       Source address (kernel or user space) for write data.
+ * @param bufferSize   Number of bytes to write from @p buffer.
+ * @param useBuffer    When false, the cache pages are zeroed instead of copied
+ *                     from @p buffer.
+ * @param reservation  Page reservation used to allocate new cache pages.
+ * @param reservePages Number of pages to re-reserve after the write.
+ * @retval B_OK        Pages were allocated, populated, and inserted successfully.
+ *
+ * @note For partial first or last pages a read-modify-write is performed via
+ *       vfs_read_pages() to preserve unwritten bytes.  The cache lock is dropped
+ *       while I/O is in flight.
+ */
 static status_t
 write_to_cache(file_cache_ref* ref, void* cookie, off_t offset,
 	int32 pageOffset, addr_t buffer, size_t bufferSize, bool useBuffer,
@@ -660,6 +863,18 @@ write_to_cache(file_cache_ref* ref, void* cookie, off_t offset,
 }
 
 
+/**
+ * @brief Write a range of zeroes directly to a vnode, bypassing the page cache.
+ *
+ * @param vnode   The vnode to write to.
+ * @param cookie  VFS cookie forwarded to vfs_write_pages().
+ * @param offset  File offset at which to start writing zeroes.
+ * @param _size   In: number of zero bytes to write. Out: bytes actually written.
+ * @retval B_OK   All bytes were zeroed successfully.
+ *
+ * @note Uses the pre-allocated sZeroPage / sZeroVecs to avoid dynamic
+ *       allocation in the I/O path.
+ */
 static status_t
 write_zeros_to_file(struct vnode* vnode, void* cookie, off_t offset,
 	size_t* _size)
@@ -697,6 +912,24 @@ write_zeros_to_file(struct vnode* vnode, void* cookie, off_t offset,
 }
 
 
+/**
+ * @brief Write data directly to the vnode, bypassing the page cache.
+ *
+ * @param ref          The file cache reference identifying the vnode.
+ * @param cookie       VFS cookie forwarded to vfs_write_pages() or
+ *                     write_zeros_to_file().
+ * @param offset       Page-aligned base file offset.
+ * @param pageOffset   Intra-page byte offset added to @p offset for the write.
+ * @param buffer       Source address for write data.
+ * @param bufferSize   Number of bytes to write.
+ * @param useBuffer    When false, zeroes are written instead of buffer data.
+ * @param reservation  Page reservation to restore after the write.
+ * @param reservePages Number of pages to re-reserve via reserve_pages().
+ * @retval B_OK        Data was written successfully.
+ *
+ * @note The VMCache lock is dropped for the duration of the I/O and
+ *       re-acquired before returning.
+ */
 static status_t
 write_to_file(file_cache_ref* ref, void* cookie, off_t offset, int32 pageOffset,
 	addr_t buffer, size_t bufferSize, bool useBuffer,
@@ -729,6 +962,35 @@ write_to_file(file_cache_ref* ref, void* cookie, off_t offset, int32 pageOffset,
 }
 
 
+/**
+ * @brief Flush any pending gap in the current I/O sweep by calling the
+ *        appropriate cache read or write function.
+ *
+ * @param ref              The file cache reference.
+ * @param cookie           VFS cookie forwarded to @p function.
+ * @param function         The cache_func to invoke (read_into_cache,
+ *                         write_to_cache, read_from_file, or write_to_file).
+ * @param offset           Current page-aligned file offset (end of gap).
+ * @param buffer           Current user/kernel buffer pointer (end of gap).
+ * @param useBuffer        Whether the buffer contains valid data.
+ * @param pageOffset       Intra-page offset for the current position; reset to
+ *                         0 on success.
+ * @param bytesLeft        Bytes remaining in the overall request.
+ * @param reservePages     Updated with the number of pages reserved for the
+ *                         next chunk.
+ * @param lastOffset       In/out: start of the pending gap; updated on success.
+ * @param lastBuffer       In/out: buffer pointer at start of gap; updated on
+ *                         success.
+ * @param lastPageOffset   In/out: page offset at start of gap; reset on success.
+ * @param lastLeft         In/out: bytes left at start of gap; updated on success.
+ * @param lastReservedPages In/out: reservation count from previous iteration.
+ * @param reservation      Active page reservation passed to @p function.
+ * @retval B_OK            The gap was satisfied and the "last*" state variables
+ *                         advanced.
+ *
+ * @note Returns B_OK immediately (no-op) when @p lastBuffer == @p buffer,
+ *       meaning no gap has accumulated since the last flush.
+ */
 static inline status_t
 satisfy_cache_io(file_cache_ref* ref, void* cookie, cache_func function,
 	off_t offset, addr_t buffer, bool useBuffer, int32 &pageOffset,
@@ -757,6 +1019,24 @@ satisfy_cache_io(file_cache_ref* ref, void* cookie, cache_func function,
 }
 
 
+/**
+ * @brief Core I/O dispatch loop: walk the page cache, serve hits in-place, and
+ *        batch cache misses into calls to the selected read or write function.
+ *
+ * @param _cacheRef Opaque pointer to a file_cache_ref; must not be NULL.
+ * @param cookie    VFS cookie forwarded to all subordinate I/O helpers.
+ * @param offset    Byte offset in the file at which the I/O begins.
+ * @param buffer    Kernel or user virtual address of the data buffer.
+ * @param _size     In: requested byte count. Out: bytes actually transferred.
+ * @param doWrite   True for write, false for read.
+ * @retval B_OK     I/O completed (possibly short due to end-of-file).
+ *
+ * @note Holds the VMCache lock for most of its execution; drops it briefly
+ *       around every subordinate read/write call and while waiting for busy
+ *       pages.  Adapts between cached (read_into_cache / write_to_cache) and
+ *       bypass (read_from_file / write_to_file) modes every 32 pages based on
+ *       available memory.
+ */
 static status_t
 do_cache_io(void* _cacheRef, void* cookie, off_t offset, addr_t buffer,
 	size_t* _size, bool doWrite)
@@ -942,6 +1222,22 @@ do_cache_io(void* _cacheRef, void* cookie, off_t offset, addr_t buffer,
 }
 
 
+/**
+ * @brief Public wrapper around do_cache_io() that handles B_BUSY retries
+ *        caused by page-fault-wait restrictions.
+ *
+ * @param ref     Opaque file_cache_ref pointer.
+ * @param cookie  VFS cookie forwarded to do_cache_io().
+ * @param offset  Starting byte offset of the I/O.
+ * @param buffer  User or kernel data buffer.
+ * @param _size   In: requested size. Out: bytes transferred.
+ * @param doWrite True for write, false for read.
+ * @retval B_OK   I/O completed successfully.
+ *
+ * @note Temporarily decrements page_fault_waits_allowed on the current thread
+ *       so that page faults do not deadlock on cache pages. On B_BUSY the
+ *       unfinished portion of the buffer is zeroed and the I/O is retried.
+ */
 static status_t
 cache_io(void* ref, void* cookie, off_t offset, addr_t buffer,
 	size_t* _size, bool doWrite)
@@ -983,6 +1279,22 @@ cache_io(void* ref, void* cookie, off_t offset, addr_t buffer,
 }
 
 
+/**
+ * @brief Generic syscall handler for the file cache subsystem.
+ *
+ * @param subsystem  Subsystem name string (unused).
+ * @param function   One of CACHE_CLEAR or CACHE_SET_MODULE.
+ * @param buffer     User-space pointer; for CACHE_SET_MODULE it holds the
+ *                   NUL-terminated module name to activate.
+ * @param bufferSize Size of @p buffer in bytes.
+ * @retval B_OK         Operation completed successfully.
+ * @retval B_BAD_ADDRESS @p buffer is not a valid user address.
+ * @retval B_BAD_VALUE  The module name does not start with CACHE_MODULES_NAME.
+ * @retval B_BAD_HANDLER Unknown @p function code.
+ *
+ * @note CACHE_SET_MODULE unloads the previous cache module (if any) with a
+ *       100 ms grace period before loading the new one.
+ */
 static status_t
 file_cache_control(const char* subsystem, uint32 function, void* buffer,
 	size_t bufferSize)
@@ -1036,6 +1348,19 @@ file_cache_control(const char* subsystem, uint32 function, void* buffer,
 //	#pragma mark - private kernel API
 
 
+/**
+ * @brief Prefetch file data into the page cache for a vnode that is already
+ *        known to the caller.
+ *
+ * @param vnode  The vnode whose cache should be populated.
+ * @param offset Byte offset at which prefetching begins (rounded down to page).
+ * @param size   Number of bytes to prefetch (rounded up to page).
+ *
+ * @note Silently returns without doing anything if the vnode has no associated
+ *       file cache, if there are insufficient free pages (fewer than twice the
+ *       requested page count), or if the cache already contains more than 2/3
+ *       of the file's pages.  I/O is issued asynchronously via PrecacheIO.
+ */
 extern "C" void
 cache_prefetch_vnode(struct vnode* vnode, off_t offset, size_t size)
 {
@@ -1123,6 +1448,17 @@ cache_prefetch_vnode(struct vnode* vnode, off_t offset, size_t size)
 }
 
 
+/**
+ * @brief Prefetch file data into the page cache by mount and vnode ID.
+ *
+ * @param mountID  Mount identifier used to look up the vnode.
+ * @param vnodeID  Vnode identifier within the mount.
+ * @param offset   Byte offset at which prefetching begins.
+ * @param size     Number of bytes to prefetch.
+ *
+ * @note Acquires a temporary reference to the vnode via vfs_get_vnode() and
+ *       delegates to cache_prefetch_vnode().
+ */
 extern "C" void
 cache_prefetch(dev_t mountID, ino_t vnodeID, off_t offset, size_t size)
 {
@@ -1140,6 +1476,20 @@ cache_prefetch(dev_t mountID, ino_t vnodeID, off_t offset, size_t size)
 }
 
 
+/**
+ * @brief Notify the active cache module that a vnode has been opened.
+ *
+ * @param vnode    The vnode that was opened.
+ * @param cache    The VMCache associated with the vnode, or NULL.
+ * @param mountID  Mount identifier of the vnode.
+ * @param parentID Inode number of the parent directory.
+ * @param vnodeID  Inode number of the opened vnode.
+ * @param name     Name of the file as it appears in its parent directory.
+ *
+ * @note No-op when no cache module is loaded or the module does not implement
+ *       node_opened.  The file size passed to the module is -1 when the vnode
+ *       has no associated file cache.
+ */
 extern "C" void
 cache_node_opened(struct vnode* vnode, VMCache* cache,
 	dev_t mountID, ino_t parentID, ino_t vnodeID, const char* name)
@@ -1159,6 +1509,17 @@ cache_node_opened(struct vnode* vnode, VMCache* cache,
 }
 
 
+/**
+ * @brief Notify the active cache module that a vnode has been closed.
+ *
+ * @param vnode   The vnode that was closed.
+ * @param cache   The VMCache associated with the vnode, or NULL.
+ * @param mountID Mount identifier of the vnode.
+ * @param vnodeID Inode number of the closed vnode.
+ *
+ * @note No-op when no cache module is loaded or the module does not implement
+ *       node_closed.
+ */
 extern "C" void
 cache_node_closed(struct vnode* vnode, VMCache* cache,
 	dev_t mountID, ino_t vnodeID)
@@ -1175,6 +1536,15 @@ cache_node_closed(struct vnode* vnode, VMCache* cache,
 }
 
 
+/**
+ * @brief Notify the active cache module that a new process has been launched.
+ *
+ * @param argCount Number of arguments in @p args.
+ * @param args     NULL-terminated argv array of the launched process.
+ *
+ * @note No-op when no cache module is loaded or the module does not implement
+ *       node_launched.
+ */
 extern "C" void
 cache_node_launched(size_t argCount, char*  const* args)
 {
@@ -1185,6 +1555,16 @@ cache_node_launched(size_t argCount, char*  const* args)
 }
 
 
+/**
+ * @brief Load the optional launch-speedup cache module after the boot device
+ *        is available.
+ *
+ * @retval B_OK Always returns B_OK; module load failure is non-fatal.
+ *
+ * @note Called once during the post-boot-device initialisation phase.
+ *       If the "file_cache/launch_speedup/v1" module is present it is opened
+ *       and stored in sCacheModule.
+ */
 extern "C" status_t
 file_cache_init_post_boot_device(void)
 {
@@ -1198,6 +1578,16 @@ file_cache_init_post_boot_device(void)
 }
 
 
+/**
+ * @brief Initialise the file cache subsystem at kernel boot time.
+ *
+ * @retval B_OK Initialisation succeeded.
+ *
+ * @note Allocates and wires a single zeroed page (sZeroPage) used for writing
+ *       zeroes without dynamic allocation in the I/O path.  Also populates the
+ *       sZeroVecs array and registers the CACHE_SYSCALLS generic syscall handler.
+ *       Must be called before any file cache or vnode store operations.
+ */
 extern "C" status_t
 file_cache_init(void)
 {
@@ -1223,6 +1613,20 @@ file_cache_init(void)
 //	#pragma mark - public FS API
 
 
+/**
+ * @brief Create a file cache for the given vnode, associating it with a new or
+ *        existing VMCache.
+ *
+ * @param mountID  Mount identifier of the file system.
+ * @param vnodeID  Inode number within that mount.
+ * @param size     Initial logical file size in bytes; stored in
+ *                 VMCache::virtual_end.
+ * @return Opaque file_cache_ref pointer on success, NULL on failure.
+ *
+ * @note Does not grab a vnode reference; the vnode must remain valid for the
+ *       lifetime of the returned cache ref.  The new ref is registered with
+ *       the VMVnodeCache via SetFileCacheRef().
+ */
 extern "C" void*
 file_cache_create(dev_t mountID, ino_t vnodeID, off_t size)
 {
@@ -1266,6 +1670,16 @@ err1:
 }
 
 
+/**
+ * @brief Destroy a file cache and release the associated VMCache reference.
+ *
+ * @param _cacheRef Opaque pointer returned by file_cache_create(); silently
+ *                  ignored if NULL.
+ *
+ * @note After this call the cache ref and all pages it owns may be freed by
+ *       the VM at any time.  The caller must ensure no concurrent I/O is in
+ *       flight on this ref.
+ */
 extern "C" void
 file_cache_delete(void* _cacheRef)
 {
@@ -1281,6 +1695,15 @@ file_cache_delete(void* _cacheRef)
 }
 
 
+/**
+ * @brief Decrement the disable counter, re-enabling caching when it reaches zero.
+ *
+ * @param _cacheRef Opaque file cache reference previously disabled with
+ *                  file_cache_disable().
+ *
+ * @note Panics if called more times than file_cache_disable() to catch
+ *       unbalanced enable/disable pairs.  Acquires the VMCache lock internally.
+ */
 extern "C" void
 file_cache_enable(void* _cacheRef)
 {
@@ -1297,6 +1720,18 @@ file_cache_enable(void* _cacheRef)
 }
 
 
+/**
+ * @brief Disable the page cache for this file, flushing and removing all
+ *        cached pages on the first call.
+ *
+ * @param _cacheRef Opaque file cache reference.
+ * @retval B_OK     Caching was disabled (or was already disabled).
+ *
+ * @note Subsequent calls increment a counter so that nested disable/enable
+ *       pairs are supported.  On the first disable, FlushAndRemoveAllPages()
+ *       is called which may block while dirty pages are written back.
+ *       The VMCache lock is held for the duration.
+ */
 extern "C" status_t
 file_cache_disable(void* _cacheRef)
 {
@@ -1327,6 +1762,14 @@ file_cache_disable(void* _cacheRef)
 }
 
 
+/**
+ * @brief Query whether the file cache is currently active for this ref.
+ *
+ * @param _cacheRef Opaque file cache reference.
+ * @return true if caching is enabled (disabled_count == 0), false otherwise.
+ *
+ * @note Acquires the VMCache lock to read disabled_count atomically.
+ */
 extern "C" bool
 file_cache_is_enabled(void* _cacheRef)
 {
@@ -1337,6 +1780,17 @@ file_cache_is_enabled(void* _cacheRef)
 }
 
 
+/**
+ * @brief Resize the VMCache backing a file cache to reflect a new file size.
+ *
+ * @param _cacheRef Opaque file cache reference; silently succeeds if NULL.
+ * @param newSize   New logical file size in bytes.
+ * @retval B_OK     The cache was resized successfully.
+ *
+ * @note Delegates to VMCache::Resize() with VM_PRIORITY_USER.  Pages beyond
+ *       @p newSize are evicted by the cache implementation.  Acquires the
+ *       VMCache lock internally.
+ */
 extern "C" status_t
 file_cache_set_size(void* _cacheRef, off_t newSize)
 {
@@ -1357,6 +1811,16 @@ file_cache_set_size(void* _cacheRef, off_t newSize)
 }
 
 
+/**
+ * @brief Flush all dirty pages of a file cache to the backing store.
+ *
+ * @param _cacheRef Opaque file cache reference.
+ * @retval B_OK        All modified pages were written back successfully.
+ * @retval B_BAD_VALUE @p _cacheRef is NULL.
+ *
+ * @note Delegates to VMCache::WriteModified(), which may block while dirty
+ *       pages are written by the page writer.
+ */
 extern "C" status_t
 file_cache_sync(void* _cacheRef)
 {
@@ -1368,6 +1832,23 @@ file_cache_sync(void* _cacheRef)
 }
 
 
+/**
+ * @brief Read data from a file through the page cache into a caller-supplied
+ *        buffer.
+ *
+ * @param _cacheRef Opaque file cache reference.
+ * @param cookie    VFS cookie forwarded to the I/O path.
+ * @param offset    Byte offset in the file to read from; must be >= 0.
+ * @param buffer    Destination buffer (kernel or user space).
+ * @param _size     In: maximum bytes to read. Out: bytes actually read.
+ * @retval B_OK        Read completed (possibly short at end-of-file).
+ * @retval B_BAD_VALUE @p offset is negative.
+ *
+ * @note When caching is disabled (disabled_count > 0) data is read directly
+ *       from the vnode via vfs_read_pages(), bypassing the VMCache entirely.
+ *       Bounds-checks the request against virtual_end and truncates @p _size
+ *       accordingly.
+ */
 extern "C" status_t
 file_cache_read(void* _cacheRef, void* cookie, off_t offset, void* buffer,
 	size_t* _size)
@@ -1403,6 +1884,22 @@ file_cache_read(void* _cacheRef, void* cookie, off_t offset, void* buffer,
 }
 
 
+/**
+ * @brief Write data from a caller-supplied buffer into a file through the page
+ *        cache.
+ *
+ * @param _cacheRef Opaque file cache reference.
+ * @param cookie    VFS cookie forwarded to the I/O path.
+ * @param offset    Byte offset in the file at which to begin writing.
+ * @param buffer    Source buffer (kernel or user space), or NULL to write zeroes.
+ * @param _size     In: bytes to write. Out: bytes actually written.
+ * @retval B_OK     Write completed successfully.
+ *
+ * @note No explicit bounds checking is performed here; the calling file system
+ *       is expected to have validated and adjusted @p offset and @p _size before
+ *       the call.  When caching is disabled data is written directly to the
+ *       vnode; a NULL @p buffer triggers write_zeros_to_file().
+ */
 extern "C" status_t
 file_cache_write(void* _cacheRef, void* cookie, off_t offset,
 	const void* buffer, size_t* _size)

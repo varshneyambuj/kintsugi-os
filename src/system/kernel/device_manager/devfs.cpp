@@ -1,9 +1,41 @@
 /*
- * Copyright 2002-2016, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2016, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file devfs.cpp
+ * @brief Device filesystem (/dev) — VFS layer over kernel device nodes.
+ *
+ * devfs is the in-memory virtual filesystem mounted at /dev. It exposes
+ * device nodes (created by the device manager and legacy driver layer) as
+ * regular files in the VFS hierarchy. Implements the fs_vnode_ops and
+ * fs_volume_ops interfaces so the VFS can open, read, write, and ioctl
+ * device files using the standard file operations.
+ *
+ * @see device_manager.cpp, legacy_drivers.cpp
  */
 
 
@@ -181,6 +213,11 @@ static struct devfs* sDeviceFileSystem = NULL;
 //	#pragma mark - devfs private
 
 
+/**
+ * @brief Return the current wall-clock time as a timespec.
+ *
+ * @return A timespec populated from real_time_clock_usecs().
+ */
 static timespec
 current_timespec()
 {
@@ -193,6 +230,12 @@ current_timespec()
 }
 
 
+/**
+ * @brief Return the inode id of @p vnode's parent, or -1 if there is none.
+ *
+ * @param vnode The vnode whose parent id is queried.
+ * @return Parent inode id, or -1 when @p vnode has no parent.
+ */
 static ino_t
 get_parent_id(struct devfs_vnode* vnode)
 {
@@ -202,6 +245,11 @@ get_parent_id(struct devfs_vnode* vnode)
 }
 
 
+/**
+ * @brief Return the current driver-scan mode (boot or normal).
+ *
+ * @return kNormalScan when a boot device is available, kBootScan otherwise.
+ */
 static int32
 scan_mode(void)
 {
@@ -213,6 +261,14 @@ scan_mode(void)
 }
 
 
+/**
+ * @brief Trigger a lazy driver scan for @p dir if it has not yet been scanned
+ *        at the current scan level.
+ *
+ * @param dir  Directory vnode to scan; must be a directory stream.
+ * @retval B_OK        Scan succeeded or was not needed.
+ * @retval B_NO_MEMORY Path buffer allocation failed.
+ */
 static status_t
 scan_for_drivers_if_needed(devfs_vnode* dir)
 {
@@ -243,6 +299,12 @@ scan_for_drivers_if_needed(devfs_vnode* dir)
 }
 
 
+/**
+ * @brief Initialize @p vnode as a directory stream with the given permissions.
+ *
+ * @param vnode       Vnode to initialize.
+ * @param permissions Permission bits (e.g. 0755) applied to S_IFDIR.
+ */
 static void
 init_directory_vnode(struct devfs_vnode* vnode, int permissions)
 {
@@ -253,6 +315,17 @@ init_directory_vnode(struct devfs_vnode* vnode, int permissions)
 }
 
 
+/**
+ * @brief Allocate and minimally populate a new devfs vnode.
+ *
+ * The caller is responsible for further initializing the stream type and
+ * inserting the vnode into the hash table and parent directory.
+ *
+ * @param fs     The devfs instance that owns the vnode.
+ * @param parent Parent vnode used to inherit the group id; may be NULL.
+ * @param name   Name of the new entry; will be duplicated internally.
+ * @return Newly allocated vnode, or NULL on allocation failure.
+ */
 static struct devfs_vnode*
 devfs_create_vnode(struct devfs* fs, devfs_vnode* parent, const char* name)
 {
@@ -280,6 +353,20 @@ devfs_create_vnode(struct devfs* fs, devfs_vnode* parent, const char* name)
 }
 
 
+/**
+ * @brief Remove @p vnode from the hash table and free all associated memory.
+ *
+ * For character devices the underlying BaseDevice::Removed() is called (or the
+ * raw-device reference is released for partitions). For directories the scan
+ * mutex is destroyed.
+ *
+ * @param fs           The owning devfs instance.
+ * @param vnode        Vnode to delete.
+ * @param forceDelete  When false, refuses deletion if the vnode is still linked
+ *                     in a directory or is a non-empty directory.
+ * @retval B_OK          Vnode deleted successfully.
+ * @retval B_NOT_ALLOWED @p forceDelete is false and the vnode is still in use.
+ */
 static status_t
 devfs_delete_vnode(struct devfs* fs, struct devfs_vnode* vnode,
 	bool forceDelete)
@@ -316,6 +403,13 @@ devfs_delete_vnode(struct devfs* fs, struct devfs_vnode* vnode,
 
 
 /*! Makes sure none of the dircookies point to the vnode passed in */
+/**
+ * @brief Advance any directory cookies that currently point at @p vnode to its
+ *        successor, so that removal does not leave dangling pointers.
+ *
+ * @param dir   Directory vnode whose cookie list is iterated.
+ * @param vnode Vnode that is about to be removed from @p dir.
+ */
 static void
 update_dir_cookies(struct devfs_vnode* dir, struct devfs_vnode* vnode)
 {
@@ -329,6 +423,15 @@ update_dir_cookies(struct devfs_vnode* dir, struct devfs_vnode* vnode)
 }
 
 
+/**
+ * @brief Look up a child entry by name inside a directory vnode.
+ *
+ * Handles the special names "." and "..".
+ *
+ * @param dir   Directory vnode to search.
+ * @param path  Name of the entry to find (single component, no slashes).
+ * @return Matching child vnode, or NULL if not found.
+ */
 static struct devfs_vnode*
 devfs_find_in_dir(struct devfs_vnode* dir, const char* path)
 {
@@ -353,6 +456,17 @@ devfs_find_in_dir(struct devfs_vnode* dir, const char* path)
 }
 
 
+/**
+ * @brief Insert @p vnode into @p dir, maintaining alphabetical order.
+ *
+ * Optionally sends a node-monitor entry-created notification.
+ *
+ * @param dir     Destination directory vnode.
+ * @param vnode   Vnode to insert.
+ * @param notify  When true (default) a VFS node-monitor notification is sent.
+ * @retval B_OK        Inserted successfully.
+ * @retval B_BAD_VALUE @p dir is not a directory.
+ */
 static status_t
 devfs_insert_in_dir(struct devfs_vnode* dir, struct devfs_vnode* vnode,
 	bool notify = true)
@@ -391,6 +505,18 @@ devfs_insert_in_dir(struct devfs_vnode* dir, struct devfs_vnode* vnode,
 }
 
 
+/**
+ * @brief Remove @p removeNode from @p dir's child list.
+ *
+ * Updates all open directory cookies and optionally sends node-monitor
+ * notifications.
+ *
+ * @param dir        Directory vnode.
+ * @param removeNode Child vnode to unlink.
+ * @param notify     When true (default) VFS node-monitor notifications are sent.
+ * @retval B_OK             Removed successfully.
+ * @retval B_ENTRY_NOT_FOUND @p removeNode was not found in @p dir.
+ */
 static status_t
 devfs_remove_from_dir(struct devfs_vnode* dir, struct devfs_vnode* removeNode,
 	bool notify = true)
@@ -423,6 +549,23 @@ devfs_remove_from_dir(struct devfs_vnode* dir, struct devfs_vnode* removeNode,
 }
 
 
+/**
+ * @brief Create a partition vnode that maps a slice of @p device.
+ *
+ * Allocates a devfs_partition descriptor, takes a reference on the raw
+ * device vnode, creates a new child vnode in the same directory as
+ * @p device, and inserts it into the hash table.
+ *
+ * @param fs      The owning devfs instance (must be locked by caller).
+ * @param device  Raw device vnode that the partition lives on.
+ * @param name    Name for the new partition entry.
+ * @param info    Partition geometry (offset, size, block size, …).
+ * @retval B_OK        Partition created and published.
+ * @retval B_BAD_VALUE @p device is not a character device, is already a
+ *                     partition, @p info.size is negative, or @p name is
+ *                     already in use.
+ * @retval B_NO_MEMORY Allocation failure.
+ */
 static status_t
 add_partition(struct devfs* fs, struct devfs_vnode* device, const char* name,
 	const partition_info& info)
@@ -490,6 +633,15 @@ err1:
 }
 
 
+/**
+ * @brief Clamp and translate a (offset, size) byte range into partition space.
+ *
+ * @param partition  Partition descriptor containing offset and size limits.
+ * @param offset     In: offset relative to partition start.  Out: absolute
+ *                   device offset.
+ * @param size       In/Out: request size, clamped to the partition boundary.
+ * @note Asserts that @p offset is non-negative and within the partition.
+ */
 static inline void
 translate_partition_access(devfs_partition* partition, off_t& offset,
 	size_t& size)
@@ -502,6 +654,16 @@ translate_partition_access(devfs_partition* partition, off_t& offset,
 }
 
 
+/**
+ * @brief Translate a (offset, size) range expressed as uint64 values into
+ *        absolute device coordinates, with overflow and bounds checking.
+ *
+ * @param partition  Partition descriptor.
+ * @param offset     In: partition-relative offset.  Out: device-absolute offset.
+ * @param size       In/Out: request size, clamped to the partition boundary.
+ * @return true if the translation is valid and the range is within the
+ *         partition; false if the range is out of bounds or would overflow.
+ */
 static bool
 translate_partition_access(devfs_partition* partition, uint64& offset,
 	uint64& size)
@@ -533,6 +695,14 @@ translate_partition_access(devfs_partition* partition, uint64& offset,
 }
 
 
+/**
+ * @brief Translate the offset stored in an io_request into absolute device
+ *        coordinates for a partition.
+ *
+ * @param partition  Partition descriptor.
+ * @param request    IO request whose offset is adjusted in place.
+ * @note Asserts that the request fits entirely within the partition.
+ */
 static inline void
 translate_partition_access(devfs_partition* partition, io_request* request)
 {
@@ -545,6 +715,18 @@ translate_partition_access(devfs_partition* partition, io_request* request)
 }
 
 
+/**
+ * @brief Resolve a devfs-relative path string to its vnode.
+ *
+ * The returned vnode has its reference count incremented; the caller must
+ * eventually call put_vnode().
+ *
+ * @param fs    The devfs instance to search.
+ * @param path  Path relative to the devfs root (no leading slash).
+ * @param _node Out: the resolved vnode on success.
+ * @retval B_OK             Node found and reference acquired.
+ * @retval B_ENTRY_NOT_FOUND Path does not exist.
+ */
 static status_t
 get_node_for_path(struct devfs* fs, const char* path,
 	struct devfs_vnode** _node)
@@ -554,6 +736,17 @@ get_node_for_path(struct devfs* fs, const char* path,
 }
 
 
+/**
+ * @brief Remove a published node from its parent directory and mark it for
+ *        removal by the VFS.
+ *
+ * @param fs    The owning devfs instance.
+ * @param node  Node to unpublish; must still be in its parent directory.
+ * @param type  Expected stream type mask (e.g. S_IFCHR); returns B_BAD_TYPE if
+ *              the node's type does not match.
+ * @retval B_OK       Unpublished successfully.
+ * @retval B_BAD_TYPE Node type does not match @p type.
+ */
 static status_t
 unpublish_node(struct devfs* fs, devfs_vnode* node, mode_t type)
 {
@@ -574,6 +767,13 @@ out:
 }
 
 
+/**
+ * @brief Insert @p node into the hash table and its parent directory atomically.
+ *
+ * @param fs       The owning devfs instance.
+ * @param dirNode  Directory into which @p node is inserted.
+ * @param node     Fully initialized vnode to publish.
+ */
 static void
 publish_node(devfs* fs, devfs_vnode* dirNode, struct devfs_vnode* node)
 {
@@ -582,6 +782,17 @@ publish_node(devfs* fs, devfs_vnode* dirNode, struct devfs_vnode* node)
 }
 
 
+/**
+ * @brief Create all intermediate directory components for @p path under the
+ *        devfs root, if they do not already exist.
+ *
+ * @param fs    The owning devfs instance (caller must hold fs->lock).
+ * @param path  Slash-separated directory path relative to the devfs root.
+ * @retval B_OK        All directories exist or were created.
+ * @retval B_NO_MEMORY Vnode or path buffer allocation failed.
+ * @retval B_FILE_EXISTS A non-directory entry already exists along the path.
+ * @note Caller must hold @c fs->lock (recursive).
+ */
 static status_t
 publish_directory(struct devfs* fs, const char* path)
 {
@@ -647,6 +858,24 @@ out:
 }
 
 
+/**
+ * @brief Walk @p path, creating intermediate directories as needed, and return
+ *        the leaf vnode and its parent without publishing the leaf.
+ *
+ * The leaf vnode is created but intentionally NOT inserted into the directory;
+ * the caller must call publish_node() after finishing initialization. This
+ * avoids sending a premature creation notification for a partially initialized
+ * node.
+ *
+ * @param fs    The owning devfs instance (caller must hold fs->lock).
+ * @param path  Slash-separated path relative to the devfs root.
+ * @param _node Out: newly allocated leaf vnode (unlinked).
+ * @param _dir  Out: parent directory vnode for the leaf.
+ * @retval B_OK        Leaf vnode allocated and returned.
+ * @retval B_NO_MEMORY Vnode or path buffer allocation failed.
+ * @retval B_FILE_EXISTS A node already exists at the target path.
+ * @note Caller must hold @c fs->lock (recursive).
+ */
 static status_t
 new_node(struct devfs* fs, const char* path, struct devfs_vnode** _node,
 	struct devfs_vnode** _dir)
@@ -733,6 +962,22 @@ out:
 }
 
 
+/**
+ * @brief Create a new character-device vnode at @p path and associate it with
+ *        @p device.
+ *
+ * Intermediate path components are created as directories if necessary. The
+ * device node is assigned mode S_IFCHR|0644.
+ *
+ * @param fs      The owning devfs instance.
+ * @param path    Destination path relative to the devfs root (no leading slash).
+ * @param device  Fully initialized BaseDevice to expose at @p path.
+ * @retval B_OK        Device published successfully.
+ * @retval B_BAD_VALUE @p device or @p path is NULL, path is empty, or starts
+ *                     with '/'.
+ * @retval B_NO_MEMORY Vnode allocation failed.
+ * @retval B_FILE_EXISTS A node already exists at @p path.
+ */
 static status_t
 publish_device(struct devfs* fs, const char* path, BaseDevice* device)
 {
@@ -781,6 +1026,17 @@ publish_device(struct devfs* fs, const char* path, BaseDevice* device)
 	This is safe to use only when the device is in use (and therefore
 	cannot be unpublished during the iteration).
 */
+/**
+ * @brief Build the full devfs-relative path of @p vnode into @p buffer.
+ *
+ * Walks the parent chain to determine the depth, then fills the buffer
+ * back-to-front. Safe to call only while the device is in use (i.e. while
+ * a reference is held, preventing unpublish).
+ *
+ * @param vnode  Vnode whose path is to be constructed.
+ * @param buffer Caller-provided output buffer.
+ * @param size   Size of @p buffer in bytes.
+ */
 static void
 get_device_name(struct devfs_vnode* vnode, char* buffer, size_t size)
 {
@@ -813,6 +1069,13 @@ get_device_name(struct devfs_vnode* vnode, char* buffer, size_t size)
 }
 
 
+/**
+ * @brief Kernel debugger command — dump a devfs_vnode at the given address.
+ *
+ * @param argc  Argument count; must be 2.
+ * @param argv  argv[1] is the hex address of the vnode to dump.
+ * @return 0 always (debugger command convention).
+ */
 static int
 dump_node(int argc, char** argv)
 {
@@ -867,6 +1130,13 @@ dump_node(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command — dump a devfs_cookie at the given address.
+ *
+ * @param argc  Argument count; must be 2.
+ * @param argv  argv[1] is the hex address of the cookie to dump.
+ * @return 0 always (debugger command convention).
+ */
 static int
 dump_cookie(int argc, char** argv)
 {
@@ -891,6 +1161,21 @@ dump_cookie(int argc, char** argv)
 //	#pragma mark - file system interface
 
 
+/**
+ * @brief Mount the device filesystem and initialize the devfs root vnode.
+ *
+ * Only one devfs instance is permitted per boot. Creates the root directory
+ * vnode, initializes the vnode hash table, and publishes the root via the VFS.
+ *
+ * @param volume       VFS volume descriptor to populate.
+ * @param devfs        Unused mount arguments (always NULL for devfs).
+ * @param flags        Mount flags (unused).
+ * @param args         Mount arguments string (unused).
+ * @param _rootNodeID  Out: inode id of the newly created root vnode.
+ * @retval B_OK        Filesystem mounted successfully.
+ * @retval B_ERROR     A devfs instance is already mounted.
+ * @retval B_NO_MEMORY Allocation failure.
+ */
 static status_t
 devfs_mount(fs_volume* volume, const char* devfs, uint32 flags,
 	const char* args, ino_t* _rootNodeID)
@@ -958,6 +1243,15 @@ err:
 }
 
 
+/**
+ * @brief Unmount the devfs volume, releasing all vnodes and filesystem state.
+ *
+ * Releases the root vnode reference, iterates the vnode hash and force-deletes
+ * every vnode, then destroys the lock and frees the fs structure.
+ *
+ * @param _volume  VFS volume descriptor for the devfs instance to unmount.
+ * @retval B_OK Always succeeds.
+ */
 static status_t
 devfs_unmount(fs_volume* _volume)
 {
@@ -986,6 +1280,12 @@ devfs_unmount(fs_volume* _volume)
 }
 
 
+/**
+ * @brief Sync the devfs volume — no-op because devfs is entirely in memory.
+ *
+ * @param _volume  VFS volume descriptor (unused).
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_sync(fs_volume* _volume)
 {
@@ -995,6 +1295,20 @@ devfs_sync(fs_volume* _volume)
 }
 
 
+/**
+ * @brief Look up a directory entry by name and return its inode id.
+ *
+ * Triggers a lazy driver scan on @p _dir before searching, so that entries
+ * added by device_manager or legacy drivers become visible.
+ *
+ * @param _volume  VFS volume.
+ * @param _dir     Directory vnode in which to search.
+ * @param name     Entry name to look up (single path component).
+ * @param _id      Out: inode id of the found vnode.
+ * @retval B_OK               Found; *_id set and reference acquired.
+ * @retval B_NOT_A_DIRECTORY  @p _dir is not a directory.
+ * @retval B_ENTRY_NOT_FOUND  No entry with @p name exists.
+ */
 static status_t
 devfs_lookup(fs_volume* _volume, fs_vnode* _dir, const char* name, ino_t* _id)
 {
@@ -1031,6 +1345,15 @@ devfs_lookup(fs_volume* _volume, fs_vnode* _dir, const char* name, ino_t* _id)
 }
 
 
+/**
+ * @brief Copy the name of @p _vnode into @p buffer.
+ *
+ * @param _volume     VFS volume (unused).
+ * @param _vnode      Vnode whose name is requested.
+ * @param buffer      Caller-supplied output buffer.
+ * @param bufferSize  Size of @p buffer in bytes.
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_get_vnode_name(fs_volume* _volume, fs_vnode* _vnode, char* buffer,
 	size_t bufferSize)
@@ -1044,6 +1367,18 @@ devfs_get_vnode_name(fs_volume* _volume, fs_vnode* _vnode, char* buffer,
 }
 
 
+/**
+ * @brief Resolve an inode id to a vnode pointer (VFS get_vnode callback).
+ *
+ * @param _volume  VFS volume.
+ * @param id       Inode id to look up.
+ * @param _vnode   Out: populated fs_vnode on success.
+ * @param _type    Out: stream type of the found vnode.
+ * @param _flags   Out: always set to 0.
+ * @param reenter  True if the call is made from within the VFS layer.
+ * @retval B_OK              Vnode found and @p _vnode populated.
+ * @retval B_ENTRY_NOT_FOUND No vnode with @p id exists.
+ */
 static status_t
 devfs_get_vnode(fs_volume* _volume, ino_t id, fs_vnode* _vnode, int* _type,
 	uint32* _flags, bool reenter)
@@ -1069,6 +1404,14 @@ devfs_get_vnode(fs_volume* _volume, ino_t id, fs_vnode* _vnode, int* _type,
 }
 
 
+/**
+ * @brief Release a VFS reference to a vnode — no-op for devfs.
+ *
+ * @param _volume  VFS volume (unused).
+ * @param _vnode   Vnode being released (unused except in trace builds).
+ * @param reenter  Reentrant flag (unused).
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_put_vnode(fs_volume* _volume, fs_vnode* _vnode, bool reenter)
 {
@@ -1083,6 +1426,19 @@ devfs_put_vnode(fs_volume* _volume, fs_vnode* _vnode, bool reenter)
 }
 
 
+/**
+ * @brief Remove a vnode from the devfs after the VFS has dropped all
+ *        references to it.
+ *
+ * Panics if the vnode is still linked into a directory (should never happen
+ * because unpublish_node removes it first). Calls devfs_delete_vnode() with
+ * forceDelete = false.
+ *
+ * @param _volume  VFS volume.
+ * @param _v       Vnode to remove.
+ * @param reenter  Reentrant flag (unused).
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_remove_vnode(fs_volume* _volume, fs_vnode* _v, bool reenter)
 {
@@ -1105,6 +1461,21 @@ devfs_remove_vnode(fs_volume* _volume, fs_vnode* _v, bool reenter)
 }
 
 
+/**
+ * @brief Open a devfs entry and allocate a per-open cookie.
+ *
+ * For character devices the underlying device's Open() hook is invoked.
+ * Directories may only be opened read-only.
+ *
+ * @param _volume   VFS volume.
+ * @param _vnode    Vnode to open.
+ * @param openMode  Open flags (O_RDONLY, O_WRONLY, …).
+ * @param _cookie   Out: newly allocated devfs_cookie on success.
+ * @retval B_OK            Opened successfully.
+ * @retval B_IS_A_DIRECTORY Directory opened with write access requested.
+ * @retval B_NO_MEMORY     Cookie allocation failed.
+ * @retval other           Error from the underlying device's Open() hook.
+ */
 static status_t
 devfs_open(fs_volume* _volume, fs_vnode* _vnode, int openMode,
 	void** _cookie)
@@ -1150,6 +1521,17 @@ devfs_open(fs_volume* _volume, fs_vnode* _vnode, int openMode,
 }
 
 
+/**
+ * @brief Close an open devfs file descriptor.
+ *
+ * For character devices, forwards the close to the underlying device's
+ * Close() hook. Does nothing for directories.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Vnode being closed.
+ * @param _cookie  Per-open cookie created by devfs_open().
+ * @retval B_OK   Always for directories; device's Close() result for devices.
+ */
 static status_t
 devfs_close(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -1167,6 +1549,17 @@ devfs_close(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 }
 
 
+/**
+ * @brief Release the per-open cookie and uninitialize the device if needed.
+ *
+ * Calls the underlying device's Free() and UninitDevice() for character
+ * devices, then frees the cookie memory.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Vnode whose cookie is being freed.
+ * @param _cookie  Per-open cookie to release.
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_free_cookie(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -1186,6 +1579,14 @@ devfs_free_cookie(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 }
 
 
+/**
+ * @brief fsync a devfs vnode — no-op because devfs is in-memory.
+ *
+ * @param _volume   VFS volume (unused).
+ * @param _v        Vnode to sync (unused).
+ * @param dataOnly  Unused.
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_fsync(fs_volume* _volume, fs_vnode* _v, bool dataOnly)
 {
@@ -1193,6 +1594,16 @@ devfs_fsync(fs_volume* _volume, fs_vnode* _v, bool dataOnly)
 }
 
 
+/**
+ * @brief Read the target of a symlink vnode.
+ *
+ * @param _volume      VFS volume (unused).
+ * @param _link        Symlink vnode to read.
+ * @param buffer       Caller-supplied output buffer.
+ * @param _bufferSize  In: buffer size; Out: actual symlink length.
+ * @retval B_OK        Target copied into @p buffer.
+ * @retval B_BAD_VALUE @p _link is not a symlink.
+ */
 static status_t
 devfs_read_link(fs_volume* _volume, fs_vnode* _link, char* buffer,
 	size_t* _bufferSize)
@@ -1211,6 +1622,22 @@ devfs_read_link(fs_volume* _volume, fs_vnode* _link, char* buffer,
 }
 
 
+/**
+ * @brief Read data from a character device vnode.
+ *
+ * Translates partition-relative offsets to device-absolute before forwarding
+ * to the underlying device's Read() hook.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Character device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param pos      Byte offset to read from (partition-relative if applicable).
+ * @param buffer   Caller-supplied output buffer.
+ * @param _length  In: requested byte count; Out: bytes actually read.
+ * @retval B_OK        Data read successfully.
+ * @retval B_BAD_VALUE Not a character device, negative @p pos, or @p pos
+ *                     beyond the partition end.
+ */
 static status_t
 devfs_read(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, off_t pos,
 	void* buffer, size_t* _length)
@@ -1244,6 +1671,22 @@ devfs_read(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, off_t pos,
 }
 
 
+/**
+ * @brief Write data to a character device vnode.
+ *
+ * Translates partition-relative offsets to device-absolute before forwarding
+ * to the underlying device's Write() hook.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Character device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param pos      Byte offset to write at (partition-relative if applicable).
+ * @param buffer   Data to write.
+ * @param _length  In: byte count to write; Out: bytes actually written.
+ * @retval B_OK        Data written successfully.
+ * @retval B_BAD_VALUE Not a character device, negative @p pos, or @p pos
+ *                     beyond the partition end.
+ */
 static status_t
 devfs_write(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, off_t pos,
 	const void* buffer, size_t* _length)
@@ -1276,6 +1719,17 @@ devfs_write(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, off_t pos,
 }
 
 
+/**
+ * @brief Create a new subdirectory inside a devfs directory.
+ *
+ * @param _volume  VFS volume.
+ * @param _dir     Parent directory vnode.
+ * @param name     Name of the new subdirectory.
+ * @param perms    Permission bits for the new directory.
+ * @retval B_OK        Directory created.
+ * @retval EEXIST      An entry with @p name already exists.
+ * @retval B_NO_MEMORY Vnode allocation failed.
+ */
 static status_t
 devfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char* name,
 	int perms)
@@ -1301,6 +1755,18 @@ devfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char* name,
 }
 
 
+/**
+ * @brief Open a directory vnode for iteration and allocate a dir cookie.
+ *
+ * Triggers a lazy driver scan on the directory before creating the cookie.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Directory vnode to open.
+ * @param _cookie  Out: newly allocated devfs_dir_cookie.
+ * @retval B_OK        Directory opened.
+ * @retval B_BAD_VALUE @p _vnode is not a directory.
+ * @retval B_NO_MEMORY Cookie allocation failed.
+ */
 static status_t
 devfs_open_dir(fs_volume* _volume, fs_vnode* _vnode, void** _cookie)
 {
@@ -1332,6 +1798,14 @@ devfs_open_dir(fs_volume* _volume, fs_vnode* _vnode, void** _cookie)
 }
 
 
+/**
+ * @brief Close a directory cookie and remove it from the directory's cookie list.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Directory vnode.
+ * @param _cookie  Cookie to free.
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_free_dir_cookie(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -1349,6 +1823,22 @@ devfs_free_dir_cookie(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 }
 
 
+/**
+ * @brief Read the next entry from an open directory.
+ *
+ * Handles "." and ".." synthetic entries, then iterates real children.
+ * Advances the cookie's position for the next call.
+ *
+ * @param _volume     VFS volume.
+ * @param _vnode      Directory vnode.
+ * @param _cookie     Directory iteration cookie.
+ * @param dirent      Caller-supplied buffer for the result.
+ * @param bufferSize  Size of @p dirent buffer.
+ * @param _num        Out: number of entries returned (0 or 1).
+ * @retval B_OK        Entry written to @p dirent (or 0 entries at end).
+ * @retval B_BAD_VALUE @p _vnode is not a directory.
+ * @retval ENOBUFS    Buffer too small for the next entry.
+ */
 static status_t
 devfs_read_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	struct dirent* dirent, size_t bufferSize, uint32* _num)
@@ -1417,6 +1907,15 @@ devfs_read_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Rewind a directory cookie back to the first entry.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Directory vnode.
+ * @param _cookie  Cookie to reset.
+ * @retval B_OK        Reset successfully.
+ * @retval B_BAD_VALUE @p _vnode is not a directory.
+ */
 static status_t
 devfs_rewind_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -1441,6 +1940,25 @@ devfs_rewind_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 /*!	Forwards the opcode to the device driver, but also handles some devfs
 	specific functionality, like partitions.
 */
+/**
+ * @brief Handle an ioctl request on a devfs character device.
+ *
+ * Intercepts devfs-specific opcodes (B_GET_GEOMETRY, B_TRIM_DEVICE,
+ * B_GET_PARTITION_INFO, B_GET_PATH_FOR_DEVICE) before forwarding unknown
+ * opcodes to the underlying device's Control() hook.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param op       Ioctl opcode.
+ * @param buffer   User-space argument buffer.
+ * @param length   Size of @p buffer in bytes.
+ * @retval B_OK          Operation completed successfully.
+ * @retval B_BAD_VALUE   Not a character device, or invalid arguments.
+ * @retval B_NOT_ALLOWED B_SET_PARTITION attempted.
+ * @retval B_UNSUPPORTED Unsupported legacy R5 ioctl.
+ * @retval other         Error from the underlying device Control() hook.
+ */
 static status_t
 devfs_ioctl(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, uint32 op,
 	void* buffer, size_t length)
@@ -1588,6 +2106,19 @@ devfs_ioctl(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, uint32 op,
 }
 
 
+/**
+ * @brief Set O_NONBLOCK / blocking-IO flag on an open device.
+ *
+ * Forwards B_SET_NONBLOCKING_IO or B_SET_BLOCKING_IO to the device's
+ * Control() hook based on whether O_NONBLOCK is set in @p flags.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Character device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param flags    New file-status flags; only O_NONBLOCK is examined.
+ * @retval B_OK          Flag set successfully.
+ * @retval B_NOT_ALLOWED @p _vnode is not a character device.
+ */
 static status_t
 devfs_set_flags(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	int flags)
@@ -1605,6 +2136,21 @@ devfs_set_flags(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Register interest in an I/O event for a character device.
+ *
+ * If the device does not implement Select(), notifies the select subsystem
+ * immediately for non-output-only events and returns B_UNSUPPORTED.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Character device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param event    Select event type (B_SELECT_READ, B_SELECT_WRITE, …).
+ * @param sync     Select synchronization object.
+ * @retval B_OK          Interest registered with the device.
+ * @retval B_NOT_ALLOWED @p _vnode is not a character device.
+ * @retval B_UNSUPPORTED Device has no Select() hook.
+ */
 static status_t
 devfs_select(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	uint8 event, selectsync* sync)
@@ -1627,6 +2173,17 @@ devfs_select(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Cancel a previously registered select event interest.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Character device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param event    Select event type to deregister.
+ * @param sync     Select synchronization object.
+ * @retval B_OK          Deselected successfully or device has no Deselect hook.
+ * @retval B_NOT_ALLOWED @p _vnode is not a character device.
+ */
 static status_t
 devfs_deselect(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	uint8 event, selectsync* sync)
@@ -1645,6 +2202,16 @@ devfs_deselect(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Report whether a character device vnode supports page I/O.
+ *
+ * Currently always returns false because the paging hook is obsolete.
+ *
+ * @param _volume  VFS volume (unused).
+ * @param _vnode   Vnode to query (unused).
+ * @param cookie   Per-open cookie (unused).
+ * @return false always.
+ */
 static bool
 devfs_can_page(fs_volume* _volume, fs_vnode* _vnode, void* cookie)
 {
@@ -1666,6 +2233,24 @@ devfs_can_page(fs_volume* _volume, fs_vnode* _vnode, void* cookie)
 }
 
 
+/**
+ * @brief Read a scatter-gather list of pages from a character device.
+ *
+ * Emulates read_pages() by calling the device's Read() hook for each iovec.
+ * Translates partition-relative offsets before issuing reads.
+ *
+ * @param _volume    VFS volume.
+ * @param _vnode     Character device vnode.
+ * @param _cookie    Per-open cookie.
+ * @param pos        Starting offset (partition-relative if applicable).
+ * @param vecs       Array of iovec descriptors for the target buffers.
+ * @param count      Number of entries in @p vecs.
+ * @param _numBytes  In: total bytes requested; Out: total bytes transferred.
+ * @retval B_OK          At least one byte was read successfully.
+ * @retval B_NOT_ALLOWED Not a character device, device lacks read/io support,
+ *                       or @p cookie is NULL.
+ * @retval B_BAD_VALUE   Negative @p pos or @p pos beyond partition end.
+ */
 static status_t
 devfs_read_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	off_t pos, const iovec* vecs, size_t count, size_t* _numBytes)
@@ -1725,6 +2310,24 @@ devfs_read_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Write a scatter-gather list of pages to a character device.
+ *
+ * Emulates write_pages() by calling the device's Write() hook for each iovec.
+ * Translates partition-relative offsets before issuing writes.
+ *
+ * @param _volume    VFS volume.
+ * @param _vnode     Character device vnode.
+ * @param _cookie    Per-open cookie.
+ * @param pos        Starting offset (partition-relative if applicable).
+ * @param vecs       Array of iovec descriptors for the source buffers.
+ * @param count      Number of entries in @p vecs.
+ * @param _numBytes  In: total bytes requested; Out: total bytes transferred.
+ * @retval B_OK          At least one byte was written successfully.
+ * @retval B_NOT_ALLOWED Not a character device, device lacks write/io support,
+ *                       or @p cookie is NULL.
+ * @retval B_BAD_VALUE   Negative @p pos or @p pos beyond partition end.
+ */
 static status_t
 devfs_write_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	off_t pos, const iovec* vecs, size_t count, size_t* _numBytes)
@@ -1784,6 +2387,22 @@ devfs_write_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Submit an asynchronous io_request to the underlying character device.
+ *
+ * Validates that the request fits within any partition boundary, adjusts the
+ * offset for partitions, and forwards to the device's IO() hook.
+ *
+ * @param volume   VFS volume.
+ * @param _vnode   Character device vnode.
+ * @param _cookie  Per-open cookie.
+ * @param request  IO request descriptor (offset and length are adjusted for
+ *                 partitions in place before forwarding).
+ * @retval B_OK          IO request accepted by the device.
+ * @retval B_NOT_ALLOWED Not a character device or @p cookie is NULL.
+ * @retval B_UNSUPPORTED Device does not implement the IO() hook.
+ * @retval B_BAD_VALUE   Request extends beyond the partition boundary.
+ */
 static status_t
 devfs_io(fs_volume* volume, fs_vnode* _vnode, void* _cookie,
 	io_request* request)
@@ -1814,6 +2433,17 @@ devfs_io(fs_volume* volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Populate a stat structure for a devfs vnode.
+ *
+ * Reports size information for partition vnodes (making them appear as block
+ * devices) and symlink length for symlink vnodes.
+ *
+ * @param _volume  VFS volume.
+ * @param _vnode   Vnode to stat.
+ * @param stat     Caller-supplied stat buffer to populate.
+ * @retval B_OK Always.
+ */
 static status_t
 devfs_read_stat(fs_volume* _volume, fs_vnode* _vnode, struct stat* stat)
 {
@@ -1865,6 +2495,19 @@ devfs_read_stat(fs_volume* _volume, fs_vnode* _vnode, struct stat* stat)
 }
 
 
+/**
+ * @brief Update writable stat fields (mode, uid, gid, timestamps) for a vnode.
+ *
+ * Changing the size field is explicitly rejected. Sends a stat-changed
+ * node-monitor notification on success.
+ *
+ * @param _volume   VFS volume.
+ * @param _vnode    Vnode to update.
+ * @param stat      Source stat values.
+ * @param statMask  Bitmask of B_STAT_* flags indicating which fields to update.
+ * @retval B_OK        Fields updated.
+ * @retval B_BAD_VALUE B_STAT_SIZE was set in @p statMask.
+ */
 static status_t
 devfs_write_stat(fs_volume* _volume, fs_vnode* _vnode, const struct stat* stat,
 	uint32 statMask)
@@ -1901,6 +2544,17 @@ devfs_write_stat(fs_volume* _volume, fs_vnode* _vnode, const struct stat* stat,
 }
 
 
+/**
+ * @brief Module init/uninit handler for the devfs filesystem module.
+ *
+ * On B_MODULE_INIT registers the devfs_node and devfs_cookie debugger
+ * commands and initializes the legacy driver layer. On B_MODULE_UNINIT
+ * removes those commands.
+ *
+ * @param op  B_MODULE_INIT or B_MODULE_UNINIT.
+ * @retval B_OK    Operation completed.
+ * @retval B_ERROR Unknown operation code.
+ */
 static status_t
 devfs_std_ops(int32 op, ...)
 {
@@ -2024,6 +2678,17 @@ file_system_module_info gDeviceFileSystem = {
 //	#pragma mark - kernel private API
 
 
+/**
+ * @brief Unpublish a file-backed virtual device from devfs by path.
+ *
+ * Looks up the node, verifies it is a FileDevice, removes it from its
+ * parent directory, and schedules VFS vnode removal.
+ *
+ * @param path  devfs-relative path of the file device to remove.
+ * @retval B_OK        Device unpublished.
+ * @retval B_BAD_VALUE Path does not refer to a character device or the
+ *                     device is not a FileDevice instance.
+ */
 extern "C" status_t
 devfs_unpublish_file_device(const char* path)
 {
@@ -2052,6 +2717,18 @@ devfs_unpublish_file_device(const char* path)
 }
 
 
+/**
+ * @brief Publish a file as a virtual block device at @p path in devfs.
+ *
+ * Creates a FileDevice backed by @p filePath and publishes it at @p path
+ * within the devfs hierarchy.
+ *
+ * @param path      devfs-relative destination path (e.g. "disk/virtual/0/raw").
+ * @param filePath  Absolute path to the backing file.
+ * @retval B_OK        Device published.
+ * @retval B_NO_MEMORY FileDevice allocation failed.
+ * @retval other       Error from FileDevice::Init() or publish_device().
+ */
 extern "C" status_t
 devfs_publish_file_device(const char* path, const char* filePath)
 {
@@ -2075,6 +2752,13 @@ devfs_publish_file_device(const char* path, const char* filePath)
 }
 
 
+/**
+ * @brief Remove a partition vnode from devfs by path.
+ *
+ * @param path  devfs-relative path of the partition node to unpublish.
+ * @retval B_OK   Partition unpublished.
+ * @retval other  Error from get_node_for_path() or unpublish_node().
+ */
 extern "C" status_t
 devfs_unpublish_partition(const char* path)
 {
@@ -2089,6 +2773,20 @@ devfs_unpublish_partition(const char* path)
 }
 
 
+/**
+ * @brief Publish a partition as a character device derived from an existing
+ *        raw device.
+ *
+ * Locates the raw device named in @p info->device, then calls add_partition()
+ * to create a child vnode that maps the given slice.
+ *
+ * @param name  Name for the new partition entry (leaf name only).
+ * @param info  Partition descriptor; info->device must be the devfs-relative
+ *              path of the parent raw device.
+ * @retval B_OK        Partition published.
+ * @retval B_BAD_VALUE @p name or @p info is NULL.
+ * @retval other       Error from get_node_for_path() or add_partition().
+ */
 extern "C" status_t
 devfs_publish_partition(const char* name, const partition_info* info)
 {
@@ -2111,6 +2809,22 @@ devfs_publish_partition(const char* name, const partition_info* info)
 }
 
 
+/**
+ * @brief Rename a partition vnode within its parent directory.
+ *
+ * Removes the vnode from the directory under @p oldName and re-inserts it
+ * under @p newName, sending a rename notification to the node monitor.
+ *
+ * @param devicePath  devfs-relative path of the raw device whose parent
+ *                    directory contains the partition entries.
+ * @param oldName     Current leaf name of the partition.
+ * @param newName     New leaf name; must not already exist in the directory.
+ * @retval B_OK             Renamed.
+ * @retval B_BAD_VALUE      @p oldName or @p newName is NULL, or @p newName
+ *                          already exists.
+ * @retval B_ENTRY_NOT_FOUND No entry named @p oldName found.
+ * @retval B_NO_MEMORY      strdup() failed.
+ */
 extern "C" status_t
 devfs_rename_partition(const char* devicePath, const char* oldName,
 	const char* newName)
@@ -2152,6 +2866,16 @@ devfs_rename_partition(const char* devicePath, const char* oldName,
 }
 
 
+/**
+ * @brief Create a directory hierarchy in devfs for the given path.
+ *
+ * Acquires the filesystem lock and delegates to publish_directory().
+ *
+ * @param path  devfs-relative directory path to create (e.g. "bus/usb").
+ * @retval B_OK        All path components exist or were created.
+ * @retval B_NO_MEMORY Allocation failure.
+ * @retval B_FILE_EXISTS A non-directory component exists along the path.
+ */
 extern "C" status_t
 devfs_publish_directory(const char* path)
 {
@@ -2161,6 +2885,16 @@ devfs_publish_directory(const char* path)
 }
 
 
+/**
+ * @brief Unpublish a device node from devfs by path and optionally disconnect
+ *        all open file descriptors.
+ *
+ * @param path        devfs-relative path of the device to remove.
+ * @param disconnect  When true, vfs_disconnect_vnode() is called to force-close
+ *                    any open file descriptors referencing this vnode.
+ * @retval B_OK   Device unpublished.
+ * @retval other  Error from get_node_for_path() or unpublish_node().
+ */
 extern "C" status_t
 devfs_unpublish_device(const char* path, bool disconnect)
 {
@@ -2182,6 +2916,17 @@ devfs_unpublish_device(const char* path, bool disconnect)
 //	#pragma mark - device_manager private API
 
 
+/**
+ * @brief Publish a BaseDevice at the given devfs-relative path.
+ *
+ * Thin wrapper over the internal publish_device() function used by the
+ * device manager layer.
+ *
+ * @param path    devfs-relative destination path.
+ * @param device  Initialized BaseDevice to publish.
+ * @retval B_OK   Device published.
+ * @retval other  Error from publish_device().
+ */
 status_t
 devfs_publish_device(const char* path, BaseDevice* device)
 {
@@ -2189,6 +2934,17 @@ devfs_publish_device(const char* path, BaseDevice* device)
 }
 
 
+/**
+ * @brief Unpublish a BaseDevice identified by its device object pointer.
+ *
+ * Looks up the vnode by the device's stored inode id, unpublishes it, and
+ * optionally disconnects open file descriptors.
+ *
+ * @param device     The device to unpublish; must have a valid ID set.
+ * @param disconnect When true, vfs_disconnect_vnode() is called on success.
+ * @retval B_OK   Unpublished.
+ * @retval other  Error from get_vnode() or unpublish_node().
+ */
 status_t
 devfs_unpublish_device(BaseDevice* device, bool disconnect)
 {
@@ -2211,6 +2967,19 @@ devfs_unpublish_device(BaseDevice* device, bool disconnect)
 /*!	Gets the device for a given devfs relative path.
 	If successful the call must be balanced with a call to devfs_put_device().
 */
+/**
+ * @brief Retrieve the BaseDevice pointer for a devfs-relative path.
+ *
+ * The returned device has a reference held on its vnode; the caller must
+ * release it by calling devfs_put_device().
+ *
+ * @param path     devfs-relative path of the device node.
+ * @param _device  Out: BaseDevice pointer on success.
+ * @retval B_OK        Device found and reference held.
+ * @retval B_BAD_VALUE Node is not a bare character device (e.g. it is a
+ *                     partition or not a character device).
+ * @retval other       Error from get_node_for_path().
+ */
 status_t
 devfs_get_device(const char* path, BaseDevice*& _device)
 {
@@ -2229,6 +2998,11 @@ devfs_get_device(const char* path, BaseDevice*& _device)
 }
 
 
+/**
+ * @brief Release the VFS reference acquired by devfs_get_device().
+ *
+ * @param device  Device whose vnode reference is to be released.
+ */
 void
 devfs_put_device(BaseDevice* device)
 {
@@ -2236,6 +3010,16 @@ devfs_put_device(BaseDevice* device)
 }
 
 
+/**
+ * @brief Compute a device_geometry that encodes a given block count and size.
+ *
+ * Adjusts head_count upward (doubling) until sectors_per_track fits in a
+ * uint32, keeping the total logical block count accurate.
+ *
+ * @param geometry    Out: geometry structure to populate.
+ * @param blockCount  Total number of logical blocks on the device.
+ * @param blockSize   Size of each logical block in bytes.
+ */
 void
 devfs_compute_geometry_size(device_geometry* geometry, uint64 blockCount,
 	uint32 blockSize)
@@ -2255,6 +3039,13 @@ devfs_compute_geometry_size(device_geometry* geometry, uint64 blockCount,
 //	#pragma mark - support API for legacy drivers
 
 
+/**
+ * @brief Ask the legacy driver layer to rescan drivers for @p driverName.
+ *
+ * @param driverName  Name of the legacy driver module to rescan.
+ * @retval B_OK   Rescan triggered.
+ * @retval other  Error from legacy_driver_rescan().
+ */
 extern "C" status_t
 devfs_rescan_driver(const char* driverName)
 {
@@ -2264,6 +3055,17 @@ devfs_rescan_driver(const char* driverName)
 }
 
 
+/**
+ * @brief Publish a legacy (R5-style) device using a device_hooks table.
+ *
+ * Delegates to legacy_driver_publish() which wraps the hooks in a
+ * LegacyDevice and calls publish_device() internally.
+ *
+ * @param path   devfs-relative path at which to publish the device.
+ * @param hooks  Legacy device hook table provided by the driver.
+ * @retval B_OK   Device published.
+ * @retval other  Error from legacy_driver_publish().
+ */
 extern "C" status_t
 devfs_publish_device(const char* path, device_hooks* hooks)
 {

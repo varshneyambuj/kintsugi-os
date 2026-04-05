@@ -1,10 +1,40 @@
 /*
- * Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file VMUserAddressSpace.cpp
+ * @brief Virtual address space management for user-space processes.
+ *
+ * Manages the layout of virtual memory regions (VMArea objects) within
+ * the user portion of the address space. Handles area insertion, removal,
+ * and the placement heuristics used when no explicit base address is given.
+ *
+ * @see VMKernelAddressSpace.cpp, VMAddressSpace.cpp
  */
 
 
@@ -41,9 +71,19 @@ const addr_t VMUserAddressSpace::kMaxInitialRandomize	= 0x2000000ul;
 #endif
 
 
-/*!	Verifies that an area with the given aligned base and size fits into
-	the spot defined by base and limit and checks for overflows.
-*/
+/**
+ * @brief Verify that an aligned base address and size fit within a slot.
+ *
+ * Checks that \a alignedBase is not below \a base, that the region does not
+ * wrap around the address space, and that the last byte of the region is no
+ * greater than \a limit.
+ *
+ * @param base        Minimum acceptable start address for the region.
+ * @param alignedBase Proposed (aligned) start address of the region.
+ * @param size        Size in bytes of the region.
+ * @param limit       Maximum acceptable last-byte address of the region.
+ * @return @c true if the region fits, @c false otherwise.
+ */
 static inline bool
 is_valid_spot(addr_t base, addr_t alignedBase, addr_t size, addr_t limit)
 {
@@ -52,6 +92,12 @@ is_valid_spot(addr_t base, addr_t alignedBase, addr_t size, addr_t limit)
 }
 
 
+/**
+ * @brief Return whether an address specification is a base-address hint.
+ *
+ * @param addressSpec One of the B_*ADDRESS constants.
+ * @return @c true for B_BASE_ADDRESS or B_RANDOMIZED_BASE_ADDRESS.
+ */
 static inline bool
 is_base_address_spec(uint32 addressSpec)
 {
@@ -60,6 +106,13 @@ is_base_address_spec(uint32 addressSpec)
 }
 
 
+/**
+ * @brief Round \a address up to the next multiple of \a alignment.
+ *
+ * @param address   Address to align.
+ * @param alignment Alignment in bytes; must be a power of two.
+ * @return The smallest aligned address that is >= \a address.
+ */
 static inline addr_t
 align_address(addr_t address, size_t alignment)
 {
@@ -67,6 +120,20 @@ align_address(addr_t address, size_t alignment)
 }
 
 
+/**
+ * @brief Align \a address, honouring a base-address hint when applicable.
+ *
+ * When \a addressSpec is a base-address specification, the address is first
+ * clamped to be no less than \a baseAddress, then rounded up to the next
+ * aligned boundary.
+ *
+ * @param address     Address to align.
+ * @param alignment   Alignment in bytes; must be a power of two.
+ * @param addressSpec Address specification constant (B_BASE_ADDRESS etc.).
+ * @param baseAddress Hint base address applied when addressSpec is a
+ *                    base-address variant.
+ * @return Aligned address satisfying both the hint and the alignment.
+ */
 static inline addr_t
 align_address(addr_t address, size_t alignment, uint32 addressSpec,
 	addr_t baseAddress)
@@ -80,6 +147,16 @@ align_address(addr_t address, size_t alignment, uint32 addressSpec,
 // #pragma mark - VMUserAddressSpace
 
 
+/**
+ * @brief Construct a VMUserAddressSpace for the given team.
+ *
+ * Delegates to the VMAddressSpace base constructor and initialises the
+ * next-insert hint to zero. The hint is updated lazily as areas are inserted.
+ *
+ * @param id   Team identifier that owns this address space.
+ * @param base Lowest virtual address belonging to the address space.
+ * @param size Total size in bytes of the address space.
+ */
 VMUserAddressSpace::VMUserAddressSpace(team_id id, addr_t base, size_t size)
 	:
 	VMAddressSpace(id, base, size, "address space"),
@@ -88,11 +165,28 @@ VMUserAddressSpace::VMUserAddressSpace(team_id id, addr_t base, size_t size)
 }
 
 
+/**
+ * @brief Destroy a VMUserAddressSpace.
+ *
+ * All VMArea objects must have been removed before this destructor is called.
+ * The base class destructor handles lock teardown.
+ */
 VMUserAddressSpace::~VMUserAddressSpace()
 {
 }
 
 
+/**
+ * @brief Return the first non-reserved area in the address space.
+ *
+ * Walks from the left-most node in the area tree and skips any entries whose
+ * ID equals RESERVED_AREA_ID.
+ *
+ * @note The caller must hold at least the read lock on the address space.
+ *
+ * @return Pointer to the first real VMArea, or @c NULL if the address space
+ *         contains no non-reserved areas.
+ */
 inline VMArea*
 VMUserAddressSpace::FirstArea() const
 {
@@ -103,6 +197,17 @@ VMUserAddressSpace::FirstArea() const
 }
 
 
+/**
+ * @brief Return the next non-reserved area after \a _area.
+ *
+ * Advances to the in-order successor of \a _area in the area tree and skips
+ * any entries with RESERVED_AREA_ID.
+ *
+ * @note The caller must hold at least the read lock on the address space.
+ *
+ * @param _area The current area; must not be @c NULL.
+ * @return Pointer to the next real VMArea, or @c NULL if there is none.
+ */
 inline VMArea*
 VMUserAddressSpace::NextArea(VMArea* _area) const
 {
@@ -114,6 +219,17 @@ VMUserAddressSpace::NextArea(VMArea* _area) const
 }
 
 
+/**
+ * @brief Allocate a new VMUserArea object.
+ *
+ * Delegates to VMUserArea::Create() with the supplied parameters.
+ *
+ * @param name             Human-readable name for the area.
+ * @param wiring           Wiring type (B_NO_LOCK, B_FULL_LOCK, etc.).
+ * @param protection       Page-protection flags (B_READ_AREA, etc.).
+ * @param allocationFlags  Heap allocation flags (e.g. HEAP_DONT_WAIT_FOR_MEMORY).
+ * @return Newly allocated VMUserArea, or @c NULL on allocation failure.
+ */
 VMArea*
 VMUserAddressSpace::CreateArea(const char* name, uint32 wiring,
 	uint32 protection, uint32 allocationFlags)
@@ -122,6 +238,15 @@ VMUserAddressSpace::CreateArea(const char* name, uint32 wiring,
 }
 
 
+/**
+ * @brief Destroy a VMUserArea and free its storage.
+ *
+ * Calls the VMUserArea destructor explicitly (rather than via @c delete) and
+ * then releases the backing memory using free_etc() with \a allocationFlags.
+ *
+ * @param _area           Area to destroy; must be a VMUserArea.
+ * @param allocationFlags Flags controlling how the backing memory is freed.
+ */
 void
 VMUserAddressSpace::DeleteArea(VMArea* _area, uint32 allocationFlags)
 {
@@ -131,7 +256,19 @@ VMUserAddressSpace::DeleteArea(VMArea* _area, uint32 allocationFlags)
 }
 
 
-//! You must hold the address space's read lock.
+/**
+ * @brief Find the area that contains \a address.
+ *
+ * Uses the red-black tree to locate the closest area whose base is <= \a
+ * address, then verifies that \a address falls within that area's extent.
+ * Reserved areas (RESERVED_AREA_ID) are excluded from the result.
+ *
+ * @note The caller must hold at least the read lock on the address space.
+ *
+ * @param address Virtual address to look up.
+ * @return Pointer to the containing VMArea, or @c NULL if no non-reserved
+ *         area contains \a address.
+ */
 VMArea*
 VMUserAddressSpace::LookupArea(addr_t address) const
 {
@@ -143,7 +280,21 @@ VMUserAddressSpace::LookupArea(addr_t address) const
 }
 
 
-//! You must hold the address space's read lock.
+/**
+ * @brief Find the closest non-reserved area to \a address.
+ *
+ * Searches the tree for the nearest area relative to \a address in the
+ * direction specified by \a less. Reserved areas are skipped by walking
+ * further in the same direction.
+ *
+ * @note The caller must hold at least the read lock on the address space.
+ *
+ * @param address Virtual address used as the search key.
+ * @param less    If @c true, find the closest area with base <= \a address;
+ *                if @c false, find the closest area with base >= \a address.
+ * @return Pointer to the closest non-reserved VMArea, or @c NULL if none
+ *         exists in the requested direction.
+ */
 VMArea*
 VMUserAddressSpace::FindClosestArea(addr_t address, bool less) const
 {
@@ -154,11 +305,30 @@ VMUserAddressSpace::FindClosestArea(addr_t address, bool less) const
 }
 
 
-/*!	This inserts the area you pass into the address space.
-	It will also set the "_address" argument to its base address when
-	the call succeeds.
-	You need to hold the VMAddressSpace write lock.
-*/
+/**
+ * @brief Insert \a area into the address space at a location chosen according
+ *        to \a addressRestrictions.
+ *
+ * Computes a valid search range from \a addressRestrictions, then delegates to
+ * _InsertAreaSlot() to find and claim a free virtual slot of \a size bytes.
+ * On success, \a *_address is set to the area's base address and the
+ * address space's free-space counter is decremented.
+ *
+ * @note The caller must hold the write lock on the address space
+ *       (ASSERT_WRITE_LOCKED_RW_LOCK is checked internally).
+ *
+ * @param _area                  Area object to insert (must be a VMUserArea).
+ * @param size                   Size in bytes of the area.
+ * @param addressRestrictions    Placement constraints (specification, hint
+ *                               address, alignment).
+ * @param allocationFlags        Heap flags forwarded to sub-allocations.
+ * @param[out] _address          Receives the chosen base address on success;
+ *                               may be @c NULL if the caller does not need it.
+ * @retval B_OK          Area inserted successfully.
+ * @retval B_BAD_VALUE   Invalid address specification or exact address is
+ *                       already occupied.
+ * @retval B_NO_MEMORY   No sufficiently large free slot exists.
+ */
 status_t
 VMUserAddressSpace::InsertArea(VMArea* _area, size_t size,
 	const virtual_address_restrictions* addressRestrictions,
@@ -208,7 +378,20 @@ VMUserAddressSpace::InsertArea(VMArea* _area, size_t size,
 }
 
 
-//! You must hold the address space's write lock.
+/**
+ * @brief Remove \a area from the address space tree.
+ *
+ * Removes the area from the internal red-black tree, increments the change
+ * counter for non-reserved areas, restores the freed bytes to the free-space
+ * counter, and retracts the next-insert hint if the removed area was at its
+ * tip.
+ *
+ * @note The caller must hold the write lock on the address space.
+ *
+ * @param _area           Area to remove; must be currently inserted.
+ * @param allocationFlags Forwarded to potential sub-operations (currently
+ *                        unused in this function body).
+ */
 void
 VMUserAddressSpace::RemoveArea(VMArea* _area, uint32 allocationFlags)
 {
@@ -228,6 +411,19 @@ VMUserAddressSpace::RemoveArea(VMArea* _area, uint32 allocationFlags)
 }
 
 
+/**
+ * @brief Check whether an area can be resized to \a newSize in place.
+ *
+ * Walks the areas that immediately follow \a area (in address order) to
+ * determine whether the new extent overlaps only reserved areas (which may be
+ * consumed) or empty space, stopping at the first non-reserved area or the
+ * end of the address space.
+ *
+ * @param area    Area whose resize feasibility is to be tested.
+ * @param newSize Proposed new size in bytes.
+ * @return @c true if the area can be resized to \a newSize without evicting
+ *         any non-reserved area, @c false otherwise.
+ */
 bool
 VMUserAddressSpace::CanResizeArea(VMArea* area, size_t newSize)
 {
@@ -255,6 +451,23 @@ VMUserAddressSpace::CanResizeArea(VMArea* area, size_t newSize)
 }
 
 
+/**
+ * @brief Resize \a area to \a newSize, adjusting or removing reserved regions.
+ *
+ * When growing, any reserved areas that fall within the new extent are either
+ * shrunk (via ShrinkAreaHead()) or entirely removed. When shrinking, an
+ * adjacent reserved area at the old tail is expanded back towards its
+ * original base (as stored in cache_offset).
+ *
+ * @note CanResizeArea() should be called first to verify the resize is safe.
+ *
+ * @param _area           Area to resize.
+ * @param newSize         Desired new size in bytes.
+ * @param allocationFlags Heap flags used when freeing consumed reserved areas.
+ * @retval B_OK    Resize completed successfully.
+ * @retval B_ERROR An internal consistency check failed (should not occur if
+ *                 CanResizeArea() returned @c true).
+ */
 status_t
 VMUserAddressSpace::ResizeArea(VMArea* _area, size_t newSize,
 	uint32 allocationFlags)
@@ -312,6 +525,17 @@ VMUserAddressSpace::ResizeArea(VMArea* _area, size_t newSize,
 }
 
 
+/**
+ * @brief Shrink \a area by removing bytes from its head (lowest addresses).
+ *
+ * Advances the base address by @c (oldSize - \a size) and sets the new size,
+ * effectively discarding the low portion of the area's virtual range.
+ *
+ * @param area            Area to shrink.
+ * @param size            New (smaller) size in bytes.
+ * @param allocationFlags Unused; present for API uniformity.
+ * @retval B_OK Always succeeds (no-op when \a size equals current size).
+ */
 status_t
 VMUserAddressSpace::ShrinkAreaHead(VMArea* area, size_t size,
 	uint32 allocationFlags)
@@ -327,6 +551,17 @@ VMUserAddressSpace::ShrinkAreaHead(VMArea* area, size_t size,
 }
 
 
+/**
+ * @brief Shrink \a area by removing bytes from its tail (highest addresses).
+ *
+ * Reduces the size of the area, discarding the high portion of its virtual
+ * range. The base address is unchanged.
+ *
+ * @param area            Area to shrink.
+ * @param size            New (smaller) size in bytes.
+ * @param allocationFlags Unused; present for API uniformity.
+ * @retval B_OK Always succeeds (no-op when \a size equals current size).
+ */
 status_t
 VMUserAddressSpace::ShrinkAreaTail(VMArea* area, size_t size,
 	uint32 allocationFlags)
@@ -341,6 +576,24 @@ VMUserAddressSpace::ShrinkAreaTail(VMArea* area, size_t size,
 }
 
 
+/**
+ * @brief Reserve a range of virtual addresses, preventing their use by
+ *        subsequent area allocations.
+ *
+ * Creates a VMUserArea with RESERVED_AREA_ID and inserts it via InsertArea().
+ * The original base address is stored in @c cache_offset so that a later
+ * ResizeArea() shrink can restore the reservation to its original boundary.
+ *
+ * @param size                 Number of bytes to reserve.
+ * @param addressRestrictions  Placement constraints for the reservation.
+ * @param flags                Protection flags stored on the reserved area.
+ * @param allocationFlags      Heap flags for the VMUserArea allocation.
+ * @param[out] _address        Receives the reserved base address on success.
+ * @retval B_OK         Reservation placed successfully.
+ * @retval B_BAD_TEAM_ID The address space is being deleted.
+ * @retval B_NO_MEMORY  No sufficiently large free slot exists or allocation
+ *                      failed.
+ */
 status_t
 VMUserAddressSpace::ReserveAddressRange(size_t size,
 	const virtual_address_restrictions* addressRestrictions,
@@ -373,6 +626,20 @@ VMUserAddressSpace::ReserveAddressRange(size_t size,
 }
 
 
+/**
+ * @brief Release all reserved areas that overlap [\a address, \a address +
+ *        \a size).
+ *
+ * Iterates over reserved areas whose last byte falls within the specified
+ * range, removes each from the tree, decrements the address-space reference
+ * count, and frees the VMUserArea.
+ *
+ * @param address         Start of the range to unreserve.
+ * @param size            Length of the range in bytes.
+ * @param allocationFlags Heap flags used when freeing VMUserArea objects.
+ * @retval B_OK         Always (errors abort silently if the space is deleting).
+ * @retval B_BAD_TEAM_ID The address space is being deleted.
+ */
 status_t
 VMUserAddressSpace::UnreserveAddressRange(addr_t address, size_t size,
 	uint32 allocationFlags)
@@ -407,6 +674,15 @@ VMUserAddressSpace::UnreserveAddressRange(addr_t address, size_t size,
 }
 
 
+/**
+ * @brief Remove all reserved areas from the address space.
+ *
+ * Walks the full area tree and removes every entry with RESERVED_AREA_ID,
+ * freeing the associated VMUserArea objects and decrementing the address-space
+ * reference count for each.
+ *
+ * @param allocationFlags Heap flags used when freeing VMUserArea objects.
+ */
 void
 VMUserAddressSpace::UnreserveAllAddressRanges(uint32 allocationFlags)
 {
@@ -422,6 +698,16 @@ VMUserAddressSpace::UnreserveAllAddressRanges(uint32 allocationFlags)
 }
 
 
+/**
+ * @brief Print a summary of the address space and all its areas to the kernel
+ *        debugger.
+ *
+ * Calls the base-class Dump() for header information, then iterates over all
+ * areas (including reserved ranges) and prints each area's ID, base address,
+ * size, name and protection flags via kprintf().
+ *
+ * @note Intended for use from a KDL command only.
+ */
 void
 VMUserAddressSpace::Dump() const
 {
@@ -440,6 +726,16 @@ VMUserAddressSpace::Dump() const
 }
 
 
+/**
+ * @brief Return whether the given address specification requests randomization.
+ *
+ * Checks both the global randomization-enabled flag and whether \a addressSpec
+ * is one of the randomized placement constants.
+ *
+ * @param addressSpec Address specification constant to test.
+ * @return @c true if randomization is both globally enabled and requested by
+ *         \a addressSpec.
+ */
 inline bool
 VMUserAddressSpace::_IsRandomized(uint32 addressSpec) const
 {
@@ -449,6 +745,22 @@ VMUserAddressSpace::_IsRandomized(uint32 addressSpec) const
 }
 
 
+/**
+ * @brief Pick a random aligned address within [\a start, \a end].
+ *
+ * Draws a cryptographically random value, reduces it modulo the effective
+ * range (clamped to kMaxInitialRandomize or kMaxRandomize depending on
+ * \a initial), and aligns it to \a alignment.
+ *
+ * @param start     Inclusive lower bound; must already be aligned.
+ * @param end       Inclusive upper bound.
+ * @param alignment Alignment in bytes (must be a power of two).
+ * @param initial   If @c true, use kMaxInitialRandomize to limit the range
+ *                  (suitable for the initial stack/heap placement); otherwise
+ *                  use kMaxRandomize.
+ * @return A randomly chosen address in [\a start, \a start + range) that is
+ *         aligned to \a alignment.
+ */
 addr_t
 VMUserAddressSpace::_RandomizeAddress(addr_t start, addr_t end,
 	size_t alignment, bool initial)
@@ -473,10 +785,29 @@ VMUserAddressSpace::_RandomizeAddress(addr_t start, addr_t end,
 }
 
 
-/*!	Finds a reserved area that covers the region spanned by \a start and
-	\a size, inserts the \a area into that region and makes sure that
-	there are reserved regions for the remaining parts.
-*/
+/**
+ * @brief Insert \a area at exactly [\a start, \a start + \a size) within an
+ *        existing reserved region.
+ *
+ * Finds the reserved area that fully contains the requested range, removes or
+ * splits it as necessary to make room, sets \a area's base and size, and
+ * inserts it into the tree.
+ *
+ * Three sub-cases are handled:
+ *  - The new area covers the entire reserved range: the reserved area is removed.
+ *  - The new area starts at the beginning: the reserved area is shrunk from its head.
+ *  - The new area ends at the tail: the reserved area is shrunk from its tail.
+ *  - The new area is in the middle: the reserved area is split into two.
+ *
+ * @param start           Exact virtual base address for the new area.
+ * @param size            Size in bytes of the new area.
+ * @param area            VMUserArea to insert.
+ * @param allocationFlags Heap flags used when allocating the split reservation.
+ * @retval B_OK             Insertion succeeded.
+ * @retval B_ENTRY_NOT_FOUND No reserved region covers the full requested range.
+ * @retval B_BAD_VALUE      The covering region is not a reserved area.
+ * @retval B_NO_MEMORY      Could not allocate a new reserved area for the split.
+ */
 status_t
 VMUserAddressSpace::_InsertAreaIntoReservedRegion(addr_t start, size_t size,
 	VMUserArea* area, uint32 allocationFlags)
@@ -546,7 +877,44 @@ VMUserAddressSpace::_InsertAreaIntoReservedRegion(addr_t start, size_t size,
 }
 
 
-/*!	Must be called with this address space's write lock held */
+/**
+ * @brief Core placement engine: find a free virtual slot and insert \a area.
+ *
+ * Searches the address space for a free region of \a size bytes that satisfies
+ * \a addressSpec (and optionally \a alignment) within [\a start, \a end].
+ * The function implements several placement strategies:
+ *
+ *  - **B_EXACT_ADDRESS**: first tries _InsertAreaIntoReservedRegion(); if that
+ *    finds no reservation, checks for a genuinely empty slot.
+ *  - **B_ANY_ADDRESS / B_ANY_KERNEL_***: linear scan from \a start, optionally
+ *    using the fNextInsertHint to skip already-used space.
+ *  - **B_BASE_ADDRESS / B_RANDOMIZED_BASE_ADDRESS**: like B_ANY_ADDRESS but
+ *    clamped to start no lower than the specified base. Falls back to a full
+ *    scan if no slot is found above the base.
+ *  - **B_RANDOMIZED_ANY_ADDRESS**: same as B_ANY_ADDRESS but randomises the
+ *    chosen offset within each candidate range.
+ *
+ * If no slot is found in the primary range, reserved areas are also scanned
+ * as a last resort for B_ANY_* specifications.
+ *
+ * On success, sets \a area's base address and size, inserts the area into the
+ * tree, increments the change counter, and updates fNextInsertHint.
+ *
+ * @note Must be called with the address space write lock held.
+ *
+ * @param start           First acceptable virtual address.
+ * @param size            Required size in bytes.
+ * @param end             Last acceptable virtual address (inclusive).
+ * @param addressSpec     One of the B_*ADDRESS constants controlling placement.
+ * @param alignment       Required alignment in bytes (0 means B_PAGE_SIZE).
+ * @param area            VMUserArea to place; its base and size are set on
+ *                        success.
+ * @param allocationFlags Heap flags forwarded to _InsertAreaIntoReservedRegion().
+ * @retval B_OK          Area placed and inserted successfully.
+ * @retval B_BAD_ADDRESS Input range is inconsistent or outside the address space.
+ * @retval B_BAD_VALUE   B_EXACT_ADDRESS requested but the slot is occupied.
+ * @retval B_NO_MEMORY   No suitable free region was found.
+ */
 status_t
 VMUserAddressSpace::_InsertAreaSlot(addr_t start, addr_t size, addr_t end,
 	uint32 addressSpec, size_t alignment, VMUserArea* area,

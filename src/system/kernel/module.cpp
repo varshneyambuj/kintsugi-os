@@ -1,12 +1,41 @@
 /*
- * Copyright 2002-2022, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Thomas Kurschel. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2022, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001, Thomas Kurschel. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
-/*!	Manages kernel add-ons and their exported modules. */
+/**
+ * @file module.cpp
+ * @brief Kernel module loader — dynamic loading and unloading of kernel modules.
+ *
+ * Implements the kernel module system: get_module(), put_module(), and the
+ * module iterator. Modules are shared libraries loaded on demand from
+ * /boot/system/add-ons/kernel/ and its subdirectories. Reference counting
+ * ensures a module remains loaded while any consumer holds a reference.
+ *
+ * @see device_manager.cpp, legacy_drivers.cpp
+ */
 
 
 #include <kmodule.h>
@@ -374,11 +403,22 @@ static ModuleTable* sModulesHash;
 
 
 
-/*!	Try to load the module image at the specified \a path.
-	If it could be loaded, it returns \c B_OK, and stores a pointer
-	to the module_image object in \a _moduleImage.
-	Needs to be called with the sModulesLock held.
-*/
+/**
+ * @brief Load a kernel add-on image from \a path and register it in the image hash.
+ *
+ * Calls load_kernel_add_on(), resolves the mandatory "modules" symbol and the
+ * optional "module_dependencies" symbol, then inserts the resulting
+ * module_image into sModuleImagesHash.
+ *
+ * @param path          Absolute filesystem path to the add-on to load.
+ * @param _moduleImage  Out-parameter filled with a pointer to the newly
+ *                      allocated and registered module_image on success.
+ * @retval B_OK          Add-on loaded and registered successfully.
+ * @retval B_NO_MEMORY   Memory allocation for module_image or path copy failed.
+ * @retval B_BAD_TYPE    Add-on does not export the required "modules" symbol.
+ * @retval <0            Error code returned directly from load_kernel_add_on().
+ * @note Must be called with sModulesLock held (recursive).
+ */
 static status_t
 load_module_image(const char* path, module_image** _moduleImage)
 {
@@ -441,9 +481,19 @@ err:
 }
 
 
-/*!	Unloads the module's kernel add-on. The \a image will be freed.
-	Needs to be called with the sModulesLock held.
-*/
+/**
+ * @brief Unload a kernel add-on image and free all associated resources.
+ *
+ * Calls unload_kernel_add_on() and frees the module_image struct. Optionally
+ * removes the image from sModuleImagesHash first.
+ *
+ * @param moduleImage  Pointer to the module_image to unload. Must not be NULL.
+ * @param remove       If \c true, remove the entry from sModuleImagesHash
+ *                     before unloading.
+ * @retval B_OK     Image unloaded successfully.
+ * @retval B_ERROR  The image's ref_count is not zero; unload refused.
+ * @note Must be called with sModulesLock held (recursive).
+ */
 static status_t
 unload_module_image(module_image* moduleImage, bool remove)
 {
@@ -467,6 +517,18 @@ unload_module_image(module_image* moduleImage, bool remove)
 }
 
 
+/**
+ * @brief Decrement the reference count of a module_image, unloading it when
+ *        the count reaches zero.
+ *
+ * The image is only physically unloaded once the boot device is available
+ * (gBootDevice > 0); before that point the image stays resident so it can
+ * still be referenced.
+ *
+ * @param image  Pointer to the module_image whose reference count to release.
+ * @note Acquires sModulesLock internally; must not be called with the lock
+ *       already held by the same thread in a non-reentrant context.
+ */
 static void
 put_module_image(module_image* image)
 {
@@ -483,6 +545,20 @@ put_module_image(module_image* image)
 }
 
 
+/**
+ * @brief Retrieve (or load) a module_image by filesystem path and increment
+ *        its reference count.
+ *
+ * Looks up \a path in sModuleImagesHash. If not found, delegates to
+ * load_module_image(). On success the caller owns one reference and must
+ * eventually call put_module_image().
+ *
+ * @param path    Absolute filesystem path of the add-on to retrieve.
+ * @param _image  Out-parameter filled with the module_image pointer on success.
+ * @retval B_OK  Image found or loaded; reference count incremented.
+ * @retval <0    Error propagated from load_module_image().
+ * @note Acquires sModulesLock internally.
+ */
 static status_t
 get_module_image(const char* path, module_image** _image)
 {
@@ -506,9 +582,25 @@ get_module_image(const char* path, module_image** _image)
 }
 
 
-/*!	Extract the information from the module_info structure pointed at
-	by "info" and create the entries required for access to it's details.
-*/
+/**
+ * @brief Allocate and register a module struct in sModulesHash from a
+ *        module_info descriptor.
+ *
+ * Creates a new module entry, copies the name, records the offset into the
+ * image's module_info array, and inserts it into sModulesHash. The newly
+ * created module starts in MODULE_QUERIED state with ref_count zero.
+ *
+ * @param info     Pointer to the module_info exported by the add-on.
+ * @param offset   Index of \a info within the add-on's module_info array
+ *                 (pass -1 for built-in modules).
+ * @param _module  Optional out-parameter; if non-NULL, receives the new
+ *                 module pointer on success.
+ * @retval B_OK          Module created and inserted successfully.
+ * @retval B_BAD_VALUE   \a info->name is NULL.
+ * @retval B_FILE_EXISTS A module with the same name already exists in the hash.
+ * @retval B_NO_MEMORY   Memory allocation failed.
+ * @note Acquires sModulesLock around the hash insertion.
+ */
 static status_t
 create_module(module_info* info, int offset, module** _module)
 {
@@ -557,14 +649,28 @@ create_module(module_info* info, int offset, module** _module)
 }
 
 
-/*!	Loads the file at \a path and scans all modules contained therein.
-	Returns \c B_OK if \a searchedName could be found under those modules,
-	and will return the referenced image in \a _moduleImage.
-	Returns \c B_ENTRY_NOT_FOUND if the module could not be found.
-
-	Must only be called for files that haven't been scanned yet.
-	\a searchedName is allowed to be \c NULL (if all modules should be scanned)
-*/
+/**
+ * @brief Load the add-on at \a path, scan all module_info entries it exports,
+ *        and check whether \a searchedName is among them.
+ *
+ * Calls get_module_image() to load (or retrieve) the image, then iterates its
+ * module_info array. For each entry that is not yet in sModulesHash a new
+ * module is created via create_module(). If \a searchedName is found the
+ * function returns \c B_OK and sets *_moduleImage to the image; otherwise it
+ * releases the image reference and returns \c B_ENTRY_NOT_FOUND.
+ *
+ * Must only be called for files that have not been scanned yet.
+ *
+ * @param path          Absolute path of the add-on to inspect.
+ * @param searchedName  Module name to look for, or NULL to register all modules
+ *                      without requiring a specific match.
+ * @param _moduleImage  Out-parameter filled with the loaded image on success
+ *                      (caller inherits the reference).
+ * @retval B_OK              \a searchedName was found (or was NULL and at least
+ *                           one module was registered).
+ * @retval B_ENTRY_NOT_FOUND \a searchedName not present in the image.
+ * @retval B_ENTRY_NOT_FOUND get_module_image() failed for \a path.
+ */
 static status_t
 check_module_image(const char* path, const char* searchedName,
 	module_image** _moduleImage)
@@ -616,6 +722,24 @@ check_module_image(const char* path, const char* searchedName,
 }
 
 
+/**
+ * @brief Search all module base directories for an add-on that exports the
+ *        module named \a name.
+ *
+ * Iterates kModulePaths in reverse priority order (highest priority last),
+ * asks the VFS for the physical path of the module via vfs_get_module_path(),
+ * then calls check_module_image() on each candidate. Stops at the first
+ * successful match. User add-on paths are skipped when sDisableUserAddOns is
+ * set.
+ *
+ * @param name          Fully qualified module name to locate.
+ * @param _moduleImage  Out-parameter receiving the image reference on success
+ *                      (caller must eventually call put_module_image()).
+ * @return Pointer to the module struct from sModulesHash on success, or NULL
+ *         if the module could not be found in any search path.
+ * @note Must be called with sModulesLock held; panics during kernel startup
+ *       (gKernelStartup == true).
+ */
 static module*
 search_module(const char* name, module_image** _moduleImage)
 {
@@ -661,6 +785,19 @@ search_module(const char* name, module_image** _moduleImage)
 }
 
 
+/**
+ * @brief Release all module references held on behalf of a module's declared
+ *        dependencies.
+ *
+ * Iterates the module_dependency array of \a module's image and calls
+ * put_module() for each named dependency. Built-in modules (which have no
+ * module_image) are silently skipped.
+ *
+ * @param module  The module whose dependency references should be released.
+ * @retval B_OK  All dependency references released (or no dependencies).
+ * @retval <0    First error returned by put_module() for a dependency.
+ * @note Caller must hold sModulesLock.
+ */
 static status_t
 put_dependent_modules(struct module* module)
 {
@@ -682,6 +819,20 @@ put_dependent_modules(struct module* module)
 }
 
 
+/**
+ * @brief Acquire module references for all modules listed as dependencies of
+ *        \a module.
+ *
+ * Iterates the module_dependency array and calls get_module() for each entry,
+ * populating the info pointer recorded in the dependency descriptor. Built-in
+ * modules (no module_image) are silently skipped.
+ *
+ * @param module  The module whose dependencies should be resolved and loaded.
+ * @retval B_OK  All dependencies resolved successfully (or no dependencies).
+ * @retval <0    Error returned by get_module() for a dependency; the caller
+ *               is responsible for rolling back already-acquired references.
+ * @note Caller must hold sModulesLock.
+ */
 static status_t
 get_dependent_modules(struct module* module)
 {
@@ -709,7 +860,23 @@ get_dependent_modules(struct module* module)
 }
 
 
-/*!	Initializes a loaded module depending on its state */
+/**
+ * @brief Initialize a module by invoking its std_ops(B_MODULE_INIT) callback,
+ *        transitioning it through the MODULE_INIT -> MODULE_READY state
+ *        sequence.
+ *
+ * If the module is in MODULE_QUERIED or MODULE_LOADED state its dependencies
+ * are first resolved via get_dependent_modules(). Circular or re-entrant
+ * initialization attempts are detected and reported as errors.
+ *
+ * @param module  Pointer to the module to initialize.
+ * @retval B_OK     Module initialized (or was already MODULE_READY).
+ * @retval B_ERROR  Circular dependency or module in MODULE_UNINIT/MODULE_ERROR
+ *                  state.
+ * @retval <0       Error returned by std_ops(B_MODULE_INIT) or
+ *                  get_dependent_modules().
+ * @note Caller must hold sModulesLock.
+ */
 static inline status_t
 init_module(module* module)
 {
@@ -772,7 +939,24 @@ init_module(module* module)
 }
 
 
-/*!	Uninitializes a module depeding on its state */
+/**
+ * @brief Uninitialize a module by invoking its std_ops(B_MODULE_UNINIT)
+ *        callback, transitioning it from MODULE_READY back to MODULE_LOADED.
+ *
+ * If uninit succeeds, dependent module references are released via
+ * put_dependent_modules(). On failure the module is placed in MODULE_ERROR
+ * state, flagged B_KEEP_LOADED, and its ref count is incremented to prevent
+ * future unload attempts.
+ *
+ * @param module  Pointer to the module to uninitialize.
+ * @retval B_NO_ERROR  Module was already in MODULE_QUERIED or MODULE_LOADED
+ *                     state (no-op).
+ * @retval B_OK        std_ops(B_MODULE_UNINIT) succeeded.
+ * @retval B_ERROR     Module is in MODULE_INIT or MODULE_UNINIT state (panic).
+ * @retval <0          Error returned by std_ops(B_MODULE_UNINIT); module moved
+ *                     to MODULE_ERROR.
+ * @note Caller must hold sModulesLock.
+ */
 static inline int
 uninit_module(module* module)
 {
@@ -827,6 +1011,18 @@ uninit_module(module* module)
 }
 
 
+/**
+ * @brief Pop and return the topmost path from an iterator's directory stack.
+ *
+ * Decrements stack_current and optionally returns the base_length of the
+ * popped entry through \a _baseLength.
+ *
+ * @param iterator    The module_iterator whose stack to pop.
+ * @param _baseLength Optional out-parameter receiving the base_length of the
+ *                    popped path entry; may be NULL.
+ * @return The path string that was on top of the stack, or NULL if the stack
+ *         is empty.
+ */
 static const char*
 iterator_pop_path_from_stack(module_iterator* iterator, uint32* _baseLength)
 {
@@ -840,6 +1036,17 @@ iterator_pop_path_from_stack(module_iterator* iterator, uint32* _baseLength)
 }
 
 
+/**
+ * @brief Push a directory path onto an iterator's traversal stack, growing
+ *        the stack buffer as needed.
+ *
+ * @param iterator    The module_iterator whose stack to extend.
+ * @param path        The path string to push (ownership transferred to the
+ *                    stack; must remain valid until popped).
+ * @param baseLength  The base_length value to associate with this path entry.
+ * @retval B_OK        Path pushed successfully.
+ * @retval B_NO_MEMORY realloc() of the stack buffer failed.
+ */
 static status_t
 iterator_push_path_on_stack(module_iterator* iterator, const char* path,
 	uint32 baseLength)
@@ -861,6 +1068,16 @@ iterator_push_path_on_stack(module_iterator* iterator, const char* path,
 }
 
 
+/**
+ * @brief Test whether a module name matches the suffix filter of an iterator.
+ *
+ * Returns true if the iterator has no suffix requirement, or if \a name ends
+ * with a '/' followed by the iterator's suffix string.
+ *
+ * @param iterator  The iterator whose suffix filter to apply.
+ * @param name      Fully qualified module name to test.
+ * @return true if the name satisfies the suffix constraint, false otherwise.
+ */
 static bool
 match_iterator_suffix(module_iterator* iterator, const char* name)
 {
@@ -876,6 +1093,25 @@ match_iterator_suffix(module_iterator* iterator, const char* name)
 }
 
 
+/**
+ * @brief Advance an iterator to the next module name that matches the prefix
+ *        and suffix filters.
+ *
+ * Proceeds through three phases in order:
+ *  1. Built-in modules (sBuiltInModules array).
+ *  2. Already-loaded modules cached in sModulesHash.
+ *  3. On-disk add-ons discovered by walking the directory stack.
+ *
+ * @param iterator    The active module_iterator driving the traversal.
+ * @param buffer      Caller-supplied buffer to receive the module name.
+ * @param _bufferSize In/out: on entry the capacity of \a buffer; on success
+ *                   updated to the length of the written name.
+ * @retval B_OK              A matching module name was written to \a buffer.
+ * @retval B_ENTRY_NOT_FOUND No more matching modules exist.
+ * @retval B_NO_MEMORY       Memory allocation failed during traversal.
+ * @retval B_BUFFER_OVERFLOW Path construction exceeded the KPath buffer.
+ * @note Must be called with sModulesLock held.
+ */
 static status_t
 iterator_get_next_module(module_iterator* iterator, char* buffer,
 	size_t* _bufferSize)
@@ -1066,6 +1302,16 @@ nextModuleImage:
 }
 
 
+/**
+ * @brief Register every entry in the NULL-terminated sBuiltInModules array as
+ *        a built-in module.
+ *
+ * Sets B_BUILT_IN_MODULE on each module_info's flags and creates a
+ * corresponding module entry via create_module(). Intended to be called once
+ * during module_init() before any preloaded images are processed.
+ *
+ * @param info  NULL-terminated array of module_info pointers to register.
+ */
 static void
 register_builtin_modules(struct module_info** info)
 {
@@ -1082,6 +1328,23 @@ register_builtin_modules(struct module_info** info)
 }
 
 
+/**
+ * @brief Register a preloaded boot-time image as a module_image and create
+ *        module entries for all module_info structs it exports.
+ *
+ * Called during module_init() for every image in kernel_args::preloaded_images.
+ * Sets image->is_module to indicate whether the image was recognised as a
+ * module add-on. If the "modules" symbol is missing the function returns an
+ * error and unloads the image (provided is_module was set true before the
+ * failure).
+ *
+ * @param image  Pointer to the preloaded_image descriptor from the boot loader.
+ * @retval B_OK        Image registered and module entries created.
+ * @retval B_BAD_VALUE image->id is negative (image not loaded).
+ * @retval B_BAD_TYPE  "modules" symbol not found in the image.
+ * @retval B_BAD_DATA  First entry in the modules array is NULL.
+ * @retval B_NO_MEMORY Memory allocation for the module_image struct failed.
+ */
 static status_t
 register_preloaded_module_image(struct preloaded_image* image)
 {
@@ -1151,6 +1414,20 @@ error:
 }
 
 
+/**
+ * @brief Kernel debugger command that dumps all known modules and loaded
+ *        module images to the kernel console.
+ *
+ * Iterates sModulesHash and prints each module's address, name, image path,
+ * offset, ref_count, state, and module_image pointer. Then iterates
+ * sModuleImagesHash and prints each image's address, path, image_id, info
+ * pointer, and ref_count.
+ *
+ * @param argc  Argument count (unused).
+ * @param argv  Argument vector (unused).
+ * @return Always returns 0.
+ * @note Callable from the kernel debugger only; not for general use.
+ */
 static int
 dump_modules(int argc, char** argv)
 {
@@ -1194,6 +1471,19 @@ DirectoryWatcher::~DirectoryWatcher()
 }
 
 
+/**
+ * @brief Handle a VFS node-monitor event for a watched module directory.
+ *
+ * Translates a B_ENTRY_MOVED event into either B_ENTRY_CREATED (destination
+ * is a watched directory) or B_ENTRY_REMOVED (source was a watched directory),
+ * then forwards the resolved opcode and entry information to
+ * sModuleNotificationService.Notify().
+ *
+ * @param service  The NotificationService that delivered the event (unused).
+ * @param event    KMessage containing "opcode", "device", "directory", "node",
+ *                 and "name" fields, plus "to directory"/"from directory" for
+ *                 move events.
+ */
 void
 DirectoryWatcher::EventOccurred(NotificationService& service,
 	const KMessage* event)
@@ -1234,6 +1524,16 @@ ModuleWatcher::~ModuleWatcher()
 }
 
 
+/**
+ * @brief Handle a VFS stat-change event for a watched module file.
+ *
+ * Filters for B_STAT_CHANGED events that include a modification-time change
+ * and notifies sModuleNotificationService with B_STAT_CHANGED so that
+ * registered listeners can react to module file updates.
+ *
+ * @param service  The NotificationService that delivered the event (unused).
+ * @param event    KMessage containing "opcode", "fields", "device", and "node".
+ */
 void
 ModuleWatcher::EventOccurred(NotificationService& service, const KMessage* event)
 {
@@ -1263,6 +1563,21 @@ ModuleNotificationService::~ModuleNotificationService()
 }
 
 
+/**
+ * @brief Register a NotificationListener to receive module change events whose
+ *        path begins with a given prefix.
+ *
+ * Extracts "prefix" from \a eventSpecifier, allocates a module_listener, and
+ * calls _AddDirectory() to begin watching the corresponding filesystem
+ * subtree. The listener is added to fListeners on success.
+ *
+ * @param eventSpecifier  KMessage containing a "prefix" string key.
+ * @param listener        The NotificationListener to invoke on matching events.
+ * @retval B_OK         Listener registered successfully.
+ * @retval B_BAD_VALUE  "prefix" key missing from \a eventSpecifier.
+ * @retval B_NO_MEMORY  Allocation of module_listener or prefix copy failed.
+ * @retval <0           Error returned by _AddDirectory().
+ */
 status_t
 ModuleNotificationService::AddListener(const KMessage* eventSpecifier,
 	NotificationListener& listener)
@@ -1294,6 +1609,13 @@ ModuleNotificationService::AddListener(const KMessage* eventSpecifier,
 }
 
 
+/**
+ * @brief Update an existing module notification listener (not implemented).
+ *
+ * @param eventSpecifier  Unused.
+ * @param listener        Unused.
+ * @retval B_ERROR  Always; not implemented.
+ */
 status_t
 ModuleNotificationService::UpdateListener(const KMessage* eventSpecifier,
 	NotificationListener& listener)
@@ -1302,6 +1624,13 @@ ModuleNotificationService::UpdateListener(const KMessage* eventSpecifier,
 }
 
 
+/**
+ * @brief Remove a module notification listener (not implemented).
+ *
+ * @param eventSpecifier  Unused.
+ * @param listener        Unused.
+ * @retval B_ERROR  Always; not implemented.
+ */
 status_t
 ModuleNotificationService::RemoveListener(const KMessage* eventSpecifier,
 	NotificationListener& listener)
@@ -1310,6 +1639,15 @@ ModuleNotificationService::RemoveListener(const KMessage* eventSpecifier,
 }
 
 
+/**
+ * @brief Check whether a (device, node) pair is currently being watched by
+ *        this service.
+ *
+ * @param device  Device ID of the filesystem node.
+ * @param node    Inode number of the filesystem node.
+ * @return true if the node is in fNodes, false otherwise.
+ * @note Acquires fLock internally.
+ */
 bool
 ModuleNotificationService::HasNode(dev_t device, ino_t node)
 {
@@ -1320,6 +1658,16 @@ ModuleNotificationService::HasNode(dev_t device, ino_t node)
 }
 
 
+/**
+ * @brief Remove a (device, node) pair from the watch set and unregister the
+ *        corresponding VFS node listener.
+ *
+ * @param device  Device ID of the node to stop watching.
+ * @param node    Inode number of the node to stop watching.
+ * @retval B_OK              Node removed and listener unregistered.
+ * @retval B_ENTRY_NOT_FOUND Node was not in fNodes.
+ * @note Acquires fLock internally.
+ */
 status_t
 ModuleNotificationService::_RemoveNode(dev_t device, ino_t node)
 {
@@ -1341,6 +1689,24 @@ ModuleNotificationService::_RemoveNode(dev_t device, ino_t node)
 }
 
 
+/**
+ * @brief Add a (device, node) pair to the watch set if not already present.
+ *
+ * Allocates a hash_entry, copies the optional path, registers the VFS node
+ * listener with the requested \a flags, and inserts the entry into fNodes.
+ *
+ * @param device    Device ID of the node to watch.
+ * @param node      Inode number to watch.
+ * @param path      Optional filesystem path associated with the node (may be
+ *                  NULL for directory nodes).
+ * @param flags     VFS watch flags (e.g. B_WATCH_DIRECTORY or B_WATCH_STAT).
+ * @param listener  The NotificationListener to attach.
+ * @retval B_OK        Node added and listener registered.
+ * @retval B_OK        Node was already present (early return, no-op).
+ * @retval B_NO_MEMORY Allocation of hash_entry or path copy failed.
+ * @retval <0          Error from add_node_listener().
+ * @note Acquires fLock internally.
+ */
 status_t
 ModuleNotificationService::_AddNode(dev_t device, ino_t node, const char* path,
 	uint32 flags, NotificationListener& listener)
@@ -1380,6 +1746,14 @@ ModuleNotificationService::_AddNode(dev_t device, ino_t node, const char* path,
 }
 
 
+/**
+ * @brief Register a directory node for B_WATCH_DIRECTORY monitoring.
+ *
+ * @param device  Device ID of the directory inode.
+ * @param node    Inode number of the directory.
+ * @retval B_OK  Successfully added (or already present).
+ * @retval <0    Error from _AddNode().
+ */
 status_t
 ModuleNotificationService::_AddDirectoryNode(dev_t device, ino_t node)
 {
@@ -1387,6 +1761,20 @@ ModuleNotificationService::_AddDirectoryNode(dev_t device, ino_t node)
 }
 
 
+/**
+ * @brief Register a module file node for B_WATCH_STAT monitoring.
+ *
+ * Resolves the vnode for \a fd to obtain its parent directory, constructs the
+ * full path, and calls _AddNode() with B_WATCH_STAT and fModuleWatcher.
+ *
+ * @param device  Device ID of the module file.
+ * @param node    Inode number of the module file.
+ * @param fd      File descriptor open on the parent directory.
+ * @param name    Name of the module file within the parent directory.
+ * @retval B_OK  Node registered successfully.
+ * @retval <0    Error from vfs_get_vnode_from_fd(), vfs_entry_ref_to_path(),
+ *               or _AddNode().
+ */
 status_t
 ModuleNotificationService::_AddModuleNode(dev_t device, ino_t node, int fd,
 	const char* name)
@@ -1414,6 +1802,18 @@ ModuleNotificationService::_AddModuleNode(dev_t device, ino_t node, int fd,
 }
 
 
+/**
+ * @brief Begin watching all filesystem locations that correspond to the
+ *        module namespace prefix \a prefix.
+ *
+ * Iterates kModulePaths, constructs the full directory path for each base,
+ * and calls _ScanDirectory() to register watchers for every matching node.
+ * Succeeds if at least one base path could be scanned.
+ *
+ * @param prefix  Module namespace prefix (e.g. "bus_managers/").
+ * @retval B_OK    At least one directory was scanned successfully.
+ * @retval B_ERROR No directory could be opened or scanned.
+ */
 status_t
 ModuleNotificationService::_AddDirectory(const char* prefix)
 {
@@ -1447,6 +1847,22 @@ ModuleNotificationService::_AddDirectory(const char* prefix)
 }
 
 
+/**
+ * @brief Open the deepest accessible ancestor of \a directoryPath and start
+ *        a recursive directory scan from that point.
+ *
+ * If the full path cannot be opened, path components are progressively
+ * stripped until a parent directory is accessible or the root is reached.
+ * The adjusted \a prefixPosition is passed on to the recursive overload.
+ *
+ * @param directoryPath  Absolute path to open; may be shortened in-place.
+ * @param prefix         Module namespace prefix being watched.
+ * @param prefixPosition In/out: offset within \a prefix at which the scan
+ *                       begins; adjusted downward if the full path is not
+ *                       accessible.
+ * @retval B_OK    Directory opened and scan completed successfully.
+ * @retval B_ERROR No accessible directory found, or scan returned an error.
+ */
 status_t
 ModuleNotificationService::_ScanDirectory(char* directoryPath,
 	const char* prefix, size_t& prefixPosition)
@@ -1484,6 +1900,23 @@ ModuleNotificationService::_ScanDirectory(char* directoryPath,
 }
 
 
+/**
+ * @brief Recursively scan a directory, registering VFS watchers for every
+ *        module file and subdirectory that matches the prefix.
+ *
+ * For each dirent: subdirectories matching the prefix component are pushed
+ * onto \a stack and registered with _AddDirectoryNode(); regular files are
+ * registered with _AddModuleNode(). If no direct prefix match is found the
+ * parent directory is registered so that future additions can be detected.
+ *
+ * @param stack           Stack accumulating subdirectory DIR* handles for
+ *                        subsequent iterations.
+ * @param dir             The currently open directory to scan.
+ * @param prefix          Full module namespace prefix being watched.
+ * @param prefixPosition  Offset into \a prefix for the current directory depth.
+ * @retval B_OK  Scan completed (individual node registration errors are
+ *               silently ignored).
+ */
 status_t
 ModuleNotificationService::_ScanDirectory(Stack<DIR*>& stack, DIR* dir,
 	const char* prefix, size_t prefixPosition)
@@ -1561,6 +1994,25 @@ ModuleNotificationService::_ScanDirectory(Stack<DIR*>& stack, DIR* dir,
 }
 
 
+/**
+ * @brief Resolve a raw (device, directory, node, name) tuple into a module
+ *        namespace path and dispatch it to all matching listeners.
+ *
+ * Constructs the full filesystem path from the entry ref or the fNodes cache,
+ * strips the module base path prefix to obtain a module-namespace-relative
+ * path, then iterates fListeners and calls EventOccurred() on each whose
+ * prefix matches. Also triggers _AddDirectory() for B_ENTRY_CREATED events
+ * and _RemoveNode() for B_ENTRY_REMOVED events.
+ *
+ * @param opcode     Node-monitor opcode (B_ENTRY_CREATED, B_ENTRY_REMOVED,
+ *                   B_STAT_CHANGED, etc.).
+ * @param device     Device ID of the affected node.
+ * @param directory  Parent directory inode (used when \a name is non-NULL).
+ * @param node       Inode of the affected node.
+ * @param name       Entry name within \a directory, or NULL if only a node ref
+ *                   is available.
+ * @note Acquires fLock internally when resolving a node-only reference.
+ */
 void
 ModuleNotificationService::_Notify(int32 opcode, dev_t device, ino_t directory,
 	ino_t node, const char* name)
@@ -1645,6 +2097,16 @@ ModuleNotificationService::_Notify(int32 opcode, dev_t device, ino_t directory,
 }
 
 
+/**
+ * @brief Drain the pending notification queue and dispatch each notification
+ *        via _Notify().
+ *
+ * Called periodically from the kernel daemon registered in
+ * module_init_post_threads(). Holds fLock for the duration to prevent
+ * concurrent modifications to fNotifications.
+ *
+ * @note Acquires fLock internally.
+ */
 void
 ModuleNotificationService::_HandleNotifications()
 {
@@ -1663,6 +2125,21 @@ ModuleNotificationService::_HandleNotifications()
 }
 
 
+/**
+ * @brief Enqueue a filesystem event for deferred delivery to module listeners.
+ *
+ * Allocates a module_notification, copies the optional \a name string, and
+ * appends the notification to fNotifications. Actual delivery happens when
+ * HandleNotifications() is invoked by the kernel daemon.
+ *
+ * @param opcode     Node-monitor opcode identifying the type of change.
+ * @param device     Device ID of the affected node.
+ * @param directory  Parent directory inode number.
+ * @param node       Inode number of the affected node.
+ * @param name       Entry name, or NULL if only a node ref is available.
+ * @note Acquires fLock internally. Safe to call from interrupt context or
+ *       VFS callbacks that cannot block.
+ */
 void
 ModuleNotificationService::Notify(int32 opcode, dev_t device, ino_t directory,
 	ino_t node, const char* name)
@@ -1690,6 +2167,17 @@ ModuleNotificationService::Notify(int32 opcode, dev_t device, ino_t directory,
 }
 
 
+/**
+ * @brief Kernel-daemon callback that triggers periodic processing of queued
+ *        module filesystem notifications.
+ *
+ * Registered with register_kernel_daemon() in module_init_post_threads() to
+ * run approximately once per second. Delegates to
+ * sModuleNotificationService._HandleNotifications().
+ *
+ * @param data       Unused daemon data pointer.
+ * @param iteration  Unused daemon iteration counter.
+ */
 /*static*/ void
 ModuleNotificationService::HandleNotifications(void * /*data*/,
 	int /*iteration*/)
@@ -1701,9 +2189,18 @@ ModuleNotificationService::HandleNotifications(void * /*data*/,
 //	#pragma mark - Exported Kernel API (private part)
 
 
-/*!	Unloads a module in case it's not in use. This is the counterpart
-	to load_module().
-*/
+/**
+ * @brief Unload a kernel add-on by filesystem path if it is no longer in use.
+ *
+ * Looks up the image in sModuleImagesHash and calls put_module_image() to
+ * release one reference. The image is physically unloaded when the reference
+ * count drops to zero (and the boot device is available).
+ *
+ * @param path  Absolute filesystem path of the add-on to unload.
+ * @retval B_OK              Reference released successfully.
+ * @retval B_ENTRY_NOT_FOUND No image with \a path is currently registered.
+ * @note Acquires sModulesLock internally.
+ */
 status_t
 unload_module(const char* path)
 {
@@ -1721,14 +2218,22 @@ unload_module(const char* path)
 }
 
 
-/*!	Unlike get_module(), this function lets you specify the add-on to
-	be loaded by path.
-	However, you must not use the exported modules without having called
-	get_module() on them. When you're done with the NULL terminated
-	\a modules array, you have to call unload_module(), no matter if
-	you're actually using any of the modules or not - of course, the
-	add-on won't be unloaded until the last put_module().
-*/
+/**
+ * @brief Load a kernel add-on by filesystem path and return its module_info
+ *        array without initializing any individual modules.
+ *
+ * Unlike get_module(), this function uses an explicit filesystem path rather
+ * than a module name. The caller receives a pointer to the NULL-terminated
+ * module_info array but must still call get_module() on any module before
+ * using it. When finished, the caller must call unload_module() exactly once,
+ * regardless of whether get_module() was called on any of the exported modules.
+ *
+ * @param path     Absolute filesystem path to the add-on to load.
+ * @param _modules Out-parameter filled with the module_info** array on success.
+ * @retval B_OK  Image loaded and \a *_modules set.
+ * @retval <0    Error from get_module_image().
+ * @note Acquires sModulesLock internally (via get_module_image()).
+ */
 status_t
 load_module(const char* path, module_info*** _modules)
 {
@@ -1742,6 +2247,23 @@ load_module(const char* path, module_info*** _modules)
 }
 
 
+/**
+ * @brief Retrieve the filesystem path of the add-on that provides a named
+ *        module.
+ *
+ * Looks up \a moduleName in sModulesHash and returns a heap-allocated copy of
+ * the associated module_image path. The caller is responsible for freeing
+ * *filePath with free().
+ *
+ * @param moduleName  Fully qualified module name to look up.
+ * @param filePath    Out-parameter receiving a newly allocated path string.
+ * @retval B_OK           Path returned in *filePath.
+ * @retval B_BAD_VALUE    \a moduleName or \a filePath is NULL.
+ * @retval ENOTSUP        Module is built-in and has no associated image file.
+ * @retval B_NO_MEMORY    strdup() of the path failed.
+ * @retval B_NAME_NOT_FOUND Module not found in sModulesHash.
+ * @note Acquires sModulesLock internally.
+ */
 status_t
 module_get_path(const char* moduleName, char** filePath)
 {
@@ -1764,6 +2286,18 @@ module_get_path(const char* moduleName, char** filePath)
 }
 
 
+/**
+ * @brief Begin watching the module namespace subtree rooted at \a prefix for
+ *        filesystem changes.
+ *
+ * Constructs a KMessage specifier with the given prefix and forwards it to
+ * sModuleNotificationService.AddListener().
+ *
+ * @param prefix    Module namespace prefix to watch (e.g. "bus_managers/").
+ * @param listener  NotificationListener to invoke when matching events occur.
+ * @retval B_OK  Watcher registered successfully.
+ * @retval <0    Error from ModuleNotificationService::AddListener().
+ */
 status_t
 start_watching_modules(const char* prefix, NotificationListener& listener)
 {
@@ -1776,6 +2310,18 @@ start_watching_modules(const char* prefix, NotificationListener& listener)
 }
 
 
+/**
+ * @brief Stop watching the module namespace subtree rooted at \a prefix.
+ *
+ * Constructs a KMessage specifier with the given prefix and forwards it to
+ * sModuleNotificationService.RemoveListener().
+ *
+ * @param prefix    Module namespace prefix to stop watching.
+ * @param listener  The NotificationListener previously registered with
+ *                  start_watching_modules().
+ * @retval B_OK  Watcher removed successfully.
+ * @retval <0    Error from ModuleNotificationService::RemoveListener().
+ */
 status_t
 stop_watching_modules(const char* prefix, NotificationListener& listener)
 {
@@ -1788,9 +2334,21 @@ stop_watching_modules(const char* prefix, NotificationListener& listener)
 }
 
 
-/*! Setup the module structures and data for use - must be called
-	before any other module call.
-*/
+/**
+ * @brief Initialize the kernel module subsystem.
+ *
+ * Must be called before any other module function. Initialises sModulesLock,
+ * allocates and seeds the module and image hash tables, registers all
+ * built-in modules, registers every preloaded boot image from \a args,
+ * constructs the ModuleNotificationService, reads the safemode flag for user
+ * add-ons, and installs the "modules" debugger command.
+ *
+ * @param args  Pointer to the kernel_args structure provided by the boot
+ *              loader; its preloaded_images list is iterated here.
+ * @retval B_OK        Initialization succeeded.
+ * @retval B_NO_MEMORY Hash table allocation failed.
+ * @note Must be called single-threaded, before multi-threading is enabled.
+ */
 status_t
 module_init(kernel_args* args)
 {
@@ -1834,6 +2392,16 @@ module_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Post-threading initialization for the module subsystem.
+ *
+ * Registers the ModuleNotificationService::HandleNotifications() kernel daemon
+ * to run approximately once per second (every 10 scheduler ticks), enabling
+ * asynchronous delivery of filesystem-change notifications to module watchers.
+ *
+ * @retval B_OK  Daemon registered successfully.
+ * @note Must be called after the scheduler and kernel threads are operational.
+ */
 status_t
 module_init_post_threads(void)
 {
@@ -1845,6 +2413,24 @@ module_init_post_threads(void)
 }
 
 
+/**
+ * @brief Finalize module initialization after the boot device becomes
+ *        available.
+ *
+ * Performs two passes over the module and image hash tables:
+ *  1. Clears module_image pointers for any unreferenced non-built-in modules
+ *     so that get_module() will reload them from disk on next use.
+ *  2. Drops unused preloaded images (ref_count == 0), and optionally normalizes
+ *     the paths of in-use images when booting from the boot loader volume.
+ *
+ * @param bootingFromBootLoaderVolume  If true, attempt to normalize relative or
+ *                                     unresolved absolute paths of in-use images
+ *                                     against the known module base paths.
+ * @retval B_OK  Always; individual normalization failures are logged but do not
+ *               abort the process.
+ * @note Must be called with the boot device already mounted and gBootDevice set.
+ *       Acquires sModulesLock internally.
+ */
 status_t
 module_init_post_boot_device(bool bootingFromBootLoaderVolume)
 {
@@ -1968,14 +2554,22 @@ module_init_post_boot_device(bool bootingFromBootLoaderVolume)
 //	#pragma mark - Exported Kernel API (public part)
 
 
-/*! This returns a pointer to a structure that can be used to
-	iterate through a list of all modules available under
-	a given prefix that adhere to the specified suffix.
-	All paths will be searched and the returned list will
-	contain all modules available under the prefix.
-	The structure is then used by read_next_module_name(), and
-	must be freed by calling close_module_list().
-*/
+/**
+ * @brief Open a filtered iterator over all available modules matching a prefix
+ *        and optional suffix.
+ *
+ * Allocates a module_iterator and pushes the kernel add-on search paths onto
+ * its traversal stack. If the boot device is not yet available, only modules
+ * already in sModulesHash are enumerated. The returned handle must be released
+ * with close_module_list().
+ *
+ * @param prefix  Module namespace prefix to filter by (e.g. "bus_managers/").
+ *                Pass NULL or "" to enumerate all modules.
+ * @param suffix  Optional module name suffix filter (e.g. "device_manager").
+ *                Pass NULL to disable suffix filtering.
+ * @return Opaque iterator handle on success, or NULL on memory allocation
+ *         failure or if the module system is not yet initialized.
+ */
 void*
 open_module_list_etc(const char* prefix, const char* suffix)
 {
@@ -2063,6 +2657,15 @@ open_module_list_etc(const char* prefix, const char* suffix)
 }
 
 
+/**
+ * @brief Open an iterator over all available modules matching a prefix.
+ *
+ * Convenience wrapper around open_module_list_etc() with no suffix filter.
+ *
+ * @param prefix  Module namespace prefix to filter by; NULL for all modules.
+ * @return Opaque iterator handle, or NULL on failure.
+ * @see open_module_list_etc(), close_module_list()
+ */
 void*
 open_module_list(const char* prefix)
 {
@@ -2070,7 +2673,18 @@ open_module_list(const char* prefix)
 }
 
 
-/*!	Frees the cookie allocated by open_module_list() */
+/**
+ * @brief Free all resources associated with a module iterator.
+ *
+ * Pops and frees all remaining paths from the iterator stack, releases any
+ * open module_image reference, closes any open directory handle, and frees
+ * all heap allocations including the iterator itself.
+ *
+ * @param cookie  Iterator handle previously returned by open_module_list() or
+ *                open_module_list_etc().
+ * @retval B_OK        Iterator freed successfully.
+ * @retval B_BAD_VALUE \a cookie is NULL.
+ */
 status_t
 close_module_list(void* cookie)
 {
@@ -2104,11 +2718,24 @@ close_module_list(void* cookie)
 }
 
 
-/*!	Return the next module name from the available list, using
-	a structure previously created by a call to open_module_list().
-	Returns B_OK as long as it found another module, B_ENTRY_NOT_FOUND
-	when done.
-*/
+/**
+ * @brief Retrieve the next module name from an open module iterator.
+ *
+ * Copies the next matching module name into \a buffer and updates
+ * \a *_bufferSize with the number of bytes written. Iteration continues until
+ * B_ENTRY_NOT_FOUND is returned; at that point close_module_list() should be
+ * called.
+ *
+ * @param cookie       Iterator handle returned by open_module_list() or
+ *                     open_module_list_etc().
+ * @param buffer       Caller-supplied buffer to receive the module name.
+ * @param _bufferSize  In/out: capacity of \a buffer on entry; number of bytes
+ *                     written (excluding NUL) on success.
+ * @retval B_OK              A module name was written to \a buffer.
+ * @retval B_ENTRY_NOT_FOUND No more modules available.
+ * @retval B_BAD_VALUE       \a cookie, \a buffer, or \a _bufferSize is NULL.
+ * @note Acquires sModulesLock internally for the duration of each call.
+ */
 status_t
 read_next_module_name(void* cookie, char* buffer, size_t* _bufferSize)
 {
@@ -2137,11 +2764,25 @@ read_next_module_name(void* cookie, char* buffer, size_t* _bufferSize)
 }
 
 
-/*!	Iterates through all loaded modules, and stores its path in "buffer".
-	TODO: check if the function in BeOS really does that (could also mean:
-		iterate through all modules that are currently loaded; have a valid
-		module_image pointer)
-*/
+/**
+ * @brief Iterate over all modules currently known to the module subsystem.
+ *
+ * Walks sModulesHash using an integer cookie as an offset counter and copies
+ * the name of the module at position *_cookie into \a buffer. On success
+ * *_cookie is advanced to the next position.
+ *
+ * @param _cookie     In/out: opaque position cookie; initialize to 0 before
+ *                    the first call and pass the returned value to each
+ *                    subsequent call.
+ * @param buffer      Caller-supplied buffer to receive the module name.
+ * @param _bufferSize In/out: capacity of \a buffer; updated with the length
+ *                    of the written name on success.
+ * @retval B_OK              Module name written; *_cookie advanced.
+ * @retval B_ENTRY_NOT_FOUND No module exists at the current offset.
+ * @retval B_BAD_VALUE       Any pointer argument is NULL.
+ * @retval B_ERROR           Called before the module subsystem is initialized.
+ * @note Acquires sModulesLock internally.
+ */
 status_t
 get_next_loaded_module_name(uint32* _cookie, char* buffer, size_t* _bufferSize)
 {
@@ -2176,6 +2817,27 @@ get_next_loaded_module_name(uint32* _cookie, char* buffer, size_t* _bufferSize)
 }
 
 
+/**
+ * @brief Acquire a reference to a kernel module and retrieve its module_info
+ *        pointer.
+ *
+ * If the module is not yet cached, search_module() locates the add-on on
+ * disk. If the module's reference count is zero, init_module() is invoked to
+ * run B_MODULE_INIT. B_KEEP_LOADED modules receive an extra permanent
+ * reference on first initialization. On success *_info points to the
+ * module's module_info struct and the caller must eventually call put_module()
+ * to release the reference.
+ *
+ * @param path   Fully qualified module name (e.g. "bus_managers/isa/v1").
+ * @param _info  Out-parameter filled with a pointer to the module_info on
+ *               success.
+ * @retval B_OK              Module initialized and reference acquired.
+ * @retval B_BAD_VALUE       \a path is NULL.
+ * @retval B_ENTRY_NOT_FOUND Module not found in any search path.
+ * @retval <0                Error returned by init_module() or
+ *                           search_module().
+ * @note Acquires sModulesLock for the duration of the call.
+ */
 status_t
 get_module(const char* path, module_info** _info)
 {
@@ -2238,6 +2900,24 @@ get_module(const char* path, module_info** _info)
 }
 
 
+/**
+ * @brief Release a reference to a kernel module previously acquired with
+ *        get_module().
+ *
+ * Decrements the module's reference count. When the count reaches zero and
+ * the module is not flagged B_KEEP_LOADED, uninit_module() is called to run
+ * B_MODULE_UNINIT and the associated module_image reference is released. If
+ * the boot device is mounted the module_image pointer is also cleared so that
+ * a subsequent get_module() will reload the image from disk.
+ *
+ * @param path  Fully qualified module name passed to the corresponding
+ *              get_module() call.
+ * @retval B_OK        Reference released (and module uninitialized if needed).
+ * @retval B_BAD_VALUE \a path not found in sModulesHash, or module already has
+ *                     zero references.
+ * @note Acquires sModulesLock for the duration of the call. Panics if a
+ *       B_KEEP_LOADED module's reference count drops to zero.
+ */
 status_t
 put_module(const char* path)
 {

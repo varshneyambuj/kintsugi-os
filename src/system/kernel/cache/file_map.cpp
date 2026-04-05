@@ -1,6 +1,36 @@
 /*
- * Copyright 2004-2012, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2012, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file file_map.cpp
+ * @brief File-to-physical-block mapping cache for the file cache.
+ *
+ * FileMap maintains a cache of file-offset → block-number translations,
+ * avoiding repeated calls into the file system for each I/O. Used by
+ * file_cache.cpp to resolve logical file positions to device block addresses.
+ *
+ * @see file_cache.cpp, block_cache.cpp
  */
 
 
@@ -112,6 +142,17 @@ static mutex sLock;
 #endif
 
 
+/**
+ * @brief Constructs a FileMap for the given vnode and initial file size.
+ *
+ * Initialises the internal mutex and, when DEBUG_FILE_MAP is enabled,
+ * registers this instance in the global list for debugger inspection.
+ * The extent cache starts empty; entries are populated lazily on the
+ * first Translate() call.
+ *
+ * @param vnode Pointer to the VFS vnode that owns this map.
+ * @param size  Current logical size of the file in bytes.
+ */
 FileMap::FileMap(struct vnode* vnode, off_t size)
 	:
 	fCount(0),
@@ -128,6 +169,13 @@ FileMap::FileMap(struct vnode* vnode, off_t size)
 }
 
 
+/**
+ * @brief Destroys the FileMap and releases all resources.
+ *
+ * Frees any dynamically allocated extent array via _Free(), destroys the
+ * mutex, and, when DEBUG_FILE_MAP is enabled, removes this instance from
+ * the global tracking list.
+ */
 FileMap::~FileMap()
 {
 	_Free();
@@ -140,6 +188,16 @@ FileMap::~FileMap()
 }
 
 
+/**
+ * @brief Returns a pointer to the file_extent at the given cache index.
+ *
+ * Selects either the inline fDirect array (for small maps) or the heap-
+ * allocated fIndirect array (for larger maps) based on fCount.
+ *
+ * @param index Zero-based index into the cached extent array.
+ * @return Pointer to the corresponding file_extent, or @c NULL if
+ *         @p index is out of range.
+ */
 file_extent*
 FileMap::ExtentAt(uint32 index)
 {
@@ -153,6 +211,18 @@ FileMap::ExtentAt(uint32 index)
 }
 
 
+/**
+ * @brief Searches the cached extent array for the extent covering @p offset.
+ *
+ * Uses a binary search over the sorted extent list. Each extent covers the
+ * half-open interval [extent->offset, extent->offset + extent->disk.length).
+ *
+ * @param offset  Logical file byte offset to locate.
+ * @param _index  If non-NULL and a match is found, receives the index of
+ *                the matching extent.
+ * @return Pointer to the matching file_extent, or @c NULL if no cached
+ *         extent covers @p offset.
+ */
 file_extent*
 FileMap::_FindExtent(off_t offset, uint32 *_index)
 {
@@ -182,6 +252,20 @@ FileMap::_FindExtent(off_t offset, uint32 *_index)
 }
 
 
+/**
+ * @brief Resizes the internal extent array to hold exactly @p count entries.
+ *
+ * Manages the transition between the inline fDirect storage (up to
+ * CACHED_FILE_EXTENTS entries) and a heap-allocated fIndirect array.
+ * The heap array grows in powers of two up to 32768 entries, then in
+ * increments of 32768 to amortise reallocation cost.
+ *
+ * @param count Desired number of extent slots after the operation.
+ * @return B_OK on success, B_NO_MEMORY if heap allocation fails.
+ *
+ * @note Shrinking from indirect to direct storage copies existing entries
+ *       into the inline array and frees the heap buffer.
+ */
 status_t
 FileMap::_MakeSpace(size_t count)
 {
@@ -229,6 +313,23 @@ FileMap::_MakeSpace(size_t count)
 }
 
 
+/**
+ * @brief Appends a set of VFS file_io_vec extents to the cached map.
+ *
+ * Allocates space for up to @p vecCount new entries and merges each
+ * incoming vector with the previous extent when the device offsets are
+ * contiguous (or both represent holes, i.e., offset == -1). Non-contiguous
+ * vectors are stored as separate extents.
+ *
+ * @param vecs       Array of file_io_vec structures returned by the VFS.
+ * @param vecCount   Number of entries in @p vecs.
+ * @param lastOffset Output: updated logical file offset after all added extents.
+ * @return B_OK on success, B_NO_MEMORY if _MakeSpace() fails.
+ *
+ * @note After a merge that shrinks the array back to CACHED_FILE_EXTENTS,
+ *       lastExtent is re-fetched because the indirect-to-direct copy
+ *       invalidates the previous pointer.
+ */
 status_t
 FileMap::_Add(file_io_vec* vecs, size_t vecCount, off_t& lastOffset)
 {
@@ -288,6 +389,16 @@ FileMap::_Add(file_io_vec* vecs, size_t vecCount, off_t& lastOffset)
 }
 
 
+/**
+ * @brief Truncates the cached extent list at the given logical file offset.
+ *
+ * Finds the extent that contains @p offset and shortens its disk length so
+ * that the map covers bytes only up to (but not including) @p offset. Any
+ * extents that lie entirely beyond @p offset are removed by shrinking fCount.
+ * If the trimmed extent would have zero length it is removed as well.
+ *
+ * @param offset Logical byte offset at which the map should be truncated.
+ */
 void
 FileMap::_InvalidateAfter(off_t offset)
 {
@@ -309,6 +420,19 @@ FileMap::_InvalidateAfter(off_t offset)
 
 /*!	Invalidates or removes the specified part of the file map.
 */
+/**
+ * @brief Invalidates part or all of the cached file map.
+ *
+ * When @p offset is zero the entire map is discarded via _Free(). Otherwise,
+ * all extents at or beyond @p offset are removed by _InvalidateAfter().
+ *
+ * @param offset Starting logical byte offset of the region to invalidate.
+ * @param size   Length of the region to invalidate (currently unused;
+ *               everything from @p offset onwards is always discarded).
+ *
+ * @note The @p size parameter is not yet honoured; it is reserved for a
+ *       future implementation that invalidates only a precise sub-range.
+ */
 void
 FileMap::Invalidate(off_t offset, off_t size)
 {
@@ -324,6 +448,16 @@ FileMap::Invalidate(off_t offset, off_t size)
 }
 
 
+/**
+ * @brief Updates the logical file size tracked by the map.
+ *
+ * If the new @p size is smaller than the current size, cached extents that
+ * extend beyond the new end-of-file are trimmed via _InvalidateAfter().
+ * Growing the file does not populate new extents; they are fetched lazily on
+ * the next Translate() call.
+ *
+ * @param size New logical file size in bytes.
+ */
 void
 FileMap::SetSize(off_t size)
 {
@@ -336,6 +470,13 @@ FileMap::SetSize(off_t size)
 }
 
 
+/**
+ * @brief Releases any heap-allocated extent storage and resets the count.
+ *
+ * Frees the fIndirect.array buffer when fCount exceeds CACHED_FILE_EXTENTS,
+ * then sets fCount to zero. The inline fDirect array requires no explicit
+ * deallocation.
+ */
 void
 FileMap::_Free()
 {
@@ -346,6 +487,19 @@ FileMap::_Free()
 }
 
 
+/**
+ * @brief Populates the extent cache to cover the range [@p offset, @p offset + @p size).
+ *
+ * Queries vfs_get_file_map() in a loop, adding batches of up to 8 extents at
+ * a time, until the cached map reaches the end of the requested range. In
+ * FILE_MAP_CACHE_ALL mode the map must already cover the entire file; if it
+ * does not, B_ERROR is returned immediately.
+ *
+ * @param offset Logical byte offset at the start of the range to cache.
+ * @param size   Number of bytes that must be covered after this call.
+ * @return B_OK on success, B_ERROR if fCacheAll is set but the map is
+ *         incomplete, or a VFS error code from vfs_get_file_map() / _Add().
+ */
 status_t
 FileMap::_Cache(off_t offset, off_t size)
 {
@@ -378,6 +532,18 @@ FileMap::_Cache(off_t offset, off_t size)
 }
 
 
+/**
+ * @brief Controls the caching strategy for this file map.
+ *
+ * Switches between FILE_MAP_CACHE_ALL (the entire file extent map is cached
+ * up-front) and FILE_MAP_CACHE_ON_DEMAND (extents are fetched lazily). When
+ * switching to FILE_MAP_CACHE_ALL the full map is populated immediately by
+ * calling _Cache(0, fSize).
+ *
+ * @param mode Either FILE_MAP_CACHE_ALL or FILE_MAP_CACHE_ON_DEMAND.
+ * @return B_OK on success, B_BAD_VALUE if @p mode is unrecognised, or a
+ *         _Cache() error if pre-population fails.
+ */
 status_t
 FileMap::SetMode(uint32 mode)
 {
@@ -403,6 +569,32 @@ FileMap::SetMode(uint32 mode)
 }
 
 
+/**
+ * @brief Translates a logical file range into an array of physical I/O vectors.
+ *
+ * Ensures the required extents are cached via _Cache(), then walks the sorted
+ * extent list starting at the extent that contains @p offset and fills
+ * @p vecs with the corresponding device offsets and lengths. If the logical
+ * range straddles a file-size boundary and @p align is greater than 1, the
+ * final vector is padded to an @p align-byte boundary.
+ *
+ * @param offset   Logical byte offset within the file to start translating.
+ * @param size     Number of bytes to translate.
+ * @param vecs     Caller-supplied array to receive the translated file_io_vec
+ *                 entries.
+ * @param _count   In: capacity of @p vecs (maximum number of entries).
+ *                 Out: actual number of entries written.
+ * @param align    Alignment in bytes for padding the last vector when the
+ *                 request extends beyond the end of file (pass 1 or 0 to
+ *                 disable padding).
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE      @p offset is negative.
+ * @retval B_BUFFER_OVERFLOW The translation requires more vectors than
+ *                           @p *_count permits; @p *_count is set to the
+ *                           number of vectors filled so far.
+ *
+ * @note An @p offset at or beyond fSize produces @p *_count == 0 and B_OK.
+ */
 status_t
 FileMap::Translate(off_t offset, size_t size, file_io_vec* vecs, size_t* _count,
 	size_t align)
@@ -487,6 +679,18 @@ FileMap::Translate(off_t offset, size_t size, file_io_vec* vecs, size_t* _count,
 
 #if DEBUG_FILE_MAP
 
+/**
+ * @brief Kernel debugger command: dumps a single FileMap instance.
+ *
+ * Prints the map's address, logical file size, and cached extent count.
+ * When invoked with the @c -p flag, also lists every individual extent with
+ * its logical offset and corresponding device offset and length.
+ *
+ * @param argc Argument count (must be >= 2).
+ * @param argv argv[0] = command name; optional argv[1] = "-p";
+ *             last argument = pointer to FileMap as a hex expression.
+ * @return 0 in all cases (required by the debugger command interface).
+ */
 static int
 dump_file_map(int argc, char** argv)
 {
@@ -524,6 +728,18 @@ dump_file_map(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: prints aggregate statistics for all FileMaps.
+ *
+ * Iterates the global sList and accumulates total file bytes, cached map
+ * bytes, extent count, and map count. An optional size range [minSize,
+ * maxSize] can be passed to restrict which maps are included in the summary.
+ *
+ * @param argc Argument count: 1 = all maps; 2 = maps up to maxSize;
+ *             3 = maps in [minSize, maxSize].
+ * @param argv argv[1] = minSize or maxSize; argv[2] = maxSize.
+ * @return 0 in all cases (required by the debugger command interface).
+ */
 static int
 dump_file_map_stats(int argc, char** argv)
 {
@@ -578,6 +794,15 @@ dump_file_map_stats(int argc, char** argv)
 //	#pragma mark - private kernel API
 
 
+/**
+ * @brief Initialises the file map subsystem.
+ *
+ * When DEBUG_FILE_MAP is enabled, registers the "file_map" and
+ * "file_map_stats" kernel debugger commands and initialises the global
+ * list mutex. In release builds this is a no-op.
+ *
+ * @return Always B_OK.
+ */
 extern "C" status_t
 file_map_init(void)
 {
@@ -599,6 +824,19 @@ file_map_init(void)
 //	#pragma mark - public FS API
 
 
+/**
+ * @brief Creates a new FileMap for the vnode identified by @p mountID / @p vnodeID.
+ *
+ * Looks up the vnode without acquiring a reference (the file cache holds the
+ * reference separately), then heap-allocates a FileMap with an initial size
+ * of @p size bytes.
+ *
+ * @param mountID  Device ID of the volume that owns the file.
+ * @param vnodeID  Inode number within the volume.
+ * @param size     Initial logical file size in bytes.
+ * @return Opaque pointer to the new FileMap, or @c NULL on failure
+ *         (vnode not found or out of memory).
+ */
 extern "C" void*
 file_map_create(dev_t mountID, ino_t vnodeID, off_t size)
 {
@@ -615,6 +853,14 @@ file_map_create(dev_t mountID, ino_t vnodeID, off_t size)
 }
 
 
+/**
+ * @brief Destroys a FileMap previously created by file_map_create().
+ *
+ * Deletes the FileMap object, releasing all cached extent storage and the
+ * internal mutex. Silently ignores a @c NULL @p _map pointer.
+ *
+ * @param _map Opaque pointer returned by file_map_create(), or @c NULL.
+ */
 extern "C" void
 file_map_delete(void* _map)
 {
@@ -627,6 +873,15 @@ file_map_delete(void* _map)
 }
 
 
+/**
+ * @brief Updates the logical size of the file map.
+ *
+ * Forwards to FileMap::SetSize(), which trims any cached extents that extend
+ * beyond the new end-of-file. Silently ignores a @c NULL @p _map pointer.
+ *
+ * @param _map Opaque pointer returned by file_map_create(), or @c NULL.
+ * @param size New logical file size in bytes.
+ */
 extern "C" void
 file_map_set_size(void* _map, off_t size)
 {
@@ -638,6 +893,18 @@ file_map_set_size(void* _map, off_t size)
 }
 
 
+/**
+ * @brief Invalidates part or all of the cached extent map.
+ *
+ * Forwards to FileMap::Invalidate(). Cached extents at or after @p offset
+ * are discarded so they will be re-fetched from the file system on the next
+ * Translate() call. Silently ignores a @c NULL @p _map pointer.
+ *
+ * @param _map   Opaque pointer returned by file_map_create(), or @c NULL.
+ * @param offset Starting logical byte offset of the region to invalidate.
+ * @param size   Length of the region (currently the implementation discards
+ *               everything from @p offset onwards regardless of @p size).
+ */
 extern "C" void
 file_map_invalidate(void* _map, off_t offset, off_t size)
 {
@@ -649,6 +916,18 @@ file_map_invalidate(void* _map, off_t offset, off_t size)
 }
 
 
+/**
+ * @brief Sets the caching strategy for the file map.
+ *
+ * Forwards to FileMap::SetMode(). Use FILE_MAP_CACHE_ALL to pre-populate
+ * the entire extent map, or FILE_MAP_CACHE_ON_DEMAND for lazy population.
+ *
+ * @param _map Opaque pointer returned by file_map_create(), or @c NULL.
+ * @param mode FILE_MAP_CACHE_ALL or FILE_MAP_CACHE_ON_DEMAND.
+ * @return B_OK on success, B_BAD_VALUE if @p _map is @c NULL or @p mode is
+ *         unrecognised, or a _Cache() error when switching to
+ *         FILE_MAP_CACHE_ALL fails.
+ */
 extern "C" status_t
 file_map_set_mode(void* _map, uint32 mode)
 {
@@ -660,6 +939,22 @@ file_map_set_mode(void* _map, uint32 mode)
 }
 
 
+/**
+ * @brief Translates a logical file range to an array of physical I/O vectors.
+ *
+ * Thin C wrapper around FileMap::Translate(). Populates @p vecs with
+ * device-offset / length pairs that together cover [@p offset,
+ * @p offset + @p size) within the file.
+ *
+ * @param _map    Opaque pointer returned by file_map_create(), or @c NULL.
+ * @param offset  Logical byte offset within the file.
+ * @param size    Number of bytes to translate.
+ * @param vecs    Caller-supplied array to receive the translated vectors.
+ * @param _count  In: capacity of @p vecs. Out: number of entries written.
+ * @param align   Alignment for the last vector's padding (1 = no padding).
+ * @return B_OK on success, B_BAD_VALUE if @p _map is @c NULL, or any error
+ *         returned by FileMap::Translate().
+ */
 extern "C" status_t
 file_map_translate(void* _map, off_t offset, size_t size, file_io_vec* vecs,
 	size_t* _count, size_t align)

@@ -1,10 +1,40 @@
 /*
- * Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file VMArea.cpp
+ * @brief Represents a mapped memory region within a VMAddressSpace.
+ *
+ * VMArea holds the address range, protection flags, VMCache reference, and
+ * page mapping information for a single contiguous virtual memory region.
+ * Created by vm_create_anonymous_area, vm_map_file, and related functions.
+ *
+ * @see VMAddressSpace.cpp, VMCache.cpp
  */
 
 
@@ -23,6 +53,16 @@ static area_id sNextAreaID = 1;
 
 // #pragma mark - VMArea
 
+/**
+ * @brief Constructs a VMArea and initialises all fields to safe defaults.
+ *
+ * Placement-constructs the VMAreaMappings list in-place so that the
+ * object is fully usable before Init() is called.
+ *
+ * @param addressSpace  The VMAddressSpace that will own this area.
+ * @param wiring        Wiring type (e.g. B_NO_LOCK, B_FULL_LOCK).
+ * @param protection    Initial page-protection flags (B_READ_AREA, etc.).
+ */
 VMArea::VMArea(VMAddressSpace* addressSpace, uint32 wiring, uint32 protection)
 	:
 	protection(protection),
@@ -39,6 +79,12 @@ VMArea::VMArea(VMAddressSpace* addressSpace, uint32 wiring, uint32 protection)
 }
 
 
+/**
+ * @brief Destroys a VMArea and releases the per-page protection array.
+ *
+ * Uses free_etc() with the appropriate heap flags so that kernel-space
+ * areas do not recursively trigger memory waits or kernel-space locking.
+ */
 VMArea::~VMArea()
 {
 	free_etc(page_protections, address_space == VMAddressSpace::Kernel()
@@ -46,6 +92,18 @@ VMArea::~VMArea()
 }
 
 
+/**
+ * @brief Finalises area initialisation by copying the name and assigning an ID.
+ *
+ * Must be called once after construction before the area is inserted into
+ * any global data structure.
+ *
+ * @param name             Descriptive name for the area (truncated to
+ *                         B_OS_NAME_LENGTH - 1 characters).
+ * @param allocationFlags  Heap allocation flags (currently unused here but
+ *                         forwarded for consistency).
+ * @retval B_OK  Always succeeds.
+ */
 status_t
 VMArea::Init(const char* name, uint32 allocationFlags)
 {
@@ -198,7 +256,14 @@ VMArea::AddWaiterIfWired(VMAreaUnwiredWaiter* waiter, addr_t base, size_t size,
 
 // #pragma mark - VMAreas
 
-
+/**
+ * @brief Initialises the global VMAreas red-black tree.
+ *
+ * Must be called once during VM subsystem bootstrap before any area is
+ * created.
+ *
+ * @retval B_OK  Always succeeds.
+ */
 /*static*/ status_t
 VMAreas::Init()
 {
@@ -207,6 +272,14 @@ VMAreas::Init()
 }
 
 
+/**
+ * @brief Looks up an area by ID, acquiring and releasing the read lock.
+ *
+ * Safe to call from any context that does not already hold sLock for writing.
+ *
+ * @param id  The area_id to look up.
+ * @return    Pointer to the matching VMArea, or @c NULL if not found.
+ */
 /*static*/ VMArea*
 VMAreas::Lookup(area_id id)
 {
@@ -217,6 +290,18 @@ VMAreas::Lookup(area_id id)
 }
 
 
+/**
+ * @brief Searches for the first area whose name matches \a name.
+ *
+ * Iterates the entire tree while holding the read lock; this can be slow for
+ * large area counts.
+ *
+ * @param name  Null-terminated name string to match.
+ * @return      area_id of the first matching area, or @c B_NAME_NOT_FOUND.
+ *
+ * @note This performs a linear scan. A hash-based secondary index would
+ *       improve performance; see the TODO inside the implementation.
+ */
 /*static*/ area_id
 VMAreas::Find(const char* name)
 {
@@ -241,6 +326,13 @@ VMAreas::Find(const char* name)
 }
 
 
+/**
+ * @brief Inserts an area into the global tree under the write lock.
+ *
+ * @param area  Fully-initialised VMArea to insert.
+ * @retval B_OK           Area inserted successfully.
+ * @retval B_NAME_IN_USE  An area with the same ID already exists in the tree.
+ */
 /*static*/ status_t
 VMAreas::Insert(VMArea* area)
 {
@@ -251,6 +343,13 @@ VMAreas::Insert(VMArea* area)
 }
 
 
+/**
+ * @brief Removes an area from the global tree under the write lock.
+ *
+ * The caller is responsible for destroying the VMArea object afterwards.
+ *
+ * @param area  The area to remove.
+ */
 /*static*/ void
 VMAreas::Remove(VMArea* area)
 {

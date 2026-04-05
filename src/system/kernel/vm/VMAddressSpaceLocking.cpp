@@ -1,7 +1,38 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file VMAddressSpaceLocking.cpp
+ * @brief RAII helpers and multi-address-space locking utilities.
+ *
+ * Provides AddressSpaceReadLocker, AddressSpaceWriteLocker, and
+ * MultiAddressSpaceLocker — scoped lock guards used throughout the VM
+ * subsystem to safely lock one or more VMAddressSpace objects without
+ * deadlock.
+ *
+ * @see VMAddressSpace.cpp
  */
 
 
@@ -40,6 +71,15 @@ AddressSpaceLockerBase::GetAddressSpaceByAreaID(area_id id)
 //	#pragma mark - AddressSpaceReadLocker
 
 
+/**
+ * @brief Constructs a read locker and immediately acquires a read lock for
+ *        the address space of the given team.
+ *
+ * @param team  The team whose address space should be locked for reading.
+ *
+ * @note If the team does not exist the locker is left in an unlocked,
+ *       unset state.  Check IsLocked() after construction if needed.
+ */
 AddressSpaceReadLocker::AddressSpaceReadLocker(team_id team)
 	:
 	fSpace(NULL),
@@ -52,6 +92,14 @@ AddressSpaceReadLocker::AddressSpaceReadLocker(team_id team)
 /*! Takes over the reference of the address space, if \a getNewReference is
 	\c false.
 */
+/**
+ * @brief Constructs a read locker from an existing VMAddressSpace pointer.
+ *
+ * @param space             The address space to lock.
+ * @param getNewReference   If @c true an additional reference is acquired via
+ *                          Get(); if @c false the locker takes ownership of an
+ *                          existing reference.
+ */
 AddressSpaceReadLocker::AddressSpaceReadLocker(VMAddressSpace* space,
 		bool getNewReference)
 	:
@@ -62,6 +110,11 @@ AddressSpaceReadLocker::AddressSpaceReadLocker(VMAddressSpace* space,
 }
 
 
+/**
+ * @brief Constructs an empty read locker not associated with any address space.
+ *
+ * Use SetTo() or SetFromArea() to bind it to a space before calling Lock().
+ */
 AddressSpaceReadLocker::AddressSpaceReadLocker()
 	:
 	fSpace(NULL),
@@ -70,6 +123,9 @@ AddressSpaceReadLocker::AddressSpaceReadLocker()
 }
 
 
+/**
+ * @brief Destroys the locker, releasing the lock and address-space reference.
+ */
 AddressSpaceReadLocker::~AddressSpaceReadLocker()
 {
 	Unset();
@@ -86,6 +142,15 @@ AddressSpaceReadLocker::Unset()
 }
 
 
+/**
+ * @brief Binds the locker to the address space of \a team and read-locks it.
+ *
+ * The locker must not already be bound to an address space (asserted).
+ *
+ * @param team  ID of the team whose address space to lock.
+ * @retval B_OK           Lock acquired.
+ * @retval B_BAD_TEAM_ID  No address space found for the given team ID.
+ */
 status_t
 AddressSpaceReadLocker::SetTo(team_id team)
 {
@@ -104,6 +169,13 @@ AddressSpaceReadLocker::SetTo(team_id team)
 /*! Takes over the reference of the address space, if \a getNewReference is
 	\c false.
 */
+/**
+ * @brief Binds the locker to an existing VMAddressSpace and read-locks it.
+ *
+ * @param space             Address space to lock; must not be @c NULL.
+ * @param getNewReference   @c true to acquire a new reference, @c false to
+ *                          take ownership of the caller's existing reference.
+ */
 void
 AddressSpaceReadLocker::SetTo(VMAddressSpace* space, bool getNewReference)
 {
@@ -170,6 +242,12 @@ AddressSpaceReadLocker::Unlock()
 //	#pragma mark - AddressSpaceWriteLocker
 
 
+/**
+ * @brief Constructs a write locker and immediately acquires a write lock for
+ *        the address space of the given team.
+ *
+ * @param team  The team whose address space should be locked for writing.
+ */
 AddressSpaceWriteLocker::AddressSpaceWriteLocker(team_id team)
 	:
 	fSpace(NULL),
@@ -180,6 +258,14 @@ AddressSpaceWriteLocker::AddressSpaceWriteLocker(team_id team)
 }
 
 
+/**
+ * @brief Constructs a write locker from an existing VMAddressSpace pointer.
+ *
+ * @param space             The address space to write-lock.
+ * @param getNewReference   If @c true an additional reference is acquired;
+ *                          if @c false ownership of the existing reference
+ *                          is transferred to the locker.
+ */
 AddressSpaceWriteLocker::AddressSpaceWriteLocker(VMAddressSpace* space,
 	bool getNewReference)
 	:
@@ -191,6 +277,9 @@ AddressSpaceWriteLocker::AddressSpaceWriteLocker(VMAddressSpace* space,
 }
 
 
+/**
+ * @brief Constructs an empty write locker not associated with any address space.
+ */
 AddressSpaceWriteLocker::AddressSpaceWriteLocker()
 	:
 	fSpace(NULL),
@@ -200,6 +289,9 @@ AddressSpaceWriteLocker::AddressSpaceWriteLocker()
 }
 
 
+/**
+ * @brief Destroys the locker, releasing the lock and address-space reference.
+ */
 AddressSpaceWriteLocker::~AddressSpaceWriteLocker()
 {
 	Unset();
@@ -216,6 +308,13 @@ AddressSpaceWriteLocker::Unset()
 }
 
 
+/**
+ * @brief Binds the locker to the address space of \a team and write-locks it.
+ *
+ * @param team  ID of the team whose address space to lock for writing.
+ * @retval B_OK           Lock acquired.
+ * @retval B_BAD_TEAM_ID  No address space found for the given team ID.
+ */
 status_t
 AddressSpaceWriteLocker::SetTo(team_id team)
 {
@@ -231,6 +330,13 @@ AddressSpaceWriteLocker::SetTo(team_id team)
 }
 
 
+/**
+ * @brief Binds the locker to an existing VMAddressSpace and write-locks it.
+ *
+ * @param space             Address space to lock; must not be @c NULL.
+ * @param getNewReference   @c true to acquire a new reference, @c false to
+ *                          take ownership of the caller's existing reference.
+ */
 void
 AddressSpaceWriteLocker::SetTo(VMAddressSpace* space, bool getNewReference)
 {
@@ -329,6 +435,16 @@ AddressSpaceWriteLocker::Unlock()
 }
 
 
+/**
+ * @brief Atomically downgrades the held write lock to a read lock.
+ *
+ * Acquires a read lock before releasing the write lock so there is no window
+ * during which the address space is completely unlocked.  After this call
+ * Unlock() will call ReadUnlock() instead of WriteUnlock().
+ *
+ * @note Only valid when the locker currently holds a write lock (not already
+ *       degraded).
+ */
 void
 AddressSpaceWriteLocker::DegradeToReadLock()
 {
@@ -341,6 +457,11 @@ AddressSpaceWriteLocker::DegradeToReadLock()
 //	#pragma mark - MultiAddressSpaceLocker
 
 
+/**
+ * @brief Constructs an empty MultiAddressSpaceLocker with no address spaces.
+ *
+ * Address spaces are added via AddTeam() or AddArea() before Lock() is called.
+ */
 MultiAddressSpaceLocker::MultiAddressSpaceLocker()
 	:
 	fItems(NULL),
@@ -351,6 +472,11 @@ MultiAddressSpaceLocker::MultiAddressSpaceLocker()
 }
 
 
+/**
+ * @brief Destroys the locker, unlocking all spaces and releasing all references.
+ *
+ * Calls Unset() to release locks and references, then frees the item array.
+ */
 MultiAddressSpaceLocker::~MultiAddressSpaceLocker()
 {
 	Unset();
@@ -441,6 +567,19 @@ MultiAddressSpaceLocker::Unset()
 }
 
 
+/**
+ * @brief Locks all registered address spaces in a deadlock-safe order.
+ *
+ * Sorts the address spaces by descending ID (kernel space last) before
+ * acquiring locks, ensuring a consistent global lock ordering.  If any
+ * individual lock acquisition fails all previously acquired locks are
+ * released before returning the error.
+ *
+ * @retval B_OK     All address spaces locked successfully.
+ * @retval other    A lock acquisition failed; no spaces are left locked.
+ *
+ * @note The locker must not already be locked (asserted internally).
+ */
 status_t
 MultiAddressSpaceLocker::Lock()
 {

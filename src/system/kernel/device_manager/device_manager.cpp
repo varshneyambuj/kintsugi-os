@@ -1,6 +1,37 @@
 /*
- * Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file device_manager.cpp
+ * @brief Kernel device manager — driver binding, node tree, and attribute management.
+ *
+ * Implements the new-style device manager. Manages the device node tree where
+ * each node corresponds to a hardware device or bus. Drivers are bound to
+ * nodes by the device manager when their probe() callback matches. Provides
+ * attribute storage per node and the driver_module_info interface.
+ *
+ * @see devfs.cpp, legacy_drivers.cpp, module.cpp
  */
 
 
@@ -216,6 +247,15 @@ static const char* sGenericContextPath;
 //	#pragma mark -
 
 
+/**
+ * @brief Search for a named attribute on a device node, optionally walking up the tree.
+ *
+ * @param node      Node to start the search from.
+ * @param name      Attribute name to look for.
+ * @param recursive If true, continue searching parent nodes until found or root reached.
+ * @param type      Required type code; pass B_ANY_TYPE to match any type.
+ * @return Pointer to the matching device_attr_private, or NULL if not found.
+ */
 static device_attr_private*
 find_attr(const device_node* node, const char* name, bool recursive,
 	type_code type)
@@ -241,6 +281,11 @@ find_attr(const device_node* node, const char* name, bool recursive,
 }
 
 
+/**
+ * @brief Print indentation spaces for tree-dump formatting.
+ *
+ * @param level Nesting level; each level adds three spaces of indentation.
+ */
 static void
 put_level(int32 level)
 {
@@ -249,6 +294,12 @@ put_level(int32 level)
 }
 
 
+/**
+ * @brief Dump a single device attribute to the kernel debugger console.
+ *
+ * @param attr  Attribute to display; does nothing if NULL.
+ * @param level Indentation level passed to put_level().
+ */
 static void
 dump_attribute(device_attr* attr, int32 level)
 {
@@ -288,6 +339,13 @@ dump_attribute(device_attr* attr, int32 level)
 }
 
 
+/**
+ * @brief Kernel debugger command that prints the entire device node tree.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return Always returns 0.
+ */
 static int
 dump_device_nodes(int argc, char** argv)
 {
@@ -296,6 +354,15 @@ dump_device_nodes(int argc, char** argv)
 }
 
 
+/**
+ * @brief Publish devfs directories for drivers found under @a subPath.
+ *
+ * When the boot device is not yet available, iterates over the module list to
+ * discover driver directories and publishes each one into devfs.
+ *
+ * @param subPath Sub-path beneath "drivers/" to enumerate; empty string for
+ *                the top-level directory.
+ */
 static void
 publish_directories(const char* subPath)
 {
@@ -337,6 +404,26 @@ publish_directories(const char* subPath)
 }
 
 
+/**
+ * @brief Generic syscall handler for the device manager subsystem.
+ *
+ * Handles userland requests to enumerate the device node tree and its
+ * attributes via the DM_GET_ROOT / DM_GET_CHILD / DM_GET_NEXT_CHILD /
+ * DM_GET_NEXT_ATTRIBUTE sub-functions.
+ *
+ * @param subsystem  Subsystem name string (unused beyond dispatch).
+ * @param function   One of the DM_* function codes.
+ * @param buffer     User-space buffer holding the request/response cookie.
+ * @param bufferSize Expected size of @a buffer; validated before use.
+ * @retval B_OK            Operation succeeded; result written to @a buffer.
+ * @retval B_BAD_ADDRESS   @a buffer is not a valid user address.
+ * @retval B_BAD_VALUE     @a bufferSize does not match the expected size.
+ * @retval B_ENTRY_NOT_FOUND No further child or attribute to iterate.
+ * @retval B_BAD_HANDLER   Unknown @a function code.
+ * @note This function currently passes raw kernel pointers to userland and
+ *       accepts them back without validation — it is unsafe and should be
+ *       redesigned before any security-sensitive use.
+ */
 static status_t
 control_device_manager(const char* subsystem, uint32 function, void* buffer,
 	size_t bufferSize)
@@ -489,6 +576,15 @@ control_device_manager(const char* subsystem, uint32 function, void* buffer,
 //	#pragma mark - Device Manager module API
 
 
+/**
+ * @brief Trigger a rescan of a device node's child devices.
+ *
+ * Acquires the device manager lock and delegates to device_node::Rescan().
+ *
+ * @param node Node whose children should be rescanned.
+ * @retval B_OK On success.
+ * @retval B_NO_INIT If the node's driver could not be initialized.
+ */
 static status_t
 rescan_node(device_node* node)
 {
@@ -497,6 +593,23 @@ rescan_node(device_node* node)
 }
 
 
+/**
+ * @brief Register a new device node as a child of @a parent.
+ *
+ * Allocates a new device_node, copies attributes and I/O resources, then
+ * calls Register() to attach it to the tree and initialize its driver.
+ *
+ * @param parent      Parent node; pass NULL only for the root node.
+ * @param moduleName  Fully-qualified driver module name (e.g. "drivers/disk/…/driver_v1").
+ * @param attrs       NULL-terminated array of attributes to attach, or NULL.
+ * @param ioResources NULL-terminated array of I/O resources to claim, or NULL.
+ * @param _node       On success, receives a pointer to the newly created node; may be NULL.
+ * @retval B_OK          Node created and registered successfully.
+ * @retval B_BAD_VALUE   @a parent is NULL but the root node already exists, or
+ *                       @a moduleName is NULL.
+ * @retval B_NAME_IN_USE An equivalent child node already exists under @a parent.
+ * @retval B_NO_MEMORY   Allocation of the node structure failed.
+ */
 static status_t
 register_node(device_node* parent, const char* moduleName,
 	const device_attr* attrs, const io_resource* ioResources,
@@ -543,6 +656,17 @@ register_node(device_node* parent, const char* moduleName,
 	indicate that the node hasn't been removed yet - it will still remove
 	the node as soon as possible.
 */
+/**
+ * @brief Unregister a device node, notifying its driver and children.
+ *
+ * Marks the node as removed via DeviceRemoved(). If the node's driver is
+ * currently initialized the node cannot be freed immediately and B_BUSY is
+ * returned; the node will be released once all references are dropped.
+ *
+ * @param node Node to unregister.
+ * @retval B_OK   Node was idle and has been removed.
+ * @retval B_BUSY Node is still in use; removal is deferred.
+ */
 static status_t
 unregister_node(device_node* node)
 {
@@ -557,6 +681,15 @@ unregister_node(device_node* node)
 }
 
 
+/**
+ * @brief Retrieve the driver module and private data for an initialized node.
+ *
+ * @param node    Node whose driver info is requested.
+ * @param _module On success, receives the driver_module_info pointer; may be NULL.
+ * @param _data   On success, receives the driver's private data pointer; may be NULL.
+ * @retval B_OK      Driver information populated successfully.
+ * @retval B_NO_INIT Node has no driver currently initialized.
+ */
 static status_t
 get_driver(device_node* node, driver_module_info** _module, void** _data)
 {
@@ -572,6 +705,12 @@ get_driver(device_node* node, driver_module_info** _module, void** _data)
 }
 
 
+/**
+ * @brief Acquire a reference to and return the global root device node.
+ *
+ * @return Pointer to the root node with an incremented reference count, or
+ *         NULL if the root has not been initialized yet.
+ */
 static device_node*
 get_root_node(void)
 {
@@ -582,6 +721,20 @@ get_root_node(void)
 }
 
 
+/**
+ * @brief Iterate over the registered children of @a parent that match @a attributes.
+ *
+ * On each successful call the previously returned node (stored in *_node) is
+ * released and the next matching child is acquired and written to *_node.
+ *
+ * @param parent     Parent node whose children are traversed.
+ * @param attributes NULL-terminated attribute array used to filter children;
+ *                   pass NULL to match any child.
+ * @param _node      In/out: on entry, the last node returned (or NULL to start);
+ *                   on success, set to the next matching child.
+ * @retval B_OK             Next matching child found and referenced.
+ * @retval B_ENTRY_NOT_FOUND No further matching child exists.
+ */
 static status_t
 get_next_child_node(device_node* parent, const device_attr* attributes,
 	device_node** _node)
@@ -623,6 +776,13 @@ get_next_child_node(device_node* parent, const device_attr* attributes,
 }
 
 
+/**
+ * @brief Acquire a reference to and return the parent of @a node.
+ *
+ * @param node Child node whose parent is requested.
+ * @return Pointer to the parent node with an incremented reference count, or
+ *         NULL if @a node is NULL.
+ */
 static device_node*
 get_parent_node(device_node* node)
 {
@@ -638,6 +798,12 @@ get_parent_node(device_node* node)
 }
 
 
+/**
+ * @brief Release a reference to @a node obtained from get_root_node(),
+ *        get_parent_node(), or get_next_child_node().
+ *
+ * @param node Node whose reference count should be decremented.
+ */
 static void
 put_node(device_node* node)
 {
@@ -646,6 +812,19 @@ put_node(device_node* node)
 }
 
 
+/**
+ * @brief Publish a device to devfs, making it accessible to userland.
+ *
+ * Creates a Device object, registers it with devfs at the given path, and
+ * stores path/driver attributes on the owning node for later inspection.
+ *
+ * @param node       Owner node the device belongs to.
+ * @param path       devfs path under which the device should appear (e.g. "disk/usb/0/raw").
+ * @param moduleName Fully-qualified device module name.
+ * @retval B_OK        Device published successfully.
+ * @retval B_BAD_VALUE @a path or @a moduleName is NULL or empty.
+ * @retval B_NO_MEMORY Allocation of the Device object failed.
+ */
 static status_t
 publish_device(device_node *node, const char *path, const char *moduleName)
 {
@@ -696,6 +875,18 @@ publish_device(device_node *node, const char *path, const char *moduleName)
 }
 
 
+/**
+ * @brief Remove a previously published device from devfs.
+ *
+ * Looks up the device by path in devfs, verifies it belongs to @a node, then
+ * unpublishes it.
+ *
+ * @param node Owner node that published the device.
+ * @param path devfs path that was passed to publish_device().
+ * @retval B_OK        Device removed from devfs successfully.
+ * @retval B_BAD_VALUE @a path is NULL, the device at @a path is not a managed
+ *                     Device, or it does not belong to @a node.
+ */
 static status_t
 unpublish_device(device_node *node, const char *path)
 {
@@ -717,6 +908,18 @@ unpublish_device(device_node *node, const char *path)
 }
 
 
+/**
+ * @brief Read a uint8 attribute from a device node.
+ *
+ * @param node      Node to query.
+ * @param name      Attribute name.
+ * @param _value    Receives the attribute value on success.
+ * @param recursive If true, search ancestor nodes when the attribute is not
+ *                  found on @a node itself.
+ * @retval B_OK             Value written to *_value.
+ * @retval B_BAD_VALUE      One of the pointer arguments is NULL.
+ * @retval B_NAME_NOT_FOUND Attribute does not exist on the node (or ancestors).
+ */
 static status_t
 get_attr_uint8(const device_node* node, const char* name, uint8* _value,
 	bool recursive)
@@ -733,6 +936,18 @@ get_attr_uint8(const device_node* node, const char* name, uint8* _value,
 }
 
 
+/**
+ * @brief Read a uint16 attribute from a device node.
+ *
+ * @param node      Node to query.
+ * @param name      Attribute name.
+ * @param _value    Receives the attribute value on success.
+ * @param recursive If true, search ancestor nodes when the attribute is not
+ *                  found on @a node itself.
+ * @retval B_OK             Value written to *_value.
+ * @retval B_BAD_VALUE      One of the pointer arguments is NULL.
+ * @retval B_NAME_NOT_FOUND Attribute does not exist on the node (or ancestors).
+ */
 static status_t
 get_attr_uint16(const device_node* node, const char* name, uint16* _value,
 	bool recursive)
@@ -749,6 +964,18 @@ get_attr_uint16(const device_node* node, const char* name, uint16* _value,
 }
 
 
+/**
+ * @brief Read a uint32 attribute from a device node.
+ *
+ * @param node      Node to query.
+ * @param name      Attribute name.
+ * @param _value    Receives the attribute value on success.
+ * @param recursive If true, search ancestor nodes when the attribute is not
+ *                  found on @a node itself.
+ * @retval B_OK             Value written to *_value.
+ * @retval B_BAD_VALUE      One of the pointer arguments is NULL.
+ * @retval B_NAME_NOT_FOUND Attribute does not exist on the node (or ancestors).
+ */
 static status_t
 get_attr_uint32(const device_node* node, const char* name, uint32* _value,
 	bool recursive)
@@ -765,6 +992,18 @@ get_attr_uint32(const device_node* node, const char* name, uint32* _value,
 }
 
 
+/**
+ * @brief Read a uint64 attribute from a device node.
+ *
+ * @param node      Node to query.
+ * @param name      Attribute name.
+ * @param _value    Receives the attribute value on success.
+ * @param recursive If true, search ancestor nodes when the attribute is not
+ *                  found on @a node itself.
+ * @retval B_OK             Value written to *_value.
+ * @retval B_BAD_VALUE      One of the pointer arguments is NULL.
+ * @retval B_NAME_NOT_FOUND Attribute does not exist on the node (or ancestors).
+ */
 static status_t
 get_attr_uint64(const device_node* node, const char* name,
 	uint64* _value, bool recursive)
@@ -781,6 +1020,21 @@ get_attr_uint64(const device_node* node, const char* name,
 }
 
 
+/**
+ * @brief Read a string attribute from a device node.
+ *
+ * The returned pointer points into the node's internal attribute storage and
+ * must not be freed or modified by the caller.
+ *
+ * @param node      Node to query.
+ * @param name      Attribute name.
+ * @param _value    Receives a pointer to the attribute's string value on success.
+ * @param recursive If true, search ancestor nodes when the attribute is not
+ *                  found on @a node itself.
+ * @retval B_OK             *_value set to the string value.
+ * @retval B_BAD_VALUE      One of the pointer arguments is NULL.
+ * @retval B_NAME_NOT_FOUND Attribute does not exist on the node (or ancestors).
+ */
 static status_t
 get_attr_string(const device_node* node, const char* name,
 	const char** _value, bool recursive)
@@ -797,6 +1051,22 @@ get_attr_string(const device_node* node, const char* name,
 }
 
 
+/**
+ * @brief Read a raw-blob attribute from a device node.
+ *
+ * Either @a _data or @a _length (or both) must be non-NULL.
+ *
+ * @param node      Node to query.
+ * @param name      Attribute name.
+ * @param _data     If non-NULL, receives a pointer to the raw data buffer.
+ * @param _length   If non-NULL, receives the length of the raw data in bytes.
+ * @param recursive If true, search ancestor nodes when the attribute is not
+ *                  found on @a node itself.
+ * @retval B_OK             Attribute found; requested fields populated.
+ * @retval B_BAD_VALUE      @a node or @a name is NULL, or both @a _data and
+ *                          @a _length are NULL.
+ * @retval B_NAME_NOT_FOUND Attribute does not exist on the node (or ancestors).
+ */
 static status_t
 get_attr_raw(const device_node* node, const char* name, const void** _data,
 	size_t* _length, bool recursive)
@@ -816,6 +1086,18 @@ get_attr_raw(const device_node* node, const char* name, const void** _data,
 }
 
 
+/**
+ * @brief Advance an attribute iterator for the given device node.
+ *
+ * Pass *_attr == NULL to obtain the first attribute. On each subsequent call
+ * pass the previously returned pointer to advance to the next attribute.
+ *
+ * @param node  Node whose attribute list is traversed.
+ * @param _attr In/out pointer to the current attribute; updated on success.
+ * @retval B_OK             *_attr set to the next attribute.
+ * @retval B_BAD_VALUE      @a node is NULL.
+ * @retval B_ENTRY_NOT_FOUND No more attributes in the list.
+ */
 static status_t
 get_next_attr(device_node* node, device_attr** _attr)
 {
@@ -839,6 +1121,21 @@ get_next_attr(device_node* node, device_attr** _attr)
 }
 
 
+/**
+ * @brief Recursively search the subtree rooted at @a parent for a node whose
+ *        attributes match @a attributes, starting after *_node.
+ *
+ * Internal helper used by the public find_child_node() overload. Traverses
+ * the child list depth-first and sets *_lastFound once the node referenced by
+ * *_node has been passed, then returns the first subsequent match.
+ *
+ * @param parent     Root of the subtree to search.
+ * @param attributes Attribute filter; a node matches when CompareTo() returns 0.
+ * @param _node      In/out: resume point on entry, matching node on exit.
+ * @param _lastFound In/out flag tracking whether the previous node was seen.
+ * @retval B_OK             Matching node found; *_node updated and referenced.
+ * @retval B_ENTRY_NOT_FOUND No matching node found in this subtree.
+ */
 static status_t
 find_child_node(device_node* parent, const device_attr* attributes,
 	device_node** _node, bool *_lastFound)
@@ -873,6 +1170,20 @@ find_child_node(device_node* parent, const device_attr* attributes,
 }
 
 
+/**
+ * @brief Find the next descendant node (anywhere in the tree) that matches
+ *        @a attributes, starting after *_node.
+ *
+ * Public wrapper around the recursive overload above. Pass *_node == NULL to
+ * obtain the first match. Each successful call acquires a reference on the
+ * returned node; the previous reference (if any) is released.
+ *
+ * @param parent     Root node of the subtree to search.
+ * @param attributes Attribute filter array (NULL-terminated).
+ * @param _node      In/out: previous match on entry (or NULL); next match on exit.
+ * @retval B_OK             Matching node found; *_node updated and referenced.
+ * @retval B_ENTRY_NOT_FOUND No further matching node exists.
+ */
 static status_t
 find_child_node(device_node* parent, const device_attr* attributes,
 	device_node** _node)
@@ -928,6 +1239,12 @@ struct device_manager_info gDeviceManagerModule = {
 //	#pragma mark - device_attr
 
 
+/**
+ * @brief Default-construct an empty device_attr_private.
+ *
+ * @note All fields are zeroed; the attribute is invalid until CopyFrom() or
+ *       direct field assignment is performed.
+ */
 device_attr_private::device_attr_private()
 {
 	name = NULL;
@@ -937,18 +1254,32 @@ device_attr_private::device_attr_private()
 }
 
 
+/**
+ * @brief Construct a device_attr_private by copying from a plain device_attr.
+ *
+ * @param attr Source attribute; strings and raw data are deep-copied.
+ */
 device_attr_private::device_attr_private(const device_attr& attr)
 {
 	CopyFrom(attr);
 }
 
 
+/**
+ * @brief Destroy the attribute, freeing any heap-allocated string or raw data.
+ */
 device_attr_private::~device_attr_private()
 {
 	_Unset();
 }
 
 
+/**
+ * @brief Check whether this attribute has been properly initialized.
+ *
+ * @retval B_OK     The name field is non-NULL and the attribute is usable.
+ * @retval B_NO_INIT The name field is NULL; the attribute was never initialized.
+ */
 status_t
 device_attr_private::InitCheck()
 {
@@ -956,6 +1287,17 @@ device_attr_private::InitCheck()
 }
 
 
+/**
+ * @brief Deep-copy the fields of @a attr into this object.
+ *
+ * Duplicates the name string and, for string/raw types, the value payload.
+ * On allocation failure the object is reset via _Unset().
+ *
+ * @param attr Source attribute to copy from.
+ * @retval B_OK        Copy succeeded.
+ * @retval B_NO_MEMORY A memory allocation failed; the object has been reset.
+ * @retval B_BAD_VALUE The attribute type is not one of the supported types.
+ */
 status_t
 device_attr_private::CopyFrom(const device_attr& attr)
 {
@@ -1004,6 +1346,9 @@ device_attr_private::CopyFrom(const device_attr& attr)
 }
 
 
+/**
+ * @brief Free all heap memory owned by this attribute and reset fields to NULL/0.
+ */
 void
 device_attr_private::_Unset()
 {
@@ -1020,6 +1365,17 @@ device_attr_private::_Unset()
 }
 
 
+/**
+ * @brief Three-way comparison of two device attributes.
+ *
+ * Both attributes must have the same type; mismatched types always return -1.
+ * For numeric types a signed difference is returned; for strings strcmp() is
+ * used; for raw blobs a length check precedes memcmp().
+ *
+ * @param attrA First attribute.
+ * @param attrB Second attribute.
+ * @return 0 if equal, negative if A < B, positive if A > B, -1 on type mismatch.
+ */
 /*static*/ int
 device_attr_private::Compare(const device_attr* attrA, const device_attr *attrB)
 {
@@ -1065,6 +1421,12 @@ device_attr_private::Compare(const device_attr* attrA, const device_attr *attrB)
 //	#pragma mark - Device
 
 
+/**
+ * @brief Construct a Device associated with @a node using the given driver module.
+ *
+ * @param node       Owning device_node; stored as fNode via the AbstractModuleDevice base.
+ * @param moduleName Device module name; duplicated onto the heap.
+ */
 Device::Device(device_node* node, const char* moduleName)
 	:
 	fModuleName(strdup(moduleName)),
@@ -1074,12 +1436,21 @@ Device::Device(device_node* node, const char* moduleName)
 }
 
 
+/**
+ * @brief Destroy the Device and free its module name string.
+ */
 Device::~Device()
 {
 	free((char*)fModuleName);
 }
 
 
+/**
+ * @brief Check whether the Device was constructed successfully.
+ *
+ * @retval B_OK      fModuleName was duplicated successfully.
+ * @retval B_NO_MEMORY strdup() failed during construction.
+ */
 status_t
 Device::InitCheck() const
 {
@@ -1087,6 +1458,17 @@ Device::InitCheck() const
 }
 
 
+/**
+ * @brief Initialize (or re-initialize) this device for an open operation.
+ *
+ * Loads the device module, ensures the parent node's driver is initialized,
+ * and calls the module's init_device() callback. Reference-counted: safe to
+ * call multiple times concurrently.
+ *
+ * @retval B_OK    Device initialized; parent driver reference acquired.
+ * @retval ENODEV  The owning node has been marked as removed.
+ * @retval B_BUSY  The owning node is waiting for its driver to be replaced.
+ */
 status_t
 Device::InitDevice()
 {
@@ -1131,6 +1513,12 @@ Device::InitDevice()
 }
 
 
+/**
+ * @brief Release one initialization reference to this device.
+ *
+ * When the last reference is released, calls uninit_device() and puts the
+ * module reference. Also releases one reference on the parent node's driver.
+ */
 void
 Device::UninitDevice()
 {
@@ -1155,6 +1543,12 @@ Device::UninitDevice()
 }
 
 
+/**
+ * @brief Notify the device that its underlying hardware has been removed.
+ *
+ * Removes the device from its parent node's device list (unless already
+ * detached) and deletes the object.
+ */
 void
 Device::Removed()
 {
@@ -1167,6 +1561,20 @@ Device::Removed()
 }
 
 
+/**
+ * @brief Handle an ioctl-style control operation on this device.
+ *
+ * Currently handles B_GET_DRIVER_FOR_DEVICE to retrieve the on-disk path of
+ * the driver module; all other operations are forwarded to
+ * AbstractModuleDevice::Control().
+ *
+ * @param _cookie Caller's open cookie (unused for B_GET_DRIVER_FOR_DEVICE).
+ * @param op      Operation code.
+ * @param buffer  User buffer to receive the result.
+ * @param length  Size of @a buffer in bytes.
+ * @retval B_OK    Operation completed successfully.
+ * @retval ERANGE  @a length is too small to hold the driver path.
+ */
 status_t
 Device::Control(void* _cookie, int32 op, void* buffer, size_t length)
 {
@@ -1192,6 +1600,17 @@ Device::Control(void* _cookie, int32 op, void* buffer, size_t length)
 //	#pragma mark - device_node
 
 
+/**
+ * @brief Construct a device_node with the given driver module name and initial attributes.
+ *
+ * Duplicates @a moduleName, copies all supplied attributes into fAttributes,
+ * appends a "device/driver" string attribute, and reads the B_DEVICE_FLAGS
+ * attribute into fFlags.
+ *
+ * @param moduleName Fully-qualified driver module name for this node.
+ * @param attrs      NULL-terminated array of initial attributes, or NULL.
+ * @note If fModuleName allocation fails, InitCheck() will return B_NO_MEMORY.
+ */
 device_node::device_node(const char* moduleName, const device_attr* attrs)
 {
 	fModuleName = strdup(moduleName);
@@ -1233,6 +1652,15 @@ device_node::device_node(const char* moduleName, const device_attr* attrs)
 }
 
 
+/**
+ * @brief Destroy the device_node, releasing children, devices, attributes, and resources.
+ *
+ * If this node was using an obsolete driver, notifies the parent to release
+ * any waiting replacement driver. Removes itself from the parent's child list.
+ *
+ * @note The driver must already have been uninitialized (DriverModule() == NULL)
+ *       before destruction, as asserted internally.
+ */
 device_node::~device_node()
 {
 	TRACE(("delete node %p\n", this));
@@ -1272,6 +1700,12 @@ device_node::~device_node()
 }
 
 
+/**
+ * @brief Check whether the node was constructed successfully.
+ *
+ * @retval B_OK      fModuleName is valid; the node is usable.
+ * @retval B_NO_MEMORY fModuleName allocation failed during construction.
+ */
 status_t
 device_node::InitCheck() const
 {
@@ -1279,6 +1713,19 @@ device_node::InitCheck() const
 }
 
 
+/**
+ * @brief Claim and store the I/O resources listed in @a resources.
+ *
+ * Iterates the NULL-terminated resource array, allocating and acquiring each
+ * entry via io_resource_private::Acquire().
+ *
+ * @param resources NULL-terminated array of I/O resources to acquire, or NULL
+ *                  to do nothing.
+ * @retval B_OK        All resources acquired successfully.
+ * @retval B_NO_MEMORY Allocation of an io_resource_private failed.
+ * @retval other       A resource could not be acquired; partial resources may
+ *                     have been stored in fResources.
+ */
 status_t
 device_node::AcquireResources(const io_resource* resources)
 {
@@ -1303,6 +1750,17 @@ device_node::AcquireResources(const io_resource* resources)
 }
 
 
+/**
+ * @brief Initialize (or reference-count) the driver bound to this node.
+ *
+ * Loads the driver module and, if this node has a parent, recursively calls
+ * InitDriver() on it. Calls driver->init_driver() on the first initialization.
+ * Reference-counted: subsequent calls increment fInitialized and acquire an
+ * additional node reference without reloading the module.
+ *
+ * @retval B_OK    Driver is initialized; node reference acquired.
+ * @retval other   Module load or init_driver() failed; fInitialized was rolled back.
+ */
 status_t
 device_node::InitDriver()
 {
@@ -1349,6 +1807,15 @@ device_node::InitDriver()
 }
 
 
+/**
+ * @brief Release one initialization reference from the driver bound to this node.
+ *
+ * When the last reference is released, calls driver->uninit_driver() and puts
+ * the module reference. Also releases one reference on the parent node's driver.
+ *
+ * @return true if this was the last reference and the driver was fully unloaded;
+ *         false if further references remain.
+ */
 bool
 device_node::UninitDriver()
 {
@@ -1377,6 +1844,15 @@ device_node::UninitDriver()
 }
 
 
+/**
+ * @brief Insert @a node as a child of this node, maintaining priority order.
+ *
+ * Children are ordered from highest to lowest priority so that the most
+ * specific driver is probed first. Acquiring this node ensures it is not
+ * deleted while it still has children.
+ *
+ * @param node Child node to insert; its fParent pointer is updated.
+ */
 void
 device_node::AddChild(device_node* node)
 {
@@ -1402,6 +1878,11 @@ device_node::AddChild(device_node* node)
 }
 
 
+/**
+ * @brief Remove @a node from this node's child list and release the parent reference.
+ *
+ * @param node Child node to remove; its fParent pointer is cleared.
+ */
 void
 device_node::RemoveChild(device_node* node)
 {
@@ -1415,6 +1896,21 @@ device_node::RemoveChild(device_node* node)
 	Also initializes the driver and keeps it that way on return in case
 	it returns successfully.
 */
+/**
+ * @brief Register this node in the device tree, initializing its driver and probing children.
+ *
+ * Adds this node to @a parent (or sets it as the root), initializes the driver,
+ * optionally registers fixed children, calls register_child_devices(), and
+ * finally performs dynamic child registration.
+ *
+ * @param parent Parent node to attach to, or NULL if this is the root node.
+ * @retval B_OK    Node registered and driver initialized (driver reference kept).
+ * @retval other   Registration or driver initialization failed; unused driver
+ *                 references are cleaned up.
+ * @note On success the driver remains initialized (fInitialized > 0); the
+ *       caller must eventually call UninitUnusedDriver() to drop the extra
+ *       reference acquired during registration.
+ */
 status_t
 device_node::Register(device_node* parent)
 {
@@ -1483,6 +1979,18 @@ device_node::Register(device_node* parent)
 	If any of these children cannot be registered, this call will fail (we
 	don't remove children we already registered up to this point in this case).
 */
+/**
+ * @brief Register all children listed via B_DEVICE_FIXED_CHILD attributes.
+ *
+ * For each B_DEVICE_FIXED_CHILD attribute on this node, loads the named
+ * driver module and calls its register_device() callback.
+ *
+ * @param registered On return, contains the count of successfully registered
+ *                   fixed children.
+ * @retval B_OK    All fixed children registered (or none were listed).
+ * @retval other   A required fixed child module could not be loaded or its
+ *                 register_device() failed.
+ */
 status_t
 device_node::_RegisterFixed(uint32& registered)
 {
@@ -1519,6 +2027,19 @@ device_node::_RegisterFixed(uint32& registered)
 }
 
 
+/**
+ * @brief Append a driver search path (basePath[/subPath]) to @a stack.
+ *
+ * Allocates a KPath, constructs the path, and pushes it onto @a stack for
+ * later iteration by _GetNextDriverPath().
+ *
+ * @param stack    Target stack to push the new path onto.
+ * @param basePath Base directory (e.g. "drivers" or "busses/usb").
+ * @param subPath  Optional sub-directory to append; NULL or empty to omit.
+ * @retval B_OK        Path constructed and pushed.
+ * @retval B_NO_MEMORY KPath allocation failed.
+ * @retval other       KPath::SetTo() or Append() failed.
+ */
 status_t
 device_node::_AddPath(Stack<KPath*>& stack, const char* basePath,
 	const char* subPath)
@@ -1542,6 +2063,21 @@ device_node::_AddPath(Stack<KPath*>& stack, const char* basePath,
 }
 
 
+/**
+ * @brief Iterate over all relevant driver search directories for this node.
+ *
+ * On the first call (cookie == NULL) the function examines the node's PCI
+ * type/subtype attributes and builds a prioritized stack of search paths.
+ * Subsequent calls pop the next path off the stack.
+ *
+ * @param cookie State cookie; set to NULL on the first call, then pass back
+ *               the value returned by the previous call. Freed internally
+ *               when the stack is exhausted.
+ * @param _path  Receives the next search path on success.
+ * @retval B_OK             Path written to _path; further paths may remain.
+ * @retval B_NO_MEMORY      Stack or path allocation failed.
+ * @retval B_ENTRY_NOT_FOUND All paths have been returned; cookie is freed.
+ */
 status_t
 device_node::_GetNextDriverPath(void*& cookie, KPath& _path)
 {
@@ -1710,6 +2246,18 @@ device_node::_GetNextDriverPath(void*& cookie, KPath& _path)
 }
 
 
+/**
+ * @brief Read the next driver_v1 module from an open module list.
+ *
+ * Skips the node's own module and any module that lacks supports_device or
+ * register_device callbacks.
+ *
+ * @param list   Open module list handle from open_module_list_etc().
+ * @param driver Receives the loaded driver_module_info on success.
+ * @retval B_OK    A suitable driver module was loaded into @a driver.
+ * @retval other   read_next_module_name() or get_module() returned an error,
+ *                 indicating the list is exhausted.
+ */
 status_t
 device_node::_GetNextDriver(void* list, driver_module_info*& driver)
 {
@@ -1738,6 +2286,22 @@ device_node::_GetNextDriver(void* list, driver_module_info*& driver)
 }
 
 
+/**
+ * @brief Scan @a path for the driver with the highest supports_device() score.
+ *
+ * Iterates all driver_v1 modules in @a path, calling supports_device() on
+ * each. Keeps a reference to the best-scoring module. Skips the driver
+ * currently bound to @a previous.
+ *
+ * @param path        Module directory path to scan.
+ * @param bestDriver  In/out: best driver found so far; updated if a better
+ *                    match is found. Caller must put_module() the reference on
+ *                    success.
+ * @param bestSupport In/out: support score of @a bestDriver.
+ * @param previous    Currently bound driver node to skip, or NULL.
+ * @retval B_OK             At least one driver scored higher than @a bestSupport.
+ * @retval B_ENTRY_NOT_FOUND No improvement found in @a path.
+ */
 status_t
 device_node::_FindBestDriver(const char* path, driver_module_info*& bestDriver,
 	float& bestSupport, device_node* previous)
@@ -1772,6 +2336,16 @@ device_node::_FindBestDriver(const char* path, driver_module_info*& bestDriver,
 }
 
 
+/**
+ * @brief Register every driver in @a path whose supports_device() score is positive.
+ *
+ * Used when B_FIND_MULTIPLE_CHILDREN is set; all matching drivers create
+ * child nodes.
+ *
+ * @param path Module directory path to scan.
+ * @retval B_OK             At least one driver was registered.
+ * @retval B_ENTRY_NOT_FOUND No driver in @a path supported this node.
+ */
 status_t
 device_node::_RegisterPath(const char* path)
 {
@@ -1796,6 +2370,15 @@ device_node::_RegisterPath(const char* path)
 }
 
 
+/**
+ * @brief Determine whether this node should always register dynamic children.
+ *
+ * Returns true for node types (serial bus, bridge, encryption, and type 0)
+ * that should have their children enumerated unconditionally, ignoring the
+ * B_FIND_CHILD_ON_DEMAND flag.
+ *
+ * @return true if dynamic children must always be registered.
+ */
 bool
 device_node::_AlwaysRegisterDynamic()
 {
@@ -1816,6 +2399,17 @@ device_node::_AlwaysRegisterDynamic()
 }
 
 
+/**
+ * @brief Dynamically register child nodes by scanning driver directories.
+ *
+ * If B_FIND_MULTIPLE_CHILDREN is set, all positively-scoring drivers from
+ * all relevant paths are registered. Otherwise, the single best-scoring driver
+ * across all paths is registered, and the previous driver node (if any) is
+ * marked obsolete.
+ *
+ * @param previous Currently active child node for single-child mode, or NULL.
+ * @retval B_OK Always; individual registration failures are silently ignored.
+ */
 status_t
 device_node::_RegisterDynamic(device_node* previous)
 {
@@ -1874,6 +2468,12 @@ device_node::_RegisterDynamic(device_node* previous)
 }
 
 
+/**
+ * @brief Clear the NODE_FLAG_WAITING_FOR_DRIVER flag from all direct children.
+ *
+ * Called when an obsolete driver node is destroyed, allowing any waiting
+ * replacement driver to proceed.
+ */
 void
 device_node::_ReleaseWaiting()
 {
@@ -1886,6 +2486,15 @@ device_node::_ReleaseWaiting()
 }
 
 
+/**
+ * @brief Release all child nodes, returning whether any remained busy.
+ *
+ * Calls Release() on every child. If children still exist after the loop
+ * (because they are referenced elsewhere) B_BUSY is returned.
+ *
+ * @retval B_OK   All children were released.
+ * @retval B_BUSY At least one child still holds an external reference.
+ */
 status_t
 device_node::_RemoveChildren()
 {
@@ -1899,6 +2508,12 @@ device_node::_RemoveChildren()
 }
 
 
+/**
+ * @brief Find the currently active (non-waiting) child node.
+ *
+ * @return The first child whose NODE_FLAG_WAITING_FOR_DRIVER is not set, or
+ *         NULL if all children are waiting.
+ */
 device_node*
 device_node::_FindCurrentChild()
 {
@@ -1914,6 +2529,17 @@ device_node::_FindCurrentChild()
 }
 
 
+/**
+ * @brief Internal probe: remove stale child nodes and re-run dynamic registration.
+ *
+ * For B_FIND_CHILD_ON_DEMAND nodes that have already been probed and have a
+ * single active child, the child is passed as @a previous to _RegisterDynamic()
+ * so that the best available driver can replace it if a better one is now
+ * available.
+ *
+ * @retval B_OK    Probe (and optional re-registration) succeeded.
+ * @retval other   _RegisterDynamic() returned an error.
+ */
 status_t
 device_node::_Probe()
 {
@@ -1939,6 +2565,19 @@ device_node::_Probe()
 }
 
 
+/**
+ * @brief Probe this node against a devfs device path and update cycle.
+ *
+ * If the node has B_FIND_CHILD_ON_DEMAND set, checks whether the PCI type
+ * matches the given @a devicePath context before probing. Otherwise, probes
+ * all child nodes recursively.
+ *
+ * @param devicePath  devfs context path (e.g. "disk", "net", "audio").
+ * @param updateCycle Monotonically increasing counter; nodes already probed
+ *                    in the current cycle are skipped.
+ * @retval B_OK    Probe completed (node may or may not have matched).
+ * @retval other   InitDriver() or _Probe() returned an error.
+ */
 status_t
 device_node::Probe(const char* devicePath, uint32 updateCycle)
 {
@@ -2013,6 +2652,15 @@ device_node::Probe(const char* devicePath, uint32 updateCycle)
 }
 
 
+/**
+ * @brief Re-probe this node and all of its children unconditionally.
+ *
+ * Initializes the driver, calls _Probe() to re-evaluate the best driver, then
+ * recursively reprobes every child node.
+ *
+ * @retval B_OK    Reprobe completed successfully for this node and all children.
+ * @retval other   InitDriver() or _Probe() or child->Reprobe() returned an error.
+ */
 status_t
 device_node::Reprobe()
 {
@@ -2040,6 +2688,15 @@ device_node::Reprobe()
 }
 
 
+/**
+ * @brief Rescan this node's driver for new children, then rescan all children.
+ *
+ * Initializes the driver and calls its rescan_child_devices() callback if
+ * present, then recursively rescans every child node.
+ *
+ * @retval B_OK    Rescan completed successfully.
+ * @retval other   InitDriver() or rescan_child_devices() or a child rescan failed.
+ */
 status_t
 device_node::Rescan()
 {
@@ -2072,6 +2729,15 @@ device_node::Rescan()
 	process keeps the driver initialized to optimize the startup procedure;
 	this function gives this reference away again.
 */
+/**
+ * @brief Release the extra driver reference held since Register() returned.
+ *
+ * Traverses to the leaves of the subtree and calls UninitDriver() on each
+ * node that still carries the NODE_FLAG_REGISTER_INITIALIZED mark.
+ *
+ * @note Must be called after Register() to avoid leaking driver references
+ *       that were kept alive to speed up initial probing.
+ */
 void
 device_node::UninitUnusedDriver()
 {
@@ -2098,6 +2764,14 @@ device_node::UninitUnusedDriver()
 	with the deepest and last child.
 	It will also remove the one reference that every node gets on its creation.
 */
+/**
+ * @brief Notify this node and all descendants that the underlying device has gone away.
+ *
+ * Recursively notifies children first, then notifies each published Device,
+ * marks this node as removed, calls the driver's device_removed() callback,
+ * drops the B_KEEP_DRIVER_LOADED reference if set, and finally releases the
+ * creation reference.
+ */
 void
 device_node::DeviceRemoved()
 {
@@ -2135,6 +2809,9 @@ device_node::DeviceRemoved()
 }
 
 
+/**
+ * @brief Atomically increment the node's reference count.
+ */
 void
 device_node::Acquire()
 {
@@ -2142,6 +2819,12 @@ device_node::Acquire()
 }
 
 
+/**
+ * @brief Decrement the node's reference count, deleting the node when it reaches zero.
+ *
+ * @return true if this was the last reference and the node was deleted;
+ *         false if further references remain.
+ */
 bool
 device_node::Release()
 {
@@ -2153,6 +2836,11 @@ device_node::Release()
 }
 
 
+/**
+ * @brief Append @a device to this node's device list.
+ *
+ * @param device Device to add; ownership is shared with devfs.
+ */
 void
 device_node::AddDevice(Device* device)
 {
@@ -2160,6 +2848,14 @@ device_node::AddDevice(Device* device)
 }
 
 
+/**
+ * @brief Remove @a device from this node's device list and delete its path/driver attributes.
+ *
+ * Removes the "dev/<id>/path" and "dev/<id>/driver" attributes that were
+ * added by publish_device() and unlinks @a device from fDevices.
+ *
+ * @param device Device to remove.
+ */
 void
 device_node::RemoveDevice(Device* device)
 {
@@ -2184,6 +2880,16 @@ device_node::RemoveDevice(Device* device)
 }
 
 
+/**
+ * @brief Compare this node's attributes against a filter array.
+ *
+ * For each attribute named in @a attributes, the matching attribute on this
+ * node is located and compared via device_attr_private::Compare(). Returns 0
+ * only when every attribute in the filter matches.
+ *
+ * @param attributes NULL-terminated attribute filter array; NULL input returns -1.
+ * @return 0 if all filter attributes match; non-zero otherwise.
+ */
 int
 device_node::CompareTo(const device_attr* attributes) const
 {
@@ -2216,6 +2922,14 @@ device_node::CompareTo(const device_attr* attributes) const
 }
 
 
+/**
+ * @brief Find the first direct child that matches @a attributes.
+ *
+ * Only children not flagged NODE_FLAG_DEVICE_REMOVED are considered.
+ *
+ * @param attributes NULL-terminated attribute filter; NULL returns NULL immediately.
+ * @return Matching child node, or NULL if none found.
+ */
 device_node*
 device_node::FindChild(const device_attr* attributes) const
 {
@@ -2236,6 +2950,12 @@ device_node::FindChild(const device_attr* attributes) const
 }
 
 
+/**
+ * @brief Find the first direct child whose module name equals @a moduleName.
+ *
+ * @param moduleName Module name to search for; NULL returns NULL immediately.
+ * @return Matching child node, or NULL if none found.
+ */
 device_node*
 device_node::FindChild(const char* moduleName) const
 {
@@ -2260,6 +2980,14 @@ device_node::FindChild(const char* moduleName) const
 	it might make sense to be able to directly set the priority via an
 	attribute.
 */
+/**
+ * @brief Return the registration priority for this node.
+ *
+ * Nodes without B_FIND_MULTIPLE_CHILDREN have priority 100 (probed first);
+ * those with the flag have priority 0 (probed last).
+ *
+ * @return Integer priority value used by AddChild() to order the sibling list.
+ */
 int32
 device_node::Priority()
 {
@@ -2267,6 +2995,15 @@ device_node::Priority()
 }
 
 
+/**
+ * @brief Recursively dump this node and all descendants to the kernel debugger.
+ *
+ * Prints module name, reference count, initialization count, driver module
+ * pointer, driver data pointer, all attributes, and all published devices at
+ * the given indentation level, then recurses into children.
+ *
+ * @param level Indentation level; 0 for the root call.
+ */
 void
 device_node::Dump(int32 level)
 {
@@ -2297,6 +3034,14 @@ device_node::Dump(int32 level)
 //	#pragma mark - root node
 
 
+/**
+ * @brief Create and register the root and generic device nodes at boot time.
+ *
+ * Registers the "Devices Root" node (B_FIND_MULTIPLE_CHILDREN |
+ * B_KEEP_DRIVER_LOADED) and, as a child of it, the "Generic" node
+ * (additionally B_FIND_CHILD_ON_DEMAND). Failure is reported via dprintf but
+ * is not fatal; the kernel continues booting.
+ */
 static void
 init_node_tree(void)
 {
@@ -2351,6 +3096,19 @@ driver_module_info gDeviceGenericModule = {
 //	#pragma mark - private kernel API
 
 
+/**
+ * @brief Probe the device tree for drivers matching the given devfs path context.
+ *
+ * Publishes devfs directories for the path, then delegates to
+ * sRootNode->Probe() to walk the tree and register any newly matching drivers.
+ *
+ * @param path        devfs sub-path context (e.g. "disk", "net") passed to
+ *                    each node's Probe() method.
+ * @param updateCycle Monotonically increasing value used to avoid probing the
+ *                    same node twice within a single scan pass.
+ * @retval B_OK    Probe completed (individual driver failures are non-fatal).
+ * @retval other   sRootNode->Probe() returned an error.
+ */
 status_t
 device_manager_probe(const char* path, uint32 updateCycle)
 {
@@ -2364,6 +3122,16 @@ device_manager_probe(const char* path, uint32 updateCycle)
 }
 
 
+/**
+ * @brief Initialize the device manager subsystem during early kernel boot.
+ *
+ * Sets up the I/O scheduler roster, ID generator, I/O resource allocator,
+ * the recursive lock, the generic syscall interface, the kernel debugger
+ * command, and the initial root/generic device nodes.
+ *
+ * @param args Kernel boot arguments (currently unused by this function).
+ * @retval B_OK Always; individual sub-initialization failures are non-fatal.
+ */
 status_t
 device_manager_init(struct kernel_args* args)
 {
@@ -2388,6 +3156,17 @@ device_manager_init(struct kernel_args* args)
 }
 
 
+/**
+ * @brief Perform post-module-load device tree re-probing.
+ *
+ * Called after all kernel modules are available. Re-probes the entire device
+ * tree so that drivers loaded after the initial boot scan can be bound to
+ * their nodes.
+ *
+ * @param args Kernel boot arguments (currently unused).
+ * @retval B_OK    Reprobe completed successfully.
+ * @retval other   sRootNode->Reprobe() returned an error.
+ */
 status_t
 device_manager_init_post_modules(struct kernel_args* args)
 {
@@ -2396,6 +3175,11 @@ device_manager_init_post_modules(struct kernel_args* args)
 }
 
 
+/**
+ * @brief Return a pointer to the device manager's global recursive lock.
+ *
+ * @return Pointer to sLock; valid for the lifetime of the kernel.
+ */
 recursive_lock*
 device_manager_get_lock()
 {

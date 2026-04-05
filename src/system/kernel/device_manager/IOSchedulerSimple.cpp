@@ -1,7 +1,37 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2004-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2004-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file IOSchedulerSimple.cpp
+ * @brief Simple elevator-style I/O scheduler for block device requests.
+ *
+ * Implements IOScheduler using an elevator algorithm: requests are sorted by
+ * offset and dispatched in order to minimize seek time. Supports read-ahead
+ * and handles DMA constraint splitting via DMAResource.
+ *
+ * @see IOScheduler.cpp, dma_resources.cpp, IORequest.cpp
  */
 
 
@@ -53,6 +83,14 @@ struct IOSchedulerSimple::RequestOwner
 };
 
 
+/**
+ * @brief Dump the state of this RequestOwner to the kernel debugger.
+ *
+ * Prints the team ID, thread ID, scheduling priority, and all associated
+ * pending, completed, and in-flight operations to the kernel debugger console.
+ *
+ * @note Must only be called from a kernel debugger context (kprintf is used).
+ */
 void
 IOSchedulerSimple::RequestOwner::Dump() const
 {
@@ -104,6 +142,21 @@ struct IOSchedulerSimple::RequestOwnerHashTable
 };
 
 
+/**
+ * @brief Construct a new IOSchedulerSimple instance.
+ *
+ * Initialises all synchronisation primitives (mutex, spinlock, condition
+ * variables), and lazily creates the global sRequestOwnerCache object cache
+ * on first construction.  No threads are started here; call Init() to
+ * complete initialisation.
+ *
+ * @param resource  Pointer to the DMAResource that provides DMA buffers and
+ *                  translates IORequests into hardware-friendly IOOperations.
+ *                  May be NULL for devices without DMA constraints.
+ *
+ * @note The sRequestOwnerCache is created under the IOSchedulerRoster lock to
+ *       avoid races when multiple schedulers are constructed concurrently.
+ */
 IOSchedulerSimple::IOSchedulerSimple(DMAResource* resource)
 	:
 	IOScheduler(resource),
@@ -135,6 +188,17 @@ IOSchedulerSimple::IOSchedulerSimple(DMAResource* resource)
 }
 
 
+/**
+ * @brief Destroy the IOSchedulerSimple and release all resources.
+ *
+ * Signals the scheduler and request-notifier threads to terminate by setting
+ * fTerminating and broadcasting all condition variables, then waits for both
+ * threads to exit.  Frees the unused-operation pool, the operation array,
+ * and all RequestOwner objects from the object cache.
+ *
+ * @note Acquires fLock and fFinisherLock internally during shutdown sequencing.
+ * @note Must not be called from interrupt context.
+ */
 IOSchedulerSimple::~IOSchedulerSimple()
 {
 	// shutdown threads
@@ -175,6 +239,24 @@ IOSchedulerSimple::~IOSchedulerSimple()
 }
 
 
+/**
+ * @brief Initialise the scheduler: allocate pools, set bandwidth, spawn threads.
+ *
+ * Calls the base class Init(), then allocates the pool of IOOperation objects
+ * sized to the DMAResource's buffer count (or a default of 16), determines the
+ * effective block size, initialises the RequestOwner hash table, inserts a
+ * fallback owner for out-of-memory conditions, calculates initial bandwidth
+ * quotas, and spawns the scheduler and request-notifier kernel threads.
+ *
+ * @param name  Human-readable name for this scheduler instance; used as a
+ *              prefix for the spawned thread names.
+ *
+ * @retval B_OK           Initialisation succeeded and threads are running.
+ * @retval B_NO_MEMORY    Memory allocation failed.
+ * @retval negative errno Spawning a kernel thread failed.
+ *
+ * @note Must be called once after construction and before ScheduleRequest().
+ */
 status_t
 IOSchedulerSimple::Init(const char* name)
 {
@@ -246,6 +328,26 @@ IOSchedulerSimple::Init(const char* name)
 }
 
 
+/**
+ * @brief Submit an IORequest to the scheduler for eventual device dispatch.
+ *
+ * Locks virtual memory for the request's buffer if it refers to user-space
+ * addresses, then acquires fLock and associates the request with a
+ * RequestOwner (looked up or created by team/thread ID).  The owner is added
+ * to the active owners list if it was previously idle, the I/O priority is
+ * refreshed from the thread's current priority, and the scheduler thread is
+ * woken via fNewRequestCondition.
+ *
+ * @param request  The IORequest to be scheduled.  Must not be NULL.
+ *
+ * @retval B_OK        Request accepted and queued.
+ * @retval B_NO_MEMORY No RequestOwner could be allocated (panic is issued).
+ * @retval other       Buffer memory locking failed; request is immediately
+ *                     completed with the error status.
+ *
+ * @note Acquires fLock internally; must not be called with fLock already held.
+ * @note May block briefly on virtual-memory locking for user-space buffers.
+ */
 status_t
 IOSchedulerSimple::ScheduleRequest(IORequest* request)
 {
@@ -302,6 +404,20 @@ IOSchedulerSimple::ScheduleRequest(IORequest* request)
 }
 
 
+/**
+ * @brief Abort a previously scheduled IORequest.
+ *
+ * Cancels an in-flight or pending request and sets its completion status to
+ * the supplied error code.  The request will not be dispatched to the device
+ * (or will be cancelled if already dispatched).
+ *
+ * @param request  The IORequest to abort.  Must have been passed to
+ *                 ScheduleRequest() and not yet completed.
+ * @param status   The error code to report as the request's completion status
+ *                 (e.g. B_CANCELED).
+ *
+ * @note Currently unimplemented; serves as a placeholder.
+ */
 void
 IOSchedulerSimple::AbortRequest(IORequest* request, status_t status)
 {
@@ -310,6 +426,23 @@ IOSchedulerSimple::AbortRequest(IORequest* request, status_t status)
 }
 
 
+/**
+ * @brief Called by the device layer to report completion of an IOOperation.
+ *
+ * Records the transferred byte count and status on the operation, moves it to
+ * the completed-operations list, and wakes the finisher via
+ * fFinishedOperationCondition so that _Finisher() can process it.
+ *
+ * If the operation's status is already <= 0 it has been finished before and
+ * is silently ignored to prevent double-completion.
+ *
+ * @param operation        The IOOperation that completed.
+ * @param status           B_OK on success, or a negative error code.
+ * @param transferredBytes Number of bytes actually transferred by the device.
+ *
+ * @note Called under interrupt context with fFinisherLock held by the caller
+ *       or from a device callback; acquires fFinisherLock internally.
+ */
 void
 IOSchedulerSimple::OperationCompleted(IOOperation* operation, status_t status,
 	generic_size_t transferredBytes)
@@ -327,6 +460,14 @@ IOSchedulerSimple::OperationCompleted(IOOperation* operation, status_t status,
 }
 
 
+/**
+ * @brief Dump the scheduler's internal state to the kernel debugger.
+ *
+ * Prints the scheduler's address, its associated DMAResource pointer, and all
+ * currently active RequestOwners to the kernel debugger console.
+ *
+ * @note Must only be called from a kernel debugger context (kprintf is used).
+ */
 void
 IOSchedulerSimple::Dump() const
 {
@@ -343,7 +484,20 @@ IOSchedulerSimple::Dump() const
 }
 
 
-/*!	Must not be called with the fLock held. */
+/**
+ * @brief Process all completed IOOperations and advance associated requests.
+ *
+ * Drains fCompletedOperations under fFinisherLock, then for each completed
+ * operation: calls IOOperation::Finish(), notifies the scheduler roster,
+ * recycles DMA buffers, and decrements fPendingOperations.  If the parent
+ * IORequest is fully finished it is either handed to the request-notifier
+ * thread (if it has callbacks) or completed inline.
+ *
+ * @note Must NOT be called with fLock held; it acquires fLock internally for
+ *       list and counter manipulation.
+ * @note Acquires and releases fFinisherLock (spinlock, disables interrupts)
+ *       for each operation dequeued.
+ */
 void
 IOSchedulerSimple::_Finisher()
 {
@@ -423,8 +577,17 @@ IOSchedulerSimple::_Finisher()
 }
 
 
-/*!	Called with \c fFinisherLock held.
-*/
+/**
+ * @brief Check whether there is pending finisher work.
+ *
+ * Returns true if fCompletedOperations is non-empty, indicating that
+ * _Finisher() should be invoked to process those operations.
+ *
+ * @retval true   At least one completed operation is waiting to be processed.
+ * @retval false  No completed operations are pending.
+ *
+ * @note Must be called with fFinisherLock held (spinlock, interrupts disabled).
+ */
 bool
 IOSchedulerSimple::_FinisherWorkPending()
 {
@@ -432,6 +595,29 @@ IOSchedulerSimple::_FinisherWorkPending()
 }
 
 
+/**
+ * @brief Translate a request's remaining I/O into ready-to-dispatch operations.
+ *
+ * If a DMAResource is associated, calls DMAResource::TranslateNext() in a loop
+ * until the quantum is exhausted or the request has no remaining bytes.  Each
+ * successful translation adds an IOOperation to @p operations.  Without a
+ * DMAResource, a single whole-request IOOperation is prepared instead.
+ *
+ * @param request            The IORequest to prepare operations for.
+ * @param operations         Output list to which prepared IOOperations are appended.
+ * @param operationsPrepared Running count incremented for each operation prepared.
+ * @param quantum            Bandwidth budget (in bytes) for this scheduling round.
+ * @param usedBandwidth      Output: bytes consumed from @p quantum by the
+ *                           operations prepared in this call.
+ *
+ * @retval true  Preparation succeeded (operations added) or completed normally;
+ *               continue scheduling.
+ * @retval false A resource (DMA buffer or bounce buffer) was temporarily
+ *               unavailable (B_BUSY); the caller should retry later.
+ *
+ * @note Must be called with fLock held.
+ * @note On a non-B_BUSY error the request is aborted via AbortRequest().
+ */
 bool
 IOSchedulerSimple::_PrepareRequestOperations(IORequest* request,
 	IOOperationList& operations, int32& operationsPrepared, off_t quantum,
@@ -500,6 +686,17 @@ IOSchedulerSimple::_PrepareRequestOperations(IORequest* request,
 }
 
 
+/**
+ * @brief Compute the per-owner bandwidth quantum for one scheduling round.
+ *
+ * Returns the minimum per-owner bandwidth value.  In the future this should
+ * return a priority-dependent quantum so that higher-priority owners receive
+ * larger slices.
+ *
+ * @param priority  The I/O priority of the RequestOwner (currently unused).
+ *
+ * @return Bandwidth budget in bytes to allocate to this owner per round.
+ */
 off_t
 IOSchedulerSimple::_ComputeRequestOwnerBandwidth(int32 priority) const
 {
@@ -508,6 +705,22 @@ IOSchedulerSimple::_ComputeRequestOwnerBandwidth(int32 priority) const
 }
 
 
+/**
+ * @brief Advance to the next active RequestOwner in round-robin order.
+ *
+ * Walks the active-owners list starting after @p owner.  If no active owners
+ * are present the method drains any pending finisher work and then sleeps on
+ * fNewRequestCondition until new requests arrive or termination is requested.
+ *
+ * @param[in,out] owner   On entry, the last-served owner (NULL to start from
+ *                        the list head).  On exit, the next owner to serve.
+ * @param[out]    quantum Bandwidth budget assigned to the returned owner.
+ *
+ * @retval true   @p owner is valid and @p quantum has been set.
+ * @retval false  The scheduler has been asked to terminate (fTerminating).
+ *
+ * @note Must be called with fLock held; temporarily releases it while waiting.
+ */
 bool
 IOSchedulerSimple::_NextActiveRequestOwner(RequestOwner*& owner,
 	off_t& quantum)
@@ -562,6 +775,24 @@ struct OperationComparator {
 };
 
 
+/**
+ * @brief Sort a list of IOOperations using the elevator (SSTF) algorithm.
+ *
+ * Moves all operations from @p operations into a temporary array, sorts them
+ * by ascending disk offset (ties broken by descending length), and then
+ * re-inserts them into @p operations in elevator order: operations whose
+ * offset is >= @p lastOffset are placed first; when the end of the sorted
+ * list is reached without finding any such operation the scan wraps around
+ * from offset 0.
+ *
+ * @param[in,out] operations  List of operations to sort in-place.
+ * @param[in,out] lastOffset  The disk offset at which the previous scheduling
+ *                            round ended; updated to the end offset of the
+ *                            last operation added to the sorted list.
+ *
+ * @note Must be called with fLock released (uses fOperationArray which is
+ *       sized during Init() and must not be concurrently accessed).
+ */
 void
 IOSchedulerSimple::_SortOperations(IOOperationList& operations,
 	off_t& lastOffset)
@@ -605,6 +836,24 @@ IOSchedulerSimple::_SortOperations(IOOperationList& operations,
 }
 
 
+/**
+ * @brief Main scheduler loop: selects requests, builds operation batches, and
+ *        dispatches them to the device callback.
+ *
+ * Runs as a dedicated kernel thread.  Each iteration:
+ *  1. Selects the next active RequestOwner via round-robin / _NextActiveRequestOwner().
+ *  2. Collects pending IOOperations from the owner (unfinished carry-overs first,
+ *     then new ones prepared via _PrepareRequestOperations()) up to the owner
+ *     quantum and per-iteration bandwidth cap.
+ *  3. Sorts the batch with _SortOperations() for elevator dispatch.
+ *  4. Calls fIOCallback for each operation and then waits for all pending
+ *     operations to complete, calling _Finisher() between waits.
+ *
+ * @retval B_OK  The loop exited cleanly because fTerminating was set.
+ *
+ * @note Runs at B_NORMAL_PRIORITY + 2 as a kernel thread.
+ * @note Acquires and releases fLock repeatedly; must never be called directly.
+ */
 status_t
 IOSchedulerSimple::_Scheduler()
 {
@@ -761,6 +1010,17 @@ panic("no more requests for owner %p (thread %" B_PRId32 ")", owner, owner->thre
 }
 
 
+/**
+ * @brief Kernel thread entry point for the scheduler loop.
+ *
+ * Casts the opaque @p _self pointer to IOSchedulerSimple and delegates to
+ * _Scheduler().
+ *
+ * @param _self  Pointer to the IOSchedulerSimple instance (passed via
+ *               spawn_kernel_thread).
+ *
+ * @return Return value of _Scheduler().
+ */
 /*static*/ status_t
 IOSchedulerSimple::_SchedulerThread(void *_self)
 {
@@ -769,6 +1029,21 @@ IOSchedulerSimple::_SchedulerThread(void *_self)
 }
 
 
+/**
+ * @brief Request-notifier loop: delivers completion callbacks for finished requests.
+ *
+ * Runs as a dedicated kernel thread.  Waits on fFinishedRequestCondition for
+ * requests that have been moved to fFinishedRequests by _Finisher(), then
+ * notifies the IOSchedulerRoster and calls IORequest::NotifyFinished() for
+ * each one.
+ *
+ * Requests are placed here (rather than being completed inline) when they have
+ * callbacks that could be expensive.
+ *
+ * @retval B_OK  Loop exited because fTerminating was set while the queue was empty.
+ *
+ * @note Acquires fLock while dequeuing; releases it before invoking callbacks.
+ */
 status_t
 IOSchedulerSimple::_RequestNotifier()
 {
@@ -805,6 +1080,17 @@ IOSchedulerSimple::_RequestNotifier()
 }
 
 
+/**
+ * @brief Kernel thread entry point for the request-notifier loop.
+ *
+ * Casts the opaque @p _self pointer to IOSchedulerSimple and delegates to
+ * _RequestNotifier().
+ *
+ * @param _self  Pointer to the IOSchedulerSimple instance (passed via
+ *               spawn_kernel_thread).
+ *
+ * @return Return value of _RequestNotifier().
+ */
 /*static*/ status_t
 IOSchedulerSimple::_RequestNotifierThread(void *_self)
 {
@@ -813,6 +1099,24 @@ IOSchedulerSimple::_RequestNotifierThread(void *_self)
 }
 
 
+/**
+ * @brief Look up or allocate a RequestOwner for the given team/thread pair.
+ *
+ * Searches fRequestOwners for an existing entry keyed by @p thread.  If none
+ * is found and @p allocate is true, allocates a new RequestOwner from
+ * sRequestOwnerCache (non-blocking).  If the cache is exhausted the fallback
+ * owner (thread == -1) is returned instead.
+ *
+ * @param team      Team ID of the requesting context.
+ * @param thread    Thread ID used as the hash key.
+ * @param allocate  If true, create a new owner when no existing one is found.
+ *
+ * @return Pointer to the located or newly created RequestOwner, or NULL if
+ *         @p allocate is false and no entry exists.
+ *
+ * @note Must be called with fLock held.
+ * @note Allocation uses CACHE_DONT_WAIT_FOR_MEMORY to avoid blocking under lock.
+ */
 IOSchedulerSimple::RequestOwner*
 IOSchedulerSimple::_GetRequestOwner(team_id team, thread_id thread,
 	bool allocate)

@@ -1,10 +1,39 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file VMAnonymousNoSwapCache.cpp
+ * @brief Anonymous VM cache that does not support swapping pages to disk.
+ *
+ * A simplified VMAnonymousCache subclass used for wired memory and other
+ * regions where pages must remain in physical RAM and cannot be swapped out.
+ *
+ * @see VMAnonymousCache.cpp, VMCache.cpp
  */
 
 #include "VMAnonymousNoSwapCache.h"
@@ -32,12 +61,34 @@
 // anymore.
 
 
+/**
+ * @brief Destroys the cache and releases all reserved physical memory.
+ *
+ * Calls vm_unreserve_memory() for the entire committed_size so that the
+ * global physical-memory reservation counter stays accurate.
+ */
 VMAnonymousNoSwapCache::~VMAnonymousNoSwapCache()
 {
 	vm_unreserve_memory(committed_size);
 }
 
 
+/**
+ * @brief Initialises the cache with overcommit and guard-page settings.
+ *
+ * Delegates to VMCache::Init() for base-class setup, then records the
+ * overcommit policy, precommitted-page count, and guarded region size.
+ *
+ * @param canOvercommit          If @c true the cache defers physical-memory
+ *                               reservation until Fault() time.
+ * @param numPrecommittedPages   Number of pages to speculatively reserve on
+ *                               the first Commit() call (capped at 255).
+ * @param numGuardPages          Number of guard pages at the appropriate end
+ *                               of a stack region.
+ * @param allocationFlags        Heap allocation flags forwarded to VMCache::Init().
+ * @retval B_OK        Initialisation succeeded.
+ * @retval B_NO_MEMORY Base-class initialisation failed to allocate memory.
+ */
 status_t
 VMAnonymousNoSwapCache::Init(bool canOvercommit, int32 numPrecommittedPages,
 	int32 numGuardPages, uint32 allocationFlags)
@@ -100,6 +151,14 @@ VMAnonymousNoSwapCache::Commitment() const
 }
 
 
+/**
+ * @brief Reports whether this cache allows memory overcommitment.
+ *
+ * When @c true, physical pages are not reserved until a page fault occurs
+ * (lazy commitment via Fault()).
+ *
+ * @return @c true if overcommit is enabled, @c false otherwise.
+ */
 bool
 VMAnonymousNoSwapCache::CanOvercommit()
 {
@@ -107,6 +166,25 @@ VMAnonymousNoSwapCache::CanOvercommit()
 }
 
 
+/**
+ * @brief Adjusts the physical-memory reservation to match \a size bytes.
+ *
+ * For overcommitting caches the first call pre-reserves a small number of
+ * pages; subsequent page-level commits are handled in Fault().  For
+ * non-overcommitting caches every call to Commit() reserves or releases
+ * memory immediately.
+ *
+ * The cache lock must be held by the caller (AssertLocked() is called
+ * internally).
+ *
+ * @param size      Desired total committed size in bytes.  Must be at least
+ *                  @c page_count * B_PAGE_SIZE.
+ * @param priority  VM priority (VM_PRIORITY_USER or VM_PRIORITY_SYSTEM) used
+ *                  when trying to reserve additional memory.
+ * @retval B_OK        Commitment adjusted successfully.
+ * @retval B_NO_MEMORY Insufficient physical memory available to satisfy the
+ *                     request.
+ */
 status_t
 VMAnonymousNoSwapCache::Commit(off_t size, int priority)
 {
@@ -160,6 +238,15 @@ VMAnonymousNoSwapCache::TakeCommitmentFrom(VMCache* _from, off_t commitment)
 }
 
 
+/**
+ * @brief Indicates that this cache never has pages in a backing store.
+ *
+ * Because this cache type has no swap backing, every page that is not
+ * already in the page cache must be zero-filled on demand.
+ *
+ * @param offset  Byte offset within the cache (unused).
+ * @return        Always @c false.
+ */
 bool
 VMAnonymousNoSwapCache::StoreHasPage(off_t offset)
 {
@@ -185,6 +272,21 @@ VMAnonymousNoSwapCache::Write(off_t offset, const generic_io_vec* vecs, size_t c
 }
 
 
+/**
+ * @brief Handles a page fault for an anonymous, non-swappable region.
+ *
+ * Checks for stack guard-page violations first.  For overcommitting caches
+ * it then tries to reserve one additional page of physical memory.
+ * Returns B_BAD_HANDLER to let vm_soft_fault() allocate and zero-fill the
+ * new page.
+ *
+ * @param aspace   The VMAddressSpace in which the fault occurred.  Used to
+ *                 select the correct VM priority for memory reservation.
+ * @param offset   Byte offset within the cache at which the fault occurred.
+ * @retval B_BAD_HANDLER  Normal path — vm_soft_fault() should handle the fault.
+ * @retval B_BAD_ADDRESS  The fault hit a guard page (stack overflow).
+ * @retval B_NO_MEMORY    Overcommit reservation failed; no RAM available.
+ */
 status_t
 VMAnonymousNoSwapCache::Fault(struct VMAddressSpace* aspace, off_t offset)
 {
@@ -230,6 +332,18 @@ VMAnonymousNoSwapCache::Fault(struct VMAddressSpace* aspace, off_t offset)
 }
 
 
+/**
+ * @brief Merges the source cache's committed memory into this cache.
+ *
+ * Transfers the source's committed_size to this cache, then trims the
+ * combined commitment to the actual virtual size of the merged region.
+ * Any excess reservation is returned to the system via vm_unreserve_memory().
+ *
+ * @param _source  The cache to merge from.  Must be a VMAnonymousNoSwapCache;
+ *                 a panic is triggered otherwise.
+ *
+ * @note Both caches must be locked before calling this method.
+ */
 void
 VMAnonymousNoSwapCache::Merge(VMCache* _source)
 {

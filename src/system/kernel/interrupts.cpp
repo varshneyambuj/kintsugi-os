@@ -1,13 +1,42 @@
 /*
- * Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
- * Copyright 2011, Michael Lotz, mmlr@mlotz.ch.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Copyright 2011, Michael Lotz, mmlr@mlotz.ch.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
+/**
+ * @file interrupts.cpp
+ * @brief Interrupt handler registration, dispatch, and statistics.
+ *
+ * Implements install_io_interrupt_handler() / remove_io_interrupt_handler()
+ * and the low-level interrupt dispatch path. Tracks per-IRQ statistics and
+ * exposes them through the kernel debugger and /proc-like interfaces.
+ *
+ * @see arch/x86/arch_interrupts.S, interrupts.h
+ */
 
 #include <interrupts.h>
 
@@ -77,6 +106,17 @@ static mutex sIOInterruptVectorAllocationLock
 
 
 #if DEBUG_INTERRUPTS
+/**
+ * @brief Kernel debugger command that prints per-vector interrupt statistics.
+ *
+ * Iterates all IO vectors and prints their enable count, handled count,
+ * unhandled count, active state, and the resolved symbol name of each
+ * registered handler.  Only available when DEBUG_INTERRUPTS is defined.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return Always 0.
+ */
 static int
 dump_int_statistics(int argc, char **argv)
 {
@@ -127,6 +167,16 @@ dump_int_statistics(int argc, char **argv)
 #endif
 
 
+/**
+ * @brief Kernel debugger command that prints per-vector interrupt load.
+ *
+ * Prints the type, enable count, load percentage, and assigned CPU for each
+ * active IO vector.  Skips vectors that have no handlers and no enable count.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return Always 0.
+ */
 static int
 dump_int_load(int argc, char** argv)
 {
@@ -167,6 +217,11 @@ dump_int_load(int argc, char** argv)
 //	#pragma mark - private kernel API
 
 
+/**
+ * @brief Returns whether hardware interrupts are currently enabled on this CPU.
+ *
+ * @return @c true if interrupts are enabled, @c false otherwise.
+ */
 bool
 interrupts_enabled(void)
 {
@@ -174,6 +229,16 @@ interrupts_enabled(void)
 }
 
 
+/**
+ * @brief First-phase interrupt subsystem initialization.
+ *
+ * Delegates directly to the architecture-specific interrupt initialization
+ * routine.  Called very early in the boot sequence before the VM is available.
+ *
+ * @param args Kernel boot arguments passed from the boot loader.
+ * @retval B_OK On success.
+ * @note Must be called before any other interrupt subsystem function.
+ */
 status_t
 interrupts_init(kernel_args* args)
 {
@@ -183,6 +248,16 @@ interrupts_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Second-phase interrupt initialization, run after the VM is ready.
+ *
+ * Initializes all @c io_vector entries (spinlocks, enable counts, load
+ * tracking, debug counters) and the CPU-assignment table.  Registers the
+ * kernel debugger commands for interrupt statistics and load inspection.
+ *
+ * @param args Kernel boot arguments.
+ * @retval B_OK On success.
+ */
 status_t
 interrupts_init_post_vm(kernel_args* args)
 {
@@ -227,6 +302,15 @@ interrupts_init_post_vm(kernel_args* args)
 }
 
 
+/**
+ * @brief Third-phase interrupt initialization for I/O subsystem setup.
+ *
+ * Delegates to the architecture-specific I/O interrupt initialization.
+ * Called after the core VM and device-manager infrastructure is up.
+ *
+ * @param args Kernel boot arguments.
+ * @retval B_OK On success.
+ */
 status_t
 interrupts_init_io(kernel_args* args)
 {
@@ -234,6 +318,15 @@ interrupts_init_io(kernel_args* args)
 }
 
 
+/**
+ * @brief Fourth-phase interrupt initialization, run after device manager init.
+ *
+ * Installs architecture debug interrupt handlers and finalizes
+ * architecture-level post-device-manager interrupt setup.
+ *
+ * @param args Kernel boot arguments.
+ * @retval B_OK On success.
+ */
 status_t
 interrupts_init_post_device_manager(kernel_args* args)
 {
@@ -243,6 +336,16 @@ interrupts_init_post_device_manager(kernel_args* args)
 }
 
 
+/**
+ * @brief Updates the exponential-moving-average load for a single IRQ vector.
+ *
+ * Tries to acquire the per-vector load spinlock without blocking.  If the lock
+ * is already held the update is skipped.  On a successful update the per-CPU
+ * aggregate load counter is adjusted by the delta.
+ *
+ * @param i Index into @c sVectors[] of the vector to update.
+ * @note Called from interrupt context; must not block.
+ */
 static void
 update_int_load(int i)
 {
@@ -260,9 +363,23 @@ update_int_load(int i)
 }
 
 
-/*!	Actually process an interrupt via the handlers registered for that
-	vector (IRQ).
-*/
+/**
+ * @brief Dispatches a hardware interrupt to all registered handlers for a vector.
+ *
+ * Acquires the vector spinlock (unless @c no_lock_vector is set), iterates the
+ * handler list, and calls each handler in order.  For level-triggered vectors
+ * iteration stops as soon as a handler returns something other than
+ * @c B_UNHANDLED_INTERRUPT.  For edge-triggered vectors all handlers are
+ * always called.  Updates per-vector timing and load statistics after dispatch.
+ *
+ * @param vector   IRQ vector number to dispatch.
+ * @param levelTriggered @c true for level-triggered, @c false for edge-triggered.
+ * @retval B_HANDLED_INTERRUPT   At least one handler claimed the interrupt.
+ * @retval B_UNHANDLED_INTERRUPT No handler claimed the interrupt.
+ * @retval B_INVOKE_SCHEDULER    A handler requests an immediate reschedule.
+ * @note Called with interrupts disabled at the CPU level.
+ * @note Must not be used for exception or syscall vectors.
+ */
 int
 io_interrupt_handler(int vector, bool levelTriggered)
 {
@@ -392,6 +509,15 @@ io_interrupt_handler(int vector, bool levelTriggered)
 #undef restore_interrupts
 
 
+/**
+ * @brief Disables hardware interrupts on the current CPU and returns the prior state.
+ *
+ * The returned value must be passed to restore_interrupts() to bring the CPU
+ * back to the correct interrupt state.
+ *
+ * @return Opaque CPU interrupt status that encodes the previous enable state.
+ * @note Pairs with restore_interrupts().
+ */
 cpu_status
 disable_interrupts(void)
 {
@@ -399,6 +525,14 @@ disable_interrupts(void)
 }
 
 
+/**
+ * @brief Restores the CPU interrupt state saved by disable_interrupts().
+ *
+ * @param status The value previously returned by disable_interrupts().
+ * @note Must be called with the same @p status value that was returned from
+ *       the matching disable_interrupts() call; mixing values leads to
+ *       undefined behaviour.
+ */
 void
 restore_interrupts(cpu_status status)
 {
@@ -406,6 +540,16 @@ restore_interrupts(cpu_status status)
 }
 
 
+/**
+ * @brief Selects a CPU to assign to a newly registered IRQ using round-robin.
+ *
+ * Walks the CPU topology tree to find the next non-disabled SMT leaf node,
+ * incrementing a global counter on each call to spread load across CPUs.
+ *
+ * @return The logical CPU ID selected for the IRQ assignment.
+ * @note The scheduler may later migrate the IRQ to a different CPU to
+ *       correct load imbalances.
+ */
 static
 uint32 assign_cpu(void)
 {
@@ -425,9 +569,35 @@ uint32 assign_cpu(void)
 }
 
 
-/*!	Install a handler to be called when an interrupt is triggered
-	for the given interrupt number with \a data as the argument.
-*/
+/**
+ * @brief Registers an interrupt handler for the given IRQ vector.
+ *
+ * Allocates an @c io_handler record, links it into the per-vector handler list,
+ * and enables the IRQ at the hardware level if this is the first handler on
+ * the vector and @c B_NO_ENABLE_COUNTER is not set.  On the first handler
+ * registration for an IRQ-type vector, the function also performs an initial
+ * CPU assignment via assign_cpu().
+ *
+ * Handlers that pass @c B_NO_HANDLED_INFO are appended at the tail of the
+ * list so that well-behaved drivers get first access.  All other handlers are
+ * prepended at the head.
+ *
+ * @param vector  IRQ vector number in the range [0, NUM_IO_VECTORS).
+ * @param handler Function pointer to the interrupt service routine.
+ * @param data    Opaque pointer passed to @p handler on each invocation.
+ * @param flags   Combination of:
+ *                - @c B_NO_ENABLE_COUNTER — do not manage the hardware enable state.
+ *                - @c B_NO_HANDLED_INFO   — handler cannot report whether it handled
+ *                                           the interrupt; appended last.
+ *                - @c B_NO_LOCK_VECTOR    — skip vector spinlock on dispatch (for
+ *                                           handlers that may run concurrently on
+ *                                           multiple CPUs, e.g. local APIC).
+ * @retval B_OK        Handler registered successfully.
+ * @retval B_BAD_VALUE @p vector is out of range.
+ * @retval B_NO_MEMORY Could not allocate the handler structure.
+ * @note Interrupts are disabled and the vector spinlock is held during list
+ *       manipulation.
+ */
 status_t
 install_io_interrupt_handler(int32 vector, interrupt_handler handler, void *data,
 	uint32 flags)
@@ -521,7 +691,23 @@ install_io_interrupt_handler(int32 vector, interrupt_handler handler, void *data
 }
 
 
-/*!	Remove a previously installed interrupt handler */
+/**
+ * @brief Removes a previously registered interrupt handler from a vector.
+ *
+ * Scans the handler list for the entry matching both @p handler and @p data,
+ * unlinks it, and frees the associated memory.  If this was the last handler
+ * on a vector that uses the enable counter the IRQ is disabled at the hardware
+ * level.  When the last handler for an IRQ-type vector is removed the CPU
+ * assignment is also cleaned up.
+ *
+ * @param vector  IRQ vector number the handler was registered on.
+ * @param handler Function pointer that was passed to install_io_interrupt_handler().
+ * @param data    Data pointer that was passed to install_io_interrupt_handler().
+ * @retval B_OK        Handler found and removed.
+ * @retval B_BAD_VALUE @p vector is out of range, or no matching handler was found.
+ * @note Interrupts are disabled and the vector spinlock is held during list
+ *       manipulation.
+ */
 status_t
 remove_io_interrupt_handler(int32 vector, interrupt_handler handler, void *data)
 {
@@ -600,11 +786,22 @@ remove_io_interrupt_handler(int32 vector, interrupt_handler handler, void *data)
 }
 
 
-/*	Mark \a count contigous interrupts starting at \a startVector as in use.
-	This will prevent them from being allocated by others. Only use this when
-	the reserved range is hardwired to the given vector, otherwise allocate
-	vectors using allocate_io_interrupt_vectors() instead.
-*/
+/**
+ * @brief Marks a contiguous range of interrupt vectors as reserved.
+ *
+ * Prevents the specified vectors from being handed out by
+ * allocate_io_interrupt_vectors().  Use this when a hardware resource is
+ * hardwired to a specific vector range; for dynamically assignable vectors
+ * use allocate_io_interrupt_vectors() instead.
+ *
+ * @param count       Number of contiguous vectors to reserve.
+ * @param startVector First vector in the range.
+ * @param type        Interrupt type to associate with the reserved vectors.
+ * @retval B_OK    Range reserved successfully.
+ * @retval B_BUSY  The range overlaps an already-allocated vector (panics in
+ *                 debug builds and partially rolls back the reservation).
+ * @note Acquires @c sIOInterruptVectorAllocationLock internally.
+ */
 status_t
 reserve_io_interrupt_vectors(int32 count, int32 startVector, interrupt_type type)
 {
@@ -632,10 +829,21 @@ reserve_io_interrupt_vectors(int32 count, int32 startVector, interrupt_type type
 }
 
 
-/*!	Allocate \a count contiguous interrupt vectors. The vectors are allocated
-	as available so that they do not overlap with any other reserved vector.
-	The first vector to be used is returned in \a startVector on success.
-*/
+/**
+ * @brief Dynamically allocates a contiguous block of free interrupt vectors.
+ *
+ * Scans the allocation bitmap for the first run of @p count consecutive free
+ * vectors, marks them as allocated, and returns the base vector index via
+ * @p startVector.
+ *
+ * @param count       Number of contiguous vectors required.
+ * @param startVector Output parameter; set to the first allocated vector on
+ *                    success.
+ * @param type        Interrupt type to associate with the allocated vectors.
+ * @retval B_OK        Vectors allocated; @p startVector is valid.
+ * @retval B_NO_MEMORY No contiguous run of @p count free vectors is available.
+ * @note Acquires @c sIOInterruptVectorAllocationLock internally.
+ */
 status_t
 allocate_io_interrupt_vectors(int32 count, int32 *startVector,
 	interrupt_type type)
@@ -683,11 +891,19 @@ allocate_io_interrupt_vectors(int32 count, int32 *startVector,
 }
 
 
-/*!	Free/unreserve interrupt vectors previously allocated with the
-	{reserve|allocate}_io_interrupt_vectors() functions. The \a count and
-	\a startVector can be adjusted from the allocation calls to partially free
-	a vector range.
-*/
+/**
+ * @brief Frees a range of interrupt vectors previously obtained from the allocator.
+ *
+ * Clears the allocation bitmap for each vector in the range and NULLs out the
+ * CPU assignment pointer.  The @p count and @p startVector may be a sub-range
+ * of what was originally allocated to allow partial freeing.
+ *
+ * @param count       Number of vectors to free.
+ * @param startVector Index of the first vector to free.
+ * @note Panics if @p startVector + @p count exceeds @c NUM_IO_VECTORS, or if
+ *       any vector in the range was not previously allocated, or if any vector
+ *       is still assigned to a CPU at the time of the call.
+ */
 void
 free_io_interrupt_vectors(int32 count, int32 startVector)
 {
@@ -721,6 +937,19 @@ free_io_interrupt_vectors(int32 count, int32 startVector)
 }
 
 
+/**
+ * @brief Migrates an IRQ vector from its current CPU to a new one.
+ *
+ * Removes the IRQ from the old CPU's IRQ list, re-routes it at the hardware
+ * level via arch_int_assign_to_cpu(), and adds it to the new CPU's list.
+ * If @p newCPU is -1 a CPU is chosen automatically by assign_cpu().
+ *
+ * @param vector IRQ vector number to reassign.
+ * @param newCPU Target CPU ID, or -1 to select automatically.
+ * @note The vector must be of type @c INTERRUPT_TYPE_IRQ.
+ * @note Called by the scheduler's IRQ-balancing logic; must be called with
+ *       interrupts disabled.
+ */
 void
 assign_io_interrupt_to_cpu(int32 vector, int32 newCPU)
 {

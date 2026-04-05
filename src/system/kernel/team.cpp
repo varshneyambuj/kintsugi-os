@@ -1,15 +1,44 @@
 /*
- * Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
- * Copyright 2008-2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Copyright 2008-2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
-
-/*!	Team functions */
+/**
+ * @file team.cpp
+ * @brief Kernel team (process) lifecycle — creation, exec, and exit.
+ *
+ * A Team is the kernel abstraction for a POSIX process. This file implements
+ * team creation (load_image, fork), exec (team_exec), and exit (team_exit),
+ * as well as team info queries, wait-for-child (waitpid), session/process-group
+ * management, and resource limit handling. Teams own threads, ports, semaphores,
+ * and file descriptors; all are released on exit.
+ *
+ * @see thread.cpp, signal.cpp, port.cpp
+ */
 
 
 #include <team.h>
@@ -176,6 +205,11 @@ static const size_t kTeamUserDataInitialSize	= 4 * B_PAGE_SIZE;
 // #pragma mark - TeamListIterator
 
 
+/**
+ * @brief Constructs a TeamListIterator and registers it with the team hash table.
+ *
+ * @note Acquires the team hash write spinlock during registration.
+ */
 TeamListIterator::TeamListIterator()
 {
 	// queue the entry
@@ -184,6 +218,11 @@ TeamListIterator::TeamListIterator()
 }
 
 
+/**
+ * @brief Destroys the TeamListIterator and removes it from the team hash table.
+ *
+ * @note Acquires the team hash write spinlock during removal.
+ */
 TeamListIterator::~TeamListIterator()
 {
 	// remove the entry
@@ -192,6 +231,14 @@ TeamListIterator::~TeamListIterator()
 }
 
 
+/**
+ * @brief Returns the next team in the global team hash table, acquiring a reference.
+ *
+ * @return Pointer to the next Team with an acquired reference, or NULL if iteration
+ *         is complete.
+ *
+ * @note The caller is responsible for releasing the returned reference.
+ */
 Team*
 TeamListIterator::Next()
 {
@@ -402,12 +449,21 @@ private:
 //	#pragma mark - TeamNotificationService
 
 
+/**
+ * @brief Constructs the TeamNotificationService, registering it under the "teams" topic.
+ */
 TeamNotificationService::TeamNotificationService()
 	: DefaultNotificationService("teams")
 {
 }
 
 
+/**
+ * @brief Sends a team event notification to all registered listeners.
+ *
+ * @param eventCode  The event type (e.g. TEAM_ADDED, TEAM_REMOVED, TEAM_EXEC).
+ * @param team       The team the event is about.
+ */
 void
 TeamNotificationService::Notify(uint32 eventCode, Team* team)
 {
@@ -425,6 +481,16 @@ TeamNotificationService::Notify(uint32 eventCode, Team* team)
 //	#pragma mark - Team
 
 
+/**
+ * @brief Constructs a Team object and initialises all fields to their default state.
+ *
+ * @param id      The team ID to assign to this team.
+ * @param kernel  If \c true, this is the kernel team; affects lock naming and
+ *                signal queue limits.
+ *
+ * @note Does not insert the team into the global hash table or any process group.
+ *       Use Team::Create() for a fully initialised team.
+ */
 Team::Team(team_id id, bool kernel)
 {
 	// allocate an ID
@@ -510,6 +576,16 @@ Team::Team(team_id id, bool kernel)
 }
 
 
+/**
+ * @brief Destroys a Team object and releases all resources it still owns.
+ *
+ * Frees the I/O context, owned ports, semaphores, user timers, pending signals,
+ * dead-thread entries, dead-children entries, free user thread list, and the
+ * job control entry.
+ *
+ * @note The team must have been removed from all global structures (hash table,
+ *       parent child list, process group) before calling this destructor.
+ */
 Team::~Team()
 {
 	// get rid of all associated data
@@ -545,6 +621,19 @@ Team::~Team()
 }
 
 
+/**
+ * @brief Allocates and fully initialises a new Team object.
+ *
+ * Creates the Team, sets its name, initialises the architecture-specific team
+ * structure, creates any user-defined timers, and records the start time.
+ *
+ * @param id      The team ID for the new team (usually the main thread's ID).
+ * @param name    The initial name for the team, or NULL to leave it empty.
+ * @param kernel  \c true if this is the kernel team.
+ * @return Pointer to the newly allocated Team on success, or NULL on failure.
+ *
+ * @note The returned Team has a reference count of 1 that the caller owns.
+ */
 /*static*/ Team*
 Team::Create(team_id id, const char* name, bool kernel)
 {
@@ -582,6 +671,16 @@ Team::Create(team_id id, const char* name, bool kernel)
 	Returns a reference to the team.
 	Team and thread spinlock must not be held.
 */
+/**
+ * @brief Looks up and returns a Team by its ID, acquiring a reference.
+ *
+ * @param id  The team ID to look up.  Passing \c B_CURRENT_TEAM returns the
+ *            calling thread's team.
+ * @return Pointer to the Team with an acquired reference, or NULL if not found.
+ *
+ * @note The caller must release the reference when done.
+ * @note Must not be called with the team hash spinlock held.
+ */
 /*static*/ Team*
 Team::Get(team_id id)
 {
@@ -603,6 +702,19 @@ Team::Get(team_id id)
 	Returns a reference to the team.
 	Team and thread spinlock must not be held.
 */
+/**
+ * @brief Looks up a Team by ID, acquires a reference, and locks it.
+ *
+ * Returns NULL if the team does not exist or is already shutting down
+ * (\c TEAM_STATE_SHUTDOWN or later).
+ *
+ * @param id  The team ID to look up.
+ * @return Locked Team pointer with an acquired reference, or NULL.
+ *
+ * @note The caller must unlock and release the reference when done
+ *       (e.g. via UnlockAndReleaseReference()).
+ * @note Must not be called with the team hash spinlock held.
+ */
 /*static*/ Team*
 Team::GetAndLock(team_id id)
 {
@@ -635,6 +747,18 @@ Team::GetAndLock(team_id id)
 	\param dontLockParentIfKernel If \c true, the team's parent team is only
 		locked, if it is not the kernel team.
 */
+/**
+ * @brief Locks this team and its parent team in the correct lock order.
+ *
+ * Uses a retry loop to handle the race where the parent changes between
+ * reading and locking it.
+ *
+ * @param dontLockParentIfKernel  If \c true, skip locking the parent when the
+ *                                parent is the kernel team.
+ *
+ * @note The caller must hold a reference to this team for the duration of the
+ *       call.
+ */
 void
 Team::LockTeamAndParent(bool dontLockParentIfKernel)
 {
@@ -671,6 +795,11 @@ Team::LockTeamAndParent(bool dontLockParentIfKernel)
 
 /*!	Unlocks the team and its parent team (if any).
 */
+/**
+ * @brief Unlocks this team and its parent team (if any).
+ *
+ * @note Must be called only after a successful LockTeamAndParent().
+ */
 void
 Team::UnlockTeamAndParent()
 {
@@ -686,6 +815,13 @@ Team::UnlockTeamAndParent()
 	it won't be deleted.
 	If the team doesn't have a parent, only the team itself is locked.
 */
+/**
+ * @brief Locks this team, its parent, and its process group in the correct order.
+ *
+ * Combines LockTeamAndProcessGroup() with parent locking, retrying if needed.
+ *
+ * @note The caller must hold a reference to this team.
+ */
 void
 Team::LockTeamParentAndProcessGroup()
 {
@@ -705,6 +841,11 @@ Team::LockTeamParentAndProcessGroup()
 
 /*!	Unlocks the team, its parent team (if any), and the team's process group.
 */
+/**
+ * @brief Unlocks this team, its parent, and its process group.
+ *
+ * @note Must only be called after LockTeamParentAndProcessGroup().
+ */
 void
 Team::UnlockTeamParentAndProcessGroup()
 {
@@ -717,6 +858,14 @@ Team::UnlockTeamParentAndProcessGroup()
 }
 
 
+/**
+ * @brief Locks this team and its process group in the correct order.
+ *
+ * Uses a retry loop to handle the race where the process group changes
+ * between reading and locking it.
+ *
+ * @note The caller must hold a reference to this team.
+ */
 void
 Team::LockTeamAndProcessGroup()
 {
@@ -750,6 +899,11 @@ Team::LockTeamAndProcessGroup()
 }
 
 
+/**
+ * @brief Unlocks this team and its process group.
+ *
+ * @note Must only be called after LockTeamAndProcessGroup().
+ */
 void
 Team::UnlockTeamAndProcessGroup()
 {
@@ -758,6 +912,12 @@ Team::UnlockTeamAndProcessGroup()
 }
 
 
+/**
+ * @brief Sets the team's name, stripping any leading directory path.
+ *
+ * @param name  The new name string (may contain path separators; only the
+ *              basename is stored).
+ */
 void
 Team::SetName(const char* name)
 {
@@ -768,6 +928,12 @@ Team::SetName(const char* name)
 }
 
 
+/**
+ * @brief Sets the team's argument string.
+ *
+ * @param args  The argument string to store (truncated to the internal buffer
+ *              size if necessary).
+ */
 void
 Team::SetArgs(const char* args)
 {
@@ -775,6 +941,13 @@ Team::SetArgs(const char* args)
 }
 
 
+/**
+ * @brief Sets the team's argument string from a path and additional arguments.
+ *
+ * @param path           The program path (stored as the first token).
+ * @param otherArgs      Array of additional argument strings.
+ * @param otherArgCount  Number of entries in \a otherArgs.
+ */
 void
 Team::SetArgs(const char* path, const char* const* otherArgs, int otherArgCount)
 {
@@ -787,6 +960,14 @@ Team::SetArgs(const char* path, const char* const* otherArgs, int otherArgCount)
 }
 
 
+/**
+ * @brief Resets signal dispositions to their post-exec defaults.
+ *
+ * Keeps SIG_IGN and SIG_DFL dispositions as-is; resets any custom handlers
+ * to SIG_DFL and clears SA_ONSTACK and all other flags.
+ *
+ * @note Called during exec to comply with POSIX signal semantics.
+ */
 void
 Team::ResetSignalsOnExec()
 {
@@ -809,6 +990,11 @@ Team::ResetSignalsOnExec()
 }
 
 
+/**
+ * @brief Copies signal actions from a parent team into this team.
+ *
+ * @param parent  The parent team whose signal action table is copied.
+ */
 void
 Team::InheritSignalActions(Team* parent)
 {
@@ -826,6 +1012,17 @@ Team::InheritSignalActions(Team* parent)
 	\return \c B_OK, if the timer was added successfully, another error code
 		otherwise.
 */
+/**
+ * @brief Adds a user timer to this team, optionally assigning a user-defined ID.
+ *
+ * @param timer  The timer to add.  If its ID is negative it is treated as
+ *               user-defined and counted against the per-team limit.
+ * @retval B_OK     Timer was added successfully.
+ * @retval B_BAD_TEAM_ID  The team is already shutting down.
+ * @retval EAGAIN   The user-defined timer limit has been reached.
+ *
+ * @note The caller must hold the team's lock.
+ */
 status_t
 Team::AddUserTimer(UserTimer* timer)
 {
@@ -851,6 +1048,13 @@ Team::AddUserTimer(UserTimer* timer)
 	\param timer The timer to be removed.
 
 */
+/**
+ * @brief Removes a user timer from this team and updates the user-defined timer count.
+ *
+ * @param timer  The timer to remove.
+ *
+ * @note The caller must hold the team's lock.
+ */
 void
 Team::RemoveUserTimer(UserTimer* timer)
 {
@@ -869,6 +1073,16 @@ Team::RemoveUserTimer(UserTimer* timer)
 	\param userDefinedOnly If \c true, only the user-defined timers are deleted,
 		otherwise all timers are deleted.
 */
+/**
+ * @brief Deletes all (or only user-defined) user timers belonging to this team.
+ *
+ * Timers belonging to the team's threads are not affected.
+ *
+ * @param userDefinedOnly  If \c true, only user-defined timers are deleted;
+ *                         otherwise all timers are deleted.
+ *
+ * @note The caller must hold the team's lock.
+ */
 void
 Team::DeleteUserTimers(bool userDefinedOnly)
 {
@@ -880,6 +1094,12 @@ Team::DeleteUserTimers(bool userDefinedOnly)
 /*!	If not at the limit yet, increments the team's user-defined timer count.
 	\return \c true, if the limit wasn't reached yet, \c false otherwise.
 */
+/**
+ * @brief Atomically increments the user-defined timer count if under the limit.
+ *
+ * @return \c true if the counter was incremented (limit not yet reached),
+ *         \c false if the per-team limit would be exceeded.
+ */
 bool
 Team::CheckAddUserDefinedTimer()
 {
@@ -896,6 +1116,11 @@ Team::CheckAddUserDefinedTimer()
 /*!	Subtracts the given count for the team's user-defined timer count.
 	\param count The count to subtract.
 */
+/**
+ * @brief Decrements the team's user-defined timer count by the given amount.
+ *
+ * @param count  The number to subtract from the user-defined timer counter.
+ */
 void
 Team::UserDefinedTimersRemoved(int32 count)
 {
@@ -903,6 +1128,12 @@ Team::UserDefinedTimersRemoved(int32 count)
 }
 
 
+/**
+ * @brief Deactivates all CPU-time user timers currently active for this team.
+ *
+ * Iterates over both the team CPU-time and user-time timer lists and deactivates
+ * each timer.
+ */
 void
 Team::DeactivateCPUTimeUserTimers()
 {
@@ -925,6 +1156,21 @@ Team::DeactivateCPUTimeUserTimers()
 		already been stopped.
 	\return The team's current total CPU time.
 */
+/**
+ * @brief Returns the team's total CPU time (kernel + user + clock offset).
+ *
+ * Sums kernel and user time over all live threads, optionally ignoring the
+ * currently-running slice of the calling thread.
+ *
+ * @param ignoreCurrentRun  If \c true, do not include the unstopped slice of
+ *                          the current thread.  Use this in scheduler
+ *                          "unscheduled" callbacks.
+ * @param lockedThread      A thread whose time_lock is already held by the
+ *                          caller, or NULL.
+ * @return The team's total CPU time in microseconds.
+ *
+ * @note The caller must hold \c time_lock.
+ */
 bigtime_t
 Team::CPUTime(bool ignoreCurrentRun, Thread* lockedThread) const
 {
@@ -959,6 +1205,15 @@ Team::CPUTime(bool ignoreCurrentRun, Thread* lockedThread) const
 
 	\return The team's current user CPU time.
 */
+/**
+ * @brief Returns the team's cumulative user-space CPU time.
+ *
+ * Sums the user_time of all live threads plus accumulated dead-thread user time.
+ *
+ * @return The team's current user CPU time in microseconds.
+ *
+ * @note The caller must hold \c time_lock.
+ */
 bigtime_t
 Team::UserCPUTime() const
 {
@@ -982,6 +1237,11 @@ Team::UserCPUTime() const
 //	#pragma mark - ProcessGroup
 
 
+/**
+ * @brief Constructs a ProcessGroup with the given process group ID.
+ *
+ * @param id  The process group ID (pid_t) for this group.
+ */
 ProcessGroup::ProcessGroup(pid_t id)
 	:
 	id(id),
@@ -994,6 +1254,10 @@ ProcessGroup::ProcessGroup(pid_t id)
 }
 
 
+/**
+ * @brief Destroys a ProcessGroup, removing it from the orphaned-check list,
+ *        the global group hash table, and releasing its session reference.
+ */
 ProcessGroup::~ProcessGroup()
 {
 	TRACE(("ProcessGroup::~ProcessGroup(): id = %" B_PRId32 "\n", id));
@@ -1019,6 +1283,13 @@ ProcessGroup::~ProcessGroup()
 }
 
 
+/**
+ * @brief Looks up a ProcessGroup by its ID, acquiring a reference.
+ *
+ * @param id  The process group ID to look up.
+ * @return Pointer to the ProcessGroup with an acquired reference, or NULL if
+ *         no such group exists.
+ */
 /*static*/ ProcessGroup*
 ProcessGroup::Get(pid_t id)
 {
@@ -1033,6 +1304,15 @@ ProcessGroup::Get(pid_t id)
 /*!	Adds the group the given session and makes it publicly accessible.
 	The caller must not hold the process group hash lock.
 */
+/**
+ * @brief Publishes the process group into the given session and global hash table.
+ *
+ * Acquires the process group hash lock internally.
+ *
+ * @param session  The session this group belongs to.
+ *
+ * @note The caller must not hold the process group hash lock.
+ */
 void
 ProcessGroup::Publish(ProcessSession* session)
 {
@@ -1044,6 +1324,14 @@ ProcessGroup::Publish(ProcessSession* session)
 /*!	Adds the group to the given session and makes it publicly accessible.
 	The caller must hold the process group hash lock.
 */
+/**
+ * @brief Publishes the process group into the given session while holding the
+ *        process group hash lock.
+ *
+ * @param session  The session this group belongs to.
+ *
+ * @note The caller must hold the process group hash lock.
+ */
 void
 ProcessGroup::PublishLocked(ProcessSession* session)
 {
@@ -1060,6 +1348,16 @@ ProcessGroup::PublishLocked(ProcessSession* session)
 	The caller must hold the group's lock.
 	\return \c true, if the group is orphaned, \c false otherwise.
 */
+/**
+ * @brief Checks whether this process group is orphaned per POSIX definition.
+ *
+ * A group is orphaned when, for every member, its parent is either in the same
+ * group or is not in the group's session.
+ *
+ * @return \c true if orphaned, \c false otherwise.
+ *
+ * @note The caller must hold the group's lock.
+ */
 bool
 ProcessGroup::IsOrphaned() const
 {
@@ -1087,6 +1385,11 @@ ProcessGroup::IsOrphaned() const
 }
 
 
+/**
+ * @brief Schedules this process group for the orphaned-check pass.
+ *
+ * Adds the group to the global orphaned-check list if not already present.
+ */
 void
 ProcessGroup::ScheduleOrphanedCheck()
 {
@@ -1099,6 +1402,9 @@ ProcessGroup::ScheduleOrphanedCheck()
 }
 
 
+/**
+ * @brief Clears the in-orphaned-check-list flag for this process group.
+ */
 void
 ProcessGroup::UnsetOrphanedCheck()
 {
@@ -1109,6 +1415,11 @@ ProcessGroup::UnsetOrphanedCheck()
 //	#pragma mark - ProcessSession
 
 
+/**
+ * @brief Constructs a ProcessSession with the given session ID.
+ *
+ * @param id  The session ID (pid_t) for this session.
+ */
 ProcessSession::ProcessSession(pid_t id)
 	:
 	id(id),
@@ -1121,6 +1432,9 @@ ProcessSession::ProcessSession(pid_t id)
 }
 
 
+/**
+ * @brief Destroys a ProcessSession, releasing its lock.
+ */
 ProcessSession::~ProcessSession()
 {
 	mutex_destroy(&fLock);
@@ -1130,6 +1444,11 @@ ProcessSession::~ProcessSession()
 //	#pragma mark - KDL functions
 
 
+/**
+ * @brief KDL helper that prints detailed information about a single team.
+ *
+ * @param team  Pointer to the Team whose information shall be printed.
+ */
 static void
 _dump_team_info(Team* team)
 {
@@ -1163,6 +1482,16 @@ _dump_team_info(Team* team)
 }
 
 
+/**
+ * @brief KDL command handler that dumps information about a specific team.
+ *
+ * Accepts an optional argument that can be a team ID, a kernel address, or a
+ * team name.  With no argument the current team is shown.
+ *
+ * @param argc  Number of command-line arguments.
+ * @param argv  Command-line argument strings.
+ * @return 0 in all cases.
+ */
 static int
 dump_team_info(int argc, char** argv)
 {
@@ -1202,6 +1531,13 @@ dump_team_info(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command handler that lists all teams in the system.
+ *
+ * @param argc  Number of command-line arguments (unused).
+ * @param argv  Command-line argument strings (unused).
+ * @return 0 in all cases.
+ */
 static int
 dump_teams(int argc, char** argv)
 {
@@ -1226,6 +1562,17 @@ dump_teams(int argc, char** argv)
 	parent, only) as well as in user_process_info where the information is
 	available to anyone (allowing to display a tree of running processes)
 */
+/**
+ * @brief Returns the parent process ID of the specified process.
+ *
+ * Passing 0 returns the parent of the calling process.
+ *
+ * @param id  The process whose parent ID is queried, or 0 for the calling
+ *            process.
+ * @return The parent process ID on success, or -1 with \c errno set on error.
+ *
+ * @retval -1  \c errno set to EINVAL (invalid id) or ESRCH (no such process).
+ */
 static pid_t
 _getppid(pid_t id)
 {
@@ -1271,6 +1618,14 @@ _getppid(pid_t id)
 	\param parent The parent team.
 	\param team The team to be inserted into \a parent's child list.
 */
+/**
+ * @brief Inserts \a team into \a parent's child list and sets the parent pointer.
+ *
+ * @param parent  The parent team that will own \a team as a child.
+ * @param team    The team to insert.
+ *
+ * @note The caller must hold the locks of both \a parent and \a team.
+ */
 static void
 insert_team_into_parent(Team* parent, Team* team)
 {
@@ -1288,6 +1643,14 @@ insert_team_into_parent(Team* parent, Team* team)
 	\param parent The parent team.
 	\param team The team to be removed from \a parent's child list.
 */
+/**
+ * @brief Removes \a team from \a parent's child list and clears the parent pointer.
+ *
+ * @param parent  The parent team.
+ * @param team    The team to remove from \a parent's child list.
+ *
+ * @note The caller must hold the locks of both \a parent and \a team.
+ */
 static void
 remove_team_from_parent(Team* parent, Team* team)
 {
@@ -1299,6 +1662,14 @@ remove_team_from_parent(Team* parent, Team* team)
 /*!	Returns whether the given team is a session leader.
 	The caller must hold the team's lock or its process group's lock.
 */
+/**
+ * @brief Returns whether the given team is a session leader.
+ *
+ * @param team  The team to check.
+ * @return \c true if the team is a session leader, \c false otherwise.
+ *
+ * @note The caller must hold the team's lock or its process group's lock.
+ */
 static bool
 is_session_leader(Team* team)
 {
@@ -1309,6 +1680,14 @@ is_session_leader(Team* team)
 /*!	Returns whether the given team is a process group leader.
 	The caller must hold the team's lock or its process group's lock.
 */
+/**
+ * @brief Returns whether the given team is a process group leader.
+ *
+ * @param team  The team to check.
+ * @return \c true if the team is a process group leader, \c false otherwise.
+ *
+ * @note The caller must hold the team's lock or its process group's lock.
+ */
 static bool
 is_process_group_leader(Team* team)
 {
@@ -1320,6 +1699,17 @@ is_process_group_leader(Team* team)
 	The caller must hold the process group's lock, the team's lock, and the
 	team's parent's lock.
 */
+/**
+ * @brief Inserts \a team into \a group and acquires a group reference.
+ *
+ * Updates the team's group, group_id, and session_id fields.
+ *
+ * @param group  The process group to insert the team into.
+ * @param team   The team to insert.
+ *
+ * @note The caller must hold the process group's lock, the team's lock, and the
+ *       team's parent's lock.
+ */
 static void
 insert_team_into_group(ProcessGroup* group, Team* team)
 {
@@ -1339,6 +1729,16 @@ insert_team_into_group(ProcessGroup* group, Team* team)
 
 	\param team The team that'll be removed from its process group.
 */
+/**
+ * @brief Removes \a team from its current process group and releases the group reference.
+ *
+ * Does nothing if the team has no process group.
+ *
+ * @param team  The team to remove from its process group.
+ *
+ * @note The caller must hold the process group's lock, the team's lock, and the
+ *       team's parent's lock.  Interrupts must be enabled.
+ */
 static void
 remove_team_from_group(Team* team)
 {
@@ -1357,6 +1757,18 @@ remove_team_from_group(Team* team)
 }
 
 
+/**
+ * @brief Creates and maps the per-team user-data area for TLS and user_thread structs.
+ *
+ * Reserves a virtual address range and creates a committed area within it for
+ * the team's user-space data.
+ *
+ * @param team          The team to create the user data area for.
+ * @param exactAddress  If not NULL, the area is placed at this exact address;
+ *                      otherwise a randomised base is used.
+ * @retval B_OK  Area was created and \c team->user_data initialised.
+ * @retval other Error code from vm_reserve_address_range() or create_area_etc().
+ */
 static status_t
 create_team_user_data(Team* team, void* exactAddress = NULL)
 {
@@ -1403,6 +1815,14 @@ create_team_user_data(Team* team, void* exactAddress = NULL)
 }
 
 
+/**
+ * @brief Deletes the per-team user-data area and releases its reserved address range.
+ *
+ * Resets all user_data-related fields in \a team to their default values and
+ * frees the free_user_threads list.
+ *
+ * @param team  The team whose user data area shall be deleted.
+ */
 static void
 delete_team_user_data(Team* team)
 {
@@ -1423,6 +1843,23 @@ delete_team_user_data(Team* team)
 }
 
 
+/**
+ * @brief Copies and validates a flat argument/environment array from user space.
+ *
+ * Allocates a kernel buffer, copies the user-space flat args array into it, and
+ * relocates all internal pointers to kernel addresses.
+ *
+ * @param userFlatArgs   User-space pointer to the flat args array.
+ * @param flatArgsSize   Total byte size of the flat args array.
+ * @param argCount       Number of argument strings.
+ * @param envCount       Number of environment strings.
+ * @param _flatArgs      Output: pointer to the newly allocated kernel buffer.
+ * @retval B_OK          Buffer allocated and validated; \a _flatArgs set.
+ * @retval B_BAD_VALUE   Invalid counts or malformed array structure.
+ * @retval B_TOO_MANY_ARGS  \a flatArgsSize exceeds MAX_PROCESS_ARGS_SIZE.
+ * @retval B_BAD_ADDRESS User pointer is invalid or copy failed.
+ * @retval B_NO_MEMORY   Kernel allocation failed.
+ */
 static status_t
 copy_user_process_args(const char* const* userFlatArgs, size_t flatArgsSize,
 	int32 argCount, int32 envCount, char**& _flatArgs)
@@ -1482,6 +1919,11 @@ copy_user_process_args(const char* const* userFlatArgs, size_t flatArgsSize,
 }
 
 
+/**
+ * @brief Frees a heap-allocated team_arg structure and its owned buffers.
+ *
+ * @param teamArg  Pointer to the team_arg to free, or NULL (no-op).
+ */
 static void
 free_team_arg(struct team_arg* teamArg)
 {
@@ -1493,6 +1935,22 @@ free_team_arg(struct team_arg* teamArg)
 }
 
 
+/**
+ * @brief Allocates and populates a team_arg structure for a new team.
+ *
+ * @param _teamArg      Output: pointer to the newly allocated team_arg.
+ * @param path          Path of the executable to launch.
+ * @param flatArgs      Flat argument/environment array (ownership transferred on
+ *                      success).
+ * @param flatArgsSize  Byte size of \a flatArgs.
+ * @param argCount      Number of argument strings.
+ * @param envCount      Number of environment strings.
+ * @param umask         The file creation mask to use for the new team.
+ * @param port          Error port for the runtime loader, or -1.
+ * @param token         Error token for the runtime loader.
+ * @retval B_OK       Structure allocated and \a _teamArg set.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 static status_t
 create_team_arg(struct team_arg** _teamArg, const char* path, char** flatArgs,
 	size_t flatArgsSize, int32 argCount, int32 envCount, mode_t umask,
@@ -1532,6 +1990,20 @@ create_team_arg(struct team_arg** _teamArg, const char* path, char** flatArgs,
 }
 
 
+/**
+ * @brief Internal thread entry for a newly created team's main thread.
+ *
+ * Writes program arguments to the user stack, loads the runtime loader ELF
+ * binary, and transitions to user space.  On failure the caller is responsible
+ * for team clean-up via the normal team deletion path.
+ *
+ * @param args  Pointer to a heap-allocated team_arg structure (ownership taken).
+ * @retval B_OK        Never returned on the success path (enters user space).
+ * @retval B_BAD_ADDRESS  User-space copy failed.
+ * @retval other       ELF load or commpage registration error.
+ *
+ * @note Called as the entry function of a newly spawned kernel thread.
+ */
 static status_t
 team_create_thread_start_internal(void* args)
 {
@@ -1676,6 +2148,13 @@ team_create_thread_start_internal(void* args)
 }
 
 
+/**
+ * @brief Outer thread entry for a new team's main thread; calls the internal
+ *        loader and ensures team exit info is set on error.
+ *
+ * @param args  Pointer to the heap-allocated team_arg (ownership taken).
+ * @return Always B_OK (calls thread_exit() which never returns).
+ */
 static status_t
 team_create_thread_start(void* args)
 {
@@ -1687,6 +2166,32 @@ team_create_thread_start(void* args)
 }
 
 
+/**
+ * @brief Creates a new team, starts its main thread, and optionally waits until
+ *        the image is fully loaded.
+ *
+ * This is the core implementation behind load_image() and _user_load_image().
+ * It allocates the Team and Thread objects, sets up the address space and I/O
+ * context, inserts the team into the global tables, and spawns the main thread.
+ *
+ * @param _flatArgs      In/out: flat argument array.  Set to NULL on success
+ *                       (ownership transferred to the team_arg structure).
+ * @param flatArgsSize   Byte size of \a _flatArgs.
+ * @param argCount       Number of argument strings.
+ * @param envCount       Number of environment strings.
+ * @param priority       Scheduling priority for the main thread.
+ * @param parentID       Team ID of the parent team.
+ * @param flags          Load flags (e.g. \c B_WAIT_TILL_LOADED).
+ * @param errorPort      Port for the runtime-loader error protocol, or -1.
+ * @param errorToken     Token for the runtime-loader error protocol.
+ * @return The thread ID of the new team's main thread on success, or a negative
+ *         error code.
+ *
+ * @retval B_BAD_VALUE     \a _flatArgs is NULL or \a argCount is 0.
+ * @retval B_NO_MEMORY     Object or address-space allocation failed.
+ * @retval B_BAD_TEAM_ID   \a parentID does not refer to a valid team.
+ * @retval B_NO_MORE_TEAMS The system team limit has been reached.
+ */
 static thread_id
 load_image_internal(char**& _flatArgs, size_t flatArgsSize, int32 argCount,
 	int32 envCount, int32 priority, team_id parentID, uint32 flags,
@@ -1915,6 +2420,18 @@ err1:
 
 /*!	Kill all threads but the main thread
 */
+/**
+ * @brief Sends SIGKILLTHR to all threads in the team except the main thread
+ *        and waits until they have all exited.
+ *
+ * @param teamLocker         A held TeamLocker for the current team; unlocked
+ *                           and re-locked internally while waiting.
+ * @param threadNotBeKilled  Thread ID to spare (e.g. the debug nub thread),
+ *                           or -1 to kill all non-main threads.
+ *
+ * @note The caller must hold the team's lock via \a teamLocker on entry; the
+ *       lock will still be held on return.
+ */
 static void
 team_kill_other_threads_locked(TeamLocker &teamLocker, thread_id threadNotBeKilled = -1)
 {
@@ -1957,6 +2474,26 @@ team_kill_other_threads_locked(TeamLocker &teamLocker, thread_id threadNotBeKill
 	This function may only be called in a userland team (caused by one of the
 	exec*() syscalls).
 */
+/**
+ * @brief Replaces the current team's image with a new executable (execve implementation).
+ *
+ * Kills all non-main threads, tears down the address space and file
+ * descriptors, then loads the new executable.  On success this function does
+ * not return.
+ *
+ * @param path          Absolute path to the new executable.
+ * @param _flatArgs     In/out: flat argument/environment array; set to NULL on
+ *                      success (ownership transferred).
+ * @param flatArgsSize  Byte size of the flat args array.
+ * @param argCount      Number of argument strings.
+ * @param envCount      Number of environment strings.
+ * @param umask         File creation mask for the new image.
+ * @retval B_NOT_ALLOWED  Called on the kernel team, or called from a non-main thread.
+ * @retval other          Error from setup or loading; team may be in an
+ *                        inconsistent state (caller should exit the thread).
+ *
+ * @note May only be called from a userland team's main thread.
+ */
 static status_t
 exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 	int32 argCount, int32 envCount, mode_t umask)
@@ -2098,6 +2635,22 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 }
 
 
+/**
+ * @brief Forks the calling team, creating a new team with a copy of the parent's
+ *        address space (copy-on-write).
+ *
+ * Implements the fork() semantics: creates a new Team and Thread object,
+ * duplicates the address space, I/O context, image list, and signal actions,
+ * then resumes the child thread.
+ *
+ * @return The child's thread ID in the parent, or a negative error code.
+ *
+ * @retval B_NOT_ALLOWED  Called from the kernel team.
+ * @retval B_NO_MEMORY    Object or address-space allocation failed.
+ * @retval B_NO_MORE_TEAMS  The system team limit has been reached.
+ *
+ * @note Must be called from a userland team.
+ */
 static thread_id
 fork_team(void)
 {
@@ -2323,6 +2876,15 @@ err1:
 	process group with the specified ID \a groupID.
 	The caller must hold \a parent's lock.
 */
+/**
+ * @brief Returns whether \a parent has any direct children in process group \a groupID.
+ *
+ * @param parent   The parent team to search.
+ * @param groupID  The process group ID to look for.
+ * @return \c true if at least one child is in the given process group.
+ *
+ * @note The caller must hold \a parent's lock.
+ */
 static bool
 has_children_in_group(Team* parent, pid_t groupID)
 {
@@ -2350,6 +2912,16 @@ has_children_in_group(Team* parent, pid_t groupID)
 	\param id The match criterion.
 	\return The first matching entry or \c NULL, if none matches.
 */
+/**
+ * @brief Returns the first job control entry from \a children matching \a id.
+ *
+ * @param children  The job control entry list to search.
+ * @param id        Match criterion: >0 matches by team ID, -1 matches any,
+ *                  <-1 matches by process group ID (-id).
+ * @return The first matching entry, or NULL if none matches.
+ *
+ * @note The caller must hold the lock of the team that owns \a children.
+ */
 static job_control_entry*
 get_job_control_entry(team_job_control_children& children, pid_t id)
 {
@@ -2393,6 +2965,19 @@ get_job_control_entry(team_job_control_children& children, pid_t id)
 		\c WCONTINUED.
 	\return The first matching entry or \c NULL, if none matches.
 */
+/**
+ * @brief Returns the first matching job control entry from a team's child state lists.
+ *
+ * Searches the dead, continued, and stopped child lists in order, according to
+ * the WEXITED/WCONTINUED/WUNTRACED/WSTOPPED bits in \a flags.
+ *
+ * @param team   The team whose child lists are searched.
+ * @param id     Match criterion (see overload above).
+ * @param flags  Bitmask of WEXITED, WCONTINUED, WUNTRACED, WSTOPPED.
+ * @return The first matching entry, or NULL if none matches.
+ *
+ * @note The caller must hold \a team's lock.
+ */
 static job_control_entry*
 get_job_control_entry(Team* team, pid_t id, uint32 flags)
 {
@@ -2411,6 +2996,9 @@ get_job_control_entry(Team* team, pid_t id, uint32 flags)
 }
 
 
+/**
+ * @brief Default-constructs a job_control_entry.
+ */
 job_control_entry::job_control_entry()
 	:
 	has_group_ref(false)
@@ -2418,6 +3006,9 @@ job_control_entry::job_control_entry()
 }
 
 
+/**
+ * @brief Destroys a job_control_entry, releasing its process group reference if held.
+ */
 job_control_entry::~job_control_entry()
 {
 	if (has_group_ref) {
@@ -2442,6 +3033,13 @@ job_control_entry::~job_control_entry()
 
 	The caller must hold the owning team's lock and the scheduler lock.
 */
+/**
+ * @brief Transitions the entry to the DEAD state, copying exit information from the team.
+ *
+ * Acquires a process group reference and clears the team pointer.
+ *
+ * @note The caller must hold the owning team's lock and the scheduler lock.
+ */
 void
 job_control_entry::InitDeadState()
 {
@@ -2467,6 +3065,14 @@ job_control_entry::InitDeadState()
 }
 
 
+/**
+ * @brief Copy-assigns a job_control_entry, transferring state without the group reference.
+ *
+ * @param other  The entry to copy from.
+ * @return Reference to \c *this.
+ *
+ * @note \c has_group_ref is always set to \c false in the copy.
+ */
 job_control_entry&
 job_control_entry::operator=(const job_control_entry& other)
 {
@@ -2488,6 +3094,26 @@ job_control_entry::operator=(const job_control_entry& other)
 
 /*! This is the kernel backend for waitid().
 */
+/**
+ * @brief Kernel backend for waitid() — waits for a child process state change.
+ *
+ * Blocks until a child matching \a child and \a flags changes state (exits,
+ * stops, or continues), then fills \a _info and \a _usage_info.
+ *
+ * @param child       The child specifier: >0 specific team, -1 any child,
+ *                    <-1 any child in process group (-child), 0 any child in
+ *                    the calling team's process group.
+ * @param flags       Combination of WEXITED, WNOHANG, WUNTRACED, WSTOPPED,
+ *                    WCONTINUED, WNOWAIT.
+ * @param _info       Output siginfo_t describing the child's state change.
+ * @param _usage_info Output CPU usage information for the child.
+ * @return The thread (team) ID of the found child on success, or a negative
+ *         error code.
+ *
+ * @retval B_BAD_VALUE   No valid wait flag was specified.
+ * @retval ECHILD        No children matching the criterion exist.
+ * @retval B_INTERRUPTED Wait was interrupted by a signal.
+ */
 static thread_id
 wait_for_child(pid_t child, uint32 flags, siginfo_t& _info,
 	team_usage_info& _usage_info)
@@ -2679,6 +3305,17 @@ wait_for_child(pid_t child, uint32 flags, siginfo_t& _info,
 /*! Fills the team_info structure with information from the specified team.
 	Interrupts must be enabled. The team must not be locked.
 */
+/**
+ * @brief Fills a team_info structure with information about the given team.
+ *
+ * @param team  The team to describe.
+ * @param info  Output buffer to fill.
+ * @param size  Size of the \a info buffer (must be <= sizeof(team_info)).
+ * @retval B_OK        Structure filled successfully.
+ * @retval B_BAD_VALUE \a size is larger than sizeof(team_info).
+ *
+ * @note Interrupts must be enabled.  The team must not be locked by the caller.
+ */
 static status_t
 fill_team_info(Team* team, team_info* info, size_t size)
 {
@@ -2728,6 +3365,14 @@ fill_team_info(Team* team, team_info* info, size_t size)
 /*!	Returns whether the process group contains stopped processes.
 	The caller must hold the process group's lock.
 */
+/**
+ * @brief Returns whether any team in \a group has a stopped job control state.
+ *
+ * @param group  The process group to check.
+ * @return \c true if at least one member team is stopped, \c false otherwise.
+ *
+ * @note The caller must hold the process group's lock.
+ */
 static bool
 process_group_has_stopped_processes(ProcessGroup* group)
 {
@@ -2755,6 +3400,12 @@ process_group_has_stopped_processes(ProcessGroup* group)
 	those that are orphaned and have stopped processes.
 	The caller must not hold any team or process group locks.
 */
+/**
+ * @brief Processes all pending orphaned process group checks and sends
+ *        SIGHUP + SIGCONT to those that are orphaned and have stopped members.
+ *
+ * @note The caller must not hold any team or process group locks.
+ */
 static void
 orphaned_process_group_check()
 {
@@ -2789,6 +3440,18 @@ orphaned_process_group_check()
 }
 
 
+/**
+ * @brief Common implementation for get_team_usage_info() and its user wrapper.
+ *
+ * @param id    The team ID to query.
+ * @param who   B_TEAM_USAGE_SELF or B_TEAM_USAGE_CHILDREN.
+ * @param info  Output team_usage_info structure.
+ * @param flags If B_CHECK_PERMISSION is set, verifies the caller's UID.
+ * @retval B_OK           Information filled successfully.
+ * @retval B_BAD_VALUE    Invalid \a who argument.
+ * @retval B_BAD_TEAM_ID  \a id does not refer to a valid team.
+ * @retval B_NOT_ALLOWED  Permission check failed.
+ */
 static status_t
 common_get_team_usage_info(team_id id, int32 who, team_usage_info* info,
 	uint32 flags)
@@ -2860,6 +3523,16 @@ common_get_team_usage_info(team_id id, int32 who, team_usage_info* info,
 //	#pragma mark - Private kernel API
 
 
+/**
+ * @brief Initialises the team subsystem and creates the kernel team.
+ *
+ * Sets up the team and process group hash tables, creates the initial session
+ * and process group (both with ID 1), creates the kernel team, registers KDL
+ * commands, and initialises the team notification service.
+ *
+ * @param args  Kernel boot arguments (currently unused).
+ * @retval B_OK Always; panics on fatal errors.
+ */
 status_t
 team_init(kernel_args* args)
 {
@@ -2939,6 +3612,11 @@ team_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Returns the configured maximum number of teams.
+ *
+ * @return The current value of \c sMaxTeams.
+ */
 int32
 team_max_teams(void)
 {
@@ -2946,6 +3624,11 @@ team_max_teams(void)
 }
 
 
+/**
+ * @brief Returns the number of teams currently alive in the system.
+ *
+ * @return The current value of \c sUsedTeams (read under the hash spinlock).
+ */
 int32
 team_used_teams(void)
 {
@@ -2964,6 +3647,17 @@ team_used_teams(void)
 	\return The death entry of the matching team, or \c NULL, if no death entry
 		for the team was found.
 */
+/**
+ * @brief Retrieves the death entry of a dead child team from the parent's list.
+ *
+ * @param team          The parent team whose dead children list is searched.
+ * @param child         The child team ID to look for (must be > 0).
+ * @param _deleteEntry  Output: set to \c true if the caller must delete the
+ *                      returned entry, \c false otherwise.
+ * @return Pointer to the matching job_control_entry, or NULL if not found.
+ *
+ * @note The caller must hold \a team's lock.
+ */
 job_control_entry*
 team_get_death_entry(Team* team, thread_id child, bool* _deleteEntry)
 {
@@ -2988,6 +3682,12 @@ team_get_death_entry(Team* team, thread_id child, bool* _deleteEntry)
 
 
 /*! Quick check to see if we have a valid team ID. */
+/**
+ * @brief Returns whether the given team ID refers to a currently live team.
+ *
+ * @param id  The team ID to validate.
+ * @return \c true if the team exists, \c false otherwise.
+ */
 bool
 team_is_valid(team_id id)
 {
@@ -2999,6 +3699,14 @@ team_is_valid(team_id id)
 }
 
 
+/**
+ * @brief Looks up a Team in the global hash table without acquiring a reference.
+ *
+ * @param id  The team ID to look up.
+ * @return Pointer to the Team, or NULL if not found.
+ *
+ * @note The caller must hold the team hash read spinlock.
+ */
 Team*
 team_get_team_struct_locked(team_id id)
 {
@@ -3006,6 +3714,13 @@ team_get_team_struct_locked(team_id id)
 }
 
 
+/**
+ * @brief Sets the controlling terminal of the calling team's session.
+ *
+ * @param tty  Opaque pointer to the TTY to set as the controlling terminal.
+ *
+ * @note Acquires the team lock and the session lock internally.
+ */
 void
 team_set_controlling_tty(void* tty)
 {
@@ -3023,6 +3738,13 @@ team_set_controlling_tty(void* tty)
 }
 
 
+/**
+ * @brief Returns the controlling terminal of the calling team's session.
+ *
+ * @return Opaque pointer to the controlling TTY, or NULL if none is set.
+ *
+ * @note Acquires the team lock and the session lock internally.
+ */
 void*
 team_get_controlling_tty()
 {
@@ -3039,6 +3761,21 @@ team_get_controlling_tty()
 }
 
 
+/**
+ * @brief Sets the foreground process group of the specified controlling terminal.
+ *
+ * Checks that \a tty is the session's controlling terminal and that \a processGroupID
+ * belongs to the same session.  If the calling team is a background group and has not
+ * ignored/blocked SIGTTOU, the group receives SIGTTOU before returning.
+ *
+ * @param tty             The terminal whose foreground group is to be changed.
+ * @param processGroupID  The new foreground process group ID.
+ * @retval B_OK           Foreground group updated.
+ * @retval ENOTTY         \a tty is not the session's controlling terminal.
+ * @retval B_BAD_VALUE    \a processGroupID does not exist.
+ * @retval EPERM          Process group belongs to a different session.
+ * @retval B_INTERRUPTED  SIGTTOU was sent; caller should restart the syscall.
+ */
 status_t
 team_set_foreground_process_group(void* tty, pid_t processGroupID)
 {
@@ -3092,6 +3829,14 @@ team_set_foreground_process_group(void* tty, pid_t processGroupID)
 }
 
 
+/**
+ * @brief Returns the effective UID of the specified team.
+ *
+ * @param id  The team ID to query.
+ * @return The team's effective UID, or (uid_t)-1 if the team was not found.
+ *
+ * @note Acquires the team hash read spinlock internally.
+ */
 uid_t
 team_geteuid(team_id id)
 {
@@ -3113,6 +3858,20 @@ team_geteuid(team_id id)
 	- \a team's parent team's lock (might be the kernel team), and
 	- \a team's lock.
 */
+/**
+ * @brief Removes a dying team from all global structures and re-parents its children.
+ *
+ * Removes the team from the hash table, its process group, and its parent's
+ * child list.  All children are moved to the kernel team.  Accumulates CPU
+ * time statistics into the parent.
+ *
+ * @param team           The team being removed.
+ * @param _signalGroup   Output: the foreground process group ID to signal with
+ *                       SIGHUP+SIGCONT if the team was a session leader, or -1.
+ *
+ * @note The caller must hold the team's process group lock, the kernel team
+ *       lock, the parent team lock, and the team lock.
+ */
 void
 team_remove_team(Team* team, pid_t& _signalGroup)
 {
@@ -3201,6 +3960,17 @@ team_remove_team(Team* team, pid_t& _signalGroup)
 	\return The port of the debugger for the team, -1 if none. To be passed to
 		team_delete_team().
 */
+/**
+ * @brief Shuts down a team: kills non-main threads, deactivates timers, and
+ *        waits for the debugger to finish.
+ *
+ * @param team  The team to shut down (must be called by its main thread).
+ * @return The debugger port for the team, or -1 if none.  Pass this to
+ *         team_delete_team().
+ *
+ * @note Must be called with no locks held.  Must only be called by the team's
+ *       main thread.
+ */
 port_id
 team_shutdown_team(Team* team)
 {
@@ -3268,6 +4038,19 @@ team_shutdown_team(Team* team)
 	resources associated with it.
 	The caller shouldn't hold any locks.
 */
+/**
+ * @brief Finalises team deletion: notifies waiters, frees resources, and
+ *        notifies the debugger.
+ *
+ * Called after team_shutdown_team() once all threads have exited.  Runs the
+ * orphaned-process-group check, notifies team watchers, frees the address
+ * space, and releases the team reference.
+ *
+ * @param team          The team to delete (all threads must have exited).
+ * @param debuggerPort  The debugger port returned by team_shutdown_team(), or -1.
+ *
+ * @note The caller must hold no locks.  The team's thread count must be 0.
+ */
 void
 team_delete_team(Team* team, port_id debuggerPort)
 {
@@ -3349,6 +4132,11 @@ team_delete_team(Team* team, port_id debuggerPort)
 }
 
 
+/**
+ * @brief Returns a pointer to the kernel team.
+ *
+ * @return Pointer to \c sKernelTeam.
+ */
 Team*
 team_get_kernel_team(void)
 {
@@ -3356,6 +4144,11 @@ team_get_kernel_team(void)
 }
 
 
+/**
+ * @brief Returns the team ID of the kernel team.
+ *
+ * @return The kernel team's ID, or 0 if the kernel team has not been created yet.
+ */
 team_id
 team_get_kernel_team_id(void)
 {
@@ -3366,6 +4159,11 @@ team_get_kernel_team_id(void)
 }
 
 
+/**
+ * @brief Returns the team ID of the calling thread's team.
+ *
+ * @return The current team's ID.
+ */
 team_id
 team_get_current_team_id(void)
 {
@@ -3373,6 +4171,16 @@ team_get_current_team_id(void)
 }
 
 
+/**
+ * @brief Acquires a reference to and returns the address space of the specified team.
+ *
+ * @param id              The team ID.
+ * @param _addressSpace   Output: the team's VMAddressSpace with an extra reference.
+ * @retval B_OK        Address space returned in \a _addressSpace.
+ * @retval B_BAD_VALUE Team ID is invalid.
+ *
+ * @note The caller must release the returned reference via Put().
+ */
 status_t
 team_get_address_space(team_id id, VMAddressSpace** _addressSpace)
 {
@@ -3407,6 +4215,21 @@ team_get_address_space(team_id id, VMAddressSpace** _addressSpace)
 		- \c signal: The number of the signal causing the state change.
 		- \c signaling_user: The real UID of the user sending the signal.
 */
+/**
+ * @brief Sets a team's job control state and moves its entry between child lists.
+ *
+ * Removes the entry from its current state list and adds it to the list
+ * corresponding to \a newState, then wakes any threads waiting on the parent's
+ * dead_children condition variable.
+ *
+ * @param team      The team whose job control state shall be set.
+ * @param newState  The new job control state.
+ * @param signal    The signal that caused the state change, or NULL.  If NULL,
+ *                  the caller must fill in \c entry->signal and
+ *                  \c entry->signaling_user before releasing the parent lock.
+ *
+ * @note The caller must hold the parent team's lock.
+ */
 void
 team_set_job_control_state(Team* team, job_control_state newState,
 	Signal* signal)
@@ -3476,6 +4299,14 @@ team_set_job_control_state(Team* team, job_control_state newState,
 
 	\param team The team whose exit info shall be initialized.
 */
+/**
+ * @brief Ensures the team's exit information is initialised, defaulting to
+ *        a generic SIGKILL death if not already set.
+ *
+ * @param team  The team whose exit information shall be initialised.
+ *
+ * @note The caller must not hold the team's lock.  Interrupts must be enabled.
+ */
 void
 team_init_exit_info_on_error(Team* team)
 {
@@ -3494,6 +4325,17 @@ team_init_exit_info_on_error(Team* team)
 /*! Adds a hook to the team that is called as soon as this team goes away.
 	This call might get public in the future.
 */
+/**
+ * @brief Registers a watcher callback that is invoked when the specified team exits.
+ *
+ * @param teamID  The team to watch.
+ * @param hook    The callback function to invoke on team exit.
+ * @param data    Opaque user data passed to \a hook.
+ * @retval B_OK           Watcher registered successfully.
+ * @retval B_BAD_VALUE    \a hook is NULL or \a teamID is invalid.
+ * @retval B_NO_MEMORY    Allocation failed.
+ * @retval B_BAD_TEAM_ID  The team does not exist or is already shutting down.
+ */
 status_t
 start_watching_team(team_id teamID, void (*hook)(team_id, void*), void* data)
 {
@@ -3524,6 +4366,17 @@ start_watching_team(team_id teamID, void (*hook)(team_id, void*), void* data)
 }
 
 
+/**
+ * @brief Unregisters a previously registered team-exit watcher.
+ *
+ * @param teamID  The team being watched.
+ * @param hook    The callback function originally registered.
+ * @param data    The opaque user data originally registered.
+ * @retval B_OK            Watcher removed successfully.
+ * @retval B_BAD_VALUE     \a hook is NULL or \a teamID is negative.
+ * @retval B_BAD_TEAM_ID   The team does not exist.
+ * @retval B_ENTRY_NOT_FOUND  No matching watcher was found.
+ */
 status_t
 stop_watching_team(team_id teamID, void (*hook)(team_id, void*), void* data)
 {
@@ -3560,6 +4413,18 @@ stop_watching_team(team_id teamID, void (*hook)(team_id, void*), void* data)
 	The team lock must be held, unless the function is called for the team's
 	main thread. Interrupts must be enabled.
 */
+/**
+ * @brief Allocates a user_thread slot from the team's user data area.
+ *
+ * Takes a slot from the free list if available; otherwise allocates from the
+ * bump pointer, growing the user data area by one page if necessary.
+ *
+ * @param team  The team to allocate from.
+ * @return Pointer to the allocated user_thread, or NULL on failure.
+ *
+ * @note The team lock must be held (except when allocating the main thread's
+ *       slot).  Interrupts must be enabled.
+ */
 struct user_thread*
 team_allocate_user_thread(Team* team)
 {
@@ -3605,6 +4470,14 @@ team_allocate_user_thread(Team* team)
 	\param team The team the user thread was allocated from.
 	\param userThread The user thread to free.
 */
+/**
+ * @brief Returns a user_thread slot to the team's free list.
+ *
+ * @param team        The team the slot was allocated from.
+ * @param userThread  The user_thread slot to free, or NULL (no-op).
+ *
+ * @note The team's lock must not be held.  Interrupts must be enabled.
+ */
 void
 team_free_user_thread(Team* team, struct user_thread* userThread)
 {
@@ -3631,6 +4504,9 @@ team_free_user_thread(Team* team, struct user_thread* userThread)
 //	#pragma mark - Associated data interface
 
 
+/**
+ * @brief Default-constructs an AssociatedData object with no owner.
+ */
 AssociatedData::AssociatedData()
 	:
 	fOwner(NULL)
@@ -3638,29 +4514,53 @@ AssociatedData::AssociatedData()
 }
 
 
+/**
+ * @brief Destroys an AssociatedData object.
+ */
 AssociatedData::~AssociatedData()
 {
 }
 
 
+/**
+ * @brief Notification hook called when the owning AssociatedDataOwner is deleted.
+ *
+ * Default implementation is a no-op.  Subclasses may override to perform
+ * cleanup.
+ *
+ * @param owner  The owner that is being deleted.
+ */
 void
 AssociatedData::OwnerDeleted(AssociatedDataOwner* owner)
 {
 }
 
 
+/**
+ * @brief Constructs an AssociatedDataOwner and initialises its lock.
+ */
 AssociatedDataOwner::AssociatedDataOwner()
 {
 	mutex_init(&fLock, "associated data owner");
 }
 
 
+/**
+ * @brief Destroys an AssociatedDataOwner and releases its lock.
+ */
 AssociatedDataOwner::~AssociatedDataOwner()
 {
 	mutex_destroy(&fLock);
 }
 
 
+/**
+ * @brief Associates \a data with this owner, acquiring a reference and setting
+ *        the owner pointer.
+ *
+ * @param data  The data object to add.  Must not already have an owner.
+ * @return \c true on success, \c false if \a data already has an owner.
+ */
 bool
 AssociatedDataOwner::AddData(AssociatedData* data)
 {
@@ -3677,6 +4577,13 @@ AssociatedDataOwner::AddData(AssociatedData* data)
 }
 
 
+/**
+ * @brief Dissociates \a data from this owner, clearing its owner and releasing
+ *        the reference.
+ *
+ * @param data  The data object to remove.  Must currently be owned by this owner.
+ * @return \c true on success, \c false if \a data is not owned by this owner.
+ */
 bool
 AssociatedDataOwner::RemoveData(AssociatedData* data)
 {
@@ -3696,6 +4603,13 @@ AssociatedDataOwner::RemoveData(AssociatedData* data)
 }
 
 
+/**
+ * @brief Notifies all associated data objects that this owner is being deleted,
+ *        then releases all references.
+ *
+ * Moves all entries to a local list (so no lock is held while invoking the
+ * hooks), calls OwnerDeleted() on each, and releases our reference.
+ */
 void
 AssociatedDataOwner::PrepareForDeletion()
 {
@@ -3728,6 +4642,13 @@ AssociatedDataOwner::PrepareForDeletion()
 	\return \c true on success, \c false otherwise. Fails only when the supplied
 		data object is already associated with another owner.
 */
+/**
+ * @brief Associates \a data with the current team.
+ *
+ * @param data  The data object to associate.
+ * @return \c true on success, \c false if \a data is already owned by another
+ *         owner.
+ */
 bool
 team_associate_data(AssociatedData* data)
 {
@@ -3742,6 +4663,13 @@ team_associate_data(AssociatedData* data)
 	\return \c true on success, \c false otherwise. Fails only when the data
 		object is not associated with the current team.
 */
+/**
+ * @brief Dissociates \a data from the current team.
+ *
+ * @param data  The data object to dissociate.
+ * @return \c true on success, \c false if \a data is not owned by the current
+ *         team.
+ */
 bool
 team_dissociate_data(AssociatedData* data)
 {
@@ -3752,6 +4680,17 @@ team_dissociate_data(AssociatedData* data)
 //	#pragma mark - Public kernel API
 
 
+/**
+ * @brief Loads and starts a new image as a child of the current team.
+ *
+ * Convenience wrapper around load_image_etc() with \c B_NORMAL_PRIORITY,
+ * \c B_CURRENT_TEAM, and \c B_WAIT_TILL_LOADED.
+ *
+ * @param argCount  Number of argument strings in \a args.
+ * @param args      NULL-terminated array of argument strings.
+ * @param env       NULL-terminated array of environment strings.
+ * @return The thread ID of the new team's main thread, or a negative error code.
+ */
 thread_id
 load_image(int32 argCount, const char** args, const char** env)
 {
@@ -3760,6 +4699,21 @@ load_image(int32 argCount, const char** args, const char** env)
 }
 
 
+/**
+ * @brief Loads and starts a new image with full control over priority, parent,
+ *        and flags.
+ *
+ * Flattens \a args and \a env into a single contiguous buffer and calls
+ * load_image_internal().
+ *
+ * @param argCount  Number of argument strings.
+ * @param args      NULL-terminated array of argument strings.
+ * @param env       NULL-terminated array of environment strings, or NULL.
+ * @param priority  Scheduling priority for the new team's main thread.
+ * @param parentID  Team ID of the parent team.
+ * @param flags     Flags such as \c B_WAIT_TILL_LOADED.
+ * @return The thread ID of the new team's main thread, or a negative error code.
+ */
 thread_id
 load_image_etc(int32 argCount, const char* const* args,
 	const char* const* env, int32 priority, team_id parentID, uint32 flags)
@@ -3820,6 +4774,14 @@ load_image_etc(int32 argCount, const char* const* args,
 }
 
 
+/**
+ * @brief Waits for the specified team to exit and optionally retrieves its exit code.
+ *
+ * @param id           The team ID to wait for.
+ * @param _returnCode  Output: the team's exit status, or NULL if not needed.
+ * @retval B_OK           Team exited; exit status stored in \a _returnCode.
+ * @retval B_BAD_TEAM_ID  No team with the given ID exists.
+ */
 status_t
 wait_for_team(team_id id, status_t* _returnCode)
 {
@@ -3839,6 +4801,14 @@ wait_for_team(team_id id, status_t* _returnCode)
 }
 
 
+/**
+ * @brief Sends SIGKILL to the main thread of the specified team, causing it to exit.
+ *
+ * @param id  The team ID to kill.
+ * @retval B_OK           Signal sent.
+ * @retval B_BAD_TEAM_ID  Team does not exist.
+ * @retval B_NOT_ALLOWED  Attempted to kill the kernel team.
+ */
 status_t
 kill_team(team_id id)
 {
@@ -3861,6 +4831,16 @@ kill_team(team_id id)
 }
 
 
+/**
+ * @brief Fills a team_info structure for the team with the given ID.
+ *
+ * @param id    The team ID to query, or B_CURRENT_TEAM.
+ * @param info  Output team_info buffer.
+ * @param size  Size of the buffer (must be <= sizeof(team_info)).
+ * @retval B_OK           Structure filled.
+ * @retval B_BAD_TEAM_ID  Team does not exist.
+ * @retval B_BAD_VALUE    \a size is too large.
+ */
 status_t
 _get_team_info(team_id id, team_info* info, size_t size)
 {
@@ -3875,6 +4855,15 @@ _get_team_info(team_id id, team_info* info, size_t size)
 }
 
 
+/**
+ * @brief Returns team_info for the next team in enumeration order.
+ *
+ * @param cookie  In/out: iteration cookie (team ID slot); initialise to 0.
+ * @param info    Output team_info buffer.
+ * @param size    Size of the buffer.
+ * @retval B_OK           Entry filled; \a cookie advanced.
+ * @retval B_BAD_TEAM_ID  No more teams.
+ */
 status_t
 _get_next_team_info(int32* cookie, team_info* info, size_t size)
 {
@@ -3905,6 +4894,17 @@ _get_next_team_info(int32* cookie, team_info* info, size_t size)
 }
 
 
+/**
+ * @brief Returns CPU usage information for the specified team.
+ *
+ * @param id    The team ID to query.
+ * @param who   B_TEAM_USAGE_SELF or B_TEAM_USAGE_CHILDREN.
+ * @param info  Output team_usage_info structure.
+ * @param size  Must equal sizeof(team_usage_info).
+ * @retval B_OK        Information returned.
+ * @retval B_BAD_VALUE \a size is wrong.
+ * @retval other       Errors from common_get_team_usage_info().
+ */
 status_t
 _get_team_usage_info(team_id id, int32 who, team_usage_info* info, size_t size)
 {
@@ -3915,6 +4915,11 @@ _get_team_usage_info(team_id id, int32 who, team_usage_info* info, size_t size)
 }
 
 
+/**
+ * @brief Returns the calling process's PID (POSIX getpid()).
+ *
+ * @return The current team's ID.
+ */
 pid_t
 getpid(void)
 {
@@ -3922,6 +4927,11 @@ getpid(void)
 }
 
 
+/**
+ * @brief Returns the parent process ID of the calling process (POSIX getppid()).
+ *
+ * @return The parent team's ID, or -1 with \c errno set on error.
+ */
 pid_t
 getppid()
 {
@@ -3929,6 +4939,14 @@ getppid()
 }
 
 
+/**
+ * @brief Returns the process group ID of the specified process (POSIX getpgid()).
+ *
+ * @param id  The process to query, or 0 for the calling process.
+ * @return The process group ID, or -1 with \c errno set on error.
+ *
+ * @retval -1  \c errno set to EINVAL (negative id) or ESRCH (process not found).
+ */
 pid_t
 getpgid(pid_t id)
 {
@@ -3960,6 +4978,14 @@ getpgid(pid_t id)
 }
 
 
+/**
+ * @brief Returns the session ID of the specified process (POSIX getsid()).
+ *
+ * @param id  The process to query, or 0 for the calling process.
+ * @return The session ID, or -1 with \c errno set on error.
+ *
+ * @retval -1  \c errno set to EINVAL (negative id) or ESRCH (process not found).
+ */
 pid_t
 getsid(pid_t id)
 {
@@ -3994,6 +5020,22 @@ getsid(pid_t id)
 //	#pragma mark - User syscalls
 
 
+/**
+ * @brief Syscall: replaces the current team image with a new executable (execve).
+ *
+ * Copies arguments from user space and calls exec_team().  This syscall normally
+ * does not return; it only returns on error.
+ *
+ * @param userPath       User-space path to the executable.
+ * @param userFlatArgs   User-space flat argument/environment array.
+ * @param flatArgsSize   Byte size of \a userFlatArgs.
+ * @param argCount       Number of argument strings.
+ * @param envCount       Number of environment strings.
+ * @param umask          File creation mask for the new image.
+ * @return Error code on failure (normally does not return on success).
+ *
+ * @retval B_BAD_ADDRESS  User pointer validation failed.
+ */
 status_t
 _user_exec(const char* userPath, const char* const* userFlatArgs,
 	size_t flatArgsSize, int32 argCount, int32 envCount, mode_t umask)
@@ -4022,6 +5064,12 @@ _user_exec(const char* userPath, const char* const* userFlatArgs,
 }
 
 
+/**
+ * @brief Syscall: forks the calling team (fork()).
+ *
+ * @return The child's thread ID in the parent, or 0 in the child, or a negative
+ *         error code.
+ */
 thread_id
 _user_fork(void)
 {
@@ -4029,6 +5077,17 @@ _user_fork(void)
 }
 
 
+/**
+ * @brief Syscall: waits for a child process state change (waitid/waitpid).
+ *
+ * @param child      The child specifier (see wait_for_child()).
+ * @param flags      Wait flags (WEXITED, WNOHANG, etc.).
+ * @param userInfo   User-space output buffer for siginfo_t, or NULL.
+ * @param usageInfo  User-space output buffer for team_usage_info, or NULL.
+ * @return The child team ID on success, or a negative error/syscall-restart code.
+ *
+ * @retval B_BAD_ADDRESS  User pointer validation failed.
+ */
 pid_t
 _user_wait_for_child(thread_id child, uint32 flags, siginfo_t* userInfo,
 	team_usage_info* usageInfo)
@@ -4057,6 +5116,13 @@ _user_wait_for_child(thread_id child, uint32 flags, siginfo_t* userInfo,
 }
 
 
+/**
+ * @brief Syscall: returns session, process group, or parent ID for the given process.
+ *
+ * @param process  The target process ID.
+ * @param which    SESSION_ID, GROUP_ID, or PARENT_ID.
+ * @return The requested ID, or a negative error code.
+ */
 pid_t
 _user_process_info(pid_t process, int32 which)
 {
@@ -4079,6 +5145,22 @@ _user_process_info(pid_t process, int32 which)
 }
 
 
+/**
+ * @brief Syscall: sets the process group of a process (setpgid()).
+ *
+ * Creates a new process group if \a groupID == \a processID and the group does
+ * not yet exist.  Otherwise moves the process into the existing group.
+ *
+ * @param processID  The target process (0 = calling process).
+ * @param groupID    The target group ID (0 = use processID).
+ * @return The new process group ID on success, or a negative error code.
+ *
+ * @retval B_BAD_VALUE   Negative \a groupID.
+ * @retval B_NOT_ALLOWED Process is a session leader, or exec-done child.
+ * @retval ESRCH         Process not found or not a child of the caller.
+ * @retval EACCES        Target child has already called exec.
+ * @retval B_NO_MEMORY   Group allocation failed.
+ */
 pid_t
 _user_setpgid(pid_t processID, pid_t groupID)
 {
@@ -4240,6 +5322,18 @@ _user_setpgid(pid_t processID, pid_t groupID)
 }
 
 
+/**
+ * @brief Syscall: creates a new session for the calling process (setsid()).
+ *
+ * The calling process must not already be a process group leader.  A new
+ * process group and session, both with the process's own ID, are created.
+ *
+ * @return The new session ID (== new process group ID) on success, or a
+ *         negative error code.
+ *
+ * @retval B_NOT_ALLOWED  The calling process is already a process group leader.
+ * @retval B_NO_MEMORY    Allocation of the new group or session failed.
+ */
 pid_t
 _user_setsid(void)
 {
@@ -4281,6 +5375,15 @@ _user_setsid(void)
 }
 
 
+/**
+ * @brief Syscall: waits for the specified team to exit.
+ *
+ * @param id                 The team ID to wait for.
+ * @param _userReturnCode    User-space pointer to receive the exit status, or NULL.
+ * @retval B_OK           Team exited; status stored.
+ * @retval B_BAD_ADDRESS  \a _userReturnCode is not a valid user address.
+ * @retval other          Syscall-restart code or error from wait_for_team().
+ */
 status_t
 _user_wait_for_team(team_id id, status_t* _userReturnCode)
 {
@@ -4302,6 +5405,19 @@ _user_wait_for_team(team_id id, status_t* _userReturnCode)
 }
 
 
+/**
+ * @brief Syscall: loads a new image as a child team (load_image from user space).
+ *
+ * @param userFlatArgs   User-space flat argument/environment array.
+ * @param flatArgsSize   Byte size of the array.
+ * @param argCount       Number of argument strings (must be >= 1).
+ * @param envCount       Number of environment strings.
+ * @param priority       Scheduling priority for the main thread.
+ * @param flags          Load flags (e.g. B_WAIT_TILL_LOADED).
+ * @param errorPort      Runtime-loader error port.
+ * @param errorToken     Runtime-loader error token.
+ * @return Thread ID of the new team's main thread, or a negative error code.
+ */
 thread_id
 _user_load_image(const char* const* userFlatArgs, size_t flatArgsSize,
 	int32 argCount, int32 envCount, int32 priority, uint32 flags,
@@ -4330,6 +5446,16 @@ _user_load_image(const char* const* userFlatArgs, size_t flatArgsSize,
 }
 
 
+/**
+ * @brief Syscall: exits the current team with the given return value (_exit()).
+ *
+ * Sets the team's exit status, stops the process under a debugger if requested,
+ * and sends SIGKILL to the calling thread to drive the team's exit.
+ *
+ * @param returnValue  The process exit code.
+ *
+ * @note Does not return.
+ */
 void
 _user_exit_team(status_t returnValue)
 {
@@ -4371,6 +5497,12 @@ _user_exit_team(status_t returnValue)
 }
 
 
+/**
+ * @brief Syscall: kills the specified team by sending SIGKILL to its main thread.
+ *
+ * @param team  The team ID to kill.
+ * @return Result of kill_team().
+ */
 status_t
 _user_kill_team(team_id team)
 {
@@ -4378,6 +5510,17 @@ _user_kill_team(team_id team)
 }
 
 
+/**
+ * @brief Syscall: fills a user-space team_info structure for the given team.
+ *
+ * @param id        Team ID to query.
+ * @param userInfo  User-space output buffer.
+ * @param size      Size of the buffer.
+ * @retval B_OK           Structure copied to user space.
+ * @retval B_BAD_VALUE    \a size is too large.
+ * @retval B_BAD_ADDRESS  \a userInfo is not a valid user address or copy failed.
+ * @retval B_BAD_TEAM_ID  Team does not exist.
+ */
 status_t
 _user_get_team_info(team_id id, team_info* userInfo, size_t size)
 {
@@ -4400,6 +5543,17 @@ _user_get_team_info(team_id id, team_info* userInfo, size_t size)
 }
 
 
+/**
+ * @brief Syscall: iterates over teams and copies team_info to user space.
+ *
+ * @param userCookie  User-space iteration cookie (in/out).
+ * @param userInfo    User-space team_info output buffer.
+ * @param size        Size of the buffer.
+ * @retval B_OK           Entry returned; cookie advanced.
+ * @retval B_BAD_VALUE    \a size is too large.
+ * @retval B_BAD_ADDRESS  User pointer validation failed.
+ * @retval B_BAD_TEAM_ID  No more teams.
+ */
 status_t
 _user_get_next_team_info(int32* userCookie, team_info* userInfo, size_t size)
 {
@@ -4427,6 +5581,11 @@ _user_get_next_team_info(int32* userCookie, team_info* userInfo, size_t size)
 }
 
 
+/**
+ * @brief Syscall: returns the current team's ID.
+ *
+ * @return The calling team's ID.
+ */
 team_id
 _user_get_current_team(void)
 {
@@ -4434,6 +5593,18 @@ _user_get_current_team(void)
 }
 
 
+/**
+ * @brief Syscall: retrieves CPU usage information for a team, with permission check.
+ *
+ * @param team      The team ID to query.
+ * @param who       B_TEAM_USAGE_SELF or B_TEAM_USAGE_CHILDREN.
+ * @param userInfo  User-space output buffer.
+ * @param size      Must equal sizeof(team_usage_info).
+ * @retval B_OK           Information copied to user space.
+ * @retval B_BAD_VALUE    Wrong \a size.
+ * @retval B_BAD_ADDRESS  \a userInfo is not a valid user address.
+ * @retval B_NOT_ALLOWED  Permission check failed.
+ */
 status_t
 _user_get_team_usage_info(team_id team, int32 who, team_usage_info* userInfo,
 	size_t size)
@@ -4454,6 +5625,25 @@ _user_get_team_usage_info(team_id team, int32 who, team_usage_info* userInfo,
 }
 
 
+/**
+ * @brief Syscall: retrieves extended team information as a KMessage.
+ *
+ * Supports the B_TEAM_INFO_BASIC flag to return basic team identity fields and
+ * current working directory.  The caller must provide a suitably sized buffer;
+ * the required size is always written to \a _sizeNeeded.
+ *
+ * @param teamID       The team to query.
+ * @param flags        Requested information flags (e.g. B_TEAM_INFO_BASIC).
+ * @param buffer       User-space output buffer, or NULL for a size query.
+ * @param size         Size of \a buffer.
+ * @param _sizeNeeded  User-space output: bytes required for the full message.
+ * @retval B_OK              Data written to \a buffer.
+ * @retval B_BAD_ADDRESS     User pointer validation failed.
+ * @retval B_BAD_TEAM_ID     Team does not exist.
+ * @retval B_NOT_ALLOWED     Permission check failed.
+ * @retval B_BUFFER_OVERFLOW \a size is too small; \a _sizeNeeded has been set.
+ * @retval B_NO_MEMORY       KMessage construction failed.
+ */
 status_t
 _user_get_extended_team_info(team_id teamID, uint32 flags, void* buffer,
 	size_t size, size_t* _sizeNeeded)
