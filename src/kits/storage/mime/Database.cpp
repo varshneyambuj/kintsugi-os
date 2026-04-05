@@ -1,13 +1,41 @@
 /*
- * Copyright 2002-2014, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Axel Dörfler, axeld@pinc-software.de
- *		Rene Gollent, rene@gollent.com.
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2014, Haiku.
+ *   Authors: Tyler Dauwalder, Axel Dörfler, Rene Gollent
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file Database.cpp
+ * @brief Master controller for the MIME type database.
+ *
+ * Database is the central class that coordinates all read and write access to
+ * the MIME database. It delegates storage I/O to DatabaseLocation, type-list
+ * management to InstalledTypes, supporting-application tracking to
+ * SupportingApps, and content-sniffing rules to SnifferRules. Change
+ * notifications are broadcast to registered BMessenger subscribers via the
+ * pluggable NotificationListener interface.
+ *
+ * @see DatabaseLocation
+ */
 
 #include <mime/Database.h>
 
@@ -45,6 +73,9 @@ namespace Storage {
 namespace Mime {
 
 
+/**
+ * @brief Destroys the NotificationListener base object.
+ */
 Database::NotificationListener::~NotificationListener()
 {
 }
@@ -61,9 +92,16 @@ Database::NotificationListener::~NotificationListener()
 	      that this sort of checking has been done beforehand.
 */
 
-// constructor
-/*!	\brief Creates and initializes a Mime::Database object.
-*/
+/**
+ * @brief Creates and initialises a Mime::Database object.
+ *
+ * Ensures the writable MIME database directory exists and initialises all
+ * internal subsystems (InstalledTypes, SupportingApps, SnifferRules).
+ *
+ * @param databaseLocation    Pointer to the DatabaseLocation that resolves paths.
+ * @param mimeSniffer         Optional pointer to a MimeSniffer add-on manager.
+ * @param notificationListener Optional pointer to a notification delivery sink.
+ */
 Database::Database(DatabaseLocation* databaseLocation, MimeSniffer* mimeSniffer,
 	NotificationListener* notificationListener)
 	:
@@ -82,36 +120,33 @@ Database::Database(DatabaseLocation* databaseLocation, MimeSniffer* mimeSniffer,
 		S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
 }
 
-// destructor
-/*!	\brief Frees all resources associated with this object.
-*/
+/**
+ * @brief Frees all resources associated with this object.
+ */
 Database::~Database()
 {
 }
 
-// InitCheck
-/*! \brief Returns the initialization status of the object.
-	\return
-	- B_OK: success
-	- "error code": failure
-*/
+/**
+ * @brief Returns the initialisation status of the object.
+ *
+ * @return B_OK on success, or an error code if initialisation failed.
+ */
 status_t
 Database::InitCheck() const
 {
 	return fStatus;
 }
 
-// Install
-/*!	\brief Installs the given type in the database
-	\note The R5 version of this call returned an unreliable result if the
-	      MIME type was already installed. Ours simply returns B_OK.
-	\param type Pointer to a NULL-terminated string containing the MIME type of interest
-	\param decsription Pointer to a NULL-terminated string containing the new long description
-	\return
-	- B_OK: success
-	- B_FILE_EXISTS: the type is already installed
-	- "error code": failure
-*/
+/**
+ * @brief Installs the given MIME type in the database.
+ *
+ * If the type is already installed, B_FILE_EXISTS is returned. On success,
+ * a B_MIME_TYPE_CREATED notification is sent (unless deferred).
+ *
+ * @param type Pointer to a NULL-terminated MIME type string.
+ * @return B_OK on success, B_FILE_EXISTS if already installed, or an error code.
+ */
 status_t
 Database::Install(const char *type)
 {
@@ -136,13 +171,15 @@ Database::Install(const char *type)
 	return err;
 }
 
-// Delete
-/*!	\brief Removes the given type from the database
-	\param type Pointer to a NULL-terminated string containing the MIME type of interest
-	\return
-	- B_OK: success
-	- "error code": failure
-*/
+/**
+ * @brief Removes the given MIME type (and any subtypes) from the database.
+ *
+ * Recursively removes subtypes if the type is a supertype directory. Sends
+ * a B_MIME_TYPE_DELETED notification on success.
+ *
+ * @param type Pointer to a NULL-terminated MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::Delete(const char *type)
 {
@@ -192,6 +229,21 @@ Database::Delete(const char *type)
 }
 
 
+/**
+ * @brief Internal helper that writes a string attribute and sends a change notification.
+ *
+ * Reads the current value first; if the value is unchanged the write is skipped.
+ * Sends B_MIME_TYPE_CREATED if the type node had to be created, otherwise sends
+ * the supplied @a what change notification.
+ *
+ * @param type          The MIME type string.
+ * @param what          Monitor notification code to send on modification.
+ * @param attribute     Attribute name to write.
+ * @param attributeType Attribute type code.
+ * @param maxLength     Maximum allowed string length (including NUL).
+ * @param value         The string value to write.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SetStringValue(const char *type, int32 what, const char* attribute,
 	type_code attributeType, size_t maxLength, const char *value)
@@ -223,12 +275,13 @@ Database::_SetStringValue(const char *type, int32 what, const char* attribute,
 }
 
 
-// SetAppHint
-/*!	\brief Sets the application hint for the given MIME type
-	\param type Pointer to a NULL-terminated string containing the MIME type of interest
-	\param decsription Pointer to an entry_ref containing the location of an application
-	       that should be used when launching an application with this signature.
-*/
+/**
+ * @brief Sets the application hint for the given MIME type.
+ *
+ * @param type Pointer to a NULL-terminated MIME type string.
+ * @param ref  Pointer to an entry_ref identifying the hint application.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetAppHint(const char *type, const entry_ref *ref)
 {
@@ -246,21 +299,17 @@ Database::SetAppHint(const char *type, const entry_ref *ref)
 		kAppHintType, B_PATH_NAME_LENGTH, path.Path());
 }
 
-// SetAttrInfo
-/*! \brief Stores a BMessage describing the format of attributes typically associated with
-	files of the given MIME type
-
-	See BMimeType::SetAttrInfo() for description of the expected message format.
-
-	The \c BMessage::what value is ignored.
-
-	\param info Pointer to a pre-allocated and properly formatted BMessage containing
-	            information about the file attributes typically associated with the
-	            MIME type.
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-*/
+/**
+ * @brief Stores a BMessage describing the format of attributes typically
+ *        associated with files of the given MIME type.
+ *
+ * See BMimeType::SetAttrInfo() for the expected message format. The
+ * BMessage::what value is ignored.
+ *
+ * @param type The MIME type string.
+ * @param info Pointer to a properly formatted BMessage with attribute info.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetAttrInfo(const char *type, const BMessage *info)
 {
@@ -283,11 +332,13 @@ Database::SetAttrInfo(const char *type, const BMessage *info)
 }
 
 
-// SetShortDescription
-/*!	\brief Sets the short description for the given MIME type
-	\param type Pointer to a NULL-terminated string containing the MIME type of interest
-	\param decsription Pointer to a NULL-terminated string containing the new short description
-*/
+/**
+ * @brief Sets the short description for the given MIME type.
+ *
+ * @param type        The MIME type string.
+ * @param description NULL-terminated string containing the new short description.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetShortDescription(const char *type, const char *description)
 {
@@ -297,11 +348,13 @@ Database::SetShortDescription(const char *type, const char *description)
 		kShortDescriptionType, B_MIME_TYPE_LENGTH, description);
 }
 
-// SetLongDescription
-/*!	\brief Sets the long description for the given MIME type
-	\param type Pointer to a NULL-terminated string containing the MIME type of interest
-	\param decsription Pointer to a NULL-terminated string containing the new long description
-*/
+/**
+ * @brief Sets the long description for the given MIME type.
+ *
+ * @param type        The MIME type string.
+ * @param description NULL-terminated string containing the new long description.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetLongDescription(const char *type, const char *description)
 {
@@ -316,19 +369,15 @@ Database::SetLongDescription(const char *type, const char *description)
 }
 
 
-/*!
-	\brief Sets the list of filename extensions associated with the MIME type
-
-	The list of extensions is given in a pre-allocated BMessage pointed to by
-	the \c extensions parameter. Please see BMimeType::SetFileExtensions()
-	for a description of the expected message format.
-
-	\param extensions Pointer to a pre-allocated, properly formatted BMessage containing
-	                  the new list of file extensions to associate with this MIME type.
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-*/
+/**
+ * @brief Sets the list of filename extensions associated with the MIME type.
+ *
+ * The @a extensions message format is described by BMimeType::SetFileExtensions().
+ *
+ * @param type       The MIME type string.
+ * @param extensions Pointer to a properly formatted BMessage with extensions.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetFileExtensions(const char *type, const BMessage *extensions)
 {
@@ -354,9 +403,14 @@ Database::SetFileExtensions(const char *type, const BMessage *extensions)
 }
 
 
-/*!
-	\brief Sets a bitmap icon for the given mime type
-*/
+/**
+ * @brief Sets the bitmap icon (from a BBitmap) for the given MIME type.
+ *
+ * @param type  The MIME type string.
+ * @param icon  Pointer to a BBitmap (NULL to clear the icon).
+ * @param which B_LARGE_ICON or B_MINI_ICON.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetIcon(const char* type, const BBitmap* icon, icon_size which)
 {
@@ -366,9 +420,15 @@ Database::SetIcon(const char* type, const BBitmap* icon, icon_size which)
 }
 
 
-/*!
-	\brief Sets a bitmap icon for the given mime type
-*/
+/**
+ * @brief Sets a raw bitmap icon for the given MIME type.
+ *
+ * @param type     The MIME type string.
+ * @param data     Pointer to the bitmap data.
+ * @param dataSize Size of the bitmap data in bytes.
+ * @param which    B_LARGE_ICON (32x32) or B_MINI_ICON (16x16).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetIcon(const char *type, const void *data, size_t dataSize,
 	icon_size which)
@@ -377,9 +437,14 @@ Database::SetIcon(const char *type, const void *data, size_t dataSize,
 }
 
 
-/*!
-	\brief Sets the vector icon for the given mime type
-*/
+/**
+ * @brief Sets the vector icon for the given MIME type.
+ *
+ * @param type     The MIME type string.
+ * @param data     Pointer to the vector icon data.
+ * @param dataSize Size of the icon data in bytes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetIcon(const char *type, const void *data, size_t dataSize)
 {
@@ -387,6 +452,15 @@ Database::SetIcon(const char *type, const void *data, size_t dataSize)
 }
 
 
+/**
+ * @brief Sets the per-file-type bitmap icon for an application type (BBitmap variant).
+ *
+ * @param type     The application MIME type string.
+ * @param fileType The file MIME type for which the custom icon is set.
+ * @param icon     Pointer to a BBitmap (NULL to clear).
+ * @param which    B_LARGE_ICON or B_MINI_ICON.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetIconForType(const char* type, const char* fileType,
 	const BBitmap* icon, icon_size which)
@@ -399,28 +473,21 @@ Database::SetIconForType(const char* type, const char* fileType,
 }
 
 
-// SetIconForType
-/*! \brief Sets the large or mini icon used by an application of this type for
-	files of the given type.
-
-	The type of the \c BMimeType object is not required to actually be a subtype of
-	\c "application/"; that is the intended use however, and application-specific
-	icons are not expected to be present for non-application types.
-
-	The bitmap data pointed to by \c data must be of the proper size (\c 32x32
-	for \c B_LARGE_ICON, \c 16x16 for \c B_MINI_ICON) and the proper color
-	space (B_CMAP8).
-
-	\param type The MIME type
-	\param fileType The MIME type whose custom icon you wish to set.
-	\param data Pointer to an array of bitmap data of proper dimensions and color depth
-	\param dataSize The length of the array pointed to by \c data
-	\param size The size icon you're expecting (\c B_LARGE_ICON or \c B_MINI_ICON)
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-
-*/
+/**
+ * @brief Sets the large or mini bitmap icon an application uses for files of
+ *        the given type.
+ *
+ * The bitmap data must be of the correct size (32x32 for B_LARGE_ICON,
+ * 16x16 for B_MINI_ICON) in B_CMAP8 colour space.
+ *
+ * @param type     The application MIME type string.
+ * @param fileType The file MIME type whose custom icon is set. Pass NULL to
+ *                 set the application's own icon.
+ * @param data     Pointer to the bitmap data.
+ * @param dataSize Size of the bitmap data in bytes.
+ * @param which    B_LARGE_ICON or B_MINI_ICON.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetIconForType(const char *type, const char *fileType,
 	const void *data, size_t dataSize, icon_size which)
@@ -485,23 +552,16 @@ Database::SetIconForType(const char *type, const char *fileType,
 	return err;
 }
 
-// SetIconForType
-/*! \brief Sets the vector icon used by an application of this type for
-	files of the given type.
-
-	The type of the \c BMimeType object is not required to actually be a subtype of
-	\c "application/"; that is the intended use however, and application-specific
-	icons are not expected to be present for non-application types.
-
-	\param type The MIME type
-	\param fileType The MIME type whose custom icon you wish to set.
-	\param data Pointer to an array of vector data
-	\param dataSize The length of the array pointed to by \c data
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-
-*/
+/**
+ * @brief Sets the vector icon an application uses for files of the given type.
+ *
+ * @param type     The application MIME type string.
+ * @param fileType The file MIME type whose custom vector icon is set. Pass NULL
+ *                 to set the application's own vector icon.
+ * @param data     Pointer to the vector icon data.
+ * @param dataSize Size of the icon data in bytes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetIconForType(const char *type, const char *fileType,
 	const void *data, size_t dataSize)
@@ -548,15 +608,16 @@ Database::SetIconForType(const char *type, const char *fileType,
 	return err;
 }
 
-// SetPreferredApp
-/*!	\brief Sets the signature of the preferred application for the given app verb
-
-	Currently, the only supported app verb is \c B_OPEN
-	\param type Pointer to a NULL-terminated string containing the MIME type of interest
-	\param signature Pointer to a NULL-terminated string containing the MIME signature
-	                 of the new preferred application
-	\param verb \c app_verb action for which the new preferred application is applicable
-*/
+/**
+ * @brief Sets the preferred application signature for the given app verb.
+ *
+ * Currently only B_OPEN is supported as an app_verb.
+ *
+ * @param type      The MIME type string.
+ * @param signature NULL-terminated MIME signature of the preferred application.
+ * @param verb      The app verb (currently only B_OPEN is used).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetPreferredApp(const char *type, const char *signature, app_verb verb)
 {
@@ -568,9 +629,16 @@ Database::SetPreferredApp(const char *type, const char *signature, app_verb verb
 		kPreferredAppType, B_MIME_TYPE_LENGTH, signature);
 }
 
-// SetSnifferRule
-/*! \brief Sets the mime sniffer rule for the given mime type
-*/
+/**
+ * @brief Sets the sniffer rule for the given MIME type.
+ *
+ * The rule is stored persistently in the database and also loaded into the
+ * in-memory SnifferRules table.
+ *
+ * @param type The MIME type string.
+ * @param rule The sniffer rule string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetSnifferRule(const char *type, const char *rule)
 {
@@ -596,20 +664,20 @@ Database::SetSnifferRule(const char *type, const char *rule)
 	return status;
 }
 
-// SetSupportedTypes
-/*!	\brief Sets the list of MIME types supported by the MIME type and
-	syncs the internal supporting apps database either partially or
-	completely.
-
-	Please see BMimeType::SetSupportedTypes() for details.
-	\param type The mime type of interest
-	\param types The supported types to be assigned to the file.
-	\param syncAll \c true to also synchronize the previously supported
-		   types, \c false otherwise.
-	\return
-	- \c B_OK: success
-	- other error codes: failure
-*/
+/**
+ * @brief Sets the list of MIME types supported by the given type and synchronises
+ *        the internal supporting-apps database.
+ *
+ * Any newly referenced types that are not yet installed are automatically
+ * installed and set to prefer the given type as their handler. See
+ * BMimeType::SetSupportedTypes() for details.
+ *
+ * @param type     The MIME type string.
+ * @param types    Pointer to a BMessage whose "types" array lists supported types.
+ * @param fullSync If true, also remove the type as a supporting app for previously
+ *                 supported types that no longer appear in @a types.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::SetSupportedTypes(const char *type, const BMessage *types, bool fullSync)
 {
@@ -657,114 +725,82 @@ Database::SetSupportedTypes(const char *type, const BMessage *types, bool fullSy
 }
 
 
-// GetInstalledSupertypes
-/*! \brief Fetches a BMessage listing all the MIME supertypes currently
-	installed in the MIME database.
-
-	The types are copied into the \c "super_types" field of the passed-in \c BMessage.
-	The \c BMessage must be pre-allocated.
-
-	\param super_types Pointer to a pre-allocated \c BMessage into which the
-	                   MIME supertypes will be copied.
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-*/
+/**
+ * @brief Retrieves a BMessage listing all installed MIME supertypes.
+ *
+ * @param supertypes Pointer to a pre-allocated BMessage to receive the list.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::GetInstalledSupertypes(BMessage *supertypes)
 {
 	return fInstalledTypes.GetInstalledSupertypes(supertypes);
 }
 
-// GetInstalledTypes
-/*! \brief Fetches a BMessage listing all the MIME types currently installed
-	in the MIME database.
-
-	The types are copied into the \c "types" field of the passed-in \c BMessage.
-	The \c BMessage must be pre-allocated.
-
-	\param types Pointer to a pre-allocated \c BMessage into which the
-	             MIME types will be copied.
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-*/
+/**
+ * @brief Retrieves a BMessage listing all installed MIME types.
+ *
+ * @param types Pointer to a pre-allocated BMessage to receive the list.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::GetInstalledTypes(BMessage *types)
 {
 	return fInstalledTypes.GetInstalledTypes(types);
 }
 
-// GetInstalledTypes
-/*! \brief Fetches a BMessage listing all the MIME subtypes of the given
-	supertype currently installed in the MIME database.
-
-	The types are copied into the \c "types" field of the passed-in \c BMessage.
-	The \c BMessage must be pre-allocated.
-
-	\param super_type Pointer to a string containing the MIME supertype whose
-	                  subtypes you wish to retrieve.
-	\param subtypes Pointer to a pre-allocated \c BMessage into which the appropriate
-	                MIME subtypes will be copied.
-	\return
-	- \c B_OK: Success
-	- "error code": Failure
-*/
+/**
+ * @brief Retrieves a BMessage listing all installed subtypes of a supertype.
+ *
+ * @param supertype  The supertype string (e.g. "text").
+ * @param subtypes   Pointer to a pre-allocated BMessage to receive subtypes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::GetInstalledTypes(const char *supertype, BMessage *subtypes)
 {
 	return fInstalledTypes.GetInstalledTypes(supertype, subtypes);
 }
 
-// GetSupportingApps
-/*! \brief Fetches a \c BMessage containing a list of MIME signatures of
-	applications that are able to handle files of this MIME type.
-
-	Please see BMimeType::GetSupportingApps() for more details.
-*/
+/**
+ * @brief Retrieves the list of applications that support the given MIME type.
+ *
+ * See BMimeType::GetSupportingApps() for the message format.
+ *
+ * @param type       The MIME type string.
+ * @param signatures Pointer to a pre-allocated BMessage to receive the list.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::GetSupportingApps(const char *type, BMessage *signatures)
 {
 	return fSupportingApps.GetSupportingApps(type, signatures);
 }
 
-// GetAssociatedTypes
-/*! \brief Returns a list of mime types associated with the given file extension
-
-	Please see BMimeType::GetAssociatedTypes() for more details.
-*/
+/**
+ * @brief Returns a list of MIME types associated with the given file extension.
+ *
+ * @param extension The filename extension string.
+ * @param types     Pointer to a pre-allocated BMessage to receive the list.
+ * @return B_ERROR (not yet implemented).
+ */
 status_t
 Database::GetAssociatedTypes(const char *extension, BMessage *types)
 {
 	return B_ERROR;
 }
 
-// GuessMimeType
-/*!	\brief Guesses a MIME type for the entry referred to by the given
-	\c entry_ref.
-
-	This version of GuessMimeType() combines the features of the other
-	versions, plus adds a few tricks of its own:
-	- If the entry is a meta mime entry (i.e. has a \c "META:TYPE" attribute),
-	  the type returned is \c "application/x-vnd.be-meta-mime".
-	- If the entry is a directory, the type returned is
-	  \c "application/x-vnd.be-directory".
-	- If the entry is a symlink, the type returned is
-	  \c "application/x-vnd.be-symlink".
-	- If the entry is a regular file, the file data is sniffed and, the
-	  type returned is the mime type with the matching rule of highest
-	  priority.
-	- If sniffing fails, the filename is checked for known extensions.
-	- If the extension check fails, the type returned is
-	  \c "application/octet-stream".
-
-	\param ref Pointer to the entry_ref referring to the entry.
-	\param type Pointer to a pre-allocated BString which is set to the
-		   resulting MIME type.
-	\return
-	- \c B_OK: success (even if the guess returned is "application/octet-stream")
-	- other error code: failure
-*/
+/**
+ * @brief Guesses the MIME type for the entry referred to by an entry_ref.
+ *
+ * Combines multiple detection strategies: META:TYPE attribute check,
+ * special-node type detection (directory, symlink), content sniffing, and
+ * filename-extension lookup. Falls back to "application/octet-stream".
+ *
+ * @param ref    Pointer to an entry_ref identifying the file to examine.
+ * @param result Pointer to a pre-allocated BString that receives the type.
+ * @return B_OK on success (even when returning the generic type), or an error code.
+ */
 status_t
 Database::GuessMimeType(const entry_ref *ref, BString *result)
 {
@@ -816,20 +852,17 @@ Database::GuessMimeType(const entry_ref *ref, BString *result)
 	return status;
 }
 
-// GuessMimeType
-/*!	\brief Guesses a MIME type for the supplied chunk of data.
-
-	See \c SnifferRules::GuessMimeType(BPositionIO*, BString*)
-	for more details.
-
-	\param buffer Pointer to the data buffer.
-	\param length Size of the buffer in bytes.
-	\param type Pointer to a pre-allocated BString which is set to the
-		   resulting MIME type.
-	\return
-	- \c B_OK: success
-	- error code: failure
-*/
+/**
+ * @brief Guesses the MIME type for a raw data buffer.
+ *
+ * Searches the installed sniffer rules. Falls back to
+ * "application/octet-stream" when no rule matches.
+ *
+ * @param buffer Pointer to the data buffer to sniff.
+ * @param length Size of the buffer in bytes.
+ * @param result Pointer to a pre-allocated BString that receives the type.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::GuessMimeType(const void *buffer, int32 length, BString *result)
 {
@@ -845,20 +878,16 @@ Database::GuessMimeType(const void *buffer, int32 length, BString *result)
 	return status;
 }
 
-// GuessMimeType
-/*!	\brief Guesses a MIME type for the given filename.
-
-	Only the filename itself is taken into consideration (in particular its
-	name extension), not the entry or corresponding data it refers to (in fact,
-	an entry with that name need not exist at all.
-
-	\param filename The filename.
-	\param type Pointer to a pre-allocated BString which is set to the
-		   resulting MIME type.
-	\return
-	- \c B_OK: success
-	- error code: failure
-*/
+/**
+ * @brief Guesses the MIME type for a filename based on its extension.
+ *
+ * Only the filename string is examined; no filesystem access is performed.
+ * Falls back to "application/octet-stream" when no extension match is found.
+ *
+ * @param filename The filename string (need not refer to an existing file).
+ * @param result   Pointer to a pre-allocated BString that receives the type.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::GuessMimeType(const char *filename, BString *result)
 {
@@ -875,85 +904,17 @@ Database::GuessMimeType(const char *filename, BString *result)
 }
 
 
-/*!	\brief Subscribes the given BMessenger to the MIME monitor service
-
-	Notification messages will be sent with a \c BMessage::what value
-	of \c B_META_MIME_CHANGED. Notification messages have the following
-	fields:
-
-	<table>
-		<tr>
-			<td> Name </td>
-			<td> Type </td>
-			<td> Description </td>
-		</tr>
-		<tr>
-			<td> \c be:type </td>
-			<td> \c B_STRING_TYPE </td>
-			<td> The MIME type that was changed </td>
-		</tr>
-		<tr>
-			<td> \c be:which </td>
-			<td> \c B_INT32_TYPE </td>
-			<td> Bitmask describing which attributes were changed (see below) </td>
-		</tr>
-		<tr>
-			<td> \c be:extra_type </td>
-			<td> \c B_STRING_TYPE </td>
-			<td> Additional MIME type string (applicable to B_ICON_FOR_TYPE_CHANGED notifications only)</td>
-		</tr>
-		<tr>
-			<td> \c be:large_icon </td>
-			<td> \c B_BOOL_TYPE </td>
-			<td> \c true if the large icon was changed, \c false if the small icon
-			     was changed (applicable to B_ICON_[FOR_TYPE_]CHANGED updates only) </td>
-		</tr>
-	</table>
-
-	The \c be:which field of the message describes which attributes were updated, and
-	may be the bitwise \c OR of any of the following values:
-
-	<table>
-		<tr>
-			<td> Value </td>
-			<td> Triggered By </td>
-		</tr>
-		<tr>
-			<td> \c B_ICON_CHANGED </td>
-			<td> \c BMimeType::SetIcon() </td>
-		</tr>
-		<tr>
-			<td> \c B_PREFERRED_APP_CHANGED </td>
-			<td> \c BMimeType::SetPreferredApp() </td>
-		</tr>
-		<tr>
-			<td> \c B_ATTR_INFO_CHANGED </td>
-			<td> \c BMimeType::SetAttrInfo() </td>
-		</tr>
-		<tr>
-			<td> \c B_FILE_EXTENSIONS_CHANGED </td>
-			<td> \c BMimeType::SetFileExtensions() </td>
-		</tr>
-		<tr>
-			<td> \c B_SHORT_DESCRIPTION_CHANGED </td>
-			<td> \c BMimeType::SetShortDescription() </td>
-		</tr>
-		<tr>
-			<td> \c B_LONG_DESCRIPTION_CHANGED </td>
-			<td> \c BMimeType::SetLongDescription() </td>
-		</tr>
-		<tr>
-			<td> \c B_ICON_FOR_TYPE_CHANGED </td>
-			<td> \c BMimeType::SetIconForType() </td>
-		</tr>
-		<tr>
-			<td> \c B_APP_HINT_CHANGED </td>
-			<td> \c BMimeType::SetAppHint() </td>
-		</tr>
-	</table>
-
-	\param target The \c BMessenger to subscribe to the MIME monitor service
-*/
+/**
+ * @brief Subscribes a BMessenger to the MIME monitor service.
+ *
+ * Subscribed messengers receive B_META_MIME_CHANGED messages whenever a MIME
+ * database attribute is modified. Message fields include "be:type" (string),
+ * "be:which" (int32 bitmask), "be:extra_type" (string, optional), and
+ * "be:large_icon" (bool, optional).
+ *
+ * @param target The BMessenger to subscribe.
+ * @return B_OK on success, B_BAD_VALUE if the messenger is invalid.
+ */
 status_t
 Database::StartWatching(BMessenger target)
 {
@@ -967,10 +928,12 @@ Database::StartWatching(BMessenger target)
 }
 
 
-/*!
-	Unsubscribes the given BMessenger from the MIME monitor service
-	\param target The \c BMessenger to unsubscribe
-*/
+/**
+ * @brief Unsubscribes a BMessenger from the MIME monitor service.
+ *
+ * @param target The BMessenger to unsubscribe.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the messenger was not subscribed.
+ */
 status_t
 Database::StopWatching(BMessenger target)
 {
@@ -988,15 +951,14 @@ Database::StopWatching(BMessenger target)
 }
 
 
-/*!	\brief Deletes the app hint attribute for the given type
-
-	A \c B_APP_HINT_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the app hint attribute for the given type.
+ *
+ * Sends a B_APP_HINT_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteAppHint(const char *type)
 {
@@ -1010,15 +972,14 @@ Database::DeleteAppHint(const char *type)
 }
 
 
-/*!	\brief Deletes the attribute info attribute for the given type
-
-	A \c B_ATTR_INFO_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the attribute-info attribute for the given type.
+ *
+ * Sends a B_ATTR_INFO_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteAttrInfo(const char *type)
 {
@@ -1032,15 +993,14 @@ Database::DeleteAttrInfo(const char *type)
 }
 
 
-/*!	\brief Deletes the short description attribute for the given type
-
-	A \c B_SHORT_DESCRIPTION_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the short description attribute for the given type.
+ *
+ * Sends a B_SHORT_DESCRIPTION_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteShortDescription(const char *type)
 {
@@ -1054,15 +1014,14 @@ Database::DeleteShortDescription(const char *type)
 }
 
 
-/*!	\brief Deletes the long description attribute for the given type
-
-	A \c B_LONG_DESCRIPTION_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the long description attribute for the given type.
+ *
+ * Sends a B_LONG_DESCRIPTION_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteLongDescription(const char *type)
 {
@@ -1076,15 +1035,14 @@ Database::DeleteLongDescription(const char *type)
 }
 
 
-/*!	\brief Deletes the associated file extensions attribute for the given type
-
-	A \c B_FILE_EXTENSIONS_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the file-extensions attribute for the given type.
+ *
+ * Sends a B_FILE_EXTENSIONS_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteFileExtensions(const char *type)
 {
@@ -1098,16 +1056,15 @@ Database::DeleteFileExtensions(const char *type)
 }
 
 
-/*!	\brief Deletes the icon of the given size for the given type
-
-	A \c B_ICON_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\param which The icon size of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the icon of the given size for the given type.
+ *
+ * Sends a B_ICON_CHANGED notification to the MIME monitor service.
+ *
+ * @param type  The MIME type string.
+ * @param which B_LARGE_ICON or B_MINI_ICON.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteIcon(const char *type, icon_size which)
 {
@@ -1123,15 +1080,14 @@ Database::DeleteIcon(const char *type, icon_size which)
 }
 
 
-/*!	\brief Deletes the vector icon for the given type
-
-	A \c B_ICON_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the vector icon for the given type.
+ *
+ * Sends a B_ICON_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteIcon(const char *type)
 {
@@ -1148,21 +1104,16 @@ Database::DeleteIcon(const char *type)
 }
 
 
-/*!	\brief Deletes the icon of the given size associated with the given file
-		type for the given application signature.
-
-    (If this function seems confusing, please see BMimeType::GetIconForType() for a
-    better description of what the *IconForType() functions are used for.)
-
-	A \c B_ICON_FOR_TYPE_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of the application whose custom icon you are deleting.
-	\param fileType The mime type for which you no longer wish \c type to have a custom icon.
-	\param which The icon size of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the bitmap icon an application uses for files of the given type.
+ *
+ * Sends a B_ICON_FOR_TYPE_CHANGED notification to the MIME monitor service.
+ *
+ * @param type     The application MIME type string.
+ * @param fileType The file MIME type whose custom icon should be removed.
+ * @param which    B_LARGE_ICON or B_MINI_ICON.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteIconForType(const char *type, const char *fileType, icon_size which)
 {
@@ -1183,20 +1134,15 @@ Database::DeleteIconForType(const char *type, const char *fileType, icon_size wh
 }
 
 
-/*!	\brief Deletes the vector icon associated with the given file
-		type for the given application signature.
-
-    (If this function seems confusing, please see BMimeType::GetIconForType() for a
-    better description of what the *IconForType() functions are used for.)
-
-	A \c B_ICON_FOR_TYPE_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of the application whose custom icon you are deleting.
-	\param fileType The mime type for which you no longer wish \c type to have a custom icon.
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the vector icon an application uses for files of the given type.
+ *
+ * Sends a B_ICON_FOR_TYPE_CHANGED notification to the MIME monitor service.
+ *
+ * @param type     The application MIME type string.
+ * @param fileType The file MIME type whose custom vector icon should be removed.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteIconForType(const char *type, const char *fileType)
 {
@@ -1218,16 +1164,16 @@ Database::DeleteIconForType(const char *type, const char *fileType)
 }
 
 
-// DeletePreferredApp
-//! Deletes the preferred app for the given app verb for the given type
-/*! A \c B_PREFERRED_APP_CHANGED notification is sent to the mime monitor service.
-	\param type The mime type of interest
-	\param which The app verb of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the preferred application for the given app verb.
+ *
+ * Sends a B_PREFERRED_APP_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @param verb The app verb (currently only B_OPEN is supported).
+ * @return B_OK on success, B_BAD_VALUE for an unsupported verb,
+ *         or another error code on failure.
+ */
 status_t
 Database::DeletePreferredApp(const char *type, app_verb verb)
 {
@@ -1254,17 +1200,15 @@ Database::DeletePreferredApp(const char *type, app_verb verb)
 	return status;
 }
 
-// DeleteSnifferRule
-//! Deletes the sniffer rule for the given type
-/*! A \c B_SNIFFER_RULE_CHANGED notification is sent to the mime monitor service,
-	and the corresponding rule is removed from the internal database of sniffer
-	rules.
-	\param type The mime type of interest
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the sniffer rule for the given type.
+ *
+ * Also removes the corresponding rule from the in-memory SnifferRules table
+ * and sends a B_SNIFFER_RULE_CHANGED notification to the MIME monitor service.
+ *
+ * @param type The MIME type string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteSnifferRule(const char *type)
 {
@@ -1281,22 +1225,17 @@ Database::DeleteSnifferRule(const char *type)
 	return status;
 }
 
-// DeleteSupportedTypes
-//! Deletes the supported types list for the given type
-/*! A \c B_SUPPORTED_TYPES_CHANGED notification is sent to the mime monitor service.
-	If \c fullSync is \c true, the given type is removed from the internal list
-	of supporting applictions for each previously supported type. If \c fullSync
-	is \c false, the said removal will occur the next time SetSupportedTypes() or
-	DeleteSupportedTypes() is called with a \c true \c fullSync paramter, or
-	\c Delete() is called for the given type.
-	\param type The mime type of interest
-	\param fullSync Whether or not to remove the type as a supporting app for
-	                all previously supported types
-	\return
-	- B_OK: success
-	- B_ENTRY_NOT_FOUND: no such attribute existed
-	- "error code": failure
-*/
+/**
+ * @brief Deletes the supported-types list for the given type.
+ *
+ * Sends a B_SUPPORTED_TYPES_CHANGED notification to the MIME monitor service.
+ * If @a fullSync is true, the type is also removed from the supporting-apps
+ * entries for all previously supported types.
+ *
+ * @param type     The MIME type string.
+ * @param fullSync Whether to perform a full synchronisation of supporting apps.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::DeleteSupportedTypes(const char *type, bool fullSync)
 {
@@ -1325,6 +1264,14 @@ Database::DeleteSupportedTypes(const char *type, bool fullSync)
 }
 
 
+/**
+ * @brief Defers the B_MIME_TYPE_CREATED notification for the given type.
+ *
+ * While deferred, any install notification triggered for this type is held
+ * until UndeferInstallNotification() is called.
+ *
+ * @param type The MIME type string whose install notification to defer.
+ */
 void
 Database::DeferInstallNotification(const char* type)
 {
@@ -1348,6 +1295,14 @@ Database::DeferInstallNotification(const char* type)
 }
 
 
+/**
+ * @brief Releases a deferred install notification and sends it if warranted.
+ *
+ * If the notification was marked for delivery (i.e. an install event occurred
+ * while deferred), the B_MIME_TYPE_CREATED notification is sent now.
+ *
+ * @param type The MIME type string whose deferred notification to release.
+ */
 void
 Database::UndeferInstallNotification(const char* type)
 {
@@ -1370,7 +1325,12 @@ Database::UndeferInstallNotification(const char* type)
 }
 
 
-//! \brief Sends a \c B_MIME_TYPE_CREATED notification to the mime monitor service
+/**
+ * @brief Sends a B_MIME_TYPE_CREATED notification to the MIME monitor service.
+ *
+ * @param type The MIME type that was created.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SendInstallNotification(const char *type)
 {
@@ -1378,7 +1338,12 @@ Database::_SendInstallNotification(const char *type)
 }
 
 
-//! \brief Sends a \c B_MIME_TYPE_DELETED notification to the mime monitor service
+/**
+ * @brief Sends a B_MIME_TYPE_DELETED notification to the MIME monitor service.
+ *
+ * @param type The MIME type that was deleted.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SendDeleteNotification(const char *type)
 {
@@ -1386,15 +1351,16 @@ Database::_SendDeleteNotification(const char *type)
 	return _SendMonitorUpdate(B_MIME_TYPE_DELETED, type, B_META_MIME_MODIFIED);
 }
 
-// _SendMonitorUpdate
-/*! \brief Sends an update notification to all BMessengers that have
-	subscribed to the MIME Monitor service
-	\param type The MIME type that was updated
-	\param which Bitmask describing which attribute was updated
-	\param extraType The MIME type to which the change is applies
-	\param largeIcon \true if the the large icon was updated, \false if the
-		   small icon was updated
-*/
+/**
+ * @brief Sends a MIME monitor update including a file-type string and icon-size flag.
+ *
+ * @param which     Bitmask describing which attribute changed.
+ * @param type      The MIME type that was updated.
+ * @param extraType Additional MIME type involved in the change.
+ * @param largeIcon true if the large icon was affected, false for the small icon.
+ * @param action    B_META_MIME_MODIFIED or B_META_MIME_DELETED.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SendMonitorUpdate(int32 which, const char *type, const char *extraType,
 	bool largeIcon, int32 action)
@@ -1419,13 +1385,15 @@ Database::_SendMonitorUpdate(int32 which, const char *type, const char *extraTyp
 	return err;
 }
 
-// _SendMonitorUpdate
-/*! \brief Sends an update notification to all BMessengers that have
-	subscribed to the MIME Monitor service
-	\param type The MIME type that was updated
-	\param which Bitmask describing which attribute was updated
-	\param extraType The MIME type to which the change is applies
-*/
+/**
+ * @brief Sends a MIME monitor update including a file-type string.
+ *
+ * @param which     Bitmask describing which attribute changed.
+ * @param type      The MIME type that was updated.
+ * @param extraType Additional MIME type involved in the change.
+ * @param action    B_META_MIME_MODIFIED or B_META_MIME_DELETED.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SendMonitorUpdate(int32 which, const char *type, const char *extraType,
 	int32 action)
@@ -1447,14 +1415,15 @@ Database::_SendMonitorUpdate(int32 which, const char *type, const char *extraTyp
 	return err;
 }
 
-// _SendMonitorUpdate
-/*! \brief Sends an update notification to all BMessengers that have
-	subscribed to the MIME Monitor service
-	\param type The MIME type that was updated
-	\param which Bitmask describing which attribute was updated
-	\param largeIcon \true if the the large icon was updated, \false if the
-		   small icon was updated
-*/
+/**
+ * @brief Sends a MIME monitor update including an icon-size flag.
+ *
+ * @param which     Bitmask describing which attribute changed.
+ * @param type      The MIME type that was updated.
+ * @param largeIcon true if the large icon was affected, false for small icon.
+ * @param action    B_META_MIME_MODIFIED or B_META_MIME_DELETED.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SendMonitorUpdate(int32 which, const char *type, bool largeIcon, int32 action)
 {
@@ -1475,12 +1444,14 @@ Database::_SendMonitorUpdate(int32 which, const char *type, bool largeIcon, int3
 	return err;
 }
 
-// _SendMonitorUpdate
-/*! \brief Sends an update notification to all BMessengers that have
-	subscribed to the MIME Monitor service
-	\param type The MIME type that was updated
-	\param which Bitmask describing which attribute was updated
-*/
+/**
+ * @brief Sends a basic MIME monitor update (type and action only).
+ *
+ * @param which  Bitmask describing which attribute changed.
+ * @param type   The MIME type that was updated.
+ * @param action B_META_MIME_MODIFIED or B_META_MIME_DELETED.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Database::_SendMonitorUpdate(int32 which, const char *type, int32 action)
 {
@@ -1499,11 +1470,12 @@ Database::_SendMonitorUpdate(int32 which, const char *type, int32 action)
 	return err;
 }
 
-// _SendMonitorUpdate
-/*! \brief Sends an update notification to all BMessengers that have subscribed to
-	the MIME Monitor service
-	\param BMessage A preformatted MIME monitor message to be sent to all subscribers
-*/
+/**
+ * @brief Delivers a pre-built B_META_MIME_CHANGED message to all subscribers.
+ *
+ * @param msg A pre-populated MIME monitor BMessage.
+ * @return B_OK (delivery failures to individual messengers are logged but ignored).
+ */
 status_t
 Database::_SendMonitorUpdate(BMessage &msg)
 {
@@ -1523,6 +1495,13 @@ Database::_SendMonitorUpdate(BMessage &msg)
 }
 
 
+/**
+ * @brief Searches the deferred-install-notification list for the given type.
+ *
+ * @param type   The MIME type to search for.
+ * @param remove If true, remove the entry from the list when found.
+ * @return Pointer to the matching DeferredInstallNotification, or NULL.
+ */
 Database::DeferredInstallNotification*
 Database::_FindDeferredInstallNotification(const char* type, bool remove)
 {
@@ -1541,6 +1520,19 @@ Database::_FindDeferredInstallNotification(const char* type, bool remove)
 }
 
 
+/**
+ * @brief Checks whether the given monitor event should be suppressed due to
+ *        a pending deferred install notification.
+ *
+ * Handles three cases: if the type is being deleted and its install was
+ * deferred, the install notification is discarded; if a create event arrives
+ * while deferred, it is recorded for later delivery; if any other update
+ * arrives while the install is deferred, it is suppressed.
+ *
+ * @param which The monitor event code.
+ * @param type  The MIME type being updated.
+ * @return true if the event should be suppressed, false otherwise.
+ */
 bool
 Database::_CheckDeferredInstallNotification(int32 which, const char* type)
 {
