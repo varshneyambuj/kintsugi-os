@@ -4,7 +4,7 @@ UsePrivateHeaders [ FDirName graphics common ] ;
 UsePrivateHeaders [ FDirName graphics radeon ] ;
 	# for multimon.h
 
-SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src preferences screen ] ;
+SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) srck preferences screen ] ;
 
 Application screenmode :
 	screenmode.cpp

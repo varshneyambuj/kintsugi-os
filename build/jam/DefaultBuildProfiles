@@ -12,6 +12,14 @@ switch $(HAIKU_BUILD_PROFILE) {
 		TARGET_DEFINES += HAIKU_BOOTSTRAP_BUILD ;
 	}
 
+	case "kintsugi-*" : {
+		HAIKU_BUILD_TYPE = kintsugi ;
+		EnableBuildFeatures minimum_image ;
+
+		HAIKU_DEFINES += HAIKU_KINTSUGI_BUILD ;
+		TARGET_DEFINES += HAIKU_KINTSUGI_BUILD ;
+	}
+
 	case "minimum-*" : {
 		HAIKU_BUILD_TYPE = minimum ;
 		EnableBuildFeatures minimum_image ;
@@ -63,6 +71,14 @@ rule DefineDefaultBuildProfiles
 		: "haiku-bootstrap.vmdk" ;
 	DefineBuildProfile bootstrap-anyboot : anyboot-image
 		: "haiku-bootstrap-anyboot.iso" ;
+
+	# kintsugi profiles
+	DefineBuildProfile kintsugi-raw : image : "kintsugi.image" ;
+	DefineBuildProfile kintsugi-mmc : haiku-mmc-image : "kintsugi.mmc" ;
+	DefineBuildProfile kintsugi-vmware : vmware-image : "kintsugi.vmdk" ;
+	DefineBuildProfile kintsugi-cd : cd-image : "kintsugi.iso" ;
+	DefineBuildProfile kintsugi-anyboot : anyboot-image
+		: "kintsugi-anyboot.iso" ;
 
 	# minimum profiles
 	DefineBuildProfile minimum-raw : image : "haiku-minimum.image" ;
@@ -173,6 +189,18 @@ rule DefineDefaultBuildProfiles
 			} else {
 				Echo "WebPositive not available on $(HAIKU_PACKAGING_ARCHS)" ;
 			}
+		}
+
+		case "kintsugi-*" : {
+			Echo Building KintsugiOS ;
+			HAIKU_ROOT_USER_NAME ?= user ;
+			HAIKU_ROOT_USER_REAL_NAME ?= "Yourself" ;
+			HAIKU_IMAGE_HOST_NAME ?= kintsugi ;
+			HAIKU_IMAGE_SIZE ?= 400 ;
+
+			AddHaikuImageSystemPackages
+				openssl3
+				;
 		}
 
 		case "minimum-*" : {

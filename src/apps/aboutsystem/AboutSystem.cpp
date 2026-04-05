@@ -87,7 +87,7 @@
 #define B_TRANSLATION_CONTEXT "AboutWindow"
 
 
-static const char* kSignature = "application/x-vnd.Haiku-About";
+static const char* kSignature = "application/x-vnd.KintsugiOS-About";
 
 static const float kWindowWidth = 500.0f;
 static const float kWindowHeight = 300.0f;
@@ -107,6 +107,7 @@ static int used_pages(system_info*);
 static const rgb_color kIdealHaikuGreen = { 42, 131, 36, 255 };
 static const rgb_color kIdealHaikuOrange = { 255, 69, 0, 255 };
 static const rgb_color kIdealHaikuYellow = { 255, 176, 0, 255 };
+static const rgb_color kKintsugiGold = { 212, 175, 55, 255 };
 static const rgb_color kIdealBeOSBlue = { 0, 0, 200, 255 };
 static const rgb_color kIdealBeOSRed = { 200, 0, 0, 255 };
 static const rgb_color kBlack = { 0, 0, 0, 255 };
@@ -393,7 +394,7 @@ AboutApp::MessageReceived(BMessage* message)
 AboutWindow::AboutWindow()
 	:
 	BWindow(BRect(0, 0, kWindowWidth, kWindowHeight),
-		B_TRANSLATE("About this system"), B_TITLED_WINDOW,
+		B_TRANSLATE("About KintsugiOS"), B_TITLED_WINDOW,
 		B_AUTO_UPDATE_SIZE_LIMITS | B_NOT_ZOOMABLE)
 {
 	SetLayout(new BGroupLayout(B_VERTICAL, 0));
@@ -1546,77 +1547,101 @@ AboutView::_CreateCreditsView()
 		fCreditsView, B_WILL_DRAW | B_FRAME_EVENTS, false, true,
 		B_PLAIN_BORDER);
 
-	// Haiku copyright
+	// KintsugiOS header
 	BFont font(be_bold_font);
 	font.SetSize(font.Size() + 4);
 
-	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuGreenColor);
-	fCreditsView->Insert("Haiku\n");
+	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &kKintsugiGold);
+	fCreditsView->Insert("KintsugiOS\n");
 
 	time_t time = ::time(NULL);
 	struct tm* tm = localtime(&time);
 	int32 year = tm->tm_year + 1900;
-	if (year < 2008)
-		year = 2008;
+	if (year < 2025)
+		year = 2025;
 	BString text;
 	text.SetToFormat(
-		B_TRANSLATE(COPYRIGHT_STRING "2001-%" B_PRId32 " The Haiku project. "),
+		B_TRANSLATE(COPYRIGHT_STRING "2025-%" B_PRId32 " Ambuj Varshney. "),
 		year);
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(text.String());
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
-	fCreditsView->Insert(B_TRANSLATE("The copyright to the Haiku code is "
-		"property of Haiku, Inc. or of the respective authors where expressly "
-		"noted in the source. Haiku" B_UTF8_REGISTERED
-		" and the HAIKU logo" B_UTF8_REGISTERED
-		" are registered trademarks of Haiku, Inc."
+	fCreditsView->Insert(B_TRANSLATE(
+		"KintsugiOS is derived from HaikuOS, an open-source operating system "
+		"licensed under the MIT license. KintsugiOS builds upon the excellent "
+		"work of the Haiku project and its contributors."
 		"\n\n"));
+
+	font.SetSize(be_bold_font->Size());
+	font.SetFace(B_BOLD_FACE | B_ITALIC_FACE);
+
+	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &kKintsugiGold);
+	fCreditsView->Insert(B_TRANSLATE("KintsugiOS author:\n"));
+
+	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
+	fCreditsView->Insert("Ambuj Varshney\n\n");
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fLinkColor);
 	fCreditsView->InsertHyperText(B_TRANSLATE("Visit the Haiku website"),
 		new URLAction("https://www.haiku-os.org"));
 	fCreditsView->Insert("\n");
-	fCreditsView->InsertHyperText(B_TRANSLATE("Make a donation"),
+	fCreditsView->InsertHyperText(B_TRANSLATE("Support the Haiku project"),
 		new URLAction("https://www.haiku-inc.org/donate"));
 	fCreditsView->Insert("\n\n");
 
-	font.SetSize(be_bold_font->Size());
-	font.SetFace(B_BOLD_FACE | B_ITALIC_FACE);
+	// Haiku credits section
+	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuGreenColor);
+	fCreditsView->Insert(B_TRANSLATE("Derived from HaikuOS\n"));
+
+	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
+	{
+		BString haikuCopyright;
+		haikuCopyright.SetToFormat(
+			B_TRANSLATE(COPYRIGHT_STRING "2001-%" B_PRId32
+				" The Haiku project. "
+				"The copyright to the Haiku code is property of Haiku, Inc. "
+				"or of the respective authors where expressly noted in the "
+				"source. Haiku" B_UTF8_REGISTERED " and the HAIKU logo"
+				B_UTF8_REGISTERED " are registered trademarks of Haiku, Inc."
+				"\n\n"),
+			year);
+		fCreditsView->Insert(haikuCopyright.String());
+	}
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Current maintainers:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku current maintainers:\n"));
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(kCurrentMaintainers);
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Past maintainers:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku past maintainers:\n"));
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(kPastMaintainers);
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Website & marketing:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku website & marketing:\n"));
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(kWebsiteTeam);
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Past website & marketing:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku past website & marketing:\n"));
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(kPastWebsiteTeam);
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Testing and bug triaging:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku testing and bug triaging:\n"));
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(kTestingTeam);
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Contributors:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku contributors:\n"));
 
 	fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
 	fCreditsView->Insert(kContributors);
@@ -1626,7 +1651,7 @@ AboutView::_CreateCreditsView()
 			"\n\n"));
 
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuOrangeColor);
-	fCreditsView->Insert(B_TRANSLATE("Translations:\n"));
+	fCreditsView->Insert(B_TRANSLATE("Haiku translations:\n"));
 
 	BLanguage* lang;
 	BString langName;

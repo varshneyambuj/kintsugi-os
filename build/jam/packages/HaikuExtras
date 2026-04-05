@@ -8,10 +8,9 @@ HaikuPackage $(extrasPackage) ;
 AddFilesToPackage bin :
 	acpi_call
 	;
-AddFilesToPackage apps :
-	TV
-	;
-AddSymlinkToPackage data deskbar menu Applications : ../../../../apps/TV : TV ;
+# TV moved to srck/apps/tv/
+#AddFilesToPackage apps : TV ;
+#AddSymlinkToPackage data deskbar menu Applications : ../../../../apps/TV : TV ;
 
 
 ## Driver Oddities
@@ -34,11 +33,11 @@ AddFilesToPackage add-ons control_look :
 	FlatControlLook
 	;
 
-# Decorators
-AddFilesToPackage add-ons decorators :
-	BeDecorator
-	FlatDecorator
-	;
+# Decorators moved to srck/add-ons/decorators/
+#AddFilesToPackage add-ons decorators :
+#	BeDecorator
+#	FlatDecorator
+#	;
 
 
 BuildHaikuPackage $(extrasPackage) : haiku_extras ;

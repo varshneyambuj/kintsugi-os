@@ -9,6 +9,8 @@ if $(HAIKU_BUILD_TYPE) = bootstrap {
 	include [ FDirName $(HAIKU_BUILD_RULES_DIR) images definitions minimum ] ;
 } else if $(HAIKU_BUILD_TYPE) = test {
 	include [ FDirName $(HAIKU_BUILD_RULES_DIR) images definitions test ] ;
+} else if $(HAIKU_BUILD_TYPE) = kintsugi {
+	include [ FDirName $(HAIKU_BUILD_RULES_DIR) images definitions kintsugi ] ;
 } else {
 	include [ FDirName $(HAIKU_BUILD_RULES_DIR) images definitions regular ] ;
 }

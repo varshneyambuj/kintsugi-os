@@ -1,7 +1,14 @@
 generated/
+generated.*/
 objects/
 *.o
 *.d
 *.image
+*.iso
+*.vmdk
+*.mmc
+*.hpkg
 haiku.image
 haiku-nightly*.zip
+kintsugi*-anyboot.iso
+kintsugi*.image
