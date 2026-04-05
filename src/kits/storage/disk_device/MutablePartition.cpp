@@ -1,6 +1,38 @@
 /*
- * Copyright 2007, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file MutablePartition.cpp
+ * @brief Mutable shadow representation of a disk partition used during editing.
+ *
+ * BMutablePartition is a writable mirror of the read-only BPartition data.
+ * It is created by a BPartition::Delegate and accumulates property changes
+ * (size, offset, name, type, parameters, etc.) while recording which fields
+ * have been modified via a change-flags bitmask. The DiskDeviceJobGenerator
+ * later reads these flags to decide which kernel jobs to generate.
+ *
+ * @see BPartition
  */
 
 #include <MutablePartition.h>
@@ -21,7 +53,13 @@
 using std::nothrow;
 
 
-// UninitializeContents
+/**
+ * @brief Resets all content-level state, leaving the partition uninitialized.
+ *
+ * Deletes all children, clears the volume ID, content name, content
+ * parameters, content size, content type, and resets the status to
+ * B_PARTITION_UNINITIALIZED. The block size is inherited from the parent.
+ */
 void
 BMutablePartition::UninitializeContents()
 {
@@ -39,7 +77,11 @@ BMutablePartition::UninitializeContents()
 }
 
 
-// Offset
+/**
+ * @brief Returns the byte offset of the partition on the device.
+ *
+ * @return Current offset in bytes.
+ */
 off_t
 BMutablePartition::Offset() const
 {
@@ -47,7 +89,11 @@ BMutablePartition::Offset() const
 }
 
 
-// SetOffset
+/**
+ * @brief Sets the byte offset of the partition and records the change.
+ *
+ * @param offset New offset in bytes.
+ */
 void
 BMutablePartition::SetOffset(off_t offset)
 {
@@ -58,7 +104,11 @@ BMutablePartition::SetOffset(off_t offset)
 }
 
 
-// Size
+/**
+ * @brief Returns the size of the partition in bytes.
+ *
+ * @return Current partition size.
+ */
 off_t
 BMutablePartition::Size() const
 {
@@ -66,7 +116,11 @@ BMutablePartition::Size() const
 }
 
 
-// SetSize
+/**
+ * @brief Sets the partition size and records the change.
+ *
+ * @param size New size in bytes.
+ */
 void
 BMutablePartition::SetSize(off_t size)
 {
@@ -77,7 +131,11 @@ BMutablePartition::SetSize(off_t size)
 }
 
 
-// ContentSize
+/**
+ * @brief Returns the usable content size of the partition in bytes.
+ *
+ * @return Current content size.
+ */
 off_t
 BMutablePartition::ContentSize() const
 {
@@ -85,7 +143,11 @@ BMutablePartition::ContentSize() const
 }
 
 
-// SetContentSize
+/**
+ * @brief Sets the usable content size and records the change.
+ *
+ * @param size New content size in bytes.
+ */
 void
 BMutablePartition::SetContentSize(off_t size)
 {
@@ -96,7 +158,11 @@ BMutablePartition::SetContentSize(off_t size)
 }
 
 
-// BlockSize
+/**
+ * @brief Returns the logical block size of the partition.
+ *
+ * @return Current block size in bytes.
+ */
 off_t
 BMutablePartition::BlockSize() const
 {
@@ -104,7 +170,11 @@ BMutablePartition::BlockSize() const
 }
 
 
-// SetBlockSize
+/**
+ * @brief Sets the logical block size and records the change.
+ *
+ * @param blockSize New block size in bytes.
+ */
 void
 BMutablePartition::SetBlockSize(off_t blockSize)
 {
@@ -115,7 +185,11 @@ BMutablePartition::SetBlockSize(off_t blockSize)
 }
 
 
-// Status
+/**
+ * @brief Returns the current status of the partition.
+ *
+ * @return One of the B_PARTITION_* status constants.
+ */
 uint32
 BMutablePartition::Status() const
 {
@@ -123,7 +197,11 @@ BMutablePartition::Status() const
 }
 
 
-// SetStatus
+/**
+ * @brief Sets the partition status and records the change.
+ *
+ * @param status New status value.
+ */
 void
 BMutablePartition::SetStatus(uint32 status)
 {
@@ -134,7 +212,11 @@ BMutablePartition::SetStatus(uint32 status)
 }
 
 
-// Flags
+/**
+ * @brief Returns the current flags bitmask of the partition.
+ *
+ * @return Current flags.
+ */
 uint32
 BMutablePartition::Flags() const
 {
@@ -142,7 +224,11 @@ BMutablePartition::Flags() const
 }
 
 
-// SetFlags
+/**
+ * @brief Replaces the entire flags bitmask and records the change.
+ *
+ * @param flags New flags value.
+ */
 void
 BMutablePartition::SetFlags(uint32 flags)
 {
@@ -153,7 +239,11 @@ BMutablePartition::SetFlags(uint32 flags)
 }
 
 
-// ClearFlags
+/**
+ * @brief Clears the specified flag bits and records the change if any bit was set.
+ *
+ * @param flags Bitmask of flags to clear.
+ */
 void
 BMutablePartition::ClearFlags(uint32 flags)
 {
@@ -164,7 +254,11 @@ BMutablePartition::ClearFlags(uint32 flags)
 }
 
 
-// VolumeID
+/**
+ * @brief Returns the volume ID associated with this partition's mounted file system.
+ *
+ * @return Volume device ID, or -1 if not mounted.
+ */
 dev_t
 BMutablePartition::VolumeID() const
 {
@@ -172,7 +266,11 @@ BMutablePartition::VolumeID() const
 }
 
 
-// SetVolumeID
+/**
+ * @brief Sets the volume ID and records the change.
+ *
+ * @param volumeID New volume device ID.
+ */
 void
 BMutablePartition::SetVolumeID(dev_t volumeID)
 {
@@ -183,7 +281,11 @@ BMutablePartition::SetVolumeID(dev_t volumeID)
 }
 
 
-// Index
+/**
+ * @brief Returns the index of this partition within its parent's child list.
+ *
+ * @return Zero-based index.
+ */
 int32
 BMutablePartition::Index() const
 {
@@ -191,7 +293,11 @@ BMutablePartition::Index() const
 }
 
 
-// Name
+/**
+ * @brief Returns the human-readable name of the partition.
+ *
+ * @return Partition name string, or \c NULL.
+ */
 const char*
 BMutablePartition::Name() const
 {
@@ -199,7 +305,14 @@ BMutablePartition::Name() const
 }
 
 
-// SetName
+/**
+ * @brief Sets the partition name and records the change.
+ *
+ * Does nothing if the new name is identical to the current name.
+ *
+ * @param name New name string; may be \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if the string copy fails.
+ */
 status_t
 BMutablePartition::SetName(const char* name)
 {
@@ -214,7 +327,11 @@ BMutablePartition::SetName(const char* name)
 }
 
 
-// ContentName
+/**
+ * @brief Returns the content name of the partition (e.g. volume label).
+ *
+ * @return Content name as a BString.
+ */
 BString
 BMutablePartition::ContentName() const
 {
@@ -222,7 +339,12 @@ BMutablePartition::ContentName() const
 }
 
 
-// SetContentName
+/**
+ * @brief Sets the content name (volume label) and records the change.
+ *
+ * @param name New content name; may be \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if the string copy fails.
+ */
 status_t
 BMutablePartition::SetContentName(const char* name)
 {
@@ -237,7 +359,11 @@ BMutablePartition::SetContentName(const char* name)
 }
 
 
-// Type
+/**
+ * @brief Returns the type string of the partition (e.g. partition table entry type).
+ *
+ * @return Partition type string, or \c NULL.
+ */
 const char*
 BMutablePartition::Type() const
 {
@@ -245,7 +371,12 @@ BMutablePartition::Type() const
 }
 
 
-// SetType
+/**
+ * @brief Sets the partition type string and records the change.
+ *
+ * @param type New type string; may be \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if the string copy fails.
+ */
 status_t
 BMutablePartition::SetType(const char* type)
 {
@@ -260,7 +391,11 @@ BMutablePartition::SetType(const char* type)
 }
 
 
-// ContentType
+/**
+ * @brief Returns the content type string identifying the disk system.
+ *
+ * @return Content type string, or \c NULL if uninitialized.
+ */
 const char*
 BMutablePartition::ContentType() const
 {
@@ -268,7 +403,16 @@ BMutablePartition::ContentType() const
 }
 
 
-// SetContentType
+/**
+ * @brief Sets the content type string and records an initialization change.
+ *
+ * Changing the content type implies a re-initialization of the partition,
+ * so both B_PARTITION_CHANGED_CONTENT_TYPE and
+ * B_PARTITION_CHANGED_INITIALIZATION flags are set.
+ *
+ * @param type New content type string; may be \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if the string copy fails.
+ */
 status_t
 BMutablePartition::SetContentType(const char* type)
 {
@@ -284,7 +428,11 @@ BMutablePartition::SetContentType(const char* type)
 }
 
 
-// Parameters
+/**
+ * @brief Returns the partition-level parameters string.
+ *
+ * @return Parameters string, or \c NULL.
+ */
 const char*
 BMutablePartition::Parameters() const
 {
@@ -292,7 +440,12 @@ BMutablePartition::Parameters() const
 }
 
 
-// SetParameters
+/**
+ * @brief Sets the partition-level parameters string and records the change.
+ *
+ * @param parameters New parameters string; may be \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if the string copy fails.
+ */
 status_t
 BMutablePartition::SetParameters(const char* parameters)
 {
@@ -307,7 +460,11 @@ BMutablePartition::SetParameters(const char* parameters)
 }
 
 
-// ContentParameters
+/**
+ * @brief Returns the content-level parameters string used by the disk system.
+ *
+ * @return Content parameters string, or \c NULL.
+ */
 const char*
 BMutablePartition::ContentParameters() const
 {
@@ -315,7 +472,12 @@ BMutablePartition::ContentParameters() const
 }
 
 
-// SetContentParameters
+/**
+ * @brief Sets the content-level parameters string and records the change.
+ *
+ * @param parameters New content parameters string; may be \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if the string copy fails.
+ */
 status_t
 BMutablePartition::SetContentParameters(const char* parameters)
 {
@@ -330,7 +492,18 @@ BMutablePartition::SetContentParameters(const char* parameters)
 }
 
 
-// CreateChild
+/**
+ * @brief Creates a new uninitialised child partition at the specified index.
+ *
+ * Allocates both a BPartition and its Delegate, inserts the new child into
+ * the internal child list, and initialises its data structure to a clean
+ * uninitialized state.
+ *
+ * @param index  Zero-based insertion index; -1 appends to the end.
+ * @param _child Set to the newly created BMutablePartition on success.
+ * @return B_OK on success, B_BAD_VALUE if \a index is out of range, or
+ *         B_NO_MEMORY if any allocation fails.
+ */
 status_t
 BMutablePartition::CreateChild(int32 index, BMutablePartition** _child)
 {
@@ -382,7 +555,19 @@ BMutablePartition::CreateChild(int32 index, BMutablePartition** _child)
 }
 
 
-// CreateChild
+/**
+ * @brief Creates a new child partition and immediately sets its type, name, and parameters.
+ *
+ * Calls the index-only CreateChild() overload and then applies the provided
+ * strings. On any error the partially-created child is cleaned up.
+ *
+ * @param index      Insertion index; -1 appends.
+ * @param type       Partition type string for the new child.
+ * @param name       Human-readable name for the new child.
+ * @param parameters Optional disk-system-specific parameters.
+ * @param _child     Set to the newly created BMutablePartition on success.
+ * @return B_OK on success, or an error code if creation or string-setting fails.
+ */
 status_t
 BMutablePartition::CreateChild(int32 index, const char* type, const char* name,
 	const char* parameters, BMutablePartition** _child)
@@ -413,7 +598,15 @@ BMutablePartition::CreateChild(int32 index, const char* type, const char* name,
 }
 
 
-// DeleteChild
+/**
+ * @brief Removes and destroys the child at the given index.
+ *
+ * Triggers recursive deletion of the child's delegate hierarchy and the
+ * associated BPartition objects.
+ *
+ * @param index Zero-based index of the child to delete.
+ * @return B_OK on success, B_BAD_VALUE if \a index is out of range.
+ */
 status_t
 BMutablePartition::DeleteChild(int32 index)
 {
@@ -431,7 +624,14 @@ BMutablePartition::DeleteChild(int32 index)
 }
 
 
-// DeleteChild
+/**
+ * @brief Removes and destroys the specified child partition.
+ *
+ * Convenience wrapper that resolves the child pointer to its index.
+ *
+ * @param child Pointer to the child to delete.
+ * @return B_OK on success, B_BAD_VALUE if \a child is not found.
+ */
 status_t
 BMutablePartition::DeleteChild(BMutablePartition* child)
 {
@@ -439,7 +639,11 @@ BMutablePartition::DeleteChild(BMutablePartition* child)
 }
 
 
-// DeleteAllChildren
+/**
+ * @brief Removes and destroys all child partitions.
+ *
+ * Iterates in reverse order to avoid index shifting issues.
+ */
 void
 BMutablePartition::DeleteAllChildren()
 {
@@ -449,7 +653,11 @@ BMutablePartition::DeleteAllChildren()
 }
 
 
-// Parent
+/**
+ * @brief Returns the parent mutable partition, or \c NULL if this is the root.
+ *
+ * @return Pointer to the parent BMutablePartition.
+ */
 BMutablePartition*
 BMutablePartition::Parent() const
 {
@@ -457,7 +665,12 @@ BMutablePartition::Parent() const
 }
 
 
-// ChildAt
+/**
+ * @brief Returns the child at the given index.
+ *
+ * @param index Zero-based child index.
+ * @return Pointer to the child, or \c NULL if out of range.
+ */
 BMutablePartition*
 BMutablePartition::ChildAt(int32 index) const
 {
@@ -465,7 +678,11 @@ BMutablePartition::ChildAt(int32 index) const
 }
 
 
-// CountChildren
+/**
+ * @brief Returns the number of direct children of this partition.
+ *
+ * @return Child count.
+ */
 int32
 BMutablePartition::CountChildren() const
 {
@@ -473,7 +690,12 @@ BMutablePartition::CountChildren() const
 }
 
 
-// IndexOfChild
+/**
+ * @brief Returns the index of the given child within the child list.
+ *
+ * @param child The child to look up.
+ * @return Zero-based index, or -1 if \a child is NULL or not found.
+ */
 int32
 BMutablePartition::IndexOfChild(BMutablePartition* child) const
 {
@@ -483,7 +705,11 @@ BMutablePartition::IndexOfChild(BMutablePartition* child) const
 }
 
 
-// SetChangeFlags
+/**
+ * @brief Replaces the change-flags bitmask with the supplied value.
+ *
+ * @param flags New change-flags value.
+ */
 void
 BMutablePartition::SetChangeFlags(uint32 flags)
 {
@@ -491,7 +717,11 @@ BMutablePartition::SetChangeFlags(uint32 flags)
 }
 
 
-// ChangeFlags
+/**
+ * @brief Returns the current change-flags bitmask.
+ *
+ * @return Bitmask of B_PARTITION_CHANGED_* flags.
+ */
 uint32
 BMutablePartition::ChangeFlags() const
 {
@@ -499,7 +729,16 @@ BMutablePartition::ChangeFlags() const
 }
 
 
-// Changed
+/**
+ * @brief Sets the given change flags and optionally clears others, then propagates upward.
+ *
+ * After updating the local change-flags bitmask, the parent partition
+ * is notified with B_PARTITION_CHANGED_DESCENDANTS so the whole ancestor
+ * chain knows that a descendant has been modified.
+ *
+ * @param flags      Flags to set.
+ * @param clearFlags Flags to clear before setting \a flags.
+ */
 void
 BMutablePartition::Changed(uint32 flags, uint32 clearFlags)
 {
@@ -511,7 +750,11 @@ BMutablePartition::Changed(uint32 flags, uint32 clearFlags)
 }
 
 
-// ChildCookie
+/**
+ * @brief Returns the opaque child cookie stored by the disk system add-on.
+ *
+ * @return The cookie value previously set by SetChildCookie().
+ */
 void*
 BMutablePartition::ChildCookie() const
 {
@@ -519,7 +762,11 @@ BMutablePartition::ChildCookie() const
 }
 
 
-// SetChildCookie
+/**
+ * @brief Stores an opaque cookie for use by the disk system add-on.
+ *
+ * @param cookie Arbitrary pointer to store.
+ */
 void
 BMutablePartition::SetChildCookie(void* cookie)
 {
@@ -527,7 +774,14 @@ BMutablePartition::SetChildCookie(void* cookie)
 }
 
 
-// constructor
+/**
+ * @brief Constructs a BMutablePartition bound to the given delegate.
+ *
+ * Called only by BPartition::Delegate. All fields are set to safe defaults;
+ * Init() must be called before the object is used.
+ *
+ * @param delegate The owning delegate.
+ */
 BMutablePartition::BMutablePartition(BPartition::Delegate* delegate)
 	: fDelegate(delegate),
 	  fData(NULL),
@@ -538,7 +792,16 @@ BMutablePartition::BMutablePartition(BPartition::Delegate* delegate)
 }
 
 
-// Init
+/**
+ * @brief Initialises the mutable partition from live partition data.
+ *
+ * Registers this partition with its parent's child list, allocates and
+ * deep-copies the user_partition_data structure including all string fields.
+ *
+ * @param partitionData Source partition data to copy.
+ * @param parent        Pointer to the parent BMutablePartition, or \c NULL.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 BMutablePartition::Init(const user_partition_data* partitionData,
 	BMutablePartition* parent)
@@ -587,7 +850,9 @@ BMutablePartition::Init(const user_partition_data* partitionData,
 }
 
 
-// destructor
+/**
+ * @brief Destroys the BMutablePartition and frees all owned string fields.
+ */
 BMutablePartition::~BMutablePartition()
 {
 	if (fData) {
@@ -602,7 +867,11 @@ BMutablePartition::~BMutablePartition()
 }
 
 
-// PartitionData
+/**
+ * @brief Returns a read-only pointer to the underlying user_partition_data.
+ *
+ * @return Pointer to the internal data structure.
+ */
 const user_partition_data*
 BMutablePartition::PartitionData() const
 {
@@ -610,10 +879,13 @@ BMutablePartition::PartitionData() const
 }
 
 
-// GetDelegate
+/**
+ * @brief Returns the BPartition::Delegate that owns this mutable partition.
+ *
+ * @return Pointer to the owning delegate.
+ */
 BPartition::Delegate*
 BMutablePartition::GetDelegate() const
 {
 	return fDelegate;
 }
-

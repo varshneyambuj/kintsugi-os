@@ -1,13 +1,39 @@
 /*
- * Copyright 2002-2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold, bonefish@users.sf.net
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2006, Haiku.
+ *   Authors: Tyler Dauwalder, Ingo Weinhold, Axel Dörfler
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file InstalledTypes.cpp
+ * @brief Maintains the complete list of installed MIME types in the database.
+ *
+ * InstalledTypes builds and caches an in-memory representation of every MIME
+ * type (both supertypes and subtypes) present in the MIME database. The list
+ * is built lazily on the first query and is updated incrementally as types are
+ * added or removed via AddType() and RemoveType().
+ *
+ * @see Database
+ */
 
 #include <mime/InstalledTypes.h>
 
@@ -39,7 +65,12 @@ namespace Mime {
 	\brief Installed types information for the entire database
 */
 
-//! Constructs a new InstalledTypes object
+/**
+ * @brief Constructs an InstalledTypes object.
+ *
+ * @param databaseLocation Pointer to the DatabaseLocation used to scan the
+ *                         MIME database directories.
+ */
 InstalledTypes::InstalledTypes(DatabaseLocation* databaseLocation)
 	:
 	fDatabaseLocation(databaseLocation),
@@ -50,7 +81,9 @@ InstalledTypes::InstalledTypes(DatabaseLocation* databaseLocation)
 }
 
 
-//! Destroys the InstalledTypes object
+/**
+ * @brief Destroys the InstalledTypes object and frees cached messages.
+ */
 InstalledTypes::~InstalledTypes()
 {
 	delete fCachedSupertypesMessage;
@@ -58,11 +91,16 @@ InstalledTypes::~InstalledTypes()
 }
 
 
-/*! \brief Returns a list of all currently installed types in the
-	pre-allocated \c BMessage pointed to by \c types.
-
-	See \c BMimeType::GetInstalledTypes(BMessage*) for more information.
-*/
+/**
+ * @brief Returns a BMessage listing all currently installed MIME types.
+ *
+ * The result is written into the pre-allocated BMessage pointed to by @a types.
+ * Results are cached; the cache is used on subsequent calls unless invalidated.
+ * Triggers a full database scan on the first call.
+ *
+ * @param types Pointer to a pre-allocated BMessage that receives all types.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::GetInstalledTypes(BMessage *types)
 {
@@ -83,12 +121,14 @@ InstalledTypes::GetInstalledTypes(BMessage *types)
 }
 
 
-/*! \brief Returns a list of all currently installed types of the given
-	supertype in the pre-allocated \c BMessage pointed to by \c types.
-
-	See \c BMimeType::GetInstalledTypes(const char*, BMessage*) for more
-	information.
-*/
+/**
+ * @brief Returns a BMessage listing all installed subtypes of the given supertype.
+ *
+ * @param supertype The supertype string (e.g. "text", "image").
+ * @param types     Pointer to a pre-allocated BMessage that receives subtypes.
+ * @return B_OK on success, B_NAME_NOT_FOUND if the supertype is not installed,
+ *         B_BAD_VALUE if @a supertype is not a pure supertype, or another error.
+ */
 status_t
 InstalledTypes::GetInstalledTypes(const char *supertype, BMessage *types)
 {
@@ -120,11 +160,12 @@ InstalledTypes::GetInstalledTypes(const char *supertype, BMessage *types)
 }
 
 
-/*! \brief Returns a list of all currently installed supertypes in the
-	pre-allocated \c BMessage pointed to by \c types.
-
-	See \c BMimeType::GetInstalledSupertypes() for more information.
-*/
+/**
+ * @brief Returns a BMessage listing all currently installed MIME supertypes.
+ *
+ * @param types Pointer to a pre-allocated BMessage that receives supertypes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::GetInstalledSupertypes(BMessage *types)
 {
@@ -149,11 +190,15 @@ InstalledTypes::GetInstalledSupertypes(BMessage *types)
 }
 
 
-/*! \brief Adds the given type to the appropriate lists of installed types.
-
-	If cached messages exist, the type is simply appended to the end of
-	the current type list.
-*/
+/**
+ * @brief Adds the given MIME type to the installed-types lists.
+ *
+ * If the full database scan has not yet been performed this call is a no-op.
+ * Otherwise the type is appended to all relevant cached structures.
+ *
+ * @param type The MIME type string to add (e.g. "text/plain").
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::AddType(const char *type)
 {
@@ -189,10 +234,15 @@ InstalledTypes::AddType(const char *type)
 }
 
 
-/*! \brief Removes the given type from the appropriate installed types lists.
-
-	Any corresponding cached messages are invalidated.
-*/
+/**
+ * @brief Removes the given MIME type from the installed-types lists.
+ *
+ * If the full database scan has not yet been performed this call is a no-op.
+ * Otherwise any cached messages that contain the type are invalidated.
+ *
+ * @param type The MIME type string to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::RemoveType(const char *type)
 {
@@ -228,11 +278,12 @@ InstalledTypes::RemoveType(const char *type)
 }
 
 
-/*! \brief Adds the given supertype to the supertype map.
-	\return
-	- B_OK: success, even if the supertype already existed in the map
-	- "error code": failure
-*/
+/**
+ * @brief Adds a supertype entry to the internal map and any cached messages.
+ *
+ * @param super The supertype string (e.g. "text").
+ * @return B_OK on success (even if it already existed), or an error code.
+ */
 status_t
 InstalledTypes::_AddSupertype(const char* super)
 {
@@ -254,17 +305,14 @@ InstalledTypes::_AddSupertype(const char* super)
 }
 
 
-/*! \brief Adds the given subtype to the given supertype's lists of installed types.
-
-	If the supertype does not yet exist, it is created.
-
-	\param super The supertype
-	\param sub The subtype (subtype only; no "supertype/subtype" types please)
-	\return
-	- B_OK: success
-	- B_NAME_IN_USE: The subtype already exists in the subtype list
-	- "error code": failure
-*/
+/**
+ * @brief Adds a subtype to the given supertype, creating the supertype if needed.
+ *
+ * @param super The supertype string.
+ * @param sub   The subtype string (without the "supertype/" prefix).
+ * @return B_OK on success, B_NAME_IN_USE if the subtype already exists,
+ *         or another error code.
+ */
 status_t
 InstalledTypes::_AddSubtype(const char *super, const char *sub)
 {
@@ -279,15 +327,14 @@ InstalledTypes::_AddSubtype(const char *super, const char *sub)
 }
 
 
-/*! \brief Adds the given subtype to the given supertype's lists of installed types.
-
-	\param super The supertype object
-	\param sub The subtype (subtype only; no "supertype/subtype" types please)
-	\return
-	- B_OK: success
-	- B_NAME_IN_USE: The subtype already exists in the subtype list
-	- "error code": failure
-*/
+/**
+ * @brief Adds a subtype string to the given Supertype object and cached message.
+ *
+ * @param super The Supertype object to which the subtype is added.
+ * @param sub   The subtype string (without the "supertype/" prefix).
+ * @return B_OK on success, B_NAME_IN_USE if the subtype already exists,
+ *         or another error code.
+ */
 status_t
 InstalledTypes::_AddSubtype(Supertype &super, const char *sub)
 {
@@ -304,8 +351,15 @@ InstalledTypes::_AddSubtype(Supertype &super, const char *sub)
 }
 
 
-/*! \brief Removes the given supertype and any corresponding subtypes.
-*/
+/**
+ * @brief Removes a supertype and all its subtypes from the internal map.
+ *
+ * Cached messages are invalidated upon removal.
+ *
+ * @param super The supertype string to remove.
+ * @return B_OK on success, B_NAME_NOT_FOUND if the supertype is not installed,
+ *         or another error code.
+ */
 status_t
 InstalledTypes::_RemoveSupertype(const char *super)
 {
@@ -319,8 +373,15 @@ InstalledTypes::_RemoveSupertype(const char *super)
 }
 
 
-/*! \brief Removes the given subtype from the given supertype.
-*/
+/**
+ * @brief Removes a subtype from the given supertype's list.
+ *
+ * Cached messages are invalidated upon removal.
+ *
+ * @param super The supertype string.
+ * @param sub   The subtype string (without the "supertype/" prefix).
+ * @return B_OK on success, B_NAME_NOT_FOUND if not found, or another error code.
+ */
 status_t
 InstalledTypes::_RemoveSubtype(const char *super, const char *sub)
 {
@@ -341,7 +402,9 @@ InstalledTypes::_RemoveSubtype(const char *super, const char *sub)
 }
 
 
-//! Clears any cached messages and empties the supertype map
+/**
+ * @brief Clears cached messages and empties the supertype map.
+ */
 void
 InstalledTypes::_Unset()
 {
@@ -350,7 +413,9 @@ InstalledTypes::_Unset()
 }
 
 
-//! Frees any cached messages and sets their pointers to NULL
+/**
+ * @brief Frees and NULLs both cached BMessage pointers.
+ */
 void
 InstalledTypes::_ClearCachedMessages()
 {
@@ -361,10 +426,15 @@ InstalledTypes::_ClearCachedMessages()
 }
 
 
-/*! \brief Reads through the database and builds a complete set of installed types lists.
-
-	An initial set of cached messages are also created.
-*/
+/**
+ * @brief Scans the database and builds the complete installed-types lists.
+ *
+ * Iterates over all supertype directories and their subtype files, reading the
+ * META:TYPE attribute from each to build the in-memory maps. Also creates
+ * initial cached messages. Sets fHaveDoneFullBuild to true on completion.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::_BuildInstalledTypesList()
 {
@@ -460,9 +530,14 @@ InstalledTypes::_BuildInstalledTypesList()
 }
 
 
-/*! \brief Allocates a new BMessage into the BMessage pointer pointed to by \c result
-	and fills it with a complete list of installed types.
-*/
+/**
+ * @brief Allocates a new BMessage and fills it with all installed MIME types.
+ *
+ * Both supertype and supertype/subtype strings are added to the message.
+ *
+ * @param _result Pointer to a BMessage pointer that is allocated and filled.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::_CreateMessageWithTypes(BMessage **_result) const
 {
@@ -492,9 +567,12 @@ InstalledTypes::_CreateMessageWithTypes(BMessage **_result) const
 }
 
 
-/*! \brief Allocates a new BMessage into the BMessage pointer pointed to by \c result
-	and fills it with a complete list of installed supertypes.
-*/
+/**
+ * @brief Allocates a new BMessage and fills it with all installed supertypes.
+ *
+ * @param _result Pointer to a BMessage pointer that is allocated and filled.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InstalledTypes::_CreateMessageWithSupertypes(BMessage **_result) const
 {
@@ -524,4 +602,3 @@ InstalledTypes::_CreateMessageWithSupertypes(BMessage **_result) const
 } // namespace Mime
 } // namespace Storage
 } // namespace BPrivate
-

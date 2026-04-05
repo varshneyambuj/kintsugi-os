@@ -1,6 +1,38 @@
 /*
- * Copyright 2007-2009, Ingo Weinhold, bonefish@users.sf.net.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2009, Ingo Weinhold, bonefish@users.sf.net.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file DiskSystemAddOnManager.cpp
+ * @brief Singleton manager for loading and referencing disk system add-ons.
+ *
+ * DiskSystemAddOnManager discovers and loads BDiskSystemAddOn plug-ins from
+ * the standard add-on directories at the request of the storage kit. It
+ * maintains reference counts on loaded images so that they are unloaded only
+ * when no longer needed, and serialises access with an internal BLocker.
+ *
+ * @see BDiskSystemAddOn
+ * @see BDiskSystem
  */
 
 #include <DiskSystemAddOnManager.h>
@@ -74,7 +106,14 @@ struct DiskSystemAddOnManager::StringSet : std::set<std::string> {
 };
 
 
-// Default
+/**
+ * @brief Returns the singleton DiskSystemAddOnManager instance.
+ *
+ * Creates the instance on first call using pthread_once to ensure
+ * thread-safe one-time initialisation.
+ *
+ * @return Pointer to the global DiskSystemAddOnManager singleton.
+ */
 DiskSystemAddOnManager*
 DiskSystemAddOnManager::Default()
 {
@@ -85,7 +124,14 @@ DiskSystemAddOnManager::Default()
 }
 
 
-// Lock
+/**
+ * @brief Acquires the manager's internal lock.
+ *
+ * Must be paired with a call to Unlock(). Returns false if the lock could
+ * not be acquired.
+ *
+ * @return true if the lock was acquired, false otherwise.
+ */
 bool
 DiskSystemAddOnManager::Lock()
 {
@@ -93,7 +139,9 @@ DiskSystemAddOnManager::Lock()
 }
 
 
-// Unlock
+/**
+ * @brief Releases the manager's internal lock.
+ */
 void
 DiskSystemAddOnManager::Unlock()
 {
@@ -101,7 +149,16 @@ DiskSystemAddOnManager::Unlock()
 }
 
 
-// LoadDiskSystems
+/**
+ * @brief Loads all disk system add-ons from the standard add-on directories.
+ *
+ * Searches the user non-packaged, user, system non-packaged, and system
+ * add-on directories in priority order. Already-loaded add-ons are skipped.
+ * The load count is incremented on each call; add-ons are only actually
+ * loaded on the first call.
+ *
+ * @return B_OK on success, or an error code if loading failed.
+ */
 status_t
 DiskSystemAddOnManager::LoadDiskSystems()
 {
@@ -132,7 +189,13 @@ DiskSystemAddOnManager::LoadDiskSystems()
 }
 
 
-// UnloadDiskSystems
+/**
+ * @brief Decrements the load count and unloads add-ons when it reaches zero.
+ *
+ * Moves all current add-ons into the pending-unload list and decrements
+ * their reference counts. An add-on image is actually unloaded once its
+ * reference count drops to zero (i.e. all users have called PutAddOn()).
+ */
 void
 DiskSystemAddOnManager::UnloadDiskSystems()
 {
@@ -151,7 +214,11 @@ DiskSystemAddOnManager::UnloadDiskSystems()
 }
 
 
-// CountAddOns
+/**
+ * @brief Returns the number of currently loaded add-ons.
+ *
+ * @return The count of add-ons in the active list.
+ */
 int32
 DiskSystemAddOnManager::CountAddOns() const
 {
@@ -159,7 +226,14 @@ DiskSystemAddOnManager::CountAddOns() const
 }
 
 
-// AddOnAt
+/**
+ * @brief Returns the add-on at the given index without incrementing its
+ *        reference count.
+ *
+ * @param index Zero-based index into the active add-on list.
+ * @return Pointer to the BDiskSystemAddOn, or NULL if the index is out of
+ *         range.
+ */
 BDiskSystemAddOn*
 DiskSystemAddOnManager::AddOnAt(int32 index) const
 {
@@ -168,7 +242,16 @@ DiskSystemAddOnManager::AddOnAt(int32 index) const
 }
 
 
-// GetAddOn
+/**
+ * @brief Looks up an add-on by name and increments its reference count.
+ *
+ * The caller must eventually pass the returned pointer to PutAddOn() to
+ * balance the reference increment.
+ *
+ * @param name The canonical disk-system name to search for.
+ * @return Pointer to the matching BDiskSystemAddOn with an incremented
+ *         reference count, or NULL if not found.
+ */
 BDiskSystemAddOn*
 DiskSystemAddOnManager::GetAddOn(const char* name)
 {
@@ -188,7 +271,14 @@ DiskSystemAddOnManager::GetAddOn(const char* name)
 }
 
 
-// PutAddOn
+/**
+ * @brief Decrements the reference count of a previously obtained add-on.
+ *
+ * Must be called once for each successful call to GetAddOn(). Calling with
+ * an unbalanced pointer triggers a debugger call.
+ *
+ * @param _addOn The add-on pointer previously returned by GetAddOn().
+ */
 void
 DiskSystemAddOnManager::PutAddOn(BDiskSystemAddOn* _addOn)
 {
@@ -221,7 +311,11 @@ DiskSystemAddOnManager::PutAddOn(BDiskSystemAddOn* _addOn)
 }
 
 
-// constructor
+/**
+ * @brief Constructs the DiskSystemAddOnManager singleton.
+ *
+ * Initialises the lock, the add-on lists, and the load counter.
+ */
 DiskSystemAddOnManager::DiskSystemAddOnManager()
 	: fLock("disk system add-ons manager"),
 	  fAddOns(),
@@ -231,6 +325,9 @@ DiskSystemAddOnManager::DiskSystemAddOnManager()
 }
 
 
+/**
+ * @brief pthread_once callback that allocates the singleton instance.
+ */
 /*static*/ void
 DiskSystemAddOnManager::_InitSingleton()
 {
@@ -238,7 +335,12 @@ DiskSystemAddOnManager::_InitSingleton()
 }
 
 
-// _AddOnAt
+/**
+ * @brief Returns the internal AddOn wrapper at the given index.
+ *
+ * @param index Zero-based index into the active add-on list.
+ * @return Pointer to the AddOn wrapper, or NULL if out of range.
+ */
 DiskSystemAddOnManager::AddOn*
 DiskSystemAddOnManager::_AddOnAt(int32 index) const
 {
@@ -246,7 +348,12 @@ DiskSystemAddOnManager::_AddOnAt(int32 index) const
 }
 
 
-// _PutAddOn
+/**
+ * @brief Decrements the reference count of the pending-unload add-on at
+ *        the given index and frees it when the count reaches zero.
+ *
+ * @param index Index into fAddOnsToBeUnloaded.
+ */
 void
 DiskSystemAddOnManager::_PutAddOn(int32 index)
 {
@@ -264,7 +371,19 @@ DiskSystemAddOnManager::_PutAddOn(int32 index)
 }
 
 
-// _LoadAddOns
+/**
+ * @brief Loads all disk system add-ons found in the given directory constant.
+ *
+ * Resolves the directory path, opens the "disk_systems" subdirectory, and
+ * attempts to load each entry as an add-on image. Already-loaded names
+ * (tracked via alreadyLoaded) are skipped. On success each add-on name is
+ * inserted into alreadyLoaded to prevent duplicate loads from lower-priority
+ * directories.
+ *
+ * @param alreadyLoaded Set of add-on file names that have already been loaded.
+ * @param addOnDir      Directory constant identifying the search directory.
+ * @return B_OK on success, or an error code if a critical failure occurred.
+ */
 status_t
 DiskSystemAddOnManager::_LoadAddOns(StringSet& alreadyLoaded,
 	directory_which addOnDir)

@@ -1,12 +1,40 @@
 /*
- * Copyright 2002-2011 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold, bonefish@users.sf.net
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2011 Haiku, Inc. All rights reserved.
+ *   Authors: Tyler Dauwalder, Ingo Weinhold (bonefish@users.sf.net)
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file Node.cpp
+ * @brief Implementation of node_ref and BNode for filesystem node access.
+ *
+ * This file implements node_ref, a lightweight structure identifying a
+ * filesystem node by device and inode number, and BNode, the base class for
+ * all filesystem objects (files, directories, symbolic links). BNode provides
+ * attribute I/O, stat access, locking, and file-descriptor management used by
+ * its subclasses.
+ *
+ * @see BNode
+ */
 
 #include <Node.h>
 
@@ -32,6 +60,9 @@
 //	#pragma mark - node_ref
 
 
+/**
+ * @brief Default constructor; initializes device and node to invalid sentinel values.
+ */
 node_ref::node_ref()
 	:
 	device((dev_t)-1),
@@ -40,6 +71,12 @@ node_ref::node_ref()
 }
 
 
+/**
+ * @brief Constructs a node_ref with the given device and inode number.
+ *
+ * @param device The device ID of the filesystem.
+ * @param node   The inode number of the node on that device.
+ */
 node_ref::node_ref(dev_t device, ino_t node)
 	:
 	device(device),
@@ -48,6 +85,11 @@ node_ref::node_ref(dev_t device, ino_t node)
 }
 
 
+/**
+ * @brief Copy constructor; initializes this node_ref as a copy of other.
+ *
+ * @param other The node_ref to copy.
+ */
 node_ref::node_ref(const node_ref& other)
 	:
 	device((dev_t)-1),
@@ -57,6 +99,12 @@ node_ref::node_ref(const node_ref& other)
 }
 
 
+/**
+ * @brief Equality operator; compares device and node fields.
+ *
+ * @param other The node_ref to compare against.
+ * @return true if both device and node match, false otherwise.
+ */
 bool
 node_ref::operator==(const node_ref& other) const
 {
@@ -64,6 +112,12 @@ node_ref::operator==(const node_ref& other) const
 }
 
 
+/**
+ * @brief Inequality operator.
+ *
+ * @param other The node_ref to compare against.
+ * @return true if device or node differ, false otherwise.
+ */
 bool
 node_ref::operator!=(const node_ref& other) const
 {
@@ -71,6 +125,12 @@ node_ref::operator!=(const node_ref& other) const
 }
 
 
+/**
+ * @brief Less-than operator for ordering; compares by device then by node.
+ *
+ * @param other The node_ref to compare against.
+ * @return true if this node_ref is ordered before other.
+ */
 bool
 node_ref::operator<(const node_ref& other) const
 {
@@ -81,6 +141,12 @@ node_ref::operator<(const node_ref& other) const
 }
 
 
+/**
+ * @brief Assignment operator; copies device and node from other.
+ *
+ * @param other The node_ref to assign from.
+ * @return A reference to this node_ref.
+ */
 node_ref&
 node_ref::operator=(const node_ref& other)
 {
@@ -93,6 +159,9 @@ node_ref::operator=(const node_ref& other)
 //	#pragma mark - BNode
 
 
+/**
+ * @brief Default constructor; creates an uninitialized BNode.
+ */
 BNode::BNode()
 	:
 	fFd(-1),
@@ -102,6 +171,11 @@ BNode::BNode()
 }
 
 
+/**
+ * @brief Constructs a BNode and initializes it to the entry identified by ref.
+ *
+ * @param ref An entry_ref identifying the node to open.
+ */
 BNode::BNode(const entry_ref* ref)
 	:
 	fFd(-1),
@@ -113,6 +187,11 @@ BNode::BNode(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Constructs a BNode and initializes it to the node pointed to by entry.
+ *
+ * @param entry A BEntry identifying the node to open.
+ */
 BNode::BNode(const BEntry* entry)
 	:
 	fFd(-1),
@@ -124,6 +203,11 @@ BNode::BNode(const BEntry* entry)
 }
 
 
+/**
+ * @brief Constructs a BNode and initializes it to the node at the given path.
+ *
+ * @param path A null-terminated string specifying the filesystem path.
+ */
 BNode::BNode(const char* path)
 	:
 	fFd(-1),
@@ -135,6 +219,12 @@ BNode::BNode(const char* path)
 }
 
 
+/**
+ * @brief Constructs a BNode and initializes it to a path relative to a directory.
+ *
+ * @param dir  The base directory for the relative path.
+ * @param path A relative path within dir.
+ */
 BNode::BNode(const BDirectory* dir, const char* path)
 	:
 	fFd(-1),
@@ -146,6 +236,11 @@ BNode::BNode(const BDirectory* dir, const char* path)
 }
 
 
+/**
+ * @brief Copy constructor; duplicates the file descriptor of node.
+ *
+ * @param node The BNode to copy.
+ */
 BNode::BNode(const BNode& node)
 	:
 	fFd(-1),
@@ -156,12 +251,20 @@ BNode::BNode(const BNode& node)
 }
 
 
+/**
+ * @brief Destructor; releases all resources held by this BNode.
+ */
 BNode::~BNode()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Returns the initialization status of this BNode.
+ *
+ * @return B_OK if initialized, B_NO_INIT or another error otherwise.
+ */
 status_t
 BNode::InitCheck() const
 {
@@ -169,6 +272,12 @@ BNode::InitCheck() const
 }
 
 
+/**
+ * @brief Initializes the BNode to the entry identified by ref.
+ *
+ * @param ref An entry_ref identifying the node to open.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNode::SetTo(const entry_ref* ref)
 {
@@ -176,6 +285,12 @@ BNode::SetTo(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Initializes the BNode to the node pointed to by entry.
+ *
+ * @param entry A BEntry identifying the node; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if entry is NULL, or another error code.
+ */
 status_t
 BNode::SetTo(const BEntry* entry)
 {
@@ -188,6 +303,12 @@ BNode::SetTo(const BEntry* entry)
 }
 
 
+/**
+ * @brief Initializes the BNode to the node at the given path.
+ *
+ * @param path A null-terminated string specifying the filesystem path.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNode::SetTo(const char* path)
 {
@@ -195,6 +316,13 @@ BNode::SetTo(const char* path)
 }
 
 
+/**
+ * @brief Initializes the BNode to a path relative to a directory.
+ *
+ * @param dir  The base directory; must not be NULL.
+ * @param path A relative path within dir; must not be NULL or absolute.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNode::SetTo(const BDirectory* dir, const char* path)
 {
@@ -208,6 +336,9 @@ BNode::SetTo(const BDirectory* dir, const char* path)
 }
 
 
+/**
+ * @brief Closes all file descriptors and resets the node to an uninitialized state.
+ */
 void
 BNode::Unset()
 {
@@ -216,6 +347,11 @@ BNode::Unset()
 }
 
 
+/**
+ * @brief Acquires an advisory lock on the node.
+ *
+ * @return B_OK on success, or an error code if the node is not initialized or locking fails.
+ */
 status_t
 BNode::Lock()
 {
@@ -226,6 +362,11 @@ BNode::Lock()
 }
 
 
+/**
+ * @brief Releases a previously acquired advisory lock on the node.
+ *
+ * @return B_OK on success, or an error code if the node is not initialized or unlocking fails.
+ */
 status_t
 BNode::Unlock()
 {
@@ -236,6 +377,11 @@ BNode::Unlock()
 }
 
 
+/**
+ * @brief Flushes any pending writes to the node to persistent storage.
+ *
+ * @return B_OK on success, or B_FILE_ERROR if the node is not initialized.
+ */
 status_t
 BNode::Sync()
 {
@@ -243,6 +389,16 @@ BNode::Sync()
 }
 
 
+/**
+ * @brief Writes data to the named attribute of this node.
+ *
+ * @param attr   The attribute name.
+ * @param type   The type code of the attribute data.
+ * @param offset Byte offset within the attribute at which to begin writing.
+ * @param buffer Pointer to the data to write.
+ * @param length Number of bytes to write.
+ * @return The number of bytes written on success, or a negative error code.
+ */
 ssize_t
 BNode::WriteAttr(const char* attr, type_code type, off_t offset,
 	const void* buffer, size_t length)
@@ -259,6 +415,16 @@ BNode::WriteAttr(const char* attr, type_code type, off_t offset,
 }
 
 
+/**
+ * @brief Reads data from the named attribute of this node.
+ *
+ * @param attr   The attribute name.
+ * @param type   The expected type code of the attribute data.
+ * @param offset Byte offset within the attribute at which to begin reading.
+ * @param buffer Buffer to receive the data.
+ * @param length Maximum number of bytes to read.
+ * @return The number of bytes read on success, or a negative error code.
+ */
 ssize_t
 BNode::ReadAttr(const char* attr, type_code type, off_t offset,
 	void* buffer, size_t length) const
@@ -275,6 +441,12 @@ BNode::ReadAttr(const char* attr, type_code type, off_t offset,
 }
 
 
+/**
+ * @brief Removes the named attribute from this node.
+ *
+ * @param name The name of the attribute to remove.
+ * @return B_OK on success, B_FILE_ERROR if not initialized, or another error code.
+ */
 status_t
 BNode::RemoveAttr(const char* name)
 {
@@ -282,6 +454,13 @@ BNode::RemoveAttr(const char* name)
 }
 
 
+/**
+ * @brief Renames an attribute on this node.
+ *
+ * @param oldName The current name of the attribute.
+ * @param newName The new name for the attribute.
+ * @return B_OK on success, B_FILE_ERROR if not initialized, or another error code.
+ */
 status_t
 BNode::RenameAttr(const char* oldName, const char* newName)
 {
@@ -292,6 +471,13 @@ BNode::RenameAttr(const char* oldName, const char* newName)
 }
 
 
+/**
+ * @brief Retrieves metadata about the named attribute.
+ *
+ * @param name The attribute name to query.
+ * @param info Pointer to an attr_info structure to be filled in.
+ * @return B_OK on success, B_FILE_ERROR if not initialized, or another error code.
+ */
 status_t
 BNode::GetAttrInfo(const char* name, struct attr_info* info) const
 {
@@ -305,6 +491,13 @@ BNode::GetAttrInfo(const char* name, struct attr_info* info) const
 }
 
 
+/**
+ * @brief Retrieves the name of the next attribute in the iteration sequence.
+ *
+ * @param buffer A buffer of at least B_ATTR_NAME_LENGTH bytes to receive the name.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when all attributes have been iterated,
+ *         or an error code on failure.
+ */
 status_t
 BNode::GetNextAttrName(char* buffer)
 {
@@ -334,6 +527,11 @@ BNode::GetNextAttrName(char* buffer)
 }
 
 
+/**
+ * @brief Rewinds the attribute iterator to the first attribute.
+ *
+ * @return B_OK on success, or B_FILE_ERROR if not initialized.
+ */
 status_t
 BNode::RewindAttrs()
 {
@@ -344,6 +542,13 @@ BNode::RewindAttrs()
 }
 
 
+/**
+ * @brief Writes a BString value as a string attribute on this node.
+ *
+ * @param name The attribute name.
+ * @param data Pointer to the BString to write; must not be NULL.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNode::WriteAttrString(const char* name, const BString* data)
 {
@@ -360,6 +565,13 @@ BNode::WriteAttrString(const char* name, const BString* data)
 }
 
 
+/**
+ * @brief Reads a string attribute from this node into a BString.
+ *
+ * @param name   The attribute name.
+ * @param result Pointer to a BString to receive the attribute value.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNode::ReadAttrString(const char* name, BString* result) const
 {
@@ -397,6 +609,12 @@ BNode::ReadAttrString(const char* name, BString* result) const
 }
 
 
+/**
+ * @brief Assignment operator; duplicates the file descriptor of node.
+ *
+ * @param node The BNode to assign from.
+ * @return A reference to this BNode.
+ */
 BNode&
 BNode::operator=(const BNode& node)
 {
@@ -415,6 +633,12 @@ BNode::operator=(const BNode& node)
 }
 
 
+/**
+ * @brief Equality operator; returns true if both nodes refer to the same filesystem node.
+ *
+ * @param node The BNode to compare against.
+ * @return true if both are uninitialized or both refer to the same node_ref.
+ */
 bool
 BNode::operator==(const BNode& node) const
 {
@@ -437,6 +661,12 @@ BNode::operator==(const BNode& node) const
 }
 
 
+/**
+ * @brief Inequality operator.
+ *
+ * @param node The BNode to compare against.
+ * @return true if the nodes are not equal.
+ */
 bool
 BNode::operator!=(const BNode& node) const
 {
@@ -444,6 +674,11 @@ BNode::operator!=(const BNode& node) const
 }
 
 
+/**
+ * @brief Duplicates the underlying file descriptor.
+ *
+ * @return A new file descriptor on success, or -1 on failure.
+ */
 int
 BNode::Dup()
 {
@@ -479,6 +714,12 @@ void BNode::_RudeNode6() { }
 	\returns \c B_OK if everything went fine, or an error code if something
 		went wrong.
 */
+/**
+ * @brief Sets the node's file descriptor, closing any previously open descriptor.
+ *
+ * @param fd The new file descriptor; may be -1 to indicate no open descriptor.
+ * @return B_OK on success.
+ */
 status_t
 BNode::set_fd(int fd)
 {
@@ -497,6 +738,9 @@ BNode::set_fd(int fd)
 	proper system call for the given file-type. This implementation calls
 	_kern_close(fFd) and also _kern_close(fAttrDir) if necessary.
 */
+/**
+ * @brief Closes the node and attribute file descriptors.
+ */
 void
 BNode::close_fd()
 {
@@ -518,6 +762,11 @@ BNode::close_fd()
 
 	\param newStatus the new value for the status variable.
 */
+/**
+ * @brief Sets the BNode's initialization status variable.
+ *
+ * @param newStatus The new status value to store in fCStatus.
+ */
 void
 BNode::set_status(status_t newStatus)
 {
@@ -550,6 +799,14 @@ BNode::set_status(status_t newStatus)
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
 */
+/**
+ * @brief Opens the node identified by a directory FD and path, trying read-write then read-only.
+ *
+ * @param fd       A directory file descriptor, or a value < 0 (requires path).
+ * @param path     NULL, absolute, or relative path; relative is resolved against fd.
+ * @param traverse If true, symlinks are followed recursively.
+ * @return B_OK on success, or an error code otherwise; also sets fCStatus.
+ */
 status_t
 BNode::_SetTo(int fd, const char* path, bool traverse)
 {
@@ -586,6 +843,13 @@ BNode::_SetTo(int fd, const char* path, bool traverse)
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
 */
+/**
+ * @brief Opens the node identified by an entry_ref, trying read-write then read-only.
+ *
+ * @param ref      An entry_ref identifying the node to open.
+ * @param traverse If true, symlinks are followed recursively.
+ * @return B_OK on success, or an error code otherwise; also sets fCStatus.
+ */
 status_t
 BNode::_SetTo(const entry_ref* ref, bool traverse)
 {
@@ -619,6 +883,13 @@ BNode::_SetTo(const entry_ref* ref, bool traverse)
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
 */
+/**
+ * @brief Applies a stat-based modification to this node (used by BStatable).
+ *
+ * @param stat The stat structure containing the new value to apply.
+ * @param what A flag specifying which stat field to modify.
+ * @return B_OK on success, B_FILE_ERROR if not initialized, or another error code.
+ */
 status_t
 BNode::set_stat(struct stat& stat, uint32 what)
 {
@@ -637,6 +908,11 @@ BNode::set_stat(struct stat& stat, uint32 what)
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
 */
+/**
+ * @brief Ensures the attribute directory FD is open, opening it if necessary.
+ *
+ * @return B_OK if the attribute directory is ready, or an error code on failure.
+ */
 status_t
 BNode::InitAttrDir()
 {
@@ -653,6 +929,12 @@ BNode::InitAttrDir()
 }
 
 
+/**
+ * @brief Reads the stat structure for this node.
+ *
+ * @param stat Pointer to a stat structure to be filled in.
+ * @return B_OK on success, or fCStatus if not initialized.
+ */
 status_t
 BNode::_GetStat(struct stat* stat) const
 {
@@ -662,6 +944,12 @@ BNode::_GetStat(struct stat* stat) const
 }
 
 
+/**
+ * @brief Reads the BeOS-compatible stat structure for this node.
+ *
+ * @param stat Pointer to a stat_beos structure to be filled in.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNode::_GetStat(struct stat_beos* stat) const
 {

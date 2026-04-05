@@ -1,13 +1,40 @@
 /*
- * Copyright 2002-2014 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Rene Gollent, rene@gollent.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2014 Haiku, Inc. All Rights Reserved.
+ *   Authors: Tyler Dauwalder, Rene Gollent, Ingo Weinhold
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file DatabaseLocation.cpp
+ * @brief Provides path resolution and node I/O for the MIME database.
+ *
+ * DatabaseLocation manages a list of directories that collectively make up
+ * the MIME database. It provides methods to open, create, read, write, and
+ * delete MIME type nodes and their attributes. The first directory in the
+ * list is the writable (user-settings) directory; additional directories
+ * are read-only system locations consulted as fallbacks.
+ *
+ * @see Database
+ */
 
 #include <mime/DatabaseLocation.h>
 
@@ -34,6 +61,9 @@ namespace Storage {
 namespace Mime {
 
 
+/**
+ * @brief Constructs a DatabaseLocation with an empty directory list.
+ */
 DatabaseLocation::DatabaseLocation()
 	:
 	fDirectories()
@@ -41,11 +71,21 @@ DatabaseLocation::DatabaseLocation()
 }
 
 
+/**
+ * @brief Destroys the DatabaseLocation object.
+ */
 DatabaseLocation::~DatabaseLocation()
 {
 }
 
 
+/**
+ * @brief Appends a directory path to the list of MIME database directories.
+ *
+ * @param directory The directory path to add.
+ * @return true if the directory was added successfully, false if the string
+ *         was empty or the addition failed.
+ */
 bool
 DatabaseLocation::AddDirectory(const BString& directory)
 {
@@ -53,12 +93,16 @@ DatabaseLocation::AddDirectory(const BString& directory)
 }
 
 
-/*!	Opens a BNode on the given type, failing if the type has no
-	corresponding file in the database.
-
-	\param type The MIME type to open.
-	\param _node Node opened on the given MIME type.
-*/
+/**
+ * @brief Opens a read-only BNode for the given MIME type.
+ *
+ * Searches all registered directories for a node corresponding to the given
+ * type. Fails with B_ENTRY_NOT_FOUND if the type has no matching file.
+ *
+ * @param type The MIME type string to open.
+ * @param _node Reference to a BNode that will be set on success.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if not found, or another error.
+ */
 status_t
 DatabaseLocation::OpenType(const char* type, BNode& _node) const
 {
@@ -70,19 +114,21 @@ DatabaseLocation::OpenType(const char* type, BNode& _node) const
 }
 
 
-/*!	Opens a BNode on the given type, creating a node of the
-	appropriate flavor if requested (and necessary).
-
-	All MIME types are converted to lowercase for use in the filesystem.
-
-	\param type The MIME type to open.
-	\param _node Node opened on the given MIME type.
-	\param _didCreate If not \c NULL, the variable the pointer refers to is
-	       set to \c true, if the node has been newly created, to \c false
-	       otherwise.
-
-	\return A status code.
-*/
+/**
+ * @brief Opens or creates a writable BNode for the given MIME type.
+ *
+ * If the type already exists in the writable directory (index 0), it is
+ * opened directly. If it exists only in a read-only directory, a copy is
+ * made in the writable directory (and *_didCreate is set to true). If the
+ * type does not exist and @a create is true, a new node is created.
+ *
+ * @param type     The MIME type string.
+ * @param _node    Reference to a BNode set on success.
+ * @param create   If true, create the node when it does not yet exist.
+ * @param _didCreate Optional pointer; set to true when a new node is created.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the type does not exist and
+ *         @a create is false, or another error code.
+ */
 status_t
 DatabaseLocation::OpenWritableType(const char* type, BNode& _node, bool create,
 	bool* _didCreate) const
@@ -143,21 +189,16 @@ DatabaseLocation::OpenWritableType(const char* type, BNode& _node, bool create,
 }
 
 
-/*! Reads up to \c length bytes of the given data from the given attribute
-	for the given MIME type.
-
-	If no entry for the given type exists in the database, the function fails,
-	and the contents of \c data are undefined.
-
-	\param type The MIME type.
-	\param attribute The attribute name.
-	\param data Pointer to a memory buffer into which the data should be copied.
-	\param length The maximum number of bytes to read.
-	\param datatype The expected data type.
-
-	\return If successful, the number of bytes read is returned, otherwise, an
-	        error code is returned.
-*/
+/**
+ * @brief Reads raw attribute data for the given MIME type.
+ *
+ * @param type      The MIME type string.
+ * @param attribute The attribute name.
+ * @param data      Buffer into which data is read.
+ * @param length    Maximum number of bytes to read.
+ * @param datatype  Expected attribute type code.
+ * @return Number of bytes read on success, or a negative error code.
+ */
 ssize_t
 DatabaseLocation::ReadAttribute(const char* type, const char* attribute,
 	void* data, size_t length, type_code datatype) const
@@ -174,20 +215,14 @@ DatabaseLocation::ReadAttribute(const char* type, const char* attribute,
 }
 
 
-/*!	Reads a flattened BMessage from the given attribute of the given
-	MIME type.
-
-	If no entry for the given type exists in the database, or if the data
-	stored in the attribute is not a flattened BMessage, the function fails
-	and the contents of \c msg are undefined.
-
-	\param type The MIME type.
-	\param attribute The attribute name.
-	\param data Reference to a pre-allocated BMessage into which the attribute
-	       data is unflattened.
-
-	\return A status code.
-*/
+/**
+ * @brief Reads a flattened BMessage from an attribute of the given MIME type.
+ *
+ * @param type      The MIME type string.
+ * @param attribute The attribute name.
+ * @param _message  Reference to a pre-allocated BMessage filled on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::ReadMessageAttribute(const char* type, const char* attribute,
 	BMessage& _message) const
@@ -223,18 +258,14 @@ DatabaseLocation::ReadMessageAttribute(const char* type, const char* attribute,
 }
 
 
-/*!	Reads a BString from the given attribute of the given MIME type.
-
-	If no entry for the given type exists in the database, the function fails
-	and the contents of \c str are undefined.
-
-	\param type The MIME type.
-	\param attribute The attribute name.
-	\param _string Reference to a pre-allocated BString into which the attribute
-	       data stored.
-
-	\return A status code.
-*/
+/**
+ * @brief Reads a string attribute for the given MIME type into a BString.
+ *
+ * @param type      The MIME type string.
+ * @param attribute The attribute name.
+ * @param _string   Reference to a BString that receives the value on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::ReadStringAttribute(const char* type, const char* attribute,
 	BString& _string) const
@@ -251,19 +282,19 @@ DatabaseLocation::ReadStringAttribute(const char* type, const char* attribute,
 }
 
 
-/*!	Writes \c len bytes of the given data to the given attribute
-	for the given MIME type.
-
-	If no entry for the given type exists in the database, it is created.
-
-	\param type The MIME type.
-	\param attribute The attribute name.
-	\param data Pointer to the data to write.
-	\param length The number of bytes to write.
-	\param datatype The data type of the given data.
-
-	\return A status code.
-*/
+/**
+ * @brief Writes raw attribute data for the given MIME type.
+ *
+ * Creates the type node if it does not already exist.
+ *
+ * @param type       The MIME type string.
+ * @param attribute  The attribute name.
+ * @param data       Pointer to the data to write.
+ * @param length     Number of bytes to write.
+ * @param datatype   Type code for the attribute.
+ * @param _didCreate Optional pointer; set to true if the type node was created.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::WriteAttribute(const char* type, const char* attribute,
 	const void* data, size_t length, type_code datatype, bool* _didCreate) const
@@ -284,17 +315,17 @@ DatabaseLocation::WriteAttribute(const char* type, const char* attribute,
 }
 
 
-/*! Flattens the given \c BMessage and writes it to the given attribute
-	of the given MIME type.
-
-	If no entry for the given type exists in the database, it is created.
-
-	\param type The MIME type.
-	\param attribute The attribute name.
-	\param message The BMessage to flatten and write.
-
-	\return A status code.
-*/
+/**
+ * @brief Flattens a BMessage and writes it as an attribute of the given MIME type.
+ *
+ * Creates the type node if it does not already exist.
+ *
+ * @param type       The MIME type string.
+ * @param attribute  The attribute name.
+ * @param message    The BMessage to flatten and store.
+ * @param _didCreate Optional pointer; set to true if the type node was created.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::WriteMessageAttribute(const char* type, const char* attribute,
 	const BMessage& message, bool* _didCreate) const
@@ -314,15 +345,14 @@ DatabaseLocation::WriteMessageAttribute(const char* type, const char* attribute,
 }
 
 
-/*!	Deletes the given attribute for the given type
-
-	\param type The mime type
-	\param attribute The attribute name
-
-	\return A status code, \c B_OK on success or an error code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No such type or attribute.
-*/
+/**
+ * @brief Removes an attribute from the given MIME type's node.
+ *
+ * @param type      The MIME type string.
+ * @param attribute The attribute name to remove.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the type or attribute does
+ *         not exist, or another error code.
+ */
 status_t
 DatabaseLocation::DeleteAttribute(const char* type, const char* attribute) const
 {
@@ -338,18 +368,13 @@ DatabaseLocation::DeleteAttribute(const char* type, const char* attribute) const
 }
 
 
-/*! Fetches the application hint for the given MIME type.
-
-	The entry_ref pointed to by \c ref must be pre-allocated.
-
-	\param type The MIME type of interest
-	\param _ref Reference to a pre-allocated \c entry_ref struct into
-	       which the location of the hint application is copied.
-
-	\return A status code, \c B_OK on success or an error code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No app hint exists for the given type
-*/
+/**
+ * @brief Fetches the application hint (preferred application path) for the type.
+ *
+ * @param type The MIME type of interest.
+ * @param _ref Reference to a pre-allocated entry_ref filled with the hint path.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no hint exists, or an error code.
+ */
 status_t
 DatabaseLocation::GetAppHint(const char* type, entry_ref& _ref)
 {
@@ -370,19 +395,16 @@ DatabaseLocation::GetAppHint(const char* type, entry_ref& _ref)
 }
 
 
-/*!	Fetches from the MIME database a BMessage describing the attributes
-	typically associated with files of the given MIME type
-
-	The attribute information is returned in a pre-allocated BMessage pointed to
-	by the \c info parameter (note that the any prior contents of the message
-	will be destroyed). Please see BMimeType::SetAttrInfo() for a description
-	of the expected format of such a message.
-
-	\param _info Reference to a pre-allocated BMessage into which information
-	       about the MIME type's associated file attributes is stored.
-
-	\return A status code, \c B_OK on success or an error code on failure.
-*/
+/**
+ * @brief Retrieves the attribute-info message describing file attributes for the type.
+ *
+ * The returned message follows the format described by BMimeType::SetAttrInfo().
+ * An empty message is returned when no attribute info has been stored yet.
+ *
+ * @param type  The MIME type of interest.
+ * @param _info Reference to a pre-allocated BMessage filled on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::GetAttributesInfo(const char* type, BMessage& _info)
 {
@@ -404,21 +426,14 @@ DatabaseLocation::GetAttributesInfo(const char* type, BMessage& _info)
 }
 
 
-/*!	Fetches the short description for the given MIME type.
-
-	The string pointed to by \c description must be long enough to
-	hold the short description; a length of \c B_MIME_TYPE_LENGTH is
-	recommended.
-
-	\param type The MIME type of interest
-	\param description Pointer to a pre-allocated string into which the short
-	       description is copied. If the function fails, the contents of the
-	       string are undefined.
-
-	\return A status code, \c B_OK on success or an error code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No short description exists for the given type.
-*/
+/**
+ * @brief Retrieves the short description string for the given MIME type.
+ *
+ * @param type        The MIME type of interest.
+ * @param description Pre-allocated buffer of at least B_MIME_TYPE_LENGTH bytes.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no short description exists,
+ *         or another error code.
+ */
 status_t
 DatabaseLocation::GetShortDescription(const char* type, char* description)
 {
@@ -429,21 +444,14 @@ DatabaseLocation::GetShortDescription(const char* type, char* description)
 }
 
 
-/*!	Fetches the long description for the given MIME type.
-
-	The string pointed to by \c description must be long enough to
-	hold the long description; a length of \c B_MIME_TYPE_LENGTH is
-	recommended.
-
-	\param type The MIME type of interest
-	\param description Pointer to a pre-allocated string into which the long
-	       description is copied. If the function fails, the contents of the
-	       string are undefined.
-
-	\return A status code, \c B_OK on success or an error code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No long description exists for the given type
-*/
+/**
+ * @brief Retrieves the long description string for the given MIME type.
+ *
+ * @param type        The MIME type of interest.
+ * @param description Pre-allocated buffer of at least B_MIME_TYPE_LENGTH bytes.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no long description exists,
+ *         or another error code.
+ */
 status_t
 DatabaseLocation::GetLongDescription(const char* type, char* description)
 {
@@ -454,19 +462,16 @@ DatabaseLocation::GetLongDescription(const char* type, char* description)
 }
 
 
-/*!	Fetches a BMessage describing the MIME type's associated filename
-	extensions.
-
-	The list of extensions is returned in a pre-allocated BMessage pointed to
-	by the \c extensions parameter (note that the any prior contents of the
-	message will be destroyed). Please see BMimeType::GetFileExtensions() for
-	a description of the message format.
-
-	\param extensions Reference to a pre-allocated BMessage into which the MIME
-	       type's associated file extensions will be stored.
-
-	\return A status code, \c B_OK on success or an error code on failure.
-*/
+/**
+ * @brief Retrieves the file-extension list message for the given MIME type.
+ *
+ * The message format is described by BMimeType::GetFileExtensions(). An empty
+ * message is returned when no extensions have been stored.
+ *
+ * @param type        The MIME type of interest.
+ * @param _extensions Reference to a pre-allocated BMessage filled on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::GetFileExtensions(const char* type, BMessage& _extensions)
 {
@@ -486,20 +491,14 @@ DatabaseLocation::GetFileExtensions(const char* type, BMessage& _extensions)
 }
 
 
-/*!	Fetches the icon of given size associated with the given MIME type.
-
-	The bitmap pointed to by \c icon must be of the proper size (\c 32x32
-	for \c B_LARGE_ICON, \c 16x16 for \c B_MINI_ICON) and color depth
-	(\c B_CMAP8).
-
-	\param type The mime type
-	\param icon Reference to a pre-allocated bitmap of proper dimensions and
-	       color depth
-	\param size The size icon you're interested in (\c B_LARGE_ICON or
-	       \c B_MINI_ICON)
-
-	\return A status code.
-*/
+/**
+ * @brief Retrieves the bitmap icon of the requested size for the given MIME type.
+ *
+ * @param type  The MIME type of interest.
+ * @param _icon Reference to a pre-allocated BBitmap of correct size and depth.
+ * @param size  Desired icon size (B_LARGE_ICON or B_MINI_ICON).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::GetIcon(const char* type, BBitmap& _icon, icon_size size)
 {
@@ -507,15 +506,16 @@ DatabaseLocation::GetIcon(const char* type, BBitmap& _icon, icon_size size)
 }
 
 
-/*!	Fetches the vector icon associated with the given MIME type.
-
-	\param type The mime type
-	\param _data Reference via which the allocated icon data is returned. You
-	       need to free the buffer once you're done with it.
-	\param _size Reference via which the size of the icon data is returned.
-
-	\return A status code.
-*/
+/**
+ * @brief Retrieves the raw vector icon data for the given MIME type.
+ *
+ * The caller is responsible for freeing the returned buffer with delete[].
+ *
+ * @param type  The MIME type of interest.
+ * @param _data Reference via which the allocated icon buffer is returned.
+ * @param _size Reference via which the buffer size in bytes is returned.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::GetIcon(const char* type, uint8*& _data, size_t& _size)
 {
@@ -523,31 +523,17 @@ DatabaseLocation::GetIcon(const char* type, uint8*& _data, size_t& _size)
 }
 
 
-/*!	Fetches the large or mini icon used by an application of this type
-	for files of the given type.
-
-	The type of the \c BMimeType object is not required to actually be a subtype
-	of \c "application/"; that is the intended use however, and calling
-	\c GetIconForType() on a non-application type will likely return
-	\c B_ENTRY_NOT_FOUND.
-
-	The icon is copied into the \c BBitmap pointed to by \c icon. The bitmap
-	must be the proper size: \c 32x32 for the large icon, \c 16x16 for the mini
-	icon.
-
-	\param type The MIME type
-	\param fileType Pointer to a pre-allocated string containing the MIME type
-	       whose custom icon you wish to fetch. If NULL, works just like
-	       GetIcon().
-	\param icon Reference to a pre-allocated \c BBitmap of proper size and
-	       colorspace into which the icon is copied.
-	\param icon_size Value that specifies which icon to return. Currently
-	       \c B_LARGE_ICON and \c B_MINI_ICON are supported.
-
-	\return A status code, \c B_OK on success or an error code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No icon of the given size exists for the given type
-*/
+/**
+ * @brief Retrieves the bitmap icon an application uses for files of a given type.
+ *
+ * @param type     The application MIME type.
+ * @param fileType The file MIME type whose custom icon is requested. Pass NULL
+ *                 to retrieve the application's own icon.
+ * @param _icon    Reference to a pre-allocated BBitmap of correct size/depth.
+ * @param which    B_LARGE_ICON or B_MINI_ICON.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching icon exists,
+ *         or another error code.
+ */
 status_t
 DatabaseLocation::GetIconForType(const char* type, const char* fileType,
 	BBitmap& _icon, icon_size which)
@@ -584,27 +570,19 @@ DatabaseLocation::GetIconForType(const char* type, const char* fileType,
 }
 
 
-/*!	Fetches the vector icon used by an application of this type for files
-	of the given type.
-
-	The type of the \c BMimeType object is not required to actually be a subtype
-	of \c "application/"; that is the intended use however, and calling
-	\c GetIconForType() on a non-application type will likely return
-	\c B_ENTRY_NOT_FOUND.
-
-	The icon data is allocated and returned in \a _data.
-
-	\param type The MIME type
-	\param fileType Reference to a pre-allocated string containing the MIME type
-	       whose custom icon you wish to fetch. If NULL, works just like
-	       GetIcon().
-	\param _data Reference via which the icon data is returned on success.
-	\param _size Reference via which the size of the icon data is returned.
-
-	\return A status code, \c B_OK on success or another code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No vector icon existed for the given type.
-*/
+/**
+ * @brief Retrieves the raw vector icon an application uses for files of a given type.
+ *
+ * The caller is responsible for freeing the returned buffer with delete[].
+ *
+ * @param type     The application MIME type.
+ * @param fileType The file MIME type whose custom icon is requested. Pass NULL
+ *                 to retrieve the application's own vector icon.
+ * @param _data    Reference via which the allocated icon buffer is returned.
+ * @param _size    Reference via which the buffer size in bytes is returned.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no vector icon exists,
+ *         or another error code.
+ */
 status_t
 DatabaseLocation::GetIconForType(const char* type, const char* fileType,
 	uint8*& _data, size_t& _size)
@@ -662,25 +640,17 @@ DatabaseLocation::GetIconForType(const char* type, const char* fileType,
 }
 
 
-/*!	Fetches signature of the MIME type's preferred application for the
-	given action.
-
-	The string pointed to by \c signature must be long enough to
-	hold the short description; a length of \c B_MIME_TYPE_LENGTH is
-	recommended.
-
-	Currently, the only supported app verb is \c B_OPEN.
-
-	\param type The MIME type of interest
-	\param description Pointer to a pre-allocated string into which the
-	       preferred application's signature is copied. If the function fails,
-	       the contents of the string are undefined.
-	\param verb \c The action of interest
-
-	\return A status code, \c B_OK on success or another code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No such preferred application exists
-*/
+/**
+ * @brief Retrieves the preferred application signature for the given action.
+ *
+ * Currently only B_OPEN is a supported app_verb.
+ *
+ * @param type      The MIME type of interest.
+ * @param signature Pre-allocated buffer of at least B_MIME_TYPE_LENGTH bytes.
+ * @param verb      The application action (currently only B_OPEN is supported).
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no preferred app is set,
+ *         or another error code.
+ */
 status_t
 DatabaseLocation::GetPreferredApp(const char* type, char* signature,
 	app_verb verb)
@@ -694,15 +664,14 @@ DatabaseLocation::GetPreferredApp(const char* type, char* signature,
 }
 
 
-/*!	Fetches the sniffer rule for the given MIME type.
-	\param type The MIME type of interest
-	\param _result Pointer to a pre-allocated BString into which the type's
-	       sniffer rule is copied.
-
-	\return A status code, \c B_OK on success or another code on failure.
-	\retval B_OK Success.
-	\retval B_ENTRY_NOT_FOUND No such preferred application exists.
-*/
+/**
+ * @brief Retrieves the sniffer rule string for the given MIME type.
+ *
+ * @param type    The MIME type of interest.
+ * @param _result Reference to a BString that receives the rule on success.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no rule has been set,
+ *         or another error code.
+ */
 status_t
 DatabaseLocation::GetSnifferRule(const char* type, BString& _result)
 {
@@ -710,6 +679,15 @@ DatabaseLocation::GetSnifferRule(const char* type, BString& _result)
 }
 
 
+/**
+ * @brief Retrieves the supported-types message for the given MIME type.
+ *
+ * An empty message is returned when no supported types have been stored.
+ *
+ * @param type   The MIME type of interest.
+ * @param _types Reference to a pre-allocated BMessage filled on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::GetSupportedTypes(const char* type, BMessage& _types)
 {
@@ -728,7 +706,12 @@ DatabaseLocation::GetSupportedTypes(const char* type, BMessage& _types)
 }
 
 
-//! Checks if the given MIME type is present in the database
+/**
+ * @brief Checks whether the given MIME type is present in the database.
+ *
+ * @param type The MIME type string to check.
+ * @return true if the type exists in any registered directory, false otherwise.
+ */
 bool
 DatabaseLocation::IsInstalled(const char* type)
 {
@@ -737,6 +720,13 @@ DatabaseLocation::IsInstalled(const char* type)
 }
 
 
+/**
+ * @brief Builds the filesystem path for a MIME type in a specific directory slot.
+ *
+ * @param type  The MIME type string (will be lowercased).
+ * @param index Index into the registered directory list.
+ * @return The full path as a BString.
+ */
 BString
 DatabaseLocation::_TypeToFilename(const char* type, int32 index) const
 {
@@ -745,6 +735,14 @@ DatabaseLocation::_TypeToFilename(const char* type, int32 index) const
 }
 
 
+/**
+ * @brief Searches all directories for a node matching the given MIME type.
+ *
+ * @param type   The MIME type string.
+ * @param _node  Reference to a BNode set on success.
+ * @param _index Reference set to the index of the directory where found.
+ * @return B_OK if found, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 DatabaseLocation::_OpenType(const char* type, BNode& _node, int32& _index) const
 {
@@ -762,6 +760,17 @@ DatabaseLocation::_OpenType(const char* type, BNode& _node, int32& _index) const
 }
 
 
+/**
+ * @brief Creates a new type node (file or directory) in the writable directory.
+ *
+ * For subtypes ("supertype/subtype"), this creates the supertype directory if
+ * needed and then creates the subtype file inside it. For supertypes, only the
+ * directory is created.
+ *
+ * @param type  The MIME type string.
+ * @param _node Reference to a BNode set to the newly created node on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DatabaseLocation::_CreateTypeNode(const char* type, BNode& _node) const
 {
@@ -806,6 +815,18 @@ DatabaseLocation::_CreateTypeNode(const char* type, BNode& _node) const
 }
 
 
+/**
+ * @brief Copies all attributes from a source node into a newly created type node.
+ *
+ * Used to promote a read-only type entry to a writable copy in the user's
+ * settings directory. Errors during individual attribute copies are logged but
+ * do not abort the overall operation.
+ *
+ * @param source  The source BNode to copy attributes from.
+ * @param type    The MIME type string (used to create the target node).
+ * @param _target Reference to a BNode set to the newly created target.
+ * @return B_OK on success, or an error code if node creation fails.
+ */
 status_t
 DatabaseLocation::_CopyTypeNode(BNode& source, const char* type, BNode& _target)
 	const

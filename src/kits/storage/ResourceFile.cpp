@@ -1,13 +1,39 @@
 /*
- * Copyright 2002-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
 
-
-/*!
-	\file ResourceFile.cpp
-	ResourceFile implementation.
-*/
+/**
+ * @file ResourceFile.cpp
+ * @brief Implementation of ResourceFile, the low-level resource file parser and writer.
+ *
+ * ResourceFile handles reading and writing raw resource data for x86, PPC,
+ * ELF32, ELF64, and PEF binary formats. It detects the file type from the
+ * magic bytes, locates the embedded resource section, and parses the
+ * resource header, index, and info-table structures. Write support
+ * regenerates the complete resource section from a ResourcesContainer.
+ *
+ * @see ResourcesContainer
+ */
 
 
 #include <ResourceFile.h>
@@ -74,6 +100,17 @@ static const uint32 kVersionInfoIntCount = 5;
 // #pragma mark - helper functions/classes
 
 
+/**
+ * @brief Reads exactly @p size bytes from @p file at @p position.
+ *
+ * Throws an Exception with @p errorMessage on short read or I/O error.
+ *
+ * @param file         The file to read from.
+ * @param position     Byte offset at which to begin reading.
+ * @param buffer       Destination buffer.
+ * @param size         Number of bytes to read.
+ * @param errorMessage Optional prefix for the exception message.
+ */
 static void
 read_exactly(BPositionIO& file, off_t position, void* buffer, size_t size,
 	const char* errorMessage = NULL)
@@ -91,6 +128,17 @@ read_exactly(BPositionIO& file, off_t position, void* buffer, size_t size,
 }
 
 
+/**
+ * @brief Writes exactly @p size bytes to @p file at @p position.
+ *
+ * Throws an Exception with @p errorMessage on short write or I/O error.
+ *
+ * @param file         The file to write to.
+ * @param position     Byte offset at which to begin writing.
+ * @param buffer       Source buffer.
+ * @param size         Number of bytes to write.
+ * @param errorMessage Optional prefix for the exception message.
+ */
 static void
 write_exactly(BPositionIO& file, off_t position, const void* buffer,
 	size_t size, const char* errorMessage = NULL)
@@ -108,6 +156,13 @@ write_exactly(BPositionIO& file, off_t position, const void* buffer,
 }
 
 
+/**
+ * @brief Rounds @p value up to the nearest multiple of @p alignment.
+ *
+ * @param value     The value to align.
+ * @param alignment The alignment boundary (must be > 0).
+ * @return The smallest multiple of @p alignment that is >= @p value.
+ */
 template<typename TV, typename TA>
 static inline TV
 align_value(const TV& value, const TA& alignment)
@@ -116,6 +171,16 @@ align_value(const TV& value, const TA& alignment)
 }
 
 
+/**
+ * @brief Computes a simple word-sum checksum over @p size bytes of @p data.
+ *
+ * Bytes are grouped into big-endian 32-bit words and summed. Partial trailing
+ * groups are zero-padded on the right.
+ *
+ * @param data Pointer to the data block.
+ * @param size Number of bytes to checksum.
+ * @return The 32-bit checksum value.
+ */
 static uint32
 calculate_checksum(const void* data, uint32 size)
 {
@@ -134,6 +199,13 @@ calculate_checksum(const void* data, uint32 size)
 }
 
 
+/**
+ * @brief Returns a const pointer advanced by @p offset bytes.
+ *
+ * @param buffer The base pointer.
+ * @param offset Number of bytes to skip.
+ * @return Pointer to buffer + offset.
+ */
 static inline const void*
 skip_bytes(const void* buffer, int32 offset)
 {
@@ -141,6 +213,13 @@ skip_bytes(const void* buffer, int32 offset)
 }
 
 
+/**
+ * @brief Returns a mutable pointer advanced by @p offset bytes.
+ *
+ * @param buffer The base pointer.
+ * @param offset Number of bytes to skip.
+ * @return Pointer to buffer + offset.
+ */
 static inline void*
 skip_bytes(void* buffer, int32 offset)
 {
@@ -148,6 +227,16 @@ skip_bytes(void* buffer, int32 offset)
 }
 
 
+/**
+ * @brief Fills @p count uint32 words in @p _buffer with the unused-resource-data pattern.
+ *
+ * The pattern is chosen based on the buffer's byte offset from the start of
+ * the resource data so that the pattern is consistent across writes.
+ *
+ * @param byteOffset Byte offset of @p _buffer from the beginning of resource data.
+ * @param _buffer    Pointer to the region to fill.
+ * @param count      Number of uint32 words to fill.
+ */
 static void
 fill_pattern(uint32 byteOffset, void* _buffer, uint32 count)
 {
@@ -157,6 +246,13 @@ fill_pattern(uint32 byteOffset, void* _buffer, uint32 count)
 }
 
 
+/**
+ * @brief Fills @p count uint32 words in @p buffer with the pattern relative to @p dataBegin.
+ *
+ * @param dataBegin Pointer to the start of the resource data region.
+ * @param buffer    Pointer to the region to fill.
+ * @param count     Number of uint32 words to fill.
+ */
 static void
 fill_pattern(const void* dataBegin, void* buffer, uint32 count)
 {
@@ -164,6 +260,13 @@ fill_pattern(const void* dataBegin, void* buffer, uint32 count)
 }
 
 
+/**
+ * @brief Fills the range [buffer, bufferEnd) with the pattern relative to @p dataBegin.
+ *
+ * @param dataBegin Pointer to the start of the resource data region.
+ * @param buffer    Start of the range to fill.
+ * @param bufferEnd One-past-end of the range to fill; must be 4-byte aligned relative to buffer.
+ */
 static void
 fill_pattern(const void* dataBegin, void* buffer, const void* bufferEnd)
 {
@@ -172,6 +275,15 @@ fill_pattern(const void* dataBegin, void* buffer, const void* bufferEnd)
 }
 
 
+/**
+ * @brief Checks whether @p count uint32 words at @p _buffer match the unused-resource pattern.
+ *
+ * @param byteOffset     Byte offset of @p _buffer from the beginning of resource data.
+ * @param _buffer        Pointer to the data to check.
+ * @param count          Number of uint32 words to check.
+ * @param hostEndianess  If false, each word is byte-swapped before comparison.
+ * @return true if all words match the expected pattern.
+ */
 static bool
 check_pattern(uint32 byteOffset, void* _buffer, uint32 count,
 	bool hostEndianess)
@@ -220,6 +332,12 @@ struct resource_parse_info {
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an uninitialized ResourceFile.
+ *
+ * The file type is set to FILE_TYPE_UNKNOWN. Call SetTo() to associate
+ * the object with an actual file.
+ */
 ResourceFile::ResourceFile()
 	:
 	fFile(),
@@ -230,12 +348,25 @@ ResourceFile::ResourceFile()
 }
 
 
+/**
+ * @brief Destroys the ResourceFile and releases the underlying file reference.
+ */
 ResourceFile::~ResourceFile()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Associates this ResourceFile with the given BFile and detects its format.
+ *
+ * If @p clobber is true any existing resource data is overwritten with an empty
+ * resource set.
+ *
+ * @param file    Pointer to an open BFile; must not be NULL.
+ * @param clobber If true, destroy existing resource data and start fresh.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 ResourceFile::SetTo(BFile* file, bool clobber)
 {
@@ -256,6 +387,11 @@ ResourceFile::SetTo(BFile* file, bool clobber)
 }
 
 
+/**
+ * @brief Resets the ResourceFile to an uninitialized state.
+ *
+ * Releases the internal OffsetFile and resets all state variables.
+ */
 void
 ResourceFile::Unset()
 {
@@ -266,6 +402,11 @@ ResourceFile::Unset()
 }
 
 
+/**
+ * @brief Returns the initialization status of this object.
+ *
+ * @return B_OK if the underlying file is valid, or an error code otherwise.
+ */
 status_t
 ResourceFile::InitCheck() const
 {
@@ -273,6 +414,15 @@ ResourceFile::InitCheck() const
 }
 
 
+/**
+ * @brief Parses the resource section of the file and populates @p container.
+ *
+ * The container is emptied first. If the file contains no resources
+ * (fEmptyResources is true) the container is left empty and B_OK is returned.
+ *
+ * @param container The container to populate with parsed ResourceItem objects.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 ResourceFile::InitContainer(ResourcesContainer& container)
 {
@@ -307,6 +457,16 @@ ResourceFile::InitContainer(ResourcesContainer& container)
 }
 
 
+/**
+ * @brief Reads the data of a single ResourceItem from the file.
+ *
+ * If the resource is already loaded and @p force is false, no I/O is performed.
+ * Byte-swapping is applied for non-host-endian files.
+ *
+ * @param resource The ResourceItem whose data is to be read.
+ * @param force    If true, re-read even if the resource is already loaded.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 ResourceFile::ReadResource(ResourceItem& resource, bool force)
 {
@@ -343,6 +503,15 @@ ResourceFile::ReadResource(ResourceItem& resource, bool force)
 }
 
 
+/**
+ * @brief Reads all resources in @p container from the file.
+ *
+ * Calls ReadResource() for each item in the container.
+ *
+ * @param container The container whose items are to be loaded.
+ * @param force     If true, re-read resources that are already loaded.
+ * @return B_OK if all resources loaded successfully, or an error code.
+ */
 status_t
 ResourceFile::ReadResources(ResourcesContainer& container, bool force)
 {
@@ -358,6 +527,15 @@ ResourceFile::ReadResources(ResourcesContainer& container, bool force)
 }
 
 
+/**
+ * @brief Writes all resources in @p container to the file.
+ *
+ * If the file currently has no resource section an x86-format resource header
+ * is created first. All resources in the container must be loaded.
+ *
+ * @param container The container whose resources are to be written.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 ResourceFile::WriteResources(ResourcesContainer& container)
 {
@@ -374,6 +552,17 @@ ResourceFile::WriteResources(ResourcesContainer& container)
 }
 
 
+/**
+ * @brief Detects the file format and initializes the internal OffsetFile.
+ *
+ * Reads the first four bytes of @p file to identify the format (x86 resource,
+ * PPC resource, ELF, PEF, or empty), sets fFileType and fHostEndianess
+ * accordingly, and positions the internal OffsetFile at the start of the
+ * resource region. Throws Exception on errors.
+ *
+ * @param file    The file to inspect.
+ * @param clobber If true, an empty resource container is written after detection.
+ */
 void
 ResourceFile::_InitFile(BFile& file, bool clobber)
 {
@@ -453,6 +642,15 @@ ResourceFile::_InitFile(BFile& file, bool clobber)
 }
 
 
+/**
+ * @brief Reads the ELF identification header and dispatches to the 32- or 64-bit initializer.
+ *
+ * Checks the ELF version, data encoding, and class, then calls
+ * _InitELFXFile<> with the appropriate header types. Throws Exception on
+ * unsupported or invalid ELF files.
+ *
+ * @param file The ELF file to inspect.
+ */
 void
 ResourceFile::_InitELFFile(BFile& file)
 {
@@ -500,6 +698,17 @@ ResourceFile::_InitELFFile(BFile& file)
 }
 
 
+/**
+ * @brief Initializes the resource offset for an ELF32 or ELF64 file.
+ *
+ * Reads the ELF header, program headers, and section headers to determine
+ * the byte offset immediately following all ELF data. The resource section
+ * is appended at that offset (aligned). Sets fFile and fEmptyResources.
+ * Throws Exception on format errors.
+ *
+ * @param file     The ELF file to parse.
+ * @param fileSize Total size of the file in bytes.
+ */
 template<typename ElfHeader, typename ElfProgramHeader,
 	typename ElfSectionHeader>
 void
@@ -677,6 +886,16 @@ ResourceFile::_InitELFXFile(BFile& file, uint64 fileSize)
 }
 
 
+/**
+ * @brief Initializes the resource offset for a PEF (PowerPC Executable Format) file.
+ *
+ * Verifies the PEF architecture is PPC, iterates all section headers to find the
+ * end of the last section, and positions the internal OffsetFile just after it.
+ * Throws Exception on format errors.
+ *
+ * @param file      The PEF file to parse.
+ * @param pefHeader The already-read PEF container header.
+ */
 void
 ResourceFile::_InitPEFFile(BFile& file, const PEFContainerHeader& pefHeader)
 {
@@ -727,6 +946,15 @@ ResourceFile::_InitPEFFile(BFile& file, const PEFContainerHeader& pefHeader)
 }
 
 
+/**
+ * @brief Reads and validates the top-level resources header from the file.
+ *
+ * Checks the magic number, resource count, index section offset, and admin
+ * section size. Stores the resource count in @p parseInfo. Throws Exception
+ * on any inconsistency.
+ *
+ * @param parseInfo Structure accumulating parse state; resource_count is set on return.
+ */
 void
 ResourceFile::_ReadHeader(resource_parse_info& parseInfo)
 {
@@ -777,6 +1005,15 @@ ResourceFile::_ReadHeader(resource_parse_info& parseInfo)
 }
 
 
+/**
+ * @brief Reads the resource index section and creates skeleton ResourceItem objects.
+ *
+ * Reads the index section header, validates its fields, then iterates through
+ * all index entries creating one ResourceItem per entry with location set.
+ * Stores info table offset/size in @p parseInfo. Throws Exception on errors.
+ *
+ * @param parseInfo Structure accumulating parse state; updated with index data.
+ */
 void
 ResourceFile::_ReadIndex(resource_parse_info& parseInfo)
 {
@@ -859,6 +1096,20 @@ ResourceFile::_ReadIndex(resource_parse_info& parseInfo)
 }
 
 
+/**
+ * @brief Reads one entry from the resource index table and adds it to the container.
+ *
+ * If the entry is filled with the unused-data pattern, returns false to signal
+ * the end of the valid index. If @p peekAhead is true and the entry is invalid,
+ * returns false without throwing.
+ *
+ * @param buffer      Buffered I/O object positioned over the resource region.
+ * @param parseInfo   Parse state; the container receives the new ResourceItem.
+ * @param index       Zero-based index of this entry in the table.
+ * @param tableOffset Byte offset of the first index entry.
+ * @param peekAhead   If true, treat out-of-bounds data as end-of-table rather than error.
+ * @return true if a valid entry was read and added, false if the table end was reached.
+ */
 bool
 ResourceFile::_ReadIndexEntry(BPositionIO& buffer,
 	resource_parse_info& parseInfo, int32 index, uint32 tableOffset,
@@ -908,6 +1159,16 @@ ResourceFile::_ReadIndexEntry(BPositionIO& buffer,
 }
 
 
+/**
+ * @brief Reads the resource info table and assigns type, ID, and name to each ResourceItem.
+ *
+ * Allocates a buffer for the entire info table, validates its checksum if
+ * present, then iterates through resource_info_block structures to set the
+ * identity of each previously created ResourceItem. Items without a matching
+ * info entry are removed. Throws Exception on format errors.
+ *
+ * @param parseInfo Parse state; info_table_offset and info_table_size must be set.
+ */
 void
 ResourceFile::_ReadInfoTable(resource_parse_info& parseInfo)
 {
@@ -1005,6 +1266,19 @@ ResourceFile::_ReadInfoTable(resource_parse_info& parseInfo)
 }
 
 
+/**
+ * @brief Checks for and validates the optional checksum record at the end of the info table.
+ *
+ * If the last @p kResourceInfoTableEndSize bytes form a valid terminator (zero
+ * terminator field and matching checksum), true is returned and the caller
+ * should reduce @p dataSize by kResourceInfoTableEndSize. Throws Exception if
+ * the table is too short to contain even a separator, or if the checksum does
+ * not match.
+ *
+ * @param data     Pointer to the start of the info table buffer.
+ * @param dataSize Size of the info table buffer in bytes.
+ * @return true if a valid table-end record is present, false otherwise.
+ */
 bool
 ResourceFile::_ReadInfoTableEnd(const void* data, int32 dataSize)
 {
@@ -1037,6 +1311,20 @@ ResourceFile::_ReadInfoTableEnd(const void* data, int32 dataSize)
 }
 
 
+/**
+ * @brief Reads one resource_info record and sets the identity of the corresponding ResourceItem.
+ *
+ * Validates the index and name size, then calls SetIdentity() on the item at
+ * the given index. If the index is out of range the record is silently ignored.
+ * Throws Exception on structural errors.
+ *
+ * @param parseInfo   Parse state providing the container and resource count.
+ * @param area        Bounds-check helper covering the entire info table buffer.
+ * @param info        Pointer to the resource_info record to read.
+ * @param type        The type code for this info block.
+ * @param readIndices Boolean array tracking which indices have been seen.
+ * @return Pointer to the byte immediately following the name field.
+ */
 const void*
 ResourceFile::_ReadResourceInfo(resource_parse_info& parseInfo,
 	const MemArea& area, const resource_info* info, type_code type,
@@ -1088,6 +1376,16 @@ ResourceFile::_ReadResourceInfo(resource_parse_info& parseInfo,
 }
 
 
+/**
+ * @brief Serializes all resources in @p container and writes them to the file.
+ *
+ * Calculates the sizes of all sections (header, index, unknown, data, info
+ * table), allocates a working buffer, and writes each section to the file in
+ * order. All resources in the container must already be loaded.
+ *
+ * @param container The container whose resources are to be written.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 ResourceFile::_WriteResources(ResourcesContainer& container)
 {
@@ -1287,6 +1585,16 @@ ResourceFile::_WriteResources(ResourcesContainer& container)
 }
 
 
+/**
+ * @brief Converts the associated file into a minimal x86 resource file.
+ *
+ * Writes the 4-byte x86 resource magic and repositions the internal
+ * OffsetFile to kX86ResourcesOffset so that resource data can be written
+ * immediately after. Throws Exception on I/O failure.
+ *
+ * @return B_OK on success, or an error code if the file is not writable or
+ *         an I/O error occurs.
+ */
 status_t
 ResourceFile::_MakeEmptyResourceFile()
 {

@@ -1,8 +1,37 @@
 /*
- * Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file RemoveEngine.cpp
+ * @brief Implementation of the BRemoveEngine file/directory removal engine.
+ *
+ * BRemoveEngine provides a flexible mechanism for recursively removing file
+ * system entries. A BController callback interface allows callers to filter
+ * entries, handle errors gracefully, and receive removal notifications.
+ *
+ * @see BRemoveEngine
+ */
 
 #include <RemoveEngine.h>
 
@@ -21,6 +50,9 @@ namespace BPrivate {
 // #pragma mark - BRemoveEngine
 
 
+/**
+ * @brief Constructs a BRemoveEngine with no controller installed.
+ */
 BRemoveEngine::BRemoveEngine()
 	:
 	fController(NULL)
@@ -28,11 +60,19 @@ BRemoveEngine::BRemoveEngine()
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BRemoveEngine::~BRemoveEngine()
 {
 }
 
 
+/**
+ * @brief Returns the currently installed controller.
+ *
+ * @return Pointer to the BController, or NULL if none is set.
+ */
 BRemoveEngine::BController*
 BRemoveEngine::Controller() const
 {
@@ -40,6 +80,12 @@ BRemoveEngine::Controller() const
 }
 
 
+/**
+ * @brief Installs a controller that receives removal progress and error
+ *        callbacks.
+ *
+ * @param controller Pointer to the BController to install (may be NULL).
+ */
 void
 BRemoveEngine::SetController(BController* controller)
 {
@@ -47,6 +93,14 @@ BRemoveEngine::SetController(BController* controller)
 }
 
 
+/**
+ * @brief Removes the file system entry described by the given Entry object.
+ *
+ * Resolves the entry to a path and delegates to _RemoveEntry().
+ *
+ * @param entry The entry to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BRemoveEngine::RemoveEntry(const Entry& entry)
 {
@@ -60,6 +114,16 @@ BRemoveEngine::RemoveEntry(const Entry& entry)
 }
 
 
+/**
+ * @brief Internal recursive implementation that removes an entry by path.
+ *
+ * Applies the entry filter via the controller, stats the entry, recurses into
+ * directory children if necessary, and then removes the entry itself using
+ * rmdir(2) or unlink(2).
+ *
+ * @param path Absolute path of the entry to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BRemoveEngine::_RemoveEntry(const char* path)
 {
@@ -133,6 +197,13 @@ BRemoveEngine::_RemoveEntry(const char* path)
 }
 
 
+/**
+ * @brief Notifies the controller of an error using a va_list argument list.
+ *
+ * @param error  The error code to report.
+ * @param format printf-style format string for the human-readable message.
+ * @param args   Pre-initialized va_list of format arguments.
+ */
 void
 BRemoveEngine::_NotifyErrorVarArgs(status_t error, const char* format,
 	va_list args)
@@ -145,6 +216,17 @@ BRemoveEngine::_NotifyErrorVarArgs(status_t error, const char* format,
 }
 
 
+/**
+ * @brief Reports an entry-level error and queries the controller whether to
+ *        continue or propagate the error.
+ *
+ * @param path   Path of the entry that caused the error.
+ * @param error  The error code.
+ * @param format printf-style format string for the human-readable message.
+ * @param ...    Format arguments.
+ * @return B_OK if the controller allows the operation to continue, otherwise
+ *         the original error code.
+ */
 status_t
 BRemoveEngine::_HandleEntryError(const char* path, status_t error,
 	const char* format, ...)
@@ -166,16 +248,28 @@ BRemoveEngine::_HandleEntryError(const char* path, status_t error,
 // #pragma mark - BController
 
 
+/**
+ * @brief Default constructor for BController.
+ */
 BRemoveEngine::BController::BController()
 {
 }
 
 
+/**
+ * @brief Destructor for BController.
+ */
 BRemoveEngine::BController::~BController()
 {
 }
 
 
+/**
+ * @brief Called before an entry is removed; returns whether to remove it.
+ *
+ * @param path Path of the entry about to be removed.
+ * @return true to proceed with removal, false to skip this entry.
+ */
 bool
 BRemoveEngine::BController::EntryStarted(const char* path)
 {
@@ -183,6 +277,13 @@ BRemoveEngine::BController::EntryStarted(const char* path)
 }
 
 
+/**
+ * @brief Called after an entry has been processed; returns whether to continue.
+ *
+ * @param path  Path of the entry that was just processed.
+ * @param error B_OK if the entry was removed successfully, or an error code.
+ * @return true to continue removing remaining entries, false to abort.
+ */
 bool
 BRemoveEngine::BController::EntryFinished(const char* path, status_t error)
 {
@@ -190,6 +291,12 @@ BRemoveEngine::BController::EntryFinished(const char* path, status_t error)
 }
 
 
+/**
+ * @brief Called when a non-fatal error occurs during the removal operation.
+ *
+ * @param message Human-readable description of the error.
+ * @param error   The error code.
+ */
 void
 BRemoveEngine::BController::ErrorOccurred(const char* message, status_t error)
 {

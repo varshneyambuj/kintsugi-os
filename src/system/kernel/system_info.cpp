@@ -1,12 +1,42 @@
 /*
- * Copyright (c) 2004-2020, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini
- *		Axel Dörfler, axeld@pinc-software.de
- *		Paweł Dziepak, pdziepak@quarnos.org
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2020, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Paweł Dziepak, pdziepak@quarnos.org
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+/**
+ * @file system_info.cpp
+ * @brief System information queries — CPU, memory, kernel version, and timing.
+ *
+ * Implements get_system_info(), get_cpu_info(), and related syscalls that
+ * return hardware topology, memory usage statistics, kernel build version,
+ * and real-time clock information to user space.
+ *
+ * @see cpu.cpp, vm/vm_page.cpp
  */
 
 
@@ -460,6 +490,17 @@ generate_topology_array(cpu_topology_node_info* topology,
 //	#pragma mark -
 
 
+/**
+ * @brief Populate a system_info structure with current kernel statistics.
+ *
+ * Queries the real-time clock, VM page allocator, VM address space manager,
+ * scheduler, and IPC subsystems to fill every field of @p info. The kernel
+ * name and build timestamp are embedded at compile time.
+ *
+ * @param info Caller-supplied buffer that receives the system_info data.
+ *             The buffer is zeroed before any field is written.
+ * @retval B_OK Always succeeds under normal operating conditions.
+ */
 status_t
 get_system_info(system_info* info)
 {
@@ -511,6 +552,24 @@ __get_cpu_info(uint32 firstCPU, uint32 cpuCount, beta2_cpu_info* beta2_info)
 }
 
 
+/**
+ * @brief Retrieve per-CPU activity information for a range of processors.
+ *
+ * Fills an array of cpu_info structures with the active time, enabled state,
+ * and current frequency for CPUs in the range [@p firstCPU,
+ * @p firstCPU + @p cpuCount). Copies the data to @p info in small batches to
+ * minimise stack pressure and avoid large temporary allocations.
+ *
+ * @param firstCPU  Index of the first CPU to query (0-based).
+ * @param cpuCount  Number of CPUs to query.
+ * @param info      Caller-supplied array of cpu_info that receives the data.
+ *                  Must be large enough for @p cpuCount entries.
+ * @param size      Must equal sizeof(cpu_info); used to detect ABI mismatches.
+ * @retval B_OK          Data written successfully for all requested CPUs.
+ * @retval B_BAD_VALUE   @p cpuCount is zero, @p size is wrong, or @p firstCPU
+ *                       is out of range.
+ * @retval B_BAD_ADDRESS @p info is not a valid user-space address.
+ */
 status_t
 _get_cpu_info_etc(uint32 firstCPU, uint32 cpuCount, cpu_info* info, size_t size)
 {
@@ -547,6 +606,15 @@ _get_cpu_info_etc(uint32 firstCPU, uint32 cpuCount, cpu_info* info, size_t size)
 }
 
 
+/**
+ * @brief Initialise the system information subsystem.
+ *
+ * Registers the "info" kernel debugger command and delegates to the
+ * architecture-specific initialisation routine.
+ *
+ * @param args Kernel boot arguments passed through to arch_system_info_init().
+ * @return B_OK on success, or an error code from arch_system_info_init().
+ */
 status_t
 system_info_init(struct kernel_args *args)
 {
@@ -556,6 +624,16 @@ system_info_init(struct kernel_args *args)
 }
 
 
+/**
+ * @brief Initialise the system notification service.
+ *
+ * Constructs the SystemNotificationService singleton and subscribes it to
+ * team and thread notification events so that user-space watchers receive
+ * B_SYSTEM_OBJECT_UPDATE messages when teams or threads are created or destroyed.
+ *
+ * @retval B_OK The notification service was started successfully.
+ * @return Any error code returned by SystemNotificationService::Init().
+ */
 status_t
 system_notifications_init()
 {
@@ -574,6 +652,16 @@ system_notifications_init()
 //	#pragma mark -
 
 
+/**
+ * @brief Syscall: copy system_info to user space.
+ *
+ * Calls get_system_info() to gather current statistics and copies the result
+ * to the user-space buffer @p userInfo.
+ *
+ * @param userInfo User-space pointer to a system_info buffer.
+ * @retval B_OK          Information copied successfully.
+ * @retval B_BAD_ADDRESS @p userInfo is @c NULL or not a valid user-space pointer.
+ */
 status_t
 _user_get_system_info(system_info* userInfo)
 {
@@ -593,6 +681,19 @@ _user_get_system_info(system_info* userInfo)
 }
 
 
+/**
+ * @brief Syscall: copy per-CPU info for a range of CPUs to user space.
+ *
+ * Delegates directly to _get_cpu_info_etc(), which performs the user_memcpy
+ * internally, so @p userInfo must be a valid user-space address.
+ *
+ * @param firstCPU  Index of the first CPU to query (0-based).
+ * @param cpuCount  Number of CPUs to query.
+ * @param userInfo  User-space array of cpu_info that receives the data.
+ * @retval B_OK          Data written successfully.
+ * @retval B_BAD_ADDRESS @p userInfo is @c NULL or not a valid user-space pointer.
+ * @retval B_BAD_VALUE   @p firstCPU is out of range or @p cpuCount is zero.
+ */
 status_t
 _user_get_cpu_info(uint32 firstCPU, uint32 cpuCount, cpu_info* userInfo)
 {
@@ -603,6 +704,21 @@ _user_get_cpu_info(uint32 firstCPU, uint32 cpuCount, cpu_info* userInfo)
 }
 
 
+/**
+ * @brief Syscall: retrieve the CPU topology tree as a flat array.
+ *
+ * If @p topologyInfos is @c NULL, writes only the total node count to
+ * @p topologyInfoCount and returns. Otherwise, fills up to @p *topologyInfoCount
+ * entries with topology data and updates @p topologyInfoCount with the number
+ * of nodes actually written.
+ *
+ * @param topologyInfos      User-space array that receives cpu_topology_node_info
+ *                           entries, or @c NULL to query the required count.
+ * @param topologyInfoCount  In/out: capacity on entry, actual count on exit.
+ * @retval B_OK          Data (or count) written successfully.
+ * @retval B_BAD_ADDRESS A pointer argument is not a valid user-space address.
+ * @retval B_NO_MEMORY   Kernel-side temporary buffer allocation failed.
+ */
 status_t
 _user_get_cpu_topology_info(cpu_topology_node_info* topologyInfos,
 	uint32* topologyInfoCount)
@@ -647,6 +763,21 @@ _user_get_cpu_topology_info(cpu_topology_node_info* topologyInfos,
 }
 
 
+/**
+ * @brief Syscall: register a user-space watcher for system object events.
+ *
+ * Asks the SystemNotificationService to send B_SYSTEM_OBJECT_UPDATE messages
+ * to @p port/@p token whenever events matching @p flags occur for @p object
+ * (a team ID, thread ID, or -1 for all).
+ *
+ * @param object  Team or thread ID to watch, or -1 to watch all objects.
+ * @param flags   B_WATCH_SYSTEM_* flags specifying which events to monitor.
+ * @param port    Destination port for notification messages.
+ * @param token   BHandler token embedded in each notification message.
+ * @retval B_OK        Listener registered (or flags updated) successfully.
+ * @retval B_BAD_VALUE Invalid @p object, @p port, or @p flags combination.
+ * @retval B_NO_MEMORY Allocation of a new listener record failed.
+ */
 status_t
 _user_start_watching_system(int32 object, uint32 flags, port_id port,
 	int32 token)
@@ -656,6 +787,20 @@ _user_start_watching_system(int32 object, uint32 flags, port_id port,
 }
 
 
+/**
+ * @brief Syscall: unregister a user-space watcher for system object events.
+ *
+ * Clears the specified @p flags for the listener identified by
+ * (@p object, @p port, @p token). If no flags remain the listener is removed
+ * entirely.
+ *
+ * @param object  Team or thread ID that was being watched, or -1.
+ * @param flags   B_WATCH_SYSTEM_* flags to stop monitoring.
+ * @param port    Destination port of the listener to remove.
+ * @param token   BHandler token of the listener to remove.
+ * @retval B_OK              Flags cleared (or listener removed) successfully.
+ * @retval B_ENTRY_NOT_FOUND No matching listener was found.
+ */
 status_t
 _user_stop_watching_system(int32 object, uint32 flags, port_id port,
 	int32 token)

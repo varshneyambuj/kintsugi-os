@@ -1,9 +1,40 @@
 /*
- * Copyright 2002-2017, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2017, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file rootfs.cpp
+ * @brief The root in-memory filesystem — backing the "/" mount point.
+ *
+ * rootfs is a minimal RAM-based file system that provides the "/" directory
+ * before the real root partition is mounted. It stores directory entries and
+ * symlinks in memory and is never unmounted. Also used for bind-mounts and
+ * the /dev, /pipe, and other virtual mount points.
+ *
+ * @see vfs.cpp, vfs_boot.cpp
  */
 
 
@@ -137,6 +168,14 @@ extern fs_vnode_ops sVnodeOps;
 #define ROOTFS_HASH_SIZE 16
 
 
+/**
+ * @brief Check whether the calling process has the requested access to a vnode.
+ *
+ * @param dir        The vnode whose permission bits are tested.
+ * @param accessMode POSIX access-mode flags (R_OK, W_OK, X_OK).
+ * @retval B_OK          Access is permitted.
+ * @retval B_NOT_ALLOWED Access is denied.
+ */
 inline static status_t
 rootfs_check_permissions(struct rootfs_vnode* dir, int accessMode)
 {
@@ -144,6 +183,12 @@ rootfs_check_permissions(struct rootfs_vnode* dir, int accessMode)
 }
 
 
+/**
+ * @brief Return the current wall-clock time as a POSIX timespec.
+ *
+ * @return A timespec whose tv_sec and tv_nsec fields are populated from
+ *         real_time_clock_usecs().
+ */
 static timespec
 current_timespec()
 {
@@ -156,6 +201,12 @@ current_timespec()
 }
 
 
+/**
+ * @brief Return the inode ID of a vnode's parent directory.
+ *
+ * @param vnode The vnode whose parent ID is requested.
+ * @return The parent inode ID, or -1 if the vnode has no parent.
+ */
 static ino_t
 get_parent_id(struct rootfs_vnode* vnode)
 {
@@ -165,6 +216,19 @@ get_parent_id(struct rootfs_vnode* vnode)
 }
 
 
+/**
+ * @brief Allocate and initialise a new rootfs vnode.
+ *
+ * Allocates heap memory for a vnode, copies the name, assigns a unique inode
+ * ID, initialises timestamps and ownership, and (for directories) initialises
+ * the cookie list and its mutex.
+ *
+ * @param fs     The rootfs volume that will own this vnode.
+ * @param parent The parent directory vnode; may be NULL for the root.
+ * @param name   The entry name; duplicated internally. May be NULL.
+ * @param type   The mode bits (e.g. S_IFDIR | 0755).
+ * @return Pointer to the new vnode on success, or NULL if allocation failed.
+ */
 static struct rootfs_vnode*
 rootfs_create_vnode(struct rootfs* fs, struct rootfs_vnode* parent,
 	const char* name, int type)
@@ -201,6 +265,20 @@ rootfs_create_vnode(struct rootfs* fs, struct rootfs_vnode* parent,
 }
 
 
+/**
+ * @brief Destroy a rootfs vnode and free all associated resources.
+ *
+ * Removes the vnode from the global hash table, destroys the directory
+ * cookie mutex if applicable, and frees the name string and the vnode
+ * structure itself.
+ *
+ * @param fs           The owning rootfs volume.
+ * @param v            The vnode to destroy.
+ * @param force_delete If false the call fails when the vnode is still linked
+ *                     into a directory or has children.
+ * @retval B_OK   Vnode deleted.
+ * @retval EPERM  Vnode is still referenced and force_delete is false.
+ */
 static status_t
 rootfs_delete_vnode(struct rootfs* fs, struct rootfs_vnode* v, bool force_delete)
 {
@@ -222,7 +300,16 @@ rootfs_delete_vnode(struct rootfs* fs, struct rootfs_vnode* v, bool force_delete
 }
 
 
-/*! Makes sure none of the dircookies point to the vnode passed in. */
+/**
+ * @brief Advance any open directory cookies that point at a vnode being removed.
+ *
+ * Iterates all open cookies on @p dir and, for each cookie whose current
+ * pointer equals @p vnode, advances it to the next entry so that ongoing
+ * readdir() calls skip the removed node cleanly.
+ *
+ * @param dir   The directory whose cookie list is scanned.
+ * @param vnode The vnode that is about to be unlinked from @p dir.
+ */
 static void
 update_dir_cookies(struct rootfs_vnode* dir, struct rootfs_vnode* vnode)
 {
@@ -237,6 +324,16 @@ update_dir_cookies(struct rootfs_vnode* dir, struct rootfs_vnode* vnode)
 }
 
 
+/**
+ * @brief Look up a child entry by name inside a directory vnode.
+ *
+ * Handles the special "." and ".." names directly; for all other names it
+ * performs a linear scan of the sorted sibling list.
+ *
+ * @param dir  The directory to search.
+ * @param path The entry name to look for.
+ * @return Pointer to the matching vnode, or NULL if not found.
+ */
 static struct rootfs_vnode*
 rootfs_find_in_dir(struct rootfs_vnode* dir, const char* path)
 {
@@ -255,6 +352,18 @@ rootfs_find_in_dir(struct rootfs_vnode* dir, const char* path)
 }
 
 
+/**
+ * @brief Insert a vnode into a directory's sorted child list.
+ *
+ * Maintains alphabetical ordering of the sibling linked list, sets the
+ * vnode's parent pointer, updates the directory's modification time, and
+ * fires a stat-changed notification.
+ *
+ * @param fs    The owning rootfs volume (used for notifications).
+ * @param dir   The directory that will receive the new entry.
+ * @param vnode The vnode to insert.
+ * @retval B_OK Always succeeds.
+ */
 static status_t
 rootfs_insert_in_dir(struct rootfs* fs, struct rootfs_vnode* dir,
 	struct rootfs_vnode* vnode)
@@ -286,6 +395,19 @@ rootfs_insert_in_dir(struct rootfs* fs, struct rootfs_vnode* dir,
 }
 
 
+/**
+ * @brief Remove a specific vnode from a directory's child list.
+ *
+ * Scans the sibling list for @p removeVnode, updates any open cookies via
+ * update_dir_cookies(), patches the linked list, refreshes the directory's
+ * modification time, and fires a stat-changed notification.
+ *
+ * @param fs          The owning rootfs volume.
+ * @param dir         The directory from which the entry is removed.
+ * @param removeVnode The vnode to unlink.
+ * @retval B_OK             Entry removed.
+ * @retval B_ENTRY_NOT_FOUND Entry was not found in the directory.
+ */
 static status_t
 rootfs_remove_from_dir(struct rootfs* fs, struct rootfs_vnode* dir,
 	struct rootfs_vnode* removeVnode)
@@ -315,6 +437,12 @@ rootfs_remove_from_dir(struct rootfs* fs, struct rootfs_vnode* dir,
 }
 
 
+/**
+ * @brief Test whether a directory vnode contains no children.
+ *
+ * @param dir The directory vnode to test.
+ * @return true if the directory has no child entries, false otherwise.
+ */
 static bool
 rootfs_is_dir_empty(struct rootfs_vnode* dir)
 {
@@ -322,7 +450,18 @@ rootfs_is_dir_empty(struct rootfs_vnode* dir)
 }
 
 
-/*! You must hold the FS write lock when calling this function */
+/**
+ * @brief Schedule a vnode for removal and unlink it from its directory.
+ *
+ * Acquires a temporary VFS reference, calls remove_vnode() to mark it
+ * for deferred deletion, removes it from the parent directory, and emits
+ * an entry-removed notification. Must be called with the FS write lock held.
+ *
+ * @param fs        The owning rootfs volume.
+ * @param directory The directory that currently contains the vnode.
+ * @param vnode     The vnode to remove.
+ * @retval B_OK On success.
+ */
 static status_t
 remove_node(struct rootfs* fs, struct rootfs_vnode* directory,
 	struct rootfs_vnode* vnode)
@@ -347,6 +486,23 @@ remove_node(struct rootfs* fs, struct rootfs_vnode* directory,
 }
 
 
+/**
+ * @brief Remove an entry from a directory by name, with type validation.
+ *
+ * Acquires the FS write lock, looks up the entry, validates that its type
+ * matches @p isDirectory, checks that a directory target is empty, removes
+ * it from the entry cache, and calls remove_node().
+ *
+ * @param fs          The owning rootfs volume.
+ * @param dir         The directory from which to remove the entry.
+ * @param name        The entry name to remove.
+ * @param isDirectory true if the caller expects to remove a directory.
+ * @retval B_OK                  Entry removed.
+ * @retval B_ENTRY_NOT_FOUND     No entry with that name exists.
+ * @retval B_NOT_A_DIRECTORY     Entry exists but is not a directory.
+ * @retval B_IS_A_DIRECTORY      Entry is a directory but isDirectory is false.
+ * @retval B_DIRECTORY_NOT_EMPTY Directory is not empty.
+ */
 static status_t
 rootfs_remove(struct rootfs* fs, struct rootfs_vnode* dir, const char* name,
 	bool isDirectory)
@@ -378,6 +534,21 @@ rootfs_remove(struct rootfs* fs, struct rootfs_vnode* dir, const char* name,
 //	#pragma mark -
 
 
+/**
+ * @brief Mount the rootfs volume and publish the root vnode.
+ *
+ * Allocates the in-memory rootfs state, initialises the vnode hash table,
+ * creates the root directory vnode, publishes it to the VFS, and returns
+ * its inode ID in @p _rootID.
+ *
+ * @param volume   The VFS volume descriptor to initialise.
+ * @param device   Ignored (rootfs has no backing device).
+ * @param flags    Mount flags (unused).
+ * @param args     Mount arguments (unused).
+ * @param _rootID  Output: inode ID of the root vnode.
+ * @retval B_OK        Volume mounted successfully.
+ * @retval B_NO_MEMORY Allocation failure.
+ */
 static status_t
 rootfs_mount(fs_volume* volume, const char* device, uint32 flags,
 	const char* args, ino_t* _rootID)
@@ -433,6 +604,16 @@ err2:
 }
 
 
+/**
+ * @brief Unmount the rootfs volume and release all resources.
+ *
+ * Drops the reference to the root vnode, iterates the vnode hash table
+ * force-deleting every remaining vnode, destroys the read-write lock, and
+ * frees the rootfs structure.
+ *
+ * @param _volume The VFS volume descriptor for the rootfs instance.
+ * @retval B_OK Always succeeds.
+ */
 static status_t
 rootfs_unmount(fs_volume* _volume)
 {
@@ -459,6 +640,15 @@ rootfs_unmount(fs_volume* _volume)
 }
 
 
+/**
+ * @brief Sync the rootfs volume to its backing store (no-op).
+ *
+ * rootfs is entirely in memory; this function exists only to satisfy the
+ * VFS sync interface.
+ *
+ * @param _volume The VFS volume descriptor (unused).
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_sync(fs_volume* _volume)
 {
@@ -468,6 +658,23 @@ rootfs_sync(fs_volume* _volume)
 }
 
 
+/**
+ * @brief Look up a named entry in a directory and return its inode ID.
+ *
+ * Checks that @p _dir is a directory, verifies execute permission, acquires
+ * the FS read lock, calls rootfs_find_in_dir(), obtains a VFS reference to
+ * the found vnode, populates the entry cache, and writes the inode ID to
+ * @p _id.
+ *
+ * @param _volume The rootfs volume.
+ * @param _dir    The directory vnode in which to search.
+ * @param name    The entry name to look up.
+ * @param _id     Output: inode ID of the located vnode.
+ * @retval B_OK              Entry found and referenced.
+ * @retval B_NOT_A_DIRECTORY @p _dir is not a directory.
+ * @retval B_ENTRY_NOT_FOUND No entry with that name exists.
+ * @retval B_NOT_ALLOWED     Caller lacks execute permission on the directory.
+ */
 static status_t
 rootfs_lookup(fs_volume* _volume, fs_vnode* _dir, const char* name, ino_t* _id)
 {
@@ -501,6 +708,15 @@ rootfs_lookup(fs_volume* _volume, fs_vnode* _dir, const char* name, ino_t* _id)
 }
 
 
+/**
+ * @brief Copy a vnode's name into the caller-supplied buffer.
+ *
+ * @param _volume    The rootfs volume (unused).
+ * @param _vnode     The vnode whose name is requested.
+ * @param buffer     Destination buffer for the name string.
+ * @param bufferSize Size of @p buffer in bytes.
+ * @retval B_OK Always succeeds (name is always present).
+ */
 static status_t
 rootfs_get_vnode_name(fs_volume* _volume, fs_vnode* _vnode, char* buffer,
 	size_t bufferSize)
@@ -515,6 +731,22 @@ rootfs_get_vnode_name(fs_volume* _volume, fs_vnode* _vnode, char* buffer,
 }
 
 
+/**
+ * @brief Retrieve a vnode object by inode ID (called by the VFS pager).
+ *
+ * Looks up the inode ID in the vnode hash table (under the FS read lock
+ * unless re-entering), and fills in the fs_vnode structure with the private
+ * node pointer, operations table, type, and flags.
+ *
+ * @param _volume The rootfs volume.
+ * @param id      The inode ID to look up.
+ * @param _vnode  Output: filled with private_node pointer and ops.
+ * @param _type   Output: the vnode's mode bits.
+ * @param _flags  Output: vnode publish flags (always 0).
+ * @param reenter true if the VFS is re-entering (skips lock acquisition).
+ * @retval B_OK             Vnode found and populated.
+ * @retval B_ENTRY_NOT_FOUND No vnode with that ID.
+ */
 static status_t
 rootfs_get_vnode(fs_volume* _volume, ino_t id, fs_vnode* _vnode, int* _type,
 	uint32* _flags, bool reenter)
@@ -546,6 +778,17 @@ rootfs_get_vnode(fs_volume* _volume, ino_t id, fs_vnode* _vnode, int* _type,
 }
 
 
+/**
+ * @brief Release a VFS reference to a rootfs vnode (no-op).
+ *
+ * rootfs vnodes are never evicted from memory, so this function performs
+ * no action beyond satisfying the VFS interface contract.
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param _vnode  The vnode being released (unused).
+ * @param reenter true if called from a re-entrant VFS path.
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_put_vnode(fs_volume* _volume, fs_vnode* _vnode, bool reenter)
 {
@@ -558,6 +801,19 @@ rootfs_put_vnode(fs_volume* _volume, fs_vnode* _vnode, bool reenter)
 }
 
 
+/**
+ * @brief Physically delete a rootfs vnode whose last reference has been dropped.
+ *
+ * Called by the VFS when the vnode's reference count reaches zero after a
+ * prior remove_vnode() call. Acquires the FS write lock (unless re-entering)
+ * and calls rootfs_delete_vnode().
+ *
+ * @param _volume The rootfs volume.
+ * @param _vnode  The vnode to permanently remove.
+ * @param reenter true if called from a re-entrant VFS path.
+ * @retval B_OK Always.
+ * @note Panics if the vnode is still linked into its parent directory.
+ */
 static status_t
 rootfs_remove_vnode(fs_volume* _volume, fs_vnode* _vnode, bool reenter)
 {
@@ -585,6 +841,21 @@ rootfs_remove_vnode(fs_volume* _volume, fs_vnode* _vnode, bool reenter)
 }
 
 
+/**
+ * @brief Stub for regular-file creation — not supported by rootfs.
+ *
+ * rootfs only holds directories and symlinks; creating regular files is
+ * not permitted.
+ *
+ * @param _volume  The rootfs volume (unused).
+ * @param _dir     The target directory (unused).
+ * @param name     The desired file name (unused).
+ * @param omode    Open-mode flags (unused).
+ * @param perms    Permission bits (unused).
+ * @param _cookie  Output cookie (unused).
+ * @param _newID   Output inode ID (unused).
+ * @retval B_BAD_VALUE Always — operation not supported.
+ */
 static status_t
 rootfs_create(fs_volume* _volume, fs_vnode* _dir, const char* name, int omode,
 	int perms, void** _cookie, ino_t* _newID)
@@ -593,6 +864,20 @@ rootfs_create(fs_volume* _volume, fs_vnode* _dir, const char* name, int omode,
 }
 
 
+/**
+ * @brief Open a rootfs vnode for reading (or directory iteration).
+ *
+ * Directories may only be opened read-only. Checks access permissions and
+ * returns a NULL cookie, since rootfs files carry no data.
+ *
+ * @param _volume  The rootfs volume.
+ * @param _v       The vnode to open.
+ * @param openMode O_* flags describing the desired access mode.
+ * @param _cookie  Output: always set to NULL on success.
+ * @retval B_OK          Vnode opened.
+ * @retval B_IS_A_DIRECTORY Directory opened with write flags.
+ * @retval B_NOT_ALLOWED Permission denied.
+ */
 static status_t
 rootfs_open(fs_volume* _volume, fs_vnode* _v, int openMode, void** _cookie)
 {
@@ -612,6 +897,14 @@ rootfs_open(fs_volume* _volume, fs_vnode* _v, int openMode, void** _cookie)
 }
 
 
+/**
+ * @brief Close a previously opened rootfs vnode (no-op).
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param _vnode  The vnode being closed (unused).
+ * @param _cookie The per-open cookie (unused).
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_close(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -621,6 +914,17 @@ rootfs_close(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 }
 
 
+/**
+ * @brief Free the per-open cookie for a rootfs vnode (no-op).
+ *
+ * Since rootfs_open() always stores NULL in the cookie, there is nothing
+ * to free here.
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param _v      The vnode (unused).
+ * @param _cookie The cookie to free — always NULL for rootfs.
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_free_cookie(fs_volume* _volume, fs_vnode* _v, void* _cookie)
 {
@@ -628,6 +932,16 @@ rootfs_free_cookie(fs_volume* _volume, fs_vnode* _v, void* _cookie)
 }
 
 
+/**
+ * @brief Flush a rootfs vnode to its backing store (no-op).
+ *
+ * rootfs is entirely in memory; this call is a no-op.
+ *
+ * @param _volume  The rootfs volume (unused).
+ * @param _v       The vnode (unused).
+ * @param dataOnly If true only data (not metadata) should be flushed (unused).
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_fsync(fs_volume* _volume, fs_vnode* _v, bool dataOnly)
 {
@@ -635,6 +949,19 @@ rootfs_fsync(fs_volume* _volume, fs_vnode* _v, bool dataOnly)
 }
 
 
+/**
+ * @brief Read data from a rootfs vnode — not supported.
+ *
+ * rootfs holds only directories and symlinks; data reads are not meaningful.
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param _vnode  The vnode (unused).
+ * @param _cookie The per-open cookie (unused).
+ * @param pos     File offset (unused).
+ * @param buffer  Destination buffer (unused).
+ * @param _length Input/output byte count (unused).
+ * @retval EINVAL Always.
+ */
 static status_t
 rootfs_read(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	off_t pos, void* buffer, size_t* _length)
@@ -643,6 +970,19 @@ rootfs_read(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Write data to a rootfs vnode — not permitted.
+ *
+ * Writes are never allowed on rootfs nodes.
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param vnode   The vnode (unused).
+ * @param cookie  The per-open cookie (unused).
+ * @param pos     File offset (unused).
+ * @param buffer  Source data buffer (unused).
+ * @param _length Input/output byte count (unused).
+ * @retval EPERM Always.
+ */
 static status_t
 rootfs_write(fs_volume* _volume, fs_vnode* vnode, void* cookie,
 	off_t pos, const void* buffer, size_t* _length)
@@ -654,6 +994,23 @@ rootfs_write(fs_volume* _volume, fs_vnode* vnode, void* cookie,
 }
 
 
+/**
+ * @brief Create a new directory entry inside a rootfs directory.
+ *
+ * Verifies write permission on the parent, checks for name collisions,
+ * allocates a new directory vnode, inserts it into the parent's sorted
+ * child list, registers it in the vnode hash, populates the entry cache,
+ * and fires an entry-created notification.
+ *
+ * @param _volume The rootfs volume.
+ * @param _dir    The parent directory vnode.
+ * @param name    The name for the new directory.
+ * @param mode    Permission bits (masked with S_IUMSK).
+ * @retval B_OK          Directory created.
+ * @retval B_FILE_EXISTS An entry with that name already exists.
+ * @retval B_NO_MEMORY   Vnode allocation failed.
+ * @retval B_NOT_ALLOWED Caller lacks write permission.
+ */
 static status_t
 rootfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char* name,
 	int mode)
@@ -690,6 +1047,22 @@ rootfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char* name,
 }
 
 
+/**
+ * @brief Remove a directory entry from a rootfs directory.
+ *
+ * Verifies write permission on the parent, then delegates to rootfs_remove()
+ * with @p isDirectory=true which additionally checks that the target is an
+ * empty directory.
+ *
+ * @param _volume The rootfs volume.
+ * @param _dir    The parent directory vnode.
+ * @param name    The name of the directory to remove.
+ * @retval B_OK                  Directory removed.
+ * @retval B_ENTRY_NOT_FOUND     No entry with that name.
+ * @retval B_NOT_A_DIRECTORY     Entry exists but is not a directory.
+ * @retval B_DIRECTORY_NOT_EMPTY Directory is not empty.
+ * @retval B_NOT_ALLOWED         Caller lacks write permission.
+ */
 static status_t
 rootfs_remove_dir(fs_volume* _volume, fs_vnode* _dir, const char* name)
 {
@@ -707,6 +1080,21 @@ rootfs_remove_dir(fs_volume* _volume, fs_vnode* _dir, const char* name)
 }
 
 
+/**
+ * @brief Open a directory vnode for iteration and allocate a cookie.
+ *
+ * Verifies read permission, allocates a rootfs_dir_cookie, initialises its
+ * mutex and iteration state, registers it in the directory's cookie list,
+ * and returns it via @p _cookie.
+ *
+ * @param _volume  The rootfs volume.
+ * @param _vnode   The directory vnode to open.
+ * @param _cookie  Output: the newly allocated directory cookie.
+ * @retval B_OK          Directory opened.
+ * @retval B_BAD_VALUE   @p _vnode is not a directory.
+ * @retval B_NO_MEMORY   Cookie allocation failed.
+ * @retval B_NOT_ALLOWED Caller lacks read permission.
+ */
 static status_t
 rootfs_open_dir(fs_volume* _volume, fs_vnode* _vnode, void** _cookie)
 {
@@ -744,6 +1132,17 @@ rootfs_open_dir(fs_volume* _volume, fs_vnode* _vnode, void** _cookie)
 }
 
 
+/**
+ * @brief Release and free a directory iteration cookie.
+ *
+ * Removes the cookie from the directory's cookie list, destroys its mutex,
+ * and frees the cookie memory.
+ *
+ * @param _volume  The rootfs volume.
+ * @param _vnode   The directory vnode that owns the cookie.
+ * @param _cookie  The cookie to free (cast to rootfs_dir_cookie*).
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_free_dir_cookie(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -766,6 +1165,22 @@ rootfs_free_dir_cookie(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 }
 
 
+/**
+ * @brief Read the next directory entry from an open directory cookie.
+ *
+ * Returns one dirent at a time. Synthesises "." and ".." from the vnode's own
+ * ID and its parent's ID respectively, then iterates through the sorted child
+ * list. Advances the cookie's current pointer and iteration state on success.
+ *
+ * @param _volume    The rootfs volume.
+ * @param _vnode     The directory vnode being iterated.
+ * @param _cookie    The per-open directory cookie.
+ * @param dirent     Output buffer for the dirent structure and name.
+ * @param bufferSize Size of @p dirent in bytes.
+ * @param _num       Input: max entries requested; output: entries written (0 or 1).
+ * @retval B_OK    Entry written or end of directory (@p *_num == 0).
+ * @retval ENOBUFS Buffer too small for the current entry.
+ */
 static status_t
 rootfs_read_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	struct dirent* dirent, size_t bufferSize, uint32* _num)
@@ -832,6 +1247,17 @@ rootfs_read_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 }
 
 
+/**
+ * @brief Rewind a directory cookie back to the start of the entry list.
+ *
+ * Resets the cookie's current pointer to the first child and the iteration
+ * state to ITERATION_STATE_BEGIN so the next readdir() returns ".".
+ *
+ * @param _volume  The rootfs volume.
+ * @param _vnode   The directory vnode.
+ * @param _cookie  The cookie to rewind.
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_rewind_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 {
@@ -849,6 +1275,19 @@ rootfs_rewind_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie)
 }
 
 
+/**
+ * @brief Perform an ioctl operation on a rootfs vnode — unsupported.
+ *
+ * rootfs does not support any ioctl operations.
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param _v      The vnode (unused).
+ * @param _cookie The per-open cookie (unused).
+ * @param op      The ioctl request code (unused).
+ * @param buffer  The ioctl argument buffer (unused).
+ * @param length  Size of @p buffer (unused).
+ * @retval B_BAD_VALUE Always.
+ */
 static status_t
 rootfs_ioctl(fs_volume* _volume, fs_vnode* _v, void* _cookie, uint32 op,
 	void* buffer, size_t length)
@@ -860,6 +1299,14 @@ rootfs_ioctl(fs_volume* _volume, fs_vnode* _v, void* _cookie, uint32 op,
 }
 
 
+/**
+ * @brief Report whether a rootfs vnode supports paging — always false.
+ *
+ * @param _volume The rootfs volume (unused).
+ * @param _v      The vnode (unused).
+ * @param cookie  The per-open cookie (unused).
+ * @return false Always.
+ */
 static bool
 rootfs_can_page(fs_volume* _volume, fs_vnode* _v, void* cookie)
 {
@@ -867,6 +1314,18 @@ rootfs_can_page(fs_volume* _volume, fs_vnode* _v, void* cookie)
 }
 
 
+/**
+ * @brief Read pages from a rootfs vnode — not allowed.
+ *
+ * @param _volume   The rootfs volume (unused).
+ * @param _v        The vnode (unused).
+ * @param cookie    The per-open cookie (unused).
+ * @param pos       Page offset (unused).
+ * @param vecs      I/O vector array (unused).
+ * @param count     Number of vectors (unused).
+ * @param _numBytes Input/output byte count (unused).
+ * @retval B_NOT_ALLOWED Always.
+ */
 static status_t
 rootfs_read_pages(fs_volume* _volume, fs_vnode* _v, void* cookie, off_t pos,
 	const iovec* vecs, size_t count, size_t* _numBytes)
@@ -875,6 +1334,18 @@ rootfs_read_pages(fs_volume* _volume, fs_vnode* _v, void* cookie, off_t pos,
 }
 
 
+/**
+ * @brief Write pages to a rootfs vnode — not allowed.
+ *
+ * @param _volume   The rootfs volume (unused).
+ * @param _v        The vnode (unused).
+ * @param cookie    The per-open cookie (unused).
+ * @param pos       Page offset (unused).
+ * @param vecs      I/O vector array (unused).
+ * @param count     Number of vectors (unused).
+ * @param _numBytes Input/output byte count (unused).
+ * @retval B_NOT_ALLOWED Always.
+ */
 static status_t
 rootfs_write_pages(fs_volume* _volume, fs_vnode* _v, void* cookie, off_t pos,
 	const iovec* vecs, size_t count, size_t* _numBytes)
@@ -883,6 +1354,19 @@ rootfs_write_pages(fs_volume* _volume, fs_vnode* _v, void* cookie, off_t pos,
 }
 
 
+/**
+ * @brief Read the target path of a symbolic link vnode.
+ *
+ * Copies the symlink's stored path into @p buffer (up to @p *_bufferSize
+ * bytes) and updates @p *_bufferSize with the full length of the target.
+ *
+ * @param _volume     The rootfs volume (unused).
+ * @param _link       The symlink vnode.
+ * @param buffer      Destination buffer for the link target string.
+ * @param _bufferSize Input: capacity of @p buffer; output: actual target length.
+ * @retval B_OK        Target copied successfully.
+ * @retval B_BAD_VALUE @p _link is not a symbolic link.
+ */
 static status_t
 rootfs_read_link(fs_volume* _volume, fs_vnode* _link, char* buffer,
 	size_t* _bufferSize)
@@ -901,6 +1385,24 @@ rootfs_read_link(fs_volume* _volume, fs_vnode* _link, char* buffer,
 }
 
 
+/**
+ * @brief Create a symbolic link entry in a rootfs directory.
+ *
+ * Checks write permission, acquires the FS write lock, verifies the name
+ * is free, creates a new S_IFLNK vnode, inserts it into the parent,
+ * duplicates the target path string into the vnode's symlink stream, and
+ * fires an entry-created notification.
+ *
+ * @param _volume The rootfs volume.
+ * @param _dir    The parent directory vnode.
+ * @param name    The name of the new symlink entry.
+ * @param path    The target path string the symlink should point to.
+ * @param mode    Permission bits (masked with S_IUMSK).
+ * @retval B_OK          Symlink created.
+ * @retval B_FILE_EXISTS An entry with that name already exists.
+ * @retval B_NO_MEMORY   Allocation failure.
+ * @retval B_NOT_ALLOWED Caller lacks write permission.
+ */
 static status_t
 rootfs_symlink(fs_volume* _volume, fs_vnode* _dir, const char* name,
 	const char* path, int mode)
@@ -944,6 +1446,20 @@ rootfs_symlink(fs_volume* _volume, fs_vnode* _dir, const char* name,
 }
 
 
+/**
+ * @brief Unlink a non-directory entry from a rootfs directory.
+ *
+ * Verifies write permission and delegates to rootfs_remove() with
+ * @p isDirectory=false.
+ *
+ * @param _volume The rootfs volume.
+ * @param _dir    The directory containing the entry to unlink.
+ * @param name    The name of the entry to remove.
+ * @retval B_OK             Entry removed.
+ * @retval B_ENTRY_NOT_FOUND Entry not found.
+ * @retval B_IS_A_DIRECTORY  Entry is a directory; use rootfs_remove_dir().
+ * @retval B_NOT_ALLOWED     Caller lacks write permission.
+ */
 static status_t
 rootfs_unlink(fs_volume* _volume, fs_vnode* _dir, const char* name)
 {
@@ -960,6 +1476,29 @@ rootfs_unlink(fs_volume* _volume, fs_vnode* _dir, const char* name)
 }
 
 
+/**
+ * @brief Rename (move) an entry between rootfs directories.
+ *
+ * Acquires the FS write lock, looks up the source entry, verifies that the
+ * destination directory is not a subdirectory of the source vnode, removes
+ * any existing entry at the destination (if it is an empty directory),
+ * renames the vnode in place, and fires an entry-moved notification.
+ *
+ * @note Renaming "/boot" from the root is explicitly forbidden.
+ *
+ * @param _volume   The rootfs volume.
+ * @param _fromDir  The source directory vnode.
+ * @param fromName  The current entry name.
+ * @param _toDir    The destination directory vnode.
+ * @param toName    The new entry name.
+ * @retval B_OK             Entry renamed.
+ * @retval B_ENTRY_NOT_FOUND Source entry not found.
+ * @retval B_BAD_VALUE      Destination is a subdirectory of the source.
+ * @retval B_NAME_IN_USE    Destination is a non-empty directory.
+ * @retval B_NO_MEMORY      Buffer allocation for the new name failed.
+ * @retval B_NOT_ALLOWED    Caller lacks write permission on source or dest.
+ * @retval EPERM            Attempted to rename "/boot".
+ */
 static status_t
 rootfs_rename(fs_volume* _volume, fs_vnode* _fromDir, const char* fromName,
 	fs_vnode* _toDir, const char* toName)
@@ -1047,6 +1586,18 @@ rootfs_rename(fs_volume* _volume, fs_vnode* _fromDir, const char* fromName,
 }
 
 
+/**
+ * @brief Read the stat(2) metadata of a rootfs vnode.
+ *
+ * Fills a struct stat with the vnode's inode ID, mode, ownership,
+ * timestamps, and size. The size is non-zero only for symlinks (target
+ * path length); directories always report size 0.
+ *
+ * @param _volume The rootfs volume.
+ * @param _v      The vnode whose metadata is requested.
+ * @param stat    Output buffer to fill.
+ * @retval B_OK Always.
+ */
 static status_t
 rootfs_read_stat(fs_volume* _volume, fs_vnode* _v, struct stat* stat)
 {
@@ -1082,6 +1633,21 @@ rootfs_read_stat(fs_volume* _volume, fs_vnode* _v, struct stat* stat)
 }
 
 
+/**
+ * @brief Write (update) the stat(2) metadata of a rootfs vnode.
+ *
+ * Applies a subset of stat fields controlled by @p statMask. Mode, UID, GID,
+ * modification time, and creation time may all be updated subject to
+ * permission checks. Resizing is never allowed.
+ *
+ * @param _volume  The rootfs volume.
+ * @param _vnode   The vnode whose metadata is to be updated.
+ * @param stat     The new metadata values.
+ * @param statMask Bitmask of B_STAT_* flags indicating which fields to apply.
+ * @retval B_OK         Metadata updated; stat-changed notification sent.
+ * @retval B_BAD_VALUE  B_STAT_SIZE was set in @p statMask.
+ * @retval B_NOT_ALLOWED Caller lacks the privilege for the requested change.
+ */
 static status_t
 rootfs_write_stat(fs_volume* _volume, fs_vnode* _vnode, const struct stat* stat,
 	uint32 statMask)
@@ -1144,6 +1710,27 @@ rootfs_write_stat(fs_volume* _volume, fs_vnode* _vnode, const struct stat* stat,
 }
 
 
+/**
+ * @brief Create a special (device, pipe, etc.) node inside a rootfs directory.
+ *
+ * Allocates a new vnode with the given mode, optionally inserts it into the
+ * parent directory (if @p name is non-NULL), publishes it to the VFS using
+ * the provided sub-vnode operations, and notifies the node monitor.
+ *
+ * @param _volume    The rootfs volume.
+ * @param _dir       The parent directory vnode.
+ * @param name       The entry name; if NULL the node is published as removed.
+ * @param subVnode   The sub-vnode supplied by the caller; if NULL the super
+ *                   vnode is used as both super and sub.
+ * @param mode       The mode and type bits for the new node.
+ * @param flags      VFS publish flags; B_VNODE_PUBLISH_REMOVED is added when
+ *                   @p name is NULL.
+ * @param _superVnode Output: filled with the rootfs-level vnode info.
+ * @param _nodeID    Output: inode ID of the created node.
+ * @retval B_OK          Node created and published.
+ * @retval B_FILE_EXISTS An entry with that name already exists.
+ * @retval B_NO_MEMORY   Vnode allocation failed.
+ */
 static status_t
 rootfs_create_special_node(fs_volume* _volume, fs_vnode* _dir, const char* name,
 	fs_vnode* subVnode, mode_t mode, uint32 flags, fs_vnode* _superVnode,
@@ -1197,6 +1784,18 @@ rootfs_create_special_node(fs_volume* _volume, fs_vnode* _dir, const char* name,
 }
 
 
+/**
+ * @brief Handle module init/uninit operations for the rootfs module.
+ *
+ * Called by the module subsystem with B_MODULE_INIT or B_MODULE_UNINIT.
+ * rootfs requires no per-module initialisation beyond what the mount
+ * call performs.
+ *
+ * @param op  The module operation code (B_MODULE_INIT or B_MODULE_UNINIT).
+ * @param ... Additional arguments (unused).
+ * @retval B_OK    For B_MODULE_INIT and B_MODULE_UNINIT.
+ * @retval B_ERROR For any unrecognised operation code.
+ */
 static status_t
 rootfs_std_ops(int32 op, ...)
 {

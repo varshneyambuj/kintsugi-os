@@ -1,10 +1,41 @@
 /*
- * Copyright 2002-2013, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2013, Haiku.
+ *   Authors:
+ *       Tyler Dauwalder
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file database_support.cpp
+ * @brief Global constants, error codes, and utility functions for the MIME database.
+ *
+ * Defines all attribute name and type constants used throughout the MIME database
+ * implementation, the well-known MIME type strings, and the kMimeGuessFailureError
+ * sentinel.  Also provides default_database_location() which initialises and
+ * returns the process-wide DatabaseLocation, and get_icon_data() which converts
+ * a BBitmap to a flat B_CMAP8 byte array suitable for database storage.
+ *
+ * @see DatabaseLocation
  */
 
 
@@ -99,6 +130,13 @@ static pthread_once_t sDefaultDatabaseLocationInitOnce = PTHREAD_ONCE_INIT;
 static DatabaseLocation* sDefaultDatabaseLocation = NULL;
 
 
+/**
+ * @brief One-time initialiser for the process-wide default DatabaseLocation.
+ *
+ * Called via pthread_once; iterates over kBaseDirectoryConstants to build the
+ * ordered list of MIME database directories and stores the result in
+ * sDefaultDatabaseLocation.
+ */
 static void
 init_default_database_location()
 {
@@ -123,6 +161,14 @@ init_default_database_location()
 }
 
 
+/**
+ * @brief Returns the process-wide default DatabaseLocation, initialising it on first call.
+ *
+ * Uses pthread_once to guarantee thread-safe single initialisation across the
+ * standard Haiku directory hierarchy.
+ *
+ * @return Pointer to the process-wide DatabaseLocation; never NULL.
+ */
 DatabaseLocation*
 default_database_location()
 {
@@ -135,6 +181,16 @@ default_database_location()
 #else	// building for the host platform
 
 
+/**
+ * @brief Returns a stub DatabaseLocation pointing to /tmp for host-platform builds.
+ *
+ * This overload is compiled when building the MIME kit for the host (non-Haiku)
+ * platform.  It returns a valid but minimal DatabaseLocation so that code that
+ * calls default_database_location() links and runs without crashing, even though
+ * the returned location is not actually used for real MIME lookups.
+ *
+ * @return Pointer to a static DatabaseLocation rooted at /tmp.
+ */
 DatabaseLocation*
 default_database_location()
 {
@@ -149,16 +205,24 @@ default_database_location()
 #endif
 
 
-/*! \brief Returns properly formatted raw bitmap data, ready to be shipped off
-	to the hacked up 4-parameter version of Database::SetIcon()
-
-	BBitmap implemented.  This function takes the given bitmap, converts it to the
-	B_CMAP8 color space if necessary and able, and returns said bitmap data in
-	a newly allocated array pointed to by the pointer that's pointed to by
-	\c data. The length of the array is stored in the integer pointed to by
-	\c dataSize. The array is allocated with \c new[], and it's your
-	responsibility to \c delete[] it when you're finished.
-*/
+/**
+ * @brief Converts a BBitmap to a flat B_CMAP8 byte array for MIME database storage.
+ *
+ * Takes the given bitmap, verifies its bounds match the expected size for
+ * \a which (16x16 for B_MINI_ICON, 32x32 for B_LARGE_ICON), converts it to
+ * the B_CMAP8 colour space if necessary, and returns a newly allocated copy of
+ * the raw pixel data.  The caller is responsible for releasing the array with
+ * delete[].
+ *
+ * @param icon     Pointer to the source BBitmap; must be initialised and non-NULL.
+ * @param which    The icon size: B_MINI_ICON or B_LARGE_ICON.
+ * @param data     Output parameter receiving a pointer to the newly allocated
+ *                 pixel data array.
+ * @param dataSize Output parameter receiving the size of the allocated array
+ *                 in bytes.
+ * @return B_OK on success, B_BAD_VALUE for invalid arguments or wrong bounds,
+ *         or B_NO_MEMORY if allocation fails.
+ */
 status_t
 get_icon_data(const BBitmap *icon, icon_size which, void **data,
 	int32 *dataSize)
@@ -216,7 +280,7 @@ get_icon_data(const BBitmap *icon, icon_size which, void **data,
 
 	// Copy the data into it.
 	if (!err)
-		memcpy(*data, srcData, *dataSize);	
+		memcpy(*data, srcData, *dataSize);
 	if (otherColorSpace)
 		delete icon8;
 	return err;
@@ -226,4 +290,3 @@ get_icon_data(const BBitmap *icon, icon_size which, void **data,
 } // namespace Mime
 } // namespace Storage
 } // namespace BPrivate
-

@@ -1,9 +1,39 @@
 /*
- * Copyright 2003-2016, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Copyright 2005-2008, Ingo Weinhold, bonefish@users.sf.net.
- * Copyright 2010, Clemens Zeidler, haiku@clemens-zeidler.de.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2016, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2005-2008, Ingo Weinhold, bonefish@users.sf.net.
+ *   Copyright 2010, Clemens Zeidler, haiku@clemens-zeidler.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file node_monitor.cpp
+ * @brief VFS node monitor — delivers file system change notifications to watchers.
+ *
+ * Implements start_watching_vnode() and stop_watching_vnode(), and the
+ * notification dispatch path that fires when vnodes, directories, or
+ * volumes are created, deleted, moved, or have attributes changed.
+ * Notifications are delivered as BMessages to registered BMessenger targets.
+ *
+ * @see vfs.cpp, fd.cpp
  */
 
 
@@ -224,18 +254,21 @@ static NodeMonitorService sNodeMonitorService;
 //	#pragma mark - NodeMonitorService
 
 
+/** @brief Constructs the NodeMonitorService and initialises the recursive lock. */
 NodeMonitorService::NodeMonitorService()
 {
 	recursive_lock_init(&fRecursiveLock, "node monitor");
 }
 
 
+/** @brief Destroys the NodeMonitorService and releases the recursive lock. */
 NodeMonitorService::~NodeMonitorService()
 {
 	recursive_lock_destroy(&fRecursiveLock);
 }
 
 
+/** @brief Returns B_OK when the service has been successfully initialised. */
 status_t
 NodeMonitorService::InitCheck()
 {
@@ -247,6 +280,7 @@ NodeMonitorService::InitCheck()
 	and free it.
 	Must be called with monitors lock hold.
 */
+/** @brief Removes a node_monitor from the hash table and frees it; must be called with the monitor lock held. */
 void
 NodeMonitorService::_RemoveMonitor(node_monitor *monitor, uint32 flags)
 {
@@ -259,6 +293,7 @@ NodeMonitorService::_RemoveMonitor(node_monitor *monitor, uint32 flags)
 
 
 //! Helper function for the RemoveListener function.
+/** @brief Removes the listener matching the given device/node/notificationListener triple from its monitor; decrements the context monitor count. */
 status_t
 NodeMonitorService::_RemoveListener(io_context *context, dev_t device,
 	ino_t node, NotificationListener& notificationListener,
@@ -291,6 +326,7 @@ NodeMonitorService::_RemoveListener(io_context *context, dev_t device,
 	and free it.
 	Must be called with monitors lock hold.
 */
+/** @brief Unlinks a monitor_listener from both the monitor list and the I/O context list, then frees it; removes the owning monitor if it becomes empty. */
 void
 NodeMonitorService::_RemoveListener(monitor_listener *listener)
 {
@@ -317,6 +353,7 @@ NodeMonitorService::_RemoveListener(monitor_listener *listener)
 /*! Returns the monitor that matches the specified device/node pair.
 	Must be called with monitors lock hold.
 */
+/** @brief Looks up and returns the node_monitor for the given device/node pair, or NULL if none exists; must be called with the monitor lock held. */
 node_monitor *
 NodeMonitorService::_MonitorFor(dev_t device, ino_t node, bool isVolumeListener)
 {
@@ -335,6 +372,7 @@ NodeMonitorService::_MonitorFor(dev_t device, ino_t node, bool isVolumeListener)
 	If the monitor does not exist yet, it will be created.
 	Must be called with monitors lock hold.
 */
+/** @brief Returns (and optionally creates) the node_monitor for the given device/node pair; enforces the per-context monitor limit when creating a new entry. */
 status_t
 NodeMonitorService::_GetMonitor(io_context *context, dev_t device, ino_t node,
 	bool addIfNecessary, node_monitor** _monitor, bool isVolumeListener)
@@ -381,6 +419,7 @@ NodeMonitorService::_GetMonitor(io_context *context, dev_t device, ino_t node,
 /*! Returns the listener that matches the specified port/token pair.
 	Must be called with monitors lock hold.
 */
+/** @brief Scans the monitor's listener list and returns the monitor_listener that compares equal to notificationListener, or NULL if not found. */
 monitor_listener*
 NodeMonitorService::_MonitorListenerFor(node_monitor* monitor,
 	NotificationListener& notificationListener)
@@ -398,6 +437,7 @@ NodeMonitorService::_MonitorListenerFor(node_monitor* monitor,
 }
 
 
+/** @brief Allocates a new monitor_listener, links it to the monitor and the I/O context, and increments the context monitor count. */
 status_t
 NodeMonitorService::_AddMonitorListener(io_context *context,
 	node_monitor* monitor, uint32 flags,
@@ -425,6 +465,7 @@ NodeMonitorService::_AddMonitorListener(io_context *context,
 }
 
 
+/** @brief Registers a new notification listener for the given device/node/flags in the supplied I/O context. */
 status_t
 NodeMonitorService::AddListener(io_context *context, dev_t device, ino_t node,
 	uint32 flags, NotificationListener& notificationListener)
@@ -446,6 +487,7 @@ NodeMonitorService::AddListener(io_context *context, dev_t device, ino_t node,
 }
 
 
+/** @brief Updates the watch flags on an existing listener; if addFlags is true the new flags are OR-ed in, otherwise they replace the existing flags. */
 status_t
 NodeMonitorService::_UpdateListener(io_context *context, dev_t device,
 	ino_t node, uint32 flags, bool addFlags,
@@ -498,6 +540,7 @@ NodeMonitorService::_UpdateListener(io_context *context, dev_t device,
 		   \a interestedListeners array. Will be incremented, if a list is
 		   appended.
 */
+/** @brief Finds the first listener on the node's monitor whose flags intersect with the requested event mask and appends its iterator to interestedListeners. */
 void
 NodeMonitorService::_GetInterestedMonitorListeners(dev_t device, ino_t node,
 	uint32 flags, interested_monitor_listener_list *interestedListeners,
@@ -522,6 +565,7 @@ NodeMonitorService::_GetInterestedMonitorListeners(dev_t device, ino_t node,
 }
 
 
+/** @brief Finds the first volume-level listener whose flags match and appends its iterator to interestedListeners. */
 void
 NodeMonitorService::_GetInterestedVolumeListeners(dev_t device, uint32 flags,
 	interested_monitor_listener_list *interestedListeners,
@@ -555,6 +599,7 @@ NodeMonitorService::_GetInterestedVolumeListeners(dev_t device, uint32 flags,
 	- \c B_OK, if everything went fine,
 	- another error code otherwise.
 */
+/** @brief Dispatches a pre-built KMessage notification to every listener in all supplied interested-listener lists, invoking EventOccurred then AllListenersNotified on each. */
 status_t
 NodeMonitorService::_SendNotificationMessage(KMessage &message,
 	interested_monitor_listener_list *interestedListeners,
@@ -589,6 +634,7 @@ NodeMonitorService::_SendNotificationMessage(KMessage &message,
 /*!	\brief Resolves the device/directory node pair to the node it's covered
 	by, if any.
 */
+/** @brief Resolves a mount-point device/directory pair to the covering vnode's parent device and directory, used when a directory node is itself a mount point. */
 void
 NodeMonitorService::_ResolveMountPoint(dev_t device, ino_t directory,
 	dev_t& parentDevice, ino_t& parentDirectory)
@@ -618,6 +664,7 @@ NodeMonitorService::_ResolveMountPoint(dev_t device, ino_t directory,
 	- \c B_OK, if everything went fine,
 	- another error code otherwise.
 */
+/** @brief Collects all volume-, node-, and directory-level listeners interested in B_WATCH_NAME or B_WATCH_DIRECTORY for the affected entry, then sends a B_NODE_MONITOR/B_ENTRY_CREATED or B_ENTRY_REMOVED message to each. */
 status_t
 NodeMonitorService::NotifyEntryCreatedOrRemoved(int32 opcode, dev_t device,
 	ino_t directory, const char *name, ino_t node)
@@ -660,6 +707,7 @@ NodeMonitorService::NotifyEntryCreatedOrRemoved(int32 opcode, dev_t device,
 }
 
 
+/** @brief Notifies all interested listeners that an entry has been moved, resolving mount points on the node and collecting listeners for both the source and destination directories. */
 inline status_t
 NodeMonitorService::NotifyEntryMoved(dev_t device, ino_t fromDirectory,
 	const char *fromName, ino_t toDirectory, const char *toName,
@@ -714,6 +762,7 @@ NodeMonitorService::NotifyEntryMoved(dev_t device, ino_t fromDirectory,
 }
 
 
+/** @brief Notifies all interested listeners that a node's stat fields have changed; handles both regular and interim-update events and correctly resolves mount-point parent directories. */
 inline status_t
 NodeMonitorService::NotifyStatChanged(dev_t device, ino_t directory, ino_t node,
 	uint32 statFields)
@@ -774,6 +823,7 @@ NodeMonitorService::NotifyStatChanged(dev_t device, ino_t directory, ino_t node,
 	- \c B_OK, if everything went fine,
 	- another error code otherwise.
 */
+/** @brief Notifies volume-, parent-directory-, and node-level listeners that the named attribute on a node has been created, changed, or removed. */
 status_t
 NodeMonitorService::NotifyAttributeChanged(dev_t device, ino_t directory,
 	ino_t node, const char *attribute, int32 cause)
@@ -826,6 +876,7 @@ NodeMonitorService::NotifyAttributeChanged(dev_t device, ino_t directory,
 }
 
 
+/** @brief Sends a B_DEVICE_UNMOUNTED notification to all listeners registered with B_WATCH_MOUNT on device -1. */
 inline status_t
 NodeMonitorService::NotifyUnmount(dev_t device)
 {
@@ -854,6 +905,7 @@ NodeMonitorService::NotifyUnmount(dev_t device)
 }
 
 
+/** @brief Sends a B_DEVICE_MOUNTED notification (including parent device and directory) to all listeners registered with B_WATCH_MOUNT. */
 inline status_t
 NodeMonitorService::NotifyMount(dev_t device, dev_t parentDevice,
 	ino_t parentDirectory)
@@ -886,6 +938,7 @@ NodeMonitorService::NotifyMount(dev_t device, dev_t parentDevice,
 }
 
 
+/** @brief Removes all monitor listeners registered in the given I/O context, freeing each monitor that becomes empty as a result. */
 inline status_t
 NodeMonitorService::RemoveListeners(io_context *context)
 {
@@ -902,6 +955,7 @@ NodeMonitorService::RemoveListeners(io_context *context)
 }
 
 
+/** @brief Adds a listener described by a KMessage event specifier (containing "device", "node", and "flags" fields) to the appropriate I/O context. */
 status_t
 NodeMonitorService::AddListener(const KMessage* eventSpecifier,
 	NotificationListener& listener)
@@ -920,6 +974,7 @@ NodeMonitorService::AddListener(const KMessage* eventSpecifier,
 }
 
 
+/** @brief Updates an existing listener's flags using values from a KMessage event specifier; supports additive flag updates via an "add flags" field. */
 status_t
 NodeMonitorService::UpdateListener(const KMessage* eventSpecifier,
 	NotificationListener& listener)
@@ -939,6 +994,7 @@ NodeMonitorService::UpdateListener(const KMessage* eventSpecifier,
 }
 
 
+/** @brief Removes the listener described by a KMessage event specifier from the current I/O context. */
 status_t
 NodeMonitorService::RemoveListener(const KMessage* eventSpecifier,
 	NotificationListener& listener)
@@ -956,6 +1012,7 @@ NodeMonitorService::RemoveListener(const KMessage* eventSpecifier,
 }
 
 
+/** @brief Removes a notification listener for the given device/node from the I/O context, trying both regular and volume listener tables. */
 status_t
 NodeMonitorService::RemoveListener(io_context *context, dev_t device,
 	ino_t node, NotificationListener& notificationListener)
@@ -973,6 +1030,7 @@ NodeMonitorService::RemoveListener(io_context *context, dev_t device,
 }
 
 
+/** @brief Removes all user-space listeners in the context that match the given port/token pair, returning B_ENTRY_NOT_FOUND if none were present. */
 inline status_t
 NodeMonitorService::RemoveUserListeners(struct io_context *context,
 	port_id port, uint32 token)
@@ -1004,6 +1062,7 @@ NodeMonitorService::RemoveUserListeners(struct io_context *context,
 }
 
 
+/** @brief Updates (or creates) a user-space watch for the given device/node/flags, copying the UserNodeListener if a new entry must be inserted into the monitor. */
 status_t
 NodeMonitorService::UpdateUserListener(io_context *context, dev_t device,
 	ino_t node, uint32 flags, UserNodeListener& userListener)
@@ -1043,6 +1102,7 @@ NodeMonitorService::UpdateUserListener(io_context *context, dev_t device,
 }
 
 
+/** @brief Internal helper that builds and sends a B_QUERY_UPDATE message for a live-query entry-created or entry-removed event to the specified port/token target. */
 static status_t
 notify_query_entry_created_or_removed(int32 opcode, port_id port, int32 token,
 	dev_t device, ino_t directory, const char *name, ino_t node)
@@ -1069,6 +1129,7 @@ notify_query_entry_created_or_removed(int32 opcode, port_id port, int32 token,
 }
 
 
+/** @brief Internal helper that builds and sends a B_QUERY_UPDATE/B_ATTR_CHANGED message for a live-query attribute-changed event to the specified port/token target. */
 static status_t
 notify_query_attr_changed(port_id port, int32 token,
 	dev_t device, ino_t directory, ino_t node, const char *attr, int32 cause)
@@ -1096,6 +1157,7 @@ notify_query_attr_changed(port_id port, int32 token,
 }
 
 
+/** @brief Internal helper that builds and sends a B_QUERY_UPDATE message for a live-query entry-moved event to the specified port/token target. */
 static status_t
 notify_query_entry_moved(int32 opcode, port_id port, int32 token,
 	dev_t device, ino_t fromDirectory, const char *fromName,
@@ -1128,6 +1190,7 @@ notify_query_entry_moved(int32 opcode, port_id port, int32 token,
 //	#pragma mark - private kernel API
 
 
+/** @brief Removes all node monitor listeners belonging to the given I/O context; called during context teardown. */
 status_t
 remove_node_monitors(struct io_context *context)
 {
@@ -1135,6 +1198,7 @@ remove_node_monitors(struct io_context *context)
 }
 
 
+/** @brief Initialises the global NodeMonitorService and UserMessagingMessageSender singletons; panics on failure. */
 status_t
 node_monitor_init(void)
 {
@@ -1148,6 +1212,7 @@ node_monitor_init(void)
 }
 
 
+/** @brief Kernel-internal wrapper: sends a B_DEVICE_UNMOUNTED notification for the given device. */
 status_t
 notify_unmount(dev_t device)
 {
@@ -1155,6 +1220,7 @@ notify_unmount(dev_t device)
 }
 
 
+/** @brief Kernel-internal wrapper: sends a B_DEVICE_MOUNTED notification for the given device and parent location. */
 status_t
 notify_mount(dev_t device, dev_t parentDevice, ino_t parentDirectory)
 {
@@ -1163,6 +1229,7 @@ notify_mount(dev_t device, dev_t parentDevice, ino_t parentDirectory)
 }
 
 
+/** @brief Removes a kernel-side notification listener previously registered for the given device/node. */
 status_t
 remove_node_listener(dev_t device, ino_t node, NotificationListener& listener)
 {
@@ -1171,6 +1238,7 @@ remove_node_listener(dev_t device, ino_t node, NotificationListener& listener)
 }
 
 
+/** @brief Registers a kernel-side notification listener for the given device/node/flags combination. */
 status_t
 add_node_listener(dev_t device, ino_t node, uint32 flags,
 	NotificationListener& listener)
@@ -1192,6 +1260,7 @@ add_node_listener(dev_t device, ino_t node, uint32 flags,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Public kernel API: notifies all registered watchers that a new directory entry has been created. */
 status_t
 notify_entry_created(dev_t device, ino_t directory, const char *name,
 	ino_t node)
@@ -1210,6 +1279,7 @@ notify_entry_created(dev_t device, ino_t directory, const char *name,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Public kernel API: notifies all registered watchers that a directory entry has been removed. */
 status_t
 notify_entry_removed(dev_t device, ino_t directory, const char *name,
 	ino_t node)
@@ -1230,6 +1300,7 @@ notify_entry_removed(dev_t device, ino_t directory, const char *name,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Public kernel API: notifies all registered watchers that a directory entry has been renamed or moved to a different directory. */
 status_t
 notify_entry_moved(dev_t device, ino_t fromDirectory,
 	const char *fromName, ino_t toDirectory, const char *toName,
@@ -1251,6 +1322,7 @@ notify_entry_moved(dev_t device, ino_t fromDirectory,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Public kernel API: notifies all registered watchers that one or more stat fields on a node have changed. */
 status_t
 notify_stat_changed(dev_t device, ino_t directory, ino_t node,
 	uint32 statFields)
@@ -1270,6 +1342,7 @@ notify_stat_changed(dev_t device, ino_t directory, ino_t node,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Public kernel API: notifies all registered watchers that a named extended attribute on a node has been created, modified, or removed. */
 status_t
 notify_attribute_changed(dev_t device, ino_t directory, ino_t node,
 	const char *attribute, int32 cause)
@@ -1291,6 +1364,7 @@ notify_attribute_changed(dev_t device, ino_t directory, ino_t node,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Notifies the live-query listener at port/token that a new entry has entered the query result set. */
 status_t
 notify_query_entry_created(port_id port, int32 token, dev_t device,
 	ino_t directory, const char *name, ino_t node)
@@ -1312,6 +1386,7 @@ notify_query_entry_created(port_id port, int32 token, dev_t device,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Notifies the live-query listener at port/token that an entry has left the query result set. */
 status_t
 notify_query_entry_removed(port_id port, int32 token, dev_t device,
 	ino_t directory, const char *name, ino_t node)
@@ -1334,6 +1409,7 @@ notify_query_entry_removed(port_id port, int32 token, dev_t device,
   	- \c B_OK, if everything went fine,
   	- another error code otherwise.
 */
+/** @brief Notifies the live-query listener at port/token that an entry still in the result set has been renamed or moved to a different directory. */
 status_t
 notify_query_entry_moved(port_id port, int32 token, dev_t device, ino_t fromDirectory,
 	const char *fromName, ino_t toDirectory, const char *toName,
@@ -1356,6 +1432,7 @@ notify_query_entry_moved(port_id port, int32 token, dev_t device, ino_t fromDire
 	- \c B_OK, if everything went fine,
 	- another error code otherwise.
 */
+/** @brief Notifies the live-query listener at port/token that an attribute on an entry still matching the query has changed. */
 status_t
 notify_query_attribute_changed(port_id port, int32 token, dev_t device,
 	ino_t directory, ino_t node, const char* attribute, int32 cause)
@@ -1374,6 +1451,7 @@ notify_query_attribute_changed(port_id port, int32 token, dev_t device,
 // associated monitor listeners when a port is transferred/deleted.
 
 
+/** @brief User syscall: removes all node-monitor listeners associated with the calling team that match the given port/token pair. */
 status_t
 _user_stop_notifying(port_id port, uint32 token)
 {
@@ -1383,6 +1461,7 @@ _user_stop_notifying(port_id port, uint32 token)
 }
 
 
+/** @brief User syscall: installs or updates a node-monitor watch for device/node with the given flags, delivering notifications to the specified port/token. */
 status_t
 _user_start_watching(dev_t device, ino_t node, uint32 flags, port_id port,
 	uint32 token)
@@ -1395,6 +1474,7 @@ _user_start_watching(dev_t device, ino_t node, uint32 flags, port_id port,
 }
 
 
+/** @brief User syscall: removes the node-monitor watch for the given device/node that delivers to port/token. */
 status_t
 _user_stop_watching(dev_t device, ino_t node, port_id port, uint32 token)
 {
@@ -1404,4 +1484,3 @@ _user_stop_watching(dev_t device, ino_t node, port_id port, uint32 token)
 	return sNodeMonitorService.RemoveListener(context, device, node,
 		listener);
 }
-

@@ -1,13 +1,43 @@
 /*
- * Copyright 2002-2012, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Axel Dörfler, axeld@pinc-software.de
- *		Ingo Weinhold, bonefish@users.sf.net
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2012, Haiku Inc.
+ *   Authors:
+ *       Tyler Dauwalder
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Ingo Weinhold, bonefish@users.sf.net
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file Path.cpp
+ * @brief Implementation of the BPath class for filesystem path manipulation.
+ *
+ * BPath provides a managed representation of a filesystem path, supporting
+ * construction from strings, entry references, BEntry objects, and BDirectory
+ * objects. It handles path normalization, flattening (BFlattenable interface),
+ * and common path operations such as appending components and retrieving the
+ * leaf or parent portions of a path.
+ *
+ * @see BEntry, BDirectory, BFlattenable
+ */
 
 #include <Path.h>
 
@@ -26,7 +56,12 @@
 using namespace std;
 
 
-// Creates an uninitialized BPath object.
+/**
+ * @brief Creates an uninitialized BPath object.
+ *
+ * The object's InitCheck() will return B_NO_INIT until it is explicitly
+ * initialized via SetTo() or an assignment operator.
+ */
 BPath::BPath()
 	:
 	fName(NULL),
@@ -35,7 +70,11 @@ BPath::BPath()
 }
 
 
-// Creates a copy of the given BPath object.
+/**
+ * @brief Creates a copy of the given BPath object.
+ *
+ * @param path The BPath object to copy.
+ */
 BPath::BPath(const BPath& path)
 	:
 	fName(NULL),
@@ -45,8 +84,12 @@ BPath::BPath(const BPath& path)
 }
 
 
-// Creates a BPath object and initializes it to the filesystem entry
-// specified by the passed in entry_ref struct.
+/**
+ * @brief Creates a BPath object initialized to the filesystem entry
+ *        specified by the passed in entry_ref struct.
+ *
+ * @param ref Pointer to the entry_ref identifying the filesystem entry.
+ */
 BPath::BPath(const entry_ref* ref)
 	:
 	fName(NULL),
@@ -56,8 +99,12 @@ BPath::BPath(const entry_ref* ref)
 }
 
 
-// Creates a BPath object and initializes it to the filesystem entry
-// specified by the passed in BEntry object.
+/**
+ * @brief Creates a BPath object initialized to the filesystem entry
+ *        specified by the passed in BEntry object.
+ *
+ * @param entry Pointer to the BEntry identifying the filesystem entry.
+ */
 BPath::BPath(const BEntry* entry)
 	:
 	fName(NULL),
@@ -67,8 +114,14 @@ BPath::BPath(const BEntry* entry)
 }
 
 
-// Creates a BPath object and initializes it to the specified path or
-// path and filename combination.
+/**
+ * @brief Creates a BPath object initialized to the specified path or
+ *        path and filename combination.
+ *
+ * @param dir   The base directory path string.
+ * @param leaf  Optional leaf name to append to the base path.
+ * @param normalize If true, forces normalization of the resulting path.
+ */
 BPath::BPath(const char* dir, const char* leaf, bool normalize)
 	:
 	fName(NULL),
@@ -78,8 +131,14 @@ BPath::BPath(const char* dir, const char* leaf, bool normalize)
 }
 
 
-// Creates a BPath object and initializes it to the specified directory
-// and filename combination.
+/**
+ * @brief Creates a BPath object initialized to the specified directory
+ *        and filename combination.
+ *
+ * @param dir       Pointer to the BDirectory representing the base directory.
+ * @param leaf      Optional leaf name to append to the directory path.
+ * @param normalize If true, forces normalization of the resulting path.
+ */
 BPath::BPath(const BDirectory* dir, const char* leaf, bool normalize)
 	:
 	fName(NULL),
@@ -89,14 +148,20 @@ BPath::BPath(const BDirectory* dir, const char* leaf, bool normalize)
 }
 
 
-// Destroys the BPath object and frees any of its associated resources.
+/**
+ * @brief Destroys the BPath object and frees any of its associated resources.
+ */
 BPath::~BPath()
 {
 	Unset();
 }
 
 
-// Checks whether or not the object was properly initialized.
+/**
+ * @brief Checks whether or not the object was properly initialized.
+ *
+ * @return B_OK if the object is properly initialized, B_NO_INIT otherwise.
+ */
 status_t
 BPath::InitCheck() const
 {
@@ -104,8 +169,13 @@ BPath::InitCheck() const
 }
 
 
-// Reinitializes the object to the filesystem entry specified by the
-// passed in entry_ref struct.
+/**
+ * @brief Reinitializes the object to the filesystem entry specified by the
+ *        passed in entry_ref struct.
+ *
+ * @param ref Pointer to the entry_ref identifying the filesystem entry.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPath::SetTo(const entry_ref* ref)
 {
@@ -125,7 +195,12 @@ BPath::SetTo(const entry_ref* ref)
 }
 
 
-// Reinitializes the object to the specified filesystem entry.
+/**
+ * @brief Reinitializes the object to the specified filesystem entry.
+ *
+ * @param entry Pointer to the BEntry identifying the filesystem entry.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPath::SetTo(const BEntry* entry)
 {
@@ -142,8 +217,18 @@ BPath::SetTo(const BEntry* entry)
 }
 
 
-// Reinitializes the object to the passed in path or path and
-// leaf combination.
+/**
+ * @brief Reinitializes the object to the passed in path or path and
+ *        leaf combination.
+ *
+ * Relative paths are always normalized. If \a leaf is an absolute path,
+ * B_BAD_VALUE is returned.
+ *
+ * @param path      The base path string.
+ * @param leaf      Optional leaf name to append; must be a relative path.
+ * @param normalize If true, forces normalization even for absolute paths.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPath::SetTo(const char* path, const char* leaf, bool normalize)
 {
@@ -200,7 +285,15 @@ BPath::SetTo(const char* path, const char* leaf, bool normalize)
 }
 
 
-// Reinitializes the object to the passed in dir and relative path combination.
+/**
+ * @brief Reinitializes the object to the passed in dir and relative path
+ *        combination.
+ *
+ * @param dir       Pointer to the BDirectory representing the base directory.
+ * @param path      Optional relative path to append to the directory path.
+ * @param normalize If true, forces normalization of the resulting path.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPath::SetTo(const BDirectory* dir, const char* path, bool normalize)
 {
@@ -222,7 +315,12 @@ BPath::SetTo(const BDirectory* dir, const char* path, bool normalize)
 }
 
 
-// Returns the object to an uninitialized state.
+/**
+ * @brief Returns the object to an uninitialized state.
+ *
+ * Frees the internal path string and resets the initialization status
+ * to B_NO_INIT.
+ */
 void
 BPath::Unset()
 {
@@ -231,7 +329,14 @@ BPath::Unset()
 }
 
 
-// Appends the passed in relative path to the end of the current path.
+/**
+ * @brief Appends the passed in relative path to the end of the current path.
+ *
+ * @param path      The relative path component to append.
+ * @param normalize If true, forces normalization of the resulting path.
+ * @return B_OK on success, B_BAD_VALUE if the object is not initialized,
+ *         or another error code on failure.
+ */
 status_t
 BPath::Append(const char* path, bool normalize)
 {
@@ -245,7 +350,12 @@ BPath::Append(const char* path, bool normalize)
 }
 
 
-// Gets the entire path of the object.
+/**
+ * @brief Gets the entire path of the object as a C string.
+ *
+ * @return A pointer to the null-terminated path string, or NULL if the
+ *         object is not initialized.
+ */
 const char*
 BPath::Path() const
 {
@@ -253,7 +363,12 @@ BPath::Path() const
 }
 
 
-// Gets the leaf portion of the path.
+/**
+ * @brief Gets the leaf portion of the path (the final component).
+ *
+ * @return A pointer to the null-terminated leaf name within the internal
+ *         path string, or NULL if the object is not initialized.
+ */
 const char*
 BPath::Leaf() const
 {
@@ -272,7 +387,13 @@ BPath::Leaf() const
 }
 
 
-// Initializes path with the parent directory of the BPath object.
+/**
+ * @brief Initializes \a path with the parent directory of this BPath object.
+ *
+ * @param path Pointer to the BPath object that will receive the parent path.
+ * @return B_OK on success, B_BAD_VALUE if \a path is NULL, B_ENTRY_NOT_FOUND
+ *         if the current path is the root "/", or an initialization error.
+ */
 status_t
 BPath::GetParent(BPath* path) const
 {
@@ -304,7 +425,12 @@ BPath::GetParent(BPath* path) const
 }
 
 
-// Gets whether or not the path is absolute or relative.
+/**
+ * @brief Gets whether or not the path is absolute.
+ *
+ * @return true if the path is absolute (starts with '/'), false otherwise
+ *         or if the object is not initialized.
+ */
 bool
 BPath::IsAbsolute() const
 {
@@ -315,7 +441,12 @@ BPath::IsAbsolute() const
 }
 
 
-// Performs a simple (string-wise) comparison of paths for equality.
+/**
+ * @brief Performs a simple (string-wise) comparison of paths for equality.
+ *
+ * @param item The BPath object to compare against.
+ * @return true if the paths are equal, false otherwise.
+ */
 bool
 BPath::operator==(const BPath& item) const
 {
@@ -323,7 +454,13 @@ BPath::operator==(const BPath& item) const
 }
 
 
-// Performs a simple (string-wise) comparison of paths for equality.
+/**
+ * @brief Performs a simple (string-wise) comparison of paths for equality.
+ *
+ * @param path The C string path to compare against.
+ * @return true if the paths are equal (or both uninitialized/NULL),
+ *         false otherwise.
+ */
 bool
 BPath::operator==(const char* path) const
 {
@@ -332,7 +469,12 @@ BPath::operator==(const char* path) const
 }
 
 
-// Performs a simple (string-wise) comparison of paths for inequality.
+/**
+ * @brief Performs a simple (string-wise) comparison of paths for inequality.
+ *
+ * @param item The BPath object to compare against.
+ * @return true if the paths are not equal, false otherwise.
+ */
 bool
 BPath::operator!=(const BPath& item) const
 {
@@ -340,7 +482,12 @@ BPath::operator!=(const BPath& item) const
 }
 
 
-// Performs a simple (string-wise) comparison of paths for inequality.
+/**
+ * @brief Performs a simple (string-wise) comparison of paths for inequality.
+ *
+ * @param path The C string path to compare against.
+ * @return true if the paths are not equal, false otherwise.
+ */
 bool
 BPath::operator!=(const char* path) const
 {
@@ -348,7 +495,12 @@ BPath::operator!=(const char* path) const
 }
 
 
-// Initializes the object as a copy of item.
+/**
+ * @brief Initializes the object as a copy of \a item.
+ *
+ * @param item The BPath object to copy.
+ * @return A reference to this BPath object.
+ */
 BPath&
 BPath::operator=(const BPath& item)
 {
@@ -358,7 +510,12 @@ BPath::operator=(const BPath& item)
 }
 
 
-// Initializes the object with the passed in path.
+/**
+ * @brief Initializes the object with the passed in path string.
+ *
+ * @param path The C string path to set. If NULL, the object is unset.
+ * @return A reference to this BPath object.
+ */
 BPath&
 BPath::operator=(const char* path)
 {
@@ -385,7 +542,11 @@ static const size_t flattened_entry_ref_size
 	= sizeof(dev_t) + sizeof(ino_t);
 
 
-// Overrides BFlattenable::IsFixedSize()
+/**
+ * @brief Overrides BFlattenable::IsFixedSize().
+ *
+ * @return false, because the flattened size depends on the path length.
+ */
 bool
 BPath::IsFixedSize() const
 {
@@ -393,7 +554,11 @@ BPath::IsFixedSize() const
 }
 
 
-// Overrides BFlattenable::TypeCode()
+/**
+ * @brief Overrides BFlattenable::TypeCode().
+ *
+ * @return B_REF_TYPE, the type code used for flattened BPath data.
+ */
 type_code
 BPath::TypeCode() const
 {
@@ -401,8 +566,13 @@ BPath::TypeCode() const
 }
 
 
-// Gets the size of the flattened entry_ref struct that represents
-// the path in bytes.
+/**
+ * @brief Gets the size of the flattened entry_ref struct that represents
+ *        the path in bytes.
+ *
+ * @return The number of bytes required to store the flattened representation
+ *         of this path.
+ */
 ssize_t
 BPath::FlattenedSize() const
 {
@@ -418,7 +588,15 @@ BPath::FlattenedSize() const
 }
 
 
-// Converts the path of the object to an entry_ref and writes it into buffer.
+/**
+ * @brief Converts the path of the object to an entry_ref and writes it
+ *        into the provided buffer.
+ *
+ * @param buffer Pointer to the destination buffer.
+ * @param size   Size in bytes of the destination buffer.
+ * @return B_OK on success, B_BAD_VALUE if buffer is NULL or size is
+ *         insufficient, or another error code on failure.
+ */
 status_t
 BPath::Flatten(void* buffer, ssize_t size) const
 {
@@ -455,7 +633,12 @@ BPath::Flatten(void* buffer, ssize_t size) const
 }
 
 
-// Checks if type code is equal to B_REF_TYPE.
+/**
+ * @brief Checks if the given type code is equal to B_REF_TYPE.
+ *
+ * @param code The type code to check.
+ * @return true if \a code equals B_REF_TYPE, false otherwise.
+ */
 bool
 BPath::AllowsTypeCode(type_code code) const
 {
@@ -463,8 +646,16 @@ BPath::AllowsTypeCode(type_code code) const
 }
 
 
-// Initializes the object with the flattened entry_ref data from the passed
-// in buffer.
+/**
+ * @brief Initializes the object with the flattened entry_ref data from the
+ *        passed in buffer.
+ *
+ * @param code   The type code of the flattened data; must be B_REF_TYPE.
+ * @param buffer Pointer to the buffer containing the flattened entry_ref.
+ * @param size   Size in bytes of the buffer.
+ * @return B_OK on success, B_BAD_VALUE if parameters are invalid, or another
+ *         error code on failure.
+ */
 status_t
 BPath::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -509,6 +700,15 @@ void BPath::_WarPath3() {}
 	\retval B_OK Everything went fine.
 	\retval B_NO_MEMORY Insufficient memory.
 */
+/**
+ * @brief Sets the internal path string, copying the supplied value.
+ *
+ * If \a path is NULL the internal path is freed and set to NULL.
+ * The previously stored path string is always deleted.
+ *
+ * @param path The path string to copy and store, or NULL to clear.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails.
+ */
 status_t
 BPath::_SetPath(const char* path)
 {
@@ -543,6 +743,18 @@ BPath::_SetPath(const char* path)
 
 	\return \c true if \a path requires normalization, \c false otherwise.
 */
+/**
+ * @brief Checks a path to determine whether normalization is required.
+ *
+ * Normalization is required for relative paths, paths containing "." or ".."
+ * components, redundant slashes, or a trailing slash.
+ *
+ * @param path   The path string to inspect.
+ * @param _error Output pointer that receives B_BAD_VALUE if the path is
+ *               invalid (NULL or empty).
+ * @return true if normalization is required, false if the path is already
+ *         in normal form or is invalid.
+ */
 bool
 BPath::_MustNormalize(const char* path, status_t* _error)
 {

@@ -1,11 +1,43 @@
 /*
- * Copyright 2002-2006 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Tyler Dauwalder
- *		Ingo Weinhold, bonefish@users.sf.net
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2006 Haiku, Inc. All rights reserved.
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Tyler Dauwalder
+ *       Ingo Weinhold, bonefish@users.sf.net
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file MimeType.cpp
+ * @brief Implementation of the BMimeType class for MIME type handling.
+ *
+ * This file provides the full implementation of BMimeType, which represents
+ * a single MIME type string and provides methods to query and modify the
+ * system MIME database. It supports installing/deleting types, reading and
+ * writing icons, descriptions, preferred applications, sniffer rules, and
+ * more. Static helpers for MIME type validation and database-wide queries
+ * are also included.
+ *
+ * @see BMimeType
  */
 
 
@@ -44,6 +76,12 @@ const char* B_FILE_MIME_TYPE		= "application/octet-stream";
 const char* B_APP_MIME_TYPE			= B_ELF_APP_MIME_TYPE;
 
 
+/**
+ * @brief Returns whether the given character is a valid MIME type character.
+ *
+ * @param ch The character to test.
+ * @return true if the character is allowed in a MIME type string, false otherwise.
+ */
 static bool
 isValidMimeChar(const char ch)
 {
@@ -71,7 +109,9 @@ isValidMimeChar(const char ch)
 //	#pragma mark -
 
 
-// Creates an uninitialized BMimeType object.
+/**
+ * @brief Creates an uninitialized BMimeType object.
+ */
 BMimeType::BMimeType()
 	:
 	fType(NULL),
@@ -80,8 +120,11 @@ BMimeType::BMimeType()
 }
 
 
-// Creates a BMimeType object and initializes it to the supplied
-// MIME type.
+/**
+ * @brief Creates a BMimeType object and initializes it to the supplied MIME type.
+ *
+ * @param mimeType A MIME type string (e.g., "text/plain").
+ */
 BMimeType::BMimeType(const char* mimeType)
 	:
 	fType(NULL),
@@ -91,14 +134,21 @@ BMimeType::BMimeType(const char* mimeType)
 }
 
 
-// Frees all resources associated with this object.
+/**
+ * @brief Frees all resources associated with this object.
+ */
 BMimeType::~BMimeType()
 {
 	Unset();
 }
 
 
-// Initializes this object to the supplied MIME type.
+/**
+ * @brief Initializes this object to the supplied MIME type.
+ *
+ * @param mimeType A valid MIME type string to set.
+ * @return B_OK on success, B_BAD_VALUE if the string is invalid, or B_NO_MEMORY.
+ */
 status_t
 BMimeType::SetTo(const char* mimeType)
 {
@@ -120,7 +170,9 @@ BMimeType::SetTo(const char* mimeType)
 }
 
 
-// Returns the object to an uninitialized state
+/**
+ * @brief Returns the object to an uninitialized state.
+ */
 void
 BMimeType::Unset()
 {
@@ -130,7 +182,11 @@ BMimeType::Unset()
 }
 
 
-// Returns the result of the most recent constructor or SetTo() call
+/**
+ * @brief Returns the result of the most recent constructor or SetTo() call.
+ *
+ * @return B_OK if the object is properly initialized, or an error code otherwise.
+ */
 status_t
 BMimeType::InitCheck() const
 {
@@ -138,7 +194,11 @@ BMimeType::InitCheck() const
 }
 
 
-// Returns the MIME string represented by this object
+/**
+ * @brief Returns the MIME string represented by this object.
+ *
+ * @return A pointer to the internal MIME type C-string, or NULL if uninitialized.
+ */
 const char*
 BMimeType::Type() const
 {
@@ -146,7 +206,11 @@ BMimeType::Type() const
 }
 
 
-// Returns whether the object represents a valid MIME type
+/**
+ * @brief Returns whether the object represents a valid MIME type.
+ *
+ * @return true if the object is initialized and its MIME string is valid.
+ */
 bool
 BMimeType::IsValid() const
 {
@@ -154,7 +218,11 @@ BMimeType::IsValid() const
 }
 
 
-// Returns whether this objects represents a supertype
+/**
+ * @brief Returns whether this object represents a supertype (has no subtype).
+ *
+ * @return true if the MIME string contains no '/' separator.
+ */
 bool
 BMimeType::IsSupertypeOnly() const
 {
@@ -172,8 +240,11 @@ BMimeType::IsSupertypeOnly() const
 }
 
 
-// Returns whether or not this type is currently installed in the
-// MIME database
+/**
+ * @brief Returns whether or not this type is currently installed in the MIME database.
+ *
+ * @return true if the type exists in the default MIME database location.
+ */
 bool
 BMimeType::IsInstalled() const
 {
@@ -182,7 +253,12 @@ BMimeType::IsInstalled() const
 }
 
 
-// Gets the supertype of the MIME type represented by this object
+/**
+ * @brief Gets the supertype of the MIME type represented by this object.
+ *
+ * @param supertype Pointer to a BMimeType to be filled with the supertype.
+ * @return B_OK on success, B_BAD_VALUE if this type is already a supertype or supertype is NULL.
+ */
 status_t
 BMimeType::GetSupertype(BMimeType* supertype) const
 {
@@ -213,7 +289,12 @@ BMimeType::GetSupertype(BMimeType* supertype) const
 }
 
 
-// Returns whether this and the supplied MIME type are equal
+/**
+ * @brief Returns whether this and the supplied BMimeType object are equal.
+ *
+ * @param type The BMimeType to compare against.
+ * @return true if both objects represent the same MIME type (case-insensitive).
+ */
 bool
 BMimeType::operator==(const BMimeType &type) const
 {
@@ -226,7 +307,12 @@ BMimeType::operator==(const BMimeType &type) const
 }
 
 
-// Returns whether this and the supplied MIME type are equal
+/**
+ * @brief Returns whether this and the supplied MIME type C-string are equal.
+ *
+ * @param type A MIME type C-string to compare against.
+ * @return true if both represent the same MIME type (case-insensitive).
+ */
 bool
 BMimeType::operator==(const char* type) const
 {
@@ -238,8 +324,12 @@ BMimeType::operator==(const char* type) const
 }
 
 
-// Returns whether this MIME type is a supertype of or equals the
-// supplied one
+/**
+ * @brief Returns whether this MIME type is a supertype of or equals the supplied one.
+ *
+ * @param type The BMimeType to test containment against.
+ * @return true if this type equals or is the supertype of the given type.
+ */
 bool
 BMimeType::Contains(const BMimeType* type) const
 {
@@ -256,7 +346,12 @@ BMimeType::Contains(const BMimeType* type) const
 }
 
 
-// Adds the MIME type to the MIME database
+/**
+ * @brief Adds the MIME type to the MIME database.
+ *
+ * @return B_OK on success, or an error code if the registrar could not be reached
+ *         or the type is already installed.
+ */
 status_t
 BMimeType::Install()
 {
@@ -286,7 +381,11 @@ BMimeType::Install()
 }
 
 
-// Removes the MIME type from the MIME database
+/**
+ * @brief Removes the MIME type from the MIME database.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::Delete()
 {
@@ -316,7 +415,13 @@ BMimeType::Delete()
 }
 
 
-// Fetches the large or mini icon associated with the MIME type
+/**
+ * @brief Fetches the large or mini icon associated with the MIME type.
+ *
+ * @param icon Pointer to a BBitmap to be filled with the icon data.
+ * @param size The desired icon size (B_LARGE_ICON or B_MINI_ICON).
+ * @return B_OK on success, B_BAD_VALUE if icon is NULL, or another error code.
+ */
 status_t
 BMimeType::GetIcon(BBitmap* icon, icon_size size) const
 {
@@ -331,7 +436,13 @@ BMimeType::GetIcon(BBitmap* icon, icon_size size) const
 }
 
 
-//	Fetches the vector icon associated with the MIME type
+/**
+ * @brief Fetches the vector icon associated with the MIME type.
+ *
+ * @param data Output pointer to be set to an allocated buffer containing the icon data.
+ * @param size Output pointer to be filled with the size of the icon data buffer.
+ * @return B_OK on success, B_BAD_VALUE if data or size is NULL, or another error code.
+ */
 status_t
 BMimeType::GetIcon(uint8** data, size_t* size) const
 {
@@ -346,8 +457,13 @@ BMimeType::GetIcon(uint8** data, size_t* size) const
 }
 
 
-// Fetches the signature of the MIME type's preferred application from the
-// MIME database
+/**
+ * @brief Fetches the signature of the MIME type's preferred application from the MIME database.
+ *
+ * @param signature Buffer to be filled with the preferred application's MIME signature.
+ * @param verb The application verb (default B_OPEN).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::GetPreferredApp(char* signature, app_verb verb) const
 {
@@ -361,8 +477,13 @@ BMimeType::GetPreferredApp(char* signature, app_verb verb) const
 }
 
 
-// Fetches from the MIME database a BMessage describing the attributes
-// typically associated with files of the given MIME type
+/**
+ * @brief Fetches from the MIME database a BMessage describing the attributes
+ *        typically associated with files of the given MIME type.
+ *
+ * @param info Pointer to a BMessage to be filled with attribute information.
+ * @return B_OK on success, B_BAD_VALUE if info is NULL, or another error code.
+ */
 status_t
 BMimeType::GetAttrInfo(BMessage* info) const
 {
@@ -377,8 +498,12 @@ BMimeType::GetAttrInfo(BMessage* info) const
 }
 
 
-// Fetches the MIME type's associated filename extensions from the MIME
-// database
+/**
+ * @brief Fetches the MIME type's associated filename extensions from the MIME database.
+ *
+ * @param extensions Pointer to a BMessage to be filled with the list of extensions.
+ * @return B_OK on success, B_BAD_VALUE if extensions is NULL, or another error code.
+ */
 status_t
 BMimeType::GetFileExtensions(BMessage* extensions) const
 {
@@ -395,7 +520,12 @@ BMimeType::GetFileExtensions(BMessage* extensions) const
 }
 
 
-// Fetches the MIME type's short description from the MIME database
+/**
+ * @brief Fetches the MIME type's short description from the MIME database.
+ *
+ * @param description Buffer to be filled with the short description string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::GetShortDescription(char* description) const
 {
@@ -409,7 +539,12 @@ BMimeType::GetShortDescription(char* description) const
 }
 
 
-// Fetches the MIME type's long description from the MIME database
+/**
+ * @brief Fetches the MIME type's long description from the MIME database.
+ *
+ * @param description Buffer to be filled with the long description string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::GetLongDescription(char* description) const
 {
@@ -423,8 +558,13 @@ BMimeType::GetLongDescription(char* description) const
 }
 
 
-// Fetches a \c BMessage containing a list of MIME signatures of
-// applications that are able to handle files of this MIME type.
+/**
+ * @brief Fetches a BMessage containing a list of MIME signatures of applications
+ *        that are able to handle files of this MIME type.
+ *
+ * @param signatures Pointer to a BMessage to be filled with supporting application signatures.
+ * @return B_OK on success, B_BAD_VALUE if signatures is NULL, or another error code.
+ */
 status_t
 BMimeType::GetSupportingApps(BMessage* signatures) const
 {
@@ -452,7 +592,13 @@ BMimeType::GetSupportingApps(BMessage* signatures) const
 }
 
 
-// Sets the large or mini icon for the MIME type
+/**
+ * @brief Sets the large or mini icon for the MIME type.
+ *
+ * @param icon Pointer to a BBitmap containing the icon data, or NULL to remove.
+ * @param which The icon size (B_LARGE_ICON or B_MINI_ICON).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetIcon(const BBitmap* icon, icon_size which)
 {
@@ -460,7 +606,13 @@ BMimeType::SetIcon(const BBitmap* icon, icon_size which)
 }
 
 
-// Sets the vector icon for the MIME type
+/**
+ * @brief Sets the vector icon for the MIME type.
+ *
+ * @param data Pointer to the raw vector icon data, or NULL to remove.
+ * @param size The size of the data buffer in bytes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetIcon(const uint8* data, size_t size)
 {
@@ -468,7 +620,13 @@ BMimeType::SetIcon(const uint8* data, size_t size)
 }
 
 
-// Sets the preferred application for the MIME type
+/**
+ * @brief Sets the preferred application for the MIME type.
+ *
+ * @param signature The MIME signature of the preferred application, or NULL/empty to remove.
+ * @param verb The application verb (default B_OPEN).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetPreferredApp(const char* signature, app_verb verb)
 {
@@ -508,8 +666,13 @@ BMimeType::SetPreferredApp(const char* signature, app_verb verb)
 }
 
 
-// Sets the description of the attributes typically associated with files
-// of the given MIME type
+/**
+ * @brief Sets the description of the attributes typically associated with files
+ *        of the given MIME type.
+ *
+ * @param info Pointer to a BMessage describing the attributes, or NULL to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetAttrInfo(const BMessage* info)
 {
@@ -539,7 +702,12 @@ BMimeType::SetAttrInfo(const BMessage* info)
 }
 
 
-// Sets the list of filename extensions associated with the MIME type
+/**
+ * @brief Sets the list of filename extensions associated with the MIME type.
+ *
+ * @param extensions Pointer to a BMessage containing the extensions list, or NULL to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetFileExtensions(const BMessage* extensions)
 {
@@ -575,7 +743,12 @@ BMimeType::SetFileExtensions(const BMessage* extensions)
 }
 
 
-// Sets the short description field for the MIME type
+/**
+ * @brief Sets the short description field for the MIME type.
+ *
+ * @param description The short description string, or NULL/empty to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetShortDescription(const char* description)
 {
@@ -615,7 +788,12 @@ BMimeType::SetShortDescription(const char* description)
 }
 
 
-// Sets the long description field for the MIME type
+/**
+ * @brief Sets the long description field for the MIME type.
+ *
+ * @param description The long description string, or NULL/empty to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetLongDescription(const char* description)
 {
@@ -655,8 +833,13 @@ BMimeType::SetLongDescription(const char* description)
 }
 
 
-// Fetches a BMessage listing all the MIME supertypes currently
-// installed in the MIME database.
+/**
+ * @brief Fetches a BMessage listing all the MIME supertypes currently installed
+ *        in the MIME database.
+ *
+ * @param supertypes Pointer to a BMessage to be filled with the list of supertypes.
+ * @return B_OK on success, B_BAD_VALUE if supertypes is NULL, or another error code.
+ */
 /*static*/ status_t
 BMimeType::GetInstalledSupertypes(BMessage* supertypes)
 {
@@ -680,8 +863,13 @@ BMimeType::GetInstalledSupertypes(BMessage* supertypes)
 }
 
 
-// Fetches a BMessage listing all the MIME types currently installed
-// in the MIME database.
+/**
+ * @brief Fetches a BMessage listing all the MIME types currently installed
+ *        in the MIME database.
+ *
+ * @param types Pointer to a BMessage to be filled with all installed types.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::GetInstalledTypes(BMessage* types)
 {
@@ -689,8 +877,14 @@ BMimeType::GetInstalledTypes(BMessage* types)
 }
 
 
-// Fetches a BMessage listing all the MIME subtypes of the given
-// supertype currently installed in the MIME database.
+/**
+ * @brief Fetches a BMessage listing all the MIME subtypes of the given supertype
+ *        currently installed in the MIME database.
+ *
+ * @param supertype The supertype to filter by, or NULL to get all types.
+ * @param types Pointer to a BMessage to be filled with the matching types.
+ * @return B_OK on success, B_BAD_VALUE if types is NULL, or another error code.
+ */
 /*static*/ status_t
 BMimeType::GetInstalledTypes(const char* supertype, BMessage* types)
 {
@@ -718,8 +912,13 @@ BMimeType::GetInstalledTypes(const char* supertype, BMessage* types)
 }
 
 
-// Fetches a \c BMessage containing a list of MIME signatures of
-// applications that are able to handle files of any type.
+/**
+ * @brief Fetches a BMessage containing a list of MIME signatures of applications
+ *        that are able to handle files of any type (wildcard apps).
+ *
+ * @param wild_ones Pointer to a BMessage to be filled with wildcard application signatures.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::GetWildcardApps(BMessage* wild_ones)
 {
@@ -731,7 +930,12 @@ BMimeType::GetWildcardApps(BMessage* wild_ones)
 }
 
 
-// Returns whether the given string represents a valid MIME type.
+/**
+ * @brief Returns whether the given string represents a valid MIME type.
+ *
+ * @param string The MIME type C-string to validate.
+ * @return true if the string is a valid MIME type, false otherwise.
+ */
 bool
 BMimeType::IsValid(const char* string)
 {
@@ -758,8 +962,13 @@ BMimeType::IsValid(const char* string)
 }
 
 
-// Fetches an \c entry_ref that serves as a hint as to where the MIME type's
-// preferred application might live
+/**
+ * @brief Fetches an entry_ref that serves as a hint as to where the MIME type's
+ *        preferred application might live.
+ *
+ * @param ref Pointer to an entry_ref to be filled with the app hint.
+ * @return B_OK on success, B_BAD_VALUE if ref is NULL, or another error code.
+ */
 status_t
 BMimeType::GetAppHint(entry_ref* ref) const
 {
@@ -773,7 +982,12 @@ BMimeType::GetAppHint(entry_ref* ref) const
 }
 
 
-// Sets the app hint field for the MIME type
+/**
+ * @brief Sets the app hint field for the MIME type.
+ *
+ * @param ref Pointer to an entry_ref indicating the application's location, or NULL to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetAppHint(const entry_ref* ref)
 {
@@ -809,8 +1023,15 @@ BMimeType::SetAppHint(const entry_ref* ref)
 }
 
 
-// Fetches the large or mini icon used by an application of this type for
-// files of the given type.
+/**
+ * @brief Fetches the large or mini icon used by an application of this type for
+ *        files of the given type.
+ *
+ * @param type The file MIME type whose icon to retrieve, or NULL to get the type's own icon.
+ * @param icon Pointer to a BBitmap to be filled with the icon data.
+ * @param which The desired icon size.
+ * @return B_OK on success, B_BAD_VALUE if icon is NULL or type is invalid, or another error code.
+ */
 status_t
 BMimeType::GetIconForType(const char* type, BBitmap* icon, icon_size which) const
 {
@@ -833,8 +1054,15 @@ BMimeType::GetIconForType(const char* type, BBitmap* icon, icon_size which) cons
 }
 
 
-// Fetches the vector icon used by an application of this type for files of
-// the given type.
+/**
+ * @brief Fetches the vector icon used by an application of this type for files of
+ *        the given type.
+ *
+ * @param type The file MIME type whose icon to retrieve, or NULL to get the type's own icon.
+ * @param _data Output pointer to be set to the allocated icon data buffer.
+ * @param _size Output pointer to be filled with the size of the data buffer.
+ * @return B_OK on success, B_BAD_VALUE if pointers are NULL or type is invalid, or another error code.
+ */
 status_t
 BMimeType::GetIconForType(const char* type, uint8** _data, size_t* _size) const
 {
@@ -854,8 +1082,15 @@ BMimeType::GetIconForType(const char* type, uint8** _data, size_t* _size) const
 }
 
 
-// Sets the large or mini icon used by an application of this type for
-// files of the given type.
+/**
+ * @brief Sets the large or mini icon used by an application of this type for
+ *        files of the given type.
+ *
+ * @param type The file MIME type to associate the icon with, or NULL for the type's own icon.
+ * @param icon Pointer to a BBitmap containing the icon, or NULL to remove.
+ * @param which The icon size (B_LARGE_ICON or B_MINI_ICON).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetIconForType(const char* type, const BBitmap* icon, icon_size which)
 {
@@ -914,8 +1149,15 @@ BMimeType::SetIconForType(const char* type, const BBitmap* icon, icon_size which
 }
 
 
-// Sets the large or mini icon used by an application of this type for
-// files of the given type.
+/**
+ * @brief Sets the vector icon used by an application of this type for files of
+ *        the given type.
+ *
+ * @param type The file MIME type to associate the icon with, or NULL for the type's own icon.
+ * @param data Pointer to the raw vector icon data, or NULL to remove.
+ * @param dataSize The size of the data buffer in bytes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetIconForType(const char* type, const uint8* data, size_t dataSize)
 {
@@ -956,7 +1198,12 @@ BMimeType::SetIconForType(const char* type, const uint8* data, size_t dataSize)
 }
 
 
-// Retrieves the MIME type's sniffer rule
+/**
+ * @brief Retrieves the MIME type's sniffer rule from the database.
+ *
+ * @param result Pointer to a BString to be filled with the sniffer rule.
+ * @return B_OK on success, B_BAD_VALUE if result is NULL, or another error code.
+ */
 status_t
 BMimeType::GetSnifferRule(BString* result) const
 {
@@ -971,7 +1218,12 @@ BMimeType::GetSnifferRule(BString* result) const
 }
 
 
-// Sets the MIME type's sniffer rule
+/**
+ * @brief Sets the MIME type's sniffer rule in the database.
+ *
+ * @param rule The sniffer rule string to set, or NULL/empty to remove.
+ * @return B_OK on success, or an error code if the rule is syntactically invalid.
+ */
 status_t
 BMimeType::SetSnifferRule(const char* rule)
 {
@@ -1011,7 +1263,13 @@ BMimeType::SetSnifferRule(const char* rule)
 }
 
 
-// Checks whether a MIME sniffer rule is valid or not.
+/**
+ * @brief Checks whether a MIME sniffer rule is valid or not.
+ *
+ * @param rule The sniffer rule string to validate.
+ * @param parseError Optional BString to be filled with a human-readable parse error.
+ * @return B_OK if the rule is valid, or an error code describing the parse failure.
+ */
 status_t
 BMimeType::CheckSnifferRule(const char* rule, BString* parseError)
 {
@@ -1021,8 +1279,13 @@ BMimeType::CheckSnifferRule(const char* rule, BString* parseError)
 }
 
 
-// Guesses a MIME type for the entry referred to by the given
-// entry_ref.
+/**
+ * @brief Guesses a MIME type for the entry referred to by the given entry_ref.
+ *
+ * @param file Pointer to the entry_ref identifying the file to sniff.
+ * @param type Pointer to a BMimeType to be filled with the guessed MIME type.
+ * @return B_OK on success, B_BAD_VALUE if either pointer is NULL, or another error code.
+ */
 status_t
 BMimeType::GuessMimeType(const entry_ref* file, BMimeType* type)
 {
@@ -1059,7 +1322,14 @@ BMimeType::GuessMimeType(const entry_ref* file, BMimeType* type)
 }
 
 
-// Guesses a MIME type for the supplied chunk of data.
+/**
+ * @brief Guesses a MIME type for the supplied chunk of data.
+ *
+ * @param buffer Pointer to the data buffer to sniff.
+ * @param length The size of the data buffer in bytes.
+ * @param type Pointer to a BMimeType to be filled with the guessed MIME type.
+ * @return B_OK on success, B_BAD_VALUE if buffer or type is NULL, or another error code.
+ */
 status_t
 BMimeType::GuessMimeType(const void* buffer, int32 length, BMimeType* type)
 {
@@ -1096,7 +1366,13 @@ BMimeType::GuessMimeType(const void* buffer, int32 length, BMimeType* type)
 }
 
 
-// Guesses a MIME type for the given filename.
+/**
+ * @brief Guesses a MIME type for the given filename.
+ *
+ * @param filename The filename (including extension) to use for MIME type guessing.
+ * @param type Pointer to a BMimeType to be filled with the guessed MIME type.
+ * @return B_OK on success, B_BAD_VALUE if filename or type is NULL, or another error code.
+ */
 status_t
 BMimeType::GuessMimeType(const char* filename, BMimeType* type)
 {
@@ -1133,7 +1409,12 @@ BMimeType::GuessMimeType(const char* filename, BMimeType* type)
 }
 
 
-// Starts monitoring the MIME database for a given target.
+/**
+ * @brief Starts monitoring the MIME database for a given target messenger.
+ *
+ * @param target The BMessenger that will receive MIME database change notifications.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::StartWatching(BMessenger target)
 {
@@ -1160,7 +1441,12 @@ BMimeType::StartWatching(BMessenger target)
 }
 
 
-// Stops monitoring the MIME database for a given target
+/**
+ * @brief Stops monitoring the MIME database for a given target messenger.
+ *
+ * @param target The BMessenger to stop receiving MIME database change notifications.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::StopWatching(BMessenger target)
 {
@@ -1187,7 +1473,12 @@ BMimeType::StopWatching(BMessenger target)
 }
 
 
-// Initializes this object to the supplied MIME type
+/**
+ * @brief Initializes this object to the supplied MIME type (deprecated alias for SetTo()).
+ *
+ * @param mimeType A valid MIME type string to set.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetType(const char* mimeType)
 {
@@ -1195,14 +1486,28 @@ BMimeType::SetType(const char* mimeType)
 }
 
 
+/**
+ * @brief Reserved virtual method slot 1 (FBC padding).
+ */
 void BMimeType::_ReservedMimeType1() {}
+
+/**
+ * @brief Reserved virtual method slot 2 (FBC padding).
+ */
 void BMimeType::_ReservedMimeType2() {}
+
+/**
+ * @brief Reserved virtual method slot 3 (FBC padding).
+ */
 void BMimeType::_ReservedMimeType3() {}
 
 
 #ifdef __HAIKU_BEOS_COMPATIBLE
-// assignment operator.
-// Unimplemented
+/**
+ * @brief Assignment operator (unimplemented, provided for ABI compatibility).
+ *
+ * @return Reference to this object (unchanged).
+ */
 BMimeType&
 BMimeType::operator=(const BMimeType &)
 {
@@ -1211,14 +1516,21 @@ BMimeType::operator=(const BMimeType &)
 }
 
 
-// copy constructor
-// Unimplemented
+/**
+ * @brief Copy constructor (unimplemented, provided for ABI compatibility).
+ */
 BMimeType::BMimeType(const BMimeType &)
 {
 }
 #endif
 
 
+/**
+ * @brief Fetches a BMessage listing the MIME types supported by this application type.
+ *
+ * @param types Pointer to a BMessage to be filled with the supported types list.
+ * @return B_OK on success, B_BAD_VALUE if types is NULL, or another error code.
+ */
 status_t
 BMimeType::GetSupportedTypes(BMessage* types)
 {
@@ -1262,6 +1574,13 @@ BMimeType::GetSupportedTypes(BMessage* types)
 
 	\returns \c B_OK on success or another error code on failure.
 */
+/**
+ * @brief Sets the list of MIME types supported by this application MIME type.
+ *
+ * @param types Pointer to a BMessage containing the supported types, or NULL to remove.
+ * @param fullSync If true, also removes this app from previously-supported types' lists.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMimeType::SetSupportedTypes(const BMessage* types, bool fullSync)
 {
@@ -1312,6 +1631,13 @@ BMimeType::SetSupportedTypes(const BMessage* types, bool fullSync)
 
 	\returns \c B_OK on success or another error code on failure.
 */
+/**
+ * @brief Returns a list of MIME types associated with the given file extension.
+ *
+ * @param extension The file extension to look up (e.g., "txt").
+ * @param types Pointer to a pre-allocated BMessage to be filled with matching MIME types.
+ * @return B_OK on success, B_BAD_VALUE if either pointer is NULL, or another error code.
+ */
 status_t
 BMimeType::GetAssociatedTypes(const char* extension, BMessage* types)
 {

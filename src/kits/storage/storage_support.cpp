@@ -1,11 +1,40 @@
-//----------------------------------------------------------------------
-//  This software is part of the Haiku distribution and is covered
-//  by the MIT License.
-//----------------------------------------------------------------------
-/*!
-	\file storage_support.cpp
-	Implementations of miscellaneous internal Storage Kit support functions.
-*/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file storage_support.cpp
+ * @brief Implementations of miscellaneous internal Storage Kit support
+ *        functions.
+ *
+ * This file provides a collection of low-level utility functions used
+ * internally by the Storage Kit. It includes path parsing and splitting
+ * routines, entry and path name validation, case-folding helpers, shell
+ * path escaping, and a device root detection helper. The FDCloser RAII
+ * helper for managing file descriptors is also implemented here.
+ *
+ * @see storage_support.h
+ */
 
 #include <new>
 #include <ctype.h>
@@ -23,9 +52,12 @@ using std::nothrow;
 namespace BPrivate {
 namespace Storage {
 
-/*!	\param path the path
-	\return \c true, if \a path is not \c NULL and absolute, \c false otherwise
-*/
+/**
+ * @brief Checks whether the given path is an absolute path.
+ *
+ * @param path The path string to test.
+ * @return true if \a path is non-NULL and begins with '/', false otherwise.
+ */
 bool
 is_absolute_path(const char *path)
 {
@@ -33,24 +65,24 @@ is_absolute_path(const char *path)
 }
 
 // parse_path
-/*!	\brief Parses the supplied path and returns the position of the leaf name
-		   part of the path and the length of its directory path part.
-
-	The value returned in \a fullPath is guaranteed to be > 0, i.e. the
-	function always returns a non-empty directory path part. The leaf name
-	part may be empty though (i.e. \code leafStart == leafEnd \endcode), which
-	will happen, if the supplied path consists only of one component.
-
-	\param fullPath The path to be parsed.
-	\param dirEnd Reference to a variable into which the end index of the
-		   directory part shall be written. The index is exclusive.
-	\param leafStart Reference to a variable into which the start index of
-		   the leaf name part shall be written. The index is inclusive.
-	\param leafEnd Reference to a variable into which the end index of
-		   the leaf name part shall be written. The index is exclusive.
-	\return \c B_OK, if everything went fine, B_BAD_VALUE, if the supplied
-		   path is invalid.
-*/
+/**
+ * @brief Parses the supplied path and returns the position of the leaf name
+ *        part and the length of its directory path part.
+ *
+ * The value written to \a dirEnd is guaranteed to be > 0, so the function
+ * always returns a non-empty directory path part. The leaf name part may be
+ * empty (i.e. \a leafStart == \a leafEnd) when the path has only one
+ * component.
+ *
+ * @param fullPath  The path to be parsed.
+ * @param dirEnd    Reference filled with the exclusive end index of the
+ *                  directory part.
+ * @param leafStart Reference filled with the inclusive start index of the
+ *                  leaf name part.
+ * @param leafEnd   Reference filled with the exclusive end index of the
+ *                  leaf name part.
+ * @return B_OK on success, B_BAD_VALUE if \a fullPath is NULL or empty.
+ */
 status_t
 parse_path(const char *fullPath, int &dirEnd, int &leafStart, int &leafEnd)
 {
@@ -89,24 +121,21 @@ parse_path(const char *fullPath, int &dirEnd, int &leafStart, int &leafEnd)
 }
 
 // parse_path
-/*!	\brief Parses the supplied path and returns the leaf name part of the path
-		   and its directory path part.
-
-	The value returned in \a fullPath is guaranteed to be > 0, i.e. the
-	function always returns a non-empty directory path part. The leaf name
-	part may be empty though (i.e. \code leafStart == leafEnd \endcode), which
-	will happen, if the supplied path consists only of one component.
-
-	\param fullPath The path to be parsed.
-	\param dirPath Pointer to a character array of size \c B_PATH_NAME_LENGTH
-		   or greater, into which the directory part shall be written.
-		   May be \c NULL.
-	\param leaf Pointer to a character array of size \c B_FILE_NAME_LENGTH
-		   or greater, into which the leaf name part shall be written.
-		   May be \c NULL.
-	\return \c B_OK, if everything went fine, B_BAD_VALUE, if the supplied
-		   path is invalid.
-*/
+/**
+ * @brief Parses the supplied path and returns the leaf name part and its
+ *        directory path part as strings.
+ *
+ * The directory path returned is guaranteed to be non-empty. The leaf name
+ * may be empty when the path consists of only one component.
+ *
+ * @param fullPath The path to be parsed.
+ * @param dirPath  Pointer to a buffer of at least B_PATH_NAME_LENGTH bytes
+ *                 to receive the directory part; may be NULL.
+ * @param leaf     Pointer to a buffer of at least B_FILE_NAME_LENGTH bytes
+ *                 to receive the leaf name; may be NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a fullPath is invalid,
+ *         B_NAME_TOO_LONG if any component exceeds the size limits.
+ */
 status_t
 parse_path(const char *fullPath, char *dirPath, char *leaf)
 {
@@ -128,6 +157,16 @@ parse_path(const char *fullPath, char *dirPath, char *leaf)
 }
 
 // internal_parse_path
+/**
+ * @brief Internal helper that parses a path and returns raw index positions
+ *        for the leaf name and path end.
+ *
+ * @param fullPath  The path to parse; if NULL the function returns immediately.
+ * @param leafStart Set to the start index of the leaf name, or -1 if none.
+ * @param leafEnd   Set to the end index of the leaf name, or -1 if none.
+ * @param pathEnd   Set to the end index of the directory portion, or -2 if
+ *                  the path ran out of characters before a '/' was found.
+ */
 static
 void
 internal_parse_path(const char *fullPath, int &leafStart, int &leafEnd,
@@ -139,16 +178,16 @@ internal_parse_path(const char *fullPath, int &leafStart, int &leafEnd,
 	enum PathParserState { PPS_START, PPS_LEAF } state = PPS_START;
 
 	int len = strlen(fullPath);
-	
+
 	leafStart = -1;
 	leafEnd = -1;
 	pathEnd = -2;
-	
+
 	bool loop = true;
 	for (int pos = len-1; ; pos--) {
 		if (pos < 0)
 			break;
-			
+
 		switch (state) {
 			case PPS_START:
 				// Skip all trailing '/' chars, then move on to
@@ -158,7 +197,7 @@ internal_parse_path(const char *fullPath, int &leafStart, int &leafEnd,
 					state = PPS_LEAF;
 				}
 				break;
-			
+
 			case PPS_LEAF:
 				// Read leaf name chars until we hit a '/' char
 				if (fullPath[pos] == '/') {
@@ -166,36 +205,50 @@ internal_parse_path(const char *fullPath, int &leafStart, int &leafEnd,
 					pathEnd = pos-1;
 					loop = false;
 				}
-				break;					
+				break;
 		}
-		
+
 		if (!loop)
 			break;
 	}
 }
 
-/*!	The caller is responsible for deleting the returned directory path name
-	and the leaf name.
-	\param fullPath the path name to be split
-	\param path a variable the directory path name pointer shall
-		   be written into, may be NULL
-	\param leaf a variable the leaf name pointer shall be
-		   written into, may be NULL
-*/
+/**
+ * @brief Splits a path into a newly allocated directory path and leaf name
+ *        (reference overload).
+ *
+ * The caller is responsible for deleting the returned strings with delete[].
+ *
+ * @param fullPath The path name to split.
+ * @param path     Reference to a pointer that will be set to the newly
+ *                 allocated directory path string; may be left as NULL.
+ * @param leaf     Reference to a pointer that will be set to the newly
+ *                 allocated leaf name string; may be left as NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a fullPath is NULL,
+ *         B_NO_MEMORY on allocation failure.
+ */
 status_t
 split_path(const char *fullPath, char *&path, char *&leaf)
 {
 	return split_path(fullPath, &path, &leaf);
 }
 
-/*!	The caller is responsible for deleting the returned directory path name
-	and the leaf name.
-	\param fullPath the path name to be split
-	\param path a pointer to a variable the directory path name pointer shall
-		   be written into, may be NULL
-	\param leaf a pointer to a variable the leaf name pointer shall be
-		   written into, may be NULL
-*/
+/**
+ * @brief Splits a path into a newly allocated directory path and leaf name
+ *        (pointer overload).
+ *
+ * The caller is responsible for deleting the returned strings with delete[].
+ * Special cases handled: a path of "/" yields path="/" and leaf="."; an
+ * empty path "" yields path="" and leaf=".".
+ *
+ * @param fullPath The path name to split.
+ * @param path     Pointer to a pointer that will be set to the newly
+ *                 allocated directory path string; may be NULL.
+ * @param leaf     Pointer to a pointer that will be set to the newly
+ *                 allocated leaf name string; may be NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a fullPath is NULL,
+ *         B_NO_MEMORY on allocation failure.
+ */
 status_t
 split_path(const char *fullPath, char **path, char **leaf)
 {
@@ -213,8 +266,8 @@ split_path(const char *fullPath, char **path, char **leaf)
 	try {
 		// Tidy up/handle special cases
 		if (leafEnd == -1) {
-	
-			// Handle special cases 
+
+			// Handle special cases
 			if (fullPath[0] == '/') {
 				// Handle "/"
 				if (path) {
@@ -227,7 +280,7 @@ split_path(const char *fullPath, char **path, char **leaf)
 					(*leaf)[0] = '.';
 					(*leaf)[1] = 0;
 				}
-				return B_OK;	
+				return B_OK;
 			} else if (fullPath[0] == 0) {
 				// Handle "", which we'll treat as "./"
 				if (path) {
@@ -239,9 +292,9 @@ split_path(const char *fullPath, char **path, char **leaf)
 					(*leaf)[0] = '.';
 					(*leaf)[1] = 0;
 				}
-				return B_OK;	
+				return B_OK;
 			}
-	
+
 		} else if (leafStart == -1) {
 			// fullPath is just an entry name, no parent directories specified
 			leafStart = 0;
@@ -250,7 +303,7 @@ split_path(const char *fullPath, char **path, char **leaf)
 			// run out of characters before hitting a '/')
 			pathEnd = 0;
 		}
-	
+
 		// Alloc new strings and copy the path and leaf over
 		if (path) {
 			if (pathEnd == -2) {
@@ -282,16 +335,16 @@ split_path(const char *fullPath, char **path, char **leaf)
 	return B_OK;
 }
 
-/*! The length of the first component is returned as well as the index at
-	which the next one starts. These values are only valid, if the function
-	returns \c B_OK.
-	\param path the path to be parsed
-	\param length the variable the length of the first component is written
-		   into
-	\param nextComponent the variable the index of the next component is
-		   written into. \c 0 is returned, if there is no next component.
-	\return \c B_OK, if \a path is not \c NULL, \c B_BAD_VALUE otherwise
-*/
+/**
+ * @brief Parses the first component of a path and returns its length and the
+ *        index at which the next component starts.
+ *
+ * @param path          The path to parse; must not be NULL.
+ * @param length        Set to the character length of the first component.
+ * @param nextComponent Set to the index of the next component, or 0 if there
+ *                      is no next component.
+ * @return B_OK on success, B_BAD_VALUE if \a path is NULL.
+ */
 status_t
 parse_first_path_component(const char *path, int32& length,
 						   int32& nextComponent)
@@ -315,17 +368,21 @@ parse_first_path_component(const char *path, int32& length,
 	return error;
 }
 
-/*! A string containing the first component is returned and the index, at
-	which the next one starts. These values are only valid, if the function
-	returns \c B_OK.
-	\param path the path to be parsed
-	\param component the variable the pointer to the newly allocated string
-		   containing the first path component is written into. The caller
-		   is responsible for delete[]'ing the string.
-	\param nextComponent the variable the index of the next component is
-		   written into. \c 0 is returned, if there is no next component.
-	\return \c B_OK, if \a path is not \c NULL, \c B_BAD_VALUE otherwise
-*/
+/**
+ * @brief Parses the first component of a path and returns it as a newly
+ *        allocated string along with the index of the next component.
+ *
+ * The caller is responsible for freeing the returned \a component string
+ * with delete[].
+ *
+ * @param path          The path to parse; must not be NULL.
+ * @param component     Set to a newly allocated string holding the first
+ *                      path component.
+ * @param nextComponent Set to the index of the next component, or 0 if there
+ *                      is no next component.
+ * @return B_OK on success, B_BAD_VALUE if \a path is NULL,
+ *         B_NO_MEMORY on allocation failure.
+ */
 status_t
 parse_first_path_component(const char *path, char *&component,
 						   int32& nextComponent)
@@ -343,16 +400,17 @@ parse_first_path_component(const char *path, char *&component,
 	return error;
 }
 
-/*!	An entry name is considered valid, if its length doesn't exceed
-	\c B_FILE_NAME_LENGTH (including the terminating null) and it doesn't
-	contain any \c "/".
-	\param entry the entry name
-	\return
-	- \c B_OK, if \a entry is valid,
-	- \c B_BAD_VALUE, if \a entry is \c NULL or contains a "/",
-	- \c B_NAME_TOO_LONG, if \a entry is too long
-	\note \c "" is considered a valid entry name.
-*/
+/**
+ * @brief Checks whether an entry name is valid.
+ *
+ * An entry name is considered valid if its length does not exceed
+ * B_FILE_NAME_LENGTH (including the null terminator) and it contains no
+ * '/' characters. An empty string "" is considered valid.
+ *
+ * @param entry The entry name to validate.
+ * @return B_OK if valid, B_BAD_VALUE if \a entry is NULL or contains a '/',
+ *         B_NAME_TOO_LONG if the name is too long.
+ */
 status_t
 check_entry_name(const char *entry)
 {
@@ -370,16 +428,17 @@ check_entry_name(const char *entry)
 	return error;
 }
 
-/*!	An path name is considered valid, if its length doesn't exceed
-	\c B_PATH_NAME_LENGTH (including the terminating null) and each of
-	its components is a valid entry name.
-	\param entry the entry name
-	\return
-	- \c B_OK, if \a path is valid,
-	- \c B_BAD_VALUE, if \a path is \c NULL,
-	- \c B_NAME_TOO_LONG, if \a path, or any of its components is too long
-	\note \c "" is considered a valid path name.
-*/
+/**
+ * @brief Checks whether a path name is valid.
+ *
+ * A path name is considered valid if its total length does not exceed
+ * B_PATH_NAME_LENGTH and each of its components is a valid entry name. An
+ * empty string "" is considered valid.
+ *
+ * @param path The path name to validate.
+ * @return B_OK if valid, B_BAD_VALUE if \a path is NULL,
+ *         B_NAME_TOO_LONG if the path or any component is too long.
+ */
 status_t
 check_path_name(const char *path)
 {
@@ -404,6 +463,12 @@ check_path_name(const char *path)
 	return error;
 }
 
+/**
+ * @brief Returns a lowercase copy of the given string as an std::string.
+ *
+ * @param str The input C string; if NULL, returns "(null)".
+ * @return An std::string containing the lowercased version of \a str.
+ */
 std::string
 to_lower(const char *str)
 {
@@ -412,6 +477,13 @@ to_lower(const char *str)
 	return result;
 }
 
+/**
+ * @brief Converts the given string to lowercase and stores the result in
+ *        an std::string.
+ *
+ * @param str    The input C string; if NULL, \a result is set to "(null)".
+ * @param result The std::string that receives the lowercased output.
+ */
 void
 to_lower(const char *str, std::string &result)
 {
@@ -423,6 +495,14 @@ to_lower(const char *str, std::string &result)
 		result = "(null)";
 }
 
+/**
+ * @brief Converts the given string to lowercase and writes the result into
+ *        a caller-supplied C string buffer.
+ *
+ * @param str    The input C string.
+ * @param result The output buffer that receives the lowercased string; must
+ *               be at least as large as \a str including the null terminator.
+ */
 void
 to_lower(const char *str, char *result)
 {
@@ -431,24 +511,41 @@ to_lower(const char *str, char *result)
 		for (i = 0; i < (int)strlen(str); i++)
 			result[i] = tolower((unsigned char)str[i]);
 		result[i] = 0;
-	}	
+	}
 }
 
+/**
+ * @brief Converts a string to lowercase in place.
+ *
+ * @param str The string to convert; modified in place.
+ */
 void
 to_lower(char *str)
 {
 	to_lower(str, str);
 }
 
+/**
+ * @brief Escapes shell-special characters in \a str and writes the result
+ *        into \a result.
+ *
+ * Characters that are escaped with a preceding backslash include spaces,
+ * single quotes, double quotes, question marks, backslashes, parentheses,
+ * brackets, asterisks, and carets.
+ *
+ * @param str    The input path string.
+ * @param result The output buffer; must be large enough to hold the escaped
+ *               string (at most twice the length of \a str plus one byte).
+ */
 void escape_path(const char *str, char *result)
 {
 	if (str && result) {
 		int32 len = strlen(str);
-		
+
 		for (int32 i = 0; i < len; i++) {
 			char ch = str[i];
 			char escapeChar = 0;
-			
+
 			switch (ch) {
 				case ' ':
 				case '\'':
@@ -462,9 +559,9 @@ void escape_path(const char *str, char *result)
 				case '*':
 				case '^':
 					escapeChar = ch;
-					break;			
+					break;
 			}
-			
+
 			if (escapeChar) {
 				*(result++) = '\\';
 				*(result++) = escapeChar;
@@ -472,11 +569,20 @@ void escape_path(const char *str, char *result)
 				*(result++) = ch;
 			}
 		}
-		
-		*result = 0;	
+
+		*result = 0;
 	}
 }
 
+/**
+ * @brief Escapes shell-special characters in the given string in place.
+ *
+ * Allocates a temporary copy, escapes it into \a str. If memory allocation
+ * fails, \a str is left unchanged.
+ *
+ * @param str The string to escape in place; must point to a buffer large
+ *            enough to hold the fully escaped result.
+ */
 void escape_path(char *str)
 {
 	if (str) {
@@ -490,6 +596,12 @@ void escape_path(char *str)
 }
 
 // device_is_root_device
+/**
+ * @brief Checks whether the given device is the root device.
+ *
+ * @param device The device identifier to test.
+ * @return true if \a device equals 1 (the root device), false otherwise.
+ */
 bool
 device_is_root_device(dev_t device)
 {
@@ -497,6 +609,12 @@ device_is_root_device(dev_t device)
 }
 
 // Close
+/**
+ * @brief Closes the managed file descriptor, if open, and resets it to -1.
+ *
+ * This method is safe to call multiple times; subsequent calls after the
+ * descriptor has been closed are no-ops.
+ */
 void
 FDCloser::Close()
 {
@@ -507,4 +625,3 @@ FDCloser::Close()
 
 };	// namespace Storage
 };	// namespace BPrivate
-

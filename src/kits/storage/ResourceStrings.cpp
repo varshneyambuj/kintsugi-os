@@ -1,11 +1,38 @@
-//----------------------------------------------------------------------
-//  This software is part of the Haiku distribution and is covered
-//  by the MIT License.
-//---------------------------------------------------------------------
-/*!
-	\file ResourceStrings.cpp
-	BResourceStrings implementation.
-*/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file ResourceStrings.cpp
+ * @brief Implementation of BResourceStrings for fast string-resource lookup.
+ *
+ * BResourceStrings provides a hash-table-based interface for looking up
+ * string resources (type 'CSTR') from a resource file by numeric ID. Strings
+ * are loaded once from the file and cached internally. The class is
+ * thread-safe via an internal BLocker.
+ *
+ * @see BResources
+ */
 
 #include <ResourceStrings.h>
 
@@ -23,9 +50,11 @@
 using namespace std;
 
 
-// constructor
-/*! \brief Creates an object initialized to the application's string resources.
-*/
+/**
+ * @brief Creates a BResourceStrings object initialized to the application's string resources.
+ *
+ * Calls SetStringFile(NULL) which resolves the running application's resource file.
+ */
 BResourceStrings::BResourceStrings()
 				: _string_lock(),
 				  _init_error(),
@@ -38,11 +67,11 @@ BResourceStrings::BResourceStrings()
 	SetStringFile(NULL);
 }
 
-// constructor
-/*! \brief Creates an object initialized to the string resources of the
-	file referred to by the supplied entry_ref.
-	\param ref the entry_ref referring to the resource file
-*/
+/**
+ * @brief Creates a BResourceStrings object initialized to a specific resource file.
+ *
+ * @param ref The entry_ref of the resource file to load strings from.
+ */
 BResourceStrings::BResourceStrings(const entry_ref &ref)
 				: _string_lock(),
 				  _init_error(),
@@ -55,37 +84,36 @@ BResourceStrings::BResourceStrings(const entry_ref &ref)
 	SetStringFile(&ref);
 }
 
-// destructor
-/*!	\brief Frees all resources associated with the BResourceStrings object.
-*/
+/**
+ * @brief Destroys the BResourceStrings object and frees all cached strings.
+ *
+ * Acquires the internal lock before cleaning up to prevent concurrent access.
+ */
 BResourceStrings::~BResourceStrings()
 {
 	_string_lock.Lock();
 	_Cleanup();
 }
 
-// InitCheck
-/*!	\brief Returns the status of the last initialization via contructor or
-	SetStringFile().
-	\return \c B_OK, if the object is properly initialized, an error code
-			otherwise.
-*/
+/**
+ * @brief Returns the initialization status of this object.
+ *
+ * @return B_OK if the object is properly initialized, or an error code otherwise.
+ */
 status_t
 BResourceStrings::InitCheck()
 {
 	return _init_error;
 }
 
-// NewString
-/*!	\brief Finds and returns a copy of the string identified by the supplied
-	ID.
-	The caller is responsible for deleting the returned BString object.
-	\param id the ID of the requested string
-	\return
-	- A string object containing the requested string,
-	- \c NULL, if the object is not properly initialized or there is no string
-	  with ID \a id.
-*/
+/**
+ * @brief Finds a string by ID and returns a newly allocated copy.
+ *
+ * The caller is responsible for deleting the returned BString object.
+ *
+ * @param id The numeric ID of the requested string.
+ * @return A new BString containing the requested string, or NULL if not found.
+ */
 BString *
 BResourceStrings::NewString(int32 id)
 {
@@ -97,17 +125,15 @@ BResourceStrings::NewString(int32 id)
 	return result;
 }
 
-// FindString
-/*!	\brief Finds and returns the string identified by the supplied ID.
-	The caller must not free the returned string. It belongs to the
-	BResourceStrings object and is valid until the object is destroyed or set
-	to another file.
-	\param id the ID of the requested string
-	\return
-	- The requested string,
-	- \c NULL, if the object is not properly initialized or there is no string
-	  with ID \a id.
-*/
+/**
+ * @brief Finds and returns the string identified by the supplied ID.
+ *
+ * The returned pointer belongs to this object and remains valid until
+ * the object is destroyed or SetStringFile() is called again.
+ *
+ * @param id The numeric ID of the requested string.
+ * @return The string, or NULL if the object is not initialized or the ID is not found.
+ */
 const char *
 BResourceStrings::FindString(int32 id)
 {
@@ -121,13 +147,15 @@ BResourceStrings::FindString(int32 id)
 	return result;
 }
 
-// SetStringFile
-/*!	\brief Re-initialized the BResourceStrings object to the file referred to
-	by the supplied entry_ref.
-	If the supplied entry_ref is \c NULL, the object is initialized to the
-	application file.
-	\param ref the entry_ref referring to the resource file
-*/
+/**
+ * @brief Re-initializes the object to the string resources of the given file.
+ *
+ * If @p ref is NULL the object is initialized to the running application's
+ * resource file. The previous state is cleaned up before re-initialization.
+ *
+ * @param ref entry_ref of the resource file, or NULL for the application file.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResourceStrings::SetStringFile(const entry_ref *ref)
 {
@@ -198,16 +226,12 @@ BResourceStrings::SetStringFile(const entry_ref *ref)
 	return error;
 }
 
-// GetStringFile
-/*!	\brief Returns an entry_ref referring to the resource file, the object is
-	currently initialized to.
-	\param outRef a pointer to an entry_ref variable to be initialized to the
-		   requested entry_ref
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a outRef.
-	- other error codes
-*/
+/**
+ * @brief Returns an entry_ref referring to the currently used resource file.
+ *
+ * @param outRef Output parameter filled with the entry_ref on success.
+ * @return B_OK on success, B_BAD_VALUE if outRef is NULL, or another error code.
+ */
 status_t
 BResourceStrings::GetStringFile(entry_ref *outRef)
 {
@@ -224,10 +248,12 @@ BResourceStrings::GetStringFile(entry_ref *outRef)
 }
 
 
-// _Cleanup
-/*!	\brief Frees all resources associated with this object and sets all
-	member variables to harmless values.
-*/
+/**
+ * @brief Frees all resources and resets all member variables to safe defaults.
+ *
+ * Empties the hash table, deletes the BResources object, and clears the file
+ * reference and string count.
+ */
 void
 BResourceStrings::_Cleanup()
 {
@@ -244,9 +270,12 @@ BResourceStrings::_Cleanup()
 //	_string_lock.Unlock();
 }
 
-// _MakeEmpty
-/*!	\brief Empties the id->string hash table.
-*/
+/**
+ * @brief Removes and deletes all entries from the id-to-string hash table.
+ *
+ * After this call the hash table buckets remain allocated but all chains
+ * are cleared and the string count is reset to zero.
+ */
 void
 BResourceStrings::_MakeEmpty()
 {
@@ -261,13 +290,15 @@ BResourceStrings::_MakeEmpty()
 	}
 }
 
-// _Rehash
-/*!	\brief Resizes the id->string hash table to the supplied size.
-	\param newSize the new hash table size
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_NO_MEMORY: Insuffient memory.
-*/
+/**
+ * @brief Resizes the id-to-string hash table to the given size.
+ *
+ * Existing entries are rehashed into the new table. If @p newSize equals the
+ * current size, no action is taken.
+ *
+ * @param newSize The desired number of hash buckets.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails.
+ */
 status_t
 BResourceStrings::_Rehash(int32 newSize)
 {
@@ -299,15 +330,14 @@ BResourceStrings::_Rehash(int32 newSize)
 	return error;
 }
 
-// _AddString
-/*!	\brief Adds an entry to the id->string hash table.
-	If there is already a string with the given ID, it will be replaced.
-	\param str the string
-	\param id the id of the string
-	\param wasMalloced if \c true, the object will be responsible for
-		   free()ing the supplied string
-	\return the hash table entry or \c NULL, if something went wrong
-*/
+/**
+ * @brief Adds a string entry to the hash table, replacing any existing entry with the same ID.
+ *
+ * @param str         The string data (may be NULL for an empty string resource).
+ * @param id          The numeric string ID.
+ * @param wasMalloced If true, the entry takes ownership of @p str and free()s it on destruction.
+ * @return Pointer to the new hash table entry, or NULL on allocation failure.
+ */
 BResourceStrings::_string_id_hash *
 BResourceStrings::_AddString(char *str, int32 id, bool wasMalloced)
 {
@@ -325,11 +355,12 @@ BResourceStrings::_AddString(char *str, int32 id, bool wasMalloced)
 	return entry;
 }
 
-// _FindString
-/*!	\brief Returns the hash table entry for a given ID.
-	\param id the ID
-	\return the hash table entry or \c NULL, if there is no entry with this ID
-*/
+/**
+ * @brief Looks up a hash table entry by numeric string ID.
+ *
+ * @param id The string ID to find.
+ * @return Pointer to the matching _string_id_hash entry, or NULL if not found.
+ */
 BResourceStrings::_string_id_hash *
 BResourceStrings::_FindString(int32 id)
 {
@@ -355,9 +386,11 @@ status_t BResourceStrings::_Reserved_ResourceStrings_5(void *) { return 0; }
 
 // _string_id_hash
 
-// constructor
-/*!	\brief Creates an uninitialized hash table entry.
-*/
+/**
+ * @brief Constructs an uninitialized hash table entry.
+ *
+ * All fields are set to NULL/zero defaults.
+ */
 BResourceStrings::_string_id_hash::_string_id_hash()
 	: next(NULL),
 	  id(0),
@@ -366,23 +399,27 @@ BResourceStrings::_string_id_hash::_string_id_hash()
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associated with this object.
-	Only if \c data_alloced is \c true, the string will be free()d.
-*/
+/**
+ * @brief Destroys the hash table entry, freeing the string if it was malloc'd.
+ *
+ * The string is only freed if data_alloced is true.
+ */
 BResourceStrings::_string_id_hash::~_string_id_hash()
 {
 	if (data_alloced)
 		free(data);
 }
 
-// assign_string
-/*!	\brief Sets the string of the hash table entry.
-	\param str the string
-	\param makeCopy If \c true, the supplied string is copied and the copy
-		   will be freed on destruction. If \c false, the entry points to the
-		   supplied string. It will not be freed() on destruction.
-*/
+/**
+ * @brief Sets the string pointer for this hash table entry.
+ *
+ * If @p makeCopy is true the string is duplicated via strdup() and the copy
+ * is freed on destruction. If false, the entry merely points to the supplied
+ * string without taking ownership.
+ *
+ * @param str      The string to assign (may be NULL).
+ * @param makeCopy If true, the string is copied; if false, the pointer is stored directly.
+ */
 void
 BResourceStrings::_string_id_hash::assign_string(const char *str,
 												 bool makeCopy)
@@ -399,7 +436,3 @@ BResourceStrings::_string_id_hash::assign_string(const char *str,
 			data = const_cast<char*>(str);
 	}
 }
-
-
-
-

@@ -1,12 +1,40 @@
 /*
- * Copyright 2002-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold, bonefish@users.sf.net
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2010 Haiku, Inc. All rights reserved.
+ *   Authors: Ingo Weinhold (bonefish@users.sf.net),
+ *            Axel Dörfler (axeld@pinc-software.de)
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file NodeInfo.cpp
+ * @brief Implementation of BNodeInfo for reading and writing node metadata attributes.
+ *
+ * BNodeInfo wraps a BNode and provides convenient accessors for the standard
+ * BeOS/Haiku filesystem metadata attributes such as MIME type, preferred
+ * application, application hint, and icons. It also provides static helper
+ * methods for retrieving Tracker-compatible icons given an entry or node.
+ *
+ * @see BNodeInfo
+ */
 
 #include <NodeInfo.h>
 
@@ -41,6 +69,9 @@ static const char* kNIIconAttribute			= NI_BEOS ":ICON";
 //	#pragma mark - BNodeInfo
 
 
+/**
+ * @brief Default constructor; creates an uninitialized BNodeInfo.
+ */
 BNodeInfo::BNodeInfo()
 	:
 	fNode(NULL),
@@ -49,6 +80,11 @@ BNodeInfo::BNodeInfo()
 }
 
 
+/**
+ * @brief Constructs a BNodeInfo and initializes it to the given node.
+ *
+ * @param node A pointer to an initialized BNode to associate with this object.
+ */
 BNodeInfo::BNodeInfo(BNode* node)
 	:
 	fNode(NULL),
@@ -58,11 +94,20 @@ BNodeInfo::BNodeInfo(BNode* node)
 }
 
 
+/**
+ * @brief Destructor; releases any resources held by this BNodeInfo.
+ */
 BNodeInfo::~BNodeInfo()
 {
 }
 
 
+/**
+ * @brief Associates this BNodeInfo with the given BNode.
+ *
+ * @param node A pointer to an initialized BNode; must not be NULL.
+ * @return B_OK on success, or B_BAD_VALUE if node is NULL or not initialized.
+ */
 status_t
 BNodeInfo::SetTo(BNode* node)
 {
@@ -76,6 +121,11 @@ BNodeInfo::SetTo(BNode* node)
 }
 
 
+/**
+ * @brief Returns the initialization status of this BNodeInfo.
+ *
+ * @return B_OK if properly initialized, or an error code otherwise.
+ */
 status_t
 BNodeInfo::InitCheck() const
 {
@@ -83,6 +133,12 @@ BNodeInfo::InitCheck() const
 }
 
 
+/**
+ * @brief Reads the MIME type string from the node's TYPE attribute.
+ *
+ * @param type Buffer of at least B_MIME_TYPE_LENGTH bytes to receive the type string.
+ * @return B_OK on success, B_BAD_VALUE if type is NULL, or another error code.
+ */
 status_t
 BNodeInfo::GetType(char* type) const
 {
@@ -121,6 +177,15 @@ BNodeInfo::GetType(char* type) const
 }
 
 
+/**
+ * @brief Writes a MIME type string to the node's TYPE attribute.
+ *
+ * Passing NULL removes the attribute. The string must be shorter than
+ * B_MIME_TYPE_LENGTH characters.
+ *
+ * @param type The MIME type string to set, or NULL to remove the attribute.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::SetType(const char* type)
 {
@@ -150,6 +215,13 @@ BNodeInfo::SetType(const char* type)
 }
 
 
+/**
+ * @brief Retrieves the icon for this node into a BBitmap.
+ *
+ * @param icon  A BBitmap sized for the requested icon size.
+ * @param which The icon size to retrieve (B_MINI_ICON or B_LARGE_ICON).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::GetIcon(BBitmap* icon, icon_size which) const
 {
@@ -162,6 +234,15 @@ BNodeInfo::GetIcon(BBitmap* icon, icon_size which) const
 }
 
 
+/**
+ * @brief Writes a bitmap icon to the node's icon attribute.
+ *
+ * Passing NULL for icon removes the attribute for the given size.
+ *
+ * @param icon  The bitmap to store, sized for which; NULL removes the icon.
+ * @param which The icon size slot to write (B_MINI_ICON or B_LARGE_ICON).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::SetIcon(const BBitmap* icon, icon_size which)
 {
@@ -236,6 +317,17 @@ BNodeInfo::SetIcon(const BBitmap* icon, icon_size which)
 }
 
 
+/**
+ * @brief Retrieves the raw vector icon data stored on the node.
+ *
+ * Allocates a buffer via new[] and returns it through data; the caller is
+ * responsible for deleting it.
+ *
+ * @param data  Set to a newly allocated buffer containing the icon data.
+ * @param size  Set to the number of bytes in data.
+ * @param type  Set to the type code of the icon attribute.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::GetIcon(uint8** data, size_t* size, type_code* type) const
 {
@@ -276,6 +368,15 @@ BNodeInfo::GetIcon(uint8** data, size_t* size, type_code* type) const
 }
 
 
+/**
+ * @brief Writes raw vector icon data to the node's icon attribute.
+ *
+ * Passing NULL data (or size 0) removes the icon attribute.
+ *
+ * @param data Pointer to the icon data buffer, or NULL to remove.
+ * @param size Number of bytes in data.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::SetIcon(const uint8* data, size_t size)
 {
@@ -302,6 +403,13 @@ BNodeInfo::SetIcon(const uint8* data, size_t size)
 }
 
 
+/**
+ * @brief Reads the preferred application signature from the node.
+ *
+ * @param signature Buffer of at least B_MIME_TYPE_LENGTH bytes.
+ * @param verb      The application verb; currently only B_OPEN is supported.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::GetPreferredApp(char* signature, app_verb verb) const
 {
@@ -340,6 +448,15 @@ BNodeInfo::GetPreferredApp(char* signature, app_verb verb) const
 }
 
 
+/**
+ * @brief Writes the preferred application signature to the node.
+ *
+ * Passing NULL removes the preferred application attribute.
+ *
+ * @param signature The application signature string, or NULL to remove.
+ * @param verb      The application verb; currently only B_OPEN is supported.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::SetPreferredApp(const char* signature, app_verb verb)
 {
@@ -369,6 +486,12 @@ BNodeInfo::SetPreferredApp(const char* signature, app_verb verb)
 }
 
 
+/**
+ * @brief Reads the application hint (path) attribute from the node into an entry_ref.
+ *
+ * @param ref Pointer to an entry_ref to receive the application hint.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::GetAppHint(entry_ref* ref) const
 {
@@ -412,6 +535,14 @@ BNodeInfo::GetAppHint(entry_ref* ref) const
 }
 
 
+/**
+ * @brief Writes an application hint (path) attribute to the node.
+ *
+ * Passing NULL removes the app-hint attribute.
+ *
+ * @param ref An entry_ref identifying the application, or NULL to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::SetAppHint(const entry_ref* ref)
 {
@@ -440,6 +571,16 @@ BNodeInfo::SetAppHint(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Retrieves the best available icon for this node suitable for Tracker display.
+ *
+ * Tries the node's own icon, then falls back to the MIME database using the
+ * node's type, preferred application, and super-type in order.
+ *
+ * @param icon  A BBitmap sized for which to receive the icon.
+ * @param which The desired icon size (B_MINI_ICON or B_LARGE_ICON).
+ * @return B_OK on success, or B_ERROR if no suitable icon could be found.
+ */
 status_t
 BNodeInfo::GetTrackerIcon(BBitmap* icon, icon_size which) const
 {
@@ -565,6 +706,17 @@ BNodeInfo::GetTrackerIcon(BBitmap* icon, icon_size which) const
 }
 
 
+/**
+ * @brief Static method: retrieves the Tracker icon for an arbitrary entry_ref.
+ *
+ * Constructs a temporary BNode and BNodeInfo for ref, then delegates to the
+ * non-static GetTrackerIcon().
+ *
+ * @param ref   An entry_ref identifying the node whose icon to retrieve.
+ * @param icon  A BBitmap sized for which to receive the icon.
+ * @param which The desired icon size (B_MINI_ICON or B_LARGE_ICON).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNodeInfo::GetTrackerIcon(const entry_ref* ref, BBitmap* icon, icon_size which)
 {
@@ -592,6 +744,15 @@ BNodeInfo::GetTrackerIcon(const entry_ref* ref, BBitmap* icon, icon_size which)
 /*!	This method is provided for binary compatibility purposes
 	(for example the program "Guido" depends on it.)
 */
+/**
+ * @brief Binary-compatibility shim for the old GetTrackerIcon C linkage symbol.
+ *
+ * @param nodeInfo Ignored (legacy parameter).
+ * @param ref      An entry_ref identifying the node.
+ * @param bitmap   The BBitmap to receive the icon.
+ * @param iconSize The desired icon size.
+ * @return B_OK on success, or an error code on failure.
+ */
 extern "C"
 status_t
 GetTrackerIcon__9BNodeInfoP9entry_refP7BBitmap9icon_size(
@@ -612,6 +773,12 @@ void BNodeInfo::_ReservedNodeInfo3() {}
 /*!	Assignment operator is declared private to prevent it from being created
 	automatically by the compiler.
 */
+/**
+ * @brief Private assignment operator; declared to prevent compiler generation.
+ *
+ * @param nodeInfo The source BNodeInfo (ignored).
+ * @return A reference to this object.
+ */
 BNodeInfo&
 BNodeInfo::operator=(const BNodeInfo &nodeInfo)
 {
@@ -622,6 +789,9 @@ BNodeInfo::operator=(const BNodeInfo &nodeInfo)
 /*!	Copy constructor is declared private to prevent it from being created
 	automatically by the compiler.
 */
+/**
+ * @brief Private copy constructor; declared to prevent compiler generation.
+ */
 BNodeInfo::BNodeInfo(const BNodeInfo &)
 {
 }

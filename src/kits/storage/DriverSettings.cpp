@@ -1,11 +1,41 @@
 /*
- * Copyright 2007-2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2013, Haiku, Inc. All Rights Reserved.
+ *   Authors: Ingo Weinhold <ingo_weinhold@gmx.de>
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file DriverSettings.cpp
+ * @brief Implementation of BDriverSettings, BDriverParameter, and
+ *        BDriverParameterIterator for reading kernel driver settings files.
+ *
+ * These classes wrap the low-level driver_settings API to provide a
+ * convenient C++ interface for loading, parsing, and querying hierarchical
+ * key-value driver configuration data. BDriverSettings loads a settings
+ * file (or parses a string), while BDriverParameter represents individual
+ * parameter nodes that may themselves contain child parameters.
+ *
+ * @see BDriverSettings
+ */
 
 #include <DriverSettings.h>
 
@@ -46,6 +76,9 @@ public:
 };
 
 
+/**
+ * @brief Default constructor; creates an empty (exhausted) iterator.
+ */
 BDriverParameterIterator::BDriverParameterIterator()
 	:
 	fDelegate(NULL)
@@ -53,6 +86,11 @@ BDriverParameterIterator::BDriverParameterIterator()
 }
 
 
+/**
+ * @brief Constructs an iterator backed by the supplied delegate.
+ *
+ * @param delegate Heap-allocated delegate; the iterator takes a reference.
+ */
 BDriverParameterIterator::BDriverParameterIterator(Delegate* delegate)
 	:
 	fDelegate(delegate)
@@ -60,6 +98,11 @@ BDriverParameterIterator::BDriverParameterIterator(Delegate* delegate)
 }
 
 
+/**
+ * @brief Copy constructor; shares or clones the delegate as needed.
+ *
+ * @param other The iterator to copy.
+ */
 BDriverParameterIterator::BDriverParameterIterator(
 	const BDriverParameterIterator& other)
 	:
@@ -69,12 +112,20 @@ BDriverParameterIterator::BDriverParameterIterator(
 }
 
 
+/**
+ * @brief Destructor. Releases the reference to the delegate.
+ */
 BDriverParameterIterator::~BDriverParameterIterator()
 {
 	_SetTo(NULL, false);
 }
 
 
+/**
+ * @brief Returns whether there are more parameters to iterate over.
+ *
+ * @return true if at least one more parameter is available, false otherwise.
+ */
 bool
 BDriverParameterIterator::HasNext() const
 {
@@ -82,6 +133,15 @@ BDriverParameterIterator::HasNext() const
 }
 
 
+/**
+ * @brief Returns the next BDriverParameter and advances the iterator.
+ *
+ * If the delegate is shared, it is cloned before advancing to preserve
+ * copy-on-write semantics.
+ *
+ * @return The next BDriverParameter, or a default-constructed (invalid)
+ *         BDriverParameter if the iterator is exhausted or an error occurs.
+ */
 BDriverParameter
 BDriverParameterIterator::Next()
 {
@@ -99,6 +159,12 @@ BDriverParameterIterator::Next()
 }
 
 
+/**
+ * @brief Assignment operator; shares the delegate from the right-hand side.
+ *
+ * @param other The iterator to assign from.
+ * @return Reference to this iterator.
+ */
 BDriverParameterIterator&
 BDriverParameterIterator::operator=(const BDriverParameterIterator& other)
 {
@@ -107,6 +173,12 @@ BDriverParameterIterator::operator=(const BDriverParameterIterator& other)
 }
 
 
+/**
+ * @brief Internal helper to swap the held delegate reference.
+ *
+ * @param delegate      New delegate to adopt (may be NULL).
+ * @param addReference  If true, acquire a reference on the new delegate.
+ */
 void
 BDriverParameterIterator::_SetTo(Delegate* delegate, bool addReference)
 {
@@ -221,16 +293,27 @@ private:
 };
 
 
+/**
+ * @brief Default constructor.
+ */
 BDriverParameterContainer::BDriverParameterContainer()
 {
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BDriverParameterContainer::~BDriverParameterContainer()
 {
 }
 
 
+/**
+ * @brief Returns the number of direct child parameters in this container.
+ *
+ * @return The parameter count, or 0 if the container is uninitialised.
+ */
 int32
 BDriverParameterContainer::CountParameters() const
 {
@@ -240,6 +323,11 @@ BDriverParameterContainer::CountParameters() const
 }
 
 
+/**
+ * @brief Returns a pointer to the raw driver_parameter array.
+ *
+ * @return Pointer to the first parameter, or NULL if unavailable.
+ */
 const driver_parameter*
 BDriverParameterContainer::Parameters() const
 {
@@ -248,6 +336,13 @@ BDriverParameterContainer::Parameters() const
 }
 
 
+/**
+ * @brief Returns the parameter at the given index.
+ *
+ * @param index Zero-based index into the parameter list.
+ * @return The BDriverParameter at that index, or an invalid one if out of
+ *         range.
+ */
 BDriverParameter
 BDriverParameterContainer::ParameterAt(int32 index) const
 {
@@ -260,6 +355,13 @@ BDriverParameterContainer::ParameterAt(int32 index) const
 }
 
 
+/**
+ * @brief Finds the first parameter with the given name.
+ *
+ * @param name       Name to search for.
+ * @param _parameter If non-NULL and a match is found, filled with the result.
+ * @return true if a matching parameter was found, false otherwise.
+ */
 bool
 BDriverParameterContainer::FindParameter(const char* name,
 	BDriverParameter* _parameter) const
@@ -281,6 +383,12 @@ BDriverParameterContainer::FindParameter(const char* name,
 }
 
 
+/**
+ * @brief Returns the first parameter with the given name.
+ *
+ * @param name Name to search for.
+ * @return The matching BDriverParameter, or an invalid one if not found.
+ */
 BDriverParameter
 BDriverParameterContainer::GetParameter(const char* name) const
 {
@@ -290,6 +398,11 @@ BDriverParameterContainer::GetParameter(const char* name) const
 }
 
 
+/**
+ * @brief Returns an iterator over all direct child parameters.
+ *
+ * @return A BDriverParameterIterator positioned at the first parameter.
+ */
 BDriverParameterIterator
 BDriverParameterContainer::ParameterIterator() const
 {
@@ -302,6 +415,14 @@ BDriverParameterContainer::ParameterIterator() const
 }
 
 
+/**
+ * @brief Returns an iterator over all direct child parameters with the given
+ *        name.
+ *
+ * @param name The parameter name to filter by.
+ * @return A BDriverParameterIterator positioned at the first matching
+ *         parameter.
+ */
 BDriverParameterIterator
 BDriverParameterContainer::ParameterIterator(const char* name) const
 {
@@ -316,6 +437,14 @@ BDriverParameterContainer::ParameterIterator(const char* name) const
 }
 
 
+/**
+ * @brief Returns the string value of the first parameter with the given name.
+ *
+ * @param name         Name of the parameter to query.
+ * @param unknownValue Value to return if the parameter does not exist.
+ * @param noValue      Value to return if the parameter exists but has no value.
+ * @return The parameter's first string value, or one of the fallback strings.
+ */
 const char*
 BDriverParameterContainer::GetParameterValue(const char* name,
 	const char* unknownValue, const char* noValue) const
@@ -327,6 +456,14 @@ BDriverParameterContainer::GetParameterValue(const char* name,
 }
 
 
+/**
+ * @brief Returns the boolean value of the first parameter with the given name.
+ *
+ * @param name         Name of the parameter to query.
+ * @param unknownValue Value to return if the parameter does not exist.
+ * @param noValue      Value to return if the parameter exists but has no value.
+ * @return The boolean interpretation of the parameter's first value.
+ */
 bool
 BDriverParameterContainer::GetBoolParameterValue(const char* name,
 	bool unknownValue, bool noValue) const
@@ -338,6 +475,14 @@ BDriverParameterContainer::GetBoolParameterValue(const char* name,
 }
 
 
+/**
+ * @brief Returns the int32 value of the first parameter with the given name.
+ *
+ * @param name         Name of the parameter to query.
+ * @param unknownValue Value to return if the parameter does not exist.
+ * @param noValue      Value to return if the parameter exists but has no value.
+ * @return The int32 interpretation of the parameter's first value.
+ */
 int32
 BDriverParameterContainer::GetInt32ParameterValue(const char* name,
 	int32 unknownValue, int32 noValue) const
@@ -349,6 +494,14 @@ BDriverParameterContainer::GetInt32ParameterValue(const char* name,
 }
 
 
+/**
+ * @brief Returns the int64 value of the first parameter with the given name.
+ *
+ * @param name         Name of the parameter to query.
+ * @param unknownValue Value to return if the parameter does not exist.
+ * @param noValue      Value to return if the parameter exists but has no value.
+ * @return The int64 interpretation of the parameter's first value.
+ */
 int64
 BDriverParameterContainer::GetInt64ParameterValue(const char* name,
 	int64 unknownValue, int64 noValue) const
@@ -363,6 +516,9 @@ BDriverParameterContainer::GetInt64ParameterValue(const char* name,
 // #pragma mark - BDriverSettings
 
 
+/**
+ * @brief Constructs an empty, uninitialised BDriverSettings object.
+ */
 BDriverSettings::BDriverSettings()
 	:
 	BDriverParameterContainer(),
@@ -372,12 +528,25 @@ BDriverSettings::BDriverSettings()
 }
 
 
+/**
+ * @brief Destructor. Calls Unset() to release the settings handle.
+ */
 BDriverSettings::~BDriverSettings()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Loads driver settings by driver name or absolute file path.
+ *
+ * Any previously loaded settings are released before the new ones are loaded.
+ *
+ * @param driverNameOrAbsolutePath Driver name (searched in standard locations)
+ *                                 or an absolute path to a settings file.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the file is not found, or
+ *         B_ERROR on other failures.
+ */
 status_t
 BDriverSettings::Load(const char* driverNameOrAbsolutePath)
 {
@@ -397,6 +566,14 @@ BDriverSettings::Load(const char* driverNameOrAbsolutePath)
 }
 
 
+/**
+ * @brief Loads driver settings from an entry_ref.
+ *
+ * Resolves the ref to a path and delegates to Load(const char*).
+ *
+ * @param ref entry_ref identifying the settings file to load.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDriverSettings::Load(const entry_ref& ref)
 {
@@ -408,6 +585,15 @@ BDriverSettings::Load(const entry_ref& ref)
 }
 
 
+/**
+ * @brief Parses driver settings from an in-memory string.
+ *
+ * Any previously loaded settings are released before parsing the new ones.
+ *
+ * @param string Null-terminated string containing the settings data.
+ * @return B_OK on success, B_BAD_DATA if parsing fails, or B_ERROR on other
+ *         failures.
+ */
 status_t
 BDriverSettings::SetToString(const char* string)
 {
@@ -427,6 +613,9 @@ BDriverSettings::SetToString(const char* string)
 }
 
 
+/**
+ * @brief Releases the currently loaded settings handle and resets all fields.
+ */
 void
 BDriverSettings::Unset()
 {
@@ -438,6 +627,12 @@ BDriverSettings::Unset()
 }
 
 
+/**
+ * @brief Returns the raw parameter array and its count for this settings node.
+ *
+ * @param _count Output parameter that receives the number of parameters.
+ * @return Pointer to the first driver_parameter, or NULL if uninitialised.
+ */
 const driver_parameter*
 BDriverSettings::GetParametersAndCount(int32& _count) const
 {
@@ -452,6 +647,9 @@ BDriverSettings::GetParametersAndCount(int32& _count) const
 // #pragma mark - BDriverParameter
 
 
+/**
+ * @brief Default constructor; creates an invalid (unset) parameter.
+ */
 BDriverParameter::BDriverParameter()
 	:
 	BDriverParameterContainer(),
@@ -460,6 +658,12 @@ BDriverParameter::BDriverParameter()
 }
 
 
+/**
+ * @brief Constructs a BDriverParameter wrapping the given driver_parameter.
+ *
+ * @param parameter Pointer to the underlying driver_parameter structure.
+ *                  The caller retains ownership.
+ */
 BDriverParameter::BDriverParameter(const driver_parameter* parameter)
 	:
 	BDriverParameterContainer(),
@@ -468,6 +672,11 @@ BDriverParameter::BDriverParameter(const driver_parameter* parameter)
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param other The BDriverParameter to copy.
+ */
 BDriverParameter::BDriverParameter(const BDriverParameter& other)
 	:
 	BDriverParameterContainer(),
@@ -476,11 +685,19 @@ BDriverParameter::BDriverParameter(const BDriverParameter& other)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BDriverParameter::~BDriverParameter()
 {
 }
 
 
+/**
+ * @brief Points this parameter at a different driver_parameter structure.
+ *
+ * @param parameter Pointer to the new driver_parameter (may be NULL).
+ */
 void
 BDriverParameter::SetTo(const driver_parameter* parameter)
 {
@@ -488,6 +705,11 @@ BDriverParameter::SetTo(const driver_parameter* parameter)
 }
 
 
+/**
+ * @brief Returns whether this parameter wraps a valid driver_parameter.
+ *
+ * @return true if valid (non-NULL), false otherwise.
+ */
 bool
 BDriverParameter::IsValid() const
 {
@@ -495,6 +717,11 @@ BDriverParameter::IsValid() const
 }
 
 
+/**
+ * @brief Returns the name of this parameter.
+ *
+ * @return The parameter name string, or NULL if invalid.
+ */
 const char*
 BDriverParameter::Name() const
 {
@@ -502,6 +729,11 @@ BDriverParameter::Name() const
 }
 
 
+/**
+ * @brief Returns the number of values associated with this parameter.
+ *
+ * @return Value count, or 0 if the parameter is invalid.
+ */
 int32
 BDriverParameter::CountValues() const
 {
@@ -509,6 +741,11 @@ BDriverParameter::CountValues() const
 }
 
 
+/**
+ * @brief Returns the raw array of value strings.
+ *
+ * @return Pointer to the value strings, or NULL if the parameter is invalid.
+ */
 const char* const*
 BDriverParameter::Values() const
 {
@@ -516,6 +753,13 @@ BDriverParameter::Values() const
 }
 
 
+/**
+ * @brief Returns the value string at the given index.
+ *
+ * @param index   Zero-based index of the value to retrieve.
+ * @param noValue Fallback value if the index is out of range.
+ * @return The value string at that index, or noValue.
+ */
 const char*
 BDriverParameter::ValueAt(int32 index, const char* noValue) const
 {
@@ -525,6 +769,15 @@ BDriverParameter::ValueAt(int32 index, const char* noValue) const
 }
 
 
+/**
+ * @brief Returns the boolean interpretation of the value at the given index.
+ *
+ * Recognised true strings: "1", "true", "yes", "on", "enable", "enabled".
+ *
+ * @param index   Zero-based index of the value to interpret.
+ * @param noValue Fallback value if the index is out of range.
+ * @return true if the value matches a known true string, false otherwise.
+ */
 bool
 BDriverParameter::BoolValueAt(int32 index, bool noValue) const
 {
@@ -540,6 +793,13 @@ BDriverParameter::BoolValueAt(int32 index, bool noValue) const
 }
 
 
+/**
+ * @brief Returns the int32 interpretation of the value at the given index.
+ *
+ * @param index   Zero-based index of the value to interpret.
+ * @param noValue Fallback value if the index is out of range.
+ * @return The value parsed as a long integer.
+ */
 int32
 BDriverParameter::Int32ValueAt(int32 index, int32 noValue) const
 {
@@ -550,6 +810,13 @@ BDriverParameter::Int32ValueAt(int32 index, int32 noValue) const
 }
 
 
+/**
+ * @brief Returns the int64 interpretation of the value at the given index.
+ *
+ * @param index   Zero-based index of the value to interpret.
+ * @param noValue Fallback value if the index is out of range.
+ * @return The value parsed as a base-10 long long integer.
+ */
 int64
 BDriverParameter::Int64ValueAt(int32 index, int64 noValue) const
 {
@@ -560,6 +827,12 @@ BDriverParameter::Int64ValueAt(int32 index, int64 noValue) const
 }
 
 
+/**
+ * @brief Returns the raw child parameter array and its count for this node.
+ *
+ * @param _count Output parameter that receives the number of child parameters.
+ * @return Pointer to the first child driver_parameter, or NULL if invalid.
+ */
 const driver_parameter*
 BDriverParameter::GetParametersAndCount(int32& _count) const
 {
@@ -571,6 +844,12 @@ BDriverParameter::GetParametersAndCount(int32& _count) const
 }
 
 
+/**
+ * @brief Assignment operator.
+ *
+ * @param other The BDriverParameter to copy from.
+ * @return Reference to this parameter.
+ */
 BDriverParameter&
 BDriverParameter::operator=(const BDriverParameter& other)
 {

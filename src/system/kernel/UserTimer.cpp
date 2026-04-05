@@ -1,7 +1,38 @@
 /*
- * Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
- * Copyright 2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Copyright 2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file UserTimer.cpp
+ * @brief POSIX timer implementation for user-space processes (timer_create/settime/gettime).
+ *
+ * Implements POSIX per-process and per-thread timers. Timers fire via signal
+ * delivery or thread event. Supports CLOCK_REALTIME, CLOCK_MONOTONIC,
+ * CLOCK_PROCESS_CPUTIME_ID, and CLOCK_THREAD_CPUTIME_ID. Periodic timers
+ * rearm themselves automatically.
+ *
+ * @see UserEvent.cpp, signal.cpp, thread.cpp
  */
 
 
@@ -45,10 +76,20 @@ static seqlock sUserTimerLock = B_SEQLOCK_INITIALIZER;
 
 namespace {
 
+/**
+ * @brief RAII helper that locks the team and optionally a thread for timer operations.
+ *
+ * Acquires the team lock unconditionally, and optionally acquires the thread lock
+ * when a non-NULL thread is provided. The destructor releases both locks in
+ * reverse order.
+ */
 struct TimerLocker {
 	Team*	team;
 	Thread*	thread;
 
+	/**
+	 * @brief Constructs a TimerLocker with both pointers initialised to NULL.
+	 */
 	TimerLocker()
 		:
 		team(NULL),
@@ -56,11 +97,20 @@ struct TimerLocker {
 	{
 	}
 
+	/**
+	 * @brief Destructor; releases all held locks via Unlock().
+	 */
 	~TimerLocker()
 	{
 		Unlock();
 	}
 
+	/**
+	 * @brief Locks the given team and, if non-NULL, the given thread.
+	 *
+	 * @param team   The team to lock; must not be NULL.
+	 * @param thread The thread to lock and reference, or NULL if not needed.
+	 */
 	void Lock(Team* team, Thread* thread)
 	{
 		this->team = team;
@@ -77,6 +127,21 @@ struct TimerLocker {
 		// called for new threads not added to the team yet.
 	}
 
+	/**
+	 * @brief Locks the current team (and optionally a thread) and retrieves a timer by ID.
+	 *
+	 * Locks the current thread's team. If @p threadID is non-negative also locks that
+	 * thread and verifies it belongs to the current team. Then looks up the timer with
+	 * @p timerID in the appropriate container.
+	 *
+	 * @param threadID  Thread ID to look up, or negative to look in the team.
+	 * @param timerID   ID of the timer to retrieve.
+	 * @param _timer    Output: set to the found UserTimer on success.
+	 * @retval B_OK            Timer found; @p _timer is valid.
+	 * @retval B_BAD_THREAD_ID @p threadID was non-negative but the thread does not exist.
+	 * @retval B_NOT_ALLOWED   The thread does not belong to the current team.
+	 * @retval B_BAD_VALUE     No timer with @p timerID was found.
+	 */
 	status_t LockAndGetTimer(thread_id threadID, int32 timerID,
 		UserTimer*& _timer)
 	{
@@ -100,6 +165,9 @@ struct TimerLocker {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Releases all locks held by this locker and resets the stored pointers.
+	 */
 	void Unlock()
 	{
 		if (thread != NULL) {
@@ -119,6 +187,13 @@ struct TimerLocker {
 // #pragma mark - UserTimer
 
 
+/**
+ * @brief Constructs a UserTimer in an inactive, unscheduled state.
+ *
+ * Initialises all fields to zero/null/false and stores @c this in the
+ * embedded kernel timer's @c user_data field so the static callback can
+ * recover the object pointer.
+ */
 UserTimer::UserTimer()
 	:
 	fID(-1),
@@ -134,6 +209,12 @@ UserTimer::UserTimer()
 }
 
 
+/**
+ * @brief Destroys the UserTimer and releases the associated UserEvent reference.
+ *
+ * @note The timer must have been cancelled before destruction; cancellation is
+ *       the caller's responsibility.
+ */
 UserTimer::~UserTimer()
 {
 	if (fEvent != NULL)
@@ -166,8 +247,12 @@ UserTimer::~UserTimer()
 */
 
 
-/*!	Cancels the timer, if it is scheduled.
-*/
+/**
+ * @brief Cancels the timer if it is currently scheduled.
+ *
+ * Convenience wrapper around Schedule() that passes B_INFINITE_TIMEOUT and
+ * a zero interval, effectively disarming the timer.
+ */
 void
 UserTimer::Cancel()
 {
@@ -194,6 +279,18 @@ UserTimer::Cancel()
 */
 
 
+/**
+ * @brief Static kernel-timer callback; invoked by the timer subsystem at interrupt level.
+ *
+ * Recovers the UserTimer from the kernel @c timer struct's @c user_data field,
+ * acquires the sequential write lock @c sUserTimerLock (spinning while @c fSkip
+ * is non-zero), and calls HandleTimer() under that lock.
+ *
+ * @param timer Pointer to the kernel timer structure that fired.
+ * @retval B_HANDLED_INTERRUPT Always; this is an interrupt-level callback.
+ *
+ * @note Called with interrupts disabled.
+ */
 /*static*/ int32
 UserTimer::HandleTimerHook(struct timer* timer)
 {
@@ -217,6 +314,16 @@ UserTimer::HandleTimerHook(struct timer* timer)
 }
 
 
+/**
+ * @brief Fires the timer's associated event and marks the timer as no longer scheduled.
+ *
+ * Calls UserEvent::Fire(); if the event is still busy from a previous delivery,
+ * increments @c fOverrunCount (capped at MAX_USER_TIMER_OVERRUN_COUNT).
+ * Clears @c fScheduled because the kernel timer is one-shot; periodic subclasses
+ * override this method to reschedule the kernel timer after calling the base version.
+ *
+ * @note Must be called with @c sUserTimerLock held for writing.
+ */
 void
 UserTimer::HandleTimer()
 {
@@ -241,6 +348,15 @@ UserTimer::HandleTimer()
 
 	The caller must not hold \c sUserTimerLock.
 */
+/**
+ * @brief Advances @c fNextTime by one interval (or more) after a periodic timer fires.
+ *
+ * Enforces a minimum advancement of @c kMinPeriodicTimerInterval microseconds to
+ * avoid starving the system with extremely short intervals. Any skipped intervals
+ * are reflected in @c fOverrunCount.
+ *
+ * @note The caller must not hold @c sUserTimerLock.
+ */
 void
 UserTimer::UpdatePeriodicStartTime()
 {
@@ -267,6 +383,17 @@ UserTimer::UpdatePeriodicStartTime()
 
 	\param now The current time.
 */
+/**
+ * @brief Skips overdue periodic intervals, bringing @c fNextTime ahead of @p now - interval.
+ *
+ * If @c fNextTime is more than one full interval in the past, computes how many
+ * complete intervals were missed, advances @c fNextTime accordingly, and adds the
+ * skip count to @c fOverrunCount (capped at MAX_USER_TIMER_OVERRUN_COUNT).
+ *
+ * @param now The current clock value to compare against (same unit as @c fNextTime).
+ *
+ * @note The caller must not hold @c sUserTimerLock.
+ */
 void
 UserTimer::CheckPeriodicOverrun(bigtime_t now)
 {
@@ -285,6 +412,14 @@ UserTimer::CheckPeriodicOverrun(bigtime_t now)
 }
 
 
+/**
+ * @brief Cancels the underlying kernel timer, blocking until the cancel takes effect.
+ *
+ * Sets @c fSkip to prevent the interrupt handler from acquiring the seq-lock while
+ * cancel_timer() drains any in-progress callback, then clears @c fSkip.
+ *
+ * @note @c fScheduled must be @c true when this is called (asserted in debug builds).
+ */
 void
 UserTimer::CancelTimer()
 {
@@ -299,6 +434,23 @@ UserTimer::CancelTimer()
 // #pragma mark - SystemTimeUserTimer
 
 
+/**
+ * @brief Arms or disarms the timer against the system monotonic clock.
+ *
+ * Cancels any previously scheduled kernel timer, records the old scheduling
+ * parameters in the output variables, then schedules a new one-shot (or periodic)
+ * kernel timer at @p nextTime on the monotonic clock.
+ *
+ * @param nextTime          Absolute or relative target time in microseconds.
+ *                          Pass B_INFINITE_TIMEOUT to disarm without rescheduling.
+ * @param interval          Repeat interval in microseconds; 0 means one-shot.
+ * @param flags             B_ABSOLUTE_TIMEOUT or B_RELATIVE_TIMEOUT.
+ * @param _oldRemainingTime Output: remaining time of the previous schedule, or
+ *                          B_INFINITE_TIMEOUT if not previously scheduled.
+ * @param _oldInterval      Output: previous interval, or 0 if not periodic.
+ *
+ * @note Must be called with @c sUserTimerLock held for writing (via InterruptsWriteSequentialLocker).
+ */
 void
 SystemTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 	uint32 flags, bigtime_t& _oldRemainingTime, bigtime_t& _oldInterval)
@@ -336,6 +488,16 @@ SystemTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 }
 
 
+/**
+ * @brief Retrieves current scheduling information for the system-time timer.
+ *
+ * Reads @c fScheduled, @c fNextTime, @c fInterval, and @c fOverrunCount under
+ * a sequential read lock to produce a consistent snapshot.
+ *
+ * @param _remainingTime Output: microseconds until next fire, or B_INFINITE_TIMEOUT.
+ * @param _interval      Output: repeat interval in microseconds, or 0 if one-shot.
+ * @param _overrunCount  Output: number of missed deliveries since last schedule.
+ */
 void
 SystemTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 	uint32& _overrunCount)
@@ -357,6 +519,14 @@ SystemTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 }
 
 
+/**
+ * @brief Handles a fired system-time timer event and reschedules it if periodic.
+ *
+ * Delegates to UserTimer::HandleTimer() for event firing, then, if the timer is
+ * periodic, advances the start time and re-arms the kernel timer.
+ *
+ * @note Must be called with @c sUserTimerLock held for writing.
+ */
 void
 SystemTimeUserTimer::HandleTimer()
 {
@@ -378,6 +548,17 @@ SystemTimeUserTimer::HandleTimer()
 	\param checkPeriodicOverrun If \c true, calls CheckPeriodicOverrun() first,
 		i.e. the start time will be adjusted to not lie too much in the past.
 */
+/**
+ * @brief Arms the underlying kernel timer at @c fNextTime on the monotonic clock.
+ *
+ * Optionally calls CheckPeriodicOverrun() to skip missed intervals before
+ * submitting the one-shot absolute kernel timer via add_timer().
+ *
+ * @param now                  Current system_time() value.
+ * @param checkPeriodicOverrun If @c true, call CheckPeriodicOverrun() first.
+ *
+ * @note The caller must hold @c sUserTimerLock.
+ */
 void
 SystemTimeUserTimer::ScheduleKernelTimer(bigtime_t now,
 	bool checkPeriodicOverrun)
@@ -401,6 +582,22 @@ SystemTimeUserTimer::ScheduleKernelTimer(bigtime_t now,
 // #pragma mark - RealTimeUserTimer
 
 
+/**
+ * @brief Arms or disarms the timer against CLOCK_REALTIME.
+ *
+ * Handles both absolute (wall-clock) and relative scheduling. For absolute
+ * timers, converts the wall-clock target to a monotonic offset, registers the
+ * timer in the global @c sAbsoluteRealTimeTimers list (so it can be adjusted
+ * when the real-time clock is stepped), and then schedules the underlying
+ * kernel timer.
+ *
+ * @param nextTime          Target time in microseconds (wall-clock for absolute,
+ *                          delta for relative). B_INFINITE_TIMEOUT disarms.
+ * @param interval          Repeat interval in microseconds; 0 means one-shot.
+ * @param flags             B_ABSOLUTE_TIMEOUT or B_RELATIVE_TIMEOUT.
+ * @param _oldRemainingTime Output: remaining time of the previous schedule.
+ * @param _oldInterval      Output: previous interval.
+ */
 void
 RealTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 	uint32 flags, bigtime_t& _oldRemainingTime, bigtime_t& _oldInterval)
@@ -461,6 +658,16 @@ RealTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 	The caller must hold \c sUserTimerLock. Optionally the caller may also
 	hold \c sAbsoluteRealTimeTimersLock.
 */
+/**
+ * @brief Adjusts the timer when the real-time clock is stepped.
+ *
+ * Fetches the new boot-time offset, cancels the current kernel timer, shifts
+ * @c fNextTime by the delta between old and new offsets, and re-arms the
+ * kernel timer so that the absolute wall-clock target is preserved.
+ *
+ * @note The caller must hold @c sUserTimerLock (and optionally @c sAbsoluteRealTimeTimersLock).
+ * @note Only valid for absolute timers (@c fAbsolute must be @c true and @c fScheduled must be @c true).
+ */
 void
 RealTimeUserTimer::TimeWarped()
 {
@@ -481,6 +688,15 @@ RealTimeUserTimer::TimeWarped()
 }
 
 
+/**
+ * @brief Handles a fired real-time timer, rescheduling or removing from the global list.
+ *
+ * Delegates to SystemTimeUserTimer::HandleTimer() for event firing and periodic
+ * rescheduling. If the timer fired as a one-shot absolute timer, removes it from
+ * the @c sAbsoluteRealTimeTimers global list.
+ *
+ * @note Must be called with @c sUserTimerLock held for writing.
+ */
 void
 RealTimeUserTimer::HandleTimer()
 {
@@ -497,6 +713,11 @@ RealTimeUserTimer::HandleTimer()
 // #pragma mark - TeamTimeUserTimer
 
 
+/**
+ * @brief Constructs a TeamTimeUserTimer for the given team.
+ *
+ * @param teamID The ID of the team whose CPU time this timer tracks.
+ */
 TeamTimeUserTimer::TeamTimeUserTimer(team_id teamID)
 	:
 	fTeamID(teamID),
@@ -505,12 +726,32 @@ TeamTimeUserTimer::TeamTimeUserTimer(team_id teamID)
 }
 
 
+/**
+ * @brief Destroys the TeamTimeUserTimer.
+ *
+ * @note @c fTeam must be NULL at destruction time (the timer must have been
+ *       deactivated beforehand); this is asserted in debug builds.
+ */
 TeamTimeUserTimer::~TeamTimeUserTimer()
 {
 	ASSERT(fTeam == NULL);
 }
 
 
+/**
+ * @brief Arms or disarms the timer against the team's total CPU time clock.
+ *
+ * Cancels any active timer, releases the current team reference, then, if
+ * @p nextTime is not B_INFINITE_TIMEOUT, acquires a new reference to the team
+ * and registers this timer with it via UserTimerActivated(). Finally calls
+ * _Update() to arm the kernel timer if any team thread is currently running.
+ *
+ * @param nextTime          Target CPU-time in microseconds (absolute or relative).
+ * @param interval          Repeat interval; 0 for one-shot.
+ * @param flags             B_ABSOLUTE_TIMEOUT or B_RELATIVE_TIMEOUT.
+ * @param _oldRemainingTime Output: remaining CPU-time of previous schedule.
+ * @param _oldInterval      Output: previous interval.
+ */
 void
 TeamTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 	uint32 flags, bigtime_t& _oldRemainingTime, bigtime_t& _oldInterval)
@@ -574,6 +815,16 @@ TeamTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 }
 
 
+/**
+ * @brief Returns current scheduling information for the team CPU-time timer.
+ *
+ * Reads the team's current CPU time under its @c time_lock to compute the
+ * remaining time, all within a sequential read lock for consistency.
+ *
+ * @param _remainingTime Output: microseconds of CPU time remaining, or B_INFINITE_TIMEOUT.
+ * @param _interval      Output: repeat interval, or 0.
+ * @param _overrunCount  Output: number of missed deliveries.
+ */
 void
 TeamTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 	uint32& _overrunCount)
@@ -600,6 +851,14 @@ TeamTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 
 	The caller must hold \c time_lock and \c sUserTimerLock.
 */
+/**
+ * @brief Deactivates the team CPU-time timer, cancelling the kernel timer if needed.
+ *
+ * Cancels any scheduled kernel timer, calls UserTimerDeactivated() on the team,
+ * releases the team reference, and sets @c fTeam to NULL.
+ *
+ * @note The caller must hold both @c time_lock and @c sUserTimerLock.
+ */
 void
 TeamTimeUserTimer::Deactivate()
 {
@@ -631,6 +890,18 @@ TeamTimeUserTimer::Deactivate()
 	\param unscheduledThread If not \c NULL, this is the thread that is
 		currently running and which is in the process of being unscheduled.
 */
+/**
+ * @brief Recounts running team threads and re-arms or cancels the kernel timer.
+ *
+ * Iterates over all CPUs to determine how many threads belonging to the team are
+ * currently running (excluding @p unscheduledThread). Delegates to _Update() to
+ * actually (re)schedule or cancel the kernel timer.
+ *
+ * @param unscheduledThread Thread being preempted, excluded from the running count, or NULL.
+ * @param lockedThread      Thread whose time_lock is already held, or NULL.
+ *
+ * @note The caller must hold @c time_lock and @c sUserTimerLock.
+ */
 void
 TeamTimeUserTimer::Update(Thread* unscheduledThread, Thread* lockedThread)
 {
@@ -657,6 +928,16 @@ TeamTimeUserTimer::Update(Thread* unscheduledThread, Thread* lockedThread)
 
 	\param changedBy The value by which the clock has changed.
 */
+/**
+ * @brief Adjusts the target time when the team's CPU clock is stepped.
+ *
+ * For relative timers, shifts @c fNextTime by @p changedBy so the remaining
+ * interval is preserved. Then calls _Update() to reschedule the kernel timer.
+ *
+ * @param changedBy Signed delta applied to the team's CPU clock (new = old + changedBy).
+ *
+ * @note The caller must hold @c time_lock and @c sUserTimerLock.
+ */
 void
 TeamTimeUserTimer::TimeWarped(bigtime_t changedBy)
 {
@@ -673,6 +954,15 @@ TeamTimeUserTimer::TimeWarped(bigtime_t changedBy)
 }
 
 
+/**
+ * @brief Handles a fired team CPU-time timer event.
+ *
+ * Delegates to UserTimer::HandleTimer() for event firing. For one-shot timers,
+ * deactivates the timer and releases the team reference. For periodic timers,
+ * advances the start time and re-arms the kernel timer via _Update().
+ *
+ * @note Must be called with @c sUserTimerLock held for writing.
+ */
 void
 TeamTimeUserTimer::HandleTimer()
 {
@@ -701,6 +991,21 @@ TeamTimeUserTimer::HandleTimer()
 	\param unscheduling \c true, when the current thread is in the process of
 		being unscheduled.
 */
+/**
+ * @brief Internal: arms or cancels the kernel timer based on @c fRunningThreads.
+ *
+ * If no team threads are currently running, cancels the kernel timer and returns.
+ * Otherwise computes the wall-clock deadline by dividing the remaining CPU-time
+ * budget across all running threads and submits a one-shot absolute kernel timer.
+ *
+ * @param unscheduling @c true when the calling thread is being preempted; passed
+ *                     to CPUTime() so the running thread's partial quantum is
+ *                     excluded from the current time sample.
+ * @param lockedThread Thread whose @c time_lock is already held by the caller, or NULL.
+ *
+ * @note @c fRunningThreads must be current. The caller must hold @c time_lock
+ *       and @c sUserTimerLock.
+ */
 void
 TeamTimeUserTimer::_Update(bool unscheduling, Thread* lockedThread)
 {
@@ -745,6 +1050,11 @@ TeamTimeUserTimer::_Update(bool unscheduling, Thread* lockedThread)
 // #pragma mark - TeamUserTimeUserTimer
 
 
+/**
+ * @brief Constructs a TeamUserTimeUserTimer for the given team.
+ *
+ * @param teamID The ID of the team whose user-mode CPU time this timer tracks.
+ */
 TeamUserTimeUserTimer::TeamUserTimeUserTimer(team_id teamID)
 	:
 	fTeamID(teamID),
@@ -753,12 +1063,31 @@ TeamUserTimeUserTimer::TeamUserTimeUserTimer(team_id teamID)
 }
 
 
+/**
+ * @brief Destroys the TeamUserTimeUserTimer.
+ *
+ * @note @c fTeam must be NULL at destruction; the timer must be deactivated
+ *       before it is deleted (asserted in debug builds).
+ */
 TeamUserTimeUserTimer::~TeamUserTimeUserTimer()
 {
 	ASSERT(fTeam == NULL);
 }
 
 
+/**
+ * @brief Arms or disarms the timer against the team's user-mode CPU time.
+ *
+ * Deactivates any currently active timer, releases the team reference, then,
+ * if @p nextTime is not B_INFINITE_TIMEOUT, acquires a new team reference,
+ * registers the timer, and calls Check() to fire immediately if already elapsed.
+ *
+ * @param nextTime          Target user-CPU-time in microseconds.
+ * @param interval          Repeat interval; 0 for one-shot.
+ * @param flags             B_ABSOLUTE_TIMEOUT or B_RELATIVE_TIMEOUT.
+ * @param _oldRemainingTime Output: remaining user-CPU-time of the previous schedule.
+ * @param _oldInterval      Output: previous interval.
+ */
 void
 TeamUserTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 	uint32 flags, bigtime_t& _oldRemainingTime, bigtime_t& _oldInterval)
@@ -815,6 +1144,16 @@ TeamUserTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 }
 
 
+/**
+ * @brief Returns current scheduling information for the team user-CPU-time timer.
+ *
+ * Reads the team's user CPU time under its @c time_lock within a sequential
+ * read lock to produce a consistent snapshot.
+ *
+ * @param _remainingTime Output: remaining user-CPU-time in microseconds, or B_INFINITE_TIMEOUT.
+ * @param _interval      Output: repeat interval, or 0.
+ * @param _overrunCount  Output: number of missed deliveries.
+ */
 void
 TeamUserTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 	uint32& _overrunCount)
@@ -841,6 +1180,15 @@ TeamUserTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 
 	The caller must hold \c time_lock and \c sUserTimerLock.
 */
+/**
+ * @brief Deactivates the team user-CPU-time timer.
+ *
+ * Notifies the team that this timer is no longer active, releases the team
+ * reference, and sets @c fTeam to NULL. Unlike TeamTimeUserTimer::Deactivate(),
+ * there is no kernel timer to cancel because this timer class does not use one.
+ *
+ * @note The caller must hold @c time_lock and @c sUserTimerLock.
+ */
 void
 TeamUserTimeUserTimer::Deactivate()
 {
@@ -858,6 +1206,16 @@ TeamUserTimeUserTimer::Deactivate()
 
 	The caller must hold \c time_lock and \c sUserTimerLock.
 */
+/**
+ * @brief Polls the team's user CPU time and fires the event if the deadline has passed.
+ *
+ * Called from Schedule() (initial arm) and from user_timer_check_team_user_timers()
+ * each time the scheduler switches user-mode accounting. If the deadline has been
+ * reached, calls HandleTimer(), then either deactivates (one-shot) or advances the
+ * next deadline (periodic).
+ *
+ * @note The caller must hold @c time_lock and @c sUserTimerLock.
+ */
 void
 TeamUserTimeUserTimer::Check()
 {
@@ -891,6 +1249,11 @@ TeamUserTimeUserTimer::Check()
 // #pragma mark - ThreadTimeUserTimer
 
 
+/**
+ * @brief Constructs a ThreadTimeUserTimer for the given thread.
+ *
+ * @param threadID The ID of the thread whose CPU time this timer tracks.
+ */
 ThreadTimeUserTimer::ThreadTimeUserTimer(thread_id threadID)
 	:
 	fThreadID(threadID),
@@ -899,12 +1262,32 @@ ThreadTimeUserTimer::ThreadTimeUserTimer(thread_id threadID)
 }
 
 
+/**
+ * @brief Destroys the ThreadTimeUserTimer.
+ *
+ * @note @c fThread must be NULL at destruction; the timer must be deactivated
+ *       before deletion (asserted in debug builds).
+ */
 ThreadTimeUserTimer::~ThreadTimeUserTimer()
 {
 	ASSERT(fThread == NULL);
 }
 
 
+/**
+ * @brief Arms or disarms the timer against the target thread's CPU time.
+ *
+ * Cancels any active kernel timer, releases the current thread reference, then,
+ * if @p nextTime is not B_INFINITE_TIMEOUT, acquires a new reference to the
+ * thread, registers the timer via UserTimerActivated(), and, if the thread is
+ * currently running, calls Start() to arm the underlying kernel timer immediately.
+ *
+ * @param nextTime          Target CPU-time in microseconds (absolute or relative).
+ * @param interval          Repeat interval; 0 for one-shot.
+ * @param flags             B_ABSOLUTE_TIMEOUT or B_RELATIVE_TIMEOUT.
+ * @param _oldRemainingTime Output: remaining CPU-time of previous schedule.
+ * @param _oldInterval      Output: previous interval.
+ */
 void
 ThreadTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 	uint32 flags, bigtime_t& _oldRemainingTime, bigtime_t& _oldInterval)
@@ -969,6 +1352,16 @@ ThreadTimeUserTimer::Schedule(bigtime_t nextTime, bigtime_t interval,
 }
 
 
+/**
+ * @brief Returns current scheduling information for the thread CPU-time timer.
+ *
+ * Reads the thread's current CPU time under its @c time_lock within a sequential
+ * read lock to produce a consistent snapshot.
+ *
+ * @param _remainingTime Output: remaining CPU-time in microseconds, or B_INFINITE_TIMEOUT.
+ * @param _interval      Output: repeat interval, or 0.
+ * @param _overrunCount  Output: number of missed deliveries.
+ */
 void
 ThreadTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 	uint32& _overrunCount)
@@ -995,6 +1388,14 @@ ThreadTimeUserTimer::GetInfo(bigtime_t& _remainingTime, bigtime_t& _interval,
 
 	The caller must hold \c time_lock and \c sUserTimerLock.
 */
+/**
+ * @brief Deactivates the thread CPU-time timer, cancelling the kernel timer if needed.
+ *
+ * Cancels any scheduled kernel timer, calls UserTimerDeactivated() on the thread,
+ * releases the thread reference, and sets @c fThread to NULL.
+ *
+ * @note The caller must hold @c time_lock and @c sUserTimerLock.
+ */
 void
 ThreadTimeUserTimer::Deactivate()
 {
@@ -1022,6 +1423,16 @@ ThreadTimeUserTimer::Deactivate()
 
 	The caller must hold \c time_lock and \c sUserTimerLock.
 */
+/**
+ * @brief Arms the kernel timer when the tracked thread begins running.
+ *
+ * Reads the thread's current CPU time, optionally skips overdue periodic
+ * intervals, computes the wall-clock deadline as @c system_time() + remaining,
+ * and submits a one-shot absolute kernel timer.
+ *
+ * @note @c fScheduled must be @c false on entry (asserted). The caller must
+ *       hold @c time_lock and @c sUserTimerLock.
+ */
 void
 ThreadTimeUserTimer::Start()
 {
@@ -1060,6 +1471,15 @@ ThreadTimeUserTimer::Start()
 
 	The caller must hold \c sUserTimerLock.
 */
+/**
+ * @brief Cancels the kernel timer when the tracked thread stops running.
+ *
+ * Called by the scheduler when the thread is preempted or blocked, or when
+ * the timer itself is cancelled. Calls CancelTimer() and clears @c fScheduled.
+ *
+ * @note @c fScheduled must be @c true on entry (asserted). The caller must
+ *       hold @c sUserTimerLock.
+ */
 void
 ThreadTimeUserTimer::Stop()
 {
@@ -1085,6 +1505,17 @@ ThreadTimeUserTimer::Stop()
 
 	\param changedBy The value by which the clock has changed.
 */
+/**
+ * @brief Adjusts the target time when the thread's CPU clock is stepped.
+ *
+ * For relative timers, shifts @c fNextTime by @p changedBy. If the kernel
+ * timer is currently scheduled, performs a Stop()/Start() cycle to re-arm
+ * it with the updated deadline.
+ *
+ * @param changedBy Signed delta applied to the thread's CPU clock (new = old + changedBy).
+ *
+ * @note The caller must hold @c time_lock and @c sUserTimerLock.
+ */
 void
 ThreadTimeUserTimer::TimeWarped(bigtime_t changedBy)
 {
@@ -1104,6 +1535,15 @@ ThreadTimeUserTimer::TimeWarped(bigtime_t changedBy)
 }
 
 
+/**
+ * @brief Handles a fired thread CPU-time timer event.
+ *
+ * Delegates to UserTimer::HandleTimer() for event firing. For periodic timers,
+ * advances the start time and re-arms the kernel timer via Start(). For one-shot
+ * timers, deactivates and releases the thread reference.
+ *
+ * @note Must be called with @c sUserTimerLock held for writing.
+ */
 void
 ThreadTimeUserTimer::HandleTimer()
 {
@@ -1127,11 +1567,20 @@ ThreadTimeUserTimer::HandleTimer()
 // #pragma mark - UserTimerList
 
 
+/**
+ * @brief Constructs an empty UserTimerList.
+ */
 UserTimerList::UserTimerList()
 {
 }
 
 
+/**
+ * @brief Destroys the UserTimerList.
+ *
+ * @note The list must be empty at destruction (asserted in debug builds).
+ *       Call DeleteTimers() before destroying.
+ */
 UserTimerList::~UserTimerList()
 {
 	ASSERT(fTimers.IsEmpty());
@@ -1144,6 +1593,17 @@ UserTimerList::~UserTimerList()
 	\return The user timer with the given ID or \c NULL, if there is no such
 		timer.
 */
+/**
+ * @brief Looks up a timer by its numeric ID.
+ *
+ * Performs a linear scan of the internal timer list.
+ *
+ * @param id The timer ID to look for.
+ * @return Pointer to the matching UserTimer, or NULL if not found.
+ *
+ * @note The list is maintained in ascending ID order; a future optimisation
+ *       could use binary search or a hash map.
+ */
 UserTimer*
 UserTimerList::TimerFor(int32 id) const
 {
@@ -1162,6 +1622,18 @@ UserTimerList::TimerFor(int32 id) const
 
 	\param timer The timer to be added.
 */
+/**
+ * @brief Inserts a timer into the list, assigning a free ID if none is set.
+ *
+ * For timers with a pre-assigned non-negative ID (default/pre-defined timers),
+ * finds the correct sorted insertion point and panics if a duplicate is detected.
+ * For user-defined timers (ID < 0), allocates the lowest available ID starting
+ * from USER_TIMER_FIRST_USER_DEFINED_ID.
+ *
+ * @param timer The timer to add; its ID may be -1 (auto-assign) or a fixed value.
+ *
+ * @note The list remains sorted by ascending timer ID after insertion.
+ */
 void
 UserTimerList::AddTimer(UserTimer* timer)
 {
@@ -1208,6 +1680,17 @@ UserTimerList::AddTimer(UserTimer* timer)
 		otherwise all timers are deleted.
 	\return The number of user-defined timers that were removed and deleted.
 */
+/**
+ * @brief Cancels and deletes timers from the list.
+ *
+ * Iterates the list; for each qualifying timer, removes it from the list,
+ * calls Cancel(), and deletes the object.
+ *
+ * @param userDefinedOnly If @c true, only timers with IDs >=
+ *                        USER_TIMER_FIRST_USER_DEFINED_ID are deleted;
+ *                        pre-defined (system) timers are skipped.
+ * @return The number of user-defined timers that were deleted.
+ */
 int32
 UserTimerList::DeleteTimers(bool userDefinedOnly)
 {
@@ -1234,6 +1717,27 @@ UserTimerList::DeleteTimers(bool userDefinedOnly)
 // #pragma mark - private
 
 
+/**
+ * @brief Internal helper: allocates and fully initialises a UserTimer of the appropriate subclass.
+ *
+ * Selects the concrete timer class based on @p clockID, creates the associated
+ * UserEvent (signal or thread-creation) from @p event, assigns a pre-defined or
+ * auto-generated ID, and inserts the timer into the team or thread's timer list.
+ *
+ * @param clockID            POSIX clock ID (CLOCK_MONOTONIC, CLOCK_REALTIME, etc.,
+ *                           or a team-ID-encoded CPU clock).
+ * @param timerID            Pre-assigned timer ID, or -1 to auto-allocate.
+ * @param team               The owning team; must not be NULL for team-clock timers.
+ * @param thread             The owning thread, or NULL for team timers.
+ * @param flags              USER_TIMER_SIGNAL_THREAD and similar modifier flags.
+ * @param event              The sigevent structure describing the notification method.
+ * @param threadAttributes   Thread-creation attributes for SIGEV_THREAD; may be NULL.
+ * @param isDefaultEvent     If @c true, the timer ID is used as @c sigev_value.
+ * @retval >= 0              The newly assigned timer ID on success.
+ * @retval B_NO_MEMORY       Allocation of the timer or event object failed.
+ * @retval B_BAD_VALUE       Invalid clock ID, signal number, or NULL team for a team clock.
+ * @retval B_NOT_ALLOWED     Attempt to create a timer against the kernel team's clock.
+ */
 static int32
 create_timer(clockid_t clockID, int32 timerID, Team* team, Thread* thread,
 	uint32 flags, const struct sigevent& event,
@@ -1379,6 +1883,17 @@ create_timer(clockid_t clockID, int32 timerID, Team* team, Thread* thread,
 	\param changedBy The value by which the CPU time clock has changed
 		(new = old + changedBy).
 */
+/**
+ * @brief Notifies all ThreadTimeUserTimers of a step in a thread's CPU clock.
+ *
+ * Iterates the thread's CPU-time timer list and calls TimeWarped() on each,
+ * so each timer can adjust its deadline accordingly.
+ *
+ * @param thread    Thread whose CPU clock was adjusted.
+ * @param changedBy Signed delta (new_clock = old_clock + changedBy).
+ *
+ * @note The caller must hold @c time_lock.
+ */
 static void
 thread_clock_changed(Thread* thread, bigtime_t changedBy)
 {
@@ -1398,6 +1913,16 @@ thread_clock_changed(Thread* thread, bigtime_t changedBy)
 	\param changedBy The value by which the CPU time clock has changed
 		(new = old + changedBy).
 */
+/**
+ * @brief Notifies all TeamTimeUserTimers of a step in a team's CPU clock.
+ *
+ * Iterates the team's CPU-time timer list and calls TimeWarped() on each timer.
+ *
+ * @param team      Team whose CPU clock was adjusted.
+ * @param changedBy Signed delta (new_clock = old_clock + changedBy).
+ *
+ * @note The caller must hold @c time_lock.
+ */
 static void
 team_clock_changed(Team* team, bigtime_t changedBy)
 {
@@ -1420,6 +1945,18 @@ team_clock_changed(Team* team, bigtime_t changedBy)
 	\param thread The thread whose pre-defined timers shall be created.
 	\return \c B_OK, when everything when fine, another error code otherwise.
 */
+/**
+ * @brief Creates the pre-defined SIGALRM timer for a new thread.
+ *
+ * Creates a CLOCK_MONOTONIC one-shot timer (USER_TIMER_REAL_TIME_ID) that
+ * sends SIGALRM to the thread when it fires. Called during thread creation
+ * before the thread is added to its team.
+ *
+ * @param team   The thread's owning team (thread may not yet be in the team).
+ * @param thread The thread for which to create the pre-defined timer.
+ * @retval B_OK  Timer created successfully.
+ * @retval <0    Error code from create_timer() (e.g. B_NO_MEMORY).
+ */
 status_t
 user_timer_create_thread_timers(Team* team, Thread* thread)
 {
@@ -1442,6 +1979,17 @@ user_timer_create_thread_timers(Team* team, Thread* thread)
 	\param team The team whose pre-defined timers shall be created.
 	\return \c B_OK, when everything when fine, another error code otherwise.
 */
+/**
+ * @brief Creates the three pre-defined timers (SIGALRM, SIGPROF, SIGVTALRM) for a team.
+ *
+ * - USER_TIMER_REAL_TIME_ID        — CLOCK_MONOTONIC, delivers SIGALRM.
+ * - USER_TIMER_TEAM_TOTAL_TIME_ID  — CLOCK_PROCESS_CPUTIME_ID, delivers SIGPROF.
+ * - USER_TIMER_TEAM_USER_TIME_ID   — CLOCK_PROCESS_USER_CPUTIME_ID, delivers SIGVTALRM.
+ *
+ * @param team The team for which to create the pre-defined timers.
+ * @retval B_OK  All timers created successfully.
+ * @retval <0    Error code from create_timer() (e.g. B_NO_MEMORY).
+ */
 status_t
 user_timer_create_team_timers(Team* team)
 {
@@ -1477,6 +2025,19 @@ user_timer_create_team_timers(Team* team)
 }
 
 
+/**
+ * @brief Reads the current value of the specified POSIX clock.
+ *
+ * Supports CLOCK_MONOTONIC, CLOCK_REALTIME, CLOCK_THREAD_CPUTIME_ID,
+ * CLOCK_PROCESS_CPUTIME_ID, CLOCK_PROCESS_USER_CPUTIME_ID, and encoded
+ * team/thread CPU clocks (CPUCLOCK_TEAM / CPUCLOCK_THREAD bit patterns).
+ *
+ * @param clockID  The POSIX clock ID to read.
+ * @param _time    Output: current clock value in microseconds.
+ * @retval B_OK          Clock read successfully.
+ * @retval B_BAD_VALUE   Unknown clock ID or referenced thread/team does not exist.
+ * @retval B_NOT_ALLOWED Attempt to read the kernel team's CPU clock.
+ */
 status_t
 user_timer_get_clock(clockid_t clockID, bigtime_t& _time)
 {
@@ -1550,6 +2111,13 @@ user_timer_get_clock(clockid_t clockID, bigtime_t& _time)
 }
 
 
+/**
+ * @brief Called when the real-time clock is changed; adjusts all absolute real-time timers.
+ *
+ * Holds both @c sUserTimerLock and @c sAbsoluteRealTimeTimersLock, then calls
+ * TimeWarped() on every timer in @c sAbsoluteRealTimeTimers so each one
+ * recomputes its monotonic-clock deadline to match the new wall-clock value.
+ */
 void
 user_timer_real_time_clock_changed()
 {
@@ -1565,6 +2133,17 @@ user_timer_real_time_clock_changed()
 }
 
 
+/**
+ * @brief Stops CPU-time timers when a thread is being preempted.
+ *
+ * Stops all ThreadTimeUserTimers for @p thread, and, if the next thread
+ * belongs to a different team, updates all TeamTimeUserTimers for the
+ * outgoing team (decrementing the running-thread count and cancelling the
+ * kernel timer if it drops to zero).
+ *
+ * @param thread     The thread being preempted/unscheduled.
+ * @param nextThread The thread that will run next, or NULL.
+ */
 void
 user_timer_stop_cpu_timers(Thread* thread, Thread* nextThread)
 {
@@ -1586,6 +2165,17 @@ user_timer_stop_cpu_timers(Thread* thread, Thread* nextThread)
 }
 
 
+/**
+ * @brief Restarts CPU-time timers when a thread is scheduled onto a CPU.
+ *
+ * If the previously running thread belongs to a different team, updates all
+ * TeamTimeUserTimers for the incoming team (incrementing the running-thread
+ * count and arming the kernel timer if it was zero before). Then starts all
+ * ThreadTimeUserTimers for @p thread.
+ *
+ * @param thread         The thread being scheduled onto a CPU.
+ * @param previousThread The thread that ran before, or NULL.
+ */
 void
 user_timer_continue_cpu_timers(Thread* thread, Thread* previousThread)
 {
@@ -1607,6 +2197,14 @@ user_timer_continue_cpu_timers(Thread* thread, Thread* previousThread)
 }
 
 
+/**
+ * @brief Polls all user-mode CPU-time timers for @p team and fires any that have elapsed.
+ *
+ * Called from the scheduler after updating user-mode CPU accounting for @p team.
+ * Iterates the team's TeamUserTimeUserTimerList and calls Check() on each timer.
+ *
+ * @param team The team whose user-CPU-time timers should be checked.
+ */
 void
 user_timer_check_team_user_timers(Team* team)
 {
@@ -1621,6 +2219,15 @@ user_timer_check_team_user_timers(Team* team)
 // #pragma mark - syscalls
 
 
+/**
+ * @brief Syscall: reads the current value of a POSIX clock and copies it to userland.
+ *
+ * @param clockID  POSIX clock ID to query.
+ * @param userTime Userland pointer to a bigtime_t that receives the result.
+ * @retval B_OK          Clock value written to @p userTime.
+ * @retval B_BAD_VALUE   Invalid clock ID or non-existent thread/team.
+ * @retval B_BAD_ADDRESS @p userTime is NULL, not a user address, or the copy failed.
+ */
 status_t
 _user_get_clock(clockid_t clockID, bigtime_t* userTime)
 {
@@ -1640,6 +2247,20 @@ _user_get_clock(clockid_t clockID, bigtime_t* userTime)
 }
 
 
+/**
+ * @brief Syscall: sets a POSIX clock to the specified value.
+ *
+ * Supports CLOCK_REALTIME (root only), CLOCK_THREAD_CPUTIME_ID, and encoded
+ * team/thread CPU clocks. CLOCK_MONOTONIC and CLOCK_PROCESS_USER_CPUTIME_ID
+ * are read-only and return B_BAD_VALUE.
+ *
+ * @param clockID POSIX clock ID to set.
+ * @param time    New clock value in microseconds.
+ * @retval B_OK          Clock updated successfully.
+ * @retval B_BAD_VALUE   Read-only or unknown clock; invalid thread/team ID.
+ * @retval B_NOT_ALLOWED Caller is not root (for CLOCK_REALTIME) or tried to
+ *                       adjust the kernel team's clock.
+ */
 status_t
 _user_set_clock(clockid_t clockID, bigtime_t time)
 {
@@ -1724,6 +2345,20 @@ _user_set_clock(clockid_t clockID, bigtime_t time)
 }
 
 
+/**
+ * @brief Syscall: retrieves a CPU clock ID for a given team or thread.
+ *
+ * Encodes the team or thread ID together with the CPUCLOCK_TEAM or
+ * CPUCLOCK_THREAD bit pattern and writes the resulting clockid_t to userland.
+ *
+ * @param id          The team or thread ID to look up.
+ * @param which       TEAM_ID or THREAD_ID, selecting which namespace to use.
+ * @param userclockID Userland pointer to receive the encoded clock ID.
+ * @retval B_OK          Clock ID written to @p userclockID.
+ * @retval B_BAD_VALUE   @p which is not TEAM_ID or THREAD_ID, or the
+ *                       referenced entity does not exist.
+ * @retval B_BAD_ADDRESS @p userclockID is not a valid user address.
+ */
 status_t
 _user_get_cpuclockid(thread_id id, int32 which, clockid_t* userclockID)
 {
@@ -1752,6 +2387,24 @@ _user_get_cpuclockid(thread_id id, int32 which, clockid_t* userclockID)
 }
 
 
+/**
+ * @brief Syscall: creates a new POSIX timer and returns its ID.
+ *
+ * Copies the sigevent structure (and optional thread-creation attributes) from
+ * userland, resolves the target thread if @p threadID is non-negative, and
+ * delegates to create_timer().
+ *
+ * @param clockID              POSIX clock ID for the new timer.
+ * @param threadID             Thread to associate the timer with, or negative for team.
+ * @param flags                USER_TIMER_SIGNAL_THREAD and similar modifier flags.
+ * @param userEvent            Userland pointer to struct sigevent, or NULL for defaults.
+ * @param userThreadAttributes Userland thread-creation attributes for SIGEV_THREAD, or NULL.
+ * @retval >= 0        The new timer's ID on success.
+ * @retval B_BAD_ADDRESS @p userEvent or @p userThreadAttributes is an invalid address.
+ * @retval B_BAD_THREAD_ID @p threadID is non-negative but the thread does not exist.
+ * @retval B_NO_MEMORY Allocation failed.
+ * @retval B_BAD_VALUE Other invalid argument.
+ */
 int32
 _user_create_timer(clockid_t clockID, thread_id threadID, uint32 flags,
 	const struct sigevent* userEvent,
@@ -1799,6 +2452,19 @@ _user_create_timer(clockid_t clockID, thread_id threadID, uint32 flags,
 }
 
 
+/**
+ * @brief Syscall: deletes a user-created POSIX timer.
+ *
+ * Only user-defined timers (ID >= USER_TIMER_FIRST_USER_DEFINED_ID) may be
+ * deleted; attempting to delete a pre-defined timer returns B_BAD_VALUE.
+ *
+ * @param timerID  The ID of the timer to delete.
+ * @param threadID Thread that owns the timer, or negative for a team timer.
+ * @retval B_OK          Timer cancelled, removed, and deleted.
+ * @retval B_BAD_VALUE   @p timerID is a pre-defined timer or does not exist.
+ * @retval B_BAD_THREAD_ID @p threadID is non-negative but the thread does not exist.
+ * @retval B_NOT_ALLOWED The thread does not belong to the current team.
+ */
 status_t
 _user_delete_timer(int32 timerID, thread_id threadID)
 {
@@ -1827,6 +2493,22 @@ _user_delete_timer(int32 timerID, thread_id threadID)
 }
 
 
+/**
+ * @brief Syscall: queries the current state of a POSIX timer.
+ *
+ * Retrieves the remaining time, interval, and overrun count of the specified
+ * timer, sanitises the remaining time to at least 1 µs if the timer has already
+ * elapsed, and copies the result to userland.
+ *
+ * @param timerID  The timer ID to query.
+ * @param threadID Thread that owns the timer, or negative for a team timer.
+ * @param userInfo Userland pointer to a user_timer_info struct to receive the result.
+ * @retval B_OK          Info written to @p userInfo.
+ * @retval B_BAD_VALUE   Timer not found.
+ * @retval B_BAD_THREAD_ID @p threadID is non-negative but does not exist.
+ * @retval B_NOT_ALLOWED Thread does not belong to the current team.
+ * @retval B_BAD_ADDRESS @p userInfo is NULL or not a valid user address.
+ */
 status_t
 _user_get_timer(int32 timerID, thread_id threadID,
 	struct user_timer_info* userInfo)
@@ -1860,6 +2542,25 @@ _user_get_timer(int32 timerID, thread_id threadID,
 }
 
 
+/**
+ * @brief Syscall: arms or disarms a POSIX timer and optionally returns the previous state.
+ *
+ * Validates the start time and interval, looks up the timer, calls Schedule()
+ * to (re)arm it, sanitises the old remaining time, and copies the previous
+ * timer state to userland if @p userOldInfo is non-NULL.
+ *
+ * @param timerID     The timer ID to modify.
+ * @param threadID    Thread that owns the timer, or negative for a team timer.
+ * @param startTime   Time of first fire (absolute or relative, per @p flags); must be >= 0.
+ * @param interval    Repeat interval in microseconds (0 for one-shot); must be >= 0.
+ * @param flags       B_ABSOLUTE_TIMEOUT or B_RELATIVE_TIMEOUT.
+ * @param userOldInfo Userland pointer for the previous timer state, or NULL.
+ * @retval B_OK          Timer rescheduled successfully.
+ * @retval B_BAD_VALUE   @p startTime or @p interval is negative, or timer not found.
+ * @retval B_BAD_THREAD_ID @p threadID is non-negative but does not exist.
+ * @retval B_NOT_ALLOWED Thread does not belong to the current team.
+ * @retval B_BAD_ADDRESS @p userOldInfo is not a valid user address.
+ */
 status_t
 _user_set_timer(int32 timerID, thread_id threadID, bigtime_t startTime,
 	bigtime_t interval, uint32 flags, struct user_timer_info* userOldInfo)

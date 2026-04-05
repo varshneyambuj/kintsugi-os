@@ -1,11 +1,39 @@
 /*
- * Copyright 2004-2008, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2008-2017, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2008, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008-2017, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
 
 
-/*! A simple class wrapping a path. Has a fixed-sized buffer. */
+/**
+ * @file KPath.cpp
+ * @brief Fixed-buffer path string helper for use in kernel VFS code.
+ *
+ * KPath wraps a fixed-size kernel buffer and provides path manipulation
+ * helpers: appending components, getting/setting the leaf name, locking
+ * the buffer for direct use, and querying the current path length.
+ *
+ * @see vfs.cpp
+ */
 
 
 #include <fs/KPath.h>
@@ -28,6 +56,7 @@ extern object_cache* sPathNameCache;
 #endif
 
 
+/** @brief Constructs a KPath with an empty path and a caller-specified buffer size. */
 KPath::KPath(size_t bufferSize)
 	:
 	fBuffer(NULL),
@@ -42,6 +71,7 @@ KPath::KPath(size_t bufferSize)
 }
 
 
+/** @brief Constructs a KPath initialised to @a path with the given flags and buffer size. */
 KPath::KPath(const char* path, int32 flags, size_t bufferSize)
 	:
 	fBuffer(NULL),
@@ -56,6 +86,7 @@ KPath::KPath(const char* path, int32 flags, size_t bufferSize)
 }
 
 
+/** @brief Copy-constructs a KPath as a deep copy of @a other. */
 KPath::KPath(const KPath& other)
 	:
 	fBuffer(NULL),
@@ -70,12 +101,19 @@ KPath::KPath(const KPath& other)
 }
 
 
+/** @brief Destructor — releases the internal path buffer. */
 KPath::~KPath()
 {
 	_FreeBuffer();
 }
 
 
+/**
+ * @brief Reinitialises this object to @a path with the specified flags and buffer size.
+ *
+ * If the buffer size differs from the current one the old buffer is freed and a new
+ * one is allocated. Passing @c NULL for @a path clears the stored path.
+ */
 status_t
 KPath::SetTo(const char* path, int32 flags, size_t bufferSize)
 {
@@ -104,6 +142,11 @@ KPath::SetTo(const char* path, int32 flags, size_t bufferSize)
 }
 
 
+/**
+ * @brief Takes ownership of the buffer held by @a other, leaving @a other empty.
+ *
+ * More efficient than copying when the caller no longer needs the source object.
+ */
 void
 KPath::Adopt(KPath& other)
 {
@@ -125,6 +168,12 @@ KPath::Adopt(KPath& other)
 }
 
 
+/**
+ * @brief Returns @c B_OK if the object is properly initialised, an error otherwise.
+ *
+ * Returns @c B_NO_MEMORY if a previous allocation failed, or @c B_NO_INIT if the
+ * object has never been initialised.
+ */
 status_t
 KPath::InitCheck() const
 {
@@ -135,12 +184,14 @@ KPath::InitCheck() const
 }
 
 
-/*!	\brief Sets the buffer to \a path.
-
-	\param flags Understands the following two options:
-		- \c NORMALIZE
-		- \c TRAVERSE_LEAF_LINK
-*/
+/**
+ * @brief Sets the stored path string to @a path, optionally normalising it.
+ *
+ * @param path   The path to store, or @c NULL to clear the buffer.
+ * @param flags  Bitfield; understands @c NORMALIZE and @c TRAVERSE_LEAF_LINK.
+ * @return @c B_OK on success, @c B_BUFFER_OVERFLOW if the path is too long, or
+ *         another error code if normalisation fails.
+ */
 status_t
 KPath::SetPath(const char* path, int32 flags)
 {
@@ -187,6 +238,10 @@ KPath::SetPath(const char* path, int32 flags)
 }
 
 
+/**
+ * @brief Returns a pointer to the stored path string, or @c NULL if the object
+ *        was initialised with a null path.
+ */
 const char*
 KPath::Path() const
 {
@@ -194,11 +249,18 @@ KPath::Path() const
 }
 
 
-/*!	\brief Locks the buffer for external changes.
-
-	\param force In lazy mode, this will allocate a buffer when set.
-		Otherwise, \c NULL will be returned if set to NULL.
-*/
+/**
+ * @brief Locks the internal buffer for direct external modification.
+ *
+ * The caller may write directly into the returned pointer up to BufferSize()
+ * bytes. Call UnlockBuffer() once the modifications are complete so the stored
+ * path length is recalculated.
+ *
+ * @param force  When @c true and the object is in lazy mode, allocate a buffer
+ *               even if the path is currently null.
+ * @return Pointer to the writable buffer, or @c NULL if already locked or not
+ *         initialised.
+ */
 char*
 KPath::LockBuffer(bool force)
 {
@@ -219,6 +281,12 @@ KPath::LockBuffer(bool force)
 }
 
 
+/**
+ * @brief Unlocks the buffer after direct external modification, recomputing the
+ *        stored path length and trimming any trailing slashes.
+ *
+ * Panics (in kernel mode) if the buffer was not previously locked.
+ */
 void
 KPath::UnlockBuffer()
 {
@@ -244,6 +312,13 @@ KPath::UnlockBuffer()
 }
 
 
+/**
+ * @brief Detaches and returns the underlying buffer, transferring ownership to
+ *        the caller.
+ *
+ * In kernel mode the slab-allocated buffer is copied into a plain malloc block
+ * first so the caller can free() it safely.
+ */
 char*
 KPath::DetachBuffer()
 {
@@ -267,6 +342,12 @@ KPath::DetachBuffer()
 }
 
 
+/**
+ * @brief Returns a pointer to the leaf (final component) of the stored path.
+ *
+ * Scans the buffer backwards for the last '/' separator. If none is found the
+ * entire path is the leaf. Returns @c NULL when the buffer is uninitialised.
+ */
 const char*
 KPath::Leaf() const
 {
@@ -282,6 +363,12 @@ KPath::Leaf() const
 }
 
 
+/**
+ * @brief Replaces the leaf component of the stored path with @a newLeaf.
+ *
+ * Strips the existing leaf from the buffer and, if @a newLeaf is non-null,
+ * appends it via Append(). Passing @c NULL just removes the current leaf.
+ */
 status_t
 KPath::ReplaceLeaf(const char* newLeaf)
 {
@@ -304,6 +391,13 @@ KPath::ReplaceLeaf(const char* newLeaf)
 }
 
 
+/**
+ * @brief Removes the leaf component from the stored path, exposing the parent
+ *        directory.
+ *
+ * @return @c true on success, @c false when the object is uninitialised or the
+ *         path cannot be shortened further (e.g. already at the root).
+ */
 bool
 KPath::RemoveLeaf()
 {
@@ -322,6 +416,15 @@ KPath::RemoveLeaf()
 }
 
 
+/**
+ * @brief Appends @a component to the stored path.
+ *
+ * When @a isComponent is @c true a '/' separator is inserted automatically if
+ * neither the current path ends with one nor @a component begins with one.
+ *
+ * @return @c B_OK on success, @c B_BUFFER_OVERFLOW if the result would exceed
+ *         the buffer, or @c B_BAD_VALUE / @c B_NO_INIT on invalid state.
+ */
 status_t
 KPath::Append(const char* component, bool isComponent)
 {
@@ -356,6 +459,13 @@ KPath::Append(const char* component, bool isComponent)
 }
 
 
+/**
+ * @brief Normalises the stored path in-place by resolving "." and ".." components
+ *        and, optionally, traversing a leaf symlink.
+ *
+ * @param traverseLeafLink  When @c true, a symlink at the final path component
+ *                          is resolved as well.
+ */
 status_t
 KPath::Normalize(bool traverseLeafLink)
 {
@@ -368,6 +478,10 @@ KPath::Normalize(bool traverseLeafLink)
 }
 
 
+/**
+ * @brief Copy-assignment operator — performs a deep copy of @a other into this
+ *        object, reallocating the buffer if necessary.
+ */
 KPath&
 KPath::operator=(const KPath& other)
 {
@@ -380,6 +494,9 @@ KPath::operator=(const KPath& other)
 }
 
 
+/**
+ * @brief Assigns a plain C string to this object by calling SetPath().
+ */
 KPath&
 KPath::operator=(const char* path)
 {
@@ -388,6 +505,9 @@ KPath::operator=(const char* path)
 }
 
 
+/**
+ * @brief Returns @c true when this object's path is equal to @a other's path.
+ */
 bool
 KPath::operator==(const KPath& other) const
 {
@@ -400,6 +520,9 @@ KPath::operator==(const KPath& other) const
 }
 
 
+/**
+ * @brief Returns @c true when the stored path equals the plain C string @a path.
+ */
 bool
 KPath::operator==(const char* path) const
 {
@@ -410,6 +533,9 @@ KPath::operator==(const char* path) const
 }
 
 
+/**
+ * @brief Returns @c true when this object's path differs from @a other's path.
+ */
 bool
 KPath::operator!=(const KPath& other) const
 {
@@ -417,6 +543,10 @@ KPath::operator!=(const KPath& other) const
 }
 
 
+/**
+ * @brief Returns @c true when the stored path differs from the plain C string
+ *        @a path.
+ */
 bool
 KPath::operator!=(const char* path) const
 {
@@ -424,6 +554,8 @@ KPath::operator!=(const char* path) const
 }
 
 
+/** @brief Allocates the internal path buffer, using the slab allocator in kernel
+ *         mode when the buffer size equals @c B_PATH_NAME_LENGTH. */
 status_t
 KPath::_AllocateBuffer()
 {
@@ -446,6 +578,8 @@ KPath::_AllocateBuffer()
 }
 
 
+/** @brief Releases the internal path buffer back to the slab or heap as
+ *         appropriate, and sets fBuffer to @c NULL. */
 void
 KPath::_FreeBuffer()
 {
@@ -459,6 +593,8 @@ KPath::_FreeBuffer()
 }
 
 
+/** @brief Calls vfs_normalize_path() to resolve the given @a path into the
+ *         internal buffer, updating fPathLength on success. */
 status_t
 KPath::_Normalize(const char* path, bool traverseLeafLink)
 {
@@ -478,6 +614,8 @@ KPath::_Normalize(const char* path, bool traverseLeafLink)
 }
 
 
+/** @brief Removes any trailing '/' characters from the buffer, leaving at most
+ *         a single '/' for the root path. */
 void
 KPath::_ChopTrailingSlashes()
 {
@@ -486,4 +624,3 @@ KPath::_ChopTrailingSlashes()
 			fBuffer[--fPathLength] = '\0';
 	}
 }
-

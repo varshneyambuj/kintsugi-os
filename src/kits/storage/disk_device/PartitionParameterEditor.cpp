@@ -1,7 +1,40 @@
 /*
- * Copyright 2013, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2009, Bryce Groff, brycegroff@gmail.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2009, Bryce Groff, brycegroff@gmail.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file PartitionParameterEditor.cpp
+ * @brief Base class for GUI editors that collect partition parameters.
+ *
+ * BPartitionParameterEditor provides the interface that disk system add-ons
+ * implement to present a user interface for gathering partition parameters
+ * (e.g. during initialisation or child creation). The base class supplies
+ * no-op or sensible-default implementations for all virtual methods so that
+ * subclasses only need to override the methods relevant to their use case.
+ *
+ * @see BDiskSystemAddOn
+ * @see BPartitionHandle
  */
 
 #include <PartitionParameterEditor.h>
@@ -10,6 +43,9 @@
 #include <View.h>
 
 
+/**
+ * @brief Constructs a BPartitionParameterEditor with no modification message.
+ */
 BPartitionParameterEditor::BPartitionParameterEditor()
 	:
 	fModificationMessage(NULL)
@@ -17,32 +53,42 @@ BPartitionParameterEditor::BPartitionParameterEditor()
 }
 
 
+/**
+ * @brief Destroys the BPartitionParameterEditor and frees the modification
+ *        message if one was set.
+ */
 BPartitionParameterEditor::~BPartitionParameterEditor()
 {
 	delete fModificationMessage;
 }
 
 
-/*!	\brief Sets the controls of the editor to match the parameters
-		of the given \a partition.
-
-	For \c B_CREATE_PARAMETER_EDITOR editors, this will be the parent
-	partition.
-*/
+/**
+ * @brief Sets the controls of the editor to match the parameters of the given
+ *        partition.
+ *
+ * For B_CREATE_PARAMETER_EDITOR editors, the supplied partition is the parent
+ * partition. The base class implementation is a no-op; subclasses should
+ * override this to populate their controls.
+ *
+ * @param partition The partition whose current parameters should be reflected
+ *                  in the editor's controls.
+ */
 void
 BPartitionParameterEditor::SetTo(BPartition* partition)
 {
 }
 
 
-/*!	\brief Sets the modification message.
-
-	This message needs to be sent whenever an internal parameter changed.
-	This call takes over ownership of the provided message.
-
-	The message may contain a string field "parameter" with the value set
-	to the name of the changed parameter.
-*/
+/**
+ * @brief Sets the modification message to be sent when a parameter changes.
+ *
+ * Takes ownership of the provided message. The message may include a string
+ * field named "parameter" identifying which parameter changed.
+ *
+ * @param message The BMessage to send on parameter changes, or NULL to clear
+ *                any previously set message.
+ */
 void
 BPartitionParameterEditor::SetModificationMessage(BMessage* message)
 {
@@ -51,8 +97,13 @@ BPartitionParameterEditor::SetModificationMessage(BMessage* message)
 }
 
 
-/*!	\brief The currently set modification message, if any.
-*/
+/**
+ * @brief Returns the currently set modification message.
+ *
+ * The returned pointer is owned by the editor; callers must not delete it.
+ *
+ * @return Pointer to the current modification BMessage, or NULL if none is set.
+ */
 BMessage*
 BPartitionParameterEditor::ModificationMessage() const
 {
@@ -60,20 +111,16 @@ BPartitionParameterEditor::ModificationMessage() const
 }
 
 
-/*!	\brief Returns a view containing the controls needed for editing the
-		   parameters.
-
-	To be overridden by derived classes.
-	The base class version returns \c NULL.
-
-	The returned BView is added to a window occasionally and removed, when
-	editing is done. The view belongs to the editor and needs to be deleted
-	by it. Subsequent calls to this method may return the same view, or each
-	time delete the old one and return a new one.
-
-	\return A view containing the controls needed for editing the parameters.
-			\c NULL can be returned, if no parameters are needed.
-*/
+/**
+ * @brief Returns a view containing the controls for editing parameters.
+ *
+ * To be overridden by derived classes. The returned BView is added to a
+ * window temporarily and removed when editing is done; it remains owned by
+ * the editor. Subsequent calls may return the same view or a new one.
+ * The base class returns NULL, indicating no UI is required.
+ *
+ * @return A BView with the editing controls, or NULL if no UI is needed.
+ */
 BView*
 BPartitionParameterEditor::View()
 {
@@ -81,16 +128,15 @@ BPartitionParameterEditor::View()
 }
 
 
-/*!	\brief Called when the user finishes editing the parameters.
-
-	To be overridden by derived classes.
-	The base class version returns \c true.
-
-	The method is supposed to check whether the parameters the user set,
-	are valid, and, if so, return \c true. Otherwise return \c false.
-
-	\return \c true, if the current parameters are valid, \c false otherwise.
-*/
+/**
+ * @brief Validates the parameters currently set in the editor.
+ *
+ * Called when the user confirms editing. Subclasses should override this to
+ * verify that the current control state represents a valid parameter set and
+ * return false if it does not. The base class always returns true.
+ *
+ * @return true if the current parameters are valid, false otherwise.
+ */
 bool
 BPartitionParameterEditor::ValidateParameters() const
 {
@@ -98,20 +144,18 @@ BPartitionParameterEditor::ValidateParameters() const
 }
 
 
-/*!	\brief Called when a parameter has changed.
-
-	Each editor type comes with a number of predefined parameters that
-	may be changed from the outside while the editor is open. You can
-	either accept the changes, and update your controls correspondingly,
-	or else reject the change by returning an appropriate error code.
-
-	To be overridden by derived classes.
-	The base class version returns B_OK.
-
-	\param name The name of the changed parameter.
-	\param variant The new value of the parameter.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Notifies the editor that an external parameter has changed.
+ *
+ * Allows the caller to push a new value for a named parameter into the
+ * editor. Subclasses may accept the change and update their controls, or
+ * reject it by returning an appropriate error code. The base class returns
+ * B_NOT_SUPPORTED.
+ *
+ * @param name    The name of the changed parameter.
+ * @param variant The new value for the parameter.
+ * @return B_OK if the change was accepted, or an error code otherwise.
+ */
 status_t
 BPartitionParameterEditor::ParameterChanged(const char* name,
 	const BVariant& variant)
@@ -120,15 +164,16 @@ BPartitionParameterEditor::ParameterChanged(const char* name,
 }
 
 
-/*!	\brief Returns the edited parameters.
-
-	To be overridden by derived classes.
-	The base class version returns an empty string.
-
-	\param parameters A BString to be set to the edited parameters.
-
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Returns the parameters currently represented by the editor's controls.
+ *
+ * To be overridden by derived classes. The base class sets parameters to an
+ * empty string and returns B_OK.
+ *
+ * @param parameters Output BString to be set to the serialised parameter data.
+ * @return B_OK on success, or an error code if the parameters could not be
+ *         retrieved.
+ */
 status_t
 BPartitionParameterEditor::GetParameters(BString& parameters)
 {

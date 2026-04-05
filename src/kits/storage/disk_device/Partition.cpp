@@ -1,6 +1,40 @@
 /*
- * Copyright 2003-2007, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2007, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file Partition.cpp
+ * @brief Implementation of the BPartition class.
+ *
+ * BPartition represents a single partition within a disk device hierarchy.
+ * It provides accessors for partition metadata (offset, size, type, name,
+ * flags), operations for mounting and unmounting volumes, and a rich set
+ * of modification methods (resize, move, rename, initialize, create/delete
+ * children) that operate on a shadow structure when the device is prepared
+ * for modifications via BDiskDevice::PrepareModifications().
+ *
+ * @see BDiskDevice
+ * @see BDiskDeviceVisitor
  */
 
 
@@ -46,27 +80,25 @@ using std::nothrow;
 static const char *skAutoCreatePrefix = "_HaikuAutoCreated";
 
 
-/*!	\class BPartition
-	\brief A BPartition object represent a partition and provides a lot of
-		   methods to retrieve information about it and some to manipulate it.
+/**
+ * @brief A BPartition object represents a partition and provides methods to
+ *        retrieve information about it and some to manipulate it.
+ *
+ * Not all BPartitions represent actual on-disk partitions. Some exist only
+ * to make all devices fit smoothly into the framework (e.g. for floppies,
+ * see IsVirtual()), others represent merely partition slots (see IsEmpty()).
+ */
 
-	Not all BPartitions represent actual on-disk partitions. Some exist only
-	to make all devices fit smoothly into the framework (e.g. for floppies,
-	\see IsVirtual()), others represents merely partition slots
-	(\see IsEmpty()).
-*/
 
-
-/*!	\brief \c NULL aware strcmp().
-
-	\c NULL is considered the least of all strings. \c NULL equals \c NULL.
-
-	\param str1 First string.
-	\param str2 Second string.
-	\return A value less than 0, if \a str1 is less than \a str2,
-			0, if they are equal, or a value greater than 0, if
-			\a str1 is greater \a str2.
-*/
+/**
+ * @brief NULL-aware strcmp helper.
+ *
+ * NULL is considered the least of all strings; NULL equals NULL.
+ *
+ * @param str1 First string (may be NULL).
+ * @param str2 Second string (may be NULL).
+ * @return Negative if str1 < str2, 0 if equal, positive if str1 > str2.
+ */
 static inline int
 compare_string(const char* str1, const char* str2)
 {
@@ -84,6 +116,9 @@ compare_string(const char* str1, const char* str2)
 // #pragma mark -
 
 
+/**
+ * @brief Creates an uninitialized BPartition object.
+ */
 BPartition::BPartition()
 	:
 	fDevice(NULL),
@@ -94,19 +129,20 @@ BPartition::BPartition()
 }
 
 
-/*!	\brief Frees all resources associated with this object.
-*/
+/**
+ * @brief Frees all resources associated with this object.
+ */
 BPartition::~BPartition()
 {
 	_Unset();
 }
 
 
-/*!	\brief Returns the partition's offset relative to the beginning of the
-		   device it resides on.
-	\return The partition's offset in bytes relative to the beginning of the
-			device it resides on.
-*/
+/**
+ * @brief Returns the partition's offset relative to the beginning of the device.
+ *
+ * @return The partition's offset in bytes from the start of the device.
+ */
 off_t
 BPartition::Offset() const
 {
@@ -114,9 +150,11 @@ BPartition::Offset() const
 }
 
 
-/*!	\brief Returns the size of the partition.
-	\return The size of the partition in bytes.
-*/
+/**
+ * @brief Returns the size of the partition.
+ *
+ * @return The size of the partition in bytes.
+ */
 off_t
 BPartition::Size() const
 {
@@ -124,6 +162,11 @@ BPartition::Size() const
 }
 
 
+/**
+ * @brief Returns the size of the partition content (used by the disk system).
+ *
+ * @return The content size in bytes as reported by the disk system.
+ */
 off_t
 BPartition::ContentSize() const
 {
@@ -131,9 +174,11 @@ BPartition::ContentSize() const
 }
 
 
-/*!	\brief Returns the block size of the device.
-	\return The block size of the device in bytes.
-*/
+/**
+ * @brief Returns the logical block size of the device.
+ *
+ * @return The block size in bytes.
+ */
 uint32
 BPartition::BlockSize() const
 {
@@ -141,9 +186,11 @@ BPartition::BlockSize() const
 }
 
 
-/*!	\brief Returns the physical block size of the device.
-	\return The physical block size of the device in bytes.
-*/
+/**
+ * @brief Returns the physical block size of the device.
+ *
+ * @return The physical block size in bytes.
+ */
 uint32
 BPartition::PhysicalBlockSize() const
 {
@@ -151,10 +198,11 @@ BPartition::PhysicalBlockSize() const
 }
 
 
-/*!	\brief Returns the index of the partition in its session's list of
-		   partitions.
-	\return The index of the partition in its session's list of partitions.
-*/
+/**
+ * @brief Returns the index of this partition among its siblings.
+ *
+ * @return The zero-based index of this partition in the parent's child list.
+ */
 int32
 BPartition::Index() const
 {
@@ -162,6 +210,11 @@ BPartition::Index() const
 }
 
 
+/**
+ * @brief Returns the status flags for this partition.
+ *
+ * @return The status value from the underlying partition data.
+ */
 uint32
 BPartition::Status() const
 {
@@ -169,6 +222,11 @@ BPartition::Status() const
 }
 
 
+/**
+ * @brief Returns whether this partition contains a recognized file system.
+ *
+ * @return \c true if the B_PARTITION_FILE_SYSTEM flag is set.
+ */
 bool
 BPartition::ContainsFileSystem() const
 {
@@ -176,6 +234,11 @@ BPartition::ContainsFileSystem() const
 }
 
 
+/**
+ * @brief Returns whether this partition contains a partitioning system.
+ *
+ * @return \c true if the B_PARTITION_PARTITIONING_SYSTEM flag is set.
+ */
 bool
 BPartition::ContainsPartitioningSystem() const
 {
@@ -183,6 +246,11 @@ BPartition::ContainsPartitioningSystem() const
 }
 
 
+/**
+ * @brief Returns whether this partition represents the device itself.
+ *
+ * @return \c true if the B_PARTITION_IS_DEVICE flag is set.
+ */
 bool
 BPartition::IsDevice() const
 {
@@ -190,6 +258,11 @@ BPartition::IsDevice() const
 }
 
 
+/**
+ * @brief Returns whether this partition is read-only.
+ *
+ * @return \c true if the B_PARTITION_READ_ONLY flag is set.
+ */
 bool
 BPartition::IsReadOnly() const
 {
@@ -197,9 +270,11 @@ BPartition::IsReadOnly() const
 }
 
 
-/*!	\brief Returns whether the volume is mounted.
-	\return \c true, if the volume is mounted, \c false otherwise.
-*/
+/**
+ * @brief Returns whether the volume on this partition is currently mounted.
+ *
+ * @return \c true if the partition is mounted, \c false otherwise.
+ */
 bool
 BPartition::IsMounted() const
 {
@@ -209,6 +284,11 @@ BPartition::IsMounted() const
 }
 
 
+/**
+ * @brief Returns whether this partition is currently busy.
+ *
+ * @return \c true if the B_PARTITION_BUSY flag is set.
+ */
 bool
 BPartition::IsBusy() const
 {
@@ -216,6 +296,11 @@ BPartition::IsBusy() const
 }
 
 
+/**
+ * @brief Returns whether child partitions of this partition support names.
+ *
+ * @return \c true if the parent disk system supports child partition names.
+ */
 bool
 BPartition::SupportsChildName() const
 {
@@ -223,19 +308,14 @@ BPartition::SupportsChildName() const
 }
 
 
-/*!	\brief Returns the flags for this partitions.
-
-	The partition flags are a bitwise combination of:
-	- \c B_HIDDEN_PARTITION: The partition can not contain a file system.
-	- \c B_VIRTUAL_PARTITION: There exists no on-disk partition this object
-	  represents. E.g. for floppies there will be a BPartition object spanning
-	  the whole floppy disk.
-	- \c B_EMPTY_PARTITION: The partition represents no physical partition,
-	  but merely an empty slot. This mainly used to keep the indexing of
-	  partitions more persistent. This flag implies also \c B_HIDDEN_PARTITION.
-
-	\return The flags for this partition.
-*/
+/**
+ * @brief Returns the partition flags.
+ *
+ * The flags are a bitwise combination of B_HIDDEN_PARTITION,
+ * B_VIRTUAL_PARTITION, and B_EMPTY_PARTITION, among others.
+ *
+ * @return The flags for this partition.
+ */
 uint32
 BPartition::Flags() const
 {
@@ -243,14 +323,13 @@ BPartition::Flags() const
 }
 
 
-/*!	\brief Returns the name of the partition.
-
-	Note, that not all partitioning system support names. The method returns
-	\c NULL, if the partition doesn't have a name.
-
-	\return The name of the partition, or \c NULL, if the partitioning system
-			does not support names.
-*/
+/**
+ * @brief Returns the name of the partition as assigned by its partitioning system.
+ *
+ * Not all partitioning systems support names; returns \c NULL in that case.
+ *
+ * @return The partition name string, or \c NULL if not supported.
+ */
 const char*
 BPartition::Name() const
 {
@@ -258,6 +337,14 @@ BPartition::Name() const
 }
 
 
+/**
+ * @brief Returns the content name, generating a default if the name is empty.
+ *
+ * For unnamed file system volumes, a name is derived from the content size
+ * and type (e.g. "10 GiB ext4 volume").
+ *
+ * @return A BString containing the content name or a generated default.
+ */
 BString
 BPartition::ContentName() const
 {
@@ -285,6 +372,11 @@ BPartition::ContentName() const
 }
 
 
+/**
+ * @brief Returns the raw content name without any default substitution.
+ *
+ * @return The content name string as stored, which may be \c NULL or empty.
+ */
 const char*
 BPartition::RawContentName() const
 {
@@ -292,9 +384,11 @@ BPartition::RawContentName() const
 }
 
 
-/*!	\brief Returns a human readable string for the type of the partition.
-	\return A human readable string for the type of the partition.
-*/
+/**
+ * @brief Returns a human-readable string describing the partition type.
+ *
+ * @return The type string for this partition, or \c NULL if unavailable.
+ */
 const char*
 BPartition::Type() const
 {
@@ -302,6 +396,11 @@ BPartition::Type() const
 }
 
 
+/**
+ * @brief Returns the content type string (e.g. file system identifier).
+ *
+ * @return The content type string, or \c NULL if unavailable.
+ */
 const char*
 BPartition::ContentType() const
 {
@@ -309,15 +408,12 @@ BPartition::ContentType() const
 }
 
 
-/*!	\brief Returns a unique identifier for this partition.
-
-	The ID is not persistent, i.e. in general won't be the same after
-	rebooting.
-
-	\see BDiskDeviceRoster::GetPartitionWithID().
-
-	\return A unique identifier for this partition.
-*/
+/**
+ * @brief Returns a unique identifier for this partition (not persistent across reboots).
+ *
+ * @return The non-persistent partition ID.
+ * @see BDiskDeviceRoster::GetPartitionWithID()
+ */
 int32
 BPartition::ID() const
 {
@@ -325,6 +421,11 @@ BPartition::ID() const
 }
 
 
+/**
+ * @brief Returns the raw parameters string for this partition.
+ *
+ * @return The parameters string, or \c NULL if none.
+ */
 const char*
 BPartition::Parameters() const
 {
@@ -332,6 +433,11 @@ BPartition::Parameters() const
 }
 
 
+/**
+ * @brief Returns the content parameters string for this partition.
+ *
+ * @return The content parameters string, or \c NULL if none.
+ */
 const char*
 BPartition::ContentParameters() const
 {
@@ -339,6 +445,13 @@ BPartition::ContentParameters() const
 }
 
 
+/**
+ * @brief Retrieves the disk system that handles this partition's content.
+ *
+ * @param diskSystem Pointer to a pre-allocated BDiskSystem to be initialized.
+ * @return \c B_OK on success, \c B_BAD_VALUE if arguments are invalid,
+ *         \c B_ENTRY_NOT_FOUND if no disk system is associated.
+ */
 status_t
 BPartition::GetDiskSystem(BDiskSystem* diskSystem) const
 {
@@ -353,6 +466,15 @@ BPartition::GetDiskSystem(BDiskSystem* diskSystem) const
 }
 
 
+/**
+ * @brief Constructs the device-node path for this partition.
+ *
+ * The path is built on the fly by combining the parent's path with this
+ * partition's index.
+ *
+ * @param path Pointer to a BPath to be set to the partition's device node path.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::GetPath(BPath* path) const
 {
@@ -388,15 +510,15 @@ BPartition::GetPath(BPath* path) const
 }
 
 
-/*!	\brief Returns a BVolume for the partition.
-
-	This can only succeed, if the partition is mounted.
-
-	\param volume Pointer to a pre-allocated BVolume, to be initialized to
-		   represent the volume.
-	\return \c B_OK, if the volume is mounted and the parameter could be set
-			accordingly, another error code otherwise.
-*/
+/**
+ * @brief Returns a BVolume for the mounted volume on this partition.
+ *
+ * Can only succeed if the partition is currently mounted.
+ *
+ * @param volume Pointer to a pre-allocated BVolume to initialize.
+ * @return \c B_OK if the partition is mounted and the volume is initialized,
+ *         another error code otherwise.
+ */
 status_t
 BPartition::GetVolume(BVolume* volume) const
 {
@@ -407,18 +529,16 @@ BPartition::GetVolume(BVolume* volume) const
 }
 
 
-/*!	\brief Returns an icon for this partition.
-
-	Note, that currently there are only per-device icons, i.e. the method
-	returns the same icon for each partition of a device. But this may change
-	in the future.
-
-	\param icon Pointer to a pre-allocated BBitmap to be set to the icon of
-		   the partition.
-	\param which Size of the icon to be retrieved. Can be \c B_MINI_ICON or
-		   \c B_LARGE_ICON.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Returns an icon for this partition (per-device icon).
+ *
+ * If mounted, the icon is retrieved from the volume. Otherwise it is obtained
+ * directly from the device. Currently icons are per-device, not per-partition.
+ *
+ * @param icon Pointer to a pre-allocated BBitmap to be set to the icon.
+ * @param which The desired icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @return \c B_OK on success, another error code otherwise.
+ */
 status_t
 BPartition::GetIcon(BBitmap* icon, icon_size which) const
 {
@@ -448,6 +568,17 @@ BPartition::GetIcon(BBitmap* icon, icon_size which) const
 }
 
 
+/**
+ * @brief Returns a raw icon data buffer for this partition.
+ *
+ * If mounted, the icon is retrieved from the volume. Otherwise it is obtained
+ * directly from the device.
+ *
+ * @param _data Set to a newly allocated buffer containing the icon data.
+ * @param _size Set to the size of the icon data buffer.
+ * @param _type Set to the MIME type code of the icon data.
+ * @return \c B_OK on success, another error code otherwise.
+ */
 status_t
 BPartition::GetIcon(uint8** _data, size_t* _size, type_code* _type) const
 {
@@ -477,19 +608,17 @@ BPartition::GetIcon(uint8** _data, size_t* _size, type_code* _type) const
 }
 
 
-/*!	\brief Returns the mount point for the partition.
-
-	If the partition is mounted this is the actual mount point. If it is not
-	mounted, but contains a file system, derived from the partition name
-	the name for a not yet existing directory in the root directory is
-	constructed and the path to it returned.
-
-	For partitions not containing a file system the method returns an error.
-
-	\param mountPoint Pointer to the path to be set to refer the mount point
-		   (respectively potential mount point) of the partition.
-	\return \c B_OK, if everything went fine, an error code otherwise.
-*/
+/**
+ * @brief Returns the current or potential mount point path for this partition.
+ *
+ * If mounted, returns the actual mount point. If unmounted but contains a
+ * file system, constructs a unique path under the root directory derived from
+ * the volume name. Returns an error for partitions without a file system.
+ *
+ * @param mountPoint Pointer to a BPath to be set to the (potential) mount point.
+ * @return \c B_OK on success, \c B_BAD_VALUE if no file system is present, or
+ *         another error code on failure.
+ */
 status_t
 BPartition::GetMountPoint(BPath* mountPoint) const
 {
@@ -540,26 +669,20 @@ BPartition::GetMountPoint(BPath* mountPoint) const
 }
 
 
-/*!	\brief Mounts the volume.
-
-	The volume can only be mounted, if the partition contains a recognized
-	file system (\see ContainsFileSystem()) and it is not already mounted.
-
-	If no mount point is given, one will be created automatically under the
-	root directory (derived from the volume name). If one is given, the
-	directory must already exist.
-
-	\param mountPoint The directory where to mount the file system. May be
-		   \c NULL, in which case a mount point in the root directory will be
-		   created automatically.
-	\param mountFlags Currently only \c B_MOUNT_READ_ONLY is defined, which
-		   forces the volume to be mounted read-only.
-	\param parameters File system specific mount parameters.
-	\return \c B_OK if everything went fine, another error code otherwise.
-	\return \c B_BUSY if already mounted.
-	\return \c B_BAD_VALUE if volume does not contain a file system.
-	\return \c B_NOT_ALLOWED if a permission error occurs.
-*/
+/**
+ * @brief Mounts the volume on this partition.
+ *
+ * The partition must contain a recognized file system and must not already
+ * be mounted. If no mount point is given, one is created automatically under
+ * the root directory based on the volume name.
+ *
+ * @param mountPoint Directory path at which to mount. May be \c NULL to
+ *        auto-create a mount point.
+ * @param mountFlags Mount flags; currently only \c B_MOUNT_READ_ONLY is defined.
+ * @param parameters File-system-specific mount parameters.
+ * @return \c B_OK on success, \c B_BUSY if already mounted, \c B_BAD_VALUE if
+ *         no file system is present, or another error code.
+ */
 status_t
 BPartition::Mount(const char* mountPoint, uint32 mountFlags, const char* parameters)
 {
@@ -618,16 +741,16 @@ BPartition::Mount(const char* mountPoint, uint32 mountFlags, const char* paramet
 }
 
 
-/*!	\brief Unmounts the volume.
-
-	The volume can of course only be unmounted, if it currently is mounted.
-
-	\param unmountFlags Currently only \c B_FORCE_UNMOUNT is defined, which
-		   forces the partition to be unmounted, even if there are still
-		   open FDs. Be careful using this flag -- you risk the user's data.
-
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Unmounts the volume on this partition.
+ *
+ * The partition must currently be mounted. If the mount point was
+ * auto-created by Mount(), it is removed after a successful unmount.
+ *
+ * @param unmountFlags Unmount flags; currently only \c B_FORCE_UNMOUNT is
+ *        defined. Use with caution as it may cause data loss.
+ * @return \c B_OK on success, \c B_BAD_VALUE if not mounted, or another error.
+ */
 status_t
 BPartition::Unmount(uint32 unmountFlags)
 {
@@ -662,9 +785,11 @@ BPartition::Unmount(uint32 unmountFlags)
 }
 
 
-/*!	\brief Returns the device this partition resides on.
-	\return The device this partition resides on.
-*/
+/**
+ * @brief Returns the BDiskDevice this partition resides on.
+ *
+ * @return Pointer to the owning BDiskDevice.
+ */
 BDiskDevice*
 BPartition::Device() const
 {
@@ -672,6 +797,11 @@ BPartition::Device() const
 }
 
 
+/**
+ * @brief Returns the parent partition of this partition, or NULL for top-level.
+ *
+ * @return Pointer to the parent BPartition, or \c NULL if this is a top-level partition.
+ */
 BPartition*
 BPartition::Parent() const
 {
@@ -679,6 +809,14 @@ BPartition::Parent() const
 }
 
 
+/**
+ * @brief Returns the child partition at the given index.
+ *
+ * If a delegate is active, the delegate's child list is used.
+ *
+ * @param index Zero-based index of the child to retrieve.
+ * @return Pointer to the child BPartition, or \c NULL if index is out of range.
+ */
 BPartition*
 BPartition::ChildAt(int32 index) const
 {
@@ -691,6 +829,11 @@ BPartition::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the number of direct child partitions.
+ *
+ * @return The count of immediate child partitions.
+ */
 int32
 BPartition::CountChildren() const
 {
@@ -701,6 +844,11 @@ BPartition::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the total number of descendants (self + all children recursively).
+ *
+ * @return The total descendant count including this partition.
+ */
 int32
 BPartition::CountDescendants() const
 {
@@ -711,6 +859,12 @@ BPartition::CountDescendants() const
 }
 
 
+/**
+ * @brief Finds a descendant partition by its ID.
+ *
+ * @param id The partition ID to search for.
+ * @return Pointer to the matching BPartition, or \c NULL if not found.
+ */
 BPartition*
 BPartition::FindDescendant(partition_id id) const
 {
@@ -719,6 +873,15 @@ BPartition::FindDescendant(partition_id id) const
 }
 
 
+/**
+ * @brief Retrieves partitioning information for this partition.
+ *
+ * Requires the device to be prepared for modifications (delegate present).
+ *
+ * @param info Pointer to a pre-allocated BPartitioningInfo to be filled.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a info is \c NULL,
+ *         \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::GetPartitioningInfo(BPartitioningInfo* info) const
 {
@@ -731,6 +894,12 @@ BPartition::GetPartitioningInfo(BPartitioningInfo* info) const
 }
 
 
+/**
+ * @brief Iterates through all direct children using a visitor.
+ *
+ * @param visitor The visitor to invoke for each child partition.
+ * @return The child at which iteration was terminated, or \c NULL.
+ */
 BPartition*
 BPartition::VisitEachChild(BDiskDeviceVisitor* visitor) const
 {
@@ -745,6 +914,12 @@ BPartition::VisitEachChild(BDiskDeviceVisitor* visitor) const
 }
 
 
+/**
+ * @brief Pre-order traversal of this partition and all its descendants.
+ *
+ * @param visitor The visitor to invoke for each partition in the subtree.
+ * @return The partition at which iteration was terminated, or \c NULL.
+ */
 BPartition*
 BPartition::VisitEachDescendant(BDiskDeviceVisitor* visitor) const
 {
@@ -754,6 +929,13 @@ BPartition::VisitEachDescendant(BDiskDeviceVisitor* visitor) const
 }
 
 
+/**
+ * @brief Returns whether this partition can be defragmented.
+ *
+ * @param whileMounted If non-NULL, set to \c true if defragmentation is
+ *        possible while the partition is mounted.
+ * @return \c true if defragmentation is supported.
+ */
 bool
 BPartition::CanDefragment(bool* whileMounted) const
 {
@@ -762,6 +944,11 @@ BPartition::CanDefragment(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Defragments this partition's file system.
+ *
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::Defragment() const
 {
@@ -772,6 +959,15 @@ BPartition::Defragment() const
 }
 
 
+/**
+ * @brief Returns whether this partition can be repaired or checked.
+ *
+ * @param checkOnly If \c true, queries check-only capability; otherwise
+ *        queries full repair capability.
+ * @param whileMounted If non-NULL, set to \c true if the operation is
+ *        supported while mounted.
+ * @return \c true if the requested repair/check operation is supported.
+ */
 bool
 BPartition::CanRepair(bool checkOnly, bool* whileMounted) const
 {
@@ -789,6 +985,12 @@ BPartition::CanRepair(bool checkOnly, bool* whileMounted) const
 }
 
 
+/**
+ * @brief Checks or repairs this partition's file system.
+ *
+ * @param checkOnly If \c true, only check the file system; if \c false, repair it.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::Repair(bool checkOnly) const
 {
@@ -799,6 +1001,15 @@ BPartition::Repair(bool checkOnly) const
 }
 
 
+/**
+ * @brief Returns whether this partition can be resized.
+ *
+ * @param canResizeContents If non-NULL, set to indicate whether content can
+ *        also be resized (unused parameter, reserved for future use).
+ * @param whileMounted If non-NULL, set to \c true if resizing is possible
+ *        while the partition is mounted.
+ * @return \c true if the partition can be resized.
+ */
 bool
 BPartition::CanResize(bool* canResizeContents, bool* whileMounted) const
 {
@@ -819,6 +1030,13 @@ BPartition::CanResize(bool* canResizeContents, bool* whileMounted) const
 }
 
 
+/**
+ * @brief Validates and adjusts a proposed new size for this partition.
+ *
+ * @param size In/out parameter for the proposed size; may be adjusted to a
+ *        valid value by the disk system.
+ * @return \c B_OK if the size is valid (possibly adjusted), or an error code.
+ */
 status_t
 BPartition::ValidateResize(off_t* size) const
 {
@@ -845,6 +1063,16 @@ BPartition::ValidateResize(off_t* size) const
 }
 
 
+/**
+ * @brief Resizes this partition to the given size.
+ *
+ * When shrinking, content is resized first; when growing, content is resized
+ * last. Requires the device to be prepared for modifications.
+ *
+ * @param size The desired new size in bytes.
+ * @return \c B_OK on success, \c B_NO_INIT if parent or delegate is missing,
+ *         or another error code.
+ */
 status_t
 BPartition::Resize(off_t size)
 {
@@ -886,6 +1114,15 @@ BPartition::Resize(off_t size)
 }
 
 
+/**
+ * @brief Returns whether this partition can be moved.
+ *
+ * @param unmovableDescendants List to be filled with descendants that cannot
+ *        be moved.
+ * @param movableOnlyIfUnmounted List to be filled with descendants that can
+ *        only be moved if unmounted.
+ * @return \c true if the partition can be moved.
+ */
 bool
 BPartition::CanMove(BObjectList<BPartition>* unmovableDescendants,
 	BObjectList<BPartition>* movableOnlyIfUnmounted) const
@@ -918,6 +1155,12 @@ BPartition::CanMove(BObjectList<BPartition>* unmovableDescendants,
 }
 
 
+/**
+ * @brief Validates and adjusts a proposed new offset for this partition.
+ *
+ * @param offset In/out parameter for the proposed offset; may be adjusted.
+ * @return \c B_OK if valid (possibly adjusted), or an error code.
+ */
 status_t
 BPartition::ValidateMove(off_t* offset) const
 {
@@ -943,6 +1186,12 @@ BPartition::ValidateMove(off_t* offset) const
 }
 
 
+/**
+ * @brief Moves this partition to a new offset within its parent.
+ *
+ * @param offset The new byte offset for the partition's start.
+ * @return \c B_OK on success, \c B_NO_INIT if parent or delegate is missing.
+ */
 status_t
 BPartition::Move(off_t offset)
 {
@@ -964,6 +1213,11 @@ BPartition::Move(off_t offset)
 }
 
 
+/**
+ * @brief Returns whether the name of this partition can be changed.
+ *
+ * @return \c true if the parent disk system supports renaming child partitions.
+ */
 bool
 BPartition::CanSetName() const
 {
@@ -976,6 +1230,12 @@ BPartition::CanSetName() const
 }
 
 
+/**
+ * @brief Validates and adjusts a proposed new name for this partition.
+ *
+ * @param name In/out BString; may be adjusted to a valid name by the disk system.
+ * @return \c B_OK on success, or an error code.
+ */
 status_t
 BPartition::ValidateSetName(BString* name) const
 {
@@ -987,6 +1247,12 @@ BPartition::ValidateSetName(BString* name) const
 }
 
 
+/**
+ * @brief Sets the name of this partition.
+ *
+ * @param name The new name for this partition.
+ * @return \c B_OK on success, \c B_NO_INIT if parent or delegate is missing.
+ */
 status_t
 BPartition::SetName(const char* name)
 {
@@ -998,6 +1264,12 @@ BPartition::SetName(const char* name)
 }
 
 
+/**
+ * @brief Returns whether the content name (volume name) can be changed.
+ *
+ * @param whileMounted If non-NULL, set to \c true if it can be changed while mounted.
+ * @return \c true if the content name can be set.
+ */
 bool
 BPartition::CanSetContentName(bool* whileMounted) const
 {
@@ -1007,6 +1279,12 @@ BPartition::CanSetContentName(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Validates and adjusts a proposed new content (volume) name.
+ *
+ * @param name In/out BString; may be adjusted to a valid name.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::ValidateSetContentName(BString* name) const
 {
@@ -1017,6 +1295,12 @@ BPartition::ValidateSetContentName(BString* name) const
 }
 
 
+/**
+ * @brief Sets the content (volume) name of this partition.
+ *
+ * @param name The new volume name.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::SetContentName(const char* name)
 {
@@ -1027,6 +1311,11 @@ BPartition::SetContentName(const char* name)
 }
 
 
+/**
+ * @brief Returns whether the type of this partition can be changed.
+ *
+ * @return \c true if the parent disk system supports changing the partition type.
+ */
 bool
 BPartition::CanSetType() const
 {
@@ -1039,6 +1328,12 @@ BPartition::CanSetType() const
 }
 
 
+/**
+ * @brief Validates a proposed new type string for this partition.
+ *
+ * @param type The proposed type string to validate.
+ * @return \c B_OK if the type is valid, or an error code.
+ */
 status_t
 BPartition::ValidateSetType(const char* type) const
 {
@@ -1050,6 +1345,12 @@ BPartition::ValidateSetType(const char* type) const
 }
 
 
+/**
+ * @brief Sets the type of this partition.
+ *
+ * @param type The new type string for this partition.
+ * @return \c B_OK on success, \c B_NO_INIT if parent or delegate is missing.
+ */
 status_t
 BPartition::SetType(const char* type)
 {
@@ -1061,6 +1362,11 @@ BPartition::SetType(const char* type)
 }
 
 
+/**
+ * @brief Returns whether the parameters of this partition can be edited.
+ *
+ * @return \c true if the parent disk system supports setting partition parameters.
+ */
 bool
 BPartition::CanEditParameters() const
 {
@@ -1073,6 +1379,16 @@ BPartition::CanEditParameters() const
 }
 
 
+/**
+ * @brief Returns a parameter editor for creating or modifying partition parameters.
+ *
+ * For B_CREATE_PARAMETER_EDITOR, the editor is retrieved from this partition's
+ * delegate. For other types, it is retrieved from the parent's delegate.
+ *
+ * @param type The type of parameter editor to retrieve.
+ * @param editor Set to the created BPartitionParameterEditor on success.
+ * @return \c B_OK on success, \c B_NO_INIT if required delegates are missing.
+ */
 status_t
 BPartition::GetParameterEditor(B_PARAMETER_EDITOR_TYPE type,
 	BPartitionParameterEditor** editor)
@@ -1096,6 +1412,12 @@ BPartition::GetParameterEditor(B_PARAMETER_EDITOR_TYPE type,
 }
 
 
+/**
+ * @brief Sets the parameters for this partition (managed by the parent disk system).
+ *
+ * @param parameters The new parameters string.
+ * @return \c B_OK on success, \c B_NO_INIT if parent or delegate is missing.
+ */
 status_t
 BPartition::SetParameters(const char* parameters)
 {
@@ -1107,6 +1429,12 @@ BPartition::SetParameters(const char* parameters)
 }
 
 
+/**
+ * @brief Returns whether the content parameters of this partition can be edited.
+ *
+ * @param whileMounted If non-NULL, set to \c true if editing is possible while mounted.
+ * @return \c true if the content parameters can be set.
+ */
 bool
 BPartition::CanEditContentParameters(bool* whileMounted) const
 {
@@ -1116,6 +1444,12 @@ BPartition::CanEditContentParameters(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Sets the content parameters for this partition's disk system.
+ *
+ * @param parameters The new content parameters string.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::SetContentParameters(const char* parameters)
 {
@@ -1126,6 +1460,15 @@ BPartition::SetContentParameters(const char* parameters)
 }
 
 
+/**
+ * @brief Iterates through the supported types for this partition.
+ *
+ * Requires the device to be prepared for modifications (delegate present).
+ *
+ * @param cookie Iteration cookie; initialize to 0 before the first call.
+ * @param type Set to the next supported type string on each successful call.
+ * @return \c B_OK while types remain, \c B_ENTRY_NOT_FOUND when exhausted.
+ */
 status_t
 BPartition::GetNextSupportedType(int32* cookie, BString* type) const
 {
@@ -1143,6 +1486,13 @@ BPartition::GetNextSupportedType(int32* cookie, BString* type) const
 }
 
 
+/**
+ * @brief Iterates through the supported child types for this partition.
+ *
+ * @param cookie Iteration cookie; initialize to 0 before the first call.
+ * @param type Set to the next supported child type string on each successful call.
+ * @return \c B_OK while types remain, \c B_ENTRY_NOT_FOUND when exhausted.
+ */
 status_t
 BPartition::GetNextSupportedChildType(int32* cookie, BString* type) const
 {
@@ -1157,6 +1507,12 @@ BPartition::GetNextSupportedChildType(int32* cookie, BString* type) const
 }
 
 
+/**
+ * @brief Returns whether this partition is a sub-system of the named disk system.
+ *
+ * @param diskSystem The short name of the disk system to check against.
+ * @return \c true if this partition is identified as a sub-system of \a diskSystem.
+ */
 bool
 BPartition::BPartition::IsSubSystem(const char* diskSystem) const
 {
@@ -1168,6 +1524,12 @@ BPartition::BPartition::IsSubSystem(const char* diskSystem) const
 }
 
 
+/**
+ * @brief Returns whether this partition can be initialized with a given disk system.
+ *
+ * @param diskSystem The short name of the disk system to check.
+ * @return \c true if initialization with \a diskSystem is possible.
+ */
 bool
 BPartition::CanInitialize(const char* diskSystem) const
 {
@@ -1178,6 +1540,14 @@ BPartition::CanInitialize(const char* diskSystem) const
 }
 
 
+/**
+ * @brief Validates the parameters for initializing this partition with a disk system.
+ *
+ * @param diskSystem The short name of the disk system to use.
+ * @param name In/out BString for the volume name; may be adjusted.
+ * @param parameters Disk-system-specific initialization parameters.
+ * @return \c B_OK if valid, or an error code.
+ */
 status_t
 BPartition::ValidateInitialize(const char* diskSystem, BString* name,
 	const char* parameters)
@@ -1189,6 +1559,14 @@ BPartition::ValidateInitialize(const char* diskSystem, BString* name,
 }
 
 
+/**
+ * @brief Initializes this partition with the specified disk system.
+ *
+ * @param diskSystem The short name of the disk system to use.
+ * @param name The volume name to assign.
+ * @param parameters Disk-system-specific initialization parameters.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::Initialize(const char* diskSystem, const char* name,
 	const char* parameters)
@@ -1200,6 +1578,11 @@ BPartition::Initialize(const char* diskSystem, const char* name,
 }
 
 
+/**
+ * @brief Removes all disk system content from this partition.
+ *
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::Uninitialize()
 {
@@ -1207,6 +1590,11 @@ BPartition::Uninitialize()
 }
 
 
+/**
+ * @brief Returns whether a new child partition can be created within this partition.
+ *
+ * @return \c true if the disk system supports creating child partitions here.
+ */
 bool
 BPartition::CanCreateChild() const
 {
@@ -1214,6 +1602,16 @@ BPartition::CanCreateChild() const
 }
 
 
+/**
+ * @brief Validates the parameters for creating a new child partition.
+ *
+ * @param offset In/out parameter for the proposed offset; may be adjusted.
+ * @param size In/out parameter for the proposed size; may be adjusted.
+ * @param type The desired partition type string.
+ * @param name In/out BString for the partition name; may be adjusted.
+ * @param parameters Disk-system-specific creation parameters.
+ * @return \c B_OK if valid (possibly adjusted), or an error code.
+ */
 status_t
 BPartition::ValidateCreateChild(off_t* offset, off_t* size, const char* type,
 	BString* name, const char* parameters) const
@@ -1225,6 +1623,17 @@ BPartition::ValidateCreateChild(off_t* offset, off_t* size, const char* type,
 }
 
 
+/**
+ * @brief Creates a new child partition within this partition.
+ *
+ * @param offset The byte offset at which to create the partition.
+ * @param size The size of the new partition in bytes.
+ * @param type The partition type string.
+ * @param name The partition name.
+ * @param parameters Disk-system-specific creation parameters.
+ * @param child Set to the newly created BPartition on success.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present.
+ */
 status_t
 BPartition::CreateChild(off_t offset, off_t size, const char* type,
 	const char* name, const char* parameters, BPartition** child)
@@ -1236,6 +1645,12 @@ BPartition::CreateChild(off_t offset, off_t size, const char* type,
 }
 
 
+/**
+ * @brief Returns whether the child at the given index can be deleted.
+ *
+ * @param index The index of the child partition to check.
+ * @return \c true if the child can be deleted.
+ */
 bool
 BPartition::CanDeleteChild(int32 index) const
 {
@@ -1248,6 +1663,13 @@ BPartition::CanDeleteChild(int32 index) const
 }
 
 
+/**
+ * @brief Deletes the child partition at the given index.
+ *
+ * @param index The index of the child partition to delete.
+ * @return \c B_OK on success, \c B_NO_INIT if no delegate is present,
+ *         \c B_BAD_VALUE if the index is invalid.
+ */
 status_t
 BPartition::DeleteChild(int32 index)
 {
@@ -1262,15 +1684,17 @@ BPartition::DeleteChild(int32 index)
 }
 
 
-/*!	\brief Privatized copy constructor to avoid usage.
-*/
+/**
+ * @brief Privatized copy constructor to avoid usage.
+ */
 BPartition::BPartition(const BPartition &)
 {
 }
 
 
-/*!	\brief Privatized assignment operator to avoid usage.
-*/
+/**
+ * @brief Privatized assignment operator to avoid usage.
+ */
 BPartition &
 BPartition::operator=(const BPartition &)
 {
@@ -1278,6 +1702,17 @@ BPartition::operator=(const BPartition &)
 }
 
 
+/**
+ * @brief Initializes this partition object from raw partition data.
+ *
+ * Recursively creates child BPartition objects for all child partitions.
+ * On failure, _Unset() is called to clean up partial state.
+ *
+ * @param device The owning BDiskDevice.
+ * @param parent The parent BPartition, or \c NULL for top-level partitions.
+ * @param data The raw user_partition_data structure for this partition.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::_SetTo(BDiskDevice* device, BPartition* parent,
 	user_partition_data* data)
@@ -1310,6 +1745,11 @@ BPartition::_SetTo(BDiskDevice* device, BPartition* parent,
 }
 
 
+/**
+ * @brief Releases all resources and resets this object to an uninitialized state.
+ *
+ * Deletes all child BPartition objects and clears all data pointers.
+ */
 void
 BPartition::_Unset()
 {
@@ -1329,6 +1769,16 @@ BPartition::_Unset()
 }
 
 
+/**
+ * @brief Removes child partitions that no longer exist in the updated data.
+ *
+ * Compares current children against the new partition data and removes any
+ * that are no longer present. Also recursively removes obsolete descendants.
+ *
+ * @param data The updated partition data to compare against.
+ * @param updated Set to \c true if any partitions were removed.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::_RemoveObsoleteDescendants(user_partition_data* data, bool* updated)
 {
@@ -1367,6 +1817,16 @@ BPartition::_RemoveObsoleteDescendants(user_partition_data* data, bool* updated)
 }
 
 
+/**
+ * @brief Updates this partition's data from newly fetched raw partition data.
+ *
+ * Replaces the current partition data, detects changes, and recursively
+ * updates or creates child BPartition objects.
+ *
+ * @param data The new raw partition data.
+ * @param updated Set to \c true if any changes were detected.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::_Update(user_partition_data* data, bool* updated)
 {
@@ -1421,6 +1881,13 @@ BPartition::_Update(user_partition_data* data, bool* updated)
 }
 
 
+/**
+ * @brief Removes the child partition at the given index and deletes it.
+ *
+ * Compacts the children array after removal.
+ *
+ * @param index The index of the child to remove.
+ */
 void
 BPartition::_RemoveChild(int32 index)
 {
@@ -1438,6 +1905,12 @@ BPartition::_RemoveChild(int32 index)
 }
 
 
+/**
+ * @brief Returns the child BPartition at the given index via raw partition data.
+ *
+ * @param index Zero-based index of the child to retrieve.
+ * @return Pointer to the child BPartition, or \c NULL if index is out of range.
+ */
 BPartition*
 BPartition::_ChildAt(int32 index) const
 {
@@ -1447,6 +1920,11 @@ BPartition::_ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the number of direct children via the raw partition data.
+ *
+ * @return The child_count from the underlying partition data.
+ */
 int32
 BPartition::_CountChildren() const
 {
@@ -1454,6 +1932,11 @@ BPartition::_CountChildren() const
 }
 
 
+/**
+ * @brief Recursively counts this partition and all its descendants.
+ *
+ * @return Total count of this partition plus all descendants.
+ */
 int32
 BPartition::_CountDescendants() const
 {
@@ -1464,6 +1947,13 @@ BPartition::_CountDescendants() const
 }
 
 
+/**
+ * @brief Returns the depth level of this partition in the partition tree.
+ *
+ * The root partition (no parent) is at level 0.
+ *
+ * @return The depth level of this partition.
+ */
 int32
 BPartition::_Level() const
 {
@@ -1475,6 +1965,13 @@ BPartition::_Level() const
 }
 
 
+/**
+ * @brief Dispatches the visitor to this partition's Visit(BPartition*, int32) overload.
+ *
+ * @param visitor The visitor to invoke.
+ * @param level The depth level at which this partition resides.
+ * @return The return value of visitor->Visit(this, level).
+ */
 bool
 BPartition::_AcceptVisitor(BDiskDeviceVisitor* visitor, int32 level)
 {
@@ -1482,6 +1979,15 @@ BPartition::_AcceptVisitor(BDiskDeviceVisitor* visitor, int32 level)
 }
 
 
+/**
+ * @brief Internal recursive implementation of VisitEachDescendant.
+ *
+ * Visits this partition first (pre-order), then recursively visits all children.
+ *
+ * @param visitor The visitor to invoke.
+ * @param level The depth level; if negative, computed from _Level().
+ * @return The partition at which iteration was terminated, or \c NULL.
+ */
 BPartition*
 BPartition::_VisitEachDescendant(BDiskDeviceVisitor* visitor, int32 level)
 {
@@ -1499,6 +2005,14 @@ BPartition::_VisitEachDescendant(BDiskDeviceVisitor* visitor, int32 level)
 }
 
 
+/**
+ * @brief Returns the effective partition data, preferring delegate data if available.
+ *
+ * When a delegate is active (device prepared for modifications), the delegate's
+ * partition data is used; otherwise the raw fPartitionData is returned.
+ *
+ * @return Pointer to the effective user_partition_data structure.
+ */
 const user_partition_data*
 BPartition::_PartitionData() const
 {
@@ -1506,6 +2020,11 @@ BPartition::_PartitionData() const
 }
 
 
+/**
+ * @brief Returns whether this partition has any disk system content.
+ *
+ * @return \c true if ContentType() returns a non-NULL value.
+ */
 bool
 BPartition::_HasContent() const
 {
@@ -1513,6 +2032,15 @@ BPartition::_HasContent() const
 }
 
 
+/**
+ * @brief Tests whether this partition's disk system supports a given operation.
+ *
+ * @param flag The capability flag to test.
+ * @param whileMountedFlag The while-mounted variant of the capability flag.
+ * @param whileMounted If non-NULL, set to \c true if the operation is supported
+ *        while the partition is mounted.
+ * @return \c true if the operation is supported.
+ */
 bool
 BPartition::_SupportsOperation(uint32 flag, uint32 whileMountedFlag,
 	bool* whileMounted) const
@@ -1529,6 +2057,14 @@ BPartition::_SupportsOperation(uint32 flag, uint32 whileMountedFlag,
 }
 
 
+/**
+ * @brief Tests whether this partition's disk system supports a child operation.
+ *
+ * @param child The child partition for which to check support, or \c NULL
+ *        to check generic child support.
+ * @param flag The child capability flag to test.
+ * @return \c true if the child operation is supported.
+ */
 bool
 BPartition::_SupportsChildOperation(const BPartition* child, uint32 flag) const
 {
@@ -1542,6 +2078,14 @@ BPartition::_SupportsChildOperation(const BPartition* child, uint32 flag) const
 }
 
 
+/**
+ * @brief Creates delegates for this partition and all its descendants.
+ *
+ * Called during PrepareModifications() to set up the shadow modification
+ * hierarchy. Each partition gets a Delegate that mediates all modification calls.
+ *
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::_CreateDelegates()
 {
@@ -1571,6 +2115,14 @@ BPartition::_CreateDelegates()
 }
 
 
+/**
+ * @brief Finalizes delegate initialization after the full hierarchy is created.
+ *
+ * Called after _CreateDelegates() completes for the entire tree. Allows each
+ * delegate to perform initialization that requires knowledge of adjacent delegates.
+ *
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BPartition::_InitDelegates()
 {
@@ -1591,6 +2143,13 @@ BPartition::_InitDelegates()
 }
 
 
+/**
+ * @brief Recursively deletes all delegates in this partition's subtree.
+ *
+ * Children are deleted first (post-order). Partitions with no backing
+ * physical data (fPartitionData == NULL) delete themselves when their
+ * delegate is deleted.
+ */
 void
 BPartition::_DeleteDelegates()
 {
@@ -1610,6 +2169,12 @@ BPartition::_DeleteDelegates()
 }
 
 
+/**
+ * @brief Returns whether this partition has uncommitted modifications.
+ *
+ * @return \c true if the delegate reports pending modifications, \c false if
+ *         no delegate is present or no modifications have been made.
+ */
 bool
 BPartition::_IsModified() const
 {

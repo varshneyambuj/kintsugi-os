@@ -1,6 +1,39 @@
 /*
- * Copyright 2003-2007, Ingo Weinhold, bonefish@cs.tu-berlin.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2007, Ingo Weinhold, bonefish@cs.tu-berlin.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file DiskSystem.cpp
+ * @brief Represents a disk system (partitioning scheme or file system).
+ *
+ * BDiskSystem encapsulates the identity and capabilities of a single disk
+ * system as reported by the kernel. It provides predicates for querying which
+ * structural operations the system supports and exposes the system's names and
+ * flags. Private _SetTo() helpers populate the object from kernel info
+ * structures or system IDs.
+ *
+ * @see BDiskDevice
+ * @see BPartition
  */
 
 #include <DiskSystem.h>
@@ -14,6 +47,12 @@
 #include "DiskSystemAddOnManager.h"
 
 
+/**
+ * @brief Constructs a default, uninitialised BDiskSystem.
+ *
+ * InitCheck() will return B_NO_INIT until the object is populated via one
+ * of the private _SetTo() methods.
+ */
 BDiskSystem::BDiskSystem()
 	:
 	fID(B_NO_INIT),
@@ -22,6 +61,11 @@ BDiskSystem::BDiskSystem()
 }
 
 
+/**
+ * @brief Copy-constructs a BDiskSystem from another instance.
+ *
+ * @param other The source BDiskSystem to copy.
+ */
 BDiskSystem::BDiskSystem(const BDiskSystem& other)
 	:
 	fID(other.fID),
@@ -33,11 +77,20 @@ BDiskSystem::BDiskSystem(const BDiskSystem& other)
 }
 
 
+/**
+ * @brief Destroys the BDiskSystem.
+ */
 BDiskSystem::~BDiskSystem()
 {
 }
 
 
+/**
+ * @brief Returns whether the object has been successfully initialised.
+ *
+ * @return B_OK if the object holds valid disk system information, otherwise
+ *         a negative error code such as B_NO_INIT.
+ */
 status_t
 BDiskSystem::InitCheck() const
 {
@@ -45,6 +98,11 @@ BDiskSystem::InitCheck() const
 }
 
 
+/**
+ * @brief Returns the canonical (internal) name of this disk system.
+ *
+ * @return Null-terminated string with the disk system's canonical name.
+ */
 const char*
 BDiskSystem::Name() const
 {
@@ -52,6 +110,11 @@ BDiskSystem::Name() const
 }
 
 
+/**
+ * @brief Returns the short name of this disk system.
+ *
+ * @return Null-terminated string with the disk system's short name.
+ */
 const char*
 BDiskSystem::ShortName() const
 {
@@ -59,6 +122,11 @@ BDiskSystem::ShortName() const
 }
 
 
+/**
+ * @brief Returns the human-readable display name of this disk system.
+ *
+ * @return Null-terminated string with the disk system's pretty name.
+ */
 const char*
 BDiskSystem::PrettyName() const
 {
@@ -66,6 +134,13 @@ BDiskSystem::PrettyName() const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports defragmenting.
+ *
+ * @param whileMounted If non-NULL, set to true when defragmentation is also
+ *                     supported while the volume is mounted.
+ * @return true if defragmenting is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsDefragmenting(bool* whileMounted) const
 {
@@ -85,6 +160,15 @@ BDiskSystem::SupportsDefragmenting(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports repairing or checking.
+ *
+ * @param checkOnly    If true, query check-only support; otherwise query full
+ *                     repair support.
+ * @param whileMounted If non-NULL, set to true when the operation is also
+ *                     supported while the volume is mounted.
+ * @return true if the requested operation is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsRepairing(bool checkOnly, bool* whileMounted) const
 {
@@ -109,6 +193,13 @@ BDiskSystem::SupportsRepairing(bool checkOnly, bool* whileMounted) const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports resizing its content.
+ *
+ * @param whileMounted If non-NULL, set to true when resizing is also
+ *                     supported while the volume is mounted.
+ * @return true if resizing is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsResizing(bool* whileMounted) const
 {
@@ -128,6 +219,12 @@ BDiskSystem::SupportsResizing(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports resizing child
+ *        partitions.
+ *
+ * @return true if child resizing is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsResizingChild() const
 {
@@ -136,6 +233,13 @@ BDiskSystem::SupportsResizingChild() const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports moving its content.
+ *
+ * @param whileMounted If non-NULL, set to true when moving is also supported
+ *                     while the volume is mounted.
+ * @return true if moving is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsMoving(bool* whileMounted) const
 {
@@ -155,6 +259,12 @@ BDiskSystem::SupportsMoving(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports moving child
+ *        partitions.
+ *
+ * @return true if child moving is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsMovingChild() const
 {
@@ -163,6 +273,11 @@ BDiskSystem::SupportsMovingChild() const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports partition names.
+ *
+ * @return true if partition names are supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsName() const
 {
@@ -171,6 +286,11 @@ BDiskSystem::SupportsName() const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports a content name.
+ *
+ * @return true if content names are supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsContentName() const
 {
@@ -179,6 +299,12 @@ BDiskSystem::SupportsContentName() const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports setting partition
+ *        names.
+ *
+ * @return true if setting names is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsSettingName() const
 {
@@ -187,6 +313,13 @@ BDiskSystem::SupportsSettingName() const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports setting the content name.
+ *
+ * @param whileMounted If non-NULL, set to true when the operation is also
+ *                     supported while the volume is mounted.
+ * @return true if setting the content name is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsSettingContentName(bool* whileMounted) const
 {
@@ -207,6 +340,12 @@ BDiskSystem::SupportsSettingContentName(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports setting partition
+ *        types.
+ *
+ * @return true if setting the partition type is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsSettingType() const
 {
@@ -215,6 +354,12 @@ BDiskSystem::SupportsSettingType() const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports setting partition
+ *        parameters.
+ *
+ * @return true if setting partition parameters is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsSettingParameters() const
 {
@@ -223,6 +368,13 @@ BDiskSystem::SupportsSettingParameters() const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports setting content parameters.
+ *
+ * @param whileMounted If non-NULL, set to true when the operation is also
+ *                     supported while the volume is mounted.
+ * @return true if setting content parameters is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsSettingContentParameters(bool* whileMounted) const
 {
@@ -243,6 +395,12 @@ BDiskSystem::SupportsSettingContentParameters(bool* whileMounted) const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports creating child
+ *        partitions.
+ *
+ * @return true if creating children is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsCreatingChild() const
 {
@@ -251,6 +409,12 @@ BDiskSystem::SupportsCreatingChild() const
 }
 
 
+/**
+ * @brief Returns whether this partitioning system supports deleting child
+ *        partitions.
+ *
+ * @return true if deleting children is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsDeletingChild() const
 {
@@ -259,6 +423,11 @@ BDiskSystem::SupportsDeletingChild() const
 }
 
 
+/**
+ * @brief Returns whether this disk system supports initialising a partition.
+ *
+ * @return true if initialisation is supported, false otherwise.
+ */
 bool
 BDiskSystem::SupportsInitializing() const
 {
@@ -267,6 +436,13 @@ BDiskSystem::SupportsInitializing() const
 }
 
 
+/**
+ * @brief Returns whether this file system supports write access.
+ *
+ * Always returns false for partitioning systems.
+ *
+ * @return true if the file system supports writing, false otherwise.
+ */
 bool
 BDiskSystem::SupportsWriting() const
 {
@@ -278,6 +454,17 @@ BDiskSystem::SupportsWriting() const
 }
 
 
+/**
+ * @brief Converts a content type string to a partition type string.
+ *
+ * Delegates to the underlying BDiskSystemAddOn obtained from the
+ * DiskSystemAddOnManager.
+ *
+ * @param contentType The content (file-system) type name to look up.
+ * @param type        Output BString set to the corresponding partition type.
+ * @return B_OK on success, B_BAD_VALUE for invalid arguments, B_ENTRY_NOT_FOUND
+ *         if the add-on is not loaded, or another error from the add-on.
+ */
 status_t
 BDiskSystem::GetTypeForContentType(const char* contentType, BString* type) const
 {
@@ -300,6 +487,12 @@ BDiskSystem::GetTypeForContentType(const char* contentType, BString* type) const
 }
 
 
+/**
+ * @brief Returns true if this disk system is a partitioning system.
+ *
+ * @return true if the B_DISK_SYSTEM_IS_FILE_SYSTEM flag is not set and the
+ *         object is initialised.
+ */
 bool
 BDiskSystem::IsPartitioningSystem() const
 {
@@ -307,6 +500,12 @@ BDiskSystem::IsPartitioningSystem() const
 }
 
 
+/**
+ * @brief Returns true if this disk system is a file system.
+ *
+ * @return true if the B_DISK_SYSTEM_IS_FILE_SYSTEM flag is set and the
+ *         object is initialised.
+ */
 bool
 BDiskSystem::IsFileSystem() const
 {
@@ -314,6 +513,12 @@ BDiskSystem::IsFileSystem() const
 }
 
 
+/**
+ * @brief Assigns another BDiskSystem to this object.
+ *
+ * @param other The source BDiskSystem to copy from.
+ * @return Reference to this object.
+ */
 BDiskSystem&
 BDiskSystem::operator=(const BDiskSystem& other)
 {
@@ -327,6 +532,15 @@ BDiskSystem::operator=(const BDiskSystem& other)
 }
 
 
+/**
+ * @brief Populates this object from the kernel using a disk system ID.
+ *
+ * Queries the kernel for the user_disk_system_info associated with id and
+ * delegates to the info-based overload.
+ *
+ * @param id The kernel disk system identifier.
+ * @return B_OK on success, or an error code from the kernel call.
+ */
 status_t
 BDiskSystem::_SetTo(disk_system_id id)
 {
@@ -344,6 +558,12 @@ BDiskSystem::_SetTo(disk_system_id id)
 }
 
 
+/**
+ * @brief Populates this object from a user_disk_system_info structure.
+ *
+ * @param info Pointer to the info structure returned by the kernel.
+ * @return B_OK on success, B_BAD_VALUE if info is NULL.
+ */
 status_t
 BDiskSystem::_SetTo(const user_disk_system_info* info)
 {
@@ -362,6 +582,11 @@ BDiskSystem::_SetTo(const user_disk_system_info* info)
 }
 
 
+/**
+ * @brief Resets this object to the uninitialised state.
+ *
+ * Clears the ID, names, and flags so that InitCheck() returns B_NO_INIT.
+ */
 void
 BDiskSystem::_Unset()
 {

@@ -1,11 +1,42 @@
 /*
- * Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
- * Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
+ *   Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file elf.cpp
+ * @brief Kernel ELF loader — loads and links ELF executables and shared libraries.
+ *
+ * Implements load_kernel_add_on() and the low-level ELF loading path used
+ * to bring up the runtime loader and kernel add-ons. Handles ELF header
+ * validation, program header mapping, symbol resolution, relocation, and
+ * the BSS zeroing. Also provides elf_debug_* routines for the kernel debugger.
+ *
+ * @see image.cpp, module.cpp
  */
 
 /*!	Contains the ELF loader */
@@ -104,6 +135,11 @@ static elf_sym *elf_find_symbol(struct elf_image_info *image, const char *name,
 	const elf_version_info *version, bool lookupDefault);
 
 
+/**
+ * @brief Remove an ELF image from the kernel image registry and hash table.
+ *
+ * @param image Pointer to the elf_image_info to unregister.
+ */
 static void
 unregister_elf_image(struct elf_image_info *image)
 {
@@ -112,6 +148,16 @@ unregister_elf_image(struct elf_image_info *image)
 }
 
 
+/**
+ * @brief Register an ELF image with the kernel image registry and insert it
+ *        into the global images hash table.
+ *
+ * Populates extended_image_info fields (text/data regions, API/ABI version)
+ * from the image's symbol table when available, then calls register_image()
+ * and inserts the entry into sImagesHash.
+ *
+ * @param image Pointer to the elf_image_info to register.
+ */
 static void
 register_elf_image(struct elf_image_info *image)
 {
@@ -174,6 +220,16 @@ register_elf_image(struct elf_image_info *image)
 }
 
 
+/**
+ * @brief Find the kernel ELF image whose text or data region contains the
+ *        given virtual address.
+ *
+ * @note The caller must hold sImageMutex (or be running inside the kernel
+ *       debugger).
+ *
+ * @param address Virtual address to search for.
+ * @return Pointer to the matching elf_image_info, or NULL if not found.
+ */
 /*!	Note, you must lock the image mutex when you call this function. */
 static struct elf_image_info *
 find_image_at_address(addr_t address)
@@ -201,6 +257,16 @@ find_image_at_address(addr_t address)
 }
 
 
+/**
+ * @brief Kernel debugger command: print the symbol and image name for a
+ *        given address.
+ *
+ * Usage: @c ls @c <address>
+ *
+ * @param argc Argument count (must be 2).
+ * @param argv Argument vector; argv[1] is the hex address to look up.
+ * @return 0 always.
+ */
 static int
 dump_address_info(int argc, char **argv)
 {
@@ -236,6 +302,12 @@ dump_address_info(int argc, char **argv)
 }
 
 
+/**
+ * @brief Look up an ELF image by its image_id in the global hash table.
+ *
+ * @param id The image_id to search for.
+ * @return Pointer to the matching elf_image_info, or NULL if not found.
+ */
 static struct elf_image_info *
 find_image(image_id id)
 {
@@ -243,6 +315,14 @@ find_image(image_id id)
 }
 
 
+/**
+ * @brief Find a loaded kernel ELF image by its backing vnode pointer.
+ *
+ * Acquires sImageMutex internally before iterating the hash table.
+ *
+ * @param vnode Vnode pointer to search for.
+ * @return Pointer to the matching elf_image_info, or NULL if not found.
+ */
 static struct elf_image_info *
 find_image_by_vnode(void *vnode)
 {
@@ -262,6 +342,13 @@ find_image_by_vnode(void *vnode)
 #endif // ELF32_COMPAT
 
 
+/**
+ * @brief Allocate and zero-initialise a new elf_image_info structure.
+ *
+ * Sets text_region.id and data_region.id to -1 and ref_count to 1.
+ *
+ * @return Pointer to the new elf_image_info, or NULL on allocation failure.
+ */
 static struct elf_image_info *
 create_image_struct()
 {
@@ -280,6 +367,14 @@ create_image_struct()
 }
 
 
+/**
+ * @brief Release all resources owned by an elf_image_info and free it.
+ *
+ * Deletes VM areas, releases the vnode reference, and frees all heap
+ * allocations (versions, debug symbols, string table, ELF header, name).
+ *
+ * @param image Pointer to the elf_image_info to destroy.
+ */
 static void
 delete_elf_image(struct elf_image_info *image)
 {
@@ -301,6 +396,12 @@ delete_elf_image(struct elf_image_info *image)
 }
 
 
+/**
+ * @brief Return a short human-readable string for an ELF symbol type.
+ *
+ * @param symbol Pointer to the ELF symbol whose type is queried.
+ * @return One of "func", " obj", "file", or "----".
+ */
 static const char *
 get_symbol_type_string(elf_sym *symbol)
 {
@@ -317,6 +418,12 @@ get_symbol_type_string(elf_sym *symbol)
 }
 
 
+/**
+ * @brief Return a short human-readable string for an ELF symbol binding.
+ *
+ * @param symbol Pointer to the ELF symbol whose binding is queried.
+ * @return One of "loc ", "glob", "weak", or "----".
+ */
 static const char *
 get_symbol_bind_string(elf_sym *symbol)
 {
@@ -336,6 +443,17 @@ get_symbol_bind_string(elf_sym *symbol)
 #ifndef ELF32_COMPAT
 
 
+/**
+ * @brief Kernel debugger command: search all kernel images for symbols
+ *        matching a name pattern and print their addresses.
+ *
+ * Usage: @c symbol @c <symbol-name>
+ *
+ * @param argc Argument count (must be 2).
+ * @param argv Argument vector; argv[1] is the symbol name (sub-string) to
+ *             search for.
+ * @return 0 always.
+ */
 /*!	Searches a symbol (pattern) in all kernel images */
 static int
 dump_symbol(int argc, char **argv)
@@ -394,6 +512,16 @@ dump_symbol(int argc, char **argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump all symbols of a specific kernel image.
+ *
+ * The image may be identified by its name, numeric image id, or an address
+ * within its text segment.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector; argv[1] is the image identifier.
+ * @return 0 on success, -1 if the image was not found.
+ */
 static int
 dump_symbols(int argc, char **argv)
 {
@@ -499,6 +627,12 @@ dump_symbols(int argc, char **argv)
 }
 
 
+/**
+ * @brief Print a single elf_region's fields to the kernel debugger console.
+ *
+ * @param region Pointer to the elf_region to display.
+ * @param name   Human-readable label for the region (e.g. "text" or "data").
+ */
 static void
 dump_elf_region(struct elf_region *region, const char *name)
 {
@@ -509,6 +643,12 @@ dump_elf_region(struct elf_region *region, const char *name)
 }
 
 
+/**
+ * @brief Print all fields of an elf_image_info structure to the kernel
+ *        debugger console.
+ *
+ * @param image Pointer to the elf_image_info to display.
+ */
 static void
 dump_image_info(struct elf_image_info *image)
 {
@@ -534,6 +674,18 @@ dump_image_info(struct elf_image_info *image)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump info about a loaded kernel image, or
+ *        list all loaded kernel images.
+ *
+ * When called with an argument the image is located by address or image id and
+ * its full elf_image_info is printed. Without an argument all loaded images are
+ * listed.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector; optional argv[1] is a hex image pointer or id.
+ * @return 0 always.
+ */
 static int
 dump_image(int argc, char **argv)
 {
@@ -590,6 +742,12 @@ void dump_symbol(struct elf_image_info *image, elf_sym *sym)
 #endif // ELF32_COMPAT
 
 
+/**
+ * @brief Compute the ELF System V hash of a symbol name string.
+ *
+ * @param _name Null-terminated symbol name.
+ * @return 28-bit hash value suitable for indexing an ELF symbol hash table.
+ */
 static uint32
 elf_hash(const char* _name)
 {
@@ -604,6 +762,22 @@ elf_hash(const char* _name)
 }
 
 
+/**
+ * @brief Look up a symbol by name in an image's ELF hash table, respecting
+ *        GNU symbol versioning rules.
+ *
+ * When @p lookupVersion is non-NULL the symbol must match both name and
+ * version hash/name. When it is NULL the function returns the base version
+ * (VER_NDX_GLOBAL / VER_NDX_INITIAL) or, if unique, the sole non-hidden
+ * versioned symbol.
+ *
+ * @param image         Image whose symbol hash table is searched.
+ * @param name          Null-terminated symbol name to find.
+ * @param lookupVersion Optional version information to match, or NULL.
+ * @param lookupDefault When true, VER_NDX_INITIAL symbols are not treated as
+ *                      base-version candidates.
+ * @return Pointer to the matching elf_sym entry, or NULL if not found.
+ */
 static elf_sym *
 elf_find_symbol(struct elf_image_info *image, const char *name,
 	const elf_version_info *lookupVersion, bool lookupDefault)
@@ -712,6 +886,18 @@ elf_find_symbol(struct elf_image_info *image, const char *name,
 }
 
 
+/**
+ * @brief Parse an ELF image's PT_DYNAMIC section and populate the
+ *        elf_image_info's dynamic-linking fields.
+ *
+ * Iterates the DT_* entries to extract symbol hash table, string table,
+ * symbol table, relocation tables, PLT info, and GNU version tables.
+ *
+ * @param image Image whose dynamic_section pointer is already set.
+ * @retval B_OK    On success.
+ * @retval B_ERROR If the dynamic section is missing or required entries
+ *                 (symhash, syms, strtab) are absent.
+ */
 static status_t
 elf_parse_dynamic_section(struct elf_image_info *image)
 {
@@ -819,6 +1005,18 @@ elf_parse_dynamic_section(struct elf_image_info *image)
 #ifndef ELF32_COMPAT
 
 
+/**
+ * @brief Verify that a dependency image exports a required version, failing
+ *        unless the requirement is flagged weak.
+ *
+ * @param dependentImage Image that declares the version requirement.
+ * @param image          Image expected to define the version.
+ * @param neededVersion  Version info (name + hash) that must be present.
+ * @param weak           When true a missing version only triggers a warning,
+ *                       not a hard error.
+ * @retval B_OK             Version found (or image has no version definitions).
+ * @retval B_MISSING_SYMBOL Required version not found in a non-weak dependency.
+ */
 static status_t
 assert_defined_image_version(elf_image_info* dependentImage,
 	elf_image_info* image, const elf_version_info& neededVersion, bool weak)
@@ -857,6 +1055,18 @@ assert_defined_image_version(elf_image_info* dependentImage,
 }
 
 
+/**
+ * @brief Allocate and populate the image's versions array from its GNU
+ *        version definition and needed-version ELF sections.
+ *
+ * Scans VER_NDX values from both elf_verdef and elf_verneed chains to
+ * determine the maximum index, then allocates and fills image->versions[].
+ *
+ * @param image Image whose version_definitions and needed_versions are set.
+ * @retval B_OK        On success.
+ * @retval B_NO_MEMORY Allocation failure.
+ * @retval B_BAD_VALUE Unsupported version definition or needed revision.
+ */
 static status_t
 init_image_version_infos(elf_image_info* image)
 {
@@ -963,6 +1173,14 @@ init_image_version_infos(elf_image_info* image)
 }
 
 
+/**
+ * @brief Verify that all versioned symbol dependencies declared in an image's
+ *        GNU verneed section are satisfied by the kernel image.
+ *
+ * @param image Image whose needed_versions are checked against sKernelImage.
+ * @retval B_OK             All required versions present (or no requirements).
+ * @retval B_MISSING_SYMBOL A required non-weak version is absent.
+ */
 static status_t
 check_needed_image_versions(elf_image_info* image)
 {
@@ -996,6 +1214,21 @@ check_needed_image_versions(elf_image_info* image)
 #endif // ELF32_COMPAT
 
 
+/**
+ * @brief Resolve a single ELF symbol to its run-time virtual address.
+ *
+ * Local symbols are resolved directly to image + delta. Global/weak symbols
+ * are looked up first in @p sharedImage (usually the kernel) then in
+ * @p image itself, following symbolic-binding and weak-binding rules. Weak
+ * undefined symbols that remain unresolved receive an address of 0.
+ *
+ * @param image          Image containing the symbol reference.
+ * @param symbol         The ELF symbol entry to resolve.
+ * @param sharedImage    Shared image (typically the kernel) to search first.
+ * @param _symbolAddress On success, set to the resolved virtual address.
+ * @retval B_OK             Symbol resolved successfully.
+ * @retval B_MISSING_SYMBOL Symbol not found or type mismatch.
+ */
 /*!	Resolves the \a symbol by linking against \a sharedImage if necessary.
 	Returns the resolved symbol's address in \a _symbolAddress.
 */
@@ -1073,6 +1306,18 @@ elf_resolve_symbol(struct elf_image_info *image, elf_sym *symbol,
 }
 
 
+/**
+ * @brief Apply all ELF relocations (REL, RELA, and PLT) for a kernel image.
+ *
+ * Dispatches to the architecture-specific arch_elf_relocate_rel() and
+ * arch_elf_relocate_rela() helpers for each relocation table present in
+ * @p image, resolving symbols against @p resolveImage.
+ *
+ * @param image        Image whose relocations are to be applied.
+ * @param resolveImage Image used as the symbol source (usually sKernelImage).
+ * @retval B_NO_ERROR On success.
+ * @retval <0         On the first architecture relocation error encountered.
+ */
 /*! Until we have shared library support, just this links against the kernel */
 static int
 elf_relocate(struct elf_image_info* image, struct elf_image_info* resolveImage)
@@ -1121,6 +1366,16 @@ elf_relocate(struct elf_image_info* image, struct elf_image_info* resolveImage)
 }
 
 
+/**
+ * @brief Validate the basic ELF header fields required to load a kernel image.
+ *
+ * Checks the ELF magic bytes, class word size, presence of a program header
+ * offset, and minimum program header entry size.
+ *
+ * @param elfHeader Pointer to the already-read ELF file header.
+ * @retval 0                  Header is valid.
+ * @retval B_NOT_AN_EXECUTABLE One or more required fields are invalid.
+ */
 static int
 verify_eheader(elf_ehdr *elfHeader)
 {
@@ -1143,6 +1398,12 @@ verify_eheader(elf_ehdr *elfHeader)
 #ifndef ELF32_COMPAT
 
 
+/**
+ * @brief Decrement the reference count of an ELF image and, if it reaches
+ *        zero, unregister and delete it.
+ *
+ * @param image Image whose reference count is decremented.
+ */
 static void
 unload_elf_image(struct elf_image_info *image)
 {
@@ -1156,6 +1417,23 @@ unload_elf_image(struct elf_image_info *image)
 }
 
 
+/**
+ * @brief Load the full ELF symbol and string tables from a kernel add-on file
+ *        for use by the kernel debugger.
+ *
+ * Reads the section headers from @p fd, locates the first SHT_SYMTAB section,
+ * reads both the symbol table and its associated SHT_STRTAB string table into
+ * heap memory, and stores them in @p image->debug_symbols /
+ * @p image->debug_string_table.
+ *
+ * @param fd    Open file descriptor for the ELF image file.
+ * @param image Image info structure to populate with debug symbol data.
+ * @retval B_OK        Tables loaded successfully.
+ * @retval B_NO_MEMORY Heap allocation failed.
+ * @retval B_BAD_DATA  Section link does not point to a string table.
+ * @retval B_BAD_VALUE No symbol table section found.
+ * @retval B_ERROR     I/O error reading section headers or tables.
+ */
 static status_t
 load_elf_symbol_table(int fd, struct elf_image_info *image)
 {
@@ -1259,6 +1537,20 @@ error1:
 }
 
 
+/**
+ * @brief Construct a kernel elf_image_info from a boot-loader preloaded image
+ *        and register it with the kernel image subsystem.
+ *
+ * Copies region layout, parses the dynamic section, optionally checks version
+ * requirements and performs relocations, then registers the image. For the
+ * kernel image itself (kernel == true) sets sKernelImage.
+ *
+ * @param preloadedImage Preloaded ELF image provided by the boot loader.
+ * @param kernel         True if this is the kernel image itself.
+ * @retval B_OK        Image inserted successfully.
+ * @retval B_NO_MEMORY Allocation failure.
+ * @retval other       ELF parse, version check, or relocation error.
+ */
 static status_t
 insert_preloaded_image(preloaded_elf_image *preloadedImage, bool kernel)
 {
@@ -1558,6 +1850,20 @@ UserSymbolLookup UserSymbolLookup::sLookup;
 //	#pragma mark - public kernel API
 
 
+/**
+ * @brief Look up a named symbol exported by a loaded kernel image.
+ *
+ * Acquires sImageMutex, finds the image by @p id, then searches its symbol
+ * table for @p name. The resolved address is written to @p _symbol.
+ *
+ * @param id          Image id to search.
+ * @param name        Null-terminated symbol name to find.
+ * @param symbolClass Symbol class hint (currently unused).
+ * @param _symbol     On success, receives the symbol's virtual address.
+ * @retval B_OK             Symbol found.
+ * @retval B_BAD_IMAGE_ID   No image with the given id exists.
+ * @retval B_ENTRY_NOT_FOUND Symbol not found or is undefined.
+ */
 status_t
 get_image_symbol(image_id id, const char *name, int32 symbolClass,
 	void **_symbol)
@@ -1599,6 +1905,26 @@ done:
 //	#pragma mark - kernel private API
 
 
+/**
+ * @brief Look up the symbol name and image for a kernel virtual address;
+ *        intended for use by the kernel debugger.
+ *
+ * Searches the debug (or dynamic) symbol tables of the image that contains
+ * @p address and returns the nearest symbol, its base address, image name,
+ * and whether the match is exact.
+ *
+ * @note This function must not be called with locks held outside the debugger.
+ *
+ * @param address       Virtual address to resolve.
+ * @param _baseAddress  On success, set to the symbol's base address.
+ * @param _symbolName   On success, set to the symbol name string.
+ * @param _imageName    On success, set to the image name string.
+ * @param _exactMatch   On success, set to true if address falls within the
+ *                      symbol's st_size range.
+ * @retval B_OK             Symbol (or nearest symbol) found.
+ * @retval B_ENTRY_NOT_FOUND No image covers the address.
+ * @retval B_ERROR          ELF subsystem not yet initialised.
+ */
 /*!	Looks up a symbol by address in all images loaded in kernel space.
 	Note, if you need to call this function outside a debugger, make
 	sure you fix locking and the way it returns its information, first!
@@ -1731,6 +2057,22 @@ symbol_found:
 }
 
 
+/**
+ * @brief Look up the symbol name and image for an address in a user-space team.
+ *
+ * The team's address space must already be active. Uses UserSymbolLookup to
+ * walk the team's image list and ELF hash tables via safe cross-space reads.
+ *
+ * @param team          Team whose image list is searched.
+ * @param address       User-space virtual address to resolve.
+ * @param _baseAddress  On success, receives the symbol base address.
+ * @param _symbolName   On success, receives the symbol name.
+ * @param _imageName    On success, receives the image name.
+ * @param _exactMatch   On success, true if address lies within the symbol.
+ * @retval B_OK           Symbol resolved.
+ * @retval B_BAD_VALUE    team is NULL or is the kernel team.
+ * @retval B_ENTRY_NOT_FOUND No image covers the address.
+ */
 /*!	Tries to find a matching user symbol for the given address.
 	Note that the given team's address space must already be in effect.
 */
@@ -1752,6 +2094,18 @@ elf_debug_lookup_user_symbol_address(Team* team, addr_t address,
 }
 
 
+/**
+ * @brief Find the virtual address of a named symbol across all loaded kernel
+ *        images; intended for use by the kernel debugger.
+ *
+ * Iterates all kernel images, checking debug symbol tables first, then
+ * standard ELF hash tables.
+ *
+ * @note Does not acquire any locks; must only be called from the debugger.
+ *
+ * @param searchName Null-terminated symbol name to find.
+ * @return Virtual address of the symbol, or 0 if not found.
+ */
 /*!	Looks up a symbol in all kernel images. Note, this function is thought to
 	be used in the kernel debugger, and therefore doesn't perform any locking.
 */
@@ -1791,6 +2145,15 @@ elf_debug_lookup_symbol(const char* searchName)
 }
 
 
+/**
+ * @brief Look up a symbol by name in the kernel image and return its address
+ *        and size.
+ *
+ * @param name  Null-terminated symbol name to find in sKernelImage.
+ * @param info  Output structure receiving the symbol address and size.
+ * @retval B_OK             Symbol found; @p info populated.
+ * @retval B_MISSING_SYMBOL Symbol not present in the kernel image.
+ */
 status_t
 elf_lookup_kernel_symbol(const char* name, elf_symbol_info* info)
 {
@@ -1808,6 +2171,24 @@ elf_lookup_kernel_symbol(const char* name, elf_symbol_info* info)
 #endif // ELF32_COMPAT
 
 
+/**
+ * @brief Load the ELF runtime loader (or another ELF shared object) into a
+ *        userland team's address space and return its entry point.
+ *
+ * Opens @p path, reads and verifies the ELF header, maps each PT_LOAD
+ * segment into @p team's address space, applies dynamic relocations, sets
+ * final segment protections, and registers the image. The entry point
+ * (e_entry + ASLR delta) is written to @p entry.
+ *
+ * @param path  Filesystem path of the ELF file to load.
+ * @param team  Target team whose address space receives the segments.
+ * @param flags Load flags (e.g. ELF_LOAD_USER_IMAGE_TEST_EXECUTABLE).
+ * @param entry On success, receives the ELF entry point virtual address.
+ * @retval B_OK                 Image loaded successfully.
+ * @retval B_NOT_AN_EXECUTABLE  ELF header invalid or segment mapping failed.
+ * @retval B_NO_MEMORY          Heap or area allocation failure.
+ * @retval other                I/O or relocation error.
+ */
 status_t
 elf_load_user_image(const char *path, Team *team, uint32 flags, addr_t *entry)
 {
@@ -2096,6 +2477,23 @@ elf_load_user_image(const char *path, Team *team, uint32 flags, addr_t *entry)
 
 #ifndef ELF32_COMPAT
 
+/**
+ * @brief Load an ELF binary as a kernel add-on and return its image_id.
+ *
+ * Opens @p path, reads and validates the ELF header, reserves kernel address
+ * space for all PT_LOAD segments, maps them with full-lock areas, applies
+ * dynamic section parsing, version checks, and relocations, then marks the
+ * text segment read-only/executable and registers the image. If the add-on is
+ * already loaded (same vnode) the reference count is incremented instead of
+ * reloading.
+ *
+ * @param path Filesystem path of the kernel add-on to load.
+ * @return image_id of the loaded add-on on success, or a negative error code.
+ * @retval B_NO_MEMORY          Allocation failure.
+ * @retval B_NOT_AN_EXECUTABLE  Invalid ELF header or segment mapping error.
+ * @retval B_BAD_DATA           Unreasonable gap between segments.
+ * @retval other                I/O, version, or relocation error.
+ */
 image_id
 load_kernel_add_on(const char *path)
 {
@@ -2405,6 +2803,17 @@ error0:
 }
 
 
+/**
+ * @brief Unload a kernel add-on previously loaded with load_kernel_add_on().
+ *
+ * Acquires both sImageLoadMutex and sImageMutex, looks up the image by @p id,
+ * and calls unload_elf_image() to decrement its reference count (and destroy
+ * it when it reaches zero).
+ *
+ * @param id image_id returned by load_kernel_add_on().
+ * @retval B_OK           Add-on unloaded (or reference count decremented).
+ * @retval B_BAD_IMAGE_ID No image with the given id is loaded.
+ */
 status_t
 unload_kernel_add_on(image_id id)
 {
@@ -2420,6 +2829,11 @@ unload_kernel_add_on(image_id id)
 }
 
 
+/**
+ * @brief Return a pointer to the elf_image_info for the kernel itself.
+ *
+ * @return Pointer to sKernelImage (never NULL after elf_init()).
+ */
 struct elf_image_info*
 elf_get_kernel_image()
 {
@@ -2427,6 +2841,15 @@ elf_get_kernel_image()
 }
 
 
+/**
+ * @brief Fill in a generic image_info for the kernel ELF image that contains
+ *        the given virtual address.
+ *
+ * @param address Virtual address that must lie within the image.
+ * @param info    Output image_info structure to populate.
+ * @retval B_OK             Image found; @p info populated.
+ * @retval B_ENTRY_NOT_FOUND No kernel image covers @p address.
+ */
 status_t
 elf_get_image_info_for_address(addr_t address, image_info* info)
 {
@@ -2454,6 +2877,22 @@ elf_get_image_info_for_address(addr_t address, image_info* info)
 }
 
 
+/**
+ * @brief Create a kernel image record for an ELF object that is already
+ *        mapped into memory (e.g. the commpage or JIT regions).
+ *
+ * Allocates an elf_image_info, attaches empty debug symbol and string tables
+ * (so that elf_debug_lookup_symbol_address() skips the absent dynamic table),
+ * and registers the image. Symbols can be added afterwards with
+ * elf_add_memory_image_symbol().
+ *
+ * @param imageName Name string for the image.
+ * @param text      Start address of the text (code) region.
+ * @param textSize  Size of the text region in bytes.
+ * @param data      Start address of the data region.
+ * @param dataSize  Size of the data region in bytes.
+ * @return image_id of the new image, or B_NO_MEMORY on allocation failure.
+ */
 image_id
 elf_create_memory_image(const char* imageName, addr_t text, size_t textSize,
 	addr_t data, size_t dataSize)
@@ -2511,6 +2950,22 @@ elf_create_memory_image(const char* imageName, addr_t text, size_t textSize,
 }
 
 
+/**
+ * @brief Add a named symbol entry to an in-memory image's debug symbol table.
+ *
+ * Grows the image's debug_symbols and debug_string_table arrays and appends
+ * a new elf_sym. The image must have been created with
+ * elf_create_memory_image().
+ *
+ * @param id      image_id of the target memory image.
+ * @param name    Null-terminated symbol name (may be NULL for an unnamed entry).
+ * @param address Virtual address of the symbol.
+ * @param size    Size of the symbol in bytes.
+ * @param type    B_SYMBOL_TYPE_DATA or B_SYMBOL_TYPE_TEXT.
+ * @retval B_OK             Symbol added.
+ * @retval B_ENTRY_NOT_FOUND No image with the given id.
+ * @retval B_NO_MEMORY      Reallocation of symbol or string table failed.
+ */
 status_t
 elf_add_memory_image_symbol(image_id id, const char* name, addr_t address,
 	size_t size, int32 type)
@@ -2573,6 +3028,28 @@ elf_add_memory_image_symbol(image_id id, const char* name, addr_t address,
 }
 
 
+/**
+ * @brief Read the symbol and string tables of a loaded kernel image into
+ *        caller-supplied buffers.
+ *
+ * Both @p _symbolCount and @p _stringTableSize are in/out: on entry they
+ * give the buffer capacities; on return they hold the actual sizes (which
+ * may exceed the capacities). As much data as fits is copied. Passing NULL
+ * for either table retrieves only the required sizes.
+ *
+ * @param id               image_id to read symbols from.
+ * @param symbolTable      Output buffer for elf_sym entries (may be NULL).
+ * @param _symbolCount     In: buffer capacity in symbols; out: total symbols.
+ * @param stringTable      Output buffer for the string table (may be NULL).
+ * @param _stringTableSize In: buffer size in bytes; out: total string table size.
+ * @param _imageDelta      On success, receives the image load delta (may be NULL).
+ * @param kernel           True if called from kernel context (uses memcpy),
+ *                         false if from user context (uses user_memcpy).
+ * @retval B_OK           Data (partially) copied; sizes updated.
+ * @retval B_BAD_VALUE    NULL required output pointer.
+ * @retval B_BAD_ADDRESS  Non-kernel caller passed a kernel pointer.
+ * @retval B_ENTRY_NOT_FOUND No image with the given id.
+ */
 /*!	Reads the symbol and string table for the kernel image with the given ID.
 	\a _symbolCount and \a _stringTableSize are both in- and output parameters.
 	When called they call the size of the buffers given by \a symbolTable and
@@ -2692,6 +3169,18 @@ elf_read_kernel_image_symbols(image_id id, elf_sym* symbolTable,
 }
 
 
+/**
+ * @brief Initialise the kernel ELF loader subsystem.
+ *
+ * Called early in kernel startup. Reads the "load_symbols" driver setting,
+ * allocates and initialises the global image hash table, inserts the kernel
+ * image and all boot-loader preloaded images, and registers kernel debugger
+ * commands (ls, symbols, symbol, image).
+ *
+ * @param args Kernel arguments passed from the boot loader.
+ * @retval B_OK        Initialisation successful.
+ * @retval B_NO_MEMORY Hash table allocation failed.
+ */
 status_t
 elf_init(kernel_args* args)
 {
@@ -2742,6 +3231,21 @@ elf_init(kernel_args* args)
 // #pragma mark -
 
 
+/**
+ * @brief Syscall wrapper: read the symbol and string table for a kernel image.
+ *
+ * Thin wrapper around elf_read_kernel_image_symbols() with kernel=false,
+ * performing user-address validation and user_memcpy transfers.
+ *
+ * @param id               image_id to read symbols from.
+ * @param symbolTable      User-space output buffer for elf_sym entries.
+ * @param _symbolCount     User-space in/out: buffer capacity / total count.
+ * @param stringTable      User-space output buffer for the string table.
+ * @param _stringTableSize User-space in/out: buffer size / total size.
+ * @param _imageDelta      User-space output for the image load delta.
+ * @retval B_OK           Success; see elf_read_kernel_image_symbols().
+ * @retval B_BAD_ADDRESS  Non-user pointer passed for an output parameter.
+ */
 /*!	Reads the symbol and string table for the kernel image with the given ID.
 	\a _symbolCount and \a _stringTableSize are both in- and output parameters.
 	When called they call the size of the buffers given by \a symbolTable and
@@ -2762,4 +3266,3 @@ _user_read_kernel_image_symbols(image_id id, elf_sym* symbolTable,
 }
 
 #endif // ELF32_COMPAT
-

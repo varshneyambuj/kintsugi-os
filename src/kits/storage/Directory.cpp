@@ -1,13 +1,41 @@
 /*
- * Copyright 2002-2009, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold, bonefish@users.sf.net
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Haiku Inc.
+ *   Authors: Tyler Dauwalder, Ingo Weinhold (bonefish@users.sf.net),
+ *            Axel Dörfler (axeld@pinc-software.de)
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file Directory.cpp
+ * @brief Implementation of the BDirectory class for directory operations.
+ *
+ * BDirectory provides an interface for opening, traversing, and manipulating
+ * filesystem directories. It inherits from BNode and adds directory-specific
+ * operations such as entry enumeration, subdirectory creation, and containment
+ * checks. The free function create_directory() allows recursive directory
+ * creation similar to POSIX mkdir -p.
+ *
+ * @see BDirectory
+ */
 
 #include "storage_support.h"
 
@@ -27,6 +55,9 @@
 #include <umask.h>
 
 
+/**
+ * @brief Default constructor; creates an uninitialized BDirectory object.
+ */
 BDirectory::BDirectory()
 	:
 	fDirFd(-1)
@@ -34,6 +65,11 @@ BDirectory::BDirectory()
 }
 
 
+/**
+ * @brief Copy constructor; initializes this BDirectory as a copy of another.
+ *
+ * @param dir The source BDirectory to copy.
+ */
 BDirectory::BDirectory(const BDirectory& dir)
 	:
 	fDirFd(-1)
@@ -42,6 +78,11 @@ BDirectory::BDirectory(const BDirectory& dir)
 }
 
 
+/**
+ * @brief Constructs and initializes the BDirectory to the entry referenced by ref.
+ *
+ * @param ref An entry_ref identifying the directory to open.
+ */
 BDirectory::BDirectory(const entry_ref* ref)
 	:
 	fDirFd(-1)
@@ -50,6 +91,11 @@ BDirectory::BDirectory(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Constructs and initializes the BDirectory to the node referenced by nref.
+ *
+ * @param nref A node_ref identifying the directory node to open.
+ */
 BDirectory::BDirectory(const node_ref* nref)
 	:
 	fDirFd(-1)
@@ -58,6 +104,11 @@ BDirectory::BDirectory(const node_ref* nref)
 }
 
 
+/**
+ * @brief Constructs and initializes the BDirectory from a BEntry.
+ *
+ * @param entry A BEntry pointing to the directory to open.
+ */
 BDirectory::BDirectory(const BEntry* entry)
 	:
 	fDirFd(-1)
@@ -66,6 +117,11 @@ BDirectory::BDirectory(const BEntry* entry)
 }
 
 
+/**
+ * @brief Constructs and initializes the BDirectory from a path string.
+ *
+ * @param path A null-terminated path to the directory to open.
+ */
 BDirectory::BDirectory(const char* path)
 	:
 	fDirFd(-1)
@@ -74,6 +130,12 @@ BDirectory::BDirectory(const char* path)
 }
 
 
+/**
+ * @brief Constructs and initializes the BDirectory from a relative path within another directory.
+ *
+ * @param dir  The base directory from which path is relative.
+ * @param path A relative path to the directory to open.
+ */
 BDirectory::BDirectory(const BDirectory* dir, const char* path)
 	:
 	fDirFd(-1)
@@ -82,6 +144,9 @@ BDirectory::BDirectory(const BDirectory* dir, const char* path)
 }
 
 
+/**
+ * @brief Destructor; closes the directory file descriptor and releases resources.
+ */
 BDirectory::~BDirectory()
 {
 	// Also called by the BNode destructor, but we rather try to avoid
@@ -93,6 +158,12 @@ BDirectory::~BDirectory()
 }
 
 
+/**
+ * @brief Initializes (or re-initializes) the BDirectory to the entry referenced by ref.
+ *
+ * @param ref An entry_ref identifying the directory to open.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::SetTo(const entry_ref* ref)
 {
@@ -116,6 +187,12 @@ BDirectory::SetTo(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Initializes the BDirectory to the node identified by a node_ref.
+ *
+ * @param nref A node_ref identifying the directory node to open.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::SetTo(const node_ref* nref)
 {
@@ -130,6 +207,12 @@ BDirectory::SetTo(const node_ref* nref)
 }
 
 
+/**
+ * @brief Initializes the BDirectory to the directory pointed to by a BEntry.
+ *
+ * @param entry A BEntry pointing to the directory.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::SetTo(const BEntry* entry)
 {
@@ -158,6 +241,12 @@ BDirectory::SetTo(const BEntry* entry)
 }
 
 
+/**
+ * @brief Initializes the BDirectory to the directory at the given path.
+ *
+ * @param path A null-terminated string specifying the path to the directory.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::SetTo(const char* path)
 {
@@ -181,6 +270,13 @@ BDirectory::SetTo(const char* path)
 }
 
 
+/**
+ * @brief Initializes the BDirectory to a path relative to another directory.
+ *
+ * @param dir  The base directory; must not be NULL, and path must be relative.
+ * @param path A relative path within dir identifying the target directory.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::SetTo(const BDirectory* dir, const char* path)
 {
@@ -220,6 +316,12 @@ BDirectory::SetTo(const BDirectory* dir, const char* path)
 }
 
 
+/**
+ * @brief Retrieves a BEntry representing this directory.
+ *
+ * @param entry Pointer to a BEntry that will be set to refer to this directory.
+ * @return B_OK on success, B_BAD_VALUE if entry is NULL, or B_NO_INIT if not initialized.
+ */
 status_t
 BDirectory::GetEntry(BEntry* entry) const
 {
@@ -231,6 +333,11 @@ BDirectory::GetEntry(BEntry* entry) const
 }
 
 
+/**
+ * @brief Returns whether this directory is the root directory of its filesystem.
+ *
+ * @return true if this is the root directory, false otherwise.
+ */
 bool
 BDirectory::IsRootDirectory() const
 {
@@ -244,6 +351,14 @@ BDirectory::IsRootDirectory() const
 }
 
 
+/**
+ * @brief Finds an entry with the given path within this directory.
+ *
+ * @param path     Relative or absolute path of the entry to locate.
+ * @param entry    BEntry to be set to the found entry on success.
+ * @param traverse If true, symlinks are traversed.
+ * @return B_OK if found, B_ENTRY_NOT_FOUND if not, or another error code.
+ */
 status_t
 BDirectory::FindEntry(const char* path, BEntry* entry, bool traverse) const
 {
@@ -269,6 +384,14 @@ BDirectory::FindEntry(const char* path, BEntry* entry, bool traverse) const
 }
 
 
+/**
+ * @brief Tests whether the path is contained within this directory.
+ *
+ * @param path      Path to test; if NULL, returns true (R5 behavior).
+ * @param nodeFlags Bitmask of node type flags (B_FILE_NODE, B_DIRECTORY_NODE, etc.)
+ *                  or B_ANY_NODE to match any type.
+ * @return true if this directory contains the path, false otherwise.
+ */
 bool
 BDirectory::Contains(const char* path, int32 nodeFlags) const
 {
@@ -289,6 +412,13 @@ BDirectory::Contains(const char* path, int32 nodeFlags) const
 }
 
 
+/**
+ * @brief Tests whether the given BEntry is contained within this directory.
+ *
+ * @param entry     The BEntry to test.
+ * @param nodeFlags Bitmask of node type flags or B_ANY_NODE to match any type.
+ * @return true if this directory contains entry, false otherwise.
+ */
 bool
 BDirectory::Contains(const BEntry* entry, int32 nodeFlags) const
 {
@@ -328,6 +458,13 @@ BDirectory::Contains(const BEntry* entry, int32 nodeFlags) const
 }
 
 
+/**
+ * @brief Retrieves the next directory entry as a BEntry.
+ *
+ * @param entry    BEntry to be set to the next entry.
+ * @param traverse If true, symlinks are traversed.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when iteration is exhausted, or an error.
+ */
 status_t
 BDirectory::GetNextEntry(BEntry* entry, bool traverse)
 {
@@ -344,6 +481,12 @@ BDirectory::GetNextEntry(BEntry* entry, bool traverse)
 }
 
 
+/**
+ * @brief Retrieves the next directory entry as an entry_ref.
+ *
+ * @param ref Pointer to an entry_ref to be filled in with the next entry's info.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when exhausted, or an error code.
+ */
 status_t
 BDirectory::GetNextRef(entry_ref* ref)
 {
@@ -369,6 +512,14 @@ BDirectory::GetNextRef(entry_ref* ref)
 }
 
 
+/**
+ * @brief Reads up to count directory entries into the supplied buffer.
+ *
+ * @param buf     Buffer to receive the dirent structures.
+ * @param bufSize Size of buf in bytes.
+ * @param count   Maximum number of entries to read.
+ * @return The number of entries read, or a negative error code.
+ */
 int32
 BDirectory::GetNextDirents(dirent* buf, size_t bufSize, int32 count)
 {
@@ -380,6 +531,11 @@ BDirectory::GetNextDirents(dirent* buf, size_t bufSize, int32 count)
 }
 
 
+/**
+ * @brief Rewinds the directory iterator back to the first entry.
+ *
+ * @return B_OK on success, or B_FILE_ERROR if the object is not initialized.
+ */
 status_t
 BDirectory::Rewind()
 {
@@ -389,6 +545,11 @@ BDirectory::Rewind()
 }
 
 
+/**
+ * @brief Returns the number of entries in the directory (excluding "." and "..").
+ *
+ * @return The entry count on success, or a negative error code on failure.
+ */
 int32
 BDirectory::CountEntries()
 {
@@ -409,6 +570,13 @@ BDirectory::CountEntries()
 }
 
 
+/**
+ * @brief Creates a new subdirectory at path relative to this directory.
+ *
+ * @param path The name or relative path of the new directory.
+ * @param dir  Optional BDirectory to be initialized to the new directory; may be NULL.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::CreateDirectory(const char* path, BDirectory* dir)
 {
@@ -432,6 +600,14 @@ BDirectory::CreateDirectory(const char* path, BDirectory* dir)
 }
 
 
+/**
+ * @brief Creates a new file at path relative to this directory.
+ *
+ * @param path         The name or relative path of the new file.
+ * @param file         Optional BFile to be opened on the new file; may be NULL.
+ * @param failIfExists If true, fails if the file already exists.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::CreateFile(const char* path, BFile* file, bool failIfExists)
 {
@@ -454,6 +630,14 @@ BDirectory::CreateFile(const char* path, BFile* file, bool failIfExists)
 }
 
 
+/**
+ * @brief Creates a new symbolic link at path pointing to linkToPath.
+ *
+ * @param path       The name or relative path for the new symlink.
+ * @param linkToPath The target path the symlink will point to.
+ * @param link       Optional BSymLink to be initialized to the new link; may be NULL.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::CreateSymLink(const char* path, const char* linkToPath,
 	BSymLink* link)
@@ -478,6 +662,12 @@ BDirectory::CreateSymLink(const char* path, const char* linkToPath,
 }
 
 
+/**
+ * @brief Assignment operator; makes this BDirectory refer to the same directory as dir.
+ *
+ * @param dir The source BDirectory to copy.
+ * @return A reference to this BDirectory.
+ */
 BDirectory&
 BDirectory::operator=(const BDirectory& dir)
 {
@@ -490,6 +680,13 @@ BDirectory::operator=(const BDirectory& dir)
 }
 
 
+/**
+ * @brief Reads the stat structure for the entry at path within this directory.
+ *
+ * @param path The relative path of the entry, or NULL for the directory itself.
+ * @param st   Pointer to a stat structure to be filled in.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::_GetStatFor(const char* path, struct stat* st) const
 {
@@ -507,6 +704,13 @@ BDirectory::_GetStatFor(const char* path, struct stat* st) const
 }
 
 
+/**
+ * @brief Reads a BeOS-compatible stat structure for the entry at path.
+ *
+ * @param path The relative path of the entry, or NULL for the directory itself.
+ * @param st   Pointer to a stat_beos structure to be filled in.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BDirectory::_GetStatFor(const char* path, struct stat_beos* st) const
 {
@@ -529,7 +733,9 @@ void BDirectory::_ErectorDirectory5() {}
 void BDirectory::_ErectorDirectory6() {}
 
 
-//! Closes the BDirectory's file descriptor.
+/**
+ * @brief Closes the BDirectory's file descriptor.
+ */
 void
 BDirectory::close_fd()
 {
@@ -541,6 +747,11 @@ BDirectory::close_fd()
 }
 
 
+/**
+ * @brief Returns the directory's file descriptor.
+ *
+ * @return The file descriptor used for directory iteration.
+ */
 int
 BDirectory::get_fd() const
 {
@@ -551,6 +762,18 @@ BDirectory::get_fd() const
 //	#pragma mark - C functions
 
 
+/**
+ * @brief Recursively creates all components of the given path with the specified mode.
+ *
+ * Behaves similarly to POSIX mkdir -p: intermediate directories that do not
+ * yet exist are created automatically. If a component already exists and is
+ * a directory, it is left untouched.
+ *
+ * @param path The full path to create, absolute or relative.
+ * @param mode Permission bits (modified by umask) for any newly created directories.
+ * @return B_OK on success, B_NOT_A_DIRECTORY if a component is not a directory,
+ *         or another error code on failure.
+ */
 // TODO: Check this method for efficiency.
 status_t
 create_directory(const char* path, mode_t mode)

@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2006, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
- * Copyright 2013 Haiku, Inc.
- * All Rights Reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, bonefish@cs.tu-berlin.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
+ *   Copyright 2013 Haiku, Inc.
+ *   All Rights Reserved.
+ *   Authors: John Scipione, jscipione@gmail.com
+ *            Ingo Weinhold, bonefish@cs.tu-berlin.de
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file Resources.cpp
+ * @brief Implementation of BResources, the public API for reading and writing file resources.
+ *
+ * BResources provides a high-level interface for accessing typed, named
+ * resources embedded in files (ELF, x86 resource, or PEF format). Resources
+ * are loaded lazily from disk and cached in a ResourcesContainer. Modifications
+ * are written back only when Sync() or WriteTo() is called.
+ *
+ * @see ResourceFile
+ */
 
 #include <Resources.h>
 
@@ -30,7 +59,11 @@ using namespace std;
 #define OUT	printf
 
 
-// Creates an unitialized BResources object.
+/**
+ * @brief Creates an uninitialized BResources object.
+ *
+ * The object is not associated with any file. Call SetTo() before use.
+ */
 BResources::BResources()
 	:
 	fFile(),
@@ -42,8 +75,12 @@ BResources::BResources()
 }
 
 
-// Creates a BResources object that represents the resources of the
-// supplied file.
+/**
+ * @brief Creates a BResources object representing the resources of the given file.
+ *
+ * @param file    The file whose resources are to be managed.
+ * @param clobber If true, any existing resources in the file are overwritten.
+ */
 BResources::BResources(const BFile* file, bool clobber)
 	:
 	fFile(),
@@ -56,8 +93,12 @@ BResources::BResources(const BFile* file, bool clobber)
 }
 
 
-// Creates a BResources object that represents the resources of the
-// file referenced by the supplied path.
+/**
+ * @brief Creates a BResources object representing the resources of the file at the given path.
+ *
+ * @param path    Path to the file whose resources are to be managed.
+ * @param clobber If true, any existing resources in the file are overwritten.
+ */
 BResources::BResources(const char* path, bool clobber)
 	:
 	fFile(),
@@ -70,8 +111,12 @@ BResources::BResources(const char* path, bool clobber)
 }
 
 
-// Creates a BResources object that represents the resources of the
-// file referenced by the supplied ref.
+/**
+ * @brief Creates a BResources object representing the resources of the file referenced by ref.
+ *
+ * @param ref     entry_ref referring to the file whose resources are to be managed.
+ * @param clobber If true, any existing resources in the file are overwritten.
+ */
 BResources::BResources(const entry_ref* ref, bool clobber)
 	:
 	fFile(),
@@ -84,7 +129,11 @@ BResources::BResources(const entry_ref* ref, bool clobber)
 }
 
 
-// Frees all resources associated with this object
+/**
+ * @brief Destroys the BResources object, syncing pending changes and freeing memory.
+ *
+ * Pending modifications are flushed to disk via Unset() before destruction.
+ */
 BResources::~BResources()
 {
 	Unset();
@@ -92,8 +141,16 @@ BResources::~BResources()
 }
 
 
-// Initialized the BResources object to represent the resources of
-// the supplied file.
+/**
+ * @brief Initializes the BResources object to represent the resources of the given file.
+ *
+ * Any previously associated state is reset first. If @p clobber is true existing
+ * resources are replaced with an empty resource set.
+ *
+ * @param file    Pointer to an open BFile; must not be NULL.
+ * @param clobber If true, overwrite existing resource data.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::SetTo(const BFile* file, bool clobber)
 {
@@ -130,8 +187,15 @@ BResources::SetTo(const BFile* file, bool clobber)
 }
 
 
-// Initialized the BResources object to represent the resources of
-// the file referred to by the supplied path.
+/**
+ * @brief Initializes the BResources object to represent the resources of the file at path.
+ *
+ * Opens the file read-write if possible, falling back to read-only.
+ *
+ * @param path    Path string of the file to open.
+ * @param clobber If true, overwrite existing resource data.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::SetTo(const char* path, bool clobber)
 {
@@ -153,8 +217,15 @@ BResources::SetTo(const char* path, bool clobber)
 }
 
 
-// Initialized the BResources object to represent the resources of the
-// file referenced by the supplied ref.
+/**
+ * @brief Initializes the BResources object to represent the resources of the file at ref.
+ *
+ * Opens the file read-write if possible, falling back to read-only.
+ *
+ * @param ref     entry_ref referring to the file to open.
+ * @param clobber If true, overwrite existing resource data.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::SetTo(const entry_ref* ref, bool clobber)
 {
@@ -176,8 +247,13 @@ BResources::SetTo(const entry_ref* ref, bool clobber)
 }
 
 
-// Initialized the BResources object to represent the resources of
-// the file from which the specified image has been loaded.
+/**
+ * @brief Initializes the BResources object to the file from which the given image was loaded.
+ *
+ * @param image   The image_id of the loaded image whose file to access.
+ * @param clobber If true, overwrite existing resource data.
+ * @return B_OK on success, B_NOT_SUPPORTED on non-Haiku platforms, or an error code.
+ */
 status_t
 BResources::SetToImage(image_id image, bool clobber)
 {
@@ -198,8 +274,17 @@ BResources::SetToImage(image_id image, bool clobber)
 }
 
 
-// Initialized the BResources object to represent the resources of
-// the file from which the specified pointer has been loaded.
+/**
+ * @brief Initializes the BResources object to the file from which the given pointer was loaded.
+ *
+ * Iterates all loaded images to find the one containing the supplied address.
+ * If @p codeOrDataPointer is NULL, the application image is selected.
+ *
+ * @param codeOrDataPointer An address in the code or data segment of the desired image.
+ * @param clobber           If true, overwrite existing resource data.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching image exists,
+ *         B_NOT_SUPPORTED on non-Haiku platforms.
+ */
 status_t
 BResources::SetToImage(const void* codeOrDataPointer, bool clobber)
 {
@@ -227,7 +312,13 @@ BResources::SetToImage(const void* codeOrDataPointer, bool clobber)
 }
 
 
-// Returns the BResources object to an uninitialized state.
+/**
+ * @brief Resets the BResources object to an uninitialized state.
+ *
+ * If the resource container has been modified, Sync() is called first to
+ * flush changes to disk. The internal ResourceFile and container are then
+ * reset.
+ */
 void
 BResources::Unset()
 {
@@ -244,7 +335,11 @@ BResources::Unset()
 }
 
 
-// Gets the initialization status of the object.
+/**
+ * @brief Returns the initialization status of the object.
+ *
+ * @return B_OK if the internal container was successfully allocated, B_NO_MEMORY otherwise.
+ */
 status_t
 BResources::InitCheck() const
 {
@@ -252,7 +347,11 @@ BResources::InitCheck() const
 }
 
 
-// Gets a reference to the internal BFile object.
+/**
+ * @brief Returns a const reference to the internal BFile object.
+ *
+ * @return The BFile currently associated with this object.
+ */
 const BFile&
 BResources::File() const
 {
@@ -260,7 +359,18 @@ BResources::File() const
 }
 
 
-// Loads a resource identified by type and id into memory.
+/**
+ * @brief Loads and returns the resource identified by type and numeric ID.
+ *
+ * The resource data is read from disk on first access and cached. The
+ * returned pointer is valid until the BResources object is modified or
+ * destroyed.
+ *
+ * @param type  The four-byte type code of the resource.
+ * @param id    The numeric resource ID.
+ * @param _size Output parameter filled with the resource size in bytes.
+ * @return Pointer to the resource data, or NULL on failure.
+ */
 const void*
 BResources::LoadResource(type_code type, int32 id, size_t* _size)
 {
@@ -286,7 +396,16 @@ BResources::LoadResource(type_code type, int32 id, size_t* _size)
 }
 
 
-// Loads a resource identified by type and name into memory.
+/**
+ * @brief Loads and returns the resource identified by type and name.
+ *
+ * The resource data is read from disk on first access and cached.
+ *
+ * @param type  The four-byte type code of the resource.
+ * @param name  The resource name string.
+ * @param _size Output parameter filled with the resource size in bytes.
+ * @return Pointer to the resource data, or NULL on failure.
+ */
 const void*
 BResources::LoadResource(type_code type, const char* name, size_t* _size)
 {
@@ -312,7 +431,15 @@ BResources::LoadResource(type_code type, const char* name, size_t* _size)
 }
 
 
-// Loads all resources of the specified type into memory.
+/**
+ * @brief Loads all resources of the specified type into memory.
+ *
+ * If @p type is 0 all resources are loaded regardless of type.
+ *
+ * @param type The type code to preload, or 0 to preload all types.
+ * @return B_OK if all requested resources loaded successfully, or a negative
+ *         count of failures.
+ */
 status_t
 BResources::PreloadResourceType(type_code type)
 {
@@ -337,7 +464,14 @@ BResources::PreloadResourceType(type_code type)
 }
 
 
-// Writes all changes to the resources to the file.
+/**
+ * @brief Writes all pending resource changes back to the file.
+ *
+ * All resources are first loaded from disk to ensure a complete in-memory
+ * copy before the updated resource set is written back.
+ *
+ * @return B_OK on success, B_NOT_ALLOWED if the file is read-only, or an error code.
+ */
 status_t
 BResources::Sync()
 {
@@ -358,8 +492,15 @@ BResources::Sync()
 }
 
 
-// Adds the resources of fromFile to the internal file of the
-// BResources object.
+/**
+ * @brief Merges the resources from the given file into this object's file.
+ *
+ * All resources from @p fromFile are loaded and added to the current
+ * resource container.
+ *
+ * @param fromFile Pointer to the source file; must not be NULL.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::MergeFrom(BFile* fromFile)
 {
@@ -381,7 +522,15 @@ BResources::MergeFrom(BFile* fromFile)
 }
 
 
-// Writes the resources to a new file.
+/**
+ * @brief Writes the current resource set to a different file.
+ *
+ * All resources are fully loaded before being written to @p file. The
+ * object's current file is not altered.
+ *
+ * @param file Pointer to the destination file; must not be NULL.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::WriteTo(BFile* file)
 {
@@ -411,7 +560,19 @@ BResources::WriteTo(BFile* file)
 }
 
 
-// Adds a new resource to the file.
+/**
+ * @brief Adds a new resource to the file.
+ *
+ * The resource is stored in the in-memory container and will be written to
+ * disk on the next Sync() call.
+ *
+ * @param type   The four-byte type code.
+ * @param id     The numeric resource ID.
+ * @param data   Pointer to the resource data; must not be NULL.
+ * @param length Size of the resource data in bytes.
+ * @param name   Optional resource name string.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::AddResource(type_code type, int32 id, const void* data,
 						size_t length, const char* name)
@@ -444,8 +605,13 @@ BResources::AddResource(type_code type, int32 id, const void* data,
 }
 
 
-// Returns whether the file contains a resource with the specified
-// type and id.
+/**
+ * @brief Returns true if the file contains a resource with the given type and numeric ID.
+ *
+ * @param type The resource type code.
+ * @param id   The numeric resource ID.
+ * @return true if the resource exists, false otherwise.
+ */
 bool
 BResources::HasResource(type_code type, int32 id)
 {
@@ -453,8 +619,13 @@ BResources::HasResource(type_code type, int32 id)
 }
 
 
-// Returns whether the file contains a resource with the specified
-// type and name.
+/**
+ * @brief Returns true if the file contains a resource with the given type and name.
+ *
+ * @param type The resource type code.
+ * @param name The resource name string.
+ * @return true if the resource exists, false otherwise.
+ */
 bool
 BResources::HasResource(type_code type, const char* name)
 {
@@ -462,7 +633,16 @@ BResources::HasResource(type_code type, const char* name)
 }
 
 
-// Gets information about a resource identified by byindex.
+/**
+ * @brief Returns information about the resource at the given container index.
+ *
+ * @param byIndex     Zero-based index into the resource list.
+ * @param typeFound   Output: type code of the resource.
+ * @param idFound     Output: numeric ID of the resource.
+ * @param nameFound   Output: name of the resource.
+ * @param lengthFound Output: data size of the resource in bytes.
+ * @return true if a resource exists at @p byIndex, false otherwise.
+ */
 bool
 BResources::GetResourceInfo(int32 byIndex, type_code* typeFound,
 	int32* idFound, const char** nameFound, size_t* lengthFound)
@@ -484,7 +664,16 @@ BResources::GetResourceInfo(int32 byIndex, type_code* typeFound,
 }
 
 
-// Gets information about a resource identified by byType and andIndex.
+/**
+ * @brief Returns information about the Nth resource of the given type.
+ *
+ * @param byType      The type code to search for.
+ * @param andIndex    Zero-based index among resources of the specified type.
+ * @param idFound     Output: numeric ID of the found resource.
+ * @param nameFound   Output: name of the found resource.
+ * @param lengthFound Output: data size of the found resource in bytes.
+ * @return true if a matching resource exists, false otherwise.
+ */
 bool
 BResources::GetResourceInfo(type_code byType, int32 andIndex, int32* idFound,
 	const char** nameFound, size_t* lengthFound)
@@ -506,7 +695,15 @@ BResources::GetResourceInfo(type_code byType, int32 andIndex, int32* idFound,
 }
 
 
-// Gets information about a resource identified by byType and andID.
+/**
+ * @brief Returns information about the resource identified by type and numeric ID.
+ *
+ * @param byType      The resource type code.
+ * @param andID       The numeric resource ID.
+ * @param nameFound   Output: name of the resource.
+ * @param lengthFound Output: data size of the resource in bytes.
+ * @return true if the resource exists, false otherwise.
+ */
 bool
 BResources::GetResourceInfo(type_code byType, int32 andID,
 	const char** nameFound, size_t* lengthFound)
@@ -524,7 +721,15 @@ BResources::GetResourceInfo(type_code byType, int32 andID,
 }
 
 
-// Gets information about a resource identified by byType and andName.
+/**
+ * @brief Returns information about the resource identified by type and name.
+ *
+ * @param byType      The resource type code.
+ * @param andName     The resource name string.
+ * @param idFound     Output: numeric ID of the resource.
+ * @param lengthFound Output: data size of the resource in bytes.
+ * @return true if the resource exists, false otherwise.
+ */
 bool
 BResources::GetResourceInfo(type_code byType, const char* andName,
 	int32* idFound, size_t* lengthFound)
@@ -542,7 +747,16 @@ BResources::GetResourceInfo(type_code byType, const char* andName,
 }
 
 
-// Gets information about a resource identified by byPointer.
+/**
+ * @brief Returns information about the resource identified by its data pointer.
+ *
+ * @param byPointer   The data pointer previously returned by LoadResource().
+ * @param typeFound   Output: type code of the resource.
+ * @param idFound     Output: numeric ID of the resource.
+ * @param lengthFound Output: data size of the resource in bytes.
+ * @param nameFound   Output: name of the resource.
+ * @return true if a resource with the given data pointer exists, false otherwise.
+ */
 bool
 BResources::GetResourceInfo(const void* byPointer, type_code* typeFound,
 	int32* idFound, size_t* lengthFound, const char** nameFound)
@@ -564,7 +778,13 @@ BResources::GetResourceInfo(const void* byPointer, type_code* typeFound,
 }
 
 
-// Removes a resource identified by its data pointer.
+/**
+ * @brief Removes the resource whose data pointer matches the given pointer.
+ *
+ * @param resource The data pointer of the resource to remove.
+ * @return B_OK on success, B_BAD_VALUE if not found or @p resource is NULL,
+ *         B_NOT_ALLOWED if read-only.
+ */
 status_t
 BResources::RemoveResource(const void* resource)
 {
@@ -585,7 +805,13 @@ BResources::RemoveResource(const void* resource)
 }
 
 
-// Removes a resource identified by type and id.
+/**
+ * @brief Removes the resource identified by type and numeric ID.
+ *
+ * @param type The resource type code.
+ * @param id   The numeric resource ID.
+ * @return B_OK on success, B_BAD_VALUE if not found, B_NOT_ALLOWED if read-only.
+ */
 status_t
 BResources::RemoveResource(type_code type, int32 id)
 {
@@ -607,8 +833,19 @@ BResources::RemoveResource(type_code type, int32 id)
 // #pragma mark - deprecated methods
 
 
-// Writes data into an existing resource
-// (deprecated, use AddResource() instead).
+/**
+ * @brief Writes data into an existing resource at the given offset (deprecated).
+ *
+ * Use AddResource() instead. This method overwrites a portion of the resource
+ * data and loads the resource from disk if not already in memory.
+ *
+ * @param type   The resource type code.
+ * @param id     The numeric resource ID.
+ * @param data   Pointer to the data to write.
+ * @param offset Byte offset within the resource at which to write.
+ * @param length Number of bytes to write.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::WriteResource(type_code type, int32 id, const void* data,
 	off_t offset, size_t length)
@@ -643,8 +880,19 @@ BResources::WriteResource(type_code type, int32 id, const void* data,
 }
 
 
-// Reads data from an existing resource
-// (deprecated, use LoadResource() instead).
+/**
+ * @brief Reads data from an existing resource at the given offset (deprecated).
+ *
+ * Use LoadResource() instead. The resource is loaded from disk if not already
+ * in memory.
+ *
+ * @param type   The resource type code.
+ * @param id     The numeric resource ID.
+ * @param data   Buffer to receive the data.
+ * @param offset Byte offset within the resource from which to read.
+ * @param length Number of bytes to read.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BResources::ReadResource(type_code type, int32 id, void* data, off_t offset,
 	size_t length)
@@ -672,8 +920,17 @@ BResources::ReadResource(type_code type, int32 id, void* data, off_t offset,
 }
 
 
-// Finds a resource by type and id and returns a pointer to a copy of
-// its data (deprecated, use LoadResource() instead).
+/**
+ * @brief Finds a resource by type and numeric ID and returns a malloc'd copy (deprecated).
+ *
+ * Use LoadResource() instead. The caller is responsible for free()ing the
+ * returned pointer.
+ *
+ * @param type        The resource type code.
+ * @param id          The numeric resource ID.
+ * @param lengthFound Output parameter filled with the resource size.
+ * @return Pointer to a malloc'd copy of the resource data, or NULL on failure.
+ */
 void*
 BResources::FindResource(type_code type, int32 id, size_t* lengthFound)
 {
@@ -690,8 +947,17 @@ BResources::FindResource(type_code type, int32 id, size_t* lengthFound)
 }
 
 
-// Finds a resource by type and name and returns a pointer to a copy of
-// its data (deprecated, use LoadResource() instead).
+/**
+ * @brief Finds a resource by type and name and returns a malloc'd copy (deprecated).
+ *
+ * Use LoadResource() instead. The caller is responsible for free()ing the
+ * returned pointer.
+ *
+ * @param type        The resource type code.
+ * @param name        The resource name string.
+ * @param lengthFound Output parameter filled with the resource size.
+ * @return Pointer to a malloc'd copy of the resource data, or NULL on failure.
+ */
 void*
 BResources::FindResource(type_code type, const char* name, size_t* lengthFound)
 {

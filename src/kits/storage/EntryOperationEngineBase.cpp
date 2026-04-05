@@ -1,8 +1,39 @@
 /*
- * Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file EntryOperationEngineBase.cpp
+ * @brief Implementation of BEntryOperationEngineBase::Entry, a flexible
+ *        file system entry descriptor.
+ *
+ * The Entry inner class provides a unified representation of a file system
+ * entry that may be specified as a raw path, a BEntry, an entry_ref, or a
+ * directory + relative path combination. Path resolution is deferred to
+ * GetPath() to avoid unnecessary stat calls.
+ *
+ * @see BEntryOperationEngineBase
+ */
 
 #include <EntryOperationEngineBase.h>
 
@@ -14,6 +45,11 @@
 namespace BPrivate {
 
 
+/**
+ * @brief Constructs an Entry from an absolute or relative path string.
+ *
+ * @param path The path string identifying the entry.
+ */
 BEntryOperationEngineBase::Entry::Entry(const char* path)
 	:
 	fDirectory(NULL),
@@ -25,6 +61,12 @@ BEntryOperationEngineBase::Entry::Entry(const char* path)
 }
 
 
+/**
+ * @brief Constructs an Entry from a parent directory and a relative path.
+ *
+ * @param directory Reference to the parent BDirectory.
+ * @param path      Relative name within the directory.
+ */
 BEntryOperationEngineBase::Entry::Entry(const BDirectory& directory,
 	const char* path)
 	:
@@ -37,6 +79,11 @@ BEntryOperationEngineBase::Entry::Entry(const BDirectory& directory,
 }
 
 
+/**
+ * @brief Constructs an Entry from an existing BEntry.
+ *
+ * @param entry Reference to the BEntry describing the entry.
+ */
 BEntryOperationEngineBase::Entry::Entry(const BEntry& entry)
 	:
 	fDirectory(NULL),
@@ -48,6 +95,11 @@ BEntryOperationEngineBase::Entry::Entry(const BEntry& entry)
 }
 
 
+/**
+ * @brief Constructs an Entry from an entry_ref.
+ *
+ * @param entryRef Reference to the entry_ref identifying the entry.
+ */
 BEntryOperationEngineBase::Entry::Entry(const entry_ref& entryRef)
 	:
 	fDirectory(NULL),
@@ -59,6 +111,12 @@ BEntryOperationEngineBase::Entry::Entry(const entry_ref& entryRef)
 }
 
 
+/**
+ * @brief Constructs an Entry from a directory node_ref and a relative path.
+ *
+ * @param directoryRef node_ref of the parent directory.
+ * @param path         Relative name within the directory.
+ */
 BEntryOperationEngineBase::Entry::Entry(const node_ref& directoryRef,
 	const char* path)
 	:
@@ -71,11 +129,27 @@ BEntryOperationEngineBase::Entry::Entry(const node_ref& directoryRef,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BEntryOperationEngineBase::Entry::~Entry()
 {
 }
 
 
+/**
+ * @brief Resolves this entry to an absolute path.
+ *
+ * Uses whichever representation was provided at construction time to
+ * compute the absolute path. If the entry was created from a plain path
+ * string, that string is returned directly without a BPath allocation.
+ *
+ * @param buffer Output BPath used as a temporary buffer when resolution
+ *               requires path construction.
+ * @param _path  Output reference that is set to point to the resolved path
+ *               string (either inside buffer or to the original path string).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BEntryOperationEngineBase::Entry::GetPath(BPath& buffer, const char*& _path)
 	const
@@ -106,6 +180,11 @@ BEntryOperationEngineBase::Entry::GetPath(BPath& buffer, const char*& _path)
 }
 
 
+/**
+ * @brief Returns the resolved absolute path as a BString.
+ *
+ * @return The absolute path string, or an empty BString on error.
+ */
 BString
 BEntryOperationEngineBase::Entry::Path() const
 {
@@ -117,6 +196,18 @@ BEntryOperationEngineBase::Entry::Path() const
 }
 
 
+/**
+ * @brief Returns the best available path or name for this entry.
+ *
+ * If the full path cannot be resolved, falls back to returning just the
+ * entry name or a partial directory path combined with the relative name.
+ * This is useful for constructing human-readable error messages when the
+ * full path is unavailable.
+ *
+ * @param _path Output BString that receives the path or name.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or another
+ *         error code if no representation can be computed.
+ */
 status_t
 BEntryOperationEngineBase::Entry::GetPathOrName(BString& _path) const
 {
@@ -173,6 +264,11 @@ BEntryOperationEngineBase::Entry::GetPathOrName(BString& _path) const
 }
 
 
+/**
+ * @brief Returns the best available path or name as a BString.
+ *
+ * @return The path or name string, or an empty BString on error.
+ */
 BString
 BEntryOperationEngineBase::Entry::PathOrName() const
 {

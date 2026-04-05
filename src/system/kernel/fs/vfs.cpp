@@ -1,12 +1,43 @@
 /*
- * Copyright 2005-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2018, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2018, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
+/**
+ * @file vfs.cpp
+ * @brief Virtual File System layer — the central hub for all file I/O.
+ *
+ * vfs.cpp implements the kernel VFS: vnode lifecycle (get_vnode, put_vnode),
+ * namespace operations (lookup, open, read, write, mkdir, rename, unlink),
+ * mount/unmount, file descriptor management, and all VFS-related syscalls.
+ * All file system add-ons are called exclusively through the vnode operation
+ * vectors stored in fs_vnode_ops and fs_volume_ops.
+ *
+ * @see fd.cpp, Vnode.cpp, vfs_boot.cpp
+ */
 
 /*! Virtual File System and File System Interface Layer */
 
@@ -713,6 +744,13 @@ public:
 /*! Finds the mounted device (the fs_mount structure) with the given ID.
 	Note, you must hold the sMountLock lock when you call this function.
 */
+/**
+ * @brief Looks up a mounted file system by its device ID.
+ *
+ * @param id The device (mount) ID to find.
+ * @return Pointer to the fs_mount structure, or NULL if not found.
+ * @note Caller must hold sMountLock (read lock at minimum) before calling.
+ */
 static struct fs_mount*
 find_mount(dev_t id)
 {
@@ -722,6 +760,16 @@ find_mount(dev_t id)
 }
 
 
+/**
+ * @brief Retrieves a mount by device ID and acquires a reference to its root vnode.
+ *
+ * @param id       The device (mount) ID.
+ * @param _mount   Output pointer set to the located fs_mount on success.
+ * @retval B_OK        Success; root vnode reference incremented.
+ * @retval B_BAD_VALUE No mount found for the given ID.
+ * @retval B_BUSY      Mount is in the process of being mounted or unmounted.
+ * @note The caller must call put_mount() when done to release the reference.
+ */
 static status_t
 get_mount(dev_t id, struct fs_mount** _mount)
 {
@@ -747,6 +795,13 @@ get_mount(dev_t id, struct fs_mount** _mount)
 }
 
 
+/**
+ * @brief Releases the reference on a mount acquired by get_mount().
+ *
+ * @param mount The mount whose root vnode reference shall be released.
+ *              May be NULL (no-op).
+ * @note Internally calls put_vnode() on mount->root_vnode.
+ */
 static void
 put_mount(struct fs_mount* mount)
 {
@@ -760,6 +815,16 @@ put_mount(struct fs_mount* mount)
 	Returns a pointer to file system module interface, or NULL if it
 	could not open the module.
 */
+/**
+ * @brief Opens the kernel module for a named file system.
+ *
+ * Accepts a short name such as "bfs" or a full module path like
+ * "file_systems/bfs/v1".
+ *
+ * @param fsName Name (short or full) of the file system module to load.
+ * @return Pointer to the file_system_module_info on success, or NULL if the
+ *         module could not be found or opened.
+ */
 static file_system_module_info*
 get_file_system(const char* fsName)
 {
@@ -785,6 +850,16 @@ get_file_system(const char* fsName)
 	done with it.
 	Returns NULL if the required memory is not available.
 */
+/**
+ * @brief Converts a file system module path to a canonical short name.
+ *
+ * Given "file_systems/bfs/v1" or "bfs", returns a heap-allocated "bfs"
+ * suitable for use in fs_info::fsh_name.
+ *
+ * @param fsName Full module path or short file system name.
+ * @return Newly allocated canonical name string, or NULL on allocation
+ *         failure. Caller must free().
+ */
 static char*
 get_file_system_name(const char* fsName)
 {
@@ -820,6 +895,18 @@ get_file_system_name(const char* fsName)
 	Returns NULL if the required memory is not available or if there is no
 	name for the specified layer.
 */
+/**
+ * @brief Extracts the file system name for a specific stacking layer.
+ *
+ * Parses a colon-separated list of FS names (e.g. "overlay:bfs") and
+ * returns the name at position \a layer (0-based).
+ *
+ * @param fsNames Colon-separated list of file system names.
+ * @param layer   Zero-based layer index to extract.
+ * @return Newly allocated name string for the requested layer, or NULL if
+ *         the layer does not exist or memory could not be allocated. Caller
+ *         must free().
+ */
 static char*
 get_file_system_name_for_layer(const char* fsNames, int32 layer)
 {
@@ -846,6 +933,13 @@ get_file_system_name_for_layer(const char* fsNames, int32 layer)
 }
 
 
+/**
+ * @brief Adds a vnode to the mount's vnode list.
+ *
+ * @param vnode  The vnode to add.
+ * @param mount  The mount the vnode belongs to.
+ * @note Acquires and releases mount->lock internally.
+ */
 static void
 add_vnode_to_mount_list(struct vnode* vnode, struct fs_mount* mount)
 {
@@ -854,6 +948,13 @@ add_vnode_to_mount_list(struct vnode* vnode, struct fs_mount* mount)
 }
 
 
+/**
+ * @brief Removes a vnode from the mount's vnode list.
+ *
+ * @param vnode  The vnode to remove.
+ * @param mount  The mount the vnode belongs to.
+ * @note Acquires and releases mount->lock internally.
+ */
 static void
 remove_vnode_from_mount_list(struct vnode* vnode, struct fs_mount* mount)
 {
@@ -893,6 +994,17 @@ lookup_vnode(dev_t mountID, ino_t vnodeID)
 
 	\return \c true if one should retry, \c false if not.
 */
+/**
+ * @brief Decides whether to retry waiting for a busy vnode and sleeps briefly.
+ *
+ * Decrements the retry counter and delays for BUSY_VNODE_DELAY microseconds
+ * before returning.
+ *
+ * @param tries   In/out retry counter; decremented on each call.
+ * @param mountID Device ID used for the diagnostic message on exhaustion.
+ * @param vnodeID Vnode ID used for the diagnostic message on exhaustion.
+ * @return true if the caller should retry; false when retries are exhausted.
+ */
 static bool
 retry_busy_vnode(int32& tries, dev_t mountID, ino_t vnodeID)
 {
@@ -923,6 +1035,24 @@ retry_busy_vnode(int32& tries, dev_t mountID, ino_t vnodeID)
 		a node with the given ID was found, \c B_NO_MEMORY or
 		\c B_ENTRY_NOT_FOUND on error.
 */
+/**
+ * @brief Creates a new vnode for the given mount/node ID pair and write-locks sVnodeLock.
+ *
+ * Allocates a fresh vnode, inserts it into sVnodeTable and the mount's vnode
+ * list. If a vnode with the same ID already exists it is returned instead and
+ * no new node is created.  On success (both new and existing) sVnodeLock is
+ * held write-locked for the caller. On error sVnodeLock is NOT held.
+ *
+ * @param mountID      The mount (device) ID.
+ * @param vnodeID      The file system node ID.
+ * @param _vnode       Set to the new or existing vnode on success.
+ * @param _nodeCreated Set to true when a new vnode was created, false when an
+ *                     existing one was returned.  Unchanged on error.
+ * @retval B_OK            Success.
+ * @retval B_NO_MEMORY     Allocation failure.
+ * @retval B_ENTRY_NOT_FOUND Mount not found or is being unmounted.
+ * @note Caller must not hold sVnodeLock or sMountLock on entry.
+ */
 static status_t
 create_new_vnode_and_lock(dev_t mountID, ino_t vnodeID, struct vnode*& _vnode,
 	bool& _nodeCreated)
@@ -979,6 +1109,17 @@ create_new_vnode_and_lock(dev_t mountID, ino_t vnodeID, struct vnode*& _vnode,
 	it from the vnode hash as well as from its mount structure.
 	Will also make sure that any cache modifications are written back.
 */
+/**
+ * @brief Frees all resources held by a vnode and removes it from global tables.
+ *
+ * Writes back cached pages (if not removed), calls the FS put_vnode or
+ * remove_vnode hook, notifies the VM cache, removes the vnode from
+ * sVnodeTable and the mount list, and returns it to sVnodeCache.
+ *
+ * @param vnode   The vnode to free.  Must have ref_count == 0 and be busy.
+ * @param reenter true if called (indirectly) from within a file system hook.
+ * @note Caller must not hold sVnodeLock or sMountLock.
+ */
 static void
 free_vnode(struct vnode* vnode, bool reenter)
 {
@@ -1053,6 +1194,19 @@ free_vnode(struct vnode* vnode, bool reenter)
 		   a file system. This will be passed to file system hooks only.
 	\return \c B_OK, if everything went fine, an error code otherwise.
 */
+/**
+ * @brief Decrements a vnode's reference count and frees it when it reaches zero.
+ *
+ * When the count drops to zero the vnode is either placed on the unused list
+ * (for later eviction) or freed immediately depending on \a alwaysFree and the
+ * vnode's removed flag.
+ *
+ * @param vnode      The vnode whose reference count is to be decremented.
+ * @param alwaysFree If true, skip the unused list and free the vnode directly.
+ * @param reenter    true if called from within a file system hook.
+ * @retval B_OK Always.
+ * @note Caller must own a reference and must NOT hold sVnodeLock or sMountLock.
+ */
 static status_t
 dec_vnode_ref_count(struct vnode* vnode, bool alwaysFree, bool reenter)
 {
@@ -1115,6 +1269,15 @@ dec_vnode_ref_count(struct vnode* vnode, bool alwaysFree, bool reenter)
 	\param vnode the vnode.
 	\returns the old reference count.
 */
+/**
+ * @brief Atomically increments a vnode's reference count.
+ *
+ * @param vnode The vnode to reference.
+ * @return The reference count value before the increment.
+ * @note Caller must ensure the vnode cannot be freed concurrently
+ *       (e.g. already holds a reference, or holds sVnodeLock read-locked
+ *       with the vnode locked, or holds sVnodeLock write-locked).
+ */
 static int32
 inc_vnode_ref_count(struct vnode* vnode)
 {
@@ -1126,6 +1289,12 @@ inc_vnode_ref_count(struct vnode* vnode)
 }
 
 
+/**
+ * @brief Tests whether a node type requires a special sub-node (e.g. FIFO).
+ *
+ * @param type POSIX mode type bits (e.g. S_IFIFO).
+ * @return true if the type needs a special sub-node, false otherwise.
+ */
 static bool
 is_special_node_type(int type)
 {
@@ -1134,6 +1303,14 @@ is_special_node_type(int type)
 }
 
 
+/**
+ * @brief Creates and attaches a special sub-node (e.g. FIFO) to an existing vnode.
+ *
+ * @param vnode The vnode for which the sub-node should be created.
+ * @param flags Flags forwarded from the FS publish call.
+ * @retval B_OK        Sub-node created successfully.
+ * @retval B_BAD_VALUE The vnode type does not need a special sub-node.
+ */
 static status_t
 create_special_sub_node(struct vnode* vnode, uint32 flags)
 {
@@ -1158,6 +1335,24 @@ create_special_sub_node(struct vnode* vnode, uint32 flags)
 		   a file system.
 	\return \c B_OK, if everything when fine, an error code otherwise.
 */
+/**
+ * @brief Retrieves (and if necessary loads) a vnode by mount and node ID.
+ *
+ * If the vnode is already cached, its reference count is incremented and it is
+ * returned immediately.  Otherwise a new vnode is created, the FS get_vnode()
+ * hook is called to populate it, and the vnode is published.
+ *
+ * @param mountID  The device (mount) ID of the desired vnode.
+ * @param vnodeID  The file system node ID.
+ * @param _vnode   Output: set to the located vnode on success.
+ * @param canWait  If true, sleep briefly and retry when the vnode is busy.
+ * @param reenter  true when called from within a file system hook.
+ * @retval B_OK          Success; caller owns one reference to *_vnode.
+ * @retval B_BUSY        Vnode is busy and canWait is false, or retries exhausted.
+ * @retval B_NO_MEMORY   Allocation failure.
+ * @retval B_ENTRY_NOT_FOUND Mount is being unmounted.
+ * @note Caller must NOT hold sVnodeLock or sMountLock.
+ */
 static status_t
 get_vnode(dev_t mountID, ino_t vnodeID, struct vnode** _vnode, bool canWait,
 	int reenter)
@@ -1292,6 +1487,14 @@ restart:
 
 	\param vnode the vnode.
 */
+/**
+ * @brief Releases one reference to a vnode, potentially freeing it.
+ *
+ * Thin wrapper around dec_vnode_ref_count() with alwaysFree=false, reenter=false.
+ *
+ * @param vnode The vnode to dereference.
+ * @note Caller must own a reference and must NOT hold sVnodeLock or sMountLock.
+ */
 static inline void
 put_vnode(struct vnode* vnode)
 {
@@ -1299,6 +1502,15 @@ put_vnode(struct vnode* vnode)
 }
 
 
+/**
+ * @brief Frees a number of unused (zero-ref) vnodes in response to memory pressure.
+ *
+ * The number of vnodes freed is proportional to the \a level of the low-resource
+ * notification: note, warning, or critical.
+ *
+ * @param level Low-resource level (B_NO_LOW_RESOURCE, B_LOW_RESOURCE_NOTE,
+ *              B_LOW_RESOURCE_WARNING, or B_LOW_RESOURCE_CRITICAL).
+ */
 static void
 free_unused_vnodes(int32 level)
 {
@@ -1396,6 +1608,17 @@ free_unused_vnodes(int32 level)
 	\return The covered vnode, or \c NULL if the given vnode doesn't cover any
 		vnode.
 */
+/**
+ * @brief Returns the deepest vnode that the given vnode covers (sVnodeLock held).
+ *
+ * Walks the covers chain to find the bottom-most covered vnode and increments
+ * its reference count.
+ *
+ * @param vnode The covering vnode to resolve.
+ * @return The covered vnode with an acquired reference, or NULL if \a vnode
+ *         does not cover any other vnode.
+ * @note Caller must hold sVnodeLock (read lock at minimum).
+ */
 static inline Vnode*
 get_covered_vnode_locked(Vnode* vnode)
 {
@@ -1423,6 +1646,16 @@ get_covered_vnode_locked(Vnode* vnode)
 	\return The covered vnode, or \c NULL if the given vnode doesn't cover any
 		vnode.
 */
+/**
+ * @brief Returns the deepest vnode that the given vnode covers (no lock held).
+ *
+ * Acquires sVnodeLock internally for the lookup.  Note that the result may
+ * be stale by the time it is used.
+ *
+ * @param vnode The covering vnode to resolve.
+ * @return The covered vnode with an acquired reference, or NULL.
+ * @note Caller must NOT hold sVnodeLock.
+ */
 static inline Vnode*
 get_covered_vnode(Vnode* vnode)
 {
@@ -1445,6 +1678,17 @@ get_covered_vnode(Vnode* vnode)
 	\return The covering vnode, or \c NULL if the given vnode isn't covered by
 		any vnode.
 */
+/**
+ * @brief Returns the topmost vnode covering the given vnode (sVnodeLock held).
+ *
+ * Walks the covered_by chain to the top-most covering vnode and increments
+ * its reference count.
+ *
+ * @param vnode The vnode that may be covered.
+ * @return The covering vnode with an acquired reference, or NULL if the vnode
+ *         is not covered.
+ * @note Caller must hold sVnodeLock (read lock at minimum).
+ */
 static Vnode*
 get_covering_vnode_locked(Vnode* vnode)
 {
@@ -1472,6 +1716,15 @@ get_covering_vnode_locked(Vnode* vnode)
 	\return The covering vnode, or \c NULL if the given vnode isn't covered by
 		any vnode.
 */
+/**
+ * @brief Returns the topmost vnode covering the given vnode (no lock held).
+ *
+ * Acquires sVnodeLock internally for the lookup.
+ *
+ * @param vnode The vnode that may be covered.
+ * @return The covering vnode with an acquired reference, or NULL.
+ * @note Caller must NOT hold sVnodeLock.
+ */
 static inline Vnode*
 get_covering_vnode(Vnode* vnode)
 {
@@ -1483,6 +1736,12 @@ get_covering_vnode(Vnode* vnode)
 }
 
 
+/**
+ * @brief Frees unused vnodes based on the current low-resource state.
+ *
+ * Queries the current low-resource level and delegates to the parameterised
+ * overload of free_unused_vnodes().
+ */
 static void
 free_unused_vnodes()
 {
@@ -1492,6 +1751,16 @@ free_unused_vnodes()
 }
 
 
+/**
+ * @brief Low-resource callback that triggers unused-vnode eviction.
+ *
+ * Registered with the low_resource_manager to free cached vnodes when memory
+ * or address-space pressure is detected.
+ *
+ * @param data      Unused opaque data pointer (always NULL).
+ * @param resources Bitmask of the resources that are low.
+ * @param level     Severity level of the low-resource condition.
+ */
 static void
 vnode_low_resource_handler(void* /*data*/, uint32 resources, int32 level)
 {
@@ -1501,6 +1770,11 @@ vnode_low_resource_handler(void* /*data*/, uint32 resources, int32 level)
 }
 
 
+/**
+ * @brief Releases the lock on an advisory_locking object acquired via get_advisory_locking().
+ *
+ * @param locking The advisory_locking object to release.
+ */
 static inline void
 put_advisory_locking(struct advisory_locking* locking)
 {
@@ -1515,6 +1789,17 @@ put_advisory_locking(struct advisory_locking* locking)
 	Note, you must not have the vnode mutex locked when calling
 	this function.
 */
+/**
+ * @brief Returns the locked advisory_locking object for a vnode.
+ *
+ * If the vnode has an advisory_locking attached, acquires its semaphore so that
+ * the caller can safely inspect and modify the lock list.  Call
+ * put_advisory_locking() when done.
+ *
+ * @param vnode The vnode whose advisory_locking shall be retrieved.
+ * @return Pointer to the locked advisory_locking, or NULL if none exists.
+ * @note Caller must NOT hold the vnode mutex when calling this function.
+ */
 static struct advisory_locking*
 get_advisory_locking(struct vnode* vnode)
 {
@@ -1546,6 +1831,18 @@ get_advisory_locking(struct vnode* vnode)
 	object from someone else in the mean time, you'll still get this
 	one locked then.
 */
+/**
+ * @brief Ensures an advisory_locking object is attached to a vnode.
+ *
+ * Creates a new advisory_locking with its semaphore locked and attaches it to
+ * the vnode if none exists.  If another thread wins the race, the newly created
+ * locking is discarded and the existing one is returned locked.
+ *
+ * @param vnode The vnode to attach locking to.
+ * @retval B_OK        An advisory_locking is now attached and locked.
+ * @retval B_FILE_ERROR vnode is NULL.
+ * @retval B_NO_MEMORY Allocation failure.
+ */
 static status_t
 create_advisory_locking(struct vnode* vnode)
 {
@@ -1591,6 +1888,13 @@ create_advisory_locking(struct vnode* vnode)
 /*! Returns \c true when either \a flock is \c NULL or the \a flock intersects
 	with the advisory_lock \a lock.
 */
+/**
+ * @brief Tests whether an advisory lock intersects with a given flock range.
+ *
+ * @param lock  The existing advisory_lock to check.
+ * @param flock The flock range to compare against.  If NULL, always returns true.
+ * @return true if the ranges overlap, false otherwise.
+ */
 static bool
 advisory_lock_intersects(struct advisory_lock* lock, struct flock* flock)
 {
@@ -1604,6 +1908,17 @@ advisory_lock_intersects(struct advisory_lock* lock, struct flock* flock)
 
 /*!	Tests whether acquiring a lock would block.
 */
+/**
+ * @brief Tests whether acquiring an advisory lock would block.
+ *
+ * Sets flock->l_type to F_UNLCK if no conflicting lock exists, or fills in the
+ * conflicting lock's details otherwise.
+ *
+ * @param vnode The vnode on which to test the lock.
+ * @param flock Input: desired lock range and type.  Output: conflicting lock
+ *              info or type set to F_UNLCK.
+ * @retval B_OK Always (conflict information is returned via \a flock).
+ */
 static status_t
 test_advisory_lock(struct vnode* vnode, struct flock* flock)
 {
@@ -1641,6 +1956,20 @@ test_advisory_lock(struct vnode* vnode, struct flock* flock)
 /*!	Removes the specified lock, or all locks of the calling team
 	if \a flock is NULL.
 */
+/**
+ * @brief Releases one or more advisory locks on a vnode.
+ *
+ * Removes locks matching the descriptor (flock() semantics) or the io_context
+ * plus range (POSIX semantics).  If flock is NULL, all matching locks for the
+ * team are removed.
+ *
+ * @param vnode      The vnode on which to release locks.
+ * @param context    The io_context of the calling team (POSIX locks).
+ * @param descriptor If non-NULL, removes flock()-style locks bound to this FD.
+ * @param flock      The range to release (POSIX), or NULL to release all.
+ * @retval B_OK        Success.
+ * @retval B_NO_MEMORY Failed to split a lock range (rare).
+ */
 static status_t
 release_advisory_lock(struct vnode* vnode, struct io_context* context,
 	struct file_descriptor* descriptor, struct flock* flock)
@@ -1755,6 +2084,23 @@ release_advisory_lock(struct vnode* vnode, struct io_context* context,
 	in question (we even allow parents to remove the lock, though, but that
 	seems to be in line to what the BSD's are doing).
 */
+/**
+ * @brief Acquires an advisory (POSIX or flock()) lock on a vnode.
+ *
+ * Checks for conflicting locks and either waits for them to be released or
+ * returns B_WOULD_BLOCK / B_PERMISSION_DENIED depending on \a wait.
+ *
+ * @param vnode      The vnode to lock.
+ * @param context    The calling team's io_context (used for POSIX lock binding).
+ * @param descriptor If non-NULL, flock() semantics; otherwise POSIX semantics.
+ * @param flock      Specifies the lock type (F_RDLCK/F_WRLCK) and byte range.
+ * @param wait       If true, block until the lock can be acquired.
+ * @retval B_OK              Lock acquired successfully.
+ * @retval B_WOULD_BLOCK     Conflicting lock exists and wait is false (flock).
+ * @retval B_PERMISSION_DENIED Conflicting lock exists and wait is false (POSIX).
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @note TODO: deadlock detection is not yet implemented.
+ */
 static status_t
 acquire_advisory_lock(struct vnode* vnode, io_context* context,
 	struct file_descriptor* descriptor, struct flock* flock, bool wait)
@@ -1844,6 +2190,18 @@ acquire_advisory_lock(struct vnode* vnode, io_context* context,
 	structure with others. The l_start and l_len fields are set to absolute
 	values according to the l_whence field.
 */
+/**
+ * @brief Normalizes flock l_start/l_len to absolute byte offsets.
+ *
+ * Converts SEEK_CUR and SEEK_END offsets to SEEK_SET-relative values so that
+ * lock range comparisons are straightforward.
+ *
+ * @param descriptor The open file descriptor (used for current position and stat).
+ * @param flock      The flock structure to normalize in place.
+ * @retval B_OK         Normalization succeeded.
+ * @retval B_UNSUPPORTED The vnode does not support read_stat (needed for SEEK_END).
+ * @retval B_BAD_VALUE  Unknown l_whence value.
+ */
 static status_t
 normalize_flock(struct file_descriptor* descriptor, struct flock* flock)
 {
@@ -1892,6 +2250,18 @@ normalize_flock(struct file_descriptor* descriptor, struct flock* flock)
 }
 
 
+/**
+ * @brief Replaces a vnode pointer with a fallback if it belongs to a being-unmounted mount.
+ *
+ * Used during unmount to redirect root and CWD references away from the
+ * unmounting mount to a safe fallback.
+ *
+ * @param mount              The mount being unmounted.
+ * @param vnodeToDisconnect  Specific vnode to disconnect, or NULL for all vnodes on mount.
+ * @param vnode              Reference to the vnode pointer to potentially replace.
+ * @param fallBack           Replacement vnode if disconnection occurs.
+ * @param lockRootLock       If true, acquires sIOContextRootLock while redirecting.
+ */
 static void
 replace_vnode_if_disconnected(struct fs_mount* mount,
 	struct vnode* vnodeToDisconnect, struct vnode*& vnode,
@@ -1941,6 +2311,18 @@ replace_vnode_if_disconnected(struct fs_mount* mount,
 	This is not a cheap function and should be used with care and rarely.
 	TODO: there is currently no means to stop a blocking read/write!
 */
+/**
+ * @brief Disconnects all open file descriptors associated with a mount or vnode.
+ *
+ * Iterates all teams and closes/marks-disconnected any FD whose vnode belongs to
+ * the specified mount (or matches vnodeToDisconnect if non-NULL).  Also
+ * redirects root and CWD references.
+ *
+ * @param mount             The mount whose FDs should be disconnected.
+ * @param vnodeToDisconnect Specific vnode to disconnect, or NULL for all on mount.
+ * @note This is a slow operation and should be used sparingly (typically during
+ *       forced unmount).  Already-in-progress I/O is NOT interrupted.
+ */
 static void
 disconnect_mount_or_vnode_fds(struct fs_mount* mount,
 	struct vnode* vnodeToDisconnect)
@@ -1991,6 +2373,15 @@ disconnect_mount_or_vnode_fds(struct fs_mount* mount,
 	If \a kernel is \c true, the kernel IO context will be used.
 	The caller obtains a reference to the returned node.
 */
+/**
+ * @brief Returns the root vnode of the current I/O context, incrementing its ref count.
+ *
+ * If \a kernel is false, the process-specific root (chroot) is returned; if it
+ * has not been set, falls back to the global sRoot.
+ *
+ * @param kernel true to use the kernel I/O context (global root).
+ * @return The root vnode with one additional reference held by the caller.
+ */
 struct vnode*
 get_root_vnode(bool kernel)
 {
@@ -2035,6 +2426,19 @@ get_root_vnode(bool kernel)
 		   name is longer than \c B_FILE_NAME_LENGTH, or \c B_ENTRY_NOT_FOUND,
 		   if the given path name is empty.
 */
+/**
+ * @brief Splits a path into its directory part and leaf name.
+ *
+ * Modifies \a path in place so that it refers to the parent directory, and
+ * writes the leaf name into \a filename.  Paths ending in "/" have "." as the
+ * leaf name.
+ *
+ * @param path     In/out path buffer (must have room for one extra character).
+ * @param filename Output buffer for the leaf name (B_FILE_NAME_LENGTH bytes).
+ * @retval B_OK           Success.
+ * @retval B_NAME_TOO_LONG The leaf name exceeds B_FILE_NAME_LENGTH.
+ * @retval B_ENTRY_NOT_FOUND The path is empty.
+ */
 static status_t
 get_dir_path_and_leaf(char* path, char* filename)
 {
@@ -2077,6 +2481,19 @@ get_dir_path_and_leaf(char* path, char* filename)
 }
 
 
+/**
+ * @brief Resolves an entry_ref (directory node + name) to a vnode.
+ *
+ * @param mountID     Device ID of the directory.
+ * @param directoryID Node ID of the parent directory.
+ * @param name        Name of the entry within the directory.
+ * @param traverse    If true, traverse the final symlink component.
+ * @param kernel      true if the kernel I/O context should be used.
+ * @param _vnode      Output: the resolved vnode with a reference held.
+ * @retval B_OK           Success.
+ * @retval B_NAME_TOO_LONG Name exceeds B_FILE_NAME_LENGTH.
+ * @note Delegates to vnode_path_to_vnode() after looking up the directory vnode.
+ */
 static status_t
 entry_ref_to_vnode(dev_t mountID, ino_t directoryID, const char* name,
 	bool traverse, bool kernel, VnodePutter& _vnode)
@@ -2101,6 +2518,18 @@ entry_ref_to_vnode(dev_t mountID, ino_t directoryID, const char* name,
 	and returns the respective vnode.
 	On success a reference to the vnode is acquired for the caller.
 */
+/**
+ * @brief Looks up a directory entry and returns the resulting vnode with a reference.
+ *
+ * Checks the entry cache first; on a miss calls the FS lookup() hook.
+ *
+ * @param dir    The directory vnode to search.
+ * @param name   The entry name to look up.
+ * @param _vnode Output: vnode for the found entry.
+ * @retval B_OK           Entry found; caller owns one reference to *_vnode.
+ * @retval B_ENTRY_NOT_FOUND Entry does not exist.
+ * @note The caller must put_vnode() the returned vnode when done.
+ */
 static status_t
 lookup_dir_entry(struct vnode* dir, const char* name, struct vnode** _vnode)
 {
@@ -2155,6 +2584,27 @@ lookup_dir_entry(struct vnode* dir, const char* name, struct vnode** _vnode)
 		put_vnode().
 	\param[out] _vnode If the function returns something else and leafname is NULL: not used.
 */
+/**
+ * @brief Walks a relative path from a starting vnode to the target vnode.
+ *
+ * Consumes one reference to \a start unconditionally.  Resolves "..", symlinks
+ * (up to B_MAX_SYMLINKS deep), and mount-point crossings.  On success sets
+ * \a _vnode to the resolved vnode.  On failure with \a leafName non-NULL,
+ * \a _vnode is set to the last successfully resolved directory.
+ *
+ * @param start           Starting vnode (reference consumed).
+ * @param path            Null-terminated relative path (modified in place).
+ * @param traverseLeafLink If true, follow the final symlink component.
+ * @param count           Current symlink recursion depth (pass 0 externally).
+ * @param ioContext       I/O context used for root/prison checks.
+ * @param _vnode          Output: target vnode on success, or last directory on failure.
+ * @param _parentID       Optional output: node ID of the parent directory.
+ * @param leafName        Optional output: leaf name when returning an intermediate dir.
+ * @retval B_OK           Path resolved; caller owns reference to _vnode.
+ * @retval B_ENTRY_NOT_FOUND Component not found.
+ * @retval B_NOT_A_DIRECTORY A non-directory component is used as a directory.
+ * @retval B_LINK_LIMIT   Symlink depth exceeded.
+ */
 static status_t
 vnode_path_to_vnode(struct vnode* start, char* path, bool traverseLeafLink,
 	int count, struct io_context* ioContext, VnodePutter& _vnode,
@@ -2329,6 +2779,18 @@ vnode_path_to_vnode(struct vnode* start, char* path, bool traverseLeafLink,
 }
 
 
+/**
+ * @brief Convenience overload of vnode_path_to_vnode() using the current I/O context.
+ *
+ * @param vnode           Starting vnode (reference consumed).
+ * @param path            Relative path to resolve (modified in place).
+ * @param traverseLeafLink If true, follow the final symlink.
+ * @param kernel          true to use the kernel I/O context.
+ * @param _vnode          Output: resolved vnode.
+ * @param _parentID       Optional output: parent node ID.
+ * @param leafName        Optional output: leaf name on partial resolution.
+ * @retval B_OK  Success.
+ */
 static status_t
 vnode_path_to_vnode(struct vnode* vnode, char* path, bool traverseLeafLink,
 	bool kernel, VnodePutter& _vnode, ino_t* _parentID, char* leafName)
@@ -2338,6 +2800,22 @@ vnode_path_to_vnode(struct vnode* vnode, char* path, bool traverseLeafLink,
 }
 
 
+/**
+ * @brief Resolves an absolute or CWD-relative path to a vnode.
+ *
+ * Determines the starting vnode (global root for absolute paths, CWD for
+ * relative) and delegates to vnode_path_to_vnode().
+ *
+ * @param path         The path to resolve (modified in place by vnode_path_to_vnode).
+ * @param traverseLink If true, follow the final symlink component.
+ * @param _vnode       Output: resolved vnode.
+ * @param _parentID    Optional output: parent node ID.
+ * @param kernel       true to use the kernel I/O context and root.
+ * @retval B_OK           Success.
+ * @retval B_BAD_VALUE    path is NULL.
+ * @retval B_ENTRY_NOT_FOUND path is empty.
+ * @retval B_ERROR        No root (called too early) or no CWD.
+ */
 static status_t
 path_to_vnode(char* path, bool traverseLink, VnodePutter& _vnode,
 	ino_t* _parentID, bool kernel)
@@ -2389,6 +2867,15 @@ path_to_vnode(char* path, bool traverseLink, VnodePutter& _vnode,
 	the last portion in filename.
 	The path buffer must be able to store at least one additional character.
 */
+/**
+ * @brief Resolves a path to the parent directory vnode and leaf name.
+ *
+ * @param path     Path to split and resolve (modified in place).
+ * @param _vnode   Output: parent directory vnode.
+ * @param filename Output buffer for the leaf name (B_FILE_NAME_LENGTH).
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK    Success.
+ */
 static status_t
 path_to_dir_vnode(char* path, VnodePutter& _vnode, char* filename,
 	bool kernel)
@@ -2425,6 +2912,18 @@ path_to_dir_vnode(char* path, VnodePutter& _vnode, char* filename,
 		   invoked from userland.
 	\return \c B_OK, if everything went fine, another error code otherwise.
 */
+/**
+ * @brief Resolves an fd+path pair to the parent directory vnode and leaf name.
+ *
+ * @param fd       File descriptor of the base directory (AT_FDCWD or -1 for CWD).
+ * @param path     Absolute or relative path (modified in place).
+ * @param _vnode   Output: parent directory vnode (caller must put_vnode()).
+ * @param filename Output buffer for the leaf name.
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK          Success.
+ * @retval B_BAD_VALUE   path is NULL.
+ * @retval B_ENTRY_NOT_FOUND path is empty.
+ */
 static status_t
 fd_and_path_to_dir_vnode(int fd, char* path, VnodePutter& _vnode,
 	char* filename, bool kernel)
@@ -2471,6 +2970,19 @@ fd_and_path_to_dir_vnode(int fd, char* path, VnodePutter& _vnode,
 		   invoked from userland.
 	\return \c B_OK, if everything went fine, another error code otherwise.
 */
+/**
+ * @brief Resolves a vnode+path pair to the parent directory vnode and leaf name.
+ *
+ * Consumes one reference to \a vnode.  If vnode is NULL or path is absolute,
+ * delegates to path_to_dir_vnode().
+ *
+ * @param vnode    Base directory vnode (reference consumed, may be NULL).
+ * @param path     Relative or absolute path (modified in place).
+ * @param _vnode   Output: parent directory vnode.
+ * @param filename Output buffer for the leaf name.
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK    Success.
+ */
 static status_t
 vnode_and_path_to_dir_vnode(struct vnode* vnode, char* path,
 	VnodePutter& _vnode, char* filename, bool kernel)
@@ -2495,6 +3007,22 @@ vnode_and_path_to_dir_vnode(struct vnode* vnode, char* path,
 
 /*! Returns a vnode's name in the d_name field of a supplied dirent buffer.
 */
+/**
+ * @brief Retrieves the name of a vnode within its parent directory.
+ *
+ * Uses the FS get_vnode_name() hook if available, otherwise scans the parent
+ * directory for a matching inode number.
+ *
+ * @param vnode      The vnode whose name is to be found.
+ * @param parent     The parent directory vnode (used for fallback search).
+ * @param buffer     dirent buffer where d_name is written.
+ * @param bufferSize Total size of \a buffer.
+ * @param ioContext  The current I/O context.
+ * @retval B_OK         Name found and written to buffer->d_name.
+ * @retval B_BAD_VALUE  Buffer too small.
+ * @retval B_UNSUPPORTED Neither hook is available and parent is NULL.
+ * @retval B_ENTRY_NOT_FOUND Name not found by directory scan.
+ */
 static status_t
 get_vnode_name(struct vnode* vnode, struct vnode* parent, struct dirent* buffer,
 	size_t bufferSize, struct io_context* ioContext)
@@ -2554,6 +3082,17 @@ get_vnode_name(struct vnode* vnode, struct vnode* parent, struct dirent* buffer,
 }
 
 
+/**
+ * @brief Convenience overload of get_vnode_name() returning the name in a char buffer.
+ *
+ * @param vnode    The vnode whose name is to be retrieved.
+ * @param parent   The parent directory vnode.
+ * @param name     Output name buffer.
+ * @param nameSize Size of \a name in bytes.
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK            Name written to \a name.
+ * @retval B_BUFFER_OVERFLOW Name does not fit in \a name.
+ */
 static status_t
 get_vnode_name(struct vnode* vnode, struct vnode* parent, char* name,
 	size_t nameSize, bool kernel)
@@ -2588,6 +3127,23 @@ get_vnode_name(struct vnode* vnode, struct vnode* parent, char* name,
 	It might be a good idea, though, to check if the returned path exists
 	in the calling function (it's not done here because of efficiency)
 */
+/**
+ * @brief Constructs the full absolute path of a directory vnode.
+ *
+ * Walks up the directory tree (up to 256 levels) using ".." lookups, building
+ * the path right-to-left into \a buffer.
+ *
+ * @param vnode      A directory vnode to resolve.
+ * @param buffer     Output buffer for the path string.
+ * @param bufferSize Size of \a buffer in bytes.
+ * @param kernel     true to use the kernel I/O context.
+ * @retval B_OK                    Path written to \a buffer.
+ * @retval B_BAD_VALUE             vnode, buffer, or bufferSize invalid.
+ * @retval B_NOT_A_DIRECTORY       vnode is not a directory.
+ * @retval B_RESULT_NOT_REPRESENTABLE Path is too long for the buffer.
+ * @retval B_LINK_LIMIT            Tree depth exceeds maximum (cycle detection).
+ * @note The returned path may be stale; no locking prevents concurrent renames.
+ */
 static status_t
 dir_vnode_to_path(struct vnode* vnode, char* buffer, size_t bufferSize,
 	bool kernel)
@@ -2694,6 +3250,15 @@ out:
 	The given path buffer must be able to store at least one
 	additional character.
 */
+/**
+ * @brief Validates each path component length and appends "." for trailing slashes.
+ *
+ * @param to Path string to validate and optionally extend (must have room for
+ *           one extra character).
+ * @retval B_OK           Path is valid.
+ * @retval B_NAME_TOO_LONG A component or the completed path is too long.
+ * @retval B_ENTRY_NOT_FOUND Path is empty.
+ */
 static status_t
 check_path(char* to)
 {
@@ -2731,6 +3296,16 @@ check_path(char* to)
 }
 
 
+/**
+ * @brief Retrieves a file descriptor and its associated vnode.
+ *
+ * @param fd      The file descriptor number.
+ * @param _vnode  Output: the vnode associated with the descriptor.
+ * @param kernel  true to look up in the kernel I/O context.
+ * @return The file_descriptor with its ref count incremented, or NULL if the FD
+ *         is invalid or does not have an associated vnode.
+ * @note Caller must call put_fd() when done.
+ */
 static struct file_descriptor*
 get_fd_and_vnode(int fd, struct vnode** _vnode, bool kernel)
 {
@@ -2753,6 +3328,15 @@ get_fd_and_vnode(int fd, struct vnode** _vnode, bool kernel)
 }
 
 
+/**
+ * @brief Returns the vnode associated with a file descriptor, with a reference.
+ *
+ * @param fd     The file descriptor number.
+ * @param kernel true to look up in the kernel I/O context.
+ * @return The vnode with an incremented reference count, or NULL if the FD is
+ *         invalid or has no vnode.
+ * @note Caller must call put_vnode() when done.
+ */
 static struct vnode*
 get_vnode_from_fd(int fd, bool kernel)
 {
@@ -2778,6 +3362,22 @@ get_vnode_from_fd(int fd, bool kernel)
 	If \a fd is a valid file descriptor, \a path may be NULL for directories,
 	and should be NULL for files.
 */
+/**
+ * @brief Resolves an fd+path pair to a vnode.
+ *
+ * If path is absolute, fd is ignored.  If fd is AT_FDCWD/-1, the CWD is used
+ * as the base.  Otherwise the vnode of fd is used as the starting point.
+ *
+ * @param fd               Base file descriptor (AT_FDCWD, -1, or a valid FD).
+ * @param path             Absolute or relative path (may be NULL for FD-only).
+ * @param traverseLeafLink If true, follow the final symlink component.
+ * @param _vnode           Output: resolved vnode (caller must put_vnode()).
+ * @param _parentID        Optional output: parent node ID.
+ * @param kernel           true to use the kernel I/O context.
+ * @retval B_OK           Resolved; caller owns a reference to _vnode.
+ * @retval B_BAD_VALUE    Both fd < 0 and path is NULL.
+ * @retval B_FILE_ERROR   fd is invalid.
+ */
 static status_t
 fd_and_path_to_vnode(int fd, char* path, bool traverseLeafLink,
 	VnodePutter& _vnode, ino_t* _parentID, bool kernel)
@@ -2833,6 +3433,19 @@ fd_is_file(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Allocates a new file descriptor and associates it with a vnode or mount.
+ *
+ * @param ops      The fd_ops table to assign to the descriptor.
+ * @param mount    Mount to associate (used when vnode is NULL, e.g. index dirs).
+ * @param vnode    Vnode to associate (may be NULL for mount-only FDs).
+ * @param cookie   FS-private open cookie.
+ * @param openMode Flags from the open() call (O_RDONLY, O_WRONLY, etc.).
+ * @param kernel   true to allocate in the kernel I/O context.
+ * @return The new file descriptor number (>= 0) on success, or a negative
+ *         error code (B_BUSY, B_NO_MEMORY, B_NO_MORE_FDS).
+ * @note Sets O_CLOEXEC and O_CLOFORK on the descriptor when requested.
+ */
 static int
 get_new_fd(struct fd_ops* ops, struct fs_mount* mount, struct vnode* vnode,
 	void* cookie, int openMode, bool kernel)
@@ -2895,6 +3508,17 @@ get_new_fd(struct fd_ops* ops, struct fs_mount* mount, struct vnode* vnode,
 /*!	In-place normalizes \a path. It's otherwise semantically equivalent to
 	vfs_normalize_path(). See there for more documentation.
 */
+/**
+ * @brief Normalizes a path in place, resolving "." ".." and symlinks.
+ *
+ * @param path         Path buffer to normalize in place.
+ * @param pathSize     Capacity of \a path in bytes.
+ * @param traverseLink If true, also resolve the final symlink component.
+ * @param kernel       true to use the kernel I/O context.
+ * @retval B_OK           Path normalized successfully.
+ * @retval B_NAME_TOO_LONG Normalized path does not fit in \a path.
+ * @retval B_LINK_LIMIT   Symlink recursion limit reached.
+ */
 static status_t
 normalize_path(char* path, size_t pathSize, bool traverseLink, bool kernel)
 {
@@ -2967,6 +3591,18 @@ normalize_path(char* path, size_t pathSize, bool traverseLink, bool kernel)
 }
 
 
+/**
+ * @brief Resolves a directory's ".." entry, honouring mount-point crossings.
+ *
+ * If \a parent is the I/O context root, returns its own device/node IDs.
+ * Otherwise traverses ".." through the covering vnode chain.
+ *
+ * @param parent    The directory whose parent should be resolved.
+ * @param _device   Output: device ID of the parent.
+ * @param _node     Output: node ID of the parent.
+ * @param ioContext The current I/O context (prison root check).
+ * @retval B_OK    Parent resolved successfully.
+ */
 static status_t
 resolve_covered_parent(struct vnode* parent, dev_t* _device, ino_t* _node,
 	struct io_context* ioContext)
@@ -2997,6 +3633,11 @@ resolve_covered_parent(struct vnode* parent, dev_t* _device, ino_t* _node,
 #ifdef ADD_DEBUGGER_COMMANDS
 
 
+/**
+ * @brief Kernel debugger helper: prints advisory_locking details.
+ *
+ * @param locking Pointer to the advisory_locking to dump, or NULL (no-op).
+ */
 static void
 _dump_advisory_locking(advisory_locking* locking)
 {
@@ -3019,6 +3660,11 @@ _dump_advisory_locking(advisory_locking* locking)
 }
 
 
+/**
+ * @brief Kernel debugger helper: prints all fields of an fs_mount structure.
+ *
+ * @param mount The mount to dump.
+ */
 static void
 _dump_mount(struct fs_mount* mount)
 {
@@ -3050,6 +3696,14 @@ _dump_mount(struct fs_mount* mount)
 }
 
 
+/**
+ * @brief Kernel debugger helper: prepends a name component to a path buffer.
+ *
+ * @param buffer     The path buffer (filled right-to-left).
+ * @param bufferSize In/out: current write offset into buffer.
+ * @param name       Component name to prepend.
+ * @return true if the name fit, false if the buffer was too small.
+ */
 static bool
 debug_prepend_vnode_name_to_path(char* buffer, size_t& bufferSize,
 	const char* name)
@@ -3070,6 +3724,17 @@ debug_prepend_vnode_name_to_path(char* buffer, size_t& bufferSize,
 }
 
 
+/**
+ * @brief Kernel debugger helper: prepends a "<dev,ino>" token to a path buffer.
+ *
+ * Used when the real name of a vnode cannot be resolved in the debugger.
+ *
+ * @param buffer     The path buffer (filled right-to-left).
+ * @param bufferSize In/out: current write offset.
+ * @param devID      Device ID to encode.
+ * @param nodeID     Inode number to encode.
+ * @return true if the token fit, false if the buffer was too small.
+ */
 static bool
 debug_prepend_vnode_id_to_path(char* buffer, size_t& bufferSize, dev_t devID,
 	ino_t nodeID)
@@ -3097,6 +3762,17 @@ debug_prepend_vnode_id_to_path(char* buffer, size_t& bufferSize, dev_t devID,
 }
 
 
+/**
+ * @brief Kernel debugger helper: reconstructs the path of a vnode using the entry cache.
+ *
+ * Safe to call from the kernel debugger (no locking, uses debug-safe memory).
+ *
+ * @param vnode       The vnode whose path should be reconstructed.
+ * @param buffer      Work/output buffer.
+ * @param bufferSize  Size of \a buffer.
+ * @param _truncated  Set to true if the path did not fit and was truncated.
+ * @return Pointer into \a buffer where the (possibly truncated) path begins.
+ */
 static char*
 debug_resolve_vnode_path(struct vnode* vnode, char* buffer, size_t bufferSize,
 	bool& _truncated)
@@ -3145,6 +3821,12 @@ debug_resolve_vnode_path(struct vnode* vnode, char* buffer, size_t bufferSize,
 }
 
 
+/**
+ * @brief Kernel debugger helper: prints all fields of a vnode structure.
+ *
+ * @param vnode     The vnode to dump.
+ * @param printPath If true, attempt to reconstruct and print the vnode's path.
+ */
 static void
 _dump_vnode(struct vnode* vnode, bool printPath)
 {
@@ -3192,6 +3874,13 @@ _dump_vnode(struct vnode* vnode, bool printPath)
 }
 
 
+/**
+ * @brief Kernel debugger command: print info about a specific fs_mount.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector: argv[1] is the mount ID or address.
+ * @return 0 always (debugger convention).
+ */
 static int
 dump_mount(int argc, char** argv)
 {
@@ -3217,6 +3906,13 @@ dump_mount(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: list all mounted file systems.
+ *
+ * @param argc Argument count (must be 1).
+ * @param argv Argument vector.
+ * @return 0 always.
+ */
 static int
 dump_mounts(int argc, char** argv)
 {
@@ -3250,6 +3946,16 @@ dump_mounts(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: print info about a specific vnode.
+ *
+ * Accepts either a vnode pointer or a (devID, nodeID) pair.  With "-p" also
+ * reconstructs and prints the path.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 always.
+ */
 static int
 dump_vnode(int argc, char** argv)
 {
@@ -3293,6 +3999,13 @@ dump_vnode(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: list all vnodes on a given device.
+ *
+ * @param argc Argument count.
+ * @param argv argv[1] is the device ID to filter by.
+ * @return 0 always.
+ */
 static int
 dump_vnodes(int argc, char** argv)
 {
@@ -3327,6 +4040,13 @@ dump_vnodes(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: list vnodes that have a VMCache attached.
+ *
+ * @param argc Argument count.
+ * @param argv Optional argv[1] to filter by device ID.
+ * @return 0 always.
+ */
 static int
 dump_vnode_caches(int argc, char** argv)
 {
@@ -3363,6 +4083,13 @@ dump_vnode_caches(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: dump the I/O context of a team or address.
+ *
+ * @param argc Argument count.
+ * @param argv Optional argv[1]: team ID or io_context address.
+ * @return 0 always.
+ */
 int
 dump_io_context(int argc, char** argv)
 {
@@ -3421,6 +4148,13 @@ dump_io_context(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel debugger command: print vnode cache usage statistics.
+ *
+ * @param argc Argument count (must be 1).
+ * @param argv Argument vector.
+ * @return 0 always.
+ */
 int
 dump_vnode_usage(int argc, char** argv)
 {
@@ -3444,6 +4178,13 @@ dump_vnode_usage(int argc, char** argv)
 
 /*!	Clears memory specified by an iovec array.
 */
+/**
+ * @brief Zeroes up to \a bytes bytes across an iovec array.
+ *
+ * @param vecs     Array of iovec descriptors.
+ * @param vecCount Number of entries in \a vecs.
+ * @param bytes    Maximum number of bytes to zero.
+ */
 static void
 zero_iovecs(const iovec* vecs, size_t vecCount, size_t bytes)
 {
@@ -3458,6 +4199,25 @@ zero_iovecs(const iovec* vecs, size_t vecCount, size_t bytes)
 /*!	Does the dirty work of combining the file_io_vecs with the iovecs
 	and calls the file system hooks to read/write the request to disk.
 */
+/**
+ * @brief Performs scatter/gather page I/O combining file_io_vecs and memory iovecs.
+ *
+ * Drives the FS read_pages / write_pages hooks by matching file extents to
+ * memory buffers, handling sparse regions (offset -1) and partial completions.
+ *
+ * @param vnode        The vnode on which to perform I/O.
+ * @param cookie       The open file cookie.
+ * @param fileVecs     Array of file extents (offset, length pairs).
+ * @param fileVecCount Number of entries in \a fileVecs.
+ * @param vecs         Memory iovec array.
+ * @param vecCount     Number of entries in \a vecs.
+ * @param _vecIndex    In/out: current iovec index.
+ * @param _vecOffset   In/out: current byte offset within the current iovec.
+ * @param _numBytes    In: bytes requested; out: bytes actually transferred.
+ * @param doWrite      true for write, false for read.
+ * @retval B_OK     I/O completed (check *_numBytes for actual transfer size).
+ * @retval B_BAD_VALUE fileVecCount is zero (out-of-bounds access).
+ */
 static status_t
 common_file_io_vec_pages(struct vnode* vnode, void* cookie,
 	const file_io_vec* fileVecs, size_t fileVecCount, const iovec* vecs,
@@ -3620,6 +4380,15 @@ common_file_io_vec_pages(struct vnode* vnode, void* cookie,
 }
 
 
+/**
+ * @brief Releases all resources held by an io_context and frees it.
+ *
+ * Closes all open file descriptors, releases root and CWD vnode references,
+ * removes all node monitors, and frees the context's memory.
+ *
+ * @param context The io_context to free.
+ * @retval B_OK Always.
+ */
 static status_t
 free_io_context(io_context* context)
 {
@@ -3654,6 +4423,15 @@ free_io_context(io_context* context)
 }
 
 
+/**
+ * @brief Resizes the node-monitor quota of an io_context.
+ *
+ * @param context The io_context to modify.
+ * @param newSize The new maximum number of node monitors (1..MAX_NODE_MONITORS).
+ * @retval B_OK        Quota updated.
+ * @retval B_BAD_VALUE newSize is out of the allowed range.
+ * @retval B_BUSY      newSize is smaller than the number of currently active monitors.
+ */
 static status_t
 resize_monitor_table(struct io_context* context, const int newSize)
 {
@@ -3673,6 +4451,23 @@ resize_monitor_table(struct io_context* context, const int newSize)
 //	#pragma mark - public API for file systems
 
 
+/**
+ * @brief Creates a new, unpublished vnode for use by a file system.
+ *
+ * Allocates a vnode, marks it busy and unpublished, and associates it with the
+ * given FS-private data and operation vector.  The vnode must subsequently be
+ * published by calling publish_vnode().
+ *
+ * @param volume      The volume on which to create the vnode.
+ * @param vnodeID     The file system node ID for the new vnode.
+ * @param privateNode FS-private data pointer (must not be NULL).
+ * @param ops         The vnode operation vector.
+ * @retval B_OK        Vnode created and marked busy/unpublished.
+ * @retval B_BAD_VALUE privateNode is NULL.
+ * @retval B_NO_MEMORY Allocation failure.
+ * @retval B_BUSY      An existing vnode with the same ID is permanently busy.
+ * @note Called from FS get_vnode() hooks; must not be called for already-known nodes.
+ */
 extern "C" status_t
 new_vnode(fs_volume* volume, ino_t vnodeID, void* privateNode,
 	fs_vnode_ops* ops)
@@ -3722,6 +4517,24 @@ restart:
 }
 
 
+/**
+ * @brief Publishes a vnode, making it visible to the rest of the kernel.
+ *
+ * If the vnode was previously created with new_vnode(), this call clears its
+ * busy and unpublished flags.  It also creates sub-vnodes for stacked file
+ * systems and special node types (FIFOs etc.) as required.
+ *
+ * @param volume      The volume owning the vnode.
+ * @param vnodeID     The node ID.
+ * @param privateNode FS-private data (may be NULL if the vnode already exists).
+ * @param ops         The vnode operation vector.
+ * @param type        POSIX mode type bits (S_IFDIR, S_IFREG, etc.).
+ * @param flags       B_VNODE_PUBLISH_REMOVED, B_VNODE_DONT_CREATE_SPECIAL_SUB_NODE.
+ * @retval B_OK        Vnode published.
+ * @retval B_BAD_VALUE The vnode exists in an unexpected state.
+ * @retval B_BUSY      A conflicting busy vnode exists and retries were exhausted.
+ * @note Called from FS lookup() and create() hooks.
+ */
 extern "C" status_t
 publish_vnode(fs_volume* volume, ino_t vnodeID, void* privateNode,
 	fs_vnode_ops* ops, int type, uint32 flags)
@@ -3821,6 +4634,18 @@ restart:
 }
 
 
+/**
+ * @brief Public FS API: retrieves a vnode and returns its private node data.
+ *
+ * Increments the vnode's reference count.  For layered file systems, resolves
+ * the private node for the correct layer using get_super_vnode().
+ *
+ * @param volume       The volume owning the vnode.
+ * @param vnodeID      The node ID to retrieve.
+ * @param _privateNode Optional output: FS-private data for the requested layer.
+ * @retval B_OK        Vnode found; caller must call put_vnode() when done.
+ * @retval B_BAD_VALUE volume is NULL.
+ */
 extern "C" status_t
 get_vnode(fs_volume* volume, ino_t vnodeID, void** _privateNode)
 {
@@ -3855,6 +4680,18 @@ get_vnode(fs_volume* volume, ino_t vnodeID, void** _privateNode)
 }
 
 
+/**
+ * @brief Public FS API: adds an extra reference to an already-referenced vnode.
+ *
+ * The caller must already hold a reference; this function is used to pass
+ * references between layers without calling the full get_vnode() path.
+ *
+ * @param volume  The volume owning the vnode.
+ * @param vnodeID The node ID.
+ * @retval B_OK        Reference added.
+ * @retval B_BAD_VALUE Vnode not found in the hash table.
+ * @note Panics in debug builds if the vnode was unused (ref_count was 0).
+ */
 extern "C" status_t
 acquire_vnode(fs_volume* volume, ino_t vnodeID)
 {
@@ -3876,6 +4713,15 @@ acquire_vnode(fs_volume* volume, ino_t vnodeID)
 }
 
 
+/**
+ * @brief Public FS API: releases a reference to a vnode identified by volume+ID.
+ *
+ * @param volume  The volume owning the vnode.
+ * @param vnodeID The node ID.
+ * @retval B_OK        Reference released.
+ * @retval B_BAD_VALUE Vnode not found.
+ * @note Calls dec_vnode_ref_count() with reenter=true.
+ */
 extern "C" status_t
 put_vnode(fs_volume* volume, ino_t vnodeID)
 {
@@ -3895,6 +4741,17 @@ put_vnode(fs_volume* volume, ino_t vnodeID)
 }
 
 
+/**
+ * @brief Public FS API: marks a vnode as removed (to be deleted when last ref drops).
+ *
+ * If the vnode is still unpublished it is freed immediately.
+ *
+ * @param volume  The volume owning the vnode.
+ * @param vnodeID The node ID to mark for removal.
+ * @retval B_OK        Vnode marked removed.
+ * @retval B_ENTRY_NOT_FOUND Vnode not found.
+ * @retval B_BUSY      Vnode is a mount point and cannot be removed.
+ */
 extern "C" status_t
 remove_vnode(fs_volume* volume, ino_t vnodeID)
 {
@@ -3933,6 +4790,13 @@ remove_vnode(fs_volume* volume, ino_t vnodeID)
 }
 
 
+/**
+ * @brief Public FS API: cancels a previous remove_vnode() call on a vnode.
+ *
+ * @param volume  The volume owning the vnode.
+ * @param vnodeID The node ID to un-mark.
+ * @retval B_OK Always (silently ignores missing vnodes).
+ */
 extern "C" status_t
 unremove_vnode(fs_volume* volume, ino_t vnodeID)
 {
@@ -3951,6 +4815,15 @@ unremove_vnode(fs_volume* volume, ino_t vnodeID)
 }
 
 
+/**
+ * @brief Public FS API: queries whether a vnode is marked for removal.
+ *
+ * @param volume   The volume owning the vnode.
+ * @param vnodeID  The node ID to query.
+ * @param _removed Output: true if the vnode is removed, false otherwise.
+ * @retval B_OK        Query successful.
+ * @retval B_BAD_VALUE Vnode not found.
+ */
 extern "C" status_t
 get_vnode_removed(fs_volume* volume, ino_t vnodeID, bool* _removed)
 {
@@ -3966,6 +4839,12 @@ get_vnode_removed(fs_volume* volume, ino_t vnodeID, bool* _removed)
 }
 
 
+/**
+ * @brief Public FS API: returns the fs_volume that owns a given fs_vnode.
+ *
+ * @param _vnode The fs_vnode (cast-compatible with struct vnode).
+ * @return The owning fs_volume, or NULL if _vnode is NULL.
+ */
 extern "C" fs_volume*
 volume_for_vnode(fs_vnode* _vnode)
 {
@@ -3977,6 +4856,19 @@ volume_for_vnode(fs_vnode* _vnode)
 }
 
 
+/**
+ * @brief Checks whether the calling thread has the requested access permissions.
+ *
+ * Evaluates POSIX user/group/other permission bits against the current euid/egid.
+ * Root always has read/write; execute requires at least one X bit.
+ *
+ * @param accessMode Requested permission bits (R_OK, W_OK, X_OK).
+ * @param mode       Node permission bits (st_mode & 0777 plus type bits).
+ * @param nodeGroupID Owner GID of the node.
+ * @param nodeUserID  Owner UID of the node.
+ * @retval B_OK               Access is permitted.
+ * @retval B_PERMISSION_DENIED Access is denied.
+ */
 extern "C" status_t
 check_access_permissions(int accessMode, mode_t mode, gid_t nodeGroupID,
 	uid_t nodeUserID)
@@ -4013,6 +4905,20 @@ check_access_permissions(int accessMode, mode_t mode, gid_t nodeGroupID,
 }
 
 
+/**
+ * @brief Validates write_stat permission for each requested stat field.
+ *
+ * Enforces POSIX rules: only the owner or root may change mode/UID/GID/times;
+ * truncation requires write permission.
+ *
+ * @param nodeGroupID GID of the node being stat'd.
+ * @param nodeUserID  UID of the node being stat'd.
+ * @param nodeMode    Current mode bits of the node.
+ * @param mask        B_STAT_* bitmask of fields to change.
+ * @param stat        New stat values requested by the caller.
+ * @retval B_OK         All requested changes are permitted.
+ * @retval B_NOT_ALLOWED At least one change is not permitted.
+ */
 extern "C" status_t
 check_write_stat_permissions(gid_t nodeGroupID, uid_t nodeUserID, mode_t nodeMode,
 	uint32 mask, const struct stat* stat)
@@ -4100,6 +5006,20 @@ write_pages(int fd, off_t pos, const iovec* vecs, size_t count,
 #endif
 
 
+/**
+ * @brief Reads data from a file using scatter/gather page I/O.
+ *
+ * @param fd           The file descriptor to read from.
+ * @param fileVecs     File extent array describing on-disk locations.
+ * @param fileVecCount Number of file extents.
+ * @param vecs         Memory iovec array.
+ * @param vecCount     Number of memory iovecs.
+ * @param _vecIndex    In/out: current iovec index.
+ * @param _vecOffset   In/out: byte offset within the current iovec.
+ * @param _bytes       In: bytes to read; out: bytes actually read.
+ * @retval B_OK        Read succeeded.
+ * @retval B_FILE_ERROR FD is invalid or write-only.
+ */
 extern "C" status_t
 read_file_io_vec_pages(int fd, const file_io_vec* fileVecs, size_t fileVecCount,
 	const iovec* vecs, size_t vecCount, uint32* _vecIndex, size_t* _vecOffset,
@@ -4120,6 +5040,20 @@ read_file_io_vec_pages(int fd, const file_io_vec* fileVecs, size_t fileVecCount,
 }
 
 
+/**
+ * @brief Writes data to a file using scatter/gather page I/O.
+ *
+ * @param fd           The file descriptor to write to.
+ * @param fileVecs     File extent array describing on-disk locations.
+ * @param fileVecCount Number of file extents.
+ * @param vecs         Memory iovec array.
+ * @param vecCount     Number of memory iovecs.
+ * @param _vecIndex    In/out: current iovec index.
+ * @param _vecOffset   In/out: byte offset within the current iovec.
+ * @param _bytes       In: bytes to write; out: bytes actually written.
+ * @retval B_OK        Write succeeded.
+ * @retval B_FILE_ERROR FD is invalid or read-only.
+ */
 extern "C" status_t
 write_file_io_vec_pages(int fd, const file_io_vec* fileVecs, size_t fileVecCount,
 	const iovec* vecs, size_t vecCount, uint32* _vecIndex, size_t* _vecOffset,
@@ -4140,6 +5074,16 @@ write_file_io_vec_pages(int fd, const file_io_vec* fileVecs, size_t fileVecCount
 }
 
 
+/**
+ * @brief Adds a positive entry to the VFS entry cache.
+ *
+ * @param mountID Device ID of the directory's mount.
+ * @param dirID   Node ID of the parent directory.
+ * @param name    Entry name to cache.
+ * @param nodeID  Node ID that the entry resolves to.
+ * @retval B_OK        Entry cached.
+ * @retval B_BAD_VALUE Mount not found.
+ */
 extern "C" status_t
 entry_cache_add(dev_t mountID, ino_t dirID, const char* name, ino_t nodeID)
 {
@@ -4155,6 +5099,15 @@ entry_cache_add(dev_t mountID, ino_t dirID, const char* name, ino_t nodeID)
 }
 
 
+/**
+ * @brief Adds a negative (missing) entry to the VFS entry cache.
+ *
+ * @param mountID Device ID of the directory's mount.
+ * @param dirID   Node ID of the parent directory.
+ * @param name    Entry name to mark as missing.
+ * @retval B_OK        Negative entry cached.
+ * @retval B_BAD_VALUE Mount not found.
+ */
 extern "C" status_t
 entry_cache_add_missing(dev_t mountID, ino_t dirID, const char* name)
 {
@@ -4170,6 +5123,15 @@ entry_cache_add_missing(dev_t mountID, ino_t dirID, const char* name)
 }
 
 
+/**
+ * @brief Removes an entry from the VFS entry cache.
+ *
+ * @param mountID Device ID of the directory's mount.
+ * @param dirID   Node ID of the parent directory.
+ * @param name    Entry name to remove.
+ * @retval B_OK        Entry removed (or was not present).
+ * @retval B_BAD_VALUE Mount not found.
+ */
 extern "C" status_t
 entry_cache_remove(dev_t mountID, ino_t dirID, const char* name)
 {
@@ -4192,6 +5154,12 @@ entry_cache_remove(dev_t mountID, ino_t dirID, const char* name)
 /*! Acquires another reference to the vnode that has to be released
 	by calling vfs_put_vnode().
 */
+/**
+ * @brief Increments a vnode's reference count (private kernel VFS API).
+ *
+ * @param vnode The vnode to acquire an additional reference to.
+ * @note Caller must already hold a valid reference to prevent concurrent freeing.
+ */
 void
 vfs_acquire_vnode(struct vnode* vnode)
 {
@@ -4206,6 +5174,16 @@ vfs_acquire_vnode(struct vnode* vnode)
 	If that's done differently, remove this call; it has no other
 	purpose.
 */
+/**
+ * @brief Retrieves the FS-private open cookie for a file descriptor.
+ *
+ * Currently used only by file_cache_create() to obtain the device cookie.
+ *
+ * @param fd      The kernel file descriptor.
+ * @param _cookie Output: the FS cookie associated with the FD.
+ * @retval B_OK        Cookie retrieved.
+ * @retval B_FILE_ERROR FD is invalid.
+ */
 extern "C" status_t
 vfs_get_cookie_from_fd(int fd, void** _cookie)
 {
@@ -4220,6 +5198,15 @@ vfs_get_cookie_from_fd(int fd, void** _cookie)
 }
 
 
+/**
+ * @brief Returns the vnode associated with a file descriptor, with a reference.
+ *
+ * @param fd     The file descriptor number.
+ * @param kernel true to use the kernel I/O context.
+ * @param vnode  Output: the vnode.
+ * @retval B_OK        Vnode returned; caller must call vfs_put_vnode() when done.
+ * @retval B_FILE_ERROR FD is invalid or has no associated vnode.
+ */
 extern "C" status_t
 vfs_get_vnode_from_fd(int fd, bool kernel, struct vnode** vnode)
 {
@@ -4232,6 +5219,15 @@ vfs_get_vnode_from_fd(int fd, bool kernel, struct vnode** vnode)
 }
 
 
+/**
+ * @brief Resolves a path to a vnode with a reference.
+ *
+ * @param path   The absolute or relative path to resolve.
+ * @param kernel true to use the kernel I/O context.
+ * @param _vnode Output: the resolved vnode; caller must call vfs_put_vnode().
+ * @retval B_OK    Vnode resolved.
+ * @retval B_NO_MEMORY Path buffer allocation failed.
+ */
 extern "C" status_t
 vfs_get_vnode_from_path(const char* path, bool kernel, struct vnode** _vnode)
 {
@@ -4255,6 +5251,15 @@ vfs_get_vnode_from_path(const char* path, bool kernel, struct vnode** _vnode)
 }
 
 
+/**
+ * @brief Retrieves a vnode by mount/node ID with an optional wait.
+ *
+ * @param mountID  Device (mount) ID.
+ * @param vnodeID  Node ID.
+ * @param canWait  If true, retry if the vnode is temporarily busy.
+ * @param _vnode   Output: the vnode; caller must call vfs_put_vnode().
+ * @retval B_OK    Vnode found.
+ */
 extern "C" status_t
 vfs_get_vnode(dev_t mountID, ino_t vnodeID, bool canWait, struct vnode** _vnode)
 {
@@ -4269,6 +5274,15 @@ vfs_get_vnode(dev_t mountID, ino_t vnodeID, bool canWait, struct vnode** _vnode)
 }
 
 
+/**
+ * @brief Resolves an entry_ref to a vnode without following the leaf symlink.
+ *
+ * @param mountID     Device ID of the parent directory.
+ * @param directoryID Node ID of the parent directory.
+ * @param name        Entry name.
+ * @param _vnode      Output: resolved vnode; caller must call vfs_put_vnode().
+ * @retval B_OK    Vnode found.
+ */
 extern "C" status_t
 vfs_entry_ref_to_vnode(dev_t mountID, ino_t directoryID,
 	const char* name, struct vnode** _vnode)
@@ -4280,6 +5294,13 @@ vfs_entry_ref_to_vnode(dev_t mountID, ino_t directoryID,
 }
 
 
+/**
+ * @brief Returns the device and node IDs stored in a vnode.
+ *
+ * @param vnode    The vnode to query.
+ * @param _mountID Output: the device (mount) ID.
+ * @param _vnodeID Output: the node ID.
+ */
 extern "C" void
 vfs_vnode_to_node_ref(struct vnode* vnode, dev_t* _mountID, ino_t* _vnodeID)
 {
@@ -4304,6 +5325,14 @@ vfs_fsnode_for_vnode(struct vnode* vnode)
 	Calls fs_open() on the given vnode and returns a new
 	file descriptor for it
 */
+/**
+ * @brief Opens a vnode and returns a new file descriptor for it.
+ *
+ * @param vnode    The vnode to open (reference NOT consumed on failure).
+ * @param openMode Open flags (O_RDONLY, O_WRONLY, O_RDWR, etc.).
+ * @param kernel   true to create the FD in the kernel I/O context.
+ * @return A non-negative FD on success, or a negative error code.
+ */
 int
 vfs_open_vnode(struct vnode* vnode, int openMode, bool kernel)
 {
@@ -4316,6 +5345,19 @@ vfs_open_vnode(struct vnode* vnode, int openMode, bool kernel)
 	to the node.
 	It's currently only be used by file_cache_create().
 */
+/**
+ * @brief Looks up a vnode in the hash table without acquiring a reference.
+ *
+ * For use by subsystems (e.g. file_cache_create()) that already hold a
+ * reference via other means.
+ *
+ * @param mountID  Device ID.
+ * @param vnodeID  Node ID.
+ * @param _vnode   Output: the vnode pointer (no reference added).
+ * @retval B_OK    Vnode found.
+ * @retval B_ERROR Vnode not in the hash table.
+ * @note Must only be used with "in-use" vnodes to avoid use-after-free.
+ */
 extern "C" status_t
 vfs_lookup_vnode(dev_t mountID, ino_t vnodeID, struct vnode** _vnode)
 {
@@ -4331,6 +5373,20 @@ vfs_lookup_vnode(dev_t mountID, ino_t vnodeID, struct vnode** _vnode)
 }
 
 
+/**
+ * @brief Resolves a path within a volume and returns the FS-private node data.
+ *
+ * Relative paths are resolved from the volume root; absolute paths use the
+ * global namespace.  The node must reside on the given volume.
+ *
+ * @param volume          The volume whose nodes are accessible.
+ * @param path            Absolute or volume-relative path.
+ * @param traverseLeafLink If true, follow the final symlink.
+ * @param kernel          true to use the kernel I/O context.
+ * @param _node           Output: FS-private node pointer for the resolved vnode.
+ * @retval B_OK        Node found on the specified volume.
+ * @retval B_BAD_VALUE Node found but it belongs to a different volume.
+ */
 extern "C" status_t
 vfs_get_fs_node_from_path(fs_volume* volume, const char* path,
 	bool traverseLeafLink, bool kernel, void** _node)
@@ -4378,6 +5434,24 @@ vfs_get_fs_node_from_path(fs_volume* volume, const char* path,
 }
 
 
+/**
+ * @brief Retrieves stat information for a file descriptor or path.
+ *
+ * If @p path is non-NULL, resolves the path relative to @p fd and calls the
+ * common_path_read_stat() helper.  If @p path is NULL the fd_read_stat
+ * operation on the file descriptor is called directly.
+ *
+ * @param fd               File descriptor; used as directory base when path
+ *                         is relative.
+ * @param path             Optional path relative to @p fd, or NULL to stat
+ *                         the FD directly.
+ * @param traverseLeafLink If true, follow the leaf symlink.
+ * @param stat             Output buffer to fill with stat data.
+ * @param kernel           true to use the kernel I/O context.
+ * @retval B_OK         Stat filled successfully.
+ * @retval B_FILE_ERROR @p fd is invalid (when @p path is NULL).
+ * @retval B_UNSUPPORTED FD type does not support fd_read_stat.
+ */
 status_t
 vfs_read_stat(int fd, const char* path, bool traverseLeafLink,
 	struct stat* stat, bool kernel)
@@ -4417,6 +5491,23 @@ vfs_read_stat(int fd, const char* path, bool traverseLeafLink,
 	functions returns unsuccessfully.
 	\a basePath and \a pathBuffer must not point to the same space.
 */
+/**
+ * @brief Searches for a module file under @p basePath and constructs its full path.
+ *
+ * Walks the directory hierarchy under @p basePath following each component of
+ * @p moduleName (slash-separated).  Stops when a regular file matching the
+ * final component is found and returns its full path in @p pathBuffer.
+ *
+ * @param basePath   Root search directory (must already exist).
+ * @param moduleName Module sub-path to locate (e.g. "bus_managers/usb/driver").
+ * @param pathBuffer Output buffer for the constructed absolute path.
+ * @param bufferSize Size of @p pathBuffer.
+ * @retval B_OK             Module file found; @p pathBuffer contains the path.
+ * @retval B_BUFFER_OVERFLOW @p pathBuffer is too small.
+ * @retval B_ENTRY_NOT_FOUND No matching regular file found; path refers to
+ *                           a directory or the traversal exhausted all
+ *                           components.
+ */
 status_t
 vfs_get_module_path(const char* basePath, const char* moduleName,
 	char* pathBuffer, size_t bufferSize)
@@ -4512,6 +5603,23 @@ vfs_get_module_path(const char* basePath, const char* moduleName,
 		   if the path is relative (to get the CWD).
 	\return \c B_OK if everything went fine, another error code otherwise.
 */
+/**
+ * @brief Normalizes a path to its canonical absolute form.
+ *
+ * The resulting path is absolute, contains no "." or ".." components, has no
+ * duplicate slashes, and none of the directory components are symbolic links
+ * (leaf symlinks are followed only when @p traverseLink is true).
+ *
+ * @param path          The path to normalize (may equal @p buffer).
+ * @param buffer        Output buffer for the normalized path; may be the same
+ *                      pointer as @p path.
+ * @param bufferSize    Size of @p buffer.
+ * @param traverseLink  If true, also resolves a leaf symlink.
+ * @param kernel        true to use the kernel I/O context for CWD resolution.
+ * @retval B_OK             Path normalized.
+ * @retval B_BAD_VALUE      @p path or @p buffer is NULL, or @p bufferSize < 1.
+ * @retval B_BUFFER_OVERFLOW Normalized path does not fit in @p buffer.
+ */
 status_t
 vfs_normalize_path(const char* path, char* buffer, size_t bufferSize,
 	bool traverseLink, bool kernel)
@@ -4533,6 +5641,18 @@ vfs_normalize_path(const char* path, char* buffer, size_t bufferSize,
 	Gets the parent of the passed in node, and correctly resolves covered
 	nodes.
 */
+/**
+ * @brief Returns the parent vnode's device/node IDs, crossing mount points.
+ *
+ * If @p parent is covered by another vnode (i.e. it is a mount point root),
+ * the covering vnode's parent is returned.
+ *
+ * @param parent  The vnode whose parent is requested.
+ * @param device  Output: device (mount) ID of the parent.
+ * @param node    Output: node ID of the parent.
+ * @retval B_OK         Parent found.
+ * @retval B_ENTRY_NOT_FOUND @p parent has no parent (it is the root).
+ */
 extern "C" status_t
 vfs_resolve_parent(struct vnode* parent, dev_t* device, ino_t* node)
 {
@@ -4564,6 +5684,25 @@ vfs_resolve_parent(struct vnode* parent, dev_t* device, ino_t* node)
 		pointer to the newly created node.
 	\return \c B_OK, if everything went fine, another error code otherwise.
 */
+/**
+ * @brief Creates a special node (FIFO, device, etc.) in the file system.
+ *
+ * If @p path is non-NULL the node is anchored at that path; otherwise it is
+ * created in the root FS without a directory entry and will be automatically
+ * deleted when the last reference is dropped.
+ *
+ * @param path          Optional path for the new node's directory entry.
+ * @param subVnode      Optional sub-vnode definition for layered FS support.
+ * @param mode          Type and permission bits for the new node.
+ * @param flags         FS-specific creation flags.
+ * @param kernel        true when called from kernel context.
+ * @param _superVnode   Optional output: super-vnode filled by the FS.
+ * @param _createdVnode Output: pointer to the newly created vnode (caller
+ *                      holds a reference and must call vfs_put_vnode()).
+ * @retval B_OK          Node created.
+ * @retval B_UNSUPPORTED The target FS does not support create_special_node.
+ * @retval B_NO_MEMORY   Path buffer allocation failed.
+ */
 status_t
 vfs_create_special_node(const char* path, fs_vnode* subVnode, mode_t mode,
 	uint32 flags, bool kernel, fs_vnode* _superVnode,
@@ -4620,6 +5759,14 @@ vfs_create_special_node(const char* path, fs_vnode* subVnode, mode_t mode,
 }
 
 
+/**
+ * @brief Releases a reference to a vnode (private kernel VFS API).
+ *
+ * Decrements the vnode's reference count.  When the count reaches zero and
+ * the vnode is marked removed, it is freed.
+ *
+ * @param vnode The vnode to release.
+ */
 extern "C" void
 vfs_put_vnode(struct vnode* vnode)
 {
@@ -4627,6 +5774,16 @@ vfs_put_vnode(struct vnode* vnode)
 }
 
 
+/**
+ * @brief Returns the device and node IDs of the current working directory.
+ *
+ * Reads the CWD from the calling thread's I/O context (user context).
+ *
+ * @param _mountID  Output: device ID of the CWD vnode.
+ * @param _vnodeID  Output: node ID of the CWD vnode.
+ * @retval B_OK     CWD retrieved.
+ * @retval B_ERROR  The I/O context has no CWD set.
+ */
 extern "C" status_t
 vfs_get_cwd(dev_t* _mountID, ino_t* _vnodeID)
 {
@@ -4643,6 +5800,16 @@ vfs_get_cwd(dev_t* _mountID, ino_t* _vnodeID)
 }
 
 
+/**
+ * @brief Unmounts a volume from the kernel side.
+ *
+ * Delegates to fs_unmount() using the kernel I/O context.
+ *
+ * @param mountID Device ID of the volume to unmount.
+ * @param flags   Unmount flags (e.g. B_FORCE_UNMOUNT).
+ * @retval B_OK        Volume unmounted.
+ * @retval B_BUSY      Volume is in use and B_FORCE_UNMOUNT was not specified.
+ */
 status_t
 vfs_unmount(dev_t mountID, uint32 flags)
 {
@@ -4650,6 +5817,17 @@ vfs_unmount(dev_t mountID, uint32 flags)
 }
 
 
+/**
+ * @brief Forces all open file descriptors on a vnode to be disconnected.
+ *
+ * Acquires a temporary reference to the vnode and calls
+ * disconnect_mount_or_vnode_fds() to close all FDs that reference it.
+ *
+ * @param mountID Device ID of the vnode.
+ * @param vnodeID Node ID of the vnode.
+ * @retval B_OK        Vnode disconnected.
+ * @retval B_ENTRY_NOT_FOUND Vnode not found.
+ */
 extern "C" status_t
 vfs_disconnect_vnode(dev_t mountID, ino_t vnodeID)
 {
@@ -4665,6 +5843,14 @@ vfs_disconnect_vnode(dev_t mountID, ino_t vnodeID)
 }
 
 
+/**
+ * @brief Releases unused vnodes in response to a low-resource notification.
+ *
+ * Calls the vnode low-resource handler to trim cached vnodes from the
+ * inactive list.
+ *
+ * @param level Low-resource severity level passed to the handler.
+ */
 extern "C" void
 vfs_free_unused_vnodes(int32 level)
 {
@@ -4675,6 +5861,13 @@ vfs_free_unused_vnodes(int32 level)
 }
 
 
+/**
+ * @brief Queries whether a vnode supports page-level I/O (mmap/page cache).
+ *
+ * @param vnode  The vnode to query.
+ * @param cookie The open cookie.
+ * @return true if the FS reports the vnode as pageable, false otherwise.
+ */
 extern "C" bool
 vfs_can_page(struct vnode* vnode, void* cookie)
 {
@@ -4686,6 +5879,21 @@ vfs_can_page(struct vnode* vnode, void* cookie)
 }
 
 
+/**
+ * @brief Reads pages from a vnode into caller-supplied generic I/O vectors.
+ *
+ * Builds an IORequest from the supplied vectors and dispatches it through the
+ * vnode I/O path.
+ *
+ * @param vnode     The vnode to read from.
+ * @param cookie    The open cookie for the vnode.
+ * @param pos       Byte offset within the file.
+ * @param vecs      Array of generic I/O vectors.
+ * @param count     Number of entries in @p vecs.
+ * @param flags     I/O flags (e.g. B_PHYSICAL_IO_REQUEST).
+ * @param _numBytes In: total bytes to read; out: bytes actually transferred.
+ * @retval B_OK     Read completed.
+ */
 extern "C" status_t
 vfs_read_pages(struct vnode* vnode, void* cookie, off_t pos,
 	const generic_io_vec* vecs, size_t count, uint32 flags,
@@ -4714,6 +5922,21 @@ vfs_read_pages(struct vnode* vnode, void* cookie, off_t pos,
 }
 
 
+/**
+ * @brief Writes pages from caller-supplied generic I/O vectors to a vnode.
+ *
+ * Builds an IORequest from the supplied vectors and dispatches it through the
+ * vnode I/O path.
+ *
+ * @param vnode     The vnode to write to.
+ * @param cookie    The open cookie for the vnode.
+ * @param pos       Byte offset within the file.
+ * @param vecs      Array of generic I/O vectors.
+ * @param count     Number of entries in @p vecs.
+ * @param flags     I/O flags (e.g. B_PHYSICAL_IO_REQUEST).
+ * @param _numBytes In: total bytes to write; out: bytes actually transferred.
+ * @retval B_OK     Write completed.
+ */
 extern "C" status_t
 vfs_write_pages(struct vnode* vnode, void* cookie, off_t pos,
 	const generic_io_vec* vecs, size_t count, uint32 flags,
@@ -4747,6 +5970,20 @@ vfs_write_pages(struct vnode* vnode, void* cookie, off_t pos,
 	In case it's successful, it will also grab a reference to the cache
 	it returns.
 */
+/**
+ * @brief Returns the VMCache for a vnode, optionally creating it.
+ *
+ * If the vnode already has a VMCache the function acquires an extra reference
+ * and returns it.  If not and @p allocate is true, vm_create_vnode_cache() is
+ * called.
+ *
+ * @param vnode    The vnode whose cache is requested.
+ * @param _cache   Output: the VMCache with one added reference.
+ * @param allocate If true, create the cache when it does not exist yet.
+ * @retval B_OK        Cache returned.
+ * @retval B_BAD_VALUE @p allocate is false and the vnode has no cache.
+ * @note Acquires and releases sVnodeLock (read) and the vnode's own lock.
+ */
 extern "C" status_t
 vfs_get_vnode_cache(struct vnode* vnode, VMCache** _cache, bool allocate)
 {
@@ -4798,6 +6035,18 @@ vfs_get_vnode_cache(struct vnode* vnode, VMCache** _cache, bool allocate)
 	In case it's successful, it will also grab a reference to the cache
 	it returns.
 */
+/**
+ * @brief Associates a caller-managed VMCache with a vnode.
+ *
+ * Used by subsystems (e.g. devfs) that manage their own page cache.  The
+ * function acquires a reference to the supplied cache.
+ *
+ * @param vnode  The vnode to attach the cache to.
+ * @param _cache The VMCache to attach (reference will be incremented).
+ * @retval B_OK         Cache attached.
+ * @retval B_NOT_ALLOWED The vnode already has a VMCache.
+ * @note Acquires and releases sVnodeLock (read) and the vnode's own lock.
+ */
 extern "C" status_t
 vfs_set_vnode_cache(struct vnode* vnode, VMCache* _cache)
 {
@@ -4818,6 +6067,19 @@ vfs_set_vnode_cache(struct vnode* vnode, VMCache* _cache)
 }
 
 
+/**
+ * @brief Retrieves the physical file extents for a byte range of a vnode.
+ *
+ * Delegates to the FS get_file_map() hook.  Used by the block cache and I/O
+ * scheduler to perform direct block I/O.
+ *
+ * @param vnode   The vnode to query.
+ * @param offset  Start byte offset within the file.
+ * @param size    Number of bytes requested.
+ * @param vecs    Output array of file_io_vec extents.
+ * @param _count  In: capacity of @p vecs; out: number of entries filled.
+ * @retval B_OK   Map filled.
+ */
 status_t
 vfs_get_file_map(struct vnode* vnode, off_t offset, size_t size,
 	file_io_vec* vecs, size_t* _count)
@@ -4829,6 +6091,15 @@ vfs_get_file_map(struct vnode* vnode, off_t offset, size_t size,
 }
 
 
+/**
+ * @brief Retrieves stat information for a vnode directly.
+ *
+ * Calls the FS read_stat() hook and fills in st_dev, st_ino, and st_rdev.
+ *
+ * @param vnode The vnode to stat.
+ * @param stat  Output buffer for stat data.
+ * @retval B_OK Stat filled.
+ */
 status_t
 vfs_stat_vnode(struct vnode* vnode, struct stat* stat)
 {
@@ -4847,6 +6118,17 @@ vfs_stat_vnode(struct vnode* vnode, struct stat* stat)
 }
 
 
+/**
+ * @brief Retrieves stat information for a node identified by device+inode.
+ *
+ * Acquires a reference to the vnode, calls vfs_stat_vnode(), then releases it.
+ *
+ * @param device Device (mount) ID.
+ * @param inode  Node ID.
+ * @param stat   Output buffer for stat data.
+ * @retval B_OK         Stat filled.
+ * @retval B_ENTRY_NOT_FOUND Vnode not found.
+ */
 status_t
 vfs_stat_node_ref(dev_t device, ino_t inode, struct stat* stat)
 {
@@ -4862,6 +6144,17 @@ vfs_stat_node_ref(dev_t device, ino_t inode, struct stat* stat)
 }
 
 
+/**
+ * @brief Retrieves the leaf name of a vnode (private kernel VFS API).
+ *
+ * Delegates to get_vnode_name() using the kernel I/O context.
+ *
+ * @param vnode    The vnode whose name is requested.
+ * @param name     Output buffer for the entry name.
+ * @param nameSize Size of @p name.
+ * @retval B_OK            Name filled.
+ * @retval B_BUFFER_OVERFLOW Name does not fit in @p name.
+ */
 status_t
 vfs_get_vnode_name(struct vnode* vnode, char* name, size_t nameSize)
 {
@@ -4869,6 +6162,23 @@ vfs_get_vnode_name(struct vnode* vnode, char* name, size_t nameSize)
 }
 
 
+/**
+ * @brief Converts a device/inode/leaf tuple into a full absolute path.
+ *
+ * Resolves the directory identified by (@p device, @p inode) to a path and
+ * appends the optional @p leaf component.  The special leaf values "." and
+ * ".." are handled directly.
+ *
+ * @param device     Device ID of the parent directory.
+ * @param inode      Node ID of the parent directory.
+ * @param leaf       Optional leaf entry name (may be NULL, ".", "..").
+ * @param kernel     true to use the kernel I/O context.
+ * @param path       Output buffer for the absolute path.
+ * @param pathLength Size of @p path.
+ * @retval B_OK             Path constructed.
+ * @retval B_BAD_VALUE      @p leaf contains a slash or is empty.
+ * @retval B_NAME_TOO_LONG  Resulting path exceeds @p pathLength.
+ */
 status_t
 vfs_entry_ref_to_path(dev_t device, ino_t inode, const char* leaf,
 	bool kernel, char* path, size_t pathLength)
@@ -4916,6 +6226,14 @@ vfs_entry_ref_to_path(dev_t device, ino_t inode, const char* leaf,
 
 
 /*!	If the given descriptor locked its vnode, that lock will be released. */
+/**
+ * @brief Releases a mandatory lock held by a file descriptor on its vnode.
+ *
+ * If the vnode's mandatory_locked_by field points to @p descriptor, it is
+ * cleared.  No-op if the descriptor does not hold the lock.
+ *
+ * @param descriptor The file descriptor that may hold the vnode lock.
+ */
 void
 vfs_unlock_vnode_if_locked(struct file_descriptor* descriptor)
 {
@@ -4927,6 +6245,16 @@ vfs_unlock_vnode_if_locked(struct file_descriptor* descriptor)
 
 
 /*!	Releases any POSIX locks on the file descriptor. */
+/**
+ * @brief Releases all POSIX locks held by a file descriptor on its vnode.
+ *
+ * If the FS provides a release_lock hook it is called; otherwise the generic
+ * advisory-lock release path is used.
+ *
+ * @param context    The I/O context owning the file descriptor.
+ * @param descriptor The file descriptor whose POSIX locks should be released.
+ * @retval B_OK Always (failures from the FS are propagated as-is).
+ */
 status_t
 vfs_release_posix_lock(io_context* context, struct file_descriptor* descriptor)
 {
@@ -4944,6 +6272,14 @@ vfs_release_posix_lock(io_context* context, struct file_descriptor* descriptor)
 /*!	Closes all file descriptors of the specified I/O context that
 	have the O_CLOEXEC flag set.
 */
+/**
+ * @brief Closes all O_CLOEXEC file descriptors in an I/O context (exec path).
+ *
+ * Called after exec() to close file descriptors that have the close-on-exec
+ * flag set.
+ *
+ * @param context The I/O context to process.
+ */
 void
 vfs_exec_io_context(io_context* context)
 {
@@ -4973,6 +6309,21 @@ vfs_exec_io_context(io_context* context)
 /*! Sets up a new io_control structure, and inherits the properties
 	of the parent io_control if it is given.
 */
+/**
+ * @brief Allocates and initializes a new I/O context.
+ *
+ * If @p parentContext is non-NULL, the new context inherits open file
+ * descriptors (excluding O_DISCONNECTED FDs and those filtered by
+ * @p purgeCloseOnExec / close-on-fork flags).  Root and CWD vnodes are
+ * inherited with an additional reference.  If @p parentContext is NULL, the
+ * context starts with the global root and no CWD.
+ *
+ * @param parentContext    The parent I/O context to inherit from, or NULL.
+ * @param purgeCloseOnExec If true, skip FDs with O_CLOEXEC (exec path);
+ *                         if false, skip close-on-fork FDs (fork path).
+ * @return A pointer to the new io_context on success, or NULL on allocation
+ *         failure.
+ */
 io_context*
 vfs_new_io_context(const io_context* parentContext, bool purgeCloseOnExec)
 {
@@ -5058,6 +6409,11 @@ vfs_new_io_context(const io_context* parentContext, bool purgeCloseOnExec)
 }
 
 
+/**
+ * @brief Increments the reference count of an I/O context.
+ *
+ * @param context The I/O context to acquire a reference to.
+ */
 void
 vfs_get_io_context(io_context* context)
 {
@@ -5065,6 +6421,14 @@ vfs_get_io_context(io_context* context)
 }
 
 
+/**
+ * @brief Decrements the reference count of an I/O context and frees it if zero.
+ *
+ * When the last reference is dropped, free_io_context() closes all open FDs
+ * and releases associated resources.
+ *
+ * @param context The I/O context to release.
+ */
 void
 vfs_put_io_context(io_context* context)
 {
@@ -5073,6 +6437,21 @@ vfs_put_io_context(io_context* context)
 }
 
 
+/**
+ * @brief Resizes the file descriptor table of an I/O context.
+ *
+ * Allocates new FD, select_info, close-on-exec, and close-on-fork arrays of
+ * the requested size and copies existing entries.  Entries beyond the new
+ * size must not be in use when shrinking.
+ *
+ * @param context The I/O context whose table should be resized.
+ * @param newSize The new table capacity (1..MAX_FD_TABLE_SIZE).
+ * @retval B_OK        Table resized.
+ * @retval B_BAD_VALUE @p newSize is out of range.
+ * @retval B_BUSY      Shrinking would drop in-use file descriptors.
+ * @retval B_NO_MEMORY Allocation failure.
+ * @note Acquires context->lock (write) internally.
+ */
 status_t
 vfs_resize_fd_table(struct io_context* context, uint32 newSize)
 {
@@ -5174,6 +6553,20 @@ vfs_resize_fd_table(struct io_context* context, uint32 newSize)
 	- \c B_OK, if everything went fine,
 	- another error code, if something went wrong.
 */
+/**
+ * @brief Resolves a vnode to the vnode that covers it (if any).
+ *
+ * If the vnode identified by (@p mountID, @p nodeID) is covered by another
+ * vnode (i.e. it is a mount point), the device and node IDs of the covering
+ * vnode are returned; otherwise the original IDs are returned unchanged.
+ *
+ * @param mountID         Device ID of the vnode to resolve.
+ * @param nodeID          Node ID of the vnode to resolve.
+ * @param resolvedMountID Output: device ID of the covering vnode (or original).
+ * @param resolvedNodeID  Output: node ID of the covering vnode (or original).
+ * @retval B_OK           Resolution successful.
+ * @retval B_ENTRY_NOT_FOUND Vnode not found.
+ */
 status_t
 vfs_resolve_vnode_to_covering_vnode(dev_t mountID, ino_t nodeID,
 	dev_t* resolvedMountID, ino_t* resolvedNodeID)
@@ -5200,6 +6593,16 @@ vfs_resolve_vnode_to_covering_vnode(dev_t mountID, ino_t nodeID,
 }
 
 
+/**
+ * @brief Returns the device and node IDs of a volume's mount-point vnode.
+ *
+ * @param mountID             Device ID of the mounted volume.
+ * @param _mountPointMountID  Output: device ID of the mount-point vnode.
+ * @param _mountPointNodeID   Output: node ID of the mount-point vnode.
+ * @retval B_OK        Mount point found.
+ * @retval B_BAD_VALUE @p mountID does not identify a known mount.
+ * @note Acquires sVnodeLock (read) and sMountLock (read).
+ */
 status_t
 vfs_get_mount_point(dev_t mountID, dev_t* _mountPointMountID,
 	ino_t* _mountPointNodeID)
@@ -5220,6 +6623,22 @@ vfs_get_mount_point(dev_t mountID, dev_t* _mountPointMountID,
 }
 
 
+/**
+ * @brief Establishes a covering/covered relationship between two vnodes.
+ *
+ * Used by overlay/bindfs mounts to link a covering vnode on one mount to a
+ * covered vnode on another mount without going through the normal mount path.
+ *
+ * @param mountID        Device ID of the covering vnode.
+ * @param nodeID         Node ID of the covering vnode.
+ * @param coveredMountID Device ID of the covered (mount-point) vnode.
+ * @param coveredNodeID  Node ID of the covered (mount-point) vnode.
+ * @retval B_OK     Link established.
+ * @retval B_BAD_VALUE Either vnode not found.
+ * @retval B_BUSY   One of the vnodes already participates in a cover link,
+ *                  or one of the mounts is being unmounted.
+ * @note Acquires sVnodeLock (write).
+ */
 status_t
 vfs_bind_mount_directory(dev_t mountID, ino_t nodeID, dev_t coveredMountID,
 	ino_t coveredNodeID)
@@ -5260,6 +6679,17 @@ vfs_bind_mount_directory(dev_t mountID, ino_t nodeID, dev_t coveredMountID,
 }
 
 
+/**
+ * @brief Retrieves a VFS-related resource limit for the calling process.
+ *
+ * Supports RLIMIT_NOFILE (maximum open file descriptors) and RLIMIT_NOVMON
+ * (maximum node monitors).
+ *
+ * @param resource The RLIMIT_* constant to query.
+ * @param rlp      Output buffer for the current and maximum limits.
+ * @return 0 on success, B_BAD_VALUE for unsupported resources, or
+ *         B_BAD_ADDRESS if @p rlp is NULL.
+ */
 int
 vfs_getrlimit(int resource, struct rlimit* rlp)
 {
@@ -5293,6 +6723,18 @@ vfs_getrlimit(int resource, struct rlimit* rlp)
 }
 
 
+/**
+ * @brief Sets a VFS-related resource limit for the calling process.
+ *
+ * Supports RLIMIT_NOFILE (resizes the FD table) and RLIMIT_NOVMON (adjusts
+ * node-monitor quota).  The hard limit must match the compile-time maximum.
+ *
+ * @param resource The RLIMIT_* constant to set.
+ * @param rlp      New limits (rlim_cur is the new soft limit).
+ * @return 0 on success, B_BAD_VALUE for unsupported resources,
+ *         B_NOT_ALLOWED if the hard-limit constraint is violated, or
+ *         B_BAD_ADDRESS if @p rlp is NULL.
+ */
 int
 vfs_setrlimit(int resource, const struct rlimit* rlp)
 {
@@ -5324,6 +6766,19 @@ vfs_setrlimit(int resource, const struct rlimit* rlp)
 }
 
 
+/**
+ * @brief Initializes the VFS subsystem during kernel boot.
+ *
+ * Creates the vnode and mount hash tables, object caches for vnodes/FDs/path
+ * names, initializes locking primitives, node monitors, block cache, FIFO
+ * subsystem, file map, file cache, and registers debugger commands and the
+ * low-resource vnode handler.
+ *
+ * @param args Kernel boot arguments (currently unused by VFS itself).
+ * @retval B_OK  VFS initialized.
+ * @retval B_ERROR block_cache_init() or file_cache_init() failed (panics for
+ *                 most other failures).
+ */
 status_t
 vfs_init(kernel_args* args)
 {
@@ -5401,6 +6856,16 @@ vfs_init(kernel_args* args)
 //	#pragma mark - fd_ops implementations
 
 
+/**
+ * @brief Validates open mode flags against a vnode's type.
+ *
+ * @param vnode    The vnode to be opened.
+ * @param openMode Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_DIRECTORY, etc.).
+ * @retval B_OK            Flags are valid for this vnode type.
+ * @retval B_BAD_VALUE     Conflicting flags (O_RDWR|O_WRONLY, or O_RDONLY|O_TRUNC).
+ * @retval B_LINK_LIMIT    O_NOFOLLOW specified and the vnode is a symlink.
+ * @retval B_NOT_A_DIRECTORY O_DIRECTORY specified but the vnode is not a directory.
+ */
 static status_t
 check_open_mode(struct vnode* vnode, int openMode)
 {
@@ -5422,6 +6887,14 @@ check_open_mode(struct vnode* vnode, int openMode)
 	Calls fs_open() on the given vnode and returns a new
 	file descriptor for it
 */
+/**
+ * @brief Calls the FS open() hook and returns a new file descriptor.
+ *
+ * @param vnode    The vnode to open.
+ * @param openMode Open flags.
+ * @param kernel   true to allocate the FD in the kernel I/O context.
+ * @return A non-negative file descriptor on success, or a negative error code.
+ */
 static int
 open_vnode(struct vnode* vnode, int openMode, bool kernel)
 {
@@ -5449,6 +6922,20 @@ open_vnode(struct vnode* vnode, int openMode, bool kernel)
 	If O_EXCL is not specified and an entry already exists at the path,
 	then that entry will be opened and returned instead.
 */
+/**
+ * @brief Creates a new file in @p directory or opens an existing one.
+ *
+ * If the entry already exists and O_EXCL is not set, the existing node is
+ * opened.  The function retries up to 3 times to handle the race between
+ * lookup and creation.
+ *
+ * @param directory The directory vnode in which to create the file.
+ * @param name      Leaf name for the new file.
+ * @param openMode  Open flags (O_CREAT implied, O_EXCL optional).
+ * @param perms     Permission bits for the new file.
+ * @param kernel    true to allocate the FD in the kernel I/O context.
+ * @return A non-negative file descriptor, or a negative error code.
+ */
 static int
 file_create_vnode(struct vnode* directory, const char* name, int openMode,
 	int perms, bool kernel)
@@ -5574,6 +7061,14 @@ file_create_vnode(struct vnode* directory, const char* name, int openMode,
 /*! Calls fs open_dir() on the given vnode and returns a new
 	file descriptor for it
 */
+/**
+ * @brief Calls the FS open_dir() hook and returns a new directory FD.
+ *
+ * @param vnode  The directory vnode to open.
+ * @param kernel true to allocate the FD in the kernel I/O context.
+ * @return A non-negative FD on success, or a negative error code.
+ * @retval B_UNSUPPORTED The vnode does not implement open_dir.
+ */
 static int
 open_dir_vnode(struct vnode* vnode, bool kernel)
 {
@@ -5601,6 +7096,14 @@ open_dir_vnode(struct vnode* vnode, bool kernel)
 	file descriptor for it.
 	Used by attr_dir_open(), and attr_dir_open_fd().
 */
+/**
+ * @brief Calls the FS open_attr_dir() hook and returns a new FD.
+ *
+ * @param vnode  The vnode whose attribute directory to open.
+ * @param kernel true to allocate the FD in the kernel I/O context.
+ * @return A non-negative FD on success, or a negative error code.
+ * @retval B_UNSUPPORTED The vnode does not implement open_attr_dir.
+ */
 static int
 open_attr_dir_vnode(struct vnode* vnode, bool kernel)
 {
@@ -5625,6 +7128,20 @@ open_attr_dir_vnode(struct vnode* vnode, bool kernel)
 }
 
 
+/**
+ * @brief Creates a new file identified by entry_ref and returns an FD.
+ *
+ * Looks up the directory vnode by (@p mountID, @p directoryID) and delegates
+ * to file_create_vnode().
+ *
+ * @param mountID     Device ID of the parent directory.
+ * @param directoryID Node ID of the parent directory.
+ * @param name        Entry name for the new file.
+ * @param openMode    Open flags.
+ * @param perms       Permission bits.
+ * @param kernel      true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ */
 static int
 file_create_entry_ref(dev_t mountID, ino_t directoryID, const char* name,
 	int openMode, int perms, bool kernel)
@@ -5645,6 +7162,19 @@ file_create_entry_ref(dev_t mountID, ino_t directoryID, const char* name,
 }
 
 
+/**
+ * @brief Creates a new file identified by a path and returns an FD.
+ *
+ * Resolves the directory component of @p path relative to @p fd and delegates
+ * to file_create_vnode().
+ *
+ * @param fd       Base directory FD for relative paths (or AT_FDCWD).
+ * @param path     Path of the file to create (leaf is extracted).
+ * @param openMode Open flags.
+ * @param perms    Permission bits.
+ * @param kernel   true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ */
 static int
 file_create(int fd, char* path, int openMode, int perms, bool kernel)
 {
@@ -5663,6 +7193,17 @@ file_create(int fd, char* path, int openMode, int perms, bool kernel)
 }
 
 
+/**
+ * @brief Opens a file identified by entry_ref and returns an FD.
+ *
+ * @param mountID     Device ID of the parent directory.
+ * @param directoryID Node ID of the parent directory.
+ * @param name        Entry name.
+ * @param openMode    Open flags.
+ * @param kernel      true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ * @retval B_BAD_VALUE @p name is NULL or empty.
+ */
 static int
 file_open_entry_ref(dev_t mountID, ino_t directoryID, const char* name,
 	int openMode, bool kernel)
@@ -5695,6 +7236,18 @@ file_open_entry_ref(dev_t mountID, ino_t directoryID, const char* name,
 }
 
 
+/**
+ * @brief Opens a file identified by (fd, path) and returns an FD.
+ *
+ * Resolves the path relative to @p fd using fd_and_path_to_vnode() and then
+ * calls open_vnode().
+ *
+ * @param fd       Base FD for relative paths (or AT_FDCWD).
+ * @param path     File path to open.
+ * @param openMode Open flags.
+ * @param kernel   true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ */
 static int
 file_open(int fd, char* path, int openMode, bool kernel)
 {
@@ -5725,6 +7278,15 @@ file_open(int fd, char* path, int openMode, bool kernel)
 }
 
 
+/**
+ * @brief fd_ops close handler for regular files.
+ *
+ * Calls the FS close() hook and releases all advisory/POSIX locks held by
+ * this descriptor.
+ *
+ * @param descriptor The file descriptor being closed.
+ * @retval B_OK Close succeeded.
+ */
 static status_t
 file_close(struct file_descriptor* descriptor)
 {
@@ -5750,6 +7312,14 @@ file_close(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free_fd handler for regular files.
+ *
+ * Calls the FS free_cookie() hook and drops the vnode reference held by the
+ * file descriptor.
+ *
+ * @param descriptor The file descriptor being freed.
+ */
 static void
 file_free_fd(struct file_descriptor* descriptor)
 {
@@ -5762,6 +7332,16 @@ file_free_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops read handler for regular files.
+ *
+ * @param descriptor The open file descriptor.
+ * @param pos        File offset; -1 means use the FD's current position.
+ * @param buffer     Destination buffer.
+ * @param length     In: bytes to read; out: bytes actually read.
+ * @retval B_IS_A_DIRECTORY If the vnode is a directory.
+ * @retval ESPIPE           @p pos is not -1 but the file is non-seekable.
+ */
 static status_t
 file_read(struct file_descriptor* descriptor, off_t pos, void* buffer,
 	size_t* length)
@@ -5779,6 +7359,17 @@ file_read(struct file_descriptor* descriptor, off_t pos, void* buffer,
 }
 
 
+/**
+ * @brief fd_ops write handler for regular files.
+ *
+ * @param descriptor The open file descriptor.
+ * @param pos        File offset; -1 means use the FD's current position.
+ * @param buffer     Source buffer.
+ * @param length     In: bytes to write; out: bytes actually written.
+ * @retval B_IS_A_DIRECTORY If the vnode is a directory.
+ * @retval ESPIPE           @p pos is not -1 but the file is non-seekable.
+ * @retval B_READ_ONLY_DEVICE FS has no write hook.
+ */
 static status_t
 file_write(struct file_descriptor* descriptor, off_t pos, const void* buffer,
 	size_t* length)
@@ -5799,6 +7390,21 @@ file_write(struct file_descriptor* descriptor, off_t pos, const void* buffer,
 }
 
 
+/**
+ * @brief Performs scatter/gather I/O on a regular file FD.
+ *
+ * Only supported for vnodes without a page cache (raw I/O via the io hook).
+ *
+ * @param descriptor The open file descriptor.
+ * @param pos        File offset (must not be -1).
+ * @param vecs       Array of iovec structures.
+ * @param count      Number of iovecs.
+ * @param write      true to write, false to read.
+ * @return Total bytes transferred on success, or a negative error code.
+ * @retval ESPIPE       The file is non-seekable.
+ * @retval B_IS_A_DIRECTORY The vnode is a directory.
+ * @retval B_UNSUPPORTED    pos == -1, no io hook, or vnode has a cache.
+ */
 static ssize_t
 file_vector_io(struct file_descriptor* descriptor, off_t pos,
 	const struct iovec *vecs, int count, bool write)
@@ -5838,6 +7444,15 @@ file_vector_io(struct file_descriptor* descriptor, off_t pos,
 }
 
 
+/**
+ * @brief fd_ops readv handler — scatter-read from a regular file.
+ *
+ * @param descriptor The open file descriptor.
+ * @param pos        File offset.
+ * @param vecs       iovec array.
+ * @param count      Number of iovecs.
+ * @return Bytes read, or a negative error code.
+ */
 static ssize_t
 file_readv(struct file_descriptor* descriptor, off_t pos,
 	const struct iovec *vecs, int count)
@@ -5847,6 +7462,15 @@ file_readv(struct file_descriptor* descriptor, off_t pos,
 }
 
 
+/**
+ * @brief fd_ops writev handler — gather-write to a regular file.
+ *
+ * @param descriptor The open file descriptor.
+ * @param pos        File offset.
+ * @param vecs       iovec array.
+ * @param count      Number of iovecs.
+ * @return Bytes written, or a negative error code.
+ */
 static ssize_t
 file_writev(struct file_descriptor* descriptor, off_t pos,
 	const struct iovec *vecs, int count)
@@ -5856,6 +7480,18 @@ file_writev(struct file_descriptor* descriptor, off_t pos,
 }
 
 
+/**
+ * @brief fd_ops seek handler for regular files.
+ *
+ * Computes the new position from @p pos and @p seekType (SEEK_SET, SEEK_CUR,
+ * SEEK_END, SEEK_DATA, SEEK_HOLE).  For block/char devices the end-of-file is
+ * determined via the geometry ioctl.
+ *
+ * @param descriptor The open file descriptor.
+ * @param pos        Seek offset.
+ * @param seekType   SEEK_SET, SEEK_CUR, SEEK_END, SEEK_DATA, or SEEK_HOLE.
+ * @return New file position on success, or ESPIPE / negative error code.
+ */
 static off_t
 file_seek(struct file_descriptor* descriptor, off_t pos, int seekType)
 {
@@ -5963,6 +7599,18 @@ file_seek(struct file_descriptor* descriptor, off_t pos, int seekType)
 }
 
 
+/**
+ * @brief fd_ops select handler for regular files.
+ *
+ * Calls the FS select() hook.  If the FS does not support select, the event is
+ * immediately notified for non-output-only event types.
+ *
+ * @param descriptor The file descriptor to monitor.
+ * @param event      The select event (B_SELECT_READ, B_SELECT_WRITE, etc.).
+ * @param sync       The selectsync object to notify.
+ * @retval B_OK        Event registered.
+ * @retval B_UNSUPPORTED FS has no select hook (event was auto-notified).
+ */
 static status_t
 file_select(struct file_descriptor* descriptor, uint8 event,
 	struct selectsync* sync)
@@ -5988,6 +7636,16 @@ file_select(struct file_descriptor* descriptor, uint8 event,
 }
 
 
+/**
+ * @brief fd_ops deselect handler for regular files.
+ *
+ * Cancels a previously registered select event.
+ *
+ * @param descriptor The file descriptor being deselected.
+ * @param event      The select event to cancel.
+ * @param sync       The selectsync object.
+ * @retval B_OK Always.
+ */
 static status_t
 file_deselect(struct file_descriptor* descriptor, uint8 event,
 	struct selectsync* sync)
@@ -6001,6 +7659,16 @@ file_deselect(struct file_descriptor* descriptor, uint8 event,
 }
 
 
+/**
+ * @brief Creates a subdirectory named @p name inside the given directory vnode.
+ *
+ * @param vnode The parent directory vnode.
+ * @param name  Name for the new subdirectory.
+ * @param perms Permission bits.
+ * @retval B_OK         Directory created.
+ * @retval B_FILE_EXISTS An entry with this name already exists.
+ * @retval B_READ_ONLY_DEVICE FS has no create_dir hook.
+ */
 static status_t
 dir_create_vnode(struct vnode* vnode, const char* name, int perms)
 {
@@ -6019,6 +7687,17 @@ dir_create_vnode(struct vnode* vnode, const char* name, int perms)
 }
 
 
+/**
+ * @brief Creates a directory identified by entry_ref.
+ *
+ * @param mountID  Device ID of the parent directory.
+ * @param parentID Node ID of the parent directory.
+ * @param name     Name for the new directory.
+ * @param perms    Permission bits.
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK        Directory created.
+ * @retval B_BAD_VALUE @p name is NULL or empty.
+ */
 static status_t
 dir_create_entry_ref(dev_t mountID, ino_t parentID, const char* name, int perms,
 	bool kernel)
@@ -6043,6 +7722,18 @@ dir_create_entry_ref(dev_t mountID, ino_t parentID, const char* name, int perms,
 }
 
 
+/**
+ * @brief Creates a directory identified by (fd, path).
+ *
+ * Resolves the parent directory from @p path relative to @p fd and calls
+ * dir_create_vnode().
+ *
+ * @param fd     Base FD for relative paths (or AT_FDCWD).
+ * @param path   Path of the directory to create.
+ * @param perms  Permission bits.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK Directory created.
+ */
 static status_t
 dir_create(int fd, char* path, int perms, bool kernel)
 {
@@ -6072,6 +7763,19 @@ dir_create(int fd, char* path, int perms, bool kernel)
 }
 
 
+/**
+ * @brief Opens a directory identified by entry_ref and returns an FD.
+ *
+ * If @p name is NULL, the vnode at (@p mountID, @p parentID) is opened
+ * directly; otherwise the entry is looked up first.
+ *
+ * @param mountID  Device ID.
+ * @param parentID Node ID of the parent (or the directory itself if name is NULL).
+ * @param name     Entry name (may be NULL).
+ * @param kernel   true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ * @retval B_BAD_VALUE @p name is an empty string.
+ */
 static int
 dir_open_entry_ref(dev_t mountID, ino_t parentID, const char* name, bool kernel)
 {
@@ -6107,6 +7811,14 @@ dir_open_entry_ref(dev_t mountID, ino_t parentID, const char* name, bool kernel)
 }
 
 
+/**
+ * @brief Opens a directory identified by (fd, path) and returns an FD.
+ *
+ * @param fd     Base FD for relative paths (or AT_FDCWD).
+ * @param path   Directory path to open.
+ * @param kernel true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ */
 static int
 dir_open(int fd, char* path, bool kernel)
 {
@@ -6135,6 +7847,12 @@ dir_open(int fd, char* path, bool kernel)
 }
 
 
+/**
+ * @brief fd_ops close handler for directory file descriptors.
+ *
+ * @param descriptor The directory FD being closed.
+ * @retval B_OK Always.
+ */
 static status_t
 dir_close(struct file_descriptor* descriptor)
 {
@@ -6151,6 +7869,13 @@ dir_close(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free_fd handler for directory file descriptors.
+ *
+ * Calls the FS free_dir_cookie() hook and drops the vnode reference.
+ *
+ * @param descriptor The directory FD being freed.
+ */
 static void
 dir_free_fd(struct file_descriptor* descriptor)
 {
@@ -6163,6 +7888,18 @@ dir_free_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops read_dir handler — reads entries from a directory FD.
+ *
+ * Delegates to the vnode-based dir_read() overload.
+ *
+ * @param ioContext  The I/O context of the caller.
+ * @param descriptor The directory FD.
+ * @param buffer     Output buffer for dirent structures.
+ * @param bufferSize Size of @p buffer.
+ * @param _count     In: max entries to read; out: entries actually read.
+ * @retval B_OK Entries read (check *_count for the actual count).
+ */
 static status_t
 dir_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 	struct dirent* buffer, size_t bufferSize, uint32* _count)
@@ -6172,6 +7909,18 @@ dir_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 }
 
 
+/**
+ * @brief Adjusts device/inode fields of a dirent for mount-point crossing.
+ *
+ * Sets d_pdev/d_pino from the parent vnode.  For ".." entries whose parent is
+ * a covering vnode, resolves to the covered parent.  For all other entries,
+ * follows covered_by links so the consumer sees the covering FS node IDs.
+ *
+ * @param parent    The directory vnode that owns the entry.
+ * @param entry     The dirent to fix up.
+ * @param ioContext I/O context for CWD/root resolution.
+ * @retval B_OK Fixup applied.
+ */
 static status_t
 fix_dirent(struct vnode* parent, struct dirent* entry,
 	struct io_context* ioContext)
@@ -6204,6 +7953,21 @@ fix_dirent(struct vnode* parent, struct dirent* entry,
 }
 
 
+/**
+ * @brief Reads directory entries from a vnode and applies mount-point fixups.
+ *
+ * Calls the FS read_dir() hook and then calls fix_dirent() on each returned
+ * entry to adjust device/inode IDs for mount-point crossing.
+ *
+ * @param ioContext  The I/O context of the caller.
+ * @param vnode      The directory vnode.
+ * @param cookie     The open directory cookie.
+ * @param buffer     Output buffer for dirent structures.
+ * @param bufferSize Size of @p buffer.
+ * @param _count     In: max entries; out: entries actually read.
+ * @retval B_OK         Entries read.
+ * @retval B_UNSUPPORTED FS has no read_dir hook.
+ */
 static status_t
 dir_read(struct io_context* ioContext, struct vnode* vnode, void* cookie,
 	struct dirent* buffer, size_t bufferSize, uint32* _count)
@@ -6230,6 +7994,13 @@ dir_read(struct io_context* ioContext, struct vnode* vnode, void* cookie,
 }
 
 
+/**
+ * @brief fd_ops rewind_dir handler — resets directory enumeration to the start.
+ *
+ * @param descriptor The directory FD.
+ * @retval B_OK         Position reset.
+ * @retval B_UNSUPPORTED FS has no rewind_dir hook.
+ */
 static status_t
 dir_rewind(struct file_descriptor* descriptor)
 {
@@ -6243,6 +8014,19 @@ dir_rewind(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Removes a directory identified by (fd, path).
+ *
+ * Rejects paths ending in ".", "..", or containing only slashes.  Resolves
+ * the parent directory and calls the FS remove_dir() hook.
+ *
+ * @param fd     Base FD for relative paths (or AT_FDCWD).
+ * @param path   Path of the directory to remove.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK             Directory removed.
+ * @retval B_NOT_ALLOWED    Path ends in ".." or ".".
+ * @retval B_READ_ONLY_DEVICE FS has no remove_dir hook.
+ */
 static status_t
 dir_remove(int fd, char* path, bool kernel)
 {
@@ -6288,6 +8072,15 @@ dir_remove(int fd, char* path, bool kernel)
 }
 
 
+/**
+ * @brief fd_ops ioctl handler — dispatches device-control requests to the FS.
+ *
+ * @param descriptor The file descriptor.
+ * @param op         The ioctl operation code.
+ * @param buffer     Input/output buffer for the operation.
+ * @param length     Size of @p buffer.
+ * @retval B_DEV_INVALID_IOCTL FS has no ioctl hook.
+ */
 static status_t
 common_ioctl(struct file_descriptor* descriptor, ulong op, void* buffer,
 	size_t length)
@@ -6301,6 +8094,22 @@ common_ioctl(struct file_descriptor* descriptor, ulong op, void* buffer,
 }
 
 
+/**
+ * @brief Implements the fcntl() system call for both kernel and user callers.
+ *
+ * Handles F_GETFD/F_SETFD (close-on-exec/fork flags), F_GETFL/F_SETFL
+ * (open-mode flags), F_DUPFD/F_DUPFD_CLOEXEC/F_DUPFD_CLOFORK (FD duplication),
+ * and F_GETLK/F_SETLK/F_SETLKW (POSIX advisory record locks).
+ *
+ * @param fd       The file descriptor to operate on.
+ * @param op       The F_* fcntl command.
+ * @param argument Command-specific argument (flag value, new FD base, or
+ *                 pointer to a struct flock).
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK        Operation succeeded.
+ * @retval B_FILE_ERROR @p fd is invalid.
+ * @retval B_BAD_VALUE  Unsupported command or invalid arguments.
+ */
 static status_t
 common_fcntl(int fd, int op, size_t argument, bool kernel)
 {
@@ -6494,6 +8303,16 @@ common_fcntl(int fd, int op, size_t argument, bool kernel)
 }
 
 
+/**
+ * @brief Flushes cached data and/or metadata for a file descriptor to storage.
+ *
+ * @param fd       The file descriptor to sync.
+ * @param dataOnly If true, only data is flushed (fdatasync semantics).
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK         Sync completed.
+ * @retval B_FILE_ERROR @p fd is invalid.
+ * @retval B_UNSUPPORTED FS has no fsync hook.
+ */
 static status_t
 common_sync(int fd, bool dataOnly, bool kernel)
 {
@@ -6514,6 +8333,17 @@ common_sync(int fd, bool dataOnly, bool kernel)
 }
 
 
+/**
+ * @brief Sets a mandatory lock on the vnode backing a file descriptor.
+ *
+ * Uses an atomic compare-and-swap so that only one FD can hold the lock.
+ *
+ * @param fd     The file descriptor that will hold the lock.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK   Lock acquired.
+ * @retval B_BUSY Another descriptor already holds the mandatory lock.
+ * @retval B_FILE_ERROR @p fd is invalid.
+ */
 static status_t
 common_lock_node(int fd, bool kernel)
 {
@@ -6534,6 +8364,17 @@ common_lock_node(int fd, bool kernel)
 }
 
 
+/**
+ * @brief Releases the mandatory lock on the vnode backing a file descriptor.
+ *
+ * Uses an atomic compare-and-swap to ensure only the holder can release it.
+ *
+ * @param fd     The file descriptor that holds the lock.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK        Lock released.
+ * @retval B_BAD_VALUE The descriptor does not hold the mandatory lock.
+ * @retval B_FILE_ERROR @p fd is invalid.
+ */
 static status_t
 common_unlock_node(int fd, bool kernel)
 {
@@ -6554,6 +8395,25 @@ common_unlock_node(int fd, bool kernel)
 }
 
 
+/**
+ * @brief Pre-allocates disk space for a regular file.
+ *
+ * Delegates to the FS preallocate() hook.  Not supported for non-regular
+ * files (pipes, sockets, block/char devices, directories, symlinks).
+ *
+ * @param fd     The file descriptor (must be open for writing).
+ * @param offset Start byte offset for pre-allocation.
+ * @param length Number of bytes to pre-allocate (must be > 0).
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK          Space reserved.
+ * @retval B_BAD_VALUE   @p offset < 0 or @p length == 0.
+ * @retval B_FILE_TOO_LARGE  offset + length would overflow off_t.
+ * @retval B_FILE_ERROR  @p fd is invalid or read-only.
+ * @retval ESPIPE        @p fd refers to a pipe or socket.
+ * @retval B_DEVICE_NOT_FOUND Non-regular file type.
+ * @retval B_UNSUPPORTED FS has write but no preallocate hook.
+ * @retval B_READ_ONLY_DEVICE FS has neither preallocate nor write hook.
+ */
 static status_t
 common_preallocate(int fd, off_t offset, off_t length, bool kernel)
 {
@@ -6594,6 +8454,17 @@ common_preallocate(int fd, off_t offset, off_t length, bool kernel)
 }
 
 
+/**
+ * @brief Reads the target of a symbolic link.
+ *
+ * @param fd          Base FD for relative paths (or AT_FDCWD).
+ * @param path        Path to the symlink (leaf is NOT followed).
+ * @param buffer      Output buffer for the link target.
+ * @param _bufferSize In: buffer capacity; out: bytes written (without NUL).
+ * @param kernel      true to use the kernel I/O context.
+ * @retval B_OK         Link target read.
+ * @retval B_BAD_VALUE  The vnode is not a symlink or has no read_symlink hook.
+ */
 static status_t
 common_read_link(int fd, char* path, char* buffer, size_t* _bufferSize,
 	bool kernel)
@@ -6614,6 +8485,18 @@ common_read_link(int fd, char* path, char* buffer, size_t* _bufferSize,
 }
 
 
+/**
+ * @brief Creates a symbolic link.
+ *
+ * @param fd     Base FD for resolving @p path (or AT_FDCWD).
+ * @param path   Path where the symlink will be created.
+ * @param toPath Link target string (stored verbatim in the symlink).
+ * @param mode   Permission bits (often ignored by FS).
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK             Symlink created.
+ * @retval B_UNSUPPORTED    FS supports write but no create_symlink.
+ * @retval B_READ_ONLY_DEVICE FS has no write hook.
+ */
 static status_t
 common_create_symlink(int fd, char* path, const char* toPath, int mode,
 	bool kernel)
@@ -6641,6 +8524,21 @@ common_create_symlink(int fd, char* path, const char* toPath, int mode,
 }
 
 
+/**
+ * @brief Creates a hard link.
+ *
+ * Both the new entry and the target must reside on the same mount.
+ *
+ * @param pathFD          FD for the directory in which to create the link.
+ * @param path            Path for the new hard link.
+ * @param toFD            FD for the directory containing the link target.
+ * @param toPath          Path of the existing node to link to.
+ * @param traverseLeafLink If true, follow the final symlink in @p toPath.
+ * @param kernel          true to use the kernel I/O context.
+ * @retval B_OK                Link created.
+ * @retval B_CROSS_DEVICE_LINK @p path and @p toPath are on different mounts.
+ * @retval B_READ_ONLY_DEVICE  FS has no link hook.
+ */
 static status_t
 common_create_link(int pathFD, char* path, int toFD, char* toPath,
 	bool traverseLeafLink, bool kernel)
@@ -6675,6 +8573,15 @@ common_create_link(int pathFD, char* path, int toFD, char* toPath,
 }
 
 
+/**
+ * @brief Removes a directory entry (file or symlink).
+ *
+ * @param fd     Base FD for relative paths (or AT_FDCWD).
+ * @param path   Path of the entry to remove.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK             Entry removed.
+ * @retval B_READ_ONLY_DEVICE FS has no unlink hook.
+ */
 static status_t
 common_unlink(int fd, char* path, bool kernel)
 {
@@ -6698,6 +8605,19 @@ common_unlink(int fd, char* path, bool kernel)
 }
 
 
+/**
+ * @brief Checks whether the calling process has the specified access to a path.
+ *
+ * Delegates to the FS access() hook if available, otherwise returns B_OK.
+ *
+ * @param fd                Base FD for relative @p path.
+ * @param path              Path to check.
+ * @param mode              Access mode bits (R_OK, W_OK, X_OK, F_OK).
+ * @param effectiveUserGroup If true use effective UID/GID (currently unused).
+ * @param kernel            true to use the kernel I/O context.
+ * @retval B_OK               Access permitted.
+ * @retval B_PERMISSION_DENIED Access denied.
+ */
 static status_t
 common_access(int fd, char* path, int mode, bool effectiveUserGroup, bool kernel)
 {
@@ -6719,6 +8639,18 @@ common_access(int fd, char* path, int mode, bool effectiveUserGroup, bool kernel
 }
 
 
+/**
+ * @brief Renames a directory entry (both must be on the same device).
+ *
+ * @param fd      FD for the source directory.
+ * @param path    Source path.
+ * @param newFD   FD for the destination directory.
+ * @param newPath Destination path.
+ * @param kernel  true to use the kernel I/O context.
+ * @retval B_OK                Rename succeeded.
+ * @retval B_CROSS_DEVICE_LINK Source and destination are on different mounts.
+ * @retval B_READ_ONLY_DEVICE  FS has no rename hook.
+ */
 static status_t
 common_rename(int fd, char* path, int newFD, char* newPath, bool kernel)
 {
@@ -6760,6 +8692,16 @@ common_rename(int fd, char* path, int newFD, char* newPath, bool kernel)
 }
 
 
+/**
+ * @brief fd_ops read_stat handler — reads stat for an open file descriptor.
+ *
+ * Zeroes the nanosecond fields before calling vfs_stat_vnode() so that file
+ * systems that don't initialize them still return a defined value.
+ *
+ * @param descriptor The open file descriptor.
+ * @param stat       Output stat buffer.
+ * @retval B_OK Stat filled.
+ */
 static status_t
 common_read_stat(struct file_descriptor* descriptor, struct stat* stat)
 {
@@ -6777,6 +8719,18 @@ common_read_stat(struct file_descriptor* descriptor, struct stat* stat)
 }
 
 
+/**
+ * @brief fd_ops write_stat handler — updates stat fields for an open FD.
+ *
+ * Rejects B_STAT_SIZE changes on read-only FDs.
+ *
+ * @param descriptor The open file descriptor.
+ * @param stat       New stat values.
+ * @param statMask   B_STAT_* bitmask of fields to update.
+ * @retval B_OK              Stat updated.
+ * @retval B_BAD_VALUE       B_STAT_SIZE requested on a read-only FD.
+ * @retval B_READ_ONLY_DEVICE FS has no write_stat hook.
+ */
 static status_t
 common_write_stat(struct file_descriptor* descriptor, const struct stat* stat,
 	int statMask)
@@ -6798,6 +8752,16 @@ common_write_stat(struct file_descriptor* descriptor, const struct stat* stat,
 }
 
 
+/**
+ * @brief Reads stat for a node identified by (fd, path).
+ *
+ * @param fd               Base FD for relative paths (or AT_FDCWD).
+ * @param path             Path to the node.
+ * @param traverseLeafLink If true, follow a final symlink.
+ * @param stat             Output stat buffer.
+ * @param kernel           true to use the kernel I/O context.
+ * @retval B_OK Stat filled.
+ */
 static status_t
 common_path_read_stat(int fd, char* path, bool traverseLeafLink,
 	struct stat* stat, bool kernel)
@@ -6817,6 +8781,18 @@ common_path_read_stat(int fd, char* path, bool traverseLeafLink,
 }
 
 
+/**
+ * @brief Updates stat fields for a node identified by (fd, path).
+ *
+ * @param fd               Base FD for relative paths (or AT_FDCWD).
+ * @param path             Path to the node.
+ * @param traverseLeafLink If true, follow a final symlink.
+ * @param stat             New stat values.
+ * @param statMask         B_STAT_* bitmask of fields to update.
+ * @param kernel           true to use the kernel I/O context.
+ * @retval B_OK              Stat updated.
+ * @retval B_READ_ONLY_DEVICE FS has no write_stat hook.
+ */
 static status_t
 common_path_write_stat(int fd, char* path, bool traverseLeafLink,
 	const struct stat* stat, int statMask, bool kernel)
@@ -6839,6 +8815,15 @@ common_path_write_stat(int fd, char* path, bool traverseLeafLink,
 }
 
 
+/**
+ * @brief Opens the attribute directory of a node identified by (fd, path).
+ *
+ * @param fd               Base FD for relative paths.
+ * @param path             Path to the node.
+ * @param traverseLeafLink If true, follow a final symlink.
+ * @param kernel           true to use the kernel I/O context.
+ * @return A non-negative FD on success, or a negative error code.
+ */
 static int
 attr_dir_open(int fd, char* path, bool traverseLeafLink, bool kernel)
 {
@@ -6859,6 +8844,12 @@ attr_dir_open(int fd, char* path, bool traverseLeafLink, bool kernel)
 }
 
 
+/**
+ * @brief fd_ops close handler for attribute directory file descriptors.
+ *
+ * @param descriptor The attribute directory FD.
+ * @retval B_OK Always.
+ */
 static status_t
 attr_dir_close(struct file_descriptor* descriptor)
 {
@@ -6873,6 +8864,13 @@ attr_dir_close(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free_fd handler for attribute directory file descriptors.
+ *
+ * Calls free_attr_dir_cookie() and drops the vnode reference.
+ *
+ * @param descriptor The attribute directory FD being freed.
+ */
 static void
 attr_dir_free_fd(struct file_descriptor* descriptor)
 {
@@ -6885,6 +8883,16 @@ attr_dir_free_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops read_dir handler for attribute directory FDs.
+ *
+ * @param ioContext  Caller's I/O context.
+ * @param descriptor The attribute directory FD.
+ * @param buffer     Output buffer for dirent structures.
+ * @param bufferSize Size of @p buffer.
+ * @param _count     In: max entries; out: entries read.
+ * @retval B_UNSUPPORTED FS has no read_attr_dir hook.
+ */
 static status_t
 attr_dir_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 	struct dirent* buffer, size_t bufferSize, uint32* _count)
@@ -6901,6 +8909,12 @@ attr_dir_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 }
 
 
+/**
+ * @brief fd_ops rewind_dir handler for attribute directory FDs.
+ *
+ * @param descriptor The attribute directory FD.
+ * @retval B_UNSUPPORTED FS has no rewind_attr_dir hook.
+ */
 static status_t
 attr_dir_rewind(struct file_descriptor* descriptor)
 {
@@ -6915,6 +8929,19 @@ attr_dir_rewind(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Creates a new extended attribute on a node.
+ *
+ * @param fd      Base FD for resolving @p path.
+ * @param path    Path to the node that will own the attribute.
+ * @param name    Name of the attribute to create.
+ * @param type    Attribute type code (B_STRING_TYPE etc.).
+ * @param openMode Open flags.
+ * @param kernel  true to use the kernel I/O context.
+ * @return A non-negative attribute FD, or a negative error code.
+ * @retval B_BAD_VALUE @p name is NULL or empty.
+ * @retval B_READ_ONLY_DEVICE FS has no create_attr hook.
+ */
 static int
 attr_create(int fd, char* path, const char* name, uint32 type,
 	int openMode, bool kernel)
@@ -6958,6 +8985,18 @@ attr_create(int fd, char* path, const char* name, uint32 type,
 }
 
 
+/**
+ * @brief Opens an existing extended attribute on a node.
+ *
+ * @param fd      Base FD for resolving @p path.
+ * @param path    Path to the node.
+ * @param name    Attribute name.
+ * @param openMode Open flags.
+ * @param kernel  true to use the kernel I/O context.
+ * @return A non-negative attribute FD, or a negative error code.
+ * @retval B_BAD_VALUE    @p name is NULL or empty.
+ * @retval B_UNSUPPORTED  FS has no open_attr hook.
+ */
 static int
 attr_open(int fd, char* path, const char* name, int openMode, bool kernel)
 {
@@ -6999,6 +9038,12 @@ attr_open(int fd, char* path, const char* name, int openMode, bool kernel)
 }
 
 
+/**
+ * @brief fd_ops close handler for attribute file descriptors.
+ *
+ * @param descriptor The attribute FD.
+ * @retval B_OK Always.
+ */
 static status_t
 attr_close(struct file_descriptor* descriptor)
 {
@@ -7013,6 +9058,11 @@ attr_close(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free_fd handler for attribute file descriptors.
+ *
+ * @param descriptor The attribute FD being freed.
+ */
 static void
 attr_free_fd(struct file_descriptor* descriptor)
 {
@@ -7025,6 +9075,15 @@ attr_free_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops read handler for attribute file descriptors.
+ *
+ * @param descriptor The attribute FD.
+ * @param pos        Byte offset within the attribute.
+ * @param buffer     Destination buffer.
+ * @param length     In: bytes to read; out: bytes read.
+ * @retval B_UNSUPPORTED FS has no read_attr hook.
+ */
 static status_t
 attr_read(struct file_descriptor* descriptor, off_t pos, void* buffer,
 	size_t* length)
@@ -7041,6 +9100,15 @@ attr_read(struct file_descriptor* descriptor, off_t pos, void* buffer,
 }
 
 
+/**
+ * @brief fd_ops write handler for attribute file descriptors.
+ *
+ * @param descriptor The attribute FD.
+ * @param pos        Byte offset within the attribute.
+ * @param buffer     Source buffer.
+ * @param length     In: bytes to write; out: bytes written.
+ * @retval B_UNSUPPORTED FS has no write_attr hook.
+ */
 static status_t
 attr_write(struct file_descriptor* descriptor, off_t pos, const void* buffer,
 	size_t* length)
@@ -7057,6 +9125,16 @@ attr_write(struct file_descriptor* descriptor, off_t pos, const void* buffer,
 }
 
 
+/**
+ * @brief fd_ops seek handler for attribute file descriptors.
+ *
+ * Supports SEEK_SET, SEEK_CUR, SEEK_END (requires read_attr_stat).
+ *
+ * @param descriptor The attribute FD.
+ * @param pos        Seek offset.
+ * @param seekType   SEEK_SET, SEEK_CUR, or SEEK_END.
+ * @return New position on success, or a negative error code.
+ */
 static off_t
 attr_seek(struct file_descriptor* descriptor, off_t pos, int seekType)
 {
@@ -7100,6 +9178,13 @@ attr_seek(struct file_descriptor* descriptor, off_t pos, int seekType)
 }
 
 
+/**
+ * @brief fd_ops read_stat handler for attribute file descriptors.
+ *
+ * @param descriptor The attribute FD.
+ * @param stat       Output stat buffer.
+ * @retval B_UNSUPPORTED FS has no read_attr_stat hook.
+ */
 static status_t
 attr_read_stat(struct file_descriptor* descriptor, struct stat* stat)
 {
@@ -7114,6 +9199,14 @@ attr_read_stat(struct file_descriptor* descriptor, struct stat* stat)
 }
 
 
+/**
+ * @brief fd_ops write_stat handler for attribute file descriptors.
+ *
+ * @param descriptor The attribute FD.
+ * @param stat       New stat values.
+ * @param statMask   B_STAT_* bitmask of fields to update.
+ * @retval B_READ_ONLY_DEVICE FS has no write_attr_stat hook.
+ */
 static status_t
 attr_write_stat(struct file_descriptor* descriptor, const struct stat* stat,
 	int statMask)
@@ -7129,6 +9222,17 @@ attr_write_stat(struct file_descriptor* descriptor, const struct stat* stat,
 }
 
 
+/**
+ * @brief Removes a named extended attribute from a node.
+ *
+ * @param fd     File descriptor for the node owning the attribute.
+ * @param name   Attribute name to remove.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK        Attribute removed.
+ * @retval B_BAD_VALUE @p name is NULL or empty.
+ * @retval B_FILE_ERROR @p fd is invalid.
+ * @retval B_READ_ONLY_DEVICE FS has no remove_attr hook.
+ */
 static status_t
 attr_remove(int fd, const char* name, bool kernel)
 {
@@ -7153,6 +9257,20 @@ attr_remove(int fd, const char* name, bool kernel)
 }
 
 
+/**
+ * @brief Renames an extended attribute (possibly across nodes on the same mount).
+ *
+ * @param fromFD   FD of the source node.
+ * @param fromName Source attribute name.
+ * @param toFD     FD of the destination node.
+ * @param toName   Destination attribute name.
+ * @param kernel   true to use the kernel I/O context.
+ * @retval B_OK                Attribute renamed.
+ * @retval B_BAD_VALUE         Any name pointer is NULL or empty.
+ * @retval B_FILE_ERROR        Either FD is invalid.
+ * @retval B_CROSS_DEVICE_LINK Nodes are on different mounts.
+ * @retval B_READ_ONLY_DEVICE  FS has no rename_attr hook.
+ */
 static status_t
 attr_rename(int fromFD, const char* fromName, int toFD, const char* toName,
 	bool kernel)
@@ -7188,6 +9306,14 @@ attr_rename(int fromFD, const char* fromName, int toFD, const char* toName,
 }
 
 
+/**
+ * @brief Opens the index directory of a volume and returns an FD.
+ *
+ * @param mountID Device ID of the volume.
+ * @param kernel  true to use the kernel I/O context.
+ * @return A non-negative FD, or a negative error code.
+ * @retval B_UNSUPPORTED FS has no open_index_dir hook.
+ */
 static int
 index_dir_open(dev_t mountID, bool kernel)
 {
@@ -7228,6 +9354,12 @@ error:
 }
 
 
+/**
+ * @brief fd_ops close handler for index directory file descriptors.
+ *
+ * @param descriptor The index directory FD.
+ * @retval B_OK Always.
+ */
 static status_t
 index_dir_close(struct file_descriptor* descriptor)
 {
@@ -7242,6 +9374,11 @@ index_dir_close(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free_fd handler for index directory file descriptors.
+ *
+ * @param descriptor The index directory FD being freed.
+ */
 static void
 index_dir_free_fd(struct file_descriptor* descriptor)
 {
@@ -7254,6 +9391,16 @@ index_dir_free_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops read_dir handler for index directory file descriptors.
+ *
+ * @param ioContext  Caller's I/O context (unused here).
+ * @param descriptor The index directory FD.
+ * @param buffer     Output buffer for dirent structures.
+ * @param bufferSize Size of @p buffer.
+ * @param _count     In: max entries; out: entries read.
+ * @retval B_UNSUPPORTED FS has no read_index_dir hook.
+ */
 static status_t
 index_dir_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 	struct dirent* buffer, size_t bufferSize, uint32* _count)
@@ -7269,6 +9416,12 @@ index_dir_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 }
 
 
+/**
+ * @brief fd_ops rewind_dir handler for index directory file descriptors.
+ *
+ * @param descriptor The index directory FD.
+ * @retval B_UNSUPPORTED FS has no rewind_index_dir hook.
+ */
 static status_t
 index_dir_rewind(struct file_descriptor* descriptor)
 {
@@ -7281,6 +9434,17 @@ index_dir_rewind(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Creates a new file-system index on a volume.
+ *
+ * @param mountID Device ID of the volume.
+ * @param name    Index name (e.g. "name", "size").
+ * @param type    Index type (B_INT32_TYPE, B_STRING_TYPE, etc.).
+ * @param flags   FS-specific flags.
+ * @param kernel  Currently unused.
+ * @retval B_OK              Index created.
+ * @retval B_READ_ONLY_DEVICE FS has no create_index hook.
+ */
 static status_t
 index_create(dev_t mountID, const char* name, uint32 type, uint32 flags,
 	bool kernel)
@@ -7335,6 +9499,16 @@ index_free_fd(struct file_descriptor* descriptor)
 #endif
 
 
+/**
+ * @brief Reads stat information for a named index on a volume.
+ *
+ * @param mountID Device ID of the volume.
+ * @param name    Index name.
+ * @param stat    Output stat buffer.
+ * @param kernel  Currently unused.
+ * @retval B_OK         Stat filled.
+ * @retval B_UNSUPPORTED FS has no read_index_stat hook.
+ */
 static status_t
 index_name_read_stat(dev_t mountID, const char* name, struct stat* stat,
 	bool kernel)
@@ -7360,6 +9534,15 @@ out:
 }
 
 
+/**
+ * @brief Removes a named index from a volume.
+ *
+ * @param mountID Device ID of the volume.
+ * @param name    Index name to remove.
+ * @param kernel  Currently unused.
+ * @retval B_OK              Index removed.
+ * @retval B_READ_ONLY_DEVICE FS has no remove_index hook.
+ */
 static status_t
 index_remove(dev_t mountID, const char* name, bool kernel)
 {
@@ -7389,6 +9572,18 @@ out:
 		for them.
 		For example, query parsing should be moved into the kernel.
 */
+/**
+ * @brief Opens a live query on a volume and returns an FD.
+ *
+ * @param device  Device ID of the volume to query.
+ * @param query   Query expression string.
+ * @param flags   Query flags (e.g. B_LIVE_QUERY).
+ * @param port    Port to receive live-query notifications (or -1).
+ * @param token   Token sent with notifications.
+ * @param kernel  true to use the kernel I/O context.
+ * @return A non-negative query FD, or a negative error code.
+ * @retval B_UNSUPPORTED FS has no open_query hook.
+ */
 static int
 query_open(dev_t device, const char* query, uint32 flags, port_id port,
 	int32 token, bool kernel)
@@ -7431,6 +9626,12 @@ error:
 }
 
 
+/**
+ * @brief fd_ops close handler for query file descriptors.
+ *
+ * @param descriptor The query FD.
+ * @retval B_OK Always.
+ */
 static status_t
 query_close(struct file_descriptor* descriptor)
 {
@@ -7445,6 +9646,11 @@ query_close(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free_fd handler for query file descriptors.
+ *
+ * @param descriptor The query FD being freed.
+ */
 static void
 query_free_fd(struct file_descriptor* descriptor)
 {
@@ -7457,6 +9663,16 @@ query_free_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops read_dir handler for query file descriptors.
+ *
+ * @param ioContext  Caller's I/O context (unused here).
+ * @param descriptor The query FD.
+ * @param buffer     Output buffer for dirent structures.
+ * @param bufferSize Size of @p buffer.
+ * @param _count     In: max entries; out: entries read.
+ * @retval B_UNSUPPORTED FS has no read_query hook.
+ */
 static status_t
 query_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 	struct dirent* buffer, size_t bufferSize, uint32* _count)
@@ -7472,6 +9688,12 @@ query_read(struct io_context* ioContext, struct file_descriptor* descriptor,
 }
 
 
+/**
+ * @brief fd_ops rewind_dir handler for query file descriptors.
+ *
+ * @param descriptor The query FD.
+ * @retval B_UNSUPPORTED FS has no rewind_query hook.
+ */
 static status_t
 query_rewind(struct file_descriptor* descriptor)
 {
@@ -7487,6 +9709,23 @@ query_rewind(struct file_descriptor* descriptor)
 //	#pragma mark - General File System functions
 
 
+/**
+ * @brief Mounts a file system and links it into the namespace.
+ *
+ * Creates a new fs_mount structure, loads the FS add-on, calls its
+ * mount() hook, acquires the root vnode, and connects the mount to the
+ * covering vnode at @p path.
+ *
+ * @param path    The mount point path (must be an existing directory).
+ * @param device  Optional block device or image file path (may be NULL).
+ * @param fsName  File system type name (e.g. "bfs").  May be NULL when
+ *                @p device is given and B_MOUNT_VIRTUAL_DEVICE is not set.
+ * @param flags   Mount flags (e.g. B_MOUNT_READ_ONLY, B_MOUNT_VIRTUAL_DEVICE).
+ * @param args    FS-specific mount arguments (may be NULL).
+ * @param kernel  true when called from the kernel (e.g. boot sequence).
+ * @return The new device ID (dev_t) on success, or a negative error code.
+ * @note Acquires sMountOpLock (recursive) for the duration of the call.
+ */
 static dev_t
 fs_mount(char* path, const char* device, const char* fsName, uint32 flags,
 	const char* args, bool kernel)
@@ -7821,6 +10060,23 @@ err1:
 }
 
 
+/**
+ * @brief Unmounts a file system from the namespace.
+ *
+ * Detaches the mount from the VFS namespace, disconnects all open FDs,
+ * frees all cached vnodes, calls the FS unmount() hook, and releases the
+ * partition reference.
+ *
+ * @param path    Optional path to the mount point (used to find the mount).
+ *                Exactly one of @p path and @p mountID must be specified.
+ * @param mountID Device ID of the mount to unmount (used when @p path is NULL).
+ * @param flags   Unmount flags (e.g. B_FORCE_UNMOUNT).
+ * @param kernel  true when called from the kernel.
+ * @retval B_OK        Volume unmounted.
+ * @retval B_BAD_VALUE @p path does not refer to a mount root.
+ * @retval B_BUSY      Volume is in use and B_FORCE_UNMOUNT was not set.
+ * @note Acquires sMountOpLock (recursive) for the duration of the call.
+ */
 static status_t
 fs_unmount(char* path, dev_t mountID, uint32 flags, bool kernel)
 {
@@ -8055,6 +10311,15 @@ fs_unmount(char* path, dev_t mountID, uint32 flags, bool kernel)
 }
 
 
+/**
+ * @brief Synchronizes all dirty data and metadata for a mounted volume.
+ *
+ * Iterates over all vnodes with a VMCache, flushes their modified pages, then
+ * calls the FS sync() hook and flushes the underlying device's write cache.
+ *
+ * @param device Device ID of the volume to sync.
+ * @retval B_OK Volume synchronized.
+ */
 static status_t
 fs_sync(dev_t device)
 {
@@ -8138,6 +10403,16 @@ fs_sync(dev_t device)
 }
 
 
+/**
+ * @brief Retrieves file system information for a mounted volume.
+ *
+ * Calls the FS read_fs_info() hook and then fills in dev, root, fsh_name,
+ * and device_name fields that the FS does not need to provide.
+ *
+ * @param device Device ID of the volume.
+ * @param info   Output fs_info buffer.
+ * @retval B_OK Info filled.
+ */
 static status_t
 fs_read_info(dev_t device, struct fs_info* info)
 {
@@ -8176,6 +10451,15 @@ fs_read_info(dev_t device, struct fs_info* info)
 }
 
 
+/**
+ * @brief Updates writable file system information fields for a mounted volume.
+ *
+ * @param device Device ID of the volume.
+ * @param info   New fs_info values.
+ * @param mask   Bitmask of fields to update (e.g. FS_WRITE_FSINFO_NAME).
+ * @retval B_OK              Fields updated.
+ * @retval B_READ_ONLY_DEVICE FS has no write_fs_info hook.
+ */
 static status_t
 fs_write_info(dev_t device, const struct fs_info* info, int mask)
 {
@@ -8194,6 +10478,16 @@ fs_write_info(dev_t device, const struct fs_info* info, int mask)
 }
 
 
+/**
+ * @brief Iterates over mounted volumes by device ID.
+ *
+ * Finds the next mounted volume whose ID is >= *_cookie and returns its ID.
+ * Updates *_cookie so that successive calls enumerate all mounts.
+ *
+ * @param _cookie In/out: cookie holding the next candidate device ID.
+ * @return The device ID of the next mounted volume, or B_BAD_VALUE when
+ *         there are no more mounts.
+ */
 static dev_t
 fs_next_device(int32* _cookie)
 {
@@ -8226,6 +10520,20 @@ fs_next_device(int32* _cookie)
 }
 
 
+/**
+ * @brief Reads an extended attribute value using the kernel I/O context.
+ *
+ * Opens the attribute identified by @p fd + @p attribute, reads @p readBytes
+ * bytes at @p pos, and closes the attribute FD.
+ *
+ * @param fd         File descriptor of the node owning the attribute.
+ * @param attribute  Attribute name.
+ * @param type       Expected attribute type (passed to attr_open, ignored here).
+ * @param pos        Byte offset within the attribute.
+ * @param buffer     Destination buffer.
+ * @param readBytes  Number of bytes to read.
+ * @return Bytes read on success, or a negative error code.
+ */
 ssize_t
 fs_read_attr(int fd, const char *attribute, uint32 type, off_t pos,
 	void *buffer, size_t readBytes)
@@ -8242,6 +10550,15 @@ fs_read_attr(int fd, const char *attribute, uint32 type, off_t pos,
 }
 
 
+/**
+ * @brief Retrieves the absolute path of the current working directory.
+ *
+ * @param buffer Output buffer for the path string.
+ * @param size   Size of @p buffer.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK       CWD path written to @p buffer.
+ * @retval B_ERROR    No CWD is set in the I/O context.
+ */
 static status_t
 get_cwd(char* buffer, size_t size, bool kernel)
 {
@@ -8267,6 +10584,20 @@ get_cwd(char* buffer, size_t size, bool kernel)
 }
 
 
+/**
+ * @brief Changes the current working directory to the given path.
+ *
+ * Resolves @p path relative to @p fd, verifies it is a directory and that
+ * the caller has execute permission, then atomically swaps the CWD in the
+ * I/O context.
+ *
+ * @param fd     Base FD for relative paths (or AT_FDCWD).
+ * @param path   New working directory path.
+ * @param kernel true to use the kernel I/O context.
+ * @retval B_OK             CWD changed.
+ * @retval B_NOT_A_DIRECTORY @p path does not refer to a directory.
+ * @retval B_PERMISSION_DENIED Caller lacks execute permission on the directory.
+ */
 static status_t
 set_cwd(int fd, char* path, bool kernel)
 {
@@ -8310,6 +10641,16 @@ set_cwd(int fd, char* path, bool kernel)
 }
 
 
+/**
+ * @brief Safely copies a name string from user space with length validation.
+ *
+ * @param to     Kernel-space destination buffer.
+ * @param from   User-space source pointer.
+ * @param length Size of @p to (including the NUL terminator).
+ * @retval B_OK            Name copied.
+ * @retval B_NAME_TOO_LONG String from user space exceeds @p length - 1.
+ * @return Negative error code if user_strlcpy() fails (e.g. bad address).
+ */
 static status_t
 user_copy_name(char* to, const char* from, size_t length)
 {
@@ -8325,6 +10666,17 @@ user_copy_name(char* to, const char* from, size_t length)
 //	#pragma mark - kernel mirrored syscalls
 
 
+/**
+ * @brief Kernel syscall: mount a file system.
+ *
+ * @param path       Mount point path.
+ * @param device     Optional block device or image.
+ * @param fsName     File system type name.
+ * @param flags      Mount flags.
+ * @param args       FS-specific arguments.
+ * @param argsLength Length of @p args (unused; present for ABI symmetry).
+ * @return New device ID on success, or a negative error code.
+ */
 dev_t
 _kern_mount(const char* path, const char* device, const char* fsName,
 	uint32 flags, const char* args, size_t argsLength)
@@ -8337,6 +10689,13 @@ _kern_mount(const char* path, const char* device, const char* fsName,
 }
 
 
+/**
+ * @brief Kernel syscall: unmount a file system by path.
+ *
+ * @param path  Mount point path.
+ * @param flags Unmount flags (e.g. B_FORCE_UNMOUNT).
+ * @retval B_OK Volume unmounted.
+ */
 status_t
 _kern_unmount(const char* path, uint32 flags)
 {
@@ -8348,6 +10707,14 @@ _kern_unmount(const char* path, uint32 flags)
 }
 
 
+/**
+ * @brief Kernel syscall: read file system information.
+ *
+ * @param device Device ID.
+ * @param info   Output fs_info buffer.
+ * @retval B_OK Info filled.
+ * @retval B_BAD_VALUE @p info is NULL.
+ */
 status_t
 _kern_read_fs_info(dev_t device, struct fs_info* info)
 {
@@ -8358,6 +10725,15 @@ _kern_read_fs_info(dev_t device, struct fs_info* info)
 }
 
 
+/**
+ * @brief Kernel syscall: write file system information.
+ *
+ * @param device Device ID.
+ * @param info   New fs_info values.
+ * @param mask   Fields to update.
+ * @retval B_OK Updated.
+ * @retval B_BAD_VALUE @p info is NULL.
+ */
 status_t
 _kern_write_fs_info(dev_t device, const struct fs_info* info, int mask)
 {
@@ -8368,6 +10744,14 @@ _kern_write_fs_info(dev_t device, const struct fs_info* info, int mask)
 }
 
 
+/**
+ * @brief Kernel syscall: synchronize all mounted file systems.
+ *
+ * Iterates over all mounts and calls fs_sync() on each.  Errors from
+ * individual mounts are logged but do not abort the iteration.
+ *
+ * @retval B_OK Always.
+ */
 status_t
 _kern_sync(void)
 {
@@ -8386,6 +10770,12 @@ _kern_sync(void)
 }
 
 
+/**
+ * @brief Kernel syscall: iterate over mounted devices.
+ *
+ * @param _cookie In/out: enumeration cookie.
+ * @return Next device ID, or B_BAD_VALUE when exhausted.
+ */
 dev_t
 _kern_next_device(int32* _cookie)
 {
@@ -8393,6 +10783,18 @@ _kern_next_device(int32* _cookie)
 }
 
 
+/**
+ * @brief Kernel syscall: enumerate open file descriptors of a team.
+ *
+ * @param teamID   Team to inspect.
+ * @param _cookie  In/out: FD slot index (start at 0).
+ * @param info     Output fd_info structure.
+ * @param infoSize Must equal sizeof(fd_info).
+ * @retval B_OK            Info filled for the next open FD.
+ * @retval B_ENTRY_NOT_FOUND No more open FDs.
+ * @retval B_BAD_TEAM_ID   Team not found.
+ * @retval B_BAD_VALUE     @p infoSize is wrong.
+ */
 status_t
 _kern_get_next_fd_info(team_id teamID, uint32* _cookie, fd_info* info,
 	size_t infoSize)
@@ -8438,6 +10840,16 @@ _kern_get_next_fd_info(team_id teamID, uint32* _cookie, fd_info* info,
 }
 
 
+/**
+ * @brief Kernel syscall: open or create a file by entry_ref.
+ *
+ * @param device   Device ID of the parent directory.
+ * @param inode    Node ID of the parent directory.
+ * @param name     Entry name.
+ * @param openMode Open flags.
+ * @param perms    Permission bits (used only when O_CREAT is set).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _kern_open_entry_ref(dev_t device, ino_t inode, const char* name, int openMode,
 	int perms)
@@ -8465,6 +10877,15 @@ _kern_open_entry_ref(dev_t device, ino_t inode, const char* name, int openMode,
 	\return A FD referring to the newly opened node, or an error code,
 			if an error occurs.
 */
+/**
+ * @brief Kernel syscall: open or create a file by (fd, path).
+ *
+ * @param fd       Base FD (AT_FDCWD or a directory FD).
+ * @param path     Absolute or relative path.
+ * @param openMode Open flags.
+ * @param perms    Permissions (used when O_CREAT is set).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _kern_open(int fd, const char* path, int openMode, int perms)
 {
@@ -8497,6 +10918,14 @@ _kern_open(int fd, const char* path, int openMode, int perms)
 	\return The FD of the newly opened directory or an error code, if
 			something went wrong.
 */
+/**
+ * @brief Kernel syscall: open a directory by entry_ref or node_ref.
+ *
+ * @param device Device ID (parent directory if @p name != NULL, else target).
+ * @param inode  Node ID (parent directory if @p name != NULL, else target).
+ * @param name   Entry name, or NULL to open the node at (@p device, @p inode).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _kern_open_dir_entry_ref(dev_t device, ino_t inode, const char* name)
 {
@@ -8517,6 +10946,13 @@ _kern_open_dir_entry_ref(dev_t device, ino_t inode, const char* name)
 	\return A FD referring to the newly opened directory, or an error code,
 			if an error occurs.
 */
+/**
+ * @brief Kernel syscall: open a directory by (fd, path).
+ *
+ * @param fd   Base FD (AT_FDCWD or a directory FD).
+ * @param path Absolute or relative path to the directory.
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _kern_open_dir(int fd, const char* path)
 {
@@ -8528,6 +10964,14 @@ _kern_open_dir(int fd, const char* path)
 }
 
 
+/**
+ * @brief Kernel syscall: file control (fcntl).
+ *
+ * @param fd       File descriptor.
+ * @param op       F_* command.
+ * @param argument Command-specific argument.
+ * @retval B_OK Operation succeeded.
+ */
 status_t
 _kern_fcntl(int fd, int op, size_t argument)
 {
@@ -8535,6 +10979,13 @@ _kern_fcntl(int fd, int op, size_t argument)
 }
 
 
+/**
+ * @brief Kernel syscall: flush file data/metadata to storage.
+ *
+ * @param fd       File descriptor.
+ * @param dataOnly true for fdatasync semantics.
+ * @retval B_OK Flushed.
+ */
 status_t
 _kern_fsync(int fd, bool dataOnly)
 {
@@ -8542,6 +10993,12 @@ _kern_fsync(int fd, bool dataOnly)
 }
 
 
+/**
+ * @brief Kernel syscall: acquire a mandatory lock on a file's vnode.
+ *
+ * @param fd File descriptor.
+ * @retval B_OK Lock acquired.
+ */
 status_t
 _kern_lock_node(int fd)
 {
@@ -8549,6 +11006,12 @@ _kern_lock_node(int fd)
 }
 
 
+/**
+ * @brief Kernel syscall: release a mandatory lock on a file's vnode.
+ *
+ * @param fd File descriptor.
+ * @retval B_OK Lock released.
+ */
 status_t
 _kern_unlock_node(int fd)
 {
@@ -8556,6 +11019,14 @@ _kern_unlock_node(int fd)
 }
 
 
+/**
+ * @brief Kernel syscall: pre-allocate disk space for a file.
+ *
+ * @param fd     File descriptor.
+ * @param offset Start offset.
+ * @param length Bytes to pre-allocate.
+ * @retval B_OK Space reserved.
+ */
 status_t
 _kern_preallocate(int fd, off_t offset, off_t length)
 {
@@ -8563,6 +11034,15 @@ _kern_preallocate(int fd, off_t offset, off_t length)
 }
 
 
+/**
+ * @brief Kernel syscall: create a directory by entry_ref.
+ *
+ * @param device Device ID of the parent.
+ * @param inode  Node ID of the parent.
+ * @param name   New directory name.
+ * @param perms  Permission bits.
+ * @retval B_OK Directory created.
+ */
 status_t
 _kern_create_dir_entry_ref(dev_t device, ino_t inode, const char* name,
 	int perms)
@@ -8585,6 +11065,14 @@ _kern_create_dir_entry_ref(dev_t device, ino_t inode, const char* name,
 	\return \c B_OK, if the directory has been created successfully, another
 			error code otherwise.
 */
+/**
+ * @brief Kernel syscall: create a directory by (fd, path).
+ *
+ * @param fd    Base FD for relative paths.
+ * @param path  Path of the directory to create.
+ * @param perms Permission bits.
+ * @retval B_OK Directory created.
+ */
 status_t
 _kern_create_dir(int fd, const char* path, int perms)
 {
@@ -8596,6 +11084,13 @@ _kern_create_dir(int fd, const char* path, int perms)
 }
 
 
+/**
+ * @brief Kernel syscall: remove a directory by (fd, path).
+ *
+ * @param fd   Base FD for relative paths.
+ * @param path Path of the directory to remove.
+ * @retval B_OK Directory removed.
+ */
 status_t
 _kern_remove_dir(int fd, const char* path)
 {
@@ -8625,6 +11120,15 @@ _kern_remove_dir(int fd, const char* path)
 	\param _bufferSize A pointer to the size of the supplied buffer.
 	\return The length of the link on success or an appropriate error code
 */
+/**
+ * @brief Kernel syscall: read the target of a symbolic link.
+ *
+ * @param fd          Base FD for relative paths.
+ * @param path        Path to the symlink (leaf NOT followed).
+ * @param buffer      Destination buffer.
+ * @param _bufferSize In: capacity; out: required size.
+ * @retval B_OK Link target read.
+ */
 status_t
 _kern_read_link(int fd, const char* path, char* buffer, size_t* _bufferSize)
 {
@@ -8651,6 +11155,15 @@ _kern_read_link(int fd, const char* path, char* buffer, size_t* _bufferSize)
 	\return \c B_OK, if the symlink has been created successfully, another
 			error code otherwise.
 */
+/**
+ * @brief Kernel syscall: create a symbolic link.
+ *
+ * @param fd     Base FD for relative @p path.
+ * @param path   Path where the symlink is created.
+ * @param toPath Link target.
+ * @param mode   Permission bits.
+ * @retval B_OK Symlink created.
+ */
 status_t
 _kern_create_symlink(int fd, const char* path, const char* toPath, int mode)
 {
@@ -8663,6 +11176,16 @@ _kern_create_symlink(int fd, const char* path, const char* toPath, int mode)
 }
 
 
+/**
+ * @brief Kernel syscall: create a hard link.
+ *
+ * @param pathFD          FD for the directory in which to create the link.
+ * @param path            Path for the new hard link.
+ * @param toFD            FD for the directory of the target.
+ * @param toPath          Path of the existing node to link.
+ * @param traverseLeafLink If true, follow the final symlink in @p toPath.
+ * @retval B_OK Link created.
+ */
 status_t
 _kern_create_link(int pathFD, const char* path, int toFD, const char* toPath,
 	bool traverseLeafLink)
@@ -8690,6 +11213,13 @@ _kern_create_link(int pathFD, const char* path, int toFD, const char* toPath,
 	\return \c B_OK, if the entry has been removed successfully, another
 			error code otherwise.
 */
+/**
+ * @brief Kernel syscall: remove a directory entry by (fd, path).
+ *
+ * @param fd   Base FD for relative paths.
+ * @param path Path of the entry to remove.
+ * @retval B_OK Entry removed.
+ */
 status_t
 _kern_unlink(int fd, const char* path)
 {
@@ -8719,6 +11249,15 @@ _kern_unlink(int fd, const char* path)
 	\return \c B_OK, if the entry has been moved successfully, another
 			error code otherwise.
 */
+/**
+ * @brief Kernel syscall: rename a directory entry.
+ *
+ * @param oldFD   FD for the source directory.
+ * @param oldPath Source path.
+ * @param newFD   FD for the destination directory.
+ * @param newPath Destination path.
+ * @retval B_OK Entry renamed.
+ */
 status_t
 _kern_rename(int oldFD, const char* oldPath, int newFD, const char* newPath)
 {
@@ -8732,6 +11271,15 @@ _kern_rename(int oldFD, const char* oldPath, int newFD, const char* newPath)
 }
 
 
+/**
+ * @brief Kernel syscall: check access permissions for a path.
+ *
+ * @param fd                Base FD for relative paths.
+ * @param path              Path to check.
+ * @param mode              R_OK, W_OK, X_OK, F_OK.
+ * @param effectiveUserGroup If true, use effective UID/GID.
+ * @retval B_OK Access permitted.
+ */
 status_t
 _kern_access(int fd, const char* path, int mode, bool effectiveUserGroup)
 {
@@ -8763,6 +11311,18 @@ _kern_access(int fd, const char* path, int mode, bool effectiveUserGroup)
 	\return \c B_OK, if the the stat data have been read successfully, another
 			error code otherwise.
 */
+/**
+ * @brief Kernel syscall: read stat data by (fd, path).
+ *
+ * Supports a smaller @p statSize for future ABI extension.
+ *
+ * @param fd               FD or base FD for relative paths.
+ * @param path             Optional path.
+ * @param traverseLeafLink If true, follow the final symlink.
+ * @param stat             Output stat buffer.
+ * @param statSize         sizeof(*stat) or smaller.
+ * @retval B_OK Stat filled.
+ */
 status_t
 _kern_read_stat(int fd, const char* path, bool traverseLeafLink,
 	struct stat* stat, size_t statSize)
@@ -8810,6 +11370,19 @@ _kern_read_stat(int fd, const char* path, bool traverseLeafLink,
 	\return \c B_OK, if the the stat data have been written successfully,
 			another error code otherwise.
 */
+/**
+ * @brief Kernel syscall: write stat data by (fd, path).
+ *
+ * Supports a smaller @p statSize by zero-extending to sizeof(struct stat).
+ *
+ * @param fd               FD or base FD for relative paths.
+ * @param path             Optional path.
+ * @param traverseLeafLink If true, follow the final symlink.
+ * @param stat             New stat values.
+ * @param statSize         sizeof(*stat) or smaller.
+ * @param statMask         B_STAT_* bitmask.
+ * @retval B_OK Updated.
+ */
 status_t
 _kern_write_stat(int fd, const char* path, bool traverseLeafLink,
 	const struct stat* stat, size_t statSize, int statMask)
@@ -8854,6 +11427,14 @@ _kern_write_stat(int fd, const char* path, bool traverseLeafLink,
 }
 
 
+/**
+ * @brief Kernel syscall: open the attribute directory of a node.
+ *
+ * @param fd               Base FD.
+ * @param path             Path to the node.
+ * @param traverseLeafLink Follow final symlink if true.
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _kern_open_attr_dir(int fd, const char* path, bool traverseLeafLink)
 {
@@ -8865,6 +11446,16 @@ _kern_open_attr_dir(int fd, const char* path, bool traverseLeafLink)
 }
 
 
+/**
+ * @brief Kernel syscall: open or create an extended attribute.
+ *
+ * @param fd      Base FD.
+ * @param path    Path to the node.
+ * @param name    Attribute name.
+ * @param type    Attribute type (when creating).
+ * @param openMode Open flags (O_CREAT to create).
+ * @return A non-negative attribute FD, or a negative error code.
+ */
 int
 _kern_open_attr(int fd, const char* path, const char* name, uint32 type,
 	int openMode)
@@ -8882,6 +11473,13 @@ _kern_open_attr(int fd, const char* path, const char* name, uint32 type,
 }
 
 
+/**
+ * @brief Kernel syscall: remove an extended attribute by name.
+ *
+ * @param fd   FD of the owning node.
+ * @param name Attribute name.
+ * @retval B_OK Attribute removed.
+ */
 status_t
 _kern_remove_attr(int fd, const char* name)
 {
@@ -8889,6 +11487,15 @@ _kern_remove_attr(int fd, const char* name)
 }
 
 
+/**
+ * @brief Kernel syscall: rename an extended attribute.
+ *
+ * @param fromFile FD of the source node.
+ * @param fromName Source attribute name.
+ * @param toFile   FD of the destination node.
+ * @param toName   Destination attribute name.
+ * @retval B_OK Attribute renamed.
+ */
 status_t
 _kern_rename_attr(int fromFile, const char* fromName, int toFile,
 	const char* toName)
@@ -8897,6 +11504,12 @@ _kern_rename_attr(int fromFile, const char* fromName, int toFile,
 }
 
 
+/**
+ * @brief Kernel syscall: open the index directory of a volume.
+ *
+ * @param device Device ID of the volume.
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _kern_open_index_dir(dev_t device)
 {
@@ -8904,6 +11517,15 @@ _kern_open_index_dir(dev_t device)
 }
 
 
+/**
+ * @brief Kernel syscall: create a file-system index.
+ *
+ * @param device Device ID.
+ * @param name   Index name.
+ * @param type   Index type.
+ * @param flags  FS-specific flags.
+ * @retval B_OK Index created.
+ */
 status_t
 _kern_create_index(dev_t device, const char* name, uint32 type, uint32 flags)
 {
@@ -8911,6 +11533,14 @@ _kern_create_index(dev_t device, const char* name, uint32 type, uint32 flags)
 }
 
 
+/**
+ * @brief Kernel syscall: read stat information for a named index.
+ *
+ * @param device Device ID.
+ * @param name   Index name.
+ * @param stat   Output stat buffer.
+ * @retval B_OK Stat filled.
+ */
 status_t
 _kern_read_index_stat(dev_t device, const char* name, struct stat* stat)
 {
@@ -8918,6 +11548,13 @@ _kern_read_index_stat(dev_t device, const char* name, struct stat* stat)
 }
 
 
+/**
+ * @brief Kernel syscall: remove a file-system index by name.
+ *
+ * @param device Device ID.
+ * @param name   Index name.
+ * @retval B_OK Index removed.
+ */
 status_t
 _kern_remove_index(dev_t device, const char* name)
 {
@@ -8925,6 +11562,13 @@ _kern_remove_index(dev_t device, const char* name)
 }
 
 
+/**
+ * @brief Kernel syscall: get the current working directory path.
+ *
+ * @param buffer Output buffer.
+ * @param size   Size of @p buffer.
+ * @retval B_OK Path written.
+ */
 status_t
 _kern_getcwd(char* buffer, size_t size)
 {
@@ -8935,6 +11579,13 @@ _kern_getcwd(char* buffer, size_t size)
 }
 
 
+/**
+ * @brief Kernel syscall: set the current working directory.
+ *
+ * @param fd   Base FD for relative paths (or AT_FDCWD).
+ * @param path New working directory path.
+ * @retval B_OK CWD changed.
+ */
 status_t
 _kern_setcwd(int fd, const char* path)
 {
@@ -8949,6 +11600,20 @@ _kern_setcwd(int fd, const char* path)
 //	#pragma mark - userland syscalls
 
 
+/**
+ * @brief User syscall: mount a file system.
+ *
+ * Copies all string arguments from user space, validates pointers, and
+ * delegates to fs_mount().
+ *
+ * @param userPath       User-space mount point path.
+ * @param userDevice     User-space block device path (may be NULL).
+ * @param userFileSystem User-space FS type name (may be NULL).
+ * @param flags          Mount flags.
+ * @param userArgs       User-space FS-specific argument string (may be NULL).
+ * @param argsLength     Length of @p userArgs (capped at 65535).
+ * @return New device ID on success, or a negative error code.
+ */
 dev_t
 _user_mount(const char* userPath, const char* userDevice,
 	const char* userFileSystem, uint32 flags, const char* userArgs,
@@ -9019,6 +11684,13 @@ _user_mount(const char* userPath, const char* userDevice,
 }
 
 
+/**
+ * @brief User syscall: unmount a file system by path.
+ *
+ * @param userPath User-space mount point path.
+ * @param flags    Unmount flags (B_UNMOUNT_BUSY_PARTITION is stripped).
+ * @retval B_OK Volume unmounted.
+ */
 status_t
 _user_unmount(const char* userPath, uint32 flags)
 {
@@ -9039,6 +11711,15 @@ _user_unmount(const char* userPath, uint32 flags)
 }
 
 
+/**
+ * @brief User syscall: read file system information.
+ *
+ * Fills a kernel fs_info buffer and copies it to @p userInfo.
+ *
+ * @param device   Device ID.
+ * @param userInfo User-space output buffer.
+ * @retval B_OK Info copied to user space.
+ */
 status_t
 _user_read_fs_info(dev_t device, struct fs_info* userInfo)
 {
@@ -9062,6 +11743,14 @@ _user_read_fs_info(dev_t device, struct fs_info* userInfo)
 }
 
 
+/**
+ * @brief User syscall: write file system information.
+ *
+ * @param device   Device ID.
+ * @param userInfo User-space fs_info buffer with new values.
+ * @param mask     Fields to update.
+ * @retval B_OK Updated.
+ */
 status_t
 _user_write_fs_info(dev_t device, const struct fs_info* userInfo, int mask)
 {
@@ -9078,6 +11767,12 @@ _user_write_fs_info(dev_t device, const struct fs_info* userInfo, int mask)
 }
 
 
+/**
+ * @brief User syscall: iterate over mounted devices.
+ *
+ * @param _userCookie User-space in/out enumeration cookie.
+ * @return Next device ID, or B_BAD_VALUE when exhausted.
+ */
 dev_t
 _user_next_device(int32* _userCookie)
 {
@@ -9100,6 +11795,11 @@ _user_next_device(int32* _userCookie)
 }
 
 
+/**
+ * @brief User syscall: synchronize all mounted file systems.
+ *
+ * @retval B_OK Always.
+ */
 status_t
 _user_sync(void)
 {
@@ -9107,6 +11807,16 @@ _user_sync(void)
 }
 
 
+/**
+ * @brief User syscall: enumerate open file descriptors of a team (root only).
+ *
+ * @param team      Team to inspect.
+ * @param userCookie User-space in/out FD slot index.
+ * @param userInfo  User-space fd_info output.
+ * @param infoSize  Must equal sizeof(fd_info).
+ * @retval B_OK         Info written.
+ * @retval B_NOT_ALLOWED Caller is not root.
+ */
 status_t
 _user_get_next_fd_info(team_id team, uint32* userCookie, fd_info* userInfo,
 	size_t infoSize)
@@ -9137,6 +11847,17 @@ _user_get_next_fd_info(team_id team, uint32* userCookie, fd_info* userInfo,
 }
 
 
+/**
+ * @brief User syscall: convert a device/inode/leaf tuple to an absolute path.
+ *
+ * @param device     Device ID.
+ * @param inode      Node ID.
+ * @param leaf       Optional leaf entry name (user space, may be NULL).
+ * @param userPath   User-space output buffer.
+ * @param pathLength Size of @p userPath.
+ * @retval B_OK             Path written to user space.
+ * @retval B_BUFFER_OVERFLOW Path exceeds @p pathLength.
+ */
 status_t
 _user_entry_ref_to_path(dev_t device, ino_t inode, const char* leaf,
 	char* userPath, size_t pathLength)
@@ -9178,6 +11899,14 @@ _user_entry_ref_to_path(dev_t device, ino_t inode, const char* leaf,
 }
 
 
+/**
+ * @brief User syscall: normalize a path to its canonical form.
+ *
+ * @param userPath     User-space input path.
+ * @param traverseLink If true, follow the final symlink.
+ * @param buffer       User-space output buffer (B_PATH_NAME_LENGTH).
+ * @retval B_OK Normalized path written.
+ */
 status_t
 _user_normalize_path(const char* userPath, bool traverseLink, char* buffer)
 {
@@ -9212,6 +11941,16 @@ _user_normalize_path(const char* userPath, bool traverseLink, char* buffer)
 }
 
 
+/**
+ * @brief User syscall: open or create a file by entry_ref.
+ *
+ * @param device   Device ID of the parent directory.
+ * @param inode    Node ID of the parent directory.
+ * @param userName User-space entry name string.
+ * @param openMode Open flags.
+ * @param perms    Permissions (used when O_CREAT is set).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _user_open_entry_ref(dev_t device, ino_t inode, const char* userName,
 	int openMode, int perms)
@@ -9235,6 +11974,15 @@ _user_open_entry_ref(dev_t device, ino_t inode, const char* userName,
 }
 
 
+/**
+ * @brief User syscall: open or create a file by (fd, path).
+ *
+ * @param fd       Base FD for relative paths.
+ * @param userPath User-space path.
+ * @param openMode Open flags.
+ * @param perms    Permissions (when O_CREAT is set).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _user_open(int fd, const char* userPath, int openMode, int perms)
 {
@@ -9257,6 +12005,14 @@ _user_open(int fd, const char* userPath, int openMode, int perms)
 }
 
 
+/**
+ * @brief User syscall: open a directory by entry_ref or node_ref.
+ *
+ * @param device   Device ID.
+ * @param inode    Node ID.
+ * @param userName User-space entry name (may be NULL for node_ref).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _user_open_dir_entry_ref(dev_t device, ino_t inode, const char* userName)
 {
@@ -9275,6 +12031,13 @@ _user_open_dir_entry_ref(dev_t device, ino_t inode, const char* userName)
 }
 
 
+/**
+ * @brief User syscall: open a directory by (fd, path).
+ *
+ * @param fd       Base FD for relative paths.
+ * @param userPath User-space path (may be NULL to open @p fd itself).
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _user_open_dir(int fd, const char* userPath)
 {
@@ -9314,6 +12077,17 @@ _user_open_dir(int fd, const char* userPath)
 	\return The file descriptor of the opened parent directory, if everything
 			went fine, an error code otherwise.
 */
+/**
+ * @brief User syscall: open a directory's parent and return the entry name.
+ *
+ * Opens the ".." directory relative to @p fd and optionally writes the
+ * original directory's entry name to @p userName.
+ *
+ * @param fd         FD of the current directory.
+ * @param userName   User-space buffer for the entry name (may be NULL).
+ * @param nameLength Size of @p userName.
+ * @return FD of the parent directory, or a negative error code.
+ */
 int
 _user_open_parent_dir(int fd, char* userName, size_t nameLength)
 {
@@ -9357,6 +12131,16 @@ _user_open_parent_dir(int fd, char* userName, size_t nameLength)
 }
 
 
+/**
+ * @brief User syscall: file control (fcntl).
+ *
+ * Handles F_SETLKW with syscall restart support.
+ *
+ * @param fd       File descriptor.
+ * @param op       F_* command.
+ * @param argument Command-specific argument.
+ * @retval B_OK Operation succeeded.
+ */
 status_t
 _user_fcntl(int fd, int op, size_t argument)
 {
@@ -9368,6 +12152,13 @@ _user_fcntl(int fd, int op, size_t argument)
 }
 
 
+/**
+ * @brief User syscall: flush file data/metadata to storage.
+ *
+ * @param fd       File descriptor.
+ * @param dataOnly true for fdatasync semantics.
+ * @retval B_OK Flushed.
+ */
 status_t
 _user_fsync(int fd, bool dataOnly)
 {
@@ -9375,6 +12166,18 @@ _user_fsync(int fd, bool dataOnly)
 }
 
 
+/**
+ * @brief User syscall: BSD-style file lock (flock).
+ *
+ * Translates the BSD flock() operation (LOCK_SH, LOCK_EX, LOCK_UN, LOCK_NB)
+ * into a POSIX-style flock advisory-lock call or an FS acquire/release_lock
+ * hook call.
+ *
+ * @param fd        File descriptor.
+ * @param operation LOCK_SH, LOCK_EX, LOCK_UN, optionally OR'd with LOCK_NB.
+ * @retval B_OK        Lock acquired or released.
+ * @retval B_BAD_VALUE @p fd is not a regular file FD, or invalid operation.
+ */
 status_t
 _user_flock(int fd, int operation)
 {
@@ -9427,6 +12230,12 @@ _user_flock(int fd, int operation)
 }
 
 
+/**
+ * @brief User syscall: acquire a mandatory lock on a file's vnode.
+ *
+ * @param fd File descriptor.
+ * @retval B_OK Lock acquired.
+ */
 status_t
 _user_lock_node(int fd)
 {
@@ -9434,6 +12243,12 @@ _user_lock_node(int fd)
 }
 
 
+/**
+ * @brief User syscall: release a mandatory lock on a file's vnode.
+ *
+ * @param fd File descriptor.
+ * @retval B_OK Lock released.
+ */
 status_t
 _user_unlock_node(int fd)
 {
@@ -9441,6 +12256,14 @@ _user_unlock_node(int fd)
 }
 
 
+/**
+ * @brief User syscall: pre-allocate disk space for a file.
+ *
+ * @param fd     File descriptor.
+ * @param offset Start offset.
+ * @param length Bytes to pre-allocate.
+ * @retval B_OK Space reserved.
+ */
 status_t
 _user_preallocate(int fd, off_t offset, off_t length)
 {
@@ -9448,6 +12271,15 @@ _user_preallocate(int fd, off_t offset, off_t length)
 }
 
 
+/**
+ * @brief User syscall: create a directory by entry_ref.
+ *
+ * @param device   Device ID of the parent.
+ * @param inode    Node ID of the parent.
+ * @param userName User-space directory name.
+ * @param perms    Permission bits.
+ * @retval B_OK Directory created.
+ */
 status_t
 _user_create_dir_entry_ref(dev_t device, ino_t inode, const char* userName,
 	int perms)
@@ -9466,6 +12298,14 @@ _user_create_dir_entry_ref(dev_t device, ino_t inode, const char* userName,
 }
 
 
+/**
+ * @brief User syscall: create a directory by (fd, path).
+ *
+ * @param fd       Base FD for relative paths.
+ * @param userPath User-space directory path.
+ * @param perms    Permission bits.
+ * @retval B_OK Directory created.
+ */
 status_t
 _user_create_dir(int fd, const char* userPath, int perms)
 {
@@ -9485,6 +12325,13 @@ _user_create_dir(int fd, const char* userPath, int perms)
 }
 
 
+/**
+ * @brief User syscall: remove a directory by (fd, path).
+ *
+ * @param fd       Base FD for relative paths.
+ * @param userPath User-space path (may be NULL to use @p fd directly).
+ * @retval B_OK Directory removed.
+ */
 status_t
 _user_remove_dir(int fd, const char* userPath)
 {
@@ -9506,6 +12353,15 @@ _user_remove_dir(int fd, const char* userPath)
 }
 
 
+/**
+ * @brief User syscall: read the target of a symbolic link.
+ *
+ * @param fd             Base FD for relative paths.
+ * @param userPath       User-space path to the symlink (may be NULL).
+ * @param userBuffer     User-space destination buffer.
+ * @param userBufferSize User-space in/out buffer size.
+ * @retval B_OK Link target written to user space.
+ */
 status_t
 _user_read_link(int fd, const char* userPath, char* userBuffer,
 	size_t* userBufferSize)
@@ -9554,6 +12410,15 @@ _user_read_link(int fd, const char* userPath, char* userBuffer,
 }
 
 
+/**
+ * @brief User syscall: create a symbolic link.
+ *
+ * @param fd         Base FD for relative @p userPath.
+ * @param userPath   User-space path where the symlink is created.
+ * @param userToPath User-space link target string.
+ * @param mode       Permission bits.
+ * @retval B_OK Symlink created.
+ */
 status_t
 _user_create_symlink(int fd, const char* userPath, const char* userToPath,
 	int mode)
@@ -9579,6 +12444,16 @@ _user_create_symlink(int fd, const char* userPath, const char* userToPath,
 }
 
 
+/**
+ * @brief User syscall: create a hard link.
+ *
+ * @param pathFD          FD for the directory of the new link.
+ * @param userPath        User-space path for the new link.
+ * @param toFD            FD for the directory of the target.
+ * @param userToPath      User-space path of the existing node.
+ * @param traverseLeafLink Follow final symlink in @p userToPath if true.
+ * @retval B_OK Link created.
+ */
 status_t
 _user_create_link(int pathFD, const char* userPath, int toFD,
 	const char* userToPath, bool traverseLeafLink)
@@ -9609,6 +12484,13 @@ _user_create_link(int pathFD, const char* userPath, int toFD,
 }
 
 
+/**
+ * @brief User syscall: remove a directory entry by (fd, path).
+ *
+ * @param fd       Base FD for relative paths.
+ * @param userPath User-space path of the entry.
+ * @retval B_OK Entry removed.
+ */
 status_t
 _user_unlink(int fd, const char* userPath)
 {
@@ -9628,6 +12510,15 @@ _user_unlink(int fd, const char* userPath)
 }
 
 
+/**
+ * @brief User syscall: rename a directory entry.
+ *
+ * @param oldFD       FD for the source directory.
+ * @param userOldPath User-space source path.
+ * @param newFD       FD for the destination directory.
+ * @param userNewPath User-space destination path.
+ * @retval B_OK Entry renamed.
+ */
 status_t
 _user_rename(int oldFD, const char* userOldPath, int newFD,
 	const char* userNewPath)
@@ -9653,6 +12544,15 @@ _user_rename(int oldFD, const char* userOldPath, int newFD,
 }
 
 
+/**
+ * @brief User syscall: create a named pipe (FIFO) in the file system.
+ *
+ * @param fd       Base FD for relative @p userPath.
+ * @param userPath User-space path for the new FIFO.
+ * @param perms    Permission bits (S_IUMSK masked).
+ * @retval B_OK         FIFO created.
+ * @retval B_UNSUPPORTED FS has no create_special_node hook.
+ */
 status_t
 _user_create_fifo(int fd, const char* userPath, mode_t perms)
 {
@@ -9693,6 +12593,18 @@ _user_create_fifo(int fd, const char* userPath, mode_t perms)
 }
 
 
+/**
+ * @brief User syscall: create an anonymous pipe.
+ *
+ * Creates an unnamed FIFO node in the root FS and opens it for reading
+ * (fds[0]) and writing (fds[1]).
+ *
+ * @param userFDs User-space int[2] output for the read/write FDs.
+ * @param flags   O_NONBLOCK, O_CLOEXEC, O_CLOFORK (other flags rejected).
+ * @retval B_OK         Pipe created; FDs written to @p userFDs.
+ * @retval B_BAD_VALUE  Unsupported flags.
+ * @retval B_UNSUPPORTED Root FS has no create_special_node hook.
+ */
 status_t
 _user_create_pipe(int* userFDs, int flags)
 {
@@ -9754,6 +12666,15 @@ _user_create_pipe(int* userFDs, int flags)
 }
 
 
+/**
+ * @brief User syscall: check access permissions for a path.
+ *
+ * @param fd                Base FD for relative paths.
+ * @param userPath          User-space path.
+ * @param mode              R_OK, W_OK, X_OK, F_OK.
+ * @param effectiveUserGroup If true, use effective UID/GID.
+ * @retval B_OK Access permitted.
+ */
 status_t
 _user_access(int fd, const char* userPath, int mode, bool effectiveUserGroup)
 {
@@ -9773,6 +12694,16 @@ _user_access(int fd, const char* userPath, int mode, bool effectiveUserGroup)
 }
 
 
+/**
+ * @brief User syscall: read stat data by (fd, path) from user space.
+ *
+ * @param fd           FD or base FD for relative paths.
+ * @param userPath     User-space path (may be NULL).
+ * @param traverseLink Follow final symlink if true.
+ * @param userStat     User-space output stat buffer.
+ * @param statSize     sizeof(*userStat) or smaller.
+ * @retval B_OK Stat written to user space.
+ */
 status_t
 _user_read_stat(int fd, const char* userPath, bool traverseLink,
 	struct stat* userStat, size_t statSize)
@@ -9822,6 +12753,17 @@ _user_read_stat(int fd, const char* userPath, bool traverseLink,
 }
 
 
+/**
+ * @brief User syscall: write stat data by (fd, path) from user space.
+ *
+ * @param fd              FD or base FD for relative paths.
+ * @param userPath        User-space path (may be NULL).
+ * @param traverseLeafLink Follow final symlink if true.
+ * @param userStat        User-space input stat buffer.
+ * @param statSize        sizeof(*userStat) or smaller.
+ * @param statMask        B_STAT_* bitmask.
+ * @retval B_OK Updated.
+ */
 status_t
 _user_write_stat(int fd, const char* userPath, bool traverseLeafLink,
 	const struct stat* userStat, size_t statSize, int statMask)
@@ -9876,6 +12818,14 @@ _user_write_stat(int fd, const char* userPath, bool traverseLeafLink,
 }
 
 
+/**
+ * @brief User syscall: open an attribute directory by (fd, path).
+ *
+ * @param fd               Base FD for relative paths.
+ * @param userPath         User-space path (may be NULL to use @p fd).
+ * @param traverseLeafLink Follow final symlink if true.
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _user_open_attr_dir(int fd, const char* userPath, bool traverseLeafLink)
 {
@@ -9897,6 +12847,18 @@ _user_open_attr_dir(int fd, const char* userPath, bool traverseLeafLink)
 }
 
 
+/**
+ * @brief User syscall: read an extended attribute value into user space.
+ *
+ * Opens the attribute FD, reads @p readBytes at @p pos, closes it.
+ *
+ * @param fd            Node FD.
+ * @param userAttribute User-space attribute name.
+ * @param pos           Byte offset within the attribute.
+ * @param userBuffer    User-space destination buffer.
+ * @param readBytes     Bytes to read.
+ * @return Bytes read, or a negative error code.
+ */
 ssize_t
 _user_read_attr(int fd, const char* userAttribute, off_t pos, void* userBuffer,
 	size_t readBytes)
@@ -9922,6 +12884,20 @@ _user_read_attr(int fd, const char* userAttribute, off_t pos, void* userBuffer,
 }
 
 
+/**
+ * @brief User syscall: write an extended attribute value from user space.
+ *
+ * Creates or opens the attribute (O_CREAT | O_WRONLY; O_TRUNC when pos==0),
+ * writes @p writeBytes at @p pos, closes it.
+ *
+ * @param fd            Node FD.
+ * @param userAttribute User-space attribute name.
+ * @param type          Attribute type code.
+ * @param pos           Byte offset within the attribute.
+ * @param buffer        User-space source buffer.
+ * @param writeBytes    Bytes to write.
+ * @return Bytes written, or a negative error code.
+ */
 ssize_t
 _user_write_attr(int fd, const char* userAttribute, uint32 type, off_t pos,
 	const void* buffer, size_t writeBytes)
@@ -9950,6 +12926,14 @@ _user_write_attr(int fd, const char* userAttribute, uint32 type, off_t pos,
 }
 
 
+/**
+ * @brief User syscall: read stat (type/size) for a named attribute.
+ *
+ * @param fd            Node FD.
+ * @param userAttribute User-space attribute name.
+ * @param userAttrInfo  User-space output attr_info buffer.
+ * @retval B_OK Attribute info written to user space.
+ */
 status_t
 _user_stat_attr(int fd, const char* userAttribute,
 	struct attr_info* userAttrInfo)
@@ -9998,6 +12982,16 @@ _user_stat_attr(int fd, const char* userAttribute,
 }
 
 
+/**
+ * @brief User syscall: open or create an extended attribute from user space.
+ *
+ * @param fd      Base FD for relative paths.
+ * @param userPath User-space path to the node (may be NULL).
+ * @param userName User-space attribute name.
+ * @param type    Attribute type (when creating).
+ * @param openMode Open flags (O_CREAT to create).
+ * @return A non-negative attribute FD, or a negative error code.
+ */
 int
 _user_open_attr(int fd, const char* userPath, const char* userName,
 	uint32 type, int openMode)
@@ -10033,6 +13027,13 @@ _user_open_attr(int fd, const char* userPath, const char* userName,
 }
 
 
+/**
+ * @brief User syscall: remove an extended attribute by name.
+ *
+ * @param fd       FD of the owning node.
+ * @param userName User-space attribute name.
+ * @retval B_OK Attribute removed.
+ */
 status_t
 _user_remove_attr(int fd, const char* userName)
 {
@@ -10048,6 +13049,15 @@ _user_remove_attr(int fd, const char* userName)
 }
 
 
+/**
+ * @brief User syscall: rename an extended attribute.
+ *
+ * @param fromFile     FD of the source node.
+ * @param userFromName User-space source attribute name.
+ * @param toFile       FD of the destination node.
+ * @param userToName   User-space destination attribute name.
+ * @retval B_OK Attribute renamed.
+ */
 status_t
 _user_rename_attr(int fromFile, const char* userFromName, int toFile,
 	const char* userToName)
@@ -10075,6 +13085,12 @@ _user_rename_attr(int fromFile, const char* userFromName, int toFile,
 }
 
 
+/**
+ * @brief User syscall: open the index directory of a volume.
+ *
+ * @param device Device ID.
+ * @return A non-negative FD, or a negative error code.
+ */
 int
 _user_open_index_dir(dev_t device)
 {
@@ -10082,6 +13098,15 @@ _user_open_index_dir(dev_t device)
 }
 
 
+/**
+ * @brief User syscall: create a file-system index.
+ *
+ * @param device   Device ID.
+ * @param userName User-space index name.
+ * @param type     Index type.
+ * @param flags    FS-specific flags.
+ * @retval B_OK Index created.
+ */
 status_t
 _user_create_index(dev_t device, const char* userName, uint32 type,
 	uint32 flags)
@@ -10098,6 +13123,14 @@ _user_create_index(dev_t device, const char* userName, uint32 type,
 }
 
 
+/**
+ * @brief User syscall: read stat information for a named index.
+ *
+ * @param device   Device ID.
+ * @param userName User-space index name.
+ * @param userStat User-space output stat buffer.
+ * @retval B_OK Stat copied to user space.
+ */
 status_t
 _user_read_index_stat(dev_t device, const char* userName, struct stat* userStat)
 {
@@ -10121,6 +13154,13 @@ _user_read_index_stat(dev_t device, const char* userName, struct stat* userStat)
 }
 
 
+/**
+ * @brief User syscall: remove a file-system index by name.
+ *
+ * @param device   Device ID.
+ * @param userName User-space index name.
+ * @retval B_OK Index removed.
+ */
 status_t
 _user_remove_index(dev_t device, const char* userName)
 {
@@ -10136,6 +13176,13 @@ _user_remove_index(dev_t device, const char* userName)
 }
 
 
+/**
+ * @brief User syscall: get the current working directory path.
+ *
+ * @param userBuffer User-space output buffer.
+ * @param size       Size of @p userBuffer (capped at kMaxPathLength).
+ * @retval B_OK Path written to user space.
+ */
 status_t
 _user_getcwd(char* userBuffer, size_t size)
 {
@@ -10167,6 +13214,13 @@ _user_getcwd(char* userBuffer, size_t size)
 }
 
 
+/**
+ * @brief User syscall: set the current working directory.
+ *
+ * @param fd       Base FD for relative paths (or AT_FDCWD).
+ * @param userPath User-space path of the new CWD.
+ * @retval B_OK CWD changed.
+ */
 status_t
 _user_setcwd(int fd, const char* userPath)
 {
@@ -10190,6 +13244,15 @@ _user_setcwd(int fd, const char* userPath)
 }
 
 
+/**
+ * @brief User syscall: change the root directory for the calling team (chroot).
+ *
+ * Only root (euid == 0) is permitted.
+ *
+ * @param userPath User-space path for the new root directory.
+ * @retval B_OK         Root changed.
+ * @retval B_NOT_ALLOWED Caller is not root.
+ */
 status_t
 _user_change_root(const char* userPath)
 {
@@ -10231,6 +13294,17 @@ _user_change_root(const char* userPath)
 }
 
 
+/**
+ * @brief User syscall: open a live query on a volume.
+ *
+ * @param device      Device ID of the volume to query.
+ * @param userQuery   User-space query expression string.
+ * @param queryLength Length of @p userQuery (must be < 65536).
+ * @param flags       Query flags (e.g. B_LIVE_QUERY).
+ * @param port        Port for live-query notifications (-1 if none).
+ * @param token       Token sent with notifications.
+ * @return A non-negative query FD, or a negative error code.
+ */
 int
 _user_open_query(dev_t device, const char* userQuery, size_t queryLength,
 	uint32 flags, port_id port, int32 token)

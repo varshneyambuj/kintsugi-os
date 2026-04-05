@@ -1,12 +1,39 @@
 /*
- * Copyright 2002-2009, Haiku Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Haiku Inc. All Rights Reserved.
+ *   Authors: Tyler Dauwalder, Ingo Weinhold
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file Volume.cpp
+ * @brief Implementation of the BVolume class for filesystem volume access.
+ *
+ * BVolume represents a mounted filesystem volume and exposes its properties
+ * such as capacity, free space, block size, name, and capability flags. It
+ * also provides methods for retrieving the volume's root directory and icon,
+ * and for setting the volume name. Volumes are identified by their device ID.
+ *
+ * @see BVolume
+ */
 
 #include <errno.h>
 #include <string.h>
@@ -24,7 +51,9 @@
 #include <fs_interface.h>
 
 
-// Creates an uninitialized BVolume object.
+/**
+ * @brief Default constructor; creates an uninitialized BVolume object.
+ */
 BVolume::BVolume()
 	: fDevice((dev_t)-1),
 	  fCStatus(B_NO_INIT)
@@ -32,8 +61,11 @@ BVolume::BVolume()
 }
 
 
-// Creates a BVolume and initializes it to the volume specified by the
-// supplied device ID.
+/**
+ * @brief Constructs a BVolume and initializes it to the specified device.
+ *
+ * @param device The device ID of the volume to represent.
+ */
 BVolume::BVolume(dev_t device)
 	: fDevice((dev_t)-1),
 	  fCStatus(B_NO_INIT)
@@ -42,7 +74,11 @@ BVolume::BVolume(dev_t device)
 }
 
 
-// Creates a copy of the supplied BVolume object.
+/**
+ * @brief Copy constructor; creates a BVolume that is a copy of volume.
+ *
+ * @param volume The source BVolume to copy.
+ */
 BVolume::BVolume(const BVolume &volume)
 	: fDevice(volume.fDevice),
 	  fCStatus(volume.fCStatus)
@@ -50,13 +86,19 @@ BVolume::BVolume(const BVolume &volume)
 }
 
 
-// Destroys the object and frees all associated resources.
+/**
+ * @brief Destructor; frees all resources associated with this BVolume.
+ */
 BVolume::~BVolume()
 {
 }
 
 
-// Returns the initialization status.
+/**
+ * @brief Returns the initialization status of this BVolume.
+ *
+ * @return B_OK if properly initialized, or an error code otherwise.
+ */
 status_t
 BVolume::InitCheck(void) const
 {
@@ -64,8 +106,12 @@ BVolume::InitCheck(void) const
 }
 
 
-// Initializes the object to refer to the volume specified by the supplied
-// device ID.
+/**
+ * @brief Initializes the BVolume to the volume specified by device.
+ *
+ * @param device The device ID of the volume to open.
+ * @return B_OK on success, B_BAD_VALUE if device is invalid, or errno on failure.
+ */
 status_t
 BVolume::SetTo(dev_t device)
 {
@@ -87,7 +133,9 @@ BVolume::SetTo(dev_t device)
 }
 
 
-// Brings the BVolume object to an uninitialized state.
+/**
+ * @brief Resets the BVolume to an uninitialized state.
+ */
 void
 BVolume::Unset()
 {
@@ -96,7 +144,11 @@ BVolume::Unset()
 }
 
 
-// Returns the device ID of the volume the object refers to.
+/**
+ * @brief Returns the device ID of the volume this object represents.
+ *
+ * @return The device ID, or (dev_t)-1 if not initialized.
+ */
 dev_t
 BVolume::Device() const
 {
@@ -104,8 +156,12 @@ BVolume::Device() const
 }
 
 
-// Writes the root directory of the volume referred to by this object into
-// directory.
+/**
+ * @brief Fills in directory with the root directory of this volume.
+ *
+ * @param directory Pointer to a BDirectory to be initialized to the root; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if directory is NULL or not initialized, or errno.
+ */
 status_t
 BVolume::GetRootDirectory(BDirectory *directory) const
 {
@@ -126,7 +182,11 @@ BVolume::GetRootDirectory(BDirectory *directory) const
 }
 
 
-// Returns the total storage capacity of the volume.
+/**
+ * @brief Returns the total storage capacity of the volume in bytes.
+ *
+ * @return The total byte capacity, or a negative error code if not initialized.
+ */
 off_t
 BVolume::Capacity() const
 {
@@ -140,7 +200,11 @@ BVolume::Capacity() const
 }
 
 
-// Returns the amount of unused space on the volume (in bytes).
+/**
+ * @brief Returns the amount of free space on the volume in bytes.
+ *
+ * @return The number of free bytes, or a negative error code if not initialized.
+ */
 off_t
 BVolume::FreeBytes() const
 {
@@ -154,7 +218,11 @@ BVolume::FreeBytes() const
 }
 
 
-// Returns the size of one block (in bytes).
+/**
+ * @brief Returns the block size of the volume in bytes.
+ *
+ * @return The block size on success, B_NO_INIT if not initialized, or errno on error.
+ */
 off_t
 BVolume::BlockSize() const
 {
@@ -171,7 +239,12 @@ BVolume::BlockSize() const
 }
 
 
-// Copies the name of the volume into the provided buffer.
+/**
+ * @brief Copies the volume's name into the provided buffer.
+ *
+ * @param name A buffer of at least B_FILE_NAME_LENGTH bytes to receive the name.
+ * @return B_OK on success, B_BAD_VALUE if name is NULL or not initialized, or errno.
+ */
 status_t
 BVolume::GetName(char *name) const
 {
@@ -188,7 +261,15 @@ BVolume::GetName(char *name) const
 }
 
 
-// Sets the name of the volume.
+/**
+ * @brief Sets the name of the volume, also renaming the mount-point entry if applicable.
+ *
+ * Following R5 behavior, if a directory named after the old volume name exists
+ * at the root and is the volume's mount point, it is also renamed.
+ *
+ * @param name The new name for the volume; must be shorter than B_FILE_NAME_LENGTH.
+ * @return B_OK on success, B_BAD_VALUE if not initialized, B_NAME_TOO_LONG, or errno.
+ */
 status_t
 BVolume::SetName(const char *name)
 {
@@ -241,7 +322,13 @@ BVolume::SetName(const char *name)
 }
 
 
-// Writes the volume's icon into icon.
+/**
+ * @brief Retrieves the volume's bitmap icon into icon.
+ *
+ * @param icon  A BBitmap sized appropriately for which.
+ * @param which The desired icon size (B_MINI_ICON or B_LARGE_ICON).
+ * @return B_OK on success, B_NO_INIT if not initialized, or errno on error.
+ */
 status_t
 BVolume::GetIcon(BBitmap *icon, icon_size which) const
 {
@@ -259,6 +346,14 @@ BVolume::GetIcon(BBitmap *icon, icon_size which) const
 }
 
 
+/**
+ * @brief Retrieves the volume's raw icon data.
+ *
+ * @param _data  Set to a newly allocated buffer with the icon data.
+ * @param _size  Set to the size of the buffer in bytes.
+ * @param _type  Set to the type code of the icon data.
+ * @return B_OK on success, B_NO_INIT if not initialized, or errno on error.
+ */
 status_t
 BVolume::GetIcon(uint8** _data, size_t* _size, type_code* _type) const
 {
@@ -276,7 +371,11 @@ BVolume::GetIcon(uint8** _data, size_t* _size, type_code* _type) const
 }
 
 
-// Returns whether or not the volume is removable.
+/**
+ * @brief Returns whether the volume is removable (e.g. a CD or USB drive).
+ *
+ * @return true if the volume has the B_FS_IS_REMOVABLE flag set, false otherwise.
+ */
 bool
 BVolume::IsRemovable() const
 {
@@ -290,7 +389,11 @@ BVolume::IsRemovable() const
 }
 
 
-// Returns whether or not the volume is read-only.
+/**
+ * @brief Returns whether the volume is read-only.
+ *
+ * @return true if the volume has the B_FS_IS_READONLY flag set, false otherwise.
+ */
 bool
 BVolume::IsReadOnly(void) const
 {
@@ -304,7 +407,11 @@ BVolume::IsReadOnly(void) const
 }
 
 
-// Returns whether or not the volume is persistent.
+/**
+ * @brief Returns whether the volume is persistent (i.e. data survives reboots).
+ *
+ * @return true if the volume has the B_FS_IS_PERSISTENT flag set, false otherwise.
+ */
 bool
 BVolume::IsPersistent(void) const
 {
@@ -318,7 +425,11 @@ BVolume::IsPersistent(void) const
 }
 
 
-// Returns whether or not the volume is shared.
+/**
+ * @brief Returns whether the volume is shared over a network.
+ *
+ * @return true if the volume has the B_FS_IS_SHARED flag set, false otherwise.
+ */
 bool
 BVolume::IsShared(void) const
 {
@@ -332,7 +443,11 @@ BVolume::IsShared(void) const
 }
 
 
-// Returns whether or not the volume supports MIME-types.
+/**
+ * @brief Returns whether the volume supports MIME-type metadata.
+ *
+ * @return true if the volume has the B_FS_HAS_MIME flag set, false otherwise.
+ */
 bool
 BVolume::KnowsMime(void) const
 {
@@ -346,7 +461,11 @@ BVolume::KnowsMime(void) const
 }
 
 
-// Returns whether or not the volume supports attributes.
+/**
+ * @brief Returns whether the volume supports extended attributes.
+ *
+ * @return true if the volume has the B_FS_HAS_ATTR flag set, false otherwise.
+ */
 bool
 BVolume::KnowsAttr(void) const
 {
@@ -360,7 +479,11 @@ BVolume::KnowsAttr(void) const
 }
 
 
-// Returns whether or not the volume supports queries.
+/**
+ * @brief Returns whether the volume supports queries.
+ *
+ * @return true if the volume has the B_FS_HAS_QUERY flag set, false otherwise.
+ */
 bool
 BVolume::KnowsQuery(void) const
 {
@@ -374,8 +497,14 @@ BVolume::KnowsQuery(void) const
 }
 
 
-// Returns whether or not the supplied BVolume object is a equal
-// to this object.
+/**
+ * @brief Equality operator; two BVolumes are equal if they refer to the same device.
+ *
+ * Two uninitialized BVolumes are also considered equal.
+ *
+ * @param volume The BVolume to compare against.
+ * @return true if the volumes are equal, false otherwise.
+ */
 bool
 BVolume::operator==(const BVolume &volume) const
 {
@@ -383,8 +512,12 @@ BVolume::operator==(const BVolume &volume) const
 			|| fDevice == volume.fDevice);
 }
 
-// Returns whether or not the supplied BVolume object is NOT equal
-// to this object.
+/**
+ * @brief Inequality operator.
+ *
+ * @param volume The BVolume to compare against.
+ * @return true if the volumes are not equal, false otherwise.
+ */
 bool
 BVolume::operator!=(const BVolume &volume) const
 {
@@ -392,7 +525,12 @@ BVolume::operator!=(const BVolume &volume) const
 }
 
 
-// Assigns the supplied BVolume object to this volume.
+/**
+ * @brief Assignment operator; makes this BVolume refer to the same device as volume.
+ *
+ * @param volume The source BVolume to copy.
+ * @return A reference to this BVolume.
+ */
 BVolume&
 BVolume::operator=(const BVolume &volume)
 {

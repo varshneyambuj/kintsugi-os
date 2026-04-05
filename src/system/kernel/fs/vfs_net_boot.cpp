@@ -1,6 +1,29 @@
 /*
- * Copyright 2007, Ingo Weinhold, bonefish@cs.tu-berlin.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007, Ingo Weinhold, bonefish@cs.tu-berlin.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file vfs_net_boot.cpp
+ * @brief Network boot support for VFS — mounts the root file system over NFS during net-boot.
  */
 
 #include "vfs_net_boot.h"
@@ -22,6 +45,12 @@
 #include <KPath.h>
 
 
+/** @brief Test whether a string begins with a given prefix.
+ *
+ * @param string  The string to test.
+ * @param prefix  The prefix to look for.
+ * @return @c true if @p string starts with @p prefix, @c false otherwise.
+ */
 static bool
 string_starts_with(const char* string, const char* prefix)
 {
@@ -31,6 +60,14 @@ string_starts_with(const char* string, const char* prefix)
 }
 
 
+/** @brief Determine whether a disk device is a virtual network-backed device.
+ *
+ * Checks whether the device path starts with either the NBD or RemoteDisk
+ * virtual-disk prefix.
+ *
+ * @param device  Pointer to the KDiskDevice to inspect.
+ * @return @c true if the device is an NBD or RemoteDisk device.
+ */
 static bool
 is_net_device(KDiskDevice* device)
 {
@@ -40,6 +77,18 @@ is_net_device(KDiskDevice* device)
 }
 
 
+/** @brief Comparator for qsort() that orders partitions so that network-backed
+ *         devices sort after locally-backed ones.
+ *
+ * Partitions on network devices are ranked higher (later) than those on local
+ * devices.  Partitions within the same class are further ordered by
+ * compare_image_boot().
+ *
+ * @param _a  Pointer to the first @c KPartition* element.
+ * @param _b  Pointer to the second @c KPartition* element.
+ * @return Negative if @p _a should come first, positive if @p _b should come
+ *         first, zero if they are equivalent.
+ */
 static int
 compare_partitions_net_devices(const void *_a, const void *_b)
 {
@@ -57,8 +106,21 @@ compare_partitions_net_devices(const void *_a, const void *_b)
 }
 
 
+/** @brief Helper class that brings up the IP network stack for net-boot.
+ *
+ * Scans /dev/net for ethernet interfaces, matches one by MAC address, and
+ * assigns the client IP address, network mask, broadcast address, and default
+ * route provided by the boot loader.
+ */
 class NetStackInitializer {
 public:
+	/** @brief Construct a NetStackInitializer with the boot-loader supplied parameters.
+	 *
+	 * @param clientMAC  48-bit Ethernet MAC address of the boot interface, packed
+	 *                   into the low 48 bits of a uint64.
+	 * @param clientIP   IPv4 address to assign to the interface (host byte order).
+	 * @param netMask    IPv4 network mask to assign (host byte order).
+	 */
 	NetStackInitializer(uint64 clientMAC, uint32 clientIP, uint32 netMask)
 		:
 		fSocket(-1),
@@ -71,6 +133,7 @@ public:
 	{
 	}
 
+	/** @brief Destructor — closes any open control sockets. */
 	~NetStackInitializer()
 	{
 		// close control sockets
@@ -81,6 +144,16 @@ public:
 			close(fLinkSocket);
 	}
 
+	/** @brief Open control sockets and scan /dev/net for the boot interface.
+	 *
+	 * Opens an AF_INET and an AF_LINK control socket, then recursively scans
+	 * /dev/net until an ethernet interface whose MAC matches fClientMAC is
+	 * found and fully configured.
+	 *
+	 * @return B_OK if the boot interface was found and configured successfully,
+	 *         @c errno on socket failure, or B_ERROR if no matching interface
+	 *         was found.
+	 */
 	status_t Init()
 	{
 		// open a control socket for playing with the stack
@@ -112,6 +185,15 @@ public:
 	}
 
 private:
+	/** @brief Recursively scan a directory tree under /dev/net for network devices.
+	 *
+	 * For each entry that is a directory, recurses; for each entry that is a
+	 * character or block device, calls _ScanDevice().  Stops scanning as soon
+	 * as fFoundInterface becomes @c true.
+	 *
+	 * @param path  Current directory path; modified in place (leaf appended and
+	 *              removed during recursion).
+	 */
 	void _ScanDevices(KPath& path)
 	{
 		DIR* dir = opendir(path.Path());
@@ -147,6 +229,15 @@ private:
 		closedir(dir);
 	}
 
+	/** @brief Attempt to configure a single network device as the boot interface.
+	 *
+	 * Adds the interface to the stack if not already present, brings it up,
+	 * reads its MAC address, and — if the MAC matches fClientMAC — assigns the
+	 * IP address, network mask, broadcast address, and a default static route.
+	 * Sets fFoundInterface and fConfiguredInterface on success.
+	 *
+	 * @param path  Kernel device path (e.g. "/dev/net/ipro1000/0").
+	 */
 	void _ScanDevice(const char* path)
 	{
 		dprintf("NetStackInitializer: scanning device %s\n", path);
@@ -301,17 +392,34 @@ private:
 // #pragma mark - NetBootMethod
 
 
+/** @brief Construct a NetBootMethod with the boot-volume message and boot method ID.
+ *
+ * @param bootVolume  Reference to the KMessage containing boot parameters
+ *                    passed by the boot loader.
+ * @param method      Numeric boot-method identifier.
+ */
 NetBootMethod::NetBootMethod(const KMessage& bootVolume, int32 method)
 	: BootMethod(bootVolume, method)
 {
 }
 
 
+/** @brief Destructor for NetBootMethod. */
 NetBootMethod::~NetBootMethod()
 {
 }
 
 
+/** @brief Initialise the network boot method.
+ *
+ * Reads the client MAC address, IP address, and network mask from the boot
+ * volume message (choosing a classful default mask when none is present),
+ * then invokes NetStackInitializer to bring up the matching network interface.
+ *
+ * @return B_OK if the network interface was configured successfully,
+ *         B_ERROR if required boot parameters are missing, or any error
+ *         returned by NetStackInitializer::Init().
+ */
 status_t
 NetBootMethod::Init()
 {
@@ -358,6 +466,14 @@ NetBootMethod::Init()
 }
 
 
+/** @brief Determine whether a disk device is a valid net-boot boot device.
+ *
+ * Accepts only NBD and RemoteDisk virtual disk devices.
+ *
+ * @param device  The disk device to test.
+ * @param strict  Unused; present to match the BootMethod interface.
+ * @return @c true if the device path is under the NBD or RemoteDisk subtree.
+ */
 bool
 NetBootMethod::IsBootDevice(KDiskDevice* device, bool strict)
 {
@@ -367,6 +483,15 @@ NetBootMethod::IsBootDevice(KDiskDevice* device, bool strict)
 }
 
 
+/** @brief Determine whether a partition is a valid net-boot root partition.
+ *
+ * Accepts any BFS-formatted partition unconditionally; sets foundForSure to
+ * @c false (the caller should keep looking).
+ *
+ * @param partition     The partition to test.
+ * @param foundForSure  Always left unchanged (not set to @c true).
+ * @return @c true if the partition content type is BFS.
+ */
 bool
 NetBootMethod::IsBootPartition(KPartition* partition, bool& foundForSure)
 {
@@ -376,6 +501,13 @@ NetBootMethod::IsBootPartition(KPartition* partition, bool& foundForSure)
 }
 
 
+/** @brief Sort a partition list so that network-backed partitions come last.
+ *
+ * Delegates to compare_partitions_net_devices() via qsort().
+ *
+ * @param partitions  Array of KPartition pointers to sort in place.
+ * @param count       Number of elements in @p partitions.
+ */
 void
 NetBootMethod::SortPartitions(KPartition** partitions, int32 count)
 {

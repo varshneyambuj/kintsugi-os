@@ -1,6 +1,29 @@
 /*
- * Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file EntryCache.cpp
+ * @brief VFS directory entry cache — maps (directory vnode, name) pairs to child vnode IDs for fast lookup.
  */
 
 
@@ -18,6 +41,11 @@ static const int32 kEntryRemoved = -2;
 // #pragma mark - EntryCacheGeneration
 
 
+/** @brief Default constructor for EntryCacheGeneration.
+ *
+ * Initialises the generation slot with a zero next_index and a NULL entries
+ * pointer.  The generation is not usable until Init() has been called.
+ */
 EntryCacheGeneration::EntryCacheGeneration()
 	:
 	next_index(0),
@@ -26,12 +54,21 @@ EntryCacheGeneration::EntryCacheGeneration()
 }
 
 
+/** @brief Destructor for EntryCacheGeneration.
+ *
+ * Releases the heap-allocated entries array that was allocated by Init().
+ */
 EntryCacheGeneration::~EntryCacheGeneration()
 {
 	delete[] entries;
 }
 
 
+/** @brief Allocate and zero-initialise the entries array for this generation.
+ *
+ * @param entriesSize  Number of EntryCacheEntry pointer slots to allocate.
+ * @return B_OK on success, or B_NO_MEMORY if the allocation fails.
+ */
 status_t
 EntryCacheGeneration::Init(int32 entriesSize)
 {
@@ -48,6 +85,11 @@ EntryCacheGeneration::Init(int32 entriesSize)
 // #pragma mark - EntryCache
 
 
+/** @brief Default constructor for EntryCache.
+ *
+ * Sets the generation count to zero and initialises the reader/writer lock.
+ * Call Init() before using any other method.
+ */
 EntryCache::EntryCache()
 	:
 	fGenerationCount(0),
@@ -60,6 +102,11 @@ EntryCache::EntryCache()
 }
 
 
+/** @brief Destructor for EntryCache.
+ *
+ * Drains the hash table, frees every cached entry, releases the generations
+ * array, and destroys the reader/writer lock.
+ */
 EntryCache::~EntryCache()
 {
 	// delete entries
@@ -75,6 +122,13 @@ EntryCache::~EntryCache()
 }
 
 
+/** @brief Initialise the entry cache, allocating generation rings.
+ *
+ * Chooses the number of generations and their sizes based on the amount of
+ * available physical memory, then allocates and zeroes all generation arrays.
+ *
+ * @return B_OK on success, or an error code if any allocation fails.
+ */
 status_t
 EntryCache::Init()
 {
@@ -106,6 +160,19 @@ EntryCache::Init()
 }
 
 
+/** @brief Insert or update a (dirID, name) -> nodeID mapping in the cache.
+ *
+ * If an entry for the given key already exists its node_id and missing flag
+ * are updated in place; otherwise a new entry is allocated and inserted.
+ * The entry is also promoted to the current generation ring slot.
+ *
+ * @param dirID    Inode number of the directory that contains the entry.
+ * @param name     Name of the directory entry (NUL-terminated).
+ * @param nodeID   Inode number of the child node.
+ * @param missing  @c true when the entry is a negative cache hit (the name
+ *                 is known not to exist in the directory).
+ * @return B_OK on success, or B_NO_MEMORY if allocation fails.
+ */
 status_t
 EntryCache::Add(ino_t dirID, const char* name, ino_t nodeID, bool missing)
 {
@@ -147,6 +214,17 @@ EntryCache::Add(ino_t dirID, const char* name, ino_t nodeID, bool missing)
 }
 
 
+/** @brief Remove the cache entry for a given (dirID, name) pair.
+ *
+ * Looks up the entry in the hash table, removes it, and — if the entry is not
+ * currently being moved between generations by another thread — frees it
+ * immediately.  If another thread holds a reference, the entry is marked with
+ * @c kEntryRemoved and the other thread will free it.
+ *
+ * @param dirID  Inode number of the directory that contains the entry.
+ * @param name   Name of the directory entry (NUL-terminated).
+ * @return B_OK if the entry was found and removed, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 EntryCache::Remove(ino_t dirID, const char* name)
 {
@@ -176,6 +254,17 @@ EntryCache::Remove(ino_t dirID, const char* name)
 }
 
 
+/** @brief Look up a (dirID, name) pair and return the associated vnode ID.
+ *
+ * Searches the hash table for the given key.  On a cache hit the entry is
+ * promoted to the current generation ring so that it ages out less quickly.
+ *
+ * @param dirID    Inode number of the directory to search in.
+ * @param name     Name to look up (NUL-terminated).
+ * @param _nodeID  On success, receives the inode number of the child node.
+ * @param _missing On success, receives @c true if this is a negative cache hit.
+ * @return @c true on a cache hit, @c false if the entry is not cached.
+ */
 bool
 EntryCache::Lookup(ino_t dirID, const char* name, ino_t& _nodeID,
 	bool& _missing)
@@ -196,6 +285,16 @@ EntryCache::Lookup(ino_t dirID, const char* name, ino_t& _nodeID,
 }
 
 
+/** @brief Reverse-lookup: find an entry whose node_id matches the given inode.
+ *
+ * Iterates the entire hash table looking for a non-dot/dotdot entry with a
+ * matching node_id.  This is intended for kernel debugger use only and is
+ * not lock-protected.
+ *
+ * @param nodeID  Inode number to search for.
+ * @param _dirID  On success, receives the inode number of the parent directory.
+ * @return Pointer to the cached name string on success, or NULL if not found.
+ */
 const char*
 EntryCache::DebugReverseLookup(ino_t nodeID, ino_t& _dirID)
 {
@@ -212,6 +311,24 @@ EntryCache::DebugReverseLookup(ino_t nodeID, ino_t& _dirID)
 }
 
 
+/** @brief Place (or move) an entry into the current generation ring slot.
+ *
+ * If @p move is @c true the entry is relocated from its current generation
+ * to the current one; otherwise it is simply inserted for the first time.
+ * When the current generation ring is full the oldest generation is evicted
+ * and its entries are freed.
+ *
+ * The caller must already hold the read lock (or the lock must have been
+ * detached to this thread) before calling this function; the function may
+ * temporarily upgrade to a write lock.
+ *
+ * @param entry  Pointer to the cache entry to place.
+ * @param move   @c true if the entry already lives in another generation and
+ *               must be moved, @c false if it is being inserted for the first
+ *               time.
+ * @return @c true if the entry is alive after the call, @c false if it was
+ *         found to have been concurrently removed and has been freed.
+ */
 bool
 EntryCache::_AddEntryToCurrentGeneration(EntryCacheEntry* entry, bool move)
 {

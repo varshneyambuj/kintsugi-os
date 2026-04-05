@@ -1,11 +1,43 @@
 /*
- * Copyright 2002-2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Axel Dörfler, axeld@pinc-software.de
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2013, Haiku, Inc. All Rights Reserved.
+ *   Authors:
+ *       Tyler Dauwalder
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file AppMetaMimeCreator.cpp
+ * @brief Creates and populates MIME database entries from application metadata.
+ *
+ * This file implements AppMetaMimeCreator, which inspects application files for
+ * embedded metadata (signature, icons, supported types, etc.) and registers
+ * those details into the MIME database. It reads BEOS:APP_SIG and related
+ * resource/attribute data, installing or updating the corresponding MIME type
+ * entry under the database location. Deferred notifications are used so that
+ * observers receive a single batched update after all fields are written.
+ *
+ * @see AppMetaMimeCreator
  */
 
 
@@ -32,6 +64,13 @@ namespace Storage {
 namespace Mime {
 
 
+/**
+ * @brief Constructs an AppMetaMimeCreator.
+ *
+ * @param database       Pointer to the MIME Database instance to update.
+ * @param databaseLocker Pointer to the locker guarding the database.
+ * @param force          Force-update flag forwarded to MimeEntryProcessor.
+ */
 AppMetaMimeCreator::AppMetaMimeCreator(Database* database,
 	DatabaseLocker* databaseLocker, int32 force)
 	:
@@ -40,11 +79,30 @@ AppMetaMimeCreator::AppMetaMimeCreator(Database* database,
 }
 
 
+/**
+ * @brief Destroys the AppMetaMimeCreator.
+ */
 AppMetaMimeCreator::~AppMetaMimeCreator()
 {
 }
 
 
+/**
+ * @brief Processes a filesystem entry and creates or updates its MIME database record.
+ *
+ * Opens the entry as a file and reads its application signature from the
+ * BEOS:APP_SIG attribute.  If the signature is valid the method installs the
+ * type (if absent) and then conditionally writes the preferred app, short
+ * description, app hint, icons, and supported-types attributes — respecting
+ * the force flag.  Deferred install notifications are used to batch observer
+ * updates for every supported type touched during the operation.
+ *
+ * @param entry       Reference to the filesystem entry to process.
+ * @param _entryIsDir Optional output parameter set to true when the entry is
+ *                    a directory.
+ * @return B_OK on success, B_BAD_TYPE if the entry has no valid app signature,
+ *         or another error code on failure.
+ */
 status_t
 AppMetaMimeCreator::Do(const entry_ref& entry, bool* _entryIsDir)
 {

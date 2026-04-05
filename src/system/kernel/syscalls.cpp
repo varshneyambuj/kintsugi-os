@@ -1,13 +1,38 @@
 /*
- * Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2004-2010, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2004-2010, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
 
-
-/*!	Big case statement for dispatching syscalls, as well as the generic
-	syscall interface.
-*/
+/**
+ * @file syscalls.cpp
+ * @brief Syscall dispatch table and generic syscall interface.
+ *
+ * Contains the big switch statement that maps syscall numbers to their
+ * kernel handler functions, and implements the generic_syscall() mechanism
+ * that allows add-ons to register additional syscall handlers at runtime.
+ *
+ * @see thread.cpp, vfs.cpp
+ */
 
 
 #include <syscalls.h>
@@ -104,12 +129,29 @@ find_generic_syscall(const char* subsystem)
 }
 
 
-/*!	Calls the generic syscall subsystem if any.
-	Also handles the special generic syscall function \c B_SYSCALL_INFO.
-	Returns \c B_NAME_NOT_FOUND if either the subsystem was not found, or
-	the subsystem does not support the requested function.
-	All other return codes are depending on the generic syscall implementation.
-*/
+/**
+ * @brief Syscall: invoke a registered generic syscall subsystem from user space.
+ *
+ * Looks up the subsystem named by @p userSubsystem and dispatches @p function
+ * to its hook. Also handles the reserved B_SYSCALL_INFO function, which
+ * returns the subsystem's current version number.
+ *
+ * Returns B_NAME_NOT_FOUND if either the subsystem was not found, or
+ * the subsystem does not support the requested function.
+ * All other return codes depend on the generic syscall implementation.
+ *
+ * @param userSubsystem User-space string naming the subsystem (e.g. "disk_device").
+ * @param function      Function code to invoke within the subsystem.
+ * @param buffer        In/out buffer whose meaning is defined by the subsystem.
+ * @param bufferSize    Size of @p buffer in bytes.
+ * @retval B_OK              The subsystem hook returned B_OK.
+ * @retval B_BAD_ADDRESS     @p userSubsystem is not a valid user-space pointer.
+ * @retval B_NAME_NOT_FOUND  No subsystem with that name is registered, or the
+ *                           subsystem does not handle @p function.
+ * @retval B_BAD_VALUE       B_SYSCALL_INFO was requested but @p bufferSize is wrong.
+ * @retval B_BAD_TYPE        B_SYSCALL_INFO was requested but the caller's version
+ *                           is older than the registered version.
+ */
 status_t
 _user_generic_syscall(const char* userSubsystem, uint32 function,
 	void* buffer, size_t bufferSize)
@@ -191,6 +233,20 @@ _user_is_computer_on(void)
 //	#pragma mark -
 
 
+/**
+ * @brief Central syscall dispatcher: maps a syscall index to its kernel handler.
+ *
+ * Called from the architecture-specific syscall entry path. Invokes the
+ * pre- and post-syscall debug hooks, then uses a generated switch statement
+ * (from syscall_dispatcher.h) to call the appropriate handler and store the
+ * 64-bit return value.
+ *
+ * @param callIndex     The syscall number extracted from the trap frame.
+ * @param args          Pointer to the packed syscall argument block.
+ * @param _returnValue  Out-parameter; receives the handler's return value.
+ * @return B_HANDLED_INTERRUPT always, so the interrupt handler knows the
+ *         trap was consumed.
+ */
 int32
 syscall_dispatcher(uint32 callIndex, void* args, uint64* _returnValue)
 {
@@ -238,6 +294,28 @@ generic_syscall_init(void)
 // #pragma mark - public API
 
 
+/**
+ * @brief Register a new generic syscall subsystem.
+ *
+ * Makes @p hook callable from user space via _user_generic_syscall() under
+ * the name @p subsystem. If a handler for the subsystem already exists the
+ * behaviour depends on @p flags:
+ * - B_DO_NOT_REPLACE_SYSCALL: returns B_NAME_IN_USE without replacing.
+ * - B_SYSCALL_NOT_REPLACEABLE on the existing entry: returns B_NOT_ALLOWED.
+ * Otherwise the existing entry is superseded and the new one takes over (the
+ * old one is saved as @c previous so it can be restored on unregister).
+ *
+ * @param subsystem Null-terminated name string for the subsystem.
+ * @param hook      Handler function invoked for every call to this subsystem.
+ * @param version   Version number advertised via B_SYSCALL_INFO.
+ * @param flags     Combination of B_DO_NOT_REPLACE_SYSCALL and
+ *                  B_SYSCALL_NOT_REPLACEABLE flags.
+ * @retval B_OK           The subsystem was registered successfully.
+ * @retval B_BAD_VALUE    @p hook is @c NULL.
+ * @retval B_NAME_IN_USE  A handler already exists and replacement is disallowed.
+ * @retval B_NOT_ALLOWED  The existing handler is marked not-replaceable.
+ * @retval B_NO_MEMORY    Allocation of the internal record failed.
+ */
 status_t
 register_generic_syscall(const char* subsystem, syscall_hook hook,
 	uint32 version, uint32 flags)
@@ -279,6 +357,20 @@ register_generic_syscall(const char* subsystem, syscall_hook hook,
 }
 
 
+/**
+ * @brief Unregister a previously registered generic syscall subsystem.
+ *
+ * Marks the subsystem invalid so no new calls are dispatched to it, then
+ * waits (blocking) until all in-flight calls complete. Once quiesced, removes
+ * the entry and reinstates the previous handler if one was displaced during
+ * registration.
+ *
+ * @param subsystem Null-terminated name of the subsystem to remove.
+ * @param version   Version of the handler to remove (currently unused; any
+ *                  version matching the name is removed).
+ * @retval B_OK              The subsystem was unregistered successfully.
+ * @retval B_NAME_NOT_FOUND  No subsystem with that name is registered.
+ */
 status_t
 unregister_generic_syscall(const char* subsystem, uint32 version)
 {

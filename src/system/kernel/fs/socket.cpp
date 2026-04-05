@@ -1,7 +1,37 @@
 /*
- * Copyright 2009-2010, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file socket.cpp
+ * @brief Kernel socket VFS interface — exposes BSD sockets as VFS file descriptors.
+ *
+ * Bridges the BSD socket API (socket, bind, connect, send, recv, etc.) into
+ * the VFS layer so that sockets can be treated as file descriptors. Delegates
+ * to the net stack add-on loaded at runtime.
+ *
+ * @see fifo.cpp, vfs.cpp
  */
 
 
@@ -48,6 +78,17 @@ static int32 sStackInterfaceConsumers = 0;
 static rw_lock sLock = RW_LOCK_INITIALIZER("stack interface");
 
 
+/**
+ * @brief Acquire a reference to the net stack interface module, loading it if needed.
+ *
+ * Atomically increments the consumer count, then returns the already-loaded
+ * module under a read lock. If the module is not yet loaded, upgrades to a
+ * write lock and loads NET_STACK_INTERFACE_MODULE_NAME.
+ *
+ * @return Pointer to the net_stack_interface_module_info on success, or NULL
+ *         if the module could not be loaded (consumer count is decremented
+ *         in that case).
+ */
 static net_stack_interface_module_info*
 get_stack_interface_module()
 {
@@ -77,6 +118,12 @@ get_stack_interface_module()
 }
 
 
+/**
+ * @brief Release a previously acquired reference to the net stack interface module.
+ *
+ * Decrements the consumer count. On KDEBUG kernels, unloads the module when
+ * the count reaches zero. On non-KDEBUG kernels the module is kept resident.
+ */
 static void
 put_stack_interface_module()
 {
@@ -97,6 +144,20 @@ put_stack_interface_module()
 }
 
 
+/**
+ * @brief Copy a socket address from userland into a kernel-side buffer.
+ *
+ * Validates that the address pointer is a legal user address and that the
+ * length is within MAX_SOCKET_ADDRESS_LENGTH, then copies @p addressLength
+ * bytes and sets @p address->ss_len to the given length.
+ *
+ * @param userAddress   The userland socket address pointer.
+ * @param addressLength The number of bytes to copy.
+ * @param address       Destination kernel-side sockaddr_storage buffer.
+ * @retval B_OK          Address copied successfully.
+ * @retval B_BAD_VALUE   @p userAddress is NULL or @p addressLength is out of range.
+ * @retval B_BAD_ADDRESS @p userAddress is not a valid user address.
+ */
 static status_t
 copy_address_from_userland(const sockaddr* userAddress, socklen_t addressLength,
 	sockaddr_storage* address)
@@ -117,6 +178,22 @@ copy_address_from_userland(const sockaddr* userAddress, socklen_t addressLength,
 }
 
 
+/**
+ * @brief Validate and prepare the output address buffer for a userland accept/getpeername call.
+ *
+ * Checks that @p _addressLength is a valid user pointer, reads the buffer
+ * size from userland, clamps it to MAX_SOCKET_ADDRESS_LENGTH, and validates
+ * @p userAddress appropriately (required or optional, depending on
+ * @p addressRequired).
+ *
+ * @param userAddress     The userland address buffer pointer (may be adjusted).
+ * @param _addressLength  Userland pointer to the address length field.
+ * @param addressLength   Output: the clamped address buffer size.
+ * @param addressRequired If true, a NULL @p userAddress is an error.
+ * @retval B_OK          Parameters are valid; @p addressLength is populated.
+ * @retval B_BAD_VALUE   @p _addressLength is NULL or @p userAddress is required but NULL.
+ * @retval B_BAD_ADDRESS A pointer failed the IS_USER_ADDRESS check.
+ */
 static status_t
 prepare_userland_address_result(struct sockaddr*& userAddress,
 	socklen_t* _addressLength, socklen_t& addressLength, bool addressRequired)
@@ -152,6 +229,21 @@ prepare_userland_address_result(struct sockaddr*& userAddress,
 }
 
 
+/**
+ * @brief Copy a socket address and its length back to userland.
+ *
+ * Writes @p addressLength to @p userAddressLength, then copies up to
+ * min(@p addressLength, @p userAddressBufferSize) bytes of @p address to
+ * @p userAddress.
+ *
+ * @param address               Kernel-side address buffer.
+ * @param addressLength         Actual length of the address.
+ * @param userAddress           Destination userland address buffer (may be NULL).
+ * @param userAddressBufferSize Size of @p userAddress in userland.
+ * @param userAddressLength     Userland pointer to receive the address length.
+ * @retval B_OK          Data copied successfully.
+ * @retval B_BAD_ADDRESS A user_memcpy call failed.
+ */
 static status_t
 copy_address_to_userland(const void* address, socklen_t addressLength,
 	sockaddr* userAddress, socklen_t userAddressBufferSize,
@@ -170,6 +262,25 @@ copy_address_to_userland(const void* address, socklen_t addressLength,
 }
 
 
+/**
+ * @brief Copy and validate a userland msghdr along with its iovec array and address.
+ *
+ * Copies the msghdr struct from userland, validates and copies the iovec
+ * array (up to IOV_MAX entries), validates the msg_name pointer and clamps
+ * msg_namelen, and sets msg_name to the kernel-side @p address buffer.
+ *
+ * @param userMessage  Userland pointer to the msghdr to copy.
+ * @param message      Output: kernel-side copy of the msghdr.
+ * @param userVecs     Output: original userland iovec pointer saved from the message.
+ * @param vecsDeleter  Deleter that owns the heap-allocated kernel iovec copy.
+ * @param userAddress  Output: original userland msg_name pointer.
+ * @param address      Kernel-side buffer (MAX_SOCKET_ADDRESS_LENGTH bytes) for msg_name.
+ * @retval B_OK        Message prepared successfully.
+ * @retval B_BAD_VALUE @p userMessage is NULL or iovec count is out of range.
+ * @retval B_BAD_ADDRESS A user address check failed.
+ * @retval B_NO_MEMORY iovec array allocation failed.
+ * @retval EMSGSIZE    msg_iovlen exceeds IOV_MAX.
+ */
 static status_t
 prepare_userland_msghdr(const msghdr* userMessage, msghdr& message,
 	iovec*& userVecs, MemoryDeleter& vecsDeleter, void*& userAddress,
@@ -224,6 +335,19 @@ prepare_userland_msghdr(const msghdr* userMessage, msghdr& message,
 // #pragma mark - socket file descriptor
 
 
+/**
+ * @brief Read data from a socket file descriptor.
+ *
+ * Delegates to the net stack's recv() with flags=0. Updates @p *_length
+ * with the number of bytes actually read.
+ *
+ * @param descriptor The socket file descriptor.
+ * @param pos        File position (ignored for sockets).
+ * @param buffer     Destination buffer for received data.
+ * @param _length    Input: buffer capacity; output: bytes received.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_read(struct file_descriptor *descriptor, off_t pos, void *buffer,
 	size_t *_length)
@@ -235,6 +359,19 @@ socket_read(struct file_descriptor *descriptor, off_t pos, void *buffer,
 }
 
 
+/**
+ * @brief Write data to a socket file descriptor.
+ *
+ * Delegates to the net stack's send() with flags=0. Updates @p *_length
+ * with the number of bytes actually sent.
+ *
+ * @param descriptor The socket file descriptor.
+ * @param pos        File position (ignored for sockets).
+ * @param buffer     Source buffer containing data to send.
+ * @param _length    Input: bytes to send; output: bytes sent.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_write(struct file_descriptor *descriptor, off_t pos, const void *buffer,
 	size_t *_length)
@@ -246,6 +383,18 @@ socket_write(struct file_descriptor *descriptor, off_t pos, const void *buffer,
 }
 
 
+/**
+ * @brief Read data from a socket into a scatter-gather iovec array.
+ *
+ * Wraps the iovec array in a zero-initialised msghdr and delegates to
+ * the net stack's recvmsg().
+ *
+ * @param descriptor The socket file descriptor.
+ * @param pos        File position (ignored for sockets).
+ * @param vecs       Array of iovec buffers to receive data into.
+ * @param count      Number of elements in @p vecs.
+ * @return Number of bytes received on success, or a negative error code.
+ */
 static ssize_t
 socket_readv(struct file_descriptor *descriptor, off_t pos,
 	const struct iovec *vecs, int count)
@@ -257,6 +406,18 @@ socket_readv(struct file_descriptor *descriptor, off_t pos,
 }
 
 
+/**
+ * @brief Write data from a scatter-gather iovec array to a socket.
+ *
+ * Wraps the iovec array in a zero-initialised msghdr and delegates to
+ * the net stack's sendmsg().
+ *
+ * @param descriptor The socket file descriptor.
+ * @param pos        File position (ignored for sockets).
+ * @param vecs       Array of iovec buffers containing data to send.
+ * @param count      Number of elements in @p vecs.
+ * @return Number of bytes sent on success, or a negative error code.
+ */
 static ssize_t
 socket_writev(struct file_descriptor *descriptor, off_t pos,
 	const struct iovec *vecs, int count)
@@ -268,6 +429,18 @@ socket_writev(struct file_descriptor *descriptor, off_t pos,
 }
 
 
+/**
+ * @brief Perform an ioctl operation on a socket file descriptor.
+ *
+ * Forwards the request directly to the net stack's ioctl() handler.
+ *
+ * @param descriptor The socket file descriptor.
+ * @param op         The ioctl request code.
+ * @param buffer     The ioctl argument buffer.
+ * @param length     Size of @p buffer in bytes.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_ioctl(struct file_descriptor *descriptor, ulong op, void *buffer,
 	size_t length)
@@ -276,6 +449,18 @@ socket_ioctl(struct file_descriptor *descriptor, ulong op, void *buffer,
 }
 
 
+/**
+ * @brief Set the blocking/non-blocking I/O flag on a socket file descriptor.
+ *
+ * Translates the VFS O_NONBLOCK flag into a B_SET_NONBLOCKING_IO or
+ * B_SET_BLOCKING_IO ioctl directed at the net stack. O_APPEND is silently
+ * ignored.
+ *
+ * @param descriptor The socket file descriptor.
+ * @param flags      New open-mode flags; only O_NONBLOCK is acted upon.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_set_flags(struct file_descriptor *descriptor, int flags)
 {
@@ -287,6 +472,18 @@ socket_set_flags(struct file_descriptor *descriptor, int flags)
 }
 
 
+/**
+ * @brief Register a select sync object for a socket event.
+ *
+ * Delegates to the net stack's select() to arm notification of the given
+ * I/O event (B_SELECT_READ, B_SELECT_WRITE, etc.).
+ *
+ * @param descriptor The socket file descriptor.
+ * @param event      The event type to monitor.
+ * @param sync       The selectsync object to notify when the event fires.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_select(struct file_descriptor *descriptor, uint8 event,
 	struct selectsync *sync)
@@ -295,6 +492,18 @@ socket_select(struct file_descriptor *descriptor, uint8 event,
 }
 
 
+/**
+ * @brief Deregister a select sync object from a socket event.
+ *
+ * Delegates to the net stack's deselect() to disarm a previously armed
+ * event notification.
+ *
+ * @param descriptor The socket file descriptor.
+ * @param event      The event type to stop monitoring.
+ * @param sync       The selectsync object to remove.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_deselect(struct file_descriptor *descriptor, uint8 event,
 	struct selectsync *sync)
@@ -303,6 +512,17 @@ socket_deselect(struct file_descriptor *descriptor, uint8 event,
 }
 
 
+/**
+ * @brief Fill in a struct stat for a socket file descriptor.
+ *
+ * Sockets do not map to real filesystem inodes, so synthetic values are
+ * returned: the inode number is the kernel address of the net_socket object,
+ * mode is S_IFSOCK|0666, and all timestamps are set to the current time.
+ *
+ * @param descriptor The socket file descriptor.
+ * @param st         Output stat structure to populate.
+ * @retval B_OK Always.
+ */
 static status_t
 socket_read_stat(struct file_descriptor *descriptor, struct stat *st)
 {
@@ -330,6 +550,16 @@ socket_read_stat(struct file_descriptor *descriptor, struct stat *st)
 }
 
 
+/**
+ * @brief Close a socket file descriptor.
+ *
+ * Delegates to the net stack's close() to initiate teardown of the socket.
+ * The socket object is freed later in socket_free().
+ *
+ * @param descriptor The socket file descriptor.
+ * @retval B_OK On success.
+ * @retval <0   Network-stack error code on failure.
+ */
 static status_t
 socket_close(struct file_descriptor *descriptor)
 {
@@ -337,6 +567,15 @@ socket_close(struct file_descriptor *descriptor)
 }
 
 
+/**
+ * @brief Free the socket object associated with a file descriptor.
+ *
+ * Called after the last reference to the descriptor is dropped. Invokes
+ * the net stack's free() to release the net_socket, then releases the
+ * module reference acquired when the socket was created.
+ *
+ * @param descriptor The socket file descriptor whose resources are to be freed.
+ */
 static void
 socket_free(struct file_descriptor *descriptor)
 {
@@ -364,6 +603,20 @@ static struct fd_ops sSocketFDOps = {
 };
 
 
+/**
+ * @brief Look up and validate a socket file descriptor from the current I/O context.
+ *
+ * Retrieves the file_descriptor for @p fd and verifies that its ops pointer
+ * is sSocketFDOps. Puts the descriptor and returns ENOTSOCK if it is not a
+ * socket.
+ *
+ * @param fd         The file descriptor number to look up.
+ * @param kernel     If true use the kernel I/O context; otherwise user context.
+ * @param descriptor Output: the located file_descriptor pointer.
+ * @retval B_OK     Descriptor retrieved and is a socket.
+ * @retval EBADF    @p fd is negative or not found in the I/O context.
+ * @retval ENOTSOCK @p fd refers to a non-socket file descriptor.
+ */
 static status_t
 get_socket_descriptor(int fd, bool kernel, file_descriptor*& descriptor)
 {
@@ -383,6 +636,18 @@ get_socket_descriptor(int fd, bool kernel, file_descriptor*& descriptor)
 }
 
 
+/**
+ * @brief Allocate a VFS file descriptor for an already-created net_socket.
+ *
+ * Queries the socket's non-blocking state, builds the open-mode flags from
+ * @p flags (SOCK_CLOEXEC, SOCK_CLOFORK, SOCK_NONBLOCK), allocates a
+ * file_descriptor via alloc_fd(), and publishes it with new_fd().
+ *
+ * @param socket The net_socket object to wrap.
+ * @param flags  Socket creation flags (SOCK_CLOEXEC | SOCK_NONBLOCK | SOCK_CLOFORK).
+ * @param kernel If true publish into the kernel I/O context.
+ * @return The new file descriptor number on success, or a negative error code.
+ */
 static int
 create_socket_fd(net_socket* socket, int flags, bool kernel)
 {
@@ -433,6 +698,20 @@ create_socket_fd(net_socket* socket, int flags, bool kernel)
 // #pragma mark - common sockets API implementation
 
 
+/**
+ * @brief Common implementation for socket(2) — create a network socket.
+ *
+ * Loads the net stack module, strips creation flags from @p type, calls
+ * the stack's open(), wraps the result in a VFS file descriptor, and
+ * releases the module reference if FD allocation fails.
+ *
+ * @param family   Address family (AF_INET, AF_UNIX, etc.).
+ * @param type     Socket type (SOCK_STREAM, etc.); may include SOCK_CLOEXEC,
+ *                 SOCK_NONBLOCK, SOCK_CLOFORK.
+ * @param protocol Protocol number (0 for default).
+ * @param kernel   If true, publish into the kernel I/O context.
+ * @return New file descriptor on success, or a negative error/status code.
+ */
 static int
 common_socket(int family, int type, int protocol, bool kernel)
 {
@@ -462,6 +741,19 @@ common_socket(int family, int type, int protocol, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for bind(2).
+ *
+ * Retrieves the socket descriptor for @p fd and forwards the call to the
+ * net stack's bind().
+ *
+ * @param fd            File descriptor referring to the socket.
+ * @param address       Local address to bind to.
+ * @param addressLength Size of @p address.
+ * @param kernel        If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ * @retval EBADF / ENOTSOCK Invalid socket descriptor.
+ */
 static status_t
 common_bind(int fd, const struct sockaddr *address, socklen_t addressLength,
 	bool kernel)
@@ -474,6 +766,18 @@ common_bind(int fd, const struct sockaddr *address, socklen_t addressLength,
 }
 
 
+/**
+ * @brief Common implementation for shutdown(2).
+ *
+ * Validates @p how is in [SHUT_RD, SHUT_RDWR], then delegates to the
+ * net stack's shutdown().
+ *
+ * @param fd     File descriptor referring to the socket.
+ * @param how    SHUT_RD, SHUT_WR, or SHUT_RDWR.
+ * @param kernel If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK        On success.
+ * @retval B_BAD_VALUE @p how is out of range.
+ */
 static status_t
 common_shutdown(int fd, int how, bool kernel)
 {
@@ -488,6 +792,18 @@ common_shutdown(int fd, int how, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for connect(2).
+ *
+ * Retrieves the socket descriptor for @p fd and forwards the call to the
+ * net stack's connect().
+ *
+ * @param fd            File descriptor referring to the socket.
+ * @param address       Remote address to connect to.
+ * @param addressLength Size of @p address.
+ * @param kernel        If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ */
 static status_t
 common_connect(int fd, const struct sockaddr *address,
 	socklen_t addressLength, bool kernel)
@@ -501,6 +817,17 @@ common_connect(int fd, const struct sockaddr *address,
 }
 
 
+/**
+ * @brief Common implementation for listen(2).
+ *
+ * Retrieves the socket descriptor for @p fd and calls the net stack's
+ * listen() with the given backlog.
+ *
+ * @param fd      File descriptor referring to the socket.
+ * @param backlog Maximum pending connection queue length.
+ * @param kernel  If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ */
 static status_t
 common_listen(int fd, int backlog, bool kernel)
 {
@@ -512,6 +839,20 @@ common_listen(int fd, int backlog, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for accept(2) / accept4(2).
+ *
+ * Calls the net stack's accept(), wraps the accepted socket in a new VFS
+ * file descriptor (honouring @p flags for SOCK_CLOEXEC etc.), and acquires
+ * an additional module reference for the new FD.
+ *
+ * @param fd             Listening socket file descriptor.
+ * @param address        Output buffer for the peer address (may be NULL).
+ * @param _addressLength Input/output address buffer size.
+ * @param flags          Socket flags for the new descriptor (SOCK_CLOEXEC, etc.).
+ * @param kernel         If true, resolve @p fd in the kernel I/O context.
+ * @return New file descriptor on success, or a negative error code.
+ */
 static int
 common_accept(int fd, struct sockaddr *address, socklen_t *_addressLength, int flags,
 	bool kernel)
@@ -543,6 +884,16 @@ common_accept(int fd, struct sockaddr *address, socklen_t *_addressLength, int f
 }
 
 
+/**
+ * @brief Common implementation for recv(2).
+ *
+ * @param fd     Socket file descriptor.
+ * @param data   Destination buffer.
+ * @param length Buffer capacity in bytes.
+ * @param flags  Receive flags (MSG_PEEK, MSG_WAITALL, etc.).
+ * @param kernel If true, resolve @p fd in the kernel I/O context.
+ * @return Bytes received on success, or a negative error code.
+ */
 static ssize_t
 common_recv(int fd, void *data, size_t length, int flags, bool kernel)
 {
@@ -554,6 +905,18 @@ common_recv(int fd, void *data, size_t length, int flags, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for recvfrom(2).
+ *
+ * @param fd             Socket file descriptor.
+ * @param data           Destination buffer.
+ * @param length         Buffer capacity in bytes.
+ * @param flags          Receive flags.
+ * @param address        Output buffer for the sender's address (may be NULL).
+ * @param _addressLength Input/output size of @p address.
+ * @param kernel         If true, resolve @p fd in the kernel I/O context.
+ * @return Bytes received on success, or a negative error code.
+ */
 static ssize_t
 common_recvfrom(int fd, void *data, size_t length, int flags,
 	struct sockaddr *address, socklen_t *_addressLength, bool kernel)
@@ -567,6 +930,15 @@ common_recvfrom(int fd, void *data, size_t length, int flags,
 }
 
 
+/**
+ * @brief Common implementation for recvmsg(2).
+ *
+ * @param fd      Socket file descriptor.
+ * @param message Message header describing receive buffers and optional address.
+ * @param flags   Receive flags.
+ * @param kernel  If true, resolve @p fd in the kernel I/O context.
+ * @return Bytes received on success, or a negative error code.
+ */
 static ssize_t
 common_recvmsg(int fd, struct msghdr *message, int flags, bool kernel)
 {
@@ -578,6 +950,16 @@ common_recvmsg(int fd, struct msghdr *message, int flags, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for send(2).
+ *
+ * @param fd     Socket file descriptor.
+ * @param data   Source buffer.
+ * @param length Number of bytes to send.
+ * @param flags  Send flags (MSG_OOB, MSG_NOSIGNAL, etc.).
+ * @param kernel If true, resolve @p fd in the kernel I/O context.
+ * @return Bytes sent on success, or a negative error code.
+ */
 static ssize_t
 common_send(int fd, const void *data, size_t length, int flags, bool kernel)
 {
@@ -589,6 +971,18 @@ common_send(int fd, const void *data, size_t length, int flags, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for sendto(2).
+ *
+ * @param fd            Socket file descriptor.
+ * @param data          Source buffer.
+ * @param length        Number of bytes to send.
+ * @param flags         Send flags.
+ * @param address       Destination address (may be NULL for connected sockets).
+ * @param addressLength Size of @p address.
+ * @param kernel        If true, resolve @p fd in the kernel I/O context.
+ * @return Bytes sent on success, or a negative error code.
+ */
 static ssize_t
 common_sendto(int fd, const void *data, size_t length, int flags,
 	const struct sockaddr *address, socklen_t addressLength, bool kernel)
@@ -602,6 +996,15 @@ common_sendto(int fd, const void *data, size_t length, int flags,
 }
 
 
+/**
+ * @brief Common implementation for sendmsg(2).
+ *
+ * @param fd      Socket file descriptor.
+ * @param message Message header describing send buffers and optional address.
+ * @param flags   Send flags.
+ * @param kernel  If true, resolve @p fd in the kernel I/O context.
+ * @return Bytes sent on success, or a negative error code.
+ */
 static ssize_t
 common_sendmsg(int fd, const struct msghdr *message, int flags, bool kernel)
 {
@@ -613,6 +1016,17 @@ common_sendmsg(int fd, const struct msghdr *message, int flags, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for getsockopt(2).
+ *
+ * @param fd      Socket file descriptor.
+ * @param level   Protocol level (SOL_SOCKET, IPPROTO_TCP, etc.).
+ * @param option  Option name.
+ * @param value   Output buffer for the option value.
+ * @param _length Input/output: size of @p value.
+ * @param kernel  If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ */
 static status_t
 common_getsockopt(int fd, int level, int option, void *value,
 	socklen_t *_length, bool kernel)
@@ -626,6 +1040,17 @@ common_getsockopt(int fd, int level, int option, void *value,
 }
 
 
+/**
+ * @brief Common implementation for setsockopt(2).
+ *
+ * @param fd      Socket file descriptor.
+ * @param level   Protocol level (SOL_SOCKET, IPPROTO_TCP, etc.).
+ * @param option  Option name.
+ * @param value   Buffer containing the new option value.
+ * @param length  Size of @p value.
+ * @param kernel  If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ */
 static status_t
 common_setsockopt(int fd, int level, int option, const void *value,
 	socklen_t length, bool kernel)
@@ -639,6 +1064,15 @@ common_setsockopt(int fd, int level, int option, const void *value,
 }
 
 
+/**
+ * @brief Common implementation for getpeername(2).
+ *
+ * @param fd             Socket file descriptor.
+ * @param address        Output buffer for the remote peer address.
+ * @param _addressLength Input/output size of @p address.
+ * @param kernel         If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ */
 static status_t
 common_getpeername(int fd, struct sockaddr *address,
 	socklen_t *_addressLength, bool kernel)
@@ -652,6 +1086,15 @@ common_getpeername(int fd, struct sockaddr *address,
 }
 
 
+/**
+ * @brief Common implementation for getsockname(2).
+ *
+ * @param fd             Socket file descriptor.
+ * @param address        Output buffer for the local bound address.
+ * @param _addressLength Input/output size of @p address.
+ * @param kernel         If true, resolve @p fd in the kernel I/O context.
+ * @retval B_OK On success.
+ */
 static status_t
 common_getsockname(int fd, struct sockaddr *address,
 	socklen_t *_addressLength, bool kernel)
@@ -665,6 +1108,16 @@ common_getsockname(int fd, struct sockaddr *address,
 }
 
 
+/**
+ * @brief Common implementation for sockatmark(3).
+ *
+ * Tests whether the read pointer is currently positioned at an out-of-band
+ * mark on the socket.
+ *
+ * @param fd     Socket file descriptor.
+ * @param kernel If true, resolve @p fd in the kernel I/O context.
+ * @return 1 if at OOB mark, 0 if not, or a negative error code.
+ */
 static int
 common_sockatmark(int fd, bool kernel)
 {
@@ -676,6 +1129,21 @@ common_sockatmark(int fd, bool kernel)
 }
 
 
+/**
+ * @brief Common implementation for socketpair(2).
+ *
+ * Loads the net stack module, strips creation flags from @p type, calls
+ * the stack's socketpair(), wraps each socket in a VFS file descriptor,
+ * and acquires an extra module reference for the second FD.
+ *
+ * @param family   Address family (typically AF_UNIX).
+ * @param type     Socket type (SOCK_STREAM, etc.) plus optional SOCK_CLOEXEC etc.
+ * @param protocol Protocol number.
+ * @param fds      Output array of two file descriptor numbers.
+ * @param kernel   If true, publish FDs in the kernel I/O context.
+ * @retval B_OK         Both FDs created successfully.
+ * @retval B_UNSUPPORTED Net stack could not be loaded.
+ */
 static status_t
 common_socketpair(int family, int type, int protocol, int fds[2], bool kernel)
 {
@@ -710,6 +1178,18 @@ common_socketpair(int family, int type, int protocol, int fds[2], bool kernel)
 }
 
 
+/**
+ * @brief Retrieve the next socket statistics entry for a given address family.
+ *
+ * Loads the net stack module (if not already loaded), delegates to
+ * get_next_socket_stat(), and releases the module reference.
+ *
+ * @param family  Address family to enumerate (0 for all).
+ * @param cookie  Opaque iteration cookie; updated on each call.
+ * @param stat    Output: net_stat structure populated with socket info.
+ * @retval B_OK          Entry returned.
+ * @retval B_UNSUPPORTED Net stack could not be loaded.
+ */
 static status_t
 common_get_next_socket_stat(int family, uint32 *cookie, struct net_stat *stat)
 {
@@ -727,6 +1207,17 @@ common_get_next_socket_stat(int family, uint32 *cookie, struct net_stat *stat)
 // #pragma mark - kernel sockets API
 
 
+/**
+ * @brief Kernel-internal socket(2) — create a socket from kernel code.
+ *
+ * Clears the syscall-restart flag and delegates to common_socket() with
+ * kernel=true.
+ *
+ * @param family   Address family.
+ * @param type     Socket type (SOCK_STREAM, etc.).
+ * @param protocol Protocol number.
+ * @return New file descriptor or a negated errno value.
+ */
 int
 socket(int family, int type, int protocol)
 {
@@ -735,6 +1226,14 @@ socket(int family, int type, int protocol)
 }
 
 
+/**
+ * @brief Kernel-internal bind(2).
+ *
+ * @param socket        File descriptor referring to the socket.
+ * @param address       Local address to bind.
+ * @param addressLength Size of @p address.
+ * @return 0 on success or a negated errno value.
+ */
 int
 bind(int socket, const struct sockaddr *address, socklen_t addressLength)
 {
@@ -743,6 +1242,13 @@ bind(int socket, const struct sockaddr *address, socklen_t addressLength)
 }
 
 
+/**
+ * @brief Kernel-internal shutdown(2).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param how    SHUT_RD, SHUT_WR, or SHUT_RDWR.
+ * @return 0 on success or a negated errno value.
+ */
 int
 shutdown(int socket, int how)
 {
@@ -751,6 +1257,14 @@ shutdown(int socket, int how)
 }
 
 
+/**
+ * @brief Kernel-internal connect(2).
+ *
+ * @param socket        File descriptor referring to the socket.
+ * @param address       Remote address to connect to.
+ * @param addressLength Size of @p address.
+ * @return 0 on success or a negated errno value.
+ */
 int
 connect(int socket, const struct sockaddr *address, socklen_t addressLength)
 {
@@ -759,6 +1273,13 @@ connect(int socket, const struct sockaddr *address, socklen_t addressLength)
 }
 
 
+/**
+ * @brief Kernel-internal listen(2).
+ *
+ * @param socket  File descriptor referring to the socket.
+ * @param backlog Maximum pending connection queue length.
+ * @return 0 on success or a negated errno value.
+ */
 int
 listen(int socket, int backlog)
 {
@@ -767,6 +1288,14 @@ listen(int socket, int backlog)
 }
 
 
+/**
+ * @brief Kernel-internal accept(2).
+ *
+ * @param socket         Listening socket file descriptor.
+ * @param address        Output buffer for the peer address (may be NULL).
+ * @param _addressLength Input/output size of @p address.
+ * @return New file descriptor on success or a negated errno value.
+ */
 int
 accept(int socket, struct sockaddr *address, socklen_t *_addressLength)
 {
@@ -775,6 +1304,18 @@ accept(int socket, struct sockaddr *address, socklen_t *_addressLength)
 }
 
 
+/**
+ * @brief Kernel-internal accept4(2).
+ *
+ * Like accept() but allows specifying SOCK_CLOEXEC / SOCK_NONBLOCK / SOCK_CLOFORK
+ * flags for the new descriptor.
+ *
+ * @param socket         Listening socket file descriptor.
+ * @param address        Output buffer for the peer address (may be NULL).
+ * @param _addressLength Input/output size of @p address.
+ * @param flags          Socket flags for the accepted descriptor.
+ * @return New file descriptor on success or a negated errno value.
+ */
 int
 accept4(int socket, struct sockaddr *address, socklen_t *_addressLength, int flags)
 {
@@ -783,6 +1324,15 @@ accept4(int socket, struct sockaddr *address, socklen_t *_addressLength, int fla
 }
 
 
+/**
+ * @brief Kernel-internal recv(2).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param data   Destination buffer.
+ * @param length Buffer capacity.
+ * @param flags  Receive flags.
+ * @return Bytes received or a negated errno value.
+ */
 ssize_t
 recv(int socket, void *data, size_t length, int flags)
 {
@@ -791,6 +1341,17 @@ recv(int socket, void *data, size_t length, int flags)
 }
 
 
+/**
+ * @brief Kernel-internal recvfrom(2).
+ *
+ * @param socket         File descriptor referring to the socket.
+ * @param data           Destination buffer.
+ * @param length         Buffer capacity.
+ * @param flags          Receive flags.
+ * @param address        Output buffer for the sender address (may be NULL).
+ * @param _addressLength Input/output size of @p address.
+ * @return Bytes received or a negated errno value.
+ */
 ssize_t
 recvfrom(int socket, void *data, size_t length, int flags,
 	struct sockaddr *address, socklen_t *_addressLength)
@@ -801,6 +1362,14 @@ recvfrom(int socket, void *data, size_t length, int flags,
 }
 
 
+/**
+ * @brief Kernel-internal recvmsg(2).
+ *
+ * @param socket  File descriptor referring to the socket.
+ * @param message Message header for the receive operation.
+ * @param flags   Receive flags.
+ * @return Bytes received or a negated errno value.
+ */
 ssize_t
 recvmsg(int socket, struct msghdr *message, int flags)
 {
@@ -809,6 +1378,15 @@ recvmsg(int socket, struct msghdr *message, int flags)
 }
 
 
+/**
+ * @brief Kernel-internal send(2).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param data   Source buffer.
+ * @param length Number of bytes to send.
+ * @param flags  Send flags.
+ * @return Bytes sent or a negated errno value.
+ */
 ssize_t
 send(int socket, const void *data, size_t length, int flags)
 {
@@ -817,6 +1395,17 @@ send(int socket, const void *data, size_t length, int flags)
 }
 
 
+/**
+ * @brief Kernel-internal sendto(2).
+ *
+ * @param socket        File descriptor referring to the socket.
+ * @param data          Source buffer.
+ * @param length        Number of bytes to send.
+ * @param flags         Send flags.
+ * @param address       Destination address (may be NULL for connected sockets).
+ * @param addressLength Size of @p address.
+ * @return Bytes sent or a negated errno value.
+ */
 ssize_t
 sendto(int socket, const void *data, size_t length, int flags,
 	const struct sockaddr *address, socklen_t addressLength)
@@ -827,6 +1416,14 @@ sendto(int socket, const void *data, size_t length, int flags,
 }
 
 
+/**
+ * @brief Kernel-internal sendmsg(2).
+ *
+ * @param socket  File descriptor referring to the socket.
+ * @param message Message header for the send operation.
+ * @param flags   Send flags.
+ * @return Bytes sent or a negated errno value.
+ */
 ssize_t
 sendmsg(int socket, const struct msghdr *message, int flags)
 {
@@ -835,6 +1432,16 @@ sendmsg(int socket, const struct msghdr *message, int flags)
 }
 
 
+/**
+ * @brief Kernel-internal getsockopt(2).
+ *
+ * @param socket  File descriptor referring to the socket.
+ * @param level   Protocol level.
+ * @param option  Option name.
+ * @param value   Output buffer for the option value.
+ * @param _length Input/output size of @p value.
+ * @return 0 on success or a negated errno value.
+ */
 int
 getsockopt(int socket, int level, int option, void *value, socklen_t *_length)
 {
@@ -844,6 +1451,16 @@ getsockopt(int socket, int level, int option, void *value, socklen_t *_length)
 }
 
 
+/**
+ * @brief Kernel-internal setsockopt(2).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param level  Protocol level.
+ * @param option Option name.
+ * @param value  Buffer with the new option value.
+ * @param length Size of @p value.
+ * @return 0 on success or a negated errno value.
+ */
 int
 setsockopt(int socket, int level, int option, const void *value,
 	socklen_t length)
@@ -854,6 +1471,14 @@ setsockopt(int socket, int level, int option, const void *value,
 }
 
 
+/**
+ * @brief Kernel-internal getpeername(2).
+ *
+ * @param socket         File descriptor referring to the socket.
+ * @param address        Output buffer for the peer address.
+ * @param _addressLength Input/output size of @p address.
+ * @return 0 on success or a negated errno value.
+ */
 int
 getpeername(int socket, struct sockaddr *address, socklen_t *_addressLength)
 {
@@ -863,6 +1488,14 @@ getpeername(int socket, struct sockaddr *address, socklen_t *_addressLength)
 }
 
 
+/**
+ * @brief Kernel-internal getsockname(2).
+ *
+ * @param socket         File descriptor referring to the socket.
+ * @param address        Output buffer for the local bound address.
+ * @param _addressLength Input/output size of @p address.
+ * @return 0 on success or a negated errno value.
+ */
 int
 getsockname(int socket, struct sockaddr *address, socklen_t *_addressLength)
 {
@@ -872,6 +1505,12 @@ getsockname(int socket, struct sockaddr *address, socklen_t *_addressLength)
 }
 
 
+/**
+ * @brief Kernel-internal sockatmark(3).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @return 1 if at OOB mark, 0 if not, or a negated errno value.
+ */
 int
 sockatmark(int socket)
 {
@@ -880,6 +1519,15 @@ sockatmark(int socket)
 }
 
 
+/**
+ * @brief Kernel-internal socketpair(2).
+ *
+ * @param family        Address family (typically AF_UNIX).
+ * @param type          Socket type.
+ * @param protocol      Protocol number.
+ * @param socketVector  Output array for the two connected file descriptors.
+ * @return 0 on success or a negated errno value.
+ */
 int
 socketpair(int family, int type, int protocol, int socketVector[2])
 {
@@ -892,6 +1540,14 @@ socketpair(int family, int type, int protocol, int socketVector[2])
 // #pragma mark - syscalls
 
 
+/**
+ * @brief Userland syscall entry for socket(2).
+ *
+ * @param family   Address family.
+ * @param type     Socket type plus optional SOCK_CLOEXEC / SOCK_NONBLOCK flags.
+ * @param protocol Protocol number.
+ * @return New file descriptor, or a negated errno value.
+ */
 int
 _user_socket(int family, int type, int protocol)
 {
@@ -900,6 +1556,17 @@ _user_socket(int family, int type, int protocol)
 }
 
 
+/**
+ * @brief Userland syscall entry for bind(2).
+ *
+ * Copies the socket address from userland before forwarding to common_bind().
+ *
+ * @param socket        File descriptor referring to the socket.
+ * @param userAddress   Userland pointer to the socket address.
+ * @param addressLength Size of the address structure.
+ * @retval B_OK On success.
+ * @retval B_BAD_ADDRESS / B_BAD_VALUE Address validation failed.
+ */
 status_t
 _user_bind(int socket, const struct sockaddr *userAddress,
 	socklen_t addressLength)
@@ -915,6 +1582,13 @@ _user_bind(int socket, const struct sockaddr *userAddress,
 }
 
 
+/**
+ * @brief Userland syscall entry for shutdown(2).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param how    SHUT_RD, SHUT_WR, or SHUT_RDWR.
+ * @retval B_OK On success.
+ */
 status_t
 _user_shutdown_socket(int socket, int how)
 {
@@ -923,6 +1597,17 @@ _user_shutdown_socket(int socket, int how)
 }
 
 
+/**
+ * @brief Userland syscall entry for connect(2).
+ *
+ * Copies the remote address from userland before forwarding to
+ * common_connect().
+ *
+ * @param socket        File descriptor referring to the socket.
+ * @param userAddress   Userland pointer to the remote address.
+ * @param addressLength Size of the address structure.
+ * @retval B_OK On success.
+ */
 status_t
 _user_connect(int socket, const struct sockaddr *userAddress,
 	socklen_t addressLength)
@@ -938,6 +1623,13 @@ _user_connect(int socket, const struct sockaddr *userAddress,
 }
 
 
+/**
+ * @brief Userland syscall entry for listen(2).
+ *
+ * @param socket  File descriptor referring to the socket.
+ * @param backlog Maximum pending connection queue length.
+ * @retval B_OK On success.
+ */
 status_t
 _user_listen(int socket, int backlog)
 {
@@ -946,6 +1638,19 @@ _user_listen(int socket, int backlog)
 }
 
 
+/**
+ * @brief Userland syscall entry for accept4(2).
+ *
+ * Validates and prepares the userland address output buffer, calls
+ * common_accept(), and copies the peer address back to userland. Closes the
+ * new FD if the address copy fails.
+ *
+ * @param socket         Listening socket file descriptor.
+ * @param userAddress    Userland output buffer for the peer address (may be NULL).
+ * @param _addressLength Userland pointer to the address length field.
+ * @param flags          Flags for the new descriptor (SOCK_CLOEXEC, etc.).
+ * @return New file descriptor on success, or a negated errno / status code.
+ */
 int
 _user_accept(int socket, struct sockaddr *userAddress,
 	socklen_t *_addressLength, int flags)
@@ -975,6 +1680,17 @@ _user_accept(int socket, struct sockaddr *userAddress,
 }
 
 
+/**
+ * @brief Userland syscall entry for recv(2).
+ *
+ * Validates the user data buffer before delegating to common_recv().
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param data   Userland destination buffer.
+ * @param length Buffer capacity.
+ * @param flags  Receive flags.
+ * @return Bytes received or a negated errno value.
+ */
 ssize_t
 _user_recv(int socket, void *data, size_t length, int flags)
 {
@@ -986,6 +1702,20 @@ _user_recv(int socket, void *data, size_t length, int flags)
 }
 
 
+/**
+ * @brief Userland syscall entry for recvfrom(2).
+ *
+ * Validates data and address buffers, calls common_recvfrom() with a
+ * kernel-side address buffer, then copies the peer address back to userland.
+ *
+ * @param socket         File descriptor referring to the socket.
+ * @param data           Userland destination buffer.
+ * @param length         Buffer capacity.
+ * @param flags          Receive flags.
+ * @param userAddress    Userland output buffer for the sender address (may be NULL).
+ * @param _addressLength Userland pointer to the address length.
+ * @return Bytes received or a negated errno value.
+ */
 ssize_t
 _user_recvfrom(int socket, void *data, size_t length, int flags,
 	struct sockaddr *userAddress, socklen_t *_addressLength)
@@ -1019,6 +1749,18 @@ _user_recvfrom(int socket, void *data, size_t length, int flags,
 }
 
 
+/**
+ * @brief Userland syscall entry for recvmsg(2).
+ *
+ * Copies and validates the msghdr, iovec array, and ancillary data from
+ * userland, calls common_recvmsg(), and copies the address, ancillary data,
+ * and updated message header back to userland.
+ *
+ * @param socket      File descriptor referring to the socket.
+ * @param userMessage Userland pointer to the msghdr structure.
+ * @param flags       Receive flags.
+ * @return Bytes received or a negated errno value.
+ */
 ssize_t
 _user_recvmsg(int socket, struct msghdr *userMessage, int flags)
 {
@@ -1076,6 +1818,17 @@ _user_recvmsg(int socket, struct msghdr *userMessage, int flags)
 }
 
 
+/**
+ * @brief Userland syscall entry for send(2).
+ *
+ * Validates the data buffer before delegating to common_send().
+ *
+ * @param socket File descriptor referring to the socket.
+ * @param data   Userland source buffer.
+ * @param length Number of bytes to send.
+ * @param flags  Send flags.
+ * @return Bytes sent or a negated errno value.
+ */
 ssize_t
 _user_send(int socket, const void *data, size_t length, int flags)
 {
@@ -1087,6 +1840,20 @@ _user_send(int socket, const void *data, size_t length, int flags)
 }
 
 
+/**
+ * @brief Userland syscall entry for sendto(2).
+ *
+ * Validates data and optionally copies the destination address from userland
+ * before calling common_sendto().
+ *
+ * @param socket        File descriptor referring to the socket.
+ * @param data          Userland source buffer.
+ * @param length        Number of bytes to send.
+ * @param flags         Send flags.
+ * @param userAddress   Userland destination address (may be NULL).
+ * @param addressLength Size of @p userAddress.
+ * @return Bytes sent or a negated errno value.
+ */
 ssize_t
 _user_sendto(int socket, const void *data, size_t length, int flags,
 	const struct sockaddr *userAddress, socklen_t addressLength)
@@ -1111,6 +1878,17 @@ _user_sendto(int socket, const void *data, size_t length, int flags,
 }
 
 
+/**
+ * @brief Userland syscall entry for sendmsg(2).
+ *
+ * Copies and validates the msghdr, iovec array, destination address, and
+ * ancillary data from userland, then calls common_sendmsg().
+ *
+ * @param socket      File descriptor referring to the socket.
+ * @param userMessage Userland pointer to the msghdr structure.
+ * @param flags       Send flags.
+ * @return Bytes sent or a negated errno value.
+ */
 ssize_t
 _user_sendmsg(int socket, const struct msghdr *userMessage, int flags)
 {
@@ -1160,6 +1938,20 @@ _user_sendmsg(int socket, const struct msghdr *userMessage, int flags)
 }
 
 
+/**
+ * @brief Userland syscall entry for getsockopt(2).
+ *
+ * Validates and copies the length from userland, calls common_getsockopt()
+ * with a kernel-side value buffer, then copies the value and length back.
+ *
+ * @param socket    File descriptor referring to the socket.
+ * @param level     Protocol level.
+ * @param option    Option name.
+ * @param userValue Userland output buffer for the option value.
+ * @param _length   Userland pointer to the option length.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE / B_BAD_ADDRESS Parameter validation failed.
+ */
 status_t
 _user_getsockopt(int socket, int level, int option, void *userValue,
 	socklen_t *_length)
@@ -1194,6 +1986,20 @@ _user_getsockopt(int socket, int level, int option, void *userValue,
 }
 
 
+/**
+ * @brief Userland syscall entry for setsockopt(2).
+ *
+ * Validates and copies the option value from userland before calling
+ * common_setsockopt().
+ *
+ * @param socket    File descriptor referring to the socket.
+ * @param level     Protocol level.
+ * @param option    Option name.
+ * @param userValue Userland buffer containing the new option value.
+ * @param length    Size of @p userValue.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE / B_BAD_ADDRESS Parameter validation failed.
+ */
 status_t
 _user_setsockopt(int socket, int level, int option, const void *userValue,
 	socklen_t length)
@@ -1216,6 +2022,18 @@ _user_setsockopt(int socket, int level, int option, const void *userValue,
 }
 
 
+/**
+ * @brief Userland syscall entry for getpeername(2).
+ *
+ * Validates and prepares the userland address output buffer, calls
+ * common_getpeername() with a kernel buffer, and copies the result back.
+ *
+ * @param socket         File descriptor referring to the socket.
+ * @param userAddress    Userland output buffer for the peer address.
+ * @param _addressLength Userland pointer to the address length.
+ * @retval B_OK On success.
+ * @retval B_BAD_ADDRESS Copy to or from userland failed.
+ */
 status_t
 _user_getpeername(int socket, struct sockaddr *userAddress,
 	socklen_t *_addressLength)
@@ -1246,6 +2064,18 @@ _user_getpeername(int socket, struct sockaddr *userAddress,
 }
 
 
+/**
+ * @brief Userland syscall entry for getsockname(2).
+ *
+ * Validates and prepares the userland address output buffer, calls
+ * common_getsockname() with a kernel buffer, and copies the result back.
+ *
+ * @param socket         File descriptor referring to the socket.
+ * @param userAddress    Userland output buffer for the local bound address.
+ * @param _addressLength Userland pointer to the address length.
+ * @retval B_OK On success.
+ * @retval B_BAD_ADDRESS Copy to or from userland failed.
+ */
 status_t
 _user_getsockname(int socket, struct sockaddr *userAddress,
 	socklen_t *_addressLength)
@@ -1276,6 +2106,12 @@ _user_getsockname(int socket, struct sockaddr *userAddress,
 }
 
 
+/**
+ * @brief Userland syscall entry for sockatmark(3).
+ *
+ * @param socket File descriptor referring to the socket.
+ * @return 1 if at OOB mark, 0 if not, or a negated errno value.
+ */
 int
 _user_sockatmark(int socket)
 {
@@ -1284,6 +2120,20 @@ _user_sockatmark(int socket)
 }
 
 
+/**
+ * @brief Userland syscall entry for socketpair(2).
+ *
+ * Validates the userland output vector pointer, calls common_socketpair()
+ * with a kernel-side array, and copies both file descriptor numbers back.
+ * Closes both FDs if the copy fails.
+ *
+ * @param family           Address family.
+ * @param type             Socket type.
+ * @param protocol         Protocol number.
+ * @param userSocketVector Userland output array for two file descriptors.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE / B_BAD_ADDRESS Parameter validation failed.
+ */
 status_t
 _user_socketpair(int family, int type, int protocol, int *userSocketVector)
 {
@@ -1312,6 +2162,18 @@ _user_socketpair(int family, int type, int protocol, int *userSocketVector)
 }
 
 
+/**
+ * @brief Userland syscall entry to iterate socket statistics.
+ *
+ * Validates and copies the iteration cookie from userland, calls
+ * common_get_next_socket_stat(), and copies the cookie and net_stat back.
+ *
+ * @param family  Address family filter (0 for all).
+ * @param _cookie Userland pointer to the opaque iteration cookie.
+ * @param _stat   Userland output pointer for the net_stat structure.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE / B_BAD_ADDRESS Parameter validation failed.
+ */
 status_t
 _user_get_next_socket_stat(int family, uint32 *_cookie, struct net_stat *_stat)
 {

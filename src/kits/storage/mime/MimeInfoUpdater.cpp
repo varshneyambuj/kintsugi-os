@@ -1,13 +1,45 @@
 /*
- * Copyright 2002-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Rene Gollent, rene@gollent.com.
- *		Michael Lotz, mmlr@mlotz.ch
- *		Jonas Sundström, jonas@kirilla.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2014, Haiku, Inc. All Rights Reserved.
+ *   Authors:
+ *       Tyler Dauwalder
+ *       Rene Gollent, rene@gollent.com.
+ *       Michael Lotz, mmlr@mlotz.ch
+ *       Jonas Sundström, jonas@kirilla.com
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file MimeInfoUpdater.cpp
+ * @brief Updates MIME type and application metadata attributes on filesystem entries.
+ *
+ * MimeInfoUpdater walks a filesystem entry, guesses its MIME type via the
+ * MIME database, and writes the result to the BEOS:TYPE attribute.  For shared
+ * object files it additionally mirrors all application metadata (signature,
+ * catalog entry, app flags, icons, version info, and supported-type icons)
+ * from the file's resources into its extended attributes so that the rest of
+ * the system can find them without loading the file.
+ *
+ * @see MimeInfoUpdater
  */
 
 
@@ -30,6 +62,20 @@
 static const char *kAppFlagsAttribute = "BEOS:APP_FLAGS";
 
 
+/**
+ * @brief Copies a bitmap icon for a supported type from one BAppFileInfo to another.
+ *
+ * Reads the icon for \a type at \a iconSize from \a appFileInfoRead and writes it
+ * to \a appFileInfoWrite.  If the source has no icon for the type, the destination's
+ * icon is cleared.
+ *
+ * @param appFileInfoRead  Source BAppFileInfo (reads from resources).
+ * @param appFileInfoWrite Destination BAppFileInfo (writes to attributes).
+ * @param type             MIME type string for which the icon applies.
+ * @param icon             Pre-allocated BBitmap sized for \a iconSize.
+ * @param iconSize         Either B_MINI_ICON or B_LARGE_ICON.
+ * @return B_OK on success, or an error code on failure.
+ */
 static status_t
 update_icon(BAppFileInfo &appFileInfoRead, BAppFileInfo &appFileInfoWrite,
 	const char *type, BBitmap &icon, icon_size iconSize)
@@ -43,6 +89,19 @@ update_icon(BAppFileInfo &appFileInfoRead, BAppFileInfo &appFileInfoWrite,
 }
 
 
+/**
+ * @brief Copies a vector icon for a supported type from one BAppFileInfo to another.
+ *
+ * Reads the raw vector icon data for \a type from \a appFileInfoRead and writes it
+ * to \a appFileInfoWrite.  If the source has no icon for the type, the destination's
+ * icon is cleared.
+ *
+ * @param appFileInfoRead  Source BAppFileInfo (reads from resources).
+ * @param appFileInfoWrite Destination BAppFileInfo (writes to attributes).
+ * @param type             MIME type string for which the icon applies, or NULL for
+ *                         the application's own icon.
+ * @return B_OK on success, or an error code on failure.
+ */
 static status_t
 update_icon(BAppFileInfo &appFileInfoRead, BAppFileInfo &appFileInfoWrite,
 	const char *type)
@@ -62,6 +121,15 @@ update_icon(BAppFileInfo &appFileInfoRead, BAppFileInfo &appFileInfoWrite,
 }
 
 
+/**
+ * @brief Returns true when the given MIME type string denotes a shared object.
+ *
+ * Compares \a type case-insensitively against B_APP_MIME_TYPE to determine
+ * whether the associated file should have its application metadata synchronised.
+ *
+ * @param type The MIME type string to test.
+ * @return true if \a type represents a shared-object / application MIME type.
+ */
 static bool
 is_shared_object_mime_type(const BString &type)
 {
@@ -74,6 +142,13 @@ namespace Storage {
 namespace Mime {
 
 
+/**
+ * @brief Constructs a MimeInfoUpdater.
+ *
+ * @param database       Pointer to the MIME Database instance used for type guessing.
+ * @param databaseLocker Pointer to the locker guarding the database.
+ * @param force          Force-update flag forwarded to MimeEntryProcessor.
+ */
 MimeInfoUpdater::MimeInfoUpdater(Database* database,
 	DatabaseLocker* databaseLocker, int32 force)
 	:
@@ -82,11 +157,29 @@ MimeInfoUpdater::MimeInfoUpdater(Database* database,
 }
 
 
+/**
+ * @brief Destroys the MimeInfoUpdater.
+ */
 MimeInfoUpdater::~MimeInfoUpdater()
 {
 }
 
 
+/**
+ * @brief Updates MIME and application metadata attributes for the given entry.
+ *
+ * Determines whether the BEOS:TYPE attribute needs updating (based on the force
+ * flag or its absence), guesses the MIME type via the database, and writes it.
+ * For shared-object files it then mirrors all application-level metadata from
+ * the file's resource fork into its extended attributes, including the signature,
+ * catalog entry, app flags, icons (vector, mini, large), version information, and
+ * per-supported-type icons.
+ *
+ * @param entry       Reference to the filesystem entry to process.
+ * @param _entryIsDir Optional output parameter set to true when the entry is
+ *                    a directory.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 MimeInfoUpdater::Do(const entry_ref& entry, bool* _entryIsDir)
 {

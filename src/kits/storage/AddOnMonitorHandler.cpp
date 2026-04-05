@@ -1,13 +1,40 @@
 /*
- * Copyright 2004-2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Andrew Bachmann
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file AddOnMonitorHandler.cpp
+ * @brief Implementation of the AddOnMonitorHandler node-monitor handler.
+ *
+ * AddOnMonitorHandler extends NodeMonitorHandler to watch one or more
+ * add-on directories and fire lifecycle callbacks (Created, Enabled,
+ * Disabled, Removed) as add-on files appear, disappear, or are renamed.
+ * Priority ordering across multiple directories ensures that a higher-priority
+ * directory shadows a lower-priority one containing an identically named
+ * add-on.
+ *
+ * @see AddOnMonitor
+ */
 
 #include "AddOnMonitorHandler.h"
 
@@ -29,6 +56,14 @@
 #endif
 
 
+/**
+ * @brief Constructs an AddOnMonitorHandler with an optional name.
+ *
+ * Passes the supplied name (or the default "AddOnMonitorHandler" when NULL)
+ * to the NodeMonitorHandler base-class constructor.
+ *
+ * @param name The BHandler name for this instance, or NULL to use the default.
+ */
 AddOnMonitorHandler::AddOnMonitorHandler(const char* name)
 	:
 	NodeMonitorHandler(name != NULL ? name : "AddOnMonitorHandler")
@@ -36,6 +71,13 @@ AddOnMonitorHandler::AddOnMonitorHandler(const char* name)
 }
 
 
+/**
+ * @brief Destructor. Stops watching all monitored directories and their entries.
+ *
+ * Iterates every known directory and its entries, calling watch_node() with
+ * B_STOP_WATCHING so that stale node-monitor subscriptions are not left
+ * behind after the handler is destroyed.
+ */
 AddOnMonitorHandler::~AddOnMonitorHandler()
 {
 	// TODO: Actually calling watch_node() here should be too late, since we
@@ -51,6 +93,16 @@ AddOnMonitorHandler::~AddOnMonitorHandler()
 }
 
 
+/**
+ * @brief Handles incoming messages, processing B_PULSE to drain the pending
+ *        entry queue.
+ *
+ * When a B_PULSE message is received, _HandlePendingEntries() is called to
+ * promote any sufficiently stable pending entries into active add-ons. All
+ * other messages are forwarded to the inherited handler.
+ *
+ * @param msg The incoming BMessage to process.
+ */
 void
 AddOnMonitorHandler::MessageReceived(BMessage* msg)
 {
@@ -61,6 +113,20 @@ AddOnMonitorHandler::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Registers a directory node for add-on monitoring.
+ *
+ * Opens the directory identified by @p nref, registers a B_WATCH_DIRECTORY
+ * node monitor on it, and enqueues all existing entries as pending. The
+ * looper is locked for the duration of the call to prevent races with
+ * concurrent node-monitor notifications or pulse messages.
+ *
+ * @param nref Pointer to the node_ref of the directory to watch.
+ * @param sync If true, pending entries are processed immediately after
+ *             the initial scan rather than waiting for the next pulse.
+ * @return B_OK on success, or an error code if the directory could not be
+ *         opened or the node monitor could not be started.
+ */
 status_t
 AddOnMonitorHandler::AddDirectory(const node_ref* nref, bool sync)
 {
@@ -113,6 +179,20 @@ AddOnMonitorHandler::AddDirectory(const node_ref* nref, bool sync)
 }
 
 
+/**
+ * @brief Registers standard system add-on directories for a given leaf path.
+ *
+ * Iterates the well-known add-on directory hierarchy (user non-packaged, user,
+ * system non-packaged, system) appending @p leafPath to each, and calls
+ * AddDirectory() for every path that resolves to an existing directory.
+ * Safemode kernel options are honoured: if user add-ons are disabled the user
+ * directories are skipped; if safe mode is active only B_SYSTEM_ADDONS_DIRECTORY
+ * is used.
+ *
+ * @param leafPath The relative path under each add-on base directory to watch
+ *                 (e.g. "input_server/devices").
+ * @return B_OK on success, or the first error code returned by AddDirectory().
+ */
 status_t
 AddOnMonitorHandler::AddAddOnDirectories(const char* leafPath)
 {
@@ -169,6 +249,14 @@ AddOnMonitorHandler::AddAddOnDirectories(const char* leafPath)
 //	#pragma mark - AddOnMonitorHandler hooks
 
 
+/**
+ * @brief Hook called when a new add-on entry has been created.
+ *
+ * The default implementation does nothing. Subclasses should override this
+ * method to react to newly discovered add-on files (e.g. load the add-on).
+ *
+ * @param entryInfo Pointer to the entry information for the created add-on.
+ */
 void
 AddOnMonitorHandler::AddOnCreated(const add_on_entry_info* entryInfo)
 {
@@ -176,18 +264,44 @@ AddOnMonitorHandler::AddOnCreated(const add_on_entry_info* entryInfo)
 }
 
 
+/**
+ * @brief Hook called when an add-on becomes the active (enabled) version.
+ *
+ * Fired after AddOnCreated() when the new add-on is not shadowed by a
+ * higher-priority directory, or when a previously shadowing add-on is
+ * removed. The default implementation does nothing.
+ *
+ * @param entryInfo Pointer to the entry information for the enabled add-on.
+ */
 void
 AddOnMonitorHandler::AddOnEnabled(const add_on_entry_info* entryInfo)
 {
 }
 
 
+/**
+ * @brief Hook called when an active add-on is about to be superseded or
+ *        removed.
+ *
+ * Always paired with a subsequent AddOnEnabled() or AddOnRemoved() call.
+ * The default implementation does nothing.
+ *
+ * @param entryInfo Pointer to the entry information for the disabled add-on.
+ */
 void
 AddOnMonitorHandler::AddOnDisabled(const add_on_entry_info* entryInfo)
 {
 }
 
 
+/**
+ * @brief Hook called when an add-on entry has been permanently removed.
+ *
+ * The default implementation does nothing. Subclasses should override this
+ * method to unload and release resources associated with the add-on.
+ *
+ * @param entryInfo Pointer to the entry information for the removed add-on.
+ */
 void
 AddOnMonitorHandler::AddOnRemoved(const add_on_entry_info* entryInfo)
 {
@@ -197,6 +311,18 @@ AddOnMonitorHandler::AddOnRemoved(const add_on_entry_info* entryInfo)
 //	#pragma mark - NodeMonitorHandler hooks
 
 
+/**
+ * @brief NodeMonitorHandler hook invoked when a new filesystem entry appears
+ *        in a watched directory.
+ *
+ * Packages the notification parameters into an add_on_entry_info and appends
+ * it to the pending entries queue for stability checking on the next pulse.
+ *
+ * @param name      The name of the newly created entry.
+ * @param directory Inode number of the containing directory.
+ * @param device    Device ID of the filesystem.
+ * @param node      Inode number of the new entry.
+ */
 void
 AddOnMonitorHandler::EntryCreated(const char* name, ino_t directory,
 	dev_t device, ino_t node)
@@ -209,6 +335,19 @@ AddOnMonitorHandler::EntryCreated(const char* name, ino_t directory,
 }
 
 
+/**
+ * @brief NodeMonitorHandler hook invoked when a filesystem entry is removed
+ *        from a watched directory.
+ *
+ * Purges the entry from the pending list, then from the active directory
+ * list. If the entry was the enabled add-on it is disabled and removed, and
+ * a lower-priority shadowed add-on with the same name (if any) is enabled.
+ *
+ * @param name      The name of the removed entry.
+ * @param directory Inode number of the containing directory.
+ * @param device    Device ID of the filesystem.
+ * @param node      Inode number of the removed entry.
+ */
 void
 AddOnMonitorHandler::EntryRemoved(const char* name, ino_t directory,
 	dev_t device, ino_t node)
@@ -273,6 +412,24 @@ AddOnMonitorHandler::EntryRemoved(const char* name, ino_t directory,
 }
 
 
+/**
+ * @brief NodeMonitorHandler hook invoked when a filesystem entry is moved or
+ *        renamed within the watched directory hierarchy.
+ *
+ * Handles all combinations of source/destination visibility: move-out
+ * (disable and possibly remove), move-in (create and possibly enable), and
+ * rename-within (remove old name, add new name, adjust enabled state). When
+ * the name stays the same but the containing directory changes the entry is
+ * re-created via EntryRemoved() / _EntryCreated().
+ *
+ * @param name          New name of the entry in the destination directory.
+ * @param fromName      Previous name of the entry in the source directory.
+ * @param fromDirectory Inode number of the source directory.
+ * @param toDirectory   Inode number of the destination directory.
+ * @param device        Device ID shared by source and destination directories.
+ * @param node          Inode number of the moved entry.
+ * @param nodeDevice    Device ID of the moved entry's node.
+ */
 void
 AddOnMonitorHandler::EntryMoved(const char* name, const char* fromName,
 	ino_t fromDirectory, ino_t toDirectory, dev_t device, ino_t node,
@@ -473,6 +630,19 @@ AddOnMonitorHandler::EntryMoved(const char* name, const char* fromName,
 }
 
 
+/**
+ * @brief NodeMonitorHandler hook invoked when the stat data of a watched
+ *        add-on file changes.
+ *
+ * Locates the corresponding entry in the active directory list by node_ref
+ * and triggers a full reload cycle (Disabled -> Removed -> Created -> Enabled)
+ * so that callers can react to in-place updates of an add-on binary.
+ *
+ * @param node       Inode number of the entry whose stat data changed.
+ * @param device     Device ID of the filesystem.
+ * @param statFields Bitmask of B_STAT_* flags indicating which stat fields
+ *                   were modified.
+ */
 void
 AddOnMonitorHandler::StatChanged(ino_t node, dev_t device, int32 statFields)
 {
@@ -505,7 +675,15 @@ AddOnMonitorHandler::StatChanged(ino_t node, dev_t device, int32 statFields)
 // #pragma mark - private
 
 
-//!	Process pending entries.
+/**
+ * @brief Processes pending entries that have been stable long enough.
+ *
+ * Iterates fPendingEntries and, for each entry whose modification time is at
+ * least ADD_ON_STABLE_SECONDS old, removes it from the pending list and
+ * promotes it to an active add-on via _EntryCreated(). Entries whose parent
+ * directory is no longer valid or whose name cannot be stat()'d are silently
+ * discarded.
+ */
 void
 AddOnMonitorHandler::_HandlePendingEntries()
 {
@@ -549,6 +727,18 @@ AddOnMonitorHandler::_HandlePendingEntries()
 }
 
 
+/**
+ * @brief Inserts a new add-on entry into the active directory list and fires
+ *        the appropriate lifecycle hooks.
+ *
+ * Locates the directory in fDirectories matching info.dir_nref, adds the
+ * entry via _AddNewEntry(), then calls AddOnCreated(). Walks the directory
+ * list to determine whether the new entry is enabled (not shadowed by a
+ * higher-priority directory), disabling any lower-priority entry with the
+ * same name before calling AddOnEnabled().
+ *
+ * @param info Reference to the add_on_entry_info describing the new entry.
+ */
 void
 AddOnMonitorHandler::_EntryCreated(add_on_entry_info& info)
 {
@@ -594,6 +784,18 @@ AddOnMonitorHandler::_EntryCreated(add_on_entry_info& info)
 }
 
 
+/**
+ * @brief Searches an EntryList for an entry matching the given node_ref.
+ *
+ * Advances the iterator @p it until either the entry whose nref equals
+ * @p entry is found or the end of the list is reached.
+ *
+ * @param entry The node_ref to search for.
+ * @param list  The EntryList to search within.
+ * @param it    Iterator positioned at the start of the search range; advanced
+ *              to the matching element on success.
+ * @return true if a matching entry was found, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_FindEntry(const node_ref& entry, const EntryList& list,
 	EntryList::iterator& it) const
@@ -606,6 +808,18 @@ AddOnMonitorHandler::_FindEntry(const node_ref& entry, const EntryList& list,
 }
 
 
+/**
+ * @brief Searches an EntryList for an entry matching the given name.
+ *
+ * Advances the iterator @p it until either the entry whose name equals
+ * @p name is found (strcmp) or the end of the list is reached.
+ *
+ * @param name The entry name to search for.
+ * @param list The EntryList to search within.
+ * @param it   Iterator positioned at the start of the search range; advanced
+ *             to the matching element on success.
+ * @return true if a matching entry was found, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_FindEntry(const char* name, const EntryList& list,
 	EntryList::iterator& it) const
@@ -618,6 +832,16 @@ AddOnMonitorHandler::_FindEntry(const char* name, const EntryList& list,
 }
 
 
+/**
+ * @brief Returns whether an entry matching the given node_ref exists in a list.
+ *
+ * Convenience wrapper around _FindEntry(node_ref) that constructs a
+ * temporary begin iterator.
+ *
+ * @param entry The node_ref to look for.
+ * @param list  The EntryList to search.
+ * @return true if the entry is present, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_HasEntry(const node_ref& entry, EntryList& list) const
 {
@@ -626,6 +850,16 @@ AddOnMonitorHandler::_HasEntry(const node_ref& entry, EntryList& list) const
 }
 
 
+/**
+ * @brief Returns whether an entry matching the given name exists in a list.
+ *
+ * Convenience wrapper around _FindEntry(const char*) that constructs a
+ * temporary begin iterator.
+ *
+ * @param name The entry name to look for.
+ * @param list The EntryList to search.
+ * @return true if the entry is present, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_HasEntry(const char* name, EntryList& list) const
 {
@@ -634,6 +868,17 @@ AddOnMonitorHandler::_HasEntry(const char* name, EntryList& list) const
 }
 
 
+/**
+ * @brief Searches fDirectories for a directory identified by inode and device.
+ *
+ * Constructs a node_ref from @p directory and @p device, then delegates to
+ * the node_ref overload of _FindDirectory().
+ *
+ * @param directory Inode number of the directory to find.
+ * @param device    Device ID of the filesystem.
+ * @param it        Iterator advanced to the matching element on success.
+ * @return true if the directory was found, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_FindDirectory(ino_t directory, dev_t device,
 	DirectoryList::iterator& it) const
@@ -644,6 +889,16 @@ AddOnMonitorHandler::_FindDirectory(ino_t directory, dev_t device,
 }
 
 
+/**
+ * @brief Searches fDirectories for a directory identified by node_ref.
+ *
+ * Delegates to the three-argument overload, passing fDirectories.end() as
+ * the upper bound.
+ *
+ * @param directoryNodeRef The node_ref to search for.
+ * @param it               Iterator advanced to the matching element on success.
+ * @return true if the directory was found, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_FindDirectory(const node_ref& directoryNodeRef,
 	DirectoryList::iterator& it) const
@@ -652,6 +907,19 @@ AddOnMonitorHandler::_FindDirectory(const node_ref& directoryNodeRef,
 }
 
 
+/**
+ * @brief Searches a range of fDirectories for a directory identified by inode
+ *        and device, up to a caller-supplied end iterator.
+ *
+ * Constructs a node_ref from @p directory and @p device, then delegates to
+ * the node_ref / end-iterator overload.
+ *
+ * @param directory Inode number of the directory to find.
+ * @param device    Device ID of the filesystem.
+ * @param it        Iterator advanced to the matching element on success.
+ * @param end       Exclusive upper bound for the search.
+ * @return true if the directory was found before @p end, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_FindDirectory(ino_t directory, dev_t device,
 	DirectoryList::iterator& it,
@@ -663,6 +931,18 @@ AddOnMonitorHandler::_FindDirectory(ino_t directory, dev_t device,
 }
 
 
+/**
+ * @brief Searches a range of fDirectories for a directory identified by
+ *        node_ref, up to a caller-supplied end iterator.
+ *
+ * Advances @p it until a directory whose nref matches @p directoryNodeRef is
+ * found or @p end is reached.
+ *
+ * @param directoryNodeRef The node_ref to search for.
+ * @param it               Iterator advanced to the matching element on success.
+ * @param end              Exclusive upper bound for the search.
+ * @return true if the directory was found before @p end, false otherwise.
+ */
 bool
 AddOnMonitorHandler::_FindDirectory(const node_ref& directoryNodeRef,
 	DirectoryList::iterator& it,
@@ -676,13 +956,27 @@ AddOnMonitorHandler::_FindDirectory(const node_ref& directoryNodeRef,
 }
 
 
+/**
+ * @brief Resolves the real add-on node (following symlinks) and adds the entry
+ *        to an EntryList with stat watching enabled.
+ *
+ * Opens the entry relative to its parent directory, resolves symlinks via
+ * BEntry follow-link semantics, and starts a B_WATCH_STAT node monitor on the
+ * resolved node so that in-place binary updates can be detected. The resolved
+ * node_ref is stored in info.addon_nref; on failure info.nref is used as a
+ * fallback.
+ *
+ * @param list The EntryList to append the new entry to.
+ * @param info Reference to the add_on_entry_info to add; addon_nref is
+ *             populated by this call.
+ */
 void
 AddOnMonitorHandler::_AddNewEntry(EntryList& list, add_on_entry_info& info)
 {
 	BDirectory directory(&info.dir_nref);
 	BEntry entry(&directory, info.name, true);
 
-	node_ref addOnRef;	
+	node_ref addOnRef;
 	if (entry.GetNodeRef(&addOnRef) == B_OK) {
 		watch_node(&addOnRef, B_WATCH_STAT, this);
 		info.addon_nref = addOnRef;

@@ -1,9 +1,39 @@
 /*
- * Copyright 2002-2014, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file AppFileInfo.cpp
+ * @brief Implementation of BAppFileInfo, providing access to application
+ *        metadata stored in file attributes and resources.
+ *
+ * BAppFileInfo extends BNodeInfo to expose application-specific metadata
+ * such as MIME type, application signature, launch flags, supported file
+ * types, version information, and icons.  Data may be stored in extended
+ * file-system attributes, embedded BResources, or both, depending on the
+ * active info_location setting.
+ *
+ * @see BNodeInfo
  */
 
 
@@ -73,6 +103,12 @@ const uint32 MINI_ICON_TYPE = 'MICN';
 const uint32 LARGE_ICON_TYPE = 'ICON';
 
 
+/**
+ * @brief Default constructor. Creates an uninitialized BAppFileInfo object.
+ *
+ * The object must be associated with a BFile by calling SetTo() before any
+ * other methods are used.
+ */
 BAppFileInfo::BAppFileInfo()
 	:
 	fResources(NULL),
@@ -81,6 +117,14 @@ BAppFileInfo::BAppFileInfo()
 }
 
 
+/**
+ * @brief Constructs a BAppFileInfo object and associates it with the given
+ *        file.
+ *
+ * Equivalent to default-constructing and then calling SetTo(file).
+ *
+ * @param file Pointer to the BFile to associate with this object.
+ */
 BAppFileInfo::BAppFileInfo(BFile* file)
 	:
 	fResources(NULL),
@@ -90,12 +134,28 @@ BAppFileInfo::BAppFileInfo(BFile* file)
 }
 
 
+/**
+ * @brief Destructor. Releases any BResources object held internally.
+ */
 BAppFileInfo::~BAppFileInfo()
 {
 	delete fResources;
 }
 
 
+/**
+ * @brief Associates the BAppFileInfo object with a file.
+ *
+ * Any previously associated file is detached first.  A BResources object is
+ * created for the new file; if the file has no resource fork the object falls
+ * back to attribute-only mode.  The info location is adjusted accordingly.
+ *
+ * @param file Pointer to an open, initialised BFile.
+ * @return A status code.
+ * @retval B_OK The object was successfully associated with the file.
+ * @retval B_BAD_VALUE \a file is \c NULL or not properly initialised.
+ * @retval B_NO_MEMORY Could not allocate the internal BResources object.
+ */
 status_t
 BAppFileInfo::SetTo(BFile* file)
 {
@@ -152,6 +212,18 @@ BAppFileInfo::SetTo(BFile* file)
 }
 
 
+/**
+ * @brief Retrieves the MIME type of the associated file.
+ *
+ * @param type A pre-allocated character buffer of at least
+ *             \c B_MIME_TYPE_LENGTH bytes that will receive the
+ *             null-terminated MIME type string.
+ * @return A status code.
+ * @retval B_OK The type was successfully read into \a type.
+ * @retval B_BAD_VALUE \a type is \c NULL.
+ * @retval B_NO_INIT The object is not associated with a file.
+ * @retval B_ENTRY_NOT_FOUND No MIME type attribute/resource exists.
+ */
 status_t
 BAppFileInfo::GetType(char* type) const
 {
@@ -176,6 +248,17 @@ BAppFileInfo::GetType(char* type) const
 }
 
 
+/**
+ * @brief Sets the MIME type of the associated file.
+ *
+ * Passing \c NULL removes any existing MIME type attribute/resource.
+ *
+ * @param type A null-terminated MIME type string, or \c NULL to remove.
+ * @return A status code.
+ * @retval B_OK The type was successfully written.
+ * @retval B_BAD_VALUE \a type is longer than \c B_MIME_TYPE_LENGTH - 1.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetType(const char* type)
 {
@@ -201,6 +284,18 @@ BAppFileInfo::SetType(const char* type)
 }
 
 
+/**
+ * @brief Retrieves the application signature of the associated file.
+ *
+ * @param signature A pre-allocated buffer of at least
+ *                  \c B_MIME_TYPE_LENGTH bytes that will receive the
+ *                  null-terminated application signature string.
+ * @return A status code.
+ * @retval B_OK The signature was successfully read into \a signature.
+ * @retval B_BAD_VALUE \a signature is \c NULL.
+ * @retval B_NO_INIT The object is not associated with a file.
+ * @retval B_ENTRY_NOT_FOUND No signature attribute/resource exists.
+ */
 status_t
 BAppFileInfo::GetSignature(char* signature) const
 {
@@ -225,6 +320,18 @@ BAppFileInfo::GetSignature(char* signature) const
 }
 
 
+/**
+ * @brief Sets the application signature of the associated file.
+ *
+ * Passing \c NULL removes any existing signature attribute/resource.
+ *
+ * @param signature A null-terminated MIME-format application signature
+ *                  string, or \c NULL to remove.
+ * @return A status code.
+ * @retval B_OK The signature was successfully written.
+ * @retval B_BAD_VALUE \a signature is longer than \c B_MIME_TYPE_LENGTH - 1.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetSignature(const char* signature)
 {
@@ -250,6 +357,20 @@ BAppFileInfo::SetSignature(const char* signature)
 }
 
 
+/**
+ * @brief Retrieves the catalog entry (localisation key) stored in the file.
+ *
+ * The catalog entry is a string of the form "appName:context:string" used
+ * by the locale kit to identify the application's human-readable name.
+ *
+ * @param catalogEntry A pre-allocated buffer of at least
+ *                     \c B_MIME_TYPE_LENGTH * 3 bytes.
+ * @return A status code.
+ * @retval B_OK The catalog entry was successfully read.
+ * @retval B_BAD_VALUE \a catalogEntry is \c NULL or the stored value is too
+ *         long.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::GetCatalogEntry(char* catalogEntry) const
 {
@@ -275,6 +396,18 @@ BAppFileInfo::GetCatalogEntry(char* catalogEntry) const
 }
 
 
+/**
+ * @brief Sets the catalog entry (localisation key) stored in the file.
+ *
+ * Passing \c NULL removes any existing catalog entry attribute/resource.
+ *
+ * @param catalogEntry A null-terminated string of the form
+ *                     "appName:context:string", or \c NULL to remove.
+ * @return A status code.
+ * @retval B_OK The catalog entry was successfully written.
+ * @retval B_BAD_VALUE \a catalogEntry exceeds \c B_MIME_TYPE_LENGTH * 3 bytes.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetCatalogEntry(const char* catalogEntry)
 {
@@ -293,6 +426,15 @@ BAppFileInfo::SetCatalogEntry(const char* catalogEntry)
 }
 
 
+/**
+ * @brief Retrieves the application launch flags from the associated file.
+ *
+ * @param flags Pointer to a \c uint32 that will receive the flags value.
+ * @return A status code.
+ * @retval B_OK The flags were successfully read into \a flags.
+ * @retval B_BAD_VALUE \a flags is \c NULL or the stored data is malformed.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::GetAppFlags(uint32* flags) const
 {
@@ -313,6 +455,15 @@ BAppFileInfo::GetAppFlags(uint32* flags) const
 }
 
 
+/**
+ * @brief Sets the application launch flags on the associated file.
+ *
+ * @param flags The application flags to store (e.g. \c B_SINGLE_LAUNCH,
+ *              \c B_MULTIPLE_LAUNCH, \c B_EXCLUSIVE_LAUNCH).
+ * @return A status code.
+ * @retval B_OK The flags were successfully written.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetAppFlags(uint32 flags)
 {
@@ -329,6 +480,14 @@ BAppFileInfo::SetAppFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Removes the application flags attribute/resource from the
+ *        associated file.
+ *
+ * @return A status code.
+ * @retval B_OK The flags were successfully removed (or did not exist).
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::RemoveAppFlags()
 {
@@ -344,6 +503,20 @@ BAppFileInfo::RemoveAppFlags()
 }
 
 
+/**
+ * @brief Retrieves the list of MIME types supported by this application.
+ *
+ * The supported types are stored as a flattened BMessage containing a
+ * string array field named "types".
+ *
+ * @param types Pointer to a BMessage that will be populated with the
+ *              supported type strings.
+ * @return A status code.
+ * @retval B_OK The supported types were successfully read into \a types.
+ * @retval B_BAD_VALUE \a types is \c NULL.
+ * @retval B_NO_INIT The object is not associated with a file.
+ * @retval B_ENTRY_NOT_FOUND No supported-types attribute/resource exists.
+ */
 status_t
 BAppFileInfo::GetSupportedTypes(BMessage* types) const
 {
@@ -367,6 +540,23 @@ BAppFileInfo::GetSupportedTypes(BMessage* types) const
 }
 
 
+/**
+ * @brief Sets the list of MIME types supported by this application, with
+ *        full control over MIME database synchronisation.
+ *
+ * @param types A BMessage whose "types" string array lists the supported
+ *              MIME types, or \c NULL to remove the supported-types data.
+ * @param updateMimeDB If \c true, the application's MIME database entry is
+ *                     updated to reflect the new supported types.
+ * @param syncAll If \c true, the MIME database sync removes types that are
+ *                no longer listed; if \c false it only adds new ones.
+ * @return A status code.
+ * @retval B_OK The supported types were successfully written.
+ * @retval B_BAD_VALUE One or more type strings in \a types are not valid
+ *         MIME strings.
+ * @retval B_NO_INIT The object is not associated with a file.
+ * @retval B_NO_MEMORY Memory allocation failure.
+ */
 status_t
 BAppFileInfo::SetSupportedTypes(const BMessage* types, bool updateMimeDB,
 	bool syncAll)
@@ -430,6 +620,19 @@ BAppFileInfo::SetSupportedTypes(const BMessage* types, bool updateMimeDB,
 }
 
 
+/**
+ * @brief Sets the list of MIME types supported by this application, updating
+ *        the MIME database.
+ *
+ * Delegates to SetSupportedTypes(types, true, syncAll).
+ *
+ * @param types A BMessage whose "types" string array lists the supported
+ *              MIME types, or \c NULL to remove.
+ * @param syncAll If \c true, stale entries are removed from the MIME
+ *                database.
+ * @return A status code as described in
+ *         SetSupportedTypes(const BMessage*, bool, bool).
+ */
 status_t
 BAppFileInfo::SetSupportedTypes(const BMessage* types, bool syncAll)
 {
@@ -437,6 +640,16 @@ BAppFileInfo::SetSupportedTypes(const BMessage* types, bool syncAll)
 }
 
 
+/**
+ * @brief Sets the list of MIME types supported by this application.
+ *
+ * Delegates to SetSupportedTypes(types, true, false).
+ *
+ * @param types A BMessage whose "types" string array lists the supported
+ *              MIME types, or \c NULL to remove.
+ * @return A status code as described in
+ *         SetSupportedTypes(const BMessage*, bool, bool).
+ */
 status_t
 BAppFileInfo::SetSupportedTypes(const BMessage* types)
 {
@@ -444,6 +657,17 @@ BAppFileInfo::SetSupportedTypes(const BMessage* types)
 }
 
 
+/**
+ * @brief Tests whether a given MIME type is in the application's supported
+ *        types list.
+ *
+ * The check honours MIME super-type containment: a supported type of
+ * "application/octet-stream" matches any queried type.
+ *
+ * @param type A null-terminated MIME type string to look up.
+ * @return \c true if \a type is supported, \c false otherwise (including on
+ *         error).
+ */
 bool
 BAppFileInfo::IsSupportedType(const char* type) const
 {
@@ -471,6 +695,16 @@ BAppFileInfo::IsSupportedType(const char* type) const
 }
 
 
+/**
+ * @brief Tests whether a given BMimeType is supported by this application.
+ *
+ * Uses BMimeType::Contains() for each supported type, so super-type matching
+ * applies.
+ *
+ * @param type Pointer to an initialised BMimeType to look up.
+ * @return \c true if \a type is supported, \c false otherwise (including on
+ *         error or if \a type is \c NULL / uninitialised).
+ */
 bool
 BAppFileInfo::Supports(BMimeType* type) const
 {
@@ -494,6 +728,15 @@ BAppFileInfo::Supports(BMimeType* type) const
 }
 
 
+/**
+ * @brief Retrieves the application icon as a BBitmap.
+ *
+ * Delegates to GetIconForType(NULL, icon, which).
+ *
+ * @param icon A pre-allocated BBitmap that will receive the icon data.
+ * @param which The desired icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @return A status code as described in GetIconForType().
+ */
 status_t
 BAppFileInfo::GetIcon(BBitmap* icon, icon_size which) const
 {
@@ -501,6 +744,17 @@ BAppFileInfo::GetIcon(BBitmap* icon, icon_size which) const
 }
 
 
+/**
+ * @brief Retrieves the application vector icon as a raw byte buffer.
+ *
+ * Delegates to GetIconForType(NULL, data, size).
+ *
+ * @param data Pointer to a \c uint8* that will be set to a newly allocated
+ *             buffer containing the raw icon data.  The caller is
+ *             responsible for freeing this buffer.
+ * @param size Pointer to a \c size_t that will receive the buffer size.
+ * @return A status code as described in GetIconForType().
+ */
 status_t
 BAppFileInfo::GetIcon(uint8** data, size_t* size) const
 {
@@ -508,6 +762,17 @@ BAppFileInfo::GetIcon(uint8** data, size_t* size) const
 }
 
 
+/**
+ * @brief Sets the application icon from a BBitmap, with optional MIME
+ *        database update.
+ *
+ * Delegates to SetIconForType(NULL, icon, which, updateMimeDB).
+ *
+ * @param icon The BBitmap to use as the icon, or \c NULL to remove.
+ * @param which The icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @param updateMimeDB If \c true the MIME database entry is updated.
+ * @return A status code as described in SetIconForType().
+ */
 status_t
 BAppFileInfo::SetIcon(const BBitmap* icon, icon_size which, bool updateMimeDB)
 {
@@ -515,6 +780,16 @@ BAppFileInfo::SetIcon(const BBitmap* icon, icon_size which, bool updateMimeDB)
 }
 
 
+/**
+ * @brief Sets the application icon from a BBitmap, updating the MIME
+ *        database.
+ *
+ * Delegates to SetIconForType(NULL, icon, which, true).
+ *
+ * @param icon The BBitmap to use as the icon, or \c NULL to remove.
+ * @param which The icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @return A status code as described in SetIconForType().
+ */
 status_t
 BAppFileInfo::SetIcon(const BBitmap* icon, icon_size which)
 {
@@ -522,6 +797,17 @@ BAppFileInfo::SetIcon(const BBitmap* icon, icon_size which)
 }
 
 
+/**
+ * @brief Sets the application vector icon from a raw byte buffer, with
+ *        optional MIME database update.
+ *
+ * Delegates to SetIconForType(NULL, data, size, updateMimeDB).
+ *
+ * @param data Pointer to the raw vector icon data.
+ * @param size Size in bytes of the icon data.
+ * @param updateMimeDB If \c true the MIME database entry is updated.
+ * @return A status code as described in SetIconForType().
+ */
 status_t
 BAppFileInfo::SetIcon(const uint8* data, size_t size, bool updateMimeDB)
 {
@@ -529,6 +815,16 @@ BAppFileInfo::SetIcon(const uint8* data, size_t size, bool updateMimeDB)
 }
 
 
+/**
+ * @brief Sets the application vector icon from a raw byte buffer, updating
+ *        the MIME database.
+ *
+ * Delegates to SetIconForType(NULL, data, size, true).
+ *
+ * @param data Pointer to the raw vector icon data.
+ * @param size Size in bytes of the icon data.
+ * @return A status code as described in SetIconForType().
+ */
 status_t
 BAppFileInfo::SetIcon(const uint8* data, size_t size)
 {
@@ -536,6 +832,23 @@ BAppFileInfo::SetIcon(const uint8* data, size_t size)
 }
 
 
+/**
+ * @brief Retrieves version information from the associated file.
+ *
+ * Two version_info records may be stored: one for the application version
+ * (index 0) and one for the system version (index 1).  If only one record
+ * is present and \a kind is \c B_SYSTEM_VERSION_KIND, a zeroed record is
+ * returned.
+ *
+ * @param info Pointer to a \c version_info structure that will receive the
+ *             version data.
+ * @param kind Selects which version to read: \c B_APP_VERSION_KIND or
+ *             \c B_SYSTEM_VERSION_KIND.
+ * @return A status code.
+ * @retval B_OK The version info was successfully read.
+ * @retval B_BAD_VALUE \a info is \c NULL or \a kind is invalid.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::GetVersionInfo(version_info* info, version_kind kind) const
 {
@@ -583,6 +896,23 @@ BAppFileInfo::GetVersionInfo(version_info* info, version_kind kind) const
 }
 
 
+/**
+ * @brief Writes version information to the associated file.
+ *
+ * Both application and system version records are stored together in one
+ * attribute/resource.  If only the other record has been written before,
+ * it is preserved; if neither has been written, the missing record is
+ * stored as zeroes.  Passing \c NULL for \a info removes the entire
+ * version-info attribute/resource.
+ *
+ * @param info Pointer to the \c version_info to store, or \c NULL to remove.
+ * @param kind Selects which version slot to write: \c B_APP_VERSION_KIND or
+ *             \c B_SYSTEM_VERSION_KIND.
+ * @return A status code.
+ * @retval B_OK The version info was successfully written.
+ * @retval B_BAD_VALUE \a kind is not a valid \c version_kind value.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetVersionInfo(const version_info* info, version_kind kind)
 {
@@ -636,6 +966,25 @@ BAppFileInfo::SetVersionInfo(const version_info* info, version_kind kind)
 }
 
 
+/**
+ * @brief Retrieves the icon associated with a specific MIME type supported
+ *        by this application, rendering it into a BBitmap.
+ *
+ * Vector icons are preferred; if none is found the method falls back to
+ * the legacy B_CMAP8 mini or large icon.  Passing \c NULL for \a type
+ * retrieves the application's own icon.
+ *
+ * @param type The MIME type whose icon should be retrieved, or \c NULL for
+ *             the application icon.
+ * @param icon A pre-allocated BBitmap that will receive the icon.
+ * @param size The desired icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @return A status code.
+ * @retval B_OK The icon was successfully read.
+ * @retval B_BAD_VALUE \a icon is \c NULL / uninitialised, \a type is not a
+ *         valid MIME string, or size/color-space constraints are violated.
+ * @retval B_NO_INIT The object is not associated with a file.
+ * @retval B_ENTRY_NOT_FOUND No icon data exists.
+ */
 status_t
 BAppFileInfo::GetIconForType(const char* type, BBitmap* icon, icon_size size)
 	const
@@ -751,6 +1100,23 @@ BAppFileInfo::GetIconForType(const char* type, BBitmap* icon, icon_size size)
 }
 
 
+/**
+ * @brief Retrieves the vector icon associated with a specific MIME type as
+ *        a raw byte buffer.
+ *
+ * Passing \c NULL for \a type retrieves the application's own vector icon.
+ *
+ * @param type The MIME type whose icon should be retrieved, or \c NULL for
+ *             the application icon.
+ * @param data Pointer to a \c uint8* that will be set to a newly allocated
+ *             buffer.  The caller is responsible for freeing this buffer.
+ * @param size Pointer to a \c size_t that will receive the buffer size.
+ * @return A status code.
+ * @retval B_OK The icon data was successfully read.
+ * @retval B_BAD_VALUE \a data or \a size is \c NULL, or \a type is not a
+ *         valid MIME string.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::GetIconForType(const char* type, uint8** data, size_t* size) const
 {
@@ -784,6 +1150,26 @@ BAppFileInfo::GetIconForType(const char* type, uint8** data, size_t* size) const
 }
 
 
+/**
+ * @brief Sets the legacy (B_CMAP8) icon for a given MIME type, with optional
+ *        MIME database update.
+ *
+ * If \a icon is \c NULL the icon attribute/resource for \a type is removed.
+ * Passing \c NULL for \a type sets the application's own icon.  The bitmap
+ * is automatically converted to \c B_CMAP8 if it uses a different colour
+ * space.
+ *
+ * @param type The MIME type to associate the icon with, or \c NULL for the
+ *             application icon.
+ * @param icon The BBitmap to store, or \c NULL to remove.
+ * @param which The icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @param updateMimeDB If \c true the MIME database entry is updated.
+ * @return A status code.
+ * @retval B_OK The icon was successfully written.
+ * @retval B_BAD_VALUE Invalid \a which value, invalid \a type string, or
+ *         \a icon has wrong bounds.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetIconForType(const char* type, const BBitmap* icon,
 	icon_size which, bool updateMimeDB)
@@ -871,6 +1257,18 @@ BAppFileInfo::SetIconForType(const char* type, const BBitmap* icon,
 }
 
 
+/**
+ * @brief Sets the legacy (B_CMAP8) icon for a given MIME type, updating the
+ *        MIME database.
+ *
+ * Delegates to SetIconForType(type, icon, which, true).
+ *
+ * @param type The MIME type to associate the icon with, or \c NULL.
+ * @param icon The BBitmap to store, or \c NULL to remove.
+ * @param which The icon size (\c B_MINI_ICON or \c B_LARGE_ICON).
+ * @return A status code as described in
+ *         SetIconForType(const char*, const BBitmap*, icon_size, bool).
+ */
 status_t
 BAppFileInfo::SetIconForType(const char* type, const BBitmap* icon,
 	icon_size which)
@@ -879,6 +1277,24 @@ BAppFileInfo::SetIconForType(const char* type, const BBitmap* icon,
 }
 
 
+/**
+ * @brief Sets the vector icon for a given MIME type from a raw byte buffer,
+ *        with optional MIME database update.
+ *
+ * If \a data is \c NULL the vector icon attribute/resource for \a type is
+ * removed.  Passing \c NULL for \a type sets the application's own vector
+ * icon.
+ *
+ * @param type The MIME type to associate the icon with, or \c NULL for the
+ *             application icon.
+ * @param data Pointer to the raw vector icon data, or \c NULL to remove.
+ * @param size Size in bytes of the icon data.
+ * @param updateMimeDB If \c true the MIME database entry is updated.
+ * @return A status code.
+ * @retval B_OK The icon was successfully written.
+ * @retval B_BAD_VALUE \a type is not a valid MIME string.
+ * @retval B_NO_INIT The object is not associated with a file.
+ */
 status_t
 BAppFileInfo::SetIconForType(const char* type, const uint8* data, size_t size,
 	bool updateMimeDB)
@@ -921,6 +1337,18 @@ BAppFileInfo::SetIconForType(const char* type, const uint8* data, size_t size,
 }
 
 
+/**
+ * @brief Sets the vector icon for a given MIME type from a raw byte buffer,
+ *        updating the MIME database.
+ *
+ * Delegates to SetIconForType(type, data, size, true).
+ *
+ * @param type The MIME type to associate the icon with, or \c NULL.
+ * @param data Pointer to the raw vector icon data, or \c NULL to remove.
+ * @param size Size in bytes of the icon data.
+ * @return A status code as described in
+ *         SetIconForType(const char*, const uint8*, size_t, bool).
+ */
 status_t
 BAppFileInfo::SetIconForType(const char* type, const uint8* data, size_t size)
 {
@@ -928,6 +1356,18 @@ BAppFileInfo::SetIconForType(const char* type, const uint8* data, size_t size)
 }
 
 
+/**
+ * @brief Specifies where application metadata is read from and written to.
+ *
+ * If the internal BResources object was not initialised (i.e. the file has
+ * no resource fork), any \c B_USE_RESOURCES bit in \a location is
+ * automatically cleared, ensuring the object operates in attribute-only
+ * mode.
+ *
+ * @param location A bitmask of \c info_location values
+ *                 (\c B_USE_ATTRIBUTES, \c B_USE_RESOURCES, or
+ *                 \c B_USE_BOTH_LOCATIONS).
+ */
 void
 BAppFileInfo::SetInfoLocation(info_location location)
 {
@@ -938,6 +1378,13 @@ BAppFileInfo::SetInfoLocation(info_location location)
 	fWhere = location;
 }
 
+/**
+ * @brief Returns whether extended file-system attributes are currently used
+ *        for reading and writing metadata.
+ *
+ * @return \c true if the \c B_USE_ATTRIBUTES flag is set in the current
+ *         info location.
+ */
 bool
 BAppFileInfo::IsUsingAttributes() const
 {
@@ -945,6 +1392,13 @@ BAppFileInfo::IsUsingAttributes() const
 }
 
 
+/**
+ * @brief Returns whether embedded file resources are currently used for
+ *        reading and writing metadata.
+ *
+ * @return \c true if the \c B_USE_RESOURCES flag is set in the current
+ *         info location.
+ */
 bool
 BAppFileInfo::IsUsingResources() const
 {
@@ -959,7 +1413,11 @@ void BAppFileInfo::_ReservedAppFileInfo3() {}
 
 
 #ifdef __HAIKU_BEOS_COMPATIBLE
-//!	Privatized assignment operator to prevent usage.
+/**
+ * @brief Privatized assignment operator to prevent usage.
+ *
+ * @return A reference to \c *this (never actually callable externally).
+ */
 BAppFileInfo&
 BAppFileInfo::operator=(const BAppFileInfo&)
 {
@@ -967,26 +1425,30 @@ BAppFileInfo::operator=(const BAppFileInfo&)
 }
 
 
-//! Privatized copy constructor to prevent usage.
+/**
+ * @brief Privatized copy constructor to prevent usage.
+ */
 BAppFileInfo::BAppFileInfo(const BAppFileInfo&)
 {
 }
 #endif
 
 
-/*!	Initializes a BMimeType to the signature of the associated file.
-
-	\warning The parameter \a meta is not checked.
-
-	\param meta A pointer to a pre-allocated BMimeType that shall be
-		   initialized to the signature of the associated file.
-
-	\returns A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE \c NULL \a meta
-	\retval B_ENTRY_NOT_FOUND The file has not signature or the signature is
-	        (not installed in the MIME database.) no valid MIME string.
-*/
+/**
+ * @brief Initialises a BMimeType to the application signature of the
+ *        associated file.
+ *
+ * @warning The parameter \a meta is not checked for \c NULL.
+ *
+ * @param meta A pointer to a pre-allocated BMimeType that will be
+ *             initialised to the file's application signature.
+ * @return A status code.
+ * @retval B_OK Everything went fine.
+ * @retval B_BAD_VALUE \c NULL \a meta or the stored signature is not a valid
+ *         MIME string.
+ * @retval B_ENTRY_NOT_FOUND The file has no signature, or the signature is
+ *         not installed in the MIME database.
+ */
 status_t
 BAppFileInfo::GetMetaMime(BMimeType* meta) const
 {
@@ -1002,31 +1464,33 @@ BAppFileInfo::GetMetaMime(BMimeType* meta) const
 }
 
 
-/*!	Reads data from an attribute or resource.
-
-	\note The data is read from the location specified by \a fWhere.
-
-	\warning The object must be properly initialized. The parameters are
-		\b NOT checked.
-
-	\param name The name of the attribute/resource to be read.
-	\param id The resource ID of the resource to be read. It is ignored
-		   when < 0.
-	\param type The type of the attribute/resource to be read.
-	\param buffer A pre-allocated buffer for the data to be read.
-	\param bufferSize The size of the supplied buffer.
-	\param bytesRead A reference parameter, set to the number of bytes
-		   actually read.
-	\param allocatedBuffer If not \c NULL, the method allocates a buffer
-		   large enough too store the whole data and writes a pointer to it
-		   into this variable. If \c NULL, the supplied buffer is used.
-
-	\returns A status code.
-	\retval B_OK Everything went fine.
-	\retval B_ENTRY_NOT_FOUND The entry was not found.
-	\retval B_NO_MEMORY Ran out of memory allocating the buffer.
-	\retval B_BAD_VALUE \a type did not match.
-*/
+/**
+ * @brief Reads data from an attribute or resource according to the current
+ *        info location.
+ *
+ * @note Data is read from the location(s) specified by \a fWhere.
+ *       Attributes are tried first; resources are used as a fallback.
+ *
+ * @warning The object must be properly initialised.  Parameters are
+ *          \b NOT checked.
+ *
+ * @param name         Name of the attribute/resource to read.
+ * @param id           Resource ID; ignored when negative.
+ * @param type         Expected type code of the attribute/resource.
+ * @param buffer       Pre-allocated destination buffer; ignored when
+ *                     \a allocatedBuffer is non-\c NULL.
+ * @param bufferSize   Size of the pre-allocated buffer.
+ * @param bytesRead    Set to the number of bytes actually read on success.
+ * @param allocatedBuffer If non-\c NULL, the method allocates a buffer large
+ *                     enough to hold all data and stores a pointer to it
+ *                     here; the caller must free it.
+ * @return A status code.
+ * @retval B_OK Everything went fine.
+ * @retval B_ENTRY_NOT_FOUND The attribute/resource was not found.
+ * @retval B_NO_MEMORY Buffer allocation failed.
+ * @retval B_BAD_VALUE The stored type did not match \a type, or the stored
+ *         data was larger than the provided buffer.
+ */
 status_t
 BAppFileInfo::_ReadData(const char* name, int32 id, type_code type,
 	void* buffer, size_t bufferSize, size_t& bytesRead, void** allocatedBuffer)
@@ -1123,26 +1587,28 @@ BAppFileInfo::_ReadData(const char* name, int32 id, type_code type,
 }
 
 
-/*!	Writes data to an attribute or resource.
-
-	\note The data is written to the location(s) specified by \a fWhere.
-
-	\warning The object must be properly initialized. The parameters are
-		\b NOT checked.
-
-	\param name The name of the attribute/resource to be written.
-	\param id The resource ID of the resource to be written.
-	\param type The type of the attribute/resource to be written.
-	\param buffer A buffer containing the data to be written.
-	\param bufferSize The size of the supplied buffer.
-	\param findID If set to \c true use the ID that is already assigned to the
-		   \a name / \a type pair or take the first unused ID >= \a id.
-		   If \c false, \a id is used.
-
-	\returns A status code.
-	\retval B_OK Everything went fine.
-	\retval B_ERROR An error occurred while trying to write the data.
-*/
+/**
+ * @brief Writes data to an attribute or resource according to the current
+ *        info location.
+ *
+ * @note Data is written to all location(s) specified by \a fWhere.
+ *
+ * @warning The object must be properly initialised.  Parameters are
+ *          \b NOT checked.
+ *
+ * @param name       Name of the attribute/resource to write.
+ * @param id         Resource ID to use when writing to a resource.
+ * @param type       Type code of the attribute/resource.
+ * @param buffer     Buffer containing the data to write.
+ * @param bufferSize Size of the data buffer in bytes.
+ * @param findID     If \c true, reuse the existing resource ID for the
+ *                   name/type pair, or find the first unused ID >= \a id.
+ *                   If \c false, \a id is used as-is.
+ * @return A status code.
+ * @retval B_OK Everything went fine.
+ * @retval B_ERROR A write error occurred.
+ * @retval B_NO_INIT Neither attributes nor resources are in use.
+ */
 status_t
 BAppFileInfo::_WriteData(const char* name, int32 id, type_code type,
 	const void* buffer, size_t bufferSize, bool findID)
@@ -1180,21 +1646,24 @@ BAppFileInfo::_WriteData(const char* name, int32 id, type_code type,
 }
 
 
-/*!	Removes an attribute or resource.
-
-	\note The removal location is specified by \a fWhere.
-
-	\warning The object must be properly initialized. The parameters are
-		\b NOT checked.
-
-	\param name The name of the attribute/resource to be remove.
-	\param type The type of the attribute/resource to be removed.
-
-	\returns A status code.
-	\retval B_OK Everything went fine.
-	\retval B_NO_INIT Not using attributes and not using resources.
-	\retval B_ENTRY_NOT_FOUND The attribute or resource was not found.
-*/
+/**
+ * @brief Removes an attribute or resource according to the current info
+ *        location.
+ *
+ * @note The removal location is determined by \a fWhere.
+ *
+ * @warning The object must be properly initialised.  Parameters are
+ *          \b NOT checked.
+ *
+ * @param name The name of the attribute/resource to remove.
+ * @param type The type code of the attribute/resource to remove.
+ * @return A status code.
+ * @retval B_OK Everything went fine (including the case where no entry
+ *         existed).
+ * @retval B_NO_INIT Neither attributes nor resources are in use.
+ * @retval B_ENTRY_NOT_FOUND The resource was not found (attribute absence
+ *         is silently ignored).
+ */
 status_t
 BAppFileInfo::_RemoveData(const char* name, type_code type)
 {

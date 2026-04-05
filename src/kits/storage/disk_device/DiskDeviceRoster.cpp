@@ -1,10 +1,41 @@
 /*
- * Copyright 2003-2009, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold, bonefish@cs.tu-berlin.de
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Haiku, Inc. All Rights Reserved.
+ *   Authors: Ingo Weinhold, bonefish@cs.tu-berlin.de
+ *            Axel Dörfler, axeld@pinc-software.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file DiskDeviceRoster.cpp
+ * @brief Implementation of the BDiskDeviceRoster class.
+ *
+ * BDiskDeviceRoster provides an interface for iterating through all disk
+ * devices and disk systems known to the system, for looking up devices and
+ * partitions by ID or path, and for subscribing to disk device change
+ * notifications. It also supports registration and unregistration of
+ * file-backed virtual disk devices.
+ *
+ * @see BDiskDevice
+ * @see BDiskDeviceList
  */
 
 #include <DiskDeviceRoster.h>
@@ -28,28 +59,25 @@
 #include <ddm_userland_interface_defs.h>
 
 
-/*!	\class BDiskDeviceRoster
-	\brief An interface for iterating through the disk devices known to the
-		   system and for a notification mechanism provided to listen to their
-		   changes.
-*/
+/**
+ * @brief Interface for iterating through disk devices and listening for changes.
+ */
 
-/*!	\brief find_directory constants of the add-on dirs to be searched. */
+/** @brief find_directory constants of the add-on dirs to be searched. */
 static const directory_which kAddOnDirs[] = {
 	B_USER_NONPACKAGED_ADDONS_DIRECTORY,
 	B_USER_ADDONS_DIRECTORY,
 	B_SYSTEM_NONPACKAGED_ADDONS_DIRECTORY,
 	B_SYSTEM_ADDONS_DIRECTORY,
 };
-/*!	\brief Size of the kAddOnDirs array. */
+/** @brief Size of the kAddOnDirs array. */
 static const int32 kAddOnDirCount
 	= sizeof(kAddOnDirs) / sizeof(directory_which);
 
 
-/*!	\brief Creates a BDiskDeviceRoster object.
-
-	The object is ready to be used after construction.
-*/
+/**
+ * @brief Creates a BDiskDeviceRoster object ready for use.
+ */
 BDiskDeviceRoster::BDiskDeviceRoster()
 	: fDeviceCookie(0),
 	  fDiskSystemCookie(0),
@@ -62,8 +90,9 @@ BDiskDeviceRoster::BDiskDeviceRoster()
 }
 
 
-/*!	\brief Frees all resources associated with the object.
-*/
+/**
+ * @brief Frees all resources associated with the object.
+ */
 BDiskDeviceRoster::~BDiskDeviceRoster()
 {
 //	if (fPartitionAddOnDir)
@@ -73,15 +102,14 @@ BDiskDeviceRoster::~BDiskDeviceRoster()
 }
 
 
-/*!	\brief Returns the next BDiskDevice.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized to
-		   represent the next device.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: The end of the list of devices had already been
-	  reached.
-	- another error code
-*/
+/**
+ * @brief Returns the next BDiskDevice in the iteration sequence.
+ *
+ * @param device Pointer to a pre-allocated BDiskDevice to be initialized to
+ *        represent the next device.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND if the end of the device
+ *         list has been reached, or another error code on failure.
+ */
 status_t
 BDiskDeviceRoster::GetNextDevice(BDiskDevice* device)
 {
@@ -98,9 +126,11 @@ BDiskDeviceRoster::GetNextDevice(BDiskDevice* device)
 }
 
 
-/*!	\brief Rewinds the device list iterator.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Rewinds the device list iterator to the beginning.
+ *
+ * @return \c B_OK always.
+ */
 status_t
 BDiskDeviceRoster::RewindDevices()
 {
@@ -109,6 +139,13 @@ BDiskDeviceRoster::RewindDevices()
 }
 
 
+/**
+ * @brief Returns the next BDiskSystem in the iteration sequence.
+ *
+ * @param system Pointer to a pre-allocated BDiskSystem to be initialized to
+ *        the next disk system.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND at the end, or an error code.
+ */
 status_t
 BDiskDeviceRoster::GetNextDiskSystem(BDiskSystem* system)
 {
@@ -123,6 +160,11 @@ BDiskDeviceRoster::GetNextDiskSystem(BDiskSystem* system)
 }
 
 
+/**
+ * @brief Rewinds the disk system list iterator to the beginning.
+ *
+ * @return \c B_OK always.
+ */
 status_t
 BDiskDeviceRoster::RewindDiskSystems()
 {
@@ -131,6 +173,16 @@ BDiskDeviceRoster::RewindDiskSystems()
 }
 
 
+/**
+ * @brief Finds a disk system by name (short name, internal name, or pretty name).
+ *
+ * @param system Pointer to a pre-allocated BDiskSystem to be initialized to
+ *        the found disk system.
+ * @param name The name to search for; matched against short, internal, and
+ *        pretty names.
+ * @return \c B_OK if found, \c B_ENTRY_NOT_FOUND if no match exists, or
+ *         an error code on failure.
+ */
 status_t
 BDiskDeviceRoster::GetDiskSystem(BDiskSystem* system, const char* name)
 {
@@ -150,6 +202,13 @@ BDiskDeviceRoster::GetDiskSystem(BDiskSystem* system, const char* name)
 }
 
 
+/**
+ * @brief Registers a file as a virtual disk device.
+ *
+ * @param filename Path to the file to register as a disk device.
+ * @return The partition_id of the new virtual device on success, or a
+ *         negative error code on failure.
+ */
 partition_id
 BDiskDeviceRoster::RegisterFileDevice(const char* filename)
 {
@@ -159,6 +218,12 @@ BDiskDeviceRoster::RegisterFileDevice(const char* filename)
 }
 
 
+/**
+ * @brief Unregisters a file-backed virtual disk device by filename.
+ *
+ * @param filename Path to the file that was registered as a disk device.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDeviceRoster::UnregisterFileDevice(const char* filename)
 {
@@ -168,6 +233,12 @@ BDiskDeviceRoster::UnregisterFileDevice(const char* filename)
 }
 
 
+/**
+ * @brief Unregisters a file-backed virtual disk device by partition ID.
+ *
+ * @param device The partition_id of the virtual device to unregister.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDeviceRoster::UnregisterFileDevice(partition_id device)
 {
@@ -177,18 +248,17 @@ BDiskDeviceRoster::UnregisterFileDevice(partition_id device)
 }
 
 
-/*!	\brief Iterates through the all devices.
-
-	The supplied visitor's Visit(BDiskDevice*) is invoked for each device.
-	If Visit() returns \c true, the iteration is terminated and this method
-	returns \c true. If supplied, \a device is set to the concerned device.
-
-	\param visitor The visitor.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device at which the iteration was terminated.
-		   May be \c NULL.
-	\return \c true, if the iteration was terminated, \c false otherwise.
-*/
+/**
+ * @brief Iterates through all devices, invoking the visitor for each one.
+ *
+ * The visitor's Visit(BDiskDevice*) is invoked for each device. If it returns
+ * \c true, the iteration stops early and this method returns \c true. If
+ * \a device is supplied, it is set to the device that terminated the iteration.
+ *
+ * @param visitor The visitor to invoke for each device.
+ * @param device Optional pre-allocated BDiskDevice to hold the terminating device.
+ * @return \c true if the iteration was terminated early, \c false otherwise.
+ */
 bool
 BDiskDeviceRoster::VisitEachDevice(BDiskDeviceVisitor* visitor,
 	BDiskDevice* device)
@@ -209,24 +279,19 @@ BDiskDeviceRoster::VisitEachDevice(BDiskDeviceVisitor* visitor,
 }
 
 
-/*!	\brief Pre-order traverses the trees spanned by the BDiskDevices and their
-		   subobjects.
-
-	The supplied visitor's Visit(BDiskDevice*) method is invoked for each
-	disk device and Visit(BPartition*) for each (non-disk device) partition.
-	If Visit() returns \c true, the iteration is terminated and this method
-	returns \c true. If supplied, \a device is set to the concerned device
-	and in \a partition the pointer to the partition object is returned.
-
-	\param visitor The visitor.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device at which the iteration was terminated.
-		   May be \c NULL.
-	\param partition Pointer to a pre-allocated BPartition pointer to be set
-		   to the partition at which the iteration was terminated.
-		   May be \c NULL.
-	\return \c true, if the iteration was terminated, \c false otherwise.
-*/
+/**
+ * @brief Pre-order traverses all devices and their partition trees using a visitor.
+ *
+ * Visit(BDiskDevice*) is called for each device and Visit(BPartition*, int32)
+ * for each non-device partition. Terminates early when a Visit() call returns
+ * \c true. If supplied, \a device and \a partition are set to the terminating
+ * objects.
+ *
+ * @param visitor The visitor to invoke for each device and partition.
+ * @param device Optional pre-allocated BDiskDevice to hold the terminating device.
+ * @param partition Optional pointer to a BPartition* to hold the terminating partition.
+ * @return \c true if the iteration was terminated early, \c false otherwise.
+ */
 bool
 BDiskDeviceRoster::VisitEachPartition(BDiskDeviceVisitor* visitor,
 	BDiskDevice* device, BPartition** partition)
@@ -255,23 +320,16 @@ BDiskDeviceRoster::VisitEachPartition(BDiskDeviceVisitor* visitor,
 }
 
 
-/*!	\brief Iterates through the all devices' partitions that are mounted.
-
-	The supplied visitor's Visit(BPartition*) is invoked for each mounted
-	partition.
-	If Visit() returns \c true, the iteration is terminated and this method
-	returns \c true. If supplied, \a device is set to the concerned device
-	and in \a partition the pointer to the partition object is returned.
-
-	\param visitor The visitor.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device at which the iteration was terminated.
-		   May be \c NULL.
-	\param partition Pointer to a pre-allocated BPartition pointer to be set
-		   to the partition at which the iteration was terminated.
-		   May be \c NULL.
-	\return \c true, if the iteration was terminated, \c false otherwise.
-*/
+/**
+ * @brief Iterates through all mounted partitions across all devices.
+ *
+ * Only partitions for which IsMounted() returns \c true are visited.
+ *
+ * @param visitor The visitor to invoke for each mounted partition.
+ * @param device Optional pre-allocated BDiskDevice to hold the terminating device.
+ * @param partition Optional pointer to a BPartition* to hold the terminating partition.
+ * @return \c true if the iteration was terminated early, \c false otherwise.
+ */
 bool
 BDiskDeviceRoster::VisitEachMountedPartition(BDiskDeviceVisitor* visitor,
 	BDiskDevice* device, BPartition** partition)
@@ -290,23 +348,16 @@ BDiskDeviceRoster::VisitEachMountedPartition(BDiskDeviceVisitor* visitor,
 }
 
 
-/*!	\brief Iterates through the all devices' partitions that are mountable.
-
-	The supplied visitor's Visit(BPartition*) is invoked for each mountable
-	partition.
-	If Visit() returns \c true, the iteration is terminated and this method
-	returns \c true. If supplied, \a device is set to the concerned device
-	and in \a partition the pointer to the partition object is returned.
-
-	\param visitor The visitor.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device at which the iteration was terminated.
-		   May be \c NULL.
-	\param partition Pointer to a pre-allocated BPartition pointer to be set
-		   to the partition at which the iteration was terminated.
-		   May be \c NULL.
-	\return \c true, if the iteration was terminated, \c false otherwise.
-*/
+/**
+ * @brief Iterates through all mountable partitions across all devices.
+ *
+ * Only partitions for which ContainsFileSystem() returns \c true are visited.
+ *
+ * @param visitor The visitor to invoke for each mountable partition.
+ * @param device Optional pre-allocated BDiskDevice to hold the terminating device.
+ * @param partition Optional pointer to a BPartition* to hold the terminating partition.
+ * @return \c true if the iteration was terminated early, \c false otherwise.
+ */
 bool
 BDiskDeviceRoster::VisitEachMountablePartition(BDiskDeviceVisitor* visitor,
 	BDiskDevice* device, BPartition** partition)
@@ -325,8 +376,15 @@ BDiskDeviceRoster::VisitEachMountablePartition(BDiskDeviceVisitor* visitor,
 }
 
 
-/*!	\brief Finds a BPartition by BVolume.
-*/
+/**
+ * @brief Finds the partition that corresponds to a given BVolume.
+ *
+ * @param volume The mounted volume whose backing partition is sought.
+ * @param device Pre-allocated BDiskDevice to be initialized to the device
+ *        containing the found partition.
+ * @param _partition Set to the BPartition corresponding to \a volume.
+ * @return \c B_OK if found, \c B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 BDiskDeviceRoster::FindPartitionByVolume(const BVolume& volume,
 	BDiskDevice* device, BPartition** _partition)
@@ -362,8 +420,14 @@ BDiskDeviceRoster::FindPartitionByVolume(const BVolume& volume,
 }
 
 
-/*!	\brief Finds a BPartition by mount path.
-*/
+/**
+ * @brief Finds the partition that is mounted at a given mount point path.
+ *
+ * @param mountPoint The file system path of the mount point to search for.
+ * @param device Pre-allocated BDiskDevice to be initialized to the containing device.
+ * @param _partition Set to the BPartition mounted at \a mountPoint.
+ * @return \c B_OK if found, \c B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 BDiskDeviceRoster::FindPartitionByMountPoint(const char* mountPoint,
 	BDiskDevice* device, BPartition** _partition)
@@ -377,18 +441,14 @@ BDiskDeviceRoster::FindPartitionByMountPoint(const char* mountPoint,
 }
 
 
-/*!	\brief Returns a BDiskDevice for a given ID.
-
-	The supplied \a device is initialized to the device identified by \a id.
-
-	\param id The ID of the device to be retrieved.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device identified by \a id.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: A device with ID \a id could not be found.
-	- other error codes
-*/
+/**
+ * @brief Retrieves the BDiskDevice identified by a given device ID.
+ *
+ * @param id The ID of the device to retrieve.
+ * @param device Pointer to a pre-allocated BDiskDevice to be initialized.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND if no such device exists,
+ *         or another error code.
+ */
 status_t
 BDiskDeviceRoster::GetDeviceWithID(int32 id, BDiskDevice* device) const
 {
@@ -398,22 +458,16 @@ BDiskDeviceRoster::GetDeviceWithID(int32 id, BDiskDevice* device) const
 }
 
 
-/*!	\brief Returns a BPartition for a given ID.
-
-	The supplied \a device is initialized to the device the partition
-	identified by \a id resides on, and \a partition is set to point to the
-	respective BPartition.
-
-	\param id The ID of the partition to be retrieved.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device the partition identified by \a id resides on.
-	\param partition Pointer to a pre-allocated BPartition pointer to be set
-		   to the partition identified by \a id.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: A partition with ID \a id could not be found.
-	- other error codes
-*/
+/**
+ * @brief Retrieves the BPartition and its containing BDiskDevice by partition ID.
+ *
+ * @param id The ID of the partition to retrieve.
+ * @param device Pre-allocated BDiskDevice to be initialized to the device
+ *        that contains the partition.
+ * @param partition Set to a pointer to the BPartition with ID \a id.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND if not found, or another
+ *         error code.
+ */
 status_t
 BDiskDeviceRoster::GetPartitionWithID(int32 id, BDiskDevice* device,
 	BPartition** partition) const
@@ -435,6 +489,13 @@ BDiskDeviceRoster::GetPartitionWithID(int32 id, BDiskDevice* device,
 }
 
 
+/**
+ * @brief Finds the disk device that owns the given file or device path.
+ *
+ * @param filename The path to a file or device node to locate.
+ * @param device Pre-allocated BDiskDevice to be initialized to the result.
+ * @return \c B_OK on success, or an error code if the device cannot be found.
+ */
 status_t
 BDiskDeviceRoster::GetDeviceForPath(const char* filename, BDiskDevice* device)
 {
@@ -452,6 +513,14 @@ BDiskDeviceRoster::GetDeviceForPath(const char* filename, BDiskDevice* device)
 }
 
 
+/**
+ * @brief Finds the partition and its containing device for a given path.
+ *
+ * @param filename The path to a file or device node to locate.
+ * @param device Pre-allocated BDiskDevice to be initialized to the containing device.
+ * @param partition Set to the BPartition that covers \a filename.
+ * @return \c B_OK on success, or an error code if the partition cannot be found.
+ */
 status_t
 BDiskDeviceRoster::GetPartitionForPath(const char* filename,
 	BDiskDevice* device, BPartition** partition)
@@ -478,6 +547,13 @@ BDiskDeviceRoster::GetPartitionForPath(const char* filename,
 }
 
 
+/**
+ * @brief Finds the file-backed virtual disk device that contains the given path.
+ *
+ * @param filename The path to look up within file-backed disk devices.
+ * @param device Pre-allocated BDiskDevice to be initialized to the result.
+ * @return \c B_OK on success, or an error code if no matching device is found.
+ */
 status_t
 BDiskDeviceRoster::GetFileDeviceForPath(const char* filename,
 	BDiskDevice* device)
@@ -496,21 +572,17 @@ BDiskDeviceRoster::GetFileDeviceForPath(const char* filename,
 }
 
 
-/*!	\brief Adds a target to the list of targets to be notified on disk device
-		   events.
-
-	\todo List the event mask flags, the events and describe the layout of the
-		  notification message.
-
-	If \a target is already listening to events, this method replaces the
-	former event mask with \a eventMask.
-
-	\param target A BMessenger identifying the target to which the events
-		   shall be sent.
-	\param eventMask A mask specifying on which events the target shall be
-		   notified.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Registers a messenger to receive disk device event notifications.
+ *
+ * If \a target is already watching, its event mask is replaced with
+ * \a eventMask.
+ *
+ * @param target A BMessenger identifying the target to notify.
+ * @param eventMask A bitmask specifying which events to watch for.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a eventMask is 0, or
+ *         another error code on failure.
+ */
 status_t
 BDiskDeviceRoster::StartWatching(BMessenger target, uint32 eventMask)
 {
@@ -525,12 +597,12 @@ BDiskDeviceRoster::StartWatching(BMessenger target, uint32 eventMask)
 }
 
 
-/*!	\brief Remove a target from the list of targets to be notified on disk
-		   device events.
-	\param target A BMessenger identifying the target to which notfication
-		   message shall not longer be sent.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Removes a messenger from the disk device event notification list.
+ *
+ * @param target A BMessenger identifying the target to stop notifying.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDeviceRoster::StopWatching(BMessenger target)
 {
@@ -543,22 +615,18 @@ BDiskDeviceRoster::StopWatching(BMessenger target)
 
 #if 0
 
-/*!	\brief Returns the next partitioning system capable of partitioning.
-
-	The returned \a shortName can be passed to BSession::Partition().
-
-	\param shortName Pointer to a pre-allocation char buffer, of size
-		   \c B_FILE_NAME_LENGTH or larger into which the short name of the
-		   partitioning system shall be written.
-	\param longName Pointer to a pre-allocation char buffer, of size
-		   \c B_FILE_NAME_LENGTH or larger into which the long name of the
-		   partitioning system shall be written. May be \c NULL.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a shortName.
-	- \c B_ENTRY_NOT_FOUND: End of the list has been reached.
-	- other error codes
-*/
+/**
+ * @brief Returns the next partitioning system capable of partitioning.
+ *
+ * The returned \a shortName can be passed to BSession::Partition().
+ *
+ * @param shortName Pre-allocated buffer of at least B_FILE_NAME_LENGTH bytes
+ *        to receive the short name of the partitioning system.
+ * @param longName Pre-allocated buffer of at least B_FILE_NAME_LENGTH bytes
+ *        to receive the long name. May be \c NULL.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a shortName is \c NULL,
+ *         \c B_ENTRY_NOT_FOUND at the end of the list, or another error code.
+ */
 status_t
 BDiskDeviceRoster::GetNextPartitioningSystem(char *shortName, char *longName)
 {
@@ -604,22 +672,18 @@ BDiskDeviceRoster::GetNextPartitioningSystem(char *shortName, char *longName)
 }
 
 
-/*!	\brief Returns the next file system capable of initializing.
-
-	The returned \a shortName can be passed to BPartition::Initialize().
-
-	\param shortName Pointer to a pre-allocation char buffer, of size
-		   \c B_FILE_NAME_LENGTH or larger into which the short name of the
-		   file system shall be written.
-	\param longName Pointer to a pre-allocation char buffer, of size
-		   \c B_FILE_NAME_LENGTH or larger into which the long name of the
-		   file system shall be written. May be \c NULL.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a shortName.
-	- \c B_ENTRY_NOT_FOUND: End of the list has been reached.
-	- other error codes
-*/
+/**
+ * @brief Returns the next file system capable of initializing partitions.
+ *
+ * The returned \a shortName can be passed to BPartition::Initialize().
+ *
+ * @param shortName Pre-allocated buffer of at least B_FILE_NAME_LENGTH bytes
+ *        to receive the short name of the file system.
+ * @param longName Pre-allocated buffer of at least B_FILE_NAME_LENGTH bytes
+ *        to receive the long name. May be \c NULL.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a shortName is \c NULL,
+ *         \c B_ENTRY_NOT_FOUND at the end of the list, or another error code.
+ */
 status_t
 BDiskDeviceRoster::GetNextFileSystem(char *shortName, char *longName)
 {
@@ -663,9 +727,11 @@ BDiskDeviceRoster::GetNextFileSystem(char *shortName, char *longName)
 }
 
 
-/*!	\brief Rewinds the partitioning system list iterator.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Rewinds the partitioning system list iterator.
+ *
+ * @return \c B_OK always.
+ */
 status_t
 BDiskDeviceRoster::RewindPartitiningSystems()
 {
@@ -678,9 +744,11 @@ BDiskDeviceRoster::RewindPartitiningSystems()
 }
 
 
-/*!	\brief Rewinds the file system list iterator.
-	\return \c B_OK, if everything went fine, another error code otherwise.
-*/
+/**
+ * @brief Rewinds the file system list iterator.
+ *
+ * @return \c B_OK always.
+ */
 status_t
 BDiskDeviceRoster::RewindFileSystems()
 {
@@ -693,22 +761,15 @@ BDiskDeviceRoster::RewindFileSystems()
 }
 
 
-/*!	\brief Returns a BDiskDevice for a given device, session or partition ID.
-
-	The supplied \a device is initialized to the device the object identified
-	by \a id belongs to.
-
-	\param fieldName "device_id", "sesison_id" or "partition_id" according to
-		   the type of object the device shall be retrieved for.
-	\param id The ID of the device, session or partition to be retrieved.
-	\param device Pointer to a pre-allocated BDiskDevice to be initialized
-		   to the device to be retrieved.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: A device, session or partition respectively with
-		 ID \a id could not be found.
-	- other error codes
-*/
+/**
+ * @brief Retrieves a BDiskDevice for a given device, session, or partition ID.
+ *
+ * @param fieldName "device_id", "session_id", or "partition_id" indicating
+ *        the type of ID being provided.
+ * @param id The ID value to look up.
+ * @param device Pre-allocated BDiskDevice to be initialized to the result.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND if not found, or an error code.
+ */
 status_t
 BDiskDeviceRoster::_GetObjectWithID(const char *fieldName, int32 id,
 	BDiskDevice *device) const
@@ -740,15 +801,18 @@ BDiskDeviceRoster::_GetObjectWithID(const char *fieldName, int32 id,
 }
 
 
-/*!	\brief Finds and loads the next add-on of an add-on subdirectory.
-	\param directory The add-on directory.
-	\param image Pointer to an image_id into which the image ID of the loaded
-		   add-on shall be written.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: End of directory.
-	- other error codes
-*/
+/**
+ * @brief Finds and loads the next add-on from a named subdirectory.
+ *
+ * Searches across all add-on directories (user and system) for the given
+ * subdirectory name, loading the next available add-on image.
+ *
+ * @param directory Pointer to the current BDirectory* (updated as dirs are exhausted).
+ * @param index Pointer to the current index into kAddOnDirs.
+ * @param subdir The subdirectory name within "disk_scanner" to search.
+ * @param image Pointer to an AddOnImage to be loaded with the found add-on.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND at end, or an error code.
+ */
 status_t
 BDiskDeviceRoster::_GetNextAddOn(BDirectory **directory, int32 *index,
 	const char *subdir, AddOnImage *image)
@@ -774,15 +838,15 @@ BDiskDeviceRoster::_GetNextAddOn(BDirectory **directory, int32 *index,
 }
 
 
-/*!	\brief Finds and loads the next add-on of an add-on subdirectory.
-	\param directory The add-on directory.
-	\param image Pointer to an image_id into which the image ID of the loaded
-		   add-on shall be written.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: End of directory.
-	- other error codes
-*/
+/**
+ * @brief Loads the next add-on image from an open directory.
+ *
+ * Iterates through directory entries until a loadable add-on image is found.
+ *
+ * @param directory The directory to iterate, or \c NULL (returns B_ENTRY_NOT_FOUND).
+ * @param image Pointer to an AddOnImage to be loaded.
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND at end, or an error code.
+ */
 status_t
 BDiskDeviceRoster::_GetNextAddOn(BDirectory *directory, AddOnImage *image)
 {
@@ -802,17 +866,15 @@ BDiskDeviceRoster::_GetNextAddOn(BDirectory *directory, AddOnImage *image)
 }
 
 
-/*!	\brief Gets the next add-on directory path.
-	\param path Pointer to a BPath to be set to the found directory.
-	\param index Pointer to an index into the kAddOnDirs array indicating
-		   which add-on dir shall be retrieved next.
-	\param subdir Name of the subdirectory (in the "disk_scanner" subdirectory
-		   of the add-on directory) \a directory shall be set to.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: End of directory list.
-	- other error codes
-*/
+/**
+ * @brief Advances the add-on directory path to the next base add-on directory.
+ *
+ * @param path Pointer to a BPath to be set to the next add-on directory.
+ * @param index Pointer to the index into kAddOnDirs indicating the next entry.
+ * @param subdir The subdirectory name within "disk_scanner".
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND when all directories are
+ *         exhausted, or an error code.
+ */
 status_t
 BDiskDeviceRoster::_GetNextAddOnDir(BPath *path, int32 *index,
 	const char *subdir)
@@ -835,17 +897,17 @@ printf("  next add-on dir: `%s'\n", path->Path());
 }
 
 
-/*!	\brief Gets the next add-on directory.
-	\param directory Pointer to a BDirectory* to be set to the found directory.
-	\param index Pointer to an index into the kAddOnDirs array indicating
-		   which add-on dir shall be retrieved next.
-	\param subdir Name of the subdirectory (in the "disk_scanner" subdirectory
-		   of the add-on directory) \a directory shall be set to.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_ENTRY_NOT_FOUND: End of directory list.
-	- other error codes
-*/
+/**
+ * @brief Advances the add-on directory object to the next base add-on directory.
+ *
+ * Creates a BDirectory for the next add-on subdirectory path, cycling through
+ * all base directories in kAddOnDirs.
+ *
+ * @param directory Pointer to a BDirectory* to be updated to the next directory.
+ * @param index Pointer to the index into kAddOnDirs.
+ * @param subdir The subdirectory name within "disk_scanner".
+ * @return \c B_OK on success, \c B_ENTRY_NOT_FOUND when exhausted, or an error code.
+ */
 status_t
 BDiskDeviceRoster::_GetNextAddOnDir(BDirectory **directory, int32 *index,
 	const char *subdir)
@@ -870,6 +932,16 @@ BDiskDeviceRoster::_GetNextAddOnDir(BDirectory **directory, int32 *index,
 }
 
 
+/**
+ * @brief Searches all add-on directories for a partition add-on with the given name.
+ *
+ * Loads the image and creates the add-on object if found.
+ *
+ * @param partitioningSystem The short name of the partitioning system to find.
+ * @param image Pointer to an AddOnImage to be loaded with the found add-on.
+ * @param _addOn Set to the created BDiskScannerPartitionAddOn object if found.
+ * @return \c B_OK on success, or an error code if the add-on cannot be found.
+ */
 status_t
 BDiskDeviceRoster::_LoadPartitionAddOn(const char *partitioningSystem,
 	AddOnImage *image, BDiskScannerPartitionAddOn **_addOn)

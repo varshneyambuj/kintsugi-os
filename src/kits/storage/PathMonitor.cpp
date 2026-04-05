@@ -1,11 +1,50 @@
 /*
- * Copyright 2007-2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Stephan Aßmus, superstippi@gmx.de
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2013, Haiku, Inc. All Rights Reserved.
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file PathMonitor.cpp
+ * @brief Implementation of the BPathMonitor filesystem path monitoring service.
+ *
+ * This file implements BPathMonitor, which allows applications to watch an
+ * arbitrary filesystem path (file or directory) for changes, including creation,
+ * removal, and movement of entries.  It handles paths that do not yet exist by
+ * watching ancestor directories in the hierarchy and transitioning to full
+ * recursive monitoring once the target path appears.
+ *
+ * The implementation maintains a tree of Ancestor objects for each path
+ * component, a graph of Node/Directory objects for the monitored subtree (in
+ * recursive mode), and a per-target Watcher that aggregates multiple
+ * PathHandler instances.  All monitoring is driven by a dedicated BLooper
+ * ("PathMonitor looper") that receives raw B_NODE_MONITOR messages and
+ * translates them into B_PATH_MONITOR messages delivered to the caller's
+ * BMessenger target.
+ *
+ * @see BPathMonitor
  */
 
 
@@ -66,8 +105,15 @@ static BPathMonitor::BWatchingInterface* sWatchingInterface = NULL;
 //	#pragma mark -
 
 
-/*! Returns empty path, if either \a parent or \a subPath is empty or an
-	allocation fails.
+/**
+ * @brief Concatenate a parent path and a sub-path component with a '/' separator.
+ *
+ * Returns an empty BString when either \a parent or \a subPath is empty, or
+ * when a memory allocation fails during string construction.
+ *
+ * @param parent   The leading portion of the path (must not be empty).
+ * @param subPath  The trailing portion to append (must not be empty).
+ * @return The combined path, or an empty BString on failure.
  */
 static BString
 make_path(const BString& parent, const char* subPath)
@@ -93,8 +139,24 @@ make_path(const BString& parent, const char* subPath)
 //	#pragma mark - Ancestor
 
 
+/**
+ * @brief Represents one component of the monitored path hierarchy.
+ *
+ * Each Ancestor corresponds to a single path segment (e.g. one directory
+ * level) between the filesystem root and the target path.  Ancestors are
+ * linked in a parent/child chain and are watched so that the PathHandler can
+ * react when an intermediate directory is created, renamed, or removed.
+ */
 class Ancestor {
 public:
+	/**
+	 * @brief Construct an Ancestor for the path component at \a pathComponentOffset.
+	 *
+	 * @param parent              Pointer to the parent Ancestor, or NULL for root.
+	 * @param path                The absolute path up to and including this component.
+	 * @param pathComponentOffset Byte offset within \a path where this component's
+	 *                            name begins.
+	 */
 	Ancestor(Ancestor* parent, const BString& path, size_t pathComponentOffset)
 		:
 		fParent(parent),
@@ -114,46 +176,90 @@ public:
 			fParent->fChild = this;
 	}
 
+	/**
+	 * @brief Return the parent Ancestor in the chain, or NULL for the root.
+	 * @return Pointer to the parent Ancestor.
+	 */
 	Ancestor* Parent() const
 	{
 		return fParent;
 	}
 
+	/**
+	 * @brief Return the child Ancestor in the chain, or NULL for the leaf.
+	 * @return Pointer to the child Ancestor.
+	 */
 	Ancestor* Child() const
 	{
 		return fChild;
 	}
 
+	/**
+	 * @brief Return the absolute path represented by this Ancestor.
+	 * @return Reference to the stored path string.
+	 */
 	const BString& Path() const
 	{
 		return fPath;
 	}
 
+	/**
+	 * @brief Return the name (last path component) of this Ancestor.
+	 * @return C-string pointer to the entry name within the stored entry ref.
+	 */
 	const char* Name() const
 	{
 		return fEntryRef.name;
 	}
 
+	/**
+	 * @brief Return whether this Ancestor's filesystem node is currently known.
+	 * @return true if the ancestor exists on-disk (device >= 0), false otherwise.
+	 */
 	bool Exists() const
 	{
 		return fNodeRef.device >= 0;
 	}
 
+	/**
+	 * @brief Return the entry ref for this Ancestor.
+	 * @return Reference to the stored NotOwningEntryRef.
+	 */
 	const NotOwningEntryRef& EntryRef() const
 	{
 		return fEntryRef;
 	}
 
+	/**
+	 * @brief Return the node ref for this Ancestor.
+	 * @return Reference to the stored node_ref.
+	 */
 	const node_ref& NodeRef() const
 	{
 		return fNodeRef;
 	}
 
+	/**
+	 * @brief Return whether this Ancestor represents a directory node.
+	 * @return true if the node is a directory.
+	 */
 	bool IsDirectory() const
 	{
 		return fIsDirectory;
 	}
 
+	/**
+	 * @brief Begin watching this Ancestor's filesystem node.
+	 *
+	 * Resolves the entry and node ref from the stored path, then registers
+	 * a node monitor with the watching interface using \a pathFlags (for the
+	 * leaf) or B_WATCH_DIRECTORY (for intermediate ancestors).
+	 *
+	 * @param pathFlags  Watch flags to apply when this is the leaf ancestor.
+	 * @param target     The BHandler that will receive node monitor messages.
+	 * @return B_OK on success, or an error code if the entry cannot be
+	 *         resolved or monitoring cannot be started.
+	 */
 	status_t StartWatching(uint32 pathFlags, BHandler* target)
 	{
 		// init entry ref
@@ -197,6 +303,14 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Stop watching this Ancestor's filesystem node and reset its refs.
+	 *
+	 * Cancels any active node monitor, clears the directory flag, and
+	 * resets both the node ref and the directory portion of the entry ref.
+	 *
+	 * @param target  The BHandler originally passed to StartWatching().
+	 */
 	void StopWatching(BHandler* target)
 	{
 		// stop watching
@@ -211,6 +325,10 @@ public:
 		fEntryRef.SetDirectoryNodeRef(node_ref());
 	}
 
+	/**
+	 * @brief Intrusive hash-table link accessor used by AncestorMap.
+	 * @return Reference to the internal hash-next pointer.
+	 */
 	Ancestor*& HashNext()
 	{
 		return fHashNext;
@@ -231,25 +349,49 @@ private:
 //	#pragma mark - AncestorMap
 
 
+/**
+ * @brief Hash table definition for mapping node_ref keys to Ancestor values.
+ */
 struct AncestorHashDefinition {
 	typedef	node_ref	KeyType;
 	typedef	Ancestor	ValueType;
 
+	/**
+	 * @brief Hash a node_ref key by XOR-ing device and inode numbers.
+	 * @param key  The node_ref to hash.
+	 * @return     Hash value.
+	 */
 	size_t HashKey(const node_ref& key) const
 	{
 		return size_t(key.device ^ key.node);
 	}
 
+	/**
+	 * @brief Hash an Ancestor value via its stored NodeRef.
+	 * @param value  Pointer to the Ancestor.
+	 * @return       Hash value.
+	 */
 	size_t Hash(Ancestor* value) const
 	{
 		return HashKey(value->NodeRef());
 	}
 
+	/**
+	 * @brief Compare a node_ref key against an Ancestor value.
+	 * @param key    The lookup key.
+	 * @param value  The candidate Ancestor.
+	 * @return       true if the key equals the Ancestor's NodeRef.
+	 */
 	bool Compare(const node_ref& key, Ancestor* value) const
 	{
 		return key == value->NodeRef();
 	}
 
+	/**
+	 * @brief Return the intrusive hash-next link for an Ancestor.
+	 * @param value  Pointer to the Ancestor.
+	 * @return       Reference to the hash-next pointer.
+	 */
 	Ancestor*& GetLink(Ancestor* value) const
 	{
 		return value->HashNext();
@@ -263,8 +405,21 @@ typedef BOpenHashTable<AncestorHashDefinition> AncestorMap;
 //	#pragma mark - Entry
 
 
+/**
+ * @brief Represents a named directory entry within the monitored tree.
+ *
+ * An Entry links a parent Directory to a child Node using the entry's name.
+ * Multiple Entry objects may refer to the same Node when hard links exist.
+ */
 class Entry : public SinglyLinkedListLinkImpl<Entry> {
 public:
+	/**
+	 * @brief Construct an Entry with the given parent, name, and node.
+	 *
+	 * @param parent  The Directory that contains this entry.
+	 * @param name    The filesystem name of this entry.
+	 * @param node    The Node this entry points to (may be NULL initially).
+	 */
 	Entry(Directory* parent, const BString& name, ::Node* node)
 		:
 		fParent(parent),
@@ -273,28 +428,53 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Return the parent Directory of this entry.
+	 * @return Pointer to the parent Directory.
+	 */
 	Directory* Parent() const
 	{
 		return fParent;
 	}
 
+	/**
+	 * @brief Return the name of this entry.
+	 * @return Reference to the stored name string.
+	 */
 	const BString& Name() const
 	{
 		return fName;
 	}
 
+	/**
+	 * @brief Return the Node this entry refers to.
+	 * @return Pointer to the associated Node.
+	 */
 	::Node* Node() const
 	{
 		return fNode;
 	}
 
+	/**
+	 * @brief Set or replace the Node associated with this entry.
+	 * @param node  The new Node pointer.
+	 */
 	void SetNode(::Node* node)
 	{
 		fNode = node;
 	}
 
+	/**
+	 * @brief Build and return a NotOwningEntryRef for this entry.
+	 * @return A NotOwningEntryRef composed from the parent's NodeRef and this
+	 *         entry's name.
+	 */
 	inline NotOwningEntryRef EntryRef() const;
 
+	/**
+	 * @brief Intrusive hash-table link accessor used by EntryMap.
+	 * @return Reference to the internal hash-next pointer.
+	 */
 	Entry*& HashNext()
 	{
 		return fHashNext;
@@ -313,25 +493,49 @@ typedef SinglyLinkedList<Entry> EntryList;
 // EntryMap
 
 
+/**
+ * @brief Hash table definition for mapping entry name (C-string) keys to Entry values.
+ */
 struct EntryHashDefinition {
 	typedef	const char*	KeyType;
 	typedef	Entry		ValueType;
 
+	/**
+	 * @brief Hash a C-string entry name using BString's hash function.
+	 * @param key  The entry name.
+	 * @return     Hash value.
+	 */
 	size_t HashKey(const char* key) const
 	{
 		return BString::HashValue(key);
 	}
 
+	/**
+	 * @brief Hash an Entry value via its stored name.
+	 * @param value  Pointer to the Entry.
+	 * @return       Hash value.
+	 */
 	size_t Hash(Entry* value) const
 	{
 		return value->Name().HashValue();
 	}
 
+	/**
+	 * @brief Compare a C-string key against an Entry's name.
+	 * @param key    The lookup key.
+	 * @param value  The candidate Entry.
+	 * @return       true if the names are equal.
+	 */
 	bool Compare(const char* key, Entry* value) const
 	{
 		return value->Name() == key;
 	}
 
+	/**
+	 * @brief Return the intrusive hash-next link for an Entry.
+	 * @param value  Pointer to the Entry.
+	 * @return       Reference to the hash-next pointer.
+	 */
 	Entry*& GetLink(Entry* value) const
 	{
 		return value->HashNext();
@@ -345,63 +549,118 @@ typedef BOpenHashTable<EntryHashDefinition> EntryMap;
 //	#pragma mark - Node
 
 
+/**
+ * @brief Represents a filesystem node (file or directory) within the monitored tree.
+ *
+ * Node is the base class for both plain files and directories.  It stores a
+ * node_ref for identification and maintains the list of Entry objects that
+ * refer to it (supporting hard links).
+ */
 class Node {
 public:
+	/**
+	 * @brief Construct a Node identified by \a nodeRef.
+	 * @param nodeRef  The filesystem node reference (device + inode).
+	 */
 	Node(const node_ref& nodeRef)
 		:
 		fNodeRef(nodeRef)
 	{
 	}
 
+	/**
+	 * @brief Virtual destructor.
+	 */
 	virtual ~Node()
 	{
 	}
 
+	/**
+	 * @brief Return whether this Node is a directory.
+	 * @return false (overridden by Directory to return true).
+	 */
 	virtual bool IsDirectory() const
 	{
 		return false;
 	}
 
+	/**
+	 * @brief Return this Node cast to a Directory, or NULL if it is not one.
+	 * @return NULL (overridden by Directory).
+	 */
 	virtual Directory* ToDirectory()
 	{
 		return NULL;
 	}
 
+	/**
+	 * @brief Return the node_ref identifying this Node.
+	 * @return Reference to the stored node_ref.
+	 */
 	const node_ref& NodeRef() const
 	{
 		return fNodeRef;
 	}
 
+	/**
+	 * @brief Return the list of Entry objects that refer to this Node.
+	 * @return Reference to the intrusive entry list.
+	 */
 	const EntryList& Entries() const
 	{
 		return fEntries;
 	}
 
+	/**
+	 * @brief Return whether any Entry objects currently refer to this Node.
+	 * @return true if the entry list is non-empty.
+	 */
 	bool HasEntries() const
 	{
 		return !fEntries.IsEmpty();
 	}
 
+	/**
+	 * @brief Return the first Entry in the node's entry list.
+	 * @return Pointer to the first Entry, or NULL if the list is empty.
+	 */
 	Entry* FirstNodeEntry() const
 	{
 		return fEntries.Head();
 	}
 
+	/**
+	 * @brief Return whether \a entry is the sole Entry referring to this Node.
+	 * @param entry  The Entry to test.
+	 * @return true if \a entry is both the head and the only element.
+	 */
 	bool IsOnlyNodeEntry(Entry* entry) const
 	{
 		return entry == fEntries.Head() && fEntries.GetNext(entry) == NULL;
 	}
 
+	/**
+	 * @brief Add \a entry to the list of entries referring to this Node.
+	 * @param entry  The Entry to add.
+	 */
 	void AddNodeEntry(Entry* entry)
 	{
 		fEntries.Add(entry);
 	}
 
+	/**
+	 * @brief Remove \a entry from the list of entries referring to this Node.
+	 * @param entry  The Entry to remove.
+	 */
 	void RemoveNodeEntry(Entry* entry)
 	{
 		fEntries.Remove(entry);
 	}
 
+	/**
+	 * @brief Intrusive hash-table link accessor used by NodeMap.
+	 * @return Reference to the internal hash-next pointer.
+	 */
 	Node*& HashNext()
 	{
 		return fHashNext;
@@ -414,25 +673,49 @@ private:
 };
 
 
+/**
+ * @brief Hash table definition for mapping node_ref keys to Node values.
+ */
 struct NodeHashDefinition {
 	typedef	node_ref	KeyType;
 	typedef	Node		ValueType;
 
+	/**
+	 * @brief Hash a node_ref key by XOR-ing device and inode.
+	 * @param key  The node_ref to hash.
+	 * @return     Hash value.
+	 */
 	size_t HashKey(const node_ref& key) const
 	{
 		return size_t(key.device ^ key.node);
 	}
 
+	/**
+	 * @brief Hash a Node value via its stored NodeRef.
+	 * @param value  Pointer to the Node.
+	 * @return       Hash value.
+	 */
 	size_t Hash(Node* value) const
 	{
 		return HashKey(value->NodeRef());
 	}
 
+	/**
+	 * @brief Compare a node_ref key against a Node value.
+	 * @param key    The lookup key.
+	 * @param value  The candidate Node.
+	 * @return       true if the key equals the Node's NodeRef.
+	 */
 	bool Compare(const node_ref& key, Node* value) const
 	{
 		return key == value->NodeRef();
 	}
 
+	/**
+	 * @brief Return the intrusive hash-next link for a Node.
+	 * @param value  Pointer to the Node.
+	 * @return       Reference to the hash-next pointer.
+	 */
 	Node*& GetLink(Node* value) const
 	{
 		return value->HashNext();
@@ -446,8 +729,22 @@ typedef BOpenHashTable<NodeHashDefinition> NodeMap;
 //	#pragma mark - Directory
 
 
+/**
+ * @brief Specialisation of Node that holds a hash map of child Entry objects.
+ *
+ * Directory extends Node with the ability to look up, create, add, remove, and
+ * iterate over its direct children.  It is created via the static factory
+ * method Create() to allow proper two-phase initialisation of the internal
+ * hash table.
+ */
 class Directory : public Node {
 public:
+	/**
+	 * @brief Factory method: allocate and initialise a Directory for \a nodeRef.
+	 *
+	 * @param nodeRef  The filesystem node reference for this directory.
+	 * @return Pointer to the new Directory, or NULL on allocation/init failure.
+	 */
 	static Directory* Create(const node_ref& nodeRef)
 	{
 		Directory* directory = new(std::nothrow) Directory(nodeRef);
@@ -459,21 +756,42 @@ public:
 		return directory;
 	}
 
+	/**
+	 * @brief Return true, indicating this Node is a Directory.
+	 * @return true.
+	 */
 	virtual bool IsDirectory() const
 	{
 		return true;
 	}
 
+	/**
+	 * @brief Return this object cast to a Directory pointer.
+	 * @return this.
+	 */
 	virtual Directory* ToDirectory()
 	{
 		return this;
 	}
 
+	/**
+	 * @brief Look up a child Entry by name.
+	 *
+	 * @param name  The entry name to search for.
+	 * @return Pointer to the matching Entry, or NULL if not found.
+	 */
 	Entry* FindEntry(const char* name) const
 	{
 		return fEntries.Lookup(name);
 	}
 
+	/**
+	 * @brief Allocate a new Entry with \a name and \a node and add it to this Directory.
+	 *
+	 * @param name  The name for the new entry.
+	 * @param node  The Node the entry should point to (may be NULL).
+	 * @return Pointer to the new Entry, or NULL on allocation failure.
+	 */
 	Entry* CreateEntry(const BString& name, Node* node)
 	{
 		Entry* entry = new(std::nothrow) Entry(this, name, node);
@@ -486,27 +804,51 @@ public:
 		return entry;
 	}
 
+	/**
+	 * @brief Insert a pre-allocated Entry into this Directory's hash table.
+	 * @param entry  The Entry to insert.
+	 */
 	void AddEntry(Entry* entry)
 	{
 		fEntries.Insert(entry);
 	}
 
+	/**
+	 * @brief Remove an Entry from this Directory's hash table.
+	 * @param entry  The Entry to remove.
+	 */
 	void RemoveEntry(Entry* entry)
 	{
 		fEntries.Remove(entry);
 	}
 
+	/**
+	 * @brief Return an iterator over all Entries in this Directory.
+	 * @return An EntryMap::Iterator positioned at the first entry.
+	 */
 	EntryMap::Iterator GetEntryIterator() const
 	{
 		return fEntries.GetIterator();
 	}
 
+	/**
+	 * @brief Remove and return all Entries from this Directory in one operation.
+	 *
+	 * The returned pointer is the head of a singly-linked list chained via
+	 * HashNext().  The caller is responsible for freeing each Entry.
+	 *
+	 * @return Pointer to the first removed Entry, or NULL if the directory was empty.
+	 */
 	Entry* RemoveAllEntries()
 	{
 		return fEntries.Clear(true);
 	}
 
 private:
+	/**
+	 * @brief Private constructor — use Create() instead.
+	 * @param nodeRef  The filesystem node reference for this directory.
+	 */
 	Directory(const node_ref& nodeRef)
 		:
 		Node(nodeRef)
@@ -521,6 +863,11 @@ private:
 //	#pragma mark - Entry
 
 
+/**
+ * @brief Build and return a NotOwningEntryRef composed from the parent's NodeRef and this entry's name.
+ *
+ * @return A NotOwningEntryRef that does not own the name string.
+ */
 inline NotOwningEntryRef
 Entry::EntryRef() const
 {
@@ -531,6 +878,14 @@ Entry::EntryRef() const
 //	#pragma mark - PathHandler
 
 
+/**
+ * @brief BHandler subclass that monitors a single path and dispatches B_PATH_MONITOR messages.
+ *
+ * PathHandler is added to the shared PathMonitor looper.  It owns an Ancestor
+ * chain for every path component, a NodeMap/EntryMap graph for the subtree
+ * (recursive mode), and translates raw B_NODE_MONITOR messages into the
+ * higher-level B_PATH_MONITOR protocol understood by BPathMonitor clients.
+ */
 class PathHandler : public BHandler {
 public:
 								PathHandler(const char* path, uint32 flags,
@@ -633,25 +988,49 @@ private:
 };
 
 
+/**
+ * @brief Hash table definition for mapping path strings to PathHandler values.
+ */
 struct PathHandlerHashDefinition {
 	typedef	const char*	KeyType;
 	typedef	PathHandler	ValueType;
 
+	/**
+	 * @brief Hash a C-string path key.
+	 * @param key  The path string.
+	 * @return     Hash value.
+	 */
 	size_t HashKey(const char* key) const
 	{
 		return BString::HashValue(key);
 	}
 
+	/**
+	 * @brief Hash a PathHandler value via its original path.
+	 * @param value  Pointer to the PathHandler.
+	 * @return       Hash value.
+	 */
 	size_t Hash(PathHandler* value) const
 	{
 		return value->OriginalPath().HashValue();
 	}
 
+	/**
+	 * @brief Compare a path key against a PathHandler's original path.
+	 * @param key    The lookup key.
+	 * @param value  The candidate PathHandler.
+	 * @return       true if the strings are equal.
+	 */
 	bool Compare(const char* key, PathHandler* value) const
 	{
 		return key == value->OriginalPath();
 	}
 
+	/**
+	 * @brief Return the intrusive hash-next link for a PathHandler.
+	 * @param value  Pointer to the PathHandler.
+	 * @return       Reference to the hash-next pointer.
+	 */
 	PathHandler*& GetLink(PathHandler* value) const
 	{
 		return value->HashNext();
@@ -665,7 +1044,20 @@ typedef BOpenHashTable<PathHandlerHashDefinition> PathHandlerMap;
 //	#pragma mark - Watcher
 
 
+/**
+ * @brief Aggregates all PathHandler instances associated with a single BMessenger target.
+ *
+ * Watcher extends PathHandlerMap (a hash map of path -> PathHandler) and
+ * records the BMessenger it belongs to.  Created via the static factory
+ * Watcher::Create().
+ */
 struct Watcher : public PathHandlerMap {
+	/**
+	 * @brief Factory method: allocate and initialise a Watcher for \a target.
+	 *
+	 * @param target  The BMessenger that will receive B_PATH_MONITOR messages.
+	 * @return Pointer to the new Watcher, or NULL on failure.
+	 */
 	static Watcher* Create(const BMessenger& target)
 	{
 		Watcher* watcher = new(std::nothrow) Watcher(target);
@@ -676,17 +1068,29 @@ struct Watcher : public PathHandlerMap {
 		return watcher;
 	}
 
+	/**
+	 * @brief Return the BMessenger target associated with this Watcher.
+	 * @return Reference to the stored BMessenger.
+	 */
 	const BMessenger& Target() const
 	{
 		return fTarget;
 	}
 
+	/**
+	 * @brief Intrusive hash-table link accessor used by WatcherMap.
+	 * @return Reference to the internal hash-next pointer.
+	 */
 	Watcher*& HashNext()
 	{
 		return fHashNext;
 	}
 
 private:
+	/**
+	 * @brief Private constructor — use Create() instead.
+	 * @param target  The BMessenger target.
+	 */
 	Watcher(const BMessenger& target)
 		:
 		fTarget(target)
@@ -699,25 +1103,49 @@ private:
 };
 
 
+/**
+ * @brief Hash table definition for mapping BMessenger keys to Watcher values.
+ */
 struct WatcherHashDefinition {
 	typedef	BMessenger	KeyType;
 	typedef	Watcher		ValueType;
 
+	/**
+	 * @brief Hash a BMessenger key using its own HashValue() method.
+	 * @param key  The BMessenger to hash.
+	 * @return     Hash value.
+	 */
 	size_t HashKey(const BMessenger& key) const
 	{
 		return key.HashValue();
 	}
 
+	/**
+	 * @brief Hash a Watcher value via its stored Target.
+	 * @param value  Pointer to the Watcher.
+	 * @return       Hash value.
+	 */
 	size_t Hash(Watcher* value) const
 	{
 		return HashKey(value->Target());
 	}
 
+	/**
+	 * @brief Compare a BMessenger key against a Watcher's target.
+	 * @param key    The lookup key.
+	 * @param value  The candidate Watcher.
+	 * @return       true if the messengers are equal.
+	 */
 	bool Compare(const BMessenger& key, Watcher* value) const
 	{
 		return key == value->Target();
 	}
 
+	/**
+	 * @brief Return the intrusive hash-next link for a Watcher.
+	 * @param value  Pointer to the Watcher.
+	 * @return       Reference to the hash-next pointer.
+	 */
 	Watcher*& GetLink(Watcher* value) const
 	{
 		return value->HashNext();
@@ -728,6 +1156,18 @@ struct WatcherHashDefinition {
 //	#pragma mark - PathHandler
 
 
+/**
+ * @brief Construct a PathHandler that monitors \a path with the given \a flags.
+ *
+ * Normalises the path (absolute, no duplicate slashes, no ".." components),
+ * creates the Ancestor chain, adds this handler to \a looper, and begins
+ * watching the ancestors and (if applicable) the full subtree.
+ *
+ * @param path    The filesystem path to monitor.
+ * @param flags   Combination of B_WATCH_* flags controlling monitoring behaviour.
+ * @param target  The BMessenger to which B_PATH_MONITOR notifications are sent.
+ * @param looper  The BLooper to which this handler is added.
+ */
 PathHandler::PathHandler(const char* path, uint32 flags,
 	const BMessenger& target, BLooper* looper)
 	:
@@ -848,6 +1288,11 @@ PathHandler::PathHandler(const char* path, uint32 flags,
 }
 
 
+/**
+ * @brief Destroy the PathHandler, stopping all active monitoring and freeing resources.
+ *
+ * Deletes the base node tree and the entire Ancestor chain.
+ */
 PathHandler::~PathHandler()
 {
 	TRACE("%p->PathHandler::~PathHandler(\"%s\", %#" B_PRIx32 ")\n", this,
@@ -864,6 +1309,12 @@ PathHandler::~PathHandler()
 }
 
 
+/**
+ * @brief Return the initialisation status set during construction.
+ *
+ * @return B_OK if the handler was constructed successfully, otherwise an
+ *         error code indicating what went wrong.
+ */
 status_t
 PathHandler::InitCheck() const
 {
@@ -871,6 +1322,12 @@ PathHandler::InitCheck() const
 }
 
 
+/**
+ * @brief Stop all watching activity, remove this handler from the looper, and delete it.
+ *
+ * After this call the PathHandler object no longer exists; the caller must not
+ * dereference the pointer.
+ */
 void
 PathHandler::Quit()
 {
@@ -881,6 +1338,16 @@ PathHandler::Quit()
 }
 
 
+/**
+ * @brief Dispatch incoming BMessages, routing B_NODE_MONITOR opcodes to the appropriate handlers.
+ *
+ * Handles B_ENTRY_CREATED, B_ENTRY_REMOVED, and B_ENTRY_MOVED opcodes by
+ * delegating to the private _Entry*() methods.  All other node-monitor
+ * opcodes are forwarded to _NodeChanged().  Unrecognised messages are
+ * passed to the base-class implementation.
+ *
+ * @param message  The incoming message to process.
+ */
 void
 PathHandler::MessageReceived(BMessage* message)
 {
@@ -920,6 +1387,15 @@ PathHandler::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Create Ancestor objects for every component of the normalised path.
+ *
+ * Walks fPath character by character, creating one Ancestor per path segment
+ * and linking them in a parent -> child chain.  Sets fRoot (topmost) and
+ * fBaseAncestor (leaf) on success.
+ *
+ * @return B_OK on success, B_NO_MEMORY if an allocation fails.
+ */
 status_t
 PathHandler::_CreateAncestors()
 {
@@ -961,6 +1437,18 @@ PathHandler::_CreateAncestors()
 }
 
 
+/**
+ * @brief Start watching all Ancestors from \a startAncestor downward, optionally notifying.
+ *
+ * For each existing ancestor, registers a node monitor and inserts the ancestor
+ * into fAncestors.  If the base ancestor exists and watching is recursive, also
+ * populates the node/entry graph via _AddNode().
+ *
+ * @param startAncestor  The first ancestor to start watching (typically fRoot).
+ * @param notify         If true, send B_ENTRY_CREATED notification for the base
+ *                       path when it exists.
+ * @return B_OK on success, or a node-monitor error code.
+ */
 status_t
 PathHandler::_StartWatchingAncestors(Ancestor* startAncestor, bool notify)
 {
@@ -1008,6 +1496,17 @@ PathHandler::_StartWatchingAncestors(Ancestor* startAncestor, bool notify)
 }
 
 
+/**
+ * @brief Stop watching all Ancestors from \a ancestor downward, optionally notifying.
+ *
+ * Tears down the recursive node/entry graph (if any), optionally sends a
+ * B_ENTRY_REMOVED notification for the base path, and calls StopWatching()
+ * on each ancestor while removing it from fAncestors.
+ *
+ * @param ancestor  The first ancestor in the chain to stop watching.
+ * @param notify    If true, send B_ENTRY_REMOVED notification for the base
+ *                  path when it currently exists.
+ */
 void
 PathHandler::_StopWatchingAncestors(Ancestor* ancestor, bool notify)
 {
@@ -1034,6 +1533,15 @@ PathHandler::_StopWatchingAncestors(Ancestor* ancestor, bool notify)
 }
 
 
+/**
+ * @brief Handle a B_ENTRY_CREATED node-monitor message.
+ *
+ * Extracts entry and node references from the message, rejects duplicate
+ * notifications, verifies the on-disk state, and delegates to the core
+ * _EntryCreated() logic.
+ *
+ * @param message  The B_NODE_MONITOR / B_ENTRY_CREATED message.
+ */
 void
 PathHandler::_EntryCreated(BMessage* message)
 {
@@ -1086,6 +1594,14 @@ PathHandler::_EntryCreated(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a B_ENTRY_REMOVED node-monitor message.
+ *
+ * Extracts the entry and node references from the message, rejects
+ * duplicates, and delegates to the core _EntryRemoved() logic.
+ *
+ * @param message  The B_NODE_MONITOR / B_ENTRY_REMOVED message.
+ */
 void
 PathHandler::_EntryRemoved(BMessage* message)
 {
@@ -1111,6 +1627,16 @@ PathHandler::_EntryRemoved(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a B_ENTRY_MOVED node-monitor message.
+ *
+ * Extracts source and destination entry refs and the node ref from the
+ * message, rejects duplicates, verifies on-disk state, and applies the
+ * appropriate combination of ancestor resync, recursive entry remove/create,
+ * and move notification.
+ *
+ * @param message  The B_NODE_MONITOR / B_ENTRY_MOVED message.
+ */
 void
 PathHandler::_EntryMoved(BMessage* message)
 {
@@ -1334,6 +1860,15 @@ PathHandler::_EntryMoved(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a stat-changed or attribute-changed node-monitor message.
+ *
+ * Looks up the notified node in the ancestor map and the node map.  If found,
+ * and if the node type matches the active watch filters, forwards the original
+ * message to the target messenger via _NotifyTarget().
+ *
+ * @param message  The B_NODE_MONITOR message with a stat or attribute change.
+ */
 void
 PathHandler::_NodeChanged(BMessage* message)
 {
@@ -1371,6 +1906,24 @@ PathHandler::_NodeChanged(BMessage* message)
 }
 
 
+/**
+ * @brief Core logic for handling the creation of a filesystem entry.
+ *
+ * Determines whether the new entry affects an ancestor, the monitored path
+ * itself, or the recursive subtree, and updates internal data structures
+ * accordingly.  In dry-run mode only reports whether the operation would
+ * succeed without modifying state.
+ *
+ * @param entryRef    The entry ref of the newly created entry.
+ * @param nodeRef     The node ref of the newly created entry.
+ * @param isDirectory true if the new entry is a directory.
+ * @param dryRun      If true, check feasibility only without changing state.
+ * @param notify      If true, send B_ENTRY_CREATED notification to the target.
+ * @param _entry      If non-NULL, receives a pointer to the newly created Entry
+ *                    object on success.
+ * @return true if the operation was handled cleanly; false if the internal
+ *         model was out of sync and a resync was (or would be) required.
+ */
 bool
 PathHandler::_EntryCreated(const NotOwningEntryRef& entryRef,
 	const node_ref& nodeRef, bool isDirectory, bool dryRun, bool notify,
@@ -1501,6 +2054,22 @@ PathHandler::_EntryCreated(const NotOwningEntryRef& entryRef,
 }
 
 
+/**
+ * @brief Core logic for handling the removal of a filesystem entry.
+ *
+ * Determines whether the removed entry affects an ancestor, the monitored
+ * path, or the recursive subtree, and updates internal state accordingly.
+ * In dry-run mode only checks feasibility without modifying state.
+ *
+ * @param entryRef    The entry ref of the removed entry.
+ * @param nodeRef     The node ref of the removed entry.
+ * @param dryRun      If true, check feasibility only without changing state.
+ * @param notify      If true, send B_ENTRY_REMOVED notification to the target.
+ * @param _keepEntry  If non-NULL, receives the Entry pointer rather than
+ *                    deleting it, allowing the caller to manage its lifetime.
+ * @return true if the operation was handled cleanly; false if a resync was
+ *         (or would be) required.
+ */
 bool
 PathHandler::_EntryRemoved(const NotOwningEntryRef& entryRef,
 	const node_ref& nodeRef, bool dryRun, bool notify, Entry** _keepEntry)
@@ -1600,6 +2169,20 @@ PathHandler::_EntryRemoved(const NotOwningEntryRef& entryRef,
 }
 
 
+/**
+ * @brief Detect and suppress duplicate entry notifications.
+ *
+ * Compares the incoming notification against the last recorded notification.
+ * If they match (same opcode, node ref, destination entry ref, and optional
+ * source entry ref), returns true to indicate a duplicate.  Otherwise,
+ * records the new notification and returns false.
+ *
+ * @param opcode        The notification opcode (B_ENTRY_CREATED etc.).
+ * @param toEntryRef    The destination entry ref of the notification.
+ * @param nodeRef       The node ref of the affected node.
+ * @param fromEntryRef  Optional source entry ref (for B_ENTRY_MOVED).
+ * @return true if this notification is a duplicate of the previous one.
+ */
 bool
 PathHandler::_CheckDuplicateEntryNotification(int32 opcode,
 	const entry_ref& toEntryRef, const node_ref& nodeRef,
@@ -1622,6 +2205,12 @@ PathHandler::_CheckDuplicateEntryNotification(int32 opcode,
 }
 
 
+/**
+ * @brief Reset the duplicate-notification state to a sentinel "no pending notification".
+ *
+ * Sets the opcode to B_STAT_CHANGED and clears all cached refs so that the
+ * next real notification will never be mistaken for a duplicate.
+ */
 void
 PathHandler::_UnsetDuplicateEntryNotification()
 {
@@ -1632,6 +2221,12 @@ PathHandler::_UnsetDuplicateEntryNotification()
 }
 
 
+/**
+ * @brief Look up an Ancestor by its node ref.
+ *
+ * @param nodeRef  The node ref to search for.
+ * @return Pointer to the matching Ancestor, or NULL if not found.
+ */
 Ancestor*
 PathHandler::_GetAncestor(const node_ref& nodeRef) const
 {
@@ -1639,6 +2234,22 @@ PathHandler::_GetAncestor(const node_ref& nodeRef) const
 }
 
 
+/**
+ * @brief Add a filesystem node (and optionally its full subtree) to the monitored tree.
+ *
+ * If the node is already known (e.g. via a hard link), simply links \a entry
+ * to the existing Node.  Otherwise creates a new Node or Directory, starts
+ * watching it, inserts it into fNodes, and (for directories) recursively adds
+ * all children.
+ *
+ * @param nodeRef      The node ref of the node to add.
+ * @param isDirectory  true if the node is a directory.
+ * @param notify       If true, send B_ENTRY_CREATED notifications for children.
+ * @param entry        If non-NULL, the Entry to associate with the new node.
+ * @param _node        If non-NULL, receives a pointer to the Node on success.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or a
+ *         watch_node() error code.
+ */
 status_t
 PathHandler::_AddNode(const node_ref& nodeRef, bool isDirectory, bool notify,
 	Entry* entry, Node** _node)
@@ -1724,6 +2335,16 @@ PathHandler::_AddNode(const node_ref& nodeRef, bool isDirectory, bool notify,
 }
 
 
+/**
+ * @brief Remove and delete a node and (recursively) all of its children.
+ *
+ * For directories, removes all child entries first via
+ * _DeleteEntryAlreadyRemovedFromParent().  Stops the node monitor, removes
+ * the Node from fNodes, and frees it.
+ *
+ * @param node    The Node to delete.
+ * @param notify  If true, send B_ENTRY_REMOVED notifications for the subtree.
+ */
 void
 PathHandler::_DeleteNode(Node* node, bool notify)
 {
@@ -1744,6 +2365,12 @@ PathHandler::_DeleteNode(Node* node, bool notify)
 }
 
 
+/**
+ * @brief Look up a Node by its node ref.
+ *
+ * @param nodeRef  The node ref to search for.
+ * @return Pointer to the matching Node, or NULL if not found.
+ */
 Node*
 PathHandler::_GetNode(const node_ref& nodeRef) const
 {
@@ -1751,6 +2378,22 @@ PathHandler::_GetNode(const node_ref& nodeRef) const
 }
 
 
+/**
+ * @brief Add an entry to \a directory if it passes the active watch filters.
+ *
+ * Creates an Entry object, calls _AddNode() to create (or reuse) the
+ * corresponding Node, and optionally notifies the target.  Entries for plain
+ * files are skipped when B_WATCH_DIRECTORIES_ONLY is active.
+ *
+ * @param directory    The Directory to add the entry to.
+ * @param name         The name of the entry.
+ * @param nodeRef      The node ref of the entry.
+ * @param isDirectory  true if the entry is a directory.
+ * @param notify       If true, send B_ENTRY_CREATED notification.
+ * @param _entry       If non-NULL, receives the newly created Entry on success.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or an error from
+ *         _AddNode().
+ */
 status_t
 PathHandler::_AddEntryIfNeeded(Directory* directory, const char* name,
 	const node_ref& nodeRef, bool isDirectory, bool notify,
@@ -1789,6 +2432,15 @@ PathHandler::_AddEntryIfNeeded(Directory* directory, const char* name,
 }
 
 
+/**
+ * @brief Remove \a entry from its parent directory then delete it.
+ *
+ * Removes the Entry from the parent Directory's hash table, then delegates
+ * to _DeleteEntryAlreadyRemovedFromParent().
+ *
+ * @param entry   The Entry to remove and delete.
+ * @param notify  If true, send B_ENTRY_REMOVED notification.
+ */
 void
 PathHandler::_DeleteEntry(Entry* entry, bool notify)
 {
@@ -1797,6 +2449,15 @@ PathHandler::_DeleteEntry(Entry* entry, bool notify)
 }
 
 
+/**
+ * @brief Finish deleting an Entry that has already been removed from its parent.
+ *
+ * Optionally notifies, then deletes the Node if this was its only Entry, and
+ * finally frees the Entry object itself.
+ *
+ * @param entry   The Entry to delete.
+ * @param notify  If true, send B_ENTRY_REMOVED notification before deleting.
+ */
 void
 PathHandler::_DeleteEntryAlreadyRemovedFromParent(Entry* entry, bool notify)
 {
@@ -1811,6 +2472,15 @@ PathHandler::_DeleteEntryAlreadyRemovedFromParent(Entry* entry, bool notify)
 }
 
 
+/**
+ * @brief Recursively send B_ENTRY_CREATED or B_ENTRY_REMOVED for all file entries under \a entry.
+ *
+ * If \a entry's node is a directory, iterates its children recursively.
+ * If it is a plain file, calls _NotifyEntryCreatedOrRemoved() directly.
+ *
+ * @param entry   The entry from which to start the recursive walk.
+ * @param opcode  B_ENTRY_CREATED or B_ENTRY_REMOVED.
+ */
 void
 PathHandler::_NotifyFilesCreatedOrRemoved(Entry* entry, int32 opcode) const
 {
@@ -1825,6 +2495,15 @@ PathHandler::_NotifyFilesCreatedOrRemoved(Entry* entry, int32 opcode) const
 }
 
 
+/**
+ * @brief Send a B_ENTRY_CREATED or B_ENTRY_REMOVED notification for a tracked Entry.
+ *
+ * Builds the entry ref and path from the Entry's parent and name, then
+ * delegates to the ref-based overload.
+ *
+ * @param entry   The Entry that was created or removed.
+ * @param opcode  B_ENTRY_CREATED or B_ENTRY_REMOVED.
+ */
 void
 PathHandler::_NotifyEntryCreatedOrRemoved(Entry* entry, int32 opcode) const
 {
@@ -1835,6 +2514,19 @@ PathHandler::_NotifyEntryCreatedOrRemoved(Entry* entry, int32 opcode) const
 }
 
 
+/**
+ * @brief Send a B_ENTRY_CREATED or B_ENTRY_REMOVED notification using explicit refs.
+ *
+ * Skips the notification when the entry's type is filtered out by
+ * B_WATCH_FILES_ONLY or B_WATCH_DIRECTORIES_ONLY.  Builds a B_PATH_MONITOR
+ * message and forwards it via _NotifyTarget().
+ *
+ * @param entryRef    The entry ref of the created/removed entry.
+ * @param nodeRef     The node ref of the created/removed entry.
+ * @param path        The absolute path of the entry (may be NULL or empty).
+ * @param isDirectory true if the entry is a directory.
+ * @param opcode      B_ENTRY_CREATED or B_ENTRY_REMOVED.
+ */
 void
 PathHandler::_NotifyEntryCreatedOrRemoved(const entry_ref& entryRef,
 	const node_ref& nodeRef, const char* path, bool isDirectory, int32 opcode)
@@ -1867,6 +2559,23 @@ PathHandler::_NotifyEntryCreatedOrRemoved(const entry_ref& entryRef,
 }
 
 
+/**
+ * @brief Send a B_ENTRY_MOVED notification to the target messenger.
+ *
+ * Filters out moves that don't match the active B_WATCH_FILES_ONLY /
+ * B_WATCH_DIRECTORIES_ONLY flags.  Adds "added" and/or "removed" boolean
+ * fields when the move crosses the boundary of the monitored path, and
+ * includes "from path" when the source is inside the monitored tree.
+ *
+ * @param fromEntryRef  Entry ref of the source location.
+ * @param toEntryRef    Entry ref of the destination location.
+ * @param nodeRef       Node ref of the moved entry.
+ * @param fromPath      Absolute path of the source (may be NULL or empty).
+ * @param path          Absolute path of the destination (may be NULL or empty).
+ * @param isDirectory   true if the moved entry is a directory.
+ * @param wasAdded      true if the entry moved into the monitored tree.
+ * @param wasRemoved    true if the entry moved out of the monitored tree.
+ */
 void
 PathHandler::_NotifyEntryMoved(const entry_ref& fromEntryRef,
 	const entry_ref& toEntryRef, const node_ref& nodeRef, const char* fromPath,
@@ -1905,6 +2614,15 @@ PathHandler::_NotifyEntryMoved(const entry_ref& fromEntryRef,
 }
 
 
+/**
+ * @brief Attach path metadata to \a message and deliver it to the target messenger.
+ *
+ * Sets the message's what field to B_PATH_MONITOR, optionally appends "path"
+ * and always appends "watched_path", then sends the message via fTarget.
+ *
+ * @param message  The message to annotate and send (modified in place).
+ * @param path     The path to include as the "path" field (may be NULL/empty).
+ */
 void
 PathHandler::_NotifyTarget(BMessage& message, const char* path) const
 {
@@ -1916,7 +2634,15 @@ PathHandler::_NotifyTarget(BMessage& message, const char* path) const
 }
 
 
-
+/**
+ * @brief Return the absolute path of \a node within the monitored tree.
+ *
+ * Uses the first known Entry for the node to construct the path recursively.
+ * Falls back to fPath for the base node if it has no entries.
+ *
+ * @param node  The Node whose path is requested.
+ * @return The absolute path as a BString, or an empty BString if unknown.
+ */
 BString
 PathHandler::_NodePath(const Node* node) const
 {
@@ -1926,6 +2652,12 @@ PathHandler::_NodePath(const Node* node) const
 }
 
 
+/**
+ * @brief Return the absolute path of \a entry by combining the parent's path and the entry name.
+ *
+ * @param entry  The Entry whose path is requested.
+ * @return The absolute path as a BString.
+ */
 BString
 PathHandler::_EntryPath(const Entry* entry) const
 {
@@ -1933,6 +2665,10 @@ PathHandler::_EntryPath(const Entry* entry) const
 }
 
 
+/**
+ * @brief Return whether B_WATCH_RECURSIVELY is set in fFlags.
+ * @return true if the handler watches the entire subtree recursively.
+ */
 bool
 PathHandler::_WatchRecursively() const
 {
@@ -1940,6 +2676,10 @@ PathHandler::_WatchRecursively() const
 }
 
 
+/**
+ * @brief Return whether B_WATCH_FILES_ONLY is set in fFlags.
+ * @return true if only plain-file entries are reported.
+ */
 bool
 PathHandler::_WatchFilesOnly() const
 {
@@ -1947,6 +2687,10 @@ PathHandler::_WatchFilesOnly() const
 }
 
 
+/**
+ * @brief Return whether B_WATCH_DIRECTORIES_ONLY is set in fFlags.
+ * @return true if only directory entries are reported.
+ */
 bool
 PathHandler::_WatchDirectoriesOnly() const
 {
@@ -1963,16 +2707,41 @@ PathHandler::_WatchDirectoriesOnly() const
 namespace BPrivate {
 
 
+/**
+ * @brief Construct a BPathMonitor instance.
+ *
+ * The constructor performs no observable work; all monitoring is set up
+ * through the static StartWatching() method.
+ */
 BPathMonitor::BPathMonitor()
 {
 }
 
 
+/**
+ * @brief Destroy the BPathMonitor instance.
+ */
 BPathMonitor::~BPathMonitor()
 {
 }
 
 
+/**
+ * @brief Begin monitoring \a path for filesystem changes and deliver notifications to \a target.
+ *
+ * Initialises the global monitoring infrastructure (looper, watcher map) if
+ * necessary.  Creates or replaces a PathHandler for the given path/target pair.
+ * When a handler already exists for the same path, the new \a flags are merged
+ * with the existing ones (resolving mutually exclusive flags in favour of the
+ * new value).
+ *
+ * @param path    The filesystem path to monitor (must be non-empty).
+ * @param flags   Combination of B_WATCH_* flags; B_WATCH_FILES_ONLY and
+ *                B_WATCH_DIRECTORIES_ONLY are mutually exclusive.
+ * @param target  The BMessenger to receive B_PATH_MONITOR messages.
+ * @return B_OK on success, B_BAD_VALUE for invalid arguments, B_NO_MEMORY if
+ *         allocation fails, or another error from the node monitor layer.
+ */
 /*static*/ status_t
 BPathMonitor::StartWatching(const char* path, uint32 flags,
 	const BMessenger& target)
@@ -2039,6 +2808,17 @@ BPathMonitor::StartWatching(const char* path, uint32 flags,
 }
 
 
+/**
+ * @brief Stop monitoring a specific \a path for the given \a target.
+ *
+ * Looks up the Watcher for \a target and the PathHandler for \a path within
+ * it, removes the handler, and cleans up the Watcher if it becomes empty.
+ *
+ * @param path    The path that was previously passed to StartWatching().
+ * @param target  The BMessenger previously passed to StartWatching().
+ * @return B_OK on success, B_BAD_VALUE if the path or target is not currently
+ *         being watched.
+ */
 /*static*/ status_t
 BPathMonitor::StopWatching(const char* path, const BMessenger& target)
 {
@@ -2069,6 +2849,16 @@ BPathMonitor::StopWatching(const char* path, const BMessenger& target)
 }
 
 
+/**
+ * @brief Stop monitoring all paths for the given \a target.
+ *
+ * Removes and destroys every PathHandler registered under the Watcher for
+ * \a target, then removes and destroys the Watcher itself.
+ *
+ * @param target  The BMessenger whose entire watch registration is to be cancelled.
+ * @return B_OK on success, B_BAD_VALUE if \a target is not currently watching
+ *         any path.
+ */
 /*static*/ status_t
 BPathMonitor::StopWatching(const BMessenger& target)
 {
@@ -2096,6 +2886,15 @@ BPathMonitor::StopWatching(const BMessenger& target)
 }
 
 
+/**
+ * @brief Replace the active watching interface with a custom implementation.
+ *
+ * Allows the caller to substitute a custom BWatchingInterface (e.g. for
+ * testing or alternative kernel APIs).  Passing NULL restores the default
+ * implementation.
+ *
+ * @param watchingInterface  The new interface to use, or NULL to restore the default.
+ */
 /*static*/ void
 BPathMonitor::SetWatchingInterface(BWatchingInterface* watchingInterface)
 {
@@ -2104,6 +2903,13 @@ BPathMonitor::SetWatchingInterface(BWatchingInterface* watchingInterface)
 }
 
 
+/**
+ * @brief Initialise the global monitoring infrastructure if it has not been set up yet.
+ *
+ * Uses pthread_once() to ensure _Init() is called exactly once.
+ *
+ * @return B_OK if the looper is running, B_NO_MEMORY if initialisation failed.
+ */
 /*static*/ status_t
 BPathMonitor::_InitIfNeeded()
 {
@@ -2112,6 +2918,13 @@ BPathMonitor::_InitIfNeeded()
 }
 
 
+/**
+ * @brief One-time initialisation of the PathMonitor subsystem.
+ *
+ * Creates the default BWatchingInterface, the global WatcherMap, and the
+ * dedicated BLooper ("PathMonitor looper") that receives all node-monitor
+ * messages.  Called exactly once via pthread_once().
+ */
 /*static*/ void
 BPathMonitor::_Init()
 {
@@ -2143,16 +2956,32 @@ BPathMonitor::_Init()
 // #pragma mark - BWatchingInterface
 
 
+/**
+ * @brief Construct a BWatchingInterface.
+ */
 BPathMonitor::BWatchingInterface::BWatchingInterface()
 {
 }
 
 
+/**
+ * @brief Destroy the BWatchingInterface.
+ */
 BPathMonitor::BWatchingInterface::~BWatchingInterface()
 {
 }
 
 
+/**
+ * @brief Start watching \a node using a BMessenger target.
+ *
+ * Delegates directly to the kernel watch_node() function.
+ *
+ * @param node    The node ref to watch.
+ * @param flags   Combination of B_WATCH_* flags.
+ * @param target  The BMessenger to receive node-monitor messages.
+ * @return B_OK on success, or a kernel error code.
+ */
 status_t
 BPathMonitor::BWatchingInterface::WatchNode(const node_ref* node, uint32 flags,
 	const BMessenger& target)
@@ -2161,6 +2990,17 @@ BPathMonitor::BWatchingInterface::WatchNode(const node_ref* node, uint32 flags,
 }
 
 
+/**
+ * @brief Start watching \a node using a BHandler/BLooper pair as the target.
+ *
+ * Delegates directly to the kernel watch_node() function.
+ *
+ * @param node     The node ref to watch.
+ * @param flags    Combination of B_WATCH_* flags.
+ * @param handler  The BHandler to receive node-monitor messages.
+ * @param looper   The BLooper that owns \a handler.
+ * @return B_OK on success, or a kernel error code.
+ */
 status_t
 BPathMonitor::BWatchingInterface::WatchNode(const node_ref* node, uint32 flags,
 	const BHandler* handler, const BLooper* looper)
@@ -2169,6 +3009,14 @@ BPathMonitor::BWatchingInterface::WatchNode(const node_ref* node, uint32 flags,
 }
 
 
+/**
+ * @brief Stop all watching activity for the given BMessenger target.
+ *
+ * Delegates directly to the kernel stop_watching() function.
+ *
+ * @param target  The BMessenger whose node monitors should be cancelled.
+ * @return B_OK on success, or a kernel error code.
+ */
 status_t
 BPathMonitor::BWatchingInterface::StopWatching(const BMessenger& target)
 {
@@ -2176,6 +3024,15 @@ BPathMonitor::BWatchingInterface::StopWatching(const BMessenger& target)
 }
 
 
+/**
+ * @brief Stop all watching activity for the given BHandler/BLooper pair.
+ *
+ * Delegates directly to the kernel stop_watching() function.
+ *
+ * @param handler  The BHandler whose node monitors should be cancelled.
+ * @param looper   The BLooper that owns \a handler.
+ * @return B_OK on success, or a kernel error code.
+ */
 status_t
 BPathMonitor::BWatchingInterface::StopWatching(const BHandler* handler,
 	const BLooper* looper)

@@ -1,10 +1,40 @@
 /*
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Copyright 2007-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2003-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2025, Haiku, Inc. All rights reserved.
+ *   Copyright 2007-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2003-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file fifo.cpp
+ * @brief POSIX named and anonymous pipe (FIFO) implementation.
+ *
+ * Implements the FIFO/pipe file system and the pipe(2) syscall. FIFOs are
+ * backed by an in-memory ring buffer. Reads block when the buffer is empty;
+ * writes block when full. Tracks open reader and writer counts to deliver
+ * SIGPIPE / EPIPE on broken-pipe conditions.
+ *
+ * @see vfs.cpp, socket.cpp
+ */
 
 #include "fifo.h"
 
@@ -270,6 +300,12 @@ struct file_cookie {
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an empty RingBuffer and initialises the write mutex.
+ *
+ * @note The underlying memory buffer is not allocated here; call
+ *       CreateBuffer() before performing any reads or writes.
+ */
 RingBuffer::RingBuffer()
 	:
 	fBuffer(NULL)
@@ -278,6 +314,10 @@ RingBuffer::RingBuffer()
 }
 
 
+/**
+ * @brief Destroys the RingBuffer, releasing any allocated memory and the
+ *        write mutex.
+ */
 RingBuffer::~RingBuffer()
 {
 	DeleteBuffer();
@@ -285,6 +325,14 @@ RingBuffer::~RingBuffer()
 }
 
 
+/**
+ * @brief Allocates the backing ring-buffer memory from the slab cache.
+ *
+ * @retval B_OK        Buffer created successfully.
+ * @retval B_NO_MEMORY Slab allocation failed.
+ * @note   Calling CreateBuffer() when the buffer is already allocated is
+ *         a no-op and returns B_OK immediately.
+ */
 status_t
 RingBuffer::CreateBuffer()
 {
@@ -301,6 +349,12 @@ RingBuffer::CreateBuffer()
 }
 
 
+/**
+ * @brief Releases the backing ring-buffer memory back to the slab cache.
+ *
+ * @note Safe to call even if the buffer was never allocated or has already
+ *       been deleted.
+ */
 void
 RingBuffer::DeleteBuffer()
 {
@@ -311,6 +365,21 @@ RingBuffer::DeleteBuffer()
 }
 
 
+/**
+ * @brief Copies up to @p length bytes from @p data into the ring buffer.
+ *
+ * @param data      Source data (user or kernel address depending on @p isUser).
+ * @param length    Maximum number of bytes to write.
+ * @param minimum   Minimum number of bytes that must be available before
+ *                  any write is attempted (atomicity hint).
+ * @param isUser    If true the source pointer is validated as a user address.
+ * @param wasEmpty  Set to true on return if the buffer was empty before
+ *                  this write (used to wake sleeping readers).
+ * @retval >0       Number of bytes actually written.
+ * @retval 0        Buffer is full or fewer than @p minimum bytes available.
+ * @retval B_NO_MEMORY  Buffer has not been allocated.
+ * @retval B_BAD_ADDRESS @p data is not a valid user address.
+ */
 inline ssize_t
 RingBuffer::Write(const void* data, size_t length, size_t minimum, bool isUser, bool* wasEmpty)
 {
@@ -359,6 +428,22 @@ RingBuffer::Write(const void* data, size_t length, size_t minimum, bool isUser, 
 }
 
 
+/**
+ * @brief Copies up to @p length bytes from the ring buffer into @p data.
+ *
+ * @param data     Destination buffer (user or kernel address).
+ * @param length   Maximum number of bytes to read.
+ * @param isUser   If true the destination pointer is validated as a user
+ *                 address.
+ * @param wasFull  Set to true on return if the buffer was completely full
+ *                 before this read (used to wake sleeping writers).
+ * @retval >0      Number of bytes actually read.
+ * @retval 0       Buffer is empty.
+ * @retval B_NO_MEMORY  Buffer has not been allocated.
+ * @retval B_BAD_ADDRESS @p data is not a valid user address.
+ * @note Uses a lock-free read-head advance with a limited retry loop to
+ *       handle concurrent readers without a mutex.
+ */
 inline ssize_t
 RingBuffer::Read(void* data, size_t length, bool isUser, bool* wasFull)
 {
@@ -429,6 +514,18 @@ RingBuffer::Read(void* data, size_t length, bool isUser, bool* wasFull)
 }
 
 
+/**
+ * @brief Reads a single byte at the given logical @p offset without
+ *        consuming it (debug/inspection helper).
+ *
+ * @param offset  Byte offset from the current read head.
+ * @param out     Receives the peeked byte value.
+ * @retval 1  A byte was available at @p offset and written to @p out.
+ * @retval 0  @p offset is past the current write head (no data).
+ * @retval B_NO_MEMORY  Buffer has not been allocated.
+ * @note This function is not thread-safe and is intended for kernel
+ *       debugger use only.
+ */
 inline ssize_t
 RingBuffer::DebugPeek(size_t offset, uint8* out) const
 {
@@ -447,6 +544,12 @@ RingBuffer::DebugPeek(size_t offset, uint8* out) const
 }
 
 
+/**
+ * @brief Returns the number of bytes currently available for reading.
+ *
+ * @note The count may be slightly stale if a concurrent read is in
+ *       progress, as in-flight read-head advances are not reflected here.
+ */
 inline size_t
 RingBuffer::Readable() const
 {
@@ -456,6 +559,10 @@ RingBuffer::Readable() const
 }
 
 
+/**
+ * @brief Returns the number of bytes that can currently be written into
+ *        the ring buffer without blocking.
+ */
 inline size_t
 RingBuffer::Writable() const
 {
@@ -466,6 +573,14 @@ RingBuffer::Writable() const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an Inode, initialising all synchronisation primitives
+ *        and setting creation/modification times to the current wall clock.
+ *
+ * @note The inode starts in the inactive state (fActive == false). It
+ *       becomes active — and the ring buffer is allocated — only after
+ *       both a reader and a writer have called Open().
+ */
 Inode::Inode()
 	:
 	fReadRequestsLock(B_SPINLOCK_INITIALIZER),
@@ -488,12 +603,25 @@ Inode::Inode()
 }
 
 
+/**
+ * @brief Destroys the Inode and releases the change lock.
+ *
+ * @note The ring buffer memory is released lazily by Close() when both
+ *       reader and writer counts drop to zero, so it should already be
+ *       freed by the time this destructor runs.
+ */
 Inode::~Inode()
 {
 	rw_lock_destroy(&fChangeLock);
 }
 
 
+/**
+ * @brief Checks whether the Inode was successfully initialised.
+ *
+ * @retval B_OK Always returns B_OK; provided for symmetry with other
+ *              kernel object patterns that can fail during construction.
+ */
 status_t
 Inode::InitCheck()
 {
@@ -508,6 +636,25 @@ Inode::InitCheck()
 	and various semaphore errors (like B_WOULD_BLOCK in non-blocking mode). If
 	the returned length is > 0, the returned error code can be ignored.
 */
+/**
+ * @brief Writes data into the FIFO ring buffer, blocking if the buffer is
+ *        full (unless non-blocking mode is set).
+ *
+ * @param _data        Pointer to the source data.
+ * @param _length      On entry the number of bytes to write; on return the
+ *                     number of bytes actually written.
+ * @param nonBlocking  If true, return B_WOULD_BLOCK instead of sleeping
+ *                     when the buffer is full.
+ * @param isUser       If true, @p _data is a user-space address and will be
+ *                     validated before access.
+ * @retval B_OK         All bytes written (or partial write with *_length > 0).
+ * @retval B_WOULD_BLOCK Non-blocking write with no space available.
+ * @retval EPIPE        All readers have closed their end; SIGPIPE is sent to
+ *                      the calling thread if no bytes were written yet.
+ * @retval B_BAD_ADDRESS @p _data is not a valid user address.
+ * @note Writes of up to VFS_FIFO_ATOMIC_WRITE_SIZE bytes are guaranteed
+ *       not to be interleaved with data from other writers.
+ */
 status_t
 Inode::Write(const void* _data, size_t* _length, bool nonBlocking,
 	bool isUser)
@@ -594,6 +741,23 @@ Inode::Write(const void* _data, size_t* _length, bool nonBlocking,
 }
 
 
+/**
+ * @brief Reads data from the FIFO ring buffer into @p data, blocking if
+ *        no bytes are currently available (unless non-blocking mode is set).
+ *
+ * @param data         Destination buffer (user or kernel address).
+ * @param _length      On entry the maximum bytes to read; on return the
+ *                     number of bytes actually read.
+ * @param nonBlocking  If true, return B_WOULD_BLOCK when no data is ready.
+ * @param isUser       If true, @p data is a user-space address.
+ * @param request      The ReadRequest representing this caller in the
+ *                     ordered read queue; must already be enqueued via
+ *                     AddReadRequest() before calling.
+ * @retval B_OK         Read succeeded (check *_length; may be 0 on EOF).
+ * @retval B_WOULD_BLOCK Non-blocking read with an empty buffer.
+ * @note  Reads are serialised through the read-request queue to preserve
+ *        FIFO ordering across concurrent readers.
+ */
 status_t
 Inode::ReadDataFromBuffer(void* data, size_t* _length, bool nonBlocking,
 	bool isUser, ReadRequest& request)
@@ -661,6 +825,13 @@ Inode::ReadDataFromBuffer(void* data, size_t* _length, bool nonBlocking,
 }
 
 
+/**
+ * @brief Appends a ReadRequest to the tail of the pending read queue.
+ *
+ * @param request  The ReadRequest to enqueue.
+ * @note Must be paired with a subsequent RemoveReadRequest() call, even
+ *       if the read is interrupted.
+ */
 void
 Inode::AddReadRequest(ReadRequest& request)
 {
@@ -669,6 +840,12 @@ Inode::AddReadRequest(ReadRequest& request)
 }
 
 
+/**
+ * @brief Removes a ReadRequest from the pending read queue.
+ *
+ * @param request  The ReadRequest to remove; must have been previously
+ *                 added with AddReadRequest().
+ */
 void
 Inode::RemoveReadRequest(ReadRequest& request)
 {
@@ -677,6 +854,16 @@ Inode::RemoveReadRequest(ReadRequest& request)
 }
 
 
+/**
+ * @brief Blocks the calling thread until its ReadRequest is notified or
+ *        an interrupt occurs.
+ *
+ * @param request  The ReadRequest to wait on.
+ * @retval B_OK          Request was notified successfully.
+ * @retval B_INTERRUPTED The wait was interrupted by a signal.
+ * @note Temporarily releases fChangeLock while sleeping and re-acquires
+ *       it before returning, so callers must be prepared for state changes.
+ */
 status_t
 Inode::WaitForReadRequest(ReadRequest& request)
 {
@@ -703,6 +890,16 @@ Inode::WaitForReadRequest(ReadRequest& request)
 }
 
 
+/**
+ * @brief Wakes waiting writers and select() notifiers after bytes have
+ *        been consumed from the ring buffer.
+ *
+ * @param wasFull  True if the buffer was completely full before the read
+ *                 that triggered this notification.
+ * @param bytes    Number of bytes that were just read.
+ * @note  Only notifies select() pools when the buffer transitions from
+ *        full to partially empty, avoiding redundant wakeups.
+ */
 void
 Inode::NotifyBytesRead(bool wasFull, size_t bytes)
 {
@@ -733,6 +930,10 @@ Inode::NotifyBytesRead(bool wasFull, size_t bytes)
 }
 
 
+/**
+ * @brief Notifies the next waiting reader after a read operation completes,
+ *        if unread data remains in the ring buffer.
+ */
 void
 Inode::NotifyReadDone()
 {
@@ -745,6 +946,15 @@ Inode::NotifyReadDone()
 }
 
 
+/**
+ * @brief Wakes waiting readers and select() notifiers after bytes have
+ *        been written into the ring buffer.
+ *
+ * @param wasEmpty  True if the buffer was completely empty before the
+ *                  write that triggered this notification.
+ * @note  Only wakes readers when the buffer transitions from empty to
+ *        non-empty to avoid spurious wakeups.
+ */
 void
 Inode::NotifyBytesWritten(bool wasEmpty)
 {
@@ -760,6 +970,14 @@ Inode::NotifyBytesWritten(bool wasEmpty)
 }
 
 
+/**
+ * @brief Notifies the opposite end when either all writers or all readers
+ *        have closed their descriptors.
+ *
+ * @param writer  If true, the last writer has closed; unblocks readers
+ *                with B_SELECT_DISCONNECTED. If false, the last reader has
+ *                closed; wakes all writers so they can detect EPIPE.
+ */
 void
 Inode::NotifyEndClosed(bool writer)
 {
@@ -790,6 +1008,20 @@ Inode::NotifyEndClosed(bool writer)
 }
 
 
+/**
+ * @brief Records a new open file descriptor and, when both ends are open,
+ *        activates the FIFO and allocates its ring buffer.
+ *
+ * @param openMode  The open flags (O_RDONLY, O_WRONLY, O_RDWR, O_NONBLOCK,
+ *                  etc.) for the new descriptor.
+ * @retval B_OK     Open succeeded.
+ * @retval ENXIO    O_WRONLY | O_NONBLOCK was requested but there is no
+ *                  reader yet.
+ * @retval B_INTERRUPTED  The blocking wait for a peer was interrupted.
+ * @note  A write-only open without a reader blocks until a reader arrives
+ *        (unless O_NONBLOCK is set). A read-only open without a writer
+ *        blocks unless O_NONBLOCK is set.
+ */
 status_t
 Inode::Open(int openMode)
 {
@@ -836,6 +1068,15 @@ Inode::Open(int openMode)
 }
 
 
+/**
+ * @brief Decrements the reader or writer count for the closing descriptor
+ *        and notifies the opposing end if this was the last reference.
+ *
+ * @param cookie  The file_cookie for the descriptor being closed; used to
+ *                cancel any pending read requests on this cookie.
+ * @note  Frees the ring buffer when both reader and writer counts reach
+ *        zero and marks the inode inactive.
+ */
 void
 Inode::Close(file_cookie* cookie)
 {
@@ -875,6 +1116,20 @@ Inode::Close(file_cookie* cookie)
 }
 
 
+/**
+ * @brief Registers a select() synchronisation object for the given event
+ *        on this FIFO.
+ *
+ * @param event     The select event (B_SELECT_READ, B_SELECT_WRITE, etc.).
+ * @param sync      The selectsync token provided by the VFS layer.
+ * @param openMode  Open flags of the calling descriptor, used to determine
+ *                  which pool (read or write) to register in.
+ * @retval B_OK        Registration succeeded.
+ * @retval B_ERROR     add_select_sync_pool_entry() failed.
+ * @retval B_NOT_ALLOWED The open mode does not allow the requested event.
+ * @note  Immediately fires the event if the condition already holds (e.g.,
+ *        data is already available for B_SELECT_READ).
+ */
 status_t
 Inode::Select(uint8 event, selectsync* sync, int openMode)
 {
@@ -912,6 +1167,16 @@ Inode::Select(uint8 event, selectsync* sync, int openMode)
 }
 
 
+/**
+ * @brief Unregisters a previously registered select() synchronisation
+ *        object for the given event.
+ *
+ * @param event     The select event to deregister.
+ * @param sync      The selectsync token to remove.
+ * @param openMode  Open flags of the calling descriptor.
+ * @retval B_OK        Deregistration succeeded.
+ * @retval B_NOT_ALLOWED The open mode does not allow the requested event.
+ */
 status_t
 Inode::Deselect(uint8 event, selectsync* sync, int openMode)
 {
@@ -931,6 +1196,14 @@ Inode::Deselect(uint8 event, selectsync* sync, int openMode)
 }
 
 
+/**
+ * @brief Prints a human-readable summary of the FIFO state to the kernel
+ *        debugger console.
+ *
+ * @param dumpData  If true, hex-dumps the bytes currently held in the ring
+ *                  buffer in addition to the summary statistics.
+ * @note  Intended for use from the kernel debugger only; not thread-safe.
+ */
 void
 Inode::Dump(bool dumpData) const
 {
@@ -1000,6 +1273,15 @@ Inode::Dump(bool dumpData) const
 }
 
 
+/**
+ * @brief Kernel debugger command handler that parses arguments and invokes
+ *        the instance Dump() method on a given Inode address.
+ *
+ * @param argc  Argument count from the debugger command line.
+ * @param argv  Argument vector; argv[1] may be "-d" to enable data dump,
+ *              followed by the hex address of the Inode.
+ * @return Always returns 0.
+ */
 /*static*/ int
 Inode::Dump(int argc, char** argv)
 {
@@ -1029,6 +1311,15 @@ Inode::Dump(int argc, char** argv)
 //	#pragma mark - vnode API
 
 
+/**
+ * @brief VFS callback invoked when the last reference to a FIFO vnode is
+ *        released; delegates to the super-vnode and then frees the FIFOInode.
+ *
+ * @param volume   The mounted FIFO volume.
+ * @param vnode    The vnode being released.
+ * @param reenter  True if called re-entrantly from within the VFS.
+ * @retval B_OK    Success (or the error from the super-vnode's put_vnode).
+ */
 static status_t
 fifo_put_vnode(fs_volume* volume, fs_vnode* vnode, bool reenter)
 {
@@ -1045,6 +1336,16 @@ fifo_put_vnode(fs_volume* volume, fs_vnode* vnode, bool reenter)
 }
 
 
+/**
+ * @brief VFS callback invoked when a FIFO vnode is to be removed from the
+ *        file system; delegates to the super-vnode and then frees the
+ *        FIFOInode.
+ *
+ * @param volume   The mounted FIFO volume.
+ * @param vnode    The vnode being removed.
+ * @param reenter  True if called re-entrantly from within the VFS.
+ * @retval B_OK    Success (or the error from the super-vnode's remove_vnode).
+ */
 static status_t
 fifo_remove_vnode(fs_volume* volume, fs_vnode* vnode, bool reenter)
 {
@@ -1061,6 +1362,21 @@ fifo_remove_vnode(fs_volume* volume, fs_vnode* vnode, bool reenter)
 }
 
 
+/**
+ * @brief VFS callback that opens a FIFO vnode and allocates a file_cookie
+ *        for the new file descriptor.
+ *
+ * @param _volume   Unused volume parameter.
+ * @param _node     The FIFO vnode to open.
+ * @param openMode  Combination of O_RDONLY / O_WRONLY / O_RDWR / O_NONBLOCK
+ *                  flags.
+ * @param _cookie   Receives the newly allocated file_cookie on success.
+ * @retval B_OK        Open succeeded.
+ * @retval B_NO_MEMORY Cookie allocation failed.
+ * @retval ENXIO       O_WRONLY | O_NONBLOCK with no reader present.
+ * @note  May block until the opposite end is opened, unless O_NONBLOCK is
+ *        set.
+ */
 static status_t
 fifo_open(fs_volume* _volume, fs_vnode* _node, int openMode,
 	void** _cookie)
@@ -1087,6 +1403,15 @@ fifo_open(fs_volume* _volume, fs_vnode* _node, int openMode,
 }
 
 
+/**
+ * @brief VFS callback that closes a FIFO file descriptor and notifies
+ *        waiting peers.
+ *
+ * @param volume  The FIFO volume.
+ * @param vnode   The FIFO vnode.
+ * @param _cookie The file_cookie for the descriptor being closed.
+ * @retval B_OK   Always succeeds.
+ */
 static status_t
 fifo_close(fs_volume* volume, fs_vnode* vnode, void* _cookie)
 {
@@ -1099,6 +1424,14 @@ fifo_close(fs_volume* volume, fs_vnode* vnode, void* _cookie)
 }
 
 
+/**
+ * @brief VFS callback that frees the file_cookie allocated by fifo_open().
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    Unused vnode parameter.
+ * @param _cookie  The cookie to free.
+ * @retval B_OK    Always succeeds.
+ */
 static status_t
 fifo_free_cookie(fs_volume* _volume, fs_vnode* _node, void* _cookie)
 {
@@ -1112,6 +1445,12 @@ fifo_free_cookie(fs_volume* _volume, fs_vnode* _node, void* _cookie)
 }
 
 
+/**
+ * @brief VFS fsync callback; FIFOs have no persistent storage so this is
+ *        always an error.
+ *
+ * @retval B_BAD_VALUE Always.
+ */
 static status_t
 fifo_fsync(fs_volume* _volume, fs_vnode* _node, bool dataOnly)
 {
@@ -1119,6 +1458,20 @@ fifo_fsync(fs_volume* _volume, fs_vnode* _node, bool dataOnly)
 }
 
 
+/**
+ * @brief VFS read callback; reads bytes from the FIFO ring buffer into the
+ *        caller's buffer.
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    The FIFO vnode.
+ * @param _cookie  The file_cookie (carries O_NONBLOCK flag).
+ * @param buffer   Destination buffer (user or kernel address).
+ * @param _length  On entry the requested byte count; on return the actual
+ *                 number of bytes read.
+ * @retval B_OK         Read succeeded (including EOF with *_length == 0).
+ * @retval B_WOULD_BLOCK Non-blocking read with no data available.
+ * @note  The file offset parameter is ignored; FIFOs are not seekable.
+ */
 static status_t
 fifo_read(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 	off_t /*pos*/, void* buffer, size_t* _length)
@@ -1165,6 +1518,22 @@ fifo_read(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 }
 
 
+/**
+ * @brief VFS write callback; copies data from the caller's buffer into the
+ *        FIFO ring buffer.
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    The FIFO vnode.
+ * @param _cookie  The file_cookie (carries O_NONBLOCK flag).
+ * @param buffer   Source buffer (user or kernel address).
+ * @param _length  On entry the number of bytes to write; on return the
+ *                 number of bytes actually written.
+ * @retval B_OK         Write succeeded.
+ * @retval B_WOULD_BLOCK Non-blocking write with no buffer space.
+ * @retval EPIPE        No readers; SIGPIPE has been delivered.
+ * @note  Zero-length writes return B_OK immediately without entering the
+ *        ring buffer logic.
+ */
 static status_t
 fifo_write(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 	off_t /*pos*/, const void* buffer, size_t* _length)
@@ -1191,6 +1560,16 @@ fifo_write(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 }
 
 
+/**
+ * @brief VFS stat callback; fills in a struct stat for the FIFO, merging
+ *        data from the super-vnode with FIFO-specific fields.
+ *
+ * @param volume  The FIFO volume.
+ * @param vnode   The FIFO vnode.
+ * @param st      Output stat structure to populate.
+ * @retval B_OK        Stat completed successfully.
+ * @retval B_BAD_VALUE The super-vnode does not implement read_stat.
+ */
 static status_t
 fifo_read_stat(fs_volume* volume, fs_vnode* vnode, struct ::stat* st)
 {
@@ -1220,6 +1599,19 @@ fifo_read_stat(fs_volume* volume, fs_vnode* vnode, struct ::stat* st)
 }
 
 
+/**
+ * @brief VFS write-stat callback; forwards attribute changes to the
+ *        super-vnode while rejecting any attempt to resize the FIFO.
+ *
+ * @param volume    The FIFO volume.
+ * @param vnode     The FIFO vnode.
+ * @param st        Stat structure containing the new attribute values.
+ * @param statMask  Bitmask of B_STAT_* flags indicating which fields to
+ *                  update.
+ * @retval B_OK        Update succeeded.
+ * @retval B_BAD_VALUE B_STAT_SIZE was set (FIFOs are not resizable) or the
+ *                     super-vnode does not implement write_stat.
+ */
 static status_t
 fifo_write_stat(fs_volume* volume, fs_vnode* vnode, const struct ::stat* st,
 	uint32 statMask)
@@ -1243,6 +1635,21 @@ fifo_write_stat(fs_volume* volume, fs_vnode* vnode, const struct ::stat* st,
 }
 
 
+/**
+ * @brief VFS ioctl callback; handles FIONREAD (bytes available) and
+ *        blocking/non-blocking mode switches for the FIFO.
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    The FIFO vnode.
+ * @param _cookie  The file_cookie for the open descriptor.
+ * @param op       The ioctl operation code.
+ * @param buffer   Input/output buffer (operation-dependent).
+ * @param length   Length of @p buffer (unused for most FIFO ioctls).
+ * @retval B_OK     Operation completed successfully.
+ * @retval EINVAL   Unrecognised @p op.
+ * @retval B_BAD_VALUE  NULL buffer for FIONREAD.
+ * @retval B_BAD_ADDRESS @p buffer is not a valid user address (FIONREAD).
+ */
 static status_t
 fifo_ioctl(fs_volume* _volume, fs_vnode* _node, void* _cookie, uint32 op,
 	void* buffer, size_t length)
@@ -1286,6 +1693,16 @@ fifo_ioctl(fs_volume* _volume, fs_vnode* _node, void* _cookie, uint32 op,
 }
 
 
+/**
+ * @brief VFS set-flags callback; updates the O_APPEND and O_NONBLOCK bits
+ *        of the open mode stored in the file_cookie.
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    The FIFO vnode.
+ * @param _cookie  The file_cookie whose flags are being updated.
+ * @param flags    New flag bits (only O_APPEND and O_NONBLOCK are applied).
+ * @retval B_OK    Always succeeds.
+ */
 static status_t
 fifo_set_flags(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 	int flags)
@@ -1301,6 +1718,19 @@ fifo_set_flags(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 }
 
 
+/**
+ * @brief VFS select callback; registers a selectsync object so that the
+ *        caller is notified when the requested I/O event becomes ready.
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    The FIFO vnode.
+ * @param _cookie  The file_cookie for the open descriptor.
+ * @param event    The event to monitor (B_SELECT_READ, B_SELECT_WRITE, etc.).
+ * @param sync     The selectsync token to register.
+ * @retval B_OK        Registration succeeded.
+ * @retval B_ERROR     Internal pool registration error.
+ * @retval B_NOT_ALLOWED The open mode does not permit the requested event.
+ */
 static status_t
 fifo_select(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 	uint8 event, selectsync* sync)
@@ -1316,6 +1746,18 @@ fifo_select(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 }
 
 
+/**
+ * @brief VFS deselect callback; removes a previously registered selectsync
+ *        object for the given event.
+ *
+ * @param _volume  Unused volume parameter.
+ * @param _node    The FIFO vnode.
+ * @param _cookie  The file_cookie for the open descriptor.
+ * @param event    The event to stop monitoring.
+ * @param sync     The selectsync token to remove.
+ * @retval B_OK        Deregistration succeeded.
+ * @retval B_NOT_ALLOWED The open mode does not permit the requested event.
+ */
 static status_t
 fifo_deselect(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 	uint8 event, selectsync* sync)
@@ -1331,6 +1773,11 @@ fifo_deselect(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 }
 
 
+/**
+ * @brief Reports that FIFO vnodes do not support memory-mapped (page) I/O.
+ *
+ * @return Always false.
+ */
 static bool
 fifo_can_page(fs_volume* _volume, fs_vnode* _node, void* cookie)
 {
@@ -1338,6 +1785,11 @@ fifo_can_page(fs_volume* _volume, fs_vnode* _node, void* cookie)
 }
 
 
+/**
+ * @brief Read-pages stub; FIFO vnodes do not support paged I/O.
+ *
+ * @retval B_NOT_ALLOWED Always.
+ */
 static status_t
 fifo_read_pages(fs_volume* _volume, fs_vnode* _node, void* cookie, off_t pos,
 	const iovec* vecs, size_t count, size_t* _numBytes)
@@ -1346,6 +1798,11 @@ fifo_read_pages(fs_volume* _volume, fs_vnode* _node, void* cookie, off_t pos,
 }
 
 
+/**
+ * @brief Write-pages stub; FIFO vnodes do not support paged I/O.
+ *
+ * @retval B_NOT_ALLOWED Always.
+ */
 static status_t
 fifo_write_pages(fs_volume* _volume, fs_vnode* _node, void* cookie,
 	off_t pos, const iovec* vecs, size_t count, size_t* _numBytes)
@@ -1354,6 +1811,17 @@ fifo_write_pages(fs_volume* _volume, fs_vnode* _node, void* cookie,
 }
 
 
+/**
+ * @brief VFS callback that retrieves the underlying super-vnode for a FIFO
+ *        vnode, traversing the layered file system stack.
+ *
+ * @param volume       The FIFO volume.
+ * @param vnode        The FIFO vnode.
+ * @param superVolume  The volume on which the super-vnode lives.
+ * @param _superVnode  Receives the super-vnode on success.
+ * @retval B_OK  Always succeeds (either via the super-vnode's own hook or
+ *               by directly copying the super-vnode descriptor).
+ */
 static status_t
 fifo_get_super_vnode(fs_volume* volume, fs_vnode* vnode, fs_volume* superVolume,
 	fs_vnode* _superVnode)
@@ -1460,6 +1928,17 @@ using namespace fifo;
 // #pragma mark -
 
 
+/**
+ * @brief Wraps an existing VFS vnode with a FIFO layer, allocating a
+ *        FIFOInode and installing the FIFO vnode ops table.
+ *
+ * @param superVolume  The volume that owns the underlying vnode.
+ * @param vnode        The vnode to wrap; on success its private_node and ops
+ *                     fields are updated to point at the new FIFOInode and
+ *                     sFIFOVnodeOps respectively.
+ * @retval B_OK        The vnode was wrapped successfully.
+ * @retval B_NO_MEMORY FIFOInode allocation failed.
+ */
 status_t
 create_fifo_vnode(fs_volume* superVolume, fs_vnode* vnode)
 {
@@ -1480,6 +1959,13 @@ create_fifo_vnode(fs_volume* superVolume, fs_vnode* vnode)
 }
 
 
+/**
+ * @brief Initialises the FIFO subsystem: creates the ring-buffer slab cache
+ *        and registers the "fifo" kernel debugger command.
+ *
+ * @note  Must be called once during kernel initialisation before any FIFO
+ *        vnode is created or opened.
+ */
 void
 fifo_init()
 {

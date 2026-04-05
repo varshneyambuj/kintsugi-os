@@ -1,11 +1,40 @@
-//----------------------------------------------------------------------
-//  This software is part of the Haiku distribution and is covered
-//  by the MIT License.
-//---------------------------------------------------------------------
-/*!
-	\file AssociatedTypes.cpp
-	AssociatedTypes class implementation
-*/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file AssociatedTypes.cpp
+ * @brief Maps file extensions to the MIME types associated with them.
+ *
+ * AssociatedTypes crawls the MIME database on first use to build two internal
+ * maps: one from MIME type to its registered file extensions, and one from
+ * each extension to the set of MIME types that claim it.  Callers can then
+ * quickly look up which MIME types are associated with a given extension, guess
+ * a type for a filename, and keep both maps up to date as file-extension
+ * registrations change.
+ *
+ * @see AssociatedTypes
+ */
 
 #include <mime/AssociatedTypes.h>
 
@@ -39,8 +68,13 @@ namespace Mime {
 	\brief Information about file extensions and their associated types
 */
 
-// Constructor
-//! Constructs a new AssociatedTypes object
+/**
+ * @brief Constructs an AssociatedTypes object.
+ *
+ * @param databaseLocation Pointer to the DatabaseLocation used for crawling the MIME DB.
+ * @param mimeSniffer      Optional MimeSniffer used for filename-based guessing before
+ *                         falling back to extension lookup; may be NULL.
+ */
 AssociatedTypes::AssociatedTypes(DatabaseLocation* databaseLocation,
 	MimeSniffer* mimeSniffer)
 	:
@@ -50,18 +84,24 @@ AssociatedTypes::AssociatedTypes(DatabaseLocation* databaseLocation,
 {
 }
 
-// Destructor
-//! Destroys the AssociatedTypes object
+/**
+ * @brief Destroys the AssociatedTypes object.
+ */
 AssociatedTypes::~AssociatedTypes()
 {
 }
 
-// GetAssociatedTypes
-/*! \brief Returns a list of mime types associated with the given file
-	extension in the pre-allocated \c BMessage pointed to by \c types.
-
-	See \c BMimeType::GetAssociatedTypes() for more information.
-*/
+/**
+ * @brief Returns a list of MIME types associated with the given file extension.
+ *
+ * Triggers a full database build on the first call.  Formats the extension,
+ * looks it up in the internal map, and populates \a types with every MIME type
+ * string that has registered the extension.
+ *
+ * @param extension The file extension to query (leading dots are stripped automatically).
+ * @param types     Pointer to a pre-allocated BMessage that receives "types" string fields.
+ * @return B_OK on success, B_BAD_VALUE if either argument is NULL or the extension is empty.
+ */
 status_t
 AssociatedTypes::GetAssociatedTypes(const char *extension, BMessage *types)
 {
@@ -92,17 +132,19 @@ AssociatedTypes::GetAssociatedTypes(const char *extension, BMessage *types)
 	return err;
 }
 
-// GuessMimeType
-/*! \brief Guesses a MIME type for the given filename based on its extension
-
-	\param filename The filename of interest
-	\param result Pointer to a pre-allocated \c BString object into which
-	              the result is stored. If the function returns a value other
-	              than \c B_OK, \a result will not be modified.
-	\return
-	- \c B_OK: success
-	- \c other error code: failure
-*/
+/**
+ * @brief Guesses a MIME type for a filename based on its extension.
+ *
+ * Triggers a full database build on the first call.  If a MimeSniffer is
+ * registered, it is consulted first; if it returns a positive priority that
+ * result is used immediately.  Otherwise the filename's extension is extracted
+ * and looked up in the internal map; the first matching MIME type is returned.
+ *
+ * @param filename The filename (or full path) to examine.
+ * @param result   Pointer to a pre-allocated BString that receives the guessed type.
+ * @return B_OK on success, kMimeGuessFailureError if no type could be determined,
+ *         or B_BAD_VALUE if either argument is NULL.
+ */
 status_t
 AssociatedTypes::GuessMimeType(const char *filename, BString *result)
 {
@@ -146,17 +188,17 @@ AssociatedTypes::GuessMimeType(const char *filename, BString *result)
 	return err;
 }
 
-// GuessMimeType
-/*! \brief Guesses a MIME type for the given \c entry_ref based on its filename extension
-
-	\param filename The entry_ref of interest
-	\param result Pointer to a pre-allocated \c BString object into which
-	              the result is stored. If the function returns a value other
-	              than \c B_OK, \a result will not be modified.
-	\return
-	- \c B_OK: success
-	- \c other error code: failure
-*/
+/**
+ * @brief Guesses a MIME type for an entry_ref based on its filename extension.
+ *
+ * Converts the entry_ref to a full path and delegates to the
+ * GuessMimeType(const char*, BString*) overload.
+ *
+ * @param ref    Pointer to the entry_ref to examine; must not be NULL.
+ * @param result Pointer to a pre-allocated BString that receives the guessed type.
+ * @return B_OK on success, B_BAD_VALUE if \a ref is NULL, kMimeGuessFailureError
+ *         if no type could be determined, or another error code on path failure.
+ */
 status_t
 AssociatedTypes::GuessMimeType(const entry_ref *ref, BString *result)
 {
@@ -170,21 +212,20 @@ AssociatedTypes::GuessMimeType(const entry_ref *ref, BString *result)
 	return err;
 }
 
-// SetFileExtensions
-/*! \brief Sets the list of file extensions for the given type and
-	updates the associated types mappings.
-
-	All listed extensions will including the given mime type in
-	their list of associated types following this call.
-
-	All extensions previously but no longer associated with this
-	mime type will no longer list this mime type as an associated
-	type.
-
-	\param app The mime type whose associated file extensions you are setting
-	\param types Pointer to a \c BMessage containing an array of associated
-	             file extensions in its \c Mime::kExtensionsField field.
-*/
+/**
+ * @brief Updates the file-extension list for a MIME type and refreshes the associated-types maps.
+ *
+ * Replaces the stored extension set for \a type with the extensions listed in
+ * \a extensions.  Extensions that were previously registered but are absent from
+ * the new list have the type removed from their associated-types set; newly added
+ * extensions gain the type in their associated-types set.  If the full table has
+ * not yet been built the call is a no-op (returns B_OK or B_BAD_VALUE as appropriate).
+ *
+ * @param type       The MIME type whose file extensions are being updated.
+ * @param extensions BMessage containing the new extension strings in its
+ *                   Mime::kTypesField array field.
+ * @return B_OK on success, B_BAD_VALUE if either argument is NULL.
+ */
 status_t
 AssociatedTypes::SetFileExtensions(const char *type, const BMessage *extensions)
 {
@@ -232,11 +273,15 @@ AssociatedTypes::SetFileExtensions(const char *type, const BMessage *extensions)
 	return err;
 }
 
-// DeleteFileExtensions
-/*! \brief Clears the given types's file extensions list and removes the
-	types from each of said extensions' associated types list.
-	\param app The mime type whose file extensions you are clearing
-*/
+/**
+ * @brief Clears all file extensions for the given MIME type.
+ *
+ * Convenience wrapper that calls SetFileExtensions() with an empty BMessage,
+ * effectively removing the type from every extension's associated-types set.
+ *
+ * @param type The MIME type whose file extensions are to be cleared.
+ * @return B_OK on success, or B_BAD_VALUE if \a type is NULL.
+ */
 status_t
 AssociatedTypes::DeleteFileExtensions(const char *type)
 {
@@ -244,8 +289,12 @@ AssociatedTypes::DeleteFileExtensions(const char *type)
 	return SetFileExtensions(type, &extensions);
 }
 
-// PrintToStream
-//! Dumps the associated types mapping to standard output
+/**
+ * @brief Dumps the complete associated-types mapping to standard output.
+ *
+ * Iterates over all known extensions and prints each one together with its
+ * comma-separated set of associated MIME types.  Intended for debugging only.
+ */
 void
 AssociatedTypes::PrintToStream() const
 {
@@ -276,16 +325,17 @@ AssociatedTypes::PrintToStream() const
 	}
 }
 
-// AddAssociatedType
-/*! \brief Adds the given mime type to the set of associated types
-	for the given extension.
-
-	\param extension The file extension
-	\param type The associated mime type
-	\return
-	- B_OK: success, even if the type was already in the associated types list
-	- "error code": failure
-*/
+/**
+ * @brief Adds a MIME type to the associated-types set for the given extension.
+ *
+ * The extension is normalised (leading dots stripped, forced to lowercase)
+ * before insertion.  Adding a type that is already present is silently ignored.
+ *
+ * @param extension The file extension (leading dots are stripped automatically).
+ * @param type      The MIME type string to add.
+ * @return B_OK on success (including when the type was already present),
+ *         B_BAD_VALUE if either argument is NULL or the normalised extension is empty.
+ */
 status_t
 AssociatedTypes::AddAssociatedType(const char *extension, const char *type)
 {
@@ -300,16 +350,17 @@ AssociatedTypes::AddAssociatedType(const char *extension, const char *type)
 	return err;
 }
 
-// RemoveAssociatedType
-/*! \brief Removes the given mime type from the set of associated types
-	for the given extension.
-
-	\param extension The file extension
-	\param type The associated mime type
-	\return
-	- B_OK: success, even if the type was not found in the associated types list
-	- "error code": failure
-*/
+/**
+ * @brief Removes a MIME type from the associated-types set for the given extension.
+ *
+ * The extension is normalised before lookup.  Removing a type that is not
+ * present is silently ignored.
+ *
+ * @param extension The file extension (leading dots are stripped automatically).
+ * @param type      The MIME type string to remove.
+ * @return B_OK on success (including when the type was not found),
+ *         B_BAD_VALUE if either argument is NULL or the normalised extension is empty.
+ */
 status_t
 AssociatedTypes::RemoveAssociatedType(const char *extension, const char *type)
 {
@@ -324,10 +375,16 @@ AssociatedTypes::RemoveAssociatedType(const char *extension, const char *type)
 	return err;
 }
 
-// BuildAssociatedTypesTable
-/*! \brief Crawls the mime database and builds a list of associated types
-	for every associated file extension.
-*/
+/**
+ * @brief Crawls the entire MIME database and builds the extension-to-types mapping.
+ *
+ * Clears and rebuilds fFileExtensions and fAssociatedTypes by iterating over
+ * every supertype directory and its subtypes in the MIME database location.
+ * On success fHaveDoneFullBuild is set to true so that subsequent calls skip
+ * this expensive operation.
+ *
+ * @return B_OK on success, or an error code if the database directory cannot be opened.
+ */
 status_t
 AssociatedTypes::BuildAssociatedTypesTable()
 {
@@ -409,16 +466,16 @@ AssociatedTypes::BuildAssociatedTypesTable()
 
 }
 
-// ProcessType
-/*! \brief Handles a portion of the initial associated types table construction for
-	the given mime type.
-
-	\note To be called by BuildAssociatedTypesTable() *ONLY*. :-)
-
-	\param type The mime type of interest. The mime string is expected to be valid
-	            and lowercase. Both "supertype" and "supertype/subtype" mime types
-	            are allowed.
-*/
+/**
+ * @brief Reads and processes the file extensions registered for a single MIME type.
+ *
+ * Reads the META:EXTENS attribute for \a type from the database location and
+ * inserts each listed extension into fFileExtensions[type] and into the
+ * fAssociatedTypes map.  Intended to be called only from BuildAssociatedTypesTable().
+ *
+ * @param type A valid, lowercase MIME type string (supertype or supertype/subtype).
+ * @return B_OK on success, B_BAD_VALUE if \a type is NULL.
+ */
 status_t
 AssociatedTypes::ProcessType(const char *type)
 {
@@ -445,10 +502,13 @@ AssociatedTypes::ProcessType(const char *type)
 	return err;
 }
 
-// PrepExtension
-/*! \brief Strips any leading '.' chars from the given extension and
-	forces all chars to lowercase.
-*/
+/**
+ * @brief Normalises a file extension by stripping leading dots and converting to lowercase.
+ *
+ * @param extension The raw extension string; may begin with one or more '.' characters.
+ * @return A lowercase std::string without leading dots, or an empty string if
+ *         \a extension is NULL or consists solely of dots.
+ */
 std::string
 AssociatedTypes::PrepExtension(const char *extension) const
 {
@@ -466,4 +526,3 @@ AssociatedTypes::PrepExtension(const char *extension) const
 } // namespace Mime
 } // namespace Storage
 } // namespace BPrivate
-

@@ -1,11 +1,39 @@
 /*
- * Copyright 2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Haiku, Inc. All Rights Reserved.
+ *   Authors: Ingo Weinhold <ingo_weinhold@gmx.de>
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file CopyEngine.cpp
+ * @brief Implementation of the BCopyEngine file/directory copy engine.
+ *
+ * BCopyEngine provides a flexible mechanism for copying file system entries,
+ * including regular files, directories (recursively), symbolic links, and
+ * extended attributes. A BController callback interface allows callers to
+ * filter entries, handle errors gracefully, and receive progress notifications.
+ *
+ * @see BCopyEngine
+ */
 
 #include <CopyEngine.h>
 
@@ -34,6 +62,12 @@ static const size_t kSmallBufferSize = 64 * 1024;
 // #pragma mark - BCopyEngine
 
 
+/**
+ * @brief Constructs a BCopyEngine with the given operational flags.
+ *
+ * @param flags Combination of BCopyEngine flag constants controlling copy
+ *              behaviour (e.g. COPY_RECURSIVELY, UNLINK_DESTINATION).
+ */
 BCopyEngine::BCopyEngine(uint32 flags)
 	:
 	fController(NULL),
@@ -44,12 +78,20 @@ BCopyEngine::BCopyEngine(uint32 flags)
 }
 
 
+/**
+ * @brief Destructor. Releases the internal I/O buffer.
+ */
 BCopyEngine::~BCopyEngine()
 {
 	delete[] fBuffer;
 }
 
 
+/**
+ * @brief Returns the currently installed controller.
+ *
+ * @return Pointer to the BController, or NULL if none is set.
+ */
 BCopyEngine::BController*
 BCopyEngine::Controller() const
 {
@@ -57,6 +99,11 @@ BCopyEngine::Controller() const
 }
 
 
+/**
+ * @brief Installs a controller that receives copy progress and error callbacks.
+ *
+ * @param controller Pointer to the BController to install (may be NULL).
+ */
 void
 BCopyEngine::SetController(BController* controller)
 {
@@ -64,6 +111,11 @@ BCopyEngine::SetController(BController* controller)
 }
 
 
+/**
+ * @brief Returns the current copy flags.
+ *
+ * @return The flags bitmask currently in effect.
+ */
 uint32
 BCopyEngine::Flags() const
 {
@@ -71,6 +123,12 @@ BCopyEngine::Flags() const
 }
 
 
+/**
+ * @brief Replaces all current flags with the supplied value.
+ *
+ * @param flags New flags bitmask.
+ * @return Reference to this engine (for chaining).
+ */
 BCopyEngine&
 BCopyEngine::SetFlags(uint32 flags)
 {
@@ -79,6 +137,12 @@ BCopyEngine::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Adds the given flags to the current flags bitmask.
+ *
+ * @param flags Flags to add.
+ * @return Reference to this engine (for chaining).
+ */
 BCopyEngine&
 BCopyEngine::AddFlags(uint32 flags)
 {
@@ -87,6 +151,12 @@ BCopyEngine::AddFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Removes the given flags from the current flags bitmask.
+ *
+ * @param flags Flags to remove.
+ * @return Reference to this engine (for chaining).
+ */
 BCopyEngine&
 BCopyEngine::RemoveFlags(uint32 flags)
 {
@@ -95,6 +165,16 @@ BCopyEngine::RemoveFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Copies a single file system entry from sourceEntry to destEntry.
+ *
+ * Allocates the I/O buffer on first use and resolves both Entry objects to
+ * path strings before delegating to _CopyEntry().
+ *
+ * @param sourceEntry The entry to copy from.
+ * @param destEntry   The entry to copy to.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCopyEngine::CopyEntry(const Entry& sourceEntry, const Entry& destEntry)
 {
@@ -127,6 +207,17 @@ BCopyEngine::CopyEntry(const Entry& sourceEntry, const Entry& destEntry)
 }
 
 
+/**
+ * @brief Internal recursive implementation that copies a single entry by path.
+ *
+ * Handles entry filtering via the controller, stat inspection, destination
+ * unlinking, node creation, file data copying, attribute copying, permission
+ * propagation, and optional recursive descent into directories.
+ *
+ * @param sourcePath Absolute path of the source entry.
+ * @param destPath   Absolute path of the destination entry.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCopyEngine::_CopyEntry(const char* sourcePath, const char* destPath)
 {
@@ -334,6 +425,18 @@ BCopyEngine::_CopyEntry(const char* sourcePath, const char* destPath)
 }
 
 
+/**
+ * @brief Copies the raw byte data from one open BFile to another.
+ *
+ * Reads the source file in chunks using the engine's I/O buffer and writes
+ * each chunk to the destination file at the same offset.
+ *
+ * @param sourcePath  Path of the source file (used in error messages).
+ * @param source      Open source BFile.
+ * @param destPath    Path of the destination file (used in error messages).
+ * @param destination Open destination BFile.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCopyEngine::_CopyFileData(const char* sourcePath, BFile& source,
 	const char* destPath, BFile& destination)
@@ -370,6 +473,19 @@ BCopyEngine::_CopyFileData(const char* sourcePath, BFile& source,
 }
 
 
+/**
+ * @brief Copies all extended attributes from one node to another.
+ *
+ * Iterates over every attribute on the source node, optionally filters via
+ * the controller, reads the attribute data in chunks, and writes it to the
+ * destination node.
+ *
+ * @param sourcePath  Path of the source node (used in error messages).
+ * @param source      Source BNode whose attributes are read.
+ * @param destPath    Path of the destination node (used in error messages).
+ * @param destination Destination BNode that receives the attributes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCopyEngine::_CopyAttributes(const char* sourcePath, BNode& source,
 	const char* destPath, BNode& destination)
@@ -459,6 +575,13 @@ BCopyEngine::_CopyAttributes(const char* sourcePath, BNode& source,
 }
 
 
+/**
+ * @brief Notifies the controller of an error using a printf-style format string.
+ *
+ * @param error  The error code to report.
+ * @param format printf-style format string for the human-readable message.
+ * @param ...    Format arguments.
+ */
 void
 BCopyEngine::_NotifyError(status_t error, const char* format, ...)
 {
@@ -471,6 +594,13 @@ BCopyEngine::_NotifyError(status_t error, const char* format, ...)
 }
 
 
+/**
+ * @brief Notifies the controller of an error using a va_list argument list.
+ *
+ * @param error  The error code to report.
+ * @param format printf-style format string for the human-readable message.
+ * @param args   Pre-initialized va_list of format arguments.
+ */
 void
 BCopyEngine::_NotifyErrorVarArgs(status_t error, const char* format,
 	va_list args)
@@ -483,6 +613,17 @@ BCopyEngine::_NotifyErrorVarArgs(status_t error, const char* format,
 }
 
 
+/**
+ * @brief Reports an entry-level error and queries the controller whether to
+ *        continue or propagate the error.
+ *
+ * @param path   Path of the entry that caused the error.
+ * @param error  The error code.
+ * @param format printf-style format string for the human-readable message.
+ * @param ...    Format arguments.
+ * @return B_OK if the controller allows the operation to continue, otherwise
+ *         the original error code.
+ */
 status_t
 BCopyEngine::_HandleEntryError(const char* path, status_t error,
 	const char* format, ...)
@@ -501,6 +642,19 @@ BCopyEngine::_HandleEntryError(const char* path, status_t error,
 }
 
 
+/**
+ * @brief Reports an attribute-level error and queries the controller whether
+ *        to continue or propagate the error.
+ *
+ * @param path          Path of the file whose attribute caused the error.
+ * @param attribute     Name of the attribute that caused the error.
+ * @param attributeType Type code of the attribute.
+ * @param error         The error code.
+ * @param format        printf-style format string for the human-readable message.
+ * @param ...           Format arguments.
+ * @return B_OK if the controller allows the operation to continue, otherwise
+ *         the original error code.
+ */
 status_t
 BCopyEngine::_HandleAttributeError(const char* path, const char* attribute,
 	uint32 attributeType, status_t error, const char* format, ...)
@@ -522,16 +676,28 @@ BCopyEngine::_HandleAttributeError(const char* path, const char* attribute,
 // #pragma mark - BController
 
 
+/**
+ * @brief Default constructor for BController.
+ */
 BCopyEngine::BController::BController()
 {
 }
 
 
+/**
+ * @brief Destructor for BController.
+ */
 BCopyEngine::BController::~BController()
 {
 }
 
 
+/**
+ * @brief Called before an entry is processed; returns whether to copy it.
+ *
+ * @param path Path of the entry about to be copied.
+ * @return true to proceed with the copy, false to skip this entry.
+ */
 bool
 BCopyEngine::BController::EntryStarted(const char* path)
 {
@@ -539,6 +705,13 @@ BCopyEngine::BController::EntryStarted(const char* path)
 }
 
 
+/**
+ * @brief Called after an entry has been processed; returns whether to continue.
+ *
+ * @param path  Path of the entry that was just processed.
+ * @param error B_OK if the entry was copied successfully, or an error code.
+ * @return true to continue copying remaining entries, false to abort.
+ */
 bool
 BCopyEngine::BController::EntryFinished(const char* path, status_t error)
 {
@@ -546,6 +719,14 @@ BCopyEngine::BController::EntryFinished(const char* path, status_t error)
 }
 
 
+/**
+ * @brief Called before an attribute is copied; returns whether to copy it.
+ *
+ * @param path          Path of the file whose attribute is about to be copied.
+ * @param attribute     Name of the attribute.
+ * @param attributeType Type code of the attribute.
+ * @return true to proceed with the attribute copy, false to skip it.
+ */
 bool
 BCopyEngine::BController::AttributeStarted(const char* path,
 	const char* attribute, uint32 attributeType)
@@ -554,6 +735,16 @@ BCopyEngine::BController::AttributeStarted(const char* path,
 }
 
 
+/**
+ * @brief Called after an attribute has been processed; returns whether to
+ *        continue.
+ *
+ * @param path          Path of the file whose attribute was processed.
+ * @param attribute     Name of the attribute.
+ * @param attributeType Type code of the attribute.
+ * @param error         B_OK on success, or an error code.
+ * @return true to continue with remaining attributes, false to abort.
+ */
 bool
 BCopyEngine::BController::AttributeFinished(const char* path,
 	const char* attribute, uint32 attributeType, status_t error)
@@ -562,6 +753,12 @@ BCopyEngine::BController::AttributeFinished(const char* path,
 }
 
 
+/**
+ * @brief Called when a non-fatal error occurs during the copy operation.
+ *
+ * @param message Human-readable description of the error.
+ * @param error   The error code.
+ */
 void
 BCopyEngine::BController::ErrorOccurred(const char* message, status_t error)
 {

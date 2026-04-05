@@ -1,10 +1,40 @@
 /*
- * Copyright 2007-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file vfs_boot.cpp
+ * @brief Boot-time VFS setup — locating and mounting the root file system.
+ *
+ * Handles the early boot phase of the VFS: scanning the boot device,
+ * selecting the correct file system for the root partition, and calling
+ * vfs_mount() to mount it at /. Also handles net-boot and CD-boot scenarios.
+ *
+ * @see vfs.cpp, vfs_net_boot.cpp
  */
 
 
@@ -63,6 +93,7 @@ bool gReadOnlyBootDevice = false;
 
 /*!	No image was chosen - prefer disks with names like "Haiku", or "System"
  */
+/** @brief Partition comparator for image-boot ordering: partitions with content names are ranked higher, with "Haiku" first and names starting with "System" second. */
 int
 compare_image_boot(const void* _a, const void* _b)
 {
@@ -98,6 +129,7 @@ compare_image_boot(const void* _a, const void* _b)
 	is no CD, fall back to the standard mechanism (as implemented by
 	compare_image_boot().
 */
+/** @brief Partition comparator for CD-boot ordering: data-session (CD) partitions are ranked above all others; ties are broken by compare_image_boot(). */
 static int
 compare_cd_boot(const void* _a, const void* _b)
 {
@@ -123,6 +155,7 @@ compare_cd_boot(const void* _a, const void* _b)
 	Note, this must use the same method as the one used in
 	boot/platform/bios_ia32/devices.cpp (or similar solutions).
 */
+/** @brief Reads 512 bytes from the disk device at the given byte offset and returns their sum as an array of uint32 values; returns 0 on read error. */
 static uint32
 compute_check_sum(KDiskDevice* device, off_t offset)
 {
@@ -149,6 +182,7 @@ compute_check_sum(KDiskDevice* device, off_t offset)
 // #pragma mark - BootMethod
 
 
+/** @brief Constructs a BootMethod base with the given boot-volume message and method type constant. */
 BootMethod::BootMethod(const KMessage& bootVolume, int32 method)
 	:
 	fBootVolume(bootVolume),
@@ -157,11 +191,13 @@ BootMethod::BootMethod(const KMessage& bootVolume, int32 method)
 }
 
 
+/** @brief Destroys the BootMethod base object. */
 BootMethod::~BootMethod()
 {
 }
 
 
+/** @brief Default initialisation for a BootMethod; derived classes may override to perform method-specific setup. */
 status_t
 BootMethod::Init()
 {
@@ -185,6 +221,7 @@ public:
 };
 
 
+/** @brief Determines whether a physical disk device matches the boot-loader's recorded disk identifier, using bus type, device type, size, and check-sum comparisons; in non-strict mode size mismatches are tolerated. */
 bool
 DiskBootMethod::IsBootDevice(KDiskDevice* device, bool strict)
 {
@@ -255,6 +292,7 @@ DiskBootMethod::IsBootDevice(KDiskDevice* device, bool strict)
 }
 
 
+/** @brief Returns true when the partition should be considered as a boot candidate; sets foundForSure to true when the partition is identified unambiguously (e.g. by exact offset match or anyboot-CD detection). */
 bool
 DiskBootMethod::IsBootPartition(KPartition* partition, bool& foundForSure)
 {
@@ -309,6 +347,7 @@ DiskBootMethod::IsBootPartition(KPartition* partition, bool& foundForSure)
 }
 
 
+/** @brief Sorts the candidate partition array using the appropriate comparator (compare_cd_boot for CD boots, compare_image_boot otherwise). */
 void
 DiskBootMethod::SortPartitions(KPartition** partitions, int32 count)
 {
@@ -326,6 +365,7 @@ DiskBootMethod::SortPartitions(KPartition** partitions, int32 count)
 	entry in this stack; if not, the most likely is put up first.
 	The boot code should then just try them one by one.
 */
+/** @brief Scans all disk devices via the KDiskDeviceManager, identifies boot-partition candidates using the appropriate BootMethod, and pushes them onto the partitions stack in priority order. */
 static status_t
 get_boot_partitions(KMessage& bootVolume, PartitionStack& partitions)
 {
@@ -433,6 +473,7 @@ get_boot_partitions(KMessage& bootVolume, PartitionStack& partitions)
 //	#pragma mark -
 
 
+/** @brief Mounts the rootfs at "/", devfs at "/dev", creates the "/boot" directory, and installs the predefined global symlinks; panics on any failure. */
 status_t
 vfs_bootstrap_file_systems(void)
 {
@@ -466,6 +507,7 @@ vfs_bootstrap_file_systems(void)
 }
 
 
+/** @brief Locates the boot partition via get_boot_partitions(), mounts it at "/boot" (applying write-overlay for read-only media), conditionally mounts packagefs for system and home, sets gBootDevice, and triggers post-boot-device module and file-cache initialisation. */
 void
 vfs_mount_boot_file_system(kernel_args* args)
 {
@@ -574,4 +616,3 @@ vfs_mount_boot_file_system(kernel_args* args)
 	manager->RescanDiskSystems();
 	manager->StartMonitoring();
 }
-

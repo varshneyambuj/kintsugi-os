@@ -1,8 +1,39 @@
 /*
- * Copyright 2006-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file TextSnifferAddon.cpp
+ * @brief MIME sniffer add-on that identifies text-based file formats.
+ *
+ * TextSnifferAddon wraps the BSD file-tool's ascmagic logic to detect whether
+ * a data buffer contains ASCII, UTF-8, UTF-16, ISO-8859, EBCDIC, or various
+ * known text sub-formats (troff, Fortran, C source, etc.). When a recognised
+ * text sub-format is installed in the MIME database, that specific type is
+ * returned; otherwise "text/plain" is used as the fallback.
+ *
+ * @see MimeSnifferAddon
+ */
 
 #include <mime/TextSnifferAddon.h>
 
@@ -23,26 +54,45 @@ namespace Storage {
 namespace Mime {
 
 
-// constructor
+/**
+ * @brief Constructs a TextSnifferAddon.
+ *
+ * @param databaseLocation Pointer to the DatabaseLocation used to check
+ *                         whether detected sub-types are installed.
+ */
 TextSnifferAddon::TextSnifferAddon(DatabaseLocation* databaseLocation)
 	:
 	fDatabaseLocation(databaseLocation)
 {
 }
 
-// destructor
+/**
+ * @brief Destroys the TextSnifferAddon.
+ */
 TextSnifferAddon::~TextSnifferAddon()
 {
 }
 
-// MinimalBufferSize
+/**
+ * @brief Returns the minimum buffer size required for content analysis.
+ *
+ * @return 512 bytes.
+ */
 size_t
 TextSnifferAddon::MinimalBufferSize()
 {
 	return 512;
 }
 
-// GuessMimeType
+/**
+ * @brief Filename-based MIME guess — always returns no match.
+ *
+ * TextSnifferAddon only operates on file content, not filenames.
+ *
+ * @param fileName The filename to examine (unused).
+ * @param type     Output MIME type (not set by this implementation).
+ * @return -1 to indicate no match.
+ */
 float
 TextSnifferAddon::GuessMimeType(const char* fileName, BMimeType* type)
 {
@@ -50,7 +100,20 @@ TextSnifferAddon::GuessMimeType(const char* fileName, BMimeType* type)
 	return -1;
 }
 
-// GuessMimeType
+/**
+ * @brief Attempts to identify a text-based MIME type from file content.
+ *
+ * Delegates to file_ascmagic() which implements the BSD file-tool character
+ * encoding and keyword-matching logic. Returns a lower confidence score for
+ * very short buffers.
+ *
+ * @param file   Pointer to the BFile being examined (may be NULL).
+ * @param buffer Pointer to the data buffer to analyse.
+ * @param length Number of valid bytes in @a buffer.
+ * @param type   Output BMimeType set to the detected type on success.
+ * @return 0.25 if a text type was identified (or 0.0 for very short buffers),
+ *         -1 if the buffer does not appear to contain text.
+ */
 float
 TextSnifferAddon::GuessMimeType(BFile* file, const void* buffer, int32 length,
 	BMimeType* type)
@@ -83,7 +146,7 @@ TextSnifferAddon::GuessMimeType(BFile* file, const void* buffer, int32 length,
  * Copyright (c) Ian F. Darwin 1986-1995.
  * Software written by Ian F. Darwin and others;
  * maintained 1995-present by Christos Zoulas and others.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -93,7 +156,7 @@ TextSnifferAddon::GuessMimeType(BFile* file, const void* buffer, int32 length,
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- *  
+ *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -140,13 +203,28 @@ static void from_ebcdic(const unsigned char *, size_t, unsigned char *);
 static int ascmatch(const unsigned char *, const my_unichar *, size_t);
 
 
+/**
+ * @brief Detects whether a buffer contains text and identifies its sub-format.
+ *
+ * Determines the character encoding (ASCII, UTF-8, UTF-16, ISO-8859, EBCDIC,
+ * etc.) and then searches for language/format keywords from the names table.
+ * Sets @a mimeType to the most specific installed text MIME type found, or
+ * "text/plain" as a fallback.
+ *
+ * @param databaseLocation Used to check whether detected sub-types are installed.
+ * @param buf    Pointer to the data buffer.
+ * @param nbytes Number of bytes to examine.
+ * @param mimeType Output BMimeType set to the detected type when rv == 1.
+ * @return 1 if the buffer appears to contain text (mimeType is set),
+ *         0 otherwise.
+ */
 static int
 file_ascmagic(DatabaseLocation* databaseLocation, const unsigned char *buf,
 	size_t nbytes, BMimeType* mimeType)
 {
 	size_t i;
 	unsigned char *nbuf = NULL;
-	my_unichar *ubuf = NULL;	
+	my_unichar *ubuf = NULL;
 	size_t ulen;
 	struct names *p;
 	int rv = -1;
@@ -200,7 +278,7 @@ file_ascmagic(DatabaseLocation* databaseLocation, const unsigned char *buf,
 	} else if (looks_latin1(buf, nbytes, ubuf, &ulen)) {
 		code = "ISO-8859";
 		type = "text";
-		code_mime = "iso-8859-1"; 
+		code_mime = "iso-8859-1";
 	} else if (looks_extended(buf, nbytes, ubuf, &ulen)) {
 		code = "Non-ISO extended-ASCII";
 		type = "text";
@@ -370,6 +448,14 @@ done:
 	return rv;
 }
 
+/**
+ * @brief Matches an ASCII string against a Unicode character array.
+ *
+ * @param s    Null-terminated ASCII string to match.
+ * @param us   Unicode character array to match against.
+ * @param ulen Number of characters in @a us.
+ * @return 1 if the strings match exactly, 0 otherwise.
+ */
 static int
 ascmatch(const unsigned char *s, const my_unichar *us, size_t ulen)
 {
@@ -465,6 +551,15 @@ static char text_chars[256] = {
 	I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I   /* 0xfX */
 };
 
+/**
+ * @brief Tests whether a buffer looks like plain ASCII text.
+ *
+ * @param buf    Input byte buffer.
+ * @param nbytes Number of bytes in @a buf.
+ * @param ubuf   Output Unicode character array (one codepoint per byte).
+ * @param ulen   Output number of characters placed in @a ubuf.
+ * @return 1 if all bytes are valid ASCII text characters, 0 otherwise.
+ */
 static int
 looks_ascii(const unsigned char *buf, size_t nbytes, my_unichar *ubuf,
     size_t *ulen)
@@ -485,6 +580,15 @@ looks_ascii(const unsigned char *buf, size_t nbytes, my_unichar *ubuf,
 	return 1;
 }
 
+/**
+ * @brief Tests whether a buffer looks like ISO-8859 (Latin-1) text.
+ *
+ * @param buf    Input byte buffer.
+ * @param nbytes Number of bytes in @a buf.
+ * @param ubuf   Output Unicode character array.
+ * @param ulen   Output number of characters placed in @a ubuf.
+ * @return 1 if all bytes are valid ASCII or ISO-8859 text characters, 0 otherwise.
+ */
 static int
 looks_latin1(const unsigned char *buf, size_t nbytes, my_unichar *ubuf, size_t *ulen)
 {
@@ -504,6 +608,16 @@ looks_latin1(const unsigned char *buf, size_t nbytes, my_unichar *ubuf, size_t *
 	return 1;
 }
 
+/**
+ * @brief Tests whether a buffer looks like non-ISO extended ASCII text.
+ *
+ * @param buf    Input byte buffer.
+ * @param nbytes Number of bytes in @a buf.
+ * @param ubuf   Output Unicode character array.
+ * @param ulen   Output number of characters placed in @a ubuf.
+ * @return 1 if all bytes are valid ASCII, ISO-8859, or extended-ASCII characters,
+ *         0 otherwise.
+ */
 static int
 looks_extended(const unsigned char *buf, size_t nbytes, my_unichar *ubuf,
     size_t *ulen)
@@ -524,6 +638,16 @@ looks_extended(const unsigned char *buf, size_t nbytes, my_unichar *ubuf,
 	return 1;
 }
 
+/**
+ * @brief Tests whether a buffer looks like valid UTF-8 text.
+ *
+ * @param buf    Input byte buffer.
+ * @param nbytes Number of bytes in @a buf.
+ * @param ubuf   Output Unicode character array (decoded codepoints).
+ * @param ulen   Output number of codepoints placed in @a ubuf.
+ * @return 1 if at least one multi-byte UTF-8 sequence was found and all bytes
+ *         are valid UTF-8, 0 otherwise (pure ASCII is not claimed as UTF-8).
+ */
 static int
 looks_utf8(const unsigned char *buf, size_t nbytes, my_unichar *ubuf, size_t *ulen)
 {
@@ -586,6 +710,17 @@ done:
 	return gotone;   /* don't claim it's UTF-8 if it's all 7-bit */
 }
 
+/**
+ * @brief Tests whether a buffer looks like UTF-16 (little- or big-endian).
+ *
+ * Checks for a UTF-16 BOM at the start of the buffer and decodes characters.
+ *
+ * @param buf    Input byte buffer.
+ * @param nbytes Number of bytes in @a buf.
+ * @param ubuf   Output Unicode character array (decoded codepoints).
+ * @param ulen   Output number of codepoints placed in @a ubuf.
+ * @return 1 for little-endian UTF-16, 2 for big-endian UTF-16, 0 if not UTF-16.
+ */
 static int
 looks_unicode(const unsigned char *buf, size_t nbytes, my_unichar *ubuf,
     size_t *ulen)
@@ -704,8 +839,12 @@ static unsigned char ebcdic_1047_to_8859[] = {
 };
 #endif
 
-/*
- * Copy buf[0 ... nbytes-1] into out[], translating EBCDIC to ASCII.
+/**
+ * @brief Translates a buffer from EBCDIC encoding to ASCII in-place.
+ *
+ * @param buf    Source EBCDIC byte buffer.
+ * @param nbytes Number of bytes to translate.
+ * @param out    Destination buffer (must be at least @a nbytes bytes).
  */
 static void
 from_ebcdic(const unsigned char *buf, size_t nbytes, unsigned char *out)

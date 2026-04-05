@@ -1,6 +1,40 @@
 /*
- * Copyright 2003-2007, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2007, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file DiskDevice.cpp
+ * @brief Implementation of the BDiskDevice class representing a storage device.
+ *
+ * BDiskDevice extends BPartition to represent a complete physical or virtual
+ * storage device known to the disk device manager. It provides methods to
+ * query device properties such as media presence, removability, and read-only
+ * status, as well as operations for ejecting media, updating device state,
+ * and managing the modification lifecycle (PrepareModifications,
+ * CommitModifications, CancelModifications).
+ *
+ * @see BPartition
+ * @see BDiskDeviceRoster
  */
 
 #include <DiskDevice.h>
@@ -38,14 +72,14 @@
 #endif
 
 
-/*!	\class BDiskDevice
-	\brief A BDiskDevice object represents a storage device.
-*/
+/**
+ * @brief A BDiskDevice object represents a storage device.
+ */
 
 
-// constructor
-/*!	\brief Creates an uninitialized BDiskDevice object.
-*/
+/**
+ * @brief Creates an uninitialized BDiskDevice object.
+ */
 BDiskDevice::BDiskDevice()
 	:
 	fDeviceData(NULL)
@@ -53,19 +87,20 @@ BDiskDevice::BDiskDevice()
 }
 
 
-// destructor
-/*!	\brief Frees all resources associated with this object.
-*/
+/**
+ * @brief Frees all resources associated with this object.
+ */
 BDiskDevice::~BDiskDevice()
 {
 	CancelModifications();
 }
 
 
-// HasMedia
-/*!	\brief Returns whether the device contains a media.
-	\return \c true, if the device contains a media, \c false otherwise.
-*/
+/**
+ * @brief Returns whether the device contains media.
+ *
+ * @return \c true if the device contains media, \c false otherwise.
+ */
 bool
 BDiskDevice::HasMedia() const
 {
@@ -74,10 +109,11 @@ BDiskDevice::HasMedia() const
 }
 
 
-// IsRemovableMedia
-/*!	\brief Returns whether the device media are removable.
-	\return \c true, if the device media are removable, \c false otherwise.
-*/
+/**
+ * @brief Returns whether the device media is removable.
+ *
+ * @return \c true if the device media is removable, \c false otherwise.
+ */
 bool
 BDiskDevice::IsRemovableMedia() const
 {
@@ -86,7 +122,11 @@ BDiskDevice::IsRemovableMedia() const
 }
 
 
-// IsReadOnlyMedia
+/**
+ * @brief Returns whether the device media is read-only.
+ *
+ * @return \c true if the device media is read-only, \c false otherwise.
+ */
 bool
 BDiskDevice::IsReadOnlyMedia() const
 {
@@ -95,7 +135,11 @@ BDiskDevice::IsReadOnlyMedia() const
 }
 
 
-// IsWriteOnceMedia
+/**
+ * @brief Returns whether the device media is write-once.
+ *
+ * @return \c true if the device media is write-once, \c false otherwise.
+ */
 bool
 BDiskDevice::IsWriteOnceMedia() const
 {
@@ -104,19 +148,17 @@ BDiskDevice::IsWriteOnceMedia() const
 }
 
 
-// Eject
-/*!	\brief Eject the device's media.
-
-	The device media must, of course, be removable, and the device must
-	support ejecting the media.
-
-	\param update If \c true, Update() is invoked after successful ejection.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_NO_INIT: The device is not properly initialized.
-	- \c B_BAD_VALUE: The device media is not removable.
-	- other error codes
-*/
+/**
+ * @brief Ejects the device's media.
+ *
+ * The device media must be removable, and the device must support ejecting
+ * the media.
+ *
+ * @param update If \c true, Update() is invoked after successful ejection.
+ * @return \c B_OK on success, \c B_NO_INIT if the device is not properly
+ *         initialized, \c B_BAD_VALUE if the device media is not removable,
+ *         or another error code on failure.
+ */
 status_t
 BDiskDevice::Eject(bool update)
 {
@@ -145,7 +187,12 @@ BDiskDevice::Eject(bool update)
 }
 
 
-// SetTo
+/**
+ * @brief Initializes this object to represent the device with the given ID.
+ *
+ * @param id The partition ID of the device to set this object to.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDevice::SetTo(partition_id id)
 {
@@ -153,19 +200,19 @@ BDiskDevice::SetTo(partition_id id)
 }
 
 
-// Update
-/*!	\brief Updates the object to reflect the latest changes to the device.
-
-	Note, that subobjects (BSessions, BPartitions) may be deleted during this
-	operation. It is also possible, that the device doesn't exist anymore --
-	e.g. if it is hot-pluggable. Then an error is returned and the object is
-	uninitialized.
-
-	\param updated Pointer to a bool variable which shall be set to \c true,
-		   if the object needed to be updated and to \c false otherwise.
-		   May be \c NULL. Is not touched, if the method fails.
-	\return \c B_OK, if the update went fine, another error code otherwise.
-*/
+/**
+ * @brief Updates the object to reflect the latest changes to the device.
+ *
+ * Note that subobjects (BPartitions) may be deleted during this operation.
+ * It is also possible that the device no longer exists (e.g. hot-pluggable
+ * device was removed), in which case an error is returned and the object is
+ * uninitialized.
+ *
+ * @param updated Pointer to a bool variable set to \c true if the object
+ *        needed to be updated and to \c false otherwise. May be \c NULL.
+ *        Not touched if the method fails.
+ * @return \c B_OK if the update went fine, another error code otherwise.
+ */
 status_t
 BDiskDevice::Update(bool* updated)
 {
@@ -188,7 +235,9 @@ BDiskDevice::Update(bool* updated)
 }
 
 
-// Unset
+/**
+ * @brief Resets the object to an uninitialized state and frees device data.
+ */
 void
 BDiskDevice::Unset()
 {
@@ -198,7 +247,11 @@ BDiskDevice::Unset()
 }
 
 
-// InitCheck
+/**
+ * @brief Returns the initialization status of this object.
+ *
+ * @return \c B_OK if the object is properly initialized, \c B_NO_INIT otherwise.
+ */
 status_t
 BDiskDevice::InitCheck() const
 {
@@ -206,7 +259,13 @@ BDiskDevice::InitCheck() const
 }
 
 
-// GetPath
+/**
+ * @brief Retrieves the path to the device node.
+ *
+ * @param path Pointer to a BPath to be set to the device path.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a path is \c NULL or the
+ *         device is uninitialized.
+ */
 status_t
 BDiskDevice::GetPath(BPath* path) const
 {
@@ -216,7 +275,12 @@ BDiskDevice::GetPath(BPath* path) const
 }
 
 
-// IsModified
+/**
+ * @brief Returns whether any partition in the hierarchy has pending modifications.
+ *
+ * @return \c true if one or more partitions have been modified since the last
+ *         commit or cancel, \c false otherwise.
+ */
 bool
 BDiskDevice::IsModified() const
 {
@@ -239,14 +303,15 @@ BDiskDevice::IsModified() const
 }
 
 
-// PrepareModifications
-/*!	\brief Initializes the partition hierarchy for modifications.
+/**
+ * @brief Initializes the partition hierarchy for modifications.
  *
- * 	Subsequent modifications are performed on so-called \a shadow structure
- * 	and not written to device until \ref CommitModifications is called.
+ * Subsequent modifications are performed on a shadow structure and not
+ * written to the device until CommitModifications() is called.
  *
- * 	\note This call locks the device. You need to call \ref CommitModifications
- * 		or \ref CancelModifications to unlock it.
+ * @note This call locks the device. You must call CommitModifications() or
+ *       CancelModifications() to unlock it.
+ * @return \c B_OK on success, or an error code on failure.
  */
 status_t
 BDiskDevice::PrepareModifications()
@@ -291,15 +356,19 @@ BDiskDevice::PrepareModifications()
 }
 
 
-// CommitModifications
-/*!	\brief Commits modifications to device.
+/**
+ * @brief Commits modifications to the device.
  *
- * 	Creates a set of jobs that perform all the changes done after
- * 	\ref PrepareModifications. The changes are then written to device.
- * 	Deletes and recreates all BPartition children to apply the changes,
- * 	so cached pointers to BPartition objects cannot be used after this
- * 	call.
- * 	Unlocks the device for further use.
+ * Creates a set of jobs that perform all changes made after
+ * PrepareModifications(). Changes are written to the device and all
+ * BPartition children are deleted and recreated to reflect the new state.
+ * Cached pointers to BPartition objects must not be used after this call.
+ * Unlocks the device for further use.
+ *
+ * @param synchronously Reserved for future use.
+ * @param progressMessenger Reserved for future use.
+ * @param receiveCompleteProgressUpdates Reserved for future use.
+ * @return \c B_OK on success, or an error code on failure.
  */
 status_t
 BDiskDevice::CommitModifications(bool synchronously,
@@ -331,10 +400,12 @@ BDiskDevice::CommitModifications(bool synchronously,
 }
 
 
-// CancelModifications
-/*!	\brief Cancels all modifications performed on the device.
+/**
+ * @brief Cancels all modifications performed on the device.
  *
- * 	Nothing is written on the device and it is unlocked for further use.
+ * Nothing is written to the device and it is unlocked for further use.
+ *
+ * @return \c B_OK on success, or an error code on failure.
  */
 status_t
 BDiskDevice::CancelModifications()
@@ -356,9 +427,11 @@ BDiskDevice::CancelModifications()
 }
 
 
-/*!	\brief Returns whether or not this device is a virtual device backed
-		up by a file.
-*/
+/**
+ * @brief Returns whether this device is a virtual device backed by a file.
+ *
+ * @return \c true if the device is backed by a file, \c false otherwise.
+ */
 bool
 BDiskDevice::IsFile() const
 {
@@ -367,7 +440,13 @@ BDiskDevice::IsFile() const
 }
 
 
-/*!	\brief Retrieves the path of the file backing up the disk device.*/
+/**
+ * @brief Retrieves the path of the file backing this virtual disk device.
+ *
+ * @param path Pointer to a BPath to be set to the backing file path.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a path is \c NULL,
+ *         \c B_BAD_TYPE if the device is not file-backed, or another error code.
+ */
 status_t
 BDiskDevice::GetFilePath(BPath* path) const
 {
@@ -386,17 +465,17 @@ BDiskDevice::GetFilePath(BPath* path) const
 }
 
 
-// copy constructor
-/*!	\brief Privatized copy constructor to avoid usage.
-*/
+/**
+ * @brief Privatized copy constructor to avoid usage.
+ */
 BDiskDevice::BDiskDevice(const BDiskDevice&)
 {
 }
 
 
-// =
-/*!	\brief Privatized assignment operator to avoid usage.
-*/
+/**
+ * @brief Privatized assignment operator to avoid usage.
+ */
 BDiskDevice&
 BDiskDevice::operator=(const BDiskDevice&)
 {
@@ -404,7 +483,18 @@ BDiskDevice::operator=(const BDiskDevice&)
 }
 
 
-// _GetData
+/**
+ * @brief Fetches the raw device data from the kernel for a given partition ID.
+ *
+ * Allocates a buffer of sufficient size and fills it via a kernel call,
+ * retrying with a larger buffer if B_BUFFER_OVERFLOW is returned.
+ *
+ * @param id The partition ID of the device to retrieve.
+ * @param deviceOnly If \c true, retrieve only device-level data.
+ * @param neededSize Hint for the initial buffer size (0 to let the call decide).
+ * @param data Out-parameter set to the allocated device data on success.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDevice::_GetData(partition_id id, bool deviceOnly, size_t neededSize,
 	user_disk_device_data** data)
@@ -447,7 +537,16 @@ BDiskDevice::_GetData(partition_id id, bool deviceOnly, size_t neededSize,
 }
 
 
-// _SetTo
+/**
+ * @brief Initializes this object by fetching device data by partition ID.
+ *
+ * Clears the current state, then fetches and applies new device data.
+ *
+ * @param id The partition ID of the device to set this object to.
+ * @param deviceOnly If \c true, only device-level data is fetched.
+ * @param neededSize Hint for the initial buffer size.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDevice::_SetTo(partition_id id, bool deviceOnly, size_t neededSize)
 {
@@ -469,7 +568,16 @@ BDiskDevice::_SetTo(partition_id id, bool deviceOnly, size_t neededSize)
 }
 
 
-// _SetTo
+/**
+ * @brief Initializes this object from a pre-fetched user_disk_device_data buffer.
+ *
+ * Takes ownership of \a data on success. On failure the caller retains
+ * ownership and must free it.
+ *
+ * @param data Pointer to the device data structure to consume.
+ * @return \c B_OK on success, \c B_BAD_VALUE if \a data is \c NULL, or
+ *         another error code on failure.
+ */
 status_t
 BDiskDevice::_SetTo(user_disk_device_data* data)
 {
@@ -493,7 +601,16 @@ BDiskDevice::_SetTo(user_disk_device_data* data)
 }
 
 
-// _Update
+/**
+ * @brief Updates this object's internal state from newly fetched device data.
+ *
+ * Removes obsolete descendant partitions, updates existing ones, and adds
+ * new ones. Frees the old device data on success.
+ *
+ * @param data The newly fetched device data.
+ * @param updated Set to \c true if any changes were detected.
+ * @return \c B_OK on success, or an error code on failure.
+ */
 status_t
 BDiskDevice::_Update(user_disk_device_data* data, bool* updated)
 {
@@ -530,7 +647,13 @@ BDiskDevice::_Update(user_disk_device_data* data, bool* updated)
 }
 
 
-// _AcceptVisitor
+/**
+ * @brief Dispatches the visitor to this device's Visit(BDiskDevice*) overload.
+ *
+ * @param visitor The visitor to invoke.
+ * @param level The depth level in the device/partition hierarchy (unused here).
+ * @return The return value of visitor->Visit(this).
+ */
 bool
 BDiskDevice::_AcceptVisitor(BDiskDeviceVisitor* visitor, int32 level)
 {
@@ -538,7 +661,14 @@ BDiskDevice::_AcceptVisitor(BDiskDeviceVisitor* visitor, int32 level)
 }
 
 
-// _ClearUserData
+/**
+ * @brief Recursively clears the user_data pointer in a partition data tree.
+ *
+ * Used before updating the device data so that stale BPartition pointers
+ * stored in user_data fields are removed prior to repopulation.
+ *
+ * @param data The root of the partition data tree to clear.
+ */
 void
 BDiskDevice::_ClearUserData(user_partition_data* data)
 {

@@ -1,6 +1,29 @@
 /*
- * Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file vfs_request_io.cpp
+ * @brief VFS-level scatter-gather I/O helpers used internally by vfs.cpp for vectored reads and writes.
  */
 
 // included by vfs.cpp
@@ -21,11 +44,28 @@
 // #pragma mark - AsyncIOCallback
 
 
+/** @brief Virtual destructor for AsyncIOCallback.
+ *
+ * Ensures that subclass destructors are called correctly when an
+ * AsyncIOCallback pointer is deleted through the base class.
+ */
 AsyncIOCallback::~AsyncIOCallback()
 {
 }
 
 
+/** @brief Static trampoline registered with the I/O request as a finish callback.
+ *
+ * Casts @p data back to an AsyncIOCallback and delegates to its
+ * IOFinished() virtual method.
+ *
+ * @param data              Opaque pointer to the AsyncIOCallback instance.
+ * @param request           The completed io_request.
+ * @param status            Final status code of the I/O operation.
+ * @param partialTransfer   @c true if fewer bytes were transferred than
+ *                          requested.
+ * @param bytesTransferred  Number of bytes actually transferred.
+ */
 /* static */ void
 AsyncIOCallback::IORequestCallback(void* data, io_request* request,
 	status_t status, bool partialTransfer, generic_size_t bytesTransferred)
@@ -38,6 +78,11 @@ AsyncIOCallback::IORequestCallback(void* data, io_request* request,
 // #pragma mark - StackableAsyncIOCallback
 
 
+/** @brief Construct a StackableAsyncIOCallback that chains to @p next.
+ *
+ * @param next  The next callback in the chain to invoke after this one
+ *              completes its work.  May be NULL if there is no next callback.
+ */
 StackableAsyncIOCallback::StackableAsyncIOCallback(AsyncIOCallback* next)
 	:
 	fNextCallback(next)
@@ -48,6 +93,11 @@ StackableAsyncIOCallback::StackableAsyncIOCallback(AsyncIOCallback* next)
 // #pragma mark -
 
 
+/** @brief Cookie used by the iterative file-descriptor I/O subsystem.
+ *
+ * Carries all state needed to drive repeated calls to do_iterative_fd_io_iterate()
+ * and the final do_iterative_fd_io_finish() callback.
+ */
 struct iterative_io_cookie {
 	struct vnode*					vnode;
 	file_descriptor*				descriptor;
@@ -60,18 +110,36 @@ struct iterative_io_cookie {
 };
 
 
+/** @brief Abstract base class for a single-shot synchronous I/O operation.
+ *
+ * Subclasses implement IO() to perform the actual read or write using
+ * different underlying mechanisms (callback-based or vnode-based).
+ */
 class DoIO {
 public:
+	/** @brief Construct a DoIO for the given transfer direction.
+	 *
+	 * @param write @c true for write operations, @c false for reads.
+	 */
 	DoIO(bool write)
 		:
 		fWrite(write)
 	{
 	}
 
+	/** @brief Virtual destructor. */
 	virtual	~DoIO()
 	{
 	}
 
+	/** @brief Perform a single contiguous I/O segment.
+	 *
+	 * @param offset  Byte offset within the file/device at which to start.
+	 * @param buffer  User/kernel buffer to read into or write from.
+	 * @param length  On entry the maximum number of bytes to transfer; on
+	 *                return the actual number of bytes transferred.
+	 * @return B_OK on success, or an error code on failure.
+	 */
 	virtual status_t IO(off_t offset, void* buffer, size_t* length) = 0;
 
 protected:
@@ -79,8 +147,19 @@ protected:
 };
 
 
+/** @brief DoIO implementation that delegates to a caller-supplied callback.
+ *
+ * Used by vfs_synchronous_io() to wrap arbitrary read/write functions in the
+ * synchronous_io() scatter-gather loop.
+ */
 class CallbackIO : public DoIO {
 public:
+	/** @brief Construct a CallbackIO.
+	 *
+	 * @param write   @c true for write, @c false for read.
+	 * @param doIO    Function pointer to the actual I/O routine.
+	 * @param cookie  Opaque value forwarded as the first argument to @p doIO.
+	 */
 	CallbackIO(bool write,
 			status_t (*doIO)(void* cookie, off_t offset, void* buffer,
 				size_t* length),
@@ -92,6 +171,13 @@ public:
 	{
 	}
 
+	/** @brief Invoke the stored callback to transfer one segment.
+	 *
+	 * @param offset  Byte offset within the file at which to start.
+	 * @param buffer  Buffer to read into or write from.
+	 * @param length  In/out byte count.
+	 * @return Status returned by the callback.
+	 */
 	virtual status_t IO(off_t offset, void* buffer, size_t* length)
 	{
 		return fDoIO(fCookie, offset, buffer, length);
@@ -103,8 +189,18 @@ private:
 };
 
 
+/** @brief DoIO implementation that calls vnode read/write_pages (or read/write).
+ *
+ * Prefers the pages variants to bypass the page cache when available.
+ */
 class VnodeIO : public DoIO {
 public:
+	/** @brief Construct a VnodeIO.
+	 *
+	 * @param write   @c true for write, @c false for read.
+	 * @param vnode   The vnode to issue the I/O against.
+	 * @param cookie  The open-file cookie associated with the vnode.
+	 */
 	VnodeIO(bool write, struct vnode* vnode, void* cookie)
 		:
 		DoIO(write),
@@ -113,6 +209,16 @@ public:
 	{
 	}
 
+	/** @brief Perform a single I/O segment against the vnode.
+	 *
+	 * Builds a single-element iovec and dispatches to write_pages/read_pages
+	 * if the file system provides them; otherwise falls back to write/read.
+	 *
+	 * @param offset  Byte offset within the file.
+	 * @param buffer  Buffer to read into or write from.
+	 * @param length  In/out byte count.
+	 * @return Status code from the file-system operation.
+	 */
 	virtual status_t IO(off_t offset, void* buffer, size_t* length)
 	{
 		iovec vec;
@@ -139,6 +245,19 @@ private:
 };
 
 
+/** @brief Iteration callback: build and schedule sub-requests from file vectors.
+ *
+ * Called repeatedly by the I/O scheduler to translate logical file offsets
+ * into physical device offsets.  Fetches up to kMaxSubRequests file vectors
+ * from the get_vecs callback, handles sparse (zero-fill) regions inline, and
+ * dispatches sub-requests to the vnode's io() entry point.
+ *
+ * @param _cookie           Pointer to the iterative_io_cookie for this request.
+ * @param request           The parent io_request being iterated.
+ * @param _partialTransfer  Set to @c true if the transfer could not be
+ *                          completed fully (e.g. get_vecs returned no vectors).
+ * @return B_OK on success, or an error code if a fatal failure occurred.
+ */
 static status_t
 do_iterative_fd_io_iterate(void* _cookie, io_request* request,
 	bool* _partialTransfer)
@@ -262,6 +381,18 @@ do_iterative_fd_io_iterate(void* _cookie, io_request* request,
 }
 
 
+/** @brief Completion callback for do_iterative_fd_io().
+ *
+ * Invokes the caller-supplied finished callback, releases the file descriptor,
+ * chains to any previously registered finished callback, and deletes the
+ * iterative_io_cookie.
+ *
+ * @param _cookie           Pointer to the iterative_io_cookie to finalise.
+ * @param request           The completed io_request.
+ * @param status            Final status of the I/O operation.
+ * @param partialTransfer   @c true if the transfer was incomplete.
+ * @param bytesTransferred  Number of bytes successfully transferred.
+ */
 static void
 do_iterative_fd_io_finish(void* _cookie, io_request* request, status_t status,
 	bool partialTransfer, generic_size_t bytesTransferred)
@@ -284,6 +415,23 @@ do_iterative_fd_io_finish(void* _cookie, io_request* request, status_t status,
 }
 
 
+/** @brief Perform iterative vnode I/O synchronously, without an io() hook.
+ *
+ * Used as a fallback when the vnode's file system does not provide an
+ * asynchronous io() entry point.  Iterates over the virtual address vectors
+ * in the request buffer, translating logical file offsets to physical ones
+ * via @p getVecs, and performs each segment synchronously via VnodeIO.
+ *
+ * @param vnode       Vnode to perform I/O on.
+ * @param openCookie  Open-file cookie for the vnode.
+ * @param request     The io_request describing the transfer.
+ * @param getVecs     Callback that maps logical offsets to file_io_vec arrays.
+ *                    May be NULL to use a 1:1 identity mapping.
+ * @param finished    Optional completion callback invoked before the request
+ *                    status is set.
+ * @param cookie      Opaque value forwarded to @p getVecs and @p finished.
+ * @return The final I/O status (B_OK or an error code).
+ */
 static status_t
 do_synchronous_iterative_vnode_io(struct vnode* vnode, void* openCookie,
 	io_request* request, iterative_io_get_vecs getVecs,
@@ -356,6 +504,17 @@ do_synchronous_iterative_vnode_io(struct vnode* vnode, void* openCookie,
 }
 
 
+/** @brief Drive an io_request synchronously through a DoIO strategy object.
+ *
+ * Iterates the virtual address vectors in the request's IOBuffer, calling
+ * @p io.IO() for each segment until all bytes are transferred, a short
+ * transfer is detected, or an error occurs.
+ *
+ * @param request  The io_request to satisfy.
+ * @param io       Reference to the DoIO strategy to use for each segment.
+ * @return B_OK on full success, or an error code on failure; the request
+ *         status is also set and notified before returning.
+ */
 static status_t
 synchronous_io(io_request* request, DoIO& io)
 {
@@ -407,6 +566,17 @@ synchronous_io(io_request* request, DoIO& io)
 // #pragma mark - kernel private API
 
 
+/** @brief Submit an io_request to a vnode, falling back to synchronous I/O.
+ *
+ * Attempts to call the file system's io() hook.  If the hook is absent or
+ * returns B_UNSUPPORTED, the request is satisfied synchronously via
+ * synchronous_io() / VnodeIO.
+ *
+ * @param vnode    The vnode to issue the request against.
+ * @param cookie   The open-file cookie for the vnode.
+ * @param request  The io_request to submit.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 vfs_vnode_io(struct vnode* vnode, void* cookie, io_request* request)
 {
@@ -422,6 +592,16 @@ vfs_vnode_io(struct vnode* vnode, void* cookie, io_request* request)
 }
 
 
+/** @brief Satisfy an io_request synchronously using a caller-supplied callback.
+ *
+ * Wraps @p doIO in a CallbackIO object and drives it through synchronous_io().
+ *
+ * @param request  The io_request to satisfy.
+ * @param doIO     Callback that performs the actual read or write for each
+ *                 segment.
+ * @param cookie   Opaque value forwarded as the first argument to @p doIO.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 vfs_synchronous_io(io_request* request,
 	status_t (*doIO)(void* cookie, off_t offset, void* buffer, size_t* length),
@@ -432,6 +612,24 @@ vfs_synchronous_io(io_request* request,
 }
 
 
+/** @brief Asynchronously read pages from a vnode into a generic I/O buffer.
+ *
+ * Allocates an IORequest, initialises it for a read at @p pos, attaches
+ * @p callback as the completion notification, and submits the request to
+ * vfs_vnode_io().  On any allocation or initialisation failure the callback
+ * is invoked directly with the error before returning.
+ *
+ * @param vnode       The vnode to read from.
+ * @param cookie      The open-file cookie for the vnode.
+ * @param pos         Byte offset within the file at which to start reading.
+ * @param vecs        Array of generic_io_vec destination buffers.
+ * @param count       Number of elements in @p vecs.
+ * @param numBytes    Total number of bytes to read.
+ * @param flags       I/O flags (e.g. B_VIP_IO_REQUEST, B_DELETE_IO_REQUEST).
+ * @param callback    Callback invoked when the request completes.
+ * @return B_OK if the request was submitted successfully, B_NO_MEMORY if
+ *         allocation failed, or another error code if initialisation failed.
+ */
 status_t
 vfs_asynchronous_read_pages(struct vnode* vnode, void* cookie, off_t pos,
 	const generic_io_vec* vecs, size_t count, generic_size_t numBytes,
@@ -458,6 +656,24 @@ vfs_asynchronous_read_pages(struct vnode* vnode, void* cookie, off_t pos,
 }
 
 
+/** @brief Asynchronously write pages from a generic I/O buffer to a vnode.
+ *
+ * Allocates an IORequest, initialises it for a write at @p pos, attaches
+ * @p callback as the completion notification, and submits the request to
+ * vfs_vnode_io().  On any allocation or initialisation failure the callback
+ * is invoked directly with the error before returning.
+ *
+ * @param vnode       The vnode to write to.
+ * @param cookie      The open-file cookie for the vnode.
+ * @param pos         Byte offset within the file at which to start writing.
+ * @param vecs        Array of generic_io_vec source buffers.
+ * @param count       Number of elements in @p vecs.
+ * @param numBytes    Total number of bytes to write.
+ * @param flags       I/O flags (e.g. B_VIP_IO_REQUEST, B_DELETE_IO_REQUEST).
+ * @param callback    Callback invoked when the request completes.
+ * @return B_OK if the request was submitted successfully, B_NO_MEMORY if
+ *         allocation failed, or another error code if initialisation failed.
+ */
 status_t
 vfs_asynchronous_write_pages(struct vnode* vnode, void* cookie, off_t pos,
 	const generic_io_vec* vecs, size_t count, generic_size_t numBytes,
@@ -487,6 +703,16 @@ vfs_asynchronous_write_pages(struct vnode* vnode, void* cookie, off_t pos,
 // #pragma mark - public API
 
 
+/** @brief Perform I/O on an open file descriptor using the iterative path.
+ *
+ * Convenience wrapper around do_iterative_fd_io() with no get_vecs callback,
+ * no finished callback, and no cookie — suitable for simple, contiguous
+ * file-descriptor I/O.
+ *
+ * @param fd       Open file descriptor to perform I/O on.
+ * @param request  The io_request describing the operation.
+ * @return B_OK on success, or B_FILE_ERROR / another error code on failure.
+ */
 status_t
 do_fd_io(int fd, io_request* request)
 {
@@ -494,6 +720,23 @@ do_fd_io(int fd, io_request* request)
 }
 
 
+/** @brief Perform (optionally iterative) I/O on an open file descriptor.
+ *
+ * Resolves the file descriptor to a vnode, validates the access mode, and
+ * either falls back to do_synchronous_iterative_vnode_io() (when the vnode
+ * has no io() hook or memory is exhausted) or sets up an iterative_io_cookie
+ * and drives the request asynchronously through the vnode's io() hook.
+ *
+ * @param fd        Open file descriptor to perform I/O on.
+ * @param request   The io_request describing the operation.
+ * @param getVecs   Callback that translates logical file offsets to
+ *                  file_io_vec arrays; may be NULL for contiguous I/O.
+ * @param finished  Optional callback invoked when the request completes.
+ * @param cookie    Opaque value forwarded to @p getVecs and @p finished.
+ * @return B_OK if the request was submitted or completed successfully,
+ *         B_FILE_ERROR if the descriptor is invalid or the access mode is
+ *         wrong, or another error code on failure.
+ */
 status_t
 do_iterative_fd_io(int fd, io_request* request, iterative_io_get_vecs getVecs,
 	iterative_io_finished finished, void* cookie)

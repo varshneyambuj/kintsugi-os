@@ -1,7 +1,39 @@
-//----------------------------------------------------------------------
-//  This software is part of the Haiku distribution and is covered
-//  by the MIT License.
-//---------------------------------------------------------------------
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file PartitioningInfo.cpp
+ * @brief Tracks the free (partitionable) spaces within a partition.
+ *
+ * BPartitioningInfo maintains a dynamic array of non-overlapping free-space
+ * intervals on a disk or partition. Disk-system add-ons call SetTo() to seed
+ * the initial free space and ExcludeOccupiedSpace() to punch holes for each
+ * existing child partition. The resulting list is queried by the DriveSetup
+ * application to determine where new partitions may be created.
+ *
+ * @see BDiskSystemAddOn
+ */
 
 #include <stdio.h>
 #include <string.h>
@@ -26,7 +58,9 @@ using namespace std;
 #endif
 
 
-// constructor
+/**
+ * @brief Constructs an empty BPartitioningInfo with no free spaces.
+ */
 BPartitioningInfo::BPartitioningInfo()
 	:
 	fPartitionID(-1),
@@ -37,14 +71,25 @@ BPartitioningInfo::BPartitioningInfo()
 }
 
 
-// destructor
+/**
+ * @brief Destroys the BPartitioningInfo and frees the free-space array.
+ */
 BPartitioningInfo::~BPartitioningInfo()
 {
 	Unset();
 }
 
 
-// SetTo
+/**
+ * @brief Initialises the free-space list with a single contiguous region.
+ *
+ * Replaces any existing free-space data. If \a size is zero or negative
+ * the list is left empty.
+ *
+ * @param offset Byte offset of the available region.
+ * @param size   Size in bytes of the available region.
+ * @return B_OK on success, B_NO_MEMORY if the array cannot be allocated.
+ */
 status_t
 BPartitioningInfo::SetTo(off_t offset, off_t size)
 {
@@ -72,7 +117,9 @@ BPartitioningInfo::SetTo(off_t offset, off_t size)
 }
 
 
-// Unset
+/**
+ * @brief Resets the object to its default empty state, freeing all storage.
+ */
 void
 BPartitioningInfo::Unset()
 {
@@ -84,7 +131,19 @@ BPartitioningInfo::Unset()
 }
 
 
-// ExcludeOccupiedSpace
+/**
+ * @brief Removes the region [\a offset, \a offset + \a size) from the free-space list.
+ *
+ * The occupied region may fully or partially overlap one or more free-space
+ * entries. Entries that are fully covered are deleted; partially overlapping
+ * entries are trimmed; a single entry that is split in the middle becomes two
+ * entries.
+ *
+ * @param offset Byte offset of the occupied region.
+ * @param size   Size in bytes of the occupied region; ignored if <= 0.
+ * @return B_OK on success, B_NO_MEMORY if a split requires reallocation
+ *         that fails.
+ */
 status_t
 BPartitioningInfo::ExcludeOccupiedSpace(off_t offset, off_t size)
 {
@@ -179,7 +238,11 @@ BPartitioningInfo::ExcludeOccupiedSpace(off_t offset, off_t size)
 }
 
 
-// PartitionID
+/**
+ * @brief Returns the partition ID associated with this info object.
+ *
+ * @return The partition ID, or -1 if not set.
+ */
 partition_id
 BPartitioningInfo::PartitionID() const
 {
@@ -187,7 +250,15 @@ BPartitioningInfo::PartitionID() const
 }
 
 
-// GetPartitionableSpaceAt
+/**
+ * @brief Returns the free-space interval at the given index.
+ *
+ * @param index  Zero-based index into the free-space list.
+ * @param offset Set to the byte offset of the space on success.
+ * @param size   Set to the size in bytes of the space on success.
+ * @return B_OK on success, B_NO_INIT if not initialised, B_BAD_VALUE if
+ *         \a offset or \a size is NULL, or B_BAD_INDEX if out of range.
+ */
 status_t
 BPartitioningInfo::GetPartitionableSpaceAt(int32 index, off_t* offset,
 										   off_t *size) const
@@ -204,7 +275,11 @@ BPartitioningInfo::GetPartitionableSpaceAt(int32 index, off_t* offset,
 }
 
 
-// CountPartitionableSpaces
+/**
+ * @brief Returns the number of free-space intervals in the list.
+ *
+ * @return Count of partitionable spaces.
+ */
 int32
 BPartitioningInfo::CountPartitionableSpaces() const
 {
@@ -212,7 +287,12 @@ BPartitioningInfo::CountPartitionableSpaces() const
 }
 
 
-// PrintToStream
+/**
+ * @brief Prints the free-space list to standard output for debugging.
+ *
+ * Outputs "not initialized" if the object has no data, otherwise prints
+ * the count and the offset/size of each free-space interval.
+ */
 void
 BPartitioningInfo::PrintToStream() const
 {
@@ -231,7 +311,17 @@ BPartitioningInfo::PrintToStream() const
 // #pragma mark -
 
 
-// _InsertSpaces
+/**
+ * @brief Inserts \a count empty slots into the free-space array at \a index.
+ *
+ * Grows the array if necessary, using a doubling strategy to amortize
+ * allocations. The newly inserted slots are uninitialised.
+ *
+ * @param index Position at which to insert; must satisfy 0 < index <= fCount.
+ * @param count Number of slots to insert; must be > 0.
+ * @return B_OK on success, B_BAD_VALUE for invalid arguments, or
+ *         B_NO_MEMORY if reallocation fails.
+ */
 status_t
 BPartitioningInfo::_InsertSpaces(int32 index, int32 count)
 {
@@ -270,7 +360,15 @@ BPartitioningInfo::_InsertSpaces(int32 index, int32 count)
 }
 
 
-// _RemoveSpaces
+/**
+ * @brief Removes \a count consecutive slots from the free-space array starting at \a index.
+ *
+ * Adjusts the count but does not shrink the allocated capacity. Out-of-range
+ * arguments are silently ignored.
+ *
+ * @param index Zero-based start index of the range to remove.
+ * @param count Number of slots to remove.
+ */
 void
 BPartitioningInfo::_RemoveSpaces(int32 index, int32 count)
 {

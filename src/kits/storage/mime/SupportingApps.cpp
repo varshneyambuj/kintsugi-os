@@ -1,13 +1,39 @@
 /*
- * Copyright 2002-2024, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold, bonefish@users.sf.net
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2024, Haiku, Inc. All rights reserved.
+ *   Authors: Tyler Dauwalder, Ingo Weinhold, Axel Dörfler
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file SupportingApps.cpp
+ * @brief Tracks which applications support each MIME type across the database.
+ *
+ * SupportingApps maintains an in-memory mapping from MIME type strings to the
+ * set of application signatures that declare support for that type. It is built
+ * lazily on the first query by scanning all application entries in the MIME
+ * database. Incremental updates are applied as types are installed or removed.
+ *
+ * @see Database
+ */
 
 #include <mime/SupportingApps.h>
 
@@ -42,6 +68,12 @@ namespace Mime {
 */
 
 
+/**
+ * @brief Constructs a SupportingApps object.
+ *
+ * @param databaseLocation Pointer to the DatabaseLocation used to read
+ *                         application entries.
+ */
 SupportingApps::SupportingApps(DatabaseLocation* databaseLocation)
 	:
 	fDatabaseLocation(databaseLocation),
@@ -50,16 +82,26 @@ SupportingApps::SupportingApps(DatabaseLocation* databaseLocation)
 }
 
 
+/**
+ * @brief Destroys the SupportingApps object.
+ */
 SupportingApps::~SupportingApps()
 {
 }
 
 
-/*! \brief Returns a list of signatures of supporting applications for the
-	given type in the pre-allocated \c BMessage pointed to by \c apps.
-
-	See \c BMimeType::GetSupportingApps() for more information.
-*/
+/**
+ * @brief Returns the list of applications that support the given MIME type.
+ *
+ * The result is written into the pre-allocated BMessage @a apps. For a full
+ * subtype query, both sub-count and super-count fields are populated; for a
+ * supertype-only query, only the super-count field is populated. Triggers a
+ * full database scan on first call.
+ *
+ * @param type The MIME type string.
+ * @param apps Pointer to a pre-allocated BMessage that receives the result.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SupportingApps::GetSupportingApps(const char *type, BMessage *apps)
 {
@@ -131,35 +173,19 @@ SupportingApps::GetSupportingApps(const char *type, BMessage *apps)
 }
 
 
-/*! \brief Sets the list of supported types for the given application and
-	updates the supporting apps mappings.
-
-	All types listed as being supported types will including the given
-	app signature in their list of supporting apps following this call.
-
-	If \a fullSync is true, all types previously but no longer supported
-	by this application with no longer list this application as a
-	supporting app.
-
-	If \a fullSync is false, said previously supported types will be
-	saved to a "stranded types" mapping and appropriately synchronized
-	the next time SetSupportedTypes() is called with a \c true \a fullSync
-	parameter.
-
-	The stranded types mapping is properly maintained even in the event
-	of types being removed and then re-added to the list of supporting
-	types with consecutive \c false \a fullSync parameters.
-
-	\param app The application whose supported types you are setting
-	\param types Pointer to a \c BMessage containing an array of supported
-	             mime types in its \c Mime::kTypesField field.
-	\param fullSync If \c true, \c app is removed as a supporting application
-	                for any types for which it is no longer a supporting application
-	                (including types which were removed as supporting types with
-	                previous callsto SetSupportedTypes(..., false)). If \c false,
-	                said mappings are not updated until the next SetSupportedTypes(..., true)
-	                call.
-*/
+/**
+ * @brief Updates the supported types for @a app and synchronises the mappings.
+ *
+ * Every type listed in @a types gains @a app as a supporting application. If
+ * @a fullSync is true, @a app is also removed from every type it previously
+ * supported but that no longer appears in @a types (including types that were
+ * stranded by earlier calls with @a fullSync == false).
+ *
+ * @param app      Application signature whose supported types are being set.
+ * @param types    BMessage whose "types" array lists the new supported types.
+ * @param fullSync If true, perform a complete re-synchronisation.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SupportingApps::SetSupportedTypes(const char *app, const BMessage *types, bool fullSync)
 {
@@ -214,11 +240,15 @@ SupportingApps::SetSupportedTypes(const char *app, const BMessage *types, bool f
 }
 
 
-/*! \brief Clears the given application's supported types list and optionally
-	removes the application from each of said types' supporting apps list.
-	\param app The application whose supported types you are clearing
-	\param fullSync See SupportingApps::SetSupportedTypes()
-*/
+/**
+ * @brief Clears all supported types for the given application.
+ *
+ * Equivalent to calling SetSupportedTypes() with an empty types message.
+ *
+ * @param app      Application signature whose supported types are being cleared.
+ * @param fullSync If true, remove @a app from each previously supported type.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SupportingApps::DeleteSupportedTypes(const char *app, bool fullSync)
 {
@@ -227,15 +257,13 @@ SupportingApps::DeleteSupportedTypes(const char *app, bool fullSync)
 }
 
 
-/*! \brief Adds the given application signature to the set of supporting
-	apps for the given type.
-
-	\param type The full mime type
-	\param app The full application signature (i.e. "application/app-subtype")
-	\return
-	- B_OK: success, even if the app was already in the supporting apps list
-	- "error code": failure
-*/
+/**
+ * @brief Adds an application signature to the supporting-apps set for a type.
+ *
+ * @param type The full MIME type string.
+ * @param app  The application signature (e.g. "application/x-vnd.foo").
+ * @return B_OK on success (even if the app was already listed), or an error code.
+ */
 status_t
 SupportingApps::AddSupportingApp(const char *type, const char *app)
 {
@@ -247,15 +275,13 @@ SupportingApps::AddSupportingApp(const char *type, const char *app)
 }
 
 
-/*! \brief Removes the given application signature from the set of supporting
-	apps for the given type.
-
-	\param type The full mime type
-	\param app The full application signature (i.e. "application/app-subtype")
-	\return
-	- B_OK: success, even if the app was not found in the supporting apps list
-	- "error code": failure
-*/
+/**
+ * @brief Removes an application signature from the supporting-apps set for a type.
+ *
+ * @param type The full MIME type string.
+ * @param app  The application signature to remove.
+ * @return B_OK on success (even if the app was not listed), or an error code.
+ */
 status_t
 SupportingApps::RemoveSupportingApp(const char *type, const char *app)
 {
@@ -267,9 +293,15 @@ SupportingApps::RemoveSupportingApp(const char *type, const char *app)
 }
 
 
-/*! \brief Crawls the mime database and builds a list of supporting application
-	signatures for every supported type.
-*/
+/**
+ * @brief Scans the database and builds the complete supporting-apps mapping.
+ *
+ * Iterates over all entries under the "application" supertype, reads each
+ * application's supported-types attribute, and populates the internal maps.
+ * Sets fHaveDoneFullBuild to true on success.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SupportingApps::BuildSupportingAppsTable()
 {

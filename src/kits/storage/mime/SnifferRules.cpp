@@ -1,16 +1,39 @@
 /*
- * Copyright 2002-2006, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Tyler Dauwalder
- *		Ingo Weinhold, bonefish@users.sf.net
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2006, Haiku Inc.
+ *   Authors: Tyler Dauwalder, Ingo Weinhold
+ *   Distributed under the terms of the MIT License.
  */
 
-/*!
-	\file SnifferRules.cpp
-	SnifferRules class implementation
-*/
+/**
+ * @file SnifferRules.cpp
+ * @brief Manages and applies the set of MIME sniffer rules for the database.
+ *
+ * SnifferRules parses and stores the priority-ordered list of sniffer rules
+ * used to identify MIME types from file contents. The rule list is built
+ * lazily by scanning the database and can be queried to guess a MIME type
+ * from a raw data buffer or a BFile reference.
+ *
+ * @see Database
+ */
 
 #include <mime/SnifferRules.h>
 
@@ -54,39 +77,39 @@ using namespace BPrivate::Storage;
 	deleting each \c sniffer_rule's \c Sniffer::Rule object.
 */
 
-// sniffer_rule Constructor
-//! Creates a new \c sniffer_rule object
+/**
+ * @brief Constructs a sniffer_rule with the given parsed Sniffer::Rule pointer.
+ *
+ * @param rule Pointer to a heap-allocated Sniffer::Rule (ownership is NOT
+ *             transferred; the SnifferRules manager is responsible for deletion).
+ */
 SnifferRules::sniffer_rule::sniffer_rule(Sniffer::Rule *rule)
 	: rule(rule)
 {
 }
 
-// sniffer_rule Destructor
-//! Destroys the \c sniffer_rule object.
-/*! \note The \c Sniffer::Rule object pointed to by the \c sniffer_rule
-	object's \c rule member is *NOT* deleted by this function.
-*/
+/**
+ * @brief Destroys the sniffer_rule struct.
+ *
+ * The Sniffer::Rule pointed to by the rule member is NOT deleted here; that
+ * responsibility belongs to the owning SnifferRules object.
+ */
 SnifferRules::sniffer_rule::~sniffer_rule()
 {
 }
 
-// private functions
-/*! \brief Returns true if \a left's priority is greater than \a right's
-
-	This may seem slightly backwards, but since sort() using
-	operator<() sorts in ascending order, we say "left < right"
-	if "left.priority > right.priority" to get them sorted in
-	ascending order. Super, no?
-
-	Also, sniffer_rule objects with \c NULL \c rule members are
-	treated as having minimal priority (and thus are placed at
-	the end of the list of rules).
-
-	Finally, sniffer_rule objects that are otherwise equal are
-	sorted in reverse alphabetic order (thus placing sniffer
-	rules for supertypes *after* sniffer rules for subtypes
-	of said supertype when both rules have identical priorities).
-*/
+/**
+ * @brief Comparator that orders sniffer_rule objects by descending priority.
+ *
+ * Rules are placed earlier in the sorted list when they have a higher priority.
+ * Rules with NULL rule pointers are treated as having minimum priority and are
+ * placed at the end. Rules with identical priorities are sorted in reverse
+ * alphabetical order so that subtype rules appear before their supertype rules.
+ *
+ * @param left  Left-hand sniffer_rule operand.
+ * @param right Right-hand sniffer_rule operand.
+ * @return true if @a left should appear before @a right in the sorted list.
+ */
 bool operator<(const SnifferRules::sniffer_rule &left, const SnifferRules::sniffer_rule &right)
 {
 	if (left.rule && right.rule) {
@@ -111,8 +134,12 @@ bool operator<(const SnifferRules::sniffer_rule &left, const SnifferRules::sniff
 	\brief Manages the sniffer rules for the entire database
 */
 
-// Constructor
-//! Constructs a new SnifferRules object
+/**
+ * @brief Constructs a SnifferRules object.
+ *
+ * @param databaseLocation Pointer to the DatabaseLocation used to read rules.
+ * @param mimeSniffer      Optional pointer to a MimeSniffer add-on manager.
+ */
 SnifferRules::SnifferRules(DatabaseLocation* databaseLocation,
 	MimeSniffer* mimeSniffer)
 	:
@@ -123,11 +150,9 @@ SnifferRules::SnifferRules(DatabaseLocation* databaseLocation,
 {
 }
 
-// Destructor
-/*! \brief Destroys the \c SnifferRules object and all dynamically allocated
-	\c Sniffer::Rule objects scattered throughout the rule list in
-	\c sniffer_rule::rule members.
-*/
+/**
+ * @brief Destroys the SnifferRules object and all owned Sniffer::Rule objects.
+ */
 SnifferRules::~SnifferRules()
 {
 	for (std::list<sniffer_rule>::iterator i = fRuleList.begin();
@@ -137,21 +162,17 @@ SnifferRules::~SnifferRules()
 	}
 }
 
-// GuessMimeType
-/*!	\brief Guesses a MIME type for the supplied entry_ref.
-
-	Only the data in the given entry is considered, not the filename or
-	its extension. Please see GuessMimeType(BFile*, const void *, int32,
-	BString*) for more details.
-
-	\param ref The entry to sniff
-	\param type Pointer to a pre-allocated BString which is set to the
-		   resulting MIME type.
-	\return
-	- \c B_OK: success
-	- \c Mime::kMimeGuessFailure: no match found (\a type is left unmodified)
-	- error code: failure
-*/
+/**
+ * @brief Guesses the MIME type of a file by sniffing its content.
+ *
+ * Reads up to MaxBytesNeeded() bytes from the entry referred to by @a ref
+ * and then delegates to GuessMimeType(BFile*, const void*, int32, BString*).
+ *
+ * @param ref  Pointer to an entry_ref identifying the file to sniff.
+ * @param type Pointer to a pre-allocated BString set to the result on success.
+ * @return B_OK on success, kMimeGuessFailureError if no rule matched,
+ *         or another error code on failure.
+ */
 status_t
 SnifferRules::GuessMimeType(const entry_ref *ref, BString *type)
 {
@@ -194,41 +215,34 @@ SnifferRules::GuessMimeType(const entry_ref *ref, BString *type)
 	return err;
 }
 
-// GuessMimeType
-/*!	\brief Guesses a MIME type for the given chunk of data.
-
-	Please see GuessMimeType(BFile*, const void *, int32, BString*) for more
-	details.
-
-	\param buffer Pointer to a data buffer to sniff
-	\param length The length of the data buffer pointed to by \a buffer
-	\param type Pointer to a pre-allocated BString which is set to the
-		   resulting MIME type.
-	\return
-	- \c B_OK: success
-	- \c Mime::kMimeGuessFailure: no match found (\a type is left unmodified)
-	- error code: failure
-*/
+/**
+ * @brief Guesses the MIME type for a raw data buffer.
+ *
+ * Delegates to GuessMimeType(BFile*, const void*, int32, BString*) with a
+ * NULL file argument.
+ *
+ * @param buffer Pointer to the data buffer to sniff.
+ * @param length Number of bytes in @a buffer.
+ * @param type   Pointer to a pre-allocated BString set to the result on success.
+ * @return B_OK on success, kMimeGuessFailureError if no rule matched,
+ *         or another error code on failure.
+ */
 status_t
 SnifferRules::GuessMimeType(const void *buffer, int32 length, BString *type)
 {
 	return GuessMimeType(NULL, buffer, length, type);
 }
 
-// SetSnifferRule
-/*! Updates the sniffer rule for the given type
-
-	If the a rule currently exists in the rule list for the given type,
-	it is first removed before the new rule is inserted.
-
-	The new rule is inserted in its proper, sorted position in the list.
-
-	\param type The type of interest
-	\param rule The new sniffer rule
-	\return
-	- \c B_OK: success
-	- other error code: failure
-*/
+/**
+ * @brief Installs or replaces the sniffer rule for the given MIME type.
+ *
+ * If a rule for @a type already exists it is removed first. The new rule is
+ * inserted at the correct sorted position in the priority-ordered list.
+ *
+ * @param type The MIME type string.
+ * @param rule The sniffer rule string to parse and store.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SnifferRules::SetSnifferRule(const char *type, const char *rule)
 {
@@ -273,13 +287,12 @@ SnifferRules::SetSnifferRule(const char *type, const char *rule)
 	return err;
 }
 
-// DeleteSnifferRule
-/*! \brief Removes the sniffer rule for the given type from the rule list
-	\param type The type of interest
-	\return
-	- \c B_OK: success (even if no rule existed for the given type)
-	- other error code: failure
-*/
+/**
+ * @brief Removes the sniffer rule for the given MIME type from the rule list.
+ *
+ * @param type The MIME type string whose rule should be removed.
+ * @return B_OK on success (even if no rule existed), or an error code.
+ */
 status_t
 SnifferRules::DeleteSnifferRule(const char *type)
 {
@@ -299,8 +312,9 @@ SnifferRules::DeleteSnifferRule(const char *type)
 	return err;
 }
 
-// PrintToStream
-//! Dumps the list of sniffer rules in sorted order to standard output
+/**
+ * @brief Prints all sniffer rules in priority-sorted order to standard output.
+ */
 void
 SnifferRules::PrintToStream() const
 {
@@ -319,12 +333,15 @@ SnifferRules::PrintToStream() const
 	}
 }
 
-// BuildRuleList
-/*! \brief Crawls through the database, parses each sniffer rule it finds, adds
-	each parsed rule to the rule list, and sorts the list by priority, largest first.
-
-	Initial MaxBytesNeeded() info is compiled by this function as well.
-*/
+/**
+ * @brief Scans the database, parses all sniffer rules, and builds the sorted list.
+ *
+ * The list is sorted by descending priority after all rules have been inserted.
+ * The maximum bytes-needed value across all rules is computed as a side effect.
+ * Sets fHaveDoneFullBuild to true on success.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SnifferRules::BuildRuleList()
 {
@@ -413,26 +430,20 @@ SnifferRules::BuildRuleList()
 	return err;
 }
 
-// GuessMimeType
-/*!	\brief Guesses a MIME type for the supplied chunk of data.
-
-	This is accomplished by searching through the currently installed
-	list of sniffer rules for a rule that matches on the given data buffer.
-	Rules are searched in order of priority (higher priority first). Rules
-	of equal priority are searched in reverse-alphabetical order (that way
-	"supertype/subtype" form rules are checked before "supertype-only" form
-	rules if their priorities happen to be identical).
-
-	\param file The file to sniff. May be \c NULL. \a buffer is always given.
-	\param buffer Pointer to a data buffer to sniff
-	\param length The length of the data buffer pointed to by \a buffer
-	\param type Pointer to a pre-allocated BString which is set to the
-		   resulting MIME type.
-	\return
-	- \c B_OK: success
-	- \c Mime::kMimeGuessFailure: no match found (\a type is left unmodified)
-	- error code: failure
-*/
+/**
+ * @brief Sniffs a data buffer (and optional BFile) using the installed rules.
+ *
+ * Searches the priority-sorted rule list for the first rule that matches
+ * the given data. If a MimeSniffer add-on returns a priority at least as
+ * high as the next rule to be checked, the add-on result is used instead.
+ *
+ * @param file   Optional BFile (may be NULL); passed to MimeSniffer add-ons.
+ * @param buffer Pointer to the data buffer to sniff.
+ * @param length Number of valid bytes in @a buffer.
+ * @param type   Pointer to a pre-allocated BString set to the result on success.
+ * @return B_OK on success, kMimeGuessFailureError if no rule matched,
+ *         or another error code on failure.
+ */
 status_t
 SnifferRules::GuessMimeType(BFile* file, const void *buffer, int32 length,
 	BString *type)
@@ -495,18 +506,14 @@ SnifferRules::GuessMimeType(BFile* file, const void *buffer, int32 length,
 	return err;
 }
 
-// MaxBytesNeeded
-/*! \brief Returns the maxmimum number of bytes needed in a data buffer for
-	all the currently installed rules to be able to perform a complete sniff,
-	or an error code if something goes wrong.
-
-	If the internal rule list has not yet been built (this includes parsing
-	all the installed rules), it will be.
-
-	\return: If the return value is non-negative, it represents	the max number
-	of bytes needed to do a complete sniff. Otherwise, the number returned is
-	an error code.
-*/
+/**
+ * @brief Returns the maximum bytes any installed rule needs for a complete sniff.
+ *
+ * Triggers BuildRuleList() if the rule list has not yet been constructed. If a
+ * MimeSniffer add-on is registered, its MinimalBufferSize() is also considered.
+ *
+ * @return The maximum number of bytes needed (>= 0), or a negative error code.
+ */
 ssize_t
 SnifferRules::MaxBytesNeeded()
 {
@@ -522,24 +529,16 @@ SnifferRules::MaxBytesNeeded()
 	return err;
 }
 
-// ProcessType
-/*! \brief Handles a portion of the initial rule list construction for
-	the given mime type.
-
-	\note To be called by BuildRuleList() *ONLY*. :-)
-
-	\param type The mime type of interest. The mime string is expected to be valid
-	            and lowercase. Both "supertype" and "supertype/subtype" mime types
-	            are allowed.
-	\param bytesNeeded Returns the minimum number of bytes needed for this rule to
-	                   perform a complete sniff. May not be NULL because I'm lazy
-	                   and this function is for internal use only anyway.
-	\return
-	The return value is essentially ignored (as this function prints out the
-	debug warning if a parse fails), but that being said:
-	- \c B_OK: success
-	- \c other error code: failure
-*/
+/**
+ * @brief Reads and parses the sniffer rule attribute for one MIME type.
+ *
+ * Called exclusively by BuildRuleList(). If the type has no sniffer rule or
+ * parsing fails, a debug warning is printed but no error is propagated.
+ *
+ * @param type        The MIME type string (must be lowercase and valid).
+ * @param bytesNeeded Returns the number of bytes this rule needs; must not be NULL.
+ * @return B_OK on success, or an error code if the rule could not be processed.
+ */
 status_t
 SnifferRules::ProcessType(const char *type, ssize_t *bytesNeeded)
 {
@@ -580,4 +579,3 @@ SnifferRules::ProcessType(const char *type, ssize_t *bytesNeeded)
 } // namespace Mime
 } // namespace Storage
 } // namespace BPrivate
-

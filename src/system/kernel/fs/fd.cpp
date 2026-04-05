@@ -1,11 +1,40 @@
 /*
- * Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2018, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2018, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
 
 
-//! Operations on file descriptors
+/**
+ * @file fd.cpp
+ * @brief File descriptor table management for kernel and user processes.
+ *
+ * Implements the per-team file descriptor table: allocating/freeing slots,
+ * duplicating descriptors (dup/dup2), translating fd numbers to file_descriptor
+ * objects, and the select()/poll() infrastructure. Also provides the kernel-side
+ * fd operations that delegate to vfs.cpp.
+ *
+ * @see vfs.cpp, Vnode.cpp
+ */
 
 
 #include <fd.h>
@@ -58,6 +87,7 @@ static void deselect_select_infos(file_descriptor* descriptor,
 #ifdef DEBUG
 void dump_fd(int fd, struct file_descriptor* descriptor);
 
+/** @brief Debug helper that prints the fields of a file_descriptor to the kernel log. */
 void
 dump_fd(int fd,struct file_descriptor* descriptor)
 {
@@ -71,8 +101,14 @@ dump_fd(int fd,struct file_descriptor* descriptor)
 #endif
 
 
-/*! Allocates and initializes a new file_descriptor.
-*/
+/**
+ * @brief Allocates and zero-initialises a new file_descriptor from the slab cache.
+ *
+ * The returned descriptor has a reference count of 1 and an open count of 0.
+ * The caller is responsible for eventually calling put_fd() to release it.
+ *
+ * @return Pointer to the new descriptor, or @c NULL on allocation failure.
+ */
 struct file_descriptor*
 alloc_fd(void)
 {
@@ -92,6 +128,11 @@ alloc_fd(void)
 }
 
 
+/**
+ * @brief Returns whether the close-on-exec flag is set for the given fd slot.
+ *
+ * The caller must hold at least a read lock on @a context->lock.
+ */
 bool
 fd_close_on_exec(const struct io_context* context, int fd)
 {
@@ -101,6 +142,11 @@ fd_close_on_exec(const struct io_context* context, int fd)
 }
 
 
+/**
+ * @brief Sets or clears the close-on-exec flag for the given fd slot.
+ *
+ * The caller must hold a write lock on @a context->lock.
+ */
 void
 fd_set_close_on_exec(struct io_context* context, int fd, bool closeFD)
 {
@@ -113,6 +159,11 @@ fd_set_close_on_exec(struct io_context* context, int fd, bool closeFD)
 }
 
 
+/**
+ * @brief Returns whether the close-on-fork flag is set for the given fd slot.
+ *
+ * The caller must hold at least a read lock on @a context->lock.
+ */
 bool
 fd_close_on_fork(const struct io_context* context, int fd)
 {
@@ -122,6 +173,11 @@ fd_close_on_fork(const struct io_context* context, int fd)
 }
 
 
+/**
+ * @brief Sets or clears the close-on-fork flag for the given fd slot.
+ *
+ * The caller must hold a write lock on @a context->lock.
+ */
 void
 fd_set_close_on_fork(struct io_context* context, int fd, bool closeFD)
 {
@@ -134,9 +190,18 @@ fd_set_close_on_fork(struct io_context* context, int fd, bool closeFD)
 }
 
 
-/*!	Searches a free slot in the FD table of the provided I/O context, and
-	inserts the specified descriptor into it.
-*/
+/**
+ * @brief Searches for a free slot in the FD table starting at @a firstIndex and
+ *        inserts @a descriptor into it.
+ *
+ * Increments the descriptor's open_count atomically. The caller must not have
+ * the context lock held; this function acquires a write lock internally.
+ *
+ * @param context     The I/O context whose table will be modified.
+ * @param descriptor  The already-allocated file_descriptor to insert.
+ * @param firstIndex  The lowest fd number to consider (typically 0 or 3).
+ * @return The newly assigned fd number, or @c B_NO_MORE_FDS / @c B_BAD_VALUE.
+ */
 int
 new_fd_etc(struct io_context* context, struct file_descriptor* descriptor,
 	int firstIndex)
@@ -168,6 +233,10 @@ new_fd_etc(struct io_context* context, struct file_descriptor* descriptor,
 }
 
 
+/**
+ * @brief Inserts @a descriptor into the lowest available slot of @a context's
+ *        FD table (convenience wrapper around new_fd_etc() with firstIndex = 0).
+ */
 int
 new_fd(struct io_context* context, struct file_descriptor* descriptor)
 {
@@ -175,9 +244,15 @@ new_fd(struct io_context* context, struct file_descriptor* descriptor)
 }
 
 
-/*!	Reduces the descriptor's reference counter, and frees all resources
-	when it's no longer used.
-*/
+/**
+ * @brief Decrements the reference count of @a descriptor and, when it reaches
+ *        zero, invokes the fd_free hook and returns the object to the slab cache.
+ *
+ * Also handles the disconnected-descriptor case: if the descriptor has been
+ * marked @c O_DISCONNECTED and the ref count drops to the open count, the
+ * underlying fd_close and fd_free hooks are invoked so the underlying resource
+ * is released even though the fd slot still exists until explicitly closed.
+ */
 void
 put_fd(struct file_descriptor* descriptor)
 {
@@ -217,9 +292,13 @@ put_fd(struct file_descriptor* descriptor)
 }
 
 
-/*!	Decrements the open counter of the file descriptor and invokes
-	its close hook when appropriate.
-*/
+/**
+ * @brief Decrements the open count of @a descriptor and, when it hits zero,
+ *        invokes fd_close to release the underlying resource.
+ *
+ * Also releases any POSIX advisory locks held by the context on this file.
+ * Must be paired with a subsequent put_fd() call to release the reference.
+ */
 void
 close_fd(struct io_context* context, struct file_descriptor* descriptor)
 {
@@ -236,6 +315,14 @@ close_fd(struct io_context* context, struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Removes the file descriptor at slot @a fd from @a context's table,
+ *        closes it, and drops the slot's reference.
+ *
+ * This is the common implementation of close(2) for both user and kernel callers.
+ *
+ * @return @c B_OK on success, @c B_FILE_ERROR if @a fd is not open.
+ */
 status_t
 close_fd_index(struct io_context* context, int fd)
 {
@@ -252,12 +339,14 @@ close_fd_index(struct io_context* context, int fd)
 }
 
 
-/*!	This descriptor's underlying object will be closed and freed as soon as
-	possible (in one of the next calls to put_fd() - get_fd() will no longer
-	succeed on this descriptor).
-	This is useful if the underlying object is gone, for instance when a
-	(mounted) volume got removed unexpectedly.
-*/
+/**
+ * @brief Marks @a descriptor as disconnected so that it can no longer be
+ *        looked up by fd number.
+ *
+ * The underlying close/free hooks are deferred until the last reference is
+ * dropped via put_fd(). Useful when the backing storage disappears
+ * unexpectedly (e.g. a hot-unplugged volume).
+ */
 void
 disconnect_fd(struct file_descriptor* descriptor)
 {
@@ -265,6 +354,11 @@ disconnect_fd(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Increments the reference count of @a descriptor by one.
+ *
+ * Used when passing a descriptor pointer to code that will later call put_fd().
+ */
 void
 inc_fd_ref_count(struct file_descriptor* descriptor)
 {
@@ -272,6 +366,12 @@ inc_fd_ref_count(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Increments the open count of @a descriptor by one.
+ *
+ * The open count tracks how many "active" operations (reads, writes, ioctls)
+ * are currently in progress on the descriptor.
+ */
 void
 inc_fd_open_count(struct file_descriptor* descriptor)
 {
@@ -279,6 +379,14 @@ inc_fd_open_count(struct file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief Returns the file_descriptor for slot @a fd without acquiring the
+ *        context lock (caller must already hold at least a read lock).
+ *
+ * Increments the reference count of the returned descriptor; the caller is
+ * responsible for calling put_fd(). Disconnected descriptors are treated as
+ * absent and @c NULL is returned.
+ */
 static struct file_descriptor*
 get_fd_locked(const struct io_context* context, int fd)
 {
@@ -300,6 +408,15 @@ get_fd_locked(const struct io_context* context, int fd)
 }
 
 
+/**
+ * @brief Returns the file_descriptor for slot @a fd, acquiring a read lock
+ *        internally.
+ *
+ * Increments the reference count of the returned descriptor; the caller must
+ * call put_fd() when done.
+ *
+ * @return The descriptor, or @c NULL if @a fd is invalid or disconnected.
+ */
 struct file_descriptor*
 get_fd(const struct io_context* context, int fd)
 {
@@ -308,6 +425,13 @@ get_fd(const struct io_context* context, int fd)
 }
 
 
+/**
+ * @brief Like get_fd() but also increments the open count so the descriptor
+ *        cannot be fully closed until the caller decrements it.
+ *
+ * Used when starting an I/O operation that may sleep; prevents the descriptor
+ * from being freed mid-operation.
+ */
 struct file_descriptor*
 get_open_fd(const struct io_context* context, int fd)
 {
@@ -323,8 +447,14 @@ get_open_fd(const struct io_context* context, int fd)
 }
 
 
-/*!	Removes the file descriptor from the specified slot.
-*/
+/**
+ * @brief Removes and returns the file_descriptor at slot @a fd from @a context's
+ *        table under the write lock.
+ *
+ * Also clears any pending select_info entries associated with the slot. The
+ * returned descriptor retains the reference that belonged to the table slot;
+ * the caller must call close_fd() and put_fd() on it.
+ */
 static struct file_descriptor*
 remove_fd(struct io_context* context, int fd)
 {
@@ -360,6 +490,14 @@ remove_fd(struct io_context* context, int fd)
 }
 
 
+/**
+ * @brief Duplicates file descriptor @a fd in the current team's I/O context,
+ *        assigning it the lowest available slot number (dup(2) semantics).
+ *
+ * @param fd      The source fd to duplicate.
+ * @param kernel  @c true to operate on the kernel I/O context.
+ * @return The new fd number, or a negative error code.
+ */
 static int
 dup_fd(int fd, bool kernel)
 {
@@ -388,12 +526,20 @@ dup_fd(int fd, bool kernel)
 }
 
 
-/*!	POSIX says this should be the same as:
-		close(newfd);
-		fcntl(oldfd, F_DUPFD, newfd);
-
-	We do dup2() directly to be thread-safe.
-*/
+/**
+ * @brief Implements dup2(2) / dup3(2): makes @a newfd refer to the same
+ *        underlying object as @a oldfd, atomically closing @a newfd first.
+ *
+ * POSIX specifies dup2() as equivalent to close(newfd) followed by
+ * fcntl(oldfd, F_DUPFD, newfd), but this implementation is thread-safe.
+ * The @a flags argument may include @c O_CLOEXEC and/or @c O_CLOFORK.
+ *
+ * @param oldfd   The source fd.
+ * @param newfd   The target fd slot.
+ * @param flags   Optional @c O_CLOEXEC / @c O_CLOFORK flags for @a newfd.
+ * @param kernel  @c true to operate on the kernel I/O context.
+ * @return @a newfd on success, or a negative error code.
+ */
 static int
 dup2_fd(int oldfd, int newfd, int flags, bool kernel)
 {
@@ -456,13 +602,14 @@ dup2_fd(int oldfd, int newfd, int flags, bool kernel)
 }
 
 
-/*!	Duplicates an FD from another team to this/the kernel team.
-	\param fromTeam The team which owns the FD.
-	\param fd The FD to duplicate.
-	\param kernel If \c true, the new FD will be created in the kernel team,
-			the current userland team otherwise.
-	\return The newly created FD or an error code, if something went wrong.
-*/
+/**
+ * @brief Duplicates an fd from another team into the current (or kernel) team.
+ *
+ * @param fromTeam  The team that owns the source fd.
+ * @param fd        The fd number within @a fromTeam to duplicate.
+ * @param kernel    @c true to place the new fd in the kernel I/O context.
+ * @return The new fd number on success, or @c B_BAD_TEAM_ID / @c B_FILE_ERROR.
+ */
 int
 dup_foreign_fd(team_id fromTeam, int fd, bool kernel)
 {
@@ -491,6 +638,13 @@ dup_foreign_fd(team_id fromTeam, int fd, bool kernel)
 }
 
 
+/**
+ * @brief Issues an ioctl on the file descriptor @a fd.
+ *
+ * Translates @c FIONBIO into an @c F_SETFL fcntl call for portability.
+ * Returns @c ENOTTY (mapped from @c B_DEV_INVALID_IOCTL) when the operation
+ * is not supported by the underlying driver.
+ */
 static status_t
 fd_ioctl(bool kernelFD, int fd, uint32 op, void* buffer, size_t length)
 {
@@ -531,6 +685,13 @@ fd_ioctl(bool kernelFD, int fd, uint32 op, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Iterates over a linked list of select_info structures and deselects
+ *        each registered event, then notifies them with @c B_EVENT_INVALID.
+ *
+ * If @a putSyncObjects is @c true, the reference to each select_sync object is
+ * released via put_select_sync().
+ */
 static void
 deselect_select_infos(file_descriptor* descriptor, select_info* infos,
 	bool putSyncObjects)
@@ -562,6 +723,17 @@ deselect_select_infos(file_descriptor* descriptor, select_info* infos,
 }
 
 
+/**
+ * @brief Registers a select_info structure against fd @a fd, subscribing to
+ *        the events specified in @a info->selected_events.
+ *
+ * For each requested event the fd_select hook is called. The info is then
+ * appended to @a context->select_infos[@a fd] so that future notifications
+ * reach the caller. If the fd does not support select(), any non-output-only
+ * events are immediately notified and @c B_UNSUPPORTED is returned.
+ *
+ * @return @c B_OK, @c B_FILE_ERROR if the fd is invalid, or @c B_UNSUPPORTED.
+ */
 status_t
 select_fd(int32 fd, struct select_info* info, bool kernel)
 {
@@ -642,6 +814,15 @@ select_fd(int32 fd, struct select_info* info, bool kernel)
 }
 
 
+/**
+ * @brief Removes a previously registered select_info from fd @a fd and
+ *        deselects all events it had subscribed to.
+ *
+ * If the info is not found in the list (e.g. because the fd was closed in the
+ * meantime) the function returns @c B_OK silently.
+ *
+ * @return @c B_OK always; @c B_FILE_ERROR if the fd itself is no longer valid.
+ */
 status_t
 deselect_fd(int32 fd, struct select_info* info, bool kernel)
 {
@@ -689,10 +870,15 @@ deselect_fd(int32 fd, struct select_info* info, bool kernel)
 }
 
 
-/*!	This function checks if the specified fd is valid in the current
-	context. It can be used for a quick check; the fd is not locked
-	so it could become invalid immediately after this check.
-*/
+/**
+ * @brief Quick validity check for fd @a fd in the current I/O context.
+ *
+ * Performs get_fd() / put_fd() without holding any additional lock. Because the
+ * descriptor may be closed immediately after this returns, the result should
+ * only be used as a hint.
+ *
+ * @return @c true if the fd is currently open and not disconnected.
+ */
 bool
 fd_is_valid(int fd, bool kernel)
 {
@@ -706,6 +892,22 @@ fd_is_valid(int fd, bool kernel)
 }
 
 
+/**
+ * @brief Internal scatter/gather I/O implementation used by both kernel and
+ *        user vector read/write paths.
+ *
+ * Iterates over the @a vecs array, calling the appropriate fd_read or fd_write
+ * hook for each vector. Falls back to per-vector loops when the fd_readv /
+ * fd_writev hooks are absent or unsupported.
+ *
+ * @param fd      File descriptor number.
+ * @param pos     File offset, or -1 to use/advance the descriptor's current position.
+ * @param vecs    Array of I/O vectors.
+ * @param count   Number of vectors.
+ * @param write   @c true for write, @c false for read.
+ * @param kernel  @c true to use the kernel I/O context.
+ * @return Total bytes transferred, or a negative error code.
+ */
 static ssize_t
 common_vector_io(int fd, off_t pos, const iovec* vecs, size_t count, bool write, bool kernel)
 {
@@ -789,6 +991,20 @@ common_vector_io(int fd, off_t pos, const iovec* vecs, size_t count, bool write,
 }
 
 
+/**
+ * @brief Validates and performs a single-buffer userland read or write.
+ *
+ * Verifies that @a buffer is a valid user-space address range before invoking
+ * the underlying fd_read / fd_write hook. Advances the descriptor's current
+ * position when @a pos is -1.
+ *
+ * @param fd      File descriptor number (user I/O context).
+ * @param pos     File offset, or -1 to use the current position.
+ * @param buffer  User-space buffer pointer.
+ * @param length  Number of bytes to transfer.
+ * @param write   @c true for write, @c false for read.
+ * @return Bytes transferred on success, or a negative error/status code.
+ */
 static ssize_t
 common_user_io(int fd, off_t pos, void* buffer, size_t length, bool write)
 {
@@ -840,6 +1056,19 @@ common_user_io(int fd, off_t pos, void* buffer, size_t length, bool write)
 }
 
 
+/**
+ * @brief Copies the userland iovec array into a kernel buffer and delegates to
+ *        common_vector_io() for the actual transfer (user vector read/write).
+ *
+ * Enforces @c IOV_MAX and validates the iovec array via get_iovecs_from_user().
+ *
+ * @param fd        File descriptor number.
+ * @param pos       File offset, or -1 to use the current position.
+ * @param userVecs  User-space pointer to the iovec array.
+ * @param count     Number of vectors.
+ * @param write     @c true for write, @c false for read.
+ * @return Bytes transferred on success, or a negative error code.
+ */
 static ssize_t
 common_user_vector_io(int fd, off_t pos, const iovec* userVecs, size_t count,
 	bool write)
@@ -862,6 +1091,10 @@ common_user_vector_io(int fd, off_t pos, const iovec* userVecs, size_t count,
 }
 
 
+/**
+ * @brief Closes a single fd in the given context (common implementation for
+ *        both _user_close() and _kern_close()).
+ */
 static status_t
 common_close(int fd, bool kernel)
 {
@@ -869,6 +1102,16 @@ common_close(int fd, bool kernel)
 }
 
 
+/**
+ * @brief Closes all open file descriptors in the range [@a minFd, @a maxFd]
+ *        inclusive.
+ *
+ * If @c CLOSE_RANGE_CLOEXEC is set in @a flags the descriptors are not closed
+ * immediately; instead their close-on-exec flags are set so they will be closed
+ * across the next exec().
+ *
+ * @return @c B_OK, or @c B_BAD_VALUE if @a maxFd < @a minFd.
+ */
 static status_t
 common_close_range(u_int minFd, u_int maxFd, int flags, bool kernel)
 {
@@ -890,6 +1133,10 @@ common_close_range(u_int minFd, u_int maxFd, int flags, bool kernel)
 }
 
 
+/**
+ * @brief Issues an ioctl on a user fd from kernel code (e.g. a driver calling
+ *        back into the VFS layer on behalf of a user request).
+ */
 status_t
 user_fd_kernel_ioctl(int fd, uint32 op, void* buffer, size_t length)
 {
@@ -902,6 +1149,8 @@ user_fd_kernel_ioctl(int fd, uint32 op, void* buffer, size_t length)
 //	#pragma mark - User syscalls
 
 
+/** @brief Syscall entry point for read(2): reads up to @a length bytes from @a fd
+ *         at offset @a pos into the user-space @a buffer. */
 ssize_t
 _user_read(int fd, off_t pos, void* buffer, size_t length)
 {
@@ -909,6 +1158,8 @@ _user_read(int fd, off_t pos, void* buffer, size_t length)
 }
 
 
+/** @brief Syscall entry point for readv(2): scattered read using a user-space
+ *         iovec array. */
 ssize_t
 _user_readv(int fd, off_t pos, const iovec* userVecs, size_t count)
 {
@@ -916,6 +1167,8 @@ _user_readv(int fd, off_t pos, const iovec* userVecs, size_t count)
 }
 
 
+/** @brief Syscall entry point for write(2): writes up to @a length bytes from
+ *         the user-space @a buffer to @a fd at offset @a pos. */
 ssize_t
 _user_write(int fd, off_t pos, const void* buffer, size_t length)
 {
@@ -923,6 +1176,8 @@ _user_write(int fd, off_t pos, const void* buffer, size_t length)
 }
 
 
+/** @brief Syscall entry point for writev(2): gathered write using a user-space
+ *         iovec array. */
 ssize_t
 _user_writev(int fd, off_t pos, const iovec* userVecs, size_t count)
 {
@@ -930,6 +1185,7 @@ _user_writev(int fd, off_t pos, const iovec* userVecs, size_t count)
 }
 
 
+/** @brief Syscall entry point for lseek(2): repositions the file offset of @a fd. */
 off_t
 _user_seek(int fd, off_t pos, int seekType)
 {
@@ -950,6 +1206,8 @@ _user_seek(int fd, off_t pos, int seekType)
 }
 
 
+/** @brief Syscall entry point for ioctl(2): dispatches a device-specific control
+ *         operation on @a fd. */
 status_t
 _user_ioctl(int fd, uint32 op, void* buffer, size_t length)
 {
@@ -968,6 +1226,13 @@ _user_ioctl(int fd, uint32 op, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Syscall entry point for getdents(2): reads directory entries from a
+ *        directory fd into the user-space @a userBuffer.
+ *
+ * Allocates a temporary kernel buffer, reads via the fd_read_dir hook, then
+ * copies the result to user space.
+ */
 ssize_t
 _user_read_dir(int fd, struct dirent* userBuffer, size_t bufferSize,
 	uint32 maxCount)
@@ -1025,6 +1290,8 @@ _user_read_dir(int fd, struct dirent* userBuffer, size_t bufferSize,
 }
 
 
+/** @brief Syscall entry point for rewinddir(2): resets the directory read
+ *         position of @a fd back to the start. */
 status_t
 _user_rewind_dir(int fd)
 {
@@ -1044,6 +1311,8 @@ _user_rewind_dir(int fd)
 }
 
 
+/** @brief Syscall entry point for close(2): closes the file descriptor @a fd in
+ *         the current user process. */
 status_t
 _user_close(int fd)
 {
@@ -1051,6 +1320,13 @@ _user_close(int fd)
 }
 
 
+/**
+ * @brief Syscall entry point for close_range(2): closes or sets CLOEXEC on a
+ *        contiguous range of file descriptors [@a minFd, @a maxFd].
+ *
+ * Only @c CLOSE_RANGE_CLOEXEC is accepted in @a flags; other bits return
+ * @c B_BAD_VALUE.
+ */
 status_t
 _user_close_range(u_int minFd, u_int maxFd, int flags)
 {
@@ -1060,6 +1336,8 @@ _user_close_range(u_int minFd, u_int maxFd, int flags)
 }
 
 
+/** @brief Syscall entry point for dup(2): duplicates @a fd to the lowest
+ *         available slot in the current user process. */
 int
 _user_dup(int fd)
 {
@@ -1067,6 +1345,8 @@ _user_dup(int fd)
 }
 
 
+/** @brief Syscall entry point for dup2(2) / dup3(2): duplicates @a ofd to
+ *         exactly slot @a nfd in the current user process, honouring @a flags. */
 int
 _user_dup2(int ofd, int nfd, int flags)
 {
@@ -1077,6 +1357,13 @@ _user_dup2(int ofd, int nfd, int flags)
 //	#pragma mark - Kernel calls
 
 
+/**
+ * @brief Kernel-internal read: reads up to @a length bytes from @a fd into the
+ *        kernel-space @a buffer at offset @a pos.
+ *
+ * Does not go through the syscall restart machinery; intended for use by kernel
+ * subsystems.
+ */
 ssize_t
 _kern_read(int fd, off_t pos, void* buffer, size_t length)
 {
@@ -1117,6 +1404,10 @@ _kern_read(int fd, off_t pos, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Kernel-internal write: writes up to @a length bytes from the
+ *        kernel-space @a buffer to @a fd at offset @a pos.
+ */
 ssize_t
 _kern_write(int fd, off_t pos, const void* buffer, size_t length)
 {
@@ -1157,6 +1448,8 @@ _kern_write(int fd, off_t pos, const void* buffer, size_t length)
 }
 
 
+/** @brief Kernel-internal scatter read: reads from @a fd using an array of
+ *         kernel-space iovecs. */
 ssize_t
 _kern_readv(int fd, off_t pos, const iovec* vecs, size_t count)
 {
@@ -1165,6 +1458,8 @@ _kern_readv(int fd, off_t pos, const iovec* vecs, size_t count)
 }
 
 
+/** @brief Kernel-internal gather write: writes to @a fd using an array of
+ *         kernel-space iovecs. */
 ssize_t
 _kern_writev(int fd, off_t pos, const iovec* vecs, size_t count)
 {
@@ -1173,6 +1468,7 @@ _kern_writev(int fd, off_t pos, const iovec* vecs, size_t count)
 }
 
 
+/** @brief Kernel-internal lseek: repositions the file offset of kernel fd @a fd. */
 off_t
 _kern_seek(int fd, off_t pos, int seekType)
 {
@@ -1189,6 +1485,8 @@ _kern_seek(int fd, off_t pos, int seekType)
 }
 
 
+/** @brief Kernel-internal ioctl: issues a device-specific control operation on
+ *         kernel fd @a fd. */
 status_t
 _kern_ioctl(int fd, uint32 op, void* buffer, size_t length)
 {
@@ -1200,6 +1498,12 @@ _kern_ioctl(int fd, uint32 op, void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Kernel-internal getdents: reads directory entries from kernel directory
+ *        fd @a fd into the kernel-space @a buffer.
+ *
+ * Returns the number of entries read, or a negative error code.
+ */
 ssize_t
 _kern_read_dir(int fd, struct dirent* buffer, size_t bufferSize,
 	uint32 maxCount)
@@ -1226,6 +1530,8 @@ _kern_read_dir(int fd, struct dirent* buffer, size_t bufferSize,
 }
 
 
+/** @brief Kernel-internal rewinddir: resets the directory read position of
+ *         kernel fd @a fd back to the start. */
 status_t
 _kern_rewind_dir(int fd)
 {
@@ -1245,6 +1551,7 @@ _kern_rewind_dir(int fd)
 }
 
 
+/** @brief Kernel-internal close: closes kernel fd @a fd. */
 status_t
 _kern_close(int fd)
 {
@@ -1252,6 +1559,10 @@ _kern_close(int fd)
 }
 
 
+/**
+ * @brief Kernel-internal close_range: closes or sets CLOEXEC on a contiguous
+ *        range of kernel file descriptors [@a minFd, @a maxFd].
+ */
 status_t
 _kern_close_range(u_int minFd, u_int maxFd, int flags)
 {
@@ -1259,6 +1570,8 @@ _kern_close_range(u_int minFd, u_int maxFd, int flags)
 }
 
 
+/** @brief Kernel-internal dup: duplicates kernel fd @a fd to the lowest
+ *         available slot in the kernel I/O context. */
 int
 _kern_dup(int fd)
 {
@@ -1266,9 +1579,10 @@ _kern_dup(int fd)
 }
 
 
+/** @brief Kernel-internal dup2: duplicates kernel fd @a ofd to exactly slot
+ *         @a nfd in the kernel I/O context, honouring @a flags. */
 int
 _kern_dup2(int ofd, int nfd, int flags)
 {
 	return dup2_fd(ofd, nfd, flags, true);
 }
-

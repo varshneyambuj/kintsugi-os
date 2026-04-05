@@ -1,6 +1,39 @@
 /*
- * Copyright 2003-2007, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, varshney@ambuj.se
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2007, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file DiskDeviceJobGenerator.cpp
+ * @brief Translates pending partition modifications into an ordered job queue.
+ *
+ * DiskDeviceJobGenerator walks the shadow (mutable) partition tree of a
+ * BDiskDevice and compares it against the live partition tree to determine
+ * which operations are required. It emits cleanup jobs (delete/uninitialize),
+ * placement jobs (resize/move), and remaining jobs (initialize, create, rename,
+ * retype, set-parameters) in the correct dependency order into a
+ * DiskDeviceJobQueue.
+ *
+ * @see DiskDeviceJobQueue
  */
 
 #include "DiskDeviceJobGenerator.h"
@@ -39,17 +72,16 @@
 using std::nothrow;
 
 
-// compare_string
-/*!	\brief \c NULL aware strcmp().
-
-	\c NULL is considered the least of all strings. \c NULL equals \c NULL.
-
-	\param str1 First string.
-	\param str2 Second string.
-	\return A value less than 0, if \a str1 is less than \a str2,
-			0, if they are equal, or a value greater than 0, if
-			\a str1 is greater \a str2.
-*/
+/**
+ * @brief NULL-aware strcmp helper used when comparing partition property strings.
+ *
+ * NULL is considered the smallest possible value; two NULL pointers compare
+ * equal.
+ *
+ * @param str1 First string, may be \c NULL.
+ * @param str2 Second string, may be \c NULL.
+ * @return Negative if \a str1 < \a str2, zero if equal, positive if greater.
+ */
 static inline int
 compare_string(const char* str1, const char* str2)
 {
@@ -92,7 +124,16 @@ struct DiskDeviceJobGenerator::PartitionRefInfo {
 };
 
 
-// constructor
+/**
+ * @brief Constructs a DiskDeviceJobGenerator for the given device and job queue.
+ *
+ * Pre-allocates internal arrays large enough to handle the worst-case
+ * scenario where all existing partitions are deleted and replaced by new
+ * ones.
+ *
+ * @param device   The disk device whose modifications will be translated.
+ * @param jobQueue The queue that will receive the generated jobs.
+ */
 DiskDeviceJobGenerator::DiskDeviceJobGenerator(BDiskDevice* device,
 		DiskDeviceJobQueue* jobQueue)
 	: fDevice(device),
@@ -113,7 +154,9 @@ DiskDeviceJobGenerator::DiskDeviceJobGenerator(BDiskDevice* device,
 }
 
 
-// destructor
+/**
+ * @brief Destroys the DiskDeviceJobGenerator and frees all pre-allocated arrays.
+ */
 DiskDeviceJobGenerator::~DiskDeviceJobGenerator()
 {
 	delete[] fMoveInfos;
@@ -122,7 +165,17 @@ DiskDeviceJobGenerator::~DiskDeviceJobGenerator()
 }
 
 
-// GenerateJobs
+/**
+ * @brief Generates all required jobs and appends them to the job queue.
+ *
+ * The generation proceeds in three ordered passes: cleanup (deletions and
+ * uninitializations), placement (resizes and moves), and remaining changes
+ * (initializations, creations, and property changes).
+ *
+ * @return B_OK on success, B_BAD_VALUE if the device or queue is NULL,
+ *         B_NO_MEMORY if array allocation failed, or the first error
+ *         encountered during job generation.
+ */
 status_t
 DiskDeviceJobGenerator::GenerateJobs()
 {
@@ -170,7 +223,13 @@ DiskDeviceJobGenerator::GenerateJobs()
 }
 
 
-// _AddJob
+/**
+ * @brief Adds a job to the queue, deleting it on failure.
+ *
+ * @param job The job to add; a NULL pointer is treated as B_NO_MEMORY.
+ * @return B_OK on success, B_NO_MEMORY if \a job is NULL, or the error
+ *         returned by DiskDeviceJobQueue::AddJob().
+ */
 status_t
 DiskDeviceJobGenerator::_AddJob(DiskDeviceJob* job)
 {
@@ -185,7 +244,16 @@ DiskDeviceJobGenerator::_AddJob(DiskDeviceJob* job)
 }
 
 
-// _GenerateCleanupJobs
+/**
+ * @brief Recursively generates delete and uninitialize jobs for the cleanup pass.
+ *
+ * Partitions that have no matching shadow are scheduled for deletion.
+ * Partitions whose initialization state is changing are scheduled for
+ * uninitialization before the placement pass runs.
+ *
+ * @param partition The root partition to start the recursive walk from.
+ * @return B_OK on success, or the first error encountered.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateCleanupJobs(BPartition* partition)
 {
@@ -216,7 +284,16 @@ DiskDeviceJobGenerator::_GenerateCleanupJobs(BPartition* partition)
 }
 
 
-// _GeneratePlacementJobs
+/**
+ * @brief Generates resize and move jobs to bring a partition to its target layout.
+ *
+ * Handles the grow-before-move and shrink-after-move ordering rules so that
+ * partitions never overlap during relocation.
+ *
+ * @param partition The partition to place; children are handled recursively.
+ * @return B_OK on success, B_ERROR if an unrecognised partition needs
+ *         resizing, or the first error from a generated job.
+ */
 status_t
 DiskDeviceJobGenerator::_GeneratePlacementJobs(BPartition* partition)
 {
@@ -253,7 +330,17 @@ DiskDeviceJobGenerator::_GeneratePlacementJobs(BPartition* partition)
 }
 
 
-// _GenerateChildPlacementJobs
+/**
+ * @brief Generates ordered move and resize jobs for all children of a partition.
+ *
+ * First shrinks children that need to shrink (so they do not block moves),
+ * then resolves move conflicts using a greedy sort-and-sweep algorithm, and
+ * finally processes children that grow or keep their size.
+ *
+ * @param partition The parent whose children are to be placed.
+ * @return B_OK on success, B_ERROR if a deadlock is detected in the move
+ *         ordering, or the first error from a generated job.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateChildPlacementJobs(BPartition* partition)
 {
@@ -366,7 +453,18 @@ DiskDeviceJobGenerator::_GenerateChildPlacementJobs(BPartition* partition)
 }
 
 
-// _GenerateRemainingJobs
+/**
+ * @brief Generates initialization, creation, and property-change jobs for a partition tree.
+ *
+ * Handles new partitions (create), property changes on existing partitions
+ * (name, type, parameters, content name, content parameters, defragmentation,
+ * repair), and initialization changes, then recurses into children.
+ *
+ * @param parent    The parent partition, or \c NULL if \a partition is the root.
+ * @param partition The partition to process.
+ * @return B_OK on success, B_BAD_VALUE if a parent is required but absent,
+ *         or the first error from a generated job.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateRemainingJobs(BPartition* parent,
 	BPartition* partition)
@@ -480,7 +578,12 @@ DiskDeviceJobGenerator::_GenerateRemainingJobs(BPartition* parent,
 }
 
 
-// _GetMutablePartition
+/**
+ * @brief Returns the BMutablePartition shadow for the given live partition.
+ *
+ * @param partition The live partition whose shadow is requested.
+ * @return The associated BMutablePartition, or \c NULL if none exists.
+ */
 BMutablePartition*
 DiskDeviceJobGenerator::_GetMutablePartition(BPartition* partition)
 {
@@ -492,7 +595,12 @@ DiskDeviceJobGenerator::_GetMutablePartition(BPartition* partition)
 }
 
 
-// _GenerateInitializeJob
+/**
+ * @brief Creates and enqueues an InitializeJob for the given partition.
+ *
+ * @param partition The partition to initialize.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateInitializeJob(BPartition* partition)
 {
@@ -516,7 +624,12 @@ DiskDeviceJobGenerator::_GenerateInitializeJob(BPartition* partition)
 }
 
 
-// _GenerateUninitializeJob
+/**
+ * @brief Creates and enqueues a UninitializeJob for the given partition.
+ *
+ * @param partition The partition to uninitialize.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateUninitializeJob(BPartition* partition)
 {
@@ -537,7 +650,12 @@ DiskDeviceJobGenerator::_GenerateUninitializeJob(BPartition* partition)
 }
 
 
-// _GenerateSetContentNameJob
+/**
+ * @brief Creates and enqueues a SetStringJob to update a partition's content name.
+ *
+ * @param partition The partition whose content name is to be changed.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateSetContentNameJob(BPartition* partition)
 {
@@ -561,7 +679,12 @@ DiskDeviceJobGenerator::_GenerateSetContentNameJob(BPartition* partition)
 }
 
 
-// _GenerateSetContentParametersJob
+/**
+ * @brief Creates and enqueues a SetStringJob to update a partition's content parameters.
+ *
+ * @param partition The partition whose content parameters are to be changed.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateSetContentParametersJob(BPartition* partition)
 {
@@ -585,7 +708,12 @@ DiskDeviceJobGenerator::_GenerateSetContentParametersJob(BPartition* partition)
 }
 
 
-// _GenerateDefragmentJob
+/**
+ * @brief Creates and enqueues a DefragmentJob for the given partition.
+ *
+ * @param partition The partition to defragment.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateDefragmentJob(BPartition* partition)
 {
@@ -598,7 +726,14 @@ DiskDeviceJobGenerator::_GenerateDefragmentJob(BPartition* partition)
 }
 
 
-// _GenerateRepairJob
+/**
+ * @brief Creates and enqueues a RepairJob for the given partition.
+ *
+ * @param partition The partition to check or repair.
+ * @param repair    When \c true a full repair is performed; when \c false
+ *                  only a consistency check is run.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateRepairJob(BPartition* partition, bool repair)
 {
@@ -611,7 +746,13 @@ DiskDeviceJobGenerator::_GenerateRepairJob(BPartition* partition, bool repair)
 }
 
 
-// _GenerateCreateChildJob
+/**
+ * @brief Creates and enqueues a CreateChildJob for the given parent/child pair.
+ *
+ * @param parent    The parent partition that will contain the new child.
+ * @param partition The shadow partition describing the new child's properties.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateCreateChildJob(BPartition* parent,
 	BPartition* partition)
@@ -642,7 +783,13 @@ DiskDeviceJobGenerator::_GenerateCreateChildJob(BPartition* parent,
 }
 
 
-// _GenerateDeleteChildJob
+/**
+ * @brief Creates and enqueues a DeleteChildJob for the given parent/child pair.
+ *
+ * @param parent    The parent partition that owns the child.
+ * @param partition The child partition to be deleted.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateDeleteChildJob(BPartition* parent,
 	BPartition* partition)
@@ -661,7 +808,15 @@ DiskDeviceJobGenerator::_GenerateDeleteChildJob(BPartition* parent,
 }
 
 
-// _GenerateResizeJob
+/**
+ * @brief Creates and enqueues a ResizeJob for the given partition.
+ *
+ * Retrieves the parent reference automatically from the partition hierarchy.
+ *
+ * @param partition The partition to resize; must have a parent.
+ * @return B_OK on success, B_BAD_VALUE if the partition has no parent, or
+ *         an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateResizeJob(BPartition* partition)
 {
@@ -684,7 +839,16 @@ DiskDeviceJobGenerator::_GenerateResizeJob(BPartition* partition)
 }
 
 
-// _GenerateMoveJob
+/**
+ * @brief Creates and enqueues a MoveJob for the given partition.
+ *
+ * Collects all descendants with active contents into the move list so that
+ * they can be moved together with their parent.
+ *
+ * @param partition The partition to move; must have a parent.
+ * @return B_OK on success, B_BAD_VALUE if the partition has no parent, or
+ *         an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateMoveJob(BPartition* partition)
 {
@@ -724,7 +888,13 @@ DiskDeviceJobGenerator::_GenerateMoveJob(BPartition* partition)
 }
 
 
-// _GenerateSetNameJob
+/**
+ * @brief Creates and enqueues a SetStringJob to rename a child partition.
+ *
+ * @param parent    The parent partition that owns the child.
+ * @param partition The child partition whose name is to be changed.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateSetNameJob(BPartition* parent,
 	BPartition* partition)
@@ -753,7 +923,13 @@ DiskDeviceJobGenerator::_GenerateSetNameJob(BPartition* parent,
 }
 
 
-// _GenerateSetTypeJob
+/**
+ * @brief Creates and enqueues a SetStringJob to change a child partition's type.
+ *
+ * @param parent    The parent partition that owns the child.
+ * @param partition The child partition whose type is to be changed.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateSetTypeJob(BPartition* parent,
 	BPartition* partition)
@@ -782,7 +958,13 @@ DiskDeviceJobGenerator::_GenerateSetTypeJob(BPartition* parent,
 }
 
 
-// _GenerateSetParametersJob
+/**
+ * @brief Creates and enqueues a SetStringJob to update a child partition's parameters.
+ *
+ * @param parent    The parent partition that owns the child.
+ * @param partition The child partition whose parameters are to be changed.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DiskDeviceJobGenerator::_GenerateSetParametersJob(BPartition* parent,
 	BPartition* partition)
@@ -812,7 +994,16 @@ DiskDeviceJobGenerator::_GenerateSetParametersJob(BPartition* parent,
 }
 
 
-// _CollectContentsToMove
+/**
+ * @brief Recursively collects partitions with content that must be moved.
+ *
+ * Adds the partition itself if it has an active, non-reinitializing content
+ * type, then recurses into children. Returns B_ERROR if a partition with
+ * unrecognised contents is encountered.
+ *
+ * @param partition The root of the subtree to inspect.
+ * @return B_OK on success, B_ERROR if an unrecognised partition is found.
+ */
 status_t
 DiskDeviceJobGenerator::_CollectContentsToMove(BPartition* partition)
 {
@@ -838,7 +1029,12 @@ DiskDeviceJobGenerator::_CollectContentsToMove(BPartition* partition)
 }
 
 
-// _PushContentsToMove
+/**
+ * @brief Appends a partition reference to the contents-to-move array.
+ *
+ * @param partition The partition whose reference should be pushed.
+ * @return B_OK on success, B_ERROR if the array is full.
+ */
 status_t
 DiskDeviceJobGenerator::_PushContentsToMove(BPartition* partition)
 {
@@ -856,7 +1052,18 @@ DiskDeviceJobGenerator::_PushContentsToMove(BPartition* partition)
 }
 
 
-// _GetPartitionReference
+/**
+ * @brief Looks up or creates a PartitionReference for the given BPartition.
+ *
+ * The reference cache is scanned linearly; on a miss a new entry is created
+ * and initialised from the partition's live data (if present).
+ *
+ * @param partition The partition for which a reference is needed.
+ * @param reference Set to the found or newly created PartitionReference.
+ * @return B_OK on success, B_BAD_VALUE if \a partition is NULL,
+ *         B_NO_MEMORY if a new reference cannot be allocated, or B_ERROR
+ *         if the internal cache is full.
+ */
 status_t
 DiskDeviceJobGenerator::_GetPartitionReference(BPartition* partition,
 	PartitionReference*& reference)
@@ -896,7 +1103,13 @@ DiskDeviceJobGenerator::_GetPartitionReference(BPartition* partition,
 }
 
 
-// _CompareMoveInfoOffset
+/**
+ * @brief qsort comparator that orders MoveInfo entries by current position.
+ *
+ * @param _a Pointer to the first MoveInfo.
+ * @param _b Pointer to the second MoveInfo.
+ * @return Negative, zero, or positive according to ascending position order.
+ */
 int
 DiskDeviceJobGenerator::_CompareMoveInfoPosition(const void* _a, const void* _b)
 {
