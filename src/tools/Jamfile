@@ -1,5 +1,8 @@
 SubDir HAIKU_TOP src tools ;
 
+# KintsugiOS: Removed non-x86 platform tools and optional dev tools.
+# Shelved in srck/tools-shelf/ - move back and add SubInclude to re-enable.
+
 UsePrivateBuildHeaders app storage ;
 
 SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src/bin ] ;
@@ -92,29 +95,21 @@ SubInclude HAIKU_TOP src tools addattr ;
 SubInclude HAIKU_TOP src tools anyboot ;
 SubInclude HAIKU_TOP src tools bfs_shell ;
 SubInclude HAIKU_TOP src tools bfs_tools ;
-SubInclude HAIKU_TOP src tools fat_shell ;
-SubInclude HAIKU_TOP src tools cppunit ;
 SubInclude HAIKU_TOP src tools create_repository_config ;
 SubInclude HAIKU_TOP src tools elfsymbolpatcher ;
-SubInclude HAIKU_TOP src tools fixup_amiga_boot_checksum ;
-SubInclude HAIKU_TOP src tools fixup_next_boot_floppy ;
-SubInclude HAIKU_TOP src tools fixup_tos_boot_checksum ;
+SubInclude HAIKU_TOP src tools fat_shell ;
 SubInclude HAIKU_TOP src tools fs_shell ;
 SubInclude HAIKU_TOP src tools gensyscalls ;
 SubInclude HAIKU_TOP src tools get_package_dependencies ;
-SubInclude HAIKU_TOP src tools hack_coff ;
-SubInclude HAIKU_TOP src tools hvif2png ;
 SubInclude HAIKU_TOP src tools keymap ;
 SubInclude HAIKU_TOP src tools locale ;
 SubInclude HAIKU_TOP src tools makebootable ;
 SubInclude HAIKU_TOP src tools mbrtool ;
-SubInclude HAIKU_TOP src tools opd_to_package_info ;
+SubInclude HAIKU_TOP src tools misc ;
 SubInclude HAIKU_TOP src tools package ;
 SubInclude HAIKU_TOP src tools package_repo ;
 SubInclude HAIKU_TOP src tools rc ;
-SubInclude HAIKU_TOP src tools remote_disk_server ;
 SubInclude HAIKU_TOP src tools resattr ;
-SubInclude HAIKU_TOP src tools translation ;
 SubInclude HAIKU_TOP src tools unflatten ;
 SubInclude HAIKU_TOP src tools unzip ;
 SubInclude HAIKU_TOP src tools update_package_requires ;
