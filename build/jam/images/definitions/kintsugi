@@ -36,7 +36,6 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	filepanel
 	finddir
 	findpaths
-	fortune
 	fstrim
 	ftpd
 	getarch

@@ -284,10 +284,7 @@ local logoArtwork =
 SEARCH on $(logoArtwork) = [ FDirName $(HAIKU_TOP) data artwork ] ;
 AddFilesToPackage data artwork : $(logoArtwork) ;
 
-local fortuneFiles = [ Glob $(HAIKU_TOP)/data/system/data/fortunes
-	: [a-zA-Z0-9]* ] ;
-fortuneFiles = $(fortuneFiles:G=data!fortunes) ;
-AddFilesToPackage data fortunes : $(fortuneFiles) ;
+# fortunes removed - shelved in srck/data-shelf/
 
 local fontDir = [ FDirName $(HAIKU_TOP) data system data fonts ] ;
 local psFonts = [ Glob $(fontDir)/psfonts : *.afm *.pfb ] ;
