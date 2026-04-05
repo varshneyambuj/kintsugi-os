@@ -1,11 +1,39 @@
 /*
- * Copyright 2001-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Ulrich Wimboeck
- *		Marc Flerackers (mflerackers@androme.be)
- *		Rene Gollent
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ulrich Wimboeck
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Rene Gollent
+ */
+
+
+/**
+ * @file ListItem.cpp
+ * @brief Implementation of BListItem, the base class for items in a BListView
+ *
+ * BListItem stores a single row of data in a BListView. It manages selection
+ * state, expansion state (for BOutlineListView), and provides a DrawItem()
+ * hook for custom rendering.
+ *
+ * @see BListView, BOutlineListView, BStringItem
  */
 
 
@@ -15,6 +43,17 @@
 #include <View.h>
 
 
+/**
+ * @brief Constructs a BListItem with the given outline level and expansion state.
+ *
+ * All dimensional fields (fTop, fWidth, fHeight) are initialised to zero;
+ * call Update() once the item has been added to a list view to populate them.
+ *
+ * @param level    The nesting depth used by BOutlineListView (0 for top-level items).
+ * @param expanded Whether the item starts in the expanded state.
+ *
+ * @see BOutlineListView, Update()
+ */
 BListItem::BListItem(uint32 level, bool expanded)
 	:
 	fTop(0.0),
@@ -31,6 +70,17 @@ BListItem::BListItem(uint32 level, bool expanded)
 }
 
 
+/**
+ * @brief Constructs a BListItem from an archived BMessage.
+ *
+ * Restores selection state ("_sel"), enabled state ("_disable"), expansion
+ * state ("_li_expanded"), and outline level ("_li_outline_level") from the
+ * archive. If "_disable" is absent, the item defaults to enabled.
+ *
+ * @param data The archived BMessage to restore state from.
+ *
+ * @see Archive(), BArchivable::BArchivable()
+ */
 BListItem::BListItem(BMessage* data)
 	:
 	BArchivable(data),
@@ -56,11 +106,28 @@ BListItem::BListItem(BMessage* data)
 }
 
 
+/**
+ * @brief Destroys the BListItem.
+ */
 BListItem::~BListItem()
 {
 }
 
 
+/**
+ * @brief Archives the BListItem's state into a BMessage.
+ *
+ * Stores the selection state ("_sel"), disabled state ("_disable"), expansion
+ * state ("_li_expanded"), and outline level ("_li_outline_level") only when
+ * their values differ from the defaults, to keep archives compact.
+ *
+ * @param archive The BMessage to archive into.
+ * @param deep    If true, child objects are also archived (unused by BListItem).
+ * @return A status code.
+ * @retval B_OK On success.
+ *
+ * @see BListItem(BMessage*), BArchivable::Archive()
+ */
 status_t
 BListItem::Archive(BMessage* archive, bool deep) const
 {
@@ -81,6 +148,15 @@ BListItem::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Returns the cached height of the item in pixels.
+ *
+ * The height is set by Update() or SetHeight().
+ *
+ * @return The item height in pixels.
+ *
+ * @see SetHeight(), Update()
+ */
 float
 BListItem::Height() const
 {
@@ -88,6 +164,15 @@ BListItem::Height() const
 }
 
 
+/**
+ * @brief Returns the cached width of the item in pixels.
+ *
+ * The width is set by Update() or SetWidth().
+ *
+ * @return The item width in pixels.
+ *
+ * @see SetWidth(), Update()
+ */
 float
 BListItem::Width() const
 {
@@ -95,6 +180,13 @@ BListItem::Width() const
 }
 
 
+/**
+ * @brief Returns whether the item is currently selected.
+ *
+ * @return true if the item is selected, false otherwise.
+ *
+ * @see Select(), Deselect()
+ */
 bool
 BListItem::IsSelected() const
 {
@@ -102,6 +194,14 @@ BListItem::IsSelected() const
 }
 
 
+/**
+ * @brief Marks the item as selected.
+ *
+ * Does not trigger a redraw; the owning BListView is responsible for
+ * invalidating the item's row after changing selection state.
+ *
+ * @see Deselect(), IsSelected()
+ */
 void
 BListItem::Select()
 {
@@ -109,6 +209,14 @@ BListItem::Select()
 }
 
 
+/**
+ * @brief Marks the item as deselected.
+ *
+ * Does not trigger a redraw; the owning BListView is responsible for
+ * invalidating the item's row after changing selection state.
+ *
+ * @see Select(), IsSelected()
+ */
 void
 BListItem::Deselect()
 {
@@ -116,6 +224,17 @@ BListItem::Deselect()
 }
 
 
+/**
+ * @brief Enables or disables the item.
+ *
+ * Disabled items are typically rendered differently (e.g. greyed out) and
+ * cannot be selected by user interaction. Subclasses may check IsEnabled()
+ * inside DrawItem() to adjust the appearance.
+ *
+ * @param on Pass true to enable the item, false to disable it.
+ *
+ * @see IsEnabled()
+ */
 void
 BListItem::SetEnabled(bool on)
 {
@@ -123,6 +242,13 @@ BListItem::SetEnabled(bool on)
 }
 
 
+/**
+ * @brief Returns whether the item is currently enabled.
+ *
+ * @return true if the item is enabled, false if it is disabled.
+ *
+ * @see SetEnabled()
+ */
 bool
 BListItem::IsEnabled() const
 {
@@ -130,6 +256,16 @@ BListItem::IsEnabled() const
 }
 
 
+/**
+ * @brief Sets the cached height of the item.
+ *
+ * This is typically called from within Update() by subclasses after measuring
+ * the required row height against the current font metrics.
+ *
+ * @param height The new height in pixels.
+ *
+ * @see Height(), Update()
+ */
 void
 BListItem::SetHeight(float height)
 {
@@ -137,6 +273,16 @@ BListItem::SetHeight(float height)
 }
 
 
+/**
+ * @brief Sets the cached width of the item.
+ *
+ * This is typically called from within Update() by subclasses after measuring
+ * the required content width.
+ *
+ * @param width The new width in pixels.
+ *
+ * @see Width(), Update()
+ */
 void
 BListItem::SetWidth(float width)
 {
@@ -144,6 +290,18 @@ BListItem::SetWidth(float width)
 }
 
 
+/**
+ * @brief Measures and caches the item's width and height for the given font.
+ *
+ * The default implementation sets the width to the owner view's current
+ * bounds width and the height to the sum of the font's ascent, descent, and
+ * leading. Subclasses should override this to measure their own content.
+ *
+ * @param owner The BView that owns this item; its bounds width is used.
+ * @param font  The font to measure against.
+ *
+ * @see SetWidth(), SetHeight(), DrawItem()
+ */
 void
 BListItem::Update(BView* owner, const BFont* font)
 {
@@ -155,6 +313,18 @@ BListItem::Update(BView* owner, const BFont* font)
 }
 
 
+/**
+ * @brief Dispatches a perform code to the base BArchivable implementation.
+ *
+ * This hook exists to support future binary-compatible extensions. Callers
+ * should not rely on any specific behavior beyond forwarding to BArchivable.
+ *
+ * @param d   The perform operation code.
+ * @param arg An opaque argument whose meaning depends on @a d.
+ * @return The status code returned by BArchivable::Perform().
+ *
+ * @see BArchivable::Perform()
+ */
 status_t
 BListItem::Perform(perform_code d, void* arg)
 {
@@ -162,6 +332,17 @@ BListItem::Perform(perform_code d, void* arg)
 }
 
 
+/**
+ * @brief Sets the item's expanded state for use in BOutlineListView.
+ *
+ * When an item is expanded, its subitems (if any) are visible in the outline.
+ * Collapsing hides the subitems. Changing this flag does not automatically
+ * redraw the list; call BOutlineListView::InvalidateItem() if needed.
+ *
+ * @param expanded Pass true to expand the item, false to collapse it.
+ *
+ * @see IsExpanded(), BOutlineListView
+ */
 void
 BListItem::SetExpanded(bool expanded)
 {
@@ -169,6 +350,13 @@ BListItem::SetExpanded(bool expanded)
 }
 
 
+/**
+ * @brief Returns whether the item is currently expanded.
+ *
+ * @return true if the item is expanded, false if it is collapsed.
+ *
+ * @see SetExpanded()
+ */
 bool
 BListItem::IsExpanded() const
 {
@@ -176,6 +364,16 @@ BListItem::IsExpanded() const
 }
 
 
+/**
+ * @brief Returns the item's nesting depth in an outline list.
+ *
+ * A level of 0 indicates a top-level item; higher values indicate progressively
+ * deeper nesting within a BOutlineListView.
+ *
+ * @return The outline nesting level.
+ *
+ * @see SetOutlineLevel(), BOutlineListView
+ */
 uint32
 BListItem::OutlineLevel() const
 {
@@ -183,6 +381,13 @@ BListItem::OutlineLevel() const
 }
 
 
+/**
+ * @brief Sets the item's nesting depth in an outline list.
+ *
+ * @param level The new outline nesting level (0 for top-level).
+ *
+ * @see OutlineLevel(), BOutlineListView
+ */
 void
 BListItem::SetOutlineLevel(uint32 level)
 {
@@ -190,6 +395,13 @@ BListItem::SetOutlineLevel(uint32 level)
 }
 
 
+/**
+ * @brief Returns whether the item has any subitems registered with the outline list.
+ *
+ * @return true if there is at least one subitem, false otherwise.
+ *
+ * @see BOutlineListView
+ */
 bool
 BListItem::HasSubitems() const
 {
@@ -201,6 +413,15 @@ void BListItem::_ReservedListItem1() {}
 void BListItem::_ReservedListItem2() {}
 
 
+/**
+ * @brief Returns whether the item is currently visible in the list.
+ *
+ * Items can be hidden when their parent outline item is collapsed.
+ *
+ * @return true if the item is visible, false if it is hidden.
+ *
+ * @see SetItemVisible(), BOutlineListView
+ */
 bool
 BListItem::IsItemVisible() const
 {
@@ -208,6 +429,14 @@ BListItem::IsItemVisible() const
 }
 
 
+/**
+ * @brief Sets the top coordinate of the item within the list view.
+ *
+ * This is an internal bookkeeping method used by BListView and
+ * BOutlineListView to track each item's vertical position during layout.
+ *
+ * @param top The y-coordinate of the item's top edge in the list view's coordinate system.
+ */
 void
 BListItem::SetTop(float top)
 {
@@ -215,6 +444,16 @@ BListItem::SetTop(float top)
 }
 
 
+/**
+ * @brief Shows or hides the item within the list view.
+ *
+ * Used internally by BOutlineListView when a parent item is expanded or
+ * collapsed; not intended for direct use by application code.
+ *
+ * @param visible Pass true to make the item visible, false to hide it.
+ *
+ * @see IsItemVisible(), BOutlineListView
+ */
 void
 BListItem::SetItemVisible(bool visible)
 {

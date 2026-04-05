@@ -1,10 +1,38 @@
 /*
- * Copyright 2007-2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- * Copyright 2021, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- * 		Tri-Edge AI <triedgeai@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *   Copyright 2021 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Tri-Edge AI <triedgeai@gmail.com>
+ */
+
+
+/**
+ * @file PincodeWindow.cpp
+ * @brief Implementation of PincodeWindow, the Bluetooth PIN entry dialog
+ *
+ * PincodeWindow presents a dialog prompting the user to enter a PIN code
+ * for Bluetooth pairing. The entered PIN is sent back to the Bluetooth
+ * server to complete the legacy pairing procedure with the remote device.
+ *
+ * @see ConnectionIncoming, LocalDevice
  */
 
 
@@ -41,13 +69,28 @@
 #define BD_ADDR_LABEL "BD_ADDR: "
 
 
+/** @brief Message constant sent when the user clicks the "Pair" button. */
 static const uint32 skMessageAcceptButton = 'acCp';
+/** @brief Message constant sent when the user clicks the "Cancel" button. */
 static const uint32 skMessageCancelButton = 'mVch';
 
 
 namespace Bluetooth
 {
 
+/**
+ * @brief Constructs a PincodeWindow from a raw Bluetooth address and HCI device id.
+ *
+ * Creates the PIN entry dialog, builds the UI, and populates the address
+ * label with the string representation of @p address. This constructor is
+ * intended for use when a RemoteDevice object is not yet available (e.g.
+ * when the pairing request arrives before device enumeration is complete).
+ *
+ * @param address The Bluetooth device address of the remote device requesting
+ *                pairing, used to populate the MAC address label.
+ * @param hid     The HCI device identifier of the local Bluetooth adapter
+ *                through which the pairing is taking place.
+ */
 PincodeWindow::PincodeWindow(bdaddr_t address, hci_id hid)
 	: BWindow(BRect(700, 200, 1000, 400), "PIN Code Request",
 		B_FLOATING_WINDOW_LOOK, B_NORMAL_WINDOW_FEEL,
@@ -63,6 +106,16 @@ PincodeWindow::PincodeWindow(bdaddr_t address, hci_id hid)
 }
 
 
+/**
+ * @brief Constructs a PincodeWindow from an existing RemoteDevice.
+ *
+ * Creates the PIN entry dialog, builds the UI, and populates the address
+ * label from the remote device's Bluetooth address. The HCI device identifier
+ * is obtained from the device's associated LocalDevice owner.
+ *
+ * @param rDevice Pointer to the RemoteDevice for which pairing is being
+ *                requested. Must have a valid LocalDevice owner set.
+ */
 PincodeWindow::PincodeWindow(RemoteDevice* rDevice)
 	: BWindow(BRect(700, 200, 1000, 400), "PIN Code Request",
 		B_FLOATING_WINDOW_LOOK, B_NORMAL_WINDOW_FEEL,
@@ -76,6 +129,18 @@ PincodeWindow::PincodeWindow(RemoteDevice* rDevice)
 }
 
 
+/**
+ * @brief Creates and arranges all UI widgets inside the window.
+ *
+ * Instantiates the Bluetooth icon view, descriptive string views, device name
+ * and MAC address labels, the PIN code text control, and the "Pair" / "Cancel"
+ * buttons. All widgets are composed into a nested BGroupLayoutBuilder hierarchy
+ * and added to the window's root layout.
+ *
+ * @note This method is called from both constructors and must not depend on any
+ *       state that differs between them. Device-specific values (e.g. the MAC
+ *       address) are applied separately via SetBDaddr() after InitUI() returns.
+ */
 void
 PincodeWindow::InitUI()
 {
@@ -140,6 +205,24 @@ PincodeWindow::InitUI()
 }
 
 
+/**
+ * @brief Handles button-press messages and forwards unknown messages to BWindow.
+ *
+ * Processes two internal message codes:
+ * - @c skMessageAcceptButton – builds an HCI PIN Code Request Reply command
+ *   from the text currently in the PIN code field and sends it to the
+ *   Bluetooth server via @c be_app_messenger. On a successful server reply the
+ *   window posts @c B_QUIT_REQUESTED to itself.
+ * - @c skMessageCancelButton – builds an HCI PIN Code Request Negative Reply
+ *   command and sends it to the Bluetooth server, rejecting the pairing
+ *   request. On a successful server reply the window posts
+ *   @c B_QUIT_REQUESTED to itself.
+ *
+ * All other messages are forwarded to BWindow::MessageReceived().
+ *
+ * @param msg The BMessage delivered by the window's message loop.
+ * @see QuitRequested(), InitUI()
+ */
 void
 PincodeWindow::MessageReceived(BMessage* msg)
 {
@@ -211,6 +294,15 @@ PincodeWindow::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Handles the window close request.
+ *
+ * Delegates directly to BWindow::QuitRequested(), allowing the default
+ * framework behaviour (closing and deleting the window) to proceed.
+ *
+ * @return @c true to allow the window to quit, as returned by
+ *         BWindow::QuitRequested().
+ */
 bool
 PincodeWindow::QuitRequested()
 {
@@ -218,6 +310,16 @@ PincodeWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Updates the MAC address label displayed in the dialog.
+ *
+ * Sets the text of the address BStringView to the supplied string. This is
+ * called from both constructors after InitUI() to populate the label with
+ * the human-readable form of the remote device's Bluetooth address.
+ *
+ * @param address A string containing the formatted Bluetooth address
+ *                (e.g. "00:11:22:33:44:55") to display.
+ */
 void
 PincodeWindow::SetBDaddr(BString address)
 {

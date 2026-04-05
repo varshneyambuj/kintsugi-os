@@ -1,27 +1,58 @@
 /*
- * Copyright 2003-2006, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stefano Ceccherini (burton666@libero.it)
- * 		Jerome Duval
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Description:	An abstract base class for option controls.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2006 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini (burton666@libero.it)
+ *       Jerome Duval
  */
+
+
+/**
+ * @file OptionControl.cpp
+ * @brief Implementation of BOptionControl, an abstract base for option-selection controls
+ *
+ * BOptionControl is the abstract base class for controls that allow the user to
+ * select one option from a set of named choices. Concrete subclasses (BOptionPopUp)
+ * implement a specific widget.
+ *
+ * @see BOptionPopUp, BControl
+ */
+
 
 #include <OptionControl.h>
 
 #include <cstring>
 
 
-/*! \brief Creates and initializes a BOptionControl.
-	\param frame The control's frame rectangle.
-	\param name The control's name.
-	\param label The label displayed by the control.
-	\param message The message which the control will send when operated.
-	\param resize Resize mask, passed to the base class's constructor.
-	\param flags View flags, passed to the base class's constructor.
-*/
+/**
+ * @brief Constructs a BOptionControl with an explicit frame rectangle (legacy layout).
+ *
+ * @param frame   The control's frame rectangle in parent coordinates.
+ * @param name    The internal name of the control.
+ * @param label   The label string displayed by the control.
+ * @param message The message sent when the selected option changes.
+ * @param resize  Resizing mode flags passed to BControl.
+ * @param flags   View flags passed to BControl.
+ *
+ * @see BControl::BControl()
+ */
 BOptionControl::BOptionControl(BRect frame, const char *name, const char *label,
 								BMessage *message, uint32 resize, uint32 flags)
 	:
@@ -30,6 +61,16 @@ BOptionControl::BOptionControl(BRect frame, const char *name, const char *label,
 }
 
 
+/**
+ * @brief Constructs a BOptionControl for use with the layout system.
+ *
+ * @param name    The internal name of the control.
+ * @param label   The label string displayed by the control.
+ * @param message The message sent when the selected option changes.
+ * @param flags   View flags passed to BControl.
+ *
+ * @see BControl::BControl()
+ */
 BOptionControl::BOptionControl(const char *name, const char *label,
 								BMessage *message, uint32 flags)
 	:
@@ -38,19 +79,27 @@ BOptionControl::BOptionControl(const char *name, const char *label,
 }
 
 
-/*! \brief Destructor
-	It does nothing.
-*/
+/**
+ * @brief Destroys the BOptionControl.
+ *
+ * The base class destructor handles cleanup of BControl resources.
+ */
 BOptionControl::~BOptionControl()
 {
 }
 
 
-/*! \brief Overrides the base version to take special actions.
-	\param message The received message.
-	Calls SetValue() if receives a B_OPTION_CONTROL_VALUE message
-	which contains a "be:value" int32
-*/
+/**
+ * @brief Handles incoming messages, including option-value change notifications.
+ *
+ * If a @c B_OPTION_CONTROL_VALUE message arrives containing a @c "be:value"
+ * int32 field, SetValue() and Invoke() are called to update and broadcast
+ * the new selection.  All other messages are forwarded to BControl.
+ *
+ * @param message The message to handle.
+ *
+ * @see MakeValueMessage(), SetValue()
+ */
 void
 BOptionControl::MessageReceived(BMessage *message)
 {
@@ -60,7 +109,7 @@ BOptionControl::MessageReceived(BMessage *message)
 			int32 value;
 			if (message->FindInt32("be:value", &value) == B_OK) {
 				SetValue(value);
-				Invoke();				
+				Invoke();
 			}
 			break;
 		}
@@ -71,12 +120,17 @@ BOptionControl::MessageReceived(BMessage *message)
 }
 
 
-/*! \brief Adds an "option" after the last one.
-	\param name The name of the option.
-	\param value The value of the option.
-	\return \c B_OK if the option was added succesfully,
-		an error code otherwise.
-*/
+/**
+ * @brief Appends a new option with the given name and value after all existing options.
+ *
+ * Convenience wrapper around AddOptionAt() that always inserts at the end.
+ *
+ * @param name  The display name of the new option.
+ * @param value The integer value associated with the option.
+ * @return @c B_OK on success, or an error code if the option could not be added.
+ *
+ * @see AddOptionAt(), CountOptions()
+ */
 status_t
 BOptionControl::AddOption(const char *name, int32 value)
 {
@@ -85,18 +139,25 @@ BOptionControl::AddOption(const char *name, int32 value)
 }
 
 
-/*! \brief Select the option which has the given value.
-	\param value The value of the option.
-	\return \c B_OK if there was an option with that value,
-		and it was correctly selected, an error code otherwise.
-	It works like SetValue(value);
-*/
+/**
+ * @brief Selects the option whose integer value matches @a value.
+ *
+ * Iterates all options and calls SetValue() on the first match.
+ * This is functionally equivalent to calling SetValue() directly, but
+ * explicitly validates that a matching option exists.
+ *
+ * @param value The integer value of the option to select.
+ * @return @c B_OK if a matching option was found and selected,
+ *         @c B_ERROR if no option with that value exists.
+ *
+ * @see SelectOptionFor(const char*), GetOptionAt(), SetValue()
+ */
 status_t
 BOptionControl::SelectOptionFor(int32 value)
 {
 	// XXX: I wonder why this method was created in the first place,
 	// since you can obtain the same result simply by calling SetValue().
-	// The only difference I can see is that this method iterates over 
+	// The only difference I can see is that this method iterates over
 	// all the options contained in the control, and then selects the right one.
 	int32 numOptions = CountOptions();
 	for (int32 c = 0; c < numOptions; c++) {
@@ -112,11 +173,17 @@ BOptionControl::SelectOptionFor(int32 value)
 }
 
 
-/*! \brief Select the option which has the given name.
-	\param name The name of the option.
-	\return \c B_OK if there was an option with that name,
-		and it was correctly selected, an error code otherwise.
-*/
+/**
+ * @brief Selects the option whose display name matches @a name.
+ *
+ * Performs a case-sensitive string comparison against each option's name.
+ *
+ * @param name The display name of the option to select.
+ * @return @c B_OK if a matching option was found and selected,
+ *         @c B_ERROR if no option with that name exists.
+ *
+ * @see SelectOptionFor(int32), GetOptionAt(), SetValue()
+ */
 status_t
 BOptionControl::SelectOptionFor(const char *name)
 {
@@ -134,20 +201,27 @@ BOptionControl::SelectOptionFor(const char *name)
 }
 
 
-// Protected
-/*! \brief Creates a BMessage which contains the given value.
-	\param The value to be added to the message.
-	\return A pointer to a BMessage, NULL if something went wrong.
-*/
+/**
+ * @brief Creates a @c B_OPTION_CONTROL_VALUE message carrying the specified integer value.
+ *
+ * The returned message should be posted to the control to trigger a value change.
+ * Ownership of the returned object passes to the caller.
+ *
+ * @param value The integer value to embed in the message's @c "be:value" field.
+ * @return A newly allocated BMessage, or @c NULL if allocation or field
+ *         insertion fails.
+ *
+ * @see MessageReceived(), BOptionPopUp::AddOptionAt()
+ */
 BMessage *
 BOptionControl::MakeValueMessage(int32 value)
 {
-	BMessage *message = new BMessage(B_OPTION_CONTROL_VALUE);	
+	BMessage *message = new BMessage(B_OPTION_CONTROL_VALUE);
 	if (message->AddInt32("be:value", value) != B_OK) {
 		delete message;
 		message = NULL;
-	}		
-	
+	}
+
 	return message;
 }
 

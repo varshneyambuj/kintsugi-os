@@ -1,14 +1,43 @@
 /*
- * Copyright 2001-2025 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Stefano Ceccherini, stefano.ceccherini@gmail.com
- *		Adrien Destugues, pulkomandy@pulkomandy.tk
- *		Marc Flerackers, mflerackers@androme.be
- *		Rene Gollent, anevilyak@gmail.com
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2025 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Stefano Ceccherini, stefano.ceccherini@gmail.com
+ *       Adrien Destugues, pulkomandy@pulkomandy.tk
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Rene Gollent, anevilyak@gmail.com
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file Menu.cpp
+ * @brief Implementation of BMenu, the core menu class
+ *
+ * BMenu manages a list of BMenuItem objects and presents them in a pop-up or
+ * embedded menu. It handles keyboard navigation, item tracking,
+ * radio-button-style exclusion, and hierarchical submenus. BMenuBar,
+ * BPopUpMenu, and BMenuField all build on BMenu.
+ *
+ * @see BMenuItem, BMenuBar, BPopUpMenu, BMenuField
  */
 
 
@@ -67,14 +96,34 @@ using BPrivate::BMenuWindow;
 
 namespace BPrivate {
 
+/**
+ * @brief Tracks the set of keyboard trigger characters already claimed by
+ *        items in a menu, preventing duplicate automatic trigger assignments.
+ *
+ * Each character is stored in its lowercase canonical form so that trigger
+ * matching is case-insensitive.
+ */
 class TriggerList {
 public:
+	/** @brief Construct an empty trigger list. */
 	TriggerList() {}
+	/** @brief Destroy the trigger list. */
 	~TriggerList() {}
 
+	/**
+	 * @brief Check whether a character is already registered as a trigger.
+	 * @param c Unicode code point to test (case-insensitive).
+	 * @return true if the character (or its lowercase equivalent) is already
+	 *         in the list, false otherwise.
+	 */
 	bool HasTrigger(uint32 c)
 		{ return fList.find(BUnicodeChar::ToLower(c)) != fList.end(); }
 
+	/**
+	 * @brief Register a character as a used trigger.
+	 * @param c Unicode code point to add (stored as lowercase).
+	 * @return Always true.
+	 */
 	bool AddTrigger(uint32 c)
 	{
 		fList.insert(BUnicodeChar::ToLower(c));
@@ -82,20 +131,31 @@ public:
 	}
 
 private:
+	/** @brief Set of lowercase Unicode code points that are already triggers. */
 	std::set<uint32> fList;
 };
 
 
+/**
+ * @brief Auxiliary per-menu data that extends BMenu without changing its ABI.
+ *
+ * Stores the optional custom tracking hook and the flag that records whether
+ * the menu window was shifted left to stay on screen, so that child submenus
+ * can open in the same direction.
+ */
 class ExtraMenuData {
 public:
+	/** @brief Optional callback invoked each tracking iteration to allow
+	 *         the caller to abort tracking. */
 	menu_tracking_hook	trackingHook;
+	/** @brief Opaque context pointer passed to @c trackingHook. */
 	void*				trackingState;
 
-	// Used to track when the menu would be drawn offscreen and instead gets
-	// shifted back on the screen towards the left. This information
-	// allows us to draw submenus in the same direction as their parents.
+	/** @brief True when the menu window was nudged leftward to stay on screen;
+	 *         used so submenus open in the correct direction. */
 	bool				frameShiftedLeft;
 
+	/** @brief Construct ExtraMenuData with all fields zeroed/false. */
 	ExtraMenuData()
 	{
 		trackingHook = NULL;
@@ -105,21 +165,37 @@ public:
 };
 
 
+/** @brief Signature of the comparator function accepted by BMenu::SortItems(). */
 typedef int (*compare_func)(const BMenuItem*, const BMenuItem*);
 
+/**
+ * @brief Strict-weak-ordering functor that wraps a ::compare_func so that
+ *        it can be passed to std::stable_sort().
+ */
 struct MenuItemComparator
 {
+	/**
+	 * @brief Construct a comparator from a raw comparison function.
+	 * @param compareFunc Function returning negative/zero/positive like strcmp.
+	 */
 	MenuItemComparator(compare_func compareFunc)
 		:
 		fCompareFunc(compareFunc)
 	{
 	}
 
+	/**
+	 * @brief Return true when item1 should sort before item2.
+	 * @param item1 Left-hand item.
+	 * @param item2 Right-hand item.
+	 * @return true if compareFunc(item1, item2) < 0.
+	 */
 	bool operator () (const BMenuItem* item1, const BMenuItem* item2) {
 		return fCompareFunc(item1, item2) < 0;
 	}
 
 private:
+	/** @brief Underlying raw comparison function. */
 	compare_func fCompareFunc;
 };
 
@@ -127,14 +203,21 @@ private:
 }	// namespace BPrivate
 
 
+/** @brief Cached system-wide menu settings shared by all BMenu instances. */
 menu_info BMenu::sMenuInfo;
 
+/** @brief Key code of the left Shift key, read once in AttachedToWindow(). */
 uint32 BMenu::sShiftKey;
+/** @brief Key code of the left Control key, read once in AttachedToWindow(). */
 uint32 BMenu::sControlKey;
+/** @brief Key code of the left Option key, read once in AttachedToWindow(). */
 uint32 BMenu::sOptionKey;
+/** @brief Key code of the left Command key, read once in AttachedToWindow(). */
 uint32 BMenu::sCommandKey;
+/** @brief Key code of the Menu key, read once in AttachedToWindow(). */
 uint32 BMenu::sMenuKey;
 
+/** @brief Scripting property table describing BMenu's supported properties. */
 static property_info sPropList[] = {
 	{ "Enabled", { B_GET_PROPERTY, 0 },
 		{ B_DIRECT_SPECIFIER, 0 }, "Returns true if menu or menu item is "
@@ -229,12 +312,19 @@ static property_info sPropList[] = {
 };
 
 
-// note: this is redefined to localized one in BMenu::_InitData
+/** @brief Fallback label shown when a menu has no items; overwritten with a
+ *         localized string in BMenu::_InitData(). */
 const char* BPrivate::kEmptyMenuLabel = "<empty>";
 
 
+/**
+ * @brief Internal layout cache for BMenu, storing the preferred size and the
+ *        resizing mode that was in effect when it was last computed.
+ */
 struct BMenu::LayoutData {
+	/** @brief Preferred size computed by the last _ComputeLayout() call. */
 	BSize	preferred;
+	/** @brief ResizingMode() at the time @c preferred was calculated. */
 	uint32	lastResizingMode;
 };
 
@@ -242,6 +332,17 @@ struct BMenu::LayoutData {
 // #pragma mark - BMenu
 
 
+/**
+ * @brief Construct a BMenu with a name and an item layout.
+ *
+ * Creates an initially empty menu with the specified layout. The view is sized
+ * to (0,0) and resized to fit its items once they are added.
+ *
+ * @param name   Identifying name passed to BView.
+ * @param layout Arrangement of items: B_ITEMS_IN_COLUMN, B_ITEMS_IN_ROW, or
+ *               B_ITEMS_IN_MATRIX.
+ * @see BMenu(const char*, float, float)
+ */
 BMenu::BMenu(const char* name, menu_layout layout)
 	:
 	BView(BRect(0, 0, 0, 0), name, 0, B_WILL_DRAW),
@@ -276,6 +377,17 @@ BMenu::BMenu(const char* name, menu_layout layout)
 }
 
 
+/**
+ * @brief Construct a B_ITEMS_IN_MATRIX menu with an explicit initial size.
+ *
+ * Use this constructor when items will be placed at arbitrary positions via
+ * AddItem(BMenuItem*, BRect). The @p width and @p height parameters set the
+ * initial view dimensions; individual item frames determine the final size.
+ *
+ * @param name   Identifying name passed to BView.
+ * @param width  Initial view width in pixels.
+ * @param height Initial view height in pixels.
+ */
 BMenu::BMenu(const char* name, float width, float height)
 	:
 	BView(BRect(0.0f, 0.0f, 0.0f, 0.0f), name, 0, B_WILL_DRAW),
@@ -310,6 +422,17 @@ BMenu::BMenu(const char* name, float width, float height)
 }
 
 
+/**
+ * @brief Reconstruct a BMenu from an archived BMessage.
+ *
+ * Restores layout, enabled state, radio mode, trigger settings, dynamic
+ * name flag, maximum content width, and all archived child BMenuItem objects.
+ * Matrix-layout item frames are restored from the "_i_frames" field.
+ *
+ * @param archive The archive message previously produced by Archive().
+ * @see Archive()
+ * @see Instantiate()
+ */
 BMenu::BMenu(BMessage* archive)
 	:
 	BView(archive),
@@ -344,6 +467,15 @@ BMenu::BMenu(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroy the BMenu and release all owned resources.
+ *
+ * Destroys the cached menu window, removes and deletes all BMenuItem children,
+ * and frees internal helper objects (matrix size cache, extra data, layout
+ * data).
+ *
+ * @note Items are deleted regardless of how they were added.
+ */
 BMenu::~BMenu()
 {
 	_DeleteMenuWindow();
@@ -356,6 +488,13 @@ BMenu::~BMenu()
 }
 
 
+/**
+ * @brief Create a new BMenu from an archived BMessage.
+ * @param archive The archive message to instantiate from.
+ * @return A newly allocated BMenu if \a archive is a valid BMenu archive, or
+ *         NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable*
 BMenu::Instantiate(BMessage* archive)
 {
@@ -366,6 +505,19 @@ BMenu::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archive the BMenu into a BMessage.
+ *
+ * Stores layout, resize-to-fit flag, enabled state, radio mode, trigger
+ * enable flag, dynamic name flag, and maximum content width. When @p deep is
+ * true, each BMenuItem child is archived recursively; for matrix layouts the
+ * per-item frame is also stored.
+ *
+ * @param data The message to archive into.
+ * @param deep If true, all child BMenuItems are archived as well.
+ * @return B_OK on success, or an error code on the first failure.
+ * @see Instantiate()
+ */
 status_t
 BMenu::Archive(BMessage* data, bool deep) const
 {
@@ -404,6 +556,18 @@ BMenu::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Perform menu-level setup when the view is added to a window.
+ *
+ * Reads the current modifier key codes, installs the menu on the window's
+ * handler list (when this is a root menu), populates dynamic items, caches
+ * font metrics, and performs an initial layout pass. Sets fAttachAborted if
+ * dynamic item addition was cancelled so that the caller can handle it.
+ *
+ * @note Overrides BView::AttachedToWindow(). Always call the base version
+ *       first if you override this in a subclass.
+ * @see DetachedFromWindow()
+ */
 void
 BMenu::AttachedToWindow()
 {
@@ -435,6 +599,14 @@ BMenu::AttachedToWindow()
 }
 
 
+/**
+ * @brief Perform cleanup when the view is removed from its window.
+ *
+ * Uninstalls the menu from the window's handler list when this is a root
+ * menu (i.e. has no superitem).
+ *
+ * @see AttachedToWindow()
+ */
 void
 BMenu::DetachedFromWindow()
 {
@@ -445,6 +617,12 @@ BMenu::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called after the entire view hierarchy has been attached to the window.
+ *
+ * Delegates to the BView base implementation. Override in subclasses that need
+ * to act after all sibling and child views are also attached.
+ */
 void
 BMenu::AllAttached()
 {
@@ -452,6 +630,12 @@ BMenu::AllAttached()
 }
 
 
+/**
+ * @brief Called before the entire view hierarchy is detached from the window.
+ *
+ * Delegates to the BView base implementation. Override in subclasses that need
+ * to act while sibling and child views are still attached.
+ */
 void
 BMenu::AllDetached()
 {
@@ -459,6 +643,15 @@ BMenu::AllDetached()
 }
 
 
+/**
+ * @brief Draw the menu background and all visible items.
+ *
+ * If the layout is stale it is recomputed and the whole view is invalidated
+ * instead of drawing, so the next update will paint with fresh geometry.
+ * Otherwise DrawBackground() is called followed by DrawItems().
+ *
+ * @param updateRect The rectangle that needs to be redrawn (view coordinates).
+ */
 void
 BMenu::Draw(BRect updateRect)
 {
@@ -472,6 +665,16 @@ BMenu::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Dispatch incoming messages to the appropriate handler.
+ *
+ * Scripting messages (those with specifiers) are forwarded to _ScriptReceived().
+ * B_MOUSE_WHEEL_CHANGED scrolls the menu window when a BMenuWindow is present.
+ * B_MODIFIERS_CHANGED is relayed to the parent menu so it can update modifier
+ * key state. All other messages are forwarded to BView::MessageReceived().
+ *
+ * @param message The message to handle.
+ */
 void
 BMenu::MessageReceived(BMessage* message)
 {
@@ -518,6 +721,18 @@ BMenu::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handle keyboard input while the menu is visible.
+ *
+ * Implements arrow-key navigation, page-up/page-down scrolling through the
+ * BMenuWindow, Enter/Space to invoke the selected item, Escape to dismiss, and
+ * trigger-character matching against the items in this menu.
+ *
+ * @param bytes    UTF-8 encoded byte string of the pressed key.
+ * @param numBytes Number of bytes in @p bytes.
+ * @see _SelectNextItem()
+ * @see _QuitTracking()
+ */
 void
 BMenu::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -635,6 +850,14 @@ BMenu::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Return the minimum size of this menu.
+ *
+ * Revalidates the preferred-size cache if necessary and then composes the
+ * computed size with any explicit minimum size set by the caller.
+ *
+ * @return The minimum BSize the menu requires.
+ */
 BSize
 BMenu::MinSize()
 {
@@ -647,6 +870,14 @@ BMenu::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum size of this menu.
+ *
+ * Revalidates the preferred-size cache if necessary and then composes the
+ * computed size with any explicit maximum size set by the caller.
+ *
+ * @return The maximum BSize the menu allows.
+ */
 BSize
 BMenu::MaxSize()
 {
@@ -659,6 +890,14 @@ BMenu::MaxSize()
 }
 
 
+/**
+ * @brief Return the preferred size of this menu.
+ *
+ * Revalidates the preferred-size cache if necessary and then composes the
+ * computed size with any explicit preferred size set by the caller.
+ *
+ * @return The preferred BSize computed from the current item layout.
+ */
 BSize
 BMenu::PreferredSize()
 {
@@ -671,6 +910,14 @@ BMenu::PreferredSize()
 }
 
 
+/**
+ * @brief Write the preferred width and height into the supplied pointers.
+ *
+ * Either pointer may be NULL if that dimension is not needed.
+ *
+ * @param _width  Receives the preferred width, or ignored if NULL.
+ * @param _height Receives the preferred height, or ignored if NULL.
+ */
 void
 BMenu::GetPreferredSize(float* _width, float* _height)
 {
@@ -684,6 +931,12 @@ BMenu::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resize the menu view to its preferred dimensions.
+ *
+ * Delegates to BView::ResizeToPreferred(), which calls GetPreferredSize()
+ * internally.
+ */
 void
 BMenu::ResizeToPreferred()
 {
@@ -691,6 +944,13 @@ BMenu::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Perform a layout pass triggered by the layout system.
+ *
+ * If a BLayout has been explicitly attached, the base class handles it.
+ * Otherwise the cached layout is invalidated and recomputed via
+ * _RelayoutIfNeeded(), followed by an Invalidate() if the geometry changed.
+ */
 void
 BMenu::DoLayout()
 {
@@ -706,6 +966,10 @@ BMenu::DoLayout()
 }
 
 
+/**
+ * @brief Notification that the menu view's frame has moved.
+ * @param where The new top-left position of the view in parent coordinates.
+ */
 void
 BMenu::FrameMoved(BPoint where)
 {
@@ -713,6 +977,11 @@ BMenu::FrameMoved(BPoint where)
 }
 
 
+/**
+ * @brief Notification that the menu view's frame has been resized.
+ * @param width  The new width of the view.
+ * @param height The new height of the view.
+ */
 void
 BMenu::FrameResized(float width, float height)
 {
@@ -720,6 +989,16 @@ BMenu::FrameResized(float width, float height)
 }
 
 
+/**
+ * @brief Mark the cached item layout as stale so it is recomputed on next use.
+ *
+ * This override exists for backwards binary compatibility. It clears the
+ * internal layout cache flag and also calls BView::InvalidateLayout() for good
+ * measure.
+ *
+ * @note Do not remove this method even though it looks trivial; it is part of
+ *       the public ABI.
+ */
 void
 BMenu::InvalidateLayout()
 {
@@ -731,6 +1010,10 @@ BMenu::InvalidateLayout()
 }
 
 
+/**
+ * @brief Give or remove keyboard focus from this menu.
+ * @param focused true to make this view the focus view, false to remove focus.
+ */
 void
 BMenu::MakeFocus(bool focused)
 {
@@ -738,6 +1021,12 @@ BMenu::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Append a BMenuItem to the end of the menu.
+ * @param item The item to add; ownership transfers to the menu.
+ * @return true on success, false if @p item is NULL or memory allocation fails.
+ * @see AddItem(BMenuItem*, int32)
+ */
 bool
 BMenu::AddItem(BMenuItem* item)
 {
@@ -745,6 +1034,16 @@ BMenu::AddItem(BMenuItem* item)
 }
 
 
+/**
+ * @brief Insert a BMenuItem at the specified index.
+ *
+ * Not valid for B_ITEMS_IN_MATRIX menus; use AddItem(BMenuItem*, BRect) for
+ * those. Triggers a layout and redraw if the menu is currently visible.
+ *
+ * @param item  The item to add; ownership transfers to the menu.
+ * @param index Zero-based position at which to insert the item.
+ * @return true on success, false if @p item is NULL or the index is invalid.
+ */
 bool
 BMenu::AddItem(BMenuItem* item, int32 index)
 {
@@ -778,6 +1077,16 @@ BMenu::AddItem(BMenuItem* item, int32 index)
 }
 
 
+/**
+ * @brief Add a BMenuItem at an explicit frame position (B_ITEMS_IN_MATRIX only).
+ *
+ * Only valid when the menu layout is B_ITEMS_IN_MATRIX. The supplied @p frame
+ * defines the item's bounding rectangle within the menu view.
+ *
+ * @param item  The item to add; ownership transfers to the menu.
+ * @param frame The desired bounding rectangle of the item in view coordinates.
+ * @return true on success, false if @p item is NULL or the add fails.
+ */
 bool
 BMenu::AddItem(BMenuItem* item, BRect frame)
 {
@@ -812,6 +1121,14 @@ BMenu::AddItem(BMenuItem* item, BRect frame)
 }
 
 
+/**
+ * @brief Append a submenu wrapped in a new BMenuItem at the end of the menu.
+ *
+ * A BMenuItem is created automatically and takes ownership of @p submenu.
+ *
+ * @param submenu The menu to attach as a submenu item.
+ * @return true on success, false if allocation of the BMenuItem fails.
+ */
 bool
 BMenu::AddItem(BMenu* submenu)
 {
@@ -829,6 +1146,16 @@ BMenu::AddItem(BMenu* submenu)
 }
 
 
+/**
+ * @brief Insert a submenu wrapped in a new BMenuItem at the specified index.
+ *
+ * Not valid for B_ITEMS_IN_MATRIX menus. A BMenuItem is created automatically
+ * and takes ownership of @p submenu.
+ *
+ * @param submenu The menu to attach as a submenu item.
+ * @param index   Zero-based position at which to insert the new item.
+ * @return true on success, false if allocation fails or the index is invalid.
+ */
 bool
 BMenu::AddItem(BMenu* submenu, int32 index)
 {
@@ -851,6 +1178,16 @@ BMenu::AddItem(BMenu* submenu, int32 index)
 }
 
 
+/**
+ * @brief Add a submenu at an explicit frame position (B_ITEMS_IN_MATRIX only).
+ *
+ * Only valid when the menu layout is B_ITEMS_IN_MATRIX. A BMenuItem is created
+ * automatically and takes ownership of @p submenu.
+ *
+ * @param submenu The menu to attach as a submenu item.
+ * @param frame   The desired bounding rectangle in view coordinates.
+ * @return true on success, false if allocation fails.
+ */
 bool
 BMenu::AddItem(BMenu* submenu, BRect frame)
 {
@@ -873,6 +1210,18 @@ BMenu::AddItem(BMenu* submenu, BRect frame)
 }
 
 
+/**
+ * @brief Insert all BMenuItems in a BList starting at the given index.
+ *
+ * Items are inserted in list order beginning at @p index. The menu does not
+ * take ownership of the BList itself, only of the BMenuItem objects inside it.
+ *
+ * @param list  A BList whose elements are BMenuItem pointers.
+ * @param index Zero-based position at which insertion begins.
+ * @return true on success; false if @p list is NULL.
+ * @note This method is not documented in the Be Book; behaviour may differ
+ *       from the original R5 implementation.
+ */
 bool
 BMenu::AddList(BList* list, int32 index)
 {
@@ -906,6 +1255,13 @@ BMenu::AddList(BList* list, int32 index)
 }
 
 
+/**
+ * @brief Append a separator line to the end of the menu.
+ *
+ * Creates a new BSeparatorItem and appends it. The item is owned by the menu.
+ *
+ * @return true on success, false if memory allocation fails.
+ */
 bool
 BMenu::AddSeparatorItem()
 {
@@ -919,6 +1275,11 @@ BMenu::AddSeparatorItem()
 }
 
 
+/**
+ * @brief Remove a specific BMenuItem from the menu without deleting it.
+ * @param item The item to remove.
+ * @return true if the item was found and removed, false otherwise.
+ */
 bool
 BMenu::RemoveItem(BMenuItem* item)
 {
@@ -926,6 +1287,11 @@ BMenu::RemoveItem(BMenuItem* item)
 }
 
 
+/**
+ * @brief Remove and return the item at the given index without deleting it.
+ * @param index Zero-based index of the item to remove.
+ * @return The removed BMenuItem, or NULL if @p index is out of range.
+ */
 BMenuItem*
 BMenu::RemoveItem(int32 index)
 {
@@ -936,6 +1302,13 @@ BMenu::RemoveItem(int32 index)
 }
 
 
+/**
+ * @brief Remove a range of items starting at @p index.
+ * @param index       Zero-based index of the first item to remove.
+ * @param count       Number of items to remove.
+ * @param deleteItems If true, each removed item is deleted.
+ * @return true if all requested items were removed successfully.
+ */
 bool
 BMenu::RemoveItems(int32 index, int32 count, bool deleteItems)
 {
@@ -943,6 +1316,11 @@ BMenu::RemoveItems(int32 index, int32 count, bool deleteItems)
 }
 
 
+/**
+ * @brief Remove the BMenuItem that wraps the given submenu.
+ * @param submenu The submenu whose parent item should be removed.
+ * @return true if a matching item was found and removed, false otherwise.
+ */
 bool
 BMenu::RemoveItem(BMenu* submenu)
 {
@@ -957,6 +1335,10 @@ BMenu::RemoveItem(BMenu* submenu)
 }
 
 
+/**
+ * @brief Return the number of items currently in the menu.
+ * @return Item count as int32.
+ */
 int32
 BMenu::CountItems() const
 {
@@ -964,6 +1346,11 @@ BMenu::CountItems() const
 }
 
 
+/**
+ * @brief Return the BMenuItem at the given index.
+ * @param index Zero-based item index.
+ * @return The BMenuItem at @p index, or NULL if out of range.
+ */
 BMenuItem*
 BMenu::ItemAt(int32 index) const
 {
@@ -971,6 +1358,11 @@ BMenu::ItemAt(int32 index) const
 }
 
 
+/**
+ * @brief Return the submenu attached to the item at the given index.
+ * @param index Zero-based item index.
+ * @return The BMenu submenu, or NULL if the item has none or is out of range.
+ */
 BMenu*
 BMenu::SubmenuAt(int32 index) const
 {
@@ -979,6 +1371,11 @@ BMenu::SubmenuAt(int32 index) const
 }
 
 
+/**
+ * @brief Return the zero-based index of the given BMenuItem.
+ * @param item The item to search for.
+ * @return The index, or -1 if not found.
+ */
 int32
 BMenu::IndexOf(BMenuItem* item) const
 {
@@ -986,6 +1383,11 @@ BMenu::IndexOf(BMenuItem* item) const
 }
 
 
+/**
+ * @brief Return the zero-based index of the item that wraps the given submenu.
+ * @param submenu The submenu to locate.
+ * @return The index, or -1 if not found.
+ */
 int32
 BMenu::IndexOf(BMenu* submenu) const
 {
@@ -998,6 +1400,11 @@ BMenu::IndexOf(BMenu* submenu) const
 }
 
 
+/**
+ * @brief Find an item by its text label, searching recursively into submenus.
+ * @param label The exact label string to match.
+ * @return The first matching BMenuItem, or NULL if none is found.
+ */
 BMenuItem*
 BMenu::FindItem(const char* label) const
 {
@@ -1020,6 +1427,11 @@ BMenu::FindItem(const char* label) const
 }
 
 
+/**
+ * @brief Find an item by its message command value, searching recursively.
+ * @param command The what field value to match.
+ * @return The first matching BMenuItem, or NULL if none is found.
+ */
 BMenuItem*
 BMenu::FindItem(uint32 command) const
 {
@@ -1042,6 +1454,15 @@ BMenu::FindItem(uint32 command) const
 }
 
 
+/**
+ * @brief Set the target BHandler for all items in this menu.
+ *
+ * Iterates over every direct child item (not recursing into submenus) and
+ * calls BMenuItem::SetTarget(BHandler*) on each.
+ *
+ * @param handler The handler to set as the target for each item.
+ * @return B_OK if all targets were set, or the first error code encountered.
+ */
 status_t
 BMenu::SetTargetForItems(BHandler* handler)
 {
@@ -1056,6 +1477,15 @@ BMenu::SetTargetForItems(BHandler* handler)
 }
 
 
+/**
+ * @brief Set a BMessenger target for all items in this menu.
+ *
+ * Iterates over every direct child item (not recursing into submenus) and
+ * calls BMenuItem::SetTarget(BMessenger) on each.
+ *
+ * @param messenger The messenger to set as the target for each item.
+ * @return B_OK if all targets were set, or the first error code encountered.
+ */
 status_t
 BMenu::SetTargetForItems(BMessenger messenger)
 {
@@ -1070,6 +1500,14 @@ BMenu::SetTargetForItems(BMessenger messenger)
 }
 
 
+/**
+ * @brief Enable or disable the menu and propagate the state to its superitem.
+ *
+ * When the enable state changes, the superitem (if any) is updated to match,
+ * and if the direct parent is a _BMCMenuBar_ the parent menu is also updated.
+ *
+ * @param enable true to enable the menu, false to disable it.
+ */
 void
 BMenu::SetEnabled(bool enable)
 {
@@ -1086,6 +1524,14 @@ BMenu::SetEnabled(bool enable)
 }
 
 
+/**
+ * @brief Enable or disable radio-button-style mutual exclusion for items.
+ *
+ * When turned off, SetLabelFromMarked(false) is also called automatically.
+ *
+ * @param on true to enable radio mode, false to disable it.
+ * @see SetLabelFromMarked()
+ */
 void
 BMenu::SetRadioMode(bool on)
 {
@@ -1095,6 +1541,10 @@ BMenu::SetRadioMode(bool on)
 }
 
 
+/**
+ * @brief Enable or disable keyboard trigger characters for this menu.
+ * @param enable true to show and respond to trigger characters, false to hide them.
+ */
 void
 BMenu::SetTriggersEnabled(bool enable)
 {
@@ -1102,6 +1552,13 @@ BMenu::SetTriggersEnabled(bool enable)
 }
 
 
+/**
+ * @brief Set the maximum width available for item content.
+ *
+ * Labels wider than this value are clipped. Pass 0 (the default) for no limit.
+ *
+ * @param width Maximum content width in pixels, or 0 for unlimited.
+ */
 void
 BMenu::SetMaxContentWidth(float width)
 {
@@ -1109,6 +1566,16 @@ BMenu::SetMaxContentWidth(float width)
 }
 
 
+/**
+ * @brief Make the menu label track the currently marked item.
+ *
+ * When enabled, the superitem's label is updated to match the label of the
+ * marked item whenever the mark changes. Enabling this also enables radio
+ * mode automatically.
+ *
+ * @param on true to enable dynamic labelling, false to disable it.
+ * @see SetRadioMode()
+ */
 void
 BMenu::SetLabelFromMarked(bool on)
 {
@@ -1118,6 +1585,10 @@ BMenu::SetLabelFromMarked(bool on)
 }
 
 
+/**
+ * @brief Return whether the menu label tracks the marked item.
+ * @return true if dynamic labelling is enabled.
+ */
 bool
 BMenu::IsLabelFromMarked()
 {
@@ -1125,6 +1596,14 @@ BMenu::IsLabelFromMarked()
 }
 
 
+/**
+ * @brief Return whether the menu is currently enabled.
+ *
+ * A menu is considered enabled only if its own enabled flag is set AND its
+ * parent menu (if any) is also enabled.
+ *
+ * @return true if the menu and all ancestor menus are enabled.
+ */
 bool
 BMenu::IsEnabled() const
 {
@@ -1135,6 +1614,10 @@ BMenu::IsEnabled() const
 }
 
 
+/**
+ * @brief Return whether radio-button-style exclusion is active.
+ * @return true if radio mode is on.
+ */
 bool
 BMenu::IsRadioMode() const
 {
@@ -1142,6 +1625,10 @@ BMenu::IsRadioMode() const
 }
 
 
+/**
+ * @brief Return whether keyboard trigger characters are enabled.
+ * @return true if triggers are shown and honoured.
+ */
 bool
 BMenu::AreTriggersEnabled() const
 {
@@ -1149,6 +1636,13 @@ BMenu::AreTriggersEnabled() const
 }
 
 
+/**
+ * @brief Return whether the menu should be redrawn after leaving sticky mode.
+ *
+ * The base implementation always returns false. BPopUpMenu overrides this.
+ *
+ * @return false in BMenu; subclasses may return true.
+ */
 bool
 BMenu::IsRedrawAfterSticky() const
 {
@@ -1156,6 +1650,10 @@ BMenu::IsRedrawAfterSticky() const
 }
 
 
+/**
+ * @brief Return the maximum content width set by SetMaxContentWidth().
+ * @return The maximum content width in pixels, or 0 if unlimited.
+ */
 float
 BMenu::MaxContentWidth() const
 {
@@ -1163,6 +1661,13 @@ BMenu::MaxContentWidth() const
 }
 
 
+/**
+ * @brief Return the first marked item in the menu.
+ *
+ * Only examines direct children; does not recurse into submenus.
+ *
+ * @return The first marked BMenuItem, or NULL if no item is marked.
+ */
 BMenuItem*
 BMenu::FindMarked()
 {
@@ -1177,6 +1682,13 @@ BMenu::FindMarked()
 }
 
 
+/**
+ * @brief Return the index of the first marked item in the menu.
+ *
+ * Only examines direct children; does not recurse into submenus.
+ *
+ * @return Zero-based index of the first marked item, or -1 if none is marked.
+ */
 int32
 BMenu::FindMarkedIndex()
 {
@@ -1191,6 +1703,10 @@ BMenu::FindMarkedIndex()
 }
 
 
+/**
+ * @brief Return the parent BMenu that contains this menu's superitem.
+ * @return The parent BMenu, or NULL if this is a root menu.
+ */
 BMenu*
 BMenu::Supermenu() const
 {
@@ -1198,6 +1714,10 @@ BMenu::Supermenu() const
 }
 
 
+/**
+ * @brief Return the BMenuItem in the parent menu whose submenu is this menu.
+ * @return The superitem BMenuItem, or NULL if this is a root menu.
+ */
 BMenuItem*
 BMenu::Superitem() const
 {
@@ -1205,6 +1725,20 @@ BMenu::Superitem() const
 }
 
 
+/**
+ * @brief Resolve the target handler for a scripting message.
+ *
+ * Checks the known property list (sPropList) and returns this menu as the
+ * target when a match is found. Unknown properties are forwarded to
+ * BView::ResolveSpecifier().
+ *
+ * @param msg       The scripting message being processed.
+ * @param index     Index of the current specifier in the message.
+ * @param specifier The current specifier extracted from the message.
+ * @param form      The specifier form constant.
+ * @param property  The property name string.
+ * @return The BHandler that should handle the message.
+ */
 BHandler*
 BMenu::ResolveSpecifier(BMessage* msg, int32 index, BMessage* specifier,
 	int32 form, const char* property)
@@ -1224,6 +1758,15 @@ BMenu::ResolveSpecifier(BMessage* msg, int32 index, BMessage* specifier,
 }
 
 
+/**
+ * @brief Report the scripting suites supported by BMenu.
+ *
+ * Adds the "suite/vnd.Be-menu" suite name and the corresponding property-info
+ * flat data to @p data, then delegates to BView::GetSupportedSuites().
+ *
+ * @param data The reply message to populate with suite information.
+ * @return B_OK on success, B_BAD_VALUE if @p data is NULL, or an error code.
+ */
 status_t
 BMenu::GetSupportedSuites(BMessage* data)
 {
@@ -1245,6 +1788,19 @@ BMenu::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Binary-compatibility hook for calling overridden virtual methods.
+ *
+ * Dispatches perform codes for layout-related virtuals (MinSize, MaxSize,
+ * PreferredSize, LayoutAlignment, HasHeightForWidth, GetHeightForWidth,
+ * SetLayout, LayoutInvalidated, DoLayout) to the corresponding BMenu
+ * overrides. Unknown codes are forwarded to BView::Perform().
+ *
+ * @param code  A PERFORM_CODE_* constant identifying the virtual to call.
+ * @param _data Pointer to a perform_data_* struct carrying arguments and
+ *              receiving the return value.
+ * @return B_OK on success, or the result of BView::Perform() for unknown codes.
+ */
 status_t
 BMenu::Perform(perform_code code, void* _data)
 {
@@ -1312,6 +1868,19 @@ BMenu::Perform(perform_code code, void* _data)
 // #pragma mark - BMenu protected methods
 
 
+/**
+ * @brief Protected constructor used by BMenuBar and BPopUpMenu subclasses.
+ *
+ * Allows subclasses to specify an explicit initial frame, resizing mode, view
+ * flags, layout, and whether the menu should resize itself to fit its items.
+ *
+ * @param frame        Initial frame rectangle in parent coordinates.
+ * @param name         Identifying name passed to BView.
+ * @param resizingMode BView resizing mode flags (B_FOLLOW_*).
+ * @param flags        BView creation flags (B_WILL_DRAW, etc.).
+ * @param layout       Item arrangement: B_ITEMS_IN_COLUMN, _ROW, or _MATRIX.
+ * @param resizeToFit  If true the menu resizes itself to fit its items.
+ */
 BMenu::BMenu(BRect frame, const char* name, uint32 resizingMode, uint32 flags,
 	menu_layout layout, bool resizeToFit)
 	:
@@ -1347,6 +1916,17 @@ BMenu::BMenu(BRect frame, const char* name, uint32 resizingMode, uint32 flags,
 }
 
 
+/**
+ * @brief Set the padding applied around each item's content.
+ *
+ * These values define the spacing between the item's bounding rectangle and
+ * its drawn content (label, shortcut, checkmark, etc.).
+ *
+ * @param left   Left padding in pixels.
+ * @param top    Top padding in pixels.
+ * @param right  Right padding in pixels.
+ * @param bottom Bottom padding in pixels.
+ */
 void
 BMenu::SetItemMargins(float left, float top, float right, float bottom)
 {
@@ -1354,6 +1934,16 @@ BMenu::SetItemMargins(float left, float top, float right, float bottom)
 }
 
 
+/**
+ * @brief Retrieve the current item content padding values.
+ *
+ * Any of the output pointers may be NULL if that value is not needed.
+ *
+ * @param _left   Receives the left padding, or ignored if NULL.
+ * @param _top    Receives the top padding, or ignored if NULL.
+ * @param _right  Receives the right padding, or ignored if NULL.
+ * @param _bottom Receives the bottom padding, or ignored if NULL.
+ */
 void
 BMenu::GetItemMargins(float* _left, float* _top, float* _right,
 	float* _bottom) const
@@ -1372,6 +1962,10 @@ BMenu::GetItemMargins(float* _left, float* _top, float* _right,
 }
 
 
+/**
+ * @brief Return the item layout mode of this menu.
+ * @return One of B_ITEMS_IN_COLUMN, B_ITEMS_IN_ROW, or B_ITEMS_IN_MATRIX.
+ */
 menu_layout
 BMenu::Layout() const
 {
@@ -1379,6 +1973,10 @@ BMenu::Layout() const
 }
 
 
+/**
+ * @brief Show the menu without pre-selecting any item.
+ * @see Show(bool)
+ */
 void
 BMenu::Show()
 {
@@ -1386,6 +1984,11 @@ BMenu::Show()
 }
 
 
+/**
+ * @brief Make the menu visible in its BMenuWindow.
+ * @param selectFirst If true, the first enabled item is pre-selected.
+ * @see Hide()
+ */
 void
 BMenu::Show(bool selectFirst)
 {
@@ -1393,6 +1996,10 @@ BMenu::Show(bool selectFirst)
 }
 
 
+/**
+ * @brief Hide the menu and its BMenuWindow.
+ * @see Show()
+ */
 void
 BMenu::Hide()
 {
@@ -1400,6 +2007,20 @@ BMenu::Hide()
 }
 
 
+/**
+ * @brief Display the menu and run the tracking loop, returning the chosen item.
+ *
+ * This is the main entry point used by BPopUpMenu::Go(). When @p sticky is
+ * true the menu stays open after the mouse button is released until the user
+ * clicks again. If @p clickToOpenRect is provided, clicking inside it in
+ * non-sticky mode switches the menu to sticky mode.
+ *
+ * @param sticky           If true, start in sticky (click-to-open) mode.
+ * @param clickToOpenRect  Optional screen-coordinate rectangle that activates
+ *                         sticky mode on mouse release inside it.
+ * @return The BMenuItem chosen by the user, or NULL if the menu was dismissed
+ *         without a selection.
+ */
 BMenuItem*
 BMenu::Track(bool sticky, BRect* clickToOpenRect)
 {
@@ -1429,6 +2050,18 @@ BMenu::Track(bool sticky, BRect* clickToOpenRect)
 // #pragma mark - BMenu private methods
 
 
+/**
+ * @brief Hook called to populate a dynamic menu with items.
+ *
+ * Subclasses override this to add items on demand. The @p state parameter
+ * indicates which phase of the add sequence is occurring:
+ * - B_INITIAL_ADD: called first; return true to continue, false to abort.
+ * - B_PROCESSING:  called repeatedly until it returns false.
+ * - B_ABORT:       called once if the operation should be cancelled.
+ *
+ * @param state One of B_INITIAL_ADD, B_PROCESSING, or B_ABORT.
+ * @return true to continue adding, false when finished or to abort.
+ */
 bool
 BMenu::AddDynamicItem(add_state state)
 {
@@ -1437,6 +2070,14 @@ BMenu::AddDynamicItem(add_state state)
 }
 
 
+/**
+ * @brief Draw the menu's background region using the current ControlLook.
+ *
+ * Computes the appropriate border flags based on where the menu sits relative
+ * to its window edges, then delegates to be_control_look->DrawMenuBackground().
+ *
+ * @param updateRect The rectangle that needs repainting (view coordinates).
+ */
 void
 BMenu::DrawBackground(BRect updateRect)
 {
@@ -1466,6 +2107,15 @@ BMenu::DrawBackground(BRect updateRect)
 }
 
 
+/**
+ * @brief Install a custom tracking hook that can abort the tracking loop.
+ *
+ * The hook is called once per tracking iteration. If it returns true the
+ * tracking loop exits immediately without selecting any item.
+ *
+ * @param func  The hook function, or NULL to clear an existing hook.
+ * @param state Opaque context pointer forwarded to @p func on each call.
+ */
 void
 BMenu::SetTrackingHook(menu_tracking_hook func, void* state)
 {
@@ -1477,6 +2127,15 @@ BMenu::SetTrackingHook(menu_tracking_hook func, void* state)
 // #pragma mark - Reorder item methods
 
 
+/**
+ * @brief Sort menu items in-place using a caller-supplied comparison function.
+ *
+ * Uses std::stable_sort so that items that compare as equal retain their
+ * original relative order. Invalidates the layout and redraws if the menu
+ * is currently visible.
+ *
+ * @param compare A function returning negative/zero/positive like strcmp().
+ */
 void
 BMenu::SortItems(int (*compare)(const BMenuItem*, const BMenuItem*))
 {
@@ -1494,6 +2153,12 @@ BMenu::SortItems(int (*compare)(const BMenuItem*, const BMenuItem*))
 }
 
 
+/**
+ * @brief Exchange the positions of two menu items.
+ * @param indexA Zero-based index of the first item.
+ * @param indexB Zero-based index of the second item.
+ * @return true if the swap succeeded, false if either index is invalid.
+ */
 bool
 BMenu::SwapItems(int32 indexA, int32 indexB)
 {
@@ -1511,6 +2176,12 @@ BMenu::SwapItems(int32 indexA, int32 indexB)
 }
 
 
+/**
+ * @brief Move a menu item from one position to another.
+ * @param indexFrom Zero-based index of the item to move.
+ * @param indexTo   Zero-based destination index.
+ * @return true if the move succeeded, false if either index is invalid.
+ */
 bool
 BMenu::MoveItem(int32 indexFrom, int32 indexTo)
 {
@@ -1534,6 +2205,16 @@ void BMenu::_ReservedMenu5() {}
 void BMenu::_ReservedMenu6() {}
 
 
+/**
+ * @brief Common initialisation shared by all BMenu constructors.
+ *
+ * Sets the menu font from the global sMenuInfo, allocates the ExtraMenuData
+ * and LayoutData helpers, configures the view colors, and — when @p archive is
+ * non-NULL — restores all persisted state including child BMenuItems.
+ *
+ * @param archive Optional archive message to restore state from; NULL for a
+ *                freshly constructed menu.
+ */
 void
 BMenu::_InitData(BMessage* archive)
 {
@@ -1590,6 +2271,21 @@ BMenu::_InitData(BMessage* archive)
 }
 
 
+/**
+ * @brief Open the BMenuWindow for this menu and optionally pre-select an item.
+ *
+ * Attempts to reuse a cached BMenuWindow from the supermenu; if none is
+ * available a new one is created. Dynamic items are added before the window
+ * is shown. If dynamic item addition is aborted the function returns false and
+ * the window is cleaned up.
+ *
+ * @param selectFirstItem If true, the first item is selected after the window
+ *                        is shown.
+ * @param keyDown         True when the menu is being opened via keyboard
+ *                        navigation; passed to _AddDynamicItems().
+ * @return true if the menu was successfully shown, false otherwise.
+ * @see _Hide()
+ */
 bool
 BMenu::_Show(bool selectFirstItem, bool keyDown)
 {
@@ -1665,6 +2361,15 @@ BMenu::_Show(bool selectFirstItem, bool keyDown)
 }
 
 
+/**
+ * @brief Close the BMenuWindow for this menu.
+ *
+ * Deselects any selected item, hides and detaches the window, then either
+ * unlocks it (if owned by the supermenu) or quits it (if this is a root menu).
+ * Also deletes the submenu window cache.
+ *
+ * @see _Show()
+ */
 void
 BMenu::_Hide()
 {
@@ -1690,6 +2395,16 @@ BMenu::_Hide()
 }
 
 
+/**
+ * @brief Dispatch a scripting message targeting the menu itself.
+ *
+ * Handles Enabled get/set, Label/Mark (forwarded to the superitem),
+ * Menu create/delete/navigate, MenuItem count/create/delete/execute/navigate.
+ * Replies to the message with a B_REPLY or B_MESSAGE_NOT_UNDERSTOOD as
+ * appropriate.
+ *
+ * @param message The scripting message with at least one specifier.
+ */
 void BMenu::_ScriptReceived(BMessage* message)
 {
 	BMessage replyMsg(B_REPLY);
@@ -1884,6 +2599,15 @@ void BMenu::_ScriptReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Dispatch a scripting message targeting a specific BMenuItem.
+ *
+ * Handles Enabled get/set, Label get/set, and Mark get/set for the given
+ * @p item. Replies to the message with B_REPLY or B_MESSAGE_NOT_UNDERSTOOD.
+ *
+ * @param message The scripting message.
+ * @param item    The item to read from or modify.
+ */
 void BMenu::_ItemScriptReceived(BMessage* message, BMenuItem* item)
 {
 	BMessage replyMsg(B_REPLY);
@@ -1959,6 +2683,20 @@ void BMenu::_ItemScriptReceived(BMessage* message, BMenuItem* item)
 }
 
 
+/**
+ * @brief Resolve a scripting specifier to the corresponding BMenuItem.
+ *
+ * Supports B_INDEX_SPECIFIER, B_REVERSE_INDEX_SPECIFIER, and
+ * B_NAME_SPECIFIER. On success, @p item is set to the found item.
+ *
+ * @param specifier The specifier sub-message from the scripting message.
+ * @param what      The specifier form constant (B_INDEX_SPECIFIER, etc.).
+ * @param item      Receives the found BMenuItem pointer.
+ * @param _index    If non-NULL, receives the zero-based numeric index of the
+ *                  item (-1 for name-based lookups).
+ * @return B_OK on success, B_BAD_INDEX if the item could not be found, or
+ *         another error if the specifier fields are missing.
+ */
 status_t BMenu::_ResolveItemSpecifier(const BMessage& specifier, int32 what,
 	BMenuItem*& item, int32 *_index)
 {
@@ -1995,6 +2733,18 @@ status_t BMenu::_ResolveItemSpecifier(const BMessage& specifier, int32 what,
 }
 
 
+/**
+ * @brief Insert a BMenuItem at the position described by a scripting specifier.
+ *
+ * Supports B_INDEX_SPECIFIER and B_REVERSE_INDEX_SPECIFIER.
+ * B_NAME_SPECIFIER is not supported and returns B_NOT_SUPPORTED.
+ *
+ * @param specifier The specifier sub-message describing the insertion point.
+ * @param what      The specifier form constant.
+ * @param item      The item to insert; caller retains ownership on failure.
+ * @return B_OK on success, B_BAD_INDEX if the index is invalid, or
+ *         B_NOT_SUPPORTED for unsupported specifier forms.
+ */
 status_t BMenu::_InsertItemAtSpecifier(const BMessage& specifier, int32 what,
 	BMenuItem* item)
 {
@@ -2023,10 +2773,28 @@ status_t BMenu::_InsertItemAtSpecifier(const BMessage& specifier, int32 what,
 // #pragma mark - mouse tracking
 
 
+/** @brief Delay (microseconds) before a hovered submenu opens; currently 0. */
 const static bigtime_t kOpenSubmenuDelay = 0;
+/** @brief Timeout (microseconds) before the navigation-area protection expires. */
 const static bigtime_t kNavigationAreaTimeout = 1000000;
 
 
+/**
+ * @brief Run the interactive mouse-tracking loop for this menu.
+ *
+ * Polls mouse position and button state in a tight loop, selecting items
+ * under the cursor, opening and closing submenus, and honouring sticky mode.
+ * Also handles keyboard-driven navigation when fState is set externally.
+ * The loop exits when fState transitions to MENU_STATE_CLOSED.
+ *
+ * @param action Output parameter; receives the final fState value so the
+ *               caller can distinguish normal close from keyboard navigation.
+ * @param start  Unused legacy parameter (reserved for future use).
+ * @return The BMenuItem that was ultimately chosen, or NULL if the menu was
+ *         dismissed without a selection.
+ * @see _UpdateStateOpenSelect()
+ * @see _UpdateStateClose()
+ */
 BMenuItem*
 BMenu::_Track(int* action, long start)
 {
@@ -2210,6 +2978,19 @@ BMenu::_Track(int* action, long start)
 }
 
 
+/**
+ * @brief Recalculate the triangular navigation-area rectangles for submenu access.
+ *
+ * When the currently selected item has an open submenu, the user should be
+ * able to move the cursor diagonally toward the submenu without accidentally
+ * selecting a different item. This function computes two axis-aligned
+ * rectangles that bound the triangular safe zone on each side of the cursor.
+ *
+ * @param position         Current cursor position in screen coordinates.
+ * @param navAreaRectAbove Receives the upper navigation area rectangle.
+ * @param navAreaRectBelow Receives the lower navigation area rectangle.
+ * @see _UpdateStateOpenSelect()
+ */
 void
 BMenu::_UpdateNavigationArea(BPoint position, BRect& navAreaRectAbove,
 	BRect& navAreaRectBelow)
@@ -2285,6 +3066,22 @@ BMenu::_UpdateNavigationArea(BPoint position, BRect& navAreaRectAbove,
 }
 
 
+/**
+ * @brief Update the selection and optionally open a submenu during tracking.
+ *
+ * Called each tracking iteration when the cursor is over a menu item. If the
+ * cursor has moved to a different item, the navigation-area logic is applied:
+ * the new item is selected immediately if the cursor is outside the protection
+ * zone, or after kNavigationAreaTimeout if inside. When the cursor lingers on
+ * an item with a submenu longer than kOpenSubmenuDelay the submenu is opened.
+ *
+ * @param item               The item currently under the cursor.
+ * @param position           Current cursor position in view coordinates.
+ * @param navAreaRectAbove   Upper navigation-area rectangle (may be updated).
+ * @param navAreaRectBelow   Lower navigation-area rectangle (may be updated).
+ * @param selectedTime       Timestamp when the current item was first selected.
+ * @param navigationAreaTime Timestamp when cursor entered the navigation area.
+ */
 void
 BMenu::_UpdateStateOpenSelect(BMenuItem* item, BPoint position,
 	BRect& navAreaRectAbove, BRect& navAreaRectBelow, bigtime_t& selectedTime,
@@ -2371,6 +3168,18 @@ BMenu::_UpdateStateOpenSelect(BMenuItem* item, BPoint position,
 }
 
 
+/**
+ * @brief Determine whether the tracking loop should close based on mouse state.
+ *
+ * In sticky mode a mouse press outside an item closes the menu; a press on an
+ * item disables sticky mode. In non-sticky mode a mouse release closes the
+ * menu unless the cursor is inside the clickToOpenRect, in which case the menu
+ * switches to sticky mode.
+ *
+ * @param item    The item under the cursor, or NULL if the cursor is outside.
+ * @param where   Current cursor position in view coordinates.
+ * @param buttons Current mouse button bitmask from GetMouse().
+ */
 void
 BMenu::_UpdateStateClose(BMenuItem* item, const BPoint& where,
 	const uint32& buttons)
@@ -2404,6 +3213,17 @@ BMenu::_UpdateStateClose(BMenuItem* item, const BPoint& where,
 }
 
 
+/**
+ * @brief Low-level helper that inserts an item into the fItems list.
+ *
+ * Installs the item on the appropriate BWindow and sets its supermenu pointer.
+ * Does not perform any layout or redraw.
+ *
+ * @param item  The item to insert; must not be NULL.
+ * @param index Zero-based insertion position.
+ * @return true on success, false if the index is out of range or the list
+ *         operation fails.
+ */
 bool
 BMenu::_AddItem(BMenuItem* item, int32 index)
 {
@@ -2432,6 +3252,21 @@ BMenu::_AddItem(BMenuItem* item, int32 index)
 }
 
 
+/**
+ * @brief Low-level helper that removes items from fItems.
+ *
+ * When @p item is non-NULL that specific item is removed and @p index and
+ * @p count are ignored. Otherwise items in the half-open range
+ * [@p index, @p index + @p count) are removed. Each removed item is
+ * uninstalled from its window and its supermenu pointer is cleared. If
+ * @p deleteItems is true the items are also deleted.
+ *
+ * @param index       Start of the range to remove (ignored when @p item is set).
+ * @param count       Number of items to remove (ignored when @p item is set).
+ * @param item        Specific item to remove, or NULL to use the range.
+ * @param deleteItems If true, each removed item is deleted.
+ * @return true if all intended removals succeeded.
+ */
 bool
 BMenu::_RemoveItems(int32 index, int32 count, BMenuItem* item,
 	bool deleteItems)
@@ -2498,6 +3333,15 @@ BMenu::_RemoveItems(int32 index, int32 count, BMenuItem* item,
 }
 
 
+/**
+ * @brief Recompute the item layout if the cached layout is stale.
+ *
+ * Clears the stale flag, refreshes the font info cache, performs a full layout
+ * pass, and updates the window/view size.
+ *
+ * @return true if a layout pass was performed, false if the cache was still
+ *         valid and nothing needed to be done.
+ */
 bool
 BMenu::_RelayoutIfNeeded()
 {
@@ -2512,6 +3356,16 @@ BMenu::_RelayoutIfNeeded()
 }
 
 
+/**
+ * @brief Compute trigger characters and lay out items starting from @p index.
+ *
+ * Calls _CalcTriggers() to (re)assign keyboard triggers, then _ComputeLayout()
+ * to calculate item positions and the menu's required size. If fResizeToFit
+ * is true the menu view is resized to exactly fit the computed dimensions.
+ *
+ * @param index Zero-based index of the first item whose position may have
+ *              changed; currently the full layout is always recomputed.
+ */
 void
 BMenu::_LayoutItems(int32 index)
 {
@@ -2526,6 +3380,14 @@ BMenu::_LayoutItems(int32 index)
 }
 
 
+/**
+ * @brief Ensure the preferred-size cache is current and return it.
+ *
+ * If the cached size is unset or the resizing mode has changed since the last
+ * computation, _ComputeLayout() is called to refresh it.
+ *
+ * @return The validated preferred BSize.
+ */
 BSize
 BMenu::_ValidatePreferredSize()
 {
@@ -2539,6 +3401,22 @@ BMenu::_ValidatePreferredSize()
 }
 
 
+/**
+ * @brief Compute the overall menu geometry by delegating to the layout method
+ *        appropriate for the current fLayout value.
+ *
+ * Dispatches to _ComputeColumnLayout(), _ComputeRowLayout(), or
+ * _ComputeMatrixLayout(). Adjusts the width for B_FOLLOW_LEFT_RIGHT resizing
+ * mode. Optionally writes the resulting size through @p _width / @p _height
+ * and stores it in fLayoutData->preferred when @p bestFit is true.
+ *
+ * @param index      First item index that may have changed (currently unused;
+ *                   the full layout is always recomputed).
+ * @param bestFit    If true, store the result in the preferred-size cache.
+ * @param moveItems  If true, update each item's fBounds to the new position.
+ * @param _width     If non-NULL, receives the computed width.
+ * @param _height    If non-NULL, receives the computed height.
+ */
 void
 BMenu::_ComputeLayout(int32 index, bool bestFit, bool moveItems,
 	float* _width, float* _height)
@@ -2612,6 +3490,22 @@ BMenu::_ComputeLayout(int32 index, bool bestFit, bool moveItems,
 }
 
 
+/**
+ * @brief Compute item geometry for a B_ITEMS_IN_COLUMN menu.
+ *
+ * Sets each item's top, bottom, and left coordinates and computes the
+ * required width accounting for shortcut modifier icons and submenu arrows.
+ * Also applies fMaxContentWidth if set.
+ *
+ * @param index         First item index to lay out (items before this are
+ *                      assumed already positioned).
+ * @param bestFit       Unused in the current implementation.
+ * @param moveItems     If true, item fBounds.right values are set to the
+ *                      computed menu width.
+ * @param overrideFrame If non-NULL, use its right edge as the initial frame
+ *                      width (used when parented by a _BMCMenuBar_).
+ * @param frame         Output: bounding rectangle enclosing all items.
+ */
 void
 BMenu::_ComputeColumnLayout(int32 index, bool bestFit, bool moveItems,
 	BRect* overrideFrame, BRect& frame)
@@ -2706,6 +3600,18 @@ BMenu::_ComputeColumnLayout(int32 index, bool bestFit, bool moveItems,
 }
 
 
+/**
+ * @brief Compute item geometry for a B_ITEMS_IN_ROW menu (e.g. BMenuBar).
+ *
+ * Positions items left-to-right. All items share the same height derived from
+ * the font metrics and fPad. When @p bestFit is true the computed width is
+ * used; otherwise the current view width is kept.
+ *
+ * @param index     First item index to lay out.
+ * @param bestFit   If true, use the computed width; otherwise keep Bounds().right.
+ * @param moveItems If true, set each item's fBounds.bottom to the row height.
+ * @param frame     Output: bounding rectangle enclosing all items.
+ */
 void
 BMenu::_ComputeRowLayout(int32 index, bool bestFit, bool moveItems,
 	BRect& frame)
@@ -2742,6 +3648,15 @@ BMenu::_ComputeRowLayout(int32 index, bool bestFit, bool moveItems,
 }
 
 
+/**
+ * @brief Compute the bounding frame for a B_ITEMS_IN_MATRIX menu.
+ *
+ * Items in matrix menus have pre-assigned fBounds set by the caller. This
+ * function computes the union of all item frames to determine the minimum
+ * enclosing rectangle.
+ *
+ * @param frame Output: bounding rectangle that encloses all item frames.
+ */
 void
 BMenu::_ComputeMatrixLayout(BRect &frame)
 {
@@ -2758,6 +3673,14 @@ BMenu::_ComputeMatrixLayout(BRect &frame)
 }
 
 
+/**
+ * @brief Respond to a layout invalidation from the BLayout system.
+ *
+ * Clears both the cached menu layout flag and the stored preferred size so
+ * they will be recomputed on the next layout request.
+ *
+ * @param descendants True if descendant layouts were also invalidated.
+ */
 void
 BMenu::LayoutInvalidated(bool descendants)
 {
@@ -2766,7 +3689,17 @@ BMenu::LayoutInvalidated(bool descendants)
 }
 
 
-// Assumes the SuperMenu to be locked (due to calling ConvertToScreen())
+/**
+ * @brief Return the screen position at which this menu should appear.
+ *
+ * For column-layout supermenus the menu opens to the right of the superitem;
+ * for row-layout supermenus it opens below it. The supermenu must be locked
+ * by the caller because this method calls ConvertToScreen().
+ *
+ * @return The screen coordinate of the menu's top-left corner.
+ * @note Subclasses (e.g. BPopUpMenu) override this to place the menu at an
+ *       arbitrary screen position.
+ */
 BPoint
 BMenu::ScreenLocation()
 {
@@ -2790,6 +3723,19 @@ BMenu::ScreenLocation()
 }
 
 
+/**
+ * @brief Calculate the on-screen frame for the menu window, keeping it visible.
+ *
+ * Starts from @p where and adjusts the frame so it stays within the screen
+ * bounds. Handles edge cases for menu fields, column menus (opens left if no
+ * room on the right), and row menus (opens upward if no room below). Sets
+ * fExtraMenuData->frameShiftedLeft if the frame was nudged leftward.
+ *
+ * @param where    Desired top-left position of the menu in screen coordinates.
+ * @param scrollOn If non-NULL, receives true when the menu is taller than the
+ *                 available screen space and scroll bars are needed.
+ * @return The adjusted screen frame for the menu window.
+ */
 BRect
 BMenu::_CalcFrame(BPoint where, bool* scrollOn)
 {
@@ -2870,6 +3816,10 @@ BMenu::_CalcFrame(BPoint where, bool* scrollOn)
 }
 
 
+/**
+ * @brief Draw all items whose frame intersects the given update rectangle.
+ * @param updateRect The dirty region in view coordinates.
+ */
 void
 BMenu::DrawItems(BRect updateRect)
 {
@@ -2882,6 +3832,15 @@ BMenu::DrawItems(BRect updateRect)
 }
 
 
+/**
+ * @brief Return the current tracking state, recursing into open submenus.
+ *
+ * If a submenu is open and tracking, its state is returned instead of this
+ * menu's state.
+ *
+ * @param item Unused output pointer (reserved for future use).
+ * @return The effective MENU_STATE_* constant.
+ */
 int
 BMenu::_State(BMenuItem** item) const
 {
@@ -2895,6 +3854,16 @@ BMenu::_State(BMenuItem** item) const
 }
 
 
+/**
+ * @brief Invoke a menu item, playing the selection animation first.
+ *
+ * Briefly highlights and un-highlights the item to provide visual feedback,
+ * then locks the root menu's looper and calls BMenuItem::Invoke(). Disabled
+ * items are silently ignored.
+ *
+ * @param item The item to invoke; must not be NULL.
+ * @param now  Currently unused; reserved for future synchronous invocation.
+ */
 void
 BMenu::_InvokeItem(BMenuItem* item, bool now)
 {
@@ -2935,6 +3904,12 @@ BMenu::_InvokeItem(BMenuItem* item, bool now)
 }
 
 
+/**
+ * @brief Test whether a screen point lies within the supermenu's bounds.
+ * @param location Screen coordinate to test.
+ * @return true if @p location is inside fSuperbounds, false otherwise or if
+ *         there is no supermenu.
+ */
 bool
 BMenu::_OverSuper(BPoint location)
 {
@@ -2945,6 +3920,16 @@ BMenu::_OverSuper(BPoint location)
 }
 
 
+/**
+ * @brief Test whether a screen point lies within @p item's open submenu.
+ *
+ * Checks the submenu's window frame and recursively checks the submenu's own
+ * selected sub-submenu, so deeply nested menus are handled correctly.
+ *
+ * @param item The item whose submenu is to be tested, or NULL.
+ * @param loc  Screen coordinate to test.
+ * @return true if @p loc is inside the submenu or any of its open children.
+ */
 bool
 BMenu::_OverSubmenu(BMenuItem* item, BPoint loc)
 {
@@ -2963,6 +3948,15 @@ BMenu::_OverSubmenu(BMenuItem* item, BPoint loc)
 }
 
 
+/**
+ * @brief Retrieve or create the cached BMenuWindow used by submenus.
+ *
+ * The window is created lazily on the first call and is reused for all child
+ * submenus to avoid repeated window creation overhead.
+ *
+ * @return The cached BMenuWindow, or NULL if allocation failed.
+ * @see _DeleteMenuWindow()
+ */
 BMenuWindow*
 BMenu::_MenuWindow()
 {
@@ -2976,6 +3970,14 @@ BMenu::_MenuWindow()
 }
 
 
+/**
+ * @brief Destroy the cached BMenuWindow and set the pointer to NULL.
+ *
+ * Locks the window, calls Quit() to destroy it asynchronously, and clears
+ * fCachedMenuWindow. Safe to call even when no window is cached.
+ *
+ * @see _MenuWindow()
+ */
 void
 BMenu::_DeleteMenuWindow()
 {
@@ -2987,6 +3989,16 @@ BMenu::_DeleteMenuWindow()
 }
 
 
+/**
+ * @brief Return the non-separator item whose frame contains the given point.
+ *
+ * Returns NULL if @p where is outside the menu bounds or if only a
+ * BSeparatorItem is at that position.
+ *
+ * @param where View-coordinate point to test.
+ * @param slop  Extra hit-test tolerance (currently ignored).
+ * @return The hit BMenuItem, or NULL if no eligible item is at @p where.
+ */
 BMenuItem*
 BMenu::_HitTestItems(BPoint where, BPoint slop) const
 {
@@ -3010,6 +4022,14 @@ BMenu::_HitTestItems(BPoint where, BPoint slop) const
 }
 
 
+/**
+ * @brief Return the cached screen bounds of the supermenu.
+ *
+ * Updated at the start of _Show() via ConvertToScreen(). Used by _OverSuper()
+ * to detect when the cursor has returned to the parent menu.
+ *
+ * @return The supermenu's bounding rectangle in screen coordinates.
+ */
 BRect
 BMenu::_Superbounds() const
 {
@@ -3017,6 +4037,12 @@ BMenu::_Superbounds() const
 }
 
 
+/**
+ * @brief Cache the current font's ascent, descent, and combined height.
+ *
+ * Results are stored in fAscent, fDescent, and fFontHeight for use during
+ * item layout and drawing without repeated calls to GetFontHeight().
+ */
 void
 BMenu::_CacheFontInfo()
 {
@@ -3028,6 +4054,14 @@ BMenu::_CacheFontInfo()
 }
 
 
+/**
+ * @brief Handle a mark change on the given item.
+ *
+ * In radio mode, all other items are unmarked. If IsLabelFromMarked() is true,
+ * the superitem's label is updated to the newly marked item's label.
+ *
+ * @param item The item that was just marked.
+ */
 void
 BMenu::_ItemMarked(BMenuItem* item)
 {
@@ -3043,6 +4077,10 @@ BMenu::_ItemMarked(BMenuItem* item)
 }
 
 
+/**
+ * @brief Install all child items onto a BWindow's shortcut handler.
+ * @param target The window on which items should be installed.
+ */
 void
 BMenu::_Install(BWindow* target)
 {
@@ -3051,6 +4089,9 @@ BMenu::_Install(BWindow* target)
 }
 
 
+/**
+ * @brief Uninstall all child items from their current BWindow.
+ */
 void
 BMenu::_Uninstall()
 {
@@ -3059,6 +4100,18 @@ BMenu::_Uninstall()
 }
 
 
+/**
+ * @brief Change the currently highlighted (selected) item.
+ *
+ * Deselects the previously selected item and closes its submenu if open.
+ * Selects the new @p item and, if @p showSubmenu is true and the item has a
+ * submenu, opens that submenu via _Show().
+ *
+ * @param item            The item to select, or NULL to deselect all.
+ * @param showSubmenu     If true and @p item has a submenu, open it.
+ * @param selectFirstItem If true, pre-select the first item in the submenu.
+ * @param keyDown         True when navigation is keyboard-driven.
+ */
 void
 BMenu::_SelectItem(BMenuItem* item, bool showSubmenu, bool selectFirstItem, bool keyDown)
 {
@@ -3089,6 +4142,17 @@ BMenu::_SelectItem(BMenuItem* item, bool showSubmenu, bool selectFirstItem, bool
 }
 
 
+/**
+ * @brief Move the selection to the next or previous enabled item.
+ *
+ * Wraps around at the ends of the list. After selecting the item the system
+ * cursor is hidden to indicate keyboard navigation.
+ *
+ * @param item    The currently selected item, or NULL.
+ * @param forward If true, select the next item; if false, select the previous.
+ * @return true if a new item was selected, false if the menu is empty or no
+ *         other enabled item could be found.
+ */
 bool
 BMenu::_SelectNextItem(BMenuItem* item, bool forward)
 {
@@ -3110,6 +4174,16 @@ BMenu::_SelectNextItem(BMenuItem* item, bool forward)
 }
 
 
+/**
+ * @brief Find the next enabled item in the given direction, wrapping around.
+ *
+ * Skips disabled items. If no enabled item exists other than the current one,
+ * returns NULL.
+ *
+ * @param item    Starting item; the search begins one step past this item.
+ * @param forward If true, search forward (increasing index); otherwise backward.
+ * @return The next enabled BMenuItem, or NULL if none is available.
+ */
 BMenuItem*
 BMenu::_NextItem(BMenuItem* item, bool forward) const
 {
@@ -3143,6 +4217,16 @@ BMenu::_NextItem(BMenuItem* item, bool forward) const
 }
 
 
+/**
+ * @brief Set the sticky (click-to-open) mode on this menu and its ancestors.
+ *
+ * Sticky mode means the menu stays open after the mouse button is released.
+ * The flag is propagated up the menu hierarchy. When enabling sticky mode on
+ * the root BMenuBar, focus is stolen from the current focus view so that
+ * keyboard events are delivered to the menu.
+ *
+ * @param sticky true to enter sticky mode, false to leave it.
+ */
 void
 BMenu::_SetStickyMode(bool sticky)
 {
@@ -3168,6 +4252,10 @@ BMenu::_SetStickyMode(bool sticky)
 }
 
 
+/**
+ * @brief Return whether this menu is currently in sticky mode.
+ * @return true if sticky mode is active.
+ */
 bool
 BMenu::_IsStickyMode() const
 {
@@ -3175,6 +4263,15 @@ BMenu::_IsStickyMode() const
 }
 
 
+/**
+ * @brief Read the left Shift key code into @p value.
+ *
+ * Falls back to the hardware default (0x4b) if get_modifier_key() fails.
+ * Cannot be moved to init_interface_kit() because get_modifier_key() would
+ * deadlock during input_server startup.
+ *
+ * @param value Receives the key code.
+ */
 void
 BMenu::_GetShiftKey(uint32 &value) const
 {
@@ -3189,6 +4286,13 @@ BMenu::_GetShiftKey(uint32 &value) const
 }
 
 
+/**
+ * @brief Read the left Control key code into @p value.
+ *
+ * Falls back to the hardware default (0x5c) if get_modifier_key() fails.
+ *
+ * @param value Receives the key code.
+ */
 void
 BMenu::_GetControlKey(uint32 &value) const
 {
@@ -3203,6 +4307,13 @@ BMenu::_GetControlKey(uint32 &value) const
 }
 
 
+/**
+ * @brief Read the left Command key code into @p value.
+ *
+ * Falls back to the hardware default (0x66) if get_modifier_key() fails.
+ *
+ * @param value Receives the key code.
+ */
 void
 BMenu::_GetCommandKey(uint32 &value) const
 {
@@ -3217,6 +4328,13 @@ BMenu::_GetCommandKey(uint32 &value) const
 }
 
 
+/**
+ * @brief Read the left Option key code into @p value.
+ *
+ * Falls back to the hardware default (0x5d) if get_modifier_key() fails.
+ *
+ * @param value Receives the key code.
+ */
 void
 BMenu::_GetOptionKey(uint32 &value) const
 {
@@ -3231,6 +4349,13 @@ BMenu::_GetOptionKey(uint32 &value) const
 }
 
 
+/**
+ * @brief Read the Menu key code into @p value.
+ *
+ * Falls back to the hardware default (0x68) if get_modifier_key() fails.
+ *
+ * @param value Receives the key code.
+ */
 void
 BMenu::_GetMenuKey(uint32 &value) const
 {
@@ -3245,6 +4370,13 @@ BMenu::_GetMenuKey(uint32 &value) const
 }
 
 
+/**
+ * @brief Assign keyboard trigger characters to all items that lack one.
+ *
+ * First collects all manually set triggers via BMenuItem::Trigger() to avoid
+ * duplicates. Then iterates over items without a trigger and calls
+ * _ChooseTrigger() to find the best available character in the item's label.
+ */
 void
 BMenu::_CalcTriggers()
 {
@@ -3270,6 +4402,19 @@ BMenu::_CalcTriggers()
 }
 
 
+/**
+ * @brief Choose the best trigger character for an item label.
+ *
+ * Makes two passes through the label: first prefers alphanumeric ASCII
+ * characters that are not already taken; then falls back to any non-space
+ * character. The chosen character is registered in @p triggers.
+ *
+ * @param title    The item label text (UTF-8 encoded); may be NULL.
+ * @param index    Receives the byte offset of the chosen character in @p title.
+ * @param trigger  Receives the lowercase Unicode code point of the trigger.
+ * @param triggers The list of already-claimed triggers; updated on success.
+ * @return true if a trigger character was found and registered, false otherwise.
+ */
 bool
 BMenu::_ChooseTrigger(const char* title, int32& index, uint32& trigger,
 	BPrivate::TriggerList& triggers)
@@ -3311,6 +4456,17 @@ BMenu::_ChooseTrigger(const char* title, int32& index, uint32& trigger,
 }
 
 
+/**
+ * @brief Resize the BMenuWindow to fit the menu content, adding scroll bars
+ *        if the menu is taller than the screen.
+ *
+ * Has no effect for BMenuBar submenus or menus with fResizeToFit == false.
+ * When @p move is true, also repositions the window using ScreenLocation().
+ * Attaches scroll bars to the window when the content overflows the screen,
+ * and scrolls to the marked item if one exists.
+ *
+ * @param move If true, move the window to the correct screen position as well.
+ */
 void
 BMenu::_UpdateWindowViewSize(const bool &move)
 {
@@ -3375,6 +4531,18 @@ BMenu::_UpdateWindowViewSize(const bool &move)
 }
 
 
+/**
+ * @brief Drive the AddDynamicItem() callback sequence to populate the menu.
+ *
+ * Calls AddDynamicItem(B_INITIAL_ADD) to start the sequence. If it returns
+ * true, keeps calling AddDynamicItem(B_PROCESSING) until it returns false or
+ * _OkToProceed() indicates the user has moved away. On cancellation,
+ * AddDynamicItem(B_ABORT) is invoked.
+ *
+ * @param keyDown True when the menu is being opened via keyboard navigation;
+ *                passed to _OkToProceed() to relax the mouse-position check.
+ * @return true if dynamic item addition was aborted, false on normal completion.
+ */
 bool
 BMenu::_AddDynamicItems(bool keyDown)
 {
@@ -3396,6 +4564,18 @@ BMenu::_AddDynamicItems(bool keyDown)
 }
 
 
+/**
+ * @brief Check whether the dynamic-item add loop should continue.
+ *
+ * Returns false if the user has pressed or released the mouse button in a way
+ * that indicates they want to cancel, or if the pointer has moved off the
+ * superitem. For keyboard navigation (@p keyDown true) the pointer position
+ * check is bypassed.
+ *
+ * @param item    The superitem that opened this menu.
+ * @param keyDown True when the menu was opened by a keyboard event.
+ * @return true if dynamic item addition may continue, false if it should abort.
+ */
 bool
 BMenu::_OkToProceed(BMenuItem* item, bool keyDown)
 {
@@ -3420,6 +4600,14 @@ BMenu::_OkToProceed(BMenuItem* item, bool keyDown)
 }
 
 
+/**
+ * @brief Invoke the custom tracking hook and return whether it wants to quit.
+ *
+ * Returns false immediately if no tracking hook is installed.
+ *
+ * @return true if the custom hook signals that tracking should stop.
+ * @see SetTrackingHook()
+ */
 bool
 BMenu::_CustomTrackingWantsToQuit()
 {
@@ -3433,6 +4621,17 @@ BMenu::_CustomTrackingWantsToQuit()
 }
 
 
+/**
+ * @brief Terminate tracking and close the menu hierarchy.
+ *
+ * Deselects the current item and sets fState to MENU_STATE_CLOSED. When
+ * @p onlyThis is false, also closes the parent menu chain, disables sticky
+ * mode, and restores the system cursor. Finally calls _Hide() to remove the
+ * window.
+ *
+ * @param onlyThis If true, close only this menu; if false, propagate the close
+ *                 up through all parent menus.
+ */
 void
 BMenu::_QuitTracking(bool onlyThis)
 {
@@ -3467,6 +4666,18 @@ BMenu::_QuitTracking(bool onlyThis)
 // InterfaceDefs.cpp
 // In R5, they do all the work client side, we let the app_server handle the
 // details.
+
+/**
+ * @brief Apply new system-wide menu settings via the app_server.
+ *
+ * Sends the new settings to the app_server using AS_SET_MENU_INFO and, on
+ * success, updates the local BMenu::sMenuInfo cache so that menus created in
+ * this team immediately reflect the new appearance.
+ *
+ * @param info Pointer to the new menu_info structure; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if @p info is NULL, or an error code
+ *         from the app_server.
+ */
 status_t
 set_menu_info(menu_info* info)
 {
@@ -3486,6 +4697,16 @@ set_menu_info(menu_info* info)
 }
 
 
+/**
+ * @brief Retrieve the current system-wide menu settings from the app_server.
+ *
+ * Sends AS_GET_MENU_INFO to the server and reads the returned menu_info into
+ * @p info.
+ *
+ * @param info Pointer to a menu_info structure to fill; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if @p info is NULL, or an error code
+ *         from the app_server.
+ */
 status_t
 get_menu_info(menu_info* info)
 {
@@ -3503,6 +4724,16 @@ get_menu_info(menu_info* info)
 }
 
 
+/**
+ * @brief GCC 2 / GCC 4 binary-compatibility thunk for BMenu::InvalidateLayout().
+ *
+ * Provides a C linkage entry point under both the GCC 2 and GCC 4 mangled
+ * names so that code compiled against older SDKs can still call
+ * InvalidateLayout() on a BMenu object.
+ *
+ * @param menu        The BMenu instance whose layout should be invalidated.
+ * @param descendants Unused; present for ABI compatibility only.
+ */
 extern "C" void
 B_IF_GCC_2(InvalidateLayout__5BMenub,_ZN5BMenu16InvalidateLayoutEb)(
 	BMenu* menu, bool descendants)

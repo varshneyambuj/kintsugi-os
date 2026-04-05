@@ -1,6 +1,38 @@
 /*
- * Copyright 2006-2010, Ingo Weinhold <ingo_weinhold@gmx.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2010 Ingo Weinhold. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ */
+
+
+/**
+ * @file TwoDimensionalLayout.cpp
+ * @brief Implementation of BTwoDimensionalLayout, the two-axis layout engine
+ *
+ * BTwoDimensionalLayout extends BLayout with row/column constraint solving. It
+ * computes row heights and column widths from item size constraints and feeds
+ * the results back to concrete subclasses (BGridLayout, BGroupLayout) for
+ * final item placement.
+ *
+ * @see BGridLayout, BGroupLayout, BLayoutItem
  */
 
 
@@ -230,16 +262,27 @@ private:
 
 // archiving constants
 namespace {
+	/** @brief Archive field listing layouts horizontally aligned with this one. */
 	const char* const kHAlignedLayoutField = "BTwoDimensionalLayout:"
 		"halignedlayout";
+	/** @brief Archive field listing layouts vertically aligned with this one. */
 	const char* const kVAlignedLayoutField = "BTwoDimensionalLayout:"
 		"valignedlayout";
+	/** @brief Archive field storing the four border insets as a BRect. */
 	const char* const kInsetsField = "BTwoDimensionalLayout:insets";
+	/** @brief Archive field storing horizontal then vertical spacing (two floats). */
 	const char* const kSpacingField = "BTwoDimensionalLayout:spacing";
 		// kSpacingField = {fHSpacing, fVSpacing}
 }
 
 
+/**
+ * @brief Default constructor — creates a layout with zero insets and spacing.
+ *
+ * Allocates the internal LocalLayouter which, in turn, creates a
+ * CompoundLayouter for each axis. Subclasses should set insets and spacing
+ * after construction.
+ */
 BTwoDimensionalLayout::BTwoDimensionalLayout()
 	:
 	fLeftInset(0),
@@ -253,6 +296,17 @@ BTwoDimensionalLayout::BTwoDimensionalLayout()
 }
 
 
+/**
+ * @brief Unarchiving constructor — restores insets and spacing from a BMessage.
+ *
+ * Reads insets (stored as a BRect) and horizontal/vertical spacing from the
+ * archive produced by Archive(). Aligned layouts are reconnected separately in
+ * AllUnarchived().
+ *
+ * @param from The archive message to restore state from.
+ * @see Archive()
+ * @see AllUnarchived()
+ */
 BTwoDimensionalLayout::BTwoDimensionalLayout(BMessage* from)
 	:
 	BAbstractLayout(from),
@@ -273,12 +327,31 @@ BTwoDimensionalLayout::BTwoDimensionalLayout(BMessage* from)
 }
 
 
+/**
+ * @brief Destructor — releases the LocalLayouter and its CompoundLayouters.
+ *
+ * The LocalLayouter releases its references to the horizontal and vertical
+ * CompoundLayouters, which are reference-counted and may be shared across
+ * aligned layouts.
+ */
 BTwoDimensionalLayout::~BTwoDimensionalLayout()
 {
 	delete fLocalLayouter;
 }
 
 
+/**
+ * @brief Set individual border insets and invalidate the layout.
+ *
+ * Each value is scaled through BControlLook::ComposeSpacing() to honour the
+ * current UI scaling factor.
+ *
+ * @param left   Left inset.
+ * @param top    Top inset.
+ * @param right  Right inset.
+ * @param bottom Bottom inset.
+ * @see GetInsets()
+ */
 void
 BTwoDimensionalLayout::SetInsets(float left, float top, float right,
 	float bottom)
@@ -292,6 +365,16 @@ BTwoDimensionalLayout::SetInsets(float left, float top, float right,
 }
 
 
+/**
+ * @brief Set symmetric horizontal and vertical insets and invalidate the layout.
+ *
+ * Left and right receive @a horizontal; top and bottom receive @a vertical.
+ * Both values are scaled by BControlLook::ComposeSpacing().
+ *
+ * @param horizontal Inset applied to the left and right edges.
+ * @param vertical   Inset applied to the top and bottom edges.
+ * @see GetInsets()
+ */
 void
 BTwoDimensionalLayout::SetInsets(float horizontal, float vertical)
 {
@@ -305,6 +388,15 @@ BTwoDimensionalLayout::SetInsets(float horizontal, float vertical)
 }
 
 
+/**
+ * @brief Set a uniform inset on all four edges and invalidate the layout.
+ *
+ * The single value is scaled by BControlLook::ComposeSpacing() and applied
+ * equally to left, right, top, and bottom.
+ *
+ * @param insets Inset to apply to all edges.
+ * @see GetInsets()
+ */
 void
 BTwoDimensionalLayout::SetInsets(float insets)
 {
@@ -317,6 +409,17 @@ BTwoDimensionalLayout::SetInsets(float insets)
 }
 
 
+/**
+ * @brief Retrieve the current border insets.
+ *
+ * Any output pointer may be NULL if that value is not required.
+ *
+ * @param left   Output: left inset, or NULL.
+ * @param top    Output: top inset, or NULL.
+ * @param right  Output: right inset, or NULL.
+ * @param bottom Output: bottom inset, or NULL.
+ * @see SetInsets()
+ */
 void
 BTwoDimensionalLayout::GetInsets(float* left, float* top, float* right,
 	float* bottom) const
@@ -345,6 +448,12 @@ BTwoDimensionalLayout::AlignLayoutWith(BTwoDimensionalLayout* other,
 }
 
 
+/**
+ * @brief Compute and return the minimum size of the layout including insets.
+ * @return Minimum BSize after adding border insets to the inner minimum.
+ * @see BaseMaxSize()
+ * @see BasePreferredSize()
+ */
 BSize
 BTwoDimensionalLayout::BaseMinSize()
 {
@@ -353,6 +462,11 @@ BTwoDimensionalLayout::BaseMinSize()
 }
 
 
+/**
+ * @brief Compute and return the maximum size of the layout including insets.
+ * @return Maximum BSize after adding border insets to the inner maximum.
+ * @see BaseMinSize()
+ */
 BSize
 BTwoDimensionalLayout::BaseMaxSize()
 {
@@ -361,6 +475,11 @@ BTwoDimensionalLayout::BaseMaxSize()
 }
 
 
+/**
+ * @brief Compute and return the preferred size of the layout including insets.
+ * @return Preferred BSize after adding border insets to the inner preferred size.
+ * @see BaseMinSize()
+ */
 BSize
 BTwoDimensionalLayout::BasePreferredSize()
 {
@@ -369,6 +488,10 @@ BTwoDimensionalLayout::BasePreferredSize()
 }
 
 
+/**
+ * @brief Return the layout alignment (delegates to BAbstractLayout).
+ * @return Default BAlignment from BAbstractLayout::BaseAlignment().
+ */
 BAlignment
 BTwoDimensionalLayout::BaseAlignment()
 {
@@ -376,6 +499,14 @@ BTwoDimensionalLayout::BaseAlignment()
 }
 
 
+/**
+ * @brief Return whether any item has a height-for-width dependency.
+ *
+ * Validates min/max before querying the LocalLayouter.
+ *
+ * @return true if at least one item reports height-for-width sensitivity.
+ * @see GetHeightForWidth()
+ */
 bool
 BTwoDimensionalLayout::HasHeightForWidth()
 {
@@ -384,6 +515,19 @@ BTwoDimensionalLayout::HasHeightForWidth()
 }
 
 
+/**
+ * @brief Query the height range for a given available width.
+ *
+ * Subtracts horizontal insets from @a width, delegates to the LocalLayouter's
+ * height-for-width solver, then adds vertical insets to the results. Any output
+ * pointer may be NULL.
+ *
+ * @param width     Available total width in pixels (including insets).
+ * @param min       Output: minimum total height, or NULL.
+ * @param max       Output: maximum total height, or NULL.
+ * @param preferred Output: preferred total height, or NULL.
+ * @see HasHeightForWidth()
+ */
 void
 BTwoDimensionalLayout::GetHeightForWidth(float width, float* min, float* max,
 	float* preferred)
@@ -405,6 +549,17 @@ BTwoDimensionalLayout::SetFrame(BRect frame)
 }
 
 
+/**
+ * @brief Archive the layout's insets and spacing into a BMessage.
+ *
+ * Aligned-layout relationships are stored separately in AllArchived().
+ *
+ * @param into The message to archive into.
+ * @param deep If true, child objects are archived as well.
+ * @return B_OK on success, or a negative error code.
+ * @see AllArchived()
+ * @see Instantiate()
+ */
 status_t
 BTwoDimensionalLayout::Archive(BMessage* into, bool deep) const
 {
@@ -426,6 +581,17 @@ BTwoDimensionalLayout::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Store aligned-layout cross-references after all objects are archived.
+ *
+ * For each CompoundLayouter that this layout owns (i.e. is the primary member
+ * of), records all other layouts aligned with it so that AlignLayoutWith()
+ * can be reconstructed during unarchiving.
+ *
+ * @param into The archive message being finalised.
+ * @return B_OK on success, or a negative error code.
+ * @see AllUnarchived()
+ */
 status_t
 BTwoDimensionalLayout::AllArchived(BMessage* into) const
 {
@@ -438,6 +604,17 @@ BTwoDimensionalLayout::AllArchived(BMessage* into) const
 }
 
 
+/**
+ * @brief Reconnect aligned-layout relationships after all objects are
+ *        unarchived.
+ *
+ * Reads the horizontal and vertical aligned-layout fields written by
+ * AllArchived() and calls AlignLayoutWith() on each referenced layout.
+ *
+ * @param from The archive message to read from.
+ * @return B_OK on success, or a negative error code.
+ * @see AllArchived()
+ */
 status_t
 BTwoDimensionalLayout::AllUnarchived(const BMessage* from)
 {
@@ -472,6 +649,15 @@ BTwoDimensionalLayout::ItemUnarchived(const BMessage* from, BLayoutItem* item,
 
 
 
+/**
+ * @brief Propagate a layout invalidation to the LocalLayouter.
+ *
+ * Instructs the LocalLayouter to invalidate both its horizontal and vertical
+ * CompoundLayouters so the constraint-solver state is rebuilt on the next
+ * layout pass.
+ *
+ * @param children Unused; forwarded by the BLayout infrastructure.
+ */
 void
 BTwoDimensionalLayout::LayoutInvalidated(bool children)
 {
@@ -479,6 +665,17 @@ BTwoDimensionalLayout::LayoutInvalidated(bool children)
 }
 
 
+/**
+ * @brief Perform the complete two-dimensional layout pass.
+ *
+ * Validates min/max constraints, runs the horizontal and vertical layouters via
+ * the LocalLayouter, then iterates over all visible items to set their final
+ * frames using GetItemDimensions() and AlignInFrame().
+ *
+ * @note Called by the BLayout infrastructure; do not call directly.
+ * @see LayoutInvalidated()
+ * @see GetItemDimensions()
+ */
 void
 BTwoDimensionalLayout::DoLayout()
 {
@@ -534,6 +731,12 @@ frame.PrintToStream();
 }
 
 
+/**
+ * @brief Add border insets to an inner BSize, returning the outer BSize.
+ * @param size Inner content-area BSize.
+ * @return Outer BSize with insets added to both dimensions.
+ * @see SubtractInsets()
+ */
 BSize
 BTwoDimensionalLayout::AddInsets(BSize size)
 {
@@ -545,6 +748,15 @@ BTwoDimensionalLayout::AddInsets(BSize size)
 }
 
 
+/**
+ * @brief Add vertical insets to a set of height values in place.
+ *
+ * Any of the three pointers may be NULL.
+ *
+ * @param minHeight       In/out: minimum height to adjust.
+ * @param maxHeight       In/out: maximum height to adjust.
+ * @param preferredHeight In/out: preferred height to adjust.
+ */
 void
 BTwoDimensionalLayout::AddInsets(float* minHeight, float* maxHeight,
 	float* preferredHeight)
@@ -559,6 +771,12 @@ BTwoDimensionalLayout::AddInsets(float* minHeight, float* maxHeight,
 }
 
 
+/**
+ * @brief Subtract border insets from an outer BSize, returning the inner BSize.
+ * @param size Outer view-area BSize.
+ * @return Inner content-area BSize with insets removed from both dimensions.
+ * @see AddInsets()
+ */
 BSize
 BTwoDimensionalLayout::SubtractInsets(BSize size)
 {
@@ -570,12 +788,28 @@ BTwoDimensionalLayout::SubtractInsets(BSize size)
 }
 
 
+/**
+ * @brief Hook called before constraint solving for the given axis.
+ *
+ * Subclasses may override this to perform per-layout-pass setup work (e.g.
+ * updating cached item grid positions). The default implementation is a no-op.
+ *
+ * @param orientation B_HORIZONTAL or B_VERTICAL.
+ */
 void
 BTwoDimensionalLayout::PrepareItems(orientation orientation)
 {
 }
 
 
+/**
+ * @brief Return whether any item spans more than one column.
+ *
+ * Overridden by subclasses (e.g. BGridLayout) that support multi-column items.
+ * The default implementation returns false.
+ *
+ * @return false; subclasses override to return true when appropriate.
+ */
 bool
 BTwoDimensionalLayout::HasMultiColumnItems()
 {
@@ -583,6 +817,14 @@ BTwoDimensionalLayout::HasMultiColumnItems()
 }
 
 
+/**
+ * @brief Return whether any item spans more than one row.
+ *
+ * Overridden by subclasses that support multi-row items. The default
+ * implementation returns false.
+ *
+ * @return false; subclasses override to return true when appropriate.
+ */
 bool
 BTwoDimensionalLayout::HasMultiRowItems()
 {
@@ -590,6 +832,12 @@ BTwoDimensionalLayout::HasMultiRowItems()
 }
 
 
+/**
+ * @brief Ensure the LocalLayouter's min/max state is current.
+ *
+ * Delegates to LocalLayouter::ValidateMinMax(), which rebuilds both the
+ * horizontal and vertical CompoundLayouters if they have been invalidated.
+ */
 void
 BTwoDimensionalLayout::_ValidateMinMax()
 {
@@ -600,6 +848,14 @@ BTwoDimensionalLayout::_ValidateMinMax()
 // #pragma mark - CompoundLayouter
 
 
+/**
+ * @brief Construct a CompoundLayouter for the given axis.
+ *
+ * The layouter starts with no Layouter object and no LocalLayouters. They are
+ * added via AddLocalLayouter() as layouts join the alignment group.
+ *
+ * @param orientation B_HORIZONTAL or B_VERTICAL.
+ */
 BTwoDimensionalLayout::CompoundLayouter::CompoundLayouter(
 	orientation orientation)
 	:
@@ -613,6 +869,9 @@ BTwoDimensionalLayout::CompoundLayouter::CompoundLayouter(
 }
 
 
+/**
+ * @brief Destroy the CompoundLayouter and release the Layouter/LayoutInfo.
+ */
 BTwoDimensionalLayout::CompoundLayouter::~CompoundLayouter()
 {
 	delete fLayouter;
@@ -620,6 +879,10 @@ BTwoDimensionalLayout::CompoundLayouter::~CompoundLayouter()
 }
 
 
+/**
+ * @brief Return the axis this CompoundLayouter operates on.
+ * @return B_HORIZONTAL or B_VERTICAL.
+ */
 orientation
 BTwoDimensionalLayout::CompoundLayouter::Orientation()
 {
@@ -627,6 +890,17 @@ BTwoDimensionalLayout::CompoundLayouter::Orientation()
 }
 
 
+/**
+ * @brief Return the active Layouter object.
+ *
+ * The base implementation always returns fLayouter regardless of @a minMax.
+ * VerticalCompoundLayouter overrides this to return the height-for-width
+ * layouter when @a minMax is false and height-for-width is active.
+ *
+ * @param minMax true to request the min/max layouter; false for the real-layout
+ *               layouter.
+ * @return The Layouter, or NULL if not yet validated.
+ */
 Layouter*
 BTwoDimensionalLayout::CompoundLayouter::GetLayouter(bool minMax)
 {
@@ -634,6 +908,10 @@ BTwoDimensionalLayout::CompoundLayouter::GetLayouter(bool minMax)
 }
 
 
+/**
+ * @brief Return the LayoutInfo object for reading element positions and sizes.
+ * @return The LayoutInfo, or NULL if not yet validated.
+ */
 LayoutInfo*
 BTwoDimensionalLayout::CompoundLayouter::GetLayoutInfo()
 {
@@ -641,6 +919,14 @@ BTwoDimensionalLayout::CompoundLayouter::GetLayoutInfo()
 }
 
 
+/**
+ * @brief Register a LocalLayouter as a member of this alignment group.
+ *
+ * Ignored if @a localLayouter is already a member. Invalidates the layout
+ * when a new member is added.
+ *
+ * @param localLayouter The LocalLayouter to add; must not be NULL.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::AddLocalLayouter(
 	LocalLayouter* localLayouter)
@@ -654,6 +940,13 @@ BTwoDimensionalLayout::CompoundLayouter::AddLocalLayouter(
 }
 
 
+/**
+ * @brief Remove a LocalLayouter from this alignment group.
+ *
+ * Invalidates the layout when a member is successfully removed.
+ *
+ * @param localLayouter The LocalLayouter to remove.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::RemoveLocalLayouter(
 	LocalLayouter* localLayouter)
@@ -663,6 +956,17 @@ BTwoDimensionalLayout::CompoundLayouter::RemoveLocalLayouter(
 }
 
 
+/**
+ * @brief Archive all layouts in this alignment group except the primary owner.
+ *
+ * Only the LocalLayouter at index 0 (the primary) is responsible for writing
+ * the list; all others are written as secondary references. This prevents
+ * duplicate entries when multiple aligned layouts archive themselves.
+ *
+ * @param archiver    The BArchiver to write to.
+ * @param requestedBy The LocalLayouter that initiated the archive call.
+ * @return B_OK on success, or a negative error code.
+ */
 status_t
 BTwoDimensionalLayout::CompoundLayouter::AddAlignedLayoutsToArchive(
 	BArchiver* archiver, LocalLayouter* requestedBy)
@@ -685,6 +989,15 @@ BTwoDimensionalLayout::CompoundLayouter::AddAlignedLayoutsToArchive(
 }
 
 
+/**
+ * @brief Merge all LocalLayouters from @a other into this CompoundLayouter.
+ *
+ * Used by AlignLayoutWith() to combine two previously independent alignment
+ * groups. After absorption, each migrated LocalLayouter is updated to point to
+ * this CompoundLayouter. No-op when @a other == this.
+ *
+ * @param other The CompoundLayouter to absorb; must be the same orientation.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::AbsorbCompoundLayouter(
 	CompoundLayouter* other)
@@ -704,6 +1017,12 @@ BTwoDimensionalLayout::CompoundLayouter::AbsorbCompoundLayouter(
 }
 
 
+/**
+ * @brief Discard the cached Layouter and notify all member LocalLayouters.
+ *
+ * After invalidation IsMinMaxValid() returns false and ValidateMinMax() will
+ * rebuild the Layouter from scratch. This is a no-op when no Layouter exists.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::InvalidateLayout()
 {
@@ -726,6 +1045,10 @@ BTwoDimensionalLayout::CompoundLayouter::InvalidateLayout()
 }
 
 
+/**
+ * @brief Return whether the Layouter is up to date.
+ * @return true if the Layouter exists (constraints are valid); false otherwise.
+ */
 bool
 BTwoDimensionalLayout::CompoundLayouter::IsMinMaxValid()
 {
@@ -733,6 +1056,13 @@ BTwoDimensionalLayout::CompoundLayouter::IsMinMaxValid()
 }
 
 
+/**
+ * @brief Build the Layouter from all member LocalLayouters' constraints.
+ *
+ * Creates a CollapsingLayouter, feeds item and column/row constraints from
+ * every LocalLayouter, and allocates a fresh LayoutInfo. Does nothing if
+ * IsMinMaxValid() already returns true.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::ValidateMinMax()
 {
@@ -759,6 +1089,16 @@ BTwoDimensionalLayout::CompoundLayouter::ValidateMinMax()
 }
 
 
+/**
+ * @brief Run the layout pass for the given size and context.
+ *
+ * Validates the Layouter first, then calls DoLayout() if the size or context
+ * has changed since the last run.
+ *
+ * @param size           Available size for this axis in pixels.
+ * @param localLayouter  The LocalLayouter that initiated the layout call.
+ * @param context        The current BLayoutContext.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::Layout(float size,
 	LocalLayouter* localLayouter, BLayoutContext* context)
@@ -773,6 +1113,16 @@ BTwoDimensionalLayout::CompoundLayouter::Layout(float size,
 }
 
 
+/**
+ * @brief Perform the actual layouter run for the given size.
+ *
+ * The base implementation simply calls fLayouter->Layout(). Overridden by
+ * VerticalCompoundLayouter to incorporate height-for-width constraints.
+ *
+ * @param size          Available size for this axis in pixels.
+ * @param localLayouter The initiating LocalLayouter.
+ * @param context       The current BLayoutContext.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::DoLayout(float size,
 	LocalLayouter* localLayouter, BLayoutContext* context)
@@ -781,6 +1131,12 @@ BTwoDimensionalLayout::CompoundLayouter::DoLayout(float size,
 }
 
 
+/**
+ * @brief Call PrepareItems() on every registered LocalLayouter.
+ *
+ * Invoked at the start of ValidateMinMax() to allow subclasses to
+ * refresh their internal state before constraints are read.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::_PrepareItems()
 {
@@ -792,6 +1148,15 @@ BTwoDimensionalLayout::CompoundLayouter::_PrepareItems()
 }
 
 
+/**
+ * @brief Return the maximum element count across all registered LocalLayouters.
+ *
+ * The element count is the number of columns (for B_HORIZONTAL) or rows (for
+ * B_VERTICAL) in the layout grid. When multiple layouts are aligned, the
+ * compound layouter uses the largest count.
+ *
+ * @return Maximum element count over all LocalLayouters.
+ */
 int32
 BTwoDimensionalLayout::CompoundLayouter::_CountElements()
 {
@@ -807,6 +1172,10 @@ BTwoDimensionalLayout::CompoundLayouter::_CountElements()
 }
 
 
+/**
+ * @brief Return whether any LocalLayouter has multi-element (spanning) items.
+ * @return true if at least one LocalLayouter reports multi-element items.
+ */
 bool
 BTwoDimensionalLayout::CompoundLayouter::_HasMultiElementItems()
 {
@@ -821,6 +1190,14 @@ BTwoDimensionalLayout::CompoundLayouter::_HasMultiElementItems()
 }
 
 
+/**
+ * @brief Feed all LocalLayouters' item constraints into a Layouter object.
+ *
+ * Called during ValidateMinMax() so that every aligned layout contributes its
+ * item min/max/preferred and weight data to the shared Layouter.
+ *
+ * @param layouter The Layouter to receive the constraints.
+ */
 void
 BTwoDimensionalLayout::CompoundLayouter::_AddConstraints(Layouter* layouter)
 {
@@ -832,6 +1209,14 @@ BTwoDimensionalLayout::CompoundLayouter::_AddConstraints(Layouter* layouter)
 }
 
 
+/**
+ * @brief Return the element spacing for this axis.
+ *
+ * Queries the first LocalLayouter (the primary member). Returns 0 when there
+ * are no members.
+ *
+ * @return Spacing in pixels between elements on this axis.
+ */
 float
 BTwoDimensionalLayout::CompoundLayouter::_Spacing()
 {
@@ -844,6 +1229,12 @@ BTwoDimensionalLayout::CompoundLayouter::_Spacing()
 // #pragma mark - VerticalCompoundLayouter
 
 
+/**
+ * @brief Construct the vertical CompoundLayouter with height-for-width support.
+ *
+ * Initialises the base class for B_VERTICAL and sets all height-for-width
+ * cache members to their "not yet computed" sentinel values.
+ */
 BTwoDimensionalLayout::VerticalCompoundLayouter::VerticalCompoundLayouter()
 	:
 	CompoundLayouter(B_VERTICAL),
@@ -856,6 +1247,16 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::VerticalCompoundLayouter()
 }
 
 
+/**
+ * @brief Return the appropriate vertical Layouter object.
+ *
+ * When @a minMax is true or no height-for-width layouter exists, returns the
+ * standard fLayouter. Otherwise returns the height-for-width clone so that
+ * DoLayout() uses the correct row sizes.
+ *
+ * @param minMax true to get the min/max layouter; false for the real-layout one.
+ * @return The appropriate Layouter for the given context.
+ */
 Layouter*
 BTwoDimensionalLayout::VerticalCompoundLayouter::GetLayouter(bool minMax)
 {
@@ -864,6 +1265,12 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::GetLayouter(bool minMax)
 }
 
 
+/**
+ * @brief Invalidate both the base layout and the height-for-width cache.
+ *
+ * Extends CompoundLayouter::InvalidateLayout() by also discarding the
+ * height-for-width layouter clone.
+ */
 void
 BTwoDimensionalLayout::VerticalCompoundLayouter::InvalidateLayout()
 {
@@ -873,6 +1280,13 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::InvalidateLayout()
 }
 
 
+/**
+ * @brief Discard the height-for-width layouter clone.
+ *
+ * Deletes fHeightForWidthLayouter and resets the added-constraints flags on all
+ * LocalLayouters so they are re-added the next time height-for-width info is
+ * requested. No-op when no clone exists.
+ */
 void
 BTwoDimensionalLayout::VerticalCompoundLayouter::InvalidateHeightForWidth()
 {
@@ -892,6 +1306,22 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::InvalidateHeightForWidth()
 }
 
 
+/**
+ * @brief Compute height-for-width values for the current horizontal layout.
+ *
+ * Clones the vertical layouter (or reuses an existing clone) and adds each
+ * height-for-width item's constraints. When the layout context changes, or
+ * when the clone does not yet exist, the clone is rebuilt from scratch.
+ * Results are cached by context so repeated calls within the same layout pass
+ * are cheap.
+ *
+ * @param localLayouter   The LocalLayouter requesting the values.
+ * @param context         The current BLayoutContext.
+ * @param realLayout      true when called from DoLayout() (affects caching).
+ * @param minHeight       Output: minimum height, or NULL.
+ * @param maxHeight       Output: maximum height, or NULL.
+ * @param preferredHeight Output: preferred height, or NULL.
+ */
 void
 BTwoDimensionalLayout::VerticalCompoundLayouter::InternalGetHeightForWidth(
 	LocalLayouter* localLayouter, BLayoutContext* context, bool realLayout,
@@ -948,6 +1378,16 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::InternalGetHeightForWidth(
 }
 
 
+/**
+ * @brief Perform the vertical layout, using height-for-width if applicable.
+ *
+ * When height-for-width is active, retrieves the adjusted minimum height and
+ * ensures @a size is at least that large before running the layouter.
+ *
+ * @param size          Available height in pixels.
+ * @param localLayouter The initiating LocalLayouter.
+ * @param context       The current BLayoutContext.
+ */
 void
 BTwoDimensionalLayout::VerticalCompoundLayouter::DoLayout(float size,
 	LocalLayouter* localLayouter, BLayoutContext* context)
@@ -966,6 +1406,10 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::DoLayout(float size,
 }
 
 
+/**
+ * @brief Return whether any member LocalLayouter has height-for-width items.
+ * @return true if height-for-width logic must be applied during layout.
+ */
 bool
 BTwoDimensionalLayout::VerticalCompoundLayouter::_HasHeightForWidth()
 {
@@ -980,6 +1424,18 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::_HasHeightForWidth()
 }
 
 
+/**
+ * @brief Switch to a new BLayoutContext for height-for-width tracking.
+ *
+ * Registers this object as a listener on @a context so that
+ * LayoutContextLeft() can reset the context pointer when the context is
+ * destroyed. When there is only one LocalLayouter the context bookkeeping is
+ * skipped (no cross-layout coordination is needed).
+ *
+ * @param context The new layout context; may be NULL.
+ * @return true if the context changed and the height-for-width state was reset;
+ *         false otherwise.
+ */
 bool
 BTwoDimensionalLayout::VerticalCompoundLayouter
 	::_SetHeightForWidthLayoutContext(BLayoutContext* context)
@@ -1009,6 +1465,14 @@ BTwoDimensionalLayout::VerticalCompoundLayouter
 }
 
 
+/**
+ * @brief BLayoutContextListener callback — clears the stored context pointer.
+ *
+ * Called when @a context is about to be destroyed so that stale pointers are
+ * not retained.
+ *
+ * @param context The layout context that is being left.
+ */
 void
 BTwoDimensionalLayout::VerticalCompoundLayouter::LayoutContextLeft(
 	BLayoutContext* context)
@@ -1020,6 +1484,15 @@ BTwoDimensionalLayout::VerticalCompoundLayouter::LayoutContextLeft(
 // #pragma mark - LocalLayouter
 
 
+/**
+ * @brief Construct a LocalLayouter for the given BTwoDimensionalLayout.
+ *
+ * Creates fresh horizontal CompoundLayouter and vertical
+ * VerticalCompoundLayouter objects, registers this LocalLayouter as a member
+ * of each, and initialises all horizontal-layout-context tracking fields.
+ *
+ * @param layout The owning BTwoDimensionalLayout.
+ */
 BTwoDimensionalLayout::LocalLayouter::LocalLayouter(
 		BTwoDimensionalLayout* layout)
 	:
@@ -1036,6 +1509,13 @@ BTwoDimensionalLayout::LocalLayouter::LocalLayouter(
 }
 
 
+/**
+ * @brief Destroy the LocalLayouter and release CompoundLayouter references.
+ *
+ * Removes this LocalLayouter from both CompoundLayouters and releases the
+ * reference-counted pointers, allowing shared CompoundLayouters to remain
+ * alive while other layouts still reference them.
+ */
 BTwoDimensionalLayout::LocalLayouter::~LocalLayouter()
 {
 	if (fHLayouter != NULL) {
@@ -1050,6 +1530,10 @@ BTwoDimensionalLayout::LocalLayouter::~LocalLayouter()
 }
 
 
+/**
+ * @brief Return the inner (pre-inset) minimum size from both CompoundLayouters.
+ * @return Inner minimum BSize.
+ */
 BSize
 BTwoDimensionalLayout::LocalLayouter::MinSize()
 {
@@ -1058,6 +1542,10 @@ BTwoDimensionalLayout::LocalLayouter::MinSize()
 }
 
 
+/**
+ * @brief Return the inner (pre-inset) maximum size from both CompoundLayouters.
+ * @return Inner maximum BSize.
+ */
 BSize
 BTwoDimensionalLayout::LocalLayouter::MaxSize()
 {
@@ -1066,6 +1554,10 @@ BTwoDimensionalLayout::LocalLayouter::MaxSize()
 }
 
 
+/**
+ * @brief Return the inner (pre-inset) preferred size from both CompoundLayouters.
+ * @return Inner preferred BSize.
+ */
 BSize
 BTwoDimensionalLayout::LocalLayouter::PreferredSize()
 {
@@ -1074,6 +1566,12 @@ BTwoDimensionalLayout::LocalLayouter::PreferredSize()
 }
 
 
+/**
+ * @brief Invalidate both the horizontal and vertical CompoundLayouters.
+ *
+ * Forces a complete rebuild of constraints and layout info on the next
+ * ValidateMinMax() call.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::InvalidateLayout()
 {
@@ -1082,6 +1580,15 @@ BTwoDimensionalLayout::LocalLayouter::InvalidateLayout()
 }
 
 
+/**
+ * @brief Run both the horizontal and vertical layout for the given size.
+ *
+ * Performs horizontal layout first (via DoHorizontalLayout()), then runs the
+ * vertical CompoundLayouter so height-for-width items receive the correct row
+ * heights.
+ *
+ * @param size The inner content-area size to lay out into.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::Layout(BSize size)
 {
@@ -1090,6 +1597,15 @@ BTwoDimensionalLayout::LocalLayouter::Layout(BSize size)
 }
 
 
+/**
+ * @brief Compute the pixel frame for a grid item from its Dimensions.
+ *
+ * Queries the horizontal and vertical LayoutInfo objects to translate the
+ * grid position and span into a pixel rectangle.
+ *
+ * @param itemDimensions The grid position and span of the item.
+ * @return The item's pixel frame (relative to the content area origin).
+ */
 BRect
 BTwoDimensionalLayout::LocalLayouter::ItemFrame(Dimensions itemDimensions)
 {
@@ -1105,6 +1621,13 @@ BTwoDimensionalLayout::LocalLayouter::ItemFrame(Dimensions itemDimensions)
 }
 
 
+/**
+ * @brief Ensure both CompoundLayouters have valid min/max data.
+ *
+ * Clears height-for-width item tracking and the horizontal layout context when
+ * the horizontal layouter is invalid, then validates both CompoundLayouters and
+ * resets the layout invalidation flag on the owning BTwoDimensionalLayout.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::ValidateMinMax()
 {
@@ -1122,6 +1645,15 @@ BTwoDimensionalLayout::LocalLayouter::ValidateMinMax()
 }
 
 
+/**
+ * @brief Run the horizontal layout pass for the given width, if needed.
+ *
+ * Skips the pass when the layout context and width are unchanged since the last
+ * call. When a new horizontal layout is performed the vertical
+ * CompoundLayouter's height-for-width cache is invalidated.
+ *
+ * @param width Available inner width in pixels.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::DoHorizontalLayout(float width)
 {
@@ -1135,6 +1667,17 @@ BTwoDimensionalLayout::LocalLayouter::DoHorizontalLayout(float width)
 }
 
 
+/**
+ * @brief Compute the height range for the given inner width.
+ *
+ * Ensures a horizontal layout has been performed for @a width, then queries
+ * the vertical CompoundLayouter for the resulting height-for-width range.
+ *
+ * @param width         Inner width in pixels.
+ * @param minHeight     Output: minimum inner height, or NULL.
+ * @param maxHeight     Output: maximum inner height, or NULL.
+ * @param preferredHeight Output: preferred inner height, or NULL.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::InternalGetHeightForWidth(float width,
 	float* minHeight, float* maxHeight, float* preferredHeight)
@@ -1145,6 +1688,15 @@ BTwoDimensionalLayout::LocalLayouter::InternalGetHeightForWidth(float width,
 }
 
 
+/**
+ * @brief Merge this layout's CompoundLayouters with those of @a other.
+ *
+ * After alignment the two layouts share the same CompoundLayouter for the
+ * requested axis, so their rows (or columns) are always sized identically.
+ *
+ * @param other       The LocalLayouter to align with.
+ * @param orientation B_HORIZONTAL to align columns; B_VERTICAL to align rows.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::AlignWith(LocalLayouter* other,
 	orientation orientation)
@@ -1156,6 +1708,15 @@ BTwoDimensionalLayout::LocalLayouter::AlignWith(LocalLayouter* other,
 }
 
 
+/**
+ * @brief Archive the aligned-layout lists for both axes.
+ *
+ * Calls AddAlignedLayoutsToArchive() on both the horizontal and vertical
+ * CompoundLayouters so that AlignLayoutWith() relationships are preserved.
+ *
+ * @param archiver The BArchiver to write to.
+ * @return B_OK on success, or a negative error code.
+ */
 status_t
 BTwoDimensionalLayout::LocalLayouter::AddAlignedLayoutsToArchive(
 	BArchiver* archiver)
@@ -1169,6 +1730,17 @@ BTwoDimensionalLayout::LocalLayouter::AddAlignedLayoutsToArchive(
 }
 
 
+/**
+ * @brief Add the owning BTwoDimensionalLayout to the archive as an aligned peer.
+ *
+ * Writes the owner to the appropriate alignment field (horizontal or vertical)
+ * so it can be reconnected during AllUnarchived().
+ *
+ * @param archiver        The BArchiver to write to.
+ * @param requestedBy     The CompoundLayouter that is requesting the archive.
+ * @param _wasAvailable   Output: set to true if the layout was already archived.
+ * @return B_OK on success, or B_NAME_NOT_FOUND if the layout is not archived.
+ */
 status_t
 BTwoDimensionalLayout::LocalLayouter::AddOwnerToArchive(BArchiver* archiver,
 	CompoundLayouter* requestedBy, bool& _wasAvailable)
@@ -1184,6 +1756,17 @@ BTwoDimensionalLayout::LocalLayouter::AddOwnerToArchive(BArchiver* archiver,
 }
 
 
+/**
+ * @brief Restore AlignLayoutWith() relationships from the archive for one axis.
+ *
+ * Reads the aligned-layout list for @a posture from the archive and calls
+ * AlignLayoutWith() on each found layout. Returns B_OK when the field is not
+ * present (no aligned layouts were archived for that axis).
+ *
+ * @param unarchiver The BUnarchiver to read from.
+ * @param posture    B_HORIZONTAL or B_VERTICAL.
+ * @return B_OK on success, or a negative error code.
+ */
 status_t
 BTwoDimensionalLayout::LocalLayouter::AlignLayoutsFromArchive(
 	BUnarchiver* unarchiver, orientation posture)
@@ -1210,6 +1793,14 @@ BTwoDimensionalLayout::LocalLayouter::AlignLayoutsFromArchive(
 }
 
 
+/**
+ * @brief Delegate the PrepareItems() call to the owning layout.
+ *
+ * Called by CompoundLayouter::_PrepareItems() so the concrete subclass can
+ * refresh any cached grid state before constraints are read.
+ *
+ * @param compoundLayouter The CompoundLayouter that initiated the call.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::PrepareItems(
 	CompoundLayouter* compoundLayouter)
@@ -1218,6 +1809,11 @@ BTwoDimensionalLayout::LocalLayouter::PrepareItems(
 }
 
 
+/**
+ * @brief Return the number of grid elements (columns or rows) for this axis.
+ * @param compoundLayouter The CompoundLayouter specifying the axis.
+ * @return Column count for B_HORIZONTAL, row count for B_VERTICAL.
+ */
 int32
 BTwoDimensionalLayout::LocalLayouter::CountElements(
 	CompoundLayouter* compoundLayouter)
@@ -1229,6 +1825,11 @@ BTwoDimensionalLayout::LocalLayouter::CountElements(
 }
 
 
+/**
+ * @brief Return whether any item spans multiple elements on this axis.
+ * @param compoundLayouter The CompoundLayouter specifying the axis.
+ * @return true if a spanning item exists on the given axis.
+ */
 bool
 BTwoDimensionalLayout::LocalLayouter::HasMultiElementItems(
 	CompoundLayouter* compoundLayouter)
@@ -1240,6 +1841,17 @@ BTwoDimensionalLayout::LocalLayouter::HasMultiElementItems(
 }
 
 
+/**
+ * @brief Feed all item and column/row constraints into a Layouter.
+ *
+ * Iterates over all visible items, translates their min/max/preferred into
+ * layouter constraints on the appropriate axis, and collects height-for-width
+ * items for later processing. Also applies per-column/row weight and min/max
+ * from GetColumnRowConstraints().
+ *
+ * @param compoundLayouter The CompoundLayouter specifying the axis.
+ * @param layouter         The Layouter to receive the constraints.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::AddConstraints(
 	CompoundLayouter* compoundLayouter, Layouter* layouter)
@@ -1293,6 +1905,11 @@ BTwoDimensionalLayout::LocalLayouter::AddConstraints(
 }
 
 
+/**
+ * @brief Return the inter-element spacing for the given axis.
+ * @param compoundLayouter The CompoundLayouter specifying the axis.
+ * @return Horizontal spacing for B_HORIZONTAL; vertical spacing for B_VERTICAL.
+ */
 float
 BTwoDimensionalLayout::LocalLayouter::Spacing(
 	CompoundLayouter* compoundLayouter)
@@ -1302,6 +1919,10 @@ BTwoDimensionalLayout::LocalLayouter::Spacing(
 }
 
 
+/**
+ * @brief Return whether any item in the owner layout is height-for-width.
+ * @return true if fHeightForWidthItems is not empty.
+ */
 bool
 BTwoDimensionalLayout::LocalLayouter::HasHeightForWidth()
 {
@@ -1309,6 +1930,20 @@ BTwoDimensionalLayout::LocalLayouter::HasHeightForWidth()
 }
 
 
+/**
+ * @brief Add this layout's height-for-width constraints to a vertical Layouter.
+ *
+ * Iterates over all height-for-width items and calls GetHeightForWidth() on
+ * each, adding the resulting constraints to @a layouter. Skips items not in
+ * the current horizontal layout context, and is idempotent within a single
+ * layout context (constraints are added only once per context).
+ *
+ * @param compoundLayouter The VerticalCompoundLayouter managing the group.
+ * @param layouter         The Layouter clone to add constraints to.
+ * @param context          The current BLayoutContext.
+ * @return true if constraints were added; false if already added or context
+ *         mismatch.
+ */
 bool
 BTwoDimensionalLayout::LocalLayouter::AddHeightForWidthConstraints(
 	VerticalCompoundLayouter* compoundLayouter, Layouter* layouter,
@@ -1348,6 +1983,14 @@ BTwoDimensionalLayout::LocalLayouter::AddHeightForWidthConstraints(
 }
 
 
+/**
+ * @brief Record whether height-for-width constraints have been added.
+ *
+ * Called by AddHeightForWidthConstraints() after successful addition, and by
+ * VerticalCompoundLayouter::InvalidateHeightForWidth() to reset the flag.
+ *
+ * @param added true to mark constraints as added; false to clear the flag.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::SetHeightForWidthConstraintsAdded(
 	bool added)
@@ -1356,6 +1999,16 @@ BTwoDimensionalLayout::LocalLayouter::SetHeightForWidthConstraintsAdded(
 }
 
 
+/**
+ * @brief Replace one of this LocalLayouter's CompoundLayouters.
+ *
+ * Used by AbsorbCompoundLayouter() to migrate a LocalLayouter into a new
+ * alignment group. Removes the reference from the old CompoundLayouter and
+ * acquires one on the new one, then invalidates the layout.
+ *
+ * @param compoundLayouter The new CompoundLayouter to use.
+ * @param orientation      B_HORIZONTAL or B_VERTICAL.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::SetCompoundLayouter(
 	CompoundLayouter* compoundLayouter, orientation orientation)
@@ -1384,6 +2037,14 @@ BTwoDimensionalLayout::LocalLayouter::SetCompoundLayouter(
 }
 
 
+/**
+ * @brief Invalidate the owning layout in response to a CompoundLayouter change.
+ *
+ * Resets the horizontal layout context and calls BLayout::InvalidateLayout()
+ * on the owner so the layout system schedules a redraw.
+ *
+ * @param compoundLayouter The CompoundLayouter that triggered the invalidation.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::InternalInvalidateLayout(
 	CompoundLayouter* compoundLayouter)
@@ -1394,6 +2055,15 @@ BTwoDimensionalLayout::LocalLayouter::InternalInvalidateLayout(
 }
 
 
+/**
+ * @brief Update the tracked horizontal layout context and width.
+ *
+ * Manages BLayoutContextListener registration so this object is notified when
+ * @a context is destroyed.
+ *
+ * @param context The new horizontal BLayoutContext; may be NULL.
+ * @param width   The width used for the horizontal layout pass.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::_SetHorizontalLayoutContext(
 	BLayoutContext* context, float width)
@@ -1412,6 +2082,14 @@ BTwoDimensionalLayout::LocalLayouter::_SetHorizontalLayoutContext(
 }
 
 
+/**
+ * @brief BLayoutContextListener callback — clears the horizontal context pointer.
+ *
+ * Called when the horizontal BLayoutContext is about to be destroyed so that
+ * the stale pointer is not retained.
+ *
+ * @param context The layout context that is being left.
+ */
 void
 BTwoDimensionalLayout::LocalLayouter::LayoutContextLeft(BLayoutContext* context)
 {

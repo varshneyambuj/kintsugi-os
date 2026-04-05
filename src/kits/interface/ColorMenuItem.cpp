@@ -1,9 +1,37 @@
 /*
- * Copyright 2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file ColorMenuItem.cpp
+ * @brief Implementation of BColorMenuItem, a menu item that displays a color swatch
+ *
+ * BColorMenuItem extends BMenuItem to draw a small filled rectangle showing
+ * the item's associated color alongside its label, useful for color-selection
+ * menus.
+ *
+ * @see BMenuItem, BMenu
  */
 
 
@@ -23,12 +51,20 @@
 #ifdef M_PHI
 #	undef M_PHI
 #endif
+/** @brief The golden ratio constant used to compute the color swatch aspect ratio. */
 #define M_PHI 1.61803398874989484820
 
 
 //	#pragma - ColorMenuItem
 
 
+/** @brief Constructs a BColorMenuItem with a label, message, color, and optional shortcut.
+ *  @param label     The text label displayed next to the color swatch.
+ *  @param message   The message sent when the item is invoked.
+ *  @param color     The color shown in the swatch rectangle.
+ *  @param shortcut  Optional keyboard shortcut character (default none).
+ *  @param modifiers Modifier keys for the shortcut (default none).
+ */
 BColorMenuItem::BColorMenuItem(const char* label, BMessage* message,
 	rgb_color color, char shortcut, uint32 modifiers)
 	:
@@ -38,6 +74,11 @@ BColorMenuItem::BColorMenuItem(const char* label, BMessage* message,
 }
 
 
+/** @brief Constructs a BColorMenuItem wrapping a submenu with an associated color.
+ *  @param menu    The submenu this item opens.
+ *  @param color   The color shown in the swatch rectangle.
+ *  @param message Optional message sent when the item is invoked.
+ */
 BColorMenuItem::BColorMenuItem(BMenu* menu, rgb_color color,
 	BMessage* message)
 	:
@@ -47,6 +88,14 @@ BColorMenuItem::BColorMenuItem(BMenu* menu, rgb_color color,
 }
 
 
+/** @brief Unarchiving constructor. Restores a BColorMenuItem from a BMessage archive.
+ *
+ *  Reads the "_color" field from \a data. If the field is absent, the color
+ *  defaults to black (0, 0, 0).
+ *
+ *  @param data The archive message produced by Archive().
+ *  @see Archive(), Instantiate()
+ */
 BColorMenuItem::BColorMenuItem(BMessage* data)
 	:
 	BMenuItem(data)
@@ -61,6 +110,15 @@ BColorMenuItem::BColorMenuItem(BMessage* data)
 }
 
 
+/** @brief Instantiates a BColorMenuItem from an archive message.
+ *
+ *  Validates the archive class name before constructing. Returns NULL if
+ *  validation fails.
+ *
+ *  @param data The archive message previously produced by Archive().
+ *  @return A newly allocated BColorMenuItem, or NULL on failure.
+ *  @see Archive()
+ */
 BArchivable*
 BColorMenuItem::Instantiate(BMessage* data)
 {
@@ -71,6 +129,15 @@ BColorMenuItem::Instantiate(BMessage* data)
 }
 
 
+/** @brief Archives this BColorMenuItem into the provided BMessage.
+ *
+ *  Calls BMenuItem::Archive() first, then appends the item color under
+ *  the key "_color".
+ *
+ *  @param data The target archive message.
+ *  @param deep If true, child objects are also archived (passed to the base class).
+ *  @return B_OK on success, or an error code if the color field could not be added.
+ */
 status_t
 BColorMenuItem::Archive(BMessage* data, bool deep) const
 {
@@ -83,6 +150,12 @@ BColorMenuItem::Archive(BMessage* data, bool deep) const
 }
 
 
+/** @brief Draws the color swatch followed by the item label.
+ *
+ *  Renders a filled rectangle in fColor with a border stroke in
+ *  B_CONTROL_BORDER_COLOR, then advances the pen past the swatch and
+ *  delegates to BMenuItem::DrawContent() to render the label text.
+ */
 void
 BColorMenuItem::DrawContent()
 {
@@ -113,6 +186,15 @@ BColorMenuItem::DrawContent()
 }
 
 
+/** @brief Returns the total content size including the color swatch and label.
+ *
+ *  The reported width is the sum of the left margin, color rectangle width,
+ *  inter-element padding, and the label width returned by BMenuItem::GetContentSize().
+ *  The height matches the label height.
+ *
+ *  @param _width  If not NULL, receives the total content width in pixels.
+ *  @param _height If not NULL, receives the content height in pixels.
+ */
 void
 BColorMenuItem::GetContentSize(float* _width, float* _height)
 {
@@ -128,6 +210,14 @@ BColorMenuItem::GetContentSize(float* _width, float* _height)
 }
 
 
+/** @brief Marks or unmarks this item and propagates the color to the top-level menu field.
+ *
+ *  When the item is marked, this method walks up the menu hierarchy to find a
+ *  BMenuField parent. If found, it updates the top-level BColorMenuItem's color
+ *  to match this item's color and invalidates the menu for redraw.
+ *
+ *  @param mark true to mark the item, false to unmark it.
+ */
 void
 BColorMenuItem::SetMarked(bool mark)
 {
@@ -183,6 +273,9 @@ BColorMenuItem::SetMarked(bool mark)
 //	#pragma mark - BColorMenuItem private methods
 
 
+/** @brief Returns the left margin width from the menu's item margins.
+ *  @return The left margin in pixels as reported by MenuPrivate::GetItemMargins().
+ */
 float
 BColorMenuItem::_LeftMargin()
 {
@@ -193,6 +286,9 @@ BColorMenuItem::_LeftMargin()
 }
 
 
+/** @brief Returns the horizontal padding inserted between the color swatch and the label.
+ *  @return Half the maximum of 14px or (font size + 2), floored to an integer pixel.
+ */
 float
 BColorMenuItem::_Padding()
 {
@@ -200,6 +296,9 @@ BColorMenuItem::_Padding()
 }
 
 
+/** @brief Returns the width of the color swatch rectangle.
+ *  @return The swatch width in pixels, derived from the font size scaled by the golden ratio.
+ */
 float
 BColorMenuItem::_ColorRectWidth()
 {

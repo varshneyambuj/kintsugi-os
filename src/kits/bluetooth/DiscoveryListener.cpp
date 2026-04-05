@@ -1,6 +1,35 @@
 /*
- * Copyright 2007 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DiscoveryListener.cpp
+ * @brief Implementation of DiscoveryListener, the Bluetooth discovery callback interface
+ *
+ * DiscoveryListener receives notifications during a Bluetooth device inquiry
+ * scan: device found events (with address, class, and RSSI), inquiry
+ * completion, and error conditions. Applications subclass DiscoveryListener
+ * and register it with a DiscoveryAgent.
+ *
+ * @see DiscoveryAgent, RemoteDevice
  */
 
 
@@ -22,6 +51,21 @@ namespace Bluetooth {
 
 
 /* hooks */
+
+/**
+ * @brief Called when a new remote device is discovered during an inquiry scan.
+ *
+ * This is a default no-op hook. Subclasses override this method to act on
+ * each newly found device. It is invoked by MessageReceived() the first time
+ * a device's Bluetooth address is seen; duplicate reports for the same address
+ * update the cached device record but do not trigger this callback again.
+ *
+ * @param btDevice Pointer to the newly created RemoteDevice object representing
+ *                 the discovered device; owned by the internal devices list.
+ * @param cod      The Class of Device reported by the remote device, encoding
+ *                 its service class, major device class, and minor device class.
+ * @see DiscoveryAgent::StartInquiry(), InquiryCompleted()
+ */
 void
 DiscoveryListener::DeviceDiscovered(RemoteDevice* btDevice, DeviceClass cod)
 {
@@ -29,6 +73,18 @@ DiscoveryListener::DeviceDiscovered(RemoteDevice* btDevice, DeviceClass cod)
 }
 
 
+/**
+ * @brief Called when the Bluetooth inquiry scan has started.
+ *
+ * This is a default no-op hook. Subclasses override this method to receive
+ * notification that the HCI inquiry command has been accepted by the
+ * controller. The internal device list is cleared immediately before this
+ * callback is fired so that each inquiry starts with a fresh set of results.
+ *
+ * @param status HCI status code returned with the inquiry-started event;
+ *               B_OK indicates the controller accepted the inquiry command.
+ * @see InquiryCompleted(), DeviceDiscovered()
+ */
 void
 DiscoveryListener::InquiryStarted(status_t status)
 {
@@ -36,6 +92,20 @@ DiscoveryListener::InquiryStarted(status_t status)
 }
 
 
+/**
+ * @brief Called when an inquiry scan ends, whether normally or abnormally.
+ *
+ * This is a default no-op hook. Subclasses override this method to act on
+ * inquiry completion. The @p discType parameter distinguishes the three
+ * possible termination paths.
+ *
+ * @param discType One of the BT_INQUIRY_* constants:
+ *                 - @c BT_INQUIRY_COMPLETED  – the inquiry ran to completion.
+ *                 - @c BT_INQUIRY_TERMINATED – the inquiry was cancelled via
+ *                   DiscoveryAgent::CancelInquiry().
+ *                 - @c BT_INQUIRY_ERROR      – the inquiry ended due to an error.
+ * @see InquiryStarted(), DiscoveryAgent::CancelInquiry()
+ */
 void
 DiscoveryListener::InquiryCompleted(int discType)
 {
@@ -45,8 +115,15 @@ DiscoveryListener::InquiryCompleted(int discType)
 
 /* private */
 
-/* A LocalDevice is always referenced in any request to the
- * Bluetooth server therefore is going to be needed in any
+/**
+ * @brief Associates this listener with the LocalDevice that owns the inquiry.
+ *
+ * A LocalDevice reference is required for any request issued back to the
+ * Bluetooth server (e.g. fetching remote device attributes). This method is
+ * called by DiscoveryAgent::StartInquiry() before the inquiry command is sent.
+ *
+ * @param ld Pointer to the LocalDevice that initiated the inquiry owning
+ *           this listener.
  */
 void
 DiscoveryListener::SetLocalDeviceOwner(LocalDevice* ld)
@@ -56,6 +133,17 @@ DiscoveryListener::SetLocalDeviceOwner(LocalDevice* ld)
 }
 
 
+/**
+ * @brief Returns the list of remote devices accumulated during the current inquiry.
+ *
+ * The returned list contains one RemoteDevice entry per unique Bluetooth
+ * address seen since the most recent BT_MSG_INQUIRY_STARTED message.
+ * Duplicate inquiry results update the existing entry rather than adding a
+ * new one.
+ *
+ * @return A RemoteDevicesList of all devices discovered so far.
+ * @see DeviceDiscovered()
+ */
 RemoteDevicesList
 DiscoveryListener::GetRemoteDevicesList(void)
 {
@@ -64,6 +152,24 @@ DiscoveryListener::GetRemoteDevicesList(void)
 }
 
 
+/**
+ * @brief Dispatches Bluetooth server inquiry messages to the appropriate hooks.
+ *
+ * Handles the following message codes sent by the Bluetooth server:
+ * - @c BT_MSG_INQUIRY_DEVICE    – one or more devices reported in a single
+ *   HCI event; each new address is added to the device list and triggers
+ *   DeviceDiscovered(). Duplicate addresses update the cached record silently.
+ * - @c BT_MSG_INQUIRY_STARTED   – clears the device list and calls
+ *   InquiryStarted() with the HCI status byte.
+ * - @c BT_MSG_INQUIRY_COMPLETED – calls InquiryCompleted(BT_INQUIRY_COMPLETED).
+ * - @c BT_MSG_INQUIRY_TERMINATED – calls InquiryCompleted(BT_INQUIRY_TERMINATED).
+ * - @c BT_MSG_INQUIRY_ERROR     – calls InquiryCompleted(BT_INQUIRY_ERROR).
+ *
+ * All unrecognised messages are forwarded to BLooper::MessageReceived().
+ *
+ * @param message The incoming BMessage delivered by the BLooper message loop.
+ * @see DeviceDiscovered(), InquiryStarted(), InquiryCompleted()
+ */
 void
 DiscoveryListener::MessageReceived(BMessage* message)
 {
@@ -174,6 +280,18 @@ DiscoveryListener::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Constructs a DiscoveryListener and starts its message loop.
+ *
+ * Initialises the internal BLooper base and pre-allocates the remote-device
+ * list with a capacity of BT_MAX_RESPONSES entries. The looper thread is
+ * started immediately so the listener is ready to receive server messages
+ * before StartInquiry() returns.
+ *
+ * @note The looper is started unconditionally; a more refined approach would
+ *       start and stop it in tandem with active inquiries.
+ * @see DiscoveryAgent::StartInquiry()
+ */
 DiscoveryListener::DiscoveryListener()
 	:
 	BLooper(),

@@ -1,15 +1,43 @@
 /*
- * Copyright 2001-2015, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Axel Dörfler, axeld@pinc-software.de
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Joseph Groover <looncraz@looncraz.net>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Joseph Groover <looncraz@looncraz.net>
  */
 
-/*! BStatusBar displays a "percentage-of-completion" gauge. */
+
+/**
+ * @file StatusBar.cpp
+ * @brief Implementation of BStatusBar, a progress indicator control
+ *
+ * BStatusBar displays a labeled progress bar filled to a percentage of its
+ * range. It supports sub-labels, trail text, and smooth update messages for
+ * animated progress indication.
+ *
+ * @see BControl, BView, BControlLook
+ */
+
+
 #include <StatusBar.h>
 
 #include <stdio.h>
@@ -24,11 +52,20 @@
 
 #include <binary_compatibility/Interface.h>
 
+/** @brief Internal flag bit indicating the bar color was set by the application. */
 enum internalFlags {
 	kCustomBarColor = 1
 };
 
 
+/**
+ * @brief Construct a frame-based BStatusBar with labels.
+ *
+ * @param frame          Initial bounds rectangle in the parent's coordinate system.
+ * @param name           Internal view name used for lookup and archiving.
+ * @param label          Left-side label displayed above the bar. May be NULL.
+ * @param trailingLabel  Right-side label displayed above the bar. May be NULL.
+ */
 BStatusBar::BStatusBar(BRect frame, const char *name, const char *label,
 		const char *trailingLabel)
 	:
@@ -40,6 +77,13 @@ BStatusBar::BStatusBar(BRect frame, const char *name, const char *label,
 }
 
 
+/**
+ * @brief Construct a layout-managed BStatusBar without an explicit frame.
+ *
+ * @param name           Internal view name.
+ * @param label          Left-side label displayed above the bar. May be NULL.
+ * @param trailingLabel  Right-side label displayed above the bar. May be NULL.
+ */
 BStatusBar::BStatusBar(const char *name, const char *label,
 		const char *trailingLabel)
 	:
@@ -52,6 +96,15 @@ BStatusBar::BStatusBar(const char *name, const char *label,
 }
 
 
+/**
+ * @brief Unarchive constructor: restore a BStatusBar from a BMessage.
+ *
+ * Reads labels, text strings, bar height, bar color, current value, and
+ * maximum value from \a archive.
+ *
+ * @param archive  The archive message produced by Archive().
+ * @see Instantiate(), Archive()
+ */
 BStatusBar::BStatusBar(BMessage *archive)
 	:
 	BView(archive)
@@ -83,11 +136,21 @@ BStatusBar::BStatusBar(BMessage *archive)
 }
 
 
+/**
+ * @brief Destroy the BStatusBar.
+ */
 BStatusBar::~BStatusBar()
 {
 }
 
 
+/**
+ * @brief Create a new BStatusBar from an archived BMessage.
+ *
+ * @param archive  The archive message to instantiate from.
+ * @return A new BStatusBar if \a archive is valid, or NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable *
 BStatusBar::Instantiate(BMessage *archive)
 {
@@ -98,6 +161,17 @@ BStatusBar::Instantiate(BMessage *archive)
 }
 
 
+/**
+ * @brief Archive this BStatusBar into a BMessage.
+ *
+ * Stores any non-default bar height, custom bar color, current value, maximum
+ * value, text strings, and label strings into \a archive.
+ *
+ * @param archive  The message to archive into.
+ * @param deep     Passed to BView::Archive(); no additional children are stored.
+ * @return B_OK on success, or a negative error code on failure.
+ * @see Instantiate()
+ */
 status_t
 BStatusBar::Archive(BMessage *archive, bool deep) const
 {
@@ -133,6 +207,13 @@ BStatusBar::Archive(BMessage *archive, bool deep) const
 // #pragma mark -
 
 
+/**
+ * @brief Finish attaching the status bar to its window.
+ *
+ * Resizes the view height to its preferred value, sets a transparent view
+ * color, adopts the parent's colors, initialises the text divider position,
+ * and applies the system bar color if no application-specific color is set.
+ */
 void
 BStatusBar::AttachedToWindow()
 {
@@ -152,6 +233,11 @@ BStatusBar::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the view is detached from its window.
+ *
+ * Forwards the notification to BView::DetachedFromWindow().
+ */
 void
 BStatusBar::DetachedFromWindow()
 {
@@ -159,6 +245,11 @@ BStatusBar::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called after all views in the hierarchy have been attached.
+ *
+ * Forwards the notification to BView::AllAttached().
+ */
 void
 BStatusBar::AllAttached()
 {
@@ -166,6 +257,11 @@ BStatusBar::AllAttached()
 }
 
 
+/**
+ * @brief Called after all views in the hierarchy have been detached.
+ *
+ * Forwards the notification to BView::AllDetached().
+ */
 void
 BStatusBar::AllDetached()
 {
@@ -176,6 +272,13 @@ BStatusBar::AllDetached()
 // #pragma mark -
 
 
+/**
+ * @brief Called when the owning window is activated or deactivated.
+ *
+ * Forwards the notification to BView::WindowActivated().
+ *
+ * @param state  true if the window became active, false if it deactivated.
+ */
 void
 BStatusBar::WindowActivated(bool state)
 {
@@ -183,6 +286,11 @@ BStatusBar::WindowActivated(bool state)
 }
 
 
+/**
+ * @brief Forward a focus change to the base BView.
+ *
+ * @param state  true to acquire focus, false to release it.
+ */
 void
 BStatusBar::MakeFocus(bool state)
 {
@@ -193,6 +301,16 @@ BStatusBar::MakeFocus(bool state)
 // #pragma mark -
 
 
+/**
+ * @brief Report the natural (preferred) dimensions of the status bar.
+ *
+ * The preferred width is the sum of all label and text string widths plus a
+ * small margin. The preferred height combines the (optional) label area with
+ * the bar height.
+ *
+ * @param _width   If non-NULL, receives the preferred width in pixels.
+ * @param _height  If non-NULL, receives the preferred height in pixels.
+ */
 void
 BStatusBar::GetPreferredSize(float* _width, float* _height)
 {
@@ -218,6 +336,11 @@ BStatusBar::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Return the minimum layout size of the status bar.
+ *
+ * @return The minimum BSize composed with any explicit minimum size.
+ */
 BSize
 BStatusBar::MinSize()
 {
@@ -228,6 +351,14 @@ BStatusBar::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum layout size of the status bar.
+ *
+ * The height is fixed at the preferred height; the width is unlimited so the
+ * bar can fill its container horizontally.
+ *
+ * @return The maximum BSize composed with any explicit maximum size.
+ */
 BSize
 BStatusBar::MaxSize()
 {
@@ -239,6 +370,11 @@ BStatusBar::MaxSize()
 }
 
 
+/**
+ * @brief Return the preferred layout size of the status bar.
+ *
+ * @return The preferred BSize composed with any explicit preferred size.
+ */
 BSize
 BStatusBar::PreferredSize()
 {
@@ -250,6 +386,11 @@ BStatusBar::PreferredSize()
 }
 
 
+/**
+ * @brief Resize the view to its preferred dimensions.
+ *
+ * Forwards to BView::ResizeToPreferred().
+ */
 void
 BStatusBar::ResizeToPreferred()
 {
@@ -257,6 +398,13 @@ BStatusBar::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Called when the view's frame origin changes.
+ *
+ * Forwards the notification to BView::FrameMoved().
+ *
+ * @param newPosition  The view's new top-left position in the parent's coordinates.
+ */
 void
 BStatusBar::FrameMoved(BPoint newPosition)
 {
@@ -264,6 +412,12 @@ BStatusBar::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Called when the view is resized; triggers a full repaint.
+ *
+ * @param newWidth   The view's new width.
+ * @param newHeight  The view's new height.
+ */
 void
 BStatusBar::FrameResized(float newWidth, float newHeight)
 {
@@ -275,6 +429,15 @@ BStatusBar::FrameResized(float newWidth, float newHeight)
 // #pragma mark -
 
 
+/**
+ * @brief Draw the status bar including label text and the filled progress bar.
+ *
+ * Paints the label/text area above the bar (when text is present), then
+ * delegates bar rendering to BControlLook::DrawStatusBar(). Unchanged
+ * regions outside the bar frame are filled with the low (background) color.
+ *
+ * @param updateRect  The rectangle that needs repainting.
+ */
 void
 BStatusBar::Draw(BRect updateRect)
 {
@@ -350,6 +513,16 @@ BStatusBar::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handle B_UPDATE_STATUS_BAR, B_RESET_STATUS_BAR, and B_COLORS_UPDATED messages.
+ *
+ * B_UPDATE_STATUS_BAR calls Update() with the delta and optional text strings.
+ * B_RESET_STATUS_BAR calls Reset() with optional new label strings.
+ * B_COLORS_UPDATED refreshes the bar color from the system palette when no
+ * application-specific color has been set.
+ *
+ * @param message  The BMessage to process.
+ */
 void
 BStatusBar::MessageReceived(BMessage *message)
 {
@@ -399,6 +572,11 @@ BStatusBar::MessageReceived(BMessage *message)
 }
 
 
+/**
+ * @brief Forward a mouse-button-down event to the base BView.
+ *
+ * @param point  Mouse position in view coordinates.
+ */
 void
 BStatusBar::MouseDown(BPoint point)
 {
@@ -406,6 +584,11 @@ BStatusBar::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Forward a mouse-button-up event to the base BView.
+ *
+ * @param point  Mouse position in view coordinates.
+ */
 void
 BStatusBar::MouseUp(BPoint point)
 {
@@ -413,6 +596,13 @@ BStatusBar::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Forward a mouse-moved event to the base BView.
+ *
+ * @param point    Current mouse position in view coordinates.
+ * @param transit  Entry/exit transit code.
+ * @param message  Drag-and-drop message, or NULL if none.
+ */
 void
 BStatusBar::MouseMoved(BPoint point, uint32 transit, const BMessage *message)
 {
@@ -423,6 +613,14 @@ BStatusBar::MouseMoved(BPoint point, uint32 transit, const BMessage *message)
 // #pragma mark -
 
 
+/**
+ * @brief Set the fill color of the progress bar.
+ *
+ * Marks the color as application-defined so that subsequent B_COLORS_UPDATED
+ * system notifications do not override it.
+ *
+ * @param color  The new bar fill color.
+ */
 void
 BStatusBar::SetBarColor(rgb_color color)
 {
@@ -433,6 +631,14 @@ BStatusBar::SetBarColor(rgb_color color)
 }
 
 
+/**
+ * @brief Set the pixel height of the filled bar region.
+ *
+ * Stores a custom bar height and resizes the view (or invalidates the layout)
+ * so the new height is reflected immediately.
+ *
+ * @param barHeight  The desired bar height in pixels.
+ */
 void
 BStatusBar::SetBarHeight(float barHeight)
 {
@@ -455,6 +661,14 @@ BStatusBar::SetBarHeight(float barHeight)
 }
 
 
+/**
+ * @brief Set the dynamic sub-label displayed to the left of the bar.
+ *
+ * The sub-text is combined with the static left label for display. Triggers
+ * a layout invalidation if the presence of text changes.
+ *
+ * @param string  The new sub-label text, or NULL to clear it.
+ */
 void
 BStatusBar::SetText(const char* string)
 {
@@ -462,6 +676,13 @@ BStatusBar::SetText(const char* string)
 }
 
 
+/**
+ * @brief Set the dynamic sub-label displayed to the right of the bar.
+ *
+ * The trailing sub-text is combined with the static trailing label for display.
+ *
+ * @param string  The new trailing sub-label text, or NULL to clear it.
+ */
 void
 BStatusBar::SetTrailingText(const char* string)
 {
@@ -469,6 +690,14 @@ BStatusBar::SetTrailingText(const char* string)
 }
 
 
+/**
+ * @brief Set the maximum value of the progress bar.
+ *
+ * @param max  The new maximum. The bar is full when CurrentValue() == max.
+ * @note For binary-compatibility reasons this method does not invalidate the
+ *       view; the visual update occurs the next time Update() or SetTo() is
+ *       called.
+ */
 void
 BStatusBar::SetMaxValue(float max)
 {
@@ -480,6 +709,16 @@ BStatusBar::SetMaxValue(float max)
 }
 
 
+/**
+ * @brief Advance the progress bar by \a delta and optionally update its text labels.
+ *
+ * If \a text or \a trailingText is NULL the existing string is preserved.
+ * Delegates to SetTo() after computing the new value.
+ *
+ * @param delta        Amount to add to the current value.
+ * @param text         New left sub-label, or NULL to keep the current one.
+ * @param trailingText New right sub-label, or NULL to keep the current one.
+ */
 void
 BStatusBar::Update(float delta, const char* text, const char* trailingText)
 {
@@ -492,6 +731,15 @@ BStatusBar::Update(float delta, const char* text, const char* trailingText)
 }
 
 
+/**
+ * @brief Reset the bar to zero and optionally replace the static labels.
+ *
+ * Clears both dynamic text strings, resets the current value to 0 and the
+ * maximum to 100, then triggers a full repaint.
+ *
+ * @param label          Replacement left label, or NULL to clear it.
+ * @param trailingLabel  Replacement right label, or NULL to clear it.
+ */
 void
 BStatusBar::Reset(const char *label, const char *trailingLabel)
 {
@@ -512,6 +760,17 @@ BStatusBar::Reset(const char *label, const char *trailingLabel)
 }
 
 
+/**
+ * @brief Set the current progress value and text labels, then repaint the changed area.
+ *
+ * Clamps \a value to [0, fMax], computes the old and new fill positions, and
+ * invalidates only the portion of the bar rect that changed, minimising
+ * unnecessary redrawing.
+ *
+ * @param value        The new absolute progress value (clamped to [0, MaxValue()]).
+ * @param text         New left sub-label, or NULL to clear it.
+ * @param trailingText New right sub-label, or NULL to clear it.
+ */
 void
 BStatusBar::SetTo(float value, const char* text, const char* trailingText)
 {
@@ -551,6 +810,11 @@ BStatusBar::SetTo(float value, const char* text, const char* trailingText)
 }
 
 
+/**
+ * @brief Return the current progress value.
+ *
+ * @return The value last set by SetTo() or Update(), in the range [0, MaxValue()].
+ */
 float
 BStatusBar::CurrentValue() const
 {
@@ -558,6 +822,11 @@ BStatusBar::CurrentValue() const
 }
 
 
+/**
+ * @brief Return the maximum value of the progress bar.
+ *
+ * @return The maximum value; the bar is full when CurrentValue() equals this.
+ */
 float
 BStatusBar::MaxValue() const
 {
@@ -565,6 +834,11 @@ BStatusBar::MaxValue() const
 }
 
 
+/**
+ * @brief Return the bar fill color.
+ *
+ * @return The rgb_color used to fill the filled portion of the bar.
+ */
 rgb_color
 BStatusBar::BarColor() const
 {
@@ -572,6 +846,14 @@ BStatusBar::BarColor() const
 }
 
 
+/**
+ * @brief Return the pixel height of the progress bar region.
+ *
+ * When no custom height has been set, the height is computed from the current
+ * font metrics (ascent + descent + 5) and cached for subsequent calls.
+ *
+ * @return The bar height in pixels, always rounded up to the nearest integer.
+ */
 float
 BStatusBar::BarHeight() const
 {
@@ -587,6 +869,11 @@ BStatusBar::BarHeight() const
 }
 
 
+/**
+ * @brief Return the dynamic sub-label displayed to the left.
+ *
+ * @return The string set by SetText(), or an empty string if none is set.
+ */
 const char *
 BStatusBar::Text() const
 {
@@ -594,6 +881,11 @@ BStatusBar::Text() const
 }
 
 
+/**
+ * @brief Return the dynamic sub-label displayed to the right.
+ *
+ * @return The string set by SetTrailingText(), or an empty string if none is set.
+ */
 const char *
 BStatusBar::TrailingText() const
 {
@@ -601,6 +893,11 @@ BStatusBar::TrailingText() const
 }
 
 
+/**
+ * @brief Return the static left-side label.
+ *
+ * @return The label string supplied at construction or via Reset().
+ */
 const char *
 BStatusBar::Label() const
 {
@@ -608,6 +905,11 @@ BStatusBar::Label() const
 }
 
 
+/**
+ * @brief Return the static right-side label.
+ *
+ * @return The trailing label string supplied at construction or via Reset().
+ */
 const char *
 BStatusBar::TrailingLabel() const
 {
@@ -618,6 +920,19 @@ BStatusBar::TrailingLabel() const
 // #pragma mark -
 
 
+/**
+ * @brief Resolve a scripting specifier to the appropriate handler.
+ *
+ * Forwards all specifiers to BView::ResolveSpecifier(); BStatusBar does not
+ * expose additional scripting properties.
+ *
+ * @param message    The scripting message containing the specifier chain.
+ * @param index      Index of the current specifier in the chain.
+ * @param specifier  The current specifier message.
+ * @param what       The specifier form constant.
+ * @param property   The property name string.
+ * @return The result of BView::ResolveSpecifier().
+ */
 BHandler *
 BStatusBar::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char *property)
@@ -626,6 +941,14 @@ BStatusBar::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Add the supported scripting suites to a BMessage.
+ *
+ * Forwards to BView::GetSupportedSuites(); no additional suites are defined.
+ *
+ * @param data  The message to populate with suite information.
+ * @return The result of BView::GetSupportedSuites().
+ */
 status_t
 BStatusBar::GetSupportedSuites(BMessage* data)
 {
@@ -633,6 +956,18 @@ BStatusBar::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Dispatch a low-level perform code to the appropriate virtual method.
+ *
+ * Handles the standard set of layout perform codes (MinSize, MaxSize,
+ * PreferredSize, LayoutAlignment, HasHeightForWidth, GetHeightForWidth,
+ * SetLayout, LayoutInvalidated, DoLayout) by calling the corresponding
+ * BStatusBar methods directly. Unknown codes are forwarded to BView::Perform().
+ *
+ * @param code   One of the PERFORM_CODE_* constants.
+ * @param _data  Pointer to the perform-specific data structure.
+ * @return B_OK if the code was handled, otherwise the result of BView::Perform().
+ */
 status_t
 BStatusBar::Perform(perform_code code, void* _data)
 {
@@ -715,6 +1050,12 @@ BStatusBar::operator=(const BStatusBar& other)
 // #pragma mark -
 
 
+/**
+ * @brief Initialise all member variables to their default values.
+ *
+ * Called from every constructor. Sets fMax to 100, fCurrent to 0, fBarHeight
+ * to -1 (auto), and enables B_FRAME_EVENTS so FrameResized() is called.
+ */
 void
 BStatusBar::_InitObject()
 {
@@ -731,6 +1072,20 @@ BStatusBar::_InitObject()
 }
 
 
+/**
+ * @brief Update one of the dynamic text strings and trigger a partial repaint.
+ *
+ * Compares the new string against the stored value; if different, updates
+ * the string, conditionally invalidates the layout (when text presence
+ * changes), and repaints the label area above the bar.
+ *
+ * @param text          The BString member to update (fText or fTrailingText).
+ * @param source        The new string value, or NULL to set an empty string.
+ * @param combineWith   The companion static label to concatenate for width
+ *                      measurement (fLabel or fTrailingLabel).
+ * @param rightAligned  If true, \a text precedes \a combineWith in the display
+ *                      order (trailing side); otherwise the order is reversed.
+ */
 void
 BStatusBar::_SetTextData(BString& text, const char* source,
 	const BString& combineWith, bool rightAligned)
@@ -767,9 +1122,17 @@ BStatusBar::_SetTextData(BString& text, const char* source,
 }
 
 
-/*!
-	Returns the inner bar frame without the surrounding bevel.
-*/
+/**
+ * @brief Return the inner bar frame excluding the surrounding two-pixel bevel.
+ *
+ * The top edge is positioned below the label area when text is present;
+ * otherwise it starts two pixels from the top. The optional \a fontHeight
+ * pointer avoids a redundant GetFontHeight() call when the caller already
+ * has the metrics.
+ *
+ * @param fontHeight  Pre-fetched font metrics, or NULL to fetch them internally.
+ * @return The inner BRect of the progress bar fill area.
+ */
 BRect
 BStatusBar::_BarFrame(const font_height* fontHeight) const
 {
@@ -787,6 +1150,16 @@ BStatusBar::_BarFrame(const font_height* fontHeight) const
 }
 
 
+/**
+ * @brief Compute the x-coordinate of the right edge of the filled portion.
+ *
+ * Maps the current progress value linearly onto the bar frame width.
+ * Returns barFrame.left - 1 (one pixel left of the bar) when fCurrent is 0,
+ * indicating an empty bar.
+ *
+ * @param barFrame  The inner bar frame returned by _BarFrame().
+ * @return The pixel x-position of the fill boundary.
+ */
 float
 BStatusBar::_BarPosition(const BRect& barFrame) const
 {
@@ -798,6 +1171,15 @@ BStatusBar::_BarPosition(const BRect& barFrame) const
 }
 
 
+/**
+ * @brief Return whether the view should reserve vertical space for the label area.
+ *
+ * In legacy (non-layout) mode this always returns true to preserve the BeOS
+ * R5 fixed-height behavior. In layout mode it returns true only when at least
+ * one of the four text strings is non-empty.
+ *
+ * @return true if label/text area space should be included in the preferred height.
+ */
 bool
 BStatusBar::_HasText() const
 {

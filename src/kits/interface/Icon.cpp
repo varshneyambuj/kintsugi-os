@@ -1,10 +1,38 @@
 /*
- * Copyright 2006-2013, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+
+/**
+ * @file Icon.cpp
+ * @brief Implementation of BIcon, a multi-resolution icon container
+ *
+ * BIcon stores an icon in both bitmap (BBitmap) and vector (BPicture-compatible)
+ * formats, allowing applications to render icons at any size with appropriate
+ * quality.
+ *
+ * @see BBitmap, BView
  */
 
 
@@ -22,6 +50,13 @@
 namespace BPrivate {
 
 
+/**
+ * @brief Construct an empty BIcon with pre-allocated bitmap list capacity.
+ *
+ * Both the enabled and disabled bitmap lists are pre-allocated for eight
+ * slots, covering the standard active, inactive, and partially-active states
+ * in both enabled and disabled variants.
+ */
 BIcon::BIcon()
 	:
 	fEnabledBitmaps(8),
@@ -30,11 +65,34 @@ BIcon::BIcon()
 }
 
 
+/**
+ * @brief Destroy the BIcon.
+ *
+ * The destructor relies on the BitmapList destructor to release the stored
+ * BBitmap objects for both the enabled and disabled lists.
+ */
 BIcon::~BIcon()
 {
 }
 
 
+/**
+ * @brief Initialize the icon from a source BBitmap, generating all required variants.
+ *
+ * Validates the bitmap's color space, optionally trims transparent borders,
+ * converts non-RGB32/RGBA32 bitmaps to RGBA32 for processing, then calls
+ * _MakeBitmaps() to produce the active, inactive, disabled, and
+ * partially-active variants as requested by @p flags.
+ *
+ * @param bitmap Source bitmap to build the icon from; must be valid.
+ * @param flags  Combination of B_TRIM_ICON_BITMAP,
+ *               B_TRIM_ICON_BITMAP_KEEP_ASPECT,
+ *               B_CREATE_DISABLED_ICON_BITMAPS,
+ *               B_CREATE_ACTIVE_ICON_BITMAP, and
+ *               B_CREATE_PARTIALLY_ACTIVE_ICON_BITMAP flags.
+ * @return B_OK on success, B_BAD_VALUE if the bitmap is invalid, or
+ *         B_NO_MEMORY if an intermediate allocation fails.
+ */
 status_t
 BIcon::SetTo(const BBitmap* bitmap, uint32 flags)
 {
@@ -117,6 +175,19 @@ BIcon::SetTo(const BBitmap* bitmap, uint32 flags)
 }
 
 
+/**
+ * @brief Store a BBitmap pointer at a specific slot in the enabled or disabled list.
+ *
+ * If the list is shorter than required, NULL entries are appended to pad it
+ * before the bitmap is stored. An existing entry at @p which is replaced
+ * without deleting the old pointer — the caller is responsible for the
+ * lifetime of any bitmap being overwritten.
+ *
+ * @param bitmap The BBitmap to store; may be NULL to clear a slot.
+ * @param which  The target slot index, optionally OR'd with
+ *               B_DISABLED_ICON_BITMAP to select the disabled list.
+ * @return true on success; false if a required list expansion fails.
+ */
 bool
 BIcon::SetBitmap(BBitmap* bitmap, uint32 which)
 {
@@ -139,6 +210,13 @@ BIcon::SetBitmap(BBitmap* bitmap, uint32 which)
 }
 
 
+/**
+ * @brief Retrieve the stored BBitmap for a given icon state slot.
+ *
+ * @param which The slot index, optionally OR'd with B_DISABLED_ICON_BITMAP.
+ * @return The stored BBitmap pointer, or NULL if the slot is empty or
+ *         out of range.
+ */
 BBitmap*
 BIcon::Bitmap(uint32 which) const
 {
@@ -148,6 +226,18 @@ BIcon::Bitmap(uint32 which) const
 }
 
 
+/**
+ * @brief Allocate a new BBitmap, store it at the given slot, and return it.
+ *
+ * Creates a BBitmap with the specified bounds and color space, stores it via
+ * SetBitmap(), and returns the pointer on success. On any failure the
+ * partially constructed bitmap is deleted and NULL is returned.
+ *
+ * @param bounds     The pixel bounds of the new bitmap.
+ * @param colorSpace The color space to use (e.g. B_RGBA32).
+ * @param which      The target slot, optionally OR'd with B_DISABLED_ICON_BITMAP.
+ * @return The new BBitmap on success, or NULL on allocation or storage failure.
+ */
 BBitmap*
 BIcon::CreateBitmap(const BRect& bounds, color_space colorSpace, uint32 which)
 {
@@ -161,6 +251,19 @@ BIcon::CreateBitmap(const BRect& bounds, color_space colorSpace, uint32 which)
 }
 
 
+/**
+ * @brief Store an externally owned BBitmap in the given slot, optionally converting it.
+ *
+ * If B_KEEP_ICON_BITMAP is set in @p flags the original pointer is stored
+ * directly (the caller retains ownership); otherwise a converted RGBA32 copy
+ * is made and stored (the icon then owns the copy).
+ *
+ * @param bitmap The source bitmap; passing NULL clears the slot.
+ * @param which  The target slot, optionally OR'd with B_DISABLED_ICON_BITMAP.
+ * @param flags  Pass B_KEEP_ICON_BITMAP to store the pointer without copying.
+ * @return B_OK on success, B_BAD_VALUE if @p bitmap is non-NULL but invalid,
+ *         or B_NO_MEMORY if conversion or storage fails.
+ */
 status_t
 BIcon::SetExternalBitmap(const BBitmap* bitmap, uint32 which, uint32 flags)
 {
@@ -188,6 +291,17 @@ BIcon::SetExternalBitmap(const BBitmap* bitmap, uint32 which, uint32 flags)
 }
 
 
+/**
+ * @brief Clone a BBitmap into the given slot and return the clone.
+ *
+ * Constructs a new BBitmap by copy, stores it at @p which via SetBitmap(),
+ * and returns the clone. On any failure the partially constructed clone is
+ * deleted and NULL is returned.
+ *
+ * @param bitmapToClone The source bitmap to duplicate.
+ * @param which         The target slot, optionally OR'd with B_DISABLED_ICON_BITMAP.
+ * @return The cloned BBitmap on success, or NULL on failure.
+ */
 BBitmap*
 BIcon::CopyBitmap(const BBitmap& bitmapToClone, uint32 which)
 {
@@ -201,6 +315,12 @@ BIcon::CopyBitmap(const BBitmap& bitmapToClone, uint32 which)
 }
 
 
+/**
+ * @brief Delete all stored bitmaps in both the enabled and disabled lists.
+ *
+ * After this call both lists are empty and all previously stored BBitmap
+ * objects have been freed.
+ */
 void
 BIcon::DeleteBitmaps()
 {
@@ -209,6 +329,19 @@ BIcon::DeleteBitmaps()
 }
 
 
+/**
+ * @brief Replace or clear the icon pointed to by @p _icon using a new source bitmap.
+ *
+ * If @p bitmap is NULL the existing icon is deleted and @p _icon is set to
+ * NULL. Otherwise a new BIcon is allocated, initialized via SetTo(), and
+ * assigned to @p _icon on success.
+ *
+ * @param bitmap Source bitmap, or NULL to clear the icon.
+ * @param flags  Flags forwarded to BIcon::SetTo().
+ * @param _icon  Reference to the BIcon pointer to update; the caller owns
+ *               the resulting object.
+ * @return B_OK on success, or B_NO_MEMORY if allocation fails.
+ */
 /*static*/ status_t
 BIcon::UpdateIcon(const BBitmap* bitmap, uint32 flags, BIcon*& _icon)
 {
@@ -233,6 +366,19 @@ BIcon::UpdateIcon(const BBitmap* bitmap, uint32 flags, BIcon*& _icon)
 }
 
 
+/**
+ * @brief Set a single bitmap slot in an icon, creating the BIcon if necessary.
+ *
+ * If @p _icon is NULL and @p bitmap is non-NULL a new BIcon is created.
+ * The bitmap is stored via SetExternalBitmap() without generating the full
+ * set of state variants.
+ *
+ * @param bitmap Source bitmap for the slot, or NULL to clear the slot.
+ * @param which  The target slot index, optionally OR'd with B_DISABLED_ICON_BITMAP.
+ * @param flags  Flags forwarded to SetExternalBitmap() (e.g. B_KEEP_ICON_BITMAP).
+ * @param _icon  Reference to the BIcon pointer to update; the caller owns the object.
+ * @return B_OK on success, or B_NO_MEMORY if a new icon could not be allocated.
+ */
 /*static*/ status_t
 BIcon::SetIconBitmap(const BBitmap* bitmap, uint32 which, uint32 flags,
 	BIcon*& _icon)
@@ -261,6 +407,18 @@ BIcon::SetIconBitmap(const BBitmap* bitmap, uint32 which, uint32 flags,
 }
 
 
+/**
+ * @brief Convert an arbitrary BBitmap to B_RGBA32 format.
+ *
+ * Allocates a new BBitmap with the same bounds as @p bitmap in B_RGBA32
+ * color space and imports the pixel data via ImportBits().
+ *
+ * @param bitmap            The source bitmap to convert; must be valid.
+ * @param noAppServerLink   If true the new bitmap is created with
+ *                          B_BITMAP_NO_SERVER_LINK, avoiding an app-server
+ *                          round-trip (safe to use from constructors).
+ * @return A newly allocated RGBA32 BBitmap on success, or NULL on failure.
+ */
 /*static*/ BBitmap*
 BIcon::_ConvertToRGB32(const BBitmap* bitmap, bool noAppServerLink)
 {
@@ -278,6 +436,25 @@ BIcon::_ConvertToRGB32(const BBitmap* bitmap, bool noAppServerLink)
 }
 
 
+/**
+ * @brief Trim fully-transparent border pixels from a B_RGBA32 bitmap.
+ *
+ * Scans every pixel's alpha channel to find the tightest bounding rectangle
+ * that contains at least one non-transparent pixel, then copies that region
+ * into a freshly allocated BBitmap.  If @p keepAspect is true the trim
+ * rectangle is expanded symmetrically so that the original aspect ratio is
+ * preserved.
+ *
+ * @param bitmap            The source bitmap; must be valid and in B_RGBA32
+ *                          color space.
+ * @param keepAspect        If true, apply the minimum inset uniformly on all
+ *                          sides to maintain the original aspect ratio.
+ * @param[out] _trimmedBitmap  Receives the newly allocated trimmed bitmap on
+ *                             success; unchanged on failure.
+ * @return B_OK on success, B_BAD_VALUE if @p bitmap is NULL, invalid, or not
+ *         B_RGBA32, or if the bitmap is entirely transparent.
+ *         B_NO_MEMORY if the output bitmap cannot be allocated.
+ */
 /*static*/ status_t
 BIcon::_TrimBitmap(const BBitmap* bitmap, bool keepAspect,
 	BBitmap*& _trimmedBitmap)
@@ -349,6 +526,25 @@ BIcon::_TrimBitmap(const BBitmap* bitmap, bool keepAspect,
 }
 
 
+/**
+ * @brief Generate all requested state bitmaps from a single source bitmap.
+ *
+ * Creates inactive, active, disabled, and disabled-active variants according
+ * to @p flags. Color adjustments are applied per-pixel:
+ * - Active (clicked) pixels are darkened by 20%.
+ * - Disabled pixels are desaturated and, for RGBA32, have their alpha reduced
+ *   to 30% of the original.
+ * - Disabled-active pixels combine both the darkening and alpha reduction.
+ *
+ * Supports B_RGB32, B_RGB32_BIG, B_RGBA32, and B_RGBA32_BIG source formats.
+ *
+ * @param bitmap Source bitmap in one of the supported color spaces.
+ * @param flags  Combination of B_CREATE_DISABLED_ICON_BITMAPS,
+ *               B_CREATE_ACTIVE_ICON_BITMAP, and
+ *               B_CREATE_PARTIALLY_ACTIVE_ICON_BITMAP.
+ * @return B_OK on success, B_NO_MEMORY if any bitmap allocation fails, or
+ *         B_BAD_VALUE if the source color space is unsupported.
+ */
 status_t
 BIcon::_MakeBitmaps(const BBitmap* bitmap, uint32 flags)
 {

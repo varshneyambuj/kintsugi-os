@@ -1,14 +1,43 @@
 /*
- * Copyright 2001-2019 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Axel Dörfler, axeld@pinc-software.de
- *		Adrian Oanca, adioanca@cotty.iren.ro
- *		Ingo Weinhold. ingo_weinhold@gmx.de
- *		Julian Harnath, julian.harnath@rwth-aachen.de
- *		Joseph Groover, looncraz@looncraz.net
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2019 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Adrian Oanca, adioanca@cotty.iren.ro
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *       Julian Harnath, julian.harnath@rwth-aachen.de
+ *       Joseph Groover, looncraz@looncraz.net
+ */
+
+
+/**
+ * @file View.cpp
+ * @brief Implementation of BView, the fundamental drawing and event-handling unit
+ *
+ * BView is the base class for all visible interface elements. It manages a
+ * coordinate system, a tree of child views, drawing state, event hooks, focus,
+ * cursors, and layout participation. BView communicates with the app_server via
+ * a command buffer for efficient batching of drawing calls.
+ *
+ * @see BWindow, BLayout, BScrollBar, BFont
  */
 
 
@@ -77,6 +106,14 @@ using std::nothrow;
 #endif
 
 
+/**
+ * @brief Scripting property table for BView.
+ *
+ * Defines the properties exposed via the BeOS scripting protocol, including
+ * "Frame", "Hidden", "Shelf", and "View" (by count, index, reverse-index, or name).
+ *
+ * @see BView::ResolveSpecifier(), BView::GetSupportedSuites()
+ */
 static property_info sViewPropInfo[] = {
 	{ "Frame", { B_GET_PROPERTY, B_SET_PROPERTY },
 		{ B_DIRECT_SPECIFIER, 0 }, "The view's frame rectangle.", 0,
@@ -106,6 +143,16 @@ static property_info sViewPropInfo[] = {
 //	#pragma mark -
 
 
+/**
+ * @brief Converts an rgb_color to a host-endian uint32.
+ *
+ * rgb_color is always stored in RGBA order regardless of host endianness.
+ * This helper reinterprets the four bytes as a 32-bit integer in host byte order,
+ * which is suitable for packing into protocol messages.
+ *
+ * @param color The colour value to convert.
+ * @return A uint32 encoding of the colour in host byte order.
+ */
 static inline uint32
 get_uint32_color(rgb_color color)
 {
@@ -115,6 +162,15 @@ get_uint32_color(rgb_color color)
 }
 
 
+/**
+ * @brief Converts a host-endian uint32 to an rgb_color.
+ *
+ * Reverses get_uint32_color(): converts the integer to big-endian byte order
+ * and reinterprets it as an rgb_color struct.
+ *
+ * @param value The host-endian encoded colour integer.
+ * @return The corresponding rgb_color value.
+ */
 static inline rgb_color
 get_rgb_color(uint32 value)
 {
@@ -128,6 +184,13 @@ get_rgb_color(uint32 value)
 
 namespace BPrivate {
 
+/**
+ * @brief Initialises all ViewState fields to their default (clean-slate) values.
+ *
+ * Sets the pen to the origin with size 1, colours to black/white/panel-background,
+ * drawing mode to B_OP_COPY, scale to 1.0, and marks all state flags as valid
+ * except B_VIEW_CLIP_REGION_BIT, which must always be fetched from the app_server.
+ */
 ViewState::ViewState()
 {
 	pen_location.Set(0, 0);
@@ -185,6 +248,15 @@ ViewState::ViewState()
 }
 
 
+/**
+ * @brief Sends only the font portion of the view state to the app_server.
+ *
+ * Starts an AS_VIEW_SET_FONT_STATE message and attaches only those font
+ * attributes whose bits are set in @c font_flags, minimising traffic on the
+ * port link.
+ *
+ * @param link The PortLink connected to the owning window's server channel.
+ */
 void
 ViewState::UpdateServerFontState(BPrivate::PortLink &link)
 {
@@ -221,6 +293,16 @@ ViewState::UpdateServerFontState(BPrivate::PortLink &link)
 }
 
 
+/**
+ * @brief Sends the complete view state (font + drawing state) to the app_server.
+ *
+ * First calls UpdateServerFontState(), then packs all remaining drawing-state
+ * fields (pen, colours, mode, scale, transforms, clipping region) into an
+ * AS_VIEW_SET_STATE message.  After flushing, all valid flags except
+ * B_VIEW_CLIP_REGION_BIT are marked valid on the client side.
+ *
+ * @param link The PortLink connected to the owning window's server channel.
+ */
 void
 ViewState::UpdateServerState(BPrivate::PortLink &link)
 {
@@ -269,6 +351,17 @@ ViewState::UpdateServerState(BPrivate::PortLink &link)
 }
 
 
+/**
+ * @brief Refreshes the local view state by querying the app_server.
+ *
+ * Sends AS_VIEW_GET_STATE and reads back the full ViewGetStateInfo structure,
+ * including font settings, pen, colours, drawing mode, transforms, and the
+ * user clipping region.  On success, valid_flags is updated to reflect the
+ * newly synchronised fields (excluding B_VIEW_CLIP_REGION_BIT and
+ * B_VIEW_PARENT_COMPOSITE_BIT, which remain managed separately).
+ *
+ * @param link The PortLink connected to the owning window's server channel.
+ */
 void
 ViewState::UpdateFrom(BPrivate::PortLink &link)
 {
@@ -340,14 +433,33 @@ ViewState::UpdateFrom(BPrivate::PortLink &link)
 
 // archiving constants
 namespace {
+	/** @brief Archive field name for the three layout sizes {min, max, preferred}. */
 	const char* const kSizesField = "BView:sizes";
 		// kSizesField = {min, max, pref}
+	/** @brief Archive field name for the view's explicit layout alignment. */
 	const char* const kAlignmentField = "BView:alignment";
+	/** @brief Archive field name for the view's attached BLayout object. */
 	const char* const kLayoutField = "BView:layout";
 }
 
 
+/**
+ * @brief Private aggregate holding all layout-related state for a BView.
+ *
+ * Stores explicit size hints, alignment, the attached BLayout, the current
+ * BLayoutContext, all BLayoutItems that reference this view, and several
+ * boolean flags that drive the layout invalidation and re-layout cycle.
+ *
+ * @see BView::SetLayout(), BView::InvalidateLayout(), BView::DoLayout()
+ */
 struct BView::LayoutData {
+	/**
+	 * @brief Initialises the layout data to a clean, layout-pending state.
+	 *
+	 * All explicit sizes and alignment are set to their "unset" defaults.
+	 * @c fLayoutValid and @c fMinMaxValid start as @c true so that the first
+	 * explicit InvalidateLayout() call initiates a real re-layout pass.
+	 */
 	LayoutData()
 		:
 		fMinSize(),
@@ -365,6 +477,15 @@ struct BView::LayoutData {
 	{
 	}
 
+	/**
+	 * @brief Writes explicit size and alignment hints into an archive message.
+	 *
+	 * Stores the minimum, maximum, and preferred sizes (under kSizesField) and
+	 * the alignment (under kAlignmentField) so they survive archiving.
+	 *
+	 * @param archive The destination message.
+	 * @return B_OK on success, or the first error encountered.
+	 */
 	status_t
 	AddDataToArchive(BMessage* archive)
 	{
@@ -382,6 +503,15 @@ struct BView::LayoutData {
 		return err;
 	}
 
+	/**
+	 * @brief Restores explicit size and alignment hints from an archive message.
+	 *
+	 * Reads the minimum, maximum, and preferred sizes (at indices 0, 1, 2 of
+	 * kSizesField) and the alignment from kAlignmentField.  Missing fields are
+	 * silently left at their default values.
+	 *
+	 * @param archive The source message previously written by AddDataToArchive().
+	 */
 	void
 	PopulateFromArchive(BMessage* archive)
 	{
@@ -391,21 +521,44 @@ struct BView::LayoutData {
 		archive->FindAlignment(kAlignmentField, &fAlignment);
 	}
 
+	/** @brief Explicitly set minimum size, or an "unset" BSize by default. */
 	BSize			fMinSize;
+	/** @brief Explicitly set maximum size, or an "unset" BSize by default. */
 	BSize			fMaxSize;
+	/** @brief Explicitly set preferred size, or an "unset" BSize by default. */
 	BSize			fPreferredSize;
+	/** @brief Explicitly set alignment within the parent layout cell. */
 	BAlignment		fAlignment;
+	/** @brief Reference count preventing layout invalidation while positive. */
 	int				fLayoutInvalidationDisabled;
+	/** @brief The BLayout managing this view's children, or NULL. */
 	BLayout*		fLayout;
+	/** @brief The active BLayoutContext during a layout pass, or NULL. */
 	BLayoutContext*	fLayoutContext;
+	/** @brief All BLayoutItems that represent this view in parent layouts. */
 	BObjectList<BLayoutItem> fLayoutItems;
+	/** @brief True when the current layout pass results are still valid. */
 	bool			fLayoutValid;
+	/** @brief True when cached min/max sizes are still valid. */
 	bool			fMinMaxValid;
+	/** @brief True while a layout pass is actively executing (re-entry guard). */
 	bool			fLayoutInProgress;
+	/** @brief True when the view must be re-laid out at the next opportunity. */
 	bool			fNeedsRelayout;
 };
 
 
+/**
+ * @brief Constructs a layout-aware BView with no explicit frame rectangle.
+ *
+ * The view is given a zero-area frame (0,0,-1,-1) and B_FOLLOW_NONE resizing
+ * mode.  B_SUPPORTS_LAYOUT is automatically added to @p flags.  If @p layout
+ * is non-NULL it is immediately installed via SetLayout().
+ *
+ * @param name    The handler/view name.
+ * @param flags   View flags (e.g. B_WILL_DRAW); B_SUPPORTS_LAYOUT is ORed in.
+ * @param layout  Optional BLayout to attach, or NULL.
+ */
 BView::BView(const char* name, uint32 flags, BLayout* layout)
 	:
 	BHandler(name)
@@ -416,6 +569,17 @@ BView::BView(const char* name, uint32 flags, BLayout* layout)
 }
 
 
+/**
+ * @brief Constructs a BView with an explicit frame rectangle and resizing mode.
+ *
+ * This is the classic BeOS constructor for views that participate in manual
+ * (non-layout) view hierarchies.  Frame coordinates are rounded to integers.
+ *
+ * @param frame        The view's frame in parent coordinates.
+ * @param name         The handler/view name.
+ * @param resizingMode How the view resizes with its parent (B_FOLLOW_* constants).
+ * @param flags        View flags (e.g. B_WILL_DRAW, B_FRAME_EVENTS).
+ */
 BView::BView(BRect frame, const char* name, uint32 resizingMode, uint32 flags)
 	:
 	BHandler(name)
@@ -424,6 +588,18 @@ BView::BView(BRect frame, const char* name, uint32 resizingMode, uint32 flags)
 }
 
 
+/**
+ * @brief Unarchives a BView from a BMessage previously produced by Archive().
+ *
+ * Restores the frame, resizing mode, flags, font, colours, drawing state,
+ * layout hints, and visibility level from the archive.  Child views are
+ * recursively unarchived via BUnarchiver when the archive is managed, or
+ * directly via AddChild() otherwise.
+ *
+ * @param archive The source BMessage; must not be NULL.
+ *
+ * @see BView::Archive(), BView::AllUnarchived()
+ */
 BView::BView(BMessage* archive)
 	:
 	BHandler(BUnarchiver::PrepareArchive(archive))
@@ -572,6 +748,14 @@ BView::BView(BMessage* archive)
 }
 
 
+/**
+ * @brief Creates a BView instance from an archive message (factory method).
+ *
+ * Validates the archive with validate_instantiation() before constructing.
+ *
+ * @param data The archive message.
+ * @return A newly allocated BView, or NULL if the archive is invalid.
+ */
 BArchivable*
 BView::Instantiate(BMessage* data)
 {
@@ -582,6 +766,21 @@ BView::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives the view's configuration into a BMessage.
+ *
+ * Stores the frame, resizing mode, flags, event mask, font, colours (including
+ * UI-colour aliases and tints), drawing state (origin, scale, transform, pen,
+ * line modes, fill rule, blending, drawing mode), layout hints, and visibility
+ * level.  When @p deep is true, child views and the attached layout are
+ * recursively archived.
+ *
+ * @param data  The destination message.
+ * @param deep  If true, recursively archive child views and the layout.
+ * @return B_OK on success, or the first error encountered.
+ *
+ * @see BView::Instantiate(), BView::AllUnarchived()
+ */
 status_t
 BView::Archive(BMessage* data, bool deep) const
 {
@@ -711,6 +910,16 @@ BView::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Completes unarchiving once all objects in the archive have been instantiated.
+ *
+ * Called by the BUnarchiver framework after all archived objects have been
+ * created.  Locates and adds child views by token, then installs the archived
+ * BLayout (if any) and sets B_SUPPORTS_LAYOUT.
+ *
+ * @param from The original archive message.
+ * @return B_OK on success, or an error if a required object is missing.
+ */
 status_t
 BView::AllUnarchived(const BMessage* from)
 {
@@ -740,6 +949,16 @@ BView::AllUnarchived(const BMessage* from)
 }
 
 
+/**
+ * @brief Finalises archiving after all objects have been archived (hook).
+ *
+ * Delegates to BHandler::AllArchived().  Subclasses may override to store
+ * additional cross-object references that are only valid once all objects in
+ * the archive have been written.
+ *
+ * @param into The archive message being finalised.
+ * @return B_OK on success.
+ */
 status_t
 BView::AllArchived(BMessage* into) const
 {
@@ -747,6 +966,16 @@ BView::AllArchived(BMessage* into) const
 }
 
 
+/**
+ * @brief Destroys the view, its children, and all associated resources.
+ *
+ * Recursively deletes all child views, removes the attached layout, releases
+ * the tool-tip reference, disconnects scroll bars, and frees the internal
+ * ViewState and LayoutData objects.
+ *
+ * @note The view must not belong to a window when it is deleted; call
+ *       RemoveSelf() first, otherwise this destructor calls debugger().
+ */
 BView::~BView()
 {
 	STRACE(("BView(%s)::~BView()\n", this->Name()));
@@ -788,6 +1017,14 @@ BView::~BView()
 }
 
 
+/**
+ * @brief Returns the view's bounds rectangle in its own local coordinate system.
+ *
+ * During printing the print rectangle is returned instead of the on-screen
+ * bounds so that drawing code can adapt its layout to the page size.
+ *
+ * @return The bounds rectangle in view-local coordinates.
+ */
 BRect
 BView::Bounds() const
 {
@@ -800,6 +1037,15 @@ BView::Bounds() const
 }
 
 
+/**
+ * @brief Converts @p point from view-local to parent coordinates in place.
+ *
+ * Accounts for the view's scroll offset (fBounds.left/top) and its position
+ * within the parent (fParentOffset).  Does nothing if the view has no parent.
+ *
+ * @param point     The point to convert; modified in place.
+ * @param checkLock If true, asserts that the owning window is locked.
+ */
 void
 BView::_ConvertToParent(BPoint* point, bool checkLock) const
 {
@@ -816,6 +1062,11 @@ BView::_ConvertToParent(BPoint* point, bool checkLock) const
 }
 
 
+/**
+ * @brief Converts @p point from view-local to parent coordinates in place.
+ *
+ * @param point The point to convert; modified in place.
+ */
 void
 BView::ConvertToParent(BPoint* point) const
 {
@@ -823,6 +1074,12 @@ BView::ConvertToParent(BPoint* point) const
 }
 
 
+/**
+ * @brief Returns @p point converted from view-local to parent coordinates.
+ *
+ * @param point The point to convert.
+ * @return The converted point in parent-view coordinates.
+ */
 BPoint
 BView::ConvertToParent(BPoint point) const
 {
@@ -832,6 +1089,15 @@ BView::ConvertToParent(BPoint point) const
 }
 
 
+/**
+ * @brief Converts @p point from parent coordinates to view-local in place.
+ *
+ * Reverses _ConvertToParent(): subtracts the view's parent offset and adds
+ * back the scroll origin.  Does nothing if the view has no parent.
+ *
+ * @param point     The point to convert; modified in place.
+ * @param checkLock If true, asserts that the owning window is locked.
+ */
 void
 BView::_ConvertFromParent(BPoint* point, bool checkLock) const
 {
@@ -848,6 +1114,11 @@ BView::_ConvertFromParent(BPoint* point, bool checkLock) const
 }
 
 
+/**
+ * @brief Converts @p point from parent coordinates to view-local in place.
+ *
+ * @param point The point to convert; modified in place.
+ */
 void
 BView::ConvertFromParent(BPoint* point) const
 {
@@ -855,6 +1126,12 @@ BView::ConvertFromParent(BPoint* point) const
 }
 
 
+/**
+ * @brief Returns @p point converted from parent coordinates to view-local.
+ *
+ * @param point The point to convert.
+ * @return The converted point in view-local coordinates.
+ */
 BPoint
 BView::ConvertFromParent(BPoint point) const
 {
@@ -864,6 +1141,11 @@ BView::ConvertFromParent(BPoint point) const
 }
 
 
+/**
+ * @brief Converts @p rect from view-local to parent coordinates in place.
+ *
+ * @param rect The rectangle to convert; modified in place.
+ */
 void
 BView::ConvertToParent(BRect* rect) const
 {
@@ -879,6 +1161,12 @@ BView::ConvertToParent(BRect* rect) const
 }
 
 
+/**
+ * @brief Returns @p rect converted from view-local to parent coordinates.
+ *
+ * @param rect The rectangle to convert.
+ * @return The converted rectangle in parent-view coordinates.
+ */
 BRect
 BView::ConvertToParent(BRect rect) const
 {
@@ -888,6 +1176,11 @@ BView::ConvertToParent(BRect rect) const
 }
 
 
+/**
+ * @brief Converts @p rect from parent coordinates to view-local in place.
+ *
+ * @param rect The rectangle to convert; modified in place.
+ */
 void
 BView::ConvertFromParent(BRect* rect) const
 {
@@ -903,6 +1196,12 @@ BView::ConvertFromParent(BRect* rect) const
 }
 
 
+/**
+ * @brief Returns @p rect converted from parent coordinates to view-local.
+ *
+ * @param rect The rectangle to convert.
+ * @return The converted rectangle in view-local coordinates.
+ */
 BRect
 BView::ConvertFromParent(BRect rect) const
 {
@@ -912,6 +1211,15 @@ BView::ConvertFromParent(BRect rect) const
 }
 
 
+/**
+ * @brief Converts @p point from view-local to screen coordinates in place.
+ *
+ * Walks up the view hierarchy, applying each parent's conversion, and finally
+ * delegates to BWindow::ConvertToScreen() at the top level.
+ *
+ * @param point     The point to convert; modified in place.
+ * @param checkLock If true, asserts that the owning window is locked.
+ */
 void
 BView::_ConvertToScreen(BPoint* point, bool checkLock) const
 {
@@ -930,6 +1238,11 @@ BView::_ConvertToScreen(BPoint* point, bool checkLock) const
 }
 
 
+/**
+ * @brief Converts @p point from view-local to screen coordinates in place.
+ *
+ * @param point The point to convert; modified in place.
+ */
 void
 BView::ConvertToScreen(BPoint* point) const
 {
@@ -937,6 +1250,12 @@ BView::ConvertToScreen(BPoint* point) const
 }
 
 
+/**
+ * @brief Returns @p point converted from view-local to screen coordinates.
+ *
+ * @param point The point to convert.
+ * @return The converted point in screen coordinates.
+ */
 BPoint
 BView::ConvertToScreen(BPoint point) const
 {
@@ -946,6 +1265,15 @@ BView::ConvertToScreen(BPoint point) const
 }
 
 
+/**
+ * @brief Converts @p point from screen coordinates to view-local in place.
+ *
+ * Walks up the view hierarchy in reverse, unapplying each parent's conversion,
+ * starting from BWindow::ConvertFromScreen() at the top level.
+ *
+ * @param point     The point to convert; modified in place.
+ * @param checkLock If true, asserts that the owning window is locked.
+ */
 void
 BView::_ConvertFromScreen(BPoint* point, bool checkLock) const
 {
@@ -964,6 +1292,11 @@ BView::_ConvertFromScreen(BPoint* point, bool checkLock) const
 }
 
 
+/**
+ * @brief Converts @p point from screen coordinates to view-local in place.
+ *
+ * @param point The point to convert; modified in place.
+ */
 void
 BView::ConvertFromScreen(BPoint* point) const
 {
@@ -971,6 +1304,12 @@ BView::ConvertFromScreen(BPoint* point) const
 }
 
 
+/**
+ * @brief Returns @p point converted from screen coordinates to view-local.
+ *
+ * @param point The point to convert.
+ * @return The converted point in view-local coordinates.
+ */
 BPoint
 BView::ConvertFromScreen(BPoint point) const
 {
@@ -980,6 +1319,11 @@ BView::ConvertFromScreen(BPoint point) const
 }
 
 
+/**
+ * @brief Converts @p rect from view-local to screen coordinates in place.
+ *
+ * @param rect The rectangle to convert; modified in place.
+ */
 void
 BView::ConvertToScreen(BRect* rect) const
 {
@@ -989,6 +1333,12 @@ BView::ConvertToScreen(BRect* rect) const
 }
 
 
+/**
+ * @brief Returns @p rect converted from view-local to screen coordinates.
+ *
+ * @param rect The rectangle to convert.
+ * @return The converted rectangle in screen coordinates.
+ */
 BRect
 BView::ConvertToScreen(BRect rect) const
 {
@@ -998,6 +1348,11 @@ BView::ConvertToScreen(BRect rect) const
 }
 
 
+/**
+ * @brief Converts @p rect from screen coordinates to view-local in place.
+ *
+ * @param rect The rectangle to convert; modified in place.
+ */
 void
 BView::ConvertFromScreen(BRect* rect) const
 {
@@ -1007,6 +1362,12 @@ BView::ConvertFromScreen(BRect* rect) const
 }
 
 
+/**
+ * @brief Returns @p rect converted from screen coordinates to view-local.
+ *
+ * @param rect The rectangle to convert.
+ * @return The converted rectangle in view-local coordinates.
+ */
 BRect
 BView::ConvertFromScreen(BRect rect) const
 {
@@ -1016,6 +1377,11 @@ BView::ConvertFromScreen(BRect rect) const
 }
 
 
+/**
+ * @brief Returns the view's flag bits, excluding the internal resizing mask.
+ *
+ * @return The current view flags (B_WILL_DRAW, B_FRAME_EVENTS, etc.).
+ */
 uint32
 BView::Flags() const
 {
@@ -1024,6 +1390,17 @@ BView::Flags() const
 }
 
 
+/**
+ * @brief Replaces the view's flag bits.
+ *
+ * If the view is attached to a window, relevant flag changes (B_WILL_DRAW,
+ * B_FULL_UPDATE_ON_RESIZE, B_FRAME_EVENTS, etc.) are forwarded to the
+ * app_server immediately.  Enabling B_PULSE_NEEDED also ensures the window's
+ * pulse runner is started.
+ *
+ * @param flags The new flag set; the resizing mask bits are preserved from the
+ *              existing value and must not be included in @p flags.
+ */
 void
 BView::SetFlags(uint32 flags)
 {
@@ -1062,6 +1439,14 @@ BView::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Returns the view's frame rectangle in its parent's coordinate system.
+ *
+ * The frame is the bounds rectangle offset to the view's position within
+ * its parent (fParentOffset).
+ *
+ * @return The frame rectangle in parent-view coordinates.
+ */
 BRect
 BView::Frame() const
 {
@@ -1069,6 +1454,16 @@ BView::Frame() const
 }
 
 
+/**
+ * @brief Hides the view by incrementing the show-level counter.
+ *
+ * When the show level transitions from 0 to 1 the view becomes hidden:
+ * the app_server is notified (AS_VIEW_HIDE) and the parent layout is
+ * invalidated so it can reclaim the space.
+ *
+ * @note Calls to Hide() must be balanced by equal calls to Show().
+ * @see BView::Show(), BView::IsHidden()
+ */
 void
 BView::Hide()
 {
@@ -1084,6 +1479,16 @@ BView::Hide()
 }
 
 
+/**
+ * @brief Shows the view by decrementing the show-level counter.
+ *
+ * When the show level transitions from 1 to 0 the view becomes visible:
+ * the app_server is notified (AS_VIEW_SHOW) and the parent layout is
+ * invalidated so it can allocate space for the view again.
+ *
+ * @note Calls to Show() must balance prior calls to Hide().
+ * @see BView::Hide(), BView::IsHidden()
+ */
 void
 BView::Show()
 {
@@ -1099,6 +1504,11 @@ BView::Show()
 }
 
 
+/**
+ * @brief Returns true if this view is the current keyboard focus.
+ *
+ * @return True when the owning window's current focus view is this view.
+ */
 bool
 BView::IsFocus() const
 {
@@ -1110,6 +1520,16 @@ BView::IsFocus() const
 }
 
 
+/**
+ * @brief Returns whether this view is hidden from a given observer's perspective.
+ *
+ * A view is hidden if its show level is greater than zero, or if any ancestor
+ * view (up to @p lookingFrom) is hidden.  When @p lookingFrom is NULL the
+ * window's own visibility is also considered.
+ *
+ * @param lookingFrom The view acting as the observer, or NULL for global visibility.
+ * @return True if the view is hidden from the observer's perspective.
+ */
 bool
 BView::IsHidden(const BView* lookingFrom) const
 {
@@ -1135,6 +1555,14 @@ BView::IsHidden(const BView* lookingFrom) const
 }
 
 
+/**
+ * @brief Returns whether this view is globally hidden.
+ *
+ * Equivalent to IsHidden(NULL): considers the view's own show level, all
+ * ancestor views, and the owning window's visibility.
+ *
+ * @return True if the view is not visible on screen.
+ */
 bool
 BView::IsHidden() const
 {
@@ -1142,6 +1570,11 @@ BView::IsHidden() const
 }
 
 
+/**
+ * @brief Returns true while the view is in the middle of a print job.
+ *
+ * @return True when the view's drawing calls are being recorded for printing.
+ */
 bool
 BView::IsPrinting() const
 {
@@ -1149,6 +1582,11 @@ BView::IsPrinting() const
 }
 
 
+/**
+ * @brief Returns the top-left corner of the view's bounds rectangle.
+ *
+ * @return The origin of the view in view-local coordinates (the scroll offset).
+ */
 BPoint
 BView::LeftTop() const
 {
@@ -1156,6 +1594,15 @@ BView::LeftTop() const
 }
 
 
+/**
+ * @brief Sets the view's resizing mode (how it follows its parent when resized).
+ *
+ * Stores the new mode in the lower bits of fFlags and notifies the app_server
+ * if the view is currently attached to a window.
+ *
+ * @param mode A combination of B_FOLLOW_* constants.
+ * @see BView::ResizingMode()
+ */
 void
 BView::SetResizingMode(uint32 mode)
 {
@@ -1171,6 +1618,11 @@ BView::SetResizingMode(uint32 mode)
 }
 
 
+/**
+ * @brief Returns the current resizing mode of the view.
+ *
+ * @return The resizing mode bits (B_FOLLOW_* constants) stored in fFlags.
+ */
 uint32
 BView::ResizingMode() const
 {
@@ -1178,6 +1630,16 @@ BView::ResizingMode() const
 }
 
 
+/**
+ * @brief Sets the mouse cursor to display when the pointer is over this view.
+ *
+ * Sends AS_SET_VIEW_CURSOR to the app_server with the cursor's server token.
+ * If @p sync is true, blocks until the server has processed the request to
+ * guarantee the cursor change takes effect before the function returns.
+ *
+ * @param cursor The cursor to use; ignored if NULL.
+ * @param sync   If true, flush and wait for the server to acknowledge.
+ */
 void
 BView::SetViewCursor(const BCursor* cursor, bool sync)
 {
@@ -1203,6 +1665,12 @@ BView::SetViewCursor(const BCursor* cursor, bool sync)
 }
 
 
+/**
+ * @brief Flushes the owning window's command buffer to the app_server.
+ *
+ * Delegates to BWindow::Flush().  Has no effect if the view is not attached
+ * to a window.
+ */
 void
 BView::Flush() const
 {
@@ -1211,6 +1679,12 @@ BView::Flush() const
 }
 
 
+/**
+ * @brief Flushes the command buffer and waits for the app_server to finish.
+ *
+ * Delegates to BWindow::Sync().  Blocks until all previously issued drawing
+ * commands have been processed by the server.
+ */
 void
 BView::Sync() const
 {
@@ -1220,6 +1694,11 @@ BView::Sync() const
 }
 
 
+/**
+ * @brief Returns the BWindow this view is attached to, or NULL.
+ *
+ * @return The owning BWindow, or NULL if the view is not currently attached.
+ */
 BWindow*
 BView::Window() const
 {
@@ -1230,6 +1709,17 @@ BView::Window() const
 //	#pragma mark - Hook Functions
 
 
+/**
+ * @brief Hook called when the view is added to a window's view hierarchy.
+ *
+ * Called after the view has been associated with a BWindow and the server-side
+ * view object has been created.  Override to perform one-time setup that
+ * requires a valid Window() (e.g. adopting parent colours, computing preferred
+ * sizes, starting timers).
+ *
+ * @note The default implementation does nothing.
+ * @see BView::AllAttached(), BView::DetachedFromWindow()
+ */
 void
 BView::AttachedToWindow()
 {
@@ -1238,6 +1728,16 @@ BView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Hook called after the view and all its children have been attached.
+ *
+ * Called once AttachedToWindow() has been called for this view and every
+ * descendant.  Override to perform setup that depends on child views already
+ * being fully attached.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::AttachedToWindow()
+ */
 void
 BView::AllAttached()
 {
@@ -1246,6 +1746,16 @@ BView::AllAttached()
 }
 
 
+/**
+ * @brief Hook called when the view is about to be removed from its window.
+ *
+ * Override to release resources that were acquired in AttachedToWindow() or
+ * that require a valid Window() to clean up (e.g. stopping timers, releasing
+ * server-side objects).
+ *
+ * @note The default implementation does nothing.
+ * @see BView::AllDetached(), BView::AttachedToWindow()
+ */
 void
 BView::DetachedFromWindow()
 {
@@ -1254,6 +1764,15 @@ BView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Hook called after the view and all its children have been detached.
+ *
+ * Override to perform cleanup that depends on all descendant views having
+ * already received their DetachedFromWindow() call.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::DetachedFromWindow()
+ */
 void
 BView::AllDetached()
 {
@@ -1262,6 +1781,19 @@ BView::AllDetached()
 }
 
 
+/**
+ * @brief Hook called to draw the view's content.
+ *
+ * Override to perform all custom drawing for this view.  The drawing state
+ * is pushed before this call and popped after, so any state changes are
+ * automatically reverted.  @p updateRect is the invalid area expressed in
+ * the view's local coordinate system.
+ *
+ * @param updateRect The rectangle that needs to be redrawn.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::DrawAfterChildren(), BView::Invalidate()
+ */
 void
 BView::Draw(BRect updateRect)
 {
@@ -1270,6 +1802,18 @@ BView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Hook called to draw over the view's children.
+ *
+ * Override when B_DRAW_ON_CHILDREN is set in the view flags.  This hook is
+ * called after all child views have been drawn, allowing a parent to paint
+ * decorations on top of its children.
+ *
+ * @param updateRect The rectangle that needs to be redrawn, in view coordinates.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::Draw()
+ */
 void
 BView::DrawAfterChildren(BRect updateRect)
 {
@@ -1278,6 +1822,16 @@ BView::DrawAfterChildren(BRect updateRect)
 }
 
 
+/**
+ * @brief Hook called when the view's frame position changes.
+ *
+ * Invoked after the view has been moved within its parent.  Override to
+ * react to position changes (e.g. updating cached screen coordinates).
+ *
+ * @param newPosition The new top-left corner in the parent's coordinate system.
+ *
+ * @note Requires B_FRAME_EVENTS in the view flags to be delivered.
+ */
 void
 BView::FrameMoved(BPoint newPosition)
 {
@@ -1286,6 +1840,18 @@ BView::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Hook called when the view's frame size changes.
+ *
+ * Invoked after the view has been resized.  Override to adapt the view's
+ * content to the new dimensions (e.g. repositioning child views that do not
+ * use automatic layout).
+ *
+ * @param newWidth  The new width of the view's bounds rectangle.
+ * @param newHeight The new height of the view's bounds rectangle.
+ *
+ * @note Requires B_FRAME_EVENTS in the view flags to be delivered.
+ */
 void
 BView::FrameResized(float newWidth, float newHeight)
 {
@@ -1294,6 +1860,17 @@ BView::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Returns the view's preferred size based on its current bounds.
+ *
+ * The default implementation returns the current bounds dimensions.  Override
+ * to provide a meaningful preferred size for layout negotiation.
+ *
+ * @param _width  Receives the preferred width; may be NULL.
+ * @param _height Receives the preferred height; may be NULL.
+ *
+ * @see BView::ResizeToPreferred(), BView::MinSize(), BView::MaxSize()
+ */
 void
 BView::GetPreferredSize(float* _width, float* _height)
 {
@@ -1306,6 +1883,13 @@ BView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resizes the view to its preferred size.
+ *
+ * Calls GetPreferredSize() and then ResizeTo() with the returned dimensions.
+ *
+ * @see BView::GetPreferredSize()
+ */
 void
 BView::ResizeToPreferred()
 {
@@ -1319,6 +1903,18 @@ BView::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Hook called when a key is pressed while this view has the focus.
+ *
+ * The default implementation forwards navigation keys to the window's keyboard
+ * navigation system.  Override to handle key input; call the base class for
+ * keys you do not handle to preserve tab/arrow navigation.
+ *
+ * @param bytes    UTF-8 encoded bytes for the key, not NUL-terminated.
+ * @param numBytes Number of bytes in @p bytes.
+ *
+ * @see BView::KeyUp(), BView::MakeFocus()
+ */
 void
 BView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -1330,6 +1926,15 @@ BView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Hook called when a key is released while this view has the focus.
+ *
+ * @param bytes    UTF-8 encoded bytes for the key, not NUL-terminated.
+ * @param numBytes Number of bytes in @p bytes.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::KeyDown()
+ */
 void
 BView::KeyUp(const char* bytes, int32 numBytes)
 {
@@ -1338,6 +1943,14 @@ BView::KeyUp(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Hook called when a mouse button is pressed over this view.
+ *
+ * @param where The location of the click in view-local coordinates.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::MouseUp(), BView::MouseMoved(), BView::SetMouseEventMask()
+ */
 void
 BView::MouseDown(BPoint where)
 {
@@ -1346,6 +1959,14 @@ BView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Hook called when a mouse button is released.
+ *
+ * @param where The location of the release in view-local coordinates.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::MouseDown()
+ */
 void
 BView::MouseUp(BPoint where)
 {
@@ -1354,6 +1975,18 @@ BView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Hook called when the mouse moves over this view.
+ *
+ * @param where       Current mouse position in view-local coordinates.
+ * @param code        Transit code: B_ENTERED_VIEW, B_INSIDE_VIEW,
+ *                    B_EXITED_VIEW, or B_OUTSIDE_VIEW.
+ * @param dragMessage The drag-and-drop message if a drag is in progress,
+ *                    otherwise NULL.
+ *
+ * @note The default implementation does nothing.
+ * @see BView::MouseDown(), BView::DragMessage()
+ */
 void
 BView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 {
@@ -1362,6 +1995,14 @@ BView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Hook called at the window's pulse rate when B_PULSE_NEEDED is set.
+ *
+ * Override to perform periodic animations or state updates.
+ *
+ * @note The default implementation does nothing.
+ * @see BWindow::SetPulseRate()
+ */
 void
 BView::Pulse()
 {
@@ -1370,6 +2011,17 @@ BView::Pulse()
 }
 
 
+/**
+ * @brief Hook called when this view becomes the target of a BScrollView.
+ *
+ * Override to react to being enclosed in a scroll view, for example to adjust
+ * the document range or initial scroll position.
+ *
+ * @param scroll_view The BScrollView that is now targeting this view.
+ *
+ * @note The default implementation does nothing.
+ * @see BScrollView
+ */
 void
 BView::TargetedByScrollView(BScrollView* scroll_view)
 {
@@ -1378,6 +2030,16 @@ BView::TargetedByScrollView(BScrollView* scroll_view)
 }
 
 
+/**
+ * @brief Hook called when the owning window gains or loses focus.
+ *
+ * Override to change the view's appearance when the window becomes active or
+ * inactive (e.g. dimming a selection highlight).
+ *
+ * @param active True if the window has just become active.
+ *
+ * @note The default implementation does nothing.
+ */
 void
 BView::WindowActivated(bool active)
 {
@@ -1389,6 +2051,17 @@ BView::WindowActivated(bool active)
 //	#pragma mark - Input Functions
 
 
+/**
+ * @brief Begins server-side rubber-band rectangle tracking.
+ *
+ * Sends AS_VIEW_BEGIN_RECT_TRACK to the app_server, which draws and animates
+ * the tracking rectangle on screen without further client-side involvement.
+ *
+ * @param startRect The initial tracking rectangle in view-local coordinates.
+ * @param style     Tracking style: B_TRACK_WHOLE_RECT or B_TRACK_RECT_CORNER.
+ *
+ * @see BView::EndRectTracking()
+ */
 void
 BView::BeginRectTracking(BRect startRect, uint32 style)
 {
@@ -1401,6 +2074,14 @@ BView::BeginRectTracking(BRect startRect, uint32 style)
 }
 
 
+/**
+ * @brief Ends server-side rubber-band rectangle tracking.
+ *
+ * Sends AS_VIEW_END_RECT_TRACK to the app_server to stop drawing the tracking
+ * rectangle started by BeginRectTracking().
+ *
+ * @see BView::BeginRectTracking()
+ */
 void
 BView::EndRectTracking()
 {
@@ -1411,6 +2092,21 @@ BView::EndRectTracking()
 }
 
 
+/**
+ * @brief Initiates a drag-and-drop operation using a dashed-border rectangle.
+ *
+ * Constructs a RGBA32 bitmap with a dashed-border appearance matching
+ * @p dragRect and calls the bitmap-based DragMessage() overload.  The drag
+ * offset is computed from the current mouse position relative to the
+ * rectangle's top-left corner.
+ *
+ * @param message  The drag payload; must not be NULL.
+ * @param dragRect The rectangle whose dashed outline is used as the drag image.
+ * @param replyTo  The handler to receive the B_COPY/B_MOVE reply, or NULL to
+ *                 use this view.
+ *
+ * @see BView::DragMessage(BMessage*, BBitmap*, BPoint, BHandler*)
+ */
 void
 BView::DragMessage(BMessage* message, BRect dragRect, BHandler* replyTo)
 {
@@ -1468,6 +2164,16 @@ BView::DragMessage(BMessage* message, BRect dragRect, BHandler* replyTo)
 }
 
 
+/**
+ * @brief Initiates a drag-and-drop operation using a bitmap image (B_OP_COPY).
+ *
+ * Convenience overload that uses B_OP_COPY as the drawing mode.
+ *
+ * @param message The drag payload; must not be NULL.
+ * @param image   The drag image; ownership is transferred to the server.
+ * @param offset  The offset from the drag image origin to the pointer hotspot.
+ * @param replyTo The handler to receive the reply, or NULL to use this view.
+ */
 void
 BView::DragMessage(BMessage* message, BBitmap* image, BPoint offset,
 	BHandler* replyTo)
@@ -1476,6 +2182,21 @@ BView::DragMessage(BMessage* message, BBitmap* image, BPoint offset,
 }
 
 
+/**
+ * @brief Initiates a drag-and-drop operation with full control over the drag image.
+ *
+ * Flattens @p message and sends AS_VIEW_DRAG_IMAGE to the app_server together
+ * with the bitmap's server token, drawing mode, and pointer offset.  The call
+ * blocks until the server has processed the request so the bitmap can be safely
+ * deleted afterwards.  If @p image is NULL a 1x1 transparent bitmap is created
+ * automatically.
+ *
+ * @param message  The drag payload; must not be NULL.
+ * @param image    The bitmap to render under the pointer; ownership is transferred.
+ * @param dragMode The drawing mode used to composite the drag image.
+ * @param offset   The offset from the bitmap's top-left to the pointer hotspot.
+ * @param replyTo  The handler for the drop reply, or NULL to use this view.
+ */
 void
 BView::DragMessage(BMessage* message, BBitmap* image,
 	drawing_mode dragMode, BPoint offset, BHandler* replyTo)
@@ -1543,6 +2264,21 @@ BView::DragMessage(BMessage* message, BBitmap* image,
 }
 
 
+/**
+ * @brief Retrieves the current mouse position and button state.
+ *
+ * When @p checkMessageQueue is true (the default) the window's message queue
+ * is scanned for a recent B_MOUSE_MOVED, B_MOUSE_UP, or B_MOUSE_DOWN message.
+ * If one is found (and not stale beyond 10 ms for B_MOUSE_MOVED) its data is
+ * returned without a round-trip to the server.  Otherwise, or when
+ * B_NO_POINTER_HISTORY is set, the server is queried directly.
+ *
+ * @param _location         Receives the pointer position in view-local
+ *                          coordinates; may be NULL.
+ * @param _buttons          Receives the current button bitmask; may be NULL.
+ * @param checkMessageQueue If true, search the message queue before querying
+ *                          the server.
+ */
 void
 BView::GetMouse(BPoint* _location, uint32* _buttons, bool checkMessageQueue)
 {
@@ -1654,6 +2390,17 @@ BView::GetMouse(BPoint* _location, uint32* _buttons, bool checkMessageQueue)
 }
 
 
+/**
+ * @brief Gives or removes keyboard focus for this view.
+ *
+ * When @p focus is true any previously focused view in the same window is
+ * defocused first.  When @p focus is false this view is defocused only if it
+ * currently holds focus.
+ *
+ * @param focus True to acquire focus, false to release it.
+ *
+ * @see BView::IsFocus(), BWindow::CurrentFocus()
+ */
 void
 BView::MakeFocus(bool focus)
 {
@@ -1679,6 +2426,12 @@ BView::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Returns the scroll bar attached to this view for the given orientation.
+ *
+ * @param direction B_VERTICAL or B_HORIZONTAL.
+ * @return The associated BScrollBar, or NULL if none is attached.
+ */
 BScrollBar*
 BView::ScrollBar(orientation direction) const
 {
@@ -1695,6 +2448,16 @@ BView::ScrollBar(orientation direction) const
 }
 
 
+/**
+ * @brief Scrolls the view's contents by the given delta.
+ *
+ * Delegates to ScrollTo() after adding the delta to the current scroll origin.
+ *
+ * @param deltaX Horizontal scroll delta in points.
+ * @param deltaY Vertical scroll delta in points.
+ *
+ * @see BView::ScrollTo()
+ */
 void
 BView::ScrollBy(float deltaX, float deltaY)
 {
@@ -1702,6 +2465,18 @@ BView::ScrollBy(float deltaX, float deltaY)
 }
 
 
+/**
+ * @brief Scrolls the view so that the given point is at the top-left.
+ *
+ * The target point is rounded to integer pixel coordinates and clamped to
+ * the range of any attached scroll bars.  Both the local bounds rectangle
+ * and the scroll bars are updated, and the app_server is notified via
+ * AS_VIEW_SCROLL.
+ *
+ * @param where The desired new scroll origin (bounds top-left) in view coordinates.
+ *
+ * @see BView::ScrollBy()
+ */
 void
 BView::ScrollTo(BPoint where)
 {
@@ -1761,6 +2536,19 @@ BView::ScrollTo(BPoint where)
 }
 
 
+/**
+ * @brief Sets the view's persistent event mask.
+ *
+ * Determines which events the view receives even when the pointer is outside
+ * its bounds or it does not have keyboard focus.  Changes are sent to the
+ * app_server immediately when the view is attached to a window.
+ *
+ * @param mask    A combination of B_POINTER_EVENTS, B_KEYBOARD_EVENTS, etc.
+ * @param options Delivery options (B_NO_POINTER_HISTORY, B_FULL_POINTER_HISTORY).
+ * @return B_OK always.
+ *
+ * @see BView::SetMouseEventMask(), BView::EventMask()
+ */
 status_t
 BView::SetEventMask(uint32 mask, uint32 options)
 {
@@ -1787,6 +2575,11 @@ BView::SetEventMask(uint32 mask, uint32 options)
 }
 
 
+/**
+ * @brief Returns the view's current persistent event mask.
+ *
+ * @return The event mask set by SetEventMask().
+ */
 uint32
 BView::EventMask()
 {
@@ -1794,6 +2587,19 @@ BView::EventMask()
 }
 
 
+/**
+ * @brief Temporarily extends the event mask for the duration of a mouse drag.
+ *
+ * Must be called from within a MouseDown() handler.  The extended mask and
+ * options apply only until the mouse button is released; after that, the
+ * view reverts to its persistent event mask.
+ *
+ * @param mask    Additional event types to receive during the drag.
+ * @param options Delivery options (B_NO_POINTER_HISTORY, B_LOCK_WINDOW_FOCUS).
+ * @return B_OK if called from a valid MouseDown() context, B_ERROR otherwise.
+ *
+ * @see BView::SetEventMask()
+ */
 status_t
 BView::SetMouseEventMask(uint32 mask, uint32 options)
 {
@@ -1819,6 +2625,16 @@ BView::SetMouseEventMask(uint32 mask, uint32 options)
 //	#pragma mark - Graphic State Functions
 
 
+/**
+ * @brief Saves the current drawing state onto the server-side state stack.
+ *
+ * Sends AS_VIEW_PUSH_STATE to the app_server.  The new state starts with
+ * origin (0,0), scale 1.0, and identity transform; all other attributes
+ * are inherited from the parent state.  Must be balanced by a call to
+ * PopState().
+ *
+ * @see BView::PopState()
+ */
 void
 BView::PushState()
 {
@@ -1837,6 +2653,15 @@ BView::PushState()
 }
 
 
+/**
+ * @brief Restores the drawing state previously saved by PushState().
+ *
+ * Sends AS_VIEW_POP_STATE to the app_server and invalidates all local state
+ * caches except B_VIEW_VIEW_COLOR_BIT, forcing them to be re-fetched from
+ * the server on next use.
+ *
+ * @see BView::PushState()
+ */
 void
 BView::PopState()
 {
@@ -1850,6 +2675,12 @@ BView::PopState()
 }
 
 
+/**
+ * @brief Sets the local coordinate system origin to @p where.
+ *
+ * @param where The new origin in current view coordinates.
+ * @see BView::SetOrigin(float, float)
+ */
 void
 BView::SetOrigin(BPoint where)
 {
@@ -1857,6 +2688,18 @@ BView::SetOrigin(BPoint where)
 }
 
 
+/**
+ * @brief Sets the local coordinate system origin.
+ *
+ * Moves the drawing origin so that subsequent drawing at (0,0) maps to
+ * (@p x, @p y) in the previous coordinate system.  No-ops if the origin
+ * is already at the requested position.
+ *
+ * @param x New origin x coordinate.
+ * @param y New origin y coordinate.
+ *
+ * @see BView::Origin(), BView::PushState()
+ */
 void
 BView::SetOrigin(float x, float y)
 {
@@ -1881,6 +2724,14 @@ BView::SetOrigin(float x, float y)
 }
 
 
+/**
+ * @brief Returns the current local coordinate system origin.
+ *
+ * If the cached origin is invalid (e.g. after PopState()) it is re-fetched
+ * from the app_server via AS_VIEW_GET_ORIGIN.
+ *
+ * @return The current origin point.
+ */
 BPoint
 BView::Origin() const
 {
@@ -1902,6 +2753,16 @@ BView::Origin() const
 }
 
 
+/**
+ * @brief Sets the uniform scale factor for the current drawing state.
+ *
+ * Scales all subsequent drawing operations by @p scale relative to the
+ * current origin.  No-ops if the scale is already at the requested value.
+ *
+ * @param scale The new scale factor (1.0 = no scaling).
+ *
+ * @see BView::Scale(), BView::PushState()
+ */
 void
 BView::SetScale(float scale) const
 {
@@ -1922,6 +2783,13 @@ BView::SetScale(float scale) const
 }
 
 
+/**
+ * @brief Returns the current drawing scale factor.
+ *
+ * Fetches the scale from the app_server if the local cache is invalid.
+ *
+ * @return The current scale factor.
+ */
 float
 BView::Scale() const
 {
@@ -1941,6 +2809,16 @@ BView::Scale() const
 }
 
 
+/**
+ * @brief Sets the affine transform for the current drawing state.
+ *
+ * Replaces the current transform with @p transform and forwards it to the
+ * app_server.  No-ops if the transform is already equal to the cached value.
+ *
+ * @param transform The new affine transform to apply to subsequent drawing.
+ *
+ * @see BView::Transform(), BView::TranslateBy(), BView::ScaleBy(), BView::RotateBy()
+ */
 void
 BView::SetTransform(BAffineTransform transform)
 {
@@ -1961,6 +2839,13 @@ BView::SetTransform(BAffineTransform transform)
 }
 
 
+/**
+ * @brief Returns the current affine transform of the drawing state.
+ *
+ * Fetches the transform from the app_server if the local cache is invalid.
+ *
+ * @return The current BAffineTransform.
+ */
 BAffineTransform
 BView::Transform() const
 {
@@ -1980,6 +2865,20 @@ BView::Transform() const
 }
 
 
+/**
+ * @brief Returns the composite transform from view coordinates to the given basis.
+ *
+ * Computes the cumulative transform (including scale and origin) that maps
+ * points expressed in the current drawing state to the requested coordinate
+ * space.  The parent composite is fetched from the server if needed.
+ *
+ * @param basis The target coordinate space:
+ *              B_CURRENT_STATE_COORDINATES, B_PREVIOUS_STATE_COORDINATES,
+ *              B_VIEW_COORDINATES, B_PARENT_VIEW_COORDINATES,
+ *              B_PARENT_VIEW_DRAW_COORDINATES, B_WINDOW_COORDINATES, or
+ *              B_SCREEN_COORDINATES.
+ * @return The BAffineTransform mapping from current-state coordinates to @p basis.
+ */
 BAffineTransform
 BView::TransformTo(coordinate_space basis) const
 {
@@ -2045,6 +2944,15 @@ BView::TransformTo(coordinate_space basis) const
 }
 
 
+/**
+ * @brief Applies an incremental translation to the current affine transform.
+ *
+ * Sends AS_VIEW_AFFINE_TRANSLATE to the server; the local transform cache is
+ * invalidated and must be re-fetched on next access.
+ *
+ * @param x Horizontal translation in current coordinate-space units.
+ * @param y Vertical translation in current coordinate-space units.
+ */
 void
 BView::TranslateBy(double x, double y)
 {
@@ -2062,6 +2970,15 @@ BView::TranslateBy(double x, double y)
 }
 
 
+/**
+ * @brief Applies an incremental non-uniform scale to the current affine transform.
+ *
+ * Sends AS_VIEW_AFFINE_SCALE to the server; the local transform cache is
+ * invalidated.
+ *
+ * @param x Horizontal scale factor.
+ * @param y Vertical scale factor.
+ */
 void
 BView::ScaleBy(double x, double y)
 {
@@ -2079,6 +2996,14 @@ BView::ScaleBy(double x, double y)
 }
 
 
+/**
+ * @brief Applies an incremental rotation to the current affine transform.
+ *
+ * Sends AS_VIEW_AFFINE_ROTATE to the server; the local transform cache is
+ * invalidated.
+ *
+ * @param angleRadians The clockwise rotation angle in radians.
+ */
 void
 BView::RotateBy(double angleRadians)
 {
@@ -2095,6 +3020,21 @@ BView::RotateBy(double angleRadians)
 }
 
 
+/**
+ * @brief Sets the line cap style, join style, and miter limit.
+ *
+ * No-ops if all three values are already set and valid.  Changes are forwarded
+ * to the app_server and the archiving flags are updated.
+ *
+ * @param lineCap   The cap style for line endpoints (B_BUTT_CAP, B_ROUND_CAP,
+ *                  B_SQUARE_CAP).
+ * @param lineJoin  The join style for connected line segments (B_MITER_JOIN,
+ *                  B_ROUND_JOIN, B_BEVEL_JOIN).
+ * @param miterLimit The maximum miter length/width ratio before the join
+ *                   switches to a bevel.
+ *
+ * @see BView::LineCapMode(), BView::LineJoinMode(), BView::LineMiterLimit()
+ */
 void
 BView::SetLineMode(cap_mode lineCap, join_mode lineJoin, float miterLimit)
 {
@@ -2125,6 +3065,13 @@ BView::SetLineMode(cap_mode lineCap, join_mode lineJoin, float miterLimit)
 }
 
 
+/**
+ * @brief Returns the current line join mode.
+ *
+ * Triggers a server fetch via LineMiterLimit() if the line mode is not cached.
+ *
+ * @return The current join_mode value.
+ */
 join_mode
 BView::LineJoinMode() const
 {
@@ -2136,6 +3083,13 @@ BView::LineJoinMode() const
 }
 
 
+/**
+ * @brief Returns the current line cap mode.
+ *
+ * Triggers a server fetch via LineMiterLimit() if the line mode is not cached.
+ *
+ * @return The current cap_mode value.
+ */
 cap_mode
 BView::LineCapMode() const
 {
@@ -2147,6 +3101,14 @@ BView::LineCapMode() const
 }
 
 
+/**
+ * @brief Returns the current miter limit for line joins.
+ *
+ * If the cached line mode is invalid, fetches all three line-mode values
+ * (cap, join, miter) from the app_server in one round-trip.
+ *
+ * @return The miter limit ratio.
+ */
 float
 BView::LineMiterLimit() const
 {
@@ -2173,6 +3135,13 @@ BView::LineMiterLimit() const
 }
 
 
+/**
+ * @brief Sets the winding rule used to determine the interior of filled shapes.
+ *
+ * @param fillRule B_NONZERO or B_EVEN_ODD.
+ *
+ * @see BView::FillRule()
+ */
 void
 BView::SetFillRule(int32 fillRule)
 {
@@ -2194,6 +3163,13 @@ BView::SetFillRule(int32 fillRule)
 }
 
 
+/**
+ * @brief Returns the current fill rule (winding rule).
+ *
+ * Fetches the value from the app_server if the local cache is invalid.
+ *
+ * @return B_NONZERO or B_EVEN_ODD.
+ */
 int32
 BView::FillRule() const
 {
@@ -2218,6 +3194,13 @@ BView::FillRule() const
 }
 
 
+/**
+ * @brief Sets the drawing mode that controls how pixels are composited.
+ *
+ * @param mode One of the drawing_mode constants (B_OP_COPY, B_OP_OVER, etc.).
+ *
+ * @see BView::DrawingMode()
+ */
 void
 BView::SetDrawingMode(drawing_mode mode)
 {
@@ -2239,6 +3222,13 @@ BView::SetDrawingMode(drawing_mode mode)
 }
 
 
+/**
+ * @brief Returns the current drawing mode.
+ *
+ * Fetches the mode from the app_server if the local cache is invalid.
+ *
+ * @return The current drawing_mode.
+ */
 drawing_mode
 BView::DrawingMode() const
 {
@@ -2262,6 +3252,16 @@ BView::DrawingMode() const
 }
 
 
+/**
+ * @brief Sets the alpha blending source and function.
+ *
+ * @param sourceAlpha   How the source alpha is determined (B_CONSTANT_ALPHA or
+ *                      B_PIXEL_ALPHA).
+ * @param alphaFunction How the source and destination are combined
+ *                      (B_ALPHA_OVERLAY or B_ALPHA_COMPOSITE).
+ *
+ * @see BView::GetBlendingMode()
+ */
 void
 BView::SetBlendingMode(source_alpha sourceAlpha, alpha_function alphaFunction)
 {
@@ -2290,6 +3290,14 @@ BView::SetBlendingMode(source_alpha sourceAlpha, alpha_function alphaFunction)
 }
 
 
+/**
+ * @brief Retrieves the current alpha blending source and function.
+ *
+ * Fetches values from the app_server if the local cache is invalid.
+ *
+ * @param _sourceAlpha   Receives the source alpha mode; may be NULL.
+ * @param _alphaFunction Receives the alpha function; may be NULL.
+ */
 void
 BView::GetBlendingMode(source_alpha* _sourceAlpha,
 	alpha_function* _alphaFunction) const
@@ -2319,6 +3327,12 @@ BView::GetBlendingMode(source_alpha* _sourceAlpha,
 }
 
 
+/**
+ * @brief Moves the drawing pen to @p point without drawing.
+ *
+ * @param point The new pen position in view-local coordinates.
+ * @see BView::MovePenTo(float, float)
+ */
 void
 BView::MovePenTo(BPoint point)
 {
@@ -2326,6 +3340,17 @@ BView::MovePenTo(BPoint point)
 }
 
 
+/**
+ * @brief Moves the drawing pen to (@p x, @p y) without drawing.
+ *
+ * No-ops if the pen is already at the requested position and the cached
+ * location is valid.
+ *
+ * @param x New pen x coordinate.
+ * @param y New pen y coordinate.
+ *
+ * @see BView::PenLocation(), BView::MovePenBy()
+ */
 void
 BView::MovePenTo(float x, float y)
 {
@@ -2349,6 +3374,15 @@ BView::MovePenTo(float x, float y)
 }
 
 
+/**
+ * @brief Moves the drawing pen by (@p x, @p y) relative to its current position.
+ *
+ * Fetches the current pen location from the server if the cached value is
+ * invalid, then delegates to MovePenTo().
+ *
+ * @param x Horizontal displacement.
+ * @param y Vertical displacement.
+ */
 void
 BView::MovePenBy(float x, float y)
 {
@@ -2360,6 +3394,14 @@ BView::MovePenBy(float x, float y)
 }
 
 
+/**
+ * @brief Returns the current drawing pen location.
+ *
+ * Fetches the value from the app_server if the local cache is invalid (e.g.
+ * after a DrawString() or StrokeLine() that implicitly moves the pen).
+ *
+ * @return The pen position in view-local coordinates.
+ */
 BPoint
 BView::PenLocation() const
 {
@@ -2381,6 +3423,13 @@ BView::PenLocation() const
 }
 
 
+/**
+ * @brief Sets the pen stroke width for subsequent drawing operations.
+ *
+ * @param size The new pen size in view-local coordinate units.
+ *
+ * @see BView::PenSize()
+ */
 void
 BView::SetPenSize(float size)
 {
@@ -2401,6 +3450,13 @@ BView::SetPenSize(float size)
 }
 
 
+/**
+ * @brief Returns the current pen stroke width.
+ *
+ * Fetches the value from the app_server if the local cache is invalid.
+ *
+ * @return The pen size in coordinate units.
+ */
 float
 BView::PenSize() const
 {
@@ -2422,6 +3478,16 @@ BView::PenSize() const
 }
 
 
+/**
+ * @brief Sets the high (foreground) colour for drawing operations.
+ *
+ * Clears any UI-colour alias (calls SetHighUIColor(B_NO_COLOR)) before
+ * applying the literal colour.  No-ops if the colour is already set.
+ *
+ * @param color The new high colour.
+ *
+ * @see BView::HighColor(), BView::SetHighUIColor()
+ */
 void
 BView::SetHighColor(rgb_color color)
 {
@@ -2447,6 +3513,13 @@ BView::SetHighColor(rgb_color color)
 }
 
 
+/**
+ * @brief Returns the current high (foreground) colour.
+ *
+ * Fetches from the app_server if the local cache is invalid.
+ *
+ * @return The current high colour as an rgb_color.
+ */
 rgb_color
 BView::HighColor() const
 {
@@ -2468,6 +3541,18 @@ BView::HighColor() const
 }
 
 
+/**
+ * @brief Sets the high colour by referencing a named UI colour constant.
+ *
+ * The actual rgb_color is resolved from the system palette and cached locally.
+ * When @p which is B_NO_COLOR the alias is cleared and the raw high colour
+ * becomes authoritative.
+ *
+ * @param which The UI colour constant (e.g. B_PANEL_TEXT_COLOR).
+ * @param tint  A tint factor applied to the resolved colour (B_NO_TINT = 1.0).
+ *
+ * @see BView::HighUIColor(), BView::SetHighColor()
+ */
 void
 BView::SetHighUIColor(color_which which, float tint)
 {
@@ -2502,6 +3587,14 @@ BView::SetHighUIColor(color_which which, float tint)
 }
 
 
+/**
+ * @brief Returns the UI colour constant for the high colour, if one is set.
+ *
+ * Fetches from the app_server if the local cache is invalid.
+ *
+ * @param tint If non-NULL, receives the tint factor currently applied.
+ * @return The color_which constant, or B_NO_COLOR if a literal colour is used.
+ */
 color_which
 BView::HighUIColor(float* tint) const
 {
@@ -2530,6 +3623,16 @@ BView::HighUIColor(float* tint) const
 }
 
 
+/**
+ * @brief Sets the low (background fill) colour for drawing operations.
+ *
+ * Used for pattern fills and certain blend operations.  Clears any UI-colour
+ * alias before applying the literal colour.
+ *
+ * @param color The new low colour.
+ *
+ * @see BView::LowColor(), BView::SetLowUIColor()
+ */
 void
 BView::SetLowColor(rgb_color color)
 {
@@ -2554,6 +3657,13 @@ BView::SetLowColor(rgb_color color)
 }
 
 
+/**
+ * @brief Returns the current low colour.
+ *
+ * Fetches from the app_server if the local cache is invalid.
+ *
+ * @return The current low colour as an rgb_color.
+ */
 rgb_color
 BView::LowColor() const
 {
@@ -2575,6 +3685,14 @@ BView::LowColor() const
 }
 
 
+/**
+ * @brief Sets the low colour by referencing a named UI colour constant.
+ *
+ * @param which The UI colour constant.
+ * @param tint  Tint factor applied to the resolved colour.
+ *
+ * @see BView::LowUIColor(), BView::SetLowColor()
+ */
 void
 BView::SetLowUIColor(color_which which, float tint)
 {
@@ -2609,6 +3727,12 @@ BView::SetLowUIColor(color_which which, float tint)
 }
 
 
+/**
+ * @brief Returns the UI colour constant for the low colour, if one is set.
+ *
+ * @param tint If non-NULL, receives the applied tint factor.
+ * @return The color_which constant, or B_NO_COLOR if a literal colour is used.
+ */
 color_which
 BView::LowUIColor(float* tint) const
 {
@@ -2637,6 +3761,14 @@ BView::LowUIColor(float* tint) const
 }
 
 
+/**
+ * @brief Returns true if none of the view's colours have been explicitly set.
+ *
+ * Checks the archiving flags for any colour-related bits.  A view that has
+ * never had a colour set returns true.
+ *
+ * @return True when all colour flags are at their initial default state.
+ */
 bool
 BView::HasDefaultColors() const
 {
@@ -2649,6 +3781,15 @@ BView::HasDefaultColors() const
 }
 
 
+/**
+ * @brief Returns true if all three colours use the standard panel colour aliases.
+ *
+ * A view "has system colours" when view colour = B_PANEL_BACKGROUND_COLOR,
+ * high colour = B_PANEL_TEXT_COLOR, low colour = B_PANEL_BACKGROUND_COLOR,
+ * all with B_NO_TINT.
+ *
+ * @return True when all colours match the system panel defaults.
+ */
 bool
 BView::HasSystemColors() const
 {
@@ -2661,6 +3802,13 @@ BView::HasSystemColors() const
 }
 
 
+/**
+ * @brief Copies all three colour settings from the parent view.
+ *
+ * Equivalent to AdoptViewColors(Parent()).
+ *
+ * @see BView::AdoptViewColors()
+ */
 void
 BView::AdoptParentColors()
 {
@@ -2668,6 +3816,12 @@ BView::AdoptParentColors()
 }
 
 
+/**
+ * @brief Sets this view's colours to the standard system panel colours.
+ *
+ * Sets view colour and low colour to B_PANEL_BACKGROUND_COLOR and high colour
+ * to B_PANEL_TEXT_COLOR, all without tinting.
+ */
 void
 BView::AdoptSystemColors()
 {
@@ -2677,6 +3831,16 @@ BView::AdoptSystemColors()
 }
 
 
+/**
+ * @brief Copies all three colour settings from the given view.
+ *
+ * Locks @p view's looper if it belongs to a different window, reads its view
+ * colour, low colour, and high colour (preferring UI-colour aliases where
+ * available), then applies them to this view.  Does nothing if @p view is NULL
+ * or cannot be locked.
+ *
+ * @param view The source view whose colours are adopted.
+ */
 void
 BView::AdoptViewColors(BView* view)
 {
@@ -2714,6 +3878,17 @@ BView::AdoptViewColors(BView* view)
 }
 
 
+/**
+ * @brief Sets the view's background fill colour.
+ *
+ * The view colour is used to erase the view before Draw() is called.  Clears
+ * any UI-colour alias before applying the literal colour, and also automatically
+ * clears the low-colour alias (but not the literal low colour).
+ *
+ * @param color The new view background colour.
+ *
+ * @see BView::ViewColor(), BView::SetViewUIColor()
+ */
 void
 BView::SetViewColor(rgb_color color)
 {
@@ -2739,6 +3914,13 @@ BView::SetViewColor(rgb_color color)
 }
 
 
+/**
+ * @brief Returns the current view background colour.
+ *
+ * Fetches from the app_server if the local cache is invalid.
+ *
+ * @return The view background colour as an rgb_color.
+ */
 rgb_color
 BView::ViewColor() const
 {
@@ -2760,6 +3942,17 @@ BView::ViewColor() const
 }
 
 
+/**
+ * @brief Sets the view background colour by referencing a named UI colour.
+ *
+ * Also propagates the alias to the low colour when no explicit low-colour alias
+ * has been set, keeping the two in sync for typical panel backgrounds.
+ *
+ * @param which The UI colour constant for the background.
+ * @param tint  Tint factor applied to the resolved colour.
+ *
+ * @see BView::ViewUIColor(), BView::SetViewColor()
+ */
 void
 BView::SetViewUIColor(color_which which, float tint)
 {
@@ -2797,6 +3990,12 @@ BView::SetViewUIColor(color_which which, float tint)
 }
 
 
+/**
+ * @brief Returns the UI colour constant for the view background, if set.
+ *
+ * @param tint If non-NULL, receives the applied tint factor.
+ * @return The color_which constant, or B_NO_COLOR if a literal colour is used.
+ */
 color_which
 BView::ViewUIColor(float* tint) const
 {
@@ -2825,6 +4024,14 @@ BView::ViewUIColor(float* tint) const
 }
 
 
+/**
+ * @brief Enables or disables font anti-aliasing for printing.
+ *
+ * When @p enable is true, text drawn by this view is not anti-aliased during
+ * a print job, which can improve legibility at printer resolutions.
+ *
+ * @param enable True to force aliased (non-anti-aliased) font rendering.
+ */
 void
 BView::ForceFontAliasing(bool enable)
 {
@@ -2846,6 +4053,18 @@ BView::ForceFontAliasing(bool enable)
 }
 
 
+/**
+ * @brief Sets the view's font, applying only the attributes indicated by @p mask.
+ *
+ * When @p mask is B_FONT_ALL the entire font is replaced.  Otherwise only the
+ * flagged attributes (family/style, size, shear, rotation, etc.) are updated.
+ * Changes are forwarded to the app_server immediately when the view is attached.
+ *
+ * @param font A pointer to the source font; ignored if NULL.
+ * @param mask A bitfield of B_FONT_* constants selecting which attributes to copy.
+ *
+ * @see BView::GetFont(), BView::SetFontSize()
+ */
 void
 BView::SetFont(const BFont* font, uint32 mask)
 {
@@ -2898,6 +4117,14 @@ BView::SetFont(const BFont* font, uint32 mask)
 }
 
 
+/**
+ * @brief Returns the view's current font.
+ *
+ * If the cached font state is invalid (e.g. after PopState()), the full state
+ * is fetched from the app_server via UpdateFrom().
+ *
+ * @param font Receives a copy of the current BFont; must not be NULL.
+ */
 void
 BView::GetFont(BFont* font) const
 {
@@ -2914,6 +4141,11 @@ BView::GetFont(BFont* font) const
 }
 
 
+/**
+ * @brief Returns the ascent, descent, and leading of the current font.
+ *
+ * @param height Receives the font_height metrics; must not be NULL.
+ */
 void
 BView::GetFontHeight(font_height* height) const
 {
@@ -2921,6 +4153,13 @@ BView::GetFontHeight(font_height* height) const
 }
 
 
+/**
+ * @brief Sets the font point size without changing any other font attributes.
+ *
+ * @param size The new font size in points.
+ *
+ * @see BView::SetFont()
+ */
 void
 BView::SetFontSize(float size)
 {
@@ -2931,6 +4170,12 @@ BView::SetFontSize(float size)
 }
 
 
+/**
+ * @brief Returns the width of the NUL-terminated string in the current font.
+ *
+ * @param string A NUL-terminated UTF-8 string.
+ * @return The rendered width in view-local coordinate units.
+ */
 float
 BView::StringWidth(const char* string) const
 {
@@ -2938,6 +4183,13 @@ BView::StringWidth(const char* string) const
 }
 
 
+/**
+ * @brief Returns the width of @p length bytes of @p string in the current font.
+ *
+ * @param string A UTF-8 string (need not be NUL-terminated).
+ * @param length Number of bytes to measure.
+ * @return The rendered width in view-local coordinate units.
+ */
 float
 BView::StringWidth(const char* string, int32 length) const
 {
@@ -2945,6 +4197,15 @@ BView::StringWidth(const char* string, int32 length) const
 }
 
 
+/**
+ * @brief Returns the widths of multiple strings in the current font.
+ *
+ * @param stringArray  Array of string pointers.
+ * @param lengthArray  Array of byte lengths corresponding to each string.
+ * @param numStrings   Number of entries in both arrays.
+ * @param widthArray   Receives the width of each string; must be at least
+ *                     @p numStrings elements.
+ */
 void
 BView::GetStringWidths(char* stringArray[], int32 lengthArray[],
 	int32 numStrings, float widthArray[]) const
@@ -2954,6 +4215,14 @@ BView::GetStringWidths(char* stringArray[], int32 lengthArray[],
 }
 
 
+/**
+ * @brief Truncates @p string so it fits within @p width pixels.
+ *
+ * @param string The string to truncate in place.
+ * @param mode   Truncation mode: B_TRUNCATE_BEGINNING, B_TRUNCATE_MIDDLE,
+ *               B_TRUNCATE_END, or B_TRUNCATE_SMART.
+ * @param width  Maximum allowed rendered width in view-local units.
+ */
 void
 BView::TruncateString(BString* string, uint32 mode, float width) const
 {
@@ -2961,6 +4230,19 @@ BView::TruncateString(BString* string, uint32 mode, float width) const
 }
 
 
+/**
+ * @brief Intersects the current clipping region with the area covered by a picture.
+ *
+ * The picture is rendered into a mask; only pixels where the picture draws
+ * remain visible.
+ *
+ * @param picture The picture that defines the clipping shape.
+ * @param where   The position of the picture in view-local coordinates.
+ * @param sync    If true, synchronise with the server before returning so the
+ *                picture token stays valid.
+ *
+ * @see BView::ClipToInversePicture()
+ */
 void
 BView::ClipToPicture(BPicture* picture, BPoint where, bool sync)
 {
@@ -2968,6 +4250,18 @@ BView::ClipToPicture(BPicture* picture, BPoint where, bool sync)
 }
 
 
+/**
+ * @brief Intersects the clipping region with the inverse of a picture's coverage.
+ *
+ * The complement of ClipToPicture(): pixels where the picture does NOT draw
+ * remain visible.
+ *
+ * @param picture The picture defining the excluded area.
+ * @param where   The position of the picture in view-local coordinates.
+ * @param sync    If true, synchronise with the server before returning.
+ *
+ * @see BView::ClipToPicture()
+ */
 void
 BView::ClipToInversePicture(BPicture* picture, BPoint where, bool sync)
 {
@@ -2975,6 +4269,16 @@ BView::ClipToInversePicture(BPicture* picture, BPoint where, bool sync)
 }
 
 
+/**
+ * @brief Retrieves the view's current clipping region from the app_server.
+ *
+ * The region is always fetched from the server because the client has no way
+ * to know when the server-side clipping has changed.  During printing the
+ * clipping region is replaced by the print rectangle.
+ *
+ * @param region Receives the current clipping region; must not be NULL.
+ *               It is cleared before being filled.
+ */
 void
 BView::GetClippingRegion(BRegion* region) const
 {
@@ -3005,6 +4309,14 @@ BView::GetClippingRegion(BRegion* region) const
 }
 
 
+/**
+ * @brief Restricts drawing to the intersection of the current clip and @p region.
+ *
+ * Passing NULL removes any user-defined clipping constraint.  The change is
+ * forwarded to the app_server and the local clip-region cache is invalidated.
+ *
+ * @param region The new user clip region, or NULL to clear user clipping.
+ */
 void
 BView::ConstrainClippingRegion(BRegion* region)
 {
@@ -3023,6 +4335,12 @@ BView::ConstrainClippingRegion(BRegion* region)
 }
 
 
+/**
+ * @brief Intersects the clipping region with a rectangle.
+ *
+ * @param rect The rectangle to intersect with, in view-local coordinates.
+ * @see BView::ClipToInverseRect()
+ */
 void
 BView::ClipToRect(BRect rect)
 {
@@ -3030,6 +4348,12 @@ BView::ClipToRect(BRect rect)
 }
 
 
+/**
+ * @brief Intersects the clipping region with everything outside @p rect.
+ *
+ * @param rect The rectangle to exclude, in view-local coordinates.
+ * @see BView::ClipToRect()
+ */
 void
 BView::ClipToInverseRect(BRect rect)
 {
@@ -3037,6 +4361,12 @@ BView::ClipToInverseRect(BRect rect)
 }
 
 
+/**
+ * @brief Intersects the clipping region with the interior of a BShape.
+ *
+ * @param shape The shape defining the clipping area, in view-local coordinates.
+ * @see BView::ClipToInverseShape()
+ */
 void
 BView::ClipToShape(BShape* shape)
 {
@@ -3044,6 +4374,12 @@ BView::ClipToShape(BShape* shape)
 }
 
 
+/**
+ * @brief Intersects the clipping region with everything outside @p shape.
+ *
+ * @param shape The shape defining the excluded area, in view-local coordinates.
+ * @see BView::ClipToShape()
+ */
 void
 BView::ClipToInverseShape(BShape* shape)
 {
@@ -3054,6 +4390,19 @@ BView::ClipToInverseShape(BShape* shape)
 //	#pragma mark - Drawing Functions
 
 
+/**
+ * @brief Draws a sub-region of a bitmap into a destination rectangle asynchronously.
+ *
+ * Sends AS_VIEW_DRAW_BITMAP without waiting for the server to complete.  The
+ * bitmap is scaled/filtered as needed to fill @p viewRect.
+ *
+ * @param bitmap     The source bitmap.
+ * @param bitmapRect The source rectangle within the bitmap's bounds.
+ * @param viewRect   The destination rectangle in view-local coordinates.
+ * @param options    Bitmap drawing options (e.g. B_FILTER_BITMAP_BILINEAR).
+ *
+ * @see BView::DrawBitmap()
+ */
 void
 BView::DrawBitmapAsync(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect,
 	uint32 options)
@@ -3077,6 +4426,13 @@ BView::DrawBitmapAsync(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect,
 }
 
 
+/**
+ * @brief Draws a sub-region of a bitmap into a destination rectangle asynchronously (no options).
+ *
+ * @param bitmap     The source bitmap.
+ * @param bitmapRect The source rectangle within the bitmap.
+ * @param viewRect   The destination rectangle in view-local coordinates.
+ */
 void
 BView::DrawBitmapAsync(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect)
 {
@@ -3084,6 +4440,12 @@ BView::DrawBitmapAsync(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect)
 }
 
 
+/**
+ * @brief Draws the entire bitmap scaled into @p viewRect asynchronously.
+ *
+ * @param bitmap   The source bitmap (full bounds used as the source rect).
+ * @param viewRect The destination rectangle in view-local coordinates.
+ */
 void
 BView::DrawBitmapAsync(const BBitmap* bitmap, BRect viewRect)
 {
@@ -3094,6 +4456,12 @@ BView::DrawBitmapAsync(const BBitmap* bitmap, BRect viewRect)
 }
 
 
+/**
+ * @brief Draws a bitmap at @p where (1:1 pixel mapping) asynchronously.
+ *
+ * @param bitmap The source bitmap.
+ * @param where  The position of the bitmap's top-left in view-local coordinates.
+ */
 void
 BView::DrawBitmapAsync(const BBitmap* bitmap, BPoint where)
 {
@@ -3115,6 +4483,11 @@ BView::DrawBitmapAsync(const BBitmap* bitmap, BPoint where)
 }
 
 
+/**
+ * @brief Draws a bitmap at the current pen location asynchronously.
+ *
+ * @param bitmap The source bitmap to draw.
+ */
 void
 BView::DrawBitmapAsync(const BBitmap* bitmap)
 {
@@ -3122,6 +4495,17 @@ BView::DrawBitmapAsync(const BBitmap* bitmap)
 }
 
 
+/**
+ * @brief Draws a sub-region of a bitmap into a destination rectangle (synchronous).
+ *
+ * Calls DrawBitmapAsync() followed by Sync() to guarantee the bitmap is rendered
+ * before this function returns.
+ *
+ * @param bitmap     The source bitmap.
+ * @param bitmapRect The source rectangle within the bitmap.
+ * @param viewRect   The destination rectangle in view-local coordinates.
+ * @param options    Bitmap drawing options.
+ */
 void
 BView::DrawBitmap(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect,
 	uint32 options)
@@ -3133,6 +4517,13 @@ BView::DrawBitmap(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect,
 }
 
 
+/**
+ * @brief Draws a sub-region of a bitmap into a destination rectangle (synchronous, no options).
+ *
+ * @param bitmap     The source bitmap.
+ * @param bitmapRect The source rectangle.
+ * @param viewRect   The destination rectangle in view-local coordinates.
+ */
 void
 BView::DrawBitmap(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect)
 {
@@ -3143,6 +4534,12 @@ BView::DrawBitmap(const BBitmap* bitmap, BRect bitmapRect, BRect viewRect)
 }
 
 
+/**
+ * @brief Draws the entire bitmap scaled into @p viewRect (synchronous).
+ *
+ * @param bitmap   The source bitmap.
+ * @param viewRect The destination rectangle in view-local coordinates.
+ */
 void
 BView::DrawBitmap(const BBitmap* bitmap, BRect viewRect)
 {
@@ -3153,6 +4550,12 @@ BView::DrawBitmap(const BBitmap* bitmap, BRect viewRect)
 }
 
 
+/**
+ * @brief Draws a bitmap at @p where (1:1 pixel mapping, synchronous).
+ *
+ * @param bitmap The source bitmap.
+ * @param where  The position of the top-left corner in view-local coordinates.
+ */
 void
 BView::DrawBitmap(const BBitmap* bitmap, BPoint where)
 {
@@ -3163,6 +4566,11 @@ BView::DrawBitmap(const BBitmap* bitmap, BPoint where)
 }
 
 
+/**
+ * @brief Draws a bitmap at the current pen location (synchronous).
+ *
+ * @param bitmap The source bitmap to draw.
+ */
 void
 BView::DrawBitmap(const BBitmap* bitmap)
 {
@@ -3170,6 +4578,18 @@ BView::DrawBitmap(const BBitmap* bitmap)
 }
 
 
+/**
+ * @brief Tiles a bitmap over @p viewRect starting at @p phase (asynchronous).
+ *
+ * The bitmap is repeated in both axes to fill @p viewRect.  The @p phase
+ * controls the alignment offset of the tile pattern.
+ *
+ * @param bitmap   The bitmap tile to repeat.
+ * @param viewRect The destination area in view-local coordinates.
+ * @param phase    The tiling phase (offset within one tile period).
+ *
+ * @see BView::DrawTiledBitmap()
+ */
 void
 BView::DrawTiledBitmapAsync(const BBitmap* bitmap, BRect viewRect,
 	BPoint phase)
@@ -3192,6 +4612,13 @@ BView::DrawTiledBitmapAsync(const BBitmap* bitmap, BRect viewRect,
 }
 
 
+/**
+ * @brief Tiles a bitmap over @p viewRect (synchronous).
+ *
+ * @param bitmap   The bitmap tile to repeat.
+ * @param viewRect The destination area in view-local coordinates.
+ * @param phase    The tiling phase.
+ */
 void
 BView::DrawTiledBitmap(const BBitmap* bitmap, BRect viewRect, BPoint phase)
 {
@@ -3202,6 +4629,11 @@ BView::DrawTiledBitmap(const BBitmap* bitmap, BRect viewRect, BPoint phase)
 }
 
 
+/**
+ * @brief Draws a single character at the current pen location.
+ *
+ * @param c The character to draw.
+ */
 void
 BView::DrawChar(char c)
 {
@@ -3209,6 +4641,12 @@ BView::DrawChar(char c)
 }
 
 
+/**
+ * @brief Draws a single character at @p location.
+ *
+ * @param c        The character to draw.
+ * @param location The baseline position in view-local coordinates.
+ */
 void
 BView::DrawChar(char c, BPoint location)
 {
@@ -3216,6 +4654,12 @@ BView::DrawChar(char c, BPoint location)
 }
 
 
+/**
+ * @brief Draws a NUL-terminated string at the current pen location.
+ *
+ * @param string The UTF-8 string to render.
+ * @param delta  Optional per-character spacing adjustments; may be NULL.
+ */
 void
 BView::DrawString(const char* string, escapement_delta* delta)
 {
@@ -3226,6 +4670,13 @@ BView::DrawString(const char* string, escapement_delta* delta)
 }
 
 
+/**
+ * @brief Draws a NUL-terminated string at @p location.
+ *
+ * @param string   The UTF-8 string to render.
+ * @param location The baseline start position in view-local coordinates.
+ * @param delta    Optional per-character spacing adjustments; may be NULL.
+ */
 void
 BView::DrawString(const char* string, BPoint location, escapement_delta* delta)
 {
@@ -3236,6 +4687,13 @@ BView::DrawString(const char* string, BPoint location, escapement_delta* delta)
 }
 
 
+/**
+ * @brief Draws @p length bytes of @p string at the current pen location.
+ *
+ * @param string The UTF-8 string (need not be NUL-terminated).
+ * @param length Number of bytes to draw.
+ * @param delta  Optional per-character spacing adjustments; may be NULL.
+ */
 void
 BView::DrawString(const char* string, int32 length, escapement_delta* delta)
 {
@@ -3243,6 +4701,18 @@ BView::DrawString(const char* string, int32 length, escapement_delta* delta)
 }
 
 
+/**
+ * @brief Draws @p length bytes of @p string at @p location.
+ *
+ * Sends AS_DRAW_STRING_WITH_DELTA or AS_DRAW_STRING to the app_server and
+ * invalidates the pen location cache because the pen moves to the end of
+ * the rendered text.
+ *
+ * @param string   The UTF-8 string to render (need not be NUL-terminated).
+ * @param length   Number of bytes to draw.
+ * @param location The baseline start position in view-local coordinates.
+ * @param delta    Optional escapement adjustments; if NULL, AS_DRAW_STRING is used.
+ */
 void
 BView::DrawString(const char* string, int32 length, BPoint location,
 	escapement_delta* delta)
@@ -3274,6 +4744,13 @@ BView::DrawString(const char* string, int32 length, BPoint location,
 }
 
 
+/**
+ * @brief Draws a NUL-terminated string with each glyph at an individual location.
+ *
+ * @param string        The UTF-8 string to render.
+ * @param locations     Array of baseline positions, one per character.
+ * @param locationCount Number of entries in @p locations.
+ */
 void
 BView::DrawString(const char* string, const BPoint* locations,
 	int32 locationCount)
@@ -3285,6 +4762,16 @@ BView::DrawString(const char* string, const BPoint* locations,
 }
 
 
+/**
+ * @brief Draws @p length bytes of @p string with each glyph at an individual location.
+ *
+ * Sends AS_DRAW_STRING_WITH_OFFSETS; the pen location is invalidated after.
+ *
+ * @param string        The UTF-8 string to render (need not be NUL-terminated).
+ * @param length        Number of bytes in @p string.
+ * @param locations     Array of baseline BPoint positions, one per character.
+ * @param locationCount Number of entries in @p locations.
+ */
 void
 BView::DrawString(const char* string, int32 length, const BPoint* locations,
 	int32 locationCount)
@@ -3308,6 +4795,14 @@ BView::DrawString(const char* string, int32 length, const BPoint* locations,
 }
 
 
+/**
+ * @brief Strokes an ellipse specified by centre and radii.
+ *
+ * @param center  The centre point in view-local coordinates.
+ * @param xRadius Horizontal radius.
+ * @param yRadius Vertical radius.
+ * @param pattern The fill pattern (e.g. B_SOLID_HIGH).
+ */
 void
 BView::StrokeEllipse(BPoint center, float xRadius, float yRadius,
 	::pattern pattern)
@@ -3317,6 +4812,12 @@ BView::StrokeEllipse(BPoint center, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Strokes an ellipse bounded by @p rect.
+ *
+ * @param rect    The bounding rectangle of the ellipse in view-local coordinates.
+ * @param pattern The fill pattern.
+ */
 void
 BView::StrokeEllipse(BRect rect, ::pattern pattern)
 {
@@ -3333,6 +4834,14 @@ BView::StrokeEllipse(BRect rect, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes an ellipse with a gradient stroke, specified by centre and radii.
+ *
+ * @param center   The centre point.
+ * @param xRadius  Horizontal radius.
+ * @param yRadius  Vertical radius.
+ * @param gradient The gradient to apply along the stroke.
+ */
 void
 BView::StrokeEllipse(BPoint center, float xRadius, float yRadius,
 	const BGradient& gradient)
@@ -3342,6 +4851,12 @@ BView::StrokeEllipse(BPoint center, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Strokes an ellipse bounded by @p rect using a gradient stroke.
+ *
+ * @param rect     The bounding rectangle.
+ * @param gradient The gradient to apply along the stroke.
+ */
 void
 BView::StrokeEllipse(BRect rect, const BGradient& gradient)
 {
@@ -3358,6 +4873,14 @@ BView::StrokeEllipse(BRect rect, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills an ellipse specified by centre and radii.
+ *
+ * @param center  The centre point in view-local coordinates.
+ * @param xRadius Horizontal radius.
+ * @param yRadius Vertical radius.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillEllipse(BPoint center, float xRadius, float yRadius,
 	::pattern pattern)
@@ -3367,6 +4890,14 @@ BView::FillEllipse(BPoint center, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Fills an ellipse with a gradient, specified by centre and radii.
+ *
+ * @param center   The centre point.
+ * @param xRadius  Horizontal radius.
+ * @param yRadius  Vertical radius.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillEllipse(BPoint center, float xRadius, float yRadius,
 	const BGradient& gradient)
@@ -3376,6 +4907,12 @@ BView::FillEllipse(BPoint center, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Fills an ellipse bounded by @p rect.
+ *
+ * @param rect    The bounding rectangle in view-local coordinates.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillEllipse(BRect rect, ::pattern pattern)
 {
@@ -3392,6 +4929,12 @@ BView::FillEllipse(BRect rect, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills an ellipse bounded by @p rect using a gradient.
+ *
+ * @param rect     The bounding rectangle.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillEllipse(BRect rect, const BGradient& gradient)
 {
@@ -3408,6 +4951,16 @@ BView::FillEllipse(BRect rect, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes an arc specified by centre, radii, and angle range.
+ *
+ * @param center     The centre point.
+ * @param xRadius    Horizontal radius.
+ * @param yRadius    Vertical radius.
+ * @param startAngle Starting angle in degrees (0 = right, counter-clockwise).
+ * @param arcAngle   Sweep angle in degrees.
+ * @param pattern    The stroke pattern.
+ */
 void
 BView::StrokeArc(BPoint center, float xRadius, float yRadius, float startAngle,
 	float arcAngle, ::pattern pattern)
@@ -3417,6 +4970,14 @@ BView::StrokeArc(BPoint center, float xRadius, float yRadius, float startAngle,
 }
 
 
+/**
+ * @brief Strokes an arc within the ellipse bounded by @p rect.
+ *
+ * @param rect       The bounding rectangle of the full ellipse.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param pattern    The stroke pattern.
+ */
 void
 BView::StrokeArc(BRect rect, float startAngle, float arcAngle,
 	::pattern pattern)
@@ -3436,6 +4997,16 @@ BView::StrokeArc(BRect rect, float startAngle, float arcAngle,
 }
 
 
+/**
+ * @brief Strokes an arc with a gradient, specified by centre, radii, and angle range.
+ *
+ * @param center     The centre point.
+ * @param xRadius    Horizontal radius.
+ * @param yRadius    Vertical radius.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param gradient   The stroke gradient.
+ */
 void
 BView::StrokeArc(BPoint center, float xRadius, float yRadius, float startAngle,
 	float arcAngle, const BGradient& gradient)
@@ -3445,6 +5016,14 @@ BView::StrokeArc(BPoint center, float xRadius, float yRadius, float startAngle,
 }
 
 
+/**
+ * @brief Strokes an arc within @p rect using a gradient stroke.
+ *
+ * @param rect       The bounding rectangle of the full ellipse.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param gradient   The stroke gradient.
+ */
 void
 BView::StrokeArc(BRect rect, float startAngle, float arcAngle,
 	const BGradient& gradient)
@@ -3464,6 +5043,16 @@ BView::StrokeArc(BRect rect, float startAngle, float arcAngle,
 }
 
 
+/**
+ * @brief Fills an arc (pie-slice) specified by centre, radii, and angle range.
+ *
+ * @param center     The centre point.
+ * @param xRadius    Horizontal radius.
+ * @param yRadius    Vertical radius.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param pattern    The fill pattern.
+ */
 void
 BView::FillArc(BPoint center,float xRadius, float yRadius, float startAngle,
 	float arcAngle, ::pattern pattern)
@@ -3473,6 +5062,16 @@ BView::FillArc(BPoint center,float xRadius, float yRadius, float startAngle,
 }
 
 
+/**
+ * @brief Fills an arc with a gradient, specified by centre, radii, and angle range.
+ *
+ * @param center     The centre point.
+ * @param xRadius    Horizontal radius.
+ * @param yRadius    Vertical radius.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param gradient   The fill gradient.
+ */
 void
 BView::FillArc(BPoint center,float xRadius, float yRadius, float startAngle,
 	float arcAngle, const BGradient& gradient)
@@ -3482,6 +5081,14 @@ BView::FillArc(BPoint center,float xRadius, float yRadius, float startAngle,
 }
 
 
+/**
+ * @brief Fills an arc (pie-slice) within @p rect.
+ *
+ * @param rect       The bounding rectangle of the full ellipse.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param pattern    The fill pattern.
+ */
 void
 BView::FillArc(BRect rect, float startAngle, float arcAngle,
 	::pattern pattern)
@@ -3501,6 +5108,14 @@ BView::FillArc(BRect rect, float startAngle, float arcAngle,
 }
 
 
+/**
+ * @brief Fills an arc within @p rect using a gradient.
+ *
+ * @param rect       The bounding rectangle of the full ellipse.
+ * @param startAngle Starting angle in degrees.
+ * @param arcAngle   Sweep angle in degrees.
+ * @param gradient   The fill gradient.
+ */
 void
 BView::FillArc(BRect rect, float startAngle, float arcAngle,
 	const BGradient& gradient)
@@ -3520,6 +5135,12 @@ BView::FillArc(BRect rect, float startAngle, float arcAngle,
 }
 
 
+/**
+ * @brief Strokes a cubic Bezier curve defined by four control points.
+ *
+ * @param controlPoints Array of four BPoints: start, control 1, control 2, end.
+ * @param pattern       The stroke pattern.
+ */
 void
 BView::StrokeBezier(BPoint* controlPoints, ::pattern pattern)
 {
@@ -3539,6 +5160,12 @@ BView::StrokeBezier(BPoint* controlPoints, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes a cubic Bezier curve with a gradient stroke.
+ *
+ * @param controlPoints Array of four BPoints: start, control 1, control 2, end.
+ * @param gradient      The stroke gradient.
+ */
 void
 BView::StrokeBezier(BPoint* controlPoints, const BGradient& gradient)
 {
@@ -3558,6 +5185,12 @@ BView::StrokeBezier(BPoint* controlPoints, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills the area enclosed by a cubic Bezier curve.
+ *
+ * @param controlPoints Array of four BPoints: start, control 1, control 2, end.
+ * @param pattern       The fill pattern.
+ */
 void
 BView::FillBezier(BPoint* controlPoints, ::pattern pattern)
 {
@@ -3577,6 +5210,12 @@ BView::FillBezier(BPoint* controlPoints, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills the area enclosed by a cubic Bezier curve using a gradient.
+ *
+ * @param controlPoints Array of four BPoints: start, control 1, control 2, end.
+ * @param gradient      The fill gradient.
+ */
 void
 BView::FillBezier(BPoint* controlPoints, const BGradient& gradient)
 {
@@ -3596,6 +5235,13 @@ BView::FillBezier(BPoint* controlPoints, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes a polygon.
+ *
+ * @param polygon The polygon to stroke.
+ * @param closed  If true, an extra line segment connects the last point to the first.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokePolygon(const BPolygon* polygon, bool closed, ::pattern pattern)
 {
@@ -3607,6 +5253,16 @@ BView::StrokePolygon(const BPolygon* polygon, bool closed, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes a polygon defined by a point array.
+ *
+ * The bounding box is computed automatically.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points in @p pointArray.
+ * @param closed     If true, close the polygon.
+ * @param pattern    The stroke pattern.
+ */
 void
 BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, bool closed,
 	::pattern pattern)
@@ -3636,6 +5292,18 @@ BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, bool closed,
 }
 
 
+/**
+ * @brief Strokes a polygon mapped into @p bounds.
+ *
+ * The vertices in @p pointArray are mapped from the polygon's natural frame
+ * to @p bounds before drawing.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points.
+ * @param bounds     Target bounding rectangle the polygon is mapped into.
+ * @param closed     If true, close the polygon.
+ * @param pattern    The stroke pattern.
+ */
 void
 BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 	bool closed, ::pattern pattern)
@@ -3666,6 +5334,13 @@ BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 }
 
 
+/**
+ * @brief Strokes a polygon with a gradient stroke.
+ *
+ * @param polygon  The polygon to stroke.
+ * @param closed   If true, close the polygon.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokePolygon(const BPolygon* polygon, bool closed, const BGradient& gradient)
 {
@@ -3677,6 +5352,14 @@ BView::StrokePolygon(const BPolygon* polygon, bool closed, const BGradient& grad
 }
 
 
+/**
+ * @brief Strokes a polygon (from a point array) with a gradient stroke.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points.
+ * @param closed     If true, close the polygon.
+ * @param gradient   The stroke gradient.
+ */
 void
 BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, bool closed,
 	const BGradient& gradient)
@@ -3706,6 +5389,15 @@ BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, bool closed,
 }
 
 
+/**
+ * @brief Strokes a polygon mapped into @p bounds, with a gradient stroke.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points.
+ * @param bounds     Target bounding rectangle the polygon is mapped into.
+ * @param closed     If true, close the polygon.
+ * @param gradient   The stroke gradient.
+ */
 void
 BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 	bool closed, const BGradient& gradient)
@@ -3736,6 +5428,12 @@ BView::StrokePolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 }
 
 
+/**
+ * @brief Fills the interior of a polygon.
+ *
+ * @param polygon The polygon to fill (must have more than 2 vertices).
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillPolygon(const BPolygon* polygon, ::pattern pattern)
 {
@@ -3762,6 +5460,12 @@ BView::FillPolygon(const BPolygon* polygon, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills the interior of a polygon using a gradient.
+ *
+ * @param polygon  The polygon to fill.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillPolygon(const BPolygon* polygon, const BGradient& gradient)
 {
@@ -3788,6 +5492,13 @@ BView::FillPolygon(const BPolygon* polygon, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills the interior of a polygon defined by a point array.
+ *
+ * @param pointArray Array of vertex points (must have more than 2 entries).
+ * @param numPoints  Number of points.
+ * @param pattern    The fill pattern.
+ */
 void
 BView::FillPolygon(const BPoint* pointArray, int32 numPoints, ::pattern pattern)
 {
@@ -3815,6 +5526,13 @@ BView::FillPolygon(const BPoint* pointArray, int32 numPoints, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills a polygon (from a point array) using a gradient.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points.
+ * @param gradient   The fill gradient.
+ */
 void
 BView::FillPolygon(const BPoint* pointArray, int32 numPoints,
 	const BGradient& gradient)
@@ -3843,6 +5561,14 @@ BView::FillPolygon(const BPoint* pointArray, int32 numPoints,
 }
 
 
+/**
+ * @brief Fills a polygon mapped into @p bounds.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points.
+ * @param bounds     The target bounding rectangle.
+ * @param pattern    The fill pattern.
+ */
 void
 BView::FillPolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 	::pattern pattern)
@@ -3857,6 +5583,14 @@ BView::FillPolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 }
 
 
+/**
+ * @brief Fills a polygon mapped into @p bounds using a gradient.
+ *
+ * @param pointArray Array of vertex points.
+ * @param numPoints  Number of points.
+ * @param bounds     The target bounding rectangle.
+ * @param gradient   The fill gradient.
+ */
 void
 BView::FillPolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 	const BGradient& gradient)
@@ -3871,6 +5605,12 @@ BView::FillPolygon(const BPoint* pointArray, int32 numPoints, BRect bounds,
 }
 
 
+/**
+ * @brief Strokes the outline of a rectangle.
+ *
+ * @param rect    The rectangle to stroke in view-local coordinates.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokeRect(BRect rect, ::pattern pattern)
 {
@@ -3887,6 +5627,12 @@ BView::StrokeRect(BRect rect, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes the outline of a rectangle with a gradient stroke.
+ *
+ * @param rect     The rectangle to stroke.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeRect(BRect rect, const BGradient& gradient)
 {
@@ -3903,6 +5649,15 @@ BView::StrokeRect(BRect rect, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills a rectangle with the given pattern.
+ *
+ * Invalid rectangles (where right < left or bottom < top) are silently
+ * ignored for BeOS compatibility.
+ *
+ * @param rect    The rectangle to fill in view-local coordinates.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillRect(BRect rect, ::pattern pattern)
 {
@@ -3924,6 +5679,12 @@ BView::FillRect(BRect rect, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills a rectangle using a gradient.
+ *
+ * @param rect     The rectangle to fill.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillRect(BRect rect, const BGradient& gradient)
 {
@@ -3945,6 +5706,14 @@ BView::FillRect(BRect rect, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes the outline of a rectangle with rounded corners.
+ *
+ * @param rect    The bounding rectangle.
+ * @param xRadius The horizontal corner radius.
+ * @param yRadius The vertical corner radius.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokeRoundRect(BRect rect, float xRadius, float yRadius,
 	::pattern pattern)
@@ -3964,6 +5733,14 @@ BView::StrokeRoundRect(BRect rect, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Strokes a rounded rectangle with a gradient stroke.
+ *
+ * @param rect     The bounding rectangle.
+ * @param xRadius  The horizontal corner radius.
+ * @param yRadius  The vertical corner radius.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeRoundRect(BRect rect, float xRadius, float yRadius,
 	const BGradient& gradient)
@@ -3983,6 +5760,14 @@ BView::StrokeRoundRect(BRect rect, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Fills a rectangle with rounded corners.
+ *
+ * @param rect    The bounding rectangle.
+ * @param xRadius The horizontal corner radius.
+ * @param yRadius The vertical corner radius.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillRoundRect(BRect rect, float xRadius, float yRadius,
 	::pattern pattern)
@@ -4003,6 +5788,14 @@ BView::FillRoundRect(BRect rect, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Fills a rounded rectangle using a gradient.
+ *
+ * @param rect     The bounding rectangle.
+ * @param xRadius  The horizontal corner radius.
+ * @param yRadius  The vertical corner radius.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillRoundRect(BRect rect, float xRadius, float yRadius,
 	const BGradient& gradient)
@@ -4022,6 +5815,12 @@ BView::FillRoundRect(BRect rect, float xRadius, float yRadius,
 }
 
 
+/**
+ * @brief Fills all rectangles in a region.
+ *
+ * @param region  The region to fill; must not be NULL.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillRegion(BRegion* region, ::pattern pattern)
 {
@@ -4039,6 +5838,12 @@ BView::FillRegion(BRegion* region, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills all rectangles in a region using a gradient.
+ *
+ * @param region   The region to fill; must not be NULL.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillRegion(BRegion* region, const BGradient& gradient)
 {
@@ -4055,6 +5860,15 @@ BView::FillRegion(BRegion* region, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes a triangle with a pre-computed bounding rectangle.
+ *
+ * @param point1  First vertex.
+ * @param point2  Second vertex.
+ * @param point3  Third vertex.
+ * @param bounds  Bounding rectangle of the three vertices.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3, BRect bounds,
 	::pattern pattern)
@@ -4076,6 +5890,14 @@ BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3, BRect bounds,
 }
 
 
+/**
+ * @brief Strokes a triangle, computing the bounding rectangle automatically.
+ *
+ * @param point1  First vertex.
+ * @param point2  Second vertex.
+ * @param point3  Third vertex.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3,
 	::pattern pattern)
@@ -4116,6 +5938,15 @@ BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3,
 }
 
 
+/**
+ * @brief Strokes a triangle with a gradient stroke and a pre-computed bounding rectangle.
+ *
+ * @param point1   First vertex.
+ * @param point2   Second vertex.
+ * @param point3   Third vertex.
+ * @param bounds   Bounding rectangle.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3, BRect bounds,
 	const BGradient& gradient)
@@ -4136,6 +5967,14 @@ BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3, BRect bounds,
 }
 
 
+/**
+ * @brief Strokes a triangle with a gradient stroke, computing the bounding rectangle.
+ *
+ * @param point1   First vertex.
+ * @param point2   Second vertex.
+ * @param point3   Third vertex.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3,
 	const BGradient& gradient)
@@ -4176,6 +6015,14 @@ BView::StrokeTriangle(BPoint point1, BPoint point2, BPoint point3,
 }
 
 
+/**
+ * @brief Fills a triangle, computing the bounding rectangle automatically.
+ *
+ * @param point1  First vertex.
+ * @param point2  Second vertex.
+ * @param point3  Third vertex.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3,
 	::pattern pattern)
@@ -4216,6 +6063,14 @@ BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3,
 }
 
 
+/**
+ * @brief Fills a triangle using a gradient, computing the bounding rectangle.
+ *
+ * @param point1   First vertex.
+ * @param point2   Second vertex.
+ * @param point3   Third vertex.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3,
 	const BGradient& gradient)
@@ -4256,6 +6111,15 @@ BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3,
 }
 
 
+/**
+ * @brief Fills a triangle with a pre-computed bounding rectangle.
+ *
+ * @param point1  First vertex.
+ * @param point2  Second vertex.
+ * @param point3  Third vertex.
+ * @param bounds  Bounding rectangle of the three vertices.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3,
 	BRect bounds, ::pattern pattern)
@@ -4276,6 +6140,15 @@ BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3,
 }
 
 
+/**
+ * @brief Fills a triangle with a gradient and a pre-computed bounding rectangle.
+ *
+ * @param point1   First vertex.
+ * @param point2   Second vertex.
+ * @param point3   Third vertex.
+ * @param bounds   Bounding rectangle.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3, BRect bounds,
 	const BGradient& gradient)
@@ -4295,6 +6168,12 @@ BView::FillTriangle(BPoint point1, BPoint point2, BPoint point3, BRect bounds,
 }
 
 
+/**
+ * @brief Strokes a line from the current pen location to @p toPoint.
+ *
+ * @param toPoint  The end point of the line in view-local coordinates.
+ * @param pattern  The stroke pattern.
+ */
 void
 BView::StrokeLine(BPoint toPoint, ::pattern pattern)
 {
@@ -4302,6 +6181,16 @@ BView::StrokeLine(BPoint toPoint, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes a line between two explicit points.
+ *
+ * Updates the pen to @p end after drawing.  Sends AS_STROKE_LINE to the
+ * app_server and invalidates the local pen location cache.
+ *
+ * @param start   The start point in view-local coordinates.
+ * @param end     The end point; the pen moves here after drawing.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokeLine(BPoint start, BPoint end, ::pattern pattern)
 {
@@ -4325,6 +6214,12 @@ BView::StrokeLine(BPoint start, BPoint end, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes a line from the pen location to @p toPoint using a gradient.
+ *
+ * @param toPoint  The end point.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeLine(BPoint toPoint, const BGradient& gradient)
 {
@@ -4332,6 +6227,13 @@ BView::StrokeLine(BPoint toPoint, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes a line between two points using a gradient stroke.
+ *
+ * @param start    The start point.
+ * @param end      The end point; the pen moves here after drawing.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeLine(BPoint start, BPoint end, const BGradient& gradient)
 {
@@ -4355,6 +6257,12 @@ BView::StrokeLine(BPoint start, BPoint end, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Strokes the outline of a BShape.
+ *
+ * @param shape   The shape to stroke; must not be NULL and must contain data.
+ * @param pattern The stroke pattern.
+ */
 void
 BView::StrokeShape(BShape* shape, ::pattern pattern)
 {
@@ -4376,6 +6284,12 @@ BView::StrokeShape(BShape* shape, ::pattern pattern)
 }
 
 
+/**
+ * @brief Strokes the outline of a BShape with a gradient stroke.
+ *
+ * @param shape    The shape to stroke.
+ * @param gradient The stroke gradient.
+ */
 void
 BView::StrokeShape(BShape* shape, const BGradient& gradient)
 {
@@ -4397,6 +6311,12 @@ BView::StrokeShape(BShape* shape, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Fills the interior of a BShape.
+ *
+ * @param shape   The shape to fill; must not be NULL and must contain data.
+ * @param pattern The fill pattern.
+ */
 void
 BView::FillShape(BShape* shape, ::pattern pattern)
 {
@@ -4418,6 +6338,12 @@ BView::FillShape(BShape* shape, ::pattern pattern)
 }
 
 
+/**
+ * @brief Fills the interior of a BShape using a gradient.
+ *
+ * @param shape    The shape to fill.
+ * @param gradient The fill gradient.
+ */
 void
 BView::FillShape(BShape* shape, const BGradient& gradient)
 {
@@ -4439,6 +6365,17 @@ BView::FillShape(BShape* shape, const BGradient& gradient)
 }
 
 
+/**
+ * @brief Begins a batch of coloured line segments for efficient rendering.
+ *
+ * Allocates a client-side array of up to @p count line entries.  Subsequent
+ * calls to AddLine() fill the array; EndLineArray() sends them all to the
+ * server in a single message.  Nesting BeginLineArray() calls is not permitted.
+ *
+ * @param count The maximum number of line segments to be added; must be > 0.
+ *
+ * @see BView::AddLine(), BView::EndLineArray()
+ */
 void
 BView::BeginLineArray(int32 count)
 {
@@ -4476,6 +6413,18 @@ BView::BeginLineArray(int32 count)
 }
 
 
+/**
+ * @brief Adds a coloured line segment to the current batch.
+ *
+ * Must be called between BeginLineArray() and EndLineArray().  Entries beyond
+ * the count passed to BeginLineArray() are silently discarded.
+ *
+ * @param start The start point in view-local coordinates.
+ * @param end   The end point in view-local coordinates.
+ * @param color The colour of this line segment.
+ *
+ * @see BView::BeginLineArray(), BView::EndLineArray()
+ */
 void
 BView::AddLine(BPoint start, BPoint end, rgb_color color)
 {
@@ -4498,6 +6447,14 @@ BView::AddLine(BPoint start, BPoint end, rgb_color color)
 }
 
 
+/**
+ * @brief Flushes all accumulated line segments to the app_server.
+ *
+ * Sends a single AS_STROKE_LINEARRAY message containing every segment added
+ * since BeginLineArray(), then frees the client-side buffer.
+ *
+ * @see BView::BeginLineArray(), BView::AddLine()
+ */
 void
 BView::EndLineArray()
 {
@@ -4520,6 +6477,17 @@ BView::EndLineArray()
 }
 
 
+/**
+ * @brief Begins recording drawing commands to a file on disk.
+ *
+ * Intended to support recording a picture to a file for later replay via
+ * DrawPicture().  Currently not implemented.
+ *
+ * @param filename Path to the target file.
+ * @param offset   Byte offset within the file where recording begins.
+ *
+ * @note This method is a stub; it does nothing in the current implementation.
+ */
 void
 BView::SetDiskMode(char* filename, long offset)
 {
@@ -4533,6 +6501,18 @@ BView::SetDiskMode(char* filename, long offset)
 }
 
 
+/**
+ * @brief Starts recording drawing commands into a BPicture.
+ *
+ * All subsequent drawing operations sent to this view are captured by
+ * @p picture instead of being rendered on screen.  Must be balanced by
+ * EndPicture().
+ *
+ * @param picture The picture object to record into; must not be NULL and must
+ *                not already be recording (fUsurped == NULL).
+ *
+ * @see BView::EndPicture(), BView::AppendToPicture()
+ */
 void
 BView::BeginPicture(BPicture* picture)
 {
@@ -4546,6 +6526,16 @@ BView::BeginPicture(BPicture* picture)
 }
 
 
+/**
+ * @brief Continues recording drawing commands into an existing BPicture.
+ *
+ * If @p picture has no server token yet, behaves like BeginPicture().
+ * Otherwise, informs the server to append to the existing picture data.
+ *
+ * @param picture The picture to append to; must not be NULL.
+ *
+ * @see BView::BeginPicture(), BView::EndPicture()
+ */
 void
 BView::AppendToPicture(BPicture* picture)
 {
@@ -4567,6 +6557,17 @@ BView::AppendToPicture(BPicture* picture)
 }
 
 
+/**
+ * @brief Stops recording and returns the completed BPicture.
+ *
+ * Sends AS_VIEW_END_PICTURE, receives the server token, assigns it to the
+ * picture, downloads the picture data, and restores the previous picture
+ * context.
+ *
+ * @return The BPicture that was being recorded, or NULL on failure.
+ *
+ * @see BView::BeginPicture(), BView::DrawPicture()
+ */
 BPicture*
 BView::EndPicture()
 {
@@ -4594,6 +6595,17 @@ BView::EndPicture()
 }
 
 
+/**
+ * @brief Sets a bitmap to be composited behind the view's drawing (view bitmap).
+ *
+ * @param bitmap      The bitmap to use as the view background; NULL clears it.
+ * @param srcRect     The source rectangle within the bitmap.
+ * @param dstRect     The destination rectangle in view-local coordinates.
+ * @param followFlags How the bitmap tracks view resizing (B_FOLLOW_* constants).
+ * @param options     Compositing options (e.g. B_TILE_BITMAP).
+ *
+ * @see BView::ClearViewBitmap()
+ */
 void
 BView::SetViewBitmap(const BBitmap* bitmap, BRect srcRect, BRect dstRect,
 	uint32 followFlags, uint32 options)
@@ -4602,6 +6614,13 @@ BView::SetViewBitmap(const BBitmap* bitmap, BRect srcRect, BRect dstRect,
 }
 
 
+/**
+ * @brief Sets a bitmap as the view background, using its full bounds as both source and destination.
+ *
+ * @param bitmap      The bitmap to use.
+ * @param followFlags How the bitmap tracks view resizing.
+ * @param options     Compositing options.
+ */
 void
 BView::SetViewBitmap(const BBitmap* bitmap, uint32 followFlags, uint32 options)
 {
@@ -4615,6 +6634,11 @@ BView::SetViewBitmap(const BBitmap* bitmap, uint32 followFlags, uint32 options)
 }
 
 
+/**
+ * @brief Removes the view's background bitmap.
+ *
+ * @see BView::SetViewBitmap()
+ */
 void
 BView::ClearViewBitmap()
 {
@@ -4622,6 +6646,21 @@ BView::ClearViewBitmap()
 }
 
 
+/**
+ * @brief Sets a hardware overlay bitmap for this view.
+ *
+ * The bitmap must have been created with B_BITMAP_WILL_OVERLAY.  The colour
+ * key (the colour rendered transparent in the overlay) is returned via
+ * @p colorKey after the server has processed the request.
+ *
+ * @param overlay     The overlay bitmap.
+ * @param srcRect     Source rectangle within the overlay.
+ * @param dstRect     Destination rectangle in view-local coordinates.
+ * @param colorKey    Receives the chroma-key colour on success.
+ * @param followFlags How the overlay tracks view resizing.
+ * @param options     Overlay options.
+ * @return B_OK on success, B_BAD_VALUE if the bitmap is unsuitable.
+ */
 status_t
 BView::SetViewOverlay(const BBitmap* overlay, BRect srcRect, BRect dstRect,
 	rgb_color* colorKey, uint32 followFlags, uint32 options)
@@ -4640,6 +6679,18 @@ BView::SetViewOverlay(const BBitmap* overlay, BRect srcRect, BRect dstRect,
 }
 
 
+/**
+ * @brief Sets a hardware overlay bitmap using its full bounds.
+ *
+ * Convenience overload that uses the overlay bitmap's own bounds for both
+ * the source and destination rectangles.
+ *
+ * @param overlay     The overlay bitmap.
+ * @param colorKey    Receives the chroma-key colour on success.
+ * @param followFlags How the overlay tracks view resizing.
+ * @param options     Overlay options.
+ * @return B_OK on success, B_BAD_VALUE if @p overlay is NULL.
+ */
 status_t
 BView::SetViewOverlay(const BBitmap* overlay, rgb_color* colorKey,
 	uint32 followFlags, uint32 options)
@@ -4654,6 +6705,11 @@ BView::SetViewOverlay(const BBitmap* overlay, rgb_color* colorKey,
 }
 
 
+/**
+ * @brief Removes the hardware overlay from this view.
+ *
+ * @see BView::SetViewOverlay()
+ */
 void
 BView::ClearViewOverlay()
 {
@@ -4661,6 +6717,15 @@ BView::ClearViewOverlay()
 }
 
 
+/**
+ * @brief Copies pixels from one rectangle in the view to another.
+ *
+ * Both @p src and @p dst must be valid rectangles.  The copy is performed
+ * server-side without a client round-trip for the pixel data.
+ *
+ * @param src The source rectangle in view-local coordinates.
+ * @param dst The destination rectangle in view-local coordinates.
+ */
 void
 BView::CopyBits(BRect src, BRect dst)
 {
@@ -4680,6 +6745,13 @@ BView::CopyBits(BRect src, BRect dst)
 }
 
 
+/**
+ * @brief Replays a BPicture at the current pen location (synchronous).
+ *
+ * @param picture The picture to draw; must not be NULL.
+ *
+ * @see BView::DrawPictureAsync()
+ */
 void
 BView::DrawPicture(const BPicture* picture)
 {
@@ -4691,6 +6763,12 @@ BView::DrawPicture(const BPicture* picture)
 }
 
 
+/**
+ * @brief Replays a BPicture at @p where (synchronous).
+ *
+ * @param picture The picture to draw.
+ * @param where   The position in view-local coordinates.
+ */
 void
 BView::DrawPicture(const BPicture* picture, BPoint where)
 {
@@ -4702,6 +6780,13 @@ BView::DrawPicture(const BPicture* picture, BPoint where)
 }
 
 
+/**
+ * @brief Loads and replays a picture from a file (synchronous).
+ *
+ * @param filename Path to the file containing the flattened picture.
+ * @param offset   Byte offset within the file where the picture starts.
+ * @param where    Position in view-local coordinates.
+ */
 void
 BView::DrawPicture(const char* filename, long offset, BPoint where)
 {
@@ -4713,6 +6798,11 @@ BView::DrawPicture(const char* filename, long offset, BPoint where)
 }
 
 
+/**
+ * @brief Replays a BPicture at the current pen location (asynchronous).
+ *
+ * @param picture The picture to draw; must not be NULL.
+ */
 void
 BView::DrawPictureAsync(const BPicture* picture)
 {
@@ -4723,6 +6813,14 @@ BView::DrawPictureAsync(const BPicture* picture)
 }
 
 
+/**
+ * @brief Replays a BPicture at @p where (asynchronous).
+ *
+ * Sends AS_VIEW_DRAW_PICTURE without waiting for the server.
+ *
+ * @param picture The picture to draw; must not be NULL and must have a valid token.
+ * @param where   The position in view-local coordinates.
+ */
 void
 BView::DrawPictureAsync(const BPicture* picture, BPoint where)
 {
@@ -4739,6 +6837,13 @@ BView::DrawPictureAsync(const BPicture* picture, BPoint where)
 }
 
 
+/**
+ * @brief Loads and replays a picture from a file (asynchronous).
+ *
+ * @param filename Path to the file containing the flattened picture.
+ * @param offset   Byte offset within the file.
+ * @param where    Position in view-local coordinates.
+ */
 void
 BView::DrawPictureAsync(const char* filename, long offset, BPoint where)
 {
@@ -4760,6 +6865,16 @@ BView::DrawPictureAsync(const char* filename, long offset, BPoint where)
 }
 
 
+/**
+ * @brief Begins a compositing layer with the given opacity.
+ *
+ * All drawing between BeginLayer() and EndLayer() is rendered into an
+ * off-screen surface and then blended into the view at the specified opacity.
+ *
+ * @param opacity The layer opacity (0 = fully transparent, 255 = fully opaque).
+ *
+ * @see BView::EndLayer()
+ */
 void
 BView::BeginLayer(uint8 opacity)
 {
@@ -4771,6 +6886,11 @@ BView::BeginLayer(uint8 opacity)
 }
 
 
+/**
+ * @brief Composites the current layer into the view and ends layer recording.
+ *
+ * @see BView::BeginLayer()
+ */
 void
 BView::EndLayer()
 {
@@ -4781,6 +6901,17 @@ BView::EndLayer()
 }
 
 
+/**
+ * @brief Marks a rectangle as needing to be redrawn.
+ *
+ * The rectangle is rounded to integer coordinates for BeOS compatibility,
+ * then sent to the app_server which will schedule a Draw() call for the
+ * affected area.  Rectangles outside the view bounds are silently ignored.
+ *
+ * @param invalRect The invalid area in view-local coordinates.
+ *
+ * @see BView::Invalidate(), BView::DelayedInvalidate()
+ */
 void
 BView::Invalidate(BRect invalRect)
 {
@@ -4820,6 +6951,12 @@ BView::Invalidate(BRect invalRect)
 }
 
 
+/**
+ * @brief Marks a region as needing to be redrawn.
+ *
+ * @param region The invalid region; must not be NULL.  Ignored if its frame
+ *               does not intersect the view's bounds.
+ */
 void
 BView::Invalidate(const BRegion* region)
 {
@@ -4846,6 +6983,9 @@ BView::Invalidate(const BRegion* region)
 }
 
 
+/**
+ * @brief Marks the entire view bounds as needing to be redrawn.
+ */
 void
 BView::Invalidate()
 {
@@ -4853,6 +6993,11 @@ BView::Invalidate()
 }
 
 
+/**
+ * @brief Marks the entire view bounds as invalid after @p delay microseconds.
+ *
+ * @param delay Minimum delay before the invalidation is processed, in microseconds.
+ */
 void
 BView::DelayedInvalidate(bigtime_t delay)
 {
@@ -4860,6 +7005,15 @@ BView::DelayedInvalidate(bigtime_t delay)
 }
 
 
+/**
+ * @brief Marks a specific rectangle as invalid after @p delay microseconds.
+ *
+ * The rectangle coordinates are truncated to integers before being sent to the
+ * server.  The absolute wake-up time is computed as system_time() + @p delay.
+ *
+ * @param delay     Minimum delay before the invalidation is processed, in microseconds.
+ * @param invalRect The region within the view (in view coordinates) to invalidate.
+ */
 void
 BView::DelayedInvalidate(bigtime_t delay, BRect invalRect)
 {
@@ -4882,6 +7036,14 @@ BView::DelayedInvalidate(bigtime_t delay, BRect invalRect)
 }
 
 
+/**
+ * @brief Inverts the colours of every pixel inside @p rect.
+ *
+ * Sends AS_VIEW_INVERT_RECT to the server.  The operation is applied in the
+ * current drawing mode and is flushed immediately unless a transaction is open.
+ *
+ * @param rect The rectangle to invert, in view coordinates.
+ */
 void
 BView::InvertRect(BRect rect)
 {
@@ -4899,6 +7061,19 @@ BView::InvertRect(BRect rect)
 //	#pragma mark - View Hierarchy Functions
 
 
+/**
+ * @brief Adds @p child to this view's child list and to any attached layout.
+ *
+ * If a BLayout is installed on this view the child is also passed to the
+ * layout via BLayout::AddView().  The child is inserted before @p before, or
+ * appended if @p before is NULL.
+ *
+ * @param child  The view to add.  Must not already have a parent.
+ * @param before Existing sibling before which @p child is inserted, or NULL to
+ *               append.
+ *
+ * @see BView::_AddChild(), BView::RemoveChild()
+ */
 void
 BView::AddChild(BView* child, BView* before)
 {
@@ -4915,6 +7090,13 @@ BView::AddChild(BView* child, BView* before)
 }
 
 
+/**
+ * @brief Adds a layout item to the view's installed layout.
+ *
+ * @param child The layout item to add.
+ *
+ * @return true if the item was added successfully; false if no layout is installed.
+ */
 bool
 BView::AddChild(BLayoutItem* child)
 {
@@ -4924,6 +7106,19 @@ BView::AddChild(BLayoutItem* child)
 }
 
 
+/**
+ * @brief Internal worker that adds @p child to the sibling list and notifies the server.
+ *
+ * Validates preconditions (non-null, no existing parent, not self), adds the
+ * child to the doubly-linked sibling list, sets the owner, creates the
+ * server-side counterpart via _CreateSelf(), calls _Attach(), and invalidates
+ * the layout.
+ *
+ * @param child  The view to add.
+ * @param before Insert before this sibling, or NULL to append.
+ *
+ * @return true on success; false if any precondition fails.
+ */
 bool
 BView::_AddChild(BView* child, BView* before)
 {
@@ -4970,6 +7165,13 @@ BView::_AddChild(BView* child, BView* before)
 }
 
 
+/**
+ * @brief Removes @p child from this view's child list.
+ *
+ * @param child The child view to remove.  Must be a direct child of this view.
+ *
+ * @return true if @p child was found and removed; false otherwise.
+ */
 bool
 BView::RemoveChild(BView* child)
 {
@@ -4985,6 +7187,11 @@ BView::RemoveChild(BView* child)
 }
 
 
+/**
+ * @brief Returns the number of direct children of this view.
+ *
+ * @return The count of direct child views.
+ */
 int32
 BView::CountChildren() const
 {
@@ -5002,6 +7209,13 @@ BView::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the child view at the given zero-based @p index.
+ *
+ * @param index Zero-based position in the child list.
+ *
+ * @return The child view at @p index, or NULL if @p index is out of range.
+ */
 BView*
 BView::ChildAt(int32 index) const
 {
@@ -5016,6 +7230,11 @@ BView::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the next sibling of this view in the parent's child list.
+ *
+ * @return Pointer to the next sibling, or NULL if this is the last child.
+ */
 BView*
 BView::NextSibling() const
 {
@@ -5023,6 +7242,11 @@ BView::NextSibling() const
 }
 
 
+/**
+ * @brief Returns the previous sibling of this view in the parent's child list.
+ *
+ * @return Pointer to the previous sibling, or NULL if this is the first child.
+ */
 BView*
 BView::PreviousSibling() const
 {
@@ -5030,6 +7254,15 @@ BView::PreviousSibling() const
 }
 
 
+/**
+ * @brief Removes this view from its parent's child list.
+ *
+ * Removes any layout items belonging to the parent's layout first, then
+ * delegates to _RemoveSelf() which notifies the server and invalidates the
+ * parent's layout.
+ *
+ * @return true on success; false if the view has no parent or removal fails.
+ */
 bool
 BView::RemoveSelf()
 {
@@ -5039,6 +7272,15 @@ BView::RemoveSelf()
 }
 
 
+/**
+ * @brief Internal worker: detaches this view from the server and parent list.
+ *
+ * Calls _UpdateStateForRemove() and _Detach() if attached to a window, then
+ * removes the view from the parent's child list and sends AS_VIEW_DELETE to the
+ * server.  Finally invalidates the parent's layout.
+ *
+ * @return true on success; false if the view has no parent.
+ */
 bool
 BView::_RemoveSelf()
 {
@@ -5072,6 +7314,14 @@ BView::_RemoveSelf()
 }
 
 
+/**
+ * @brief Removes all layout items belonging to this view from the parent's layout.
+ *
+ * Iterates fLayoutData->fLayoutItems in reverse and calls RemoveSelf() on each
+ * item.  If @p deleteItems is true the items are also deleted.
+ *
+ * @param deleteItems Pass true to delete each item after removing it.
+ */
 void
 BView::_RemoveLayoutItemsFromLayout(bool deleteItems)
 {
@@ -5089,6 +7339,15 @@ BView::_RemoveLayoutItemsFromLayout(bool deleteItems)
 }
 
 
+/**
+ * @brief Returns the parent view, or NULL if this is a top-level view.
+ *
+ * Top-level views (directly attached to a window) are hidden behind an
+ * internal wrapper; this method correctly returns NULL in that case so callers
+ * never receive an internal implementation detail.
+ *
+ * @return The parent BView, or NULL if there is none or this is top-level.
+ */
 BView*
 BView::Parent() const
 {
@@ -5099,6 +7358,15 @@ BView::Parent() const
 }
 
 
+/**
+ * @brief Searches the view hierarchy for a view with the given @p name.
+ *
+ * Performs a depth-first search starting from this view.
+ *
+ * @param name The name to look for.
+ *
+ * @return The first BView whose Name() matches @p name, or NULL if not found.
+ */
 BView*
 BView::FindView(const char* name) const
 {
@@ -5121,6 +7389,14 @@ BView::FindView(const char* name) const
 }
 
 
+/**
+ * @brief Moves this view by the given delta relative to its current position.
+ *
+ * Both deltas are rounded to the nearest integer before being applied.
+ *
+ * @param deltaX Horizontal displacement in parent coordinates.
+ * @param deltaY Vertical displacement in parent coordinates.
+ */
 void
 BView::MoveBy(float deltaX, float deltaY)
 {
@@ -5128,6 +7404,11 @@ BView::MoveBy(float deltaX, float deltaY)
 }
 
 
+/**
+ * @brief Moves this view so that its top-left corner is at @p where.
+ *
+ * @param where New top-left position in parent coordinates.
+ */
 void
 BView::MoveTo(BPoint where)
 {
@@ -5135,6 +7416,15 @@ BView::MoveTo(BPoint where)
 }
 
 
+/**
+ * @brief Moves this view so that its top-left corner is at (@p x, @p y).
+ *
+ * Coordinates are rounded to integers.  If the view is attached to a window
+ * the new position is communicated to the server immediately.
+ *
+ * @param x New left edge in parent coordinates.
+ * @param y New top edge in parent coordinates.
+ */
 void
 BView::MoveTo(float x, float y)
 {
@@ -5160,6 +7450,15 @@ BView::MoveTo(float x, float y)
 }
 
 
+/**
+ * @brief Changes the view's size by the given deltas.
+ *
+ * Both deltas are rounded to integers.  The new size is sent to the server and
+ * the local bounds are updated via _ResizeBy().
+ *
+ * @param deltaWidth  Change in width.
+ * @param deltaHeight Change in height.
+ */
 void
 BView::ResizeBy(float deltaWidth, float deltaHeight)
 {
@@ -5186,6 +7485,12 @@ BView::ResizeBy(float deltaWidth, float deltaHeight)
 }
 
 
+/**
+ * @brief Resizes this view to the given @p width and @p height.
+ *
+ * @param width  New width.
+ * @param height New height.
+ */
 void
 BView::ResizeTo(float width, float height)
 {
@@ -5193,6 +7498,11 @@ BView::ResizeTo(float width, float height)
 }
 
 
+/**
+ * @brief Resizes this view to the given @p size.
+ *
+ * @param size New width and height packed in a BSize.
+ */
 void
 BView::ResizeTo(BSize size)
 {
@@ -5203,6 +7513,16 @@ BView::ResizeTo(BSize size)
 //	#pragma mark - Inherited Methods (from BHandler)
 
 
+/**
+ * @brief Appends the view's scripting suite and property info to @p data.
+ *
+ * Adds the "suite/vnd.Be-view" suite name and the sViewPropInfo property
+ * table, then chains to BHandler::GetSupportedSuites().
+ *
+ * @param data Message to receive the suite descriptions.
+ *
+ * @return B_OK on success, or an error code from BMessage::AddString/AddFlat.
+ */
 status_t
 BView::GetSupportedSuites(BMessage* data)
 {
@@ -5219,6 +7539,21 @@ BView::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier and returns the target handler.
+ *
+ * Handles B_WINDOW_MOVE_BY/B_WINDOW_MOVE_TO messages directly and
+ * dispatches View, Hidden, Shelf, and Children properties via the property
+ * table.  Unrecognised specifiers are forwarded to BHandler::ResolveSpecifier().
+ *
+ * @param message   The scripting message.
+ * @param index     The current specifier index.
+ * @param specifier The specifier sub-message.
+ * @param what      The specifier type constant.
+ * @param property  The property name string.
+ *
+ * @return The handler that should process the message, or NULL on error.
+ */
 BHandler*
 BView::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 what, const char* property)
@@ -5317,6 +7652,18 @@ BView::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/**
+ * @brief Handles messages sent to this view.
+ *
+ * Dispatches common interface messages (B_MOUSE_DOWN/UP/MOVED,
+ * B_KEY_DOWN/UP, B_INVALIDATE, B_MOUSE_WHEEL_CHANGED, B_COLORS_UPDATED,
+ * B_FONTS_UPDATED, B_SCREEN_CHANGED, B_WORKSPACE_ACTIVATED,
+ * B_WORKSPACES_CHANGED) and scripting GET/SET operations for the Frame,
+ * Hidden, and Children properties.  Unhandled messages are forwarded to
+ * BHandler::MessageReceived().
+ *
+ * @param message The message to handle.
+ */
 void
 BView::MessageReceived(BMessage* message)
 {
@@ -5596,6 +7943,20 @@ BView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Executes a virtual-dispatch perform call identified by @p code.
+ *
+ * This mechanism allows binary-compatible override dispatch for layout-related
+ * virtuals (MinSize, MaxSize, PreferredSize, LayoutAlignment,
+ * HasHeightForWidth, GetHeightForWidth, SetLayout, LayoutInvalidated,
+ * DoLayout, LayoutChanged, GetToolTipAt, AllUnarchived, AllArchived).
+ * Unrecognised codes are forwarded to BHandler::Perform().
+ *
+ * @param code  A PERFORM_CODE_* constant identifying the virtual to call.
+ * @param _data In/out data struct for the requested operation.
+ *
+ * @return B_OK on success, or the return value of BHandler::Perform().
+ */
 status_t
 BView::Perform(perform_code code, void* _data)
 {
@@ -5684,6 +8045,15 @@ BView::Perform(perform_code code, void* _data)
 // #pragma mark - Layout Functions
 
 
+/**
+ * @brief Returns the minimum size of this view for layout purposes.
+ *
+ * Composes the explicit minimum size (if set via SetExplicitMinSize()) with the
+ * minimum size reported by the installed layout, or falls back to
+ * GetPreferredSize() when no layout is installed.
+ *
+ * @return The effective minimum BSize.
+ */
 BSize
 BView::MinSize()
 {
@@ -5697,6 +8067,14 @@ BView::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size of this view for layout purposes.
+ *
+ * Composes the explicit maximum size with the layout's maximum, defaulting to
+ * B_SIZE_UNLIMITED when no layout is installed.
+ *
+ * @return The effective maximum BSize.
+ */
 BSize
 BView::MaxSize()
 {
@@ -5706,6 +8084,14 @@ BView::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size of this view for layout purposes.
+ *
+ * Composes the explicit preferred size with the layout's preferred size, or
+ * GetPreferredSize() when no layout is installed.
+ *
+ * @return The effective preferred BSize.
+ */
 BSize
 BView::PreferredSize()
 {
@@ -5719,6 +8105,14 @@ BView::PreferredSize()
 }
 
 
+/**
+ * @brief Returns the layout alignment of this view.
+ *
+ * Composes the explicit alignment with the installed layout's alignment,
+ * defaulting to B_ALIGN_HORIZONTAL_CENTER / B_ALIGN_VERTICAL_CENTER.
+ *
+ * @return The effective BAlignment.
+ */
 BAlignment
 BView::LayoutAlignment()
 {
@@ -5728,6 +8122,11 @@ BView::LayoutAlignment()
 }
 
 
+/**
+ * @brief Sets the explicit minimum size hint for layout managers.
+ *
+ * @param size The minimum size to advertise.
+ */
 void
 BView::SetExplicitMinSize(BSize size)
 {
@@ -5736,6 +8135,11 @@ BView::SetExplicitMinSize(BSize size)
 }
 
 
+/**
+ * @brief Sets the explicit maximum size hint for layout managers.
+ *
+ * @param size The maximum size to advertise.
+ */
 void
 BView::SetExplicitMaxSize(BSize size)
 {
@@ -5744,6 +8148,11 @@ BView::SetExplicitMaxSize(BSize size)
 }
 
 
+/**
+ * @brief Sets the explicit preferred size hint for layout managers.
+ *
+ * @param size The preferred size to advertise.
+ */
 void
 BView::SetExplicitPreferredSize(BSize size)
 {
@@ -5752,6 +8161,14 @@ BView::SetExplicitPreferredSize(BSize size)
 }
 
 
+/**
+ * @brief Sets the explicit minimum, maximum, and preferred sizes to the same value.
+ *
+ * Convenience method that locks all three size hints to @p size, effectively
+ * making the view fixed-size with respect to the layout system.
+ *
+ * @param size The fixed size to advertise for min, max, and preferred.
+ */
 void
 BView::SetExplicitSize(BSize size)
 {
@@ -5762,6 +8179,11 @@ BView::SetExplicitSize(BSize size)
 }
 
 
+/**
+ * @brief Sets the explicit alignment hint for layout managers.
+ *
+ * @param alignment The alignment to advertise.
+ */
 void
 BView::SetExplicitAlignment(BAlignment alignment)
 {
@@ -5770,6 +8192,11 @@ BView::SetExplicitAlignment(BAlignment alignment)
 }
 
 
+/**
+ * @brief Returns the explicit minimum size set via SetExplicitMinSize().
+ *
+ * @return The explicit minimum BSize (may be B_SIZE_UNSET components).
+ */
 BSize
 BView::ExplicitMinSize() const
 {
@@ -5777,6 +8204,11 @@ BView::ExplicitMinSize() const
 }
 
 
+/**
+ * @brief Returns the explicit maximum size set via SetExplicitMaxSize().
+ *
+ * @return The explicit maximum BSize (may be B_SIZE_UNSET components).
+ */
 BSize
 BView::ExplicitMaxSize() const
 {
@@ -5784,6 +8216,11 @@ BView::ExplicitMaxSize() const
 }
 
 
+/**
+ * @brief Returns the explicit preferred size set via SetExplicitPreferredSize().
+ *
+ * @return The explicit preferred BSize (may be B_SIZE_UNSET components).
+ */
 BSize
 BView::ExplicitPreferredSize() const
 {
@@ -5791,6 +8228,11 @@ BView::ExplicitPreferredSize() const
 }
 
 
+/**
+ * @brief Returns the explicit alignment set via SetExplicitAlignment().
+ *
+ * @return The explicit BAlignment.
+ */
 BAlignment
 BView::ExplicitAlignment() const
 {
@@ -5798,6 +8240,13 @@ BView::ExplicitAlignment() const
 }
 
 
+/**
+ * @brief Returns whether this view's height depends on its width.
+ *
+ * Delegates to the installed layout if one exists.
+ *
+ * @return true if the view (or its layout) has height-for-width behaviour.
+ */
 bool
 BView::HasHeightForWidth()
 {
@@ -5806,6 +8255,17 @@ BView::HasHeightForWidth()
 }
 
 
+/**
+ * @brief Retrieves the height constraints for a given @p width.
+ *
+ * Delegates to the installed layout.  If no layout is installed the output
+ * pointers are left unchanged.
+ *
+ * @param width     The available width.
+ * @param min       Receives the minimum height, or unchanged if no layout.
+ * @param max       Receives the maximum height, or unchanged if no layout.
+ * @param preferred Receives the preferred height, or unchanged if no layout.
+ */
 void
 BView::GetHeightForWidth(float width, float* min, float* max, float* preferred)
 {
@@ -5814,6 +8274,17 @@ BView::GetHeightForWidth(float width, float* min, float* max, float* preferred)
 }
 
 
+/**
+ * @brief Installs @p layout as the layout manager for this view.
+ *
+ * The B_SUPPORTS_LAYOUT flag is set automatically.  Any previously installed
+ * layout is removed, its owner is cleared, and it is deleted.  All existing
+ * child views are then added to the new layout, and the layout is invalidated.
+ *
+ * @param layout The new layout to install, or NULL to remove the current layout.
+ *
+ * @note Panics (via debugger()) if @p layout already belongs to another layout.
+ */
 void
 BView::SetLayout(BLayout* layout)
 {
@@ -5847,6 +8318,11 @@ BView::SetLayout(BLayout* layout)
 }
 
 
+/**
+ * @brief Returns the currently installed layout manager.
+ *
+ * @return The installed BLayout, or NULL if none is set.
+ */
 BLayout*
 BView::GetLayout() const
 {
@@ -5854,6 +8330,16 @@ BView::GetLayout() const
 }
 
 
+/**
+ * @brief Marks this view's layout (and optionally all descendants) as invalid.
+ *
+ * Clears both fLayoutValid and fMinMaxValid, calls the LayoutInvalidated() hook,
+ * propagates the invalidation upward via the layout hierarchy or the parent view,
+ * and posts B_LAYOUT_WINDOW to the owning window when called on a top-level view.
+ * The call is a no-op if layout invalidation is disabled or already in progress.
+ *
+ * @param descendants If true, recursively invalidates all child views as well.
+ */
 void
 BView::InvalidateLayout(bool descendants)
 {
@@ -5887,6 +8373,12 @@ BView::InvalidateLayout(bool descendants)
 }
 
 
+/**
+ * @brief Re-enables layout invalidation after a matching DisableLayoutInvalidation() call.
+ *
+ * Decrements the suppression counter.  Calls are reference-counted: one Enable
+ * is required for each Disable before invalidation resumes.
+ */
 void
 BView::EnableLayoutInvalidation()
 {
@@ -5895,6 +8387,12 @@ BView::EnableLayoutInvalidation()
 }
 
 
+/**
+ * @brief Suppresses layout invalidation until the matching Enable call.
+ *
+ * Increments the suppression counter.  Must be balanced with a call to
+ * EnableLayoutInvalidation().
+ */
 void
 BView::DisableLayoutInvalidation()
 {
@@ -5902,6 +8400,12 @@ BView::DisableLayoutInvalidation()
 }
 
 
+/**
+ * @brief Returns whether layout invalidation is currently suppressed.
+ *
+ * @return true if DisableLayoutInvalidation() has been called more times than
+ *         EnableLayoutInvalidation() since the last reset.
+ */
 bool
 BView::IsLayoutInvalidationDisabled()
 {
@@ -5911,6 +8415,11 @@ BView::IsLayoutInvalidationDisabled()
 }
 
 
+/**
+ * @brief Returns whether the current layout is valid (up to date).
+ *
+ * @return true if the layout has been applied since the last invalidation.
+ */
 bool
 BView::IsLayoutValid() const
 {
@@ -5918,6 +8427,12 @@ BView::IsLayoutValid() const
 }
 
 
+/**
+ * @brief Marks the min/max cache as valid without performing a full layout pass.
+ *
+ * Used by the layout engine after reading min/max values to suppress redundant
+ * invalidation cycles.
+ */
 void
 BView::ResetLayoutInvalidation()
 {
@@ -5925,6 +8440,11 @@ BView::ResetLayoutInvalidation()
 }
 
 
+/**
+ * @brief Returns the active layout context during a layout pass.
+ *
+ * @return The current BLayoutContext, or NULL outside of a layout pass.
+ */
 BLayoutContext*
 BView::LayoutContext() const
 {
@@ -5932,6 +8452,14 @@ BView::LayoutContext() const
 }
 
 
+/**
+ * @brief Performs a layout pass on this view and all of its children.
+ *
+ * Creates a fresh BLayoutContext and delegates to _Layout().  If @p force is
+ * true the layout is applied even if the current layout is considered valid.
+ *
+ * @param force Pass true to force re-layout even when already valid.
+ */
 void
 BView::Layout(bool force)
 {
@@ -5940,6 +8468,13 @@ BView::Layout(bool force)
 }
 
 
+/**
+ * @brief Schedules a layout pass when the current layout is valid but stale.
+ *
+ * Marks fNeedsRelayout and triggers Layout(false) unless a parent layout pass
+ * is already in progress (in which case the parent will call Layout() on
+ * this view automatically).
+ */
 void
 BView::Relayout()
 {
@@ -5957,6 +8492,14 @@ BView::Relayout()
 }
 
 
+/**
+ * @brief Hook called when the view's layout is invalidated.
+ *
+ * Subclasses may override this to react to layout invalidation before a new
+ * layout pass is performed.  The default implementation is empty.
+ *
+ * @param descendants true if the invalidation propagated from a descendant.
+ */
 void
 BView::LayoutInvalidated(bool descendants)
 {
@@ -5964,6 +8507,13 @@ BView::LayoutInvalidated(bool descendants)
 }
 
 
+/**
+ * @brief Applies the installed layout to this view's children.
+ *
+ * Called by the layout engine during a layout pass.  Subclasses without an
+ * installed layout can override this to position children manually.  The
+ * default implementation delegates to BLayout::_LayoutWithinContext().
+ */
 void
 BView::DoLayout()
 {
@@ -5972,6 +8522,15 @@ BView::DoLayout()
 }
 
 
+/**
+ * @brief Sets the view's tool tip to a plain-text string.
+ *
+ * If @p text is NULL or empty the tool tip is cleared.  If a BTextToolTip
+ * is already installed its text is updated in place; otherwise a new
+ * BTextToolTip is created.
+ *
+ * @param text The tool tip text, or NULL/empty to remove the tip.
+ */
 void
 BView::SetToolTip(const char* text)
 {
@@ -5987,6 +8546,15 @@ BView::SetToolTip(const char* text)
 }
 
 
+/**
+ * @brief Sets the view's tool tip to the given BToolTip object.
+ *
+ * If @p tip differs from the current tip the current one is released via
+ * ReleaseReference(), any visible tip is hidden, and @p tip is stored after
+ * calling AcquireReference().  Passing NULL removes the tool tip.
+ *
+ * @param tip The new tool tip, or NULL to remove the current tip.
+ */
 void
 BView::SetToolTip(BToolTip* tip)
 {
@@ -6005,6 +8573,11 @@ BView::SetToolTip(BToolTip* tip)
 }
 
 
+/**
+ * @brief Returns the tool tip currently associated with this view.
+ *
+ * @return The installed BToolTip, or NULL if none is set.
+ */
 BToolTip*
 BView::ToolTip() const
 {
@@ -6012,6 +8585,14 @@ BView::ToolTip() const
 }
 
 
+/**
+ * @brief Displays the given tool tip at the current mouse position.
+ *
+ * Converts the current mouse position to screen coordinates and delegates to
+ * BToolTipManager::ShowTip().  Does nothing if @p tip is NULL.
+ *
+ * @param tip The tool tip to display.
+ */
 void
 BView::ShowToolTip(BToolTip* tip)
 {
@@ -6025,6 +8606,12 @@ BView::ShowToolTip(BToolTip* tip)
 }
 
 
+/**
+ * @brief Hides the currently visible tool tip.
+ *
+ * Delegates to BToolTipManager::HideTip().  Does nothing if no tool tip is
+ * installed on this view.
+ */
 void
 BView::HideToolTip()
 {
@@ -6036,6 +8623,17 @@ BView::HideToolTip()
 }
 
 
+/**
+ * @brief Returns the tool tip for the given view-local @p point.
+ *
+ * The default implementation returns the view's own tool tip regardless of
+ * @p point.  Subclasses can override this to provide per-region tool tips.
+ *
+ * @param point The view-local point being queried.
+ * @param _tip  Receives the tool tip pointer.
+ *
+ * @return true if a tool tip was found; false otherwise.
+ */
 bool
 BView::GetToolTipAt(BPoint point, BToolTip** _tip)
 {
@@ -6049,6 +8647,12 @@ BView::GetToolTipAt(BPoint point, BToolTip** _tip)
 }
 
 
+/**
+ * @brief Hook called after a layout pass has completed for this view.
+ *
+ * Subclasses can override this to react after children have been repositioned.
+ * The default implementation is empty.
+ */
 void
 BView::LayoutChanged()
 {
@@ -6056,6 +8660,17 @@ BView::LayoutChanged()
 }
 
 
+/**
+ * @brief Internal layout worker: performs DoLayout() and recurses to children.
+ *
+ * Guards against re-entrancy via fLayoutInProgress, updates the layout context,
+ * calls DoLayout(), recursively lays out non-hidden children, fires the
+ * LayoutChanged() hook, and optionally invalidates the drawn content when
+ * B_INVALIDATE_AFTER_LAYOUT is set.
+ *
+ * @param force   Force re-layout even when the layout is already valid.
+ * @param context The BLayoutContext for this layout pass.
+ */
 void
 BView::_Layout(bool force, BLayoutContext* context)
 {
@@ -6097,6 +8712,14 @@ BView::_Layout(bool force, BLayoutContext* context)
 }
 
 
+/**
+ * @brief Called when the owned layout is deleted by its parent layout.
+ *
+ * Clears fLayoutData->fLayout to prevent a double-delete when the view itself
+ * is destroyed, then invalidates the layout.
+ *
+ * @param deleted The layout that has already been deleted.
+ */
 void
 BView::_LayoutLeft(BLayout* deleted)
 {
@@ -6110,6 +8733,14 @@ BView::_LayoutLeft(BLayout* deleted)
 }
 
 
+/**
+ * @brief Propagates a layout invalidation to whichever layout owns this view.
+ *
+ * Climbs the layout ownership chain: if this view's layout has a parent layout
+ * that parent is invalidated; otherwise any registered layout items are used to
+ * find the owning layout; finally the direct parent view's InvalidateLayout() is
+ * called as a fallback.
+ */
 void
 BView::_InvalidateParentLayout()
 {
@@ -6134,6 +8765,18 @@ BView::_InvalidateParentLayout()
 //	#pragma mark - Private Functions
 
 
+/**
+ * @brief Initialises all data members to their default values.
+ *
+ * Called by every constructor.  Rounds the frame coordinates, sets all pointer
+ * members to NULL, allocates the ViewState and LayoutData aggregates, and
+ * applies the default UI colours when B_SUPPORTS_LAYOUT is set.
+ *
+ * @param frame        Initial frame rectangle in parent coordinates.
+ * @param name         Handler name passed to BHandler.
+ * @param resizingMode Resizing mode flags (low 16 bits of fFlags).
+ * @param flags        View flags (high 16 bits of fFlags).
+ */
 void
 BView::_InitData(BRect frame, const char* name, uint32 resizingMode,
 	uint32 flags)
@@ -6204,6 +8847,12 @@ BView::_InitData(BRect frame, const char* name, uint32 resizingMode,
 }
 
 
+/**
+ * @brief Frees the command array used for batching drawing operations.
+ *
+ * Deletes the fCommArray->array buffer and the fCommArray descriptor itself,
+ * then sets fCommArray to NULL.
+ */
 void
 BView::_RemoveCommArray()
 {
@@ -6215,6 +8864,14 @@ BView::_RemoveCommArray()
 }
 
 
+/**
+ * @brief Transfers ownership of this view (and all descendants) to @p newOwner.
+ *
+ * Removes this view from the old window's handler list (releasing focus if held)
+ * and registers it with the new window.  Recursively propagates to all children.
+ *
+ * @param newOwner The new owning window, or NULL to detach.
+ */
 void
 BView::_SetOwner(BWindow* newOwner)
 {
@@ -6251,6 +8908,19 @@ BView::_SetOwner(BWindow* newOwner)
 }
 
 
+/**
+ * @brief Clips the view's drawing region to the shape recorded in @p picture.
+ *
+ * Sends AS_VIEW_CLIP_TO_PICTURE with the picture token, offset, and invert
+ * flag.  If @p sync is true (the default for public callers) a round-trip
+ * Sync() is performed to ensure the picture token remains valid on the server
+ * before this view's commands are processed.
+ *
+ * @param picture The source picture, or NULL to reset picture clipping.
+ * @param where   Offset applied to the picture's coordinate system.
+ * @param invert  If true, the clipping is the inverse of the picture's shape.
+ * @param sync    If true, flush and wait for the server before returning.
+ */
 void
 BView::_ClipToPicture(BPicture* picture, BPoint where, bool invert, bool sync)
 {
@@ -6284,6 +8954,12 @@ BView::_ClipToPicture(BPicture* picture, BPoint where, bool invert, bool sync)
 }
 
 
+/**
+ * @brief Clips the view's drawing region to (or to the inverse of) @p rect.
+ *
+ * @param rect    The clipping rectangle in view coordinates.
+ * @param inverse If true, the region outside @p rect is clipped instead.
+ */
 void
 BView::_ClipToRect(BRect rect, bool inverse)
 {
@@ -6296,6 +8972,14 @@ BView::_ClipToRect(BRect rect, bool inverse)
 }
 
 
+/**
+ * @brief Clips the view's drawing region to (or to the inverse of) @p shape.
+ *
+ * Does nothing if @p shape is NULL or contains no operations/points.
+ *
+ * @param shape   The clipping shape in view coordinates.
+ * @param inverse If true, the region outside @p shape is clipped instead.
+ */
 void
 BView::_ClipToShape(BShape* shape, bool inverse)
 {
@@ -6315,6 +8999,16 @@ BView::_ClipToShape(BShape* shape, bool inverse)
 }
 
 
+/**
+ * @brief Removes @p child from this view's doubly-linked sibling list.
+ *
+ * Adjusts the fFirstChild pointer, the surrounding siblings' next/previous
+ * pointers, and clears the child's parent and sibling pointers.
+ *
+ * @param child The child to unlink.
+ *
+ * @return true on success; false if @p child's parent is not this view.
+ */
 bool
 BView::_RemoveChildFromList(BView* child)
 {
@@ -6340,6 +9034,18 @@ BView::_RemoveChildFromList(BView* child)
 }
 
 
+/**
+ * @brief Inserts @p child into this view's doubly-linked sibling list.
+ *
+ * If @p before is non-NULL, @p child is inserted immediately before it;
+ * otherwise it is appended to the end of the list.  Panics via debugger() if
+ * @p child already has a parent or @p before does not belong to this view.
+ *
+ * @param child  The view to insert.
+ * @param before The sibling before which to insert, or NULL to append.
+ *
+ * @return true on success; false if @p child is NULL.
+ */
 bool
 BView::_AddChildToList(BView* child, BView* before)
 {
@@ -6387,11 +9093,16 @@ BView::_AddChildToList(BView* child, BView* before)
 }
 
 
-/*!	\brief Creates the server counterpart of this view.
-	This is only done for views that are part of the view hierarchy, ie. when
-	they are attached to a window.
-	RemoveSelf() deletes the server object again.
-*/
+/**
+ * @brief Creates the server-side counterpart of this view.
+ *
+ * Only called when the view is part of the hierarchy (i.e. attached to a
+ * window).  Sends AS_VIEW_CREATE or AS_VIEW_CREATE_ROOT, transmits all current
+ * state, and recurses to create server objects for all child views.
+ * RemoveSelf() issues AS_VIEW_DELETE to destroy the server object.
+ *
+ * @return Always true.
+ */
 bool
 BView::_CreateSelf()
 {
@@ -6435,12 +9146,15 @@ BView::_CreateSelf()
 }
 
 
-/*!	Sets the new view position.
-	It doesn't contact the server, though - the only case where this
-	is called outside of MoveTo() is as reaction of moving a view
-	in the server (a.k.a. B_WINDOW_RESIZED).
-	It also calls the BView's FrameMoved() hook.
-*/
+/**
+ * @brief Updates the local parent-offset and fires the FrameMoved() hook.
+ *
+ * Does not contact the server; the server-side position is already set by
+ * MoveTo() or by a B_VIEW_MOVED notification from the server.
+ *
+ * @param x New left edge in parent coordinates (pixel-aligned).
+ * @param y New top edge in parent coordinates (pixel-aligned).
+ */
 void
 BView::_MoveTo(int32 x, int32 y)
 {
@@ -6457,13 +9171,18 @@ BView::_MoveTo(int32 x, int32 y)
 }
 
 
-/*!	Computes the actual new frame size and recalculates the size of
-	the children as well.
-	It doesn't contact the server, though - the only case where this
-	is called outside of ResizeBy() is as reaction of resizing a view
-	in the server (a.k.a. B_WINDOW_RESIZED).
-	It also calls the BView's FrameResized() hook.
-*/
+/**
+ * @brief Updates local bounds and propagates the size change to children.
+ *
+ * Does not contact the server directly; the server-side size is already set by
+ * ResizeBy() or by a B_VIEW_RESIZED notification.  If B_SUPPORTS_LAYOUT is
+ * set the children are re-laid out via Relayout(); otherwise each child's
+ * _ParentResizedBy() is called according to its resizing mode.
+ * Fires the FrameResized() hook when done.
+ *
+ * @param deltaWidth  Change in width (pixel-aligned integer).
+ * @param deltaHeight Change in height (pixel-aligned integer).
+ */
 void
 BView::_ResizeBy(int32 deltaWidth, int32 deltaHeight)
 {
@@ -6496,7 +9215,16 @@ BView::_ResizeBy(int32 deltaWidth, int32 deltaHeight)
 }
 
 
-/*!	Relayouts the view according to its resizing mode. */
+/**
+ * @brief Repositions and/or resizes this view according to its resizing mode.
+ *
+ * Interprets the four nibbles of the resizing mode (left, right, top, bottom
+ * edges) and adjusts the frame so edges track the parent's right/bottom or
+ * stay centred as appropriate, then calls _MoveTo() and _ResizeBy() as needed.
+ *
+ * @param x Change in the parent's width.
+ * @param y Change in the parent's height.
+ */
 void
 BView::_ParentResizedBy(int32 x, int32 y)
 {
@@ -6541,6 +9269,13 @@ BView::_ParentResizedBy(int32 x, int32 y)
 }
 
 
+/**
+ * @brief Propagates a window-activation event to this view and all descendants.
+ *
+ * Calls WindowActivated() on this view and then recurses to all children.
+ *
+ * @param active true if the owning window has become active; false if deactivated.
+ */
 void
 BView::_Activate(bool active)
 {
@@ -6553,6 +9288,14 @@ BView::_Activate(bool active)
 }
 
 
+/**
+ * @brief Finalises attachment of this view and all descendants to a window.
+ *
+ * Re-syncs any pending UI-colour aliases with the server, calls
+ * AttachedToWindow() on this view, sets fAttached, starts pulse if needed,
+ * invalidates the view to force an initial draw, recursively calls _Attach()
+ * on children that have not yet been attached, and finally calls AllAttached().
+ */
 void
 BView::_Attach()
 {
@@ -6604,6 +9347,16 @@ BView::_Attach()
 }
 
 
+/**
+ * @brief Updates cached colour values after a B_COLORS_UPDATED notification.
+ *
+ * Reads the new RGB values for view colour, low colour, and high colour from
+ * @p message (keyed by ui_color_name()), applies any tint, marks the
+ * corresponding state bits valid, calls MessageReceived() so subclasses can
+ * react, recurses to all children, and invalidates the view.
+ *
+ * @param message The B_COLORS_UPDATED message containing new colour values.
+ */
 void
 BView::_ColorsUpdated(BMessage* message)
 {
@@ -6644,6 +9397,14 @@ BView::_ColorsUpdated(BMessage* message)
 }
 
 
+/**
+ * @brief Detaches this view and all descendants from their owning window.
+ *
+ * Calls DetachedFromWindow() on this view, sets fAttached to false, recurses
+ * to children, fires AllDetached(), then cleans up window-level references
+ * (focus, default button, key menu bar, last mouse-moved view, last view
+ * token) and calls _SetOwner(NULL).
+ */
 void
 BView::_Detach()
 {
@@ -6692,6 +9453,15 @@ BView::_Detach()
 }
 
 
+/**
+ * @brief Dispatches a draw request from the server to the Draw() hook.
+ *
+ * Switches the server's current view, converts @p updateRect from screen to
+ * view coordinates, pushes state, calls Draw(), pops state, and flushes.
+ * Does nothing if the view is hidden or lacks B_WILL_DRAW.
+ *
+ * @param updateRect The region that needs redrawing, in screen coordinates.
+ */
 void
 BView::_Draw(BRect updateRect)
 {
@@ -6716,6 +9486,13 @@ BView::_Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Dispatches a post-children draw request to the DrawAfterChildren() hook.
+ *
+ * Similar to _Draw() but is only called when B_DRAW_ON_CHILDREN is set.
+ *
+ * @param updateRect The region that needs redrawing, in screen coordinates.
+ */
 void
 BView::_DrawAfterChildren(BRect updateRect)
 {
@@ -6735,6 +9512,13 @@ BView::_DrawAfterChildren(BRect updateRect)
 }
 
 
+/**
+ * @brief Propagates a B_FONTS_UPDATED message to this view and all descendants.
+ *
+ * Calls MessageReceived() so subclasses can react, then recurses to children.
+ *
+ * @param message The B_FONTS_UPDATED message.
+ */
 void
 BView::_FontsUpdated(BMessage* message)
 {
@@ -6747,6 +9531,11 @@ BView::_FontsUpdated(BMessage* message)
 }
 
 
+/**
+ * @brief Propagates a pulse tick to this view and all descendants.
+ *
+ * Calls Pulse() if B_PULSE_NEEDED is set, then recurses to all children.
+ */
 void
 BView::_Pulse()
 {
@@ -6760,6 +9549,13 @@ BView::_Pulse()
 }
 
 
+/**
+ * @brief Reads the latest drawing state from the server before detaching.
+ *
+ * Called by _RemoveSelf() while the view is still connected.  Ensures that
+ * the local ViewState is up to date so it can be restored if the view is
+ * later re-attached.  Recurses to all attached children.
+ */
 void
 BView::_UpdateStateForRemove()
 {
@@ -6790,6 +9586,14 @@ BView::_UpdateStateForRemove()
 }
 
 
+/**
+ * @brief Sends the drawing pattern to the server if it has changed.
+ *
+ * Skips the server round-trip when the cached pattern is already valid and
+ * matches @p pattern.
+ *
+ * @param pattern The new fill/stroke pattern.
+ */
 inline void
 BView::_UpdatePattern(::pattern pattern)
 {
@@ -6809,6 +9613,12 @@ BView::_UpdatePattern(::pattern pattern)
 }
 
 
+/**
+ * @brief Flushes the owner's command buffer unless a transaction is open.
+ *
+ * Avoids an unnecessary flush when drawing commands are batched inside a
+ * Begin/EndPicture or similar transaction.
+ */
 void
 BView::_FlushIfNotInTransaction()
 {
@@ -6818,6 +9628,11 @@ BView::_FlushIfNotInTransaction()
 }
 
 
+/**
+ * @brief Returns the BShelf replicant container installed on this view.
+ *
+ * @return The installed BShelf, or NULL if none.
+ */
 BShelf*
 BView::_Shelf() const
 {
@@ -6825,6 +9640,14 @@ BView::_Shelf() const
 }
 
 
+/**
+ * @brief Installs or replaces the BShelf replicant container on this view.
+ *
+ * Removes the old shelf from the owner's handler list (if attached) before
+ * storing @p shelf, then adds the new shelf to the owner.
+ *
+ * @param shelf The new shelf, or NULL to remove the current one.
+ */
 void
 BView::_SetShelf(BShelf* shelf)
 {
@@ -6838,6 +9661,21 @@ BView::_SetShelf(BShelf* shelf)
 }
 
 
+/**
+ * @brief Sends a view bitmap to the server for use as the view background.
+ *
+ * Sends AS_VIEW_SET_VIEW_BITMAP with the bitmap token (or -1 for none),
+ * source/destination rectangles, follow flags, and option flags.  Waits for
+ * the server's status reply.
+ *
+ * @param bitmap      The bitmap to install, or NULL to remove the background.
+ * @param srcRect     Source rectangle within @p bitmap.
+ * @param dstRect     Destination rectangle in view coordinates.
+ * @param followFlags Flags controlling how the bitmap follows view resizing.
+ * @param options     Additional display options (e.g. B_TILE_BITMAP).
+ *
+ * @return B_OK on success, or B_ERROR if there is no owner or the lock fails.
+ */
 status_t
 BView::_SetViewBitmap(const BBitmap* bitmap, BRect srcRect, BRect dstRect,
 	uint32 followFlags, uint32 options)
@@ -6861,6 +9699,15 @@ BView::_SetViewBitmap(const BBitmap* bitmap, BRect srcRect, BRect dstRect,
 }
 
 
+/**
+ * @brief Verifies that the view has an owner and that the owner's looper is locked,
+ *        then makes this view the server's current view.
+ *
+ * Panics via debugger() if no owner is set.
+ *
+ * @return true if all checks passed and the server context was switched;
+ *         false if the view has no owner.
+ */
 bool
 BView::_CheckOwnerLockAndSwitchCurrent() const
 {
@@ -6877,6 +9724,13 @@ BView::_CheckOwnerLockAndSwitchCurrent() const
 }
 
 
+/**
+ * @brief Verifies that the view has an owner and that the owner's looper is locked.
+ *
+ * Panics via debugger() if no owner is set.
+ *
+ * @return true if the owner is set and its looper is locked; false otherwise.
+ */
 bool
 BView::_CheckOwnerLock() const
 {
@@ -6890,6 +9744,12 @@ BView::_CheckOwnerLock() const
 }
 
 
+/**
+ * @brief Verifies the owner's looper lock and makes this the server's current view.
+ *
+ * Does nothing if the view has no owner.  Does not panic on missing owner,
+ * unlike _CheckOwnerLockAndSwitchCurrent().
+ */
 void
 BView::_CheckLockAndSwitchCurrent() const
 {
@@ -6904,6 +9764,11 @@ BView::_CheckLockAndSwitchCurrent() const
 }
 
 
+/**
+ * @brief Verifies that the owner's looper is locked.
+ *
+ * Does nothing if the view has no owner.
+ */
 void
 BView::_CheckLock() const
 {
@@ -6912,6 +9777,12 @@ BView::_CheckLock() const
 }
 
 
+/**
+ * @brief Tells the server to make this view the active drawing target.
+ *
+ * Sends AS_SET_CURRENT_VIEW with this view's object token only when the
+ * owner's cached last-view token differs, avoiding redundant round-trips.
+ */
 void
 BView::_SwitchServerCurrentView() const
 {
@@ -6928,6 +9799,17 @@ BView::_SwitchServerCurrentView() const
 }
 
 
+/**
+ * @brief Scrolls a scroll bar by a mouse-wheel delta.
+ *
+ * Multiplies @p delta by the scroll bar's large step when Shift is held, or
+ * by three times the small step otherwise, then calls BScrollBar::SetValue().
+ *
+ * @param scrollBar The scroll bar to scroll.
+ * @param delta     Raw mouse-wheel delta (positive scrolls forward/down).
+ *
+ * @return B_OK on success; B_BAD_VALUE if @p scrollBar is NULL or @p delta is 0.
+ */
 status_t
 BView::ScrollWithMouseWheelDelta(BScrollBar* scrollBar, float delta)
 {
@@ -7079,12 +9961,22 @@ B_IF_GCC_2(_ReservedView12__5BView, _ZN5BView15_ReservedView12Ev)(
 }
 
 
+/** @brief Reserved for future ABI use; currently a no-op. */
 void BView::_ReservedView13() {}
+/** @brief Reserved for future ABI use; currently a no-op. */
 void BView::_ReservedView14() {}
+/** @brief Reserved for future ABI use; currently a no-op. */
 void BView::_ReservedView15() {}
+/** @brief Reserved for future ABI use; currently a no-op. */
 void BView::_ReservedView16() {}
 
 
+/**
+ * @brief Intentionally non-functional copy constructor.
+ *
+ * Declared private and exported for ABI compatibility only.  BView objects
+ * cannot be copied; calling this constructor causes undefined behaviour.
+ */
 BView::BView(const BView& other)
 	:
 	BHandler()
@@ -7093,6 +9985,14 @@ BView::BView(const BView& other)
 }
 
 
+/**
+ * @brief Intentionally non-functional copy-assignment operator.
+ *
+ * Declared private and exported for ABI compatibility only.  BView objects
+ * cannot be assigned; calling this operator causes undefined behaviour.
+ *
+ * @return *this (unchanged).
+ */
 BView&
 BView::operator=(const BView& other)
 {
@@ -7101,6 +10001,13 @@ BView::operator=(const BView& other)
 }
 
 
+/**
+ * @brief Dumps a human-readable summary of this view's state to standard output.
+ *
+ * Prints hierarchy pointers (parent, first child, siblings, owner), flags,
+ * bounds, pen state, colours, drawing mode, font, and other internal fields.
+ * Intended for debugging only.
+ */
 void
 BView::_PrintToStream()
 {
@@ -7183,6 +10090,12 @@ BView::_PrintToStream()
 }
 
 
+/**
+ * @brief Prints the view tree rooted at this view to standard output.
+ *
+ * Performs an iterative depth-first traversal and prints each view's name
+ * indented by two spaces per level.  Intended for debugging only.
+ */
 void
 BView::_PrintTree()
 {
@@ -7230,6 +10143,13 @@ BView::_PrintTree()
 // #pragma mark -
 
 
+/**
+ * @brief Returns the layout item registered at @p index for the wrapped view.
+ *
+ * @param index Zero-based index into the view's fLayoutItems list.
+ *
+ * @return The BLayoutItem at @p index, or NULL if out of range.
+ */
 BLayoutItem*
 BView::Private::LayoutItemAt(int32 index)
 {
@@ -7237,6 +10157,11 @@ BView::Private::LayoutItemAt(int32 index)
 }
 
 
+/**
+ * @brief Returns the number of layout items registered for the wrapped view.
+ *
+ * @return The count of BLayoutItem objects in the view's fLayoutItems list.
+ */
 int32
 BView::Private::CountLayoutItems()
 {
@@ -7244,6 +10169,11 @@ BView::Private::CountLayoutItems()
 }
 
 
+/**
+ * @brief Registers @p item as a layout item belonging to the wrapped view.
+ *
+ * @param item The layout item to register.
+ */
 void
 BView::Private::RegisterLayoutItem(BLayoutItem* item)
 {
@@ -7251,6 +10181,11 @@ BView::Private::RegisterLayoutItem(BLayoutItem* item)
 }
 
 
+/**
+ * @brief Removes @p item from the wrapped view's registered layout item list.
+ *
+ * @param item The layout item to deregister.
+ */
 void
 BView::Private::DeregisterLayoutItem(BLayoutItem* item)
 {
@@ -7258,6 +10193,12 @@ BView::Private::DeregisterLayoutItem(BLayoutItem* item)
 }
 
 
+/**
+ * @brief Returns whether the wrapped view's cached min/max sizes are valid.
+ *
+ * @return true if fMinMaxValid is set; false if the cache needs to be
+ *         recomputed before the next layout pass.
+ */
 bool
 BView::Private::MinMaxValid()
 {
@@ -7265,6 +10206,13 @@ BView::Private::MinMaxValid()
 }
 
 
+/**
+ * @brief Returns whether the wrapped view needs a layout pass.
+ *
+ * @return true if a layout pass is needed (relayout requested, layout invalid,
+ *         or min/max cache stale) and no layout pass is currently in progress;
+ *         false otherwise.
+ */
 bool
 BView::Private::WillLayout()
 {

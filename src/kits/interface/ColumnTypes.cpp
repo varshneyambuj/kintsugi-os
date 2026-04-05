@@ -28,9 +28,19 @@ using BPrivate::gSystemCatalog;
 		B_TRANSLATION_CONTEXT, (comment))
 
 
+/** @brief Horizontal padding (in pixels) added on each side of text within a cell. */
 #define kTEXT_MARGIN	8
 
 
+/**
+ * @brief Construct a BTitledColumn with a display title and layout constraints.
+ *
+ * @param title    The column header string shown in the list view.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum allowed width in pixels.
+ * @param maxWidth Maximum allowed width in pixels.
+ * @param align    Horizontal alignment of cell content.
+ */
 BTitledColumn::BTitledColumn(const char* title, float width, float minWidth,
 	float maxWidth, alignment align)
 	:
@@ -44,6 +54,12 @@ BTitledColumn::BTitledColumn(const char* title, float width, float minWidth,
 }
 
 
+/**
+ * @brief Draw the column header title into the given rect, truncating if necessary.
+ *
+ * @param rect   The bounding rectangle for the header cell.
+ * @param parent The view to draw into.
+ */
 void
 BTitledColumn::DrawTitle(BRect rect, BView* parent)
 {
@@ -55,6 +71,11 @@ BTitledColumn::DrawTitle(BRect rect, BView* parent)
 }
 
 
+/**
+ * @brief Copy the column name into the provided BString.
+ *
+ * @param into Output string that receives the column title.
+ */
 void
 BTitledColumn::GetColumnName(BString* into) const
 {
@@ -62,6 +83,16 @@ BTitledColumn::GetColumnName(BString* into) const
 }
 
 
+/**
+ * @brief Draw a string into a cell rect, respecting the column's alignment setting.
+ *
+ * Vertically centres the text within \a rect and positions the pen horizontally
+ * according to B_ALIGN_LEFT, B_ALIGN_CENTER, or B_ALIGN_RIGHT.
+ *
+ * @param string The text to draw.
+ * @param parent The view to draw into.
+ * @param rect   The bounding rectangle of the cell.
+ */
 void
 BTitledColumn::DrawString(const char* string, BView* parent, BRect rect)
 {
@@ -96,6 +127,11 @@ BTitledColumn::DrawString(const char* string, BView* parent, BRect rect)
 }
 
 
+/**
+ * @brief Change the column's display title.
+ *
+ * @param title The new title string.
+ */
 void
 BTitledColumn::SetTitle(const char* title)
 {
@@ -103,6 +139,11 @@ BTitledColumn::SetTitle(const char* title)
 }
 
 
+/**
+ * @brief Copy the column title into the provided BString.
+ *
+ * @param forTitle Output string that receives the title; does nothing if NULL.
+ */
 void
 BTitledColumn::Title(BString* forTitle) const
 {
@@ -111,6 +152,14 @@ BTitledColumn::Title(BString* forTitle) const
 }
 
 
+/**
+ * @brief Return the combined descent and leading of the default plain font.
+ *
+ * This value is cached at construction time and is useful for computing the
+ * vertical position of text within a cell.
+ *
+ * @return Font height in pixels (descent + leading).
+ */
 float
 BTitledColumn::FontHeight() const
 {
@@ -118,6 +167,13 @@ BTitledColumn::FontHeight() const
 }
 
 
+/**
+ * @brief Return the preferred column width needed to display the column title.
+ *
+ * @param _field Unused; the width is based solely on the title string.
+ * @param parent The view used to measure the string width.
+ * @return Preferred width in pixels (title string width plus margins).
+ */
 float
 BTitledColumn::GetPreferredWidth(BField *_field, BView* parent) const
 {
@@ -128,6 +184,11 @@ BTitledColumn::GetPreferredWidth(BField *_field, BView* parent) const
 // #pragma mark - BStringField
 
 
+/**
+ * @brief Construct a BStringField holding the given string value.
+ *
+ * @param string The initial string content for this field.
+ */
 BStringField::BStringField(const char* string)
 	:
 	fWidth(0),
@@ -137,6 +198,13 @@ BStringField::BStringField(const char* string)
 }
 
 
+/**
+ * @brief Replace the string content of this field.
+ *
+ * Also clears the cached clipped string and the cached column width.
+ *
+ * @param val The new string value.
+ */
 void
 BStringField::SetString(const char* val)
 {
@@ -146,6 +214,11 @@ BStringField::SetString(const char* val)
 }
 
 
+/**
+ * @brief Return the full (unclipped) string stored in this field.
+ *
+ * @return A pointer to the internal string data; valid until the next mutation.
+ */
 const char*
 BStringField::String() const
 {
@@ -153,6 +226,11 @@ BStringField::String() const
 }
 
 
+/**
+ * @brief Cache the column width at which the current clipped string was computed.
+ *
+ * @param width The pixel width associated with the cached clipped string.
+ */
 void
 BStringField::SetWidth(float width)
 {
@@ -160,6 +238,11 @@ BStringField::SetWidth(float width)
 }
 
 
+/**
+ * @brief Return the cached column width used for the current clipped string.
+ *
+ * @return The cached width in pixels.
+ */
 float
 BStringField::Width()
 {
@@ -167,6 +250,11 @@ BStringField::Width()
 }
 
 
+/**
+ * @brief Store the pre-truncated version of the field string.
+ *
+ * @param val The truncated string to cache; pass an empty string to clear.
+ */
 void
 BStringField::SetClippedString(const char* val)
 {
@@ -174,6 +262,11 @@ BStringField::SetClippedString(const char* val)
 }
 
 
+/**
+ * @brief Return whether a non-empty clipped string is currently cached.
+ *
+ * @return true if a clipped string is cached, false if the full string fits.
+ */
 bool
 BStringField::HasClippedString() const
 {
@@ -181,6 +274,11 @@ BStringField::HasClippedString() const
 }
 
 
+/**
+ * @brief Return the cached truncated string.
+ *
+ * @return The clipped string, or an empty string if no clipping was needed.
+ */
 const char*
 BStringField::ClippedString()
 {
@@ -191,6 +289,16 @@ BStringField::ClippedString()
 // #pragma mark - BStringColumn
 
 
+/**
+ * @brief Construct a BStringColumn with display constraints and truncation mode.
+ *
+ * @param title    Column header text.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum column width in pixels.
+ * @param maxWidth Maximum column width in pixels.
+ * @param truncate B_TRUNCATE_* constant controlling where long strings are cut.
+ * @param align    Horizontal alignment of cell text.
+ */
 BStringColumn::BStringColumn(const char* title, float width, float minWidth,
 	float maxWidth, uint32 truncate, alignment align)
 	:
@@ -200,6 +308,17 @@ BStringColumn::BStringColumn(const char* title, float width, float minWidth,
 }
 
 
+/**
+ * @brief Draw a BStringField into a list-view cell, caching the truncated string.
+ *
+ * Re-truncates the field's string whenever the available cell width has changed
+ * since the last draw. The truncated result is cached in the field to avoid
+ * redundant work on subsequent paints at the same width.
+ *
+ * @param _field The BStringField to render.
+ * @param rect   The cell bounding rectangle.
+ * @param parent The view to draw into.
+ */
 void
 BStringColumn::DrawField(BField* _field, BRect rect, BView* parent)
 {
@@ -225,6 +344,13 @@ BStringColumn::DrawField(BField* _field, BRect rect, BView* parent)
 }
 
 
+/**
+ * @brief Return the minimum column width required to display the field's full string.
+ *
+ * @param _field The BStringField to measure.
+ * @param parent The view used to measure the string width.
+ * @return Preferred width in pixels.
+ */
 float
 BStringColumn::GetPreferredWidth(BField *_field, BView* parent) const
 {
@@ -233,6 +359,13 @@ BStringColumn::GetPreferredWidth(BField *_field, BView* parent) const
 }
 
 
+/**
+ * @brief Compare two BStringFields case-insensitively for sort ordering.
+ *
+ * @param field1 First field to compare.
+ * @param field2 Second field to compare.
+ * @return Negative, zero, or positive in the same convention as strcmp().
+ */
 int
 BStringColumn::CompareFields(BField* field1, BField* field2)
 {
@@ -241,6 +374,12 @@ BStringColumn::CompareFields(BField* field1, BField* field2)
 }
 
 
+/**
+ * @brief Return whether this column accepts a given field type.
+ *
+ * @param field The field to test.
+ * @return true if \a field is a BStringField, false otherwise.
+ */
 bool
 BStringColumn::AcceptsField(const BField *field) const
 {
@@ -251,6 +390,14 @@ BStringColumn::AcceptsField(const BField *field) const
 // #pragma mark - BDateField
 
 
+/**
+ * @brief Construct a BDateField from a POSIX time_t value.
+ *
+ * Converts \a time to both a broken-down struct tm (local time) and a
+ * normalised time_t via mktime() for later comparison.
+ *
+ * @param time Pointer to the POSIX timestamp to represent.
+ */
 BDateField::BDateField(time_t* time)
 	:
 	fTime(*localtime(time)),
@@ -263,6 +410,11 @@ BDateField::BDateField(time_t* time)
 }
 
 
+/**
+ * @brief Cache the column width used for the current clipped date string.
+ *
+ * @param width The pixel width to cache.
+ */
 void
 BDateField::SetWidth(float width)
 {
@@ -270,6 +422,11 @@ BDateField::SetWidth(float width)
 }
 
 
+/**
+ * @brief Return the cached column width for the current clipped date string.
+ *
+ * @return Cached width in pixels.
+ */
 float
 BDateField::Width()
 {
@@ -277,6 +434,11 @@ BDateField::Width()
 }
 
 
+/**
+ * @brief Store the pre-formatted (possibly truncated) date string.
+ *
+ * @param string The formatted date string to cache.
+ */
 void
 BDateField::SetClippedString(const char* string)
 {
@@ -284,6 +446,11 @@ BDateField::SetClippedString(const char* string)
 }
 
 
+/**
+ * @brief Return the cached formatted date string.
+ *
+ * @return The last string set by SetClippedString(), or "" if not yet set.
+ */
 const char*
 BDateField::ClippedString()
 {
@@ -291,6 +458,11 @@ BDateField::ClippedString()
 }
 
 
+/**
+ * @brief Return the normalised timestamp (via mktime) for sort comparison.
+ *
+ * @return The time_t produced by normalising the local-time breakdown.
+ */
 time_t
 BDateField::Seconds()
 {
@@ -298,6 +470,11 @@ BDateField::Seconds()
 }
 
 
+/**
+ * @brief Return the original POSIX timestamp stored in this field.
+ *
+ * @return The raw time_t value passed to the constructor.
+ */
 time_t
 BDateField::UnixTime()
 {
@@ -308,6 +485,15 @@ BDateField::UnixTime()
 // #pragma mark - BDateColumn
 
 
+/**
+ * @brief Construct a BDateColumn with display constraints.
+ *
+ * @param title    Column header text.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum column width in pixels.
+ * @param maxWidth Maximum column width in pixels.
+ * @param align    Horizontal alignment of cell text.
+ */
 BDateColumn::BDateColumn(const char* title, float width, float minWidth,
 	float maxWidth, alignment align)
 	:
@@ -317,6 +503,17 @@ BDateColumn::BDateColumn(const char* title, float width, float minWidth,
 }
 
 
+/**
+ * @brief Draw a BDateField into a cell, choosing the most detailed format that fits.
+ *
+ * Iterates through progressively shorter date/time format combinations until
+ * the formatted string fits within the available cell width. The chosen string
+ * is cached in the field to avoid reformatting on every paint.
+ *
+ * @param _field The BDateField to render.
+ * @param rect   The cell bounding rectangle.
+ * @param parent The view to draw into.
+ */
 void
 BDateColumn::DrawField(BField* _field, BRect rect, BView* parent)
 {
@@ -368,6 +565,13 @@ BDateColumn::DrawField(BField* _field, BRect rect, BView* parent)
 }
 
 
+/**
+ * @brief Compare two BDateFields by their normalised timestamps for sort ordering.
+ *
+ * @param field1 First field to compare.
+ * @param field2 Second field to compare.
+ * @return The difference in seconds between the two timestamps (field1 - field2).
+ */
 int
 BDateColumn::CompareFields(BField* field1, BField* field2)
 {
@@ -378,6 +582,11 @@ BDateColumn::CompareFields(BField* field1, BField* field2)
 // #pragma mark - BSizeField
 
 
+/**
+ * @brief Construct a BSizeField holding a byte-count value.
+ *
+ * @param size The file or object size in bytes.
+ */
 BSizeField::BSizeField(off_t size)
 	:
 	fSize(size)
@@ -385,6 +594,11 @@ BSizeField::BSizeField(off_t size)
 }
 
 
+/**
+ * @brief Update the byte-count value stored in this field.
+ *
+ * @param size The new size in bytes.
+ */
 void
 BSizeField::SetSize(off_t size)
 {
@@ -392,6 +606,11 @@ BSizeField::SetSize(off_t size)
 }
 
 
+/**
+ * @brief Return the byte-count value stored in this field.
+ *
+ * @return The size in bytes.
+ */
 off_t
 BSizeField::Size()
 {
@@ -402,6 +621,15 @@ BSizeField::Size()
 // #pragma mark - BSizeColumn
 
 
+/**
+ * @brief Construct a BSizeColumn with display constraints.
+ *
+ * @param title    Column header text.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum column width in pixels.
+ * @param maxWidth Maximum column width in pixels.
+ * @param align    Horizontal alignment of cell text.
+ */
 BSizeColumn::BSizeColumn(const char* title, float width, float minWidth,
 	float maxWidth, alignment align)
 	:
@@ -414,6 +642,17 @@ BSizeColumn::BSizeColumn(const char* title, float width, float minWidth,
 #define B_TRANSLATION_CONTEXT "StringForSize"
 
 
+/**
+ * @brief Draw a BSizeField as a human-readable size string (e.g., "1.5 MiB").
+ *
+ * Selects the most appropriate SI binary unit (bytes, KiB, MiB, GiB, TiB) and
+ * the highest precision that still fits within the available cell width. The
+ * string is truncated in the middle as a last resort.
+ *
+ * @param _field The BSizeField to render.
+ * @param rect   The cell bounding rectangle.
+ * @param parent The view to draw into.
+ */
 void
 BSizeColumn::DrawField(BField* _field, BRect rect, BView* parent)
 {
@@ -477,6 +716,13 @@ BSizeColumn::DrawField(BField* _field, BRect rect, BView* parent)
 #undef B_TRANSLATION_CONTEXT
 
 
+/**
+ * @brief Compare two BSizeFields by their byte-count values for sort ordering.
+ *
+ * @param field1 First field to compare.
+ * @param field2 Second field to compare.
+ * @return -1 if field1 < field2, 0 if equal, 1 if field1 > field2.
+ */
 int
 BSizeColumn::CompareFields(BField* field1, BField* field2)
 {
@@ -492,6 +738,11 @@ BSizeColumn::CompareFields(BField* field1, BField* field2)
 // #pragma mark - BIntegerField
 
 
+/**
+ * @brief Construct a BIntegerField holding a 32-bit integer value.
+ *
+ * @param number The initial integer value.
+ */
 BIntegerField::BIntegerField(int32 number)
 	:
 	fInteger(number)
@@ -499,6 +750,11 @@ BIntegerField::BIntegerField(int32 number)
 }
 
 
+/**
+ * @brief Update the integer value stored in this field.
+ *
+ * @param value The new integer value.
+ */
 void
 BIntegerField::SetValue(int32 value)
 {
@@ -506,6 +762,11 @@ BIntegerField::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Return the integer value stored in this field.
+ *
+ * @return The current integer value.
+ */
 int32
 BIntegerField::Value()
 {
@@ -516,6 +777,15 @@ BIntegerField::Value()
 // #pragma mark - BIntegerColumn
 
 
+/**
+ * @brief Construct a BIntegerColumn with display constraints.
+ *
+ * @param title    Column header text.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum column width in pixels.
+ * @param maxWidth Maximum column width in pixels.
+ * @param align    Horizontal alignment of cell text.
+ */
 BIntegerColumn::BIntegerColumn(const char* title, float width, float minWidth,
 	float maxWidth, alignment align)
 	:
@@ -524,6 +794,16 @@ BIntegerColumn::BIntegerColumn(const char* title, float width, float minWidth,
 }
 
 
+/**
+ * @brief Draw a BIntegerField as a localised integer string.
+ *
+ * Formats the integer using the column's number formatter and truncates in the
+ * middle if the result does not fit within the cell.
+ *
+ * @param field  The BIntegerField to render.
+ * @param rect   The cell bounding rectangle.
+ * @param parent The view to draw into.
+ */
 void
 BIntegerColumn::DrawField(BField *field, BRect rect, BView* parent)
 {
@@ -536,6 +816,13 @@ BIntegerColumn::DrawField(BField *field, BRect rect, BView* parent)
 }
 
 
+/**
+ * @brief Compare two BIntegerFields by their integer values for sort ordering.
+ *
+ * @param field1 First field to compare.
+ * @param field2 Second field to compare.
+ * @return Difference (field1 - field2); negative, zero, or positive.
+ */
 int
 BIntegerColumn::CompareFields(BField *field1, BField *field2)
 {
@@ -546,6 +833,15 @@ BIntegerColumn::CompareFields(BField *field1, BField *field2)
 // #pragma mark - GraphColumn
 
 
+/**
+ * @brief Construct a GraphColumn that renders integer values as progress bars.
+ *
+ * @param name     Column header text.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum column width in pixels.
+ * @param maxWidth Maximum column width in pixels.
+ * @param align    Horizontal alignment of cell content.
+ */
 GraphColumn::GraphColumn(const char* name, float width, float minWidth,
 	float maxWidth, alignment align)
 	:
@@ -554,6 +850,17 @@ GraphColumn::GraphColumn(const char* name, float width, float minWidth,
 }
 
 
+/**
+ * @brief Draw a BIntegerField as a percentage bar with a centred label.
+ *
+ * Clamps the field value to [0, 100], draws a rounded-rect outline, fills
+ * the proportional bar in the navigation colour, then overlays the percentage
+ * string in invert mode so it remains readable over the fill.
+ *
+ * @param field  The BIntegerField whose value is treated as a percentage.
+ * @param rect   The cell bounding rectangle.
+ * @param parent The view to draw into.
+ */
 void
 GraphColumn::DrawField(BField* field, BRect rect, BView* parent)
 {
@@ -592,6 +899,14 @@ GraphColumn::DrawField(BField* field, BRect rect, BView* parent)
 // #pragma mark - BBitmapField
 
 
+/**
+ * @brief Construct a BBitmapField wrapping a BBitmap pointer.
+ *
+ * The field does not take ownership of the bitmap; the caller is responsible
+ * for the bitmap's lifetime.
+ *
+ * @param bitmap The bitmap to display; may be NULL.
+ */
 BBitmapField::BBitmapField(BBitmap* bitmap)
 	:
 	fBitmap(bitmap)
@@ -599,6 +914,11 @@ BBitmapField::BBitmapField(BBitmap* bitmap)
 }
 
 
+/**
+ * @brief Return the bitmap stored in this field.
+ *
+ * @return A const pointer to the current BBitmap, or NULL if none is set.
+ */
 const BBitmap*
 BBitmapField::Bitmap()
 {
@@ -606,6 +926,13 @@ BBitmapField::Bitmap()
 }
 
 
+/**
+ * @brief Replace the bitmap stored in this field.
+ *
+ * The field does not free the previous bitmap; the caller manages memory.
+ *
+ * @param bitmap The new bitmap to store; may be NULL.
+ */
 void
 BBitmapField::SetBitmap(BBitmap* bitmap)
 {
@@ -616,6 +943,15 @@ BBitmapField::SetBitmap(BBitmap* bitmap)
 // #pragma mark - BBitmapColumn
 
 
+/**
+ * @brief Construct a BBitmapColumn with display constraints.
+ *
+ * @param title    Column header text.
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum column width in pixels.
+ * @param maxWidth Maximum column width in pixels.
+ * @param align    Horizontal alignment of the bitmap within the cell.
+ */
 BBitmapColumn::BBitmapColumn(const char* title, float width, float minWidth,
 	float maxWidth, alignment align)
 	:
@@ -624,6 +960,18 @@ BBitmapColumn::BBitmapColumn(const char* title, float width, float minWidth,
 }
 
 
+/**
+ * @brief Draw a BBitmapField's bitmap centred vertically in a cell.
+ *
+ * Positions the bitmap horizontally according to the column's alignment setting
+ * and sets the appropriate drawing mode (B_OP_ALPHA for bitmaps with an alpha
+ * channel, B_OP_OVER otherwise). The previous drawing mode is restored after
+ * the bitmap is drawn.
+ *
+ * @param field  The BBitmapField to render.
+ * @param rect   The cell bounding rectangle.
+ * @param parent The view to draw into.
+ */
 void
 BBitmapColumn::DrawField(BField* field, BRect rect, BView* parent)
 {
@@ -667,6 +1015,15 @@ BBitmapColumn::DrawField(BField* field, BRect rect, BView* parent)
 }
 
 
+/**
+ * @brief Compare two BBitmapFields for sort ordering.
+ *
+ * Bitmap fields have no meaningful ordering, so this always returns 0.
+ *
+ * @param field1 Unused.
+ * @param field2 Unused.
+ * @return Always 0.
+ */
 int
 BBitmapColumn::CompareFields(BField* /*field1*/, BField* /*field2*/)
 {
@@ -675,6 +1032,12 @@ BBitmapColumn::CompareFields(BField* /*field1*/, BField* /*field2*/)
 }
 
 
+/**
+ * @brief Return whether this column accepts a given field type.
+ *
+ * @param field The field to test.
+ * @return true if \a field is a BBitmapField, false otherwise.
+ */
 bool
 BBitmapColumn::AcceptsField(const BField *field) const
 {

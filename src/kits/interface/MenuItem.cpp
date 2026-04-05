@@ -1,13 +1,41 @@
 /*
- * Copyright 2001-2025 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stefano Ceccherini, stefano.ceccherini@gmail.com
- *		Marc Flerackers, mflerackers@androme.be
- *		Bill Hayden, haydentech@users.sourceforge.net
- *		Olivier Milla
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2025 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini, stefano.ceccherini@gmail.com
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Bill Hayden, haydentech@users.sourceforge.net
+ *       Olivier Milla
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file MenuItem.cpp
+ * @brief Implementation of BMenuItem, a single item in a BMenu
+ *
+ * BMenuItem draws a text label (with optional shortcut and submenu arrow),
+ * tracks its marked/enabled/selected state, and invokes a BMessage when
+ * selected. Subclasses can override DrawContent() for custom rendering.
+ *
+ * @see BMenu, BSeparatorItem
  */
 
 
@@ -29,10 +57,12 @@
 #include "utf8_functions.h"
 
 
+/** @brief Tint factor applied to the high color when drawing the mark checkmark. */
 static const float kMarkTint = 0.75f;
 
 // map control key shortcuts to drawable Unicode characters
 // cf. http://unicode.org/charts/PDF/U2190.pdf
+/** @brief Maps ASCII control-key values to their displayable UTF-8 Unicode symbols. */
 const char* kUTF8ControlMap[] = {
 	NULL,
 	"\xe2\x86\xb8", /* B_HOME U+21B8 */
@@ -55,12 +85,21 @@ const char* kUTF8ControlMap[] = {
 	"\xe2\x90\xa3"  /* B_SPACE */
 };
 
+/** @brief UTF-8 symbol used to represent the Delete key in shortcut display (U+2326). */
 static const char* kDeleteShortcutUTF8 = "\xe2\x8c\xa6"; /* B_DELETE U+2326 */
 
 
 using BPrivate::MenuPrivate;
 
 
+/**
+ * @brief Construct a BMenuItem with a text label, message, and optional shortcut.
+ *
+ * @param label     Text label displayed for this item; a copy is made.
+ * @param message   BMessage sent when the item is invoked; ownership is transferred.
+ * @param shortcut  ASCII character used as the keyboard shortcut, or 0 for none.
+ * @param modifiers Modifier key mask (e.g. B_COMMAND_KEY) qualifying the shortcut.
+ */
 BMenuItem::BMenuItem(const char* label, BMessage* message, char shortcut, uint32 modifiers)
 {
 	_InitData();
@@ -74,6 +113,15 @@ BMenuItem::BMenuItem(const char* label, BMessage* message, char shortcut, uint32
 }
 
 
+/**
+ * @brief Construct a BMenuItem that opens a submenu.
+ *
+ * The item's label is derived from the submenu's name (or the marked item's
+ * label when the menu is in radio+label-from-marked mode).
+ *
+ * @param menu    The submenu to attach; ownership is transferred.
+ * @param message BMessage sent when the item is invoked, or NULL for none.
+ */
 BMenuItem::BMenuItem(BMenu* menu, BMessage* message)
 {
 	_InitData();
@@ -82,6 +130,15 @@ BMenuItem::BMenuItem(BMenu* menu, BMessage* message)
 }
 
 
+/**
+ * @brief Unarchive constructor: restore a BMenuItem from a BMessage archive.
+ *
+ * Reads the label, enabled state, marked state, trigger, shortcut, message,
+ * and optional submenu from \a data.
+ *
+ * @param data The archive message produced by Archive().
+ * @see Instantiate(), Archive()
+ */
 BMenuItem::BMenuItem(BMessage* data)
 {
 	_InitData();
@@ -132,6 +189,14 @@ BMenuItem::BMenuItem(BMessage* data)
 }
 
 
+/**
+ * @brief Create a new BMenuItem from an archived BMessage.
+ *
+ * @param data The archive message to instantiate from.
+ * @return A new BMenuItem if \a data is a valid BMenuItem archive, or NULL
+ *         if validation fails.
+ * @see Archive()
+ */
 BArchivable*
 BMenuItem::Instantiate(BMessage* data)
 {
@@ -142,6 +207,17 @@ BMenuItem::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archive this BMenuItem into a BMessage.
+ *
+ * Stores the label, enabled/marked state, trigger, shortcut, message, and
+ * (when \a deep is true) the submenu.
+ *
+ * @param data  The message to archive into.
+ * @param deep  If true, the attached submenu is recursively archived.
+ * @return B_OK on success, or a negative error code on failure.
+ * @see Instantiate()
+ */
 status_t
 BMenuItem::Archive(BMessage* data, bool deep) const
 {
@@ -178,6 +254,12 @@ BMenuItem::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Destroy the BMenuItem, removing it from its parent menu.
+ *
+ * Frees the label string, deletes the attached submenu, and removes the
+ * item from its parent BMenu if one exists.
+ */
 BMenuItem::~BMenuItem()
 {
 	if (fSuper != NULL)
@@ -188,6 +270,14 @@ BMenuItem::~BMenuItem()
 }
 
 
+/**
+ * @brief Set the item's text label.
+ *
+ * Replaces the current label with a copy of \a string and triggers a layout
+ * invalidation and visual refresh of the parent menu.
+ *
+ * @param string The new label text, or NULL to clear the label.
+ */
 void
 BMenuItem::SetLabel(const char* string)
 {
@@ -210,6 +300,15 @@ BMenuItem::SetLabel(const char* string)
 }
 
 
+/**
+ * @brief Enable or disable the item.
+ *
+ * When \a enable is false the item cannot be invoked and is rendered in a
+ * dimmed style. If the item owns a submenu, the submenu's enabled state is
+ * updated to match.
+ *
+ * @param enable Pass true to enable the item, false to disable it.
+ */
 void
 BMenuItem::SetEnabled(bool enable)
 {
@@ -229,6 +328,14 @@ BMenuItem::SetEnabled(bool enable)
 }
 
 
+/**
+ * @brief Mark or unmark the item.
+ *
+ * When \a mark is true and the parent menu is in radio mode, all other items
+ * in the menu are automatically unmarked via MenuPrivate::ItemMarked().
+ *
+ * @param mark Pass true to mark the item, false to unmark it.
+ */
 void
 BMenuItem::SetMarked(bool mark)
 {
@@ -241,6 +348,15 @@ BMenuItem::SetMarked(bool mark)
 }
 
 
+/**
+ * @brief Set the keyboard trigger character for this item.
+ *
+ * The trigger is the underlined letter shown in the item's label that, when
+ * pressed while the menu is open, selects the item. The search is
+ * case-insensitive and prefers an uppercase match.
+ *
+ * @param trigger The ASCII character to use as the trigger.
+ */
 void
 BMenuItem::SetTrigger(char trigger)
 {
@@ -269,6 +385,16 @@ BMenuItem::SetTrigger(char trigger)
 }
 
 
+/**
+ * @brief Set the global keyboard shortcut for this item.
+ *
+ * Registers the shortcut with the item's window so it can be triggered even
+ * when the menu is closed. The old shortcut (if any) is removed from the
+ * window first.
+ *
+ * @param shortcut   ASCII character for the shortcut key, or 0 to remove.
+ * @param modifiers  Modifier key mask (e.g. B_COMMAND_KEY) for the shortcut.
+ */
 void
 BMenuItem::SetShortcut(char shortcut, uint32 modifiers)
 {
@@ -294,6 +420,11 @@ BMenuItem::SetShortcut(char shortcut, uint32 modifiers)
 }
 
 
+/**
+ * @brief Return the item's text label.
+ *
+ * @return A pointer to the internal label string, or NULL if none is set.
+ */
 const char*
 BMenuItem::Label() const
 {
@@ -301,6 +432,14 @@ BMenuItem::Label() const
 }
 
 
+/**
+ * @brief Return whether the item can currently be invoked.
+ *
+ * An item is enabled only when it is individually enabled, its parent menu
+ * chain is enabled, and (if it has a submenu) the submenu is enabled.
+ *
+ * @return true if the item is enabled, false otherwise.
+ */
 bool
 BMenuItem::IsEnabled() const
 {
@@ -314,6 +453,11 @@ BMenuItem::IsEnabled() const
 }
 
 
+/**
+ * @brief Return whether the item is currently marked.
+ *
+ * @return true if the item has a checkmark, false otherwise.
+ */
 bool
 BMenuItem::IsMarked() const
 {
@@ -321,6 +465,11 @@ BMenuItem::IsMarked() const
 }
 
 
+/**
+ * @brief Return the user-specified trigger character.
+ *
+ * @return The trigger character set by SetTrigger(), or 0 if none is set.
+ */
 char
 BMenuItem::Trigger() const
 {
@@ -328,6 +477,12 @@ BMenuItem::Trigger() const
 }
 
 
+/**
+ * @brief Return the keyboard shortcut character and its modifiers.
+ *
+ * @param modifiers If non-NULL, the modifier mask is written here.
+ * @return The shortcut character, or 0 if no shortcut is set.
+ */
 char
 BMenuItem::Shortcut(uint32* modifiers) const
 {
@@ -338,6 +493,11 @@ BMenuItem::Shortcut(uint32* modifiers) const
 }
 
 
+/**
+ * @brief Return the submenu attached to this item.
+ *
+ * @return A pointer to the BMenu submenu, or NULL if this is a leaf item.
+ */
 BMenu*
 BMenuItem::Submenu() const
 {
@@ -345,6 +505,11 @@ BMenuItem::Submenu() const
 }
 
 
+/**
+ * @brief Return the parent BMenu that contains this item.
+ *
+ * @return A pointer to the parent BMenu, or NULL if the item has no parent.
+ */
 BMenu*
 BMenuItem::Menu() const
 {
@@ -352,6 +517,11 @@ BMenuItem::Menu() const
 }
 
 
+/**
+ * @brief Return the bounding rectangle of this item in the parent menu's coordinates.
+ *
+ * @return The item's frame rect as set by the parent menu during layout.
+ */
 BRect
 BMenuItem::Frame() const
 {
@@ -359,6 +529,15 @@ BMenuItem::Frame() const
 }
 
 
+/**
+ * @brief Calculate the natural content width and height of this item.
+ *
+ * Caches the font metrics and string width so the parent menu can size its
+ * items during layout. Results are written to \a _width and \a _height.
+ *
+ * @param _width   If non-NULL, receives the content width in pixels.
+ * @param _height  If non-NULL, receives the content height (font height) in pixels.
+ */
 void
 BMenuItem::GetContentSize(float* _width, float* _height)
 {
@@ -376,6 +555,15 @@ BMenuItem::GetContentSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Truncate the label to fit within \a maxWidth pixels using B_TRUNCATE_MIDDLE.
+ *
+ * The truncated string is written into the caller-supplied buffer \a newLabel,
+ * which must be large enough to hold the result (at most strlen(Label()) + 4).
+ *
+ * @param maxWidth  Maximum pixel width available for the label.
+ * @param newLabel  Output buffer that receives the null-terminated truncated string.
+ */
 void
 BMenuItem::TruncateLabel(float maxWidth, char* newLabel)
 {
@@ -391,6 +579,16 @@ BMenuItem::TruncateLabel(float maxWidth, char* newLabel)
 }
 
 
+/**
+ * @brief Draw the label text (and trigger underline) at the current pen position.
+ *
+ * Called by Draw() after the pen has been moved to ContentLocation(). If the
+ * label is too wide for the available frame width it is truncated first.
+ * Triggers are rendered with an underline using StrokeLine().
+ *
+ * @note Subclasses may override this method to provide custom content drawing.
+ * @see Draw(), TruncateLabel()
+ */
 void
 BMenuItem::DrawContent()
 {
@@ -442,6 +640,15 @@ BMenuItem::DrawContent()
 }
 
 
+/**
+ * @brief Draw the complete menu item including background, content, and decorations.
+ *
+ * Fills the selection background when active, calls DrawContent() for the
+ * label, and then renders the mark symbol, shortcut, and submenu arrow as
+ * appropriate for the parent menu's layout mode.
+ *
+ * @see DrawContent(), Highlight()
+ */
 void
 BMenuItem::Draw()
 {
@@ -484,6 +691,14 @@ BMenuItem::Draw()
 }
 
 
+/**
+ * @brief Called when the item's selection state changes.
+ *
+ * Invalidates the item's frame in the parent menu so the highlighted
+ * (or de-highlighted) appearance is repainted.
+ *
+ * @param highlight true if the item is now selected, false if deselected.
+ */
 void
 BMenuItem::Highlight(bool highlight)
 {
@@ -491,6 +706,11 @@ BMenuItem::Highlight(bool highlight)
 }
 
 
+/**
+ * @brief Return whether the item is currently selected (highlighted).
+ *
+ * @return true if this item is the currently highlighted menu item.
+ */
 bool
 BMenuItem::IsSelected() const
 {
@@ -498,6 +718,13 @@ BMenuItem::IsSelected() const
 }
 
 
+/**
+ * @brief Return the drawing origin for the item's content.
+ *
+ * Adds the parent menu's left and top padding to the item's top-left corner.
+ *
+ * @return The point at which DrawContent() should begin drawing.
+ */
 BPoint
 BMenuItem::ContentLocation() const
 {
@@ -525,6 +752,11 @@ BMenuItem::operator=(const BMenuItem &)
 }
 
 
+/**
+ * @brief Initialize all member variables to their default values.
+ *
+ * Called from every constructor before any other initialization.
+ */
 void
 BMenuItem::_InitData()
 {
@@ -544,6 +776,15 @@ BMenuItem::_InitData()
 }
 
 
+/**
+ * @brief Attach a submenu to this item and derive the item's label from it.
+ *
+ * Sets up the bidirectional link between the item and its submenu by calling
+ * MenuPrivate::SetSuperItem(), then chooses the label from the submenu's
+ * marked item (in radio+label-from-marked mode) or its name.
+ *
+ * @param menu The BMenu to attach; ownership is transferred to this item.
+ */
 void
 BMenuItem::_InitMenuData(BMenu* menu)
 {
@@ -560,6 +801,15 @@ BMenuItem::_InitMenuData(BMenu* menu)
 }
 
 
+/**
+ * @brief Register this item with a BWindow so shortcuts can be dispatched.
+ *
+ * Recursively installs the submenu (if any), stores the window reference,
+ * registers the shortcut key with the window, and sets the invoke target to
+ * the window if no explicit target has been assigned.
+ *
+ * @param window The window to install into.
+ */
 void
 BMenuItem::Install(BWindow* window)
 {
@@ -582,6 +832,16 @@ BMenuItem::Install(BWindow* window)
 }
 
 
+/**
+ * @brief Invoke the item's message, marking it if the parent is in radio mode.
+ *
+ * Stamps the clone message with the item's index, timestamp, source pointer,
+ * and sender messenger before dispatching via BInvoker::Invoke().
+ *
+ * @param message  Optional override message; if NULL the item's own message is used.
+ * @return B_OK on success, B_ERROR if the item is disabled, or B_BAD_VALUE if
+ *         there is no message to send and the menu is not watched.
+ */
 status_t
 BMenuItem::Invoke(BMessage* message)
 {
@@ -621,6 +881,12 @@ BMenuItem::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Detach this item from its BWindow, removing the registered shortcut.
+ *
+ * Recursively uninstalls the submenu, clears the window reference, and
+ * removes the keyboard shortcut from the window.
+ */
 void
 BMenuItem::Uninstall()
 {
@@ -637,6 +903,14 @@ BMenuItem::Uninstall()
 }
 
 
+/**
+ * @brief Set the parent BMenu of this item.
+ *
+ * Calls debugger() if the item already has a different parent, enforcing the
+ * rule that a menu item may only belong to one container at a time.
+ *
+ * @param super The new parent BMenu, or NULL to detach.
+ */
 void
 BMenuItem::SetSuper(BMenu* super)
 {
@@ -652,6 +926,15 @@ BMenuItem::SetSuper(BMenu* super)
 }
 
 
+/**
+ * @brief Change the item's selected (highlighted) state.
+ *
+ * If the state changes, updates fSelected and calls Highlight() to trigger
+ * a visual refresh. Selection is only allowed when the item is enabled or
+ * has a submenu.
+ *
+ * @param selected true to select the item, false to deselect.
+ */
 void
 BMenuItem::Select(bool selected)
 {
@@ -665,6 +948,13 @@ BMenuItem::Select(bool selected)
 }
 
 
+/**
+ * @brief Return true when the item should be drawn in its activated appearance.
+ *
+ * An item is activated when it is selected and either enabled or has a submenu.
+ *
+ * @return true if the item should use the activated visual style.
+ */
 bool
 BMenuItem::_IsActivated()
 {
@@ -672,6 +962,14 @@ BMenuItem::_IsActivated()
 }
 
 
+/**
+ * @brief Return the background fill color for this item.
+ *
+ * Returns B_MENU_SELECTED_BACKGROUND_COLOR when activated, otherwise
+ * B_MENU_BACKGROUND_COLOR.
+ *
+ * @return The rgb_color to use as the low (background) color.
+ */
 rgb_color
 BMenuItem::_LowColor()
 {
@@ -680,6 +978,14 @@ BMenuItem::_LowColor()
 }
 
 
+/**
+ * @brief Return the foreground text/stroke color for this item.
+ *
+ * Chooses among the selected-text color, normal text color, and a disabled
+ * tint based on the background luminance.
+ *
+ * @return The rgb_color to use as the high (foreground) color.
+ */
 rgb_color
 BMenuItem::_HighColor()
 {
@@ -704,6 +1010,12 @@ BMenuItem::_HighColor()
 }
 
 
+/**
+ * @brief Draw the checkmark symbol in the left margin of the item.
+ *
+ * Renders a small tick/checkmark glyph using StrokeShape(), positioned and
+ * sized to fit within the item's left padding area.
+ */
 void
 BMenuItem::_DrawMarkSymbol()
 {
@@ -745,6 +1057,15 @@ BMenuItem::_DrawMarkSymbol()
 }
 
 
+/**
+ * @brief Draw the keyboard shortcut symbol at the right edge of the item.
+ *
+ * Renders the shortcut character (or its UTF-8 control-key symbol) followed
+ * by modifier-key bitmaps (Command, Control, Option, Shift) reading right-to-left.
+ *
+ * @param submenus Pass true when at least one item in the menu has a submenu,
+ *                 so that extra space is reserved for the submenu arrow.
+ */
 void
 BMenuItem::_DrawShortcutSymbol(bool submenus)
 {
@@ -801,6 +1122,12 @@ BMenuItem::_DrawShortcutSymbol(bool submenus)
 }
 
 
+/**
+ * @brief Draw the right-pointing arrow that indicates a submenu is attached.
+ *
+ * Renders the arrow using BControlLook::DrawArrowShape() scaled to two-thirds
+ * of the item height and positioned at the right edge of the item's frame.
+ */
 void
 BMenuItem::_DrawSubmenuSymbol()
 {
@@ -823,6 +1150,15 @@ BMenuItem::_DrawSubmenuSymbol()
 }
 
 
+/**
+ * @brief Draw the UTF-8 Unicode symbol that represents a non-printable control shortcut.
+ *
+ * Looks up \a shortcut in kUTF8ControlMap (or uses kDeleteShortcutUTF8 for
+ * B_DELETE) and draws the resulting symbol string at \a where.
+ *
+ * @param shortcut The control character whose Unicode glyph should be drawn.
+ * @param where    The baseline point in the parent menu's coordinate system.
+ */
 void
 BMenuItem::_DrawControlChar(char shortcut, BPoint where)
 {
@@ -838,6 +1174,15 @@ BMenuItem::_DrawControlChar(char shortcut, BPoint where)
 }
 
 
+/**
+ * @brief Set the automatically-assigned trigger index and character.
+ *
+ * Called by BMenu during layout when it assigns triggers to items that do not
+ * have a user-specified trigger, allowing the menu to avoid duplicate triggers.
+ *
+ * @param index   UTF-8 character index within the label to underline.
+ * @param trigger The trigger code point.
+ */
 void
 BMenuItem::SetAutomaticTrigger(int32 index, uint32 trigger)
 {

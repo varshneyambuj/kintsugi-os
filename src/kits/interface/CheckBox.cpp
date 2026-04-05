@@ -1,14 +1,39 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
 
 
-// BCheckBox displays an on/off control.
+/**
+ * @file CheckBox.cpp
+ * @brief Implementation of BCheckBox, a two-state toggle control
+ *
+ * BCheckBox renders a labeled checkbox that toggles between checked
+ * (B_CONTROL_ON) and unchecked (B_CONTROL_OFF) states when clicked,
+ * invoking its associated BMessage.
+ *
+ * @see BControl, BControlLook
+ */
 
 
 #include <CheckBox.h>
@@ -24,6 +49,21 @@
 #include <binary_compatibility/Interface.h>
 
 
+/**
+ * @brief Constructs a BCheckBox with an explicit frame rectangle (legacy layout).
+ *
+ * Ensures the checkbox meets a minimum height derived from the current font
+ * metrics, resizing vertically if the supplied frame is too short.
+ *
+ * @param frame        The position and size of the checkbox in the parent's
+ *                     coordinate system.
+ * @param name         The internal view name used for look-up.
+ * @param label        The visible text drawn beside the checkbox.
+ * @param message      The message sent when the checkbox is toggled. Ownership
+ *                     is transferred to BControl.
+ * @param resizingMode How the checkbox resizes with its parent (B_FOLLOW_* flags).
+ * @param flags        View flags passed to BControl.
+ */
 BCheckBox::BCheckBox(BRect frame, const char* name, const char* label,
 	BMessage* message, uint32 resizingMode, uint32 flags)
 	:
@@ -42,6 +82,14 @@ BCheckBox::BCheckBox(BRect frame, const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a BCheckBox without an explicit frame (layout-managed).
+ *
+ * @param name    The internal view name.
+ * @param label   The visible text drawn beside the checkbox.
+ * @param message The message sent when the checkbox is toggled.
+ * @param flags   View flags (B_WILL_DRAW and B_NAVIGABLE are always added).
+ */
 BCheckBox::BCheckBox(const char* name, const char* label, BMessage* message,
 	uint32 flags)
 	:
@@ -53,6 +101,14 @@ BCheckBox::BCheckBox(const char* name, const char* label, BMessage* message,
 }
 
 
+/**
+ * @brief Constructs a BCheckBox with only a label and message (simplest form).
+ *
+ * This is the recommended constructor when using the layout system.
+ *
+ * @param label   The visible text drawn beside the checkbox.
+ * @param message The message sent when the checkbox is toggled.
+ */
 BCheckBox::BCheckBox(const char* label, BMessage* message)
 	:
 	BControl(NULL, label, message, B_WILL_DRAW | B_NAVIGABLE),
@@ -63,6 +119,13 @@ BCheckBox::BCheckBox(const char* label, BMessage* message)
 }
 
 
+/**
+ * @brief Constructs a BCheckBox from an archived BMessage.
+ *
+ * @param data The archive message produced by Archive().
+ * @see Instantiate()
+ * @see Archive()
+ */
 BCheckBox::BCheckBox(BMessage* data)
 	:
 	BControl(data),
@@ -72,6 +135,9 @@ BCheckBox::BCheckBox(BMessage* data)
 }
 
 
+/**
+ * @brief Destroys the BCheckBox.
+ */
 BCheckBox::~BCheckBox()
 {
 }
@@ -80,6 +146,13 @@ BCheckBox::~BCheckBox()
 // #pragma mark - Archiving methods
 
 
+/**
+ * @brief Creates a new BCheckBox from an archived BMessage.
+ *
+ * @param data The archive message to instantiate from.
+ * @return A newly allocated BCheckBox on success, or NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable*
 BCheckBox::Instantiate(BMessage* data)
 {
@@ -90,6 +163,15 @@ BCheckBox::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives the BCheckBox into a BMessage.
+ *
+ * Delegates entirely to BControl::Archive(); BCheckBox adds no extra fields.
+ *
+ * @param data The message to archive into.
+ * @param deep If true, child objects are archived recursively.
+ * @return B_OK on success, or an error code from BControl::Archive().
+ */
 status_t
 BCheckBox::Archive(BMessage* data, bool deep) const
 {
@@ -100,6 +182,14 @@ BCheckBox::Archive(BMessage* data, bool deep) const
 // #pragma mark - Hook methods
 
 
+/**
+ * @brief Draws the checkbox and its label into the current view.
+ *
+ * Renders the checkbox glyph (with an optional outlined/pressed state) and
+ * then the label and icon to the right of the glyph, using BControlLook.
+ *
+ * @param updateRect The invalid rectangle that needs to be redrawn.
+ */
 void
 BCheckBox::Draw(BRect updateRect)
 {
@@ -125,6 +215,11 @@ BCheckBox::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Called when the checkbox is attached to a window.
+ *
+ * Delegates to BControl::AttachedToWindow() for standard view setup.
+ */
 void
 BCheckBox::AttachedToWindow()
 {
@@ -132,6 +227,11 @@ BCheckBox::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the checkbox is detached from its window.
+ *
+ * Delegates to BControl::DetachedFromWindow() for cleanup.
+ */
 void
 BCheckBox::DetachedFromWindow()
 {
@@ -139,6 +239,9 @@ BCheckBox::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called after all sibling views have been attached to the window.
+ */
 void
 BCheckBox::AllAttached()
 {
@@ -146,6 +249,9 @@ BCheckBox::AllAttached()
 }
 
 
+/**
+ * @brief Called after all sibling views have been detached from the window.
+ */
 void
 BCheckBox::AllDetached()
 {
@@ -153,6 +259,10 @@ BCheckBox::AllDetached()
 }
 
 
+/**
+ * @brief Called when the checkbox's frame position changes.
+ * @param newPosition The new top-left corner position in the parent's coordinates.
+ */
 void
 BCheckBox::FrameMoved(BPoint newPosition)
 {
@@ -160,6 +270,11 @@ BCheckBox::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Called when the checkbox's frame size changes.
+ * @param newWidth  The new width in pixels.
+ * @param newHeight The new height in pixels.
+ */
 void
 BCheckBox::FrameResized(float newWidth, float newHeight)
 {
@@ -167,6 +282,10 @@ BCheckBox::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Called when the checkbox's window gains or loses focus.
+ * @param active true if the window just became active, false if deactivated.
+ */
 void
 BCheckBox::WindowActivated(bool active)
 {
@@ -174,6 +293,10 @@ BCheckBox::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Handles an incoming BMessage not dispatched by the default mechanism.
+ * @param message The message to process.
+ */
 void
 BCheckBox::MessageReceived(BMessage* message)
 {
@@ -181,6 +304,16 @@ BCheckBox::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles a key-press event.
+ *
+ * B_ENTER and B_SPACE advance the checkbox to the next logical state and
+ * invoke the action. All other keys bypass BControl and go directly to
+ * BView to avoid unintended value toggling.
+ *
+ * @param bytes    Pointer to the UTF-8 key data.
+ * @param numBytes Number of bytes in \a bytes.
+ */
 void
 BCheckBox::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -197,6 +330,16 @@ BCheckBox::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Handles a mouse-button-press event.
+ *
+ * Sets the outlined (pressed) visual state and begins tracking. In
+ * synchronous mode, polls the mouse until the button is released; if the
+ * pointer is still inside the checkbox at release, the state is advanced
+ * and the action is invoked.
+ *
+ * @param where The location of the click in the view's coordinate system.
+ */
 void
 BCheckBox::MouseDown(BPoint where)
 {
@@ -241,6 +384,15 @@ BCheckBox::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Called when the mouse button is released over this checkbox.
+ *
+ * Completes asynchronous tracking: advances the state and invokes the action
+ * if the release point is inside the checkbox bounds, otherwise just
+ * redraws. Stops tracking regardless.
+ *
+ * @param where The release position in view coordinates.
+ */
 void
 BCheckBox::MouseUp(BPoint where)
 {
@@ -266,6 +418,16 @@ BCheckBox::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Called when the pointer moves while the checkbox is being tracked.
+ *
+ * Updates the outlined (hover-press) state and invalidates the view if
+ * the pointer has entered or exited the checkbox bounds.
+ *
+ * @param where       Current pointer position in view coordinates.
+ * @param code        B_ENTERED_VIEW, B_INSIDE_VIEW, or B_EXITED_VIEW.
+ * @param dragMessage Non-NULL if a drag-and-drop operation is in progress.
+ */
 void
 BCheckBox::MouseMoved(BPoint where, uint32 code,
 	const BMessage* dragMessage)
@@ -285,6 +447,15 @@ BCheckBox::MouseMoved(BPoint where, uint32 code,
 // #pragma mark -
 
 
+/**
+ * @brief Returns the checkbox's preferred width and height.
+ *
+ * Results are cached after the first computation; the cache is invalidated
+ * via LayoutInvalidated(). Pass NULL for dimensions you do not need.
+ *
+ * @param _width  Receives the preferred width, or ignored if NULL.
+ * @param _height Receives the preferred height, or ignored if NULL.
+ */
 void
 BCheckBox::GetPreferredSize(float* _width, float* _height)
 {
@@ -298,6 +469,11 @@ BCheckBox::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resizes the checkbox to its preferred size.
+ *
+ * Delegates to BControl::ResizeToPreferred().
+ */
 void
 BCheckBox::ResizeToPreferred()
 {
@@ -305,6 +481,14 @@ BCheckBox::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Returns the minimum layout size of the checkbox.
+ *
+ * Composes the explicit minimum size (if any) with the computed preferred
+ * size so the layout system never makes the checkbox smaller than needed.
+ *
+ * @return The minimum BSize for layout purposes.
+ */
 BSize
 BCheckBox::MinSize()
 {
@@ -313,6 +497,14 @@ BCheckBox::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum layout size of the checkbox.
+ *
+ * Composes the explicit maximum size (if any) with the computed preferred
+ * size.
+ *
+ * @return The maximum BSize for layout purposes.
+ */
 BSize
 BCheckBox::MaxSize()
 {
@@ -321,6 +513,14 @@ BCheckBox::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred layout size of the checkbox.
+ *
+ * Composes the explicit preferred size (if any) with the internally
+ * computed preferred size based on the glyph, icon, label, and font metrics.
+ *
+ * @return The preferred BSize for layout purposes.
+ */
 BSize
 BCheckBox::PreferredSize()
 {
@@ -329,6 +529,14 @@ BCheckBox::PreferredSize()
 }
 
 
+/**
+ * @brief Returns the preferred layout alignment of the checkbox.
+ *
+ * Composes the explicit alignment (if any) with left-horizontal /
+ * vertical-center defaults suited to inline label controls.
+ *
+ * @return The BAlignment for layout purposes.
+ */
 BAlignment
 BCheckBox::LayoutAlignment()
 {
@@ -340,6 +548,10 @@ BCheckBox::LayoutAlignment()
 // #pragma mark -
 
 
+/**
+ * @brief Gives or removes keyboard focus from the checkbox.
+ * @param focused true to grant focus, false to remove it.
+ */
 void
 BCheckBox::MakeFocus(bool focused)
 {
@@ -347,6 +559,15 @@ BCheckBox::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Sets the integer value of the checkbox control.
+ *
+ * Accepts only B_CONTROL_OFF, B_CONTROL_ON, and B_CONTROL_PARTIALLY_ON;
+ * any other value is treated as B_CONTROL_ON. Only the checkbox glyph area
+ * is invalidated when the value changes.
+ *
+ * @param value The new value to set.
+ */
 void
 BCheckBox::SetValue(int32 value)
 {
@@ -368,6 +589,14 @@ BCheckBox::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Invokes the checkbox's action message.
+ *
+ * Delegates to BControl::Invoke().
+ *
+ * @param message The message to send, or NULL to use the checkbox's own message.
+ * @return B_OK on success, or an error code from BControl::Invoke().
+ */
 status_t
 BCheckBox::Invoke(BMessage* message)
 {
@@ -375,6 +604,16 @@ BCheckBox::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the handler that should process it.
+ *
+ * @param message   The scripting message.
+ * @param index     Index of the specifier within the message.
+ * @param specifier The specifier message.
+ * @param what      The specifier constant.
+ * @param property  The property name being accessed.
+ * @return The BHandler that should handle the scripting message.
+ */
 BHandler*
 BCheckBox::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -384,6 +623,12 @@ BCheckBox::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Fills a BMessage with the scripting suites supported by BCheckBox.
+ *
+ * @param message The message to populate with suite information.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BCheckBox::GetSupportedSuites(BMessage* message)
 {
@@ -391,6 +636,17 @@ BCheckBox::GetSupportedSuites(BMessage* message)
 }
 
 
+/**
+ * @brief Executes a binary-compatibility perform code.
+ *
+ * Handles the PERFORM_CODE_* constants required for ABI stability across
+ * shared-library versions, dispatching to the appropriate virtual method.
+ * Unrecognised codes are forwarded to BControl::Perform().
+ *
+ * @param code  The perform code identifying the operation.
+ * @param _data Pointer to the perform-specific data structure.
+ * @return B_OK on success, or an error code from the dispatched method.
+ */
 status_t
 BCheckBox::Perform(perform_code code, void* _data)
 {
@@ -452,6 +708,17 @@ BCheckBox::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Sets the checkbox's icon bitmap.
+ *
+ * Extends BControl::SetIcon() by always requesting disabled icon variants so
+ * the checkbox can render them when it is disabled.
+ *
+ * @param icon  The source bitmap to use as the icon.
+ * @param flags Icon creation flags (B_CREATE_DISABLED_ICON_BITMAPS is always
+ *              added).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BCheckBox::SetIcon(const BBitmap* icon, uint32 flags)
 {
@@ -459,6 +726,11 @@ BCheckBox::SetIcon(const BBitmap* icon, uint32 flags)
 }
 
 
+/**
+ * @brief Clears the cached preferred size when the layout is invalidated.
+ *
+ * @param descendants true if descendant layouts were also invalidated.
+ */
 void
 BCheckBox::LayoutInvalidated(bool descendants)
 {
@@ -467,6 +739,11 @@ BCheckBox::LayoutInvalidated(bool descendants)
 }
 
 
+/**
+ * @brief Returns whether the partial state transitions to off instead of on.
+ * @return true if B_CONTROL_PARTIALLY_ON cycles to B_CONTROL_OFF, false if
+ *         it cycles to B_CONTROL_ON.
+ */
 bool
 BCheckBox::IsPartialStateToOff() const
 {
@@ -474,6 +751,16 @@ BCheckBox::IsPartialStateToOff() const
 }
 
 
+/**
+ * @brief Controls whether the partial state cycles to off or on.
+ *
+ * When true, a checkbox in B_CONTROL_PARTIALLY_ON will transition to
+ * B_CONTROL_OFF on the next toggle. When false (the default), it
+ * transitions to B_CONTROL_ON.
+ *
+ * @param partialToOff true to transition partial to off, false to transition
+ *                     partial to on.
+ */
 void
 BCheckBox::SetPartialStateToOff(bool partialToOff)
 {
@@ -489,6 +776,15 @@ void BCheckBox::_ReservedCheckBox2() {}
 void BCheckBox::_ReservedCheckBox3() {}
 
 
+/**
+ * @brief Returns the bounding rectangle of the checkbox glyph for a given font.
+ *
+ * The rectangle is sized to match the font's ascent so the glyph aligns with
+ * the text baseline.
+ *
+ * @param fontHeight The font metrics used to compute the glyph size.
+ * @return The BRect of the checkbox glyph in view coordinates.
+ */
 BRect
 BCheckBox::_CheckBoxFrame(const font_height& fontHeight) const
 {
@@ -497,6 +793,13 @@ BCheckBox::_CheckBoxFrame(const font_height& fontHeight) const
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the checkbox glyph using current font.
+ *
+ * Convenience overload that fetches the current font height automatically.
+ *
+ * @return The BRect of the checkbox glyph in view coordinates.
+ */
 BRect
 BCheckBox::_CheckBoxFrame() const
 {
@@ -506,6 +809,15 @@ BCheckBox::_CheckBoxFrame() const
 }
 
 
+/**
+ * @brief Computes and caches the checkbox's preferred size if not already valid.
+ *
+ * Calculates the preferred width from the glyph size, optional icon, and
+ * label string width. Calculates the preferred height from the glyph and
+ * font metrics. The result is stored in fPreferredSize and returned.
+ *
+ * @return The validated preferred BSize.
+ */
 BSize
 BCheckBox::_ValidatePreferredSize()
 {
@@ -540,6 +852,14 @@ BCheckBox::_ValidatePreferredSize()
 }
 
 
+/**
+ * @brief Returns the next logical state following the current value.
+ *
+ * Implements the three-state cycle: OFF -> ON, ON -> OFF, and
+ * PARTIALLY_ON -> OFF (when fPartialToOff is true) or ON (otherwise).
+ *
+ * @return The next B_CONTROL_* state value.
+ */
 int32
 BCheckBox::_NextState() const
 {
@@ -562,6 +882,16 @@ BCheckBox::operator=(const BCheckBox &)
 }
 
 
+/**
+ * @brief Binary-compatibility thunk for BCheckBox::InvalidateLayout().
+ *
+ * Provided for GCC 2 ABI compatibility. Calls Perform() with
+ * PERFORM_CODE_LAYOUT_INVALIDATED so the virtual dispatch reaches the
+ * correct BCheckBox override even when called through an old vtable.
+ *
+ * @param box         The BCheckBox whose layout should be invalidated.
+ * @param descendants If true, descendant layouts are also invalidated.
+ */
 extern "C" void
 B_IF_GCC_2(InvalidateLayout__9BCheckBoxb, _ZN9BCheckBox16InvalidateLayoutEb)(
 	BCheckBox* box, bool descendants)
@@ -571,4 +901,3 @@ B_IF_GCC_2(InvalidateLayout__9BCheckBoxb, _ZN9BCheckBox16InvalidateLayoutEb)(
 
 	box->Perform(PERFORM_CODE_LAYOUT_INVALIDATED, &data);
 }
-

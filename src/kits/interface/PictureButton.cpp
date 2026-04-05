@@ -1,9 +1,37 @@
 /*
- * Copyright 2001-2010, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Graham MacDonald (macdonag@btopenworld.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Graham MacDonald (macdonag@btopenworld.com)
+ */
+
+
+/**
+ * @file PictureButton.cpp
+ * @brief Implementation of BPictureButton, a button that renders using BPicture objects
+ *
+ * BPictureButton is a BControl that uses two BPicture objects (enabled and disabled
+ * states) for its appearance. This allows arbitrary drawing commands to define the
+ * button face rather than a text label.
+ *
+ * @see BControl, BPicture
  */
 
 
@@ -14,6 +42,21 @@
 #include <binary_compatibility/Interface.h>
 
 
+/**
+ * @brief Construct a BPictureButton with an explicit frame and pictures.
+ *
+ * @param frame       The position and size of the button in the parent's coordinate system.
+ * @param name        The view name used for identification.
+ * @param off         The picture drawn when the button is in the off (unpressed) state.
+ * @param on          The picture drawn when the button is in the on (pressed) state.
+ * @param message     The message sent to the target when the button is invoked.
+ * @param behavior    Either B_ONE_STATE_BUTTON (momentary) or B_TWO_STATE_BUTTON (toggle).
+ * @param resizingMode How the view resizes when its parent is resized.
+ * @param flags       View flags controlling event handling and drawing behaviour.
+ * @note  The supplied pictures are deep-copied; the caller retains ownership of
+ *        the originals.
+ * @see   BControl::BControl()
+ */
 BPictureButton::BPictureButton(BRect frame, const char* name,
 	BPicture* off, BPicture* on, BMessage* message,
 	uint32 behavior, uint32 resizingMode, uint32 flags)
@@ -28,6 +71,16 @@ BPictureButton::BPictureButton(BRect frame, const char* name,
 }
 
 
+/**
+ * @brief Unarchiving constructor; restores a BPictureButton from a BMessage.
+ *
+ * Reads the behavior mode and all four picture slots from the archive message.
+ * Missing picture entries are left as NULL; the caller is responsible for
+ * setting disabled pictures before the button is shown in a disabled state.
+ *
+ * @param data  The archive message previously produced by Archive().
+ * @see   Instantiate(), Archive()
+ */
 BPictureButton::BPictureButton(BMessage* data)
 	:
 	BControl(data),
@@ -57,6 +110,9 @@ BPictureButton::BPictureButton(BMessage* data)
 }
 
 
+/**
+ * @brief Destroy the BPictureButton and release all owned picture objects.
+ */
 BPictureButton::~BPictureButton()
 {
 	delete fEnabledOn;
@@ -66,6 +122,14 @@ BPictureButton::~BPictureButton()
 }
 
 
+/**
+ * @brief Instantiate a BPictureButton from an archived BMessage.
+ *
+ * @param data  The archive message to instantiate from.
+ * @return A newly allocated BPictureButton, or NULL if @a data is not a valid
+ *         BPictureButton archive.
+ * @see   Archive()
+ */
 BArchivable*
 BPictureButton::Instantiate(BMessage* data)
 {
@@ -76,6 +140,19 @@ BPictureButton::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archive the button's state and pictures into a BMessage.
+ *
+ * When @a deep is true, each non-NULL picture is recursively archived under
+ * the keys "_e_on", "_e_off", "_d_on", and "_d_off". The behavior mode is
+ * always written as "_behave".
+ *
+ * @param data  The message to archive into.
+ * @param deep  If true, BPicture objects are archived recursively.
+ * @return B_OK on success, or an error code if archiving fails.
+ * @retval B_OK On success.
+ * @see   Instantiate()
+ */
 status_t
 BPictureButton::Archive(BMessage* data, bool deep) const
 {
@@ -188,6 +265,18 @@ BPictureButton::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Draw the button by rendering the appropriate BPicture for the current state.
+ *
+ * Selects between the enabled-on, enabled-off, disabled-on, and disabled-off
+ * pictures based on IsEnabled() and Value(). If the button has keyboard focus,
+ * a navigation-colour rectangle is stroked around the bounds.
+ *
+ * @param updateRect  The rectangle that needs to be redrawn (passed by the
+ *                    drawing system; the picture always covers the full bounds).
+ * @note  Calls debugger() if the required disabled pictures have not been set.
+ * @see   SetDisabledOn(), SetDisabledOff()
+ */
 void
 BPictureButton::Draw(BRect updateRect)
 {
@@ -222,6 +311,16 @@ BPictureButton::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handle keyboard activation of the button.
+ *
+ * Pressing B_ENTER or B_SPACE triggers the button: momentary buttons
+ * flash on then off, toggle buttons flip their state. Invoke() is called
+ * in either case. All other keys are forwarded to BControl.
+ *
+ * @param bytes     Pointer to the raw key bytes.
+ * @param numBytes  Number of bytes in @a bytes.
+ */
 void
 BPictureButton::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -248,6 +347,17 @@ BPictureButton::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Handle a mouse-button press on the picture button.
+ *
+ * Ignored when the button is disabled. Otherwise, captures pointer events and
+ * updates the visual state: momentary buttons switch on, toggle buttons flip
+ * their current state. Tracking mode is enabled so that MouseUp() can finalise
+ * the action.
+ *
+ * @param where  The cursor position in the view's coordinate system.
+ * @see   MouseUp(), MouseMoved()
+ */
 void
 BPictureButton::MouseDown(BPoint where)
 {
@@ -271,6 +381,16 @@ BPictureButton::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Handle a mouse-button release on the picture button.
+ *
+ * If the button is enabled and tracking, and the release occurs inside the
+ * view bounds, a momentary button is reset to the off state (after a short
+ * delay) and Invoke() is called. Tracking mode is cleared unconditionally.
+ *
+ * @param where  The cursor position in the view's coordinate system at release time.
+ * @see   MouseDown(), Invoke()
+ */
 void
 BPictureButton::MouseUp(BPoint where)
 {
@@ -290,6 +410,18 @@ BPictureButton::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Track cursor movement while the mouse button is held down.
+ *
+ * When tracking, exiting the view resets the button to off, and re-entering
+ * restores it to on, providing the standard button-cancel-by-dragging-away
+ * behaviour. When not tracking, the event is forwarded to BControl.
+ *
+ * @param where        Current cursor position in the view's coordinate system.
+ * @param code         Transit code: B_ENTERED_VIEW, B_EXITED_VIEW, etc.
+ * @param dragMessage  Drag-and-drop payload, if any (may be NULL).
+ * @see   MouseDown(), MouseUp()
+ */
 void
 BPictureButton::MouseMoved(BPoint where, uint32 code,
 	const BMessage* dragMessage)
@@ -307,14 +439,13 @@ BPictureButton::MouseMoved(BPoint where, uint32 code,
 // #pragma mark -
 
 
-void
-BPictureButton::SetEnabledOn(BPicture* picture)
-{
-	delete fEnabledOn;
-	fEnabledOn = new (std::nothrow) BPicture(*picture);
-}
-
-
+/**
+ * @brief Replace the picture shown when the button is enabled and in the off state.
+ *
+ * The existing picture is deleted and replaced with a deep copy of @a picture.
+ *
+ * @param picture  The new picture to use for the enabled-off state.
+ */
 void
 BPictureButton::SetEnabledOff(BPicture* picture)
 {
@@ -323,6 +454,30 @@ BPictureButton::SetEnabledOff(BPicture* picture)
 }
 
 
+/**
+ * @brief Replace the picture shown when the button is enabled and in the on state.
+ *
+ * The existing picture is deleted and replaced with a deep copy of @a picture.
+ *
+ * @param picture  The new picture to use for the enabled-on state.
+ */
+void
+BPictureButton::SetEnabledOn(BPicture* picture)
+{
+	delete fEnabledOn;
+	fEnabledOn = new (std::nothrow) BPicture(*picture);
+}
+
+
+/**
+ * @brief Replace the picture shown when the button is disabled and in the on state.
+ *
+ * The existing picture is deleted and replaced with a deep copy of @a picture.
+ * Required for B_TWO_STATE_BUTTON in the disabled state.
+ *
+ * @param picture  The new picture to use for the disabled-on state.
+ * @see   SetDisabledOff()
+ */
 void
 BPictureButton::SetDisabledOn(BPicture* picture)
 {
@@ -331,6 +486,16 @@ BPictureButton::SetDisabledOn(BPicture* picture)
 }
 
 
+/**
+ * @brief Replace the picture shown when the button is disabled and in the off state.
+ *
+ * The existing picture is deleted and replaced with a deep copy of @a picture.
+ * This picture must be set before the button is disabled; Draw() calls
+ * debugger() if it is missing.
+ *
+ * @param picture  The new picture to use for the disabled-off state.
+ * @see   SetDisabledOn()
+ */
 void
 BPictureButton::SetDisabledOff(BPicture* picture)
 {
@@ -339,6 +504,11 @@ BPictureButton::SetDisabledOff(BPicture* picture)
 }
 
 
+/**
+ * @brief Return the picture used when the button is enabled and in the on state.
+ *
+ * @return Pointer to the enabled-on BPicture, or NULL if none has been set.
+ */
 BPicture*
 BPictureButton::EnabledOn() const
 {
@@ -346,6 +516,11 @@ BPictureButton::EnabledOn() const
 }
 
 
+/**
+ * @brief Return the picture used when the button is enabled and in the off state.
+ *
+ * @return Pointer to the enabled-off BPicture, or NULL if none has been set.
+ */
 BPicture*
 BPictureButton::EnabledOff() const
 {
@@ -353,6 +528,11 @@ BPictureButton::EnabledOff() const
 }
 
 
+/**
+ * @brief Return the picture used when the button is disabled and in the on state.
+ *
+ * @return Pointer to the disabled-on BPicture, or NULL if none has been set.
+ */
 BPicture*
 BPictureButton::DisabledOn() const
 {
@@ -360,6 +540,11 @@ BPictureButton::DisabledOn() const
 }
 
 
+/**
+ * @brief Return the picture used when the button is disabled and in the off state.
+ *
+ * @return Pointer to the disabled-off BPicture, or NULL if none has been set.
+ */
 BPicture*
 BPictureButton::DisabledOff() const
 {
@@ -367,6 +552,13 @@ BPictureButton::DisabledOff() const
 }
 
 
+/**
+ * @brief Set the button's interaction behaviour.
+ *
+ * @param behavior  B_ONE_STATE_BUTTON for a momentary button, or
+ *                  B_TWO_STATE_BUTTON for a toggle button.
+ * @see   Behavior()
+ */
 void
 BPictureButton::SetBehavior(uint32 behavior)
 {
@@ -374,6 +566,12 @@ BPictureButton::SetBehavior(uint32 behavior)
 }
 
 
+/**
+ * @brief Return the button's current interaction behaviour.
+ *
+ * @return B_ONE_STATE_BUTTON or B_TWO_STATE_BUTTON.
+ * @see    SetBehavior()
+ */
 uint32
 BPictureButton::Behavior() const
 {
@@ -411,6 +609,22 @@ BPictureButton::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Dispatch a binary-compatibility perform code to the appropriate virtual method.
+ *
+ * Enables calling layout-related virtual methods (MinSize, MaxSize,
+ * PreferredSize, LayoutAlignment, HasHeightForWidth, GetHeightForWidth,
+ * SetLayout, LayoutInvalidated, DoLayout, SetIcon) through the stable ABI
+ * perform() mechanism without requiring a vtable entry for each.
+ *
+ * @param code   One of the PERFORM_CODE_* constants identifying the method to invoke.
+ * @param _data  Pointer to a perform_data_* struct whose fields carry both the
+ *               input arguments and receive the return value.
+ * @return B_OK if the code was handled, or the result of BControl::Perform()
+ *         for unrecognised codes.
+ * @retval B_OK On success.
+ * @see   BControl::Perform()
+ */
 status_t
 BPictureButton::Perform(perform_code code, void* _data)
 {
@@ -492,4 +706,3 @@ BPictureButton::operator=(const BPictureButton &button)
 {
 	return *this;
 }
-

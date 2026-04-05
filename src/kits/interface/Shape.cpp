@@ -1,12 +1,41 @@
 /*
- * Copyright 2003-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Marc Flerackers, mflerackers@androme.be
- *		Michael Lotz, mmlr@mlotz.ch
- *		Marcus Overhagen, marcus@overhagen.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Michael Lotz, mmlr@mlotz.ch
+ *       Marcus Overhagen, marcus@overhagen.de
+ */
+
+
+/**
+ * @file Shape.cpp
+ * @brief Implementation of BShape and BShapeIterator for vector path operations
+ *
+ * BShape stores a sequence of path operations (move-to, line-to, bezier curve,
+ * close) that describe a vector outline. BShapeIterator provides a visitor
+ * interface for traversing shape operations. BView can fill and stroke BShape
+ * objects.
+ *
+ * @see BView, BShapeIterator
  */
 
 
@@ -26,16 +55,41 @@
 //	#pragma mark - BShapeIterator
 
 
+/**
+ * @brief Construct a BShapeIterator.
+ *
+ * The default constructor performs no action; all state is managed by
+ * concrete subclasses.
+ */
 BShapeIterator::BShapeIterator()
 {
 }
 
 
+/**
+ * @brief Destroy the BShapeIterator.
+ *
+ * The virtual destructor ensures that subclass resources are released when
+ * the iterator is deleted through a base-class pointer.
+ */
 BShapeIterator::~BShapeIterator()
 {
 }
 
 
+/**
+ * @brief Walk every operation in \a shape, dispatching to the appropriate hook.
+ *
+ * Decodes the packed op-list stored in the shape's private data and calls
+ * IterateMoveTo(), IterateLineTo(), IterateBezierTo(), IterateArcTo(), and
+ * IterateClose() in order for each recorded operation.
+ *
+ * @param shape The shape whose operations are to be iterated.
+ * @return B_OK on success. Individual hook methods may return error codes but
+ *         the default implementations always return B_OK.
+ * @see IterateMoveTo(), IterateLineTo(), IterateBezierTo(), IterateArcTo(),
+ *      IterateClose()
+ */
 status_t
 BShapeIterator::Iterate(BShape* shape)
 {
@@ -83,6 +137,16 @@ BShapeIterator::Iterate(BShape* shape)
 }
 
 
+/**
+ * @brief Hook called when a MoveTo operation is encountered during iteration.
+ *
+ * Subclasses override this to respond to the start of a new sub-path.
+ * The default implementation does nothing and returns B_OK.
+ *
+ * @param point Pointer to the destination point of the move.
+ * @return B_OK (default); subclasses may return an error to abort.
+ * @see Iterate()
+ */
 status_t
 BShapeIterator::IterateMoveTo(BPoint* point)
 {
@@ -90,6 +154,18 @@ BShapeIterator::IterateMoveTo(BPoint* point)
 }
 
 
+/**
+ * @brief Hook called when one or more LineTo operations are encountered.
+ *
+ * Subclasses override this to draw or process line segments. Multiple
+ * consecutive LineTo operations may be batched into a single call.
+ * The default implementation does nothing and returns B_OK.
+ *
+ * @param lineCount  The number of line endpoints in \a linePoints.
+ * @param linePoints Array of \a lineCount destination points.
+ * @return B_OK (default); subclasses may return an error to abort.
+ * @see Iterate()
+ */
 status_t
 BShapeIterator::IterateLineTo(int32 lineCount, BPoint* linePoints)
 {
@@ -97,6 +173,19 @@ BShapeIterator::IterateLineTo(int32 lineCount, BPoint* linePoints)
 }
 
 
+/**
+ * @brief Hook called when one or more cubic Bezier segments are encountered.
+ *
+ * Each segment is described by three consecutive points: two control points
+ * followed by the endpoint. Multiple segments may be batched into a single call.
+ * The default implementation does nothing and returns B_OK.
+ *
+ * @param bezierCount The number of complete Bezier segments.
+ * @param bezierPoints Array of 3 * \a bezierCount points (control1, control2,
+ *                     endpoint repeated for each segment).
+ * @return B_OK (default); subclasses may return an error to abort.
+ * @see Iterate()
+ */
 status_t
 BShapeIterator::IterateBezierTo(int32 bezierCount, BPoint* bezierPoints)
 {
@@ -104,6 +193,16 @@ BShapeIterator::IterateBezierTo(int32 bezierCount, BPoint* bezierPoints)
 }
 
 
+/**
+ * @brief Hook called when a Close operation is encountered during iteration.
+ *
+ * Subclasses override this to close the current sub-path with a straight line
+ * back to its most recent MoveTo point. The default implementation does
+ * nothing and returns B_OK.
+ *
+ * @return B_OK (default); subclasses may return an error to abort.
+ * @see Iterate()
+ */
 status_t
 BShapeIterator::IterateClose()
 {
@@ -111,6 +210,22 @@ BShapeIterator::IterateClose()
 }
 
 
+/**
+ * @brief Hook called when an ArcTo operation is encountered during iteration.
+ *
+ * Subclasses override this to draw or process an elliptical arc. The arc
+ * parameters follow the SVG arc convention. The default implementation does
+ * nothing and returns B_OK.
+ *
+ * @param rx               X radius of the ellipse.
+ * @param ry               Y radius of the ellipse.
+ * @param angle            Rotation of the ellipse's X axis in degrees.
+ * @param largeArc         True to take the large-arc sweep, false for small.
+ * @param counterClockWise True if the arc sweeps counter-clockwise.
+ * @param point            The arc endpoint.
+ * @return B_OK (default); subclasses may return an error to abort.
+ * @see Iterate()
+ */
 status_t
 BShapeIterator::IterateArcTo(float& rx, float& ry, float& angle, bool largeArc,
 	bool counterClockWise, BPoint& point)
@@ -130,12 +245,21 @@ void BShapeIterator::_ReservedShapeIterator4() {}
 // #pragma mark - BShape
 
 
+/**
+ * @brief Construct an empty BShape with no path operations.
+ */
 BShape::BShape()
 {
 	InitData();
 }
 
 
+/**
+ * @brief Copy-construct a BShape by duplicating all operations from \a other.
+ *
+ * @param other The shape to copy.
+ * @see AddShape()
+ */
 BShape::BShape(const BShape& other)
 {
 	InitData();
@@ -144,6 +268,14 @@ BShape::BShape(const BShape& other)
 
 
 #if defined(__cplusplus) && __cplusplus >= 201103L
+/**
+ * @brief Move-construct a BShape by transferring path data from \a other.
+ *
+ * After the move, \a other is left in an empty but valid state.
+ *
+ * @param other The shape to move from.
+ * @see MoveFrom()
+ */
 BShape::BShape(BShape&& other)
 {
 	InitData();
@@ -152,6 +284,15 @@ BShape::BShape(BShape&& other)
 #endif
 
 
+/**
+ * @brief Unarchiving constructor — restore a BShape from a BMessage archive.
+ *
+ * Reads the "ops" (int32 array) and "pts" (BPoint array) fields from
+ * \a archive to reconstruct the path data.
+ *
+ * @param archive The archive message produced by Archive().
+ * @see Archive(), Instantiate()
+ */
 BShape::BShape(BMessage* archive)
 	:
 	BArchivable(archive)
@@ -189,6 +330,12 @@ BShape::BShape(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroy the BShape, releasing all path data.
+ *
+ * Frees the op-list and point-list arrays when the shape owns them, then
+ * releases the reference to the private shape_data object.
+ */
 BShape::~BShape()
 {
 	shape_data* data = (shape_data*)fPrivateData;
@@ -201,6 +348,18 @@ BShape::~BShape()
 }
 
 
+/**
+ * @brief Archive the BShape's path data into a BMessage.
+ *
+ * Stores the point list under the "pts" key (B_POINT_TYPE) and the op list
+ * under the "ops" key (B_INT32_TYPE). An empty shape (no ops or no points)
+ * is archived with just the base BArchivable fields.
+ *
+ * @param archive The message to archive into.
+ * @param deep    Passed to BArchivable::Archive(); unused by BShape itself.
+ * @return B_OK on success, or an error code on the first failure.
+ * @see Instantiate()
+ */
 status_t
 BShape::Archive(BMessage* archive, bool deep) const
 {
@@ -237,6 +396,13 @@ BShape::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Create a new BShape from an archive message.
+ *
+ * @param archive The archive message to instantiate from.
+ * @return A newly allocated BShape on success, or NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable*
 BShape::Instantiate(BMessage* archive)
 {
@@ -247,6 +413,15 @@ BShape::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Copy-assign another shape's path data to this shape.
+ *
+ * Clears the existing path and copies all operations from \a other.
+ *
+ * @param other The source shape.
+ * @return A reference to this shape.
+ * @see AddShape(), Clear()
+ */
 BShape&
 BShape::operator=(const BShape& other)
 {
@@ -260,6 +435,16 @@ BShape::operator=(const BShape& other)
 
 
 #if defined(__cplusplus) && __cplusplus >= 201103L
+/**
+ * @brief Move-assign another shape's path data to this shape.
+ *
+ * Transfers all path data from \a other without copying, then leaves \a other
+ * in an empty state.
+ *
+ * @param other The source shape to move from.
+ * @return A reference to this shape.
+ * @see MoveFrom()
+ */
 BShape&
 BShape::operator=(BShape&& other)
 {
@@ -270,6 +455,14 @@ BShape::operator=(BShape&& other)
 #endif
 
 
+/**
+ * @brief Compare two shapes for equality.
+ *
+ * Two shapes are equal if they have identical op-lists and point-lists.
+ *
+ * @param other The shape to compare against.
+ * @return True if both shapes contain exactly the same path data.
+ */
 bool
 BShape::operator==(const BShape& other) const
 {
@@ -292,6 +485,13 @@ BShape::operator==(const BShape& other) const
 }
 
 
+/**
+ * @brief Compare two shapes for inequality.
+ *
+ * @param other The shape to compare against.
+ * @return True if the shapes differ in any op or point.
+ * @see operator==()
+ */
 bool
 BShape::operator!=(const BShape& other) const
 {
@@ -299,6 +499,12 @@ BShape::operator!=(const BShape& other) const
 }
 
 
+/**
+ * @brief Remove all path operations and reset the shape to an empty state.
+ *
+ * Frees the op-list and point-list arrays and resets fState and fBuildingOp
+ * to zero. The shape can be reused after calling Clear().
+ */
 void
 BShape::Clear()
 {
@@ -323,6 +529,15 @@ BShape::Clear()
 }
 
 
+/**
+ * @brief Transfer path data from \a other into this shape without copying.
+ *
+ * Swaps the private shape_data pointers so that this shape takes ownership
+ * of \a other's op-list and point-list. \a other is left empty.
+ *
+ * @param other The source shape whose data is moved.
+ * @see operator=(BShape&&)
+ */
 void
 BShape::MoveFrom(BShape& other)
 {
@@ -337,6 +552,15 @@ BShape::MoveFrom(BShape& other)
 }
 
 
+/**
+ * @brief Compute and return the axis-aligned bounding box of the shape.
+ *
+ * Delegates to shape_data::DetermineBoundingBox(), which scans all recorded
+ * points.
+ *
+ * @return The smallest BRect that contains all points in the shape, or an
+ *         invalid BRect if the shape is empty.
+ */
 BRect
 BShape::Bounds() const
 {
@@ -345,6 +569,14 @@ BShape::Bounds() const
 }
 
 
+/**
+ * @brief Return the last point appended to the shape.
+ *
+ * Useful for computing relative moves or continuation points after a series
+ * of path operations.
+ *
+ * @return The most recently added BPoint, or B_ORIGIN if the shape is empty.
+ */
 BPoint
 BShape::CurrentPosition() const
 {
@@ -357,6 +589,17 @@ BShape::CurrentPosition() const
 }
 
 
+/**
+ * @brief Append all operations and points from \a otherShape to this shape.
+ *
+ * Allocates additional capacity as needed. The fBuildingOp is updated to
+ * match the last building op of \a otherShape so that subsequent operations
+ * are merged correctly.
+ *
+ * @param otherShape The shape whose path data is appended.
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list or point-list cannot be grown.
+ */
 status_t
 BShape::AddShape(const BShape* otherShape)
 {
@@ -380,6 +623,17 @@ BShape::AddShape(const BShape* otherShape)
 }
 
 
+/**
+ * @brief Begin a new sub-path at \a point.
+ *
+ * If the previous operation was also a MoveTo, the destination point is
+ * replaced rather than adding a new op, keeping the op-list compact.
+ *
+ * @param point The starting point of the new sub-path.
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list or point-list cannot be grown.
+ * @see LineTo(), BezierTo(), Close()
+ */
 status_t
 BShape::MoveTo(BPoint point)
 {
@@ -406,6 +660,17 @@ BShape::MoveTo(BPoint point)
 }
 
 
+/**
+ * @brief Draw a straight line from the current position to \a point.
+ *
+ * Consecutive LineTo calls after a MoveTo (or other LineTo) are merged into
+ * a single op entry with an incremented count to keep the op-list compact.
+ *
+ * @param point The endpoint of the line segment.
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list or point-list cannot be grown.
+ * @see MoveTo(), BezierTo(), Close()
+ */
 status_t
 BShape::LineTo(BPoint point)
 {
@@ -436,6 +701,17 @@ BShape::LineTo(BPoint point)
 }
 
 
+/**
+ * @brief Draw a cubic Bezier curve using an array of three control points.
+ *
+ * Convenience overload that unpacks \a controlPoints[0..2] and calls the
+ * three-argument form.
+ *
+ * @param controlPoints Array of three points: control1, control2, endpoint.
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list or point-list cannot be grown.
+ * @see BezierTo(const BPoint&, const BPoint&, const BPoint&)
+ */
 status_t
 BShape::BezierTo(BPoint controlPoints[3])
 {
@@ -443,6 +719,19 @@ BShape::BezierTo(BPoint controlPoints[3])
 }
 
 
+/**
+ * @brief Draw a cubic Bezier curve to \a endPoint via two control points.
+ *
+ * Consecutive BezierTo calls are merged into a single op entry with an
+ * incremented count (in steps of 3) to keep the op-list compact.
+ *
+ * @param control1  The first control point.
+ * @param control2  The second control point.
+ * @param endPoint  The curve endpoint.
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list or point-list cannot be grown.
+ * @see LineTo(), ArcTo(), Close()
+ */
 status_t
 BShape::BezierTo(const BPoint& control1, const BPoint& control2,
 	const BPoint& endPoint)
@@ -475,6 +764,23 @@ BShape::BezierTo(const BPoint& control1, const BPoint& control2,
 }
 
 
+/**
+ * @brief Draw an elliptical arc following the SVG arc convention.
+ *
+ * The arc parameters (radii, axis rotation, large-arc flag, sweep direction)
+ * map directly to the SVG 'A' path command. The parameters are packed into
+ * three BPoint slots so they fit the existing point-list structure.
+ *
+ * @param rx               X radius of the arc ellipse.
+ * @param ry               Y radius of the arc ellipse.
+ * @param angle            Rotation of the ellipse's X axis in degrees.
+ * @param largeArc         True to use the large-arc sweep.
+ * @param counterClockWise True if the arc sweeps counter-clockwise.
+ * @param point            The arc endpoint.
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list or point-list cannot be grown.
+ * @see BezierTo(), LineTo(), Close()
+ */
 status_t
 BShape::ArcTo(float rx, float ry, float angle, bool largeArc,
 	bool counterClockWise, const BPoint& point)
@@ -521,6 +827,15 @@ BShape::ArcTo(float rx, float ry, float angle, bool largeArc,
 }
 
 
+/**
+ * @brief Close the current sub-path with a straight line back to its origin.
+ *
+ * A Close immediately after another Close or a MoveTo is silently ignored.
+ *
+ * @return B_OK on success.
+ * @retval B_NO_MEMORY If the op-list cannot be grown.
+ * @see MoveTo(), LineTo()
+ */
 status_t
 BShape::Close()
 {
@@ -551,6 +866,15 @@ BShape::Close()
 //	#pragma mark - BShape private methods
 
 
+/**
+ * @brief Binary-compatibility hook for BShape virtual methods.
+ *
+ * Forwards unknown perform codes to BArchivable::Perform().
+ *
+ * @param code The perform code identifying the operation.
+ * @param data Pointer to the perform_data structure for \a code.
+ * @return B_OK on success, or an error from BArchivable::Perform().
+ */
 status_t
 BShape::Perform(perform_code code, void* data)
 {
@@ -570,6 +894,17 @@ void BShape::_ReservedShape4() {}
 //	#pragma mark - BShape private methods
 
 
+/**
+ * @brief Read the raw op-list and point-list out of the shape's private data.
+ *
+ * Provides low-level access to the shape internals for use by the app server
+ * or rendering back-ends that need to operate directly on the packed arrays.
+ *
+ * @param opCount  Set to the number of entries in the op-list on return.
+ * @param ptCount  Set to the number of points in the point-list on return.
+ * @param opList   Set to a pointer to the op-list array on return.
+ * @param ptList   Set to a pointer to the point-list array on return.
+ */
 void
 BShape::Private::GetData(int32* opCount, int32* ptCount, uint32** opList,
 	BPoint** ptList)
@@ -583,6 +918,18 @@ BShape::Private::GetData(int32* opCount, int32* ptCount, uint32** opList,
 }
 
 
+/**
+ * @brief Replace the shape's raw op-list and point-list in bulk.
+ *
+ * Clears the existing shape data, allocates new arrays of the required size,
+ * and copies the supplied lists. The fBuildingOp is set to the last op in the
+ * new list so that subsequent path operations are merged correctly.
+ *
+ * @param opCount The number of entries in \a opList.
+ * @param ptCount The number of points in \a ptList.
+ * @param opList  The new op-list; copied into internal storage.
+ * @param ptList  The new point-list; copied into internal storage.
+ */
 void
 BShape::Private::SetData(int32 opCount, int32 ptCount, const uint32* opList,
 	const BPoint* ptList)
@@ -608,6 +955,13 @@ BShape::Private::SetData(int32 opCount, int32 ptCount, const uint32* opList,
 }
 
 
+/**
+ * @brief Allocate or zero-initialise the shape's private data.
+ *
+ * Creates a new shape_data object, sets fState and fBuildingOp to zero, and
+ * initialises all list pointers and counts to NULL / 0. Called by every
+ * constructor before any path data is added.
+ */
 void
 BShape::InitData()
 {
@@ -626,6 +980,16 @@ BShape::InitData()
 }
 
 
+/**
+ * @brief Ensure the op-list has capacity for at least \a count more entries.
+ *
+ * Grows the op-list in chunks of 256 entries using realloc() to amortise
+ * allocation costs. The existing entries are preserved.
+ *
+ * @param count The number of additional entries required.
+ * @return True if the array has sufficient capacity after the call, false if
+ *         realloc() fails.
+ */
 inline bool
 BShape::AllocateOps(int32 count)
 {
@@ -645,6 +1009,16 @@ BShape::AllocateOps(int32 count)
 }
 
 
+/**
+ * @brief Ensure the point-list has capacity for at least \a count more points.
+ *
+ * Grows the point-list in chunks of 256 entries using realloc() to amortise
+ * allocation costs. The existing points are preserved.
+ *
+ * @param count The number of additional BPoint slots required.
+ * @return True if the array has sufficient capacity after the call, false if
+ *         realloc() fails.
+ */
 inline bool
 BShape::AllocatePts(int32 count)
 {
@@ -671,6 +1045,17 @@ BShape::AllocatePts(int32 count)
 #if __GNUC__ < 3
 
 
+/**
+ * @brief GCC 2 in-place copy-constructor thunk for BShape.
+ *
+ * Constructs a BShape copy in pre-allocated memory \a self by copying all
+ * path data from \a copyFrom. Used by the GCC 2 ABI when a BShape is
+ * returned by value.
+ *
+ * @param self     Pre-allocated memory region for the new BShape.
+ * @param copyFrom The source shape to copy from.
+ * @return Pointer to the newly constructed BShape at \a self.
+ */
 extern "C" BShape*
 __6BShapeR6BShape(void* self, BShape& copyFrom)
 {
@@ -679,6 +1064,12 @@ __6BShapeR6BShape(void* self, BShape& copyFrom)
 }
 
 
+/**
+ * @brief GCC 2 binary-compatibility thunk for BShape::Bounds().
+ *
+ * @param self The BShape instance to query.
+ * @return The bounding box of the shape.
+ */
 extern "C" BRect
 Bounds__6BShape(BShape* self)
 {
@@ -686,6 +1077,12 @@ Bounds__6BShape(BShape* self)
 }
 
 
+/**
+ * @brief GCC 2 binary-compatibility placeholder for the first reserved
+ *        BShapeIterator slot.
+ *
+ * @param self Unused iterator pointer.
+ */
 extern "C" void
 _ReservedShapeIterator1__14BShapeIterator(BShapeIterator* self)
 {
@@ -695,6 +1092,12 @@ _ReservedShapeIterator1__14BShapeIterator(BShapeIterator* self)
 #else // __GNUC__ < 3
 
 
+/**
+ * @brief GCC 3+ binary-compatibility placeholder for the first reserved
+ *        BShapeIterator slot.
+ *
+ * @param self Unused iterator pointer.
+ */
 extern "C" void
 _ZN14BShapeIterator23_ReservedShapeIterator1Ev(BShapeIterator* self)
 {

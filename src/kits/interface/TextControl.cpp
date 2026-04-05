@@ -1,16 +1,41 @@
 /*
- * Copyright 2001-2020 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Frans van Nispen (xlr8@tref.nl)
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Ingo Weinhold <bonefish@cs.tu-berlin.de>
- *		John Scipione <jscipione@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Frans van Nispen (xlr8@tref.nl)
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ *       John Scipione <jscipione@gmail.com>
  */
 
 
-/*!	BTextControl displays text that can act like a control. */
+/**
+ * @file TextControl.cpp
+ * @brief Implementation of BTextControl, a labeled text entry field
+ *
+ * BTextControl pairs a text label with an embedded text-editing view
+ * (BTextInput). It enforces input filters, sends a modification BMessage when
+ * editing is committed, and integrates with the layout system.
+ *
+ * @see BControl, BTextView
+ */
 
 
 #include <TextControl.h>
@@ -48,12 +73,16 @@
 
 
 namespace {
+	/** @brief Archive key for storing a layout item's frame rectangle. */
 	const char* const kFrameField = "BTextControl:layoutitem:frame";
+	/** @brief Archive key for the TextViewLayoutItem sub-object. */
 	const char* const kTextViewItemField = "BTextControl:textViewItem";
+	/** @brief Archive key for the LabelLayoutItem sub-object. */
 	const char* const kLabelItemField = "BMenuField:labelItem";
 }
 
 
+/** @brief Scripting property table exposing the "Value" (text) property via the BeOS scripting protocol. */
 static property_info sPropertyList[] = {
 	{
 		"Value",
@@ -150,13 +179,26 @@ struct BTextControl::LayoutData {
 };
 
 
+/** @brief Pixel inset applied around the embedded text view to create its border stroke area. */
 static const int32 kFrameMargin = 2;
+/** @brief Horizontal gap in pixels between the label and the text-input border. */
 static const int32 kLabelInputSpacing = 3;
 
 
 // #pragma mark - BTextControl
 
 
+/**
+ * @brief Constructs a frame-based BTextControl (BeOS-compatible layout).
+ *
+ * @param frame      Initial frame in the parent's coordinate system.
+ * @param name       Internal view name.
+ * @param label      Text label displayed to the left of the input field.
+ * @param text       Initial content of the text field.
+ * @param message    Message sent when the text is committed.
+ * @param resizeMask Resizing mode flags.
+ * @param flags      Standard BView flags; B_FRAME_EVENTS is added automatically.
+ */
 BTextControl::BTextControl(BRect frame, const char* name, const char* label,
 	const char* text, BMessage* message, uint32 resizeMask, uint32 flags)
 	:
@@ -168,6 +210,15 @@ BTextControl::BTextControl(BRect frame, const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a layout-enabled BTextControl with an explicit name.
+ *
+ * @param name    Internal view name.
+ * @param label   Text label displayed to the left of the input field.
+ * @param text    Initial content of the text field.
+ * @param message Message sent when the text is committed.
+ * @param flags   Standard BView flags; B_FRAME_EVENTS is added automatically.
+ */
 BTextControl::BTextControl(const char* name, const char* label,
 	const char* text, BMessage* message, uint32 flags)
 	:
@@ -179,6 +230,16 @@ BTextControl::BTextControl(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a layout-enabled BTextControl using label as the view identifier.
+ *
+ * This is the shortest constructor; it sets no explicit view name and uses
+ * default flags including B_WILL_DRAW, B_NAVIGABLE, and B_FRAME_EVENTS.
+ *
+ * @param label   Text label displayed to the left of the input field.
+ * @param text    Initial content of the text field.
+ * @param message Message sent when the text is committed.
+ */
 BTextControl::BTextControl(const char* label, const char* text,
 	BMessage* message)
 	:
@@ -191,6 +252,11 @@ BTextControl::BTextControl(const char* label, const char* text,
 }
 
 
+/**
+ * @brief Destructs the BTextControl and releases its resources.
+ *
+ * Clears the modification message and deletes the layout-data structure.
+ */
 BTextControl::~BTextControl()
 {
 	SetModificationMessage(NULL);
@@ -201,6 +267,13 @@ BTextControl::~BTextControl()
 //	#pragma mark - Archiving
 
 
+/**
+ * @brief Constructs a BTextControl from an archived BMessage.
+ *
+ * Restores the divider position, modification message, and alignment settings.
+ *
+ * @param archive The BMessage previously produced by BTextControl::Archive().
+ */
 BTextControl::BTextControl(BMessage* archive)
 	:
 	BControl(BUnarchiver::PrepareArchive(archive))
@@ -226,6 +299,12 @@ BTextControl::BTextControl(BMessage* archive)
 }
 
 
+/**
+ * @brief Creates a new BTextControl from an archived BMessage.
+ *
+ * @param archive The BMessage to instantiate from.
+ * @return A new BTextControl, or NULL if the archive is invalid.
+ */
 BArchivable*
 BTextControl::Instantiate(BMessage* archive)
 {
@@ -236,6 +315,16 @@ BTextControl::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archives the BTextControl's state into a BMessage.
+ *
+ * Stores label alignment, text alignment, divider position, and the
+ * modification message in addition to the base BControl archive data.
+ *
+ * @param data The BMessage to archive into.
+ * @param deep Whether to recursively archive layout items.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTextControl::Archive(BMessage* data, bool deep) const
 {
@@ -263,6 +352,15 @@ BTextControl::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Archives the layout items (LabelLayoutItem, TextViewLayoutItem) if managed.
+ *
+ * Called by the archiver after the main Archive() step to add any layout-item
+ * objects that the archiver has decided should be included.
+ *
+ * @param into The BMessage to add the layout items to.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextControl::AllArchived(BMessage* into) const
 {
@@ -283,6 +381,15 @@ BTextControl::AllArchived(BMessage* into) const
 }
 
 
+/**
+ * @brief Completes unarchiving after all child objects have been instantiated.
+ *
+ * Reconnects restored LabelLayoutItem and TextViewLayoutItem objects and
+ * initializes the embedded text view from the archive.
+ *
+ * @param from The original archive BMessage.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTextControl::AllUnarchived(const BMessage* from)
 {
@@ -319,6 +426,11 @@ BTextControl::AllUnarchived(const BMessage* from)
 //	#pragma mark - Hook methods
 
 
+/**
+ * @brief Hook called after all children have been attached to the window.
+ *
+ * Forwards the notification to BControl::AllAttached().
+ */
 void
 BTextControl::AllAttached()
 {
@@ -326,6 +438,11 @@ BTextControl::AllAttached()
 }
 
 
+/**
+ * @brief Hook called after all children have been detached from the window.
+ *
+ * Forwards the notification to BControl::AllDetached().
+ */
 void
 BTextControl::AllDetached()
 {
@@ -333,6 +450,12 @@ BTextControl::AllDetached()
 }
 
 
+/**
+ * @brief Synchronizes colors and editability when the view is added to a window.
+ *
+ * Updates the embedded text view's colors and enables or disables editing to
+ * match the current enabled state.
+ */
 void
 BTextControl::AttachedToWindow()
 {
@@ -343,6 +466,11 @@ BTextControl::AttachedToWindow()
 }
 
 
+/**
+ * @brief Hook called when the view is removed from its window.
+ *
+ * Forwards the notification to BControl::DetachedFromWindow().
+ */
 void
 BTextControl::DetachedFromWindow()
 {
@@ -350,6 +478,15 @@ BTextControl::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Draws the text-control border and the label.
+ *
+ * Renders the text-input border via BControlLook::DrawTextControlBorder() and,
+ * when a label is present, draws it in the area to the left of the divider.
+ * Active and disabled states affect the border flags and label color.
+ *
+ * @param updateRect The rectangle that needs to be redrawn.
+ */
 void
 BTextControl::Draw(BRect updateRect)
 {
@@ -385,6 +522,11 @@ BTextControl::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Called when the view's frame position changes.
+ *
+ * @param newPosition The new top-left corner in the parent's coordinate system.
+ */
 void
 BTextControl::FrameMoved(BPoint newPosition)
 {
@@ -392,6 +534,16 @@ BTextControl::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Invalidates changed border regions when the view is resized.
+ *
+ * Compares the new width and height against the cached previous values and
+ * selectively invalidates only the newly exposed or contracted border strips,
+ * then updates the cached dimensions.
+ *
+ * @param width  The new width of the view.
+ * @param height The new height of the view.
+ */
 void
 BTextControl::FrameResized(float width, float height)
 {
@@ -464,6 +616,15 @@ BTextControl::LayoutInvalidated(bool descendants)
 }
 
 
+/**
+ * @brief Handles incoming messages including color updates and "Value" scripting.
+ *
+ * Responds to B_COLORS_UPDATED by refreshing the text-view palette, and to
+ * B_GET_PROPERTY / B_SET_PROPERTY for the "Value" scripting key. All other
+ * messages are forwarded to BControl::MessageReceived().
+ *
+ * @param message The message to process.
+ */
 void
 BTextControl::MessageReceived(BMessage* message)
 {
@@ -513,6 +674,11 @@ BTextControl::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Focuses the embedded text view on mouse click.
+ *
+ * @param where The click location in the view's coordinate system.
+ */
 void
 BTextControl::MouseDown(BPoint where)
 {
@@ -521,6 +687,13 @@ BTextControl::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Forwards mouse-moved events to the base class.
+ *
+ * @param where       Current cursor position in the view's coordinate system.
+ * @param transit     Entry/exit transit code (B_ENTERED_VIEW, etc.).
+ * @param dragMessage The dragged BMessage, or NULL if no drag is in progress.
+ */
 void
 BTextControl::MouseMoved(BPoint where, uint32 transit,
 	const BMessage* dragMessage)
@@ -529,6 +702,11 @@ BTextControl::MouseMoved(BPoint where, uint32 transit,
 }
 
 
+/**
+ * @brief Forwards mouse-up events to the base class.
+ *
+ * @param where The release location in the view's coordinate system.
+ */
 void
 BTextControl::MouseUp(BPoint where)
 {
@@ -536,6 +714,14 @@ BTextControl::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Updates the focus ring when the parent window gains or loses activation.
+ *
+ * Invalidates the border area around the text view and the text view itself so
+ * the focus indicator is redrawn correctly.
+ *
+ * @param active @c true if the window just became active.
+ */
 void
 BTextControl::WindowActivated(bool active)
 {
@@ -555,6 +741,15 @@ BTextControl::WindowActivated(bool active)
 //	#pragma mark - Getters and Setters
 
 
+/**
+ * @brief Sets the text content of the embedded text view.
+ *
+ * Has no effect if the control was invoked via a means other than
+ * B_CONTROL_INVOKED. If the text view already has focus, the initial text is
+ * reset and all text is selected.
+ *
+ * @param text The new text string to display.
+ */
 void
 BTextControl::SetText(const char* text)
 {
@@ -574,6 +769,11 @@ BTextControl::SetText(const char* text)
 }
 
 
+/**
+ * @brief Returns the current text content.
+ *
+ * @return A pointer to the null-terminated text owned by the embedded BTextView.
+ */
 const char*
 BTextControl::Text() const
 {
@@ -612,6 +812,13 @@ BTextControl::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Returns the embedded BTextView used for text input.
+ *
+ * Callers may use this to configure allowed character sets, max bytes, etc.
+ *
+ * @return A pointer to the internal BTextView (never NULL after construction).
+ */
 BTextView*
 BTextControl::TextView() const
 {
@@ -619,6 +826,13 @@ BTextControl::TextView() const
 }
 
 
+/**
+ * @brief Sets the message sent whenever the text is modified.
+ *
+ * Takes ownership of @a message; the previous modification message is deleted.
+ *
+ * @param message The new modification message, or NULL to clear it.
+ */
 void
 BTextControl::SetModificationMessage(BMessage* message)
 {
@@ -627,6 +841,11 @@ BTextControl::SetModificationMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the message sent whenever the text is modified.
+ *
+ * @return The modification BMessage, or NULL if none has been set.
+ */
 BMessage*
 BTextControl::ModificationMessage() const
 {
@@ -634,6 +853,12 @@ BTextControl::ModificationMessage() const
 }
 
 
+/**
+ * @brief Sets the alignment of the label and the text within the input field.
+ *
+ * @param labelAlignment Horizontal alignment for the label (B_ALIGN_LEFT, etc.).
+ * @param textAlignment  Horizontal alignment for the text field text.
+ */
 void
 BTextControl::SetAlignment(alignment labelAlignment, alignment textAlignment)
 {
@@ -646,6 +871,14 @@ BTextControl::SetAlignment(alignment labelAlignment, alignment textAlignment)
 }
 
 
+/**
+ * @brief Retrieves the current label and text alignment settings.
+ *
+ * Either output pointer may be NULL if that value is not needed.
+ *
+ * @param[out] _label Receives the label alignment.
+ * @param[out] _text  Receives the text-field alignment.
+ */
 void
 BTextControl::GetAlignment(alignment* _label, alignment* _text) const
 {
@@ -657,6 +890,14 @@ BTextControl::GetAlignment(alignment* _label, alignment* _text) const
 }
 
 
+/**
+ * @brief Sets the horizontal divider position separating the label from the input.
+ *
+ * The position is snapped to the nearest pixel. The text view is repositioned
+ * and both it and the control are invalidated.
+ *
+ * @param position Pixel offset from the left edge of the view to the divider.
+ */
 void
 BTextControl::SetDivider(float position)
 {
@@ -671,6 +912,11 @@ BTextControl::SetDivider(float position)
 }
 
 
+/**
+ * @brief Returns the current divider position.
+ *
+ * @return Pixel offset from the left edge of the view to the label/input divider.
+ */
 float
 BTextControl::Divider() const
 {
@@ -678,6 +924,14 @@ BTextControl::Divider() const
 }
 
 
+/**
+ * @brief Delegates keyboard focus to or from the embedded text view.
+ *
+ * When gaining focus, all existing text is selected. When the state matches
+ * the current focus, no action is taken.
+ *
+ * @param state @c true to give focus, @c false to remove it.
+ */
 void
 BTextControl::MakeFocus(bool state)
 {
@@ -690,6 +944,15 @@ BTextControl::MakeFocus(bool state)
 }
 
 
+/**
+ * @brief Enables or disables the control and its embedded text view.
+ *
+ * Updates the text view's editable state, B_NAVIGABLE flag, colors, and
+ * invalidation when the new state differs from the current one. If there is
+ * no attached window, changes are applied lazily when the window appears.
+ *
+ * @param enable @c true to enable the control, @c false to disable it.
+ */
 void
 BTextControl::SetEnabled(bool enable)
 {
@@ -713,6 +976,16 @@ BTextControl::SetEnabled(bool enable)
 }
 
 
+/**
+ * @brief Returns the preferred size for this control.
+ *
+ * In non-layout mode, the width is at least as wide as the current bounds
+ * when no label is present (BeOS compatibility). Height is always the
+ * computed minimum.
+ *
+ * @param[out] _width  Receives the preferred width.
+ * @param[out] _height Receives the preferred height.
+ */
 void
 BTextControl::GetPreferredSize(float* _width, float* _height)
 {
@@ -735,6 +1008,12 @@ BTextControl::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resizes the control to its preferred size and resets the divider.
+ *
+ * Sets the divider to the string width of the label plus two pixels, then
+ * repositions the embedded text view accordingly.
+ */
 void
 BTextControl::ResizeToPreferred()
 {
@@ -773,6 +1052,19 @@ BTextControl::SetFlags(uint32 flags)
 //	#pragma mark - Scripting
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate handler.
+ *
+ * Handles the "Value" property itself; delegates everything else to
+ * BControl::ResolveSpecifier().
+ *
+ * @param message   The scripting message.
+ * @param index     Index into the message's specifier stack.
+ * @param specifier The current specifier BMessage.
+ * @param what      The specifier type constant.
+ * @param property  The property name string.
+ * @return @c this if the property is "Value", otherwise the base class result.
+ */
 BHandler*
 BTextControl::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -787,6 +1079,14 @@ BTextControl::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by BTextControl.
+ *
+ * Delegates to BControl::GetSupportedSuites().
+ *
+ * @param data The BMessage to populate with suite information.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextControl::GetSupportedSuites(BMessage* data)
 {
@@ -797,6 +1097,11 @@ BTextControl::GetSupportedSuites(BMessage* data)
 //	#pragma mark - Layout
 
 
+/**
+ * @brief Returns the minimum size for this control.
+ *
+ * @return The minimum BSize; honors any explicit minimum set by the caller.
+ */
 BSize
 BTextControl::MinSize()
 {
@@ -807,6 +1112,14 @@ BTextControl::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size for this control.
+ *
+ * Height is fixed at the minimum; width is unlimited to allow the text field
+ * to grow.
+ *
+ * @return The maximum BSize; honors any explicit maximum set by the caller.
+ */
 BSize
 BTextControl::MaxSize()
 {
@@ -821,6 +1134,12 @@ BTextControl::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size for this control.
+ *
+ * @return The preferred BSize (same as minimum); honors any explicit preferred
+ *         size set by the caller.
+ */
 BSize
 BTextControl::PreferredSize()
 {
@@ -831,6 +1150,15 @@ BTextControl::PreferredSize()
 }
 
 
+/**
+ * @brief Returns the default layout alignment for this control.
+ *
+ * Aligns the control to the left and centers it vertically within its layout
+ * cell.
+ *
+ * @return The composed BAlignment; honors any explicit alignment set by the
+ *         caller.
+ */
 BAlignment
 BTextControl::LayoutAlignment()
 {
@@ -842,6 +1170,13 @@ BTextControl::LayoutAlignment()
 }
 
 
+/**
+ * @brief Creates and returns the layout item representing the label portion.
+ *
+ * The item is lazily created on the first call and cached in fLayoutData.
+ *
+ * @return The LabelLayoutItem for use in a split layout.
+ */
 BLayoutItem*
 BTextControl::CreateLabelLayoutItem()
 {
@@ -852,6 +1187,13 @@ BTextControl::CreateLabelLayoutItem()
 }
 
 
+/**
+ * @brief Creates and returns the layout item representing the text-input portion.
+ *
+ * The item is lazily created on the first call and cached in fLayoutData.
+ *
+ * @return The TextViewLayoutItem for use in a split layout.
+ */
 BLayoutItem*
 BTextControl::CreateTextViewLayoutItem()
 {
@@ -936,6 +1278,17 @@ BTextControl::SetIcon(const BBitmap* icon, uint32 flags)
 // #pragma mark - private methods
 
 
+/**
+ * @brief Dispatches ABI-extension perform codes for BTextControl.
+ *
+ * Handles layout-related perform codes (MinSize, MaxSize, PreferredSize,
+ * LayoutAlignment, DoLayout, SetLayout, LayoutInvalidated, SetIcon,
+ * AllUnarchived, AllArchived) and forwards all others to BControl::Perform().
+ *
+ * @param code  The perform code identifying the virtual call to dispatch.
+ * @param _data Opaque pointer to the perform-specific data structure.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextControl::Perform(perform_code code, void* _data)
 {
@@ -1038,6 +1391,15 @@ BTextControl::operator=(const BTextControl&)
 }
 
 
+/**
+ * @brief Updates the embedded text view's color scheme to reflect the control state.
+ *
+ * When disabled, both text and background colors are blended toward the panel
+ * background. When the B_INVALID look flag is set, the background hue shifts
+ * toward the system failure color while preserving lightness.
+ *
+ * @param enable @c true if the control is currently enabled.
+ */
 void
 BTextControl::_UpdateTextViewColors(bool enable)
 {
@@ -1070,12 +1432,28 @@ BTextControl::_UpdateTextViewColors(bool enable)
 }
 
 
+/**
+ * @brief Commits the current text value as the control's confirmed value.
+ *
+ * Currently a no-op placeholder; subclasses may override to post-process the
+ * text when editing is finalized.
+ */
 void
 BTextControl::_CommitValue()
 {
 }
 
 
+/**
+ * @brief Initializes member variables shared by all BTextControl constructors.
+ *
+ * Sets up the layout data structure, applies the plain font if not archived,
+ * and computes the initial divider position from the label width.
+ *
+ * @param label   The label string; used to compute the initial divider position.
+ * @param archive Optional archive BMessage; if non-NULL, font properties
+ *                already present in the archive are not overwritten.
+ */
 void
 BTextControl::_InitData(const char* label, const BMessage* archive)
 {
@@ -1152,6 +1530,12 @@ BTextControl::_InitText(const char* initialText, const BMessage* archive)
 }
 
 
+/**
+ * @brief Validates and applies the initial layout geometry.
+ *
+ * Ensures cached layout data is up to date, resizes the view to the minimum
+ * height, and positions the embedded text view.
+ */
 void
 BTextControl::_ValidateLayout()
 {
@@ -1227,6 +1611,16 @@ BTextControl::_UpdateFrame()
 }
 
 
+/**
+ * @brief Recomputes and caches the label dimensions and minimum size.
+ *
+ * Calculates the label pixel width and height from the current font metrics,
+ * derives the minimum divider position, and computes the overall minimum size
+ * of the control. Results are cached in fLayoutData->min and fLayoutData->valid
+ * is set to @c true.
+ *
+ * @note This is a no-op if fLayoutData->valid is already @c true.
+ */
 void
 BTextControl::_ValidateLayoutData()
 {
@@ -1287,6 +1681,11 @@ BTextControl::_ValidateLayoutData()
 // #pragma mark - BTextControl::LabelLayoutItem
 
 
+/**
+ * @brief Constructs a LabelLayoutItem for the given BTextControl.
+ *
+ * @param parent The owning BTextControl.
+ */
 BTextControl::LabelLayoutItem::LabelLayoutItem(BTextControl* parent)
 	:
 	fParent(parent),
@@ -1295,6 +1694,11 @@ BTextControl::LabelLayoutItem::LabelLayoutItem(BTextControl* parent)
 }
 
 
+/**
+ * @brief Constructs a LabelLayoutItem from an archived BMessage.
+ *
+ * @param from The BMessage previously produced by LabelLayoutItem::Archive().
+ */
 BTextControl::LabelLayoutItem::LabelLayoutItem(BMessage* from)
 	:
 	BAbstractLayoutItem(from),
@@ -1305,6 +1709,11 @@ BTextControl::LabelLayoutItem::LabelLayoutItem(BMessage* from)
 }
 
 
+/**
+ * @brief Returns whether the label area is visible.
+ *
+ * @return @c true if the parent BTextControl is not hidden.
+ */
 bool
 BTextControl::LabelLayoutItem::IsVisible()
 {
@@ -1312,6 +1721,11 @@ BTextControl::LabelLayoutItem::IsVisible()
 }
 
 
+/**
+ * @brief No-op: visibility of the label item is controlled by the parent view.
+ *
+ * @param visible Ignored.
+ */
 void
 BTextControl::LabelLayoutItem::SetVisible(bool visible)
 {
@@ -1319,6 +1733,11 @@ BTextControl::LabelLayoutItem::SetVisible(bool visible)
 }
 
 
+/**
+ * @brief Returns the label item's current frame in screen coordinates.
+ *
+ * @return The cached frame rectangle.
+ */
 BRect
 BTextControl::LabelLayoutItem::Frame()
 {
@@ -1326,6 +1745,11 @@ BTextControl::LabelLayoutItem::Frame()
 }
 
 
+/**
+ * @brief Updates the label item's frame and propagates the change to the parent.
+ *
+ * @param frame The new frame rectangle assigned by the layout engine.
+ */
 void
 BTextControl::LabelLayoutItem::SetFrame(BRect frame)
 {
@@ -1334,6 +1758,11 @@ BTextControl::LabelLayoutItem::SetFrame(BRect frame)
 }
 
 
+/**
+ * @brief Sets the owning BTextControl, used after unarchiving.
+ *
+ * @param parent The BTextControl that owns this layout item.
+ */
 void
 BTextControl::LabelLayoutItem::SetParent(BTextControl* parent)
 {
@@ -1341,6 +1770,11 @@ BTextControl::LabelLayoutItem::SetParent(BTextControl* parent)
 }
 
 
+/**
+ * @brief Returns the BView associated with this layout item.
+ *
+ * @return The parent BTextControl, which is the actual view being laid out.
+ */
 BView*
 BTextControl::LabelLayoutItem::View()
 {
@@ -1348,6 +1782,14 @@ BTextControl::LabelLayoutItem::View()
 }
 
 
+/**
+ * @brief Returns the minimum size needed to render the label text.
+ *
+ * Returns BSize(-1, -1) when the parent has no label, signalling that the
+ * label area need not be reserved.
+ *
+ * @return The minimum BSize for the label, including the default label spacing.
+ */
 BSize
 BTextControl::LabelLayoutItem::BaseMinSize()
 {
@@ -1362,6 +1804,13 @@ BTextControl::LabelLayoutItem::BaseMinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size for the label item (same as minimum).
+ *
+ * The label does not grow; its size is fixed to the text width.
+ *
+ * @return The same value as BaseMinSize().
+ */
 BSize
 BTextControl::LabelLayoutItem::BaseMaxSize()
 {
@@ -1369,6 +1818,11 @@ BTextControl::LabelLayoutItem::BaseMaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size for the label item (same as minimum).
+ *
+ * @return The same value as BaseMinSize().
+ */
 BSize
 BTextControl::LabelLayoutItem::BasePreferredSize()
 {
@@ -1376,6 +1830,12 @@ BTextControl::LabelLayoutItem::BasePreferredSize()
 }
 
 
+/**
+ * @brief Returns the base alignment for the label layout item.
+ *
+ * @return Full-width, full-height alignment so the label fills its allocated
+ *         cell.
+ */
 BAlignment
 BTextControl::LabelLayoutItem::BaseAlignment()
 {
@@ -1383,6 +1843,11 @@ BTextControl::LabelLayoutItem::BaseAlignment()
 }
 
 
+/**
+ * @brief Returns the label item's frame in the parent view's coordinate system.
+ *
+ * @return The frame rectangle translated to parent-relative coordinates.
+ */
 BRect
 BTextControl::LabelLayoutItem::FrameInParent() const
 {
@@ -1390,6 +1855,15 @@ BTextControl::LabelLayoutItem::FrameInParent() const
 }
 
 
+/**
+ * @brief Archives the LabelLayoutItem into a BMessage.
+ *
+ * Stores the current frame under kFrameField in addition to base-class data.
+ *
+ * @param into The BMessage to archive into.
+ * @param deep Whether to archive child objects recursively.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextControl::LabelLayoutItem::Archive(BMessage* into, bool deep) const
 {
@@ -1402,6 +1876,12 @@ BTextControl::LabelLayoutItem::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Creates a new LabelLayoutItem from an archived BMessage.
+ *
+ * @param from The BMessage to instantiate from.
+ * @return A new LabelLayoutItem, or NULL if the archive is invalid.
+ */
 BArchivable*
 BTextControl::LabelLayoutItem::Instantiate(BMessage* from)
 {
@@ -1414,6 +1894,13 @@ BTextControl::LabelLayoutItem::Instantiate(BMessage* from)
 // #pragma mark - BTextControl::TextViewLayoutItem
 
 
+/**
+ * @brief Constructs a TextViewLayoutItem for the given BTextControl.
+ *
+ * Sets an unlimited maximum width so the text-input portion can grow freely.
+ *
+ * @param parent The owning BTextControl.
+ */
 BTextControl::TextViewLayoutItem::TextViewLayoutItem(BTextControl* parent)
 	:
 	fParent(parent),
@@ -1425,6 +1912,11 @@ BTextControl::TextViewLayoutItem::TextViewLayoutItem(BTextControl* parent)
 }
 
 
+/**
+ * @brief Constructs a TextViewLayoutItem from an archived BMessage.
+ *
+ * @param from The BMessage previously produced by TextViewLayoutItem::Archive().
+ */
 BTextControl::TextViewLayoutItem::TextViewLayoutItem(BMessage* from)
 	:
 	BAbstractLayoutItem(from),
@@ -1435,6 +1927,11 @@ BTextControl::TextViewLayoutItem::TextViewLayoutItem(BMessage* from)
 }
 
 
+/**
+ * @brief Returns whether the text-view area is visible.
+ *
+ * @return @c true if the parent BTextControl is not hidden.
+ */
 bool
 BTextControl::TextViewLayoutItem::IsVisible()
 {
@@ -1442,6 +1939,11 @@ BTextControl::TextViewLayoutItem::IsVisible()
 }
 
 
+/**
+ * @brief No-op: visibility of the text-view item is controlled by the parent view.
+ *
+ * @param visible Ignored.
+ */
 void
 BTextControl::TextViewLayoutItem::SetVisible(bool visible)
 {
@@ -1449,6 +1951,11 @@ BTextControl::TextViewLayoutItem::SetVisible(bool visible)
 }
 
 
+/**
+ * @brief Returns the text-view item's current frame in screen coordinates.
+ *
+ * @return The cached frame rectangle.
+ */
 BRect
 BTextControl::TextViewLayoutItem::Frame()
 {
@@ -1456,6 +1963,11 @@ BTextControl::TextViewLayoutItem::Frame()
 }
 
 
+/**
+ * @brief Updates the text-view item's frame and propagates the change to the parent.
+ *
+ * @param frame The new frame rectangle assigned by the layout engine.
+ */
 void
 BTextControl::TextViewLayoutItem::SetFrame(BRect frame)
 {
@@ -1464,6 +1976,11 @@ BTextControl::TextViewLayoutItem::SetFrame(BRect frame)
 }
 
 
+/**
+ * @brief Sets the owning BTextControl, used after unarchiving.
+ *
+ * @param parent The BTextControl that owns this layout item.
+ */
 void
 BTextControl::TextViewLayoutItem::SetParent(BTextControl* parent)
 {
@@ -1471,6 +1988,11 @@ BTextControl::TextViewLayoutItem::SetParent(BTextControl* parent)
 }
 
 
+/**
+ * @brief Returns the BView associated with this layout item.
+ *
+ * @return The parent BTextControl, which is the actual view being laid out.
+ */
 BView*
 BTextControl::TextViewLayoutItem::View()
 {
@@ -1478,6 +2000,12 @@ BTextControl::TextViewLayoutItem::View()
 }
 
 
+/**
+ * @brief Returns the minimum size for the text-input area including frame margins.
+ *
+ * @return The minimum BSize, derived from the embedded BTextView's minimum size
+ *         plus kFrameMargin on each side.
+ */
 BSize
 BTextControl::TextViewLayoutItem::BaseMinSize()
 {
@@ -1491,6 +2019,13 @@ BTextControl::TextViewLayoutItem::BaseMinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size for the text-input area.
+ *
+ * Width is unlimited so the text field can expand as much as space allows.
+ *
+ * @return A BSize with unlimited width and the same height as BaseMinSize().
+ */
 BSize
 BTextControl::TextViewLayoutItem::BaseMaxSize()
 {
@@ -1501,6 +2036,13 @@ BTextControl::TextViewLayoutItem::BaseMaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size for the text-input area.
+ *
+ * Uses a fixed preferred width of 100 pixels as a reasonable default.
+ *
+ * @return A BSize with a 100-pixel preferred width.
+ */
 BSize
 BTextControl::TextViewLayoutItem::BasePreferredSize()
 {
@@ -1512,6 +2054,11 @@ BTextControl::TextViewLayoutItem::BasePreferredSize()
 }
 
 
+/**
+ * @brief Returns the base alignment for the text-view layout item.
+ *
+ * @return Full-width, full-height alignment so the text field fills its cell.
+ */
 BAlignment
 BTextControl::TextViewLayoutItem::BaseAlignment()
 {
@@ -1519,6 +2066,11 @@ BTextControl::TextViewLayoutItem::BaseAlignment()
 }
 
 
+/**
+ * @brief Returns the text-view item's frame in the parent view's coordinate system.
+ *
+ * @return The frame rectangle translated to parent-relative coordinates.
+ */
 BRect
 BTextControl::TextViewLayoutItem::FrameInParent() const
 {
@@ -1526,6 +2078,15 @@ BTextControl::TextViewLayoutItem::FrameInParent() const
 }
 
 
+/**
+ * @brief Archives the TextViewLayoutItem into a BMessage.
+ *
+ * Stores the current frame under kFrameField in addition to base-class data.
+ *
+ * @param into The BMessage to archive into.
+ * @param deep Whether to archive child objects recursively.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextControl::TextViewLayoutItem::Archive(BMessage* into, bool deep) const
 {
@@ -1538,6 +2099,12 @@ BTextControl::TextViewLayoutItem::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Creates a new TextViewLayoutItem from an archived BMessage.
+ *
+ * @param from The BMessage to instantiate from.
+ * @return A new TextViewLayoutItem, or NULL if the archive is invalid.
+ */
 BArchivable*
 BTextControl::TextViewLayoutItem::Instantiate(BMessage* from)
 {

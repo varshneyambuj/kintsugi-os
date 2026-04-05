@@ -1,13 +1,40 @@
 /*
- * Copyright 2004-2015, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2009 Stephan Aßmus, superstippi@gmx.de.
- * Copyright 2014-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Axel Dörfler, axeld@pinc-software.de
- *		John Scipione, jscpione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2015, Axel Dörfler / Copyright 2009 Stephan Aßmus /
+ *   Copyright 2014-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       John Scipione, jscpione@gmail.com
+ */
+
+
+/**
+ * @file ScrollView.cpp
+ * @brief Implementation of BScrollView, a view with attached scroll bars
+ *
+ * BScrollView wraps an existing BView (the "target") and adds optional
+ * horizontal and/or vertical BScrollBar instances. It automatically sizes and
+ * positions the scroll bars relative to the target view.
+ *
+ * @see BScrollBar, BView
  */
 
 
@@ -22,10 +49,31 @@
 #include <binary_compatibility/Interface.h>
 
 
+/** @brief Pixel thickness of the border when @c B_FANCY_BORDER is used. */
 static const float kFancyBorderSize = 2;
+
+/** @brief Pixel thickness of the border when @c B_PLAIN_BORDER is used. */
 static const float kPlainBorderSize = 1;
 
 
+/**
+ * @brief Construct a BScrollView with legacy (non-layout) resizing.
+ *
+ * Creates the scroll view in the frame derived from @a target's frame plus
+ * the space needed for any requested scroll bars and the border.  This
+ * constructor is intended for use in non-layout-managed hierarchies.
+ *
+ * @param name         The view name, used for scripting and debugging.
+ * @param target       The child view to be scrolled.  Ownership is transferred
+ *                     to the scroll view.
+ * @param resizingMode Legacy resizing flags (e.g. @c B_FOLLOW_ALL).
+ * @param flags        View creation flags forwarded to BView.
+ * @param horizontal   If true, a horizontal scroll bar is added.
+ * @param vertical     If true, a vertical scroll bar is added.
+ * @param border       The border style: @c B_NO_BORDER, @c B_PLAIN_BORDER, or
+ *                     @c B_FANCY_BORDER.
+ * @see BScrollBar, BView
+ */
 BScrollView::BScrollView(const char* name, BView* target, uint32 resizingMode,
 	uint32 flags, bool horizontal, bool vertical, border_style border)
 	:
@@ -37,6 +85,23 @@ BScrollView::BScrollView(const char* name, BView* target, uint32 resizingMode,
 }
 
 
+/**
+ * @brief Construct a layout-aware BScrollView.
+ *
+ * Creates the scroll view without an explicit frame; the layout engine is
+ * responsible for sizing and positioning.  Use this constructor when the
+ * scroll view participates in a BLayout hierarchy.
+ *
+ * @param name       The view name, used for scripting and debugging.
+ * @param target     The child view to be scrolled.  Ownership is transferred
+ *                   to the scroll view.
+ * @param flags      View creation flags forwarded to BView.
+ * @param horizontal If true, a horizontal scroll bar is added.
+ * @param vertical   If true, a vertical scroll bar is added.
+ * @param border     The border style: @c B_NO_BORDER, @c B_PLAIN_BORDER, or
+ *                   @c B_FANCY_BORDER.
+ * @see BScrollBar, BLayout
+ */
 BScrollView::BScrollView(const char* name, BView* target, uint32 flags,
 	bool horizontal, bool vertical, border_style border)
 	:
@@ -48,6 +113,18 @@ BScrollView::BScrollView(const char* name, BView* target, uint32 flags,
 }
 
 
+/**
+ * @brief Unarchive constructor — reconstruct a BScrollView from a BMessage.
+ *
+ * Restores the border style and re-identifies the target view and scroll
+ * bars from the archived child list.  For layout-managed archives the child
+ * search is repeated in AllUnarchived() once all children have been attached.
+ *
+ * @param archive The archive message previously produced by Archive().
+ * @see Archive()
+ * @see AllUnarchived()
+ * @see Instantiate()
+ */
 BScrollView::BScrollView(BMessage* archive)
 	:
 	BView(archive),
@@ -94,6 +171,12 @@ BScrollView::BScrollView(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroy the BScrollView.
+ *
+ * The target view and scroll bars are child views and are destroyed by the
+ * BView destructor; no explicit cleanup is required here.
+ */
 BScrollView::~BScrollView()
 {
 }
@@ -102,6 +185,14 @@ BScrollView::~BScrollView()
 // #pragma mark - Archiving
 
 
+/**
+ * @brief Create a new BScrollView from an archive message.
+ *
+ * @param archive The BMessage produced by Archive().
+ * @return A newly allocated BScrollView, or NULL if @a archive does not
+ *         represent a valid BScrollView instance.
+ * @see Archive()
+ */
 BArchivable*
 BScrollView::Instantiate(BMessage* archive)
 {
@@ -112,6 +203,19 @@ BScrollView::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archive this BScrollView into a BMessage.
+ *
+ * Stores the border style (when it is not the default @c B_FANCY_BORDER) and
+ * a flag indicating whether there is no target view.  The highlighted state
+ * is intentionally not archived because it tracks transient focus state.
+ *
+ * @param archive The message to archive into.
+ * @param deep    If true, child views (target and scroll bars) are archived
+ *                recursively by the BView base class.
+ * @return B_OK on success, or an error code on failure.
+ * @see Instantiate()
+ */
 status_t
 BScrollView::Archive(BMessage* archive, bool deep) const
 {
@@ -135,6 +239,17 @@ BScrollView::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Complete unarchiving once all children have been attached.
+ *
+ * For layout-managed archives children are not yet present during the
+ * constructor, so this hook re-identifies the target view and scroll bars,
+ * then wires up the scroll bar targets and notifies the target view.
+ *
+ * @param archive The original archive message.
+ * @return B_OK on success, or an error code forwarded from BView.
+ * @see Archive()
+ */
 status_t
 BScrollView::AllUnarchived(const BMessage* archive)
 {
@@ -182,6 +297,15 @@ BScrollView::AllUnarchived(const BMessage* archive)
 // #pragma mark - Hook methods
 
 
+/**
+ * @brief Adjust scroll bar sizes when the view is added to a window.
+ *
+ * When only one scroll bar is present and the scroll view is positioned in
+ * the bottom-right corner of a @c B_DOCUMENT_WINDOW_LOOK window, the single
+ * bar is shortened to leave room for the window's resize knob.
+ *
+ * @see DetachedFromWindow()
+ */
 void
 BScrollView::AttachedToWindow()
 {
@@ -212,6 +336,13 @@ BScrollView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the view is removed from its window.
+ *
+ * Forwards the notification to BView; no additional cleanup is required.
+ *
+ * @see AttachedToWindow()
+ */
 void
 BScrollView::DetachedFromWindow()
 {
@@ -219,6 +350,11 @@ BScrollView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called after all children have been attached to the window.
+ *
+ * Forwards the notification to BView.
+ */
 void
 BScrollView::AllAttached()
 {
@@ -226,6 +362,11 @@ BScrollView::AllAttached()
 }
 
 
+/**
+ * @brief Called after all children have been detached from the window.
+ *
+ * Forwards the notification to BView.
+ */
 void
 BScrollView::AllDetached()
 {
@@ -233,6 +374,16 @@ BScrollView::AllDetached()
 }
 
 
+/**
+ * @brief Draw the scroll view border for the given update rectangle.
+ *
+ * Delegates to @c be_control_look->DrawScrollViewFrame(), passing the
+ * current border style, the bounding rectangles of any scroll bars, and
+ * the @c B_FOCUSED flag when the border is highlighted and the window is
+ * active.
+ *
+ * @param updateRect The region that needs to be redrawn.
+ */
 void
 BScrollView::Draw(BRect updateRect)
 {
@@ -257,6 +408,14 @@ BScrollView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Called when the view's position changes.
+ *
+ * Forwards the notification to BView; no additional work is required.
+ *
+ * @param newPosition The view's new left-top position in its parent's
+ *                    coordinate system.
+ */
 void
 BScrollView::FrameMoved(BPoint newPosition)
 {
@@ -264,6 +423,17 @@ BScrollView::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Update scroll bar ranges and invalidate border regions on resize.
+ *
+ * When the target supports layout but not @c B_SCROLL_VIEW_AWARE, the scroll
+ * bar ranges, steps, and proportions are recalculated from the target's
+ * preferred size.  Border regions that have appeared or disappeared due to
+ * the size change are also invalidated so the border is redrawn correctly.
+ *
+ * @param newWidth  The new width of the view in pixels.
+ * @param newHeight The new height of the view in pixels.
+ */
 void
 BScrollView::FrameResized(float newWidth, float newHeight)
 {
@@ -349,6 +519,11 @@ BScrollView::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Forward an incoming message to BView's default handler.
+ *
+ * @param message The message to handle.
+ */
 void
 BScrollView::MessageReceived(BMessage* message)
 {
@@ -356,6 +531,11 @@ BScrollView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Forward a mouse-down event to BView.
+ *
+ * @param where The click position in the view's coordinate system.
+ */
 void
 BScrollView::MouseDown(BPoint where)
 {
@@ -363,6 +543,15 @@ BScrollView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Forward a mouse-moved event to BView.
+ *
+ * @param where       The current cursor position in the view's coordinate
+ *                    system.
+ * @param code        The transit code (@c B_ENTERED_VIEW, @c B_INSIDE_VIEW,
+ *                    @c B_EXITED_VIEW, or @c B_OUTSIDE_VIEW).
+ * @param dragMessage The drag-and-drop message, or NULL if no drag is active.
+ */
 void
 BScrollView::MouseMoved(BPoint where, uint32 code,
 	const BMessage* dragMessage)
@@ -371,6 +560,11 @@ BScrollView::MouseMoved(BPoint where, uint32 code,
 }
 
 
+/**
+ * @brief Forward a mouse-up event to BView.
+ *
+ * @param where The release position in the view's coordinate system.
+ */
 void
 BScrollView::MouseUp(BPoint where)
 {
@@ -378,6 +572,16 @@ BScrollView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Redraw the border highlight when the window activation state changes.
+ *
+ * When the scroll view has a highlighted border the entire view is
+ * invalidated so the focus indicator is repainted with the correct colour
+ * for the new activation state.
+ *
+ * @param active true if the window just became active, false if it became
+ *               inactive.
+ */
 void
 BScrollView::WindowActivated(bool active)
 {
@@ -391,6 +595,16 @@ BScrollView::WindowActivated(bool active)
 // #pragma mark - Size methods
 
 
+/**
+ * @brief Return the preferred size as separate width and height values.
+ *
+ * Convenience wrapper around PreferredSize() for callers that need the
+ * dimensions as individual floats rather than a BSize.
+ *
+ * @param[out] _width  Set to the preferred width, if not NULL.
+ * @param[out] _height Set to the preferred height, if not NULL.
+ * @see PreferredSize()
+ */
 void
 BScrollView::GetPreferredSize(float* _width, float* _height)
 {
@@ -404,6 +618,14 @@ BScrollView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resize the scroll view to its preferred size.
+ *
+ * Does nothing if the view is not currently attached to a window.
+ *
+ * @see GetPreferredSize()
+ * @see PreferredSize()
+ */
 void
 BScrollView::ResizeToPreferred()
 {
@@ -413,6 +635,14 @@ BScrollView::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Grant or remove input focus.
+ *
+ * Forwards the focus change to BView without additional action; subclasses
+ * can override to respond to focus transitions.
+ *
+ * @param focus true to grant focus, false to remove it.
+ */
 void
 BScrollView::MakeFocus(bool focus)
 {
@@ -420,6 +650,18 @@ BScrollView::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Return the minimum size of the scroll view.
+ *
+ * Computes the minimum size by adding the border and scroll bar dimensions
+ * to the target's own minimum size (or a default of 16×16 if there is no
+ * target).  The result is composed with any explicit minimum size set by
+ * the user.
+ *
+ * @return The minimum BSize for layout negotiation.
+ * @see MaxSize()
+ * @see PreferredSize()
+ */
 BSize
 BScrollView::MinSize()
 {
@@ -430,6 +672,18 @@ BScrollView::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum size of the scroll view.
+ *
+ * Computes the maximum size by adding the border and scroll bar dimensions
+ * to the target's own maximum size (or @c B_SIZE_UNLIMITED if there is no
+ * target).  The result is composed with any explicit maximum size set by
+ * the user.
+ *
+ * @return The maximum BSize for layout negotiation.
+ * @see MinSize()
+ * @see PreferredSize()
+ */
 BSize
 BScrollView::MaxSize()
 {
@@ -440,6 +694,17 @@ BScrollView::MaxSize()
 }
 
 
+/**
+ * @brief Return the preferred size of the scroll view.
+ *
+ * Computes the preferred size by adding the border and scroll bar dimensions
+ * to the target's preferred size (or 32×32 if there is no target).  The
+ * result is composed with any explicit preferred size set by the user.
+ *
+ * @return The preferred BSize for layout negotiation.
+ * @see MinSize()
+ * @see MaxSize()
+ */
 BSize
 BScrollView::PreferredSize()
 {
@@ -453,6 +718,14 @@ BScrollView::PreferredSize()
 // #pragma mark - BScrollView methods
 
 
+/**
+ * @brief Return the scroll bar for the given orientation.
+ *
+ * @param direction @c B_HORIZONTAL or @c B_VERTICAL.
+ * @return The requested BScrollBar, or NULL if no bar was created for that
+ *         orientation.
+ * @see SetBorder()
+ */
 BScrollBar*
 BScrollView::ScrollBar(orientation direction) const
 {
@@ -463,6 +736,18 @@ BScrollView::ScrollBar(orientation direction) const
 }
 
 
+/**
+ * @brief Change the border style of the scroll view.
+ *
+ * For layout-aware views the border change triggers DoLayout() and a full
+ * invalidate.  For legacy non-layout views the view and all its children
+ * are repositioned and resized to reflect the new border thickness.
+ *
+ * @param border The new border style: @c B_NO_BORDER, @c B_PLAIN_BORDER, or
+ *               @c B_FANCY_BORDER.
+ * @see Border()
+ * @see SetBorderHighlighted()
+ */
 void
 BScrollView::SetBorder(border_style border)
 {
@@ -523,6 +808,12 @@ BScrollView::SetBorder(border_style border)
 }
 
 
+/**
+ * @brief Return the current border style.
+ *
+ * @return The active border_style value.
+ * @see SetBorder()
+ */
 border_style
 BScrollView::Border() const
 {
@@ -530,6 +821,17 @@ BScrollView::Border() const
 }
 
 
+/**
+ * @brief Set which sides of the border are drawn.
+ *
+ * Only meaningful for layout-aware scroll views (@c B_SUPPORTS_LAYOUT must
+ * be set).  Triggers a layout pass and full invalidate so the new set of
+ * visible borders takes effect immediately.
+ *
+ * @param borders A bitmask of @c BControlLook border flags (e.g.
+ *                @c BControlLook::B_ALL_BORDERS).
+ * @see Borders()
+ */
 void
 BScrollView::SetBorders(uint32 borders)
 {
@@ -542,6 +844,12 @@ BScrollView::SetBorders(uint32 borders)
 }
 
 
+/**
+ * @brief Return the current set of drawn border sides.
+ *
+ * @return A bitmask of @c BControlLook border flags.
+ * @see SetBorders()
+ */
 uint32
 BScrollView::Borders() const
 {
@@ -549,6 +857,21 @@ BScrollView::Borders() const
 }
 
 
+/**
+ * @brief Highlight or un-highlight the scroll view's fancy border.
+ *
+ * Highlighting is typically used to indicate that the contained target view
+ * has keyboard focus.  Only effective when the border style is
+ * @c B_FANCY_BORDER; returns @c B_ERROR for other border styles.  The four
+ * border edge strips are individually invalidated to minimise redraw.
+ *
+ * @param highlight true to draw the border with focus highlighting, false to
+ *                  draw it normally.
+ * @return B_OK on success.
+ * @retval B_ERROR If the border style is not @c B_FANCY_BORDER.
+ * @see IsBorderHighlighted()
+ * @see SetBorder()
+ */
 status_t
 BScrollView::SetBorderHighlighted(bool highlight)
 {
@@ -580,6 +903,12 @@ BScrollView::SetBorderHighlighted(bool highlight)
 }
 
 
+/**
+ * @brief Return whether the border is currently highlighted.
+ *
+ * @return true if the fancy border is drawn with focus highlighting.
+ * @see SetBorderHighlighted()
+ */
 bool
 BScrollView::IsBorderHighlighted() const
 {
@@ -587,6 +916,16 @@ BScrollView::IsBorderHighlighted() const
 }
 
 
+/**
+ * @brief Replace the scrolled target view.
+ *
+ * Detaches the existing target (without deleting it), then adds the new
+ * target as the topmost child, connects the scroll bars to it, and notifies
+ * it via BView::TargetedByScrollView().
+ *
+ * @param target The new target view, or NULL to remove the current target.
+ * @see Target()
+ */
 void
 BScrollView::SetTarget(BView* target)
 {
@@ -625,6 +964,12 @@ BScrollView::SetTarget(BView* target)
 }
 
 
+/**
+ * @brief Return the current scrolled target view.
+ *
+ * @return The target BView, or NULL if no target is set.
+ * @see SetTarget()
+ */
 BView*
 BScrollView::Target() const
 {
@@ -636,6 +981,18 @@ BScrollView::Target() const
 
 
 
+/**
+ * @brief Resolve a scripting specifier to the appropriate BHandler.
+ *
+ * Delegates to BView's default implementation.
+ *
+ * @param message   The scripting message.
+ * @param index     The index of the current specifier in the message.
+ * @param specifier The current specifier message.
+ * @param what      The specifier form constant.
+ * @param property  The property name being targeted.
+ * @return The BHandler that should handle the scripted request.
+ */
 BHandler*
 BScrollView::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -644,6 +1001,14 @@ BScrollView::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Add the supported scripting suites to a reply message.
+ *
+ * Delegates to BView's default implementation.
+ *
+ * @param message The reply message to populate with suite information.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BScrollView::GetSupportedSuites(BMessage* message)
 {
@@ -654,6 +1019,21 @@ BScrollView::GetSupportedSuites(BMessage* message)
 //	#pragma mark - Perform
 
 
+/**
+ * @brief Dispatch a binary-compatibility perform code.
+ *
+ * Handles layout-related perform codes (@c PERFORM_CODE_MIN_SIZE,
+ * @c PERFORM_CODE_MAX_SIZE, @c PERFORM_CODE_PREFERRED_SIZE,
+ * @c PERFORM_CODE_LAYOUT_ALIGNMENT, @c PERFORM_CODE_HAS_HEIGHT_FOR_WIDTH,
+ * @c PERFORM_CODE_GET_HEIGHT_FOR_WIDTH, @c PERFORM_CODE_SET_LAYOUT,
+ * @c PERFORM_CODE_LAYOUT_INVALIDATED, @c PERFORM_CODE_DO_LAYOUT) and
+ * forwards unknown codes to BView::Perform().
+ *
+ * @param code  The perform operation code.
+ * @param _data In/out data buffer whose layout depends on @a code.
+ * @return B_OK if the code was handled, otherwise the result of
+ *         BView::Perform().
+ */
 status_t
 BScrollView::Perform(perform_code code, void* _data)
 {
@@ -721,12 +1101,31 @@ BScrollView::Perform(perform_code code, void* _data)
 //	#pragma mark - Protected methods
 
 
+/**
+ * @brief Called when the layout has been invalidated.
+ *
+ * Hook for subclasses; the base implementation does nothing.
+ *
+ * @param descendants true if descendant layouts were also invalidated.
+ */
 void
 BScrollView::LayoutInvalidated(bool descendants)
 {
 }
 
 
+/**
+ * @brief Position and size the target and scroll bars according to the layout.
+ *
+ * If the view does not support layout (@c B_SUPPORTS_LAYOUT is not set), the
+ * method returns immediately.  If a user-provided layout is attached, the
+ * base class version is called.  Otherwise the inner frame is computed from
+ * the current bounds, the target is positioned within it, and the scroll bars
+ * are aligned around it via _AlignScrollBars().
+ *
+ * @see _InnerFrame()
+ * @see _AlignScrollBars()
+ */
 void
 BScrollView::DoLayout()
 {
@@ -756,6 +1155,16 @@ BScrollView::DoLayout()
 // #pragma mark - Private methods
 
 
+/**
+ * @brief Shared initialisation logic called by all public constructors.
+ *
+ * Creates any requested scroll bars, positions them around the target frame,
+ * adds all children, and records the initial bounds so that FrameResized()
+ * can compute delta regions for border invalidation.
+ *
+ * @param horizontal If true, a horizontal scroll bar is created.
+ * @param vertical   If true, a vertical scroll bar is created.
+ */
 void
 BScrollView::_Init(bool horizontal, bool vertical)
 {
@@ -816,6 +1225,14 @@ BScrollView::_Init(bool horizontal, bool vertical)
 }
 
 
+/**
+ * @brief Return the pixel thickness of the current border style.
+ *
+ * Convenience overload that uses the instance's @c fBorder field.
+ *
+ * @return The border thickness in pixels.
+ * @see _BorderSize(border_style)
+ */
 float
 BScrollView::_BorderSize() const
 {
@@ -823,6 +1240,16 @@ BScrollView::_BorderSize() const
 }
 
 
+/**
+ * @brief Compute the rectangle available for the target view.
+ *
+ * Starts from the view's bounds, insets by the border thickness on the
+ * enabled border sides, and then subtracts the preferred heights/widths of
+ * any present scroll bars.
+ *
+ * @return The inner BRect in the view's coordinate system.
+ * @see _InsetBorders()
+ */
 BRect
 BScrollView::_InnerFrame() const
 {
@@ -846,6 +1273,16 @@ BScrollView::_InnerFrame() const
 }
 
 
+/**
+ * @brief Compute the overall scroll view size for a given target size.
+ *
+ * Wraps the target size in a temporary BRect and delegates to the static
+ * _ComputeFrame() overload, then returns the resulting BSize.
+ *
+ * @param targetSize The size of the target view.
+ * @return The total BSize that the scroll view would occupy.
+ * @see _ComputeFrame()
+ */
 BSize
 BScrollView::_ComputeSize(BSize targetSize) const
 {
@@ -856,6 +1293,16 @@ BScrollView::_ComputeSize(BSize targetSize) const
 }
 
 
+/**
+ * @brief Compute the scroll view frame for a given target rectangle.
+ *
+ * Instance-level convenience that calls the static overload with the
+ * current scroll bar pointers, border style, and border-side mask.
+ *
+ * @param targetRect The frame of the target view.
+ * @return The frame the scroll view would occupy.
+ * @see _ComputeFrame(BRect, BScrollBar*, BScrollBar*, border_style, uint32)
+ */
 BRect
 BScrollView::_ComputeFrame(BRect targetRect) const
 {
@@ -864,6 +1311,19 @@ BScrollView::_ComputeFrame(BRect targetRect) const
 }
 
 
+/**
+ * @brief Position and resize the scroll bars to align with a target frame.
+ *
+ * Moves and resizes the horizontal bar immediately below the target frame
+ * and the vertical bar immediately to the right.  When both bars are
+ * present, or when a border is drawn, each bar is extended by one pixel so
+ * that it overlaps the border or the corner square between the two bars.
+ *
+ * @param horizontal  true if a horizontal scroll bar exists.
+ * @param vertical    true if a vertical scroll bar exists.
+ * @param targetFrame The frame of the target view in the scroll view's
+ *                    coordinate system.
+ */
 void
 BScrollView::_AlignScrollBars(bool horizontal, bool vertical, BRect targetFrame)
 {
@@ -912,6 +1372,23 @@ BScrollView::_AlignScrollBars(bool horizontal, bool vertical, BRect targetFrame)
 	and which border style is used.
 	It is used in the constructor and at other places.
 */
+/**
+ * @brief Compute the outer scroll view frame from a target frame and scroll
+ *        bar configuration.
+ *
+ * Expands @a frame to include the preferred sizes of any supplied scroll
+ * bars, clamps to the scroll bars' minimum sizes when needed, then expands
+ * further by the border thickness on the enabled sides.  When the border
+ * has zero thickness an extra pixel is added for each present scroll bar to
+ * close the gap between bar and target.
+ *
+ * @param frame      The frame of the target view.
+ * @param horizontal The horizontal BScrollBar, or NULL if none.
+ * @param vertical   The vertical BScrollBar, or NULL if none.
+ * @param border     The border style to apply.
+ * @param borders    Bitmask of border sides that are drawn.
+ * @return The frame that the BScrollView should occupy.
+ */
 /*static*/ BRect
 BScrollView::_ComputeFrame(BRect frame, BScrollBar* horizontal,
 	BScrollBar* vertical, border_style border, uint32 borders)
@@ -948,6 +1425,21 @@ BScrollView::_ComputeFrame(BRect frame, BScrollBar* horizontal,
 }
 
 
+/**
+ * @brief Compute the outer scroll view frame from a target view pointer.
+ *
+ * Convenience overload that reads the target's current frame (falling back
+ * to a 16×16 default if @a target is NULL) and delegates to the rectangle
+ * overload.
+ *
+ * @param target     The target view whose frame is used, or NULL.
+ * @param horizontal The horizontal BScrollBar, or NULL if none.
+ * @param vertical   The vertical BScrollBar, or NULL if none.
+ * @param border     The border style to apply.
+ * @param borders    Bitmask of border sides that are drawn.
+ * @return The frame that the BScrollView should occupy.
+ * @see _ComputeFrame(BRect, BScrollBar*, BScrollBar*, border_style, uint32)
+ */
 /*static*/ BRect
 BScrollView::_ComputeFrame(BView *target, BScrollBar* horizontal,
 	BScrollBar* vertical, border_style border, uint32 borders)
@@ -957,8 +1449,14 @@ BScrollView::_ComputeFrame(BView *target, BScrollBar* horizontal,
 }
 
 
-/*! This method returns the size of the specified border.
-*/
+/**
+ * @brief Return the pixel thickness for the given border style.
+ *
+ * @param border The border style to query.
+ * @return @c kFancyBorderSize for @c B_FANCY_BORDER,
+ *         @c kPlainBorderSize for @c B_PLAIN_BORDER, or 0 for
+ *         @c B_NO_BORDER.
+ */
 /*static*/ float
 BScrollView::_BorderSize(border_style border)
 {
@@ -971,9 +1469,19 @@ BScrollView::_BorderSize(border_style border)
 }
 
 
-/*!	This method changes the "flags" argument as passed on to
-	the BView constructor.
-*/
+/**
+ * @brief Augment view creation flags to satisfy border and layout requirements.
+ *
+ * Adds @c B_FRAME_EVENTS when the target is layout-aware but not scroll-view
+ * aware (so that FrameResized() can update scroll ranges).  Adds
+ * @c B_WILL_DRAW and either @c B_FULL_UPDATE_ON_RESIZE or @c B_FRAME_EVENTS
+ * when a border is present so the border is always repainted correctly.
+ *
+ * @param flags  The flags as supplied by the caller.
+ * @param target The target view, or NULL.
+ * @param border The border style.
+ * @return The adjusted flags value.
+ */
 /*static*/ uint32
 BScrollView::_ModifyFlags(uint32 flags, BView* target, border_style border)
 {
@@ -992,6 +1500,20 @@ BScrollView::_ModifyFlags(uint32 flags, BView* target, border_style border)
 }
 
 
+/**
+ * @brief Inset (or expand) a rectangle by the border thickness on each
+ *        enabled side.
+ *
+ * When @a expand is false the rectangle is shrunk inward by the border size
+ * on each side included in @a borders; when @a expand is true the signs are
+ * reversed so the rectangle grows outward.
+ *
+ * @param[in,out] frame  The rectangle to modify in place.
+ * @param         border The border style that determines the thickness.
+ * @param         borders Bitmask of border sides to include
+ *                        (e.g. @c BControlLook::B_ALL_BORDERS).
+ * @param         expand If true, expand the rectangle; if false, inset it.
+ */
 /*static*/ void
 BScrollView::_InsetBorders(BRect& frame, border_style border, uint32 borders, bool expand)
 {
@@ -1012,6 +1534,11 @@ BScrollView::_InsetBorders(BRect& frame, border_style border, uint32 borders, bo
 //	#pragma mark - FBC and forbidden
 
 
+/**
+ * @brief Forbidden copy-assignment operator (FBC padding).
+ *
+ * @return A reference to this object (assignment is a no-op).
+ */
 BScrollView&
 BScrollView::operator=(const BScrollView &)
 {
@@ -1025,6 +1552,15 @@ void BScrollView::_ReservedScrollView3() {}
 void BScrollView::_ReservedScrollView4() {}
 
 
+/**
+ * @brief GCC-2/GCC-3 binary-compatibility trampoline for InvalidateLayout().
+ *
+ * Dispatches @c PERFORM_CODE_LAYOUT_INVALIDATED via Perform() so that the
+ * correct virtual override is called regardless of the ABI in use.
+ *
+ * @param view        The BScrollView whose layout should be invalidated.
+ * @param descendants If true, descendant layouts are also invalidated.
+ */
 extern "C" void
 B_IF_GCC_2(InvalidateLayout__11BScrollViewb,
 	_ZN11BScrollView16InvalidateLayoutEb)(BScrollView* view, bool descendants)

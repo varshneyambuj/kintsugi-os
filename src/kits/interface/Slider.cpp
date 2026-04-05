@@ -1,11 +1,40 @@
 /*
- * Copyright 2001-2016 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Marc Flerackers (mflerackers@androme.be)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2016 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Marc Flerackers (mflerackers@androme.be)
+ */
+
+
+/**
+ * @file Slider.cpp
+ * @brief Implementation of BSlider, a draggable slider control
+ *
+ * BSlider lets the user select a numeric value within a range by dragging a
+ * thumb along a track. It supports horizontal and vertical orientations, hash
+ * marks, and custom thumb and bar images. Tick update modes allow notifications
+ * during or after dragging.
+ *
+ * @see BControl, BControlLook
  */
 
 
@@ -29,9 +58,30 @@
 #include <binary_compatibility/Interface.h>
 
 
+/** @brief When non-zero, rendering is done to an off-screen BBitmap first. */
 #define USE_OFF_SCREEN_VIEW 0
 
 
+/**
+ * @brief Constructs a frame-based BSlider with a horizontal orientation.
+ *
+ * Creates a slider that occupies the given \a frame rectangle. The orientation
+ * is fixed to B_HORIZONTAL. Use the orientation-aware constructor to choose a
+ * different axis.
+ *
+ * @param frame         The position and size of the slider in its parent's
+ *                      coordinate system.
+ * @param name          The internal name used to identify this view.
+ * @param label         The label text displayed above the bar, or NULL.
+ * @param message       The message sent to the target on value changes. Takes
+ *                      ownership.
+ * @param minValue      The minimum selectable integer value.
+ * @param maxValue      The maximum selectable integer value.
+ * @param thumbType     The visual style of the thumb (B_BLOCK_THUMB or
+ *                      B_TRIANGLE_THUMB).
+ * @param resizingMode  The resizing mode flags passed to BView.
+ * @param flags         The view flags passed to BView.
+ */
 BSlider::BSlider(
 	BRect frame, const char* name, const char* label, BMessage* message,
 	int32 minValue, int32 maxValue, thumb_style thumbType, uint32 resizingMode,
@@ -63,6 +113,26 @@ BSlider::BSlider(
 }
 
 
+/**
+ * @brief Constructs a frame-based BSlider with an explicit orientation.
+ *
+ * Identical to the basic frame constructor but allows the caller to select
+ * B_HORIZONTAL or B_VERTICAL for the slider axis.
+ *
+ * @param frame         The position and size of the slider in its parent's
+ *                      coordinate system.
+ * @param name          The internal name used to identify this view.
+ * @param label         The label text displayed along the bar, or NULL.
+ * @param message       The message sent to the target on value changes. Takes
+ *                      ownership.
+ * @param minValue      The minimum selectable integer value.
+ * @param maxValue      The maximum selectable integer value.
+ * @param posture       The axis along which the thumb travels (B_HORIZONTAL or
+ *                      B_VERTICAL).
+ * @param thumbType     The visual style of the thumb.
+ * @param resizingMode  The resizing mode flags passed to BView.
+ * @param flags         The view flags passed to BView.
+ */
 BSlider::BSlider(BRect frame, const char* name, const char* label,
 	BMessage* message, int32 minValue, int32 maxValue, orientation posture,
 	thumb_style thumbType, uint32 resizingMode, uint32 flags)
@@ -93,6 +163,22 @@ BSlider::BSlider(BRect frame, const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a layout-managed BSlider with no fixed frame.
+ *
+ * This constructor is intended for use with the layout system. The slider
+ * acquires its bounds from the attached layout rather than from a BRect.
+ *
+ * @param name      The internal name used to identify this view.
+ * @param label     The label text displayed along the bar, or NULL.
+ * @param message   The message sent to the target on value changes. Takes
+ *                  ownership.
+ * @param minValue  The minimum selectable integer value.
+ * @param maxValue  The maximum selectable integer value.
+ * @param posture   The axis along which the thumb travels.
+ * @param thumbType The visual style of the thumb.
+ * @param flags     The view flags passed to BView.
+ */
 BSlider::BSlider(const char* name, const char* label, BMessage* message,
 	int32 minValue, int32 maxValue, orientation posture, thumb_style thumbType,
 	uint32 flags)
@@ -123,6 +209,17 @@ BSlider::BSlider(const char* name, const char* label, BMessage* message,
 }
 
 
+/**
+ * @brief Reconstructs a BSlider from a BMessage archive.
+ *
+ * Restores all slider properties that were previously stored by Archive(),
+ * including the bar color, fill color, orientation, limit labels, value range,
+ * key increment, hash mark settings, thumb style, and bar thickness. Missing
+ * fields fall back to sensible defaults.
+ *
+ * @param archive The archive message produced by a prior call to Archive().
+ * @see BSlider::Archive(), BSlider::Instantiate()
+ */
 BSlider::BSlider(BMessage* archive)
 	:
 	BControl(archive)
@@ -201,6 +298,13 @@ BSlider::BSlider(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroys the BSlider and frees all owned resources.
+ *
+ * Releases the modification message, the update-text buffer, and the
+ * min/max limit label strings. When off-screen rendering is enabled the
+ * backing BBitmap is also deleted here.
+ */
 BSlider::~BSlider()
 {
 #if USE_OFF_SCREEN_VIEW
@@ -214,6 +318,13 @@ BSlider::~BSlider()
 }
 
 
+/**
+ * @brief Initialises the bar and fill colors to their system defaults.
+ *
+ * Asks BControlLook for the standard slider bar color derived from the panel
+ * background, and disables the optional fill-color feature. Called from every
+ * public constructor before _InitObject().
+ */
 void
 BSlider::_InitBarColor()
 {
@@ -223,6 +334,13 @@ BSlider::_InitBarColor()
 }
 
 
+/**
+ * @brief Initialises non-color transient state shared by all constructors.
+ *
+ * Zeroes the thumb location, clears the off-screen view pointers when
+ * off-screen rendering is compiled in, and resets the update-text buffer and
+ * cached minimum-size fields to their invalid sentinel values.
+ */
 void
 BSlider::_InitObject()
 {
@@ -242,6 +360,16 @@ BSlider::_InitObject()
 }
 
 
+/**
+ * @brief Creates a new BSlider from an archive message (factory method).
+ *
+ * Called by the archiving infrastructure. Validates that \a archive was
+ * produced by BSlider before constructing the object.
+ *
+ * @param archive The archive message to restore from.
+ * @return A newly allocated BSlider, or NULL if the archive is invalid.
+ * @see BSlider::Archive()
+ */
 BArchivable*
 BSlider::Instantiate(BMessage* archive)
 {
@@ -252,6 +380,19 @@ BSlider::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Serialises the slider's state into a BMessage archive.
+ *
+ * Stores the modification message, snooze delay, bar color, fill color,
+ * orientation, limit labels, value range, key increment, hash-mark settings,
+ * thumb style, and bar thickness. Delegates the BControl base fields to the
+ * parent implementation.
+ *
+ * @param archive The message to write the state into.
+ * @param deep    If true, child views are archived recursively.
+ * @return B_OK on success, or the first error code encountered.
+ * @see BSlider::Instantiate()
+ */
 status_t
 BSlider::Archive(BMessage* archive, bool deep) const
 {
@@ -303,6 +444,18 @@ BSlider::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Dispatches binary-compatibility perform codes to the correct virtual method.
+ *
+ * Handles layout-related perform codes (MinSize, MaxSize, PreferredSize,
+ * LayoutAlignment, HasHeightForWidth, GetHeightForWidth, SetLayout,
+ * LayoutInvalidated, DoLayout, SetIcon) by calling the corresponding
+ * BSlider virtual. Unrecognised codes are forwarded to BControl::Perform().
+ *
+ * @param code  The perform code identifying the operation.
+ * @param _data Pointer to the code-specific data structure.
+ * @return B_OK on success, or an error code from the delegated call.
+ */
 status_t
 BSlider::Perform(perform_code code, void* _data)
 {
@@ -371,6 +524,14 @@ BSlider::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Notifies the slider that its window's active state has changed.
+ *
+ * Forwards the notification to BControl so that focus rendering and
+ * keyboard delivery are updated correctly.
+ *
+ * @param state true if the window became active, false if it became inactive.
+ */
 void
 BSlider::WindowActivated(bool state)
 {
@@ -378,6 +539,14 @@ BSlider::WindowActivated(bool state)
 }
 
 
+/**
+ * @brief Called when the slider is added to a window's view hierarchy.
+ *
+ * Adopts the system color scheme, resizes the view to its preferred dimensions,
+ * clamps the current value to the valid range, recomputes the thumb location,
+ * and refreshes the update-text label. When off-screen rendering is enabled,
+ * this method also allocates the backing BBitmap and its associated BView.
+ */
 void
 BSlider::AttachedToWindow()
 {
@@ -415,6 +584,13 @@ BSlider::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called after all children of the slider have been attached to the window.
+ *
+ * When the slider is used inside a layout and therefore has no parent view,
+ * this method manually applies the panel background color so that the view
+ * colors are always correct regardless of the attachment order.
+ */
 void
 BSlider::AllAttached()
 {
@@ -428,6 +604,11 @@ BSlider::AllAttached()
 }
 
 
+/**
+ * @brief Called after all children of the slider have been detached from the window.
+ *
+ * Forwards the notification to BControl for any base-class cleanup.
+ */
 void
 BSlider::AllDetached()
 {
@@ -435,6 +616,12 @@ BSlider::AllDetached()
 }
 
 
+/**
+ * @brief Called when the slider is removed from a window's view hierarchy.
+ *
+ * Releases the off-screen BBitmap and clears the associated BView pointer when
+ * off-screen rendering is enabled, preventing stale references.
+ */
 void
 BSlider::DetachedFromWindow()
 {
@@ -448,6 +635,14 @@ BSlider::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Handles messages delivered to the slider's message queue.
+ *
+ * Forwards unhandled messages to BControl::MessageReceived() for default
+ * processing (scripting, B_SET_PROPERTY, etc.).
+ *
+ * @param message The received message.
+ */
 void
 BSlider::MessageReceived(BMessage* message)
 {
@@ -455,6 +650,14 @@ BSlider::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Called when the slider's frame has been moved to a new position.
+ *
+ * Forwards the notification to BControl so that any dependent geometry
+ * (e.g. cached screen coordinates) can be updated.
+ *
+ * @param new_position The slider's new origin in its parent's coordinate system.
+ */
 void
 BSlider::FrameMoved(BPoint new_position)
 {
@@ -462,6 +665,16 @@ BSlider::FrameMoved(BPoint new_position)
 }
 
 
+/**
+ * @brief Called when the slider's frame has been resized.
+ *
+ * Resizes the off-screen BBitmap to match the new bounds when off-screen
+ * rendering is enabled, then invalidates the entire view so it is repainted
+ * at the correct dimensions. No-ops when the new size is degenerate.
+ *
+ * @param w The new width of the slider's bounds rectangle.
+ * @param h The new height of the slider's bounds rectangle.
+ */
 void
 BSlider::FrameResized(float w,float h)
 {
@@ -488,6 +701,18 @@ BSlider::FrameResized(float w,float h)
 }
 
 
+/**
+ * @brief Handles keyboard navigation for the slider.
+ *
+ * Arrow keys and Home/End adjust the value by the key-increment amount and
+ * clamp it to [fMinValue, fMaxValue]. A modification message is posted
+ * whenever the value actually changes. All other key codes are forwarded to
+ * BControl.
+ *
+ * @param bytes    Pointer to the UTF-8 byte sequence of the pressed key.
+ * @param numBytes Length of the byte sequence.
+ * @note The slider must be enabled and visible for key events to take effect.
+ */
 void
 BSlider::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -533,6 +758,16 @@ BSlider::KeyDown(const char* bytes, int32 numBytes)
 	}
 }
 
+/**
+ * @brief Finalises a keyboard value change by invoking the main message.
+ *
+ * If the thumb location has moved since the key was pressed, Invoke() is
+ * called to deliver the final notification, mirroring the behaviour of a
+ * mouse-up event at the end of a drag.
+ *
+ * @param bytes    Pointer to the UTF-8 byte sequence of the released key.
+ * @param numBytes Length of the byte sequence.
+ */
 void
 BSlider::KeyUp(const char* bytes, int32 numBytes)
 {
@@ -547,11 +782,18 @@ BSlider::KeyUp(const char* bytes, int32 numBytes)
 }
 
 
-/*!
-	Makes sure the \a point is within valid bounds.
-	Returns \c true if the relevant coordinate (depending on the orientation
-	of the slider) differs from \a comparePoint.
-*/
+/**
+ * @brief Clamps \a point to the bar's draggable range along the active axis.
+ *
+ * Only the coordinate relevant to the current orientation (x for horizontal,
+ * y for vertical) is modified. The function reports whether that coordinate
+ * actually differs from the corresponding coordinate of \a comparePoint, which
+ * is used by mouse-tracking code to decide whether to update the value.
+ *
+ * @param point        The point to constrain, modified in place if out of range.
+ * @param comparePoint Reference point used to detect a meaningful axis change.
+ * @return true if the relevant axis coordinate differs from \a comparePoint.
+ */
 bool
 BSlider::_ConstrainPoint(BPoint& point, BPoint comparePoint) const
 {
@@ -579,6 +821,19 @@ BSlider::_ConstrainPoint(BPoint& point, BPoint comparePoint) const
 }
 
 
+/**
+ * @brief Begins a thumb-drag interaction on a mouse-button press.
+ *
+ * If the press falls within the bar or thumb frame the current location is
+ * saved as the initial position. In asynchronous mode the view enters
+ * tracking mode so that subsequent MouseMoved() and MouseUp() calls handle
+ * the drag. In synchronous mode a polling loop runs until all buttons are
+ * released, sending modification messages each time the value changes and a
+ * final Invoke() when the drag completes.
+ *
+ * @param point The location of the mouse press in the view's coordinate system.
+ * @note The slider must be enabled; disabled sliders ignore mouse events.
+ */
 void
 BSlider::MouseDown(BPoint point)
 {
@@ -625,6 +880,16 @@ BSlider::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Finalises a thumb drag when the mouse button is released.
+ *
+ * If the slider is in tracking (asynchronous) mode and the thumb has moved
+ * from its initial position, Invoke() is called to deliver the final value
+ * notification before tracking is cleared. Otherwise the event is forwarded
+ * to BControl.
+ *
+ * @param point The location of the mouse release in the view's coordinate system.
+ */
 void
 BSlider::MouseUp(BPoint point)
 {
@@ -638,6 +903,17 @@ BSlider::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Tracks pointer movement during an asynchronous thumb drag.
+ *
+ * While the slider is in tracking mode, each movement is constrained to the
+ * bar's valid range. If the constrained position maps to a different value a
+ * modification message is sent. Non-tracking events are forwarded to BControl.
+ *
+ * @param point   The current pointer position in the view's coordinate system.
+ * @param transit The transit code (B_ENTERED_VIEW, B_INSIDE_VIEW, etc.).
+ * @param message The drag-and-drop message in transit, or NULL.
+ */
 void
 BSlider::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 {
@@ -654,6 +930,11 @@ BSlider::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 }
 
 
+/**
+ * @brief Called periodically by the window when the slider has B_PULSE_NEEDED.
+ *
+ * Forwards to BControl::Pulse() for any base-class periodic behavior.
+ */
 void
 BSlider::Pulse()
 {
@@ -661,6 +942,14 @@ BSlider::Pulse()
 }
 
 
+/**
+ * @brief Sets the slider's main label text.
+ *
+ * The label is rendered above the bar (horizontal) or at the top (vertical).
+ * Delegates storage and invalidation to BControl::SetLabel().
+ *
+ * @param label The new label string, or NULL to remove the label.
+ */
 void
 BSlider::SetLabel(const char* label)
 {
@@ -668,6 +957,17 @@ BSlider::SetLabel(const char* label)
 }
 
 
+/**
+ * @brief Sets the text labels shown at the minimum and maximum ends of the bar.
+ *
+ * The strings are copied internally; the caller retains ownership of the
+ * pointers. Setting either label to NULL removes it. After updating the labels
+ * the layout is invalidated and, for views not using the layout system, the
+ * view is immediately resized to its new preferred size.
+ *
+ * @param minLabel Label displayed at the low end of the range, or NULL.
+ * @param maxLabel Label displayed at the high end of the range, or NULL.
+ */
 void
 BSlider::SetLimitLabels(const char* minLabel, const char* maxLabel)
 {
@@ -689,6 +989,12 @@ BSlider::SetLimitLabels(const char* minLabel, const char* maxLabel)
 }
 
 
+/**
+ * @brief Returns the label displayed at the minimum end of the bar.
+ *
+ * @return A pointer to the internally stored string, or NULL if no label is set.
+ * @see SetLimitLabels()
+ */
 const char*
 BSlider::MinLimitLabel() const
 {
@@ -696,6 +1002,12 @@ BSlider::MinLimitLabel() const
 }
 
 
+/**
+ * @brief Returns the label displayed at the maximum end of the bar.
+ *
+ * @return A pointer to the internally stored string, or NULL if no label is set.
+ * @see SetLimitLabels()
+ */
 const char*
 BSlider::MaxLimitLabel() const
 {
@@ -703,6 +1015,17 @@ BSlider::MaxLimitLabel() const
 }
 
 
+/**
+ * @brief Sets the slider's current value and updates the display.
+ *
+ * Clamps \a value to [fMinValue, fMaxValue], moves the thumb to the
+ * corresponding pixel position, and invalidates the union of the old and new
+ * thumb frames (extended slightly for anti-aliasing with triangle thumbs and
+ * for the focus mark). Also refreshes the update-text label. No redraw occurs
+ * if the value is unchanged.
+ *
+ * @param value The desired value; clamped to the configured range.
+ */
 void
 BSlider::SetValue(int32 value)
 {
@@ -750,6 +1073,17 @@ BSlider::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Converts a pixel coordinate to the nearest slider value.
+ *
+ * Projects \a location onto the slider's active axis, clamps the result to
+ * the bar's pixel range, and performs a linear mapping to the integer value
+ * range [fMinValue, fMaxValue].
+ *
+ * @param location A point in the view's coordinate system.
+ * @return The integer value corresponding to the given position.
+ * @see PointForValue(), SetValue()
+ */
 int32
 BSlider::ValueForPoint(BPoint location) const
 {
@@ -777,6 +1111,15 @@ BSlider::ValueForPoint(BPoint location) const
 }
 
 
+/**
+ * @brief Sets the slider value using a normalised position in [0.0, 1.0].
+ *
+ * Values at or below 0.0 map to fMinValue; values at or above 1.0 map to
+ * fMaxValue. Intermediate values are linearly interpolated.
+ *
+ * @param position The normalised position; clamped to [0.0, 1.0].
+ * @see Position(), SetValue()
+ */
 void
 BSlider::SetPosition(float position)
 {
@@ -789,6 +1132,15 @@ BSlider::SetPosition(float position)
 }
 
 
+/**
+ * @brief Returns the current slider position as a normalised value in [0.0, 1.0].
+ *
+ * When the range is zero the function avoids a division-by-zero by treating
+ * the range as 1.
+ *
+ * @return The normalised position of the thumb.
+ * @see SetPosition()
+ */
 float
 BSlider::Position() const
 {
@@ -800,6 +1152,14 @@ BSlider::Position() const
 }
 
 
+/**
+ * @brief Enables or disables the slider.
+ *
+ * Delegates to BControl::SetEnabled(), which triggers a redraw so the
+ * thumb and bar are rendered in the appropriate enabled/disabled state.
+ *
+ * @param on true to enable the slider, false to disable it.
+ */
 void
 BSlider::SetEnabled(bool on)
 {
@@ -807,6 +1167,13 @@ BSlider::SetEnabled(bool on)
 }
 
 
+/**
+ * @brief Retrieves the minimum and maximum values of the slider's range.
+ *
+ * @param minimum If not NULL, receives the minimum value.
+ * @param maximum If not NULL, receives the maximum value.
+ * @see SetLimits()
+ */
 void
 BSlider::GetLimits(int32* minimum, int32* maximum) const
 {
@@ -821,6 +1188,15 @@ BSlider::GetLimits(int32* minimum, int32* maximum) const
 // #pragma mark - drawing
 
 
+/**
+ * @brief Paints the slider in response to an expose event.
+ *
+ * Fills the background region (excluding the bar frame) with the low color
+ * when the view is not transparent and is not drawn on a parent that draws on
+ * its children, then delegates all slider-specific rendering to DrawSlider().
+ *
+ * @param updateRect The dirty rectangle that needs to be repainted.
+ */
 void
 BSlider::Draw(BRect updateRect)
 {
@@ -852,6 +1228,14 @@ BSlider::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Renders all slider components in the correct paint order.
+ *
+ * Acquires the looper lock and then calls DrawBar(), DrawHashMarks(),
+ * DrawThumb(), DrawFocusMark(), and DrawText() in sequence. When off-screen
+ * rendering is enabled the result is composited onto the view via
+ * DrawBitmap() after the off-screen view is synchronised.
+ */
 void
 BSlider::DrawSlider()
 {
@@ -877,6 +1261,14 @@ BSlider::DrawSlider()
 }
 
 
+/**
+ * @brief Draws the slider bar (track) using BControlLook.
+ *
+ * Retrieves the current bar frame and control-look flags, then calls
+ * BControlLook::DrawSliderBar(). When the fill color is enabled the left
+ * portion of the bar (behind the thumb) is rendered in fFillColor; otherwise
+ * both portions use fBarColor.
+ */
 void
 BSlider::DrawBar()
 {
@@ -892,6 +1284,13 @@ BSlider::DrawBar()
 }
 
 
+/**
+ * @brief Draws tick marks alongside the slider bar.
+ *
+ * Returns immediately when fHashMarks is B_HASH_MARKS_NONE. Otherwise
+ * delegates to BControlLook::DrawSliderHashMarks() using the hash-marks
+ * frame, mark count, and current orientation.
+ */
 void
 BSlider::DrawHashMarks()
 {
@@ -908,6 +1307,13 @@ BSlider::DrawHashMarks()
 }
 
 
+/**
+ * @brief Draws the draggable thumb in the style configured by SetStyle().
+ *
+ * Dispatches to _DrawBlockThumb() for B_BLOCK_THUMB or _DrawTriangleThumb()
+ * for B_TRIANGLE_THUMB. Subclasses may override this method to supply a
+ * completely custom thumb appearance.
+ */
 void
 BSlider::DrawThumb()
 {
@@ -918,6 +1324,14 @@ BSlider::DrawThumb()
 }
 
 
+/**
+ * @brief Draws the keyboard-focus indicator on the thumb.
+ *
+ * Only draws when the slider has focus. For block thumbs a rectangle is
+ * stroked 2-3 pixels inside the thumb frame; for triangle thumbs a line is
+ * drawn just outside the thumb, parallel to the bar axis, using the system
+ * keyboard-navigation highlight color.
+ */
 void
 BSlider::DrawFocusMark()
 {
@@ -950,6 +1364,15 @@ BSlider::DrawFocusMark()
 }
 
 
+/**
+ * @brief Draws all text elements: the label, update text, and limit labels.
+ *
+ * For horizontal sliders the label and update text appear above the bar on
+ * opposite ends, with the limit labels below. For vertical sliders all text
+ * is centred horizontally, with the label and max-limit label at the top and
+ * the min-limit label and update text at the bottom. Rendering is performed
+ * via BControlLook::DrawLabel() to pick up system theming.
+ */
 void
 BSlider::DrawText()
 {
@@ -1023,6 +1446,18 @@ BSlider::DrawText()
 // #pragma mark -
 
 
+/**
+ * @brief Returns the dynamically generated text shown at the opposite end from the label.
+ *
+ * The default implementation returns NULL (no update text). Subclasses can
+ * override this method to return a string that reflects the current value
+ * (e.g. a formatted percentage or measurement). The returned pointer must
+ * remain valid until the next call to UpdateText() or until the slider is
+ * destroyed.
+ *
+ * @return The text to display, or NULL to show nothing.
+ * @see UpdateTextChanged()
+ */
 const char*
 BSlider::UpdateText() const
 {
@@ -1030,6 +1465,17 @@ BSlider::UpdateText() const
 }
 
 
+/**
+ * @brief Refreshes the cached update-text string and repaints the affected region.
+ *
+ * Called by SetValue() whenever the value changes. Fetches the new string from
+ * UpdateText(), computes the dirty rectangle based on the wider of the old and
+ * new string widths, and invalidates that region. If the maximum update-text
+ * width changes the layout is also invalidated so the minimum size is
+ * recalculated.
+ *
+ * @see UpdateText(), SetValue()
+ */
 void
 BSlider::UpdateTextChanged()
 {
@@ -1079,6 +1525,16 @@ BSlider::UpdateTextChanged()
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the slider bar (track).
+ *
+ * Computes the frame in the view's local coordinate system taking into account
+ * the current orientation, font metrics, bar thickness, thumb style, and all
+ * visible text areas. The returned rectangle is used by Draw(), DrawBar(),
+ * HashMarksFrame(), ThumbFrame(), and hit-testing in MouseDown().
+ *
+ * @return The bar's frame in local coordinates.
+ */
 BRect
 BSlider::BarFrame() const
 {
@@ -1129,6 +1585,15 @@ BSlider::BarFrame() const
 }
 
 
+/**
+ * @brief Returns the bounding rectangle within which hash marks are drawn.
+ *
+ * Extends the bar frame by 6 pixels on both sides perpendicular to the bar
+ * axis (top and bottom for horizontal, left and right for vertical).
+ *
+ * @return The hash-marks region in local coordinates.
+ * @see DrawHashMarks(), BarFrame()
+ */
 BRect
 BSlider::HashMarksFrame() const
 {
@@ -1146,6 +1611,18 @@ BSlider::HashMarksFrame() const
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the draggable thumb at its current position.
+ *
+ * Computes the frame in local coordinates based on the current Position(),
+ * the bar thickness, the thumb style, and font metrics. The block thumb is
+ * 17 x (barThickness + 7) pixels; the triangle thumb is 12 x 8 pixels (plus
+ * bar thickness padding) in horizontal orientation, with axes transposed for
+ * vertical. Used by Draw(), MouseDown() hit-testing, and SetValue()
+ * invalidation.
+ *
+ * @return The thumb's frame in local coordinates.
+ */
 BRect
 BSlider::ThumbFrame() const
 {
@@ -1194,6 +1671,14 @@ BSlider::ThumbFrame() const
 }
 
 
+/**
+ * @brief Sets the view flags for the slider.
+ *
+ * Forwards to BControl::SetFlags() to update the underlying BView flags,
+ * which control properties such as mouse and keyboard event delivery.
+ *
+ * @param flags The new set of B_* view flag constants.
+ */
 void
 BSlider::SetFlags(uint32 flags)
 {
@@ -1201,6 +1686,14 @@ BSlider::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Sets the resizing mode of the slider view.
+ *
+ * Forwards to BControl::SetResizingMode() to update how the view responds
+ * to its parent being resized.
+ *
+ * @param mode A combination of B_FOLLOW_* resizing mode constants.
+ */
 void
 BSlider::SetResizingMode(uint32 mode)
 {
@@ -1208,6 +1701,18 @@ BSlider::SetResizingMode(uint32 mode)
 }
 
 
+/**
+ * @brief Returns the preferred width and height for the slider.
+ *
+ * Queries PreferredSize() and writes the result into the caller's pointers.
+ * For horizontal sliders the returned width is the maximum of the current
+ * bounds width and the layout-preferred width, so the view never shrinks
+ * below its current size in legacy (non-layout) applications. A symmetric
+ * rule applies for the height of vertical sliders.
+ *
+ * @param _width  Set to the preferred width, or left unchanged if NULL.
+ * @param _height Set to the preferred height, or left unchanged if NULL.
+ */
 void
 BSlider::GetPreferredSize(float* _width, float* _height)
 {
@@ -1237,6 +1742,12 @@ BSlider::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resizes the slider to its preferred dimensions.
+ *
+ * Delegates to BControl::ResizeToPreferred(), which calls GetPreferredSize()
+ * and performs the resize.
+ */
 void
 BSlider::ResizeToPreferred()
 {
@@ -1244,6 +1755,17 @@ BSlider::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Sends the slider's invocation message to its target.
+ *
+ * Forwards to BControl::Invoke(), which stamps the message with the current
+ * value and dispatches it via the configured messenger. Typically called at
+ * the end of a drag (mouse-up or key-up) to signal the final committed value.
+ *
+ * @param message The message to send, or NULL to use the slider's own message.
+ * @return B_OK on success, or an error code from the messenger.
+ * @see InvokeNotify(), SetModificationMessage()
+ */
 status_t
 BSlider::Invoke(BMessage* message)
 {
@@ -1251,6 +1773,18 @@ BSlider::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the handler that owns the named property.
+ *
+ * Forwards unhandled specifiers to BControl::ResolveSpecifier().
+ *
+ * @param message   The scripting message being processed.
+ * @param index     The index of the current specifier in the message.
+ * @param specifier The specifier message extracted from \a message.
+ * @param command   The scripting command (B_GET_PROPERTY, B_SET_PROPERTY, etc.).
+ * @param property  The name of the property being accessed.
+ * @return The BHandler responsible for the property, or NULL on failure.
+ */
 BHandler*
 BSlider::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 command, const char* property)
@@ -1260,6 +1794,15 @@ BSlider::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/**
+ * @brief Fills \a message with the scripting suites supported by this slider.
+ *
+ * Forwards to BControl::GetSupportedSuites() to append the standard control
+ * suite information.
+ *
+ * @param message The message to receive the suite names and property descriptions.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BSlider::GetSupportedSuites(BMessage* message)
 {
@@ -1267,6 +1810,16 @@ BSlider::GetSupportedSuites(BMessage* message)
 }
 
 
+/**
+ * @brief Sets the message sent while the user is actively dragging the thumb.
+ *
+ * This message is delivered via InvokeNotify() with kind B_CONTROL_MODIFIED
+ * each time the value changes during a drag, before the final Invoke() at
+ * mouse-up. Takes ownership of \a message and deletes the previous one.
+ *
+ * @param message The modification message, or NULL to clear it.
+ * @see ModificationMessage(), Invoke()
+ */
 void
 BSlider::SetModificationMessage(BMessage* message)
 {
@@ -1275,6 +1828,12 @@ BSlider::SetModificationMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the message sent during active thumb dragging.
+ *
+ * @return The modification message, or NULL if none is set.
+ * @see SetModificationMessage()
+ */
 BMessage*
 BSlider::ModificationMessage() const
 {
@@ -1282,6 +1841,16 @@ BSlider::ModificationMessage() const
 }
 
 
+/**
+ * @brief Sets the polling interval used during a synchronous mouse drag.
+ *
+ * In synchronous tracking mode the event loop sleeps for this many
+ * microseconds between GetMouse() calls. The value is clamped to
+ * [10000, 1000000] microseconds (10 ms – 1 s).
+ *
+ * @param snoozeTime The desired sleep interval in microseconds.
+ * @see SnoozeAmount()
+ */
 void
 BSlider::SetSnoozeAmount(int32 snoozeTime)
 {
@@ -1294,6 +1863,12 @@ BSlider::SetSnoozeAmount(int32 snoozeTime)
 }
 
 
+/**
+ * @brief Returns the synchronous-drag polling interval in microseconds.
+ *
+ * @return The current snooze amount, guaranteed to be in [10000, 1000000].
+ * @see SetSnoozeAmount()
+ */
 int32
 BSlider::SnoozeAmount() const
 {
@@ -1301,6 +1876,12 @@ BSlider::SnoozeAmount() const
 }
 
 
+/**
+ * @brief Sets the amount by which each arrow-key press changes the value.
+ *
+ * @param incrementValue The integer delta applied per key event.
+ * @see KeyIncrementValue(), KeyDown()
+ */
 void
 BSlider::SetKeyIncrementValue(int32 incrementValue)
 {
@@ -1308,6 +1889,12 @@ BSlider::SetKeyIncrementValue(int32 incrementValue)
 }
 
 
+/**
+ * @brief Returns the value delta applied by each arrow-key press.
+ *
+ * @return The current key increment value.
+ * @see SetKeyIncrementValue()
+ */
 int32
 BSlider::KeyIncrementValue() const
 {
@@ -1315,6 +1902,15 @@ BSlider::KeyIncrementValue() const
 }
 
 
+/**
+ * @brief Sets the number of tick marks drawn along the bar.
+ *
+ * Triggers a full repaint. Has no visible effect when fHashMarks is
+ * B_HASH_MARKS_NONE.
+ *
+ * @param hashMarkCount The desired number of tick marks (including end marks).
+ * @see HashMarkCount(), SetHashMarks()
+ */
 void
 BSlider::SetHashMarkCount(int32 hashMarkCount)
 {
@@ -1323,6 +1919,12 @@ BSlider::SetHashMarkCount(int32 hashMarkCount)
 }
 
 
+/**
+ * @brief Returns the number of tick marks configured for the slider.
+ *
+ * @return The current hash-mark count.
+ * @see SetHashMarkCount()
+ */
 int32
 BSlider::HashMarkCount() const
 {
@@ -1330,6 +1932,16 @@ BSlider::HashMarkCount() const
 }
 
 
+/**
+ * @brief Sets which side(s) of the bar display tick marks.
+ *
+ * Accepts B_HASH_MARKS_NONE, B_HASH_MARKS_TOP, B_HASH_MARKS_LEFT,
+ * B_HASH_MARKS_BOTTOM, B_HASH_MARKS_RIGHT, or B_HASH_MARKS_BOTH.
+ * Triggers a repaint.
+ *
+ * @param where The desired hash-mark placement.
+ * @see HashMarks(), SetHashMarkCount()
+ */
 void
 BSlider::SetHashMarks(hash_mark_location where)
 {
@@ -1340,6 +1952,12 @@ BSlider::SetHashMarks(hash_mark_location where)
 }
 
 
+/**
+ * @brief Returns the current hash-mark placement setting.
+ *
+ * @return A hash_mark_location constant indicating where marks are drawn.
+ * @see SetHashMarks()
+ */
 hash_mark_location
 BSlider::HashMarks() const
 {
@@ -1347,6 +1965,16 @@ BSlider::HashMarks() const
 }
 
 
+/**
+ * @brief Sets the visual style of the thumb.
+ *
+ * Choosing B_BLOCK_THUMB produces a rectangular button; B_TRIANGLE_THUMB
+ * produces a triangular pointer. The layout is invalidated because different
+ * thumb styles have different frame sizes, and the view is repainted.
+ *
+ * @param style The desired thumb style.
+ * @see Style(), ThumbFrame()
+ */
 void
 BSlider::SetStyle(thumb_style style)
 {
@@ -1356,6 +1984,12 @@ BSlider::SetStyle(thumb_style style)
 }
 
 
+/**
+ * @brief Returns the current thumb style.
+ *
+ * @return B_BLOCK_THUMB or B_TRIANGLE_THUMB.
+ * @see SetStyle()
+ */
 thumb_style
 BSlider::Style() const
 {
@@ -1363,6 +1997,14 @@ BSlider::Style() const
 }
 
 
+/**
+ * @brief Sets the color used to render the slider bar (track).
+ *
+ * Only the bar-frame rectangle is invalidated for efficient repainting.
+ *
+ * @param barColor The new bar color.
+ * @see BarColor(), SetFillColor()
+ */
 void
 BSlider::SetBarColor(rgb_color barColor)
 {
@@ -1371,6 +2013,12 @@ BSlider::SetBarColor(rgb_color barColor)
 }
 
 
+/**
+ * @brief Returns the color used to render the slider bar.
+ *
+ * @return The current bar color.
+ * @see SetBarColor()
+ */
 rgb_color
 BSlider::BarColor() const
 {
@@ -1378,6 +2026,18 @@ BSlider::BarColor() const
 }
 
 
+/**
+ * @brief Enables or disables the two-tone fill color for the bar.
+ *
+ * When \a useFill is true the portion of the bar between the minimum end
+ * and the thumb is painted in the fill color instead of the bar color,
+ * providing a visual progress indication. If \a barColor is not NULL the
+ * fill color is also updated.
+ *
+ * @param useFill  true to enable the fill color, false to use a single color.
+ * @param barColor New fill color, or NULL to leave the existing fill color.
+ * @see FillColor(), SetFillColor()
+ */
 void
 BSlider::UseFillColor(bool useFill, const rgb_color* barColor)
 {
@@ -1390,6 +2050,14 @@ BSlider::UseFillColor(bool useFill, const rgb_color* barColor)
 }
 
 
+/**
+ * @brief Returns whether the fill color is enabled, and optionally retrieves it.
+ *
+ * @param barColor If not NULL and the fill color is enabled, receives the
+ *                 current fill color.
+ * @return true if the fill color is in use, false otherwise.
+ * @see UseFillColor()
+ */
 bool
 BSlider::FillColor(rgb_color* barColor) const
 {
@@ -1400,6 +2068,16 @@ BSlider::FillColor(rgb_color* barColor) const
 }
 
 
+/**
+ * @brief Returns the view used for drawing slider components.
+ *
+ * When off-screen rendering is compiled in (USE_OFF_SCREEN_VIEW != 0) this
+ * returns the off-screen BView backed by a BBitmap. Otherwise it returns the
+ * slider itself, so all DrawBar(), DrawThumb(), etc. calls operate directly on
+ * the on-screen view.
+ *
+ * @return The BView into which component-drawing methods should render.
+ */
 BView*
 BSlider::OffscreenView() const
 {
@@ -1411,6 +2089,12 @@ BSlider::OffscreenView() const
 }
 
 
+/**
+ * @brief Returns the current slider orientation.
+ *
+ * @return B_HORIZONTAL or B_VERTICAL.
+ * @see SetOrientation()
+ */
 orientation
 BSlider::Orientation() const
 {
@@ -1418,6 +2102,16 @@ BSlider::Orientation() const
 }
 
 
+/**
+ * @brief Changes the axis along which the thumb travels.
+ *
+ * Switching between B_HORIZONTAL and B_VERTICAL invalidates the layout
+ * (because the min-size geometry changes entirely) and triggers a repaint.
+ * No-ops when the new orientation matches the current one.
+ *
+ * @param posture The new orientation (B_HORIZONTAL or B_VERTICAL).
+ * @see Orientation()
+ */
 void
 BSlider::SetOrientation(orientation posture)
 {
@@ -1430,6 +2124,12 @@ BSlider::SetOrientation(orientation posture)
 }
 
 
+/**
+ * @brief Returns the thickness of the slider bar in pixels.
+ *
+ * @return The current bar thickness, always at least 1.0.
+ * @see SetBarThickness()
+ */
 float
 BSlider::BarThickness() const
 {
@@ -1437,6 +2137,18 @@ BSlider::BarThickness() const
 }
 
 
+/**
+ * @brief Sets the cross-axis thickness of the slider bar in pixels.
+ *
+ * Values below 1.0 are clamped to 1.0; other values are rounded to the
+ * nearest pixel. When the thickness actually changes, the dirty region (bar
+ * frame plus hash-mark extension) is computed before and after the update
+ * and both are invalidated, and the layout is also invalidated because the
+ * minimum size may change.
+ *
+ * @param thickness The desired bar thickness in pixels.
+ * @see BarThickness()
+ */
 void
 BSlider::SetBarThickness(float thickness)
 {
@@ -1465,6 +2177,17 @@ BSlider::SetBarThickness(float thickness)
 }
 
 
+/**
+ * @brief Sets the font used for label and limit-label rendering.
+ *
+ * Updates the off-screen view's font when off-screen rendering is enabled,
+ * then invalidates the layout because font metrics affect the minimum size
+ * calculation.
+ *
+ * @param font       The new font to apply.
+ * @param properties A bitmask of B_FONT_* flags indicating which properties
+ *                   to copy from \a font.
+ */
 void
 BSlider::SetFont(const BFont* font, uint32 properties)
 {
@@ -1481,6 +2204,16 @@ BSlider::SetFont(const BFont* font, uint32 properties)
 }
 
 
+/**
+ * @brief Sets both ends of the slider's value range atomically.
+ *
+ * Only takes effect when \a minimum <= \a maximum. The current value is
+ * clamped to the new range and SetValue() is called if it falls outside.
+ *
+ * @param minimum The new minimum value.
+ * @param maximum The new maximum value.
+ * @see GetLimits()
+ */
 void
 BSlider::SetLimits(int32 minimum, int32 maximum)
 {
@@ -1498,6 +2231,18 @@ BSlider::SetLimits(int32 minimum, int32 maximum)
 }
 
 
+/**
+ * @brief Returns the maximum pixel width the update text will ever occupy.
+ *
+ * The default implementation probes the width at fMaxValue, assuming that the
+ * widest string occurs at the largest value. Subclasses that generate update
+ * text with different width characteristics should override this method.
+ * The result is cached in fMaxUpdateTextWidth and used by _ValidateMinSize()
+ * to reserve space in the preferred-size calculation.
+ *
+ * @return The maximum update-text width in pixels.
+ * @see UpdateText(), UpdateTextChanged()
+ */
 float
 BSlider::MaxUpdateTextWidth()
 {
@@ -1518,6 +2263,15 @@ BSlider::MaxUpdateTextWidth()
 // #pragma mark - layout related
 
 
+/**
+ * @brief Returns the minimum size the layout system may assign to this slider.
+ *
+ * Composes the internally computed minimum size (from _ValidateMinSize()) with
+ * any explicit minimum size set by the application via SetExplicitMinSize().
+ *
+ * @return The layout-system minimum size.
+ * @see PreferredSize(), MaxSize()
+ */
 BSize
 BSlider::MinSize()
 {
@@ -1525,6 +2279,17 @@ BSlider::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size the layout system may assign to this slider.
+ *
+ * Sets the dimension along the slider axis to B_SIZE_UNLIMITED (the slider
+ * may grow freely in that direction), while keeping the cross-axis dimension
+ * fixed at the computed minimum. Composes the result with any explicit maximum
+ * set by the application.
+ *
+ * @return The layout-system maximum size.
+ * @see MinSize(), PreferredSize()
+ */
 BSize
 BSlider::MaxSize()
 {
@@ -1538,6 +2303,16 @@ BSlider::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size for this slider.
+ *
+ * Extends the computed minimum size along the slider axis to at least 100
+ * pixels, giving the thumb enough room to be draggable. Composes the result
+ * with any explicit preferred size set by the application.
+ *
+ * @return The layout-system preferred size.
+ * @see MinSize(), MaxSize(), GetPreferredSize()
+ */
 BSize
 BSlider::PreferredSize()
 {
@@ -1551,6 +2326,17 @@ BSlider::PreferredSize()
 }
 
 
+/**
+ * @brief Sets a decorative icon bitmap for this slider.
+ *
+ * Forwards to BControl::SetIcon(). Sliders do not use icons in their default
+ * rendering, but the method is provided for binary compatibility and subclass
+ * use.
+ *
+ * @param icon  The icon bitmap, or NULL to remove the icon.
+ * @param flags Icon-loading flags (B_TRIM_ICON_BITMAP, etc.).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BSlider::SetIcon(const BBitmap* icon, uint32 flags)
 {
@@ -1558,6 +2344,14 @@ BSlider::SetIcon(const BBitmap* icon, uint32 flags)
 }
 
 
+/**
+ * @brief Called by the layout system when the layout is invalidated.
+ *
+ * Resets the cached minimum-size sentinel so that _ValidateMinSize() will
+ * recompute it on the next query.
+ *
+ * @param descendants true if child layouts were also invalidated.
+ */
 void
 BSlider::LayoutInvalidated(bool descendants)
 {
@@ -1569,6 +2363,12 @@ BSlider::LayoutInvalidated(bool descendants)
 // #pragma mark - private
 
 
+/**
+ * @brief Renders the block (rectangular) thumb via BControlLook.
+ *
+ * Retrieves the current thumb frame and control flags and delegates to
+ * BControlLook::DrawSliderThumb() using the control background color.
+ */
 void
 BSlider::_DrawBlockThumb()
 {
@@ -1582,6 +2382,13 @@ BSlider::_DrawBlockThumb()
 }
 
 
+/**
+ * @brief Renders the triangular pointer thumb via BControlLook.
+ *
+ * Retrieves the current thumb frame and control flags and delegates to
+ * BControlLook::DrawSliderTriangle(), which draws the triangle pointing
+ * toward the bar along the active axis.
+ */
 void
 BSlider::_DrawTriangleThumb()
 {
@@ -1594,6 +2401,12 @@ BSlider::_DrawTriangleThumb()
 }
 
 
+/**
+ * @brief Returns the current pixel location of the thumb's anchor point.
+ *
+ * @return The cached fLocation point in local view coordinates.
+ * @see _SetLocationForValue()
+ */
 BPoint
 BSlider::_Location() const
 {
@@ -1601,6 +2414,16 @@ BSlider::_Location() const
 }
 
 
+/**
+ * @brief Updates fLocation so it corresponds to the given integer value.
+ *
+ * Performs a linear interpolation between _MinPosition() and _MaxPosition()
+ * based on where \a value falls in [fMinValue, fMaxValue]. For horizontal
+ * sliders only the x coordinate is set; for vertical sliders only y is set.
+ *
+ * @param value The integer value whose pixel position is to be computed.
+ * @see _Location(), SetValue()
+ */
 void
 BSlider::_SetLocationForValue(int32 value)
 {
@@ -1623,6 +2446,15 @@ BSlider::_SetLocationForValue(int32 value)
 }
 
 
+/**
+ * @brief Returns the pixel coordinate of the low end of the draggable range.
+ *
+ * For horizontal sliders this is BarFrame().left + 1; for vertical sliders it
+ * is BarFrame().bottom - 1 (higher y means lower value in screen space).
+ *
+ * @return The minimum draggable pixel position along the active axis.
+ * @see _MaxPosition()
+ */
 float
 BSlider::_MinPosition() const
 {
@@ -1633,6 +2465,15 @@ BSlider::_MinPosition() const
 }
 
 
+/**
+ * @brief Returns the pixel coordinate of the high end of the draggable range.
+ *
+ * For horizontal sliders this is BarFrame().right - 1; for vertical sliders
+ * it is BarFrame().top + 1.
+ *
+ * @return The maximum draggable pixel position along the active axis.
+ * @see _MinPosition()
+ */
 float
 BSlider::_MaxPosition() const
 {
@@ -1643,6 +2484,18 @@ BSlider::_MaxPosition() const
 }
 
 
+/**
+ * @brief Computes and caches the minimum size required by the slider's content.
+ *
+ * Returns the cached value immediately when fMinSize.width >= 0. Otherwise
+ * measures all visible text areas using the current font metrics, computes
+ * the minimum width and height needed to display the bar, thumb, hash marks,
+ * label, limit labels, and update text, stores the result in fMinSize, and
+ * calls ResetLayoutInvalidation() to mark the cache as valid.
+ *
+ * @return The newly computed (or previously cached) minimum size.
+ * @see LayoutInvalidated(), MinSize()
+ */
 BSize
 BSlider::_ValidateMinSize()
 {
@@ -1753,6 +2606,7 @@ void BSlider::_ReservedSlider11() {}
 void BSlider::_ReservedSlider12() {}
 
 
+/** @brief Private copy-assignment operator; copying BSlider objects is not supported. */
 BSlider&
 BSlider::operator=(const BSlider&)
 {

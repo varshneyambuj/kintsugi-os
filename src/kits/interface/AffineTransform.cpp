@@ -1,34 +1,61 @@
 /*
- * Copyright 2008-2010, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephen Deken, stephen.deken@gmail.com
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephen Deken, stephen.deken@gmail.com
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *
+ *   This file also incorporates work from Anti-Grain Geometry (AGG):
+ *   Copyright 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
+ *   Permission to copy, use, modify, sell and distribute this software
+ *   is granted provided this copyright notice appears in all copies.
  */
-//----------------------------------------------------------------------------
-// Anti-Grain Geometry - Version 2.4
-// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
-//
-// Permission to copy, use, modify, sell and distribute this software
-// is granted provided this copyright notice appears in all copies.
-// This software is provided "as is" without express or implied
-// warranty, and with no claim as to its suitability for any purpose.
-//
-//----------------------------------------------------------------------------
-// Contact: mcseem@antigrain.com
-//          mcseemagg@yahoo.com
-//          http://www.antigrain.com
-//----------------------------------------------------------------------------
+
+
+/**
+ * @file AffineTransform.cpp
+ * @brief Implementation of BAffineTransform for 2D affine coordinate transformations
+ *
+ * BAffineTransform wraps a 3x2 affine matrix supporting translation, scaling,
+ * rotation, shearing, and composition of transforms. The implementation
+ * derives from the Anti-Grain Geometry library.
+ *
+ * @see BView, BShape
+ */
+
 
 #include <AffineTransform.h>
 
 #include <TypeConstants.h>
 
 
+/** @brief The identity transform: no translation, rotation, scale, or shear. */
 const BAffineTransform B_AFFINE_IDENTITY_TRANSFORM;
 
 
+/**
+ * @brief Construct an identity BAffineTransform.
+ *
+ * Initialises all scale components to 1.0 and all remaining components to 0.0,
+ * producing a transform that leaves every point unchanged.
+ */
 BAffineTransform::BAffineTransform()
 	:
 	sx(1.0),
@@ -41,6 +68,19 @@ BAffineTransform::BAffineTransform()
 }
 
 
+/**
+ * @brief Construct a BAffineTransform from explicit matrix components.
+ *
+ * The six parameters correspond directly to the elements of the 3x2 affine
+ * matrix: [sx shy shx sy tx ty].
+ *
+ * @param sx  X-axis scale factor (column 0, row 0).
+ * @param shy Y-axis shear factor applied to the X column (column 0, row 1).
+ * @param shx X-axis shear factor applied to the Y column (column 1, row 0).
+ * @param sy  Y-axis scale factor (column 1, row 1).
+ * @param tx  X translation (column 2, row 0).
+ * @param ty  Y translation (column 2, row 1).
+ */
 BAffineTransform::BAffineTransform(double sx, double shy, double shx,
 		double sy, double tx, double ty)
 	:
@@ -54,6 +94,11 @@ BAffineTransform::BAffineTransform(double sx, double shy, double shx,
 }
 
 
+/**
+ * @brief Copy constructor — duplicate an existing BAffineTransform.
+ *
+ * @param other The transform to copy.
+ */
 BAffineTransform::BAffineTransform(const BAffineTransform& other)
 	:
 	sx(other.sx),
@@ -66,6 +111,9 @@ BAffineTransform::BAffineTransform(const BAffineTransform& other)
 }
 
 
+/**
+ * @brief Destroy the BAffineTransform.
+ */
 BAffineTransform::~BAffineTransform()
 {
 }
@@ -74,6 +122,12 @@ BAffineTransform::~BAffineTransform()
 // #pragma mark -
 
 
+/**
+ * @brief Report whether the flattened form has a fixed size.
+ *
+ * @return Always true; a BAffineTransform always flattens to exactly six
+ *         doubles (48 bytes).
+ */
 bool
 BAffineTransform::IsFixedSize() const
 {
@@ -81,6 +135,11 @@ BAffineTransform::IsFixedSize() const
 }
 
 
+/**
+ * @brief Return the type code used to identify this flattenable type.
+ *
+ * @return B_AFFINE_TRANSFORM_TYPE.
+ */
 type_code
 BAffineTransform::TypeCode() const
 {
@@ -88,6 +147,11 @@ BAffineTransform::TypeCode() const
 }
 
 
+/**
+ * @brief Return the number of bytes required to flatten this transform.
+ *
+ * @return Six times sizeof(double), i.e. 48 bytes.
+ */
 ssize_t
 BAffineTransform::FlattenedSize() const
 {
@@ -95,6 +159,17 @@ BAffineTransform::FlattenedSize() const
 }
 
 
+/**
+ * @brief Write the transform matrix into a raw byte buffer.
+ *
+ * The six matrix components are written in the order sx, shy, shx, sy, tx, ty
+ * as native-endian doubles.
+ *
+ * @param _buffer Destination buffer; must be at least FlattenedSize() bytes.
+ * @param size    Byte capacity of \a _buffer.
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE If \a _buffer is NULL or \a size is too small.
+ */
 status_t
 BAffineTransform::Flatten(void* _buffer, ssize_t size) const
 {
@@ -114,6 +189,18 @@ BAffineTransform::Flatten(void* _buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Read the transform matrix from a raw byte buffer.
+ *
+ * Restores the six matrix components from a buffer previously written by
+ * Flatten(). The type code must match B_AFFINE_TRANSFORM_TYPE.
+ *
+ * @param code    Type code from the stream; must equal TypeCode().
+ * @param _buffer Source buffer containing the flattened data.
+ * @param size    Byte size of \a _buffer; must be at least FlattenedSize().
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE If any argument is invalid or the type code mismatches.
+ */
 status_t
 BAffineTransform::Unflatten(type_code code, const void* _buffer, ssize_t size)
 {
@@ -138,6 +225,13 @@ BAffineTransform::Unflatten(type_code code, const void* _buffer, ssize_t size)
 // #pragma mark -
 
 
+/**
+ * @brief Create a pure-translation transform.
+ *
+ * @param x Translation distance along the X axis.
+ * @param y Translation distance along the Y axis.
+ * @return A new BAffineTransform that translates by (x, y).
+ */
 /*static*/ BAffineTransform
 BAffineTransform::AffineTranslation(double x, double y)
 {
@@ -145,6 +239,12 @@ BAffineTransform::AffineTranslation(double x, double y)
 }
 
 
+/**
+ * @brief Create a pure-rotation transform around the origin.
+ *
+ * @param angle Rotation angle in radians, measured counter-clockwise.
+ * @return A new BAffineTransform that rotates by \a angle.
+ */
 /*static*/ BAffineTransform
 BAffineTransform::AffineRotation(double angle)
 {
@@ -153,6 +253,13 @@ BAffineTransform::AffineRotation(double angle)
 }
 
 
+/**
+ * @brief Create a non-uniform scaling transform.
+ *
+ * @param x Scale factor along the X axis.
+ * @param y Scale factor along the Y axis.
+ * @return A new BAffineTransform that scales by (x, y).
+ */
 /*static*/ BAffineTransform
 BAffineTransform::AffineScaling(double x, double y)
 {
@@ -160,6 +267,12 @@ BAffineTransform::AffineScaling(double x, double y)
 }
 
 
+/**
+ * @brief Create a uniform scaling transform.
+ *
+ * @param scale Scale factor applied equally to both axes.
+ * @return A new BAffineTransform that scales uniformly by \a scale.
+ */
 /*static*/ BAffineTransform
 BAffineTransform::AffineScaling(double scale)
 {
@@ -167,6 +280,13 @@ BAffineTransform::AffineScaling(double scale)
 }
 
 
+/**
+ * @brief Create a shearing transform.
+ *
+ * @param x Shear angle in radians along the X axis (tan of the X shear angle).
+ * @param y Shear angle in radians along the Y axis (tan of the Y shear angle).
+ * @return A new BAffineTransform that applies the specified shear.
+ */
 /*static*/ BAffineTransform
 BAffineTransform::AffineShearing(double x, double y)
 {
@@ -177,6 +297,12 @@ BAffineTransform::AffineShearing(double x, double y)
 // #pragma mark -
 
 
+/**
+ * @brief Apply this transform to a BPoint and return the result.
+ *
+ * @param point The input point in the source coordinate system.
+ * @return The transformed point in the destination coordinate system.
+ */
 BPoint
 BAffineTransform::Apply(const BPoint& point) const
 {
@@ -187,6 +313,12 @@ BAffineTransform::Apply(const BPoint& point) const
 }
 
 
+/**
+ * @brief Apply the inverse of this transform to a BPoint and return the result.
+ *
+ * @param point The input point in the destination coordinate system.
+ * @return The back-transformed point in the source coordinate system.
+ */
 BPoint
 BAffineTransform::ApplyInverse(const BPoint& point) const
 {
@@ -197,6 +329,12 @@ BAffineTransform::ApplyInverse(const BPoint& point) const
 }
 
 
+/**
+ * @brief Apply this transform to a BPoint in place.
+ *
+ * @param point Pointer to the point to transform; updated in place.
+ *              Does nothing if NULL.
+ */
 void
 BAffineTransform::Apply(BPoint* point) const
 {
@@ -210,6 +348,12 @@ BAffineTransform::Apply(BPoint* point) const
 }
 
 
+/**
+ * @brief Apply the inverse of this transform to a BPoint in place.
+ *
+ * @param point Pointer to the point to back-transform; updated in place.
+ *              Does nothing if NULL.
+ */
 void
 BAffineTransform::ApplyInverse(BPoint* point) const
 {
@@ -223,6 +367,13 @@ BAffineTransform::ApplyInverse(BPoint* point) const
 }
 
 
+/**
+ * @brief Apply this transform to an array of BPoints in place.
+ *
+ * @param points Pointer to the first element of the point array.
+ *               Does nothing if NULL.
+ * @param count  Number of points to transform.
+ */
 void
 BAffineTransform::Apply(BPoint* points, uint32 count) const
 {
@@ -233,6 +384,13 @@ BAffineTransform::Apply(BPoint* points, uint32 count) const
 }
 
 
+/**
+ * @brief Apply the inverse of this transform to an array of BPoints in place.
+ *
+ * @param points Pointer to the first element of the point array.
+ *               Does nothing if NULL.
+ * @param count  Number of points to back-transform.
+ */
 void
 BAffineTransform::ApplyInverse(BPoint* points, uint32 count) const
 {
@@ -246,6 +404,14 @@ BAffineTransform::ApplyInverse(BPoint* points, uint32 count) const
 // #pragma mark -
 
 
+/**
+ * @brief Post-translate this transform by a BPoint delta.
+ *
+ * Equivalent to calling TranslateBy(delta.x, delta.y).
+ *
+ * @param delta The (dx, dy) displacement to add.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::TranslateBy(const BPoint& delta)
 {
@@ -253,6 +419,13 @@ BAffineTransform::TranslateBy(const BPoint& delta)
 }
 
 
+/**
+ * @brief Return a translated copy of this transform.
+ *
+ * @param x Displacement along the X axis.
+ * @param y Displacement along the Y axis.
+ * @return A new transform equal to *this post-translated by (x, y).
+ */
 BAffineTransform
 BAffineTransform::TranslateByCopy(double x, double y) const
 {
@@ -262,6 +435,12 @@ BAffineTransform::TranslateByCopy(double x, double y) const
 }
 
 
+/**
+ * @brief Return a translated copy of this transform using a BPoint delta.
+ *
+ * @param delta The (dx, dy) displacement to add.
+ * @return A new transform equal to *this post-translated by \a delta.
+ */
 BAffineTransform
 BAffineTransform::TranslateByCopy(const BPoint& delta) const
 {
@@ -272,6 +451,16 @@ BAffineTransform::TranslateByCopy(const BPoint& delta) const
 // #pragma mark -
 
 
+/**
+ * @brief Post-rotate this transform around an arbitrary center point.
+ *
+ * Temporarily translates the origin to \a center, applies the rotation,
+ * then translates back.
+ *
+ * @param center The pivot point for the rotation.
+ * @param angle  Rotation angle in radians (counter-clockwise).
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::RotateBy(const BPoint& center, double angle)
 {
@@ -281,6 +470,12 @@ BAffineTransform::RotateBy(const BPoint& center, double angle)
 }
 
 
+/**
+ * @brief Return a rotated copy of this transform around the origin.
+ *
+ * @param angle Rotation angle in radians (counter-clockwise).
+ * @return A new transform equal to *this post-rotated by \a angle.
+ */
 BAffineTransform
 BAffineTransform::RotateByCopy(double angle) const
 {
@@ -290,6 +485,13 @@ BAffineTransform::RotateByCopy(double angle) const
 }
 
 
+/**
+ * @brief Return a rotated copy of this transform around an arbitrary center point.
+ *
+ * @param center The pivot point for the rotation.
+ * @param angle  Rotation angle in radians (counter-clockwise).
+ * @return A new transform equal to *this post-rotated around \a center by \a angle.
+ */
 BAffineTransform
 BAffineTransform::RotateByCopy(const BPoint& center, double angle) const
 {
@@ -302,6 +504,13 @@ BAffineTransform::RotateByCopy(const BPoint& center, double angle) const
 // #pragma mark -
 
 
+/**
+ * @brief Post-scale this transform uniformly around an arbitrary center point.
+ *
+ * @param center The fixed point around which scaling is applied.
+ * @param scale  Uniform scale factor for both axes.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ScaleBy(const BPoint& center, double scale)
 {
@@ -309,6 +518,14 @@ BAffineTransform::ScaleBy(const BPoint& center, double scale)
 }
 
 
+/**
+ * @brief Post-scale this transform non-uniformly around an arbitrary center point.
+ *
+ * @param center The fixed point around which scaling is applied.
+ * @param x      Scale factor along the X axis.
+ * @param y      Scale factor along the Y axis.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ScaleBy(const BPoint& center, double x, double y)
 {
@@ -318,6 +535,12 @@ BAffineTransform::ScaleBy(const BPoint& center, double x, double y)
 }
 
 
+/**
+ * @brief Post-scale this transform using a BPoint as the (sx, sy) scale vector.
+ *
+ * @param scale A point whose x and y components are the scale factors.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ScaleBy(const BPoint& scale)
 {
@@ -325,6 +548,13 @@ BAffineTransform::ScaleBy(const BPoint& scale)
 }
 
 
+/**
+ * @brief Post-scale this transform around a center point using a BPoint scale vector.
+ *
+ * @param center The fixed point around which scaling is applied.
+ * @param scale  A point whose x and y components are the scale factors.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ScaleBy(const BPoint& center, const BPoint& scale)
 {
@@ -332,6 +562,12 @@ BAffineTransform::ScaleBy(const BPoint& center, const BPoint& scale)
 }
 
 
+/**
+ * @brief Return a uniformly scaled copy of this transform.
+ *
+ * @param scale Uniform scale factor.
+ * @return A new transform equal to *this post-scaled by \a scale on both axes.
+ */
 BAffineTransform
 BAffineTransform::ScaleByCopy(double scale) const
 {
@@ -339,6 +575,13 @@ BAffineTransform::ScaleByCopy(double scale) const
 }
 
 
+/**
+ * @brief Return a uniformly scaled copy of this transform around an arbitrary center.
+ *
+ * @param center The fixed point around which scaling is applied.
+ * @param scale  Uniform scale factor.
+ * @return A new transform equal to *this post-scaled uniformly around \a center.
+ */
 BAffineTransform
 BAffineTransform::ScaleByCopy(const BPoint& center, double scale) const
 {
@@ -346,6 +589,13 @@ BAffineTransform::ScaleByCopy(const BPoint& center, double scale) const
 }
 
 
+/**
+ * @brief Return a non-uniformly scaled copy of this transform.
+ *
+ * @param x Scale factor along the X axis.
+ * @param y Scale factor along the Y axis.
+ * @return A new transform equal to *this post-scaled by (x, y).
+ */
 BAffineTransform
 BAffineTransform::ScaleByCopy(double x, double y) const
 {
@@ -355,6 +605,14 @@ BAffineTransform::ScaleByCopy(double x, double y) const
 }
 
 
+/**
+ * @brief Return a non-uniformly scaled copy of this transform around an arbitrary center.
+ *
+ * @param center The fixed point around which scaling is applied.
+ * @param x      Scale factor along the X axis.
+ * @param y      Scale factor along the Y axis.
+ * @return A new transform equal to *this post-scaled by (x, y) around \a center.
+ */
 BAffineTransform
 BAffineTransform::ScaleByCopy(const BPoint& center, double x, double y) const
 {
@@ -364,6 +622,12 @@ BAffineTransform::ScaleByCopy(const BPoint& center, double x, double y) const
 }
 
 
+/**
+ * @brief Return a copy scaled by a BPoint scale vector.
+ *
+ * @param scale A point whose x and y components are the scale factors.
+ * @return A new transform equal to *this post-scaled by \a scale.
+ */
 BAffineTransform
 BAffineTransform::ScaleByCopy(const BPoint& scale) const
 {
@@ -371,6 +635,13 @@ BAffineTransform::ScaleByCopy(const BPoint& scale) const
 }
 
 
+/**
+ * @brief Return a copy scaled around a center point using a BPoint scale vector.
+ *
+ * @param center The fixed point around which scaling is applied.
+ * @param scale  A point whose x and y components are the scale factors.
+ * @return A new transform equal to *this post-scaled by \a scale around \a center.
+ */
 BAffineTransform
 BAffineTransform::ScaleByCopy(const BPoint& center, const BPoint& scale) const
 {
@@ -378,6 +649,15 @@ BAffineTransform::ScaleByCopy(const BPoint& center, const BPoint& scale) const
 }
 
 
+/**
+ * @brief Set the overall uniform scale while preserving rotation and shear.
+ *
+ * Decomposes the current transform into its constituent parameters, replaces the
+ * scale with a uniform \a scale value, and recomposes the matrix.
+ *
+ * @param scale The desired uniform scale factor.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::SetScale(double scale)
 {
@@ -385,6 +665,16 @@ BAffineTransform::SetScale(double scale)
 }
 
 
+/**
+ * @brief Set the overall non-uniform scale while preserving rotation and shear.
+ *
+ * Decomposes the current transform, replaces the X and Y scale factors, and
+ * recomposes the matrix.
+ *
+ * @param x Desired scale factor along the X axis.
+ * @param y Desired scale factor along the Y axis.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::SetScale(double x, double y)
 {
@@ -411,6 +701,14 @@ BAffineTransform::SetScale(double x, double y)
 // #pragma mark -
 
 
+/**
+ * @brief Post-shear this transform around an arbitrary center point.
+ *
+ * @param center The fixed point around which the shear is applied.
+ * @param x      X-axis shear angle in radians.
+ * @param y      Y-axis shear angle in radians.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ShearBy(const BPoint& center, double x, double y)
 {
@@ -420,6 +718,12 @@ BAffineTransform::ShearBy(const BPoint& center, double x, double y)
 }
 
 
+/**
+ * @brief Post-shear this transform using a BPoint as the (shx, shy) shear vector.
+ *
+ * @param shear A point whose x and y components are the shear angles (in radians).
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ShearBy(const BPoint& shear)
 {
@@ -427,6 +731,13 @@ BAffineTransform::ShearBy(const BPoint& shear)
 }
 
 
+/**
+ * @brief Post-shear this transform around a center point using a BPoint shear vector.
+ *
+ * @param center The fixed point around which the shear is applied.
+ * @param shear  A point whose x and y components are the shear angles (in radians).
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::ShearBy(const BPoint& center, const BPoint& shear)
 {
@@ -434,6 +745,13 @@ BAffineTransform::ShearBy(const BPoint& center, const BPoint& shear)
 }
 
 
+/**
+ * @brief Return a sheared copy of this transform.
+ *
+ * @param x X-axis shear angle in radians.
+ * @param y Y-axis shear angle in radians.
+ * @return A new transform equal to *this post-sheared by (x, y).
+ */
 BAffineTransform
 BAffineTransform::ShearByCopy(double x, double y) const
 {
@@ -443,6 +761,14 @@ BAffineTransform::ShearByCopy(double x, double y) const
 }
 
 
+/**
+ * @brief Return a sheared copy of this transform around an arbitrary center point.
+ *
+ * @param center The fixed point around which the shear is applied.
+ * @param x      X-axis shear angle in radians.
+ * @param y      Y-axis shear angle in radians.
+ * @return A new transform equal to *this post-sheared by (x, y) around \a center.
+ */
 BAffineTransform
 BAffineTransform::ShearByCopy(const BPoint& center, double x, double y) const
 {
@@ -452,6 +778,12 @@ BAffineTransform::ShearByCopy(const BPoint& center, double x, double y) const
 }
 
 
+/**
+ * @brief Return a sheared copy of this transform using a BPoint shear vector.
+ *
+ * @param shear A point whose x and y components are the shear angles (in radians).
+ * @return A new transform equal to *this post-sheared by \a shear.
+ */
 BAffineTransform
 BAffineTransform::ShearByCopy(const BPoint& shear) const
 {
@@ -461,6 +793,13 @@ BAffineTransform::ShearByCopy(const BPoint& shear) const
 }
 
 
+/**
+ * @brief Return a sheared copy around a center point using a BPoint shear vector.
+ *
+ * @param center The fixed point around which the shear is applied.
+ * @param shear  A point whose x and y components are the shear angles (in radians).
+ * @return A new transform equal to *this post-sheared by \a shear around \a center.
+ */
 BAffineTransform
 BAffineTransform::ShearByCopy(const BPoint& center, const BPoint& shear) const
 {
@@ -473,6 +812,16 @@ BAffineTransform::ShearByCopy(const BPoint& center, const BPoint& shear) const
 // #pragma mark -
 
 
+/**
+ * @brief Pre-multiply this transform by another, i.e. compute other * this.
+ *
+ * Post-multiplying appends a transform on the right; pre-multiplying prepends
+ * it on the left. Use this when \a other should be applied before \a *this in
+ * the transformation pipeline.
+ *
+ * @param other The transform to prepend.
+ * @return A const reference to this transform after modification.
+ */
 const BAffineTransform&
 BAffineTransform::PreMultiply(const BAffineTransform& other)
 {
@@ -489,6 +838,15 @@ BAffineTransform::PreMultiply(const BAffineTransform& other)
 }
 
 
+/**
+ * @brief Test whether this transform has non-degenerate scale components.
+ *
+ * A transform is considered valid when both scale components exceed \a epsilon
+ * in absolute value, guaranteeing that the matrix is invertible.
+ *
+ * @param epsilon Tolerance below which a scale component is considered zero.
+ * @return true if the transform can be inverted, false if it is degenerate.
+ */
 bool
 BAffineTransform::IsValid(double epsilon) const
 {
@@ -496,6 +854,14 @@ BAffineTransform::IsValid(double epsilon) const
 }
 
 
+/**
+ * @brief Test whether two doubles are equal within a tolerance.
+ *
+ * @param v1      First value.
+ * @param v2      Second value.
+ * @param epsilon Maximum allowed absolute difference for equality.
+ * @return true if |v1 - v2| <= epsilon.
+ */
 static inline bool
 IsEqualEpsilon(double v1, double v2, double epsilon)
 {
@@ -503,6 +869,13 @@ IsEqualEpsilon(double v1, double v2, double epsilon)
 }
 
 
+/**
+ * @brief Test whether this transform is the identity, within a tolerance.
+ *
+ * @param epsilon Maximum allowed deviation of each component from its identity
+ *                value (1.0 for sx/sy, 0.0 for all others).
+ * @return true if every component is within \a epsilon of the identity value.
+ */
 bool
 BAffineTransform::IsIdentity(double epsilon) const
 {
@@ -515,6 +888,12 @@ BAffineTransform::IsIdentity(double epsilon) const
 }
 
 
+/**
+ * @brief Test whether this transform is a dilation (scale only, no shear).
+ *
+ * @param epsilon Tolerance for comparing shear components to zero.
+ * @return true if both shear components are within \a epsilon of zero.
+ */
 bool
 BAffineTransform::IsDilation(double epsilon) const
 {
@@ -523,6 +902,13 @@ BAffineTransform::IsDilation(double epsilon) const
 }
 
 
+/**
+ * @brief Test whether this transform is component-wise equal to another.
+ *
+ * @param other   The transform to compare against.
+ * @param epsilon Maximum allowed per-component absolute difference.
+ * @return true if every matrix component differs by at most \a epsilon.
+ */
 bool
 BAffineTransform::IsEqual(const BAffineTransform& other, double epsilon) const
 {
@@ -535,6 +921,16 @@ BAffineTransform::IsEqual(const BAffineTransform& other, double epsilon) const
 }
 
 
+/**
+ * @brief Invert this transform in place.
+ *
+ * Replaces the matrix with its inverse using the standard 2x2 adjugate formula
+ * extended to the translation components. The result is undefined if
+ * IsValid() returns false (degenerate matrix).
+ *
+ * @return A const reference to this transform after inversion.
+ * @see IsValid()
+ */
 const BAffineTransform&
 BAffineTransform::Invert()
 {
@@ -555,6 +951,11 @@ BAffineTransform::Invert()
 }
 
 
+/**
+ * @brief Flip this transform along the X axis (negate the X components).
+ *
+ * @return A const reference to this transform after the flip.
+ */
 const BAffineTransform&
 BAffineTransform::FlipX()
 {
@@ -565,6 +966,11 @@ BAffineTransform::FlipX()
 }
 
 
+/**
+ * @brief Flip this transform along the Y axis (negate the Y components).
+ *
+ * @return A const reference to this transform after the flip.
+ */
 const BAffineTransform&
 BAffineTransform::FlipY()
 {
@@ -575,6 +981,13 @@ BAffineTransform::FlipY()
 }
 
 
+/**
+ * @brief Reset this transform to the identity.
+ *
+ * Sets sx = sy = 1.0 and all other components to 0.0.
+ *
+ * @return A const reference to this transform after the reset.
+ */
 const BAffineTransform&
 BAffineTransform::Reset()
 {
@@ -584,6 +997,12 @@ BAffineTransform::Reset()
 }
 
 
+/**
+ * @brief Retrieve the translation components of this transform.
+ *
+ * @param _tx Output parameter for the X translation; may be NULL.
+ * @param _ty Output parameter for the Y translation; may be NULL.
+ */
 void
 BAffineTransform::GetTranslation(double* _tx, double* _ty) const
 {
@@ -594,6 +1013,13 @@ BAffineTransform::GetTranslation(double* _tx, double* _ty) const
 }
 
 
+/**
+ * @brief Compute the net rotation angle encoded in this transform.
+ *
+ * Transforms two reference points to determine the angle of the rotated X axis.
+ *
+ * @return The rotation angle in radians (counter-clockwise from positive X).
+ */
 double
 BAffineTransform::Rotation() const
 {
@@ -607,6 +1033,14 @@ BAffineTransform::Rotation() const
 }
 
 
+/**
+ * @brief Compute the average scale magnitude of this transform.
+ *
+ * Uses a weighted combination of the matrix components to approximate the
+ * geometric mean scale factor without a full decomposition.
+ *
+ * @return The approximate uniform scale factor.
+ */
 double
 BAffineTransform::Scale() const
 {
@@ -616,6 +1050,16 @@ BAffineTransform::Scale() const
 }
 
 
+/**
+ * @brief Retrieve the per-axis scale factors by decomposing the transform.
+ *
+ * Removes the rotation component and then measures how much the unit X and Y
+ * vectors are stretched. More accurate than reading sx/sy directly when shear
+ * is present.
+ *
+ * @param _sx Output parameter for the X scale factor; may be NULL.
+ * @param _sy Output parameter for the Y scale factor; may be NULL.
+ */
 void
 BAffineTransform::GetScale(double* _sx, double* _sy) const
 {
@@ -634,6 +1078,15 @@ BAffineTransform::GetScale(double* _sx, double* _sy) const
 }
 
 
+/**
+ * @brief Retrieve the per-axis scale magnitudes using the column-norm method.
+ *
+ * Computes the Euclidean lengths of the two matrix columns, which gives a
+ * reliable scale estimate even under significant shear.
+ *
+ * @param _sx Output parameter for the X scale magnitude; may be NULL.
+ * @param _sy Output parameter for the Y scale magnitude; may be NULL.
+ */
 void
 BAffineTransform::GetScaleAbs(double* _sx, double* _sy) const
 {
@@ -646,6 +1099,21 @@ BAffineTransform::GetScaleAbs(double* _sx, double* _sy) const
 }
 
 
+/**
+ * @brief Decompose this transform into its constituent affine parameters.
+ *
+ * Extracts the translation, rotation angle, per-axis scale, and per-axis shear
+ * by progressively removing each effect and measuring the remainder.
+ *
+ * @param _translationX Output X translation; may be NULL.
+ * @param _translationY Output Y translation; may be NULL.
+ * @param _rotation     Output rotation angle in radians; may be NULL.
+ * @param _scaleX       Output X scale factor; may be NULL.
+ * @param _scaleY       Output Y scale factor; may be NULL.
+ * @param _shearX       Output X shear (normalised by scaleX); may be NULL.
+ * @param _shearY       Output Y shear (normalised by scaleY); may be NULL.
+ * @return true on success; false if the matrix is degenerate (zero scale).
+ */
 bool
 BAffineTransform::GetAffineParameters(double* _translationX,
 	double* _translationY, double* _rotation, double* _scaleX, double* _scaleY,
@@ -711,4 +1179,3 @@ BAffineTransform::GetAffineParameters(double* _translationX,
 
 	return true;
 }
-

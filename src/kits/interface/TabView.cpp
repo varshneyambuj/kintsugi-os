@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Jérôme Duval (korli@users.berlios.de)
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Artur Wyszynski
- *		Rene Gollent (rene@gollent.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Jérôme Duval (korli@users.berlios.de)
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Artur Wyszynski
+ *       Rene Gollent (rene@gollent.com)
+ */
+
+
+/**
+ * @file TabView.cpp
+ * @brief Implementation of BTabView and BTab for tabbed panel interfaces
+ *
+ * BTabView manages a row of tab labels (BTab objects) above a shared content
+ * area. Clicking a tab selects it and shows its associated view. BTab holds
+ * the label and optional view, and can be subclassed to customize tab
+ * appearance and behavior.
+ *
+ * @see BView, BTab, BControlLook
  */
 
 
@@ -35,6 +64,7 @@
 #include <private/libroot/libroot_private.h>
 
 
+/** @brief Scripting property table exposing the "Selection" property via the BeOS scripting protocol. */
 static property_info sPropertyList[] = {
 	{
 		"Selection",
@@ -48,6 +78,12 @@ static property_info sPropertyList[] = {
 };
 
 
+/**
+ * @brief Returns whether @a childView is managed by a BCardLayout.
+ *
+ * @param childView The view to test.
+ * @return @c true if the view's parent uses a BCardLayout, @c false otherwise.
+ */
 static bool
 IsLayouted(BView* childView)
 {
@@ -58,6 +94,14 @@ IsLayouted(BView* childView)
 }
 
 
+/**
+ * @brief Constructs a BTab optionally associated with a content view.
+ *
+ * If @a contentsView is non-NULL its BView::Name() is used as the initial
+ * tab label.
+ *
+ * @param contentsView The view to display when this tab is selected, or NULL.
+ */
 BTab::BTab(BView* contentsView)
 	:
 	fEnabled(true),
@@ -71,6 +115,13 @@ BTab::BTab(BView* contentsView)
 }
 
 
+/**
+ * @brief Constructs a BTab from an archived BMessage.
+ *
+ * Restores the enabled state from the "_disable" field if present.
+ *
+ * @param archive The BMessage previously produced by BTab::Archive().
+ */
 BTab::BTab(BMessage* archive)
 	:
 	BArchivable(archive),
@@ -89,6 +140,12 @@ BTab::BTab(BMessage* archive)
 }
 
 
+/**
+ * @brief Destructs the BTab, removing and deleting its associated view.
+ *
+ * If the tab is currently selected, the view is first removed from its parent
+ * before being deleted.
+ */
 BTab::~BTab()
 {
 	if (fView == NULL)
@@ -101,6 +158,12 @@ BTab::~BTab()
 }
 
 
+/**
+ * @brief Creates a new BTab from an archived BMessage.
+ *
+ * @param archive The BMessage to instantiate from.
+ * @return A new BTab, or NULL if the archive is invalid.
+ */
 BArchivable*
 BTab::Instantiate(BMessage* archive)
 {
@@ -111,6 +174,15 @@ BTab::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archives the BTab into a BMessage.
+ *
+ * Stores the disabled state (when false) under the "_disable" key.
+ *
+ * @param data  The BMessage to archive into.
+ * @param deep  If @c true, child objects are also archived (unused here).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTab::Archive(BMessage* data, bool deep) const
 {
@@ -125,6 +197,13 @@ BTab::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Dispatches a perform code to the base class.
+ *
+ * @param d   The perform code.
+ * @param arg Opaque argument whose meaning depends on @a d.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTab::Perform(uint32 d, void* arg)
 {
@@ -132,6 +211,14 @@ BTab::Perform(uint32 d, void* arg)
 }
 
 
+/**
+ * @brief Returns the tab's display label.
+ *
+ * Under the GCC2/BeOS ABI the label is sourced from the associated view's
+ * name; under the Haiku ABI it is an independent string.
+ *
+ * @return The label string, or NULL if none is set.
+ */
 const char*
 BTab::Label() const
 {
@@ -149,6 +236,13 @@ BTab::Label() const
 }
 
 
+/**
+ * @brief Sets the tab's display label and invalidates the parent tab view.
+ *
+ * Has no effect if @a label is NULL or no view has been associated with the tab.
+ *
+ * @param label The new label string.
+ */
 void
 BTab::SetLabel(const char* label)
 {
@@ -166,6 +260,11 @@ BTab::SetLabel(const char* label)
 }
 
 
+/**
+ * @brief Returns whether this tab is currently selected.
+ *
+ * @return @c true if selected, @c false otherwise.
+ */
 bool
 BTab::IsSelected() const
 {
@@ -173,6 +272,15 @@ BTab::IsSelected() const
 }
 
 
+/**
+ * @brief Marks this tab as selected and shows its associated view.
+ *
+ * If the owner uses no layout, the view is added as a child of @a owner.
+ * If a BCardLayout is in use, visibility is managed by the layout instead.
+ *
+ * @param owner The container view that hosts tab content (typically
+ *              BTabView::ContainerView()).
+ */
 void
 BTab::Select(BView* owner)
 {
@@ -188,6 +296,11 @@ BTab::Select(BView* owner)
 }
 
 
+/**
+ * @brief Marks this tab as deselected and hides its associated view.
+ *
+ * If the view is not managed by a layout, it is removed from its parent.
+ */
 void
 BTab::Deselect()
 {
@@ -202,6 +315,11 @@ BTab::Deselect()
 }
 
 
+/**
+ * @brief Enables or disables the tab.
+ *
+ * @param enable @c true to enable the tab, @c false to disable it.
+ */
 void
 BTab::SetEnabled(bool enable)
 {
@@ -209,6 +327,11 @@ BTab::SetEnabled(bool enable)
 }
 
 
+/**
+ * @brief Returns whether the tab is currently enabled.
+ *
+ * @return @c true if enabled, @c false if disabled.
+ */
 bool
 BTab::IsEnabled() const
 {
@@ -216,6 +339,12 @@ BTab::IsEnabled() const
 }
 
 
+/**
+ * @brief Sets the keyboard-focus state of the tab.
+ *
+ * @param focus @c true to give this tab keyboard focus, @c false to remove it.
+ * @see BTab::IsFocus()
+ */
 void
 BTab::MakeFocus(bool focus)
 {
@@ -223,6 +352,11 @@ BTab::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Returns whether this tab currently has keyboard focus.
+ *
+ * @return @c true if the tab has focus, @c false otherwise.
+ */
 bool
 BTab::IsFocus() const
 {
@@ -230,6 +364,16 @@ BTab::IsFocus() const
 }
 
 
+/**
+ * @brief Associates a new content view with the tab, replacing any existing one.
+ *
+ * The old view is removed from the hierarchy and deleted. The label is updated
+ * to the new view's name. If this tab is currently selected, the new view is
+ * shown immediately.
+ *
+ * @param view The new content view; must be non-NULL and different from the
+ *             current view.
+ */
 void
 BTab::SetView(BView* view)
 {
@@ -250,6 +394,11 @@ BTab::SetView(BView* view)
 }
 
 
+/**
+ * @brief Returns the content view associated with this tab.
+ *
+ * @return The associated BView, or NULL if none has been set.
+ */
 BView*
 BTab::View() const
 {
@@ -257,6 +406,16 @@ BTab::View() const
 }
 
 
+/**
+ * @brief Draws the keyboard-navigation focus indicator for this tab.
+ *
+ * Draws a short underline beneath (or beside, for vertical tab sides) the
+ * tab label using the system keyboard-navigation color.
+ *
+ * @param owner The BView on which to draw (typically the BTabView).
+ * @param frame The bounding rectangle of this tab as returned by
+ *              BTabView::TabFrame().
+ */
 void
 BTab::DrawFocusMark(BView* owner, BRect frame)
 {
@@ -294,6 +453,15 @@ BTab::DrawFocusMark(BView* owner, BRect frame)
 }
 
 
+/**
+ * @brief Draws the tab label centered within @a frame.
+ *
+ * Applies the appropriate rotation transform for left/right tab sides and
+ * delegates to BControlLook::DrawLabel(). The transform is reset after drawing.
+ *
+ * @param owner The BView on which to draw (typically the BTabView).
+ * @param frame The bounding rectangle of this tab.
+ */
 void
 BTab::DrawLabel(BView* owner, BRect frame)
 {
@@ -338,6 +506,15 @@ BTab::DrawLabel(BView* owner, BRect frame)
 }
 
 
+/**
+ * @brief Draws the full tab chrome (background and label).
+ *
+ * Delegates to BControlLook::DrawActiveTab() or DrawInactiveTab() depending
+ * on whether this tab is selected, then draws the label via DrawLabel().
+ *
+ * @param owner  The BView on which to draw (typically the BTabView).
+ * @param frame  The bounding rectangle of this tab.
+ */
 void
 BTab::DrawTab(BView* owner, BRect frame, tab_position, bool)
 {
@@ -368,6 +545,16 @@ BTab::DrawTab(BView* owner, BRect frame, tab_position, bool)
 //	#pragma mark - BTab private methods
 
 
+/**
+ * @brief Computes the set of BControlLook border flags appropriate for this tab.
+ *
+ * Always includes the two borders parallel to the tab row, and conditionally
+ * adds the perpendicular borders for the first and last tabs in the row.
+ *
+ * @param owner The BView hosting the tab row.
+ * @param frame The bounding rectangle of this tab.
+ * @return A bitmask of BControlLook border flags.
+ */
 uint32
 BTab::_Borders(BView* owner, BRect frame)
 {
@@ -425,6 +612,14 @@ BTab &BTab::operator=(const BTab &)
 //	#pragma mark - BTabView
 
 
+/**
+ * @brief Constructs a layout-enabled BTabView with the given name.
+ *
+ * @param name  The view name.
+ * @param width Tab-width sizing policy (B_WIDTH_AS_USUAL, B_WIDTH_FROM_LABEL,
+ *              or B_WIDTH_FROM_WIDEST).
+ * @param flags Standard BView flags; B_SUPPORTS_LAYOUT is implied.
+ */
 BTabView::BTabView(const char* name, button_width width, uint32 flags)
 	:
 	BView(name, flags)
@@ -433,6 +628,15 @@ BTabView::BTabView(const char* name, button_width width, uint32 flags)
 }
 
 
+/**
+ * @brief Constructs a frame-based (non-layout) BTabView.
+ *
+ * @param frame      Initial frame rectangle in the parent's coordinate system.
+ * @param name       The view name.
+ * @param width      Tab-width sizing policy.
+ * @param resizeMask Resizing mode flags.
+ * @param flags      Standard BView flags.
+ */
 BTabView::BTabView(BRect frame, const char* name, button_width width,
 	uint32 resizeMask, uint32 flags)
 	:
@@ -442,6 +646,9 @@ BTabView::BTabView(BRect frame, const char* name, button_width width,
 }
 
 
+/**
+ * @brief Destructs the BTabView, deleting all BTab objects in the list.
+ */
 BTabView::~BTabView()
 {
 	for (int32 i = 0; i < CountTabs(); i++)
@@ -451,6 +658,14 @@ BTabView::~BTabView()
 }
 
 
+/**
+ * @brief Constructs a BTabView from an archived BMessage.
+ *
+ * Restores tab-width policy, tab height, selection, border style, tab side,
+ * and all previously archived BTab/BView pairs.
+ *
+ * @param archive The BMessage previously produced by BTabView::Archive().
+ */
 BTabView::BTabView(BMessage* archive)
 	:
 	BView(BUnarchiver::PrepareArchive(archive)),
@@ -517,6 +732,12 @@ BTabView::BTabView(BMessage* archive)
 }
 
 
+/**
+ * @brief Creates a new BTabView from an archived BMessage.
+ *
+ * @param archive The BMessage to instantiate from.
+ * @return A new BTabView, or NULL if the archive is invalid.
+ */
 BArchivable*
 BTabView::Instantiate(BMessage* archive)
 {
@@ -527,6 +748,15 @@ BTabView::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archives the BTabView's configuration and tabs into a BMessage.
+ *
+ * When @a deep is @c true each BTab and its associated view are also archived.
+ *
+ * @param archive The BMessage to archive into.
+ * @param deep    If @c true, recursively archives all tabs and their views.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTabView::Archive(BMessage* archive, bool deep) const
 {
@@ -561,6 +791,15 @@ BTabView::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Completes unarchiving after all child objects have been instantiated.
+ *
+ * Reconnects restored BTab objects to their associated BView instances and
+ * selects the previously saved tab index.
+ *
+ * @param archive The original archive BMessage.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTabView::AllUnarchived(const BMessage* archive)
 {
@@ -596,6 +835,15 @@ BTabView::AllUnarchived(const BMessage* archive)
 }
 
 
+/**
+ * @brief Dispatches ABI-extension perform codes for BTabView.
+ *
+ * Handles PERFORM_CODE_ALL_UNARCHIVED and forwards all other codes to BView.
+ *
+ * @param code  The perform code identifying the virtual call to dispatch.
+ * @param _data Opaque pointer to the perform-specific data structure.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTabView::Perform(perform_code code, void* _data)
 {
@@ -614,6 +862,11 @@ BTabView::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Selects the first tab when the view is attached and no tab is selected.
+ *
+ * Overrides BView::AttachedToWindow() to ensure a valid initial selection.
+ */
 void
 BTabView::AttachedToWindow()
 {
@@ -624,6 +877,11 @@ BTabView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Hook called when the view is removed from its window.
+ *
+ * Forwards the notification to BView::DetachedFromWindow().
+ */
 void
 BTabView::DetachedFromWindow()
 {
@@ -631,6 +889,11 @@ BTabView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Hook called after all children have been attached to the window.
+ *
+ * Forwards the notification to BView::AllAttached().
+ */
 void
 BTabView::AllAttached()
 {
@@ -638,6 +901,11 @@ BTabView::AllAttached()
 }
 
 
+/**
+ * @brief Hook called after all children have been detached from the window.
+ *
+ * Forwards the notification to BView::AllDetached().
+ */
 void
 BTabView::AllDetached()
 {
@@ -648,6 +916,15 @@ BTabView::AllDetached()
 // #pragma mark -
 
 
+/**
+ * @brief Handles incoming BMessages, including scripting Get/Set for "Selection".
+ *
+ * Routes B_GET_PROPERTY and B_SET_PROPERTY messages that target the "Selection"
+ * property to the appropriate Select() call and sends back a B_REPLY. All
+ * other messages are forwarded to BView::MessageReceived().
+ *
+ * @param message The message to process.
+ */
 void
 BTabView::MessageReceived(BMessage* message)
 {
@@ -723,6 +1000,15 @@ BTabView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles keyboard navigation between tabs.
+ *
+ * Arrow keys move focus to the adjacent tab; Enter/Space selects the focused
+ * tab. All other keys are forwarded to BView::KeyDown().
+ *
+ * @param bytes    Pointer to the key bytes.
+ * @param numBytes Number of bytes in @a bytes.
+ */
 void
 BTabView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -759,6 +1045,14 @@ BTabView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Handles mouse-button presses to select tabs.
+ *
+ * Mouse buttons 4 and 5 (back/forward) navigate to the previous/next tab.
+ * All other buttons select whichever tab the cursor is over.
+ *
+ * @param where The click location in the view's coordinate system.
+ */
 void
 BTabView::MouseDown(BPoint where)
 {
@@ -794,6 +1088,11 @@ BTabView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Forwards mouse-up events to the base class.
+ *
+ * @param where The release location in the view's coordinate system.
+ */
 void
 BTabView::MouseUp(BPoint where)
 {
@@ -801,6 +1100,13 @@ BTabView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Forwards mouse-moved events to the base class.
+ *
+ * @param where       Current cursor position in the view's coordinate system.
+ * @param transit     Entry/exit transit code (B_ENTERED_VIEW, etc.).
+ * @param dragMessage The dragged BMessage, or NULL if no drag is in progress.
+ */
 void
 BTabView::MouseMoved(BPoint where, uint32 transit, const BMessage* dragMessage)
 {
@@ -815,6 +1121,16 @@ BTabView::Pulse()
 }
 
 
+/**
+ * @brief Selects the tab at @a index, deselecting the previously active tab.
+ *
+ * Updates the BCardLayout visibility when in layout mode, scrolls the tab
+ * strip to ensure the newly selected tab is visible, and shifts keyboard
+ * focus to the selected tab.
+ *
+ * @param index Zero-based index of the tab to select. Out-of-range values
+ *              keep the current selection.
+ */
 void
 BTabView::Select(int32 index)
 {
@@ -859,6 +1175,11 @@ BTabView::Select(int32 index)
 }
 
 
+/**
+ * @brief Returns the index of the currently selected tab.
+ *
+ * @return Zero-based index of the selected tab, or -1 if none is selected.
+ */
 int32
 BTabView::Selection() const
 {
@@ -866,6 +1187,11 @@ BTabView::Selection() const
 }
 
 
+/**
+ * @brief Redraws the focus mark when the parent window's activation changes.
+ *
+ * @param active @c true if the window just became active.
+ */
 void
 BTabView::WindowActivated(bool active)
 {
@@ -876,6 +1202,12 @@ BTabView::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Forwards focus changes to the currently selected tab.
+ *
+ * @param focus @c true to give keyboard focus to the selected tab, @c false to
+ *              remove it.
+ */
 void
 BTabView::MakeFocus(bool focus)
 {
@@ -885,6 +1217,16 @@ BTabView::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Moves keyboard focus to or from a specific tab.
+ *
+ * When @a focus is @c true the previously focused tab loses focus and @a tab
+ * gains it. When @a focus is @c false the current focus tab is cleared.
+ * The affected tab areas are invalidated to update the focus mark display.
+ *
+ * @param tab   Zero-based index of the tab to (un)focus.
+ * @param focus @c true to give focus, @c false to remove focus.
+ */
 void
 BTabView::SetFocusTab(int32 tab, bool focus)
 {
@@ -916,6 +1258,11 @@ BTabView::SetFocusTab(int32 tab, bool focus)
 }
 
 
+/**
+ * @brief Returns the index of the tab that currently has keyboard focus.
+ *
+ * @return Zero-based index of the focus tab, or -1 if no tab has focus.
+ */
 int32
 BTabView::FocusTab() const
 {
@@ -923,6 +1270,11 @@ BTabView::FocusTab() const
 }
 
 
+/**
+ * @brief Draws the tab strip, the content-area border box, and the focus mark.
+ *
+ * @param updateRect The rectangle that needs to be redrawn.
+ */
 void
 BTabView::Draw(BRect updateRect)
 {
@@ -934,6 +1286,15 @@ BTabView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Draws the tab-strip background and all individual tabs.
+ *
+ * Draws the tab-frame background first, then iterates over every tab calling
+ * BTab::DrawTab().
+ *
+ * @return The frame rectangle of the currently selected tab, or an empty
+ *         BRect if there are no tabs.
+ */
 BRect
 BTabView::DrawTabs()
 {
@@ -974,6 +1335,16 @@ BTabView::DrawTabs()
 }
 
 
+/**
+ * @brief Draws the border box that surrounds the content area.
+ *
+ * The border on the side where the tabs reside is omitted so the selected tab
+ * visually merges with the content area. The drawing style depends on the
+ * current border style (B_FANCY_BORDER, B_PLAIN_BORDER, or B_NO_BORDER).
+ *
+ * @param selectedTabRect The frame of the currently selected tab, used to
+ *                        position the open edge of the box.
+ */
 void
 BTabView::DrawBox(BRect selectedTabRect)
 {
@@ -1009,6 +1380,15 @@ BTabView::DrawBox(BRect selectedTabRect)
 }
 
 
+/**
+ * @brief Returns the frame rectangle of the tab at @a index.
+ *
+ * The frame is computed from the tab-width policy, the current tab height,
+ * and the active tab side. Coordinates are in the BTabView's own space.
+ *
+ * @param index Zero-based index of the tab.
+ * @return The tab's bounding BRect, or an empty BRect for an invalid index.
+ */
 BRect
 BTabView::TabFrame(int32 index) const
 {
@@ -1098,6 +1478,11 @@ BTabView::SetResizingMode(uint32 mode)
 // #pragma mark -
 
 
+/**
+ * @brief Resizes the view to its preferred size.
+ *
+ * Delegates to BView::ResizeToPreferred().
+ */
 void
 BTabView::ResizeToPreferred()
 {
@@ -1105,6 +1490,12 @@ BTabView::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Returns the preferred width and height for this view.
+ *
+ * @param[out] _width  Receives the preferred width.
+ * @param[out] _height Receives the preferred height.
+ */
 void
 BTabView::GetPreferredSize(float* _width, float* _height)
 {
@@ -1112,6 +1503,14 @@ BTabView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Returns the minimum size needed to display at least two tabs.
+ *
+ * Combines the minimum tab-strip size with the container view's minimum size
+ * plus border widths.
+ *
+ * @return The minimum BSize; honors any explicit minimum set by the caller.
+ */
 BSize
 BTabView::MinSize()
 {
@@ -1131,6 +1530,14 @@ BTabView::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size of the tab view.
+ *
+ * Combines the minimum tab-strip size with the container view's maximum size
+ * plus border widths.
+ *
+ * @return The maximum BSize; honors any explicit maximum set by the caller.
+ */
 BSize
 BTabView::MaxSize()
 {
@@ -1150,6 +1557,15 @@ BTabView::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size of the tab view.
+ *
+ * Combines the minimum tab-strip size with the container view's preferred size
+ * plus border widths.
+ *
+ * @return The preferred BSize; honors any explicit preferred size set by
+ *         the caller.
+ */
 BSize
 BTabView::PreferredSize()
 {
@@ -1169,6 +1585,11 @@ BTabView::PreferredSize()
 }
 
 
+/**
+ * @brief Called when the view's frame position changes.
+ *
+ * @param newPosition The new top-left corner in the parent's coordinate system.
+ */
 void
 BTabView::FrameMoved(BPoint newPosition)
 {
@@ -1176,6 +1597,12 @@ BTabView::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Called when the view's frame dimensions change.
+ *
+ * @param newWidth  The new width of the view.
+ * @param newHeight The new height of the view.
+ */
 void
 BTabView::FrameResized(float newWidth, float newHeight)
 {
@@ -1186,6 +1613,20 @@ BTabView::FrameResized(float newWidth, float newHeight)
 // #pragma mark -
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate handler.
+ *
+ * Handles the "Selection" property itself; delegates everything else to
+ * BView::ResolveSpecifier().
+ *
+ * @param message   The scripting message.
+ * @param index     Index into the message's specifier stack.
+ * @param specifier The current specifier BMessage.
+ * @param what      The specifier type constant.
+ * @param property  The property name string.
+ * @return @c this if the property is "Selection", otherwise the result from
+ *         BView::ResolveSpecifier().
+ */
 BHandler*
 BTabView::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -1199,6 +1640,15 @@ BTabView::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by BTabView.
+ *
+ * Adds "suite/vnd.Be-tab-view" and the property info table before delegating
+ * to BView::GetSupportedSuites().
+ *
+ * @param message The BMessage to populate with suite information.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTabView::GetSupportedSuites(BMessage* message)
 {
@@ -1214,6 +1664,16 @@ BTabView::GetSupportedSuites(BMessage* message)
 // #pragma mark -
 
 
+/**
+ * @brief Adds a tab to the tab view, optionally using a caller-supplied BTab.
+ *
+ * If @a tab is NULL a new BTab is created. The target view is registered with
+ * the container's BCardLayout (if present) and, when this is the first tab and
+ * the view is already attached, it is selected immediately.
+ *
+ * @param target The content view for the new tab.
+ * @param tab    An existing BTab to use, or NULL to create a default one.
+ */
 void
 BTabView::AddTab(BView* target, BTab* tab)
 {
@@ -1235,6 +1695,15 @@ BTabView::AddTab(BView* target, BTab* tab)
 }
 
 
+/**
+ * @brief Removes and returns the tab at @a index.
+ *
+ * The removed tab is deselected and detached from the tab view. Adjusts the
+ * selection and focus indices so that a valid tab remains selected.
+ *
+ * @param index Zero-based index of the tab to remove.
+ * @return The removed BTab (caller takes ownership), or NULL on failure.
+ */
 BTab*
 BTabView::RemoveTab(int32 index)
 {
@@ -1267,6 +1736,12 @@ BTabView::RemoveTab(int32 index)
 }
 
 
+/**
+ * @brief Returns the BTab at @a index.
+ *
+ * @param index Zero-based index into the tab list.
+ * @return The BTab at @a index, or NULL if @a index is out of range.
+ */
 BTab*
 BTabView::TabAt(int32 index) const
 {
@@ -1274,6 +1749,12 @@ BTabView::TabAt(int32 index) const
 }
 
 
+/**
+ * @brief Sets the tab-width sizing policy and invalidates the view.
+ *
+ * @param width The sizing policy: B_WIDTH_AS_USUAL, B_WIDTH_FROM_LABEL, or
+ *              B_WIDTH_FROM_WIDEST.
+ */
 void
 BTabView::SetTabWidth(button_width width)
 {
@@ -1283,6 +1764,11 @@ BTabView::SetTabWidth(button_width width)
 }
 
 
+/**
+ * @brief Returns the current tab-width sizing policy.
+ *
+ * @return The active button_width policy.
+ */
 button_width
 BTabView::TabWidth() const
 {
@@ -1290,6 +1776,13 @@ BTabView::TabWidth() const
 }
 
 
+/**
+ * @brief Sets the height of the tab strip and repositions the container view.
+ *
+ * Has no effect if @a height equals the current tab height.
+ *
+ * @param height The new tab-strip height in pixels.
+ */
 void
 BTabView::SetTabHeight(float height)
 {
@@ -1303,6 +1796,11 @@ BTabView::SetTabHeight(float height)
 }
 
 
+/**
+ * @brief Returns the current tab-strip height in pixels.
+ *
+ * @return The tab height.
+ */
 float
 BTabView::TabHeight() const
 {
@@ -1310,6 +1808,11 @@ BTabView::TabHeight() const
 }
 
 
+/**
+ * @brief Sets the border style of the content-area box.
+ *
+ * @param borderStyle B_FANCY_BORDER, B_PLAIN_BORDER, or B_NO_BORDER.
+ */
 void
 BTabView::SetBorder(border_style borderStyle)
 {
@@ -1322,6 +1825,11 @@ BTabView::SetBorder(border_style borderStyle)
 }
 
 
+/**
+ * @brief Returns the current content-area border style.
+ *
+ * @return The border_style constant in use.
+ */
 border_style
 BTabView::Border() const
 {
@@ -1329,6 +1837,11 @@ BTabView::Border() const
 }
 
 
+/**
+ * @brief Sets which side of the view the tab strip appears on.
+ *
+ * @param tabSide kTopSide, kBottomSide, kLeftSide, or kRightSide.
+ */
 void
 BTabView::SetTabSide(tab_side tabSide)
 {
@@ -1340,6 +1853,11 @@ BTabView::SetTabSide(tab_side tabSide)
 }
 
 
+/**
+ * @brief Returns the side of the view on which the tab strip is drawn.
+ *
+ * @return The active tab_side value.
+ */
 BTabView::tab_side
 BTabView::TabSide() const
 {
@@ -1347,6 +1865,11 @@ BTabView::TabSide() const
 }
 
 
+/**
+ * @brief Returns the internal container view that hosts tab content.
+ *
+ * @return The container BView managed by this BTabView.
+ */
 BView*
 BTabView::ContainerView() const
 {
@@ -1354,6 +1877,11 @@ BTabView::ContainerView() const
 }
 
 
+/**
+ * @brief Returns the total number of tabs in the view.
+ *
+ * @return The tab count.
+ */
 int32
 BTabView::CountTabs() const
 {
@@ -1361,6 +1889,15 @@ BTabView::CountTabs() const
 }
 
 
+/**
+ * @brief Returns the content view associated with the tab at @a tabIndex.
+ *
+ * Convenience wrapper around TabAt() and BTab::View().
+ *
+ * @param tabIndex Zero-based index of the tab.
+ * @return The BView for that tab, or NULL if the index is invalid or the tab
+ *         has no associated view.
+ */
 BView*
 BTabView::ViewForTab(int32 tabIndex) const
 {
@@ -1372,6 +1909,12 @@ BTabView::ViewForTab(int32 tabIndex) const
 }
 
 
+/**
+ * @brief Returns the index of @a tab within the tab list.
+ *
+ * @param tab The BTab to look up.
+ * @return The zero-based index, or -1 if @a tab is not found.
+ */
 int32
 BTabView::IndexOf(BTab* tab) const
 {
@@ -1387,6 +1930,16 @@ BTabView::IndexOf(BTab* tab) const
 }
 
 
+/**
+ * @brief Performs common initialization shared by all BTabView constructors.
+ *
+ * Sets up the tab list, selection state, appearance defaults, and calls
+ * _InitContainerView().
+ *
+ * @param layouted If @c true, creates a layout-aware container using
+ *                 BGroupLayout / BCardLayout.
+ * @param width    Initial tab-width sizing policy.
+ */
 void
 BTabView::_InitObject(bool layouted, button_width width)
 {
@@ -1412,6 +1965,15 @@ BTabView::_InitObject(bool layouted, button_width width)
 }
 
 
+/**
+ * @brief Creates and positions the container view if it does not yet exist.
+ *
+ * In layout mode a BGroupLayout is installed on the tab view and the container
+ * uses a BCardLayout. In non-layout mode the container spans the full bounds
+ * minus the tab-strip height.
+ *
+ * @param layouted @c true to create a layout-managed container.
+ */
 void
 BTabView::_InitContainerView(bool layouted)
 {
@@ -1445,6 +2007,14 @@ BTabView::_InitContainerView(bool layouted)
 }
 
 
+/**
+ * @brief Returns the minimum size required to display the first two tabs.
+ *
+ * Used internally by MinSize(), MaxSize(), and PreferredSize() to account for
+ * the tab-strip portion of the overall minimum size.
+ *
+ * @return The minimum BSize for the tab strip.
+ */
 BSize
 BTabView::_TabsMinSize() const
 {
@@ -1464,6 +2034,11 @@ BTabView::_TabsMinSize() const
 }
 
 
+/**
+ * @brief Returns the pixel width of the content-area border for the current style.
+ *
+ * @return 3 for B_FANCY_BORDER, 1 for B_PLAIN_BORDER, 0 for B_NO_BORDER.
+ */
 float
 BTabView::_BorderWidth() const
 {
@@ -1481,6 +2056,15 @@ BTabView::_BorderWidth() const
 }
 
 
+/**
+ * @brief Updates the container view's position and size after a layout change.
+ *
+ * In layout mode, adjusts the BGroupLayout insets so the tab strip and border
+ * are reserved on the correct side. In non-layout mode, repositions and resizes
+ * the container directly.
+ *
+ * @param layouted @c true when the tab view is operating in layout mode.
+ */
 void
 BTabView::_LayoutContainerView(bool layouted)
 {

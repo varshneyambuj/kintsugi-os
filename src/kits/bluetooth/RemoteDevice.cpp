@@ -1,7 +1,36 @@
 /*
- * Copyright 2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- * Copyright 2008 Mika Lindqvist, monni1995_at_gmail.com
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *   Copyright 2008 Mika Lindqvist, monni1995_at_gmail.com
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file RemoteDevice.cpp
+ * @brief Implementation of RemoteDevice, a discovered Bluetooth peer device
+ *
+ * RemoteDevice represents a remote Bluetooth device found during inquiry or
+ * retrieved from the known-devices cache. It stores the device's Bluetooth
+ * address, name, and class, and provides methods to authenticate, encrypt,
+ * and retrieve service records for the device.
+ *
+ * @see LocalDevice, DiscoveryAgent, DeviceClass
  */
 
 
@@ -34,9 +63,17 @@ namespace Bluetooth {
 
 
 // TODO: Check headers for valid/reserved ranges
+/** @brief Sentinel connection handle value used to indicate no active ACL connection. */
 static const uint16 invalidConnectionHandle = 0xF000;
 
 
+/**
+ * @brief Return whether this device is marked as trusted.
+ *
+ * @return Always returns true in the current stub implementation.
+ * @note This method is not yet fully implemented and unconditionally returns
+ *       true regardless of any stored trust state.
+ */
 bool
 RemoteDevice::IsTrustedDevice(void)
 {
@@ -45,6 +82,22 @@ RemoteDevice::IsTrustedDevice(void)
 }
 
 
+/**
+ * @brief Retrieve the human-readable friendly name of the remote device.
+ *
+ * Sends an HCI Remote Name Request command to the Bluetooth server and waits
+ * for the Remote Name Request Complete event. If @a alwaysAsk is false and a
+ * complete cached name is already available, the cached name is returned
+ * immediately without issuing a new HCI command.
+ *
+ * @param alwaysAsk If true, always issue a fresh HCI name request even if a
+ *                  cached name is available. If false, return the cached name
+ *                  when it is already complete.
+ * @return The friendly name string on success, or a localised error sentinel
+ *         string (prefixed with '#') if the owner device, server messenger,
+ *         or HCI command is unavailable or fails.
+ * @see GetCachedFriendlyName()
+ */
 BString
 RemoteDevice::GetFriendlyName(bool alwaysAsk)
 {
@@ -109,6 +162,16 @@ RemoteDevice::GetFriendlyName(bool alwaysAsk)
 }
 
 
+/**
+ * @brief Retrieve the friendly name, using the cache when available.
+ *
+ * Convenience overload that calls GetFriendlyName(false), returning the
+ * locally cached name if it is already complete, or issuing an HCI name
+ * request otherwise.
+ *
+ * @return The friendly name string, or a localised error sentinel on failure.
+ * @see GetFriendlyName(bool)
+ */
 BString
 RemoteDevice::GetFriendlyName()
 {
@@ -117,6 +180,13 @@ RemoteDevice::GetFriendlyName()
 }
 
 
+/**
+ * @brief Return the locally cached friendly name without issuing any HCI request.
+ *
+ * @return The cached friendly name string, which may be empty if the name has
+ *         not yet been retrieved.
+ * @see GetFriendlyName()
+ */
 BString
 RemoteDevice::GetCachedFriendlyName()
 {
@@ -125,6 +195,11 @@ RemoteDevice::GetCachedFriendlyName()
 }
 
 
+/**
+ * @brief Return the Bluetooth device address of this remote device.
+ *
+ * @return The 48-bit Bluetooth address (bdaddr_t) stored at construction time.
+ */
 bdaddr_t
 RemoteDevice::GetBluetoothAddress()
 {
@@ -133,6 +208,13 @@ RemoteDevice::GetBluetoothAddress()
 }
 
 
+/**
+ * @brief Compare this device's address to another RemoteDevice instance.
+ *
+ * @param obj Pointer to the other RemoteDevice to compare against.
+ * @return true if both devices share the same Bluetooth address, false otherwise.
+ * @see bdaddrUtils::Compare()
+ */
 bool
 RemoteDevice::Equals(RemoteDevice* obj)
 {
@@ -144,6 +226,21 @@ RemoteDevice::Equals(RemoteDevice* obj)
 //  static RemoteDevice* GetRemoteDevice(Connection conn);
 
 
+/**
+ * @brief Establish an ACL connection and authenticate with the remote device.
+ *
+ * Sends an HCI Create Connection command followed by an HCI Authentication
+ * Requested command via the Bluetooth server. On success the ACL connection
+ * handle is stored in fHandle for subsequent operations.
+ *
+ * @return true if both the ACL connection and authentication complete with
+ *         BT_OK status, false if the local device or server messenger is
+ *         unavailable, or if either HCI command returns a non-OK status.
+ * @note The role-switch capability and preferred packet type are read from the
+ *       owning LocalDevice's properties before building the connection command.
+ * @see Disconnect()
+ * @see IsAuthenticated()
+ */
 bool
 RemoteDevice::Authenticate()
 {
@@ -220,6 +317,18 @@ RemoteDevice::Authenticate()
 }
 
 
+/**
+ * @brief Disconnect the active ACL link to the remote device.
+ *
+ * Sends an HCI Disconnect command with the supplied reason code. On a
+ * successful Disconnection Complete event the stored connection handle is
+ * reset to invalidConnectionHandle.
+ *
+ * @param reason HCI disconnect reason code to send to the controller.
+ * @return The HCI status byte returned by the Disconnection Complete event on
+ *         success, or B_ERROR if no active connection handle is held.
+ * @see Authenticate()
+ */
 status_t
 RemoteDevice::Disconnect(int8 reason)
 {
@@ -269,6 +378,12 @@ RemoteDevice::Disconnect(int8 reason)
 //  bool Encrypt(Connection conn, bool on);
 
 
+/**
+ * @brief Return whether the current ACL link to the remote device is authenticated.
+ *
+ * @return Always returns true in the current stub implementation.
+ * @note This method is not yet fully implemented.
+ */
 bool
 RemoteDevice::IsAuthenticated()
 {
@@ -280,6 +395,12 @@ RemoteDevice::IsAuthenticated()
 //  bool IsAuthorized(Connection conn);
 
 
+/**
+ * @brief Return whether the current ACL link to the remote device is encrypted.
+ *
+ * @return Always returns true in the current stub implementation.
+ * @note This method is not yet fully implemented.
+ */
 bool
 RemoteDevice::IsEncrypted()
 {
@@ -288,6 +409,12 @@ RemoteDevice::IsEncrypted()
 }
 
 
+/**
+ * @brief Return the LocalDevice that discovered or owns this RemoteDevice.
+ *
+ * @return Pointer to the owning LocalDevice, or NULL if none has been assigned.
+ * @see SetLocalDeviceOwner()
+ */
 LocalDevice*
 RemoteDevice::GetLocalDeviceOwner()
 {
@@ -297,6 +424,15 @@ RemoteDevice::GetLocalDeviceOwner()
 
 
 /* Private */
+/**
+ * @brief Set the LocalDevice that owns or manages this RemoteDevice.
+ *
+ * Called internally by the discovery subsystem to bind a remote device to the
+ * local adapter that discovered it.
+ *
+ * @param ld Pointer to the LocalDevice to associate with this remote device.
+ * @see GetLocalDeviceOwner()
+ */
 void
 RemoteDevice::SetLocalDeviceOwner(LocalDevice* ld)
 {
@@ -306,6 +442,19 @@ RemoteDevice::SetLocalDeviceOwner(LocalDevice* ld)
 
 
 /* Constructor */
+/**
+ * @brief Construct a RemoteDevice from a raw Bluetooth address and class record.
+ *
+ * Initialises the device with the given 48-bit address and decodes the
+ * three-byte Class of Device record. Connects to the Bluetooth server by
+ * retrieving a messenger via _RetrieveBluetoothMessenger().
+ *
+ * @param address The 48-bit Bluetooth device address.
+ * @param record  Three-byte Class of Device (CoD) payload as received in the
+ *                inquiry result event.
+ * @see RemoteDevice(const BString&)
+ * @see DeviceClass::SetRecord()
+ */
 RemoteDevice::RemoteDevice(const bdaddr_t address, uint8 record[3])
 	:
 	BluetoothDevice(),
@@ -319,6 +468,17 @@ RemoteDevice::RemoteDevice(const bdaddr_t address, uint8 record[3])
 }
 
 
+/**
+ * @brief Construct a RemoteDevice from a human-readable address string.
+ *
+ * Parses the colon-separated Bluetooth address string and initialises the
+ * device. No Class of Device record is available via this constructor.
+ *
+ * @param address A string in the standard "XX:XX:XX:XX:XX:XX" Bluetooth
+ *                address notation.
+ * @see RemoteDevice(const bdaddr_t, uint8[3])
+ * @see bdaddrUtils::FromString()
+ */
 RemoteDevice::RemoteDevice(const BString& address)
 	:
 	BluetoothDevice(),
@@ -331,6 +491,12 @@ RemoteDevice::RemoteDevice(const BString& address)
 }
 
 
+/**
+ * @brief Destroy the RemoteDevice and release all held resources.
+ *
+ * Deletes the server messenger obtained during construction. Any active ACL
+ * connection must be closed via Disconnect() before the object is destroyed.
+ */
 RemoteDevice::~RemoteDevice()
 {
 	CALLED();
@@ -338,6 +504,13 @@ RemoteDevice::~RemoteDevice()
 }
 
 
+/**
+ * @brief Retrieve a named string property from the remote device.
+ *
+ * @param property The name of the property to retrieve.
+ * @return A BString containing the property value, or NULL if not implemented.
+ * @note This method is not yet implemented and always returns NULL.
+ */
 BString
 RemoteDevice::GetProperty(const char* property) /* Throwing */
 {
@@ -345,6 +518,14 @@ RemoteDevice::GetProperty(const char* property) /* Throwing */
 }
 
 
+/**
+ * @brief Retrieve a named integer property from the remote device.
+ *
+ * @param property The name of the property to retrieve.
+ * @param value    Pointer to a uint32 that will receive the property value.
+ * @return B_ERROR unconditionally; this method is not yet implemented.
+ * @note This method is a stub and always returns B_ERROR.
+ */
 status_t
 RemoteDevice::GetProperty(const char* property, uint32* value) /* Throwing */
 {
@@ -353,6 +534,13 @@ RemoteDevice::GetProperty(const char* property, uint32* value) /* Throwing */
 }
 
 
+/**
+ * @brief Return the Bluetooth Class of Device descriptor for this remote device.
+ *
+ * @return A DeviceClass value object encoding the device's major/minor class
+ *         and supported service classes.
+ * @see DeviceClass
+ */
 DeviceClass
 RemoteDevice::GetDeviceClass()
 {

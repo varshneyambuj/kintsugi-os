@@ -1,15 +1,42 @@
 /*
- * Copyright 2001-2018, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
- *		Marcus Overhagen (marcus@overhagen.de)
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2018 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *       Marcus Overhagen (marcus@overhagen.de)
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
 
-/**	PicturePlayer is used to play picture data. */
+
+/**
+ * @file PicturePlayer.cpp
+ * @brief Implementation of PicturePlayer, the replayer for BPicture data
+ *
+ * PicturePlayer decodes and executes the binary drawing command stream stored in a
+ * BPicture, dispatching each opcode to a set of callback functions that perform the
+ * actual drawing on a BView or equivalent surface.
+ *
+ * @see BPicture, BView
+ */
+
 
 #include <PicturePlayer.h>
 
@@ -33,6 +60,19 @@ using BPrivate::PicturePlayerCallbacks;
 using BPrivate::picture_player_callbacks_compat;
 
 
+/**
+ * @brief Adapter that bridges the legacy C function-pointer table to the
+ *        PicturePlayerCallbacks virtual-method interface.
+ *
+ * CallbackAdapterPlayer wraps a @c picture_player_callbacks_compat table
+ * supplied by older callers and translates each virtual callback dispatch
+ * into the corresponding C function-pointer call. This allows PicturePlayer::_Play()
+ * to work uniformly against PicturePlayerCallbacks regardless of whether the
+ * caller uses the modern virtual-method API or the legacy flat function table.
+ *
+ * @see PicturePlayer::Play(void**, int32, void*)
+ * @see picture_player_callbacks_compat
+ */
 class CallbackAdapterPlayer : public PicturePlayerCallbacks {
 public:
 	CallbackAdapterPlayer(void* userData, void** functionTable);
@@ -104,17 +144,34 @@ public:
 	virtual void StrokeLineGradient(const BPoint& start, const BPoint& end, BGradient& gradient);
 
 private:
+	/** @brief Opaque user data pointer forwarded to every legacy callback. */
 	void* fUserData;
+	/** @brief Pointer to the legacy C function-pointer table cast from the caller's void** table. */
 	picture_player_callbacks_compat* fCallbacks;
 };
 
 
+/**
+ * @brief No-operation placeholder used to pad a short legacy callback table.
+ *
+ * When a caller supplies a function table with fewer entries than kOpsTableSize,
+ * PicturePlayer::Play() fills the missing slots with this function so that
+ * unsupported opcodes are silently ignored rather than invoking a NULL pointer.
+ */
 static void
 nop()
 {
 }
 
 
+/**
+ * @brief Constructs a CallbackAdapterPlayer wrapping a legacy C callback table.
+ *
+ * @param userData      Opaque pointer passed verbatim as the first argument to
+ *                      every function in @a functionTable.
+ * @param functionTable Pointer to an array of function pointers cast to
+ *                      @c picture_player_callbacks_compat.
+ */
 CallbackAdapterPlayer::CallbackAdapterPlayer(void* userData, void** functionTable)
 	:
 	fUserData(userData),
@@ -123,6 +180,11 @@ CallbackAdapterPlayer::CallbackAdapterPlayer(void* userData, void** functionTabl
 }
 
 
+/**
+ * @brief Forwards a pen-move request to the legacy move_pen_by callback.
+ *
+ * @param delta The displacement by which the current pen position is moved.
+ */
 void
 CallbackAdapterPlayer::MovePenBy(const BPoint& delta)
 {
@@ -130,6 +192,12 @@ CallbackAdapterPlayer::MovePenBy(const BPoint& delta)
 }
 
 
+/**
+ * @brief Forwards a stroke-line request to the legacy stroke_line callback.
+ *
+ * @param start The starting point of the line in view coordinates.
+ * @param end   The ending point of the line in view coordinates.
+ */
 void
 CallbackAdapterPlayer::StrokeLine(const BPoint& start, const BPoint& end)
 {
@@ -137,6 +205,14 @@ CallbackAdapterPlayer::StrokeLine(const BPoint& start, const BPoint& end)
 }
 
 
+/**
+ * @brief Forwards a draw-rectangle request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_rect when @a fill is @c true, or stroke_rect otherwise.
+ *
+ * @param rect The rectangle to draw, in view coordinates.
+ * @param fill @c true to fill the rectangle; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawRect(const BRect& rect, bool fill)
 {
@@ -147,6 +223,15 @@ CallbackAdapterPlayer::DrawRect(const BRect& rect, bool fill)
 }
 
 
+/**
+ * @brief Forwards a draw-round-rectangle request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_round_rect when @a fill is @c true, or stroke_round_rect otherwise.
+ *
+ * @param rect   The bounding rectangle of the rounded rectangle.
+ * @param radii  The x and y corner radii stored as BPoint::x and BPoint::y respectively.
+ * @param fill   @c true to fill; @c false to stroke the outline.
+ */
 void
 CallbackAdapterPlayer::DrawRoundRect(const BRect& rect, const BPoint& radii,
 	bool fill)
@@ -158,6 +243,15 @@ CallbackAdapterPlayer::DrawRoundRect(const BRect& rect, const BPoint& radii,
 }
 
 
+/**
+ * @brief Forwards a draw-bezier request to the appropriate legacy callback.
+ *
+ * Copies the four control points into a local array (the legacy callbacks
+ * accept a non-const pointer) and dispatches to fill_bezier or stroke_bezier.
+ *
+ * @param _points Array of exactly four BPoint control points defining the curve.
+ * @param fill    @c true to fill the enclosed area; @c false to stroke the curve.
+ */
 void
 CallbackAdapterPlayer::DrawBezier(const BPoint _points[4], bool fill)
 {
@@ -170,6 +264,17 @@ CallbackAdapterPlayer::DrawBezier(const BPoint _points[4], bool fill)
 }
 
 
+/**
+ * @brief Forwards a draw-arc request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_arc when @a fill is @c true, or stroke_arc otherwise.
+ *
+ * @param center     The center point of the arc's ellipse.
+ * @param radii      The x and y radii of the ellipse.
+ * @param startTheta The starting angle of the arc, in degrees.
+ * @param arcTheta   The angular extent of the arc, in degrees.
+ * @param fill       @c true to fill the arc sector; @c false to stroke the arc.
+ */
 void
 CallbackAdapterPlayer::DrawArc(const BPoint& center, const BPoint& radii,
 	float startTheta, float arcTheta, bool fill)
@@ -181,6 +286,15 @@ CallbackAdapterPlayer::DrawArc(const BPoint& center, const BPoint& radii,
 }
 
 
+/**
+ * @brief Forwards a draw-ellipse request to the appropriate legacy callback.
+ *
+ * Converts the bounding @a rect to a center+radii representation required by
+ * the legacy fill_ellipse / stroke_ellipse callbacks.
+ *
+ * @param rect The bounding rectangle of the ellipse.
+ * @param fill @c true to fill the ellipse; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawEllipse(const BRect& rect, bool fill)
 {
@@ -194,6 +308,18 @@ CallbackAdapterPlayer::DrawEllipse(const BRect& rect, bool fill)
 }
 
 
+/**
+ * @brief Forwards a draw-polygon request to the appropriate legacy callback.
+ *
+ * Copies the point array into a stack-or-heap buffer (the legacy callbacks
+ * accept a non-const pointer) and dispatches to fill_polygon or stroke_polygon.
+ *
+ * @param numPoints The number of vertices in @a _points.
+ * @param _points   Array of polygon vertices in view coordinates.
+ * @param isClosed  @c true if the polygon's last vertex is connected back to
+ *                  the first; ignored when filling (always treated as closed).
+ * @param fill      @c true to fill the polygon; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawPolygon(size_t numPoints, const BPoint _points[],
 	bool isClosed, bool fill)
@@ -212,6 +338,14 @@ CallbackAdapterPlayer::DrawPolygon(size_t numPoints, const BPoint _points[],
 }
 
 
+/**
+ * @brief Forwards a draw-shape request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_shape when @a fill is @c true, or stroke_shape otherwise.
+ *
+ * @param shape The BShape object to draw.
+ * @param fill  @c true to fill the shape; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawShape(const BShape& shape, bool fill)
 {
@@ -222,6 +356,17 @@ CallbackAdapterPlayer::DrawShape(const BShape& shape, bool fill)
 }
 
 
+/**
+ * @brief Forwards a draw-string request to the legacy draw_string callback.
+ *
+ * Duplicates the string with strndup() because the legacy callback receives
+ * a null-terminated char* rather than a pointer-plus-length pair.
+ *
+ * @param _string        The character data to draw (not necessarily null-terminated).
+ * @param length         Number of bytes in @a _string to render.
+ * @param deltaSpace     Extra escapement added for space characters.
+ * @param deltaNonSpace  Extra escapement added for non-space characters.
+ */
 void
 CallbackAdapterPlayer::DrawString(const char* _string, size_t length,
 	float deltaSpace, float deltaNonSpace)
@@ -234,6 +379,22 @@ CallbackAdapterPlayer::DrawString(const char* _string, size_t length,
 }
 
 
+/**
+ * @brief Forwards a draw-pixels request to the legacy draw_pixels callback.
+ *
+ * Copies the pixel data into a heap buffer because the legacy callback
+ * receives a non-const void* and may modify the data.
+ *
+ * @param src         The source rectangle within the pixel buffer.
+ * @param dest        The destination rectangle in view coordinates.
+ * @param width       Width of the pixel buffer in pixels.
+ * @param height      Height of the pixel buffer in pixels.
+ * @param bytesPerRow Number of bytes per row in the pixel buffer.
+ * @param pixelFormat The color_space describing the pixel encoding.
+ * @param options     Renderer-specific option flags.
+ * @param _data       Pointer to the raw pixel data.
+ * @param length      Total byte length of @a _data.
+ */
 void
 CallbackAdapterPlayer::DrawPixels(const BRect& src, const BRect& dest, uint32 width,
 	uint32 height, size_t bytesPerRow, color_space pixelFormat, uint32 options,
@@ -252,6 +413,12 @@ CallbackAdapterPlayer::DrawPixels(const BRect& src, const BRect& dest, uint32 wi
 }
 
 
+/**
+ * @brief Forwards a draw-picture request to the legacy draw_picture callback.
+ *
+ * @param where  The point in view coordinates at which the nested picture is rendered.
+ * @param token  The server-side token identifying the nested BPicture object.
+ */
 void
 CallbackAdapterPlayer::DrawPicture(const BPoint& where, int32 token)
 {
@@ -259,6 +426,15 @@ CallbackAdapterPlayer::DrawPicture(const BPoint& where, int32 token)
 }
 
 
+/**
+ * @brief Forwards a set-clipping-rects request to the legacy set_clipping_rects callback.
+ *
+ * Converts the array of @c clipping_rect (integer) values to an array of BRect
+ * (floating-point) objects required by the legacy callback.
+ *
+ * @param numRects The number of rectangles in @a _rects.
+ * @param _rects   Array of integer-coordinate clipping rectangles.
+ */
 void
 CallbackAdapterPlayer::SetClippingRects(size_t numRects, const clipping_rect _rects[])
 {
@@ -276,6 +452,14 @@ CallbackAdapterPlayer::SetClippingRects(size_t numRects, const clipping_rect _re
 }
 
 
+/**
+ * @brief Forwards a clip-to-picture request to the legacy clip_to_picture callback.
+ *
+ * @param token         Server-side token identifying the clipping BPicture.
+ * @param origin        The origin offset applied when rendering the clipping picture.
+ * @param clipToInverse @c true to clip to the area outside the picture shape;
+ *                      @c false to clip to the inside.
+ */
 void
 CallbackAdapterPlayer::ClipToPicture(int32 token, const BPoint& origin,
 	bool clipToInverse)
@@ -284,6 +468,11 @@ CallbackAdapterPlayer::ClipToPicture(int32 token, const BPoint& origin,
 }
 
 
+/**
+ * @brief Forwards a push-state request to the legacy push_state callback.
+ *
+ * Saves the current drawing state onto the state stack.
+ */
 void
 CallbackAdapterPlayer::PushState()
 {
@@ -291,6 +480,11 @@ CallbackAdapterPlayer::PushState()
 }
 
 
+/**
+ * @brief Forwards a pop-state request to the legacy pop_state callback.
+ *
+ * Restores the most recently pushed drawing state from the state stack.
+ */
 void
 CallbackAdapterPlayer::PopState()
 {
@@ -298,6 +492,12 @@ CallbackAdapterPlayer::PopState()
 }
 
 
+/**
+ * @brief Forwards an enter-state-change notification to the legacy enter_state_change callback.
+ *
+ * Called before a block of state-setting opcodes is processed, allowing the
+ * rendering back-end to batch or defer state updates.
+ */
 void
 CallbackAdapterPlayer::EnterStateChange()
 {
@@ -305,6 +505,12 @@ CallbackAdapterPlayer::EnterStateChange()
 }
 
 
+/**
+ * @brief Forwards an exit-state-change notification to the legacy exit_state_change callback.
+ *
+ * Called after a block of state-setting opcodes has been processed, signalling
+ * the rendering back-end to commit any deferred state updates.
+ */
 void
 CallbackAdapterPlayer::ExitStateChange()
 {
@@ -312,6 +518,11 @@ CallbackAdapterPlayer::ExitStateChange()
 }
 
 
+/**
+ * @brief Forwards an enter-font-state notification to the legacy enter_font_state callback.
+ *
+ * Called before a block of font-setting opcodes is processed.
+ */
 void
 CallbackAdapterPlayer::EnterFontState()
 {
@@ -319,6 +530,11 @@ CallbackAdapterPlayer::EnterFontState()
 }
 
 
+/**
+ * @brief Forwards an exit-font-state notification to the legacy exit_font_state callback.
+ *
+ * Called after a block of font-setting opcodes has been processed.
+ */
 void
 CallbackAdapterPlayer::ExitFontState()
 {
@@ -326,6 +542,11 @@ CallbackAdapterPlayer::ExitFontState()
 }
 
 
+/**
+ * @brief Forwards a set-origin request to the legacy set_origin callback.
+ *
+ * @param origin The new coordinate-system origin in the parent coordinate space.
+ */
 void
 CallbackAdapterPlayer::SetOrigin(const BPoint& origin)
 {
@@ -333,6 +554,11 @@ CallbackAdapterPlayer::SetOrigin(const BPoint& origin)
 }
 
 
+/**
+ * @brief Forwards a set-pen-location request to the legacy set_pen_location callback.
+ *
+ * @param penLocation The new pen position in view coordinates.
+ */
 void
 CallbackAdapterPlayer::SetPenLocation(const BPoint& penLocation)
 {
@@ -340,6 +566,11 @@ CallbackAdapterPlayer::SetPenLocation(const BPoint& penLocation)
 }
 
 
+/**
+ * @brief Forwards a set-drawing-mode request to the legacy set_drawing_mode callback.
+ *
+ * @param mode The drawing mode (e.g. B_OP_COPY, B_OP_OVER) to apply.
+ */
 void
 CallbackAdapterPlayer::SetDrawingMode(drawing_mode mode)
 {
@@ -347,6 +578,13 @@ CallbackAdapterPlayer::SetDrawingMode(drawing_mode mode)
 }
 
 
+/**
+ * @brief Forwards a set-line-mode request to the legacy set_line_mode callback.
+ *
+ * @param capMode    The cap style for line endpoints (e.g. B_BUTT_CAP).
+ * @param joinMode   The join style for connected line segments (e.g. B_MITER_JOIN).
+ * @param miterLimit The miter limit used when @a joinMode is B_MITER_JOIN.
+ */
 void
 CallbackAdapterPlayer::SetLineMode(cap_mode capMode, join_mode joinMode,
 	float miterLimit)
@@ -355,6 +593,11 @@ CallbackAdapterPlayer::SetLineMode(cap_mode capMode, join_mode joinMode,
 }
 
 
+/**
+ * @brief Forwards a set-pen-size request to the legacy set_pen_size callback.
+ *
+ * @param size The new pen (stroke) width in view coordinates.
+ */
 void
 CallbackAdapterPlayer::SetPenSize(float size)
 {
@@ -362,6 +605,11 @@ CallbackAdapterPlayer::SetPenSize(float size)
 }
 
 
+/**
+ * @brief Forwards a set-foreground-color request to the legacy set_fore_color callback.
+ *
+ * @param color The new foreground color used for stroking and text rendering.
+ */
 void
 CallbackAdapterPlayer::SetForeColor(const rgb_color& color)
 {
@@ -369,6 +617,11 @@ CallbackAdapterPlayer::SetForeColor(const rgb_color& color)
 }
 
 
+/**
+ * @brief Forwards a set-background-color request to the legacy set_back_color callback.
+ *
+ * @param color The new background color used for clearing and certain drawing modes.
+ */
 void
 CallbackAdapterPlayer::SetBackColor(const rgb_color& color)
 {
@@ -376,6 +629,11 @@ CallbackAdapterPlayer::SetBackColor(const rgb_color& color)
 }
 
 
+/**
+ * @brief Forwards a set-stipple-pattern request to the legacy set_stipple_pattern callback.
+ *
+ * @param stipplePattern The 8x8 bit pattern used to mask drawing operations.
+ */
 void
 CallbackAdapterPlayer::SetStipplePattern(const pattern& stipplePattern)
 {
@@ -383,6 +641,11 @@ CallbackAdapterPlayer::SetStipplePattern(const pattern& stipplePattern)
 }
 
 
+/**
+ * @brief Forwards a set-scale request to the legacy set_scale callback.
+ *
+ * @param scale The uniform scale factor applied to subsequent drawing operations.
+ */
 void
 CallbackAdapterPlayer::SetScale(float scale)
 {
@@ -390,6 +653,15 @@ CallbackAdapterPlayer::SetScale(float scale)
 }
 
 
+/**
+ * @brief Forwards a set-font-family request to the legacy set_font_family callback.
+ *
+ * Duplicates the family name with strndup() because the legacy callback
+ * receives a null-terminated char* rather than a pointer-plus-length pair.
+ *
+ * @param _family The font family name (not necessarily null-terminated).
+ * @param length  Number of bytes in @a _family.
+ */
 void
 CallbackAdapterPlayer::SetFontFamily(const char* _family, size_t length)
 {
@@ -401,6 +673,15 @@ CallbackAdapterPlayer::SetFontFamily(const char* _family, size_t length)
 }
 
 
+/**
+ * @brief Forwards a set-font-style request to the legacy set_font_style callback.
+ *
+ * Duplicates the style name with strndup() because the legacy callback
+ * receives a null-terminated char* rather than a pointer-plus-length pair.
+ *
+ * @param _style The font style name (not necessarily null-terminated).
+ * @param length Number of bytes in @a _style.
+ */
 void
 CallbackAdapterPlayer::SetFontStyle(const char* _style, size_t length)
 {
@@ -412,6 +693,11 @@ CallbackAdapterPlayer::SetFontStyle(const char* _style, size_t length)
 }
 
 
+/**
+ * @brief Forwards a set-font-spacing request to the legacy set_font_spacing callback.
+ *
+ * @param spacing The character spacing mode (e.g. B_CHAR_SPACING, B_STRING_SPACING).
+ */
 void
 CallbackAdapterPlayer::SetFontSpacing(uint8 spacing)
 {
@@ -419,6 +705,11 @@ CallbackAdapterPlayer::SetFontSpacing(uint8 spacing)
 }
 
 
+/**
+ * @brief Forwards a set-font-size request to the legacy set_font_size callback.
+ *
+ * @param size The new font size in points.
+ */
 void
 CallbackAdapterPlayer::SetFontSize(float size)
 {
@@ -426,6 +717,11 @@ CallbackAdapterPlayer::SetFontSize(float size)
 }
 
 
+/**
+ * @brief Forwards a set-font-rotation request to the legacy set_font_rotate callback.
+ *
+ * @param rotation The font rotation angle in degrees, measured counter-clockwise.
+ */
 void
 CallbackAdapterPlayer::SetFontRotation(float rotation)
 {
@@ -433,6 +729,11 @@ CallbackAdapterPlayer::SetFontRotation(float rotation)
 }
 
 
+/**
+ * @brief Forwards a set-font-encoding request to the legacy set_font_encoding callback.
+ *
+ * @param encoding The character encoding identifier (e.g. B_UNICODE_UTF8).
+ */
 void
 CallbackAdapterPlayer::SetFontEncoding(uint8 encoding)
 {
@@ -440,6 +741,11 @@ CallbackAdapterPlayer::SetFontEncoding(uint8 encoding)
 }
 
 
+/**
+ * @brief Forwards a set-font-flags request to the legacy set_font_flags callback.
+ *
+ * @param flags Bitmask of font rendering flags (e.g. B_DISABLE_ANTIALIASING).
+ */
 void
 CallbackAdapterPlayer::SetFontFlags(uint32 flags)
 {
@@ -447,6 +753,11 @@ CallbackAdapterPlayer::SetFontFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Forwards a set-font-shear request to the legacy set_font_shear callback.
+ *
+ * @param shear The shear angle in degrees; 90.0 produces upright (unsheared) glyphs.
+ */
 void
 CallbackAdapterPlayer::SetFontShear(float shear)
 {
@@ -454,6 +765,11 @@ CallbackAdapterPlayer::SetFontShear(float shear)
 }
 
 
+/**
+ * @brief Forwards a set-font-face request to the legacy set_font_face callback.
+ *
+ * @param face Bitmask of font face attributes (e.g. B_BOLD_FACE, B_ITALIC_FACE).
+ */
 void
 CallbackAdapterPlayer::SetFontFace(uint16 face)
 {
@@ -461,6 +777,13 @@ CallbackAdapterPlayer::SetFontFace(uint16 face)
 }
 
 
+/**
+ * @brief Forwards a set-blending-mode request to the legacy set_blending_mode callback.
+ *
+ * @param alphaSrcMode  Selects which source alpha value is used (e.g. B_PIXEL_ALPHA).
+ * @param alphaFncMode  Selects how source and destination alpha values are combined
+ *                      (e.g. B_ALPHA_OVERLAY).
+ */
 void
 CallbackAdapterPlayer::SetBlendingMode(source_alpha alphaSrcMode,
 	alpha_function alphaFncMode)
@@ -469,6 +792,11 @@ CallbackAdapterPlayer::SetBlendingMode(source_alpha alphaSrcMode,
 }
 
 
+/**
+ * @brief Forwards a set-transform request to the legacy set_transform callback.
+ *
+ * @param transform The affine transformation matrix to apply to subsequent drawing.
+ */
 void
 CallbackAdapterPlayer::SetTransform(const BAffineTransform& transform)
 {
@@ -476,6 +804,12 @@ CallbackAdapterPlayer::SetTransform(const BAffineTransform& transform)
 }
 
 
+/**
+ * @brief Forwards a translate-by request to the legacy translate_by callback.
+ *
+ * @param x Horizontal translation offset in view coordinates.
+ * @param y Vertical translation offset in view coordinates.
+ */
 void
 CallbackAdapterPlayer::TranslateBy(double x, double y)
 {
@@ -483,6 +817,12 @@ CallbackAdapterPlayer::TranslateBy(double x, double y)
 }
 
 
+/**
+ * @brief Forwards a scale-by request to the legacy scale_by callback.
+ *
+ * @param x Horizontal scale factor.
+ * @param y Vertical scale factor.
+ */
 void
 CallbackAdapterPlayer::ScaleBy(double x, double y)
 {
@@ -490,6 +830,11 @@ CallbackAdapterPlayer::ScaleBy(double x, double y)
 }
 
 
+/**
+ * @brief Forwards a rotate-by request to the legacy rotate_by callback.
+ *
+ * @param angleRadians The rotation angle in radians, applied counter-clockwise.
+ */
 void
 CallbackAdapterPlayer::RotateBy(double angleRadians)
 {
@@ -497,6 +842,11 @@ CallbackAdapterPlayer::RotateBy(double angleRadians)
 }
 
 
+/**
+ * @brief Forwards a blend-layer request to the legacy blend_layer callback.
+ *
+ * @param layer Pointer to the compositing layer to blend into the current surface.
+ */
 void
 CallbackAdapterPlayer::BlendLayer(Layer* layer)
 {
@@ -504,6 +854,13 @@ CallbackAdapterPlayer::BlendLayer(Layer* layer)
 }
 
 
+/**
+ * @brief Forwards a clip-to-rect request to the legacy clip_to_rect callback.
+ *
+ * @param rect    The rectangle used as the clipping boundary.
+ * @param inverse @c true to clip to the region outside @a rect;
+ *                @c false to clip to the inside.
+ */
 void
 CallbackAdapterPlayer::ClipToRect(const BRect& rect, bool inverse)
 {
@@ -511,6 +868,16 @@ CallbackAdapterPlayer::ClipToRect(const BRect& rect, bool inverse)
 }
 
 
+/**
+ * @brief Forwards a clip-to-shape request to the legacy clip_to_shape callback.
+ *
+ * @param opCount  Number of shape opcodes in @a opList.
+ * @param opList   Array of BShape opcode values.
+ * @param ptCount  Number of points in @a ptList.
+ * @param ptList   Array of BPoint coordinates referenced by the opcodes.
+ * @param inverse  @c true to clip to the region outside the shape;
+ *                 @c false to clip to the inside.
+ */
 void
 CallbackAdapterPlayer::ClipToShape(int32 opCount, const uint32 opList[],
 	int32 ptCount, const BPoint ptList[], bool inverse)
@@ -520,6 +887,17 @@ CallbackAdapterPlayer::ClipToShape(int32 opCount, const uint32 opList[],
 }
 
 
+/**
+ * @brief Forwards a draw-string-at-locations request to the legacy draw_string_locations callback.
+ *
+ * Duplicates the string with strndup() because the legacy callback receives
+ * a null-terminated char* rather than a pointer-plus-length pair.
+ *
+ * @param _string       The character data to draw (not necessarily null-terminated).
+ * @param length        Number of bytes in @a _string.
+ * @param locations     Array of per-glyph positions in view coordinates.
+ * @param locationCount Number of elements in @a locations.
+ */
 void
 CallbackAdapterPlayer::DrawStringLocations(const char* _string, size_t length,
 	const BPoint* locations, size_t locationCount)
@@ -533,6 +911,16 @@ CallbackAdapterPlayer::DrawStringLocations(const char* _string, size_t length,
 }
 
 
+/**
+ * @brief Forwards a draw-rectangle-with-gradient request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_rect_gradient when @a fill is @c true, or
+ * stroke_rect_gradient otherwise.
+ *
+ * @param rect     The rectangle to draw.
+ * @param gradient The gradient to apply when rendering.
+ * @param fill     @c true to fill; @c false to stroke the outline.
+ */
 void
 CallbackAdapterPlayer::DrawRectGradient(const BRect& rect, BGradient& gradient, bool fill)
 {
@@ -543,6 +931,16 @@ CallbackAdapterPlayer::DrawRectGradient(const BRect& rect, BGradient& gradient, 
 }
 
 
+/**
+ * @brief Forwards a draw-round-rectangle-with-gradient request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_round_rect_gradient or stroke_round_rect_gradient based on @a fill.
+ *
+ * @param rect     The bounding rectangle of the rounded rectangle.
+ * @param radii    The x and y corner radii.
+ * @param gradient The gradient to apply when rendering.
+ * @param fill     @c true to fill; @c false to stroke the outline.
+ */
 void
 CallbackAdapterPlayer::DrawRoundRectGradient(const BRect& rect, const BPoint& radii, BGradient& gradient,
 	bool fill)
@@ -554,6 +952,16 @@ CallbackAdapterPlayer::DrawRoundRectGradient(const BRect& rect, const BPoint& ra
 }
 
 
+/**
+ * @brief Forwards a draw-bezier-with-gradient request to the appropriate legacy callback.
+ *
+ * Copies the control points into a local array and dispatches to fill_bezier_gradient
+ * or stroke_bezier_gradient based on @a fill.
+ *
+ * @param _points  Array of exactly four BPoint control points.
+ * @param gradient The gradient to apply when rendering.
+ * @param fill     @c true to fill the enclosed area; @c false to stroke the curve.
+ */
 void
 CallbackAdapterPlayer::DrawBezierGradient(const BPoint _points[4], BGradient& gradient, bool fill)
 {
@@ -566,6 +974,18 @@ CallbackAdapterPlayer::DrawBezierGradient(const BPoint _points[4], BGradient& gr
 }
 
 
+/**
+ * @brief Forwards a draw-arc-with-gradient request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_arc_gradient or stroke_arc_gradient based on @a fill.
+ *
+ * @param center     The center point of the arc's ellipse.
+ * @param radii      The x and y radii of the ellipse.
+ * @param startTheta The starting angle of the arc, in degrees.
+ * @param arcTheta   The angular extent of the arc, in degrees.
+ * @param gradient   The gradient to apply when rendering.
+ * @param fill       @c true to fill the arc sector; @c false to stroke the arc.
+ */
 void
 CallbackAdapterPlayer::DrawArcGradient(const BPoint& center, const BPoint& radii,
 	float startTheta, float arcTheta, BGradient& gradient, bool fill)
@@ -577,6 +997,16 @@ CallbackAdapterPlayer::DrawArcGradient(const BPoint& center, const BPoint& radii
 }
 
 
+/**
+ * @brief Forwards a draw-ellipse-with-gradient request to the appropriate legacy callback.
+ *
+ * Converts the bounding @a rect to center+radii form and dispatches to
+ * fill_ellipse_gradient or stroke_ellipse_gradient based on @a fill.
+ *
+ * @param rect     The bounding rectangle of the ellipse.
+ * @param gradient The gradient to apply when rendering.
+ * @param fill     @c true to fill the ellipse; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawEllipseGradient(const BRect& rect, BGradient& gradient, bool fill)
 {
@@ -590,6 +1020,18 @@ CallbackAdapterPlayer::DrawEllipseGradient(const BRect& rect, BGradient& gradien
 }
 
 
+/**
+ * @brief Forwards a draw-polygon-with-gradient request to the appropriate legacy callback.
+ *
+ * Copies the point array into a stack-or-heap buffer and dispatches to
+ * fill_polygon_gradient or stroke_polygon_gradient based on @a fill.
+ *
+ * @param numPoints The number of vertices in @a _points.
+ * @param _points   Array of polygon vertices in view coordinates.
+ * @param isClosed  @c true if the polygon is closed.
+ * @param gradient  The gradient to apply when rendering.
+ * @param fill      @c true to fill the polygon; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawPolygonGradient(size_t numPoints, const BPoint _points[],
 	bool isClosed, BGradient& gradient, bool fill)
@@ -607,6 +1049,15 @@ CallbackAdapterPlayer::DrawPolygonGradient(size_t numPoints, const BPoint _point
 }
 
 
+/**
+ * @brief Forwards a draw-shape-with-gradient request to the appropriate legacy callback.
+ *
+ * Dispatches to fill_shape_gradient or stroke_shape_gradient based on @a fill.
+ *
+ * @param shape    The BShape object to draw.
+ * @param gradient The gradient to apply when rendering.
+ * @param fill     @c true to fill the shape; @c false to stroke its outline.
+ */
 void
 CallbackAdapterPlayer::DrawShapeGradient(const BShape& shape, BGradient& gradient, bool fill)
 {
@@ -617,6 +1068,12 @@ CallbackAdapterPlayer::DrawShapeGradient(const BShape& shape, BGradient& gradien
 }
 
 
+/**
+ * @brief Forwards a set-fill-rule request to the legacy set_fill_rule callback.
+ *
+ * @param fillRule The fill rule to use for self-intersecting shapes
+ *                 (e.g. B_EVEN_ODD or B_NONZERO).
+ */
 void
 CallbackAdapterPlayer::SetFillRule(int32 fillRule)
 {
@@ -624,6 +1081,13 @@ CallbackAdapterPlayer::SetFillRule(int32 fillRule)
 }
 
 
+/**
+ * @brief Forwards a stroke-line-with-gradient request to the legacy stroke_line_gradient callback.
+ *
+ * @param start    The starting point of the line in view coordinates.
+ * @param end      The ending point of the line in view coordinates.
+ * @param gradient The gradient to apply along the stroke.
+ */
 void
 CallbackAdapterPlayer::StrokeLineGradient(const BPoint& start, const BPoint& end, BGradient& gradient)
 {
@@ -632,6 +1096,15 @@ CallbackAdapterPlayer::StrokeLineGradient(const BPoint& start, const BPoint& end
 
 
 #if DEBUG > 1
+/**
+ * @brief Returns a human-readable string name for a BPicture opcode.
+ *
+ * Used only in debug builds (DEBUG > 1) to produce diagnostic log output
+ * during picture playback.
+ *
+ * @param op The numeric opcode value (e.g. B_PIC_MOVE_PEN_BY).
+ * @return A string literal naming the opcode, or "Unknown op" if unrecognised.
+ */
 static const char *
 PictureOpToString(int op)
 {
@@ -720,6 +1193,17 @@ PictureOpToString(int op)
 #endif
 
 
+/**
+ * @brief Constructs a PicturePlayer bound to a raw BPicture data buffer.
+ *
+ * The player does not copy the data; the caller must ensure the buffer
+ * remains valid for the lifetime of the PicturePlayer instance.
+ *
+ * @param data     Pointer to the raw BPicture command stream.
+ * @param size     Byte length of @a data.
+ * @param pictures BList of nested BPicture pointers referenced by
+ *                 B_PIC_DRAW_PICTURE opcodes, or NULL if there are none.
+ */
 PicturePlayer::PicturePlayer(const void *data, size_t size, BList *pictures)
 	:	fData(data),
 		fSize(size),
@@ -728,11 +1212,36 @@ PicturePlayer::PicturePlayer(const void *data, size_t size, BList *pictures)
 }
 
 
+/**
+ * @brief Destroys the PicturePlayer.
+ *
+ * Does not free the data buffer or the pictures list; those are owned by
+ * the caller.
+ */
 PicturePlayer::~PicturePlayer()
 {
 }
 
 
+/**
+ * @brief Plays back the picture using a legacy C function-pointer callback table.
+ *
+ * This overload exists for source compatibility with older code that passes a
+ * flat array of function pointers rather than a PicturePlayerCallbacks subclass.
+ * If @a tableEntries is smaller than kOpsTableSize, missing slots are filled with
+ * a no-op function so that unknown opcodes are silently skipped.
+ *
+ * @param callBackTable  Pointer to an array of function pointers matching the
+ *                       layout of picture_player_callbacks_compat.
+ * @param tableEntries   Number of valid entries in @a callBackTable.
+ * @param userData       Opaque pointer forwarded as the first argument to every callback.
+ *
+ * @return A status code.
+ * @retval B_OK       Playback completed successfully.
+ * @retval B_BAD_DATA The picture data stream is malformed.
+ *
+ * @see Play(PicturePlayerCallbacks&), _Play()
+ */
 status_t
 PicturePlayer::Play(void** callBackTable, int32 tableEntries, void* userData)
 {
@@ -758,6 +1267,20 @@ PicturePlayer::Play(void** callBackTable, int32 tableEntries, void* userData)
 }
 
 
+/**
+ * @brief Plays back the picture using a PicturePlayerCallbacks virtual-method object.
+ *
+ * This is the preferred modern overload. Each decoded opcode in the picture
+ * stream results in a virtual method call on @a callbacks.
+ *
+ * @param callbacks Reference to the callback object that receives drawing operations.
+ *
+ * @return A status code.
+ * @retval B_OK       Playback completed successfully.
+ * @retval B_BAD_DATA The picture data stream is malformed.
+ *
+ * @see Play(void**, int32, void*), _Play()
+ */
 status_t
 PicturePlayer::Play(PicturePlayerCallbacks& callbacks)
 {
@@ -765,8 +1288,23 @@ PicturePlayer::Play(PicturePlayerCallbacks& callbacks)
 }
 
 
+/**
+ * @brief Lightweight bounds-checked reader over a flat byte buffer.
+ *
+ * DataReader wraps a raw memory region and provides typed, bounds-checked
+ * pointer access without copying data. It is used by _Play() to safely
+ * decode the packed binary fields within each picture opcode's payload.
+ *
+ * @see PicturePlayer::_Play()
+ */
 class DataReader {
 public:
+		/**
+		 * @brief Constructs a DataReader over an existing memory buffer.
+		 *
+		 * @param buffer Pointer to the start of the data to read.
+		 * @param length Total number of bytes available in @a buffer.
+		 */
 		DataReader(const void* buffer, size_t length)
 			:
 			fBuffer((const uint8*)buffer),
@@ -774,12 +1312,29 @@ public:
 		{
 		}
 
+		/**
+		 * @brief Returns the number of bytes not yet consumed from the buffer.
+		 *
+		 * @return Remaining byte count.
+		 */
 		size_t
 		Remaining() const
 		{
 			return fRemaining;
 		}
 
+		/**
+		 * @brief Returns a typed pointer into the buffer and advances the read cursor.
+		 *
+		 * Checks that at least @c sizeof(T) * @a count bytes remain before
+		 * advancing.  No data is copied; @a typed is set to point directly
+		 * into the underlying buffer.
+		 *
+		 * @tparam T     The type to interpret the next bytes as.
+		 * @param  typed On success, set to point at the next @a count elements of type T.
+		 * @param  count Number of consecutive T elements to consume (default 1).
+		 * @return @c true on success; @c false if the buffer has insufficient data.
+		 */
 		template<typename T>
 		bool
 		Get(const T*& typed, size_t count = 1)
@@ -793,6 +1348,17 @@ public:
 			return true;
 		}
 
+		/**
+		 * @brief Unflattens a BGradient from the current buffer position and advances the cursor.
+		 *
+		 * Uses BGradient::Unflatten() with a BMemoryIO wrapper over the remaining
+		 * buffer bytes. The cursor is advanced by however many bytes the gradient
+		 * consumed from the stream.
+		 *
+		 * @param gradient On success, set to a newly allocated BGradient object;
+		 *                 the caller takes ownership.
+		 * @return @c true on success; @c false if unflattening failed.
+		 */
 		bool GetGradient(BGradient*& gradient)
 		{
 			BMemoryIO stream(fBuffer, fRemaining);
@@ -807,6 +1373,16 @@ public:
 			return true;
 		}
 
+		/**
+		 * @brief Returns a typed pointer to all remaining bytes and marks the buffer as exhausted.
+		 *
+		 * After a successful call, Remaining() will return 0.
+		 *
+		 * @tparam T      The type to interpret the remaining data as.
+		 * @param  buffer On success, set to point at the start of the remaining data.
+		 * @param  size   On success, set to the number of bytes remaining.
+		 * @return @c true on success; @c false if the buffer is already empty.
+		 */
 		template<typename T>
 		bool
 		GetRemaining(const T*& buffer, size_t& size)
@@ -821,17 +1397,51 @@ public:
 		}
 
 private:
+		/** @brief Current read position within the buffer. */
 		const uint8*	fBuffer;
+		/** @brief Number of bytes not yet consumed. */
 		size_t			fRemaining;
 };
 
 
+/**
+ * @brief Packed header preceding each opcode record in the BPicture data stream.
+ *
+ * Every command in the stream starts with a picture_data_entry_header that
+ * identifies the opcode and gives the byte length of its payload, allowing
+ * the player to skip unknown opcodes safely.
+ */
 struct picture_data_entry_header {
-	uint16 op;
-	uint32 size;
+	uint16 op;   /**< @brief Opcode identifying the drawing command (e.g. B_PIC_STROKE_LINE). */
+	uint32 size; /**< @brief Byte length of the opcode's payload that follows this header. */
 } _PACKED;
 
 
+/**
+ * @brief Iterates over and executes all opcodes in a BPicture data buffer.
+ *
+ * _Play() is the core dispatch loop. It reads successive picture_data_entry_header
+ * records from @a buffer, validates each opcode against the nesting context
+ * imposed by @a parentOp, decodes the typed payload fields using a DataReader,
+ * and calls the appropriate PicturePlayerCallbacks virtual method. Nested
+ * B_PIC_ENTER_STATE_CHANGE and B_PIC_ENTER_FONT_STATE blocks are handled by
+ * recursive calls.
+ *
+ * @param callbacks Reference to the callback object that receives each drawing command.
+ * @param buffer    Pointer to the start of the picture command stream to decode.
+ * @param length    Byte length of @a buffer.
+ * @param parentOp  The enclosing opcode when called recursively (0 for the top level,
+ *                  B_PIC_ENTER_STATE_CHANGE for a state-change block, or
+ *                  B_PIC_ENTER_FONT_STATE for a font-state block). Used to enforce
+ *                  which opcodes are legal within the current nesting context.
+ *
+ * @return A status code.
+ * @retval B_OK       All opcodes were decoded and dispatched successfully.
+ * @retval B_BAD_DATA The stream is truncated or contains an opcode that is illegal
+ *                    in the current @a parentOp context.
+ *
+ * @see Play(PicturePlayerCallbacks&), Play(void**, int32, void*)
+ */
 status_t
 PicturePlayer::_Play(PicturePlayerCallbacks& callbacks,
 	const void* buffer, size_t length, uint16 parentOp)

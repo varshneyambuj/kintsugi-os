@@ -1,10 +1,38 @@
 /*
- * Copyright 2001-2008, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2008 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Stephan Aßmus <superstippi@gmx.de>
+ */
+
+
+/**
+ * @file RadioButton.cpp
+ * @brief Implementation of BRadioButton, a mutually exclusive selection control
+ *
+ * BRadioButton is a toggle control that, when turned on, automatically turns off all
+ * other BRadioButton siblings within the same parent view. It implements the
+ * radio-button group behavior expected for single-choice option sets.
+ *
+ * @see BControl, BCheckBox, BControlLook
  */
 
 
@@ -21,6 +49,21 @@
 #include <binary_compatibility/Interface.h>
 
 
+/**
+ * @brief Constructs a BRadioButton with an explicit frame rectangle (legacy layout).
+ *
+ * Ensures the radio button meets a minimum height derived from its preferred
+ * size, resizing vertically if the supplied frame is too short.
+ *
+ * @param frame        The position and size of the radio button in the parent's
+ *                     coordinate system.
+ * @param name         The internal view name used for look-up.
+ * @param label        The visible text drawn beside the radio button knob.
+ * @param message      The message sent when the button is selected. Ownership
+ *                     is transferred to BControl.
+ * @param resizingMode How the view resizes with its parent (B_FOLLOW_* flags).
+ * @param flags        View flags (B_FRAME_EVENTS is always added).
+ */
 BRadioButton::BRadioButton(BRect frame, const char* name, const char* label,
 	BMessage* message, uint32 resizingMode, uint32 flags)
 	:
@@ -35,6 +78,14 @@ BRadioButton::BRadioButton(BRect frame, const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a BRadioButton without an explicit frame (layout-managed).
+ *
+ * @param name    The internal view name.
+ * @param label   The visible text drawn beside the radio button knob.
+ * @param message The message sent when the button is selected.
+ * @param flags   View flags (B_FRAME_EVENTS is always added).
+ */
 BRadioButton::BRadioButton(const char* name, const char* label,
 	BMessage* message, uint32 flags)
 	:
@@ -44,6 +95,14 @@ BRadioButton::BRadioButton(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a BRadioButton with only a label and message (simplest form).
+ *
+ * This is the recommended constructor when using the layout system.
+ *
+ * @param label   The visible text drawn beside the radio button knob.
+ * @param message The message sent when the button is selected.
+ */
 BRadioButton::BRadioButton(const char* label, BMessage* message)
 	:
 	BControl(NULL, label, message, B_WILL_DRAW | B_NAVIGABLE | B_FRAME_EVENTS),
@@ -52,6 +111,13 @@ BRadioButton::BRadioButton(const char* label, BMessage* message)
 }
 
 
+/**
+ * @brief Constructs a BRadioButton from an archived BMessage.
+ *
+ * @param data The archive message produced by Archive().
+ * @see Instantiate()
+ * @see Archive()
+ */
 BRadioButton::BRadioButton(BMessage* data)
 	:
 	BControl(data),
@@ -60,11 +126,22 @@ BRadioButton::BRadioButton(BMessage* data)
 }
 
 
+/**
+ * @brief Destroys the BRadioButton.
+ */
 BRadioButton::~BRadioButton()
 {
 }
 
 
+/**
+ * @brief Creates a new BRadioButton from an archived BMessage.
+ *
+ * @param data The archive message to instantiate from.
+ * @return A newly allocated BRadioButton on success, or NULL if validation
+ *         fails.
+ * @see Archive()
+ */
 BArchivable*
 BRadioButton::Instantiate(BMessage* data)
 {
@@ -75,6 +152,15 @@ BRadioButton::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives the BRadioButton into a BMessage.
+ *
+ * Delegates entirely to BControl::Archive(); BRadioButton adds no extra fields.
+ *
+ * @param data The message to archive into.
+ * @param deep If true, child objects are archived recursively.
+ * @return B_OK on success, or an error code from BControl::Archive().
+ */
 status_t
 BRadioButton::Archive(BMessage* data, bool deep) const
 {
@@ -82,6 +168,15 @@ BRadioButton::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Draws the radio button knob and its label into the current view.
+ *
+ * Renders the circular knob (with an optional outlined/pressed state) and
+ * then the label and icon to the right of the knob, using BControlLook.
+ * The knob size is derived from the current font's ascent.
+ *
+ * @param updateRect The invalid rectangle that needs to be redrawn.
+ */
 void
 BRadioButton::Draw(BRect updateRect)
 {
@@ -110,6 +205,16 @@ BRadioButton::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handles a mouse-button-press event.
+ *
+ * Sets the outlined (pressed) visual state and begins tracking. In
+ * synchronous mode, polls the mouse until the button is released; if the
+ * pointer is still inside the radio button at release, the value is set
+ * to B_CONTROL_ON and the action is invoked.
+ *
+ * @param where The location of the click in the view's coordinate system.
+ */
 void
 BRadioButton::MouseDown(BPoint where)
 {
@@ -150,6 +255,11 @@ BRadioButton::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Called when the radio button is attached to a window.
+ *
+ * Delegates to BControl::AttachedToWindow() for standard view setup.
+ */
 void
 BRadioButton::AttachedToWindow()
 {
@@ -157,6 +267,18 @@ BRadioButton::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles a key-press event.
+ *
+ * B_SPACE (and B_RETURN, which is overridden to prevent toggling off) set
+ * the value to B_CONTROL_ON and invoke if the button is not already on.
+ * All other keys are forwarded to BControl.
+ *
+ * @param bytes    Pointer to the UTF-8 key data.
+ * @param numBytes Number of bytes in \a bytes.
+ * @note Cursor-key navigation between radio buttons in a group is not yet
+ *       implemented.
+ */
 void
 BRadioButton::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -181,6 +303,17 @@ BRadioButton::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Sets the value of the radio button and deselects all siblings.
+ *
+ * When set to B_CONTROL_ON, iterates all sibling views (including BBox label
+ * views) and calls SetValue(B_CONTROL_OFF) on any other BRadioButton found,
+ * implementing the mutually exclusive group behavior. When set to
+ * B_CONTROL_OFF no sibling deselection occurs.
+ *
+ * @param value B_CONTROL_ON to select this button, B_CONTROL_OFF to deselect.
+ * @see BControl::SetValueNoUpdate()
+ */
 void
 BRadioButton::SetValue(int32 value)
 {
@@ -239,6 +372,16 @@ BRadioButton::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Returns the radio button's preferred width and height.
+ *
+ * Computes the size from the knob frame (font-metric-dependent), optional
+ * icon dimensions, and label string width. Pass NULL for dimensions you do
+ * not need.
+ *
+ * @param _width  Receives the preferred width, or ignored if NULL.
+ * @param _height Receives the preferred height, or ignored if NULL.
+ */
 void
 BRadioButton::GetPreferredSize(float* _width, float* _height)
 {
@@ -271,6 +414,11 @@ BRadioButton::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resizes the radio button to its preferred size.
+ *
+ * Delegates to BControl::ResizeToPreferred().
+ */
 void
 BRadioButton::ResizeToPreferred()
 {
@@ -278,6 +426,14 @@ BRadioButton::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Invokes the radio button's action message.
+ *
+ * Delegates to BControl::Invoke().
+ *
+ * @param message The message to send, or NULL to use the button's own message.
+ * @return B_OK on success, or an error code from BControl::Invoke().
+ */
 status_t
 BRadioButton::Invoke(BMessage* message)
 {
@@ -285,6 +441,10 @@ BRadioButton::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Handles an incoming BMessage not dispatched by the default mechanism.
+ * @param message The message to process.
+ */
 void
 BRadioButton::MessageReceived(BMessage* message)
 {
@@ -292,6 +452,10 @@ BRadioButton::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Called when the radio button's window gains or loses focus.
+ * @param active true if the window just became active, false if deactivated.
+ */
 void
 BRadioButton::WindowActivated(bool active)
 {
@@ -299,6 +463,15 @@ BRadioButton::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Called when the mouse button is released over this radio button.
+ *
+ * Completes asynchronous tracking: if the release point is inside the button,
+ * sets the value to B_CONTROL_ON and invokes (only if the value changed).
+ * Invalidates and stops tracking regardless.
+ *
+ * @param where The release position in view coordinates.
+ */
 void
 BRadioButton::MouseUp(BPoint where)
 {
@@ -319,6 +492,16 @@ BRadioButton::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Called when the pointer moves while the radio button is being tracked.
+ *
+ * Updates the outlined (hover-press) state and invalidates the view if the
+ * pointer has entered or exited the button bounds.
+ *
+ * @param where       Current pointer position in view coordinates.
+ * @param code        B_ENTERED_VIEW, B_INSIDE_VIEW, or B_EXITED_VIEW.
+ * @param dragMessage Non-NULL if a drag-and-drop operation is in progress.
+ */
 void
 BRadioButton::MouseMoved(BPoint where, uint32 code,
 	const BMessage* dragMessage)
@@ -335,6 +518,11 @@ BRadioButton::MouseMoved(BPoint where, uint32 code,
 }
 
 
+/**
+ * @brief Called when the radio button is detached from its window.
+ *
+ * Delegates to BControl::DetachedFromWindow() for cleanup.
+ */
 void
 BRadioButton::DetachedFromWindow()
 {
@@ -342,6 +530,10 @@ BRadioButton::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called when the radio button's frame position changes.
+ * @param newPosition The new top-left corner position in the parent's coordinates.
+ */
 void
 BRadioButton::FrameMoved(BPoint newPosition)
 {
@@ -349,6 +541,15 @@ BRadioButton::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Called when the radio button's frame size changes.
+ *
+ * Invalidates the entire view before delegating to BControl so the knob
+ * and label are fully redrawn at the new size.
+ *
+ * @param newWidth  The new width in pixels.
+ * @param newHeight The new height in pixels.
+ */
 void
 BRadioButton::FrameResized(float newWidth, float newHeight)
 {
@@ -357,6 +558,16 @@ BRadioButton::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the handler that should process it.
+ *
+ * @param message   The scripting message.
+ * @param index     Index of the specifier within the message.
+ * @param specifier The specifier message.
+ * @param what      The specifier constant.
+ * @param property  The property name being accessed.
+ * @return The BHandler that should handle the scripting message.
+ */
 BHandler*
 BRadioButton::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -366,6 +577,10 @@ BRadioButton::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Gives or removes keyboard focus from the radio button.
+ * @param focus true to grant focus, false to remove it.
+ */
 void
 BRadioButton::MakeFocus(bool focus)
 {
@@ -373,6 +588,9 @@ BRadioButton::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Called after all sibling views have been attached to the window.
+ */
 void
 BRadioButton::AllAttached()
 {
@@ -380,6 +598,9 @@ BRadioButton::AllAttached()
 }
 
 
+/**
+ * @brief Called after all sibling views have been detached from the window.
+ */
 void
 BRadioButton::AllDetached()
 {
@@ -387,6 +608,12 @@ BRadioButton::AllDetached()
 }
 
 
+/**
+ * @brief Fills a BMessage with the scripting suites supported by BRadioButton.
+ *
+ * @param message The message to populate with suite information.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BRadioButton::GetSupportedSuites(BMessage* message)
 {
@@ -394,6 +621,17 @@ BRadioButton::GetSupportedSuites(BMessage* message)
 }
 
 
+/**
+ * @brief Executes a binary-compatibility perform code.
+ *
+ * Handles the PERFORM_CODE_* constants required for ABI stability across
+ * shared-library versions, dispatching to the appropriate virtual method.
+ * Unrecognised codes are forwarded to BControl::Perform().
+ *
+ * @param code  The perform code identifying the operation.
+ * @param _data Pointer to the perform-specific data structure.
+ * @return B_OK on success, or an error code from the dispatched method.
+ */
 status_t
 BRadioButton::Perform(perform_code code, void* _data)
 {
@@ -464,6 +702,14 @@ BRadioButton::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Returns the maximum layout size of the radio button.
+ *
+ * Composes the explicit maximum size (if any) with the computed preferred
+ * size so the layout system allows the button to grow as needed.
+ *
+ * @return The maximum BSize for layout purposes.
+ */
 BSize
 BRadioButton::MaxSize()
 {
@@ -475,6 +721,15 @@ BRadioButton::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred layout alignment of the radio button.
+ *
+ * Composes the explicit alignment (if any) with left-horizontal /
+ * vertical-unset defaults, which allow the enclosing layout to decide
+ * the vertical alignment.
+ *
+ * @return The BAlignment for layout purposes.
+ */
 BAlignment
 BRadioButton::LayoutAlignment()
 {
@@ -483,6 +738,17 @@ BRadioButton::LayoutAlignment()
 }
 
 
+/**
+ * @brief Sets the radio button's icon bitmap.
+ *
+ * Extends BControl::SetIcon() by always requesting disabled icon variants so
+ * the radio button can render them when it is disabled.
+ *
+ * @param icon  The source bitmap to use as the icon.
+ * @param flags Icon creation flags (B_CREATE_DISABLED_ICON_BITMAPS is always
+ *              added).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BRadioButton::SetIcon(const BBitmap* icon, uint32 flags)
 {
@@ -501,6 +767,13 @@ BRadioButton::operator=(const BRadioButton &)
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the radio knob using current font.
+ *
+ * Convenience overload that fetches the current font height automatically.
+ *
+ * @return The BRect of the radio knob in view coordinates.
+ */
 BRect
 BRadioButton::_KnobFrame() const
 {
@@ -510,6 +783,15 @@ BRadioButton::_KnobFrame() const
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the radio knob for a given font.
+ *
+ * The rectangle is sized to match the font's ascent so the knob aligns with
+ * the text baseline. Uses the same geometry as BCheckBox::_CheckBoxFrame().
+ *
+ * @param fontHeight The font metrics used to compute the knob size.
+ * @return The BRect of the radio knob in view coordinates.
+ */
 BRect
 BRadioButton::_KnobFrame(const font_height& fontHeight) const
 {
@@ -519,6 +801,13 @@ BRadioButton::_KnobFrame(const font_height& fontHeight) const
 }
 
 
+/**
+ * @brief Redraws the radio button by clearing the background and calling Draw().
+ *
+ * Fills the view with the background color, then calls Draw() and Flush()
+ * to produce a clean, flicker-free repaint. Used in synchronous mouse-
+ * tracking loops where UpdateIfNeeded() is not available.
+ */
 void
 BRadioButton::_Redraw()
 {

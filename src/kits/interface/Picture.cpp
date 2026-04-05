@@ -1,13 +1,38 @@
 /*
- * Copyright 2001-2014 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers, mflerackers@androme.be
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2014 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers, mflerackers@androme.be
  */
 
 
-// Records a series of drawing instructions that can be "replayed" later.
+/**
+ * @file Picture.cpp
+ * @brief Implementation of BPicture, a recorded sequence of drawing instructions
+ *
+ * BPicture records a sequence of BView drawing calls that can be replayed at any time.
+ * It stores data as an opaque stream understood by the app_server. Used by BPictureButton
+ * and BDragger for resolution-independent graphics.
+ *
+ * @see BView, BPictureButton, BPicturePlayer
+ */
 
 
 #include <Picture.h>
@@ -32,10 +57,19 @@
 #include "PicturePrivate.h"
 
 
+/** @brief Global list of all live BPicture objects, used to reconnect them after a server restart. */
 static BObjectList<BPicture> sPictureList;
+/** @brief Lock protecting sPictureList against concurrent access. */
 static recursive_lock sPictureListLock = RECURSIVE_LOCK_INITIALIZER("BPicture list");
 
 
+/**
+ * @brief Re-upload all live BPicture objects to a freshly started app_server.
+ *
+ * Called by the system after an app_server reconnection event. Iterates the
+ * global picture list and calls ReconnectToAppServer() on each entry so that
+ * every picture's drawing data is sent back to the new server instance.
+ */
 void
 reconnect_pictures_to_app_server()
 {
@@ -47,6 +81,11 @@ reconnect_pictures_to_app_server()
 }
 
 
+/**
+ * @brief Construct a Private accessor wrapping the given BPicture.
+ *
+ * @param picture The BPicture to wrap; must not be NULL.
+ */
 BPicture::Private::Private(BPicture* picture)
 	:
 	fPicture(picture)
@@ -54,6 +93,12 @@ BPicture::Private::Private(BPicture* picture)
 }
 
 
+/**
+ * @brief Re-upload the wrapped BPicture's data to the app_server.
+ *
+ * Delegates to BPicture::_Upload() to transmit the local picture data after
+ * a server reconnection.
+ */
 void
 BPicture::Private::ReconnectToAppServer()
 {
@@ -104,6 +149,13 @@ struct picture_header {
 };
 
 
+/**
+ * @brief Construct an empty BPicture.
+ *
+ * Allocates a new _BPictureExtent_ to hold the drawing stream and registers
+ * this picture in the global list. The picture is not yet connected to the
+ * app_server; it will be uploaded on demand.
+ */
 BPicture::BPicture()
 	:
 	fToken(-1),
@@ -114,6 +166,14 @@ BPicture::BPicture()
 }
 
 
+/**
+ * @brief Construct a BPicture as a deep copy of another.
+ *
+ * Clones the server-side picture object (via AS_CLONE_PICTURE) and copies
+ * the local data extent together with all referenced sub-pictures.
+ *
+ * @param otherPicture The picture to copy.
+ */
 BPicture::BPicture(const BPicture& otherPicture)
 	:
 	fToken(-1),
@@ -148,6 +208,16 @@ BPicture::BPicture(const BPicture& otherPicture)
 }
 
 
+/**
+ * @brief Reconstruct a BPicture from an archived BMessage.
+ *
+ * Reads the version, endianness, raw drawing data, and any embedded sub-picture
+ * messages. Only version 1 archives are supported; version 0 triggers a
+ * debugger call.
+ *
+ * @param data The archive message produced by Archive().
+ * @see Archive(), Instantiate()
+ */
 BPicture::BPicture(BMessage* data)
 	:
 	fToken(-1),
@@ -199,6 +269,16 @@ BPicture::BPicture(BMessage* data)
 }
 
 
+/**
+ * @brief Construct a BPicture from a legacy (R4-era) raw data pointer.
+ *
+ * Old-style picture data is not supported; this constructor immediately calls
+ * the debugger.
+ *
+ * @param data Pointer to the old-format picture data.
+ * @param size Byte size of \a data.
+ * @note This constructor exists for binary compatibility only.
+ */
 BPicture::BPicture(const void* data, int32 size)
 {
 	_InitData();
@@ -207,6 +287,12 @@ BPicture::BPicture(const void* data, int32 size)
 }
 
 
+/**
+ * @brief Shared initialisation helper called by all constructors.
+ *
+ * Resets fToken and fUsurped, allocates fExtent, and registers this picture
+ * in the global sPictureList under sPictureListLock.
+ */
 void
 BPicture::_InitData()
 {
@@ -220,6 +306,13 @@ BPicture::_InitData()
 }
 
 
+/**
+ * @brief Destroy the BPicture, releasing server-side and local resources.
+ *
+ * Removes this picture from the global list before calling _DisposeData() to
+ * ensure that reconnect_pictures_to_app_server() never sees a half-destroyed
+ * object.
+ */
 BPicture::~BPicture()
 {
 	RecursiveLocker _(sPictureListLock);
@@ -228,6 +321,12 @@ BPicture::~BPicture()
 }
 
 
+/**
+ * @brief Release the server-side picture token and the local extent.
+ *
+ * Sends AS_DELETE_PICTURE to the app_server if a valid token exists, then
+ * deletes the _BPictureExtent_ and NULLs fExtent.
+ */
 void
 BPicture::_DisposeData()
 {
@@ -245,6 +344,13 @@ BPicture::_DisposeData()
 }
 
 
+/**
+ * @brief Instantiate a BPicture from an archived BMessage.
+ *
+ * @param data The archive message to instantiate from.
+ * @return A new BPicture if \a data is a valid BPicture archive, or NULL on failure.
+ * @see Archive()
+ */
 BArchivable*
 BPicture::Instantiate(BMessage* data)
 {
@@ -255,6 +361,18 @@ BPicture::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archive this BPicture into a BMessage.
+ *
+ * Writes the version (1), host endianness, raw drawing data, and one "piclib"
+ * sub-message for each referenced sub-picture. Requires a local copy of the
+ * data; _AssertLocalCopy() is called internally.
+ *
+ * @param data The message to archive into.
+ * @param deep If true, sub-pictures are archived recursively.
+ * @return B_OK on success, or an error code on failure.
+ * @see Instantiate()
+ */
 status_t
 BPicture::Archive(BMessage* data, bool deep) const
 {
@@ -293,6 +411,13 @@ BPicture::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Dispatch a perform_code to the base class.
+ *
+ * @param code The perform code identifying the operation.
+ * @param arg  Opaque argument passed to BArchivable::Perform().
+ * @return The result from BArchivable::Perform().
+ */
 status_t
 BPicture::Perform(perform_code code, void* arg)
 {
@@ -300,6 +425,17 @@ BPicture::Perform(perform_code code, void* arg)
 }
 
 
+/**
+ * @brief Replay the recorded drawing instructions through a callback table.
+ *
+ * Obtains a local copy of the picture data if necessary, then constructs a
+ * BPrivate::PicturePlayer and invokes it with the provided table.
+ *
+ * @param callBackTable Array of function pointers indexed by drawing opcode.
+ * @param tableEntries  Number of entries in \a callBackTable.
+ * @param user          Caller-supplied context pointer passed to each callback.
+ * @return B_OK on success, or an error code if the local copy could not be obtained.
+ */
 status_t
 BPicture::Play(void** callBackTable, int32 tableEntries, void* user)
 {
@@ -313,6 +449,18 @@ BPicture::Play(void** callBackTable, int32 tableEntries, void* user)
 }
 
 
+/**
+ * @brief Write the picture data to a BDataIO stream in a portable format.
+ *
+ * Writes a two-int32 magic header followed by the flattened extent (sub-picture
+ * count, each sub-picture recursively, data size, data bytes). Requires a local
+ * copy of the data.
+ *
+ * @param stream The output stream to write to.
+ * @return B_OK on success.
+ * @retval B_IO_ERROR If fewer bytes than expected were written.
+ * @see Unflatten()
+ */
 status_t
 BPicture::Flatten(BDataIO* stream)
 {
@@ -333,6 +481,18 @@ BPicture::Flatten(BDataIO* stream)
 }
 
 
+/**
+ * @brief Read picture data from a BDataIO stream produced by Flatten().
+ *
+ * Validates the magic header, reads the extent data (sub-pictures and raw
+ * drawing bytes), and uploads the result to the app_server. The local copy
+ * is freed once the server has a copy.
+ *
+ * @param stream The input stream to read from.
+ * @return B_OK on success.
+ * @retval B_BAD_TYPE If the stream header is invalid or unrecognised.
+ * @see Flatten()
+ */
 status_t
 BPicture::Unflatten(BDataIO* stream)
 {
@@ -364,6 +524,15 @@ BPicture::Unflatten(BDataIO* stream)
 }
 
 
+/**
+ * @brief Import legacy R4/R5 picture data (currently a no-op).
+ *
+ * Old-format picture data is not supported. This method exists as a placeholder
+ * for future implementation.
+ *
+ * @param data Pointer to the old-format data buffer.
+ * @param size Byte size of \a data.
+ */
 void
 BPicture::_ImportOldData(const void* data, int32 size)
 {
@@ -371,6 +540,11 @@ BPicture::_ImportOldData(const void* data, int32 size)
 }
 
 
+/**
+ * @brief Set the app_server token associated with this picture.
+ *
+ * @param token The new token value; use -1 to indicate no server copy.
+ */
 void
 BPicture::SetToken(int32 token)
 {
@@ -378,6 +552,11 @@ BPicture::SetToken(int32 token)
 }
 
 
+/**
+ * @brief Return the app_server token for this picture.
+ *
+ * @return The current token, or -1 if no server copy exists.
+ */
 int32
 BPicture::Token() const
 {
@@ -385,6 +564,16 @@ BPicture::Token() const
 }
 
 
+/**
+ * @brief Ensure that a local copy of the picture data is available.
+ *
+ * Returns true immediately if local data already exists. If only a server copy
+ * is present, downloads it via _Download(). Returns false if neither source
+ * is available.
+ *
+ * @return true if local data is available after the call.
+ * @see _Download()
+ */
 bool
 BPicture::_AssertLocalCopy()
 {
@@ -398,6 +587,11 @@ BPicture::_AssertLocalCopy()
 }
 
 
+/**
+ * @brief Stub that always returns false (old-format local copies are unsupported).
+ *
+ * @return Always false.
+ */
 bool
 BPicture::_AssertOldLocalCopy()
 {
@@ -407,6 +601,16 @@ BPicture::_AssertOldLocalCopy()
 }
 
 
+/**
+ * @brief Ensure that a server-side copy of the picture data exists.
+ *
+ * Returns true immediately if a valid token is already held. If only local data
+ * is present, recursively ensures all sub-pictures are uploaded, then uploads
+ * this picture's data via _Upload().
+ *
+ * @return true if a server copy is available after the call.
+ * @see _Upload()
+ */
 bool
 BPicture::_AssertServerCopy()
 {
@@ -425,6 +629,14 @@ BPicture::_AssertServerCopy()
 }
 
 
+/**
+ * @brief Send the local picture data to the app_server and store the returned token.
+ *
+ * Transmits sub-picture tokens followed by the raw drawing-data buffer via
+ * AS_CREATE_PICTURE. On success, fToken is updated.
+ *
+ * @return B_OK on success, or B_BAD_VALUE / B_ERROR on failure.
+ */
 status_t
 BPicture::_Upload()
 {
@@ -456,6 +668,14 @@ BPicture::_Upload()
 }
 
 
+/**
+ * @brief Download the picture data from the app_server into the local extent.
+ *
+ * Sends AS_DOWNLOAD_PICTURE with the current token and reads back the
+ * sub-picture token list followed by the raw drawing-data buffer.
+ *
+ * @return B_OK on success, or an error code if the download fails.
+ */
 status_t
 BPicture::_Download()
 {
@@ -490,6 +710,11 @@ BPicture::_Download()
 }
 
 
+/**
+ * @brief Return a pointer to the raw picture data, downloading it if necessary.
+ *
+ * @return Pointer to the internal picture data buffer, or NULL on failure.
+ */
 const void*
 BPicture::Data() const
 {
@@ -500,6 +725,11 @@ BPicture::Data() const
 }
 
 
+/**
+ * @brief Return the byte size of the raw picture data, downloading it if necessary.
+ *
+ * @return Number of bytes in the picture data buffer, or 0 on failure.
+ */
 int32
 BPicture::DataSize() const
 {
@@ -510,6 +740,16 @@ BPicture::DataSize() const
 }
 
 
+/**
+ * @brief Replace this picture's content with a fresh empty state, saving the old state.
+ *
+ * Disposes the current data, reinitialises the object, and stores \a lameDuck
+ * in fUsurped so it can be retrieved later by StepDown(). Used internally
+ * during recording to nest picture scopes.
+ *
+ * @param lameDuck The picture whose state should be saved and restored later.
+ * @see StepDown()
+ */
 void
 BPicture::Usurp(BPicture* lameDuck)
 {
@@ -523,6 +763,14 @@ BPicture::Usurp(BPicture* lameDuck)
 }
 
 
+/**
+ * @brief Restore the previously usurped picture and clear the saved reference.
+ *
+ * Returns the picture saved by the last Usurp() call and sets fUsurped to NULL.
+ *
+ * @return The previously usurped BPicture, or NULL if Usurp() was never called.
+ * @see Usurp()
+ */
 BPicture*
 BPicture::StepDown()
 {
@@ -538,6 +786,14 @@ void BPicture::_ReservedPicture2() {}
 void BPicture::_ReservedPicture3() {}
 
 
+/**
+ * @brief Assignment operator (intentionally a no-op for binary compatibility).
+ *
+ * BPicture objects are not copyable via assignment; this operator returns
+ * *this unchanged. Use the copy constructor to duplicate a picture.
+ *
+ * @return A reference to this object, unchanged.
+ */
 BPicture&
 BPicture::operator=(const BPicture&)
 {
@@ -546,6 +802,12 @@ BPicture::operator=(const BPicture&)
 
 
 // _BPictureExtent_
+
+/**
+ * @brief Construct a _BPictureExtent_ with an optional initial buffer size.
+ *
+ * @param size Initial byte capacity to allocate; 0 means no allocation.
+ */
 _BPictureExtent_::_BPictureExtent_(int32 size)
 	:
 	fNewData(NULL),
@@ -555,6 +817,9 @@ _BPictureExtent_::_BPictureExtent_(int32 size)
 }
 
 
+/**
+ * @brief Destroy the _BPictureExtent_, freeing the data buffer and all sub-pictures.
+ */
 _BPictureExtent_::~_BPictureExtent_()
 {
 	free(fNewData);
@@ -563,6 +828,15 @@ _BPictureExtent_::~_BPictureExtent_()
 }
 
 
+/**
+ * @brief Copy raw picture data into this extent, reallocating as needed.
+ *
+ * @param data Pointer to the source data buffer; must not be NULL.
+ * @param size Number of bytes to copy from \a data.
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE If \a data is NULL.
+ * @retval B_NO_MEMORY If reallocation fails.
+ */
 status_t
 _BPictureExtent_::ImportData(const void* data, int32 size)
 {
@@ -580,6 +854,18 @@ _BPictureExtent_::ImportData(const void* data, int32 size)
 }
 
 
+/**
+ * @brief Restore extent data from a BDataIO stream.
+ *
+ * Reads a sub-picture count, instantiates and unflattens each sub-picture, then
+ * reads the data size and raw bytes into the internal buffer.
+ *
+ * @param stream The input stream; must not be NULL.
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE If \a stream is NULL.
+ * @retval B_BAD_DATA If the picture count field is truncated.
+ * @retval B_IO_ERROR If any subsequent read returns fewer bytes than expected.
+ */
 status_t
 _BPictureExtent_::Unflatten(BDataIO* stream)
 {
@@ -630,6 +916,16 @@ _BPictureExtent_::Unflatten(BDataIO* stream)
 }
 
 
+/**
+ * @brief Write extent data to a BDataIO stream.
+ *
+ * Writes a sub-picture count, flattens each sub-picture recursively, then writes
+ * the data size and raw bytes.
+ *
+ * @param stream The output stream to write to.
+ * @return B_OK on success.
+ * @retval B_IO_ERROR If any write returns fewer bytes than expected.
+ */
 status_t
 _BPictureExtent_::Flatten(BDataIO* stream)
 {
@@ -665,6 +961,17 @@ _BPictureExtent_::Flatten(BDataIO* stream)
 }
 
 
+/**
+ * @brief Resize the internal data buffer.
+ *
+ * Uses realloc() to grow or shrink the buffer. Passing 0 frees the buffer
+ * entirely and sets the pointer to NULL.
+ *
+ * @param size The desired buffer size in bytes; must be >= 0.
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE If \a size is negative.
+ * @retval B_NO_MEMORY If reallocation fails.
+ */
 status_t
 _BPictureExtent_::SetSize(int32 size)
 {

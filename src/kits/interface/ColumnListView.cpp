@@ -80,6 +80,7 @@ All rights reserved.
 
 namespace BPrivate {
 
+/** @brief 8x8 bitmap for a downward-pointing sort arrow in 8-bit palette mode. */
 static const unsigned char kDownSortArrow8x8[] = {
 	0xff, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
@@ -91,6 +92,7 @@ static const unsigned char kDownSortArrow8x8[] = {
 	0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff
 };
 
+/** @brief 8x8 bitmap for an upward-pointing sort arrow in 8-bit palette mode. */
 static const unsigned char kUpSortArrow8x8[] = {
 	0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
@@ -102,6 +104,7 @@ static const unsigned char kUpSortArrow8x8[] = {
 	0xff, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff
 };
 
+/** @brief Inverted 8x8 bitmap for a downward-pointing sort arrow, used on dark backgrounds. */
 static const unsigned char kDownSortArrow8x8Invert[] = {
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 	0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0xff,
@@ -113,6 +116,7 @@ static const unsigned char kDownSortArrow8x8Invert[] = {
 	0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0xff
 };
 
+/** @brief Inverted 8x8 bitmap for an upward-pointing sort arrow, used on dark backgrounds. */
 static const unsigned char kUpSortArrow8x8Invert[] = {
 	0xff, 0xff, 0xff, 0x1f, 0xff, 0xff, 0xff, 0xff,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -124,26 +128,42 @@ static const unsigned char kUpSortArrow8x8Invert[] = {
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 };
 
+/** @brief Tint factor applied to alternating rows on light backgrounds. */
 static const float kTintedLineTint = 1.04;
+/** @brief Tint factor applied to alternating rows on dark backgrounds. */
 static const float kTintedLineTintDark = 0.90;
 
-
+/** @brief Minimum pixel height of the column title area. */
 static const float kMinTitleHeight = 16.0;
+/** @brief Minimum pixel height of a list row. */
 static const float kMinRowHeight = 16.0;
+/** @brief Multiplier applied to font size to derive the title area height. */
 static const float kTitleSpacing = 1.4;
+/** @brief Multiplier applied to font size to derive the default row height. */
 static const float kRowSpacing = 1.4;
+/** @brief Pixel width reserved for the expand/collapse latch widget. */
 static const float kLatchWidth = 15.0;
 
+/** @brief Maximum nesting depth supported by the recursive iterator stack. */
 static const int32 kMaxDepth = 1024;
+/** @brief Left margin width, at least as wide as the latch. */
 static const float kLeftMargin = kLatchWidth;
+/** @brief Right margin width in pixels. */
 static const float kRightMargin = 8;
+/** @brief Horizontal indent per outline nesting level in pixels. */
 static const float kOutlineLevelIndent = kLatchWidth;
+/** @brief Total width of the column-resize hit area centered on a column edge. */
 static const float kColumnResizeAreaWidth = 10.0;
+/** @brief Minimum pixel distance the mouse must move before a row drag begins. */
 static const float kRowDragSensitivity = 5.0;
+/** @brief Maximum pixel distance between click and release to count as a double-click. */
 static const float kDoubleClickMoveSensitivity = 4.0;
+/** @brief Pixel width reserved for the sort-order indicator arrow in a column header. */
 static const float kSortIndicatorWidth = 9.0;
+/** @brief Height of the horizontal drop-target highlight line during drag operations. */
 static const float kDropHighlightLineHeight = 2.0;
 
+/** @brief Message command sent when the user toggles a column's visibility via the popup menu. */
 static const uint32 kToggleColumn = 'BTCL';
 
 
@@ -423,6 +443,12 @@ using namespace BPrivate;
 
 #ifdef DOUBLE_BUFFERED_COLUMN_RESIZE
 
+/**
+ * @brief Construct the resize buffer view and allocate its backing bitmap.
+ *
+ * Creates a 600x35-pixel off-screen BView and immediately allocates the
+ * backing BBitmap used for double-buffered column resize redraws.
+ */
 ColumnResizeBufferView::ColumnResizeBufferView()
 	: BView(BRect(0, 0, 600, 35), "double_buffer_view", B_FOLLOW_ALL_SIDES, 0), fDrawBuffer(NULL)
 {
@@ -430,12 +456,20 @@ ColumnResizeBufferView::ColumnResizeBufferView()
 }
 
 
+/**
+ * @brief Destroy the resize buffer view and release the backing bitmap.
+ */
 ColumnResizeBufferView::~ColumnResizeBufferView()
 {
 	_FreeBitmap();
 }
 
 
+/**
+ * @brief Grow the backing bitmap if @p width exceeds the current bitmap width.
+ *
+ * @param width The new minimum required width in pixels.
+ */
 void
 ColumnResizeBufferView::UpdateMaxWidth(float width)
 {
@@ -452,6 +486,11 @@ ColumnResizeBufferView::UpdateMaxWidth(float width)
 }
 
 
+/**
+ * @brief Grow the backing bitmap if @p height exceeds the current bitmap height.
+ *
+ * @param height The new minimum required height in pixels.
+ */
 void
 ColumnResizeBufferView::UpdateMaxHeight(float height)
 {
@@ -468,6 +507,11 @@ ColumnResizeBufferView::UpdateMaxHeight(float height)
 }
 
 
+/**
+ * @brief Lock the backing bitmap for exclusive drawing access.
+ *
+ * @return true if the lock was acquired, false otherwise.
+ */
 bool
 ColumnResizeBufferView::Lock()
 {
@@ -475,6 +519,9 @@ ColumnResizeBufferView::Lock()
 }
 
 
+/**
+ * @brief Unlock the backing bitmap after drawing is complete.
+ */
 void
 ColumnResizeBufferView::Unlock()
 {
@@ -482,6 +529,11 @@ ColumnResizeBufferView::Unlock()
 }
 
 
+/**
+ * @brief Return a pointer to the backing bitmap.
+ *
+ * @return The internal BBitmap used for off-screen rendering.
+ */
 const BBitmap*
 ColumnResizeBufferView::Bitmap()
 {
@@ -489,6 +541,11 @@ ColumnResizeBufferView::Bitmap()
 }
 
 
+/**
+ * @brief Allocate (or reallocate) the backing bitmap to match the current view bounds.
+ *
+ * Any previously allocated bitmap is freed first via _FreeBitmap().
+ */
 void
 ColumnResizeBufferView::_InitBitmap()
 {
@@ -501,6 +558,9 @@ ColumnResizeBufferView::_InitBitmap()
 }
 
 
+/**
+ * @brief Release and delete the backing bitmap, detaching this view from it first.
+ */
 void
 ColumnResizeBufferView::_FreeBitmap()
 {
@@ -516,11 +576,20 @@ ColumnResizeBufferView::_FreeBitmap()
 #endif
 
 
+/**
+ * @brief Construct a BField cell-data object.
+ *
+ * BField is an abstract base class; concrete subclasses hold the actual
+ * data displayed in a column cell.
+ */
 BField::BField()
 {
 }
 
 
+/**
+ * @brief Destroy the BField.
+ */
 BField::~BField()
 {
 }
@@ -529,6 +598,20 @@ BField::~BField()
 // #pragma mark -
 
 
+/**
+ * @brief Called when the mouse moves over a field cell owned by this column.
+ *
+ * The default implementation does nothing. Subclasses may override to provide
+ * interactive behavior such as hover effects or tooltip activation.
+ *
+ * @param parent    The owning BColumnListView.
+ * @param row       The row containing the field.
+ * @param field     The field the mouse is over.
+ * @param field_rect The bounding rectangle of the field in view coordinates.
+ * @param point     Current mouse position in view coordinates.
+ * @param buttons   Currently pressed mouse buttons.
+ * @param code      Transit code (B_ENTERED_VIEW, B_INSIDE_VIEW, B_EXITED_VIEW, etc.).
+ */
 void
 BColumn::MouseMoved(BColumnListView* /*parent*/, BRow* /*row*/,
 	BField* /*field*/, BRect /*field_rect*/, BPoint/*point*/,
@@ -537,6 +620,19 @@ BColumn::MouseMoved(BColumnListView* /*parent*/, BRow* /*row*/,
 }
 
 
+/**
+ * @brief Called when a mouse button is pressed over a field cell owned by this column.
+ *
+ * The default implementation does nothing. Subclasses may override to handle
+ * in-cell editing or custom interactions.
+ *
+ * @param parent    The owning BColumnListView.
+ * @param row       The row containing the field.
+ * @param field     The field that was clicked.
+ * @param field_rect The bounding rectangle of the field in view coordinates.
+ * @param point     Mouse position in view coordinates at the time of the click.
+ * @param buttons   Mouse buttons that are currently pressed.
+ */
 void
 BColumn::MouseDown(BColumnListView* /*parent*/, BRow* /*row*/,
 	BField* /*field*/, BRect /*field_rect*/, BPoint /*point*/,
@@ -545,6 +641,16 @@ BColumn::MouseDown(BColumnListView* /*parent*/, BRow* /*row*/,
 }
 
 
+/**
+ * @brief Called when a mouse button is released over a field cell owned by this column.
+ *
+ * The default implementation does nothing. Subclasses may override to finalize
+ * in-cell editing or commit an interaction started in MouseDown().
+ *
+ * @param parent The owning BColumnListView.
+ * @param row    The row containing the field.
+ * @param field  The field over which the button was released.
+ */
 void
 BColumn::MouseUp(BColumnListView* /*parent*/, BRow* /*row*/, BField* /*field*/)
 {
@@ -554,6 +660,12 @@ BColumn::MouseUp(BColumnListView* /*parent*/, BRow* /*row*/, BField* /*field*/)
 // #pragma mark -
 
 
+/**
+ * @brief Construct a BRow with a height derived from the current plain font size.
+ *
+ * The row height is computed as the ceiling of be_plain_font size multiplied
+ * by kRowSpacing, clamped to at least kMinRowHeight pixels.
+ */
 BRow::BRow()
 	:
 	fChildList(NULL),
@@ -568,6 +680,11 @@ BRow::BRow()
 }
 
 
+/**
+ * @brief Construct a BRow with an explicit pixel height.
+ *
+ * @param height The desired row height in pixels.
+ */
 BRow::BRow(float height)
 	:
 	fChildList(NULL),
@@ -581,6 +698,9 @@ BRow::BRow(float height)
 }
 
 
+/**
+ * @brief Destroy the BRow and delete all of its owned BField objects.
+ */
 BRow::~BRow()
 {
 	while (true) {
@@ -593,6 +713,13 @@ BRow::~BRow()
 }
 
 
+/**
+ * @brief Return whether this row has at least one child row.
+ *
+ * A row with children displays an expand/collapse latch widget.
+ *
+ * @return true if the row has one or more child rows, false otherwise.
+ */
 bool
 BRow::HasLatch() const
 {
@@ -600,6 +727,11 @@ BRow::HasLatch() const
 }
 
 
+/**
+ * @brief Return the number of BField objects stored in this row.
+ *
+ * @return The total count of fields (including NULL slots) held by this row.
+ */
 int32
 BRow::CountFields() const
 {
@@ -607,6 +739,12 @@ BRow::CountFields() const
 }
 
 
+/**
+ * @brief Return the BField at the given logical field index.
+ *
+ * @param index Logical field index (matches the column's logical field number).
+ * @return The BField at @p index, or NULL if none has been set.
+ */
 BField*
 BRow::GetField(int32 index)
 {
@@ -614,6 +752,12 @@ BRow::GetField(int32 index)
 }
 
 
+/**
+ * @brief Return the BField at the given logical field index (const overload).
+ *
+ * @param index Logical field index.
+ * @return The BField at @p index, or NULL if none has been set.
+ */
 const BField*
 BRow::GetField(int32 index) const
 {
@@ -621,6 +765,17 @@ BRow::GetField(int32 index) const
 }
 
 
+/**
+ * @brief Set the BField for the given logical field index, replacing any existing field.
+ *
+ * If a field already exists at @p logicalFieldIndex it is deleted before the
+ * new one is installed. If the row is already attached to a list view, the
+ * field type is validated against the corresponding column and the row is
+ * invalidated so it will be redrawn.
+ *
+ * @param field             The new field to store (ownership is transferred to the row).
+ * @param logicalFieldIndex The logical field index that matches the target column.
+ */
 void
 BRow::SetField(BField* field, int32 logicalFieldIndex)
 {
@@ -636,6 +791,11 @@ BRow::SetField(BField* field, int32 logicalFieldIndex)
 }
 
 
+/**
+ * @brief Return the pixel height of this row.
+ *
+ * @return The row height in pixels.
+ */
 float
 BRow::Height() const
 {
@@ -643,6 +803,11 @@ BRow::Height() const
 }
 
 
+/**
+ * @brief Return whether this row's child list is currently expanded (visible).
+ *
+ * @return true if the row is expanded, false if collapsed.
+ */
 bool
 BRow::IsExpanded() const
 {
@@ -650,6 +815,13 @@ BRow::IsExpanded() const
 }
 
 
+/**
+ * @brief Return whether this row is currently selected.
+ *
+ * A row is selected when it is linked into the selection intrusive list.
+ *
+ * @return true if the row is selected, false otherwise.
+ */
 bool
 BRow::IsSelected() const
 {
@@ -657,6 +829,11 @@ BRow::IsSelected() const
 }
 
 
+/**
+ * @brief Invalidate the visual area of this row so it is redrawn on the next update.
+ *
+ * Has no effect if the row is not currently attached to a BColumnListView.
+ */
 void
 BRow::Invalidate()
 {
@@ -665,6 +842,12 @@ BRow::Invalidate()
 }
 
 
+/**
+ * @brief Validate every field in this row against its corresponding column type.
+ *
+ * Iterates over all fields and calls ValidateField() for each one. Triggers a
+ * debugger() call if any field type is incompatible with the column that owns it.
+ */
 void
 BRow::ValidateFields() const
 {
@@ -673,6 +856,16 @@ BRow::ValidateFields() const
 }
 
 
+/**
+ * @brief Validate a single field against the column at the given logical index.
+ *
+ * Looks up the column whose logical field number matches @p logicalFieldIndex
+ * and calls BColumn::AcceptsField(). If the column does not accept the field
+ * type, debugger() is called with a descriptive message.
+ *
+ * @param field             The field to validate.
+ * @param logicalFieldIndex The logical field index used to locate the column.
+ */
 void
 BRow::ValidateField(const BField* field, int32 logicalFieldIndex) const
 {
@@ -707,6 +900,14 @@ BRow::ValidateField(const BField* field, int32 logicalFieldIndex) const
 // #pragma mark -
 
 
+/**
+ * @brief Construct a BColumn with the given display properties.
+ *
+ * @param width    Initial column width in pixels.
+ * @param minWidth Minimum allowed width in pixels.
+ * @param maxWidth Maximum allowed width in pixels.
+ * @param align    Horizontal alignment of cell content (B_ALIGN_LEFT, etc.).
+ */
 BColumn::BColumn(float width, float minWidth, float maxWidth, alignment align)
 	:
 	fWidth(width),
@@ -720,11 +921,19 @@ BColumn::BColumn(float width, float minWidth, float maxWidth, alignment align)
 }
 
 
+/**
+ * @brief Destroy the BColumn.
+ */
 BColumn::~BColumn()
 {
 }
 
 
+/**
+ * @brief Return the current display width of this column in pixels.
+ *
+ * @return The column width in pixels.
+ */
 float
 BColumn::Width() const
 {
@@ -732,6 +941,12 @@ BColumn::Width() const
 }
 
 
+/**
+ * @brief Set the display width of this column.
+ *
+ * @param width New width in pixels. The caller is responsible for clamping to
+ *              [MinWidth(), MaxWidth()] if needed.
+ */
 void
 BColumn::SetWidth(float width)
 {
@@ -739,6 +954,11 @@ BColumn::SetWidth(float width)
 }
 
 
+/**
+ * @brief Return the minimum allowed width of this column in pixels.
+ *
+ * @return The minimum column width.
+ */
 float
 BColumn::MinWidth() const
 {
@@ -746,6 +966,11 @@ BColumn::MinWidth() const
 }
 
 
+/**
+ * @brief Return the maximum allowed width of this column in pixels.
+ *
+ * @return The maximum column width.
+ */
 float
 BColumn::MaxWidth() const
 {
@@ -753,18 +978,47 @@ BColumn::MaxWidth() const
 }
 
 
+/**
+ * @brief Draw the column header title into the given view and bounding rectangle.
+ *
+ * The default implementation does nothing. Subclasses must override to render
+ * the column label text or other title content.
+ *
+ * @param rect The bounding rectangle of the header cell in view coordinates.
+ * @param view The view to draw into.
+ */
 void
 BColumn::DrawTitle(BRect, BView*)
 {
 }
 
 
+/**
+ * @brief Draw a field's content into the given view and bounding rectangle.
+ *
+ * The default implementation does nothing. Subclasses must override to render
+ * the cell data contained in @p field.
+ *
+ * @param field The field whose data should be rendered.
+ * @param rect  The bounding rectangle of the cell in view coordinates.
+ * @param view  The view to draw into.
+ */
 void
 BColumn::DrawField(BField*, BRect, BView*)
 {
 }
 
 
+/**
+ * @brief Compare two fields for sort ordering.
+ *
+ * The default implementation returns 0 (equal) for all field pairs. Subclasses
+ * should override to implement a meaningful sort comparison.
+ *
+ * @param field1 The first field to compare.
+ * @param field2 The second field to compare.
+ * @return A negative value if field1 < field2, 0 if equal, positive if field1 > field2.
+ */
 int
 BColumn::CompareFields(BField*, BField*)
 {
@@ -772,6 +1026,14 @@ BColumn::CompareFields(BField*, BField*)
 }
 
 
+/**
+ * @brief Write the human-readable column name into @p into.
+ *
+ * The default implementation sets @p into to "(Unnamed)". Subclasses should
+ * override to return a meaningful name used in the column-visibility popup menu.
+ *
+ * @param into Output parameter that receives the column name.
+ */
 void
 BColumn::GetColumnName(BString* into) const
 {
@@ -779,6 +1041,16 @@ BColumn::GetColumnName(BString* into) const
 }
 
 
+/**
+ * @brief Return the preferred width needed to display @p field without clipping.
+ *
+ * The default implementation returns the current column width. Subclasses
+ * should override to measure the actual rendered content width.
+ *
+ * @param field  The field whose content should be measured.
+ * @param parent The view providing font metrics and drawing context.
+ * @return The preferred width in pixels.
+ */
 float
 BColumn::GetPreferredWidth(BField* field, BView* parent) const
 {
@@ -786,6 +1058,11 @@ BColumn::GetPreferredWidth(BField* field, BView* parent) const
 }
 
 
+/**
+ * @brief Return whether this column is currently visible.
+ *
+ * @return true if the column is shown, false if hidden.
+ */
 bool
 BColumn::IsVisible() const
 {
@@ -793,6 +1070,15 @@ BColumn::IsVisible() const
 }
 
 
+/**
+ * @brief Set the visibility of this column.
+ *
+ * If the column is attached to a list view and its visibility is changing,
+ * delegates to BColumnListView::SetColumnVisible() which handles the
+ * necessary relayout and redraws.
+ *
+ * @param visible true to show the column, false to hide it.
+ */
 void
 BColumn::SetVisible(bool visible)
 {
@@ -801,6 +1087,11 @@ BColumn::SetVisible(bool visible)
 }
 
 
+/**
+ * @brief Return whether this column's title heading is shown.
+ *
+ * @return true if the heading is shown, false otherwise.
+ */
 bool
 BColumn::ShowHeading() const
 {
@@ -808,6 +1099,11 @@ BColumn::ShowHeading() const
 }
 
 
+/**
+ * @brief Set whether this column's title heading should be shown.
+ *
+ * @param state true to show the heading, false to hide it.
+ */
 void
 BColumn::SetShowHeading(bool state)
 {
@@ -815,6 +1111,11 @@ BColumn::SetShowHeading(bool state)
 }
 
 
+/**
+ * @brief Return the horizontal text alignment used when drawing cell content.
+ *
+ * @return One of B_ALIGN_LEFT, B_ALIGN_CENTER, or B_ALIGN_RIGHT.
+ */
 alignment
 BColumn::Alignment() const
 {
@@ -822,6 +1123,11 @@ BColumn::Alignment() const
 }
 
 
+/**
+ * @brief Set the horizontal text alignment for cell content in this column.
+ *
+ * @param align The desired alignment (B_ALIGN_LEFT, B_ALIGN_CENTER, or B_ALIGN_RIGHT).
+ */
 void
 BColumn::SetAlignment(alignment align)
 {
@@ -829,6 +1135,11 @@ BColumn::SetAlignment(alignment align)
 }
 
 
+/**
+ * @brief Return whether this column receives mouse events for its field cells.
+ *
+ * @return true if the column wants mouse events, false otherwise.
+ */
 bool
 BColumn::WantsEvents() const
 {
@@ -836,6 +1147,14 @@ BColumn::WantsEvents() const
 }
 
 
+/**
+ * @brief Set whether this column should receive mouse events for its field cells.
+ *
+ * When enabled, MouseDown(), MouseMoved(), and MouseUp() are dispatched to the
+ * column for each cell interaction.
+ *
+ * @param state true to enable event delivery, false to disable.
+ */
 void
 BColumn::SetWantsEvents(bool state)
 {
@@ -843,6 +1162,14 @@ BColumn::SetWantsEvents(bool state)
 }
 
 
+/**
+ * @brief Return the logical field number assigned to this column.
+ *
+ * The logical field number is the index used to look up a BField within a
+ * BRow and is set when the column is added to a BColumnListView.
+ *
+ * @return The logical field index.
+ */
 int32
 BColumn::LogicalFieldNum() const
 {
@@ -850,6 +1177,15 @@ BColumn::LogicalFieldNum() const
 }
 
 
+/**
+ * @brief Return whether this column can display the given field type.
+ *
+ * The default implementation accepts all field types. Subclasses should
+ * override to restrict to the specific BField subclass they understand.
+ *
+ * @param field The field whose type should be checked.
+ * @return true if the column can display @p field, false otherwise.
+ */
 bool
 BColumn::AcceptsField(const BField*) const
 {
@@ -860,6 +1196,17 @@ BColumn::AcceptsField(const BField*) const
 // #pragma mark -
 
 
+/**
+ * @brief Construct a BColumnListView with an explicit frame rectangle (legacy layout).
+ *
+ * @param rect                    Frame rectangle in the parent view's coordinate system.
+ * @param name                    View name.
+ * @param resizingMode            Resizing mode flags (B_FOLLOW_* constants).
+ * @param flags                   View flags; B_WILL_DRAW, B_FRAME_EVENTS, and
+ *                                B_FULL_UPDATE_ON_RESIZE are added automatically.
+ * @param border                  Border style (B_NO_BORDER, B_PLAIN_BORDER, or B_FANCY_BORDER).
+ * @param showHorizontalScrollbar true to show the horizontal scroll bar.
+ */
 BColumnListView::BColumnListView(BRect rect, const char* name,
 	uint32 resizingMode, uint32 flags, border_style border,
 	bool showHorizontalScrollbar)
@@ -877,6 +1224,15 @@ BColumnListView::BColumnListView(BRect rect, const char* name,
 }
 
 
+/**
+ * @brief Construct a BColumnListView using the layout-manager system (no explicit frame).
+ *
+ * @param name                    View name.
+ * @param flags                   View flags; B_WILL_DRAW, B_FRAME_EVENTS, and
+ *                                B_FULL_UPDATE_ON_RESIZE are added automatically.
+ * @param border                  Border style (B_NO_BORDER, B_PLAIN_BORDER, or B_FANCY_BORDER).
+ * @param showHorizontalScrollbar true to show the horizontal scroll bar.
+ */
 BColumnListView::BColumnListView(const char* name, uint32 flags,
 	border_style border, bool showHorizontalScrollbar)
 	:
@@ -892,6 +1248,11 @@ BColumnListView::BColumnListView(const char* name, uint32 flags,
 }
 
 
+/**
+ * @brief Destroy the BColumnListView and free all owned BColumn objects.
+ *
+ * BRow objects are not owned by the view and are not deleted here.
+ */
 BColumnListView::~BColumnListView()
 {
 	while (BColumn* column = (BColumn*)fColumns.RemoveItem((int32)0))
@@ -899,6 +1260,16 @@ BColumnListView::~BColumnListView()
 }
 
 
+/**
+ * @brief Called when the user begins dragging a row.
+ *
+ * The default implementation returns false, meaning dragging is not handled.
+ * Subclasses may override to initiate a drag-and-drop operation.
+ *
+ * @param point     The point in view coordinates where the drag started.
+ * @param wasSelected true if the dragged row was selected at the time of the drag.
+ * @return true if the drag was accepted and initiated, false to cancel.
+ */
 bool
 BColumnListView::InitiateDrag(BPoint, bool)
 {
@@ -906,12 +1277,27 @@ BColumnListView::InitiateDrag(BPoint, bool)
 }
 
 
+/**
+ * @brief Called when a BMessage is dropped onto the view during a drag-and-drop operation.
+ *
+ * The default implementation does nothing. Subclasses may override to handle
+ * the dropped data.
+ *
+ * @param message The dropped message.
+ * @param point   The drop location in view coordinates.
+ */
 void
 BColumnListView::MessageDropped(BMessage*, BPoint)
 {
 }
 
 
+/**
+ * @brief Expand or collapse the child rows of @p row.
+ *
+ * @param row  The parent row whose child list should be expanded or collapsed.
+ * @param Open true to expand, false to collapse.
+ */
 void
 BColumnListView::ExpandOrCollapse(BRow* row, bool Open)
 {
@@ -919,6 +1305,14 @@ BColumnListView::ExpandOrCollapse(BRow* row, bool Open)
 }
 
 
+/**
+ * @brief Invoke the list view's action message.
+ *
+ * If @p message is NULL, the message set with SetMessage() is used.
+ *
+ * @param message The message to send, or NULL to use the default invocation message.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BColumnListView::Invoke(BMessage* message)
 {
@@ -929,6 +1323,12 @@ BColumnListView::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Called when an item is invoked (e.g., double-clicked or Enter pressed).
+ *
+ * The default implementation calls Invoke() with the default invocation message.
+ * Subclasses may override to perform a custom action.
+ */
 void
 BColumnListView::ItemInvoked()
 {
@@ -936,6 +1336,11 @@ BColumnListView::ItemInvoked()
 }
 
 
+/**
+ * @brief Set the message sent when an item is invoked.
+ *
+ * @param message The message to send on invocation; ownership is transferred.
+ */
 void
 BColumnListView::SetInvocationMessage(BMessage* message)
 {
@@ -943,6 +1348,11 @@ BColumnListView::SetInvocationMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Return the message sent when an item is invoked.
+ *
+ * @return The current invocation message, or NULL if none is set.
+ */
 BMessage*
 BColumnListView::InvocationMessage() const
 {
@@ -950,6 +1360,11 @@ BColumnListView::InvocationMessage() const
 }
 
 
+/**
+ * @brief Return the what code of the current invocation message.
+ *
+ * @return The invocation message's what field, or 0 if no message is set.
+ */
 uint32
 BColumnListView::InvocationCommand() const
 {
@@ -957,6 +1372,11 @@ BColumnListView::InvocationCommand() const
 }
 
 
+/**
+ * @brief Return the row that currently holds keyboard focus.
+ *
+ * @return The focused BRow, or NULL if no row has focus.
+ */
 BRow*
 BColumnListView::FocusRow() const
 {
@@ -964,6 +1384,12 @@ BColumnListView::FocusRow() const
 }
 
 
+/**
+ * @brief Set keyboard focus to the row at the given top-level index.
+ *
+ * @param Index  Zero-based index of the root-level row to focus.
+ * @param Select If true, the focused row is also selected.
+ */
 void
 BColumnListView::SetFocusRow(int32 Index, bool Select)
 {
@@ -971,6 +1397,12 @@ BColumnListView::SetFocusRow(int32 Index, bool Select)
 }
 
 
+/**
+ * @brief Set keyboard focus to the given row.
+ *
+ * @param row    The row to focus.
+ * @param Select If true, the focused row is also added to the selection.
+ */
 void
 BColumnListView::SetFocusRow(BRow* row, bool Select)
 {
@@ -978,6 +1410,11 @@ BColumnListView::SetFocusRow(BRow* row, bool Select)
 }
 
 
+/**
+ * @brief Enable or disable mouse-tracking (roll-over highlight) in the outline view.
+ *
+ * @param Enabled true to enable mouse tracking, false to disable.
+ */
 void
 BColumnListView::SetMouseTrackingEnabled(bool Enabled)
 {
@@ -985,6 +1422,11 @@ BColumnListView::SetMouseTrackingEnabled(bool Enabled)
 }
 
 
+/**
+ * @brief Return the current selection mode of the list.
+ *
+ * @return B_SINGLE_SELECTION_LIST or B_MULTIPLE_SELECTION_LIST.
+ */
 list_view_type
 BColumnListView::SelectionMode() const
 {
@@ -992,6 +1434,11 @@ BColumnListView::SelectionMode() const
 }
 
 
+/**
+ * @brief Remove @p row from the selection without clearing other selected rows.
+ *
+ * @param row The row to deselect.
+ */
 void
 BColumnListView::Deselect(BRow* row)
 {
@@ -999,6 +1446,14 @@ BColumnListView::Deselect(BRow* row)
 }
 
 
+/**
+ * @brief Add @p row to the current selection.
+ *
+ * In B_SINGLE_SELECTION_LIST mode, any previously selected row is first
+ * deselected.
+ *
+ * @param row The row to add to the selection.
+ */
 void
 BColumnListView::AddToSelection(BRow* row)
 {
@@ -1006,6 +1461,9 @@ BColumnListView::AddToSelection(BRow* row)
 }
 
 
+/**
+ * @brief Deselect all currently selected rows.
+ */
 void
 BColumnListView::DeselectAll()
 {
@@ -1013,6 +1471,15 @@ BColumnListView::DeselectAll()
 }
 
 
+/**
+ * @brief Iterate over selected rows.
+ *
+ * Pass NULL to get the first selected row. Pass the previously returned row
+ * to get the next selected row.
+ *
+ * @param lastSelected The last row returned by a previous call, or NULL to start.
+ * @return The next selected BRow, or NULL when the selection is exhausted.
+ */
 BRow*
 BColumnListView::CurrentSelection(BRow* lastSelected) const
 {
@@ -1020,6 +1487,13 @@ BColumnListView::CurrentSelection(BRow* lastSelected) const
 }
 
 
+/**
+ * @brief Called when the selection changes.
+ *
+ * Sends the selection message if one has been set with SetSelectionMessage().
+ * Subclasses may override to be notified of selection changes without
+ * needing to use a message.
+ */
 void
 BColumnListView::SelectionChanged()
 {
@@ -1028,6 +1502,14 @@ BColumnListView::SelectionChanged()
 }
 
 
+/**
+ * @brief Set the message sent whenever the selection changes.
+ *
+ * Any previously set selection message is deleted. Ownership of @p message
+ * is transferred to the list view.
+ *
+ * @param message The message to send on selection change, or NULL to disable.
+ */
 void
 BColumnListView::SetSelectionMessage(BMessage* message)
 {
@@ -1039,6 +1521,11 @@ BColumnListView::SetSelectionMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Return the message sent whenever the selection changes.
+ *
+ * @return The selection message, or NULL if none has been set.
+ */
 BMessage*
 BColumnListView::SelectionMessage()
 {
@@ -1046,6 +1533,11 @@ BColumnListView::SelectionMessage()
 }
 
 
+/**
+ * @brief Return the what code of the current selection message.
+ *
+ * @return The selection message's what field, or 0 if no message is set.
+ */
 uint32
 BColumnListView::SelectionCommand() const
 {
@@ -1056,6 +1548,13 @@ BColumnListView::SelectionCommand() const
 }
 
 
+/**
+ * @brief Set whether the list allows single or multiple row selection.
+ *
+ * Changing the mode deselects all currently selected rows.
+ *
+ * @param mode B_SINGLE_SELECTION_LIST or B_MULTIPLE_SELECTION_LIST.
+ */
 void
 BColumnListView::SetSelectionMode(list_view_type mode)
 {
@@ -1063,6 +1562,14 @@ BColumnListView::SetSelectionMode(list_view_type mode)
 }
 
 
+/**
+ * @brief Enable or disable column-header-click sorting.
+ *
+ * Disabling sorting also clears the current sort column list and redraws
+ * the header to remove sort indicators.
+ *
+ * @param enabled true to enable sorting, false to disable.
+ */
 void
 BColumnListView::SetSortingEnabled(bool enabled)
 {
@@ -1073,6 +1580,11 @@ BColumnListView::SetSortingEnabled(bool enabled)
 }
 
 
+/**
+ * @brief Return whether column-header-click sorting is enabled.
+ *
+ * @return true if sorting is enabled, false otherwise.
+ */
 bool
 BColumnListView::SortingEnabled() const
 {
@@ -1080,6 +1592,17 @@ BColumnListView::SortingEnabled() const
 }
 
 
+/**
+ * @brief Add or replace the primary sort column and trigger a re-sort.
+ *
+ * If sorting is disabled this method has no effect. When @p add is false all
+ * existing sort columns are removed before @p column is added.
+ *
+ * @param column    The column to sort by.
+ * @param add       If true, @p column is appended to any existing sort columns
+ *                  (multi-column sort). If false, the sort list is cleared first.
+ * @param ascending true to sort ascending, false for descending.
+ */
 void
 BColumnListView::SetSortColumn(BColumn* column, bool add, bool ascending)
 {
@@ -1098,6 +1621,11 @@ BColumnListView::SetSortColumn(BColumn* column, bool add, bool ascending)
 }
 
 
+/**
+ * @brief Remove all sort columns so that no sort is active.
+ *
+ * The column headers are redrawn to remove the sort indicator arrows.
+ */
 void
 BColumnListView::ClearSortColumns()
 {
@@ -1107,6 +1635,15 @@ BColumnListView::ClearSortColumns()
 }
 
 
+/**
+ * @brief Attach a status view to the left side of the horizontal scroll bar.
+ *
+ * The status view is resized to fit within the available space and the
+ * horizontal scroll bar is shortened accordingly. The view's width is clamped
+ * to at most half the list view width.
+ *
+ * @param view The view to attach. It must not already be a child of another view.
+ */
 void
 BColumnListView::AddStatusView(BView* view)
 {
@@ -1137,6 +1674,13 @@ BColumnListView::AddStatusView(BView* view)
 }
 
 
+/**
+ * @brief Detach and return the previously added status view.
+ *
+ * Restores the horizontal scroll bar to its original full width.
+ *
+ * @return The removed status view, or NULL if none was attached.
+ */
 BView*
 BColumnListView::RemoveStatusView()
 {
@@ -1155,6 +1699,15 @@ BColumnListView::RemoveStatusView()
 }
 
 
+/**
+ * @brief Add a column to the list view at the given logical field index.
+ *
+ * If a column with the same logical field index already exists it is removed
+ * first. The column's width is clamped to [MinWidth(), MaxWidth()].
+ *
+ * @param column            The column to add. Ownership is transferred to the view.
+ * @param logicalFieldIndex The logical field index that maps this column to BRow fields.
+ */
 void
 BColumnListView::AddColumn(BColumn* column, int32 logicalFieldIndex)
 {
@@ -1182,6 +1735,12 @@ BColumnListView::AddColumn(BColumn* column, int32 logicalFieldIndex)
 }
 
 
+/**
+ * @brief Move @p column to the given display position.
+ *
+ * @param column The column to reorder.
+ * @param index  The target display index, or -1 to move to the end.
+ */
 void
 BColumnListView::MoveColumn(BColumn* column, int32 index)
 {
@@ -1190,6 +1749,15 @@ BColumnListView::MoveColumn(BColumn* column, int32 index)
 }
 
 
+/**
+ * @brief Remove @p column from the list view.
+ *
+ * The column is hidden first so the outline view is redrawn, then removed from
+ * the internal column list. Ownership is not transferred back to the caller;
+ * the column must be deleted separately.
+ *
+ * @param column The column to remove.
+ */
 void
 BColumnListView::RemoveColumn(BColumn* column)
 {
@@ -1202,6 +1770,11 @@ BColumnListView::RemoveColumn(BColumn* column)
 }
 
 
+/**
+ * @brief Return the total number of columns (visible and hidden).
+ *
+ * @return The number of columns currently registered with the list view.
+ */
 int32
 BColumnListView::CountColumns() const
 {
@@ -1209,6 +1782,12 @@ BColumnListView::CountColumns() const
 }
 
 
+/**
+ * @brief Return the column at the given display index.
+ *
+ * @param field Zero-based column index in the current display order.
+ * @return The BColumn at @p field, or NULL if @p field is out of range.
+ */
 BColumn*
 BColumnListView::ColumnAt(int32 field) const
 {
@@ -1216,6 +1795,12 @@ BColumnListView::ColumnAt(int32 field) const
 }
 
 
+/**
+ * @brief Return the visible column located at the given view-coordinate point.
+ *
+ * @param point A point in the outline view's coordinate system.
+ * @return The BColumn whose display area contains @p point, or NULL if none does.
+ */
 BColumn*
 BColumnListView::ColumnAt(BPoint point) const
 {
@@ -1236,6 +1821,12 @@ BColumnListView::ColumnAt(BPoint point) const
 }
 
 
+/**
+ * @brief Show or hide the given column.
+ *
+ * @param column  The column whose visibility should change.
+ * @param visible true to show, false to hide.
+ */
 void
 BColumnListView::SetColumnVisible(BColumn* column, bool visible)
 {
@@ -1243,6 +1834,12 @@ BColumnListView::SetColumnVisible(BColumn* column, bool visible)
 }
 
 
+/**
+ * @brief Show or hide the column at the given display index.
+ *
+ * @param index     Zero-based column display index.
+ * @param isVisible true to show, false to hide.
+ */
 void
 BColumnListView::SetColumnVisible(int32 index, bool isVisible)
 {
@@ -1252,6 +1849,12 @@ BColumnListView::SetColumnVisible(int32 index, bool isVisible)
 }
 
 
+/**
+ * @brief Return whether the column at the given display index is visible.
+ *
+ * @param index Zero-based column display index.
+ * @return true if the column is visible, false if hidden or @p index is invalid.
+ */
 bool
 BColumnListView::IsColumnVisible(int32 index) const
 {
@@ -1263,6 +1866,12 @@ BColumnListView::IsColumnVisible(int32 index) const
 }
 
 
+/**
+ * @brief Set the column interaction flags controlling which operations are allowed.
+ *
+ * @param flags A combination of B_ALLOW_COLUMN_MOVE, B_ALLOW_COLUMN_RESIZE,
+ *              B_ALLOW_COLUMN_POPUP, and B_ALLOW_COLUMN_REMOVE.
+ */
 void
 BColumnListView::SetColumnFlags(column_flags flags)
 {
@@ -1270,6 +1879,14 @@ BColumnListView::SetColumnFlags(column_flags flags)
 }
 
 
+/**
+ * @brief Resize the column at @p index to its preferred width.
+ *
+ * The preferred width is determined by iterating over all visible rows and
+ * measuring the widest field in that column.
+ *
+ * @param index Zero-based column display index.
+ */
 void
 BColumnListView::ResizeColumnToPreferred(int32 index)
 {
@@ -1289,6 +1906,11 @@ BColumnListView::ResizeColumnToPreferred(int32 index)
 }
 
 
+/**
+ * @brief Resize every column to its preferred width.
+ *
+ * @see ResizeColumnToPreferred()
+ */
 void
 BColumnListView::ResizeAllColumnsToPreferred()
 {
@@ -1298,6 +1920,14 @@ BColumnListView::ResizeAllColumnsToPreferred()
 }
 
 
+/**
+ * @brief Return the row at the given index within @p parentRow's children (const).
+ *
+ * @param Index     Zero-based row index within the parent's child list, or within
+ *                  the root list if @p parentRow is NULL.
+ * @param parentRow The parent row, or NULL to index into the root list.
+ * @return The BRow at @p Index, or NULL if @p Index is out of range.
+ */
 const BRow*
 BColumnListView::RowAt(int32 Index, BRow* parentRow) const
 {
@@ -1308,6 +1938,13 @@ BColumnListView::RowAt(int32 Index, BRow* parentRow) const
 }
 
 
+/**
+ * @brief Return the row at the given index within @p parentRow's children.
+ *
+ * @param Index     Zero-based row index.
+ * @param parentRow The parent row, or NULL for the root list.
+ * @return The BRow at @p Index, or NULL if out of range.
+ */
 BRow*
 BColumnListView::RowAt(int32 Index, BRow* parentRow)
 {
@@ -1318,6 +1955,12 @@ BColumnListView::RowAt(int32 Index, BRow* parentRow)
 }
 
 
+/**
+ * @brief Return the row displayed at the given view-coordinate point (const).
+ *
+ * @param point A point in the outline view's coordinate system.
+ * @return The BRow under @p point, or NULL if no row is there.
+ */
 const BRow*
 BColumnListView::RowAt(BPoint point) const
 {
@@ -1327,6 +1970,12 @@ BColumnListView::RowAt(BPoint point) const
 }
 
 
+/**
+ * @brief Return the row displayed at the given view-coordinate point.
+ *
+ * @param point A point in the outline view's coordinate system.
+ * @return The BRow under @p point, or NULL if no row is there.
+ */
 BRow*
 BColumnListView::RowAt(BPoint point)
 {
@@ -1336,6 +1985,13 @@ BColumnListView::RowAt(BPoint point)
 }
 
 
+/**
+ * @brief Retrieve the bounding rectangle of @p row in the outline view's coordinates.
+ *
+ * @param row     The row to find.
+ * @param outRect Output parameter that receives the row's bounding rectangle.
+ * @return true if the row was found and @p outRect was set, false otherwise.
+ */
 bool
 BColumnListView::GetRowRect(const BRow* row, BRect* outRect) const
 {
@@ -1343,6 +1999,14 @@ BColumnListView::GetRowRect(const BRow* row, BRect* outRect) const
 }
 
 
+/**
+ * @brief Find the parent row of @p row.
+ *
+ * @param row        The row whose parent should be found.
+ * @param _parent    Output: set to the parent BRow, or NULL for root rows.
+ * @param _isVisible Output: set to true if @p row is visible in the current tree state.
+ * @return true if @p row has a parent, false if it is a root row.
+ */
 bool
 BColumnListView::FindParent(BRow* row, BRow** _parent, bool* _isVisible) const
 {
@@ -1350,6 +2014,12 @@ BColumnListView::FindParent(BRow* row, BRow** _parent, bool* _isVisible) const
 }
 
 
+/**
+ * @brief Return the index of @p row within its parent's child list (or the root list).
+ *
+ * @param row The row to locate.
+ * @return The zero-based index of @p row, or B_ERROR if not found.
+ */
 int32
 BColumnListView::IndexOf(BRow* row)
 {
@@ -1357,6 +2027,12 @@ BColumnListView::IndexOf(BRow* row)
 }
 
 
+/**
+ * @brief Return the number of child rows under @p parentRow.
+ *
+ * @param parentRow The parent row to count children of, or NULL to count root rows.
+ * @return The number of immediate child rows.
+ */
 int32
 BColumnListView::CountRows(BRow* parentRow) const
 {
@@ -1369,6 +2045,14 @@ BColumnListView::CountRows(BRow* parentRow) const
 }
 
 
+/**
+ * @brief Append @p row to the end of the root list or @p parentRow's children.
+ *
+ * Equivalent to calling AddRow(row, -1, parentRow).
+ *
+ * @param row       The row to add. Ownership is not transferred.
+ * @param parentRow The parent row, or NULL to add at the root level.
+ */
 void
 BColumnListView::AddRow(BRow* row, BRow* parentRow)
 {
@@ -1376,6 +2060,16 @@ BColumnListView::AddRow(BRow* row, BRow* parentRow)
 }
 
 
+/**
+ * @brief Add @p row at the given index within the root list or @p parentRow's children.
+ *
+ * If sorting is enabled, @p index is ignored and the row is inserted in sorted order.
+ * Pass -1 for @p index to append to the end.
+ *
+ * @param row       The row to add. Ownership is not transferred.
+ * @param index     The desired insertion index, or -1 to append.
+ * @param parentRow The parent row, or NULL to add at the root level.
+ */
 void
 BColumnListView::AddRow(BRow* row, int32 index, BRow* parentRow)
 {
@@ -1386,6 +2080,17 @@ BColumnListView::AddRow(BRow* row, int32 index, BRow* parentRow)
 }
 
 
+/**
+ * @brief Add multiple rows at once, starting at the given index.
+ *
+ * This is more efficient than calling AddRow() for each row individually when
+ * adding many rows to the same parent, as invalidation is batched.
+ * All rows must share the same parent.
+ *
+ * @param rows   A BList of BRow pointers to add. Ownership is not transferred.
+ * @param index  The desired insertion index for the first row, or -1 to append.
+ * @param parent The parent row, or NULL to add at the root level.
+ */
 void
 BColumnListView::AddRows(BList* rows, int32 index, BRow* parent)
 {
@@ -1400,6 +2105,14 @@ BColumnListView::AddRows(BList* rows, int32 index, BRow* parent)
 }
 
 
+/**
+ * @brief Remove @p row from the list view.
+ *
+ * The row is detached from the outline view and its fList pointer is cleared.
+ * Ownership of the row is returned to the caller; it must be deleted separately.
+ *
+ * @param row The row to remove.
+ */
 void
 BColumnListView::RemoveRow(BRow* row)
 {
@@ -1423,6 +2136,14 @@ BColumnListView::RemoveRows(BList* rows)
 }
 
 
+/**
+ * @brief Notify the list view that the data in @p row has changed.
+ *
+ * If sorting is active and the row's sort key has changed, the row is
+ * repositioned in the sorted order. Otherwise the row is simply redrawn.
+ *
+ * @param row The row whose data has been updated.
+ */
 void
 BColumnListView::UpdateRow(BRow* row)
 {
@@ -1430,6 +2151,20 @@ BColumnListView::UpdateRow(BRow* row)
 }
 
 
+/**
+ * @brief Swap two rows at the given indices within their respective parent containers.
+ *
+ * Both parent containers must be non-NULL and valid. The region spanning both
+ * rows is invalidated so the view is redrawn.
+ *
+ * @param index1    Index of the first row within @p parentRow1's child list
+ *                  (or the root list if NULL).
+ * @param index2    Index of the second row within @p parentRow2's child list
+ *                  (or the root list if NULL).
+ * @param parentRow1 Parent of the first row, or NULL for root.
+ * @param parentRow2 Parent of the second row, or NULL for root.
+ * @return true if the swap succeeded, false if either row could not be located.
+ */
 bool
 BColumnListView::SwapRows(int32 index1, int32 index2, BRow* parentRow1,
 	BRow* parentRow2)
@@ -1484,6 +2219,11 @@ BColumnListView::SwapRows(int32 index1, int32 index2, BRow* parentRow1,
 }
 
 
+/**
+ * @brief Scroll the view so that @p row is visible.
+ *
+ * @param row The row to scroll into view.
+ */
 void
 BColumnListView::ScrollTo(const BRow* row)
 {
@@ -1491,6 +2231,11 @@ BColumnListView::ScrollTo(const BRow* row)
 }
 
 
+/**
+ * @brief Scroll the outline view to the given position.
+ *
+ * @param point The top-left position to scroll to, in the outline view's coordinate system.
+ */
 void
 BColumnListView::ScrollTo(BPoint point)
 {
@@ -1498,6 +2243,11 @@ BColumnListView::ScrollTo(BPoint point)
 }
 
 
+/**
+ * @brief Remove and delete all rows from the list view.
+ *
+ * The selection is cleared and the scroll bar range is reset.
+ */
 void
 BColumnListView::Clear()
 {
@@ -1505,6 +2255,13 @@ BColumnListView::Clear()
 }
 
 
+/**
+ * @brief Invalidate the display area of @p row so it is redrawn on the next update.
+ *
+ * Has no effect if @p row's bounding rectangle does not intersect the visible area.
+ *
+ * @param row The row to invalidate.
+ */
 void
 BColumnListView::InvalidateRow(BRow* row)
 {
@@ -1517,6 +2274,14 @@ BColumnListView::InvalidateRow(BRow* row)
 
 
 // This method is deprecated.
+/**
+ * @brief Set the font for both the row area and the column header (deprecated).
+ *
+ * Prefer SetFont(ColumnListViewFont, const BFont*, uint32) for clarity.
+ *
+ * @param font The font to apply.
+ * @param mask Font property mask (see BFont::SetFamilyAndFace(), etc.).
+ */
 void
 BColumnListView::SetFont(const BFont* font, uint32 mask)
 {
@@ -1525,6 +2290,13 @@ BColumnListView::SetFont(const BFont* font, uint32 mask)
 }
 
 
+/**
+ * @brief Set the font for either the row area or the column header.
+ *
+ * @param font_num B_FONT_ROW to set the row font, B_FONT_HEADER for the header.
+ * @param font     The font to apply.
+ * @param mask     Font property mask.
+ */
 void
 BColumnListView::SetFont(ColumnListViewFont font_num, const BFont* font,
 	uint32 mask)
@@ -1545,6 +2317,12 @@ BColumnListView::SetFont(ColumnListViewFont font_num, const BFont* font,
 }
 
 
+/**
+ * @brief Retrieve the font currently used for the row area or column header.
+ *
+ * @param font_num B_FONT_ROW to get the row font, B_FONT_HEADER for the header.
+ * @param font     Output parameter that receives the font.
+ */
 void
 BColumnListView::GetFont(ColumnListViewFont font_num, BFont* font) const
 {
@@ -1564,6 +2342,15 @@ BColumnListView::GetFont(ColumnListViewFont font_num, BFont* font) const
 }
 
 
+/**
+ * @brief Override a specific color slot in the list view's color palette.
+ *
+ * Enables custom colors mode (fCustomColors = true) so that system color
+ * updates no longer override the custom values.
+ *
+ * @param colorIndex The color slot to set (B_COLOR_BACKGROUND, B_COLOR_TEXT, etc.).
+ * @param color      The color value to assign.
+ */
 void
 BColumnListView::SetColor(ColumnListViewColor colorIndex, const rgb_color color)
 {
@@ -1582,6 +2369,12 @@ BColumnListView::SetColor(ColumnListViewColor colorIndex, const rgb_color color)
 }
 
 
+/**
+ * @brief Reset all colors to the current system UI colors.
+ *
+ * Disables custom colors mode so that subsequent B_COLORS_UPDATED messages
+ * will update the palette automatically.
+ */
 void
 BColumnListView::ResetColors()
 {
@@ -1591,6 +2384,12 @@ BColumnListView::ResetColors()
 }
 
 
+/**
+ * @brief Return the color currently assigned to the given color slot.
+ *
+ * @param colorIndex The color slot to query.
+ * @return The rgb_color for that slot.
+ */
 rgb_color
 BColumnListView::Color(ColumnListViewColor colorIndex) const
 {
@@ -1608,6 +2407,14 @@ BColumnListView::Color(ColumnListViewColor colorIndex) const
 }
 
 
+/**
+ * @brief Set the high color of the list view (stored for column use).
+ *
+ * @note Calling this will not trigger an immediate repaint because doing so
+ *       causes an infinite redraw loop in the current implementation.
+ *
+ * @param color The new high color.
+ */
 void
 BColumnListView::SetHighColor(rgb_color color)
 {
@@ -1619,6 +2426,11 @@ BColumnListView::SetHighColor(rgb_color color)
 }
 
 
+/**
+ * @brief Convenience method to set the selection highlight color.
+ *
+ * @param color The background color used for selected rows.
+ */
 void
 BColumnListView::SetSelectionColor(rgb_color color)
 {
@@ -1627,6 +2439,13 @@ BColumnListView::SetSelectionColor(rgb_color color)
 }
 
 
+/**
+ * @brief Convenience method to set the list background color.
+ *
+ * Triggers an immediate repaint of the outline view.
+ *
+ * @param color The new background color.
+ */
 void
 BColumnListView::SetBackgroundColor(rgb_color color)
 {
@@ -1637,6 +2456,11 @@ BColumnListView::SetBackgroundColor(rgb_color color)
 }
 
 
+/**
+ * @brief Convenience method to set the edit-mode background color.
+ *
+ * @param color The background color used in edit mode.
+ */
 void
 BColumnListView::SetEditColor(rgb_color color)
 {
@@ -1645,6 +2469,11 @@ BColumnListView::SetEditColor(rgb_color color)
 }
 
 
+/**
+ * @brief Return the current selection highlight color.
+ *
+ * @return The color used for selected-row backgrounds.
+ */
 const rgb_color
 BColumnListView::SelectionColor() const
 {
@@ -1652,6 +2481,11 @@ BColumnListView::SelectionColor() const
 }
 
 
+/**
+ * @brief Return the current list background color.
+ *
+ * @return The color used for unselected row backgrounds.
+ */
 const rgb_color
 BColumnListView::BackgroundColor() const
 {
@@ -1659,6 +2493,11 @@ BColumnListView::BackgroundColor() const
 }
 
 
+/**
+ * @brief Return the current edit-mode background color.
+ *
+ * @return The color used for the edit-mode background.
+ */
 const rgb_color
 BColumnListView::EditColor() const
 {
@@ -1666,6 +2505,17 @@ BColumnListView::EditColor() const
 }
 
 
+/**
+ * @brief Suggest a text baseline position for rendering text in a field cell.
+ *
+ * Computes the point at which a text pen should be placed so that the text
+ * is vertically centered within the row and horizontally offset from the left
+ * edge of the column.
+ *
+ * @param row      The row containing the cell.
+ * @param inColumn The column containing the cell.
+ * @return A BPoint suitable for passing to MovePenTo() before DrawString().
+ */
 BPoint
 BColumnListView::SuggestTextPosition(const BRow* row,
 	const BColumn* inColumn) const
@@ -1680,6 +2530,16 @@ BColumnListView::SuggestTextPosition(const BRow* row,
 }
 
 
+/**
+ * @brief Return the bounding rectangle of the field cell for @p row and @p inColumn.
+ *
+ * If @p inColumn is NULL, the full row rectangle is returned.
+ *
+ * @param row      The row containing the cell.
+ * @param inColumn The column whose cell rectangle should be returned, or NULL
+ *                 for the entire row.
+ * @return The bounding BRect of the requested cell in outline-view coordinates.
+ */
 BRect
 BColumnListView::GetFieldRect(const BRow* row, const BColumn* inColumn) const
 {
@@ -1706,6 +2566,11 @@ BColumnListView::GetFieldRect(const BRow* row, const BColumn* inColumn) const
 }
 
 
+/**
+ * @brief Set the pixel width reserved for the expand/collapse latch widget.
+ *
+ * @param width The latch width in pixels.
+ */
 void
 BColumnListView::SetLatchWidth(float width)
 {
@@ -1714,12 +2579,28 @@ BColumnListView::SetLatchWidth(float width)
 }
 
 
+/**
+ * @brief Return the current latch width.
+ *
+ * @return The latch width in pixels.
+ */
 float
 BColumnListView::LatchWidth() const
 {
 	return fLatchWidth;
 }
 
+/**
+ * @brief Draw the expand/collapse latch widget for a row.
+ *
+ * Renders a square +/- box inside @p rect according to the current @p position.
+ * Subclasses may override to provide a custom latch appearance.
+ *
+ * @param view     The view to draw into.
+ * @param rect     The bounding rectangle allocated for the latch.
+ * @param position B_OPEN_LATCH, B_CLOSED_LATCH, B_PRESSED_LATCH, or B_NO_LATCH.
+ * @param row      The row whose latch is being drawn (unused by the default implementation).
+ */
 void
 BColumnListView::DrawLatch(BView* view, BRect rect, LatchType position, BRow*)
 {
@@ -1806,6 +2687,11 @@ BColumnListView::DrawLatch(BView* view, BRect rect, LatchType position, BRow*)
 }
 
 
+/**
+ * @brief Handle focus changes by updating the focus border and scroll bar highlights.
+ *
+ * @param isFocus true if the view is gaining focus, false if losing it.
+ */
 void
 BColumnListView::MakeFocus(bool isFocus)
 {
@@ -1820,6 +2706,15 @@ BColumnListView::MakeFocus(bool isFocus)
 }
 
 
+/**
+ * @brief Handle incoming messages, including mouse wheel scrolling and system color updates.
+ *
+ * Mouse wheel messages are forwarded to the outline view to perform scrolling.
+ * B_COLORS_UPDATED messages trigger a palette refresh when custom colors are
+ * not in use.
+ *
+ * @param message The message to handle.
+ */
 void
 BColumnListView::MessageReceived(BMessage* message)
 {
@@ -1842,6 +2737,16 @@ BColumnListView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handle keyboard navigation and interaction within the list view.
+ *
+ * Arrow keys move or extend the selection. B_PAGE_UP / B_PAGE_DOWN scroll
+ * by a full page. B_ENTER invokes the selected item. B_SPACE toggles row
+ * selection. '+' toggles the focused row's expand/collapse state.
+ *
+ * @param bytes    Pointer to the key byte(s).
+ * @param numBytes Number of bytes in @p bytes.
+ */
 void
 BColumnListView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -1958,6 +2863,12 @@ BColumnListView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Called when the view is attached to a window.
+ *
+ * Sets the default invocation target to the window if no target has been set,
+ * and starts the background sort thread if sorting is enabled.
+ */
 void
 BColumnListView::AttachedToWindow()
 {
@@ -1968,6 +2879,14 @@ BColumnListView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the window containing this view is activated or deactivated.
+ *
+ * Forces a repaint of the outline view and the border frame so that focus and
+ * selection indicators are updated to reflect the new activation state.
+ *
+ * @param active true if the window is now active, false if it lost focus.
+ */
 void
 BColumnListView::WindowActivated(bool active)
 {
@@ -1980,6 +2899,15 @@ BColumnListView::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Draw the list view border and scroll-view frame.
+ *
+ * Renders the border around the child views using be_control_look, respecting
+ * the configured border style (B_NO_BORDER, B_PLAIN_BORDER, or B_FANCY_BORDER)
+ * and the current focus state.
+ *
+ * @param updateRect The rectangle that needs to be redrawn.
+ */
 void
 BColumnListView::Draw(BRect updateRect)
 {
@@ -2027,6 +2955,14 @@ BColumnListView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Serialize column widths, visibility, and sort order into @p message.
+ *
+ * The message is cleared before writing. Saved state can be restored with
+ * LoadState().
+ *
+ * @param message The BMessage to write state into.
+ */
 void
 BColumnListView::SaveState(BMessage* message)
 {
@@ -2050,6 +2986,14 @@ BColumnListView::SaveState(BMessage* message)
 }
 
 
+/**
+ * @brief Restore column widths, visibility, and sort order from @p message.
+ *
+ * Uses the logical field IDs stored by SaveState() to match columns, then
+ * reorders, resizes, and shows/hides them accordingly.
+ *
+ * @param message The BMessage previously produced by SaveState().
+ */
 void
 BColumnListView::LoadState(BMessage* message)
 {
@@ -2086,6 +3030,14 @@ BColumnListView::LoadState(BMessage* message)
 }
 
 
+/**
+ * @brief Enable or disable edit mode for the list view.
+ *
+ * In edit mode, mouse events are not used for row selection or latch
+ * toggling, allowing in-cell editing widgets to function correctly.
+ *
+ * @param state true to enter edit mode, false to return to normal operation.
+ */
 void
 BColumnListView::SetEditMode(bool state)
 {
@@ -2094,6 +3046,12 @@ BColumnListView::SetEditMode(bool state)
 }
 
 
+/**
+ * @brief Force an immediate synchronous repaint of the entire list view.
+ *
+ * Locks the looper, fixes the scroll bar range, invalidates both the outline
+ * and parent views, and then flushes pending updates.
+ */
 void
 BColumnListView::Refresh()
 {
@@ -2107,6 +3065,14 @@ BColumnListView::Refresh()
 }
 
 
+/**
+ * @brief Return the minimum size of the list view for the layout manager.
+ *
+ * The minimum width is fixed at 100 px. The minimum height accounts for the
+ * title bar, four scroll-bar heights, and (if visible) the horizontal scroll bar.
+ *
+ * @return The minimum BSize, composed with any explicitly set minimum.
+ */
 BSize
 BColumnListView::MinSize()
 {
@@ -2123,6 +3089,15 @@ BColumnListView::MinSize()
 }
 
 
+/**
+ * @brief Return the preferred size of the list view for the layout manager.
+ *
+ * The preferred height adds 20 lines of text to the minimum. The preferred
+ * width is the sum of all column widths plus border and margin overhead, or
+ * the minimum width if there are no columns.
+ *
+ * @return The preferred BSize, composed with any explicitly set preferred size.
+ */
 BSize
 BColumnListView::PreferredSize()
 {
@@ -2157,6 +3132,11 @@ BColumnListView::PreferredSize()
 }
 
 
+/**
+ * @brief Return the maximum size of the list view for the layout manager.
+ *
+ * @return B_SIZE_UNLIMITED in both dimensions, composed with any explicit maximum.
+ */
 BSize
 BColumnListView::MaxSize()
 {
@@ -2165,12 +3145,26 @@ BColumnListView::MaxSize()
 }
 
 
+/**
+ * @brief Called by the layout system when the layout is invalidated.
+ *
+ * Currently a no-op placeholder; layout work is deferred to DoLayout().
+ *
+ * @param descendants true if descendant layouts were also invalidated.
+ */
 void
 BColumnListView::LayoutInvalidated(bool descendants)
 {
 }
 
 
+/**
+ * @brief Perform the layout pass, positioning and sizing all child views.
+ *
+ * Computes the rectangles for the title view, outline view, vertical scroll
+ * bar, and horizontal scroll bar, then moves and resizes each child accordingly.
+ * Also repositions and resizes the optional status view if one is attached.
+ */
 void
 BColumnListView::DoLayout()
 {
@@ -2225,6 +3219,13 @@ BColumnListView::DoLayout()
 }
 
 
+/**
+ * @brief Initialize child views, scroll bars, and color palette.
+ *
+ * Called from both constructors. Creates the OutlineView, TitleView, and
+ * both BScrollBar children, then hides the horizontal scroll bar if it was
+ * not requested.
+ */
 void
 BColumnListView::_Init()
 {
@@ -2270,6 +3271,11 @@ BColumnListView::_Init()
 }
 
 
+/**
+ * @brief Refresh the color palette from the current system UI colors.
+ *
+ * Has no effect when custom colors are active (fCustomColors is true).
+ */
 void
 BColumnListView::_UpdateColors()
 {
@@ -2305,6 +3311,19 @@ BColumnListView::_UpdateColors()
 }
 
 
+/**
+ * @brief Compute the frame rectangles for all child views within @p bounds.
+ *
+ * Splits @p bounds into non-overlapping regions for the title bar, outline
+ * area, vertical scroll bar, and horizontal scroll bar, taking the border
+ * style insets into account.
+ *
+ * @param bounds          The available area (typically Bounds()).
+ * @param titleRect       Output: rectangle for the TitleView.
+ * @param outlineRect     Output: rectangle for the OutlineView.
+ * @param vScrollBarRect  Output: rectangle for the vertical BScrollBar.
+ * @param hScrollBarRect  Output: rectangle for the horizontal BScrollBar.
+ */
 void
 BColumnListView::_GetChildViewRects(const BRect& bounds, BRect& titleRect,
 	BRect& outlineRect, BRect& vScrollBarRect, BRect& hScrollBarRect)
@@ -2365,6 +3384,19 @@ BColumnListView::_GetChildViewRects(const BRect& bounds, BRect& titleRect,
 // #pragma mark -
 
 
+/**
+ * @brief Construct the column header bar (TitleView).
+ *
+ * Creates the sort-arrow bitmaps and resize/move cursors, then fixes the
+ * horizontal scroll bar range.
+ *
+ * @param rect           Initial frame rectangle.
+ * @param horizontalSlave The OutlineView whose horizontal position is synchronized.
+ * @param visibleColumns  Shared list of BColumn pointers (owned by BColumnListView).
+ * @param sortColumns     Shared list of sort-order BColumn pointers.
+ * @param listView        The master BColumnListView.
+ * @param resizingMode    BView resizing flags.
+ */
 TitleView::TitleView(BRect rect, OutlineView* horizontalSlave,
 	BList* visibleColumns, BList* sortColumns, BColumnListView* listView,
 	uint32 resizingMode)
@@ -2399,6 +3431,11 @@ TitleView::TitleView(BRect rect, OutlineView* horizontalSlave,
 }
 
 
+/**
+ * @brief Destroy the TitleView and release all owned resources.
+ *
+ * Deletes the column-visibility popup menu, sort-arrow bitmaps, and cursor objects.
+ */
 TitleView::~TitleView()
 {
 	delete fColumnPop;
@@ -2414,6 +3451,14 @@ TitleView::~TitleView()
 }
 
 
+/**
+ * @brief Notify the title view that a column has been added to the list.
+ *
+ * Updates the double-buffer view's maximum width if needed, then fixes the
+ * horizontal scroll bar range and invalidates the header area.
+ *
+ * @param column The newly added column.
+ */
 void
 TitleView::ColumnAdded(BColumn* column)
 {
@@ -2426,6 +3471,14 @@ TitleView::ColumnAdded(BColumn* column)
 }
 
 
+/**
+ * @brief Notify the title view that a column has been resized.
+ *
+ * Fixes the horizontal scroll bar range and invalidates the header area.
+ *
+ * @param column   The column that was resized.
+ * @param oldWidth The column's previous width in pixels.
+ */
 void
 TitleView::ColumnResized(BColumn* column, float oldWidth)
 {
@@ -2435,6 +3488,15 @@ TitleView::ColumnResized(BColumn* column, float oldWidth)
 }
 
 
+/**
+ * @brief Show or hide a column in both the title and outline areas.
+ *
+ * Computes the invalid region before and after changing the visibility so
+ * that only the affected area is redrawn. Updates the scroll bar range.
+ *
+ * @param column  The column to show or hide.
+ * @param visible true to show, false to hide.
+ */
 void
 TitleView::SetColumnVisible(BColumn* column, bool visible)
 {
@@ -2468,6 +3530,15 @@ TitleView::SetColumnVisible(BColumn* column, bool visible)
 }
 
 
+/**
+ * @brief Compute the bounding rectangle of a column header cell.
+ *
+ * Iterates over visible columns to find @p findColumn and fills @p _rect
+ * with its header-cell rectangle. Calls TRESPASS() if the column is not found.
+ *
+ * @param findColumn The column to find.
+ * @param _rect      Output: the header-cell bounding rectangle.
+ */
 void
 TitleView::GetTitleRect(BColumn* findColumn, BRect* _rect)
 {
@@ -2491,6 +3562,13 @@ TitleView::GetTitleRect(BColumn* findColumn, BRect* _rect)
 }
 
 
+/**
+ * @brief Find the visible column whose header cell contains the given position.
+ *
+ * @param position  A point in the title view's coordinate system.
+ * @param _leftEdge Output: the left edge of the found column's header cell.
+ * @return The display index of the found column, or 0 if none was found.
+ */
 int32
 TitleView::FindColumn(BPoint position, float* _leftEdge)
 {
@@ -2517,6 +3595,13 @@ TitleView::FindColumn(BPoint position, float* _leftEdge)
 }
 
 
+/**
+ * @brief Update the horizontal scroll bar range to match the total virtual width.
+ *
+ * @param scrollToFit If true, forces the range to be updated even when the user
+ *                    is scrolled beyond the new maximum; otherwise, range updates
+ *                    are deferred until the user scrolls back.
+ */
 void
 TitleView::FixScrollBar(bool scrollToFit)
 {
@@ -2543,6 +3628,14 @@ TitleView::FixScrollBar(bool scrollToFit)
 }
 
 
+/**
+ * @brief Update the position of the column being dragged.
+ *
+ * Finds the column under @p position, moves the selected column to that slot,
+ * recalculates drag boundaries, and redraws the affected region.
+ *
+ * @param position Current drag position in title-view coordinates.
+ */
 void
 TitleView::DragSelectedColumn(BPoint position)
 {
@@ -2571,6 +3664,12 @@ TitleView::DragSelectedColumn(BPoint position)
 }
 
 
+/**
+ * @brief Move @p column to the given display position in the column list.
+ *
+ * @param column The column to reposition.
+ * @param index  Target display index, or -1 to append to the end.
+ */
 void
 TitleView::MoveColumn(BColumn* column, int32 index)
 {
@@ -2585,6 +3684,12 @@ TitleView::MoveColumn(BColumn* column, int32 index)
 }
 
 
+/**
+ * @brief Set the column interaction flags for the title view.
+ *
+ * @param flags A bitmask of B_ALLOW_COLUMN_MOVE, B_ALLOW_COLUMN_RESIZE,
+ *              B_ALLOW_COLUMN_POPUP, and B_ALLOW_COLUMN_REMOVE.
+ */
 void
 TitleView::SetColumnFlags(column_flags flags)
 {
@@ -2592,6 +3697,14 @@ TitleView::SetColumnFlags(column_flags flags)
 }
 
 
+/**
+ * @brief Return the total non-column margin width used by the title view.
+ *
+ * This includes the left margin (at least as wide as the latch) plus the
+ * right margin, and is used when computing the horizontal scroll bar range.
+ *
+ * @return The margin width in pixels.
+ */
 float
 TitleView::MarginWidth() const
 {
@@ -2599,6 +3712,18 @@ TitleView::MarginWidth() const
 }
 
 
+/**
+ * @brief Resize the currently selected column to match @p position or its preferred width.
+ *
+ * Clamps the width to [MinWidth(), MaxWidth()]. Uses double-buffered rendering
+ * (when enabled) to move the column header and outline areas efficiently with CopyBits.
+ * Updates the resize cursor to reflect the new width state.
+ *
+ * @param position  The current mouse position in title-view coordinates; the column
+ *                  right edge tracks this x coordinate.
+ * @param preferred If true, the column is resized to its preferred content width
+ *                  instead of following @p position.
+ */
 void
 TitleView::ResizeSelectedColumn(BPoint position, bool preferred)
 {
@@ -2669,6 +3794,14 @@ TitleView::ResizeSelectedColumn(BPoint position, bool preferred)
 }
 
 
+/**
+ * @brief Compute the left and right drag boundaries for a column being moved.
+ *
+ * Sets fLeftDragBoundry and fRightDragBoundry so that the column cannot be
+ * dragged past its nearest neighbors.
+ *
+ * @param findColumn The column being dragged.
+ */
 void
 TitleView::ComputeDragBoundries(BColumn* findColumn, BPoint)
 {
@@ -2705,6 +3838,18 @@ TitleView::ComputeDragBoundries(BColumn* findColumn, BPoint)
 }
 
 
+/**
+ * @brief Draw a single column header cell.
+ *
+ * Renders the button background, sort indicator arrow and index (if applicable),
+ * and delegates actual title text rendering to BColumn::DrawTitle(). Passing
+ * NULL for @p column draws an empty header background (used for margin areas).
+ *
+ * @param view      The view to draw into.
+ * @param rect      The bounding rectangle of the header cell.
+ * @param column    The column whose title should be drawn, or NULL for margins.
+ * @param depressed If true, the cell is drawn in a pressed/active state.
+ */
 void
 TitleView::DrawTitle(BView* view, BRect rect, BColumn* column, bool depressed)
 {
@@ -2804,6 +3949,13 @@ TitleView::DrawTitle(BView* view, BRect rect, BColumn* column, bool depressed)
 }
 
 
+/**
+ * @brief Compute the total virtual width of all visible columns plus margins.
+ *
+ * Used to set the horizontal scroll bar range.
+ *
+ * @return The total virtual width in pixels.
+ */
 float
 TitleView::_VirtualWidth() const
 {
@@ -2820,6 +3972,15 @@ TitleView::_VirtualWidth() const
 }
 
 
+/**
+ * @brief Draw the entire title bar, including all column headers and margin areas.
+ *
+ * Iterates over visible columns, draws each header cell, fills margin areas,
+ * and (when DRAG_TITLE_OUTLINE is enabled) draws a blue outline for the column
+ * being dragged.
+ *
+ * @param invalidRect The area of the title view that needs to be redrawn.
+ */
 void
 TitleView::Draw(BRect invalidRect)
 {
@@ -2874,6 +4035,14 @@ TitleView::Draw(BRect invalidRect)
 }
 
 
+/**
+ * @brief Scroll the title view and synchronize the slave outline view.
+ *
+ * Also checks whether the horizontal scroll bar range needs to be corrected
+ * after a user-initiated scroll that moved past the new maximum.
+ *
+ * @param position The new scroll position.
+ */
 void
 TitleView::ScrollTo(BPoint position)
 {
@@ -2893,6 +4062,14 @@ TitleView::ScrollTo(BPoint position)
 }
 
 
+/**
+ * @brief Handle the kToggleColumn message from the column-visibility popup menu.
+ *
+ * Toggles the visibility of the column identified by the "be:field_num" field
+ * in @p message. Other messages are forwarded to the base class.
+ *
+ * @param message The received BMessage.
+ */
 void
 TitleView::MessageReceived(BMessage* message)
 {
@@ -2915,6 +4092,16 @@ TitleView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a mouse-button press in the title view.
+ *
+ * A right-click shows the column-visibility popup (if allowed). A left-click
+ * near a column edge starts resizing; a double-click or middle-click resizes
+ * to the preferred width. A left-click within a column starts a potential drag
+ * or sort-column toggle.
+ *
+ * @param position The mouse position in title-view coordinates.
+ */
 void
 TitleView::MouseDown(BPoint position)
 {
@@ -3012,6 +4199,17 @@ TitleView::MouseDown(BPoint position)
 }
 
 
+/**
+ * @brief Handle mouse movement in the title view.
+ *
+ * Dispatches to the appropriate handler based on fCurrentState: resizes the
+ * selected column, updates the drag position, or adjusts the resize cursor
+ * when the mouse is near a column edge while inactive.
+ *
+ * @param position    Current mouse position in title-view coordinates.
+ * @param transit     Transit code (B_ENTERED_VIEW, B_INSIDE_VIEW, B_EXITED_VIEW).
+ * @param dragMessage The drag message if a system drag-and-drop is in progress, or NULL.
+ */
 void
 TitleView::MouseMoved(BPoint position, uint32 transit,
 	const BMessage* dragMessage)
@@ -3159,6 +4357,14 @@ TitleView::MouseMoved(BPoint position, uint32 transit,
 }
 
 
+/**
+ * @brief Handle a mouse-button release in the title view.
+ *
+ * Finalizes column resize or drag, or (when a column was simply clicked)
+ * updates the sort order and triggers a re-sort.
+ *
+ * @param position The mouse position in title-view coordinates at release time.
+ */
 void
 TitleView::MouseUp(BPoint position)
 {
@@ -3222,6 +4428,14 @@ TitleView::MouseUp(BPoint position)
 }
 
 
+/**
+ * @brief Called when the title view is resized.
+ *
+ * Updates fVisibleRect and recalculates the horizontal scroll bar range.
+ *
+ * @param width  New view width in pixels.
+ * @param height New view height in pixels.
+ */
 void
 TitleView::FrameResized(float width, float height)
 {
@@ -3234,6 +4448,17 @@ TitleView::FrameResized(float width, float height)
 // #pragma mark - OutlineView
 
 
+/**
+ * @brief Construct the outline (row) view.
+ *
+ * Initializes all interaction state, creates the double-buffer resize view,
+ * fixes the vertical scroll bar, and sets up the selection list sentinel.
+ *
+ * @param rect          Initial frame rectangle.
+ * @param visibleColumns Shared column list (owned by BColumnListView).
+ * @param sortColumns   Shared sort-column list.
+ * @param listView      The master BColumnListView.
+ */
 OutlineView::OutlineView(BRect rect, BList* visibleColumns, BList* sortColumns,
 	BColumnListView* listView)
 	:
@@ -3274,6 +4499,11 @@ OutlineView::OutlineView(BRect rect, BList* visibleColumns, BList* sortColumns,
 }
 
 
+/**
+ * @brief Destroy the OutlineView and free all owned resources.
+ *
+ * Deletes the double-buffer view and removes all rows via Clear().
+ */
 OutlineView::~OutlineView()
 {
 #if DOUBLE_BUFFERED_COLUMN_RESIZE
@@ -3284,6 +4514,11 @@ OutlineView::~OutlineView()
 }
 
 
+/**
+ * @brief Remove and delete all rows, reset item height, and invalidate the view.
+ *
+ * The selection is cleared first to prevent dangling pointers in the selection list.
+ */
 void
 OutlineView::Clear()
 {
@@ -3296,6 +4531,11 @@ OutlineView::Clear()
 }
 
 
+/**
+ * @brief Set the selection mode and deselect all currently selected rows.
+ *
+ * @param mode B_SINGLE_SELECTION_LIST or B_MULTIPLE_SELECTION_LIST.
+ */
 void
 OutlineView::SetSelectionMode(list_view_type mode)
 {
@@ -3304,6 +4544,11 @@ OutlineView::SetSelectionMode(list_view_type mode)
 }
 
 
+/**
+ * @brief Return the current selection mode.
+ *
+ * @return B_SINGLE_SELECTION_LIST or B_MULTIPLE_SELECTION_LIST.
+ */
 list_view_type
 OutlineView::SelectionMode() const
 {
@@ -3311,6 +4556,11 @@ OutlineView::SelectionMode() const
 }
 
 
+/**
+ * @brief Remove @p row from the selection list and invalidate it.
+ *
+ * @param row The row to deselect, or NULL (no-op).
+ */
 void
 OutlineView::Deselect(BRow* row)
 {
@@ -3327,6 +4577,13 @@ OutlineView::Deselect(BRow* row)
 }
 
 
+/**
+ * @brief Add @p row to the selection list and invalidate it if visible.
+ *
+ * In B_SINGLE_SELECTION_LIST mode, all existing selections are cleared first.
+ *
+ * @param row The row to select, or NULL (no-op).
+ */
 void
 OutlineView::AddToSelection(BRow* row)
 {
@@ -3349,6 +4606,12 @@ OutlineView::AddToSelection(BRow* row)
 }
 
 
+/**
+ * @brief Recursively delete all rows in @p list and, optionally, the list itself.
+ *
+ * @param list    The container of rows to delete.
+ * @param isOwner If true, @p list is deleted after all its rows are removed.
+ */
 void
 OutlineView::RecursiveDeleteRows(BRowContainer* list, bool isOwner)
 {
@@ -3371,6 +4634,18 @@ OutlineView::RecursiveDeleteRows(BRowContainer* list, bool isOwner)
 }
 
 
+/**
+ * @brief Redraw a single column's cells for all visible rows.
+ *
+ * Used during column resize to efficiently redraw only the affected column
+ * strip. Uses double-buffered rendering when DOUBLE_BUFFERED_COLUMN_RESIZE
+ * is enabled.
+ *
+ * @param column       The column to redraw.
+ * @param leftEdge     The x coordinate of the column's left edge.
+ * @param isFirstColumn true if this is the leftmost visible column (draws
+ *                      latch widgets and applies outline indentation).
+ */
 void
 OutlineView::RedrawColumn(BColumn* column, float leftEdge, bool isFirstColumn)
 {
@@ -3525,6 +4800,15 @@ OutlineView::RedrawColumn(BColumn* column, float leftEdge, bool isFirstColumn)
 }
 
 
+/**
+ * @brief Draw all visible rows within @p invalidBounds.
+ *
+ * Iterates over the recursive row tree, renders each row's field cells,
+ * latch widgets, and focus indicator, and fills empty space below the last row.
+ * Also draws the drop-target highlight line when a drag is in progress.
+ *
+ * @param invalidBounds The rectangle that needs to be redrawn.
+ */
 void
 OutlineView::Draw(BRect invalidBounds)
 {
@@ -3709,6 +4993,14 @@ OutlineView::Draw(BRect invalidBounds)
 }
 
 
+/**
+ * @brief Find the row displayed at the given vertical position.
+ *
+ * @param ypos       Vertical position in the outline view's coordinate system.
+ * @param _rowIndent Output: the nesting depth (indent level) of the found row.
+ * @param _top       Output: the y coordinate of the found row's top edge.
+ * @return The BRow at @p ypos, or NULL if no row is there.
+ */
 BRow*
 OutlineView::FindRow(float ypos, int32* _rowIndent, float* _top)
 {
@@ -3735,6 +5027,13 @@ OutlineView::FindRow(float ypos, int32* _rowIndent, float* _top)
 	return NULL;
 }
 
+/**
+ * @brief Enable or disable mouse-over (roll-over) row highlighting.
+ *
+ * When disabled, any existing drop highlight line is immediately erased.
+ *
+ * @param enabled true to enable tracking, false to disable.
+ */
 void OutlineView::SetMouseTrackingEnabled(bool enabled)
 {
 	fTrackMouse = enabled;
@@ -3753,6 +5052,15 @@ void OutlineView::SetMouseTrackingEnabled(bool enabled)
 // resulting in drawing glitches.  The code that adds items needs to be a little smarter
 // about invalidating state.
 //
+/**
+ * @brief Handle a mouse-button press in the outline view.
+ *
+ * Determines whether the click landed on a latch widget or a data row, then
+ * updates the focus row, selection state, and field mouse-down state accordingly.
+ * Captures the mouse for subsequent MouseMoved() and MouseUp() events.
+ *
+ * @param position The mouse position in outline-view coordinates.
+ */
 void
 OutlineView::MouseDown(BPoint position)
 {
@@ -3915,6 +5223,16 @@ OutlineView::MouseDown(BPoint position)
 }
 
 
+/**
+ * @brief Handle mouse movement in the outline view.
+ *
+ * While no button is held, tracks the field under the cursor and dispatches
+ * BColumn::MouseMoved() enter/inside/exit events. While dragging, either
+ * updates the latch visual, initiates a row drag via BColumnListView::InitiateDrag(),
+ * or tracks the drop highlight position.
+ *
+ * @param position    Current mouse position in outline-view coordinates.
+ */
 void
 OutlineView::MouseMoved(BPoint position, uint32 /*transit*/,
 	const BMessage* /*dragMessage*/)
@@ -4108,6 +5426,14 @@ OutlineView::MouseMoved(BPoint position, uint32 /*transit*/,
 }
 
 
+/**
+ * @brief Handle a mouse-button release in the outline view.
+ *
+ * Finalizes a latch click (expand/collapse), detects double-clicks for item
+ * invocation, ends a row drag, and erases the drop highlight line.
+ *
+ * @param position The mouse position in outline-view coordinates at release time.
+ */
 void
 OutlineView::MouseUp(BPoint position)
 {
@@ -4157,6 +5483,14 @@ OutlineView::MouseUp(BPoint position)
 }
 
 
+/**
+ * @brief Handle messages received by the outline view.
+ *
+ * Dropped messages are forwarded to BColumnListView::MessageDropped().
+ * All other messages are passed to the base class.
+ *
+ * @param message The received BMessage.
+ */
 void
 OutlineView::MessageReceived(BMessage* message)
 {
@@ -4171,6 +5505,11 @@ OutlineView::MessageReceived(BMessage* message)
 
 #if DOUBLE_BUFFERED_COLUMN_RESIZE
 
+/**
+ * @brief Return the double-buffer resize view used for off-screen column rendering.
+ *
+ * @return Pointer to the ColumnResizeBufferView.
+ */
 ColumnResizeBufferView*
 OutlineView::ResizeBufferView()
 {
@@ -4180,6 +5519,14 @@ OutlineView::ResizeBufferView()
 #endif
 
 
+/**
+ * @brief Move keyboard focus to the next or previous row and optionally update the selection.
+ *
+ * @param up                  true to move focus upward, false to move downward.
+ * @param updateSelection     If true, the newly focused row is selected.
+ * @param addToCurrentSelection If true, the new row is added to an existing
+ *                            multi-row selection rather than replacing it.
+ */
 void
 OutlineView::ChangeFocusRow(bool up, bool updateSelection,
 	bool addToCurrentSelection)
@@ -4271,6 +5618,12 @@ OutlineView::ChangeFocusRow(bool up, bool updateSelection,
 }
 
 
+/**
+ * @brief Move keyboard focus to the first visible row in the current viewport.
+ *
+ * Clears the current focus and calls ChangeFocusRow() to select the first
+ * row visible at the top of the scrolled region.
+ */
 void
 OutlineView::MoveFocusToVisibleRect()
 {
@@ -4279,6 +5632,15 @@ OutlineView::MoveFocusToVisibleRect()
 }
 
 
+/**
+ * @brief Return the next selected row after @p lastSelected in selection order.
+ *
+ * Pass NULL to start from the beginning of the selection. The selection list
+ * is a circular intrusive doubly-linked list with a dummy head sentinel.
+ *
+ * @param lastSelected The previously returned row, or NULL to start.
+ * @return The next selected BRow, or NULL when the list is exhausted.
+ */
 BRow*
 OutlineView::CurrentSelection(BRow* lastSelected) const
 {
@@ -4296,6 +5658,15 @@ OutlineView::CurrentSelection(BRow* lastSelected) const
 }
 
 
+/**
+ * @brief Toggle the selection state of the focused row.
+ *
+ * When @p selectRange is true and the selection mode is multiple, selects the
+ * range of rows between the last selected row and the focus row.
+ *
+ * @param selectRange If true, a range selection from fLastSelectedItem to the
+ *                    focus row is performed.
+ */
 void
 OutlineView::ToggleFocusRowSelection(bool selectRange)
 {
@@ -4329,6 +5700,11 @@ OutlineView::ToggleFocusRowSelection(bool selectRange)
 }
 
 
+/**
+ * @brief Toggle the expand/collapse state of the focused row.
+ *
+ * Has no effect if there is no focused row.
+ */
 void
 OutlineView::ToggleFocusRowOpen()
 {
@@ -4337,6 +5713,15 @@ OutlineView::ToggleFocusRowOpen()
 }
 
 
+/**
+ * @brief Expand or collapse the child list of @p parentRow.
+ *
+ * Recomputes fItemsHeight by summing (or subtracting) the heights of all rows
+ * in the sub-tree, then invalidates and fixes the scroll bar.
+ *
+ * @param parentRow The row to expand or collapse.
+ * @param expand    true to expand, false to collapse.
+ */
 void
 OutlineView::ExpandOrCollapse(BRow* parentRow, bool expand)
 {
@@ -4390,6 +5775,12 @@ OutlineView::ExpandOrCollapse(BRow* parentRow, bool expand)
 /*!	This method will remove the row from the selection if it is in the
 	selection, but does not trigger any UI update.
 */
+/**
+ * @brief Unlink @p row from the selection list without triggering any UI update.
+ *
+ * @param row The row to remove from the selection intrusive list.
+ * @return true if the row was in the selection and was removed, false otherwise.
+ */
 bool
 OutlineView::RemoveRowFromSelectionOnly(BRow* row)
 {
@@ -4404,6 +5795,15 @@ OutlineView::RemoveRowFromSelectionOnly(BRow* row)
 }
 
 
+/**
+ * @brief Remove a single @p row from the outline view.
+ *
+ * Adjusts fItemsHeight, fixes the scroll bar, updates the focus row if it was
+ * inside the removed sub-tree, removes the row from the selection if necessary,
+ * and clears the current field/column/row pointers.
+ *
+ * @param row The row to remove, or NULL (no-op).
+ */
 void
 OutlineView::RemoveRow(BRow* row)
 {
@@ -4482,6 +5882,15 @@ OutlineView::RemoveRow(BRow* row)
 }
 
 
+/**
+ * @brief Remove multiple rows at once from the outline view.
+ *
+ * All rows must share the same parent. Invalidation is batched for better
+ * performance compared to calling RemoveRow() individually for each row.
+ * Triggers SelectionChanged() once if any removed row was selected.
+ *
+ * @param rows A BList of BRow pointers to remove. All must have the same parent.
+ */
 void
 OutlineView::RemoveRows(BList* rows)
 {
@@ -4626,6 +6035,11 @@ OutlineView::RemoveRows(BList* rows)
 }
 
 
+/**
+ * @brief Return the root-level row container.
+ *
+ * @return Pointer to the BRowContainer that holds all top-level rows.
+ */
 BRowContainer*
 OutlineView::RowList()
 {
@@ -4633,6 +6047,14 @@ OutlineView::RowList()
 }
 
 
+/**
+ * @brief Notify the outline view that the data in @p row has changed.
+ *
+ * If the row's position in the sort order has changed, the entire list is
+ * re-sorted. Otherwise only the row's visible area is invalidated.
+ *
+ * @param row The row whose data has been updated.
+ */
 void
 OutlineView::UpdateRow(BRow* row)
 {
@@ -4675,6 +6097,18 @@ OutlineView::UpdateRow(BRow* row)
 	but will make no adjustments to the UI elements such as the scrollbar.
 	Returns the index of the row at which the row was added.
 */
+/**
+ * @brief Insert @p row into its parent container without updating the UI.
+ *
+ * When sorting is enabled the row is inserted in sorted order and @p index
+ * is ignored. When sorting is disabled, @p index determines the position (-1
+ * appends to the end). Creates parentRow->fChildList if necessary.
+ *
+ * @param row       The row to insert.
+ * @param index     The desired insertion position, or -1 to append.
+ * @param parentRow The parent row, or NULL for the root list.
+ * @return The index at which the row was actually inserted.
+ */
 int32
 OutlineView::AddRowToParentOnly(BRow* row, int32 index, BRow* parentRow)
 {
@@ -4719,6 +6153,16 @@ OutlineView::AddRowToParentOnly(BRow* row, int32 index, BRow* parentRow)
 }
 
 
+/**
+ * @brief Add multiple rows to the outline view at once.
+ *
+ * Inserts all rows via AddRowToParentOnly(), updates fItemsHeight, fixes
+ * the scroll bar, and batches invalidation for efficiency.
+ *
+ * @param addedRows List of BRow pointers to insert.
+ * @param index     Insertion index for the first row, or -1 to append.
+ * @param parentRow The parent row, or NULL for the root level.
+ */
 void
 OutlineView::AddRows(BList* addedRows, int32 index, BRow* parentRow)
 {
@@ -4802,6 +6246,16 @@ OutlineView::AddRows(BList* addedRows, int32 index, BRow* parentRow)
 }
 
 
+/**
+ * @brief Add a single row to the outline view.
+ *
+ * Inserts the row, updates fItemsHeight, fixes the scroll bar, and performs
+ * optimized partial-view updates using CopyBits where possible.
+ *
+ * @param row       The row to insert.
+ * @param Index     The insertion index, or -1 to append.
+ * @param parentRow The parent row, or NULL for the root level.
+ */
 void
 OutlineView::AddRow(BRow* row, int32 Index, BRow* parentRow)
 {
@@ -4892,6 +6346,14 @@ OutlineView::AddRow(BRow* row, int32 Index, BRow* parentRow)
 }
 
 
+/**
+ * @brief Update the vertical scroll bar range to match the current total row height.
+ *
+ * If the user has scrolled past the new maximum, the range update is deferred
+ * until ScrollTo() detects the discrepancy and corrects it.
+ *
+ * @param scrollToFit If true, forces the range to be updated immediately.
+ */
 void
 OutlineView::FixScrollBar(bool scrollToFit)
 {
@@ -4916,6 +6378,17 @@ OutlineView::FixScrollBar(bool scrollToFit)
 
 
 /*!	Returns the index at which the row was added. */
+/**
+ * @brief Insert @p row into @p list in sorted order using binary search.
+ *
+ * Uses a shell-sort-style binary search to find the correct insertion point,
+ * then inserts the row. If the list is empty or the row belongs at the end,
+ * the row is appended.
+ *
+ * @param list The sorted row container to insert into.
+ * @param row  The row to insert.
+ * @return The index at which @p row was inserted, or -1 if @p list or @p row is NULL.
+ */
 int32
 OutlineView::AddSorted(BRowContainer* list, BRow* row)
 {
@@ -4954,6 +6427,16 @@ OutlineView::AddSorted(BRowContainer* list, BRow* row)
 }
 
 
+/**
+ * @brief Compare two rows according to the current sort column list.
+ *
+ * Iterates over all active sort columns in order, calling BColumn::CompareFields()
+ * on the corresponding field pair. The result is negated for descending sorts.
+ *
+ * @param row1 First row to compare.
+ * @param row2 Second row to compare.
+ * @return Negative if row1 < row2, 0 if equal, positive if row1 > row2.
+ */
 int32
 OutlineView::CompareRows(BRow* row1, BRow* row2)
 {
@@ -4978,6 +6461,14 @@ OutlineView::CompareRows(BRow* row1, BRow* row2)
 }
 
 
+/**
+ * @brief Called when the outline view is resized.
+ *
+ * Updates fVisibleRect and recalculates the vertical scroll bar range.
+ *
+ * @param width  New view width in pixels.
+ * @param height New view height in pixels.
+ */
 void
 OutlineView::FrameResized(float width, float height)
 {
@@ -4988,6 +6479,14 @@ OutlineView::FrameResized(float width, float height)
 }
 
 
+/**
+ * @brief Scroll the outline view to the given position.
+ *
+ * Updates fVisibleRect and, if the view was scrolled past the previous scroll
+ * bar maximum, corrects the range via FixScrollBar().
+ *
+ * @param position The new scroll position (top-left of the visible area).
+ */
 void
 OutlineView::ScrollTo(BPoint position)
 {
@@ -5007,6 +6506,11 @@ OutlineView::ScrollTo(BPoint position)
 }
 
 
+/**
+ * @brief Return the currently visible rectangle in the outline view's coordinate system.
+ *
+ * @return Reference to fVisibleRect, which tracks the scrolled viewport.
+ */
 const BRect&
 OutlineView::VisibleRect() const
 {
@@ -5014,6 +6518,16 @@ OutlineView::VisibleRect() const
 }
 
 
+/**
+ * @brief Find the visible-area bounding rectangle of @p row.
+ *
+ * Similar to FindRect() but returns false for rows whose top is below
+ * fVisibleRect.bottom (i.e., rows that are scrolled out of view).
+ *
+ * @param row   The row to find.
+ * @param _rect Output: the row's bounding rectangle in view coordinates.
+ * @return true if the row was found and is within the visible area.
+ */
 bool
 OutlineView::FindVisibleRect(BRow* row, BRect* _rect)
 {
@@ -5038,6 +6552,16 @@ OutlineView::FindVisibleRect(BRow* row, BRect* _rect)
 /*!	This method will store the visible rectangle of the supplied `row` into
 	`_rect` returning true if the row is currently visible.
 */
+/**
+ * @brief Find the bounding rectangle of @p row in the outline view's coordinate system.
+ *
+ * Iterates over the full row tree (including collapsed branches) using
+ * a non-open-branches-only iterator.
+ *
+ * @param row   The row to find.
+ * @param _rect Output: the row's bounding rectangle.
+ * @return true if the row was found, false otherwise.
+ */
 bool
 OutlineView::FindRect(const BRow* row, BRect* _rect)
 {
@@ -5057,6 +6581,14 @@ OutlineView::FindRect(const BRow* row, BRect* _rect)
 }
 
 
+/**
+ * @brief Scroll the view so that @p row is visible.
+ *
+ * If the row's top is above the current viewport, scrolls up to show it.
+ * If the row's bottom is below, scrolls down by the minimum amount needed.
+ *
+ * @param row The row to scroll into view.
+ */
 void
 OutlineView::ScrollTo(const BRow* row)
 {
@@ -5071,6 +6603,12 @@ OutlineView::ScrollTo(const BRow* row)
 }
 
 
+/**
+ * @brief Deselect all rows and invalidate their visible areas.
+ *
+ * Iterates the full row tree to find and invalidate visible selected rows,
+ * then unlinks all rows from the selection intrusive list.
+ */
 void
 OutlineView::DeselectAll()
 {
@@ -5102,6 +6640,11 @@ OutlineView::DeselectAll()
 }
 
 
+/**
+ * @brief Return the row that currently holds keyboard focus.
+ *
+ * @return The focused BRow, or NULL if no row has focus.
+ */
 BRow*
 OutlineView::FocusRow() const
 {
@@ -5109,6 +6652,14 @@ OutlineView::FocusRow() const
 }
 
 
+/**
+ * @brief Set keyboard focus to @p row, optionally adding it to the selection.
+ *
+ * Invalidates the previous focus row rect and the new one to trigger redraws.
+ *
+ * @param row    The row to focus.
+ * @param Select If true, the row is also added to the selection.
+ */
 void
 OutlineView::SetFocusRow(BRow* row, bool Select)
 {
@@ -5132,6 +6683,17 @@ OutlineView::SetFocusRow(BRow* row, bool Select)
 }
 
 
+/**
+ * @brief Sort @p list in-place using a shell sort.
+ *
+ * If @p isVisible is true, the view is invalidated after the sort and the
+ * window is briefly unlocked to allow the display to refresh. Returns false
+ * if the window was destroyed during the unlock.
+ *
+ * @param list      The row container to sort.
+ * @param isVisible true if the list is currently visible and should be redrawn.
+ * @return true if sorting completed successfully, false if the window was destroyed.
+ */
 bool
 OutlineView::SortList(BRowContainer* list, bool isVisible)
 {
@@ -5176,6 +6738,12 @@ OutlineView::SortList(BRowContainer* list, bool isVisible)
 }
 
 
+/**
+ * @brief Thread entry point that calls DeepSort() on the OutlineView.
+ *
+ * @param _outlineView Pointer to the OutlineView instance cast as void*.
+ * @return Always 0.
+ */
 int32
 OutlineView::DeepSortThreadEntry(void* _outlineView)
 {
@@ -5184,6 +6752,13 @@ OutlineView::DeepSortThreadEntry(void* _outlineView)
 }
 
 
+/**
+ * @brief Recursively sort the entire row tree on a background thread.
+ *
+ * Uses an explicit stack to perform a depth-first traversal, calling SortList()
+ * on each container. Respects fSortCancelled so that a new sort can preempt a
+ * running one. Unlocks the window during SortList() calls to allow redraws.
+ */
 void
 OutlineView::DeepSort()
 {
@@ -5254,6 +6829,12 @@ OutlineView::DeepSort()
 }
 
 
+/**
+ * @brief Launch a background thread to sort the entire row tree.
+ *
+ * If a previous sort thread is still running, it is cancelled and waited for
+ * before spawning a new one. Has no effect if the view is not attached to a window.
+ */
 void
 OutlineView::StartSorting()
 {
@@ -5287,6 +6868,16 @@ OutlineView::StartSorting()
 }
 
 
+/**
+ * @brief Select all rows between @p start and @p end in display order.
+ *
+ * Traverses the full row tree (including collapsed branches) to find the
+ * range. If @p end appears before @p start in the traversal order, the
+ * parameters are swapped before selection begins.
+ *
+ * @param start The first boundary row of the range (already selected on entry).
+ * @param end   The last boundary row of the range.
+ */
 void
 OutlineView::SelectRange(BRow* start, BRow* end)
 {
@@ -5332,6 +6923,16 @@ OutlineView::SelectRange(BRow* start, BRow* end)
 }
 
 
+/**
+ * @brief Find the parent row of @p row and determine its visibility.
+ *
+ * Walks the parent chain to determine if all ancestors are expanded.
+ *
+ * @param row              The row whose parent to find.
+ * @param outParent        Output: set to the parent BRow, or NULL for root rows.
+ * @param outParentIsVisible Output: set to true if the parent chain is fully expanded.
+ * @return true if @p row has a parent, false if it is a root row.
+ */
 bool
 OutlineView::FindParent(BRow* row, BRow** outParent, bool* outParentIsVisible)
 {
@@ -5358,6 +6959,12 @@ OutlineView::FindParent(BRow* row, BRow** outParent, bool* outParentIsVisible)
 }
 
 
+/**
+ * @brief Return the index of @p row within its container (parent's child list or root).
+ *
+ * @param row The row to locate.
+ * @return The zero-based index, or B_ERROR if @p row is NULL.
+ */
 int32
 OutlineView::IndexOf(BRow* row)
 {
@@ -5373,6 +6980,11 @@ OutlineView::IndexOf(BRow* row)
 }
 
 
+/**
+ * @brief Refresh the cached focus-row rectangle after a sort or structural change.
+ *
+ * Calls FindRect() to recompute fFocusRowRect from the current row positions.
+ */
 void
 OutlineView::InvalidateCachedPositions()
 {
@@ -5381,6 +6993,16 @@ OutlineView::InvalidateCachedPositions()
 }
 
 
+/**
+ * @brief Calculate the preferred width of @p column given the current row data.
+ *
+ * Iterates over all rows, queries BColumn::GetPreferredWidth() for each field,
+ * accounts for indent, and also measures the column name. The result is clamped
+ * to [MinWidth(), MaxWidth()].
+ *
+ * @param column The column to measure.
+ * @return The preferred width in pixels.
+ */
 float
 OutlineView::GetColumnPreferredWidth(BColumn* column)
 {
@@ -5413,6 +7035,14 @@ OutlineView::GetColumnPreferredWidth(BColumn* column)
 // #pragma mark -
 
 
+/**
+ * @brief Construct an iterator that traverses a row tree depth-first.
+ *
+ * @param list             The root BRowContainer to iterate.
+ * @param openBranchesOnly If true (the default), collapsed sub-trees are skipped.
+ *                         Pass false to iterate the entire tree regardless of
+ *                         expand/collapse state.
+ */
 RecursiveOutlineIterator::RecursiveOutlineIterator(BRowContainer* list,
 	bool openBranchesOnly)
 	:
@@ -5428,6 +7058,11 @@ RecursiveOutlineIterator::RecursiveOutlineIterator(BRowContainer* list,
 }
 
 
+/**
+ * @brief Return the row at the current iterator position.
+ *
+ * @return The current BRow, or NULL if the iterator is exhausted.
+ */
 BRow*
 RecursiveOutlineIterator::CurrentRow() const
 {
@@ -5438,6 +7073,13 @@ RecursiveOutlineIterator::CurrentRow() const
 }
 
 
+/**
+ * @brief Advance the iterator to the next row in depth-first order.
+ *
+ * If the current row has an expanded (or all, when not open-branches-only)
+ * child list, the iterator descends into it. Otherwise it advances to the next
+ * sibling, popping the stack when a list is exhausted.
+ */
 void
 RecursiveOutlineIterator::GoToNext()
 {
@@ -5476,6 +7118,11 @@ RecursiveOutlineIterator::GoToNext()
 }
 
 
+/**
+ * @brief Return the nesting depth of the current row.
+ *
+ * @return 0 for root-level rows, 1 for their children, and so on.
+ */
 int32
 RecursiveOutlineIterator::CurrentLevel() const
 {

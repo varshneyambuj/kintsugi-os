@@ -91,9 +91,11 @@ using std::nothrow;
 #endif
 
 
-/*  1 if two clipping_rects overlap.
- *  0 if two clipping_rects do not overlap.
- *  Remember, right and bottom are not in the region
+/**
+ * @brief Test whether two clipping_rects overlap.
+ *
+ * Evaluates to 1 if the two rectangles share at least one pixel, 0 otherwise.
+ * Note that right and bottom coordinates are exclusive (not part of the region).
  */
 #define EXTENTCHECK(r1, r2) \
 	((r1)->right > (r2)->left && \
@@ -101,8 +103,11 @@ using std::nothrow;
 	 (r1)->bottom > (r2)->top && \
 	 (r1)->top < (r2)->bottom)
 
-/*
- *  update region fBounds
+/**
+ * @brief Expand the bounding rectangle of \a idRect to include rectangle \a r.
+ *
+ * Updates each edge of idRect->fBounds in-place; used as new rectangles are
+ * appended to a region during set operations.
  */
 #define EXTENTS(r,idRect){\
             if ((r)->left < (idRect)->fBounds.left)\
@@ -115,8 +120,11 @@ using std::nothrow;
               (idRect)->fBounds.bottom = (r)->bottom;\
         }
 
-/*
- *   Check to see if there is enough memory in the present region.
+/**
+ * @brief Grow the rectangle array of \a reg if it is full.
+ *
+ * When fCount is within one of fDataSize, the array is doubled via realloc().
+ * Returns 0 (false) from the enclosing function on allocation failure.
  */
 #define MEMCHECK(reg, rect, firstrect){\
         if ((reg)->fCount >= ((reg)->fDataSize - 1)){\
@@ -129,10 +137,12 @@ using std::nothrow;
          }\
        }
 
-/*  this routine checks to see if the previous rectangle is the same
- *  or subsumes the new rectangle to add.
+/**
+ * @brief Guard macro: true when the last appended rectangle does not subsume the new one.
+ *
+ * Returns non-zero (safe to append) when the previous rectangle in \a Reg
+ * does not already cover the candidate rectangle defined by (Rx1, Ry1, Rx2, Ry2).
  */
-
 #define CHECK_PREVIOUS(Reg, R, Rx1, Ry1, Rx2, Ry2)\
                (!(((Reg)->fCount > 0)&&\
                   ((R-1)->top == (Ry1)) &&\
@@ -140,7 +150,13 @@ using std::nothrow;
                   ((R-1)->left <= (Rx1)) &&\
                   ((R-1)->right >= (Rx2))))
 
-/*  add a rectangle to the given BRegion */
+/**
+ * @brief Append a rectangle to a region and update its bounding box.
+ *
+ * The rectangle is only added when it is non-empty and is not already subsumed
+ * by the previous rectangle (CHECK_PREVIOUS).  EXTENTS is called to grow
+ * the region's fBounds accordingly.
+ */
 #define ADDRECT(reg, r, rx1, ry1, rx2, ry2){\
     if (((rx1) < (rx2)) && ((ry1) < (ry2)) &&\
         CHECK_PREVIOUS((reg), (r), (rx1), (ry1), (rx2), (ry2))){\
@@ -156,7 +172,12 @@ using std::nothrow;
 
 
 
-/*  add a rectangle to the given BRegion */
+/**
+ * @brief Append a rectangle to a region without updating the bounding box.
+ *
+ * Like ADDRECT but skips the EXTENTS call, so the caller is responsible for
+ * maintaining fBounds separately.
+ */
 #define ADDRECTNOX(reg, r, rx1, ry1, rx2, ry2){\
             if ((rx1 < rx2) && (ry1 < ry2) &&\
                 CHECK_PREVIOUS((reg), (r), (rx1), (ry1), (rx2), (ry2))){\
@@ -169,10 +190,17 @@ using std::nothrow;
             }\
         }
 
+/** @brief Empty a region by calling its MakeEmpty() method. */
 #define EMPTY_REGION(pReg) pReg->MakeEmpty()
 
+/** @brief Evaluate to non-zero (true) when a region contains at least one rectangle. */
 #define REGION_NOT_EMPTY(pReg) pReg->fCount
 
+/**
+ * @brief Test whether point (x, y) lies inside rectangle \a r.
+ *
+ * Uses half-open intervals: right and bottom edges are exclusive.
+ */
 #define INBOX(r, x, y) \
       ( ( ((r).right >  x)) && \
         ( ((r).left <= x)) && \
@@ -181,13 +209,25 @@ using std::nothrow;
 
 
 
-/*	Create a new empty region	*/
+/**
+ * @brief Allocate and return a new empty BRegion on the heap.
+ *
+ * @return Pointer to a newly allocated, empty BRegion, or NULL if allocation
+ *         fails.
+ */
 BRegion*
 BRegion::Support::CreateRegion(void)
 {
     return new (nothrow) BRegion();
 }
 
+/**
+ * @brief Delete a BRegion previously created by CreateRegion().
+ *
+ * Safe to call with a NULL pointer.
+ *
+ * @param r Region to destroy.
+ */
 void
 BRegion::Support::DestroyRegion(BRegion* r)
 {
@@ -195,20 +235,14 @@ BRegion::Support::DestroyRegion(BRegion* r)
 }
 
 
-/*-
- *-----------------------------------------------------------------------
- * miSetExtents --
- *	Reset the fBounds of a region to what they should be. Called by
- *	miSubtract and miIntersect b/c they can't figure it out along the
- *	way or do so easily, as miUnion can.
+/**
+ * @brief Recompute the bounding rectangle of a region from its rectangle array.
  *
- * Results:
- *	None.
+ * Called by XSubtractRegion() and XIntersectRegion() because those operations
+ * cannot easily maintain fBounds incrementally the way XUnionRegion() can.
+ * If the region is empty all four edges are set to zero.
  *
- * Side Effects:
- *	The region's 'fBounds' structure is overwritten.
- *
- *-----------------------------------------------------------------------
+ * @param pReg Region whose fBounds field is to be recalculated.
  */
 void
 BRegion::Support::miSetExtents(BRegion* pReg)
@@ -259,10 +293,16 @@ BRegion::Support::miSetExtents(BRegion* pReg)
 }
 
 
-/* TranslateRegion(pRegion, x, y)
-   translates in place
-   added by raymond
-*/
+/**
+ * @brief Translate all rectangles and the bounding box of a region in place.
+ *
+ * Adds (\a x, \a y) to every coordinate of every rectangle in \a pRegion,
+ * including fBounds.  No allocation is performed.
+ *
+ * @param pRegion Region to translate.
+ * @param x       Horizontal displacement in pixels (may be negative).
+ * @param y       Vertical displacement in pixels (may be negative).
+ */
 void
 BRegion::Support::XOffsetRegion(
     BRegion* pRegion,
@@ -386,18 +426,21 @@ IndexRects(
 /*======================================================================
  *	    BRegion* Intersection
  *====================================================================*/
-/*-
- *-----------------------------------------------------------------------
- * miIntersectO --
- *	Handle an overlapping band for miIntersect.
+/**
+ * @brief Overlap-band callback for XIntersectRegion().
  *
- * Results:
- *	None.
+ * Processes one horizontal band where both source regions have rectangles.
+ * For each overlapping pair the intersection rectangle is appended to \a pReg.
+ * Both rectangle lists are advanced past each rectangle as it is consumed.
  *
- * Side Effects:
- *	Rectangles may be added to the region.
- *
- *-----------------------------------------------------------------------
+ * @param pReg    Destination region being built.
+ * @param r1      First rectangle of the current band in region 1.
+ * @param r1End   One past the last rectangle of the current band in region 1.
+ * @param r2      First rectangle of the current band in region 2.
+ * @param r2End   One past the last rectangle of the current band in region 2.
+ * @param top     Top y coordinate of the current band.
+ * @param bottom  Bottom y coordinate of the current band (exclusive).
+ * @return 0 (lint).
  */
 int
 BRegion::Support::miIntersectO (
@@ -463,6 +506,20 @@ BRegion::Support::miIntersectO (
     return 0;	/* lint */
 }
 
+/**
+ * @brief Compute the intersection of two regions and store it in \a newReg.
+ *
+ * Performs a trivial rejection when either region is empty or the bounding
+ * boxes do not overlap.  Otherwise delegates to miRegionOp() with
+ * miIntersectO() as the overlap handler and NULL non-overlap handlers
+ * (non-overlapping portions contribute nothing to an intersection).
+ * fBounds is recomputed by miSetExtents() after the operation.
+ *
+ * @param reg1   First source region.
+ * @param reg2   Second source region.
+ * @param newReg Destination region (may alias reg1 or reg2).
+ * @return 1 always.
+ */
 int
 BRegion::Support::XIntersectRegion(
     const BRegion* 	  	reg1,
@@ -488,6 +545,15 @@ BRegion::Support::XIntersectRegion(
     return 1;
 }
 
+/**
+ * @brief Copy one region into another.
+ *
+ * Uses BRegion's copy-assignment operator, which performs a deep copy of
+ * the rectangle array and the bounding box.
+ *
+ * @param dstrgn Destination region.
+ * @param rgn    Source region.
+ */
 void
 BRegion::Support::miRegionCopy(
     BRegion* dstrgn,
@@ -633,22 +699,19 @@ TopRects(
  *	    Generic BRegion* Operator
  *====================================================================*/
 
-/*-
- *-----------------------------------------------------------------------
- * miCoalesce --
- *	Attempt to merge the boxes in the current band with those in the
- *	previous one. Used only by miRegionOp.
+/**
+ * @brief Attempt to merge the current band with the previous band in \a pReg.
  *
- * Results:
- *	The new index for the previous band.
+ * Two adjacent horizontal bands can be merged into taller rectangles when
+ * they have the same number of rectangles, the bottom of the previous band
+ * equals the top of the current band, and every pair of rectangles shares
+ * the same left and right edges.  On success the duplicate rectangles are
+ * removed and the bottom of each previous-band rectangle is extended.
  *
- * Side Effects:
- *	If coalescing takes place:
- *	    - rectangles in the previous band will have their bottom fields
- *	      altered.
- *	    - pReg->fCount will be decreased.
- *
- *-----------------------------------------------------------------------
+ * @param pReg      Region being built by miRegionOp().
+ * @param prevStart Index into pReg->fData of the first rectangle in the previous band.
+ * @param curStart  Index into pReg->fData of the first rectangle in the current band.
+ * @return The updated index to use as \c prevStart in the next miCoalesce() call.
  */
 int
 BRegion::Support::miCoalesce(
@@ -774,29 +837,32 @@ BRegion::Support::miCoalesce(
     return (curStart);
 }
 
-/*-
- *-----------------------------------------------------------------------
- * miRegionOp --
- *	Apply an operation to two regions. Called by miUnion, miInverse,
- *	miSubtract, miIntersect...
+/**
+ * @brief Generic region set-operation engine used by union, intersection, and subtraction.
  *
- * Results:
- *	None.
+ * Sweeps two y-x-banded regions in lock-step.  For each horizontal band the
+ * function categorises the area as:
+ *  - non-overlapping (only region 1 has rectangles): calls \a nonOverlap1Func.
+ *  - non-overlapping (only region 2 has rectangles): calls \a nonOverlap2Func.
+ *  - overlapping (both regions have rectangles):     calls \a overlapFunc.
  *
- * Side Effects:
- *	The new region is overwritten.
+ * After processing each band miCoalesce() is called to merge it with the
+ * previous band when possible, keeping the rectangle count minimal.
  *
- * Notes:
- *	The idea behind this function is to view the two regions as sets.
- *	Together they cover a rectangle of area that this function divides
- *	into horizontal bands where points are covered only by one region
- *	or by both. For the first case, the nonOverlapFunc is called with
- *	each the band and the band's upper and lower fBounds. For the
- *	second, the overlapFunc is called to process the entire band. It
- *	is responsible for clipping the rectangles in the band, though
- *	this function provides the boundaries.
- *	At the end of each band, the new region is coalesced, if possible,
- *	to reduce the number of rectangles in the region.
+ * @param newReg          Destination region (may alias reg1 or reg2).
+ * @param reg1            First source region.
+ * @param reg2            Second source region.
+ * @param overlapFunc     Callback invoked for bands covered by both regions.
+ * @param nonOverlap1Func Callback invoked for bands covered only by reg1, or NULL.
+ * @param nonOverlap2Func Callback invoked for bands covered only by reg2, or NULL.
+ *
+ * @note fBounds is not updated by this function; callers must call miSetExtents()
+ *       or set fBounds manually afterwards.
+ *
+ * @see miCoalesce()
+ * @see XIntersectRegion()
+ * @see XUnionRegion()
+ * @see XSubtractRegion()
  *
  *-----------------------------------------------------------------------
  */
@@ -1087,21 +1153,19 @@ BRegion::Support::miRegionOp(
  *	    BRegion* Union
  *====================================================================*/
 
-/*-
- *-----------------------------------------------------------------------
- * miUnionNonO --
- *	Handle a non-overlapping band for the union operation. Just
- *	Adds the rectangles into the region. Doesn't have to check for
- *	subsumption or anything.
+/**
+ * @brief Non-overlap-band callback for XUnionRegion().
  *
- * Results:
- *	None.
+ * Appends each rectangle in the band [r, rEnd) directly to \a pReg with the
+ * supplied vertical extent [\a top, \a bottom).  No subsumption check is
+ * needed because in a union all non-overlapping area is always included.
  *
- * Side Effects:
- *	pReg->fCount is incremented and the final rectangles overwritten
- *	with the rectangles we're passed.
- *
- *-----------------------------------------------------------------------
+ * @param pReg   Destination region being built.
+ * @param r      First rectangle of the non-overlapping band.
+ * @param rEnd   One past the last rectangle of the band.
+ * @param top    Top y coordinate of the band.
+ * @param bottom Bottom y coordinate of the band (exclusive).
+ * @return 0 (lint).
  */
 int
 BRegion::Support::miUnionNonO(BRegion* pReg,
@@ -1129,22 +1193,23 @@ BRegion::Support::miUnionNonO(BRegion* pReg,
 }
 
 
-/*-
- *-----------------------------------------------------------------------
- * miUnionO --
- *	Handle an overlapping band for the union operation. Picks the
- *	left-most rectangle each time and merges it into the region.
+/**
+ * @brief Overlap-band callback for XUnionRegion().
  *
- * Results:
- *	None.
+ * Merges rectangles from both bands into \a pReg by always picking the
+ * left-most leading edge.  Adjacent or overlapping rectangles within the
+ * merged band are coalesced horizontally via the MERGERECT macro so that
+ * the band contains the minimum number of non-touching rectangles.
  *
- * Side Effects:
- *	Rectangles are overwritten in pReg->fData and pReg->fCount will
- *	be changed.
- *
- *-----------------------------------------------------------------------
+ * @param pReg   Destination region being built.
+ * @param r1     First rectangle of the current band in region 1.
+ * @param r1End  One past the last rectangle of the current band in region 1.
+ * @param r2     First rectangle of the current band in region 2.
+ * @param r2End  One past the last rectangle of the current band in region 2.
+ * @param top    Top y coordinate of the current band.
+ * @param bottom Bottom y coordinate of the current band (exclusive).
+ * @return 0 (lint).
  */
-
 int
 BRegion::Support::miUnionO (
     BRegion*	pReg,
@@ -1211,6 +1276,23 @@ BRegion::Support::miUnionO (
     return 0;	/* lint */
 }
 
+/**
+ * @brief Compute the union of two regions and store the result in \a newReg.
+ *
+ * Several fast paths are checked before the general miRegionOp() path:
+ *  - same pointer or empty reg1: copy reg2.
+ *  - empty reg2: copy reg1.
+ *  - reg1 subsumes reg2 (single rect): copy reg1.
+ *  - reg2 subsumes reg1 (single rect): copy reg2.
+ *
+ * After the general operation fBounds is set to the bounding box of
+ * both source regions' bounds (always correct for a union).
+ *
+ * @param reg1   First source region.
+ * @param reg2   Second source region.
+ * @param newReg Destination region (may alias reg1 or reg2).
+ * @return 1 always.
+ */
 int
 BRegion::Support::XUnionRegion(
     const BRegion* 	  reg1,
@@ -1283,19 +1365,19 @@ BRegion::Support::XUnionRegion(
  * 	    	  BRegion* Subtraction
  *====================================================================*/
 
-/*-
- *-----------------------------------------------------------------------
- * miSubtractNonO --
- *	Deal with non-overlapping band for subtraction. Any parts from
- *	region 2 we discard. Anything from region 1 we add to the region.
+/**
+ * @brief Non-overlap-band callback for the minuend side of XSubtractRegion().
  *
- * Results:
- *	None.
+ * Appends each rectangle from region 1's non-overlapping band to \a pReg.
+ * Rectangles from region 2's non-overlapping bands are silently discarded
+ * (NULL is passed as nonOverlap2Func in XSubtractRegion()).
  *
- * Side Effects:
- *	pReg may be affected.
- *
- *-----------------------------------------------------------------------
+ * @param pReg   Destination region being built.
+ * @param r      First rectangle of the non-overlapping band from region 1.
+ * @param rEnd   One past the last rectangle of the band.
+ * @param top    Top y coordinate of the band.
+ * @param bottom Bottom y coordinate of the band (exclusive).
+ * @return 0 (lint).
  */
 int
 BRegion::Support::miSubtractNonO1 (
@@ -1329,19 +1411,22 @@ BRegion::Support::miSubtractNonO1 (
     return 0;	/* lint */
 }
 
-/*-
- *-----------------------------------------------------------------------
- * miSubtractO --
- *	Overlapping band subtraction. left is the left-most point not yet
- *	checked.
+/**
+ * @brief Overlap-band callback for XSubtractRegion().
  *
- * Results:
- *	None.
+ * Computes the portions of the current minuend band (r1) that are not
+ * covered by the current subtrahend band (r2) and appends them to \a pReg.
+ * The algorithm maintains a "left fence" that tracks how far right the
+ * current minuend segment has been consumed.
  *
- * Side Effects:
- *	pReg may have rectangles added to it.
- *
- *-----------------------------------------------------------------------
+ * @param pReg   Destination region being built.
+ * @param r1     First rectangle of the current band in the minuend region.
+ * @param r1End  One past the last rectangle of the current minuend band.
+ * @param r2     First rectangle of the current band in the subtrahend region.
+ * @param r2End  One past the last rectangle of the current subtrahend band.
+ * @param top    Top y coordinate of the current band.
+ * @param bottom Bottom y coordinate of the current band (exclusive).
+ * @return 0 (lint).
  */
 int
 BRegion::Support::miSubtractO(
@@ -1477,21 +1562,20 @@ BRegion::Support::miSubtractO(
     return 0;	/* lint */
 }
 
-/*-
- *-----------------------------------------------------------------------
- * miSubtract --
- *	Subtract regS from regM and leave the result in regD.
- *	S stands for subtrahend, M for minuend and D for difference.
+/**
+ * @brief Subtract region \a regS from region \a regM and store the result in \a regD.
  *
- * Results:
- *	true.
+ * Performs a trivial rejection when the minuend is empty, the subtrahend is
+ * empty, or the bounding boxes do not overlap (in which case \a regM is copied
+ * to \a regD unchanged).  Otherwise delegates to miRegionOp() with
+ * miSubtractO() and miSubtractNonO1() and then recomputes fBounds via
+ * miSetExtents().
  *
- * Side Effects:
- *	regD is overwritten.
- *
- *-----------------------------------------------------------------------
+ * @param regM Minuend region (the region being subtracted from).
+ * @param regS Subtrahend region (the region to subtract).
+ * @param regD Destination region for the difference (may alias regM or regS).
+ * @return 1 always.
  */
-
 int
 BRegion::Support::XSubtractRegion(
     const BRegion* 	  	regM,
@@ -1520,6 +1604,18 @@ BRegion::Support::XSubtractRegion(
     return 1;
 }
 
+/**
+ * @brief Compute the symmetric difference (XOR) of two regions.
+ *
+ * Calculates (sra - srb) union (srb - sra) using two temporary regions.
+ * The result contains all pixels that are in exactly one of the two source
+ * regions.
+ *
+ * @param sra First source region.
+ * @param srb Second source region.
+ * @param dr  Destination region for the symmetric difference.
+ * @return 0 on success; 0 also on allocation failure (result will be empty).
+ */
 int
 BRegion::Support::XXorRegion(const BRegion* sra, const BRegion* srb,
 	BRegion* dr)
@@ -1542,6 +1638,18 @@ BRegion::Support::XXorRegion(const BRegion* sra, const BRegion* srb,
 }
 
 
+/**
+ * @brief Test whether a point lies inside a region.
+ *
+ * Performs an INBOX check against the bounding box first, then linearly
+ * scans the rectangle array.  A binary search by y is noted as a
+ * future optimisation.
+ *
+ * @param pRegion Region to test.
+ * @param x       X coordinate of the point to test.
+ * @param y       Y coordinate of the point to test.
+ * @return true if (x, y) is inside any rectangle of \a pRegion, false otherwise.
+ */
 bool
 BRegion::Support::XPointInRegion(
     const BRegion* pRegion,
@@ -1562,6 +1670,21 @@ BRegion::Support::XPointInRegion(
     return false;
 }
 
+/**
+ * @brief Determine the containment relationship between a rectangle and a region.
+ *
+ * Scans the y-x-banded rectangle array to classify \a rect as:
+ *  - RectangleOut  — no part of rect is inside the region.
+ *  - RectanglePart — rect partially overlaps the region.
+ *  - RectangleIn   — rect is completely contained within the region.
+ *
+ * The algorithm uses a two-flag approach (partIn / partOut) and bails out
+ * early as soon as both flags are set.
+ *
+ * @param region Region to test against.
+ * @param rect   Rectangle to classify.
+ * @return RectangleOut, RectanglePart, or RectangleIn.
+ */
 int
 BRegion::Support::XRectInRegion(
     const BRegion* region,

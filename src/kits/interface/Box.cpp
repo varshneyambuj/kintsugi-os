@@ -1,13 +1,41 @@
 /*
- * Copyright 2001-2022 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Marc Flerackers, mflerackers@androme.be
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2022 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Marc Flerackers, mflerackers@androme.be
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file Box.cpp
+ * @brief Implementation of BBox, a decorative grouping container with an optional label
+ *
+ * BBox draws a labeled border around a group of child views. It supports plain
+ * borders, beveled borders, and etched borders, as well as a label that can be
+ * a text string or an arbitrary BView.
+ *
+ * @see BView, BGroupLayout
  */
 
 
@@ -26,23 +54,37 @@
 #include <binary_compatibility/Interface.h>
 
 
+/** @brief Cached layout metrics computed by _ValidateLayoutData(). */
 struct BBox::LayoutData {
 	LayoutData()
 		: valid(false)
 	{
 	}
 
-	BRect	label_box;		// label box (label string or label view); in case
-							// of a label string not including descent
-	BRect	insets;			// insets induced by border and label
-	BSize	min;
-	BSize	max;
-	BSize	preferred;
-	BAlignment alignment;
-	bool	valid;			// validity the other fields
+	BRect	label_box;		/**< @brief Bounding box of the label string or label view;
+	                         *         for a string label, excludes the descent. */
+	BRect	insets;			/**< @brief Per-edge insets induced by the border style and label
+	                         *         height. */
+	BSize	min;            /**< @brief Minimum layout size. */
+	BSize	max;            /**< @brief Maximum layout size. */
+	BSize	preferred;      /**< @brief Preferred layout size. */
+	BAlignment alignment;   /**< @brief Layout alignment derived from child constraints. */
+	bool	valid;			/**< @brief True when the fields above are up to date. */
 };
 
 
+/**
+ * @brief Construct a BBox with a legacy frame rectangle.
+ *
+ * @param frame        The position and size of the box in its parent's
+ *                     coordinate system.
+ * @param name         The view name.
+ * @param resizingMode Combination of B_FOLLOW_* flags.
+ * @param flags        Additional view flags; B_WILL_DRAW and B_FRAME_EVENTS are
+ *                     always added.
+ * @param border       The initial border style (B_FANCY_BORDER by default in
+ *                     the header, but specified explicitly here).
+ */
 BBox::BBox(BRect frame, const char* name, uint32 resizingMode, uint32 flags,
 		border_style border)
 	:
@@ -53,6 +95,16 @@ BBox::BBox(BRect frame, const char* name, uint32 resizingMode, uint32 flags,
 }
 
 
+/**
+ * @brief Construct a layout-aware BBox without an explicit frame.
+ *
+ * @param name   The view name.
+ * @param flags  Additional view flags; B_WILL_DRAW and B_FRAME_EVENTS are
+ *               always added.
+ * @param border The initial border style.
+ * @param child  An optional first child view. If non-NULL it is added
+ *               immediately via AddChild().
+ */
 BBox::BBox(const char* name, uint32 flags, border_style border, BView* child)
 	:
 	BView(name, flags | B_WILL_DRAW | B_FRAME_EVENTS),
@@ -65,6 +117,15 @@ BBox::BBox(const char* name, uint32 flags, border_style border, BView* child)
 }
 
 
+/**
+ * @brief Construct a BBox suitable as a separator or navigational jump target.
+ *
+ * Uses B_NAVIGABLE_JUMP so that Tab navigation can use the box as a
+ * group boundary. No frame is specified; the layout engine sets the size.
+ *
+ * @param border The initial border style.
+ * @param child  An optional first child view.
+ */
 BBox::BBox(border_style border, BView* child)
 	:
 	BView(NULL, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE_JUMP),
@@ -77,6 +138,13 @@ BBox::BBox(border_style border, BView* child)
 }
 
 
+/**
+ * @brief Construct a BBox from an archived BMessage.
+ *
+ * @param archive The archive message produced by Archive().
+ * @see Instantiate()
+ * @see Archive()
+ */
 BBox::BBox(BMessage* archive)
 	:
 	BView(archive),
@@ -86,6 +154,12 @@ BBox::BBox(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroy the BBox.
+ *
+ * Clears the label (freeing the string or deleting the label view) and
+ * releases the cached layout data.
+ */
 BBox::~BBox()
 {
 	_ClearLabel();
@@ -94,6 +168,13 @@ BBox::~BBox()
 }
 
 
+/**
+ * @brief Create a BBox instance from an archived BMessage.
+ *
+ * @param archive The archive message to instantiate from.
+ * @return A newly allocated BBox on success, or NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable*
 BBox::Instantiate(BMessage* archive)
 {
@@ -104,6 +185,18 @@ BBox::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archive the BBox into a BMessage.
+ *
+ * Stores the string label, a flag when a view label is present, and the
+ * border style (only when it differs from B_FANCY_BORDER) in addition to
+ * all data archived by BView.
+ *
+ * @param archive The message to archive into.
+ * @param deep    If true, child views are archived recursively.
+ * @return B_OK on success, or an error code on failure.
+ * @see Instantiate()
+ */
 status_t
 BBox::Archive(BMessage* archive, bool deep) const
 {
@@ -122,6 +215,15 @@ BBox::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Set the border style drawn around the box.
+ *
+ * Immediately invalidates the layout and schedules a redraw when the style
+ * actually changes.
+ *
+ * @param border B_PLAIN_BORDER, B_FANCY_BORDER, or B_NO_BORDER.
+ * @see Border()
+ */
 void
 BBox::SetBorder(border_style border)
 {
@@ -139,6 +241,12 @@ BBox::SetBorder(border_style border)
 }
 
 
+/**
+ * @brief Return the current border style.
+ *
+ * @return The active border_style constant.
+ * @see SetBorder()
+ */
 border_style
 BBox::Border() const
 {
@@ -175,6 +283,16 @@ BBox::InnerFrame()
 }
 
 
+/**
+ * @brief Set the box label to a text string.
+ *
+ * Clears any existing label (string or view), copies the new string, and
+ * invalidates the layout and display.
+ *
+ * @param string The label text, or NULL to remove the label entirely.
+ * @see Label()
+ * @see SetLabel(BView*)
+ */
 void
 BBox::SetLabel(const char* string)
 {
@@ -190,6 +308,18 @@ BBox::SetLabel(const char* string)
 }
 
 
+/**
+ * @brief Set the box label to a BView.
+ *
+ * Clears any existing label, then inserts @a viewLabel as the first child
+ * positioned at (10, 0). The view is sized to its preferred size during the
+ * next layout pass.
+ *
+ * @param viewLabel The view to use as the label, or NULL to remove the label.
+ * @return B_OK always.
+ * @see LabelView()
+ * @see SetLabel(const char*)
+ */
 status_t
 BBox::SetLabel(BView* viewLabel)
 {
@@ -210,6 +340,13 @@ BBox::SetLabel(BView* viewLabel)
 }
 
 
+/**
+ * @brief Return the current string label.
+ *
+ * @return The label string, or NULL if no string label is set (including when
+ *         a view label is in use).
+ * @see SetLabel(const char*)
+ */
 const char*
 BBox::Label() const
 {
@@ -217,6 +354,12 @@ BBox::Label() const
 }
 
 
+/**
+ * @brief Return the current view label.
+ *
+ * @return The label BView, or NULL if no view label is set.
+ * @see SetLabel(BView*)
+ */
 BView*
 BBox::LabelView() const
 {
@@ -224,6 +367,15 @@ BBox::LabelView() const
 }
 
 
+/**
+ * @brief Draw the box border and label within the given update rectangle.
+ *
+ * Clips out the label area before drawing the border so that the border does
+ * not overwrite the label. After the border is drawn, the clip is removed and
+ * the label string is rendered (if any).
+ *
+ * @param updateRect The portion of the view that requires redrawing.
+ */
 void
 BBox::Draw(BRect updateRect)
 {
@@ -272,6 +424,13 @@ BBox::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Hook called when the box is attached to a window.
+ *
+ * Adopts the parent's colors and ensures the low color matches the view color
+ * so that the label background is drawn correctly. Switches to system colors
+ * when the view color is transparent.
+ */
 void
 BBox::AttachedToWindow()
 {
@@ -294,6 +453,11 @@ BBox::AttachedToWindow()
 }
 
 
+/**
+ * @brief Hook called when the box is removed from its window.
+ *
+ * Delegates directly to BView::DetachedFromWindow().
+ */
 void
 BBox::DetachedFromWindow()
 {
@@ -301,6 +465,11 @@ BBox::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Hook called after all views in the hierarchy have been attached.
+ *
+ * Delegates directly to BView::AllAttached().
+ */
 void
 BBox::AllAttached()
 {
@@ -308,6 +477,11 @@ BBox::AllAttached()
 }
 
 
+/**
+ * @brief Hook called after all views in the hierarchy have been detached.
+ *
+ * Delegates directly to BView::AllDetached().
+ */
 void
 BBox::AllDetached()
 {
@@ -315,6 +489,16 @@ BBox::AllDetached()
 }
 
 
+/**
+ * @brief Hook called when the box's frame is resized.
+ *
+ * Invalidates only the border strips along the edges that changed size,
+ * avoiding a full redraw. Updates the cached bounds snapshot for future
+ * comparisons.
+ *
+ * @param width  The new width of the box in pixels.
+ * @param height The new height of the box in pixels.
+ */
 void
 BBox::FrameResized(float width, float height)
 {
@@ -362,6 +546,13 @@ BBox::FrameResized(float width, float height)
 }
 
 
+/**
+ * @brief Handle an incoming message.
+ *
+ * Delegates directly to BView::MessageReceived().
+ *
+ * @param message The message to process.
+ */
 void
 BBox::MessageReceived(BMessage* message)
 {
@@ -369,6 +560,13 @@ BBox::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a mouse-button-down event.
+ *
+ * Delegates directly to BView::MouseDown().
+ *
+ * @param point The cursor position in view coordinates.
+ */
 void
 BBox::MouseDown(BPoint point)
 {
@@ -376,6 +574,13 @@ BBox::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Handle a mouse-button-up event.
+ *
+ * Delegates directly to BView::MouseUp().
+ *
+ * @param point The cursor position in view coordinates.
+ */
 void
 BBox::MouseUp(BPoint point)
 {
@@ -383,6 +588,13 @@ BBox::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Hook called when the parent window gains or loses activation.
+ *
+ * Delegates directly to BView::WindowActivated().
+ *
+ * @param active True if the window became active, false if it lost activation.
+ */
 void
 BBox::WindowActivated(bool active)
 {
@@ -390,6 +602,16 @@ BBox::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Handle cursor movement events.
+ *
+ * Delegates directly to BView::MouseMoved().
+ *
+ * @param point   The current cursor position in view coordinates.
+ * @param transit One of B_ENTERED_VIEW, B_INSIDE_VIEW, B_EXITED_VIEW, or
+ *                B_OUTSIDE_VIEW.
+ * @param message The drag-and-drop message, or NULL.
+ */
 void
 BBox::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 {
@@ -397,6 +619,13 @@ BBox::MouseMoved(BPoint point, uint32 transit, const BMessage* message)
 }
 
 
+/**
+ * @brief Hook called when the box's frame position changes.
+ *
+ * Delegates directly to BView::FrameMoved().
+ *
+ * @param newLocation The new top-left corner in the parent's coordinate system.
+ */
 void
 BBox::FrameMoved(BPoint newLocation)
 {
@@ -404,6 +633,18 @@ BBox::FrameMoved(BPoint newLocation)
 }
 
 
+/**
+ * @brief Resolve a scripting specifier to a target handler.
+ *
+ * Delegates directly to BView::ResolveSpecifier().
+ *
+ * @param message   The scripting message.
+ * @param index     The specifier index.
+ * @param specifier The current specifier message.
+ * @param what      The specifier form constant.
+ * @param property  The property name string.
+ * @return The handler that should process the scripting message.
+ */
 BHandler*
 BBox::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 what, const char* property)
@@ -412,6 +653,12 @@ BBox::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/**
+ * @brief Resize the box to its preferred size, never making it smaller.
+ *
+ * Computes the preferred size, clamps it so that the box is not made smaller
+ * than its current dimensions, and calls BView::ResizeTo().
+ */
 void
 BBox::ResizeToPreferred()
 {
@@ -428,6 +675,14 @@ BBox::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Return the preferred width and height of the box.
+ *
+ * Validates cached layout data and returns the stored preferred size.
+ *
+ * @param _width  Set to the preferred width in pixels, or left unchanged if NULL.
+ * @param _height Set to the preferred height in pixels, or left unchanged if NULL.
+ */
 void
 BBox::GetPreferredSize(float* _width, float* _height)
 {
@@ -440,6 +695,13 @@ BBox::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Set or remove keyboard focus for this box.
+ *
+ * Delegates directly to BView::MakeFocus().
+ *
+ * @param focused True to give focus, false to relinquish it.
+ */
 void
 BBox::MakeFocus(bool focused)
 {
@@ -447,6 +709,14 @@ BBox::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Fill a BMessage with the scripting suites this object supports.
+ *
+ * Delegates directly to BView::GetSupportedSuites().
+ *
+ * @param message The message to populate.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BBox::GetSupportedSuites(BMessage* message)
 {
@@ -454,6 +724,17 @@ BBox::GetSupportedSuites(BMessage* message)
 }
 
 
+/**
+ * @brief Dispatch a binary-compatibility perform code.
+ *
+ * Handles perform codes for MinSize, MaxSize, PreferredSize, LayoutAlignment,
+ * HasHeightForWidth, GetHeightForWidth, SetLayout, LayoutInvalidated, and
+ * DoLayout. Unrecognized codes are forwarded to BView::Perform().
+ *
+ * @param code  The perform code constant (PERFORM_CODE_*).
+ * @param _data Pointer to the code-specific data structure.
+ * @return B_OK for recognized codes, or the result from BView::Perform().
+ */
 status_t
 BBox::Perform(perform_code code, void* _data)
 {
@@ -510,6 +791,14 @@ BBox::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Return the minimum layout size of the box.
+ *
+ * Incorporates the minimum size imposed by the label width and border
+ * insets, then composes with any explicit minimum set by the caller.
+ *
+ * @return The smallest BSize the layout engine may assign to this box.
+ */
 BSize
 BBox::MinSize()
 {
@@ -522,6 +811,11 @@ BBox::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum layout size of the box.
+ *
+ * @return The largest BSize the layout engine should assign to this box.
+ */
 BSize
 BBox::MaxSize()
 {
@@ -532,6 +826,12 @@ BBox::MaxSize()
 }
 
 
+/**
+ * @brief Return the preferred layout size of the box.
+ *
+ * @return The ideal BSize as determined by the child layout or cached data,
+ *         composed with any explicit preferred size.
+ */
 BSize
 BBox::PreferredSize()
 {
@@ -543,6 +843,14 @@ BBox::PreferredSize()
 }
 
 
+/**
+ * @brief Return the layout alignment of the box.
+ *
+ * Derives the alignment from the child layout or the cached default, then
+ * composes it with any explicit alignment set on this view.
+ *
+ * @return The BAlignment the layout engine should use for this box.
+ */
 BAlignment
 BBox::LayoutAlignment()
 {
@@ -554,6 +862,12 @@ BBox::LayoutAlignment()
 }
 
 
+/**
+ * @brief Mark cached layout data as invalid when the layout is invalidated.
+ *
+ * @param descendants True when child layouts were also invalidated (unused
+ *                    here but required by the BView override signature).
+ */
 void
 BBox::LayoutInvalidated(bool descendants)
 {
@@ -561,6 +875,15 @@ BBox::LayoutInvalidated(bool descendants)
 }
 
 
+/**
+ * @brief Perform a layout pass, positioning the label view and the child view.
+ *
+ * When a BLayout is set, the base class handles child views. The label view
+ * is temporarily removed from the child list so the layout engine does not
+ * try to size it, then re-added afterwards. The label view is always moved to
+ * its computed position regardless. When no layout is set, the single non-label
+ * child is positioned within the inset rectangle.
+ */
 void
 BBox::DoLayout()
 {
@@ -631,6 +954,17 @@ BBox::operator=(const BBox &)
 }
 
 
+/**
+ * @brief Perform one-time initialization shared by all constructors.
+ *
+ * Snapshots the initial bounds, zeroes the label pointers, allocates the
+ * LayoutData structure, applies the bold font family and size defaults (unless
+ * overridden by the archive), reads label and style from the archive when
+ * provided, and adopts system colors.
+ *
+ * @param archive Optional archive message from which to restore label and
+ *                style. Pass NULL (the default) when constructing fresh.
+ */
 void
 BBox::_InitObject(BMessage* archive)
 {
@@ -675,6 +1009,16 @@ BBox::_InitObject(BMessage* archive)
 }
 
 
+/**
+ * @brief Render the box using a plain single-pixel border.
+ *
+ * When the box has zero width or height it is drawn as a separator line.
+ * Otherwise four lines are drawn with a light top-left bevel and a dark
+ * bottom-right shadow.
+ *
+ * @param labelBox The area occupied by the label, used to set the top of the
+ *                 border rectangle correctly via TopBorderOffset().
+ */
 void
 BBox::_DrawPlain(BRect labelBox)
 {
@@ -711,6 +1055,16 @@ BBox::_DrawPlain(BRect labelBox)
 }
 
 
+/**
+ * @brief Render the box using the fancy (etched) border style.
+ *
+ * Delegates to be_control_look->DrawGroupFrame(). When the box is exactly
+ * one pixel tall or wide, only the corresponding single border side is drawn
+ * so the box can serve as a horizontal or vertical separator.
+ *
+ * @param labelBox The area occupied by the label; used to set the top of the
+ *                 border rectangle via TopBorderOffset().
+ */
 void
 BBox::_DrawFancy(BRect labelBox)
 {
@@ -733,6 +1087,12 @@ BBox::_DrawFancy(BRect labelBox)
 }
 
 
+/**
+ * @brief Release the current label, whether string or view.
+ *
+ * Frees the string with free() when a string label is set, or removes,
+ * deletes, and NULLs the label view when a view label is set.
+ */
 void
 BBox::_ClearLabel()
 {
@@ -747,6 +1107,14 @@ BBox::_ClearLabel()
 }
 
 
+/**
+ * @brief Return the first child that is not the label view.
+ *
+ * Iterates through the child list and returns the first BView that is not
+ * fLabelView, or NULL when no such child exists.
+ *
+ * @return The primary content child, or NULL.
+ */
 BView*
 BBox::_Child() const
 {
@@ -759,6 +1127,16 @@ BBox::_Child() const
 }
 
 
+/**
+ * @brief Recompute cached layout metrics when they are out of date.
+ *
+ * Calculates the label bounding box, per-edge insets induced by the border
+ * style and label height, and the minimum, maximum, and preferred sizes.
+ * Also derives the layout alignment from the child's constraints. Results are
+ * stored in fLayoutData and the valid flag is set to true.
+ *
+ * @note This is a no-op when fLayoutData->valid is already true.
+ */
 void
 BBox::_ValidateLayoutData()
 {
@@ -865,4 +1243,3 @@ B_IF_GCC_2(InvalidateLayout__4BBoxb, _ZN4BBox16InvalidateLayoutEb)(
 
 	box->Perform(PERFORM_CODE_LAYOUT_INVALIDATED, &data);
 }
-

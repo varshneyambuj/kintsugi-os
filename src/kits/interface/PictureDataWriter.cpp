@@ -1,12 +1,41 @@
 /*
- * Copyright 2006-2018 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stefano Ceccherini, stefano.ceccherini@gmail.com
- *		Julian Harnath, <julian.harnath@rwth-achen.de>
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2018 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini, stefano.ceccherini@gmail.com
+ *       Julian Harnath, <julian.harnath@rwth-achen.de>
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
+
+
+/**
+ * @file PictureDataWriter.cpp
+ * @brief Implementation of PictureDataWriter, the serializer for BPicture data
+ *
+ * PictureDataWriter encodes drawing operations into the binary stream format used
+ * by BPicture. It is used by the BView drawing implementation to record commands
+ * into an active picture.
+ *
+ * @see BPicture, BView
+ */
+
 
 #include <PictureDataWriter.h>
 
@@ -21,12 +50,20 @@
 
 #include <PictureProtocol.h>
 
+/** @brief Throws @a error as a status_t exception, aborting the current operation. */
 #define THROW_ERROR(error) throw (status_t)(error)
 
 
 // TODO: Review writing of strings. AFAIK in the picture data format
 // They are not supposed to be NULL terminated
 // (at least, it's not mandatory) so we should write their size too.
+
+/**
+ * @brief Default constructor; creates an uninitialized writer with no target stream.
+ *
+ * Call SetTo() before using any Write* methods, otherwise they will return
+ * B_NO_INIT.
+ */
 PictureDataWriter::PictureDataWriter()
 	:
 	fData(NULL)
@@ -34,6 +71,12 @@ PictureDataWriter::PictureDataWriter()
 }
 
 
+/**
+ * @brief Constructs the writer and attaches it to the given data stream.
+ *
+ * @param data The BPositionIO stream that will receive serialized picture
+ *             opcodes. Must remain valid for the lifetime of this object.
+ */
 PictureDataWriter::PictureDataWriter(BPositionIO* data)
 	:
 	fData(data)
@@ -41,11 +84,23 @@ PictureDataWriter::PictureDataWriter(BPositionIO* data)
 }
 
 
+/**
+ * @brief Destructor.
+ *
+ * Releases no stream ownership; the caller remains responsible for the
+ * lifetime of the BPositionIO passed to the constructor or SetTo().
+ */
 PictureDataWriter::~PictureDataWriter()
 {
 }
 
 
+/**
+ * @brief Attaches the writer to a new target stream, replacing any previous one.
+ *
+ * @param data The BPositionIO stream to write picture data into. Must not be NULL.
+ * @return B_OK on success, or B_BAD_VALUE if @a data is NULL.
+ */
 status_t
 PictureDataWriter::SetTo(BPositionIO* data)
 {
@@ -58,6 +113,12 @@ PictureDataWriter::SetTo(BPositionIO* data)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_ORIGIN opcode that shifts the drawing origin.
+ *
+ * @param point The new origin point, relative to the current coordinate system.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetOrigin(const BPoint& point)
 {
@@ -73,6 +134,15 @@ PictureDataWriter::WriteSetOrigin(const BPoint& point)
 }
 
 
+/**
+ * @brief Records an invert-rectangle operation using B_OP_INVERT drawing mode.
+ *
+ * Pushes the current drawing state, switches to B_OP_INVERT, emits a
+ * B_PIC_FILL_RECT opcode for @a rect, then restores the prior state.
+ *
+ * @param rect The rectangle whose pixels are to be inverted.
+ * @return B_OK on success, or an error code if any write step fails.
+ */
 status_t
 PictureDataWriter::WriteInvertRect(const BRect& rect)
 {
@@ -93,6 +163,12 @@ PictureDataWriter::WriteInvertRect(const BRect& rect)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_DRAWING_MODE opcode that sets the drawing mode.
+ *
+ * @param mode The drawing mode to apply to subsequent drawing operations.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetDrawingMode(const drawing_mode& mode)
 {
@@ -108,6 +184,12 @@ PictureDataWriter::WriteSetDrawingMode(const drawing_mode& mode)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_PEN_LOCATION opcode that repositions the pen.
+ *
+ * @param point The new pen location in the current coordinate system.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetPenLocation(const BPoint& point)
 {
@@ -123,6 +205,12 @@ PictureDataWriter::WriteSetPenLocation(const BPoint& point)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_PEN_SIZE opcode that sets the stroke width.
+ *
+ * @param penSize The pen (stroke) width in pixels.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetPenSize(const float& penSize)
 {
@@ -138,6 +226,15 @@ PictureDataWriter::WriteSetPenSize(const float& penSize)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_LINE_MODE opcode for line-cap, join, and miter limit.
+ *
+ * @param cap        The line-cap style (butt, round, or square).
+ * @param join       The line-join style (miter, round, or bevel).
+ * @param miterLimit The maximum ratio of miter length to stroke width before
+ *                   a miter join is beveled.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetLineMode(const cap_mode& cap, const join_mode& join,
 	const float& miterLimit)
@@ -156,6 +253,13 @@ PictureDataWriter::WriteSetLineMode(const cap_mode& cap, const join_mode& join,
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FILL_RULE opcode that controls how overlapping
+ *        sub-paths are filled.
+ *
+ * @param fillRule The fill rule constant (e.g. B_EVEN_ODD or B_NONZERO).
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFillRule(int32 fillRule)
 {
@@ -171,6 +275,15 @@ PictureDataWriter::WriteSetFillRule(int32 fillRule)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_BLENDING_MODE opcode for alpha compositing.
+ *
+ * @param srcAlpha  The source-alpha formula (how the source pixel's alpha
+ *                  is interpreted).
+ * @param alphaFunc The alpha compositing function applied when blending source
+ *                  and destination pixels.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetBlendingMode(source_alpha srcAlpha, alpha_function alphaFunc)
 {
@@ -187,6 +300,12 @@ PictureDataWriter::WriteSetBlendingMode(source_alpha srcAlpha, alpha_function al
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_SCALE opcode that sets a uniform scaling factor.
+ *
+ * @param scale The uniform scale factor applied to subsequent drawing operations.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetScale(const float& scale)
 {
@@ -202,6 +321,16 @@ PictureDataWriter::WriteSetScale(const float& scale)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_TRANSFORM opcode that replaces the current
+ *        affine transformation matrix.
+ *
+ * The six elements of @a transform (sx, shy, shx, sy, tx, ty) are written
+ * as consecutive doubles.
+ *
+ * @param transform The affine transformation to record.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetTransform(const BAffineTransform& transform)
 {
@@ -217,6 +346,13 @@ PictureDataWriter::WriteSetTransform(const BAffineTransform& transform)
 }
 
 
+/**
+ * @brief Records a B_PIC_AFFINE_TRANSLATE opcode that appends a translation.
+ *
+ * @param x Horizontal translation distance in the current coordinate system.
+ * @param y Vertical translation distance in the current coordinate system.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteTranslateBy(double x, double y)
 {
@@ -233,6 +369,13 @@ PictureDataWriter::WriteTranslateBy(double x, double y)
 }
 
 
+/**
+ * @brief Records a B_PIC_AFFINE_SCALE opcode that appends a non-uniform scale.
+ *
+ * @param x Horizontal scale factor.
+ * @param y Vertical scale factor.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteScaleBy(double x, double y)
 {
@@ -249,6 +392,12 @@ PictureDataWriter::WriteScaleBy(double x, double y)
 }
 
 
+/**
+ * @brief Records a B_PIC_AFFINE_ROTATE opcode that appends a rotation.
+ *
+ * @param angleRadians The rotation angle in radians, measured counter-clockwise.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteRotateBy(double angleRadians)
 {
@@ -264,6 +413,12 @@ PictureDataWriter::WriteRotateBy(double angleRadians)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_STIPLE_PATTERN opcode that sets the fill/stroke pattern.
+ *
+ * @param pattern The 8-byte stipple pattern to apply to subsequent drawing operations.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetPattern(const ::pattern& pattern)
 {
@@ -279,6 +434,16 @@ PictureDataWriter::WriteSetPattern(const ::pattern& pattern)
 }
 
 
+/**
+ * @brief Records a B_PIC_CLIP_TO_PICTURE opcode that clips the drawing to a
+ *        previously recorded picture.
+ *
+ * @param pictureToken The token identifying the picture to use as the clip mask.
+ * @param origin       The offset applied to the picture clip shape.
+ * @param inverse      If true, the clip is inverted (drawing occurs outside the picture).
+ * @return B_OK on success, or an error code if the write fails.
+ * @note Compatibility with the R5 BPicture clip format has not been confirmed.
+ */
 status_t
 PictureDataWriter::WriteClipToPicture(int32 pictureToken,
 						const BPoint& origin, bool inverse)
@@ -298,6 +463,17 @@ PictureDataWriter::WriteClipToPicture(int32 pictureToken,
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_CLIPPING_RECTS opcode that constrains drawing to
+ *        a region.
+ *
+ * Writes the bounding rectangle of @a region followed by each individual
+ * clipping rectangle it contains.
+ *
+ * @param region The clipping region; its rectangles are serialized as
+ *               clipping_rect values.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetClipping(const BRegion& region)
 {
@@ -317,6 +493,14 @@ PictureDataWriter::WriteSetClipping(const BRegion& region)
 }
 
 
+/**
+ * @brief Records a B_PIC_CLEAR_CLIPPING_RECTS opcode that removes all clipping.
+ *
+ * After this opcode is played back, drawing is unrestricted by any previously
+ * set clipping region.
+ *
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteClearClipping()
 {
@@ -331,6 +515,12 @@ PictureDataWriter::WriteClearClipping()
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FORE_COLOR opcode that sets the high (foreground) color.
+ *
+ * @param color The RGBA color to use as the high color for subsequent operations.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetHighColor(const rgb_color& color)
 {
@@ -346,6 +536,12 @@ PictureDataWriter::WriteSetHighColor(const rgb_color& color)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_BACK_COLOR opcode that sets the low (background) color.
+ *
+ * @param color The RGBA color to use as the low color for subsequent operations.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetLowColor(const rgb_color& color)
 {
@@ -361,6 +557,15 @@ PictureDataWriter::WriteSetLowColor(const rgb_color& color)
 }
 
 
+/**
+ * @brief Records a fill or stroke rectangle opcode.
+ *
+ * Emits either B_PIC_FILL_RECT or B_PIC_STROKE_RECT depending on @a fill.
+ *
+ * @param rect The rectangle to draw.
+ * @param fill If true, the rectangle is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawRect(const BRect& rect, const bool& fill)
 {
@@ -376,6 +581,17 @@ PictureDataWriter::WriteDrawRect(const BRect& rect, const bool& fill)
 }
 
 
+/**
+ * @brief Records a fill or stroke rounded-rectangle opcode.
+ *
+ * Emits either B_PIC_FILL_ROUND_RECT or B_PIC_STROKE_ROUND_RECT depending on
+ * @a fill.
+ *
+ * @param rect   The bounding rectangle of the rounded rectangle.
+ * @param radius The x and y radii of the corner arcs.
+ * @param fill   If true, the shape is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawRoundRect(const BRect& rect, const BPoint& radius,
 	const bool& fill)
@@ -393,6 +609,16 @@ PictureDataWriter::WriteDrawRoundRect(const BRect& rect, const BPoint& radius,
 }
 
 
+/**
+ * @brief Records a fill or stroke ellipse opcode.
+ *
+ * Emits either B_PIC_FILL_ELLIPSE or B_PIC_STROKE_ELLIPSE depending on
+ * @a fill.
+ *
+ * @param rect The bounding rectangle that defines the ellipse.
+ * @param fill If true, the ellipse is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawEllipse(const BRect& rect, const bool& fill)
 {
@@ -408,6 +634,18 @@ PictureDataWriter::WriteDrawEllipse(const BRect& rect, const bool& fill)
 }
 
 
+/**
+ * @brief Records a fill or stroke arc opcode.
+ *
+ * Emits either B_PIC_FILL_ARC or B_PIC_STROKE_ARC depending on @a fill.
+ *
+ * @param center     The center point of the ellipse that defines the arc.
+ * @param radius     The x and y radii of the ellipse.
+ * @param startTheta The starting angle of the arc in degrees.
+ * @param arcTheta   The angular span of the arc in degrees.
+ * @param fill       If true, the arc is filled as a pie wedge; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawArc(const BPoint& center, const BPoint& radius,
 	const float& startTheta, const float& arcTheta, const bool& fill)
@@ -427,6 +665,20 @@ PictureDataWriter::WriteDrawArc(const BPoint& center, const BPoint& radius,
 }
 
 
+/**
+ * @brief Records a fill or stroke polygon opcode.
+ *
+ * Emits either B_PIC_FILL_POLYGON or B_PIC_STROKE_POLYGON depending on
+ * @a fill.  For stroked polygons, an additional byte encodes whether the
+ * last vertex should be connected back to the first.
+ *
+ * @param numPoints The number of vertices in @a points.
+ * @param points    Array of polygon vertices.
+ * @param isClosed  For stroke mode only: if true, a closing segment is drawn
+ *                  from the last point back to the first.
+ * @param fill      If true, the polygon is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawPolygon(const int32& numPoints, BPoint* points,
 	const bool& isClosed, const bool& fill)
@@ -449,6 +701,18 @@ PictureDataWriter::WriteDrawPolygon(const int32& numPoints, BPoint* points,
 }
 
 
+/**
+ * @brief Records a fill or stroke cubic Bezier curve opcode.
+ *
+ * Emits either B_PIC_FILL_BEZIER or B_PIC_STROKE_BEZIER depending on
+ * @a fill. The four control points are written in order.
+ *
+ * @param points Array of exactly four BPoint values: the start point, two
+ *               control points, and the end point.
+ * @param fill   If true, the closed Bezier region is filled; otherwise it is
+ *               stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawBezier(const BPoint points[4], const bool& fill)
 {
@@ -466,6 +730,13 @@ PictureDataWriter::WriteDrawBezier(const BPoint points[4], const bool& fill)
 }
 
 
+/**
+ * @brief Records a B_PIC_STROKE_LINE opcode that draws a line segment.
+ *
+ * @param start The starting point of the line.
+ * @param end   The ending point of the line.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteStrokeLine(const BPoint& start, const BPoint& end)
 {
@@ -482,6 +753,19 @@ PictureDataWriter::WriteStrokeLine(const BPoint& start, const BPoint& end)
 }
 
 
+/**
+ * @brief Records a B_PIC_DRAW_STRING opcode for a string at a specific location.
+ *
+ * First emits a B_PIC_SET_PEN_LOCATION to position the pen at @a where, then
+ * writes the string data together with escapement delta values.
+ *
+ * @param where       The baseline origin for the text.
+ * @param string      The raw character data to render; need not be NUL-terminated
+ *                    within the recorded range.
+ * @param length      The number of bytes from @a string to write.
+ * @param escapement  Per-character spacing adjustments for space and non-space glyphs.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawString(const BPoint& where, const char* string,
 	const int32& length, const escapement_delta& escapement)
@@ -505,6 +789,16 @@ PictureDataWriter::WriteDrawString(const BPoint& where, const char* string,
 }
 
 
+/**
+ * @brief Records a B_PIC_DRAW_STRING_LOCATIONS opcode that draws each glyph
+ *        at an individual position.
+ *
+ * @param string        The raw character data to render.
+ * @param length        The number of bytes from @a string to write.
+ * @param locations     Array of per-glyph baseline origin points.
+ * @param locationCount The number of entries in @a locations.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawString(const char* string,
 	int32 length, const BPoint* locations, int32 locationCount)
@@ -526,6 +820,20 @@ PictureDataWriter::WriteDrawString(const char* string,
 }
 
 
+/**
+ * @brief Records a fill or stroke shape opcode defined by a BShape op/point list.
+ *
+ * Emits either B_PIC_FILL_SHAPE or B_PIC_STROKE_SHAPE depending on @a fill.
+ * The shape is encoded as a pair of parallel arrays: an array of uint32 opcodes
+ * and an array of BPoint coordinates.
+ *
+ * @param opCount Number of entries in @a opList.
+ * @param opList  Array of BShape opcodes (uint32 each).
+ * @param ptCount Number of entries in @a ptList.
+ * @param ptList  Array of BPoint coordinates referenced by the opcodes.
+ * @param fill    If true, the shape is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawShape(const int32& opCount, const void* opList,
 	const int32& ptCount, const void* ptList, const bool& fill)
@@ -545,6 +853,17 @@ PictureDataWriter::WriteDrawShape(const int32& opCount, const void* opList,
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient rectangle opcode.
+ *
+ * Emits either B_PIC_FILL_RECT_GRADIENT or B_PIC_STROKE_RECT_GRADIENT and
+ * flattens the gradient into the stream immediately after the rect.
+ *
+ * @param rect     The rectangle to draw.
+ * @param gradient The gradient to use for filling or stroking.
+ * @param fill     If true, the rectangle is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawRectGradient(const BRect& rect, const BGradient& gradient, const bool& fill)
 {
@@ -561,6 +880,18 @@ PictureDataWriter::WriteDrawRectGradient(const BRect& rect, const BGradient& gra
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient rounded-rectangle opcode.
+ *
+ * Emits either B_PIC_FILL_ROUND_RECT_GRADIENT or
+ * B_PIC_STROKE_ROUND_RECT_GRADIENT and flattens the gradient into the stream.
+ *
+ * @param rect     The bounding rectangle of the rounded rectangle.
+ * @param radius   The x and y corner radii.
+ * @param gradient The gradient to use for filling or stroking.
+ * @param fill     If true, the shape is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawRoundRectGradient(const BRect& rect, const BPoint& radius, const BGradient& gradient,
 	const bool& fill)
@@ -579,6 +910,17 @@ PictureDataWriter::WriteDrawRoundRectGradient(const BRect& rect, const BPoint& r
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient cubic Bezier curve opcode.
+ *
+ * Emits either B_PIC_FILL_BEZIER_GRADIENT or B_PIC_STROKE_BEZIER_GRADIENT and
+ * flattens the gradient into the stream after the four control points.
+ *
+ * @param points   Array of exactly four control points defining the curve.
+ * @param gradient The gradient to use for filling or stroking.
+ * @param fill     If true, the closed region is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawBezierGradient(const BPoint points[4], const BGradient& gradient, const bool& fill)
 {
@@ -597,6 +939,20 @@ PictureDataWriter::WriteDrawBezierGradient(const BPoint points[4], const BGradie
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient arc opcode.
+ *
+ * Emits either B_PIC_FILL_ARC_GRADIENT or B_PIC_STROKE_ARC_GRADIENT and
+ * flattens the gradient into the stream after the arc parameters.
+ *
+ * @param center     The center of the ellipse defining the arc.
+ * @param radius     The x and y radii of the ellipse.
+ * @param startTheta The starting angle of the arc in degrees.
+ * @param arcTheta   The angular span of the arc in degrees.
+ * @param gradient   The gradient to use for filling or stroking.
+ * @param fill       If true, the arc wedge is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawArcGradient(const BPoint& center, const BPoint& radius,
 	const float& startTheta, const float& arcTheta, const BGradient& gradient, const bool& fill)
@@ -617,6 +973,17 @@ PictureDataWriter::WriteDrawArcGradient(const BPoint& center, const BPoint& radi
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient ellipse opcode.
+ *
+ * Emits either B_PIC_FILL_ELLIPSE_GRADIENT or B_PIC_STROKE_ELLIPSE_GRADIENT
+ * and flattens the gradient into the stream after the bounding rectangle.
+ *
+ * @param rect     The bounding rectangle defining the ellipse.
+ * @param gradient The gradient to use for filling or stroking.
+ * @param fill     If true, the ellipse is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawEllipseGradient(const BRect& rect, const BGradient& gradient, const bool& fill)
 {
@@ -633,6 +1000,20 @@ PictureDataWriter::WriteDrawEllipseGradient(const BRect& rect, const BGradient& 
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient polygon opcode.
+ *
+ * Emits either B_PIC_FILL_POLYGON_GRADIENT or B_PIC_STROKE_POLYGON_GRADIENT.
+ * For stroked polygons, an extra byte encodes the closed flag before the
+ * flattened gradient.
+ *
+ * @param numPoints The number of vertices in @a points.
+ * @param points    Array of polygon vertices.
+ * @param isClosed  For stroke mode only: if true, a closing segment is added.
+ * @param gradient  The gradient to use for filling or stroking.
+ * @param fill      If true, the polygon is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawPolygonGradient(const int32& numPoints, BPoint* points,
 	const bool& isClosed, const BGradient& gradient, const bool& fill)
@@ -656,6 +1037,20 @@ PictureDataWriter::WriteDrawPolygonGradient(const int32& numPoints, BPoint* poin
 }
 
 
+/**
+ * @brief Records a fill or stroke gradient shape opcode.
+ *
+ * Emits either B_PIC_FILL_SHAPE_GRADIENT or B_PIC_STROKE_SHAPE_GRADIENT and
+ * flattens the gradient into the stream after the op/point arrays.
+ *
+ * @param opCount  Number of entries in @a opList.
+ * @param opList   Array of BShape opcodes (uint32 each).
+ * @param ptCount  Number of entries in @a ptList.
+ * @param ptList   Array of BPoint coordinates referenced by the opcodes.
+ * @param gradient The gradient to use for filling or stroking.
+ * @param fill     If true, the shape is filled; otherwise it is stroked.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawShapeGradient(const int32& opCount, const void* opList,
 	const int32& ptCount, const void* ptList, const BGradient& gradient, const bool& fill)
@@ -676,6 +1071,15 @@ PictureDataWriter::WriteDrawShapeGradient(const int32& opCount, const void* opLi
 }
 
 
+/**
+ * @brief Records a B_PIC_STROKE_LINE_GRADIENT opcode that strokes a line with
+ *        a gradient.
+ *
+ * @param start    The starting endpoint of the line.
+ * @param end      The ending endpoint of the line.
+ * @param gradient The gradient applied along the stroke.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteStrokeLineGradient(const BPoint& start, const BPoint& end,
 	const BGradient& gradient)
@@ -694,6 +1098,23 @@ PictureDataWriter::WriteStrokeLineGradient(const BPoint& start, const BPoint& en
 }
 
 
+/**
+ * @brief Records a B_PIC_DRAW_PIXELS opcode that blits raw bitmap data.
+ *
+ * The caller must ensure that @a length equals @a height * @a bytesPerRow;
+ * a violation calls debugger() immediately.
+ *
+ * @param srcRect     The sub-rectangle of the source bitmap to copy.
+ * @param dstRect     The destination rectangle in the view's coordinate system.
+ * @param width       The width of the full source bitmap in pixels.
+ * @param height      The height of the full source bitmap in pixels.
+ * @param bytesPerRow The number of bytes per row in the source bitmap.
+ * @param colorSpace  The color space constant (B_RGB32, B_RGBA32, etc.).
+ * @param flags       Bitmap drawing flags (e.g. B_FILTER_BITMAP_BILINEAR).
+ * @param data        Pointer to the raw pixel data buffer.
+ * @param length      Total byte length of @a data; must equal height * bytesPerRow.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteDrawBitmap(const BRect& srcRect, const BRect& dstRect,
 	const int32& width, const int32& height, const int32& bytesPerRow,
@@ -722,6 +1143,15 @@ PictureDataWriter::WriteDrawBitmap(const BRect& srcRect, const BRect& dstRect,
 }
 
 
+/**
+ * @brief Records a B_PIC_DRAW_PICTURE opcode that plays back a nested picture.
+ *
+ * @param where The offset applied to the nested picture's coordinate system.
+ * @param token The server-side token that identifies the nested BPicture.
+ * @return B_OK on success, or an error code if the write fails.
+ * @note The token alone may not be sufficient for archiving or flattening; the
+ *       picture data itself is not embedded by this method.
+ */
 status_t
 PictureDataWriter::WriteDrawPicture(const BPoint& where, const int32& token)
 {
@@ -742,6 +1172,15 @@ PictureDataWriter::WriteDrawPicture(const BPoint& where, const int32& token)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_FAMILY opcode that selects the font family.
+ *
+ * The family name is written with its length (including the NUL terminator)
+ * preceding the string data, matching the BeOS picture format convention.
+ *
+ * @param family The font family name string.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontFamily(const font_family family)
 {
@@ -760,6 +1199,15 @@ PictureDataWriter::WriteSetFontFamily(const font_family family)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_STYLE opcode that selects the font style.
+ *
+ * The style name is written with its length (including the NUL terminator)
+ * preceding the string data, matching the BeOS picture format convention.
+ *
+ * @param style The font style name string (e.g. "Bold", "Italic").
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontStyle(const font_style style)
 {
@@ -778,6 +1226,12 @@ PictureDataWriter::WriteSetFontStyle(const font_style style)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_SPACING opcode that sets character spacing.
+ *
+ * @param spacing The spacing constant (e.g. B_BITMAP_SPACING, B_STRING_SPACING).
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontSpacing(const int32& spacing)
 {
@@ -793,6 +1247,12 @@ PictureDataWriter::WriteSetFontSpacing(const int32& spacing)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_SIZE opcode that sets the font point size.
+ *
+ * @param size The font size in points.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontSize(const float& size)
 {
@@ -808,6 +1268,13 @@ PictureDataWriter::WriteSetFontSize(const float& size)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_ROTATE opcode that sets the text rotation.
+ *
+ * @param rotation The baseline rotation angle in degrees, measured
+ *                 counter-clockwise from the horizontal.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontRotation(const float& rotation)
 {
@@ -823,6 +1290,13 @@ PictureDataWriter::WriteSetFontRotation(const float& rotation)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_ENCODING opcode that selects the character
+ *        encoding.
+ *
+ * @param encoding The encoding constant (e.g. B_UNICODE_UTF8, B_ISO_8859_1).
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontEncoding(const int32& encoding)
 {
@@ -838,6 +1312,12 @@ PictureDataWriter::WriteSetFontEncoding(const int32& encoding)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_FLAGS opcode that sets miscellaneous font flags.
+ *
+ * @param flags A bitmask of font attribute flags (e.g. B_DISABLE_ANTIALIASING).
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontFlags(const int32& flags)
 {
@@ -853,6 +1333,12 @@ PictureDataWriter::WriteSetFontFlags(const int32& flags)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_SHEAR opcode that sets the italic shear angle.
+ *
+ * @param shear The shear angle in degrees (90 degrees = upright, no shear).
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontShear(const float& shear)
 {
@@ -868,6 +1354,12 @@ PictureDataWriter::WriteSetFontShear(const float& shear)
 }
 
 
+/**
+ * @brief Records a B_PIC_SET_FONT_FACE opcode that sets the font face flags.
+ *
+ * @param face A bitmask of face attributes (e.g. B_BOLD_FACE, B_ITALIC_FACE).
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteSetFontFace(const int32& face)
 {
@@ -883,6 +1375,15 @@ PictureDataWriter::WriteSetFontFace(const int32& face)
 }
 
 
+/**
+ * @brief Records a B_PIC_PUSH_STATE opcode that saves the current drawing state.
+ *
+ * The saved state is restored by a matching WritePopState() call during
+ * picture playback.
+ *
+ * @return B_OK on success, or an error code if the write fails.
+ * @see WritePopState()
+ */
 status_t
 PictureDataWriter::WritePushState()
 {
@@ -897,6 +1398,13 @@ PictureDataWriter::WritePushState()
 }
 
 
+/**
+ * @brief Records a B_PIC_POP_STATE opcode that restores the most recently
+ *        pushed drawing state.
+ *
+ * @return B_OK on success, or an error code if the write fails.
+ * @see WritePushState()
+ */
 status_t
 PictureDataWriter::WritePopState()
 {
@@ -911,6 +1419,12 @@ PictureDataWriter::WritePopState()
 }
 
 
+/**
+ * @brief Records a B_PIC_BLEND_LAYER opcode that composites a rendering layer.
+ *
+ * @param layer Pointer to the Layer object to blend into the picture output.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteBlendLayer(Layer* layer)
 {
@@ -926,6 +1440,13 @@ PictureDataWriter::WriteBlendLayer(Layer* layer)
 }
 
 
+/**
+ * @brief Records a B_PIC_CLIP_TO_RECT opcode that clips drawing to a rectangle.
+ *
+ * @param rect    The rectangle to use as the clip boundary.
+ * @param inverse If true, drawing is clipped to the area outside @a rect.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteClipToRect(const BRect& rect, bool inverse)
 {
@@ -942,6 +1463,19 @@ PictureDataWriter::WriteClipToRect(const BRect& rect, bool inverse)
 }
 
 
+/**
+ * @brief Records a B_PIC_CLIP_TO_SHAPE opcode that clips drawing to a shape.
+ *
+ * The shape is encoded as a pair of parallel arrays identical to those used
+ * by WriteDrawShape().
+ *
+ * @param opCount Number of entries in @a opList.
+ * @param opList  Array of BShape opcodes (uint32 each).
+ * @param ptCount Number of entries in @a ptList.
+ * @param ptList  Array of BPoint coordinates referenced by the opcodes.
+ * @param inverse If true, drawing is clipped to the area outside the shape.
+ * @return B_OK on success, or an error code if the write fails.
+ */
 status_t
 PictureDataWriter::WriteClipToShape(int32 opCount, const void* opList,
 	int32 ptCount, const void* ptList, bool inverse)
@@ -963,6 +1497,18 @@ PictureDataWriter::WriteClipToShape(int32 opCount, const void* opList,
 
 
 // private
+
+/**
+ * @brief Begins a new opcode block by writing the opcode and a placeholder size.
+ *
+ * Pushes the current stream position onto @c fStack so that EndOp() can later
+ * seek back and patch the block's byte count. The size field is initialized to
+ * zero and overwritten with the correct value by EndOp().
+ *
+ * @param op The 16-bit picture opcode constant (e.g. B_PIC_FILL_RECT).
+ * @note Throws B_NO_INIT if @c fData is NULL.
+ * @see EndOp()
+ */
 void
 PictureDataWriter::BeginOp(const int16& op)
 {
@@ -978,6 +1524,17 @@ PictureDataWriter::BeginOp(const int16& op)
 }
 
 
+/**
+ * @brief Closes the current opcode block and patches its size field.
+ *
+ * Pops the start position saved by BeginOp() from @c fStack, computes the
+ * payload byte count (total bytes written minus the opcode and size header),
+ * seeks back to the size field, writes the correct value, then seeks forward
+ * to resume normal writing.
+ *
+ * @note Throws B_NO_INIT if @c fData is NULL.
+ * @see BeginOp()
+ */
 void
 PictureDataWriter::EndOp()
 {
@@ -1002,6 +1559,17 @@ PictureDataWriter::EndOp()
 }
 
 
+/**
+ * @brief Writes a raw block of bytes to the picture stream.
+ *
+ * Calls fData->Write() and verifies that the entire buffer was accepted.
+ * Throws an error status if the write fails or returns a short count.
+ *
+ * @param data Pointer to the data buffer to write.
+ * @param size Number of bytes to write from @a data.
+ * @note Throws the negative error code returned by BPositionIO::Write() on
+ *       failure, or B_IO_ERROR if fewer bytes than requested were written.
+ */
 void
 PictureDataWriter::WriteData(const void* data, size_t size)
 {

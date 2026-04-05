@@ -1,12 +1,40 @@
 /*
- * Copyright 2006-2016 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Marc Flerackers, mflerackers@androme.be
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, bonefish@cs.tu-berlin.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2016 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Marc Flerackers, mflerackers@androme.be
+ *       John Scipione, jscipione@gmail.com
+ *       Ingo Weinhold, bonefish@cs.tu-berlin.de
+ */
+
+
+/**
+ * @file MenuField.cpp
+ * @brief Implementation of BMenuField, a labeled pop-up menu control
+ *
+ * BMenuField combines a text label with a compact pop-up menu button. When
+ * clicked, it opens a BPopUpMenu beneath the button. It supports layout
+ * integration and provides scripting access to the current menu selection.
+ *
+ * @see BMenu, BPopUpMenu, BControl
  */
 
 
@@ -57,13 +85,17 @@
 #endif
 
 
+/** @brief Minimum pixel width for the embedded menu bar, determined empirically on BeOS R5. */
 static const float kMinMenuBarWidth = 20.0f;
 	// found by experimenting on BeOS R5
 
 
 namespace {
+	/** @brief Archive field key for storing a layout item's frame rectangle. */
 	const char* const kFrameField = "BMenuField:layoutItem:frame";
+	/** @brief Archive field key for the MenuBarLayoutItem archivable. */
 	const char* const kMenuBarItemField = "BMenuField:barItem";
+	/** @brief Archive field key for the LabelLayoutItem archivable. */
 	const char* const kLabelItemField = "BMenuField:labelItem";
 }
 
@@ -137,7 +169,19 @@ private:
 //	#pragma mark - LayoutData
 
 
+/**
+ * @brief Internal POD structure that caches all computed layout metrics.
+ *
+ * Recalculated by _ValidateLayoutData() whenever valid is @c false.
+ * Stored as a heap-allocated pointer in BMenuField so that the public
+ * header does not need to expose internal types.
+ *
+ * @see BMenuField::_ValidateLayoutData(), BMenuField::LayoutInvalidated()
+ */
 struct BMenuField::LayoutData {
+	/**
+	 * @brief Constructs a LayoutData with all metrics in the invalid state.
+	 */
 	LayoutData()
 		:
 		label_layout_item(NULL),
@@ -147,15 +191,24 @@ struct BMenuField::LayoutData {
 	{
 	}
 
+	/** @brief Layout item for the label portion; @c NULL until CreateLabelLayoutItem() is called. */
 	LabelLayoutItem*	label_layout_item;
+	/** @brief Layout item for the menu bar portion; @c NULL until CreateMenuBarLayoutItem() is called. */
 	MenuBarLayoutItem*	menu_bar_layout_item;
+	/** @brief Last recorded view height, used in FrameResized() to detect height changes. */
 	float				previous_height;	// used in FrameResized() for
 											// invalidation
+	/** @brief Cached font metrics for the current font, filled by _ValidateLayoutData(). */
 	font_height			font_info;
+	/** @brief Pixel width of the label string (ceil), or 0 if no label. */
 	float				label_width;
+	/** @brief Pixel height of the label text (ascent + descent, ceil), or 0 if no label. */
 	float				label_height;
+	/** @brief Computed overall minimum (== preferred) size of the BMenuField. */
 	BSize				min;
+	/** @brief Minimum size of the embedded menu bar as reported by BMenuBar::MinSize(). */
 	BSize				menu_bar_min;
+	/** @brief True when the cached values are up to date; set to false by LayoutInvalidated(). */
 	bool				valid;
 };
 
@@ -164,6 +217,14 @@ struct BMenuField::LayoutData {
 
 namespace {
 
+/**
+ * @brief Internal message filter that suppresses B_MOUSE_DOWN events.
+ *
+ * Installed as a common window filter while the pop-up menu is tracking so
+ * that stray mouse-down events do not re-trigger menu activation.
+ *
+ * @see BMenuField::MouseDown(), BMenuField::MouseUp()
+ */
 class MouseDownFilter : public BMessageFilter
 {
 public:
@@ -174,6 +235,9 @@ public:
 };
 
 
+/**
+ * @brief Constructs a MouseDownFilter that intercepts messages from any source.
+ */
 MouseDownFilter::MouseDownFilter()
 	:
 	BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE)
@@ -181,11 +245,21 @@ MouseDownFilter::MouseDownFilter()
 }
 
 
+/**
+ * @brief Destroys the MouseDownFilter.
+ */
 MouseDownFilter::~MouseDownFilter()
 {
 }
 
 
+/**
+ * @brief Skips B_MOUSE_DOWN messages; dispatches all other messages normally.
+ *
+ * @param message The incoming message to evaluate.
+ * @param target  The intended handler (not modified).
+ * @return B_SKIP_MESSAGE for B_MOUSE_DOWN, B_DISPATCH_MESSAGE otherwise.
+ */
 filter_result
 MouseDownFilter::Filter(BMessage* message, BHandler** target)
 {
@@ -199,6 +273,23 @@ MouseDownFilter::Filter(BMessage* message, BHandler** target)
 // #pragma mark - BMenuField
 
 
+/**
+ * @brief Constructs a BMenuField in frame-based (non-layout) mode.
+ *
+ * Creates the label and an embedded pop-up menu bar sized to the given
+ * @a frame. The menu bar grows or shrinks with the view. Use this
+ * constructor for legacy frame-based window management.
+ *
+ * @param frame        The position and size of the entire control in its
+ *                     parent's coordinate system.
+ * @param name         The internal view name, used for scripting.
+ * @param label        The text label displayed to the left of the menu.
+ * @param menu         The BMenu (typically a BPopUpMenu) to embed.
+ * @param resizingMode How the view resizes with its parent (e.g. B_FOLLOW_LEFT).
+ * @param flags        View flags (e.g. B_WILL_DRAW | B_NAVIGABLE).
+ *
+ * @see BMenuField(BRect, const char*, const char*, BMenu*, bool, uint32, uint32)
+ */
 BMenuField::BMenuField(BRect frame, const char* name, const char* label,
 	BMenu* menu, uint32 resizingMode, uint32 flags)
 	:
@@ -217,6 +308,24 @@ BMenuField::BMenuField(BRect frame, const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a BMenuField in frame-based mode with optional fixed menu-bar width.
+ *
+ * Same as the five-parameter frame constructor but allows the caller to pin
+ * the menu bar to a fixed width via @a fixedSize. When @a fixedSize is
+ * @c true the menu bar always spans the full remaining width of the view.
+ *
+ * @param frame        The position and size of the control.
+ * @param name         The internal view name.
+ * @param label        The label text.
+ * @param menu         The BMenu to embed.
+ * @param fixedSize    If @c true the menu bar has a fixed (full) width;
+ *                     if @c false it sizes to its content.
+ * @param resizingMode How the view resizes with its parent.
+ * @param flags        View flags.
+ *
+ * @see BMenuField(BRect, const char*, const char*, BMenu*, uint32, uint32)
+ */
 BMenuField::BMenuField(BRect frame, const char* name, const char* label,
 	BMenu* menu, bool fixedSize, uint32 resizingMode, uint32 flags)
 	:
@@ -233,6 +342,20 @@ BMenuField::BMenuField(BRect frame, const char* name, const char* label,
 }
 
 
+/**
+ * @brief Constructs a BMenuField in layout mode (no frame, fixed-size menu bar).
+ *
+ * Use this constructor when the control will be managed by a BLayout. The
+ * view has no name and B_FRAME_EVENTS is added to @a flags automatically.
+ * The menu bar is always fixed-width (full available width).
+ *
+ * @param name  The internal view name.
+ * @param label The label text, or @c NULL for no label.
+ * @param menu  The BMenu to embed.
+ * @param flags View flags; B_FRAME_EVENTS is OR-ed in unconditionally.
+ *
+ * @see BMenuField(const char*, const char*, BMenu*, bool, uint32)
+ */
 BMenuField::BMenuField(const char* name, const char* label, BMenu* menu,
 	uint32 flags)
 	:
@@ -246,6 +369,18 @@ BMenuField::BMenuField(const char* name, const char* label, BMenu* menu,
 }
 
 
+/**
+ * @brief Constructs a BMenuField in layout mode with configurable menu-bar sizing.
+ *
+ * Like the three-parameter layout constructor but exposes @a fixedSize so the
+ * caller can allow the menu bar to shrink to its content width.
+ *
+ * @param name      The internal view name.
+ * @param label     The label text, or @c NULL for no label.
+ * @param menu      The BMenu to embed.
+ * @param fixedSize If @c true the menu bar spans the full available width.
+ * @param flags     View flags; B_FRAME_EVENTS is OR-ed in unconditionally.
+ */
 BMenuField::BMenuField(const char* name, const char* label, BMenu* menu,
 	bool fixedSize, uint32 flags)
 	:
@@ -261,6 +396,16 @@ BMenuField::BMenuField(const char* name, const char* label, BMenu* menu,
 }
 
 
+/**
+ * @brief Constructs an anonymous BMenuField in layout mode.
+ *
+ * Convenience constructor for layout-managed fields; the view name is set to
+ * @c NULL and the menu bar is fixed-width.
+ *
+ * @param label The label text, or @c NULL for no label.
+ * @param menu  The BMenu to embed.
+ * @param flags View flags; B_FRAME_EVENTS is OR-ed in unconditionally.
+ */
 BMenuField::BMenuField(const char* label, BMenu* menu, uint32 flags)
 	:
 	BView(NULL, flags | B_FRAME_EVENTS)
@@ -273,6 +418,17 @@ BMenuField::BMenuField(const char* label, BMenu* menu, uint32 flags)
 }
 
 
+/**
+ * @brief Constructs a BMenuField from an archived BMessage.
+ *
+ * Restores the label, divider position, and alignment from the archive.
+ * If the archive is not managed by a BUnarchiver (legacy archives), the
+ * menu bar is restored inline via _InitMenuBar(const BMessage*).
+ *
+ * @param data The BMessage produced by Archive().
+ *
+ * @see Archive(), Instantiate(), AllUnarchived()
+ */
 BMenuField::BMenuField(BMessage* data)
 	:
 	BView(BUnarchiver::PrepareArchive(data))
@@ -296,6 +452,12 @@ BMenuField::BMenuField(BMessage* data)
 }
 
 
+/**
+ * @brief Destroys the BMenuField and releases all owned resources.
+ *
+ * Frees the label string, waits for the menu-tracking thread to finish,
+ * deletes the LayoutData structure, and deletes the MouseDownFilter.
+ */
 BMenuField::~BMenuField()
 {
 	free(fLabel);
@@ -309,6 +471,14 @@ BMenuField::~BMenuField()
 }
 
 
+/**
+ * @brief Creates a BMenuField from an archive message (BArchivable hook).
+ *
+ * @param data The archive message previously produced by Archive().
+ * @return A newly allocated BMenuField, or @c NULL if the archive is invalid.
+ *
+ * @see Archive(), BMenuField(BMessage*)
+ */
 BArchivable*
 BMenuField::Instantiate(BMessage* data)
 {
@@ -319,6 +489,21 @@ BMenuField::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives the BMenuField's state into a BMessage.
+ *
+ * Stores the label ("_label"), disabled state ("_disable"), alignment
+ * ("_align"), divider position ("_divide"), fixed-size flag ("be:fixeds"),
+ * and pop-up marker visibility ("be:dmark") in addition to the base
+ * BView archive data.
+ *
+ * @param data The BMessage to archive into.
+ * @param deep If @c true, child views are archived recursively.
+ * @return B_OK on success, or an error code from BView::Archive() or
+ *         BMessage::AddString()/AddBool()/AddFloat()/AddInt32().
+ *
+ * @see Instantiate(), AllArchived()
+ */
 status_t
 BMenuField::Archive(BMessage* data, bool deep) const
 {
@@ -349,6 +534,18 @@ BMenuField::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Finishes archiving by storing the layout items (BArchivable hook).
+ *
+ * Called after all children have been archived. Adds the MenuBarLayoutItem
+ * and LabelLayoutItem to @a into using their respective field keys so that
+ * layout geometry is preserved across archive/unarchive cycles.
+ *
+ * @param into The archive message being built.
+ * @return B_OK on success, or the first error encountered.
+ *
+ * @see AllUnarchived(), Archive()
+ */
 status_t
 BMenuField::AllArchived(BMessage* into) const
 {
@@ -373,6 +570,18 @@ BMenuField::AllArchived(BMessage* into) const
 }
 
 
+/**
+ * @brief Completes unarchiving by restoring layout items and the menu bar (BArchivable hook).
+ *
+ * Reconstructs the embedded menu bar from the archive, then re-attaches
+ * the MenuBarLayoutItem and LabelLayoutItem and sets their parent pointer
+ * back to this BMenuField.
+ *
+ * @param from The archive message produced by Archive()/AllArchived().
+ * @return B_OK on success, or an error forwarded from BView or BUnarchiver.
+ *
+ * @see AllArchived(), BMenuField(BMessage*)
+ */
 status_t
 BMenuField::AllUnarchived(const BMessage* from)
 {
@@ -408,6 +617,16 @@ BMenuField::AllUnarchived(const BMessage* from)
 }
 
 
+/**
+ * @brief Draws the label and the menu-bar frame for the dirty region.
+ *
+ * Delegates to the private helpers _DrawLabel() and _DrawMenuBar(), each of
+ * which clips to @a updateRect before rendering.
+ *
+ * @param updateRect The portion of the view that needs repainting.
+ *
+ * @see _DrawLabel(), _DrawMenuBar()
+ */
 void
 BMenuField::Draw(BRect updateRect)
 {
@@ -416,6 +635,15 @@ BMenuField::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Synchronises the view's low color with the parent when added to a window.
+ *
+ * If the view has a parent, it adopts the parent's colors and aligns the low
+ * color to the parent's UI color. If there is no parent, it falls back to the
+ * system colors so that the label background always blends seamlessly.
+ *
+ * @see AllAttached(), BView::AttachedToWindow()
+ */
 void
 BMenuField::AttachedToWindow()
 {
@@ -437,6 +665,16 @@ BMenuField::AttachedToWindow()
 }
 
 
+/**
+ * @brief Resizes the control to fit the menu bar after the whole hierarchy is attached.
+ *
+ * In non-fixed-size mode, if the menu bar would be narrower than
+ * @c kMinMenuBarWidth, the overall view is widened to accommodate the first
+ * menu item. The view height is always forced to match the menu bar height
+ * plus the vertical margin on both sides.
+ *
+ * @see AttachedToWindow(), BView::AllAttached()
+ */
 void
 BMenuField::AllAttached()
 {
@@ -461,6 +699,18 @@ BMenuField::AllAttached()
 }
 
 
+/**
+ * @brief Opens the pop-up menu and starts the tracking thread on a mouse-down event.
+ *
+ * Starts the embedded menu bar's tracking mode, spawns the internal
+ * _MenuTask() thread that monitors tracking state, installs the
+ * MouseDownFilter to suppress re-entrant clicks, and extends the view's
+ * mouse-event mask for the duration of the interaction.
+ *
+ * @param where The mouse position in the view's coordinate system (unused directly).
+ *
+ * @see MouseUp(), _MenuTask(), _thread_entry()
+ */
 void
 BMenuField::MouseDown(BPoint where)
 {
@@ -479,6 +729,18 @@ BMenuField::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Opens the pop-up menu in response to keyboard activation keys.
+ *
+ * Space, right-arrow, and down-arrow open the first menu item when the
+ * control has focus and is enabled. All other keys are forwarded to
+ * BView::KeyDown().
+ *
+ * @param bytes    Pointer to the UTF-8 byte sequence of the key pressed.
+ * @param numBytes Number of bytes in the sequence.
+ *
+ * @see MakeFocus(), MouseDown()
+ */
 void
 BMenuField::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -506,6 +768,16 @@ BMenuField::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Grants or removes keyboard focus and repaints the focus indicator.
+ *
+ * Calls the base-class implementation and then invalidates the entire view
+ * so that the focus ring around the label is drawn or erased.
+ *
+ * @param focused @c true to acquire focus, @c false to relinquish it.
+ *
+ * @see KeyDown(), WindowActivated()
+ */
 void
 BMenuField::MakeFocus(bool focused)
 {
@@ -519,6 +791,16 @@ BMenuField::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Forwards unhandled messages to BView::MessageReceived().
+ *
+ * BMenuField does not process any messages directly; all message handling
+ * is delegated to the base class.
+ *
+ * @param message The incoming BMessage to process.
+ *
+ * @see BView::MessageReceived()
+ */
 void
 BMenuField::MessageReceived(BMessage* message)
 {
@@ -526,6 +808,17 @@ BMenuField::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Repaints the focus ring when the window gains or loses activation.
+ *
+ * The focus highlight is only visible when the window is active, so the
+ * view must be repainted whenever the activation state changes while this
+ * control holds keyboard focus.
+ *
+ * @param active @c true if the window has just become active.
+ *
+ * @see MakeFocus(), BView::WindowActivated()
+ */
 void
 BMenuField::WindowActivated(bool active)
 {
@@ -536,6 +829,15 @@ BMenuField::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Forwards mouse-move events to the base class.
+ *
+ * @param point   Current mouse position in view coordinates.
+ * @param code    Transit code (B_ENTERED_VIEW, B_INSIDE_VIEW, etc.).
+ * @param message Drag-and-drop message, or @c NULL.
+ *
+ * @see BView::MouseMoved()
+ */
 void
 BMenuField::MouseMoved(BPoint point, uint32 code, const BMessage* message)
 {
@@ -543,6 +845,16 @@ BMenuField::MouseMoved(BPoint point, uint32 code, const BMessage* message)
 }
 
 
+/**
+ * @brief Removes the MouseDownFilter and forwards the event after menu tracking ends.
+ *
+ * Called when the mouse button is released. Unregisters the common filter
+ * that was suppressing extra mouse-down events during tracking.
+ *
+ * @param where Mouse position in view coordinates at button release.
+ *
+ * @see MouseDown(), MouseDownFilter
+ */
 void
 BMenuField::MouseUp(BPoint where)
 {
@@ -551,6 +863,13 @@ BMenuField::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Called when the view is removed from its window.
+ *
+ * Forwards to BView::DetachedFromWindow() for standard cleanup.
+ *
+ * @see BView::DetachedFromWindow(), AllDetached()
+ */
 void
 BMenuField::DetachedFromWindow()
 {
@@ -558,6 +877,13 @@ BMenuField::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called after the entire view hierarchy has been detached from the window.
+ *
+ * Forwards to BView::AllDetached() for standard cleanup.
+ *
+ * @see BView::AllDetached(), DetachedFromWindow()
+ */
 void
 BMenuField::AllDetached()
 {
@@ -565,6 +891,13 @@ BMenuField::AllDetached()
 }
 
 
+/**
+ * @brief Forwards the frame-moved notification to the base class.
+ *
+ * @param newPosition The view's new origin in its parent's coordinate system.
+ *
+ * @see BView::FrameMoved(), FrameResized()
+ */
 void
 BMenuField::FrameMoved(BPoint newPosition)
 {
@@ -572,6 +905,18 @@ BMenuField::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Adjusts the menu bar and repaints after the view is resized.
+ *
+ * In fixed-size mode the menu bar is explicitly resized to stay flush with
+ * the right edge. When the height changes and a label is present, the whole
+ * view is invalidated because the label vertical position also shifts.
+ *
+ * @param newWidth  The new pixel width of the view's bounds.
+ * @param newHeight The new pixel height of the view's bounds.
+ *
+ * @see FrameMoved(), BView::FrameResized()
+ */
 void
 BMenuField::FrameResized(float newWidth, float newHeight)
 {
@@ -598,6 +943,13 @@ BMenuField::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Returns the BMenu embedded in this control.
+ *
+ * @return Pointer to the BMenu (typically a BPopUpMenu) set at construction.
+ *
+ * @see MenuBar(), _AddMenu()
+ */
 BMenu*
 BMenuField::Menu() const
 {
@@ -605,6 +957,13 @@ BMenuField::Menu() const
 }
 
 
+/**
+ * @brief Returns the internal BMenuBar that hosts the pop-up menu.
+ *
+ * @return Pointer to the _BMCMenuBar_ child view used as the menu container.
+ *
+ * @see Menu(), CreateMenuBarLayoutItem()
+ */
 BMenuBar*
 BMenuField::MenuBar() const
 {
@@ -612,6 +971,16 @@ BMenuField::MenuBar() const
 }
 
 
+/**
+ * @brief Returns the top-level BMenuItem displayed in the menu bar.
+ *
+ * This is the item at index 0 of the embedded menu bar, which shows the
+ * currently selected entry of the pop-up menu.
+ *
+ * @return Pointer to the first BMenuItem, or @c NULL if the bar is empty.
+ *
+ * @see Menu(), MenuBar()
+ */
 BMenuItem*
 BMenuField::MenuItem() const
 {
@@ -619,6 +988,18 @@ BMenuField::MenuItem() const
 }
 
 
+/**
+ * @brief Sets the text label displayed to the left of the menu bar.
+ *
+ * Does nothing if the new label is identical to the current one. Frees the
+ * old label string, duplicates the new one, invalidates the view for an
+ * immediate repaint, and invalidates the layout so the preferred size is
+ * recalculated.
+ *
+ * @param label The new label text, or @c NULL to remove the label.
+ *
+ * @see Label(), SetDivider(), InvalidateLayout()
+ */
 void
 BMenuField::SetLabel(const char* label)
 {
@@ -642,6 +1023,13 @@ BMenuField::SetLabel(const char* label)
 }
 
 
+/**
+ * @brief Returns the current label text.
+ *
+ * @return Pointer to the null-terminated label string, or @c NULL if no label is set.
+ *
+ * @see SetLabel()
+ */
 const char*
 BMenuField::Label() const
 {
@@ -649,6 +1037,16 @@ BMenuField::Label() const
 }
 
 
+/**
+ * @brief Enables or disables the control and its embedded menu bar.
+ *
+ * Propagates the enabled state to the embedded menu bar and repaints both
+ * the bar and the overall view so the dimmed appearance is updated immediately.
+ *
+ * @param on @c true to enable the control, @c false to disable it.
+ *
+ * @see IsEnabled(), SetLabel()
+ */
 void
 BMenuField::SetEnabled(bool on)
 {
@@ -665,6 +1063,13 @@ BMenuField::SetEnabled(bool on)
 }
 
 
+/**
+ * @brief Returns whether the control is currently enabled.
+ *
+ * @return @c true if the control accepts user input, @c false if it is disabled.
+ *
+ * @see SetEnabled()
+ */
 bool
 BMenuField::IsEnabled() const
 {
@@ -672,6 +1077,13 @@ BMenuField::IsEnabled() const
 }
 
 
+/**
+ * @brief Sets the horizontal alignment of the label text.
+ *
+ * @param label One of B_ALIGN_LEFT, B_ALIGN_CENTER, or B_ALIGN_RIGHT.
+ *
+ * @see Alignment(), SetLabel()
+ */
 void
 BMenuField::SetAlignment(alignment label)
 {
@@ -679,6 +1091,13 @@ BMenuField::SetAlignment(alignment label)
 }
 
 
+/**
+ * @brief Returns the current horizontal alignment of the label text.
+ *
+ * @return The alignment constant set by SetAlignment().
+ *
+ * @see SetAlignment()
+ */
 alignment
 BMenuField::Alignment() const
 {
@@ -686,6 +1105,20 @@ BMenuField::Alignment() const
 }
 
 
+/**
+ * @brief Sets the pixel position of the divider between label and menu bar.
+ *
+ * The divider determines how much of the view width is allocated to the label
+ * versus the menu bar. In layout mode the divider is controlled by the layout
+ * system and calling this method will only trigger a relayout. In frame mode
+ * the menu bar is repositioned and resized immediately, and the dirty region is
+ * invalidated.
+ *
+ * @param position The new divider position in view coordinates (rounded to the
+ *                 nearest integer pixel).
+ *
+ * @see Divider(), SetAlignment(), DoLayout()
+ */
 void
 BMenuField::SetDivider(float position)
 {
@@ -717,6 +1150,13 @@ BMenuField::SetDivider(float position)
 }
 
 
+/**
+ * @brief Returns the current divider position between label and menu bar.
+ *
+ * @return The divider's x-coordinate in the view's coordinate system.
+ *
+ * @see SetDivider()
+ */
 float
 BMenuField::Divider() const
 {
@@ -724,6 +1164,13 @@ BMenuField::Divider() const
 }
 
 
+/**
+ * @brief Displays the small pop-up arrow marker inside the menu bar button.
+ *
+ * Has no effect if the embedded menu bar is not a _BMCMenuBar_ instance.
+ *
+ * @see HidePopUpMarker(), _BMCMenuBar_::TogglePopUpMarker()
+ */
 void
 BMenuField::ShowPopUpMarker()
 {
@@ -734,6 +1181,13 @@ BMenuField::ShowPopUpMarker()
 }
 
 
+/**
+ * @brief Hides the small pop-up arrow marker inside the menu bar button.
+ *
+ * Has no effect if the embedded menu bar is not a _BMCMenuBar_ instance.
+ *
+ * @see ShowPopUpMarker(), _BMCMenuBar_::TogglePopUpMarker()
+ */
 void
 BMenuField::HidePopUpMarker()
 {
@@ -744,6 +1198,20 @@ BMenuField::HidePopUpMarker()
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate BHandler.
+ *
+ * Delegates directly to BView for standard property handling.
+ *
+ * @param message   The scripting message.
+ * @param index     The specifier index within the message.
+ * @param specifier The specifier extracted from @a message.
+ * @param form      The specifier form (e.g. B_NAME_SPECIFIER).
+ * @param property  The property name being accessed.
+ * @return The BHandler that should handle the message.
+ *
+ * @see GetSupportedSuites(), BView::ResolveSpecifier()
+ */
 BHandler*
 BMenuField::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 form, const char* property)
@@ -752,6 +1220,17 @@ BMenuField::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Fills @a data with the scripting suites supported by BMenuField.
+ *
+ * Delegates to BView::GetSupportedSuites(); BMenuField does not add its own
+ * scripting suite beyond what BView provides.
+ *
+ * @param data The BMessage to populate with suite information.
+ * @return B_OK on success, or an error code from BView.
+ *
+ * @see ResolveSpecifier(), BView::GetSupportedSuites()
+ */
 status_t
 BMenuField::GetSupportedSuites(BMessage* data)
 {
@@ -759,6 +1238,15 @@ BMenuField::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Resizes the control and its embedded menu bar to their preferred sizes.
+ *
+ * First asks the menu bar to resize itself to its preferred size, then calls
+ * BView::ResizeToPreferred() to resize the outer view accordingly, and finally
+ * invalidates to trigger a repaint.
+ *
+ * @see GetPreferredSize(), PreferredSize()
+ */
 void
 BMenuField::ResizeToPreferred()
 {
@@ -778,6 +1266,18 @@ BMenuField::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Returns the preferred (minimum) width and height of the control.
+ *
+ * Validates the cached layout data and returns the computed minimum size
+ * as the preferred size. Either output parameter may be @c NULL if the
+ * caller does not need that dimension.
+ *
+ * @param[out] _width  Receives the preferred width, or is ignored if @c NULL.
+ * @param[out] _height Receives the preferred height, or is ignored if @c NULL.
+ *
+ * @see MinSize(), PreferredSize(), _ValidateLayoutData()
+ */
 void
 BMenuField::GetPreferredSize(float* _width, float* _height)
 {
@@ -793,6 +1293,16 @@ BMenuField::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Returns the minimum layout size of the control.
+ *
+ * Composes the computed minimum size with any explicit minimum set by the
+ * caller via SetExplicitMinSize().
+ *
+ * @return The minimum BSize, composed with any explicit override.
+ *
+ * @see MaxSize(), PreferredSize(), _ValidateLayoutData()
+ */
 BSize
 BMenuField::MinSize()
 {
@@ -803,6 +1313,16 @@ BMenuField::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum layout size of the control.
+ *
+ * The height maximum equals the minimum height; the width maximum is
+ * B_SIZE_UNLIMITED so the control can expand horizontally in a layout.
+ *
+ * @return The maximum BSize, composed with any explicit override.
+ *
+ * @see MinSize(), PreferredSize()
+ */
 BSize
 BMenuField::MaxSize()
 {
@@ -817,6 +1337,16 @@ BMenuField::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred layout size of the control.
+ *
+ * The preferred size equals the minimum size; the control does not
+ * benefit from extra space beyond its minimum.
+ *
+ * @return The preferred BSize, composed with any explicit override.
+ *
+ * @see MinSize(), MaxSize()
+ */
 BSize
 BMenuField::PreferredSize()
 {
@@ -827,6 +1357,17 @@ BMenuField::PreferredSize()
 }
 
 
+/**
+ * @brief Creates (or returns the existing) layout item for the label portion.
+ *
+ * The returned LabelLayoutItem can be placed independently in a BLayout so
+ * that multiple BMenuField instances can align their labels in a grid. Only
+ * one instance is created; subsequent calls return the same object.
+ *
+ * @return The LabelLayoutItem owned by this BMenuField.
+ *
+ * @see CreateMenuBarLayoutItem(), LabelLayoutItem
+ */
 BLayoutItem*
 BMenuField::CreateLabelLayoutItem()
 {
@@ -837,6 +1378,17 @@ BMenuField::CreateLabelLayoutItem()
 }
 
 
+/**
+ * @brief Creates (or returns the existing) layout item for the menu bar portion.
+ *
+ * The returned MenuBarLayoutItem can be placed independently in a BLayout.
+ * On first call the embedded menu bar is configured to use full available
+ * width. Subsequent calls return the same object.
+ *
+ * @return The MenuBarLayoutItem owned by this BMenuField.
+ *
+ * @see CreateLabelLayoutItem(), MenuBarLayoutItem
+ */
 BLayoutItem*
 BMenuField::CreateMenuBarLayoutItem()
 {
@@ -851,6 +1403,21 @@ BMenuField::CreateMenuBarLayoutItem()
 }
 
 
+/**
+ * @brief Dispatches binary-compatibility perform codes for layout and archive hooks.
+ *
+ * Implements the BView perform() protocol so that layout-aware host environments
+ * can call MinSize(), MaxSize(), PreferredSize(), LayoutAlignment(),
+ * HasHeightForWidth(), GetHeightForWidth(), SetLayout(), LayoutInvalidated(),
+ * DoLayout(), AllUnarchived(), and AllArchived() through an opaque perform code
+ * rather than a vtable slot. All unrecognised codes are forwarded to BView::Perform().
+ *
+ * @param code  One of the PERFORM_CODE_* constants defined in binary_compatibility/Interface.h.
+ * @param _data Pointer to the matching perform_data_* structure.
+ * @return B_OK if the code was handled, otherwise the result from BView::Perform().
+ *
+ * @see MinSize(), MaxSize(), PreferredSize(), LayoutAlignment()
+ */
 status_t
 BMenuField::Perform(perform_code code, void* _data)
 {
@@ -931,6 +1498,17 @@ BMenuField::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Marks the cached layout data stale when the layout is invalidated.
+ *
+ * Called by the layout system whenever the view's layout needs to be
+ * recalculated. Sets @c fLayoutData->valid to @c false so that the next call
+ * to _ValidateLayoutData() recomputes sizes from scratch.
+ *
+ * @param descendants If @c true, child views were also invalidated.
+ *
+ * @see _ValidateLayoutData(), DoLayout()
+ */
 void
 BMenuField::LayoutInvalidated(bool descendants)
 {
@@ -940,6 +1518,17 @@ BMenuField::LayoutInvalidated(bool descendants)
 }
 
 
+/**
+ * @brief Performs the actual layout of the embedded menu bar within the view's bounds.
+ *
+ * Does nothing if the view does not support layout (B_SUPPORTS_LAYOUT flag
+ * absent). If a child layout is set, delegates to BView::DoLayout(). Otherwise
+ * computes the divider from the layout items (if valid) or from the label
+ * width, then positions and sizes the menu bar within the remaining space and
+ * invalidates the previously dirty region.
+ *
+ * @see LayoutInvalidated(), _ValidateLayoutData(), SetDivider()
+ */
 void
 BMenuField::DoLayout()
 {
@@ -998,11 +1587,26 @@ BMenuField::DoLayout()
 }
 
 
+/** @brief Reserved for future binary-compatible extension (slot 1). */
 void BMenuField::_ReservedMenuField1() {}
+/** @brief Reserved for future binary-compatible extension (slot 2). */
 void BMenuField::_ReservedMenuField2() {}
+/** @brief Reserved for future binary-compatible extension (slot 3). */
 void BMenuField::_ReservedMenuField3() {}
 
 
+/**
+ * @brief Initialises all member variables to their default state.
+ *
+ * Called from every constructor before the menu bar is created. Sets all
+ * pointers to NULL, booleans to their defaults, allocates the LayoutData
+ * structure and the MouseDownFilter, then applies the label and computes
+ * the initial divider position (half the frame width if a label is supplied).
+ *
+ * @param label The initial label text, or @c NULL for no label.
+ *
+ * @see InitObject2(), _InitMenuBar()
+ */
 void
 BMenuField::InitObject(const char* label)
 {
@@ -1027,6 +1631,15 @@ BMenuField::InitObject(const char* label)
 }
 
 
+/**
+ * @brief Finalises the menu bar setup after _InitMenuBar() has been called.
+ *
+ * In non-fixed-size mode the menu bar is resized to its preferred height and
+ * the computed available width. A _BMCFilter_ is installed on the menu bar to
+ * intercept B_MOUSE_DOWN events before they reach the standard handler.
+ *
+ * @see InitObject(), _InitMenuBar()
+ */
 void
 BMenuField::InitObject2()
 {
@@ -1047,6 +1660,18 @@ BMenuField::InitObject2()
 }
 
 
+/**
+ * @brief Renders the text label clipped to the label area and the update rectangle.
+ *
+ * Validates the layout data, determines the label bounding rectangle from
+ * either the layout item or the divider, and calls be_control_look to draw
+ * the label text. When the menu is open, the label background is highlighted
+ * with B_MENU_SELECTED_BACKGROUND_COLOR as on BeOS R5.
+ *
+ * @param updateRect The dirty rectangle passed to Draw().
+ *
+ * @see Draw(), _DrawMenuBar(), _ValidateLayoutData()
+ */
 void
 BMenuField::_DrawLabel(BRect updateRect)
 {
@@ -1095,6 +1720,17 @@ BMenuField::_DrawLabel(BRect updateRect)
 }
 
 
+/**
+ * @brief Renders the decorative frame around the embedded menu bar.
+ *
+ * Computes the frame by insetting the menu bar's frame by the vertical margin,
+ * clips to @a updateRect, then delegates to be_control_look->DrawMenuFieldFrame()
+ * with the appropriate disabled/focused flags.
+ *
+ * @param updateRect The dirty rectangle passed to Draw().
+ *
+ * @see Draw(), _DrawLabel()
+ */
 void
 BMenuField::_DrawMenuBar(BRect updateRect)
 {
@@ -1116,6 +1752,16 @@ BMenuField::_DrawMenuBar(BRect updateRect)
 }
 
 
+/**
+ * @brief Recursively sets be_plain_font on a menu and all its submenus.
+ *
+ * Called once during construction to ensure a consistent look across all
+ * levels of the pop-up menu hierarchy.
+ *
+ * @param menu The root BMenu to initialise; its submenus are visited recursively.
+ *
+ * @see _AddMenu(), _InitMenuBar()
+ */
 void
 BMenuField::InitMenu(BMenu* menu)
 {
@@ -1129,6 +1775,16 @@ BMenuField::InitMenu(BMenu* menu)
 }
 
 
+/**
+ * @brief Static thread entry point that forwards to _MenuTask().
+ *
+ * Provides the C-callable @c thread_func signature required by spawn_thread().
+ *
+ * @param arg The BMenuField instance cast to @c void*.
+ * @return The return value of _MenuTask().
+ *
+ * @see _MenuTask(), MouseDown()
+ */
 /*static*/ int32
 BMenuField::_thread_entry(void* arg)
 {
@@ -1136,6 +1792,17 @@ BMenuField::_thread_entry(void* arg)
 }
 
 
+/**
+ * @brief Monitors the menu bar's tracking state and invalidates the label area.
+ *
+ * Locks the looper, triggers an initial repaint to show the open state, then
+ * polls fMenuBar->fTracking every 20 ms until tracking ends. A final
+ * invalidation is issued to restore the normal label appearance.
+ *
+ * @return 0 always.
+ *
+ * @see _thread_entry(), MouseDown()
+ */
 int32
 BMenuField::_MenuTask()
 {
@@ -1165,6 +1832,17 @@ BMenuField::_MenuTask()
 }
 
 
+/**
+ * @brief Synchronises the view's frame and divider with the layout items' frames.
+ *
+ * Called by LabelLayoutItem::SetFrame() and MenuBarLayoutItem::SetFrame()
+ * whenever the layout engine repositions one of the two items. Recomputes the
+ * divider as the horizontal distance between the two item frames, then moves
+ * and resizes the outer view to span both items. If the size did not change, a
+ * manual Relayout() is triggered because ResizeTo() will not do so.
+ *
+ * @see LabelLayoutItem::SetFrame(), MenuBarLayoutItem::SetFrame(), DoLayout()
+ */
 void
 BMenuField::_UpdateFrame()
 {
@@ -1198,6 +1876,20 @@ BMenuField::_UpdateFrame()
 }
 
 
+/**
+ * @brief Creates and configures the embedded _BMCMenuBar_ from a menu and frame.
+ *
+ * In layout mode a frameless _BMCMenuBar_ is created; in frame mode the bar
+ * is positioned at _MenuBarOffset() with the vertical margin applied. The bar's
+ * explicit alignment is set to full-width or left-aligned depending on
+ * @a fixedSize, the menu is added via _AddMenu(), and be_plain_font is applied.
+ *
+ * @param menu      The BMenu to attach to the newly created menu bar.
+ * @param frame     The initial frame in the view's local coordinates (frame mode only).
+ * @param fixedSize If @c true the bar spans the full available width.
+ *
+ * @see _InitMenuBar(const BMessage*), _AddMenu(), InitObject2()
+ */
 void
 BMenuField::_InitMenuBar(BMenu* menu, BRect frame, bool fixedSize)
 {
@@ -1236,6 +1928,18 @@ BMenuField::_InitMenuBar(BMenu* menu, BRect frame, bool fixedSize)
 }
 
 
+/**
+ * @brief Restores the embedded menu bar from an archive message.
+ *
+ * Reads the fixed-size flag ("be:fixeds"), locates the existing "_mc_mb_"
+ * child view (present if the BView archive already recreated it), or creates
+ * a fresh one. Then reconnects the first submenu, restores the enabled state,
+ * and re-applies the pop-up marker visibility.
+ *
+ * @param archive The BMessage archive passed to the BMenuField(BMessage*) constructor.
+ *
+ * @see _InitMenuBar(BMenu*, BRect, bool), _AddMenu(), AllUnarchived()
+ */
 void
 BMenuField::_InitMenuBar(const BMessage* archive)
 {
@@ -1266,6 +1970,20 @@ BMenuField::_InitMenuBar(const BMessage* archive)
 }
 
 
+/**
+ * @brief Attaches a BMenu to the embedded menu bar as the top-level item.
+ *
+ * Calls InitMenu() to apply be_plain_font recursively, then determines
+ * which item to display: the marked item in radio mode, or the first
+ * enabled non-separator item otherwise. A shallow archive copy of the chosen
+ * item is made, stripped of its install state, and added to fMenuBar as a
+ * submenu wrapper. If no suitable item is found the menu itself is added
+ * directly.
+ *
+ * @param menu The BMenu to attach; does nothing if @c NULL or if fMenuBar is @c NULL.
+ *
+ * @see InitMenu(), _InitMenuBar()
+ */
 void
 BMenuField::_AddMenu(BMenu* menu)
 {
@@ -1322,6 +2040,19 @@ BMenuField::_AddMenu(BMenu* menu)
 }
 
 
+/**
+ * @brief Recomputes and caches the layout metrics if the cache is stale.
+ *
+ * Populates fLayoutData with the current font height, label pixel dimensions,
+ * minimum menu bar size, and the resulting overall minimum size of the control.
+ * In frame mode the current fDivider is also factored into the minimum width.
+ * Sets fLayoutData->valid to @c true and calls ResetLayoutInvalidation() when done.
+ *
+ * @note Must be called at the start of every size-query method (MinSize(),
+ *       GetPreferredSize(), etc.) and before DoLayout().
+ *
+ * @see LayoutInvalidated(), DoLayout(), MinSize()
+ */
 void
 BMenuField::_ValidateLayoutData()
 {
@@ -1383,6 +2114,15 @@ BMenuField::_ValidateLayoutData()
 }
 
 
+/**
+ * @brief Returns the x-coordinate at which the menu bar starts inside the view.
+ *
+ * Ensures at least kVMargin even when the divider is zero (no label).
+ *
+ * @return The left edge of the menu bar in view-local coordinates.
+ *
+ * @see _MenuBarWidth(), SetDivider()
+ */
 float
 BMenuField::_MenuBarOffset() const
 {
@@ -1390,6 +2130,16 @@ BMenuField::_MenuBarOffset() const
 }
 
 
+/**
+ * @brief Returns the available pixel width for the menu bar.
+ *
+ * Computed as the view's total width minus the menu-bar start offset and the
+ * right-side margin.
+ *
+ * @return The usable width for the embedded menu bar.
+ *
+ * @see _MenuBarOffset(), DoLayout()
+ */
 float
 BMenuField::_MenuBarWidth() const
 {
@@ -1400,6 +2150,11 @@ BMenuField::_MenuBarWidth() const
 // #pragma mark - BMenuField::LabelLayoutItem
 
 
+/**
+ * @brief Constructs a LabelLayoutItem associated with the given BMenuField.
+ *
+ * @param parent The owning BMenuField; must not be @c NULL.
+ */
 BMenuField::LabelLayoutItem::LabelLayoutItem(BMenuField* parent)
 	:
 	fParent(parent),
@@ -1408,6 +2163,16 @@ BMenuField::LabelLayoutItem::LabelLayoutItem(BMenuField* parent)
 }
 
 
+/**
+ * @brief Constructs a LabelLayoutItem from an archived BMessage.
+ *
+ * Restores the layout frame from the kFrameField key. The parent pointer
+ * is not stored in the archive and must be set afterwards via SetParent().
+ *
+ * @param from The archive message produced by Archive().
+ *
+ * @see Archive(), Instantiate(), SetParent()
+ */
 BMenuField::LabelLayoutItem::LabelLayoutItem(BMessage* from)
 	:
 	BAbstractLayoutItem(from),
@@ -1418,6 +2183,16 @@ BMenuField::LabelLayoutItem::LabelLayoutItem(BMessage* from)
 }
 
 
+/**
+ * @brief Returns the layout item's frame translated into the parent view's coordinates.
+ *
+ * Converts the absolute screen-space fFrame by subtracting the parent
+ * BMenuField's own origin so that the rect is usable by Draw() and friends.
+ *
+ * @return The label area in the parent view's local coordinate system.
+ *
+ * @see Frame()
+ */
 BRect
 BMenuField::LabelLayoutItem::FrameInParent() const
 {
@@ -1425,6 +2200,13 @@ BMenuField::LabelLayoutItem::FrameInParent() const
 }
 
 
+/**
+ * @brief Returns whether the label area is currently visible.
+ *
+ * @return @c true if the parent BMenuField is not hidden.
+ *
+ * @see SetVisible()
+ */
 bool
 BMenuField::LabelLayoutItem::IsVisible()
 {
@@ -1432,6 +2214,14 @@ BMenuField::LabelLayoutItem::IsVisible()
 }
 
 
+/**
+ * @brief Visibility changes are not permitted for this item.
+ *
+ * The label visibility is tied to the parent BMenuField and cannot be
+ * toggled independently; this override is intentionally a no-op.
+ *
+ * @param visible Ignored.
+ */
 void
 BMenuField::LabelLayoutItem::SetVisible(bool visible)
 {
@@ -1439,6 +2229,13 @@ BMenuField::LabelLayoutItem::SetVisible(bool visible)
 }
 
 
+/**
+ * @brief Returns the absolute frame of this layout item.
+ *
+ * @return The item frame in the layout's coordinate system.
+ *
+ * @see SetFrame(), FrameInParent()
+ */
 BRect
 BMenuField::LabelLayoutItem::Frame()
 {
@@ -1446,6 +2243,16 @@ BMenuField::LabelLayoutItem::Frame()
 }
 
 
+/**
+ * @brief Updates the layout item's frame and triggers a parent frame update.
+ *
+ * Stores the new frame and calls BMenuField::_UpdateFrame() so that the
+ * parent view moves and resizes itself to span both layout items.
+ *
+ * @param frame The new absolute frame assigned by the layout engine.
+ *
+ * @see Frame(), BMenuField::_UpdateFrame()
+ */
 void
 BMenuField::LabelLayoutItem::SetFrame(BRect frame)
 {
@@ -1454,6 +2261,16 @@ BMenuField::LabelLayoutItem::SetFrame(BRect frame)
 }
 
 
+/**
+ * @brief Sets the parent BMenuField after unarchiving.
+ *
+ * Must be called when a LabelLayoutItem is reconstructed from an archive
+ * (when fParent is @c NULL) before the item is used.
+ *
+ * @param parent The BMenuField that owns this layout item.
+ *
+ * @see LabelLayoutItem(BMessage*)
+ */
 void
 BMenuField::LabelLayoutItem::SetParent(BMenuField* parent)
 {
@@ -1461,6 +2278,13 @@ BMenuField::LabelLayoutItem::SetParent(BMenuField* parent)
 }
 
 
+/**
+ * @brief Returns the BView associated with this layout item.
+ *
+ * @return The parent BMenuField, which is the view drawn for this item.
+ *
+ * @see SetParent()
+ */
 BView*
 BMenuField::LabelLayoutItem::View()
 {
@@ -1468,6 +2292,16 @@ BMenuField::LabelLayoutItem::View()
 }
 
 
+/**
+ * @brief Returns the minimum size needed to render the label text.
+ *
+ * Returns BSize(-1, -1) if there is no label. Otherwise returns the
+ * label pixel width plus the default label spacing, and the font height.
+ *
+ * @return The minimum BSize for the label area.
+ *
+ * @see BaseMaxSize(), BasePreferredSize()
+ */
 BSize
 BMenuField::LabelLayoutItem::BaseMinSize()
 {
@@ -1482,6 +2316,16 @@ BMenuField::LabelLayoutItem::BaseMinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size of the label area (equals the minimum).
+ *
+ * The label area does not grow beyond its preferred size; this keeps the
+ * divider in a fixed position.
+ *
+ * @return Same as BaseMinSize().
+ *
+ * @see BaseMinSize()
+ */
 BSize
 BMenuField::LabelLayoutItem::BaseMaxSize()
 {
@@ -1489,6 +2333,13 @@ BMenuField::LabelLayoutItem::BaseMaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size of the label area (equals the minimum).
+ *
+ * @return Same as BaseMinSize().
+ *
+ * @see BaseMinSize()
+ */
 BSize
 BMenuField::LabelLayoutItem::BasePreferredSize()
 {
@@ -1496,6 +2347,14 @@ BMenuField::LabelLayoutItem::BasePreferredSize()
 }
 
 
+/**
+ * @brief Returns the layout alignment for the label item.
+ *
+ * Uses full width and full height so that the label fills the cell
+ * assigned by the layout engine.
+ *
+ * @return BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_USE_FULL_HEIGHT).
+ */
 BAlignment
 BMenuField::LabelLayoutItem::BaseAlignment()
 {
@@ -1503,6 +2362,17 @@ BMenuField::LabelLayoutItem::BaseAlignment()
 }
 
 
+/**
+ * @brief Archives the LabelLayoutItem into a BMessage.
+ *
+ * Stores the base class data and the current fFrame under kFrameField.
+ *
+ * @param into The BMessage to archive into.
+ * @param deep If @c true, children are archived (unused; no children).
+ * @return B_OK on success, or an error from BAbstractLayoutItem::Archive().
+ *
+ * @see Instantiate(), LabelLayoutItem(BMessage*)
+ */
 status_t
 BMenuField::LabelLayoutItem::Archive(BMessage* into, bool deep) const
 {
@@ -1516,6 +2386,14 @@ BMenuField::LabelLayoutItem::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Instantiates a LabelLayoutItem from an archive message (BArchivable hook).
+ *
+ * @param from The archive message produced by Archive().
+ * @return A newly allocated LabelLayoutItem, or @c NULL if validation fails.
+ *
+ * @see Archive(), LabelLayoutItem(BMessage*)
+ */
 BArchivable*
 BMenuField::LabelLayoutItem::Instantiate(BMessage* from)
 {
@@ -1529,6 +2407,14 @@ BMenuField::LabelLayoutItem::Instantiate(BMessage* from)
 // #pragma mark - BMenuField::MenuBarLayoutItem
 
 
+/**
+ * @brief Constructs a MenuBarLayoutItem associated with the given BMenuField.
+ *
+ * Sets an explicit unlimited maximum width so that the menu bar area can
+ * expand horizontally without bound inside a layout.
+ *
+ * @param parent The owning BMenuField; must not be @c NULL.
+ */
 BMenuField::MenuBarLayoutItem::MenuBarLayoutItem(BMenuField* parent)
 	:
 	fParent(parent),
@@ -1540,6 +2426,16 @@ BMenuField::MenuBarLayoutItem::MenuBarLayoutItem(BMenuField* parent)
 }
 
 
+/**
+ * @brief Constructs a MenuBarLayoutItem from an archived BMessage.
+ *
+ * Restores the layout frame from kFrameField. The parent pointer is not
+ * stored and must be restored via SetParent() after construction.
+ *
+ * @param from The archive message produced by Archive().
+ *
+ * @see Archive(), Instantiate(), SetParent()
+ */
 BMenuField::MenuBarLayoutItem::MenuBarLayoutItem(BMessage* from)
 	:
 	BAbstractLayoutItem(from),
@@ -1550,6 +2446,13 @@ BMenuField::MenuBarLayoutItem::MenuBarLayoutItem(BMessage* from)
 }
 
 
+/**
+ * @brief Returns the layout item's frame translated into the parent view's coordinates.
+ *
+ * @return The menu bar area in the parent view's local coordinate system.
+ *
+ * @see Frame()
+ */
 BRect
 BMenuField::MenuBarLayoutItem::FrameInParent() const
 {
@@ -1557,6 +2460,13 @@ BMenuField::MenuBarLayoutItem::FrameInParent() const
 }
 
 
+/**
+ * @brief Returns whether the menu bar area is currently visible.
+ *
+ * @return @c true if the parent BMenuField is not hidden.
+ *
+ * @see SetVisible()
+ */
 bool
 BMenuField::MenuBarLayoutItem::IsVisible()
 {
@@ -1564,6 +2474,14 @@ BMenuField::MenuBarLayoutItem::IsVisible()
 }
 
 
+/**
+ * @brief Visibility changes are not permitted for this item.
+ *
+ * The menu bar visibility is tied to the parent BMenuField; this override
+ * is intentionally a no-op.
+ *
+ * @param visible Ignored.
+ */
 void
 BMenuField::MenuBarLayoutItem::SetVisible(bool visible)
 {
@@ -1571,6 +2489,13 @@ BMenuField::MenuBarLayoutItem::SetVisible(bool visible)
 }
 
 
+/**
+ * @brief Returns the absolute frame of this layout item.
+ *
+ * @return The item frame in the layout's coordinate system.
+ *
+ * @see SetFrame(), FrameInParent()
+ */
 BRect
 BMenuField::MenuBarLayoutItem::Frame()
 {
@@ -1578,6 +2503,16 @@ BMenuField::MenuBarLayoutItem::Frame()
 }
 
 
+/**
+ * @brief Updates the layout item's frame and triggers a parent frame update.
+ *
+ * Stores the new frame and calls BMenuField::_UpdateFrame() so that the
+ * parent view repositions and resizes itself.
+ *
+ * @param frame The new absolute frame assigned by the layout engine.
+ *
+ * @see Frame(), BMenuField::_UpdateFrame()
+ */
 void
 BMenuField::MenuBarLayoutItem::SetFrame(BRect frame)
 {
@@ -1586,6 +2521,15 @@ BMenuField::MenuBarLayoutItem::SetFrame(BRect frame)
 }
 
 
+/**
+ * @brief Sets the parent BMenuField after unarchiving.
+ *
+ * Must be called when a MenuBarLayoutItem is reconstructed from an archive.
+ *
+ * @param parent The BMenuField that owns this layout item.
+ *
+ * @see MenuBarLayoutItem(BMessage*)
+ */
 void
 BMenuField::MenuBarLayoutItem::SetParent(BMenuField* parent)
 {
@@ -1593,6 +2537,13 @@ BMenuField::MenuBarLayoutItem::SetParent(BMenuField* parent)
 }
 
 
+/**
+ * @brief Returns the BView associated with this layout item.
+ *
+ * @return The parent BMenuField, which is the view drawn for this item.
+ *
+ * @see SetParent()
+ */
 BView*
 BMenuField::MenuBarLayoutItem::View()
 {
@@ -1600,6 +2551,16 @@ BMenuField::MenuBarLayoutItem::View()
 }
 
 
+/**
+ * @brief Returns the minimum size of the menu bar area.
+ *
+ * Queries the parent's cached menu bar minimum size and adds the vertical
+ * margin on both horizontal and vertical sides.
+ *
+ * @return The minimum BSize for the menu bar area (including margins).
+ *
+ * @see BaseMaxSize(), BasePreferredSize(), BMenuField::_ValidateLayoutData()
+ */
 BSize
 BMenuField::MenuBarLayoutItem::BaseMinSize()
 {
@@ -1613,6 +2574,16 @@ BMenuField::MenuBarLayoutItem::BaseMinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size of the menu bar area.
+ *
+ * The height is constrained to the minimum; the width is unlimited so that
+ * the menu bar expands to fill all available horizontal space.
+ *
+ * @return The maximum BSize with an unlimited width.
+ *
+ * @see BaseMinSize()
+ */
 BSize
 BMenuField::MenuBarLayoutItem::BaseMaxSize()
 {
@@ -1623,6 +2594,13 @@ BMenuField::MenuBarLayoutItem::BaseMaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size of the menu bar area (equals the minimum).
+ *
+ * @return Same as BaseMinSize().
+ *
+ * @see BaseMinSize()
+ */
 BSize
 BMenuField::MenuBarLayoutItem::BasePreferredSize()
 {
@@ -1630,6 +2608,13 @@ BMenuField::MenuBarLayoutItem::BasePreferredSize()
 }
 
 
+/**
+ * @brief Returns the layout alignment for the menu bar item.
+ *
+ * Uses full width and full height so that the menu bar fills its cell.
+ *
+ * @return BAlignment(B_ALIGN_USE_FULL_WIDTH, B_ALIGN_USE_FULL_HEIGHT).
+ */
 BAlignment
 BMenuField::MenuBarLayoutItem::BaseAlignment()
 {
@@ -1637,6 +2622,17 @@ BMenuField::MenuBarLayoutItem::BaseAlignment()
 }
 
 
+/**
+ * @brief Archives the MenuBarLayoutItem into a BMessage.
+ *
+ * Stores the base class data and fFrame under kFrameField.
+ *
+ * @param into The BMessage to archive into.
+ * @param deep If @c true, children are archived (unused; no children).
+ * @return B_OK on success, or an error from BAbstractLayoutItem::Archive().
+ *
+ * @see Instantiate(), MenuBarLayoutItem(BMessage*)
+ */
 status_t
 BMenuField::MenuBarLayoutItem::Archive(BMessage* into, bool deep) const
 {
@@ -1650,6 +2646,14 @@ BMenuField::MenuBarLayoutItem::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Instantiates a MenuBarLayoutItem from an archive message (BArchivable hook).
+ *
+ * @param from The archive message produced by Archive().
+ * @return A newly allocated MenuBarLayoutItem, or @c NULL if validation fails.
+ *
+ * @see Archive(), MenuBarLayoutItem(BMessage*)
+ */
 BArchivable*
 BMenuField::MenuBarLayoutItem::Instantiate(BMessage* from)
 {
@@ -1659,6 +2663,17 @@ BMenuField::MenuBarLayoutItem::Instantiate(BMessage* from)
 }
 
 
+/**
+ * @brief Binary-compatibility trampoline for BMenuField::InvalidateLayout().
+ *
+ * This C-linkage stub is exported under both the GCC 2 mangled name
+ * (InvalidateLayout__10BMenuFieldb) and the GCC 4+ mangled name so that
+ * code compiled against older headers can still call InvalidateLayout().
+ * It forwards to BMenuField::Perform(PERFORM_CODE_LAYOUT_INVALIDATED, ...).
+ *
+ * @param field       The BMenuField instance whose layout should be invalidated.
+ * @param descendants If @c true, child views are also invalidated.
+ */
 extern "C" void
 B_IF_GCC_2(InvalidateLayout__10BMenuFieldb, _ZN10BMenuField16InvalidateLayoutEb)(
 	BMenuField* field, bool descendants)

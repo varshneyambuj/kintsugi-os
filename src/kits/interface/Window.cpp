@@ -1,12 +1,42 @@
 /*
- * Copyright 2001-2025 Haiku, Inc. All rights reserved
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Axel Dörfler, axeld@pinc-software.de
- *		Adrian Oanca, adioanca@cotty.iren.ro
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2025 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Adrian Oanca, adioanca@cotty.iren.ro
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file Window.cpp
+ * @brief Implementation of BWindow, the top-level windowed container
+ *
+ * BWindow manages a native application window: its title, type, feel, look,
+ * position, and size. It runs its own message loop (as a BLooper), dispatches
+ * keyboard/mouse events to child BViews, handles menu shortcuts, and
+ * coordinates layout updates. It communicates with the app_server to create
+ * and update the on-screen window.
+ *
+ * @see BView, BLooper, BMenu, BLayout
  */
 
 
@@ -63,65 +93,188 @@
 #	define STRACE(x) ;
 #endif
 
+/** @brief Internal message code to hide all windows of the application (equivalent to iconifying the team). */
 #define B_HIDE_APPLICATION '_AHD'
 	// if we ever move this to a public namespace, we should also move the
 	// handling of this message into BApplication
 
+/** @brief Internal message code sent by the minimize keyboard shortcut handler. */
 #define _MINIMIZE_			'_WMZ'
+/** @brief Internal message code sent by the zoom keyboard shortcut handler. */
 #define _ZOOM_				'_WZO'
+/** @brief Internal message code that sends the window behind all others. */
 #define _SEND_BEHIND_		'_WSB'
+/** @brief Internal message code that raises the window to the front. */
 #define _SEND_TO_FRONT_		'_WSF'
 
 
+/**
+ * @brief Minimizes or restores the team's windows using the Deskbar animation.
+ *
+ * @param zoomRect Source rectangle used for the zoom animation.
+ * @param team     The team whose windows should be minimized or restored.
+ * @param zoom     If @c true, restore (un-minimize); if @c false, minimize.
+ */
 void do_minimize_team(BRect zoomRect, team_id team, bool zoom);
 
 
+/**
+ * @brief Cookie used by _UnpackMessage() to iterate over all targets of a
+ *        single preferred-handler input message.
+ *
+ * Because an app_server input event may carry multiple view tokens inside one
+ * BMessage (e.g. the focus view plus every view that overlaps the mouse
+ * cursor), this cookie tracks state across repeated calls to _UnpackMessage()
+ * so each target receives its own copy of the message.
+ */
 struct BWindow::unpack_cookie {
+	/**
+	 * @brief Initialises the cookie to the sentinel state before the first
+	 *        call to _UnpackMessage().
+	 */
 	unpack_cookie();
 
+	/** @brief The original message being distributed; NULL signals iteration end. */
 	BMessage*	message;
+	/** @brief Index of the next "_token" field entry to process. */
 	int32		index;
+	/** @brief The focus-view handler extracted from the original target. */
 	BHandler*	focus;
+	/** @brief Token of the focus view, used for identity checks. */
 	int32		focus_token;
+	/** @brief Token of the last-mouse-moved view at the start of iteration. */
 	int32		last_view_token;
+	/** @brief Set to @c true once the focus token appears in the token list. */
 	bool		found_focus;
+	/** @brief Set to @c true once all "_token" fields have been scanned. */
 	bool		tokens_scanned;
 };
 
 
+/**
+ * @brief Represents a single registered keyboard shortcut in a BWindow.
+ *
+ * A Shortcut associates a key (normalised to upper-case Unicode) and a set of
+ * modifier keys with either a BMenuItem (which is invoked directly) or a
+ * BMessage (posted to an optional BHandler target).  BWindow owns the list of
+ * Shortcut objects and is responsible for their lifetime.
+ *
+ * @see BWindow::AddShortcut(), BWindow::RemoveShortcut(), BWindow::HasShortcut()
+ */
 class BWindow::Shortcut {
 public:
-							Shortcut(uint32 key, uint32 modifiers,
-								BMenuItem* item);
-							Shortcut(uint32 key, uint32 modifiers,
-								BMessage* message, BHandler* target);
-							~Shortcut();
+	/**
+	 * @brief Constructs a shortcut that invokes a menu item.
+	 *
+	 * @param key       Raw Unicode code point for the shortcut key.
+	 * @param modifiers Modifier-key bitmask (e.g. B_COMMAND_KEY).
+	 * @param item      The BMenuItem to invoke when the shortcut fires.
+	 */
+						Shortcut(uint32 key, uint32 modifiers,
+							BMenuItem* item);
 
-			bool			Matches(uint32 key, uint32 preparedModifiers) const;
+	/**
+	 * @brief Constructs a shortcut that posts a message to a handler.
+	 *
+	 * The Shortcut takes ownership of @a message and will delete it when
+	 * the Shortcut itself is destroyed.
+	 *
+	 * @param key       Raw Unicode code point for the shortcut key.
+	 * @param modifiers Modifier-key bitmask.
+	 * @param message   The BMessage to post; ownership is transferred.
+	 * @param target    Optional target handler; if NULL the focus view is used.
+	 */
+						Shortcut(uint32 key, uint32 modifiers,
+							BMessage* message, BHandler* target);
 
-			uint32			Key() const { return fKey; };
-			uint32			Modifiers() const;
-			uint32			PreparedModifiers() const { return fPreparedModifiers; };
-			BMenuItem*		MenuItem() const { return fMenuItem; }
-			BMessage*		Message() const { return fMessage; }
-			BHandler*		Target() const { return fTarget; }
+	/**
+	 * @brief Destructor; deletes the owned BMessage, if any.
+	 */
+						~Shortcut();
 
+	/**
+	 * @brief Returns @c true if this shortcut matches the given key and modifiers.
+	 *
+	 * @param key                Raw key value (already prepared via PrepareKey()).
+	 * @param preparedModifiers  Modifier mask already prepared via PrepareModifiers().
+	 * @return @c true on match, @c false otherwise.
+	 */
+		bool			Matches(uint32 key, uint32 preparedModifiers) const;
+
+	/** @brief Returns the normalised (upper-case) key code. */
+		uint32			Key() const { return fKey; };
+
+	/**
+	 * @brief Returns the modifier mask as reported to the caller.
+	 *
+	 * Adds B_NO_COMMAND_KEY to the prepared modifiers when B_COMMAND_KEY is
+	 * absent, so callers can distinguish "explicitly without Command" from
+	 * "Command implied by default".
+	 */
+		uint32			Modifiers() const;
+
+	/** @brief Returns the internally prepared modifier bitmask. */
+		uint32			PreparedModifiers() const { return fPreparedModifiers; };
+	/** @brief Returns the associated BMenuItem, or NULL if this is a message shortcut. */
+		BMenuItem*		MenuItem() const { return fMenuItem; }
+	/** @brief Returns the associated BMessage, or NULL if this is a menu-item shortcut. */
+		BMessage*		Message() const { return fMessage; }
+	/** @brief Returns the target BHandler for message shortcuts, or NULL for the focus view. */
+		BHandler*		Target() const { return fTarget; }
+
+	/**
+	 * @brief Returns the modifier-key bits that are eligible to participate in shortcuts.
+	 *
+	 * Only Command, Option, Shift, Control, and Menu modifier keys are considered.
+	 */
 	static	uint32			AllowedModifiers();
+
+	/**
+	 * @brief Normalises a key code to upper-case Unicode for comparison.
+	 *
+	 * @param key Raw Unicode code point.
+	 * @return Upper-case code point.
+	 */
 	static	uint32			PrepareKey(uint32 key);
+
+	/**
+	 * @brief Strips disallowed modifiers and enforces the Command-key convention.
+	 *
+	 * If B_NO_COMMAND_KEY is present the Command bit is cleared; otherwise it
+	 * is forced on.  Only bits in AllowedModifiers() are kept.
+	 *
+	 * @param modifiers Raw modifier bitmask.
+	 * @return Normalised modifier bitmask.
+	 */
 	static	uint32			PrepareModifiers(uint32 modifiers);
 
 private:
-			uint32			fKey;
-			uint32			fPreparedModifiers;
-			BMenuItem*		fMenuItem;
-			BMessage*		fMessage;
-			BHandler*		fTarget;
+		/** @brief Normalised (upper-case) key code. */
+		uint32			fKey;
+		/** @brief Prepared modifier bitmask used for matching. */
+		uint32			fPreparedModifiers;
+		/** @brief Menu item to invoke, or NULL for message shortcuts. */
+		BMenuItem*		fMenuItem;
+		/** @brief Owned message to post, or NULL for menu-item shortcuts. */
+		BMessage*		fMessage;
+		/** @brief Target handler for message shortcuts, or NULL for focus view. */
+		BHandler*		fTarget;
 };
 
 
 using BPrivate::gDefaultTokens;
 using BPrivate::MenuPrivate;
 
+/**
+ * @brief Scripting property table for BWindow.
+ *
+ * Defines the properties exposed via the BeOS scripting protocol, including
+ * "Active", "Feel", "Flags", "Frame", "Hidden", "Look", "Title",
+ * "Workspaces", "MenuBar", "View" (count and specifier), "Minimize",
+ * and "TabFrame" (read-only decorator tab rectangle).
+ *
+ * @see BWindow::ResolveSpecifier(), BWindow::GetSupportedSuites()
+ */
 static property_info sWindowPropInfo[] = {
 	{
 		"Active", { B_GET_PROPERTY, B_SET_PROPERTY },
@@ -190,6 +343,14 @@ static property_info sWindowPropInfo[] = {
 	{ 0 }
 };
 
+/**
+ * @brief Scripting command-value table for BWindow.
+ *
+ * Describes the scripting commands "MoveTo", "MoveBy", "ResizeTo", and
+ * "ResizeBy" that can be sent to a BWindow via the BeOS scripting protocol.
+ *
+ * @see BWindow::GetSupportedSuites()
+ */
 static value_info sWindowValueInfo[] = {
 	{
 		"MoveTo", 'WDMT', B_COMMAND_KIND,
@@ -215,6 +376,16 @@ static value_info sWindowValueInfo[] = {
 };
 
 
+/**
+ * @brief Sets the menu-tracking semaphore on a BWindow.
+ *
+ * Called by BMenuBar to install a semaphore that the window destructor
+ * acquires before destroying itself, ensuring that an in-progress menu
+ * tracking loop finishes safely.
+ *
+ * @param window The window whose fMenuSem field will be updated.
+ * @param sem    The semaphore ID to install, or -1 to clear it.
+ */
 void
 _set_menu_sem_(BWindow* window, sem_id sem)
 {
@@ -226,6 +397,14 @@ _set_menu_sem_(BWindow* window, sem_id sem)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an unpack_cookie ready for the first _UnpackMessage() call.
+ *
+ * Sets @c message to a non-NULL sentinel value (@c ~0UL) so that the initial
+ * check inside _UnpackMessage() can distinguish "not yet started" from "done".
+ * All token fields are initialised to @c B_NULL_TOKEN and boolean flags to
+ * @c false.
+ */
 BWindow::unpack_cookie::unpack_cookie()
 	:
 	message((BMessage*)~0UL),
@@ -242,6 +421,17 @@ BWindow::unpack_cookie::unpack_cookie()
 //	#pragma mark - BWindow::Shortcut
 
 
+/**
+ * @brief Constructs a Shortcut that will invoke a BMenuItem.
+ *
+ * The key and modifiers are normalised via PrepareKey() and
+ * PrepareModifiers() so that comparisons are consistent regardless of
+ * how the caller specified them.
+ *
+ * @param key       Raw Unicode code point for the shortcut key.
+ * @param modifiers Modifier-key bitmask (e.g. B_COMMAND_KEY).
+ * @param item      The BMenuItem to invoke; ownership is not transferred.
+ */
 BWindow::Shortcut::Shortcut(uint32 key, uint32 modifiers, BMenuItem* item)
 	:
 	fKey(PrepareKey(key)),
@@ -253,6 +443,18 @@ BWindow::Shortcut::Shortcut(uint32 key, uint32 modifiers, BMenuItem* item)
 }
 
 
+/**
+ * @brief Constructs a Shortcut that posts a BMessage to an optional handler.
+ *
+ * The Shortcut takes ownership of @a message and will delete it on destruction.
+ * If @a target is NULL the message is posted to the focus view at the time the
+ * shortcut fires.
+ *
+ * @param key       Raw Unicode code point for the shortcut key.
+ * @param modifiers Modifier-key bitmask.
+ * @param message   The BMessage to post; ownership is transferred.
+ * @param target    Target BHandler, or NULL to use the current focus view.
+ */
 BWindow::Shortcut::Shortcut(uint32 key, uint32 modifiers, BMessage* message,
 	BHandler* target)
 	:
@@ -265,6 +467,9 @@ BWindow::Shortcut::Shortcut(uint32 key, uint32 modifiers, BMessage* message,
 }
 
 
+/**
+ * @brief Destructs the Shortcut, releasing the owned BMessage if present.
+ */
 BWindow::Shortcut::~Shortcut()
 {
 	// we own the message, if any
@@ -272,6 +477,16 @@ BWindow::Shortcut::~Shortcut()
 }
 
 
+/**
+ * @brief Returns @c true if this shortcut matches the given prepared key and modifiers.
+ *
+ * Both arguments must already have been processed through PrepareKey() and
+ * PrepareModifiers() respectively.
+ *
+ * @param key                Normalised key code.
+ * @param preparedModifiers  Normalised modifier bitmask.
+ * @return @c true on an exact match, @c false otherwise.
+ */
 bool
 BWindow::Shortcut::Matches(uint32 key, uint32 preparedModifiers) const
 {
@@ -279,6 +494,15 @@ BWindow::Shortcut::Matches(uint32 key, uint32 preparedModifiers) const
 }
 
 
+/**
+ * @brief Returns the modifier mask as it should be presented to external callers.
+ *
+ * Adds the B_NO_COMMAND_KEY pseudo-bit when the Command key is absent so that
+ * callers can distinguish an explicitly command-free shortcut from one where
+ * the Command key is implied by the default.
+ *
+ * @return The modifier bitmask, including B_NO_COMMAND_KEY if appropriate.
+ */
 uint32
 BWindow::Shortcut::Modifiers() const
 {
@@ -287,6 +511,14 @@ BWindow::Shortcut::Modifiers() const
 }
 
 
+/**
+ * @brief Returns the bitmask of modifier keys that are eligible for shortcuts.
+ *
+ * Only Command, Option, Shift, Control, and Menu modifier bits are considered.
+ * All other bits are stripped out by PrepareModifiers().
+ *
+ * @return Bitmask of allowed modifier keys.
+ */
 /*static*/
 uint32
 BWindow::Shortcut::AllowedModifiers()
@@ -295,6 +527,16 @@ BWindow::Shortcut::AllowedModifiers()
 }
 
 
+/**
+ * @brief Normalises a raw modifier bitmask for shortcut matching.
+ *
+ * Strips any bits not in AllowedModifiers().  If @c B_NO_COMMAND_KEY is set
+ * the Command bit is removed; otherwise it is forced on (Command is implied
+ * by default for shortcuts).
+ *
+ * @param modifiers Raw modifier bitmask from a key event or caller.
+ * @return Normalised modifier bitmask.
+ */
 /*static*/
 uint32
 BWindow::Shortcut::PrepareModifiers(uint32 modifiers)
@@ -306,6 +548,12 @@ BWindow::Shortcut::PrepareModifiers(uint32 modifiers)
 }
 
 
+/**
+ * @brief Normalises a key code to upper-case Unicode for case-insensitive matching.
+ *
+ * @param key Raw Unicode code point.
+ * @return Upper-case equivalent of @a key.
+ */
 /*static*/
 uint32
 BWindow::Shortcut::PrepareKey(uint32 key)
@@ -317,6 +565,21 @@ BWindow::Shortcut::PrepareKey(uint32 key)
 //	#pragma mark - BWindow
 
 
+/**
+ * @brief Constructs a BWindow using a combined window_type convenience value.
+ *
+ * Decomposes @a type into the corresponding window_look and window_feel values,
+ * then delegates to _InitData() to create the server-side window and set up the
+ * top-level view.
+ *
+ * @param frame     Initial position and size of the window in screen coordinates.
+ * @param title     Title string shown in the window's title tab.
+ * @param type      Combined window type (e.g. B_TITLED_WINDOW, B_DOCUMENT_WINDOW).
+ * @param flags     Window behaviour flags (e.g. B_NOT_RESIZABLE).
+ * @param workspace Workspace bitmask; use B_CURRENT_WORKSPACE for the active one.
+ *
+ * @see BWindow::BWindow(BRect, const char*, window_look, window_feel, uint32, uint32)
+ */
 BWindow::BWindow(BRect frame, const char* title, window_type type,
 		uint32 flags, uint32 workspace)
 	:
@@ -330,6 +593,19 @@ BWindow::BWindow(BRect frame, const char* title, window_type type,
 }
 
 
+/**
+ * @brief Constructs a BWindow with explicit look and feel parameters.
+ *
+ * This is the most general public constructor.  The window is initially hidden
+ * (show-level 1); call Show() to make it visible and start the message loop.
+ *
+ * @param frame     Initial position and size of the window in screen coordinates.
+ * @param title     Title string shown in the window's title tab.
+ * @param look      Visual appearance (e.g. B_TITLED_WINDOW_LOOK).
+ * @param feel      Behaviour relative to other windows (e.g. B_NORMAL_WINDOW_FEEL).
+ * @param flags     Window behaviour flags (e.g. B_NOT_RESIZABLE).
+ * @param workspace Workspace bitmask; use B_CURRENT_WORKSPACE for the active one.
+ */
 BWindow::BWindow(BRect frame, const char* title, window_look look,
 		window_feel feel, uint32 flags, uint32 workspace)
 	:
@@ -339,6 +615,18 @@ BWindow::BWindow(BRect frame, const char* title, window_look look,
 }
 
 
+/**
+ * @brief Archive constructor — restores a BWindow from a flattened BMessage.
+ *
+ * Called by Instantiate().  Reads all window attributes (frame, title, look,
+ * feel, flags, workspaces, size limits, pulse rate, and child views) from
+ * @a data, then creates the server-side window via _InitData() and
+ * reconstructs every archived child view.
+ *
+ * @param data The archive message previously produced by Archive().
+ *
+ * @see BWindow::Archive(), BWindow::Instantiate()
+ */
 BWindow::BWindow(BMessage* data)
 	:
 	BLooper(data)
@@ -391,6 +679,17 @@ BWindow::BWindow(BMessage* data)
 }
 
 
+/**
+ * @brief Internal constructor for off-screen bitmap windows.
+ *
+ * Creates an invisible, untyped window backed by the BBitmap identified by
+ * @a bitmapToken.  Used internally by BBitmap to obtain a drawing context.
+ *
+ * @param frame       Dimensions of the off-screen drawing area.
+ * @param bitmapToken Server-side token of the backing BBitmap.
+ *
+ * @note Not intended for application use.
+ */
 BWindow::BWindow(BRect frame, int32 bitmapToken)
 	:
 	BLooper("offscreen bitmap")
@@ -400,6 +699,17 @@ BWindow::BWindow(BRect frame, int32 bitmapToken)
 }
 
 
+/**
+ * @brief Destroys the BWindow, tearing down the server connection and all resources.
+ *
+ * Stops any active menu tracking, waits for any pending menu semaphore, removes
+ * and deletes the top-level view, frees all registered shortcuts, disables
+ * pulsing, notifies the app_server (AS_DELETE_WINDOW), and destroys the IPC
+ * link ports.
+ *
+ * @note The BWindow must be locked before the destructor is called.
+ * @see BWindow::Quit()
+ */
 BWindow::~BWindow()
 {
 	if (BMenu* menu = dynamic_cast<BMenu*>(fFocus)) {
@@ -452,6 +762,18 @@ BWindow::~BWindow()
 }
 
 
+/**
+ * @brief Creates a BWindow from an archived BMessage (BArchivable hook).
+ *
+ * Validates the archive's class field and, if correct, allocates a new
+ * BWindow using the archive constructor.
+ *
+ * @param data The archive message to restore from.
+ * @return A newly allocated BWindow, or NULL if the archive is invalid or
+ *         allocation fails.
+ *
+ * @see BWindow::Archive()
+ */
 BArchivable*
 BWindow::Instantiate(BMessage* data)
 {
@@ -462,6 +784,20 @@ BWindow::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Flattens the BWindow's state into a BMessage for archiving.
+ *
+ * Stores frame, title, look, feel, flags, workspace, size limits, pulse rate,
+ * and (when @a deep is @c true) recursive archives of all direct child views.
+ * Non-default size limits and zoom limits are only written when they differ
+ * from their default values to keep archives compact.
+ *
+ * @param data  The message to write archive data into.
+ * @param deep  If @c true, recursively archive child views.
+ * @return @c B_OK on success, or a negative error code on failure.
+ *
+ * @see BWindow::Instantiate()
+ */
 status_t
 BWindow::Archive(BMessage* data, bool deep) const
 {
@@ -521,6 +857,18 @@ BWindow::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Hides the window and terminates its message loop.
+ *
+ * Hides the window (calling Hide() until the show-level reaches zero), posts
+ * B_QUIT_REQUESTED to the application if B_QUIT_ON_WINDOW_CLOSE is set, then
+ * delegates to BLooper::Quit() which deletes the looper.
+ *
+ * @note The window must be locked before Quit() is called; an error is printed
+ *       if it is not.
+ *
+ * @see BLooper::Quit(), BWindow::QuitRequested()
+ */
 void
 BWindow::Quit()
 {
@@ -550,6 +898,19 @@ BWindow::Quit()
 }
 
 
+/**
+ * @brief Adds a BView as a direct child of the window's top-level view.
+ *
+ * The window is auto-locked for the duration of the call.  If @a before is
+ * not NULL the new child is inserted immediately before it in sibling order;
+ * otherwise it is appended at the end.
+ *
+ * @param child  The view to add; must not already have a parent.
+ * @param before Existing sibling before which @a child is inserted, or NULL
+ *               to append.
+ *
+ * @see BWindow::RemoveChild(), BView::AddChild()
+ */
 void
 BWindow::AddChild(BView* child, BView* before)
 {
@@ -559,6 +920,15 @@ BWindow::AddChild(BView* child, BView* before)
 }
 
 
+/**
+ * @brief Adds a BLayoutItem to the window's top-level layout.
+ *
+ * Forwards the request to the top-level view's layout under an auto-lock.
+ *
+ * @param child The layout item to add.
+ *
+ * @see BWindow::SetLayout(), BView::AddChild(BLayoutItem*)
+ */
 void
 BWindow::AddChild(BLayoutItem* child)
 {
@@ -568,6 +938,16 @@ BWindow::AddChild(BLayoutItem* child)
 }
 
 
+/**
+ * @brief Removes a direct child view from the window's top-level view.
+ *
+ * The window is auto-locked for the duration of the call.
+ *
+ * @param child The view to remove.
+ * @return @c true if the view was found and removed, @c false otherwise.
+ *
+ * @see BWindow::AddChild(), BView::RemoveChild()
+ */
 bool
 BWindow::RemoveChild(BView* child)
 {
@@ -579,6 +959,13 @@ BWindow::RemoveChild(BView* child)
 }
 
 
+/**
+ * @brief Returns the number of direct child views of the window.
+ *
+ * @return Number of direct children, or 0 if the window cannot be locked.
+ *
+ * @see BWindow::ChildAt()
+ */
 int32
 BWindow::CountChildren() const
 {
@@ -590,6 +977,15 @@ BWindow::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the direct child view at the given zero-based index.
+ *
+ * @param index Zero-based index of the child view.
+ * @return The child view at @a index, or NULL if the index is out of range or
+ *         the window cannot be locked.
+ *
+ * @see BWindow::CountChildren()
+ */
 BView*
 BWindow::ChildAt(int32 index) const
 {
@@ -601,6 +997,17 @@ BWindow::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Minimizes or restores the window.
+ *
+ * Does nothing for modal, floating, or hidden windows, and is a no-op if the
+ * window is already in the requested state.  Notifies the app_server via
+ * AS_MINIMIZE_WINDOW.
+ *
+ * @param minimize @c true to minimize the window, @c false to restore it.
+ *
+ * @see BWindow::IsMinimized()
+ */
 void
 BWindow::Minimize(bool minimize)
 {
@@ -618,6 +1025,15 @@ BWindow::Minimize(bool minimize)
 }
 
 
+/**
+ * @brief Stacks this window immediately behind another window.
+ *
+ * Sends AS_SEND_BEHIND to the app_server.  If @a window is NULL the window is
+ * sent behind all other windows.
+ *
+ * @param window The window to stack behind, or NULL to go to the back.
+ * @return @c B_OK on success, or an error code on failure.
+ */
 status_t
 BWindow::SendBehind(const BWindow* window)
 {
@@ -637,6 +1053,15 @@ BWindow::SendBehind(const BWindow* window)
 }
 
 
+/**
+ * @brief Flushes all pending drawing commands to the app_server without waiting.
+ *
+ * Acquires the window lock, flushes the BPortLink send buffer, then
+ * releases the lock.  This is an asynchronous operation — the caller does
+ * not block until the server has processed the commands.
+ *
+ * @see BWindow::Sync()
+ */
 void
 BWindow::Flush() const
 {
@@ -647,6 +1072,16 @@ BWindow::Flush() const
 }
 
 
+/**
+ * @brief Synchronously flushes pending drawing commands to the app_server.
+ *
+ * Sends AS_SYNC and blocks until the server sends a reply, guaranteeing that
+ * all prior drawing commands have been fully processed before this call
+ * returns.  Useful when ordering is required relative to other server
+ * operations (e.g. before deleting a BBitmap).
+ *
+ * @see BWindow::Flush()
+ */
 void
 BWindow::Sync() const
 {
@@ -663,6 +1098,15 @@ BWindow::Sync() const
 }
 
 
+/**
+ * @brief Suspends automatic screen updates for this window.
+ *
+ * All drawing performed after this call will be queued on the server side but
+ * not shown on screen until EnableUpdates() is called.  Useful for reducing
+ * flicker during complex redraws.
+ *
+ * @see BWindow::EnableUpdates()
+ */
 void
 BWindow::DisableUpdates()
 {
@@ -674,6 +1118,14 @@ BWindow::DisableUpdates()
 }
 
 
+/**
+ * @brief Re-enables automatic screen updates after a DisableUpdates() call.
+ *
+ * Instructs the app_server to flush any queued drawing operations and resume
+ * normal update processing for this window.
+ *
+ * @see BWindow::DisableUpdates()
+ */
 void
 BWindow::EnableUpdates()
 {
@@ -685,6 +1137,15 @@ BWindow::EnableUpdates()
 }
 
 
+/**
+ * @brief Begins a view transaction, batching all link messages to the server.
+ *
+ * Sets the internal transaction flag so that view operations are accumulated
+ * in the link buffer rather than flushed immediately.  Must be balanced with
+ * a call to EndViewTransaction().
+ *
+ * @see BWindow::EndViewTransaction(), BWindow::InViewTransaction()
+ */
 void
 BWindow::BeginViewTransaction()
 {
@@ -695,6 +1156,14 @@ BWindow::BeginViewTransaction()
 }
 
 
+/**
+ * @brief Ends a view transaction and flushes all buffered commands to the server.
+ *
+ * Flushes the link buffer if a transaction is in progress, then clears the
+ * transaction flag.
+ *
+ * @see BWindow::BeginViewTransaction(), BWindow::InViewTransaction()
+ */
 void
 BWindow::EndViewTransaction()
 {
@@ -707,6 +1176,13 @@ BWindow::EndViewTransaction()
 }
 
 
+/**
+ * @brief Returns @c true if a view transaction is currently in progress.
+ *
+ * @return @c true between BeginViewTransaction() and EndViewTransaction() calls.
+ *
+ * @see BWindow::BeginViewTransaction(), BWindow::EndViewTransaction()
+ */
 bool
 BWindow::InViewTransaction() const
 {
@@ -715,6 +1191,13 @@ BWindow::InViewTransaction() const
 }
 
 
+/**
+ * @brief Returns @c true if this window is currently the front-most window.
+ *
+ * Queries the app_server synchronously via AS_IS_FRONT_WINDOW.
+ *
+ * @return @c true if the window is at the front of the window stack.
+ */
 bool
 BWindow::IsFront() const
 {
@@ -732,6 +1215,20 @@ BWindow::IsFront() const
 }
 
 
+/**
+ * @brief Handles messages directed at the BWindow itself.
+ *
+ * Processes non-scripting messages (keyboard navigation, app_server restart
+ * reconnection) and dispatches scripting messages (B_GET_PROPERTY /
+ * B_SET_PROPERTY) for the "Active", "Feel", "Flags", "Frame", "Hidden",
+ * "Look", "Title", "Workspaces", "Minimize", and "TabFrame" properties.
+ * All unhandled messages are forwarded to BLooper::MessageReceived().
+ *
+ * @param message The BMessage to handle.
+ *
+ * @see BWindow::DispatchMessage(), BLooper::MessageReceived()
+ * @see BWindow::ResolveSpecifier(), BWindow::GetSupportedSuites()
+ */
 void
 BWindow::MessageReceived(BMessage* message)
 {
@@ -947,6 +1444,34 @@ BWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Central message dispatcher for the BWindow message loop.
+ *
+ * Intercepts system messages before they reach their target handler:
+ * - B_ZOOM / _ZOOM_ — triggers the zoom operation.
+ * - _MINIMIZE_ — minimizes the window via shortcut.
+ * - _SEND_BEHIND_ / _SEND_TO_FRONT_ — reorder the window.
+ * - B_MINIMIZE / B_HIDE_APPLICATION — minimize or hide the application team.
+ * - B_WINDOW_RESIZED / B_WINDOW_MOVED — coalesces pending resize/move
+ *   notifications and calls FrameResized() / FrameMoved().
+ * - B_WINDOW_ACTIVATED — coalesces activation messages and calls WindowActivated().
+ * - B_SCREEN_CHANGED / B_WORKSPACE_ACTIVATED / B_WORKSPACES_CHANGED —
+ *   propagates to child views and calls the corresponding hook.
+ * - B_KEY_DOWN / B_UNMAPPED_KEY_DOWN — tries shortcut and navigation handling.
+ * - B_PULSE — delivers pulse events to all views.
+ * - _UPDATE_ — performs the incremental repaint protocol with the app_server.
+ * - _MENUS_DONE_ — calls MenusEnded().
+ * - B_WINDOW_MOVE_BY / B_WINDOW_MOVE_TO — legacy scripting move commands.
+ * - B_LAYOUT_WINDOW — triggers a layout pass.
+ * - B_COLORS_UPDATED / B_FONTS_UPDATED — propagates theme changes.
+ *
+ * All other messages are forwarded to BLooper::DispatchMessage().
+ *
+ * @param message The message to dispatch.
+ * @param target  The intended target handler for this message.
+ *
+ * @see BWindow::MessageReceived(), BLooper::DispatchMessage()
+ */
 void
 BWindow::DispatchMessage(BMessage* message, BHandler* target)
 {
@@ -1340,6 +1865,14 @@ FrameMoved(origin);
 }
 
 
+/**
+ * @brief Hook called when the window's position changes.
+ *
+ * The default implementation does nothing.  Override to respond to window
+ * moves, e.g. to update cached position data or adjust child windows.
+ *
+ * @param newPosition The new top-left corner of the window in screen coordinates.
+ */
 void
 BWindow::FrameMoved(BPoint newPosition)
 {
@@ -1348,6 +1881,15 @@ BWindow::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Hook called when the window's size changes.
+ *
+ * The default implementation does nothing.  Override to respond to resize
+ * events, e.g. to rearrange manually-laid-out child views.
+ *
+ * @param newWidth  New content width of the window in pixels.
+ * @param newHeight New content height of the window in pixels.
+ */
 void
 BWindow::FrameResized(float newWidth, float newHeight)
 {
@@ -1356,6 +1898,15 @@ BWindow::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Hook called when the window's workspace membership changes.
+ *
+ * The default implementation does nothing.  Override to respond to the window
+ * being moved between workspaces.
+ *
+ * @param oldWorkspaces Bitmask of workspaces the window belonged to before.
+ * @param newWorkspaces Bitmask of workspaces the window now belongs to.
+ */
 void
 BWindow::WorkspacesChanged(uint32 oldWorkspaces, uint32 newWorkspaces)
 {
@@ -1364,6 +1915,16 @@ BWindow::WorkspacesChanged(uint32 oldWorkspaces, uint32 newWorkspaces)
 }
 
 
+/**
+ * @brief Hook called when the active workspace changes.
+ *
+ * The default implementation does nothing.  Override to respond to workspace
+ * switches, e.g. to pause or resume activity when the window becomes invisible.
+ *
+ * @param workspace Index of the workspace whose activation state changed.
+ * @param state     @c true if @a workspace became active, @c false if it
+ *                  became inactive.
+ */
 void
 BWindow::WorkspaceActivated(int32 workspace, bool state)
 {
@@ -1372,6 +1933,15 @@ BWindow::WorkspaceActivated(int32 workspace, bool state)
 }
 
 
+/**
+ * @brief Hook called just before a menu begins tracking (i.e. is about to open).
+ *
+ * The default implementation does nothing.  Override to enable or update menu
+ * items before they are displayed.  This hook is also invoked when a keyboard
+ * shortcut is evaluated, giving subclasses a chance to install dynamic shortcuts.
+ *
+ * @see BWindow::MenusEnded()
+ */
 void
 BWindow::MenusBeginning()
 {
@@ -1380,6 +1950,14 @@ BWindow::MenusBeginning()
 }
 
 
+/**
+ * @brief Hook called after a menu tracking session ends.
+ *
+ * The default implementation does nothing.  Override to perform cleanup or
+ * update state after a menu is dismissed.
+ *
+ * @see BWindow::MenusBeginning()
+ */
 void
 BWindow::MenusEnded()
 {
@@ -1388,6 +1966,21 @@ BWindow::MenusEnded()
 }
 
 
+/**
+ * @brief Sets the minimum and maximum size constraints for the window.
+ *
+ * Sends the limits to the app_server (AS_SET_SIZE_LIMITS), which may adjust
+ * the window's current size to satisfy the new constraints.  The actual limits
+ * enforced by the server are read back and stored in the member variables.
+ * Does nothing if minWidth > maxWidth or minHeight > maxHeight.
+ *
+ * @param minWidth  Minimum allowed content width in pixels.
+ * @param maxWidth  Maximum allowed content width in pixels.
+ * @param minHeight Minimum allowed content height in pixels.
+ * @param maxHeight Maximum allowed content height in pixels.
+ *
+ * @see BWindow::GetSizeLimits(), BWindow::UpdateSizeLimits()
+ */
 void
 BWindow::SetSizeLimits(float minWidth, float maxWidth,
 	float minHeight, float maxHeight)
@@ -1424,6 +2017,18 @@ BWindow::SetSizeLimits(float minWidth, float maxWidth,
 }
 
 
+/**
+ * @brief Retrieves the current minimum and maximum size constraints.
+ *
+ * Any of the output pointers may be NULL; those values are simply skipped.
+ *
+ * @param _minWidth  Output: minimum content width, or NULL.
+ * @param _maxWidth  Output: maximum content width, or NULL.
+ * @param _minHeight Output: minimum content height, or NULL.
+ * @param _maxHeight Output: maximum content height, or NULL.
+ *
+ * @see BWindow::SetSizeLimits()
+ */
 void
 BWindow::GetSizeLimits(float* _minWidth, float* _maxWidth, float* _minHeight,
 	float* _maxHeight)
@@ -1440,6 +2045,15 @@ BWindow::GetSizeLimits(float* _minWidth, float* _maxWidth, float* _minHeight,
 }
 
 
+/**
+ * @brief Synchronises the window's size limits with its top-level layout's min/max sizes.
+ *
+ * Only has an effect when the B_AUTO_UPDATE_SIZE_LIMITS flag is set.  Queries
+ * the top view's MinSize() and MaxSize() and forwards the results to
+ * SetSizeLimits().
+ *
+ * @see BWindow::SetSizeLimits(), BWindow::SetFlags()
+ */
 void
 BWindow::UpdateSizeLimits()
 {
@@ -1456,6 +2070,18 @@ BWindow::UpdateSizeLimits()
 }
 
 
+/**
+ * @brief Applies custom decorator settings to this window's decorator.
+ *
+ * Flattens the BMessage into a raw buffer and sends it to the app_server via
+ * AS_SET_DECORATOR_SETTINGS.  The exact keys accepted depend on the active
+ * decorator plug-in.
+ *
+ * @param settings A BMessage containing decorator-specific key/value pairs.
+ * @return @c B_OK on success, or an error code if flattening or sending fails.
+ *
+ * @see BWindow::GetDecoratorSettings()
+ */
 status_t
 BWindow::SetDecoratorSettings(const BMessage& settings)
 {
@@ -1489,6 +2115,18 @@ BWindow::SetDecoratorSettings(const BMessage& settings)
 }
 
 
+/**
+ * @brief Retrieves the current decorator settings for this window.
+ *
+ * Sends AS_GET_DECORATOR_SETTINGS to the app_server, reads the flattened
+ * BMessage reply, and unflattens it into @a settings.  Useful for reading
+ * the "tab frame" and "border width" values used by DecoratorFrame().
+ *
+ * @param settings Output BMessage that receives the decorator settings.
+ * @return @c B_OK on success, or an error code if the query fails.
+ *
+ * @see BWindow::SetDecoratorSettings(), BWindow::DecoratorFrame()
+ */
 status_t
 BWindow::GetDecoratorSettings(BMessage* settings) const
 {
@@ -1525,6 +2163,19 @@ BWindow::GetDecoratorSettings(BMessage* settings) const
 }
 
 
+/**
+ * @brief Sets the maximum dimensions the window may occupy when zoomed.
+ *
+ * The effective zoom limits are clamped to the size limits set via
+ * SetSizeLimits() and further clipped to the screen size when Zoom() is
+ * invoked.  Values larger than the current maximum size limit are silently
+ * clamped.
+ *
+ * @param maxWidth  Maximum content width in pixels when zoomed.
+ * @param maxHeight Maximum content height in pixels when zoomed.
+ *
+ * @see BWindow::Zoom(), BWindow::SetSizeLimits()
+ */
 void
 BWindow::SetZoomLimits(float maxWidth, float maxHeight)
 {
@@ -1539,6 +2190,19 @@ BWindow::SetZoomLimits(float maxWidth, float maxHeight)
 }
 
 
+/**
+ * @brief Hook called by the non-virtual Zoom() with the computed ideal frame.
+ *
+ * The default implementation simply moves and resizes the window to the
+ * supplied @a origin, @a width, and @a height.  Override to customise zoom
+ * behaviour (e.g. to preserve aspect ratio or animate the transition).
+ *
+ * @param origin Target top-left corner of the zoomed window in screen coordinates.
+ * @param width  Target content width in pixels.
+ * @param height Target content height in pixels.
+ *
+ * @see BWindow::Zoom(), BWindow::SetZoomLimits()
+ */
 void
 BWindow::Zoom(BPoint origin, float width, float height)
 {
@@ -1549,6 +2213,18 @@ BWindow::Zoom(BPoint origin, float width, float height)
 }
 
 
+/**
+ * @brief Zooms (or un-zooms) the window to the largest useful size on screen.
+ *
+ * Computes the ideal zoom rectangle as the smallest of: the zoom limits set
+ * by SetZoomLimits(), the size limits set by SetSizeLimits(), and the usable
+ * screen area (adjusted for the Deskbar unless it is auto-hidden or
+ * B_SHIFT_KEY is held).  If the window is already at the computed size,
+ * restores it to the previous frame.  Delegates the actual move/resize to the
+ * Zoom(BPoint, float, float) hook.
+ *
+ * @see BWindow::Zoom(BPoint, float, float), BWindow::SetZoomLimits()
+ */
 void
 BWindow::Zoom()
 {
@@ -1654,6 +2330,16 @@ BWindow::Zoom()
 }
 
 
+/**
+ * @brief Hook called when the screen's resolution or colour depth changes.
+ *
+ * The default implementation does nothing.  Override to respond to screen
+ * configuration changes, e.g. to reposition the window or reload
+ * resolution-dependent resources.
+ *
+ * @param screenSize The new screen frame in screen coordinates.
+ * @param depth      The new colour space of the screen.
+ */
 void
 BWindow::ScreenChanged(BRect screenSize, color_space depth)
 {
@@ -1661,6 +2347,17 @@ BWindow::ScreenChanged(BRect screenSize, color_space depth)
 }
 
 
+/**
+ * @brief Sets the interval at which B_PULSE messages are sent to child views.
+ *
+ * A rate of 0 disables pulsing.  If the rate changes, any existing
+ * BMessageRunner is reconfigured or destroyed and a new one is created as
+ * needed.  Negative values are ignored.
+ *
+ * @param rate Pulse interval in microseconds, or 0 to disable pulsing.
+ *
+ * @see BWindow::PulseRate(), BView::Pulse()
+ */
 void
 BWindow::SetPulseRate(bigtime_t rate)
 {
@@ -1687,6 +2384,15 @@ BWindow::SetPulseRate(bigtime_t rate)
 }
 
 
+/**
+ * @brief Returns the current pulse interval in microseconds.
+ *
+ * A return value of 0 means pulsing is disabled.
+ *
+ * @return The pulse rate in microseconds.
+ *
+ * @see BWindow::SetPulseRate()
+ */
 bigtime_t
 BWindow::PulseRate() const
 {
@@ -1694,7 +2400,19 @@ BWindow::PulseRate() const
 }
 
 
-//! \brief Used by BMenuItem to add its shortcut to the window.
+/**
+ * @brief Internal helper used by BMenuItem to register its shortcut with the window.
+ *
+ * Prepares the key and modifiers through the Shortcut helper, removes any
+ * existing shortcut with the same prepared key/modifiers, then adds the new
+ * Shortcut to the internal list.  The prepared (normalised) key and modifier
+ * values are written back through the output pointers so BMenuItem can cache
+ * them.
+ *
+ * @param _key       In/out: raw key code on entry, prepared key code on return.
+ * @param _modifiers In/out: raw modifier mask on entry, prepared mask on return.
+ * @param item       The BMenuItem that owns this shortcut.
+ */
 void
 BWindow::_AddShortcut(uint32* _key, uint32* _modifiers, BMenuItem* item)
 {
@@ -1713,6 +2431,18 @@ BWindow::_AddShortcut(uint32* _key, uint32* _modifiers, BMenuItem* item)
 }
 
 
+/**
+ * @brief Registers a keyboard shortcut that posts a message to this window.
+ *
+ * Convenience overload that uses the BWindow itself as the target handler.
+ *
+ * @param key       Unicode code point for the shortcut key.
+ * @param modifiers Modifier-key bitmask (e.g. B_COMMAND_KEY).
+ * @param message   The message to post; ownership is transferred.
+ *
+ * @see BWindow::AddShortcut(uint32, uint32, BMessage*, BHandler*)
+ * @see BWindow::RemoveShortcut(), BWindow::HasShortcut()
+ */
 void
 BWindow::AddShortcut(uint32 key, uint32 modifiers, BMessage* message)
 {
@@ -1720,6 +2450,20 @@ BWindow::AddShortcut(uint32 key, uint32 modifiers, BMessage* message)
 }
 
 
+/**
+ * @brief Registers a keyboard shortcut that posts a message to a specific handler.
+ *
+ * If a shortcut with the same prepared key and modifiers already exists it is
+ * first removed.  Does nothing if @a message is NULL.  The window takes
+ * ownership of @a message.
+ *
+ * @param key       Unicode code point for the shortcut key.
+ * @param modifiers Modifier-key bitmask (e.g. B_COMMAND_KEY).
+ * @param message   The message to post; ownership is transferred.
+ * @param target    Target BHandler, or NULL to post to the current focus view.
+ *
+ * @see BWindow::RemoveShortcut(), BWindow::HasShortcut()
+ */
 void
 BWindow::AddShortcut(uint32 key, uint32 modifiers, BMessage* message, BHandler* target)
 {
@@ -1737,6 +2481,15 @@ BWindow::AddShortcut(uint32 key, uint32 modifiers, BMessage* message, BHandler* 
 }
 
 
+/**
+ * @brief Returns @c true if a shortcut for the given key and modifiers is registered.
+ *
+ * @param key       Unicode code point for the shortcut key.
+ * @param modifiers Modifier-key bitmask.
+ * @return @c true if a matching shortcut exists, @c false otherwise.
+ *
+ * @see BWindow::AddShortcut(), BWindow::RemoveShortcut()
+ */
 bool
 BWindow::HasShortcut(uint32 key, uint32 modifiers)
 {
@@ -1744,6 +2497,18 @@ BWindow::HasShortcut(uint32 key, uint32 modifiers)
 }
 
 
+/**
+ * @brief Removes the registered shortcut for the given key and modifiers.
+ *
+ * If no matching shortcut is found and the key/modifiers identify the
+ * "Command+Q" quit shortcut, the internal @c fNoQuitShortcut flag is set so
+ * that the built-in quit handling is also suppressed.
+ *
+ * @param key       Unicode code point for the shortcut key.
+ * @param modifiers Modifier-key bitmask.
+ *
+ * @see BWindow::AddShortcut(), BWindow::HasShortcut()
+ */
 void
 BWindow::RemoveShortcut(uint32 key, uint32 modifiers)
 {
@@ -1755,6 +2520,16 @@ BWindow::RemoveShortcut(uint32 key, uint32 modifiers)
 }
 
 
+/**
+ * @brief Returns the current default button of the window.
+ *
+ * The default button is invoked when the user presses Return/Enter without
+ * any modifier keys while the window is active.
+ *
+ * @return The default BButton, or NULL if none has been set.
+ *
+ * @see BWindow::SetDefaultButton()
+ */
 BButton*
 BWindow::DefaultButton() const
 {
@@ -1763,6 +2538,17 @@ BWindow::DefaultButton() const
 }
 
 
+/**
+ * @brief Designates a BButton as the window's default button.
+ *
+ * The previously registered default button (if any) is deselected via
+ * BButton::MakeDefault(false) and invalidated.  The new @a button is then
+ * selected via BButton::MakeDefault(true) and invalidated.
+ *
+ * @param button The new default BButton, or NULL to clear the default button.
+ *
+ * @see BWindow::DefaultButton(), BButton::MakeDefault()
+ */
 void
 BWindow::SetDefaultButton(BButton* button)
 {
@@ -1787,6 +2573,16 @@ BWindow::SetDefaultButton(BButton* button)
 }
 
 
+/**
+ * @brief Returns @c true if any part of the window needs to be redrawn.
+ *
+ * Queries the app_server synchronously via AS_NEEDS_UPDATE.
+ *
+ * @return @c true if there is a pending update, @c false otherwise (or if the
+ *         window cannot be locked).
+ *
+ * @see BWindow::UpdateIfNeeded()
+ */
 bool
 BWindow::NeedsUpdate() const
 {
@@ -1804,6 +2600,20 @@ BWindow::NeedsUpdate() const
 }
 
 
+/**
+ * @brief Immediately processes any pending _UPDATE_ messages in the window's queue.
+ *
+ * Must be called from the window thread.  Syncs with the app_server, dequeues
+ * all pending messages from the port, then dispatches every _UPDATE_ message
+ * found in the queue.  This allows a long-running operation on the window
+ * thread to service redraws without returning to the event loop.
+ *
+ * @note This function has no effect when called from a thread other than the
+ *       window thread, or when the message queue is already locked (recursive
+ *       update dispatch).
+ *
+ * @see BWindow::NeedsUpdate()
+ */
 void
 BWindow::UpdateIfNeeded()
 {
@@ -1851,6 +2661,17 @@ BWindow::UpdateIfNeeded()
 }
 
 
+/**
+ * @brief Finds a descendant view by name.
+ *
+ * Searches the entire view hierarchy rooted at the top-level view for the
+ * first view whose name matches @a viewName.
+ *
+ * @param viewName The name to search for.
+ * @return The matching BView, or NULL if not found or the window cannot be locked.
+ *
+ * @see BWindow::FindView(BPoint) const
+ */
 BView*
 BWindow::FindView(const char* viewName) const
 {
@@ -1862,6 +2683,18 @@ BWindow::FindView(const char* viewName) const
 }
 
 
+/**
+ * @brief Finds the deepest visible view that contains the given point.
+ *
+ * @a point is interpreted in window coordinates (i.e. relative to the
+ * window's content area).
+ *
+ * @param point A point in window coordinates to test.
+ * @return The deepest visible BView that contains @a point, or NULL if none
+ *         is found or the window cannot be locked.
+ *
+ * @see BWindow::FindView(const char*) const
+ */
 BView*
 BWindow::FindView(BPoint point) const
 {
@@ -1875,6 +2708,13 @@ BWindow::FindView(BPoint point) const
 }
 
 
+/**
+ * @brief Returns the view that currently has keyboard focus in this window.
+ *
+ * @return The focused BView, or NULL if no view has focus.
+ *
+ * @see BView::MakeFocus(), BWindow::_SetFocus()
+ */
 BView*
 BWindow::CurrentFocus() const
 {
@@ -1882,6 +2722,16 @@ BWindow::CurrentFocus() const
 }
 
 
+/**
+ * @brief Activates or deactivates the window.
+ *
+ * Sends AS_ACTIVATE_WINDOW to the app_server.  Activating also un-minimizes
+ * the window if it was minimized.  Does nothing if the window is hidden.
+ *
+ * @param active @c true to activate, @c false to deactivate.
+ *
+ * @see BWindow::IsActive(), BWindow::WindowActivated()
+ */
 void
 BWindow::Activate(bool active)
 {
@@ -1901,6 +2751,18 @@ BWindow::Activate(bool active)
 }
 
 
+/**
+ * @brief Hook called when the window gains or loses active (key) status.
+ *
+ * The default implementation does nothing.  Override to update UI elements
+ * that depend on whether the window is the key window (e.g. draw focus rings,
+ * enable or disable controls).
+ *
+ * @param focus @c true if the window just became active, @c false if it lost
+ *              active status.
+ *
+ * @see BWindow::Activate(), BWindow::IsActive()
+ */
 void
 BWindow::WindowActivated(bool focus)
 {
@@ -1909,6 +2771,11 @@ BWindow::WindowActivated(bool focus)
 }
 
 
+/**
+ * @brief Converts a point from window coordinates to screen coordinates (in place).
+ *
+ * @param point In/out: the point to convert.
+ */
 void
 BWindow::ConvertToScreen(BPoint* point) const
 {
@@ -1917,6 +2784,12 @@ BWindow::ConvertToScreen(BPoint* point) const
 }
 
 
+/**
+ * @brief Converts a point from window coordinates to screen coordinates (by value).
+ *
+ * @param point The point to convert.
+ * @return The converted point in screen coordinates.
+ */
 BPoint
 BWindow::ConvertToScreen(BPoint point) const
 {
@@ -1924,6 +2797,11 @@ BWindow::ConvertToScreen(BPoint point) const
 }
 
 
+/**
+ * @brief Converts a point from screen coordinates to window coordinates (in place).
+ *
+ * @param point In/out: the point to convert.
+ */
 void
 BWindow::ConvertFromScreen(BPoint* point) const
 {
@@ -1932,6 +2810,12 @@ BWindow::ConvertFromScreen(BPoint* point) const
 }
 
 
+/**
+ * @brief Converts a point from screen coordinates to window coordinates (by value).
+ *
+ * @param point The point to convert.
+ * @return The converted point in window coordinates.
+ */
 BPoint
 BWindow::ConvertFromScreen(BPoint point) const
 {
@@ -1939,6 +2823,11 @@ BWindow::ConvertFromScreen(BPoint point) const
 }
 
 
+/**
+ * @brief Converts a rect from window coordinates to screen coordinates (in place).
+ *
+ * @param rect In/out: the rectangle to convert.
+ */
 void
 BWindow::ConvertToScreen(BRect* rect) const
 {
@@ -1946,6 +2835,12 @@ BWindow::ConvertToScreen(BRect* rect) const
 }
 
 
+/**
+ * @brief Converts a rect from window coordinates to screen coordinates (by value).
+ *
+ * @param rect The rectangle to convert.
+ * @return The converted rectangle in screen coordinates.
+ */
 BRect
 BWindow::ConvertToScreen(BRect rect) const
 {
@@ -1953,6 +2848,11 @@ BWindow::ConvertToScreen(BRect rect) const
 }
 
 
+/**
+ * @brief Converts a rect from screen coordinates to window coordinates (in place).
+ *
+ * @param rect In/out: the rectangle to convert.
+ */
 void
 BWindow::ConvertFromScreen(BRect* rect) const
 {
@@ -1960,6 +2860,12 @@ BWindow::ConvertFromScreen(BRect* rect) const
 }
 
 
+/**
+ * @brief Converts a rect from screen coordinates to window coordinates (by value).
+ *
+ * @param rect The rectangle to convert.
+ * @return The converted rectangle in window coordinates.
+ */
 BRect
 BWindow::ConvertFromScreen(BRect rect) const
 {
@@ -1967,6 +2873,14 @@ BWindow::ConvertFromScreen(BRect rect) const
 }
 
 
+/**
+ * @brief Returns @c true if the window is currently minimized (iconified).
+ *
+ * @return @c true if minimized, @c false otherwise (or if the window cannot
+ *         be locked).
+ *
+ * @see BWindow::Minimize()
+ */
 bool
 BWindow::IsMinimized() const
 {
@@ -1978,6 +2892,16 @@ BWindow::IsMinimized() const
 }
 
 
+/**
+ * @brief Returns the window's content area in window-local coordinates.
+ *
+ * Always returns a rectangle with a top-left at the origin (0, 0); the
+ * bottom-right reflects the current width and height.
+ *
+ * @return The content bounds rectangle.
+ *
+ * @see BWindow::Frame(), BWindow::Size()
+ */
 BRect
 BWindow::Bounds() const
 {
@@ -1985,6 +2909,15 @@ BWindow::Bounds() const
 }
 
 
+/**
+ * @brief Returns the window's content frame in screen coordinates.
+ *
+ * Does not include the decorator border or title tab.
+ *
+ * @return The content frame in screen coordinates.
+ *
+ * @see BWindow::DecoratorFrame(), BWindow::Bounds()
+ */
 BRect
 BWindow::Frame() const
 {
@@ -1992,6 +2925,17 @@ BWindow::Frame() const
 }
 
 
+/**
+ * @brief Returns the full frame of the window including the decorator.
+ *
+ * Queries the decorator settings (tab frame, border width) from the
+ * app_server and expands the content frame accordingly.  Falls back to
+ * sensible defaults if the settings cannot be retrieved.
+ *
+ * @return The decorator frame in screen coordinates (includes border and title tab).
+ *
+ * @see BWindow::Frame(), BWindow::GetDecoratorSettings()
+ */
 BRect
 BWindow::DecoratorFrame() const
 {
@@ -2029,6 +2973,13 @@ BWindow::DecoratorFrame() const
 }
 
 
+/**
+ * @brief Returns the current content size of the window as a BSize.
+ *
+ * @return The width and height of the window's content area.
+ *
+ * @see BWindow::Frame(), BWindow::Bounds()
+ */
 BSize
 BWindow::Size() const
 {
@@ -2036,6 +2987,14 @@ BWindow::Size() const
 }
 
 
+/**
+ * @brief Returns the window's title string.
+ *
+ * @return A pointer to the internally stored title.  The pointer remains
+ *         valid until SetTitle() is called or the window is destroyed.
+ *
+ * @see BWindow::SetTitle()
+ */
 const char*
 BWindow::Title() const
 {
@@ -2043,6 +3002,17 @@ BWindow::Title() const
 }
 
 
+/**
+ * @brief Changes the window's title text.
+ *
+ * Updates the internal title buffer, renames the handler and thread via
+ * _SetName(), and notifies the app_server (AS_SET_WINDOW_TITLE).  NULL is
+ * treated as an empty string.
+ *
+ * @param title The new title string; may not be NULL (treated as "").
+ *
+ * @see BWindow::Title()
+ */
 void
 BWindow::SetTitle(const char* title)
 {
@@ -2064,6 +3034,13 @@ BWindow::SetTitle(const char* title)
 }
 
 
+/**
+ * @brief Returns @c true if this window is currently the active (key) window.
+ *
+ * @return @c true if the window is active, @c false otherwise.
+ *
+ * @see BWindow::Activate(), BWindow::WindowActivated()
+ */
 bool
 BWindow::IsActive() const
 {
@@ -2071,6 +3048,16 @@ BWindow::IsActive() const
 }
 
 
+/**
+ * @brief Sets the window's key menu bar.
+ *
+ * The key menu bar receives keyboard focus when the user presses the menu
+ * activation key (typically Command+Escape on Haiku).
+ *
+ * @param bar The BMenuBar to designate as the key menu bar, or NULL to clear it.
+ *
+ * @see BWindow::KeyMenuBar()
+ */
 void
 BWindow::SetKeyMenuBar(BMenuBar* bar)
 {
@@ -2078,6 +3065,13 @@ BWindow::SetKeyMenuBar(BMenuBar* bar)
 }
 
 
+/**
+ * @brief Returns the window's key menu bar.
+ *
+ * @return The current key BMenuBar, or NULL if none has been set.
+ *
+ * @see BWindow::SetKeyMenuBar()
+ */
 BMenuBar*
 BWindow::KeyMenuBar() const
 {
@@ -2085,6 +3079,16 @@ BWindow::KeyMenuBar() const
 }
 
 
+/**
+ * @brief Returns @c true if the window has a modal feel.
+ *
+ * A window is modal if its feel is B_MODAL_SUBSET_WINDOW_FEEL,
+ * B_MODAL_APP_WINDOW_FEEL, B_MODAL_ALL_WINDOW_FEEL, or kMenuWindowFeel.
+ *
+ * @return @c true for modal windows.
+ *
+ * @see BWindow::IsFloating(), BWindow::Feel()
+ */
 bool
 BWindow::IsModal() const
 {
@@ -2095,6 +3099,16 @@ BWindow::IsModal() const
 }
 
 
+/**
+ * @brief Returns @c true if the window has a floating feel.
+ *
+ * A window is floating if its feel is B_FLOATING_SUBSET_WINDOW_FEEL,
+ * B_FLOATING_APP_WINDOW_FEEL, or B_FLOATING_ALL_WINDOW_FEEL.
+ *
+ * @return @c true for floating windows.
+ *
+ * @see BWindow::IsModal(), BWindow::Feel()
+ */
 bool
 BWindow::IsFloating() const
 {
@@ -2104,6 +3118,19 @@ BWindow::IsFloating() const
 }
 
 
+/**
+ * @brief Adds a normal window to this modal or floating subset window's subset.
+ *
+ * The subset window will restrict input to @a window and to itself when the
+ * subset window is shown.  Both this window's feel must be subset-feel and
+ * @a window must have B_NORMAL_WINDOW_FEEL.
+ *
+ * @param window The normal window to add to the subset.
+ * @return @c B_OK on success, @c B_BAD_VALUE if the arguments are invalid,
+ *         or another error code if the server request fails.
+ *
+ * @see BWindow::RemoveFromSubset(), BWindow::Feel()
+ */
 status_t
 BWindow::AddToSubset(BWindow* window)
 {
@@ -2126,6 +3153,15 @@ BWindow::AddToSubset(BWindow* window)
 }
 
 
+/**
+ * @brief Removes a normal window from this subset window's subset.
+ *
+ * @param window The window to remove from the subset.
+ * @return @c B_OK on success, @c B_BAD_VALUE if the arguments are invalid,
+ *         or another error code if the server request fails.
+ *
+ * @see BWindow::AddToSubset()
+ */
 status_t
 BWindow::RemoveFromSubset(BWindow* window)
 {
@@ -2148,6 +3184,19 @@ BWindow::RemoveFromSubset(BWindow* window)
 }
 
 
+/**
+ * @brief Implements virtual-dispatch compatibility for future API additions.
+ *
+ * Currently handles PERFORM_CODE_SET_LAYOUT to allow binary-compatible
+ * addition of SetLayout() without breaking the vtable ABI.
+ *
+ * @param code  The perform code indicating which operation to execute.
+ * @param _data Pointer to the operation-specific data struct.
+ * @return @c B_OK on success, or the result from BLooper::Perform() for
+ *         unknown codes.
+ *
+ * @see BLooper::Perform()
+ */
 status_t
 BWindow::Perform(perform_code code, void* _data)
 {
@@ -2164,6 +3213,17 @@ BWindow::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Sets both the look and feel of the window using a window_type constant.
+ *
+ * Decomposes the type into look and feel and forwards to SetLook() and
+ * SetFeel() respectively.
+ *
+ * @param type The combined window type (e.g. B_TITLED_WINDOW).
+ * @return @c B_OK on success, or the first error returned by SetLook() or SetFeel().
+ *
+ * @see BWindow::Type(), BWindow::SetLook(), BWindow::SetFeel()
+ */
 status_t
 BWindow::SetType(window_type type)
 {
@@ -2179,6 +3239,16 @@ BWindow::SetType(window_type type)
 }
 
 
+/**
+ * @brief Returns the combined window_type for the current look and feel.
+ *
+ * Returns B_UNTYPED_WINDOW when the look/feel combination does not map to a
+ * named window_type constant.
+ *
+ * @return The combined window type.
+ *
+ * @see BWindow::SetType(), BWindow::Look(), BWindow::Feel()
+ */
 window_type
 BWindow::Type() const
 {
@@ -2186,6 +3256,18 @@ BWindow::Type() const
 }
 
 
+/**
+ * @brief Changes the visual appearance (look) of the window.
+ *
+ * Sends AS_SET_LOOK to the app_server.  On success the internal @c fLook field
+ * is updated.  Changing the look may also alter the window's size constraints
+ * (e.g. removing the title tab changes the minimum height).
+ *
+ * @param look The new window look (e.g. B_TITLED_WINDOW_LOOK).
+ * @return @c B_OK on success, or an error code on failure.
+ *
+ * @see BWindow::Look(), BWindow::SetFeel(), BWindow::SetType()
+ */
 status_t
 BWindow::SetLook(window_look look)
 {
@@ -2207,6 +3289,13 @@ BWindow::SetLook(window_look look)
 }
 
 
+/**
+ * @brief Returns the window's current visual look.
+ *
+ * @return The current window_look value.
+ *
+ * @see BWindow::SetLook()
+ */
 window_look
 BWindow::Look() const
 {
@@ -2214,6 +3303,17 @@ BWindow::Look() const
 }
 
 
+/**
+ * @brief Changes the behaviour (feel) of the window relative to other windows.
+ *
+ * Sends AS_SET_FEEL to the app_server.  On success the internal @c fFeel field
+ * is updated.
+ *
+ * @param feel The new window feel (e.g. B_NORMAL_WINDOW_FEEL).
+ * @return @c B_OK on success, or an error code on failure.
+ *
+ * @see BWindow::Feel(), BWindow::SetLook(), BWindow::SetType()
+ */
 status_t
 BWindow::SetFeel(window_feel feel)
 {
@@ -2232,6 +3332,13 @@ BWindow::SetFeel(window_feel feel)
 }
 
 
+/**
+ * @brief Returns the window's current feel.
+ *
+ * @return The current window_feel value.
+ *
+ * @see BWindow::SetFeel()
+ */
 window_feel
 BWindow::Feel() const
 {
@@ -2239,6 +3346,18 @@ BWindow::Feel() const
 }
 
 
+/**
+ * @brief Sets the window behaviour flags.
+ *
+ * Sends AS_SET_FLAGS to the app_server.  On success the internal @c fFlags
+ * field is updated to the new value.
+ *
+ * @param flags New bitmask of window flags (e.g. B_NOT_RESIZABLE |
+ *              B_NOT_CLOSABLE).
+ * @return @c B_OK on success, or an error code on failure.
+ *
+ * @see BWindow::Flags()
+ */
 status_t
 BWindow::SetFlags(uint32 flags)
 {
@@ -2257,6 +3376,13 @@ BWindow::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Returns the current window behaviour flags.
+ *
+ * @return The current flags bitmask.
+ *
+ * @see BWindow::SetFlags()
+ */
 uint32
 BWindow::Flags() const
 {
@@ -2264,6 +3390,26 @@ BWindow::Flags() const
 }
 
 
+/**
+ * @brief Sets pixel or byte alignment constraints for window movement and resizing.
+ *
+ * Sends AS_SET_ALIGNMENT to the app_server.  The server enforces that all
+ * position and size changes satisfy the specified grid.
+ *
+ * @param mode        Alignment mode (B_BYTE_ALIGNMENT or B_PIXEL_ALIGNMENT).
+ * @param h           Horizontal grid size.
+ * @param hOffset     Horizontal offset within the grid.
+ * @param width       Width grid size.
+ * @param widthOffset Width offset within the grid.
+ * @param v           Vertical grid size.
+ * @param vOffset     Vertical offset within the grid.
+ * @param height      Height grid size.
+ * @param heightOffset Height offset within the grid.
+ * @return @c B_OK on success, @c B_BAD_VALUE for invalid parameters, or an
+ *         error code if the server request fails.
+ *
+ * @see BWindow::GetWindowAlignment()
+ */
 status_t
 BWindow::SetWindowAlignment(window_alignment mode,
 	int32 h, int32 hOffset, int32 width, int32 widthOffset,
@@ -2301,6 +3447,24 @@ BWindow::SetWindowAlignment(window_alignment mode,
 }
 
 
+/**
+ * @brief Retrieves the current window alignment constraints from the app_server.
+ *
+ * Sends AS_GET_ALIGNMENT and reads back all alignment parameters.
+ *
+ * @param mode         Output: current alignment mode.
+ * @param h            Output: horizontal grid size.
+ * @param hOffset      Output: horizontal offset.
+ * @param width        Output: width grid size.
+ * @param widthOffset  Output: width offset.
+ * @param v            Output: vertical grid size.
+ * @param vOffset      Output: vertical offset.
+ * @param height       Output: height grid size.
+ * @param heightOffset Output: height offset.
+ * @return @c B_OK on success, or an error code on failure.
+ *
+ * @see BWindow::SetWindowAlignment()
+ */
 status_t
 BWindow::GetWindowAlignment(window_alignment* mode,
 	int32* h, int32* hOffset, int32* width, int32* widthOffset,
@@ -2329,6 +3493,15 @@ BWindow::GetWindowAlignment(window_alignment* mode,
 }
 
 
+/**
+ * @brief Returns the bitmask of workspaces the window currently occupies.
+ *
+ * Queries the app_server synchronously via AS_GET_WORKSPACES.
+ *
+ * @return Workspace bitmask, or 0 if the window cannot be locked.
+ *
+ * @see BWindow::SetWorkspaces(), BWindow::CurrentWorkspace()
+ */
 uint32
 BWindow::Workspaces() const
 {
@@ -2348,6 +3521,18 @@ BWindow::Workspaces() const
 }
 
 
+/**
+ * @brief Moves the window to the specified workspace(s).
+ *
+ * Only applies to normal (B_NORMAL_WINDOW_FEEL) windows.  Pass
+ * B_CURRENT_WORKSPACE to move the window to the active workspace, or a
+ * bitmask for specific workspaces.
+ *
+ * @param workspaces Workspace bitmask, e.g. B_CURRENT_WORKSPACE or
+ *                   (1 << 0) | (1 << 2) for workspaces 1 and 3.
+ *
+ * @see BWindow::Workspaces()
+ */
 void
 BWindow::SetWorkspaces(uint32 workspaces)
 {
@@ -2364,6 +3549,13 @@ BWindow::SetWorkspaces(uint32 workspaces)
 }
 
 
+/**
+ * @brief Returns the view over which the mouse pointer was last moved.
+ *
+ * Updated during B_MOUSE_MOVED processing in _SanitizeMessage().
+ *
+ * @return The last BView that received a B_MOUSE_MOVED event, or NULL.
+ */
 BView*
 BWindow::LastMouseMovedView() const
 {
@@ -2371,6 +3563,16 @@ BWindow::LastMouseMovedView() const
 }
 
 
+/**
+ * @brief Moves the window by the given offsets relative to its current position.
+ *
+ * A no-op if both offsets are zero.  Delegates to MoveTo().
+ *
+ * @param dx Horizontal offset in pixels (positive moves right).
+ * @param dy Vertical offset in pixels (positive moves down).
+ *
+ * @see BWindow::MoveTo()
+ */
 void
 BWindow::MoveBy(float dx, float dy)
 {
@@ -2381,6 +3583,14 @@ BWindow::MoveBy(float dx, float dy)
 }
 
 
+/**
+ * @brief Moves the window to the specified screen position (BPoint overload).
+ *
+ * @param point The new top-left corner of the window content area in screen
+ *              coordinates.
+ *
+ * @see BWindow::MoveTo(float, float), BWindow::MoveBy()
+ */
 void
 BWindow::MoveTo(BPoint point)
 {
@@ -2388,6 +3598,17 @@ BWindow::MoveTo(BPoint point)
 }
 
 
+/**
+ * @brief Moves the window so that its top-left corner is at (@a x, @a y).
+ *
+ * Coordinates are rounded to the nearest pixel and sent to the app_server
+ * via AS_WINDOW_MOVE.  The internal frame is updated on success.
+ *
+ * @param x New left edge of the content area in screen coordinates.
+ * @param y New top edge of the content area in screen coordinates.
+ *
+ * @see BWindow::MoveTo(BPoint), BWindow::MoveBy()
+ */
 void
 BWindow::MoveTo(float x, float y)
 {
@@ -2411,6 +3632,16 @@ BWindow::MoveTo(float x, float y)
 }
 
 
+/**
+ * @brief Resizes the window by the given deltas relative to its current size.
+ *
+ * Delegates to ResizeTo() which enforces size limits.
+ *
+ * @param dx Width change in pixels (positive makes the window wider).
+ * @param dy Height change in pixels (positive makes the window taller).
+ *
+ * @see BWindow::ResizeTo()
+ */
 void
 BWindow::ResizeBy(float dx, float dy)
 {
@@ -2421,6 +3652,18 @@ BWindow::ResizeBy(float dx, float dy)
 }
 
 
+/**
+ * @brief Resizes the window's content area to the specified dimensions.
+ *
+ * The requested size is clamped to the current size limits before being sent
+ * to the app_server via AS_WINDOW_RESIZE.  On success, the internal frame
+ * and the top-level view are updated via _AdoptResize().
+ *
+ * @param width  Desired content width in pixels.
+ * @param height Desired content height in pixels.
+ *
+ * @see BWindow::ResizeBy(), BWindow::SetSizeLimits()
+ */
 void
 BWindow::ResizeTo(float width, float height)
 {
@@ -2458,6 +3701,15 @@ BWindow::ResizeTo(float width, float height)
 }
 
 
+/**
+ * @brief Resizes the window to the top-level layout's preferred size.
+ *
+ * Performs a layout pass, queries the top view's preferred, minimum, and
+ * maximum sizes, optionally adjusts the height for height-for-width layouts,
+ * then calls ResizeTo().
+ *
+ * @see BWindow::Layout(), BWindow::GetLayout()
+ */
 void
 BWindow::ResizeToPreferred()
 {
@@ -2479,6 +3731,18 @@ BWindow::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Centers the window within the given rectangle.
+ *
+ * Updates size limits first (to account for B_AUTO_UPDATE_SIZE_LIMITS), then
+ * moves the window so that it is centred horizontally and vertically within
+ * @a rect.  Calls MoveOnScreen() afterwards to ensure the window is fully
+ * visible.
+ *
+ * @param rect The reference rectangle in screen coordinates.
+ *
+ * @see BWindow::CenterOnScreen(), BWindow::MoveOnScreen()
+ */
 void
 BWindow::CenterIn(const BRect& rect)
 {
@@ -2494,6 +3758,13 @@ BWindow::CenterIn(const BRect& rect)
 }
 
 
+/**
+ * @brief Centers the window on the screen it currently occupies.
+ *
+ * Convenience wrapper around CenterIn() using the current screen's frame.
+ *
+ * @see BWindow::CenterIn(), BWindow::CenterOnScreen(screen_id)
+ */
 void
 BWindow::CenterOnScreen()
 {
@@ -2501,7 +3772,13 @@ BWindow::CenterOnScreen()
 }
 
 
-// Centers the window on the screen with the passed in id.
+/**
+ * @brief Centers the window on a specific screen identified by @a id.
+ *
+ * @param id The identifier of the screen to centre on.
+ *
+ * @see BWindow::CenterOnScreen(), BWindow::CenterIn()
+ */
 void
 BWindow::CenterOnScreen(screen_id id)
 {
@@ -2509,6 +3786,20 @@ BWindow::CenterOnScreen(screen_id id)
 }
 
 
+/**
+ * @brief Moves (and optionally resizes) the window so it is fully on screen.
+ *
+ * Adjusts the window's position so that the entire decorator frame, including
+ * the title tab and border, is visible on the screen.  If @a flags does not
+ * include B_DO_NOT_RESIZE_TO_FIT, the window is also resized to fit on screen.
+ * If the window is entirely off-screen, CenterOnScreen() is called instead.
+ *
+ * @param flags Control flags:
+ *              - B_DO_NOT_RESIZE_TO_FIT: do not resize, only move.
+ *              - B_MOVE_IF_PARTIALLY_OFFSCREEN: only move when partially off-screen.
+ *
+ * @see BWindow::CenterOnScreen(), BWindow::UpdateSizeLimits()
+ */
 void
 BWindow::MoveOnScreen(uint32 flags)
 {
@@ -2565,6 +3856,19 @@ BWindow::MoveOnScreen(uint32 flags)
 }
 
 
+/**
+ * @brief Makes the window visible and, on the first call, starts the message loop.
+ *
+ * Decrements the show-level counter and notifies the app_server.  If the
+ * window has not yet been run (first Show() call), Run() is invoked
+ * automatically to start the looper thread.  Subsequent Show() calls simply
+ * counteract Hide() calls.
+ *
+ * @note If the app_server link is not yet valid the looper thread is not
+ *       started and @c fThread is set to @c B_ERROR.
+ *
+ * @see BWindow::Hide(), BWindow::IsHidden(), BWindow::Run()
+ */
 void
 BWindow::Show()
 {
@@ -2594,6 +3898,16 @@ BWindow::Show()
 }
 
 
+/**
+ * @brief Hides the window from the screen.
+ *
+ * Increments the show-level counter and notifies the app_server.  If the
+ * window was minimized and is being hidden from show-level 0, it is first
+ * un-minimized.  Multiple Hide() calls are stacked and must each be matched
+ * with a Show() call.
+ *
+ * @see BWindow::Show(), BWindow::IsHidden()
+ */
 void
 BWindow::Hide()
 {
@@ -2611,6 +3925,16 @@ BWindow::Hide()
 }
 
 
+/**
+ * @brief Returns @c true if the window is currently hidden.
+ *
+ * The window is hidden whenever its show-level is greater than zero, which
+ * happens after Hide() calls have outnumbered Show() calls.
+ *
+ * @return @c true if the show-level is > 0.
+ *
+ * @see BWindow::Show(), BWindow::Hide()
+ */
 bool
 BWindow::IsHidden() const
 {
@@ -2618,6 +3942,17 @@ BWindow::IsHidden() const
 }
 
 
+/**
+ * @brief Hook called when the window receives a B_QUIT_REQUESTED message.
+ *
+ * The default implementation delegates to BLooper::QuitRequested() which
+ * returns @c true, causing the window to be closed.  Override to present a
+ * "save changes?" prompt or to suppress closing.
+ *
+ * @return @c true to allow the window to close, @c false to keep it open.
+ *
+ * @see BLooper::QuitRequested(), BWindow::Quit()
+ */
 bool
 BWindow::QuitRequested()
 {
@@ -2625,6 +3960,17 @@ BWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Starts the window's message loop thread.
+ *
+ * Enables screen updates (EnableUpdates()) before calling BLooper::Run() so
+ * that the first frame is visible as soon as the loop is running.  Normally
+ * called automatically by the first Show() invocation.
+ *
+ * @return The thread_id of the window's looper thread.
+ *
+ * @see BLooper::Run(), BWindow::Show()
+ */
 thread_id
 BWindow::Run()
 {
@@ -2633,6 +3979,16 @@ BWindow::Run()
 }
 
 
+/**
+ * @brief Sets the layout manager for the window's content area.
+ *
+ * Adopts the layout's view colours for the top-level view before installing
+ * the layout so that colours propagate correctly.
+ *
+ * @param layout The BLayout to install; may be NULL to remove the layout.
+ *
+ * @see BWindow::GetLayout(), BWindow::InvalidateLayout(), BWindow::Layout()
+ */
 void
 BWindow::SetLayout(BLayout* layout)
 {
@@ -2644,6 +4000,13 @@ BWindow::SetLayout(BLayout* layout)
 }
 
 
+/**
+ * @brief Returns the layout manager currently installed on the content area.
+ *
+ * @return The current BLayout, or NULL if no layout is installed.
+ *
+ * @see BWindow::SetLayout()
+ */
 BLayout*
 BWindow::GetLayout() const
 {
@@ -2651,6 +4014,13 @@ BWindow::GetLayout() const
 }
 
 
+/**
+ * @brief Marks the layout as invalid, scheduling a layout pass on the next update.
+ *
+ * @param descendants If @c true, also invalidates the layout of all descendant views.
+ *
+ * @see BWindow::Layout(), BWindow::SetLayout()
+ */
 void
 BWindow::InvalidateLayout(bool descendants)
 {
@@ -2658,6 +4028,17 @@ BWindow::InvalidateLayout(bool descendants)
 }
 
 
+/**
+ * @brief Performs a layout pass on the window's view hierarchy.
+ *
+ * Updates size limits first (via UpdateSizeLimits()) and then delegates the
+ * layout calculation to the top-level view.
+ *
+ * @param force If @c true, forces a full layout even if nothing appears to
+ *              have changed since the last pass.
+ *
+ * @see BWindow::InvalidateLayout(), BWindow::SetLayout()
+ */
 void
 BWindow::Layout(bool force)
 {
@@ -2668,6 +4049,11 @@ BWindow::Layout(bool force)
 }
 
 
+/**
+ * @brief Returns @c true if this window is an off-screen (BBitmap) window.
+ *
+ * @return @c true for windows created via the BBitmap-backed constructor.
+ */
 bool
 BWindow::IsOffscreenWindow() const
 {
@@ -2675,6 +4061,19 @@ BWindow::IsOffscreenWindow() const
 }
 
 
+/**
+ * @brief Reports the scripting suites and properties this window supports.
+ *
+ * Adds "suite/vnd.Be-window" to @a data's "suites" array along with the
+ * property and value info tables, then calls BLooper::GetSupportedSuites()
+ * to add inherited suite information.
+ *
+ * @param data The BMessage to populate with suite information.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a data is NULL, or another
+ *         error code on failure.
+ *
+ * @see BWindow::ResolveSpecifier()
+ */
 status_t
 BWindow::GetSupportedSuites(BMessage* data)
 {
@@ -2694,6 +4093,24 @@ BWindow::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate BHandler.
+ *
+ * Handles B_WINDOW_MOVE_BY and B_WINDOW_MOVE_TO by returning @c this
+ * directly, routes "View" specifiers to the top-level view without popping the
+ * specifier, and routes "MenuBar" specifiers to the key menu bar (if present).
+ * All other properties that match sWindowPropInfo are handled by this window.
+ * Unrecognised specifiers are forwarded to BLooper::ResolveSpecifier().
+ *
+ * @param message   The scripting message being processed.
+ * @param index     Current specifier index in the message.
+ * @param specifier The current specifier sub-message.
+ * @param what      The specifier type constant.
+ * @param property  The property name string.
+ * @return The BHandler that should process the message, or NULL on error.
+ *
+ * @see BWindow::GetSupportedSuites()
+ */
 BHandler*
 BWindow::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 what, const char* property)
@@ -2730,6 +4147,27 @@ BWindow::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 //	#pragma mark - Private Methods
 
 
+/**
+ * @brief Initialises all BWindow member variables and creates the server-side window.
+ *
+ * Called by all public constructors.  Rounds the frame coordinates, stores all
+ * window attributes, installs default keyboard shortcuts (cut/copy/paste/select-all,
+ * minimize, zoom, hide-app, front/back), creates the IPC port and BPortLink,
+ * sends AS_CREATE_WINDOW (or AS_CREATE_OFFSCREEN_WINDOW for bitmaps) to the
+ * app_server and reads back the enforced frame and size limits, then calls
+ * _CreateTopView() to set up the top-level BView.
+ *
+ * @param frame        Initial frame of the window's content area in screen coords.
+ * @param title        Window title; NULL is treated as "".
+ * @param look         Visual appearance of the window.
+ * @param feel         Behavioural feel of the window.
+ * @param flags        Window flags bitmask.
+ * @param workspace    Workspace bitmask.
+ * @param bitmapToken  Server token of a backing BBitmap, or -1 for a normal window.
+ *
+ * @note Calls debugger() and aborts if no BApplication exists or if the port
+ *       cannot be created.
+ */
 void
 BWindow::_InitData(BRect frame, const char* title, window_look look,
 	window_feel feel, uint32 flags,	uint32 workspace, int32 bitmapToken)
@@ -2903,7 +4341,15 @@ BWindow::_InitData(BRect frame, const char* title, window_look look,
 }
 
 
-//! Rename the handler and its thread
+/**
+ * @brief Renames the BHandler and (if running) the looper thread to match the title.
+ *
+ * Builds a thread name of the form "w>title" (truncated to B_OS_NAME_LENGTH),
+ * calls BHandler::SetName(), and — if the message loop is already running —
+ * renames the thread via rename_thread().
+ *
+ * @param title The new window title; NULL is treated as "".
+ */
 void
 BWindow::_SetName(const char* title)
 {
@@ -2932,7 +4378,13 @@ BWindow::_SetName(const char* title)
 }
 
 
-//!	Reads all pending messages from the window port and put them into the queue.
+/**
+ * @brief Drains all pending messages from the window's IPC port into the message queue.
+ *
+ * Reads the current port count and retrieves that many messages using a zero
+ * timeout so the call never blocks.  Each message is appended to the direct
+ * target's queue.
+ */
 void
 BWindow::_DequeueAll()
 {
@@ -2947,18 +4399,21 @@ BWindow::_DequeueAll()
 }
 
 
-/*!	This here is an almost complete code duplication to BLooper::task_looper()
-	but with some important differences:
-	 a)	it uses the _DetermineTarget() method to tell what the later target of
-		a message will be, if no explicit target is supplied.
-	 b)	it calls _UnpackMessage() and _SanitizeMessage() to duplicate the message
-		to all of its intended targets, and to add all fields the target would
-		expect in such a message.
-
-	This is important because the app_server sends all input events to the
-	preferred handler, and expects them to be correctly distributed to their
-	intended targets.
-*/
+/**
+ * @brief The BWindow message loop — an extended version of BLooper::task_looper().
+ *
+ * Differs from the standard BLooper loop in three important ways:
+ * -# Uses _DetermineTarget() to select the correct handler when no explicit
+ *    target is embedded in the message.
+ * -# Calls _UnpackMessage() to distribute a single app_server input event to
+ *    multiple target views (each gets its own copy).
+ * -# Calls _SanitizeMessage() to add view-local coordinate fields and transit
+ *    information expected by BView mouse handlers.
+ *
+ * This design is necessary because the app_server always sends input events
+ * to the preferred handler and relies on the window to fan them out to the
+ * correct per-view targets.
+ */
 void
 BWindow::task_looper()
 {
@@ -3075,6 +4530,19 @@ BWindow::task_looper()
 }
 
 
+/**
+ * @brief Derives the window_type constant from separate look and feel values.
+ *
+ * Returns B_UNTYPED_WINDOW for any combination that does not map to one of the
+ * named typed constants (B_TITLED_WINDOW, B_DOCUMENT_WINDOW, B_MODAL_WINDOW,
+ * B_FLOATING_WINDOW, or B_BORDERED_WINDOW).
+ *
+ * @param look The window's visual look.
+ * @param feel The window's feel.
+ * @return The corresponding window_type, or B_UNTYPED_WINDOW.
+ *
+ * @see BWindow::_DecomposeType()
+ */
 window_type
 BWindow::_ComposeType(window_look look, window_feel feel) const
 {
@@ -3113,6 +4581,18 @@ BWindow::_ComposeType(window_look look, window_feel feel) const
 }
 
 
+/**
+ * @brief Splits a window_type constant into its constituent look and feel values.
+ *
+ * Unknown or B_UNTYPED_WINDOW types default to B_TITLED_WINDOW_LOOK and
+ * B_NORMAL_WINDOW_FEEL.
+ *
+ * @param type  The combined window type to decompose.
+ * @param _look Output: the corresponding window_look.
+ * @param _feel Output: the corresponding window_feel.
+ *
+ * @see BWindow::_ComposeType()
+ */
 void
 BWindow::_DecomposeType(window_type type, window_look* _look,
 	window_feel* _feel) const
@@ -3148,6 +4628,15 @@ BWindow::_DecomposeType(window_type type, window_look* _look,
 }
 
 
+/**
+ * @brief Creates and installs the window's top-level BView.
+ *
+ * Allocates a BView that covers the entire content area, marks it as a
+ * top-level view, assigns this window as its owner, sets the last-view token,
+ * and calls BView::_CreateSelf() to register it with the app_server.
+ *
+ * @note This must only be called once from _InitData().
+ */
 void
 BWindow::_CreateTopView()
 {
@@ -3175,12 +4664,16 @@ BWindow::_CreateTopView()
 }
 
 
-/*!
-	Resizes the top view to match the window size. This will also
-	adapt the size of all its child views as needed.
-	This method has to be called whenever the frame of the window
-	changes.
-*/
+/**
+ * @brief Resizes the top-level view (and its children) to match the current window frame.
+ *
+ * Computes the delta between the new frame dimensions and the top view's
+ * current bounds, then calls BView::_ResizeBy() to propagate the change
+ * through the view hierarchy.  This mirrors the resize logic performed
+ * server-side, avoiding a round-trip to the app_server.
+ *
+ * Must be called whenever @c fFrame changes (i.e. after a move/resize reply).
+ */
 void
 BWindow::_AdoptResize()
 {
@@ -3197,6 +4690,18 @@ BWindow::_AdoptResize()
 }
 
 
+/**
+ * @brief Sets the keyboard focus to the specified view.
+ *
+ * Updates @c fFocus and the looper's preferred handler.  When @a notifyInputServer
+ * is @c true and the window is currently active, notifies the input server
+ * about the focus transition (used to toggle input-method awareness).
+ *
+ * @param focusView         The view to receive focus, or NULL to clear focus.
+ * @param notifyInputServer @c true to inform the input server of the change.
+ *
+ * @see BWindow::CurrentFocus(), BView::MakeFocus()
+ */
 void
 BWindow::_SetFocus(BView* focusView, bool notifyInputServer)
 {
@@ -3223,10 +4728,19 @@ BWindow::_SetFocus(BView* focusView, bool notifyInputServer)
 }
 
 
-/*!
-	\brief Determines the target of a message received for the
-		focus view.
-*/
+/**
+ * @brief Determines the correct target handler for an incoming message.
+ *
+ * For key events routes to the default button (on B_ENTER) or the focus view.
+ * For mouse events reads the "_view_token" field and finds the view by token,
+ * falling back to the last-mouse-moved view.  For B_PULSE and B_QUIT_REQUESTED
+ * returns @c this (the window).  For dropped messages, uses the last-mouse-moved
+ * view.  All other messages fall through to the supplied @a target.
+ *
+ * @param message The message for which a target is needed.
+ * @param target  Suggested target, or NULL if none was embedded in the message.
+ * @return The resolved target BHandler.
+ */
 BHandler*
 BWindow::_DetermineTarget(BMessage* message, BHandler* target)
 {
@@ -3295,12 +4809,17 @@ BWindow::_DetermineTarget(BMessage* message, BHandler* target)
 }
 
 
-/*!	\brief Determines whether or not this message has targeted the focus view.
-
-	This will return \c false only if the message did not go to the preferred
-	handler, or if the packed message does not contain address the focus view
-	at all.
-*/
+/**
+ * @brief Returns @c true if this message is directed at the focus view.
+ *
+ * A message targets the focus view when it was sent to the preferred handler
+ * and either has no "_token" field (direct preferred target) or carries a
+ * "_feed_focus" flag set to @c true.  Returns @c false if the message has an
+ * explicit non-preferred target or if "_feed_focus" is present but @c false.
+ *
+ * @param message The message to test.
+ * @return @c true if the message is intended for the focus view.
+ */
 bool
 BWindow::_IsFocusMessage(BMessage* message)
 {
@@ -3317,11 +4836,26 @@ BWindow::_IsFocusMessage(BMessage* message)
 }
 
 
-/*!	\brief Distributes the message to its intended targets. This is done for
-		all messages that should go to the preferred handler.
-
-	Returns \c true in case the message should still be dispatched
-*/
+/**
+ * @brief Iterates over all per-view targets embedded in a preferred-handler message.
+ *
+ * On the first call (cookie.index == 0) the cookie is initialised from the
+ * message and the focus/last-mouse-moved tokens are extracted.  Subsequent
+ * calls yield copies of the message for each additional "_token" recipient.
+ * After all secondary targets have been served, the original message is
+ * returned for delivery to the focus view (unless focus is no longer valid or
+ * "_feed_focus" suppresses it).
+ *
+ * @param cookie        Persistent iteration state; initialised by the caller
+ *                      before the first invocation.
+ * @param _message      In/out: the message to dispatch; may be replaced with a
+ *                      copy for secondary targets.
+ * @param _target       In/out: the current target handler.
+ * @param _usePreferred In/out: preferred-handler flag for the current iteration.
+ * @return @c true while there are more targets to serve, @c false when done.
+ *
+ * @see BWindow::_SanitizeMessage(), BWindow::_IsFocusMessage()
+ */
 bool
 BWindow::_UnpackMessage(unpack_cookie& cookie, BMessage** _message,
 	BHandler** _target, bool* _usePreferred)
@@ -3426,10 +4960,21 @@ BWindow::_UnpackMessage(unpack_cookie& cookie, BMessage** _message,
 }
 
 
-/*!	Some messages don't get to the window in a shape an application should see.
-	This method is supposed to give a message the last grinding before
-	it's acceptable for the receiving application.
-*/
+/**
+ * @brief Post-processes a message before it is dispatched to its target.
+ *
+ * For mouse-related messages, adds view-local and window-local coordinate
+ * fields ("where", "be:view_where") computed from the "screen_where" field,
+ * and — for B_MOUSE_MOVED — adds the "be:transit" field and updates
+ * @c fLastMouseMovedView when dispatching to the preferred handler.
+ * For B_MOUSE_IDLE, adds the "be:view_where" field.
+ * For _MESSAGE_DROPPED_, restores the original "what" code.
+ *
+ * @param message     The message to sanitize (modified in place).
+ * @param target      The target handler that will receive the message.
+ * @param usePreferred @c true if the message is being dispatched to the
+ *                    preferred (focus) handler.
+ */
 void
 BWindow::_SanitizeMessage(BMessage* message, BHandler* target, bool usePreferred)
 {
@@ -3515,17 +5060,21 @@ BWindow::_SanitizeMessage(BMessage* message, BHandler* target, bool usePreferred
 }
 
 
-/*!
-	This is called by BView::GetMouse() when a B_MOUSE_MOVED message
-	is removed from the queue.
-	It allows the window to update the last mouse moved view, and
-	let it decide if this message should be kept. It will also remove
-	the message from the queue.
-	You need to hold the message queue lock when calling this method!
-
-	\return true if this message can be used to get the mouse data from,
-	\return false if this is not meant for the public.
-*/
+/**
+ * @brief Intercepts a B_MOUSE_MOVED message on behalf of BView::GetMouse().
+ *
+ * Called while the message queue lock is held.  Determines whether the message
+ * can be consumed by GetMouse(): if the message has multiple targets (secondary
+ * "_token" views), the "_feed_focus" flag is stripped and @a deleteMessage is
+ * set to @c false; otherwise the message is removed from the queue and
+ * @a deleteMessage is set to @c true.  B_ENTERED_VIEW / B_EXITED_VIEW transit
+ * messages are never deleted.
+ *
+ * @param message       The B_MOUSE_MOVED message candidate.
+ * @param deleteMessage Output: @c true if the caller should delete the message.
+ * @return @c true if the message is usable by GetMouse(), @c false if it should
+ *         not be consumed (e.g. has an explicit non-preferred target).
+ */
 bool
 BWindow::_StealMouseMessage(BMessage* message, bool& deleteMessage)
 {
@@ -3576,6 +5125,18 @@ BWindow::_StealMouseMessage(BMessage* message, bool& deleteMessage)
 }
 
 
+/**
+ * @brief Computes the mouse-transit constant for a B_MOUSE_MOVED event.
+ *
+ * Compares the @a view receiving the event with the view currently under the
+ * mouse (@a viewUnderMouse) and the previous last-mouse-moved view to determine
+ * whether the pointer entered, exited, or remained inside/outside the view.
+ *
+ * @param view           The view for which transit is being computed.
+ * @param viewUnderMouse The view currently under the mouse pointer.
+ * @return One of B_ENTERED_VIEW, B_EXITED_VIEW, B_INSIDE_VIEW, or
+ *         B_OUTSIDE_VIEW.
+ */
 uint32
 BWindow::_TransitForMouseMoved(BView* view, BView* viewUnderMouse) const
 {
@@ -3597,8 +5158,16 @@ BWindow::_TransitForMouseMoved(BView* view, BView* viewUnderMouse) const
 }
 
 
-/*!	Forwards the key to the switcher
-*/
+/**
+ * @brief Forwards a keyboard shortcut to the Deskbar's application switcher.
+ *
+ * Repeating key events are silently ignored (only the first press is sent).
+ * Does nothing if the Deskbar is not running.
+ *
+ * @param rawKey   The raw key code from the key event.
+ * @param modifiers The modifier bitmask at the time of the key press.
+ * @param repeat   @c true if this is a key-repeat event.
+ */
 void
 BWindow::_Switcher(int32 rawKey, uint32 modifiers, bool repeat)
 {
@@ -3622,14 +5191,25 @@ BWindow::_Switcher(int32 rawKey, uint32 modifiers, bool repeat)
 }
 
 
-/*!	Handles keyboard input before it gets forwarded to the target handler.
-	This includes shortcut evaluation, keyboard navigation, etc.
-
-	\return handled if true, the event was already handled, and will not
-		be forwarded to the target handler.
-
-	TODO: must also convert the incoming key to the font encoding of the target
-*/
+/**
+ * @brief Pre-processes a B_KEY_DOWN message before it reaches the target view.
+ *
+ * Evaluates the following in order:
+ * - Command+Escape to open the key menu bar.
+ * - Tab with B_OPTION_KEY for keyboard navigation.
+ * - Tab or raw-key 0x11 with B_CONTROL_KEY for the Deskbar Switcher.
+ * - Escape with B_CLOSE_ON_ESCAPE flag to close the window.
+ * - Print-Screen key combinations to take a screenshot.
+ * - Command+Q to post B_QUIT_REQUESTED to the application.
+ * - Command+Left/Right Arrow forwarded to a focused BTextView.
+ * - Registered keyboard shortcuts (after calling MenusBeginning/MenusEnded).
+ * - Any remaining Command-modified key (consumed without forwarding).
+ *
+ * Only processes the message if it was targeted at the focus view.
+ *
+ * @param event The B_KEY_DOWN BMessage to evaluate.
+ * @return @c true if the event was consumed (not forwarded to the target).
+ */
 bool
 BWindow::_HandleKeyDown(BMessage* event)
 {
@@ -3798,6 +5378,16 @@ BWindow::_HandleKeyDown(BMessage* event)
 }
 
 
+/**
+ * @brief Pre-processes a B_UNMAPPED_KEY_DOWN message before it reaches the target.
+ *
+ * Handles the special case of raw key 0x11 (Tab-equivalent) with B_CONTROL_KEY
+ * for the Deskbar Switcher, which is the only unmapped key requiring window-level
+ * handling.  Only processes messages targeted at the focus view.
+ *
+ * @param event The B_UNMAPPED_KEY_DOWN BMessage to evaluate.
+ * @return @c true if the event was consumed, @c false to forward it.
+ */
 bool
 BWindow::_HandleUnmappedKeyDown(BMessage* event)
 {
@@ -3822,6 +5412,16 @@ BWindow::_HandleUnmappedKeyDown(BMessage* event)
 }
 
 
+/**
+ * @brief Implements Tab-key focus navigation between views.
+ *
+ * Reads the current B_KEY_DOWN message and moves focus to the next or previous
+ * navigable view (B_NAVIGABLE), or to the next navigable group (B_NAVIGABLE_JUMP)
+ * when B_OPTION_KEY is held.  Shift reverses the direction.
+ *
+ * Called from DispatchMessage() for B_KEY_DOWN (when navigation is needed) and
+ * from MessageReceived() for subsequent B_KEY_DOWN messages.
+ */
 void
 BWindow::_KeyboardNavigation()
 {
@@ -3849,18 +5449,16 @@ BWindow::_KeyboardNavigation()
 }
 
 
-/*!
-	\brief Return the position of the window centered horizontally to the passed
-           in \a frame and vertically 3/4 from the top of \a frame.
-
-	If the window is on the borders
-
-	\param width The width of the window.
-	\param height The height of the window.
-	\param frame The \a frame to center the window in.
-
-	\return The new window position.
-*/
+/**
+ * @brief Returns the ideal position for an alert dialog relative to @a frame.
+ *
+ * Centres the window horizontally and places it approximately 3/4 of the way
+ * down from the top of @a frame.  Clamps the result to remain within screen
+ * bounds and to not be obscured by another window's title tab.
+ *
+ * @param frame The reference rectangle (typically the screen or a parent window frame).
+ * @return The recommended top-left corner position for the alert window.
+ */
 BPoint
 BWindow::AlertPosition(const BRect& frame)
 {
@@ -3901,6 +5499,16 @@ BWindow::AlertPosition(const BRect& frame)
 }
 
 
+/**
+ * @brief Converts a raw port message into a BMessage.
+ *
+ * Delegates directly to BLooper::ConvertToMessage().  Present to allow
+ * subclasses to override the raw-message conversion step.
+ *
+ * @param raw  Pointer to the raw message data read from the port.
+ * @param code The message code identifying the message type.
+ * @return A newly allocated BMessage, or NULL on failure.
+ */
 BMessage*
 BWindow::ConvertToMessage(void* raw, int32 code)
 {
@@ -3908,6 +5516,16 @@ BWindow::ConvertToMessage(void* raw, int32 code)
 }
 
 
+/**
+ * @brief Searches the shortcut list for a matching key and modifier combination.
+ *
+ * Prepares the key and modifiers before searching so the comparison is
+ * normalised.
+ *
+ * @param key       Unicode code point for the shortcut key.
+ * @param modifiers Modifier bitmask (raw; will be prepared internally).
+ * @return The matching Shortcut, or NULL if none is found.
+ */
 BWindow::Shortcut*
 BWindow::_FindShortcut(uint32 key, uint32 modifiers)
 {
@@ -3925,6 +5543,15 @@ BWindow::_FindShortcut(uint32 key, uint32 modifiers)
 }
 
 
+/**
+ * @brief Finds a view in this window by its server-side token.
+ *
+ * Looks up the token in the global token space and verifies that the found
+ * handler is a BView belonging to this window.
+ *
+ * @param token The server-side handler token.
+ * @return The matching BView, or NULL if not found or not owned by this window.
+ */
 BView*
 BWindow::_FindView(int32 token)
 {
@@ -3943,6 +5570,17 @@ BWindow::_FindView(int32 token)
 }
 
 
+/**
+ * @brief Recursively finds the deepest visible view that contains @a point.
+ *
+ * @a point must be in @a view's local coordinate system.  Hidden views are
+ * skipped.  If no child contains the point, @a view itself is returned.
+ *
+ * @param view  The root of the view sub-tree to search.
+ * @param point A point in @a view's local coordinate system.
+ * @return The deepest visible view containing @a point, or NULL if @a view
+ *         itself does not contain it.
+ */
 BView*
 BWindow::_FindView(BView* view, BPoint point) const
 {
@@ -3967,6 +5605,18 @@ BWindow::_FindView(BView* view, BPoint point) const
 }
 
 
+/**
+ * @brief Finds the next view after @a focus that has the given navigability flags.
+ *
+ * Performs a depth-first forward traversal of the view tree, wrapping around
+ * at the top view.  Returns NULL if no navigable view is found.
+ *
+ * @param focus The currently focused view, or NULL to start from the top view.
+ * @param flags Navigability flags to match (B_NAVIGABLE or B_NAVIGABLE_JUMP).
+ * @return The next navigable view, or NULL if none exists.
+ *
+ * @see BWindow::_FindPreviousNavigable()
+ */
 BView*
 BWindow::_FindNextNavigable(BView* focus, uint32 flags)
 {
@@ -4009,6 +5659,19 @@ BWindow::_FindNextNavigable(BView* focus, uint32 flags)
 }
 
 
+/**
+ * @brief Finds the previous view before @a focus that has the given navigability flags.
+ *
+ * Performs a reverse depth-first traversal of the view tree using
+ * _LastViewChild() to walk backwards through sibling chains.  Returns NULL if
+ * no navigable view is found.
+ *
+ * @param focus The currently focused view, or NULL to start from the top view.
+ * @param flags Navigability flags to match (B_NAVIGABLE or B_NAVIGABLE_JUMP).
+ * @return The previous navigable view, or NULL if none exists.
+ *
+ * @see BWindow::_FindNextNavigable()
+ */
 BView*
 BWindow::_FindPreviousNavigable(BView* focus, uint32 flags)
 {
@@ -4040,10 +5703,17 @@ BWindow::_FindPreviousNavigable(BView* focus, uint32 flags)
 }
 
 
-/*!
-	Returns the last child in a view hierarchy.
-	Needed only by _FindPreviousNavigable().
-*/
+/**
+ * @brief Returns the deepest last-child descendant of @a parent.
+ *
+ * Walks the first-child chain and then the sibling chain at each level until
+ * the very last leaf view is reached.  Used exclusively by
+ * _FindPreviousNavigable() to implement reverse view-tree traversal.
+ *
+ * @param parent The view whose last descendant is desired.
+ * @return The deepest last-child descendant, which may be @a parent itself if
+ *         it has no children.
+ */
 BView*
 BWindow::_LastViewChild(BView* parent)
 {
@@ -4061,6 +5731,16 @@ BWindow::_LastViewChild(BView* parent)
 }
 
 
+/**
+ * @brief Marks or unmarks this window as a file panel.
+ *
+ * File-panel windows receive special treatment from the system (e.g.
+ * they are excluded from the application's window list in the Deskbar).
+ *
+ * @param isFilePanel @c true to mark as a file panel, @c false to clear it.
+ *
+ * @see BWindow::IsFilePanel()
+ */
 void
 BWindow::SetIsFilePanel(bool isFilePanel)
 {
@@ -4068,6 +5748,13 @@ BWindow::SetIsFilePanel(bool isFilePanel)
 }
 
 
+/**
+ * @brief Returns @c true if this window has been marked as a file panel.
+ *
+ * @return @c true if the window is a file panel.
+ *
+ * @see BWindow::SetIsFilePanel()
+ */
 bool
 BWindow::IsFilePanel() const
 {
@@ -4075,6 +5762,16 @@ BWindow::IsFilePanel() const
 }
 
 
+/**
+ * @brief Retrieves the decorator's border width and tab height.
+ *
+ * Queries the decorator settings from the app_server.  Falls back to
+ * reasonable defaults (5 px border, 21 px tab) if the query fails, and
+ * adjusts to 0 for B_NO_BORDER_WINDOW_LOOK windows.
+ *
+ * @param _borderWidth Output: border width in pixels, or NULL.
+ * @param _tabHeight   Output: title-tab height in pixels, or NULL.
+ */
 void
 BWindow::_GetDecoratorSize(float* _borderWidth, float* _tabHeight) const
 {
@@ -4105,6 +5802,12 @@ BWindow::_GetDecoratorSize(float* _borderWidth, float* _tabHeight) const
 }
 
 
+/**
+ * @brief Sends the current show-level to the app_server.
+ *
+ * Sends AS_SHOW_OR_HIDE_WINDOW with @c fShowLevel so the server can
+ * show or hide the on-screen window accordingly.  Called by Show() and Hide().
+ */
 void
 BWindow::_SendShowOrHideMessage()
 {
@@ -4114,6 +5817,15 @@ BWindow::_SendShowOrHideMessage()
 }
 
 
+/**
+ * @brief Posts a copy of @a message to each direct child view of the window.
+ *
+ * Used to propagate system-wide notifications such as B_SCREEN_CHANGED,
+ * B_WORKSPACE_ACTIVATED, and B_WORKSPACES_CHANGED to all top-level child views
+ * before invoking the corresponding window hook.
+ *
+ * @param message The message to forward to each child view.
+ */
 void
 BWindow::_PropagateMessageToChildViews(BMessage* message)
 {
@@ -4129,6 +5841,16 @@ BWindow::_PropagateMessageToChildViews(BMessage* message)
 //	#pragma mark - C++ binary compatibility kludge
 
 
+/**
+ * @brief Binary-compatibility trampoline for BWindow::SetLayout().
+ *
+ * Exported as a C symbol so that code compiled against an older version of
+ * libbe (which had SetLayout in the vtable as _ReservedWindow1) can still
+ * call the current SetLayout() implementation via Perform().
+ *
+ * @param window The BWindow on which to call SetLayout.
+ * @param layout The BLayout to install.
+ */
 extern "C" void
 _ReservedWindow1__7BWindow(BWindow* window, BLayout* layout)
 {
@@ -4139,11 +5861,18 @@ _ReservedWindow1__7BWindow(BWindow* window, BLayout* layout)
 }
 
 
+/** @brief Reserved virtual slot 2 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow2() {}
+/** @brief Reserved virtual slot 3 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow3() {}
+/** @brief Reserved virtual slot 4 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow4() {}
+/** @brief Reserved virtual slot 5 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow5() {}
+/** @brief Reserved virtual slot 6 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow6() {}
+/** @brief Reserved virtual slot 7 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow7() {}
+/** @brief Reserved virtual slot 8 — not yet used; provided for ABI stability. */
 void BWindow::_ReservedWindow8() {}
 

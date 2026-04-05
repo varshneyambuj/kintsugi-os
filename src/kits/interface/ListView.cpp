@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights resrerved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Assmus, superstippi@gmx.de
- *		Axel Dörfler, axeld@pinc-software.de
- *		Marc Flerackers, mflerackers@androme.be
- *		Rene Gollent, rene@gollent.com
- *		Ulrich Wimboeck
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Assmus, superstippi@gmx.de
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Rene Gollent, rene@gollent.com
+ *       Ulrich Wimboeck
+ */
+
+
+/**
+ * @file ListView.cpp
+ * @brief Implementation of BListView, a scrollable list of selectable items
+ *
+ * BListView manages an ordered list of BListItem objects, handling item
+ * selection (single and multiple), keyboard navigation, drag-and-drop
+ * reordering, and scroll-to-selection. It sends selection-change notifications
+ * to an optional target.
+ *
+ * @see BListItem, BOutlineListView, BScrollView
  */
 
 
@@ -27,21 +56,47 @@
 #include <binary_compatibility/Interface.h>
 
 
+/**
+ * @brief Mouse-tracking state captured at each MouseDown event.
+ *
+ * This struct records all information needed to detect double-clicks, decide
+ * whether to initiate a drag operation, and update the selection correctly
+ * across MouseDown / MouseMoved / MouseUp.
+ */
 struct track_data {
+	/** @brief View-coordinate position where the mouse button was pressed. */
 	BPoint		drag_start;
+	/** @brief Index of the list item that was under the pointer on MouseDown, or -1. */
 	int32		item_index;
+	/** @brief Button mask from the current mouse-down event. */
 	int32		buttons;
+	/** @brief How many consecutive clicks landed on an already-selected item. */
 	uint32		selected_click_count;
+	/** @brief Whether the item at item_index was selected when the button was pressed. */
 	bool		was_selected;
+	/** @brief True while the pointer has moved enough to consider starting a drag. */
 	bool		try_drag;
+	/** @brief True once InitiateDrag() has accepted the drag. */
 	bool		is_dragging;
+	/** @brief Timestamp (system_time()) of the most recent mouse-down. */
 	bigtime_t	last_click_time;
 };
 
 
+/** @brief Maximum pointer travel (in pixels) between two clicks that still counts as a double-click. */
 const float kDoubleClickThreshold = 6.0f;
 
 
+/**
+ * @brief Scripting property table for BListView.
+ *
+ * Defines the "Item" and "Selection" properties exposed through the BeOS
+ * scripting protocol, including count, execute, get, and set operations with
+ * various specifier types (direct, index, reverse-index, range, reverse-range).
+ *
+ * @see BListView::ResolveSpecifier(), BListView::GetSupportedSuites(),
+ *      BListView::MessageReceived()
+ */
 static property_info sProperties[] = {
 	{ "Item", { B_COUNT_PROPERTIES, 0 }, { B_DIRECT_SPECIFIER, 0 },
 		"Returns the number of BListItems currently in the list.", 0,
@@ -84,6 +139,22 @@ static property_info sProperties[] = {
 };
 
 
+/**
+ * @brief Constructs a BListView with an explicit frame rectangle (legacy layout).
+ *
+ * This constructor is intended for use without the layout system. The view is
+ * placed at @a frame within its parent and resizes according to @a resizingMode.
+ * @c B_SCROLL_VIEW_AWARE is OR-ed into @a flags automatically so that a
+ * containing BScrollView can notify this view of its presence.
+ *
+ * @param frame         The view's frame rectangle in the parent's coordinate system.
+ * @param name          The view's name, used for scripting and debugging.
+ * @param type          @c B_SINGLE_SELECTION_LIST or @c B_MULTIPLE_SELECTION_LIST.
+ * @param resizingMode  Resizing mask (e.g. @c B_FOLLOW_ALL).
+ * @param flags         View flags (e.g. @c B_WILL_DRAW | @c B_FRAME_EVENTS).
+ *
+ * @see BListView(const char*, list_view_type, uint32)
+ */
 BListView::BListView(BRect frame, const char* name, list_view_type type,
 	uint32 resizingMode, uint32 flags)
 	:
@@ -93,6 +164,18 @@ BListView::BListView(BRect frame, const char* name, list_view_type type,
 }
 
 
+/**
+ * @brief Constructs a BListView for use with the layout system.
+ *
+ * The view has no fixed frame; its position and size are determined by the
+ * layout engine. @c B_SCROLL_VIEW_AWARE is OR-ed into @a flags automatically.
+ *
+ * @param name  The view's name.
+ * @param type  @c B_SINGLE_SELECTION_LIST or @c B_MULTIPLE_SELECTION_LIST.
+ * @param flags View flags.
+ *
+ * @see BListView(BRect, const char*, list_view_type, uint32, uint32)
+ */
 BListView::BListView(const char* name, list_view_type type, uint32 flags)
 	:
 	BView(name, flags | B_SCROLL_VIEW_AWARE)
@@ -101,6 +184,15 @@ BListView::BListView(const char* name, list_view_type type, uint32 flags)
 }
 
 
+/**
+ * @brief Constructs a BListView with default flags and no name.
+ *
+ * Convenience constructor that applies @c B_WILL_DRAW, @c B_FRAME_EVENTS,
+ * @c B_NAVIGABLE, and @c B_SCROLL_VIEW_AWARE automatically. Intended for the
+ * layout system.
+ *
+ * @param type  @c B_SINGLE_SELECTION_LIST or @c B_MULTIPLE_SELECTION_LIST.
+ */
 BListView::BListView(list_view_type type)
 	:
 	BView(NULL, B_WILL_DRAW | B_FRAME_EVENTS | B_NAVIGABLE
@@ -110,6 +202,17 @@ BListView::BListView(list_view_type type)
 }
 
 
+/**
+ * @brief Constructs a BListView from an archived BMessage.
+ *
+ * Restores the list type from the "_lv_type" field, re-instantiates each
+ * archived BListItem stored under "_l_items", and restores the invocation
+ * message ("_msg") and selection message ("_2nd_msg") if present.
+ *
+ * @param archive The BMessage produced by a prior call to Archive().
+ *
+ * @see Archive(), Instantiate()
+ */
 BListView::BListView(BMessage* archive)
 	:
 	BView(archive)
@@ -146,6 +249,15 @@ BListView::BListView(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroys the BListView and releases internal resources.
+ *
+ * Frees the track_data struct and deletes the selection message. The list
+ * items themselves are @b not deleted; the caller retains ownership of the
+ * BListItem objects, as documented in the BeBook.
+ *
+ * @see SetSelectionMessage(), AddItem()
+ */
 BListView::~BListView()
 {
 	// NOTE: According to BeBook, BListView does not free the items itself.
@@ -157,6 +269,18 @@ BListView::~BListView()
 // #pragma mark -
 
 
+/**
+ * @brief Creates a new BListView from an archived BMessage.
+ *
+ * This is the standard BArchivable factory function called by
+ * instantiate_object().  It validates that @a archive was produced by a
+ * BListView and, if so, returns a heap-allocated instance.
+ *
+ * @param archive The BMessage produced by Archive().
+ * @return A newly allocated BListView, or NULL if @a archive is invalid.
+ *
+ * @see Archive(), BListView(BMessage*)
+ */
 BArchivable*
 BListView::Instantiate(BMessage* archive)
 {
@@ -167,6 +291,20 @@ BListView::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archives the BListView into a BMessage.
+ *
+ * Stores the list type under "_lv_type". When @a deep is true, each BListItem
+ * is recursively archived and appended under "_l_items". The invocation message
+ * is stored under "_msg" and the selection message under "_2nd_msg".
+ *
+ * @param data  The BMessage to fill with the archived data.
+ * @param deep  If true, archive all contained BListItem objects as well.
+ * @return A status code.
+ * @retval B_OK On success.
+ *
+ * @see Instantiate(), BListView(BMessage*)
+ */
 status_t
 BListView::Archive(BMessage* data, bool deep) const
 {
@@ -203,6 +341,17 @@ BListView::Archive(BMessage* data, bool deep) const
 // #pragma mark -
 
 
+/**
+ * @brief Draws all list items that intersect with the update rectangle.
+ *
+ * Iterates over every BListItem, computes its frame, and calls DrawItem() for
+ * each item whose frame overlaps @a updateRect. Items are drawn top-to-bottom
+ * using each item's Height().
+ *
+ * @param updateRect The portion of the view that needs to be redrawn.
+ *
+ * @see DrawItem(), InvalidateItem()
+ */
 void
 BListView::Draw(BRect updateRect)
 {
@@ -223,6 +372,16 @@ BListView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Performs post-attachment initialization when the view is added to a window.
+ *
+ * Calls BView::AttachedToWindow(), then updates all items with the current
+ * font metrics via _UpdateItems(). If no invocation target has been set, the
+ * view's own window is made the default target. Finally, adjusts the scroll
+ * bar range via _FixupScrollBar().
+ *
+ * @see DetachedFromWindow(), _UpdateItems(), _FixupScrollBar()
+ */
 void
 BListView::AttachedToWindow()
 {
@@ -236,6 +395,14 @@ BListView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the view is removed from its window.
+ *
+ * Delegates to BView::DetachedFromWindow(). Subclasses may override to release
+ * window-specific resources.
+ *
+ * @see AttachedToWindow()
+ */
 void
 BListView::DetachedFromWindow()
 {
@@ -243,6 +410,14 @@ BListView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Called after all views in the hierarchy have been attached to the window.
+ *
+ * Delegates to BView::AllAttached(). Subclasses may override to perform
+ * initialization that depends on the entire view tree being in place.
+ *
+ * @see AllDetached(), AttachedToWindow()
+ */
 void
 BListView::AllAttached()
 {
@@ -250,6 +425,14 @@ BListView::AllAttached()
 }
 
 
+/**
+ * @brief Called after all views in the hierarchy have been detached from the window.
+ *
+ * Delegates to BView::AllDetached(). Subclasses may override to clean up
+ * resources that require the full view tree to still be present.
+ *
+ * @see AllAttached(), DetachedFromWindow()
+ */
 void
 BListView::AllDetached()
 {
@@ -257,6 +440,18 @@ BListView::AllDetached()
 }
 
 
+/**
+ * @brief Responds to a change in the view's frame size.
+ *
+ * Adjusts the scroll bar range and proportion via _FixupScrollBar(), then
+ * notifies all items of the new width so they can recompute their layout via
+ * _UpdateItems().
+ *
+ * @param newWidth   The new width of the view's frame.
+ * @param newHeight  The new height of the view's frame.
+ *
+ * @see _FixupScrollBar(), _UpdateItems()
+ */
 void
 BListView::FrameResized(float newWidth, float newHeight)
 {
@@ -267,6 +462,14 @@ BListView::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Responds to the view's frame being moved.
+ *
+ * Delegates to BView::FrameMoved(). Subclasses may override to react to
+ * position changes.
+ *
+ * @param newPosition The new top-left corner of the view in the parent's coordinates.
+ */
 void
 BListView::FrameMoved(BPoint newPosition)
 {
@@ -274,6 +477,16 @@ BListView::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Notifies the list view that it has been embedded in a BScrollView.
+ *
+ * Stores the pointer to the enclosing BScrollView so that MakeFocus() can
+ * highlight the scroll view's border when the list gains or loses focus.
+ *
+ * @param view The BScrollView that now targets this list view, or NULL.
+ *
+ * @see MakeFocus(), _FixupScrollBar()
+ */
 void
 BListView::TargetedByScrollView(BScrollView* view)
 {
@@ -284,6 +497,14 @@ BListView::TargetedByScrollView(BScrollView* view)
 }
 
 
+/**
+ * @brief Called when the list view's window is activated or deactivated.
+ *
+ * Delegates to BView::WindowActivated(). Subclasses may override to change
+ * visual appearance depending on the window's active state.
+ *
+ * @param active True if the window became active, false if it was deactivated.
+ */
 void
 BListView::WindowActivated(bool active)
 {
@@ -294,6 +515,19 @@ BListView::WindowActivated(bool active)
 // #pragma mark -
 
 
+/**
+ * @brief Dispatches incoming messages, including scripting and built-in commands.
+ *
+ * Handles the BeOS scripting protocol for "Item" and "Selection" properties
+ * (count, execute, get, set). Also responds to @c B_MOUSE_WHEEL_CHANGED
+ * (suppressed during drags) and @c B_SELECT_ALL (selects all items in
+ * multiple-selection mode). All other messages are forwarded to
+ * BView::MessageReceived().
+ *
+ * @param message The message to process.
+ *
+ * @see ResolveSpecifier(), GetSupportedSuites(), Select(), Deselect()
+ */
 void
 BListView::MessageReceived(BMessage* message)
 {
@@ -483,6 +717,25 @@ BListView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles keyboard navigation and selection within the list.
+ *
+ * Interprets the following keys:
+ * - @c B_UP_ARROW / @c B_DOWN_ARROW: Move the selection one enabled item
+ *   up or down. With @c B_SHIFT_KEY held in a multiple-selection list, extends
+ *   or contracts the selection.
+ * - @c B_HOME / @c B_END: Jump to the first or last enabled item.
+ * - @c B_PAGE_UP / @c B_PAGE_DOWN: Scroll by one visible page.
+ * - @c B_RETURN / @c B_SPACE: Invoke the current selection.
+ *
+ * All navigation keys call ScrollToSelection() after updating the selection.
+ * Unrecognized keys are forwarded to BView::KeyDown().
+ *
+ * @param bytes    Pointer to the raw key bytes.
+ * @param numBytes Number of bytes in @a bytes.
+ *
+ * @see Select(), Deselect(), ScrollToSelection(), Invoke()
+ */
 void
 BListView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -618,6 +871,20 @@ BListView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Handles a mouse-button press over the list view.
+ *
+ * Acquires focus if not already focused. Detects double-clicks by comparing
+ * the current click location and time against the values stored in fTrack; a
+ * double-click on a selected item invokes the list without changing the
+ * selection. Single-clicks update fTrack state, enable the drag-detection
+ * window (@c B_POINTER_EVENTS), and call _DoSelection() to update the
+ * selection according to the current modifier keys and list type.
+ *
+ * @param where The pointer position in the view's coordinate system.
+ *
+ * @see MouseUp(), MouseMoved(), InitiateDrag(), _DoSelection()
+ */
 void
 BListView::MouseDown(BPoint where)
 {
@@ -685,6 +952,19 @@ BListView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Handles a mouse-button release over the list view.
+ *
+ * Clears drag-tracking state. For single-selection lists that were not
+ * dragging, finalizes the selection: if the pointer moved to a different item
+ * since MouseDown(), the "faked" in-transit selection is replaced with a real
+ * selection on the item under the released pointer. Multiple-selection lists
+ * and completed drag operations do not alter the selection on release.
+ *
+ * @param where The pointer position in the view's coordinate system.
+ *
+ * @see MouseDown(), MouseMoved(), _DoSelection()
+ */
 void
 BListView::MouseUp(BPoint where)
 {
@@ -725,6 +1005,22 @@ BListView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Handles pointer movement while a mouse button is pressed.
+ *
+ * If the pointer has traveled at least 5 pixels from the initial click
+ * position and drag detection is armed (fTrack->try_drag), calls
+ * InitiateDrag(). While a button is held, scrolls the list to keep the item
+ * under the pointer visible. For single-selection lists that are not dragging,
+ * also "fakes" a transient selection on the item under the pointer, which is
+ * committed or reverted in MouseUp().
+ *
+ * @param where        The current pointer position in the view's coordinates.
+ * @param code         Transit code (@c B_ENTERED_VIEW, @c B_INSIDE_VIEW, etc.).
+ * @param dragMessage  The drag message if a drag is in progress, or NULL.
+ *
+ * @see MouseDown(), MouseUp(), InitiateDrag(), ScrollTo(int32)
+ */
 void
 BListView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 {
@@ -783,6 +1079,22 @@ BListView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Hook called when the user begins a drag gesture on a list item.
+ *
+ * Subclasses override this method to initiate a BView drag-and-drop operation
+ * by calling DragMessage(). The base-class implementation always returns
+ * false, meaning no drag is started.
+ *
+ * @param where        The pointer position (in the view's coordinates) where
+ *                     the drag gesture started.
+ * @param index        The index of the item under the pointer.
+ * @param wasSelected  True if the item was already selected when the button
+ *                     was pressed.
+ * @return True if the drag was accepted and started, false otherwise.
+ *
+ * @see MouseMoved(), MouseDown()
+ */
 bool
 BListView::InitiateDrag(BPoint where, int32 index, bool wasSelected)
 {
@@ -793,6 +1105,14 @@ BListView::InitiateDrag(BPoint where, int32 index, bool wasSelected)
 // #pragma mark -
 
 
+/**
+ * @brief Resizes the view to its preferred size.
+ *
+ * Delegates to BView::ResizeToPreferred(), which calls GetPreferredSize()
+ * and resizes the view accordingly.
+ *
+ * @see GetPreferredSize(), PreferredSize()
+ */
 void
 BListView::ResizeToPreferred()
 {
@@ -800,6 +1120,18 @@ BListView::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Returns the preferred width and height of the list view.
+ *
+ * The preferred width is the maximum Width() of all contained items. The
+ * preferred height is the Bottom() of the last item. When the list is empty,
+ * BView::GetPreferredSize() is used as a fallback.
+ *
+ * @param[out] _width   Set to the preferred width, or unchanged if NULL.
+ * @param[out] _height  Set to the preferred height, or unchanged if NULL.
+ *
+ * @see MinSize(), MaxSize(), PreferredSize()
+ */
 void
 BListView::GetPreferredSize(float *_width, float *_height)
 {
@@ -822,6 +1154,17 @@ BListView::GetPreferredSize(float *_width, float *_height)
 }
 
 
+/**
+ * @brief Returns the minimum size of the list view for the layout system.
+ *
+ * Returns the larger of any explicitly set minimum size and a hard-coded
+ * floor of 10 x 10 pixels, ensuring the layout engine always has a stable,
+ * non-zero minimum.
+ *
+ * @return The minimum BSize.
+ *
+ * @see MaxSize(), PreferredSize(), GetPreferredSize()
+ */
 BSize
 BListView::MinSize()
 {
@@ -831,6 +1174,16 @@ BListView::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size of the list view for the layout system.
+ *
+ * Delegates to BView::MaxSize(), which returns the explicitly set maximum or
+ * the default unconstrained size.
+ *
+ * @return The maximum BSize.
+ *
+ * @see MinSize(), PreferredSize()
+ */
 BSize
 BListView::MaxSize()
 {
@@ -838,6 +1191,17 @@ BListView::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size of the list view for the layout system.
+ *
+ * Returns the larger of any explicitly set preferred size and a hard-coded
+ * default of 100 x 50 pixels, ensuring the layout engine always has a stable,
+ * non-zero preferred size.
+ *
+ * @return The preferred BSize.
+ *
+ * @see MinSize(), MaxSize(), GetPreferredSize()
+ */
 BSize
 BListView::PreferredSize()
 {
@@ -850,6 +1214,17 @@ BListView::PreferredSize()
 // #pragma mark -
 
 
+/**
+ * @brief Sets or clears the keyboard focus for this list view.
+ *
+ * Calls BView::MakeFocus() to update the standard focus state. If the list
+ * is embedded in a BScrollView, also highlights or un-highlights the scroll
+ * view's border to provide a visual focus indicator.
+ *
+ * @param focused True to give focus to this view, false to remove it.
+ *
+ * @see TargetedByScrollView(), KeyDown()
+ */
 void
 BListView::MakeFocus(bool focused)
 {
@@ -863,6 +1238,19 @@ BListView::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Sets the font used for drawing list items.
+ *
+ * Calls BView::SetFont() to update the view's font, then calls _UpdateItems()
+ * so that all BListItem objects recompute their preferred height using the new
+ * font metrics. The update is skipped if the window is currently in a view
+ * transaction.
+ *
+ * @param font The new font to apply.
+ * @param mask A bitmask of font attributes to change (see BFont).
+ *
+ * @see _UpdateItems(), BListItem::Update()
+ */
 void
 BListView::SetFont(const BFont* font, uint32 mask)
 {
@@ -873,6 +1261,16 @@ BListView::SetFont(const BFont* font, uint32 mask)
 }
 
 
+/**
+ * @brief Scrolls the list view so that @a point is at the top-left of the visible area.
+ *
+ * Delegates to BView::ScrollTo(). This overload is provided so subclasses can
+ * intercept scroll-to-point operations.
+ *
+ * @param point The target scroll position in the view's own coordinate system.
+ *
+ * @see ScrollTo(int32), ScrollToSelection()
+ */
 void
 BListView::ScrollTo(BPoint point)
 {
@@ -883,6 +1281,22 @@ BListView::ScrollTo(BPoint point)
 // #pragma mark - List ops
 
 
+/**
+ * @brief Inserts a BListItem at the specified index.
+ *
+ * Inserts @a item at position @a index, shifting subsequent items down.
+ * Selection and anchor indices are adjusted to remain consistent. When
+ * attached to a window, the item's top position and metrics are computed
+ * immediately, the scroll bar is updated, and the affected region is
+ * invalidated.
+ *
+ * @param item   The item to insert. Ownership is not transferred.
+ * @param index  The zero-based position at which to insert the item.
+ * @return True on success, false if @a index is out of range or memory
+ *         allocation fails.
+ *
+ * @see AddItem(BListItem*), RemoveItem(int32), AddList()
+ */
 bool
 BListView::AddItem(BListItem* item, int32 index)
 {
@@ -914,6 +1328,19 @@ BListView::AddItem(BListItem* item, int32 index)
 }
 
 
+/**
+ * @brief Appends a BListItem to the end of the list.
+ *
+ * Adds @a item as the last element. No selection or anchor adjustments are
+ * needed since no existing items are shifted. When attached to a window, the
+ * item's top position and metrics are computed, the scroll bar is updated, and
+ * only the new item's cell is invalidated.
+ *
+ * @param item The item to append. Ownership is not transferred.
+ * @return True on success, false if memory allocation fails.
+ *
+ * @see AddItem(BListItem*, int32), RemoveItem(int32)
+ */
 bool
 BListView::AddItem(BListItem* item)
 {
@@ -938,6 +1365,21 @@ BListView::AddItem(BListItem* item)
 }
 
 
+/**
+ * @brief Inserts all items from @a list starting at @a index.
+ *
+ * Inserts every item in @a list into this BListView beginning at @a index,
+ * shifting subsequent items. Selection and anchor indices are adjusted.
+ * When attached to a window, metrics are computed for the new items and the
+ * entire view is invalidated.
+ *
+ * @param list   A BList whose items are inserted; ownership of the items is
+ *               not transferred.
+ * @param index  The zero-based position at which to begin inserting.
+ * @return True on success, false on failure.
+ *
+ * @see AddList(BList*), AddItem(BListItem*, int32)
+ */
 bool
 BListView::AddList(BList* list, int32 index)
 {
@@ -974,6 +1416,16 @@ BListView::AddList(BList* list, int32 index)
 }
 
 
+/**
+ * @brief Appends all items from @a list to the end of this list view.
+ *
+ * Convenience overload that calls AddList(@a list, CountItems()).
+ *
+ * @param list A BList whose items are appended; ownership is not transferred.
+ * @return True on success, false on failure.
+ *
+ * @see AddList(BList*, int32)
+ */
 bool
 BListView::AddList(BList* list)
 {
@@ -981,6 +1433,19 @@ BListView::AddList(BList* list)
 }
 
 
+/**
+ * @brief Removes the item at @a index and returns it.
+ *
+ * Deselects the item if it is selected, removes it from the internal list,
+ * adjusts the selection and anchor indices, recomputes item top positions from
+ * @a index onward, and invalidates the affected region. The caller becomes
+ * responsible for the returned item.
+ *
+ * @param index The zero-based index of the item to remove.
+ * @return The removed BListItem, or NULL if @a index is out of range.
+ *
+ * @see RemoveItem(BListItem*), RemoveItems(), AddItem(BListItem*, int32)
+ */
 BListItem*
 BListView::RemoveItem(int32 index)
 {
@@ -1012,6 +1477,16 @@ BListView::RemoveItem(int32 index)
 }
 
 
+/**
+ * @brief Removes a specific BListItem by pointer.
+ *
+ * Looks up @a item via IndexOf() and delegates to RemoveItem(int32).
+ *
+ * @param item The item to remove.
+ * @return True if the item was found and removed, false otherwise.
+ *
+ * @see RemoveItem(int32), IndexOf(BListItem*)
+ */
 bool
 BListView::RemoveItem(BListItem* item)
 {
@@ -1019,6 +1494,20 @@ BListView::RemoveItem(BListItem* item)
 }
 
 
+/**
+ * @brief Removes @a count items starting at @a index.
+ *
+ * Adjusts the anchor index to @a index if the anchor fell within the removed
+ * range, removes the items from the underlying BList, recomputes item tops for
+ * the remainder, and invalidates the entire view. The removed items are not
+ * deleted; the caller retains ownership.
+ *
+ * @param index The zero-based starting index of the items to remove.
+ * @param count The number of items to remove.
+ * @return True on success, false if @a index is out of range.
+ *
+ * @see RemoveItem(int32), MakeEmpty()
+ */
 bool
 BListView::RemoveItems(int32 index, int32 count)
 {
@@ -1040,6 +1529,16 @@ BListView::RemoveItems(int32 index, int32 count)
 }
 
 
+/**
+ * @brief Sets the message sent to the target whenever the selection changes.
+ *
+ * Replaces the current selection message with @a message (which may be NULL
+ * to disable selection notifications). The old message is deleted.
+ *
+ * @param message The new selection-change notification message, or NULL.
+ *
+ * @see SelectionMessage(), SelectionCommand(), SetInvocationMessage()
+ */
 void
 BListView::SetSelectionMessage(BMessage* message)
 {
@@ -1048,6 +1547,17 @@ BListView::SetSelectionMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Sets the message sent to the target when an item is invoked.
+ *
+ * Stores @a message as the invocation message via BInvoker::SetMessage().
+ * The invocation message is sent when the user double-clicks an item or
+ * presses Return/Space.
+ *
+ * @param message The new invocation message, or NULL to disable invocation.
+ *
+ * @see InvocationMessage(), InvocationCommand(), SetSelectionMessage()
+ */
 void
 BListView::SetInvocationMessage(BMessage* message)
 {
@@ -1055,6 +1565,13 @@ BListView::SetInvocationMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the current invocation message.
+ *
+ * @return The BMessage sent on invocation, or NULL if none is set.
+ *
+ * @see SetInvocationMessage(), InvocationCommand()
+ */
 BMessage*
 BListView::InvocationMessage() const
 {
@@ -1062,6 +1579,13 @@ BListView::InvocationMessage() const
 }
 
 
+/**
+ * @brief Returns the @c what field of the current invocation message.
+ *
+ * @return The command code of the invocation message, or 0 if none is set.
+ *
+ * @see InvocationMessage(), SetInvocationMessage()
+ */
 uint32
 BListView::InvocationCommand() const
 {
@@ -1069,6 +1593,13 @@ BListView::InvocationCommand() const
 }
 
 
+/**
+ * @brief Returns the current selection-change notification message.
+ *
+ * @return The BMessage sent when the selection changes, or NULL if none is set.
+ *
+ * @see SetSelectionMessage(), SelectionCommand()
+ */
 BMessage*
 BListView::SelectionMessage() const
 {
@@ -1076,6 +1607,13 @@ BListView::SelectionMessage() const
 }
 
 
+/**
+ * @brief Returns the @c what field of the current selection-change message.
+ *
+ * @return The command code of the selection message, or 0 if none is set.
+ *
+ * @see SelectionMessage(), SetSelectionMessage()
+ */
 uint32
 BListView::SelectionCommand() const
 {
@@ -1086,6 +1624,17 @@ BListView::SelectionCommand() const
 }
 
 
+/**
+ * @brief Changes the selection mode of the list.
+ *
+ * Switches between @c B_SINGLE_SELECTION_LIST and @c B_MULTIPLE_SELECTION_LIST.
+ * When switching from multiple to single selection, the current first selected
+ * item is preserved and all others are deselected.
+ *
+ * @param type The new list type.
+ *
+ * @see ListType(), Select()
+ */
 void
 BListView::SetListType(list_view_type type)
 {
@@ -1098,6 +1647,13 @@ BListView::SetListType(list_view_type type)
 }
 
 
+/**
+ * @brief Returns the current selection mode.
+ *
+ * @return @c B_SINGLE_SELECTION_LIST or @c B_MULTIPLE_SELECTION_LIST.
+ *
+ * @see SetListType()
+ */
 list_view_type
 BListView::ListType() const
 {
@@ -1105,6 +1661,14 @@ BListView::ListType() const
 }
 
 
+/**
+ * @brief Returns the item at the given index.
+ *
+ * @param index The zero-based index of the item to retrieve.
+ * @return The BListItem at @a index, or NULL if @a index is out of range.
+ *
+ * @see FirstItem(), LastItem(), CountItems()
+ */
 BListItem*
 BListView::ItemAt(int32 index) const
 {
@@ -1112,6 +1676,18 @@ BListView::ItemAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the index of the given BListItem pointer.
+ *
+ * When attached to a window, uses a binary search on the item's top position
+ * for efficiency, then validates the result. Falls back to a linear search
+ * on the underlying BList when there is no window.
+ *
+ * @param item The item to locate.
+ * @return The zero-based index of @a item, or -1 if not found.
+ *
+ * @see IndexOf(BPoint), HasItem()
+ */
 int32
 BListView::IndexOf(BListItem* item) const
 {
@@ -1128,6 +1704,18 @@ BListView::IndexOf(BListItem* item) const
 }
 
 
+/**
+ * @brief Returns the index of the item that contains the given point.
+ *
+ * Uses a binary search on item top/bottom positions, so the time complexity
+ * is O(log n).
+ *
+ * @param point A point in the view's coordinate system.
+ * @return The zero-based index of the item that contains @a point, or -1 if
+ *         @a point is not within any item.
+ *
+ * @see IndexOf(BListItem*), ItemFrame()
+ */
 int32
 BListView::IndexOf(BPoint point) const
 {
@@ -1154,6 +1742,13 @@ BListView::IndexOf(BPoint point) const
 }
 
 
+/**
+ * @brief Returns the first item in the list.
+ *
+ * @return The first BListItem, or NULL if the list is empty.
+ *
+ * @see LastItem(), ItemAt(), CountItems()
+ */
 BListItem*
 BListView::FirstItem() const
 {
@@ -1161,6 +1756,13 @@ BListView::FirstItem() const
 }
 
 
+/**
+ * @brief Returns the last item in the list.
+ *
+ * @return The last BListItem, or NULL if the list is empty.
+ *
+ * @see FirstItem(), ItemAt(), CountItems()
+ */
 BListItem*
 BListView::LastItem() const
 {
@@ -1168,6 +1770,14 @@ BListView::LastItem() const
 }
 
 
+/**
+ * @brief Returns whether the list contains a specific item.
+ *
+ * @param item The item to search for.
+ * @return True if @a item is present in the list, false otherwise.
+ *
+ * @see IndexOf(BListItem*)
+ */
 bool
 BListView::HasItem(BListItem *item) const
 {
@@ -1175,6 +1785,13 @@ BListView::HasItem(BListItem *item) const
 }
 
 
+/**
+ * @brief Returns the total number of items in the list.
+ *
+ * @return The number of BListItem objects currently managed by this view.
+ *
+ * @see IsEmpty(), ItemAt()
+ */
 int32
 BListView::CountItems() const
 {
@@ -1182,6 +1799,15 @@ BListView::CountItems() const
 }
 
 
+/**
+ * @brief Removes all items from the list without deleting them.
+ *
+ * Deselects all items, clears the internal list, and when attached to a
+ * window resets the scroll bar and invalidates the view. Item objects
+ * are not freed; the caller retains ownership.
+ *
+ * @see RemoveItems(), IsEmpty()
+ */
 void
 BListView::MakeEmpty()
 {
@@ -1198,6 +1824,13 @@ BListView::MakeEmpty()
 }
 
 
+/**
+ * @brief Returns whether the list contains no items.
+ *
+ * @return True if CountItems() == 0, false otherwise.
+ *
+ * @see CountItems(), MakeEmpty()
+ */
 bool
 BListView::IsEmpty() const
 {
@@ -1205,6 +1838,16 @@ BListView::IsEmpty() const
 }
 
 
+/**
+ * @brief Calls @a func for each item in the list until it returns true.
+ *
+ * Iteration stops early if @a func returns true for any item.
+ *
+ * @param func A function that receives a BListItem pointer and returns a bool.
+ *             Return true to stop iteration, false to continue.
+ *
+ * @see DoForEach(bool (*)(BListItem*, void*), void*)
+ */
 void
 BListView::DoForEach(bool (*func)(BListItem*))
 {
@@ -1212,6 +1855,17 @@ BListView::DoForEach(bool (*func)(BListItem*))
 }
 
 
+/**
+ * @brief Calls @a func for each item in the list, passing an extra argument.
+ *
+ * Iteration stops early if @a func returns true for any item.
+ *
+ * @param func A function that receives a BListItem pointer and @a arg, and
+ *             returns a bool. Return true to stop iteration, false to continue.
+ * @param arg  An arbitrary pointer passed as the second argument to @a func.
+ *
+ * @see DoForEach(bool (*)(BListItem*))
+ */
 void
 BListView::DoForEach(bool (*func)(BListItem*, void*), void* arg)
 {
@@ -1219,6 +1873,17 @@ BListView::DoForEach(bool (*func)(BListItem*, void*), void* arg)
 }
 
 
+/**
+ * @brief Returns a direct pointer to the internal item array.
+ *
+ * The returned pointer is valid only as long as no items are added or removed.
+ * It may be used to iterate the list rapidly without repeated ItemAt() calls.
+ *
+ * @return A pointer to the first element of the internal BListItem* array,
+ *         or NULL if the list is empty.
+ *
+ * @see ItemAt(), CountItems()
+ */
 const BListItem**
 BListView::Items() const
 {
@@ -1226,6 +1891,15 @@ BListView::Items() const
 }
 
 
+/**
+ * @brief Marks the bounding rectangle of the item at @a index as needing redraw.
+ *
+ * Convenience wrapper around Invalidate(ItemFrame(@a index)).
+ *
+ * @param index The zero-based index of the item to invalidate.
+ *
+ * @see ItemFrame(), Draw()
+ */
 void
 BListView::InvalidateItem(int32 index)
 {
@@ -1233,6 +1907,18 @@ BListView::InvalidateItem(int32 index)
 }
 
 
+/**
+ * @brief Scrolls the view to make the item at @a index fully visible.
+ *
+ * If the item's top edge is above the current scroll position, scrolls up so
+ * the item appears at the top. If the item's bottom edge is below the visible
+ * area, scrolls down so the item appears at the bottom. Out-of-range indices
+ * are clamped to [0, CountItems()-1].
+ *
+ * @param index The zero-based index of the item to scroll to.
+ *
+ * @see ScrollTo(BPoint), ScrollToSelection(), ItemFrame()
+ */
 void
 BListView::ScrollTo(int32 index)
 {
@@ -1250,6 +1936,16 @@ BListView::ScrollTo(int32 index)
 }
 
 
+/**
+ * @brief Scrolls the view to make the first selected item visible.
+ *
+ * If the selected item's top is above the visible area, or the item is taller
+ * than the visible area, scrolls up to align the item's top with the view's
+ * top. If the item's bottom is below the visible area, scrolls down to bring
+ * the bottom into view. Does nothing if there is no selection.
+ *
+ * @see CurrentSelection(), ScrollTo(int32)
+ */
 void
 BListView::ScrollToSelection()
 {
@@ -1263,6 +1959,20 @@ BListView::ScrollToSelection()
 }
 
 
+/**
+ * @brief Selects the item at @a index, optionally extending the selection.
+ *
+ * Calls _Select() to update the internal selection state. If the state
+ * changed, fires SelectionChanged() and sends the selection notification
+ * via InvokeNotify().
+ *
+ * @param index   The zero-based index of the item to select.
+ * @param extend  If false (the default), any existing selection is cleared
+ *                first. If true, the item is added to the current selection
+ *                (only meaningful in @c B_MULTIPLE_SELECTION_LIST mode).
+ *
+ * @see Select(int32, int32, bool), Deselect(), DeselectAll(), _Select(int32, bool)
+ */
 void
 BListView::Select(int32 index, bool extend)
 {
@@ -1273,6 +1983,19 @@ BListView::Select(int32 index, bool extend)
 }
 
 
+/**
+ * @brief Selects a contiguous range of items from @a start to @a finish.
+ *
+ * Calls _Select() with the given range. If the selection state changed, fires
+ * SelectionChanged() and sends the selection notification message.
+ *
+ * @param start   The zero-based index of the first item to select.
+ * @param finish  The zero-based index of the last item to select (inclusive).
+ * @param extend  If false, the existing selection is cleared before applying
+ *                the range. If true, the range is added to the selection.
+ *
+ * @see Select(int32, bool), Deselect(), _Select(int32, int32, bool)
+ */
 void
 BListView::Select(int32 start, int32 finish, bool extend)
 {
@@ -1283,6 +2006,15 @@ BListView::Select(int32 start, int32 finish, bool extend)
 }
 
 
+/**
+ * @brief Returns whether the item at @a index is currently selected.
+ *
+ * @param index The zero-based item index to query.
+ * @return True if the item is selected, false if it is not selected or
+ *         @a index is out of range.
+ *
+ * @see CurrentSelection(), Select()
+ */
 bool
 BListView::IsItemSelected(int32 index) const
 {
@@ -1294,6 +2026,18 @@ BListView::IsItemSelected(int32 index) const
 }
 
 
+/**
+ * @brief Returns the index of the @a index-th selected item.
+ *
+ * Iterates through the selected range to find the @a index-th (zero-based)
+ * selected item. Use @a index = 0 to get the first selected item.
+ *
+ * @param index  The zero-based rank of the selected item to retrieve.
+ * @return The list index of the @a index-th selected item, or -1 if there
+ *         are fewer than @a index + 1 selected items.
+ *
+ * @see IsItemSelected(), Select(), fFirstSelected, fLastSelected
+ */
 int32
 BListView::CurrentSelection(int32 index) const
 {
@@ -1316,6 +2060,25 @@ BListView::CurrentSelection(int32 index) const
 }
 
 
+/**
+ * @brief Invokes the list view, sending the invocation message to the target.
+ *
+ * Builds a clone of either @a message or the stored invocation message,
+ * adding "when", "source", and "be:sender" fields. For a single-selection
+ * list, appends the index of the first selected item as "index". For a
+ * multiple-selection list, appends the index of every selected item.
+ * Watch notifications are sent via SendNotices() in addition to the direct
+ * message delivery.
+ *
+ * @param message  An optional override message. If NULL, the stored
+ *                 invocation message (Message()) is used.
+ * @return A status code.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE If neither @a message nor the stored message is set
+ *                     and no watches are registered.
+ *
+ * @see SetInvocationMessage(), InvocationMessage(), BInvoker::Invoke()
+ */
 status_t
 BListView::Invoke(BMessage* message)
 {
@@ -1361,6 +2124,14 @@ BListView::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Deselects all items in the list.
+ *
+ * Calls _DeselectAll() with no exceptions. If any item was deselected, fires
+ * SelectionChanged() and sends the selection notification message.
+ *
+ * @see DeselectExcept(), Deselect(), Select()
+ */
 void
 BListView::DeselectAll()
 {
@@ -1371,6 +2142,18 @@ BListView::DeselectAll()
 }
 
 
+/**
+ * @brief Deselects all items outside the range [@a exceptFrom, @a exceptTo].
+ *
+ * Items in the inclusive range [@a exceptFrom, @a exceptTo] are preserved;
+ * all others are deselected. If any change occurs, SelectionChanged() is fired
+ * and the selection notification is sent.
+ *
+ * @param exceptFrom  The first index (inclusive) of the preserved range.
+ * @param exceptTo    The last index (inclusive) of the preserved range.
+ *
+ * @see DeselectAll(), Deselect()
+ */
 void
 BListView::DeselectExcept(int32 exceptFrom, int32 exceptTo)
 {
@@ -1384,6 +2167,16 @@ BListView::DeselectExcept(int32 exceptFrom, int32 exceptTo)
 }
 
 
+/**
+ * @brief Deselects the item at @a index.
+ *
+ * Calls _Deselect() to clear the item's selected state. If the state changed,
+ * fires SelectionChanged() and sends the selection notification message.
+ *
+ * @param index The zero-based index of the item to deselect.
+ *
+ * @see DeselectAll(), DeselectExcept(), Select()
+ */
 void
 BListView::Deselect(int32 index)
 {
@@ -1394,6 +2187,18 @@ BListView::Deselect(int32 index)
 }
 
 
+/**
+ * @brief Hook called whenever the selection changes.
+ *
+ * The base-class implementation does nothing. Subclasses override this method
+ * to react to selection changes without registering a separate selection
+ * message target.
+ *
+ * @note This method is called @e after the internal selection state has been
+ *       updated and @e before the selection notification message is sent.
+ *
+ * @see Select(), Deselect(), DeselectAll()
+ */
 void
 BListView::SelectionChanged()
 {
@@ -1401,6 +2206,19 @@ BListView::SelectionChanged()
 }
 
 
+/**
+ * @brief Sorts the list items using the supplied comparator and redraws.
+ *
+ * Clears the entire selection before sorting (firing SelectionChanged() and
+ * the selection notification if needed), then sorts the internal BList using
+ * @a cmp, recomputes all item top positions, and invalidates the view.
+ *
+ * @param cmp A comparator function suitable for qsort(); receives pointers
+ *            to BListItem* pointers and returns a negative, zero, or positive
+ *            integer.
+ *
+ * @see SwapItems(), MoveItem()
+ */
 void
 BListView::SortItems(int (*cmp)(const void *, const void *))
 {
@@ -1415,6 +2233,18 @@ BListView::SortItems(int (*cmp)(const void *, const void *))
 }
 
 
+/**
+ * @brief Swaps the items at indices @a a and @a b.
+ *
+ * Delegates to DoMiscellaneous() with the @c B_SWAP_OP code, which calls
+ * _SwapItems() to perform the actual swap and handle redrawing.
+ *
+ * @param a The index of the first item.
+ * @param b The index of the second item.
+ * @return True on success, false if either index is out of range.
+ *
+ * @see MoveItem(), ReplaceItem(), _SwapItems()
+ */
 bool
 BListView::SwapItems(int32 a, int32 b)
 {
@@ -1427,6 +2257,18 @@ BListView::SwapItems(int32 a, int32 b)
 }
 
 
+/**
+ * @brief Moves the item at @a from to the position @a to.
+ *
+ * Delegates to DoMiscellaneous() with the @c B_MOVE_OP code, which calls
+ * _MoveItem() to reposition the item and update the display.
+ *
+ * @param from The current zero-based index of the item.
+ * @param to   The target zero-based index.
+ * @return True on success, false if either index is out of range.
+ *
+ * @see SwapItems(), ReplaceItem(), _MoveItem()
+ */
 bool
 BListView::MoveItem(int32 from, int32 to)
 {
@@ -1439,6 +2281,20 @@ BListView::MoveItem(int32 from, int32 to)
 }
 
 
+/**
+ * @brief Replaces the item at @a index with @a item.
+ *
+ * Delegates to DoMiscellaneous() with the @c B_REPLACE_OP code, which calls
+ * _ReplaceItem() to substitute the item, update selection state, recompute
+ * top positions, and redraw the affected area.
+ *
+ * @param index The zero-based index of the item to replace.
+ * @param item  The new BListItem to insert at @a index. Ownership is not
+ *              transferred; the old item is @b not deleted.
+ * @return True on success, false if @a index is out of range or @a item is NULL.
+ *
+ * @see SwapItems(), MoveItem(), _ReplaceItem()
+ */
 bool
 BListView::ReplaceItem(int32 index, BListItem* item)
 {
@@ -1451,6 +2307,18 @@ BListView::ReplaceItem(int32 index, BListItem* item)
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the item at @a index.
+ *
+ * The returned rect spans the full width of the view. Its top and bottom
+ * are taken from the item's cached top/bottom positions. Returns an
+ * empty rect (top=0, bottom=-1) if @a index is out of range.
+ *
+ * @param index The zero-based index of the item.
+ * @return The item's frame rectangle in the view's coordinate system.
+ *
+ * @see InvalidateItem(), IndexOf(BPoint), Draw()
+ */
 BRect
 BListView::ItemFrame(int32 index)
 {
@@ -1470,6 +2338,23 @@ BListView::ItemFrame(int32 index)
 // #pragma mark -
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate handler.
+ *
+ * Checks whether the given @a property and @a specifier match one of the
+ * entries in sProperties. If so, returns @c this so that MessageReceived()
+ * processes the scripting command. Otherwise, delegates to
+ * BView::ResolveSpecifier().
+ *
+ * @param message    The scripting message being resolved.
+ * @param index      The specifier index within @a message.
+ * @param specifier  The specifier sub-message.
+ * @param what       The specifier type constant.
+ * @param property   The property name string.
+ * @return The BHandler that should process the message.
+ *
+ * @see GetSupportedSuites(), MessageReceived()
+ */
 BHandler*
 BListView::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -1487,6 +2372,19 @@ BListView::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by BListView.
+ *
+ * Adds the suite name "suite/vnd.Be-list-view" and the flat-packed property
+ * info table (sProperties) to @a data, then chains to BView::GetSupportedSuites().
+ *
+ * @param data The BMessage to populate with suite and property information.
+ * @return A status code.
+ * @retval B_OK On success.
+ * @retval B_BAD_VALUE If @a data is NULL.
+ *
+ * @see ResolveSpecifier(), MessageReceived()
+ */
 status_t
 BListView::GetSupportedSuites(BMessage* data)
 {
@@ -1505,6 +2403,22 @@ BListView::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Executes a binary-compatibility perform operation.
+ *
+ * Handles layout-related perform codes (MinSize, MaxSize, PreferredSize,
+ * LayoutAlignment, HasHeightForWidth, GetHeightForWidth, SetLayout,
+ * LayoutInvalidated, DoLayout) by dispatching to the corresponding BListView
+ * virtual methods and storing the result in the data struct. Unrecognized
+ * codes are forwarded to BView::Perform().
+ *
+ * @param code   The perform operation code (e.g. @c PERFORM_CODE_MIN_SIZE).
+ * @param _data  A pointer to the operation-specific data struct.
+ * @return A status code.
+ * @retval B_OK On success.
+ *
+ * @see MinSize(), MaxSize(), PreferredSize()
+ */
 status_t
 BListView::Perform(perform_code code, void* _data)
 {
@@ -1561,6 +2475,20 @@ BListView::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Dispatches miscellaneous list operations (replace, move, swap).
+ *
+ * Acts as a central dispatch point called by ReplaceItem(), MoveItem(), and
+ * SwapItems(). Subclasses such as BOutlineListView override this method to
+ * intercept these operations and maintain their own tree structure.
+ *
+ * @param code The operation code: @c B_NO_OP, @c B_REPLACE_OP,
+ *             @c B_MOVE_OP, or @c B_SWAP_OP.
+ * @param data A union containing the operation-specific parameters.
+ * @return True if the operation succeeded, false otherwise.
+ *
+ * @see SwapItems(), MoveItem(), ReplaceItem()
+ */
 bool
 BListView::DoMiscellaneous(MiscCode code, MiscData* data)
 {
@@ -1588,11 +2516,19 @@ BListView::DoMiscellaneous(MiscCode code, MiscData* data)
 // #pragma mark -
 
 
+/** @brief Reserved virtual slot 2 for future binary-compatible extensions. */
 void BListView::_ReservedListView2() {}
+/** @brief Reserved virtual slot 3 for future binary-compatible extensions. */
 void BListView::_ReservedListView3() {}
+/** @brief Reserved virtual slot 4 for future binary-compatible extensions. */
 void BListView::_ReservedListView4() {}
 
 
+/**
+ * @brief Assignment operator (not implemented; copying a BListView is unsupported).
+ *
+ * @return A reference to @c *this, unchanged.
+ */
 BListView&
 BListView::operator=(const BListView& /*other*/)
 {
@@ -1603,6 +2539,17 @@ BListView::operator=(const BListView& /*other*/)
 // #pragma mark -
 
 
+/**
+ * @brief Common initialization shared by all constructors.
+ *
+ * Sets the list type, resets all selection tracking indices to -1,
+ * allocates and zero-initializes the fTrack struct, and configures the
+ * view's background and low colors.
+ *
+ * @param type  @c B_SINGLE_SELECTION_LIST or @c B_MULTIPLE_SELECTION_LIST.
+ *
+ * @see fTrack, fFirstSelected, fLastSelected, fAnchorIndex
+ */
 void
 BListView::_InitObject(list_view_type type)
 {
@@ -1628,6 +2575,21 @@ BListView::_InitObject(list_view_type type)
 }
 
 
+/**
+ * @brief Adjusts the scroll bar range and proportion to match the current content.
+ *
+ * For the vertical scroll bar: if the total item height fits within the view,
+ * the range is set to [0, 0] and the scroll position is reset to the top.
+ * Otherwise, the range is set to allow scrolling to the last item, and the
+ * proportion is set accordingly. If the list has scrolled past the content
+ * bottom, the view is scrolled back up. Step sizes are set to one item height
+ * (small) and one view height (large).
+ *
+ * For the horizontal scroll bar: behaves similarly based on the maximum item
+ * width returned by GetPreferredSize().
+ *
+ * @see AttachedToWindow(), FrameResized(), AddItem(), RemoveItem()
+ */
 void
 BListView::_FixupScrollBar()
 {
@@ -1678,6 +2640,18 @@ BListView::_FixupScrollBar()
 }
 
 
+/**
+ * @brief Invalidates the region from @a index to the bottom of the view.
+ *
+ * Computes the dirty rectangle starting just below the item preceding
+ * @a index (to account for items that may already have been removed from
+ * the list) and extending to the bottom of the view's bounds.
+ *
+ * @param index The first item index whose visual row (and all below) needs
+ *              to be redrawn.
+ *
+ * @see InvalidateItem(), AddItem(), RemoveItem()
+ */
 void
 BListView::_InvalidateFrom(int32 index)
 {
@@ -1697,6 +2671,16 @@ BListView::_InvalidateFrom(int32 index)
 }
 
 
+/**
+ * @brief Recomputes the top position and metrics for every item using the current font.
+ *
+ * Calls BListItem::SetTop() and BListItem::Update() for each item in order,
+ * so that item heights and widths reflect the current view font. Called when
+ * the view is first attached to a window, when the font changes, and when
+ * the frame is resized.
+ *
+ * @see AttachedToWindow(), SetFont(), FrameResized()
+ */
 void
 BListView::_UpdateItems()
 {
@@ -1709,10 +2693,21 @@ BListView::_UpdateItems()
 }
 
 
-/*!	Selects the item at the specified \a index, and returns \c true in
-	case the selection was changed because of this method.
-	If \a extend is \c false, all previously selected items are deselected.
-*/
+/**
+ * @brief Selects the item at @a index and returns true if the selection changed.
+ *
+ * Acquires the window lock if a window is present. If @a extend is false,
+ * all existing selections are cleared first via _DeselectAll(). The anchor
+ * index is always updated to @a index. If the item is already selected or
+ * disabled, no visual change is made but the method still returns true if a
+ * prior deselect caused a change.
+ *
+ * @param index   The zero-based index of the item to select.
+ * @param extend  If false, clears the existing selection before selecting.
+ * @return True if the selection state changed, false otherwise.
+ *
+ * @see _Select(int32, int32, bool), _Deselect(), _DeselectAll()
+ */
 bool
 BListView::_Select(int32 index, bool extend)
 {
@@ -1757,11 +2752,23 @@ BListView::_Select(int32 index, bool extend)
 }
 
 
-/*!
-	Selects the items between \a from and \a to, and returns \c true in
-	case the selection was changed because of this method.
-	If \a extend is \c false, all previously selected items are deselected.
-*/
+/**
+ * @brief Selects the items in the range [@a from, @a to] and returns true if the
+ *        selection changed.
+ *
+ * Acquires the window lock if a window is present. If @a extend is false,
+ * any prior selection is cleared before the range is applied. Updates
+ * fFirstSelected and fLastSelected to encompass the new range, then marks
+ * each enabled, previously-unselected item in the range as selected and
+ * invalidates it.
+ *
+ * @param from    The zero-based index of the first item to select.
+ * @param to      The zero-based index of the last item to select (inclusive).
+ * @param extend  If false, clears the existing selection before applying the range.
+ * @return True if any item's selection state changed, false otherwise.
+ *
+ * @see _Select(int32, bool), _DeselectAll()
+ */
 bool
 BListView::_Select(int32 from, int32 to, bool extend)
 {
@@ -1801,6 +2808,20 @@ BListView::_Select(int32 from, int32 to, bool extend)
 }
 
 
+/**
+ * @brief Deselects the item at @a index and redraws it.
+ *
+ * Acquires the window lock if a window is present. Clears the item's selected
+ * state, redraws the item within the view's bounds, and updates fFirstSelected
+ * / fLastSelected by calling _CalcFirstSelected() / _CalcLastSelected() if the
+ * deselected item was at one of the boundary positions.
+ *
+ * @param index The zero-based index of the item to deselect.
+ * @return True if the item's state changed (i.e. it was selected),
+ *         false if the index was out of range or the item was not selected.
+ *
+ * @see _DeselectAll(), _CalcFirstSelected(), _CalcLastSelected()
+ */
 bool
 BListView::_Deselect(int32 index)
 {
@@ -1839,6 +2860,20 @@ BListView::_Deselect(int32 index)
 }
 
 
+/**
+ * @brief Deselects all items, optionally preserving a range.
+ *
+ * Iterates from fFirstSelected to fLastSelected and deselects every item
+ * not within the range [@a exceptFrom, @a exceptTo]. If @a exceptFrom and
+ * @a exceptTo are both -1, all selected items are deselected unconditionally.
+ * After deselection, fFirstSelected and fLastSelected are recomputed.
+ *
+ * @param exceptFrom  First index of the range to preserve, or -1 for none.
+ * @param exceptTo    Last index of the range to preserve, or -1 for none.
+ * @return True if any item was deselected, false if nothing changed.
+ *
+ * @see _Deselect(), _CalcFirstSelected(), _CalcLastSelected()
+ */
 bool
 BListView::_DeselectAll(int32 exceptFrom, int32 exceptTo)
 {
@@ -1877,6 +2912,18 @@ BListView::_DeselectAll(int32 exceptFrom, int32 exceptTo)
 }
 
 
+/**
+ * @brief Finds the first selected item at or after @a after.
+ *
+ * Scans forward from @a after to the end of the list looking for the first
+ * item whose IsSelected() returns true.
+ *
+ * @param after The index from which to begin scanning (inclusive).
+ * @return The index of the first selected item at or after @a after,
+ *         or -1 if none exists.
+ *
+ * @see _CalcLastSelected(), _Deselect(), _DeselectAll()
+ */
 int32
 BListView::_CalcFirstSelected(int32 after)
 {
@@ -1893,6 +2940,18 @@ BListView::_CalcFirstSelected(int32 after)
 }
 
 
+/**
+ * @brief Finds the last selected item at or before @a before.
+ *
+ * Scans backward from @a before (clamped to CountItems()-1) to index 0
+ * looking for the last item whose IsSelected() returns true.
+ *
+ * @param before The index from which to begin scanning backward (inclusive).
+ * @return The index of the last selected item at or before @a before,
+ *         or -1 if none exists.
+ *
+ * @see _CalcFirstSelected(), _Deselect(), _DeselectAll()
+ */
 int32
 BListView::_CalcLastSelected(int32 before)
 {
@@ -1910,6 +2969,22 @@ BListView::_CalcLastSelected(int32 before)
 }
 
 
+/**
+ * @brief Draws a single list item with the correct text color for its state.
+ *
+ * Sets the high color based on the item's state before delegating to
+ * BListItem::DrawItem():
+ * - Disabled items use a dimmed version of @c B_LIST_ITEM_TEXT_COLOR.
+ * - Selected items use @c B_LIST_SELECTED_ITEM_TEXT_COLOR.
+ * - Normal items use @c B_LIST_ITEM_TEXT_COLOR.
+ *
+ * @param item      The BListItem to draw.
+ * @param itemRect  The bounding rectangle in which to draw the item.
+ * @param complete  If true, the item should redraw its entire background;
+ *                  if false, only the changed parts need updating.
+ *
+ * @see Draw(), InvalidateItem(), BListItem::DrawItem()
+ */
 void
 BListView::DrawItem(BListItem* item, BRect itemRect, bool complete)
 {
@@ -1931,6 +3006,23 @@ BListView::DrawItem(BListItem* item, BRect itemRect, bool complete)
 }
 
 
+/**
+ * @brief Swaps the items at positions @a a and @a b in the underlying list.
+ *
+ * Records the item frames before the swap, performs the swap in fList, then
+ * adjusts the anchor index and, if the selection state of the two items
+ * differs, rescans the selection boundaries. Sets the top positions of the
+ * swapped items to match their pre-swap frames. When the items have different
+ * heights, _RecalcItemTops() is called for the range and the union of both
+ * frames is invalidated; otherwise only the two individual frames are
+ * invalidated.
+ *
+ * @param a Index of the first item.
+ * @param b Index of the second item.
+ * @return True on success, false if the swap in fList failed.
+ *
+ * @see SwapItems(), _MoveItem(), _ReplaceItem(), _RescanSelection()
+ */
 bool
 BListView::_SwapItems(int32 a, int32 b)
 {
@@ -1989,6 +3081,20 @@ BListView::_SwapItems(int32 a, int32 b)
 }
 
 
+/**
+ * @brief Moves the item at @a from to the position @a to.
+ *
+ * Records both item frames before the move, performs the move in fList,
+ * updates the anchor index, rescans the selection if the moved item is
+ * selected, recomputes top positions starting from the lower of the two
+ * indices, and invalidates the union of both frames.
+ *
+ * @param from The current zero-based index of the item.
+ * @param to   The destination zero-based index.
+ * @return True on success, false if the move in fList failed.
+ *
+ * @see MoveItem(), _SwapItems(), _ReplaceItem(), _RescanSelection()
+ */
 bool
 BListView::_MoveItem(int32 from, int32 to)
 {
@@ -2023,6 +3129,22 @@ BListView::_MoveItem(int32 from, int32 to)
 }
 
 
+/**
+ * @brief Replaces the item at @a index with @a item.
+ *
+ * Verifies that @a item is non-NULL and that a current item exists at
+ * @a index. Performs the replacement in fList, then if the old and new items
+ * differ in selected state, rescans the selection between the known
+ * boundaries and fires SelectionChanged(). Recomputes top positions from
+ * @a index onward. If the item height changed, invalidates from @a index
+ * down and fixes up the scroll bar; otherwise invalidates only the item frame.
+ *
+ * @param index The zero-based index of the item to replace.
+ * @param item  The new item. Must be non-NULL.
+ * @return True on success, false if @a item is NULL or @a index is out of range.
+ *
+ * @see ReplaceItem(), _SwapItems(), _MoveItem(), _RescanSelection()
+ */
 bool
 BListView::_ReplaceItem(int32 index, BListItem* item)
 {
@@ -2068,6 +3190,19 @@ BListView::_ReplaceItem(int32 index, BListItem* item)
 }
 
 
+/**
+ * @brief Rescans the selection boundaries in the range [@a from, @a to].
+ *
+ * Normalizes the range (ensuring from <= to and clamping to valid indices),
+ * swaps the anchor index if it matches either boundary, then walks the range
+ * to find the new fFirstSelected and fLastSelected values. Used after items
+ * are swapped, moved, or replaced to keep the selection tracking consistent.
+ *
+ * @param from  One end of the range to rescan.
+ * @param to    The other end of the range to rescan.
+ *
+ * @see _SwapItems(), _MoveItem(), _ReplaceItem()
+ */
 void
 BListView::_RescanSelection(int32 from, int32 to)
 {
@@ -2105,6 +3240,20 @@ BListView::_RescanSelection(int32 from, int32 to)
 }
 
 
+/**
+ * @brief Recomputes the cached top position for items from @a start to @a end.
+ *
+ * Starts from the bottom of the item preceding @a start (or 0.0 if
+ * @a start == 0) and accumulates heights using ceilf(item->Height()) to
+ * assign each item's top position. When @a end is negative, all items from
+ * @a start to the end of the list are updated.
+ *
+ * @param start  The first item index to update.
+ * @param end    The last item index to update (inclusive), or -1 for all
+ *               items from @a start to the end of the list.
+ *
+ * @see AddItem(), RemoveItem(), _SwapItems(), _MoveItem(), _ReplaceItem()
+ */
 void
 BListView::_RecalcItemTops(int32 start, int32 end)
 {
@@ -2125,6 +3274,23 @@ BListView::_RecalcItemTops(int32 start, int32 end)
 }
 
 
+/**
+ * @brief Updates the selection in response to a mouse click at @a index.
+ *
+ * Interprets the current modifier keys to decide how the click should
+ * affect the selection:
+ * - Clicking a disabled item deselects everything.
+ * - In multiple-selection mode, Shift extends or contracts the selection;
+ *   Command toggles the clicked item; a plain click selects only that item
+ *   (unless it is the second click on an already-selected item, which is
+ *   reserved for drag-and-drop).
+ * - In single-selection mode, Command+click on a selected item deselects it;
+ *   any other click selects only that item.
+ *
+ * @param index The index of the item that was clicked, or -1 if no item.
+ *
+ * @see MouseDown(), Select(), Deselect(), DeselectExcept()
+ */
 void
 BListView::_DoSelection(int32 index)
 {

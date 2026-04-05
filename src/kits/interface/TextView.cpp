@@ -1,14 +1,42 @@
 /*
- * Copyright 2001-2020 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Stefano Ceccherini, stefano.ceccherini@gmail.com
- *		Marc Flerackers, mflerackers@androme.be
- *		Hiroshi Lockheimer (BTextView is based on his STEEngine)
- *		John Scipione, jscipione@gmail.com
- *		Oliver Tappe, zooey@hirschkaefer.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Stefano Ceccherini, stefano.ceccherini@gmail.com
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Hiroshi Lockheimer (BTextView is based on his STEEngine)
+ *       John Scipione, jscipione@gmail.com
+ *       Oliver Tappe, zooey@hirschkaefer.de
+ */
+
+
+/**
+ * @file TextView.cpp
+ * @brief Implementation of BTextView, a full-featured multi-line text editing view
+ *
+ * BTextView provides a multi-line rich-text editor with word wrapping,
+ * undo/redo, selection, clipboard integration, and optional run-style character
+ * formatting. The core engine is derived from Hiroshi Lockheimer's STEEngine.
+ *
+ * @see BView, BScrollView, BTextControl
  */
 
 
@@ -88,10 +116,19 @@ using BPrivate::gSystemCatalog;
 #endif
 
 
+/** @brief Enables use of the _BWidthBuffer_ glyph-width cache for faster string measurement. */
 #define USE_WIDTHBUFFER 1
+
+/** @brief Enables double-buffered offscreen rendering (currently disabled due to known bugs). */
 #define USE_DOUBLEBUFFERING 0
 
 
+/**
+ * @brief POD record describing a single flattened style run as serialised to a BMessage.
+ *
+ * Used internally by FlattenRunArray() and UnflattenRunArray() to convert between
+ * the live text_run_array format and a portable, big-endian byte stream.
+ */
 struct flattened_text_run {
 	int32	offset;
 	font_family	family;
@@ -106,6 +143,12 @@ struct flattened_text_run {
 	uint16	_reserved_;	// 0
 };
 
+/**
+ * @brief Header + variable-length array of flattened_text_run records.
+ *
+ * The complete on-disk/in-message representation of a text_run_array,
+ * prefixed with a magic cookie and version number for validation.
+ */
 struct flattened_text_run_array {
 	uint32	magic;
 	uint32	version;
@@ -113,45 +156,95 @@ struct flattened_text_run_array {
 	flattened_text_run styles[1];
 };
 
+/** @brief Magic cookie stored in big-endian form at the start of a flattened run array. */
 static const uint32 kFlattenedTextRunArrayMagic = 'Ali!';
+
+/** @brief Version tag embedded in every flattened run array; currently always 0. */
 static const uint32 kFlattenedTextRunArrayVersion = 0;
 
 
+/**
+ * @brief Character-class constants used by _CharClassification() for word-break logic.
+ *
+ * Each constant identifies a broad category of Unicode/ASCII character, allowing
+ * CanEndLine(), _PreviousWordBoundary(), and _NextWordBoundary() to make
+ * language-agnostic decisions about where to break lines and words.
+ */
 enum {
-	CHAR_CLASS_DEFAULT,
-	CHAR_CLASS_WHITESPACE,
-	CHAR_CLASS_GRAPHICAL,
-	CHAR_CLASS_QUOTE,
-	CHAR_CLASS_PUNCTUATION,
-	CHAR_CLASS_PARENS_OPEN,
-	CHAR_CLASS_PARENS_CLOSE,
-	CHAR_CLASS_END_OF_TEXT
+	CHAR_CLASS_DEFAULT,       /**< Ordinary word character (letters, digits, etc.). */
+	CHAR_CLASS_WHITESPACE,    /**< Space, tab, or newline. */
+	CHAR_CLASS_GRAPHICAL,     /**< Operator and symbol characters (e.g. @c = @ # $ %). */
+	CHAR_CLASS_QUOTE,         /**< Single or double quotation marks. */
+	CHAR_CLASS_PUNCTUATION,   /**< Sentence-ending and separating punctuation. */
+	CHAR_CLASS_PARENS_OPEN,   /**< Opening bracket, parenthesis, or brace. */
+	CHAR_CLASS_PARENS_CLOSE,  /**< Closing bracket, parenthesis, or brace. */
+	CHAR_CLASS_END_OF_TEXT    /**< The null terminator / past-end-of-buffer sentinel. */
 };
 
 
+/**
+ * @brief Transient state maintained while the user is clicking or dragging in the view.
+ *
+ * Created in MouseDown() and destroyed in _StopMouseTracking(). Carries enough
+ * context to extend or shrink the selection as the mouse moves, and fires a
+ * recurring _PING_ message so that auto-scrolling works even when no B_MOUSE_MOVED
+ * events arrive (e.g. cursor is stationary outside the view).
+ */
 class BTextView::TextTrackState {
 public:
+	/**
+	 * @brief Constructs the tracking state and starts the auto-scroll pulse runner.
+	 *
+	 * @param messenger A BMessenger targeting the BTextView that owns this state,
+	 *                  used to deliver periodic _PING_ messages for auto-scrolling.
+	 */
 	TextTrackState(BMessenger messenger);
+
+	/** @brief Destroys the state and stops the auto-scroll pulse runner. */
 	~TextTrackState();
 
+	/**
+	 * @brief Synthesises a MouseMoved() call so auto-scrolling works when the cursor is still.
+	 *
+	 * @param view The BTextView to deliver the simulated movement to.
+	 */
 	void SimulateMouseMovement(BTextView* view);
 
 public:
+	/** @brief Text offset at which the mouse button was originally pressed. */
 	int32				clickOffset;
+	/** @brief Whether the Shift key was held at the time of the initial click. */
 	bool				shiftDown;
+	/** @brief Bounding rectangle of the current selection at the time of the click, used to detect drag initiation. */
 	BRect				selectionRect;
+	/** @brief Last known mouse position, updated each time _PerformMouseMoved() is called. */
 	BPoint				where;
 
+	/** @brief The fixed end of the selection that does not move as the mouse is dragged. */
 	int32				anchor;
+	/** @brief Proposed new selection start, updated continuously during mouse tracking. */
 	int32				selStart;
+	/** @brief Proposed new selection end, updated continuously during mouse tracking. */
 	int32				selEnd;
 
 private:
+	/** @brief Recurring message runner that fires _PING_ at ~40 Hz for auto-scroll. */
 	BMessageRunner*		fRunner;
 };
 
 
+/**
+ * @brief Layout-related inset and cached size data for the BTextView.
+ *
+ * Stores the four inset distances between the view bounds and the text rect,
+ * plus the minimum and preferred BSize computed by _ValidateLayoutData().
+ * The @c valid flag is cleared whenever the layout is invalidated so that the
+ * cache is recomputed on the next layout pass.
+ */
 struct BTextView::LayoutData {
+	/**
+	 * @brief Initialises all insets to zero and marks the cache as invalid.
+	 */
 	LayoutData()
 		: leftInset(0),
 		  topInset(0),
@@ -162,29 +255,57 @@ struct BTextView::LayoutData {
 	{
 	}
 
+	/** @brief Distance in pixels from the left view edge to the left text-rect edge. */
 	float				leftInset;
+	/** @brief Distance in pixels from the top view edge to the top text-rect edge. */
 	float				topInset;
+	/** @brief Distance in pixels from the right text-rect edge to the right view edge. */
 	float				rightInset;
+	/** @brief Distance in pixels from the bottom text-rect edge to the bottom view edge. */
 	float				bottomInset;
 
+	/** @brief Cached minimum size (recomputed when @c valid is false). */
 	BSize				min;
+	/** @brief Cached preferred size (recomputed when @c valid is false). */
 	BSize				preferred;
+	/** @brief True when @c min and @c preferred reflect the current text content. */
 	bool				valid : 1;
+	/** @brief True when the application has called SetInsets() and automatic inset calculation is suppressed. */
 	bool				overridden : 1;
 };
 
 
+/** @brief Highlight colour used to mark the active (selected) portion of an IME inline-input string. */
 static const rgb_color kBlueInputColor = { 152, 203, 255, 255 };
+
+/** @brief Highlight colour used to mark the selected-within-inline sub-range during IME composition. */
 static const rgb_color kRedInputColor = { 255, 152, 152, 255 };
 
+/** @brief Horizontal scroll bar small-step size in pixels. */
 static const float kHorizontalScrollBarStep = 10.0;
+
+/** @brief Vertical scroll bar small-step size in pixels. */
 static const float kVerticalScrollBarStep = 12.0;
 
+/** @brief Internal message code delivered by the window shortcut handler to perform arrow-key navigation. */
 static const int32 kMsgNavigateArrow = '_NvA';
+
+/** @brief Internal message code delivered by the window shortcut handler to perform page/home/end navigation. */
 static const int32 kMsgNavigatePage  = '_NvP';
+
+/** @brief Internal message code delivered by the window shortcut handler to remove a whole word. */
 static const int32 kMsgRemoveWord    = '_RmW';
 
 
+/**
+ * @brief Scripting property table for BTextView.
+ *
+ * Exposes "selection" (get/set), "Text" (count/get/set), and "text_run_array"
+ * (get/set) through the BeOS scripting protocol so that external tools can
+ * inspect and manipulate the view programmatically.
+ *
+ * @see BTextView::ResolveSpecifier(), BTextView::GetSupportedSuites()
+ */
 static property_info sPropertyList[] = {
 	{
 		"selection",
@@ -242,6 +363,16 @@ static property_info sPropertyList[] = {
 };
 
 
+/**
+ * @brief Constructs a BTextView with an explicit frame and text rect, using the default font and colour.
+ *
+ * @param frame      Position and size of the view within its parent.
+ * @param name       Identifying name passed to BView.
+ * @param textRect   Initial rectangle within the view where text is rendered.
+ * @param resizeMask Resize flags passed to BView (e.g. B_FOLLOW_ALL).
+ * @param flags      View flags; B_FRAME_EVENTS, B_PULSE_NEEDED, and
+ *                   B_INPUT_METHOD_AWARE are always added internally.
+ */
 BTextView::BTextView(BRect frame, const char* name, BRect textRect,
 	uint32 resizeMask, uint32 flags)
 	:
@@ -261,6 +392,18 @@ BTextView::BTextView(BRect frame, const char* name, BRect textRect,
 }
 
 
+/**
+ * @brief Constructs a BTextView with an explicit frame, text rect, font, and text colour.
+ *
+ * @param frame        Position and size of the view within its parent.
+ * @param name         Identifying name passed to BView.
+ * @param textRect     Initial rectangle within the view where text is rendered.
+ * @param initialFont  The font to use for newly entered text; may be NULL to use the inherited view font.
+ * @param initialColor The foreground colour for newly entered text; may be NULL to use B_DOCUMENT_TEXT_COLOR.
+ * @param resizeMask   Resize flags passed to BView.
+ * @param flags        View flags; B_FRAME_EVENTS, B_PULSE_NEEDED, and
+ *                     B_INPUT_METHOD_AWARE are always added internally.
+ */
 BTextView::BTextView(BRect frame, const char* name, BRect textRect,
 	const BFont* initialFont, const rgb_color* initialColor,
 	uint32 resizeMask, uint32 flags)
@@ -281,6 +424,17 @@ BTextView::BTextView(BRect frame, const char* name, BRect textRect,
 }
 
 
+/**
+ * @brief Constructs a layout-mode BTextView with the default font and colour.
+ *
+ * Use this constructor when the view is managed by a BLayout; the text rect is
+ * initialised to the view's initial bounds and recalculated automatically when
+ * the layout assigns a size.
+ *
+ * @param name  Identifying name passed to BView.
+ * @param flags View flags; B_FRAME_EVENTS, B_PULSE_NEEDED, and
+ *              B_INPUT_METHOD_AWARE are always added internally.
+ */
 BTextView::BTextView(const char* name, uint32 flags)
 	:
 	BView(name,
@@ -299,6 +453,15 @@ BTextView::BTextView(const char* name, uint32 flags)
 }
 
 
+/**
+ * @brief Constructs a layout-mode BTextView with an explicit initial font and colour.
+ *
+ * @param name         Identifying name passed to BView.
+ * @param initialFont  The font to use for newly entered text; may be NULL.
+ * @param initialColor The foreground colour for newly entered text; may be NULL.
+ * @param flags        View flags; B_FRAME_EVENTS, B_PULSE_NEEDED, and
+ *                     B_INPUT_METHOD_AWARE are always added internally.
+ */
 BTextView::BTextView(const char* name, const BFont* initialFont,
 	const rgb_color* initialColor, uint32 flags)
 	:
@@ -318,6 +481,16 @@ BTextView::BTextView(const char* name, const BFont* initialFont,
 }
 
 
+/**
+ * @brief Reconstructs a BTextView from a BMessage archive (used by the scripting and layout systems).
+ *
+ * Restores all serialised properties including the text, selection, tab width,
+ * alignment, word wrap, stylable flag, password mode, disallowed characters,
+ * and the full run array.
+ *
+ * @param archive The archive message previously created by Archive().
+ * @see BTextView::Archive(), BTextView::Instantiate()
+ */
 BTextView::BTextView(BMessage* archive)
 	:
 	BView(archive),
@@ -409,6 +582,13 @@ BTextView::BTextView(BMessage* archive)
 }
 
 
+/**
+ * @brief Destroys the BTextView and frees all associated resources.
+ *
+ * Cancels any active input method transaction, stops mouse tracking, deletes
+ * the offscreen bitmap, and releases the text gap buffer, line buffer, style
+ * buffer, disallowed-character list, undo buffer, and layout data.
+ */
 BTextView::~BTextView()
 {
 	_CancelInputMethod();
@@ -426,6 +606,13 @@ BTextView::~BTextView()
 }
 
 
+/**
+ * @brief Creates a new BTextView from an archive message (BArchivable hook).
+ *
+ * @param archive The archive message produced by Archive().
+ * @return A newly allocated BTextView on success, or NULL if the archive is invalid.
+ * @see BTextView::Archive()
+ */
 BArchivable*
 BTextView::Instantiate(BMessage* archive)
 {
@@ -436,6 +623,18 @@ BTextView::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Serialises the BTextView's state into a BMessage for archiving or scripting.
+ *
+ * Stores the text content, alignment, tab width, colour space, text rect,
+ * maximum byte count, selection offsets, stylable and auto-indent flags,
+ * word-wrap setting, editability/selectability, password mode, disallowed
+ * characters, and the full text run array.
+ *
+ * @param data The message to receive the archived data.
+ * @param deep If true, child views are also archived (delegated to BView).
+ * @return B_OK on success, or a negative error code on failure.
+ */
 status_t
 BTextView::Archive(BMessage* data, bool deep) const
 {
@@ -493,6 +692,13 @@ BTextView::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Called when the view is attached to a window; performs initial setup.
+ *
+ * Sets the drawing mode to B_OP_COPY, configures the window pulse rate for
+ * caret blinking, validates the text rect, triggers an auto-resize pass,
+ * updates the scroll bars, and resets all click/drag tracking state.
+ */
 void
 BTextView::AttachedToWindow()
 {
@@ -519,6 +725,12 @@ BTextView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the view is detached from its window.
+ *
+ * Delegates to BView::DetachedFromWindow(); subclasses may override to
+ * perform additional cleanup.
+ */
 void
 BTextView::DetachedFromWindow()
 {
@@ -526,6 +738,14 @@ BTextView::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Draws the text lines that intersect the given update rectangle.
+ *
+ * Determines which lines overlap @a updateRect and delegates to _DrawLines()
+ * to render them along with any active selection highlight or caret.
+ *
+ * @param updateRect The rectangle that needs to be redrawn, in view coordinates.
+ */
 void
 BTextView::Draw(BRect updateRect)
 {
@@ -537,6 +757,17 @@ BTextView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handles a mouse-button press inside the view.
+ *
+ * Cancels any active IME transaction, takes focus, hides the caret, and then
+ * either shows the context menu (right button), begins a drag-detection pass
+ * (click inside existing selection), or positions the caret and starts tracking
+ * the selection (all other cases). Initiates a click-count sequence for double
+ * and triple-click word/line selection.
+ *
+ * @param where The position of the mouse click in view coordinates.
+ */
 void
 BTextView::MouseDown(BPoint where)
 {
@@ -645,6 +876,14 @@ BTextView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Handles a mouse-button release inside the view.
+ *
+ * Finalises the current selection or drag operation via _PerformMouseUp(),
+ * then releases the drag runner if one is active.
+ *
+ * @param where The position of the mouse release in view coordinates.
+ */
 void
 BTextView::MouseUp(BPoint where)
 {
@@ -656,6 +895,17 @@ BTextView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Handles mouse-movement events to update the selection or drag caret.
+ *
+ * If the mouse is being tracked for a click-and-drag, _PerformMouseMoved()
+ * handles selection extension or drag initiation. Otherwise the view cursor
+ * and drag caret are updated based on whether a drop message is present.
+ *
+ * @param where       Current mouse position in view coordinates.
+ * @param code        One of B_ENTERED_VIEW, B_INSIDE_VIEW, B_EXITED_VIEW, etc.
+ * @param dragMessage The dragging message if a drag-and-drop is in progress, or NULL.
+ */
 void
 BTextView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 {
@@ -681,6 +931,14 @@ BTextView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Called when the view's window is activated or deactivated.
+ *
+ * Activates or deactivates the view (showing/hiding the caret and selection
+ * highlight) and updates the cursor if the mouse is within the view bounds.
+ *
+ * @param active true if the window has become active, false if it has lost focus.
+ */
 void
 BTextView::WindowActivated(bool active)
 {
@@ -703,6 +961,17 @@ BTextView::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Handles a key-down event, routing it to the appropriate handler.
+ *
+ * Dispatches navigation keys (arrows, page, home/end) to non-editable views
+ * for scrolling. For editable views, dispatches backspace, delete, navigation,
+ * and printable characters to their dedicated handlers, filtering disallowed
+ * characters and showing/hiding the caret appropriately.
+ *
+ * @param bytes    The UTF-8 byte sequence of the key that was pressed.
+ * @param numBytes The number of bytes in @a bytes.
+ */
 void
 BTextView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -788,6 +1057,12 @@ BTextView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Called at the window pulse rate (500 ms) to blink the insertion caret.
+ *
+ * Inverts the caret if the view is active, editable or selectable, and the
+ * selection is collapsed to a single offset.
+ */
 void
 BTextView::Pulse()
 {
@@ -798,6 +1073,16 @@ BTextView::Pulse()
 }
 
 
+/**
+ * @brief Called when the view's frame rectangle changes size.
+ *
+ * If the view is not auto-resizable, adjusts the text rect for the new width
+ * and height, recalculates line breaks for word-wrap mode, or repositions the
+ * text rect and updates scroll bars for non-wrap mode.
+ *
+ * @param newWidth  The new width of the view in pixels.
+ * @param newHeight The new height of the view in pixels.
+ */
 void
 BTextView::FrameResized(float newWidth, float newHeight)
 {
@@ -835,6 +1120,14 @@ BTextView::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Gives or removes keyboard focus from the view.
+ *
+ * Activates the view (showing caret/selection) when gaining focus in an active
+ * window, and deactivates it when losing focus.
+ *
+ * @param focus true to give focus to this view, false to remove it.
+ */
 void
 BTextView::MakeFocus(bool focus)
 {
@@ -850,6 +1143,17 @@ BTextView::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Dispatches incoming BMessages to the appropriate handler.
+ *
+ * Handles clipboard operations (B_CUT, B_COPY, B_PASTE, B_UNDO, B_SELECT_ALL),
+ * IME events (B_INPUT_METHOD_EVENT), scripting messages (B_SET_PROPERTY,
+ * B_GET_PROPERTY, B_COUNT_PROPERTIES), and internal timing messages
+ * (_PING_, _DISPOSE_DRAG_, kMsgNavigateArrow, kMsgNavigatePage, kMsgRemoveWord).
+ * Dropped messages are forwarded to _MessageDropped().
+ *
+ * @param message The message to be processed.
+ */
 void
 BTextView::MessageReceived(BMessage* message)
 {
@@ -1041,6 +1345,19 @@ BTextView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the BHandler that should handle the message.
+ *
+ * Checks the property against sPropertyList; if it matches, returns @c this,
+ * otherwise delegates to BView::ResolveSpecifier().
+ *
+ * @param message   The scripting message being resolved.
+ * @param index     The specifier index within the message.
+ * @param specifier The specifier sub-message extracted from @a message.
+ * @param what      The specifier constant (e.g. B_DIRECT_SPECIFIER).
+ * @param property  The property name string.
+ * @return The BHandler that should handle the message.
+ */
 BHandler*
 BTextView::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 what, const char* property)
@@ -1057,6 +1374,15 @@ BTextView::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/**
+ * @brief Reports the scripting suites and properties supported by BTextView.
+ *
+ * Adds the suite name "suite/vnd.Be-text-view" and the flattened property
+ * info table to @a data, then delegates to BView::GetSupportedSuites().
+ *
+ * @param data The message to receive the suite and property information.
+ * @return B_OK on success, B_BAD_VALUE if @a data is NULL, or another error code.
+ */
 status_t
 BTextView::GetSupportedSuites(BMessage* data)
 {
@@ -1076,6 +1402,19 @@ BTextView::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Dispatches binary-compatibility hook calls for layout-related overrides.
+ *
+ * Handles PERFORM_CODE_MIN_SIZE, PERFORM_CODE_MAX_SIZE, PERFORM_CODE_PREFERRED_SIZE,
+ * PERFORM_CODE_LAYOUT_ALIGNMENT, PERFORM_CODE_HAS_HEIGHT_FOR_WIDTH,
+ * PERFORM_CODE_GET_HEIGHT_FOR_WIDTH, PERFORM_CODE_SET_LAYOUT,
+ * PERFORM_CODE_LAYOUT_INVALIDATED, and PERFORM_CODE_DO_LAYOUT.
+ * Unknown codes are forwarded to BView::Perform().
+ *
+ * @param code  The perform code identifying which virtual method to call.
+ * @param _data Pointer to the perform_data_* struct corresponding to @a code.
+ * @return B_OK on success, or the result from BView::Perform() for unknown codes.
+ */
 status_t
 BTextView::Perform(perform_code code, void* _data)
 {
@@ -1132,6 +1471,15 @@ BTextView::Perform(perform_code code, void* _data)
 }
 
 
+/**
+ * @brief Replaces all text in the view with the given null-terminated string.
+ *
+ * Computes the length automatically via strlen() and delegates to
+ * SetText(const char*, int32, const text_run_array*).
+ *
+ * @param text The null-terminated replacement string, or NULL to clear all text.
+ * @param runs Optional run array specifying per-character font and colour; may be NULL.
+ */
 void
 BTextView::SetText(const char* text, const text_run_array* runs)
 {
@@ -1139,6 +1487,16 @@ BTextView::SetText(const char* text, const text_run_array* runs)
 }
 
 
+/**
+ * @brief Replaces all text in the view with the first @a length bytes of @a text.
+ *
+ * Hides the caret, clears the existing text, inserts the new text, recalculates
+ * line breaks, and resets the caret to offset 0.
+ *
+ * @param text   The replacement text buffer (does not need to be null-terminated).
+ * @param length The number of bytes from @a text to insert.
+ * @param runs   Optional run array for rich-text styling; may be NULL.
+ */
 void
 BTextView::SetText(const char* text, int32 length, const text_run_array* runs)
 {
@@ -1177,6 +1535,18 @@ BTextView::SetText(const char* text, int32 length, const text_run_array* runs)
 }
 
 
+/**
+ * @brief Replaces all text in the view with bytes read from a BFile.
+ *
+ * Reads @a length bytes starting at @a offset from @a file into the text
+ * buffer, applies the optional run array, recalculates line breaks, and
+ * scrolls to the beginning.
+ *
+ * @param file   The open BFile to read from; must not be NULL.
+ * @param offset The byte offset within @a file at which to start reading.
+ * @param length The number of bytes to read.
+ * @param runs   Optional run array for rich-text styling; may be NULL.
+ */
 void
 BTextView::SetText(BFile* file, int32 offset, int32 length,
 	const text_run_array* runs)
@@ -1217,6 +1587,12 @@ BTextView::SetText(BFile* file, int32 offset, int32 length,
 }
 
 
+/**
+ * @brief Inserts a null-terminated string at the current selection start.
+ *
+ * @param text The null-terminated text to insert; ignored if NULL.
+ * @param runs Optional run array for rich-text styling; may be NULL.
+ */
 void
 BTextView::Insert(const char* text, const text_run_array* runs)
 {
@@ -1225,6 +1601,13 @@ BTextView::Insert(const char* text, const text_run_array* runs)
 }
 
 
+/**
+ * @brief Inserts the first @a length bytes of @a text at the current selection start.
+ *
+ * @param text   The text buffer to insert; ignored if NULL.
+ * @param length The maximum number of bytes to read from @a text.
+ * @param runs   Optional run array for rich-text styling; may be NULL.
+ */
 void
 BTextView::Insert(const char* text, int32 length, const text_run_array* runs)
 {
@@ -1233,6 +1616,14 @@ BTextView::Insert(const char* text, int32 length, const text_run_array* runs)
 }
 
 
+/**
+ * @brief Inserts text at an explicit byte offset within the buffer.
+ *
+ * @param offset The byte offset at which to insert; clamped to [0, TextLength()].
+ * @param text   The text buffer to insert; ignored if NULL.
+ * @param length The maximum number of bytes to read from @a text.
+ * @param runs   Optional run array for rich-text styling; may be NULL.
+ */
 void
 BTextView::Insert(int32 offset, const char* text, int32 length,
 	const text_run_array* runs)
@@ -1248,6 +1639,11 @@ BTextView::Insert(int32 offset, const char* text, int32 length,
 }
 
 
+/**
+ * @brief Deletes the currently selected text (from fSelStart to fSelEnd).
+ *
+ * Equivalent to Delete(fSelStart, fSelEnd).
+ */
 void
 BTextView::Delete()
 {
@@ -1255,6 +1651,16 @@ BTextView::Delete()
 }
 
 
+/**
+ * @brief Deletes the text in the range [@a startOffset, @a endOffset).
+ *
+ * Both offsets are clamped to [0, TextLength()]. If the range is empty,
+ * nothing happens. Adjusts the caret and selection after deletion and
+ * redraws the affected lines.
+ *
+ * @param startOffset The byte offset of the first character to delete.
+ * @param endOffset   The byte offset one past the last character to delete.
+ */
 void
 BTextView::Delete(int32 startOffset, int32 endOffset)
 {
@@ -1302,6 +1708,13 @@ BTextView::Delete(int32 startOffset, int32 endOffset)
 }
 
 
+/**
+ * @brief Returns a pointer to the raw text buffer (gap buffer flattened to contiguous memory).
+ *
+ * The pointer is valid until the next modification of the text.
+ *
+ * @return A null-terminated C string containing all text in the view.
+ */
 const char*
 BTextView::Text() const
 {
@@ -1309,6 +1722,11 @@ BTextView::Text() const
 }
 
 
+/**
+ * @brief Returns the total number of bytes of text currently stored in the view.
+ *
+ * @return The byte length of the text, not including any null terminator.
+ */
 int32
 BTextView::TextLength() const
 {
@@ -1316,6 +1734,16 @@ BTextView::TextLength() const
 }
 
 
+/**
+ * @brief Copies @a length bytes of text starting at @a offset into @a buffer.
+ *
+ * The caller is responsible for ensuring that @a buffer is large enough to
+ * hold @a length bytes plus a null terminator.
+ *
+ * @param offset The byte offset of the first character to copy.
+ * @param length The number of bytes to copy.
+ * @param buffer Destination buffer; ignored if NULL.
+ */
 void
 BTextView::GetText(int32 offset, int32 length, char* buffer) const
 {
@@ -1324,6 +1752,12 @@ BTextView::GetText(int32 offset, int32 length, char* buffer) const
 }
 
 
+/**
+ * @brief Returns the byte value of the character at the given byte @a offset.
+ *
+ * @param offset The zero-based byte offset of the desired character.
+ * @return The byte at @a offset, or '\0' if @a offset is out of range.
+ */
 uchar
 BTextView::ByteAt(int32 offset) const
 {
@@ -1334,6 +1768,11 @@ BTextView::ByteAt(int32 offset) const
 }
 
 
+/**
+ * @brief Returns the total number of lines of text in the view.
+ *
+ * @return The line count, always at least 1 even when the buffer is empty.
+ */
 int32
 BTextView::CountLines() const
 {
@@ -1341,6 +1780,11 @@ BTextView::CountLines() const
 }
 
 
+/**
+ * @brief Returns the line number that contains the start of the current selection.
+ *
+ * @return The zero-based line index of the caret or selection start.
+ */
 int32
 BTextView::CurrentLine() const
 {
@@ -1348,6 +1792,14 @@ BTextView::CurrentLine() const
 }
 
 
+/**
+ * @brief Moves the caret to the start of the specified line.
+ *
+ * Cancels any IME transaction, hides the current caret, collapses the
+ * selection to the first byte of line @a index, and shows the caret there.
+ *
+ * @param index The zero-based line number to navigate to.
+ */
 void
 BTextView::GoToLine(int32 index)
 {
@@ -1358,6 +1810,14 @@ BTextView::GoToLine(int32 index)
 }
 
 
+/**
+ * @brief Cuts the selected text to the clipboard.
+ *
+ * Records a CutUndoBuffer, copies the selection to @a clipboard, then
+ * deletes it. Does nothing if the view is not editable.
+ *
+ * @param clipboard The clipboard to receive the cut text.
+ */
 void
 BTextView::Cut(BClipboard* clipboard)
 {
@@ -1373,6 +1833,14 @@ BTextView::Cut(BClipboard* clipboard)
 }
 
 
+/**
+ * @brief Copies the selected text (and, if stylable, its run array) to the clipboard.
+ *
+ * Places "text/plain" MIME data in @a clipboard and, when the view is stylable,
+ * also adds "application/x-vnd.Be-text_run_array" data.
+ *
+ * @param clipboard The clipboard to receive the copied data.
+ */
 void
 BTextView::Copy(BClipboard* clipboard)
 {
@@ -1401,6 +1869,16 @@ BTextView::Copy(BClipboard* clipboard)
 }
 
 
+/**
+ * @brief Pastes plain text (and optionally run-array style data) from the clipboard.
+ *
+ * Filters disallowed characters, records a PasteUndoBuffer, replaces any
+ * current selection, inserts the clipboard text, and scrolls to the new
+ * selection end. Does nothing if the view is not editable or the clipboard
+ * cannot be locked.
+ *
+ * @param clipboard The clipboard to paste from.
+ */
 void
 BTextView::Paste(BClipboard* clipboard)
 {
@@ -1451,6 +1929,12 @@ BTextView::Paste(BClipboard* clipboard)
 }
 
 
+/**
+ * @brief Deletes the currently selected text, recording a ClearUndoBuffer if undo is enabled.
+ *
+ * Unlike Delete(), Clear() always creates an undo record. Equivalent to
+ * recording a ClearUndoBuffer and calling Delete().
+ */
 void
 BTextView::Clear()
 {
@@ -1465,6 +1949,12 @@ BTextView::Clear()
 }
 
 
+/**
+ * @brief Returns whether the view would accept a paste from the given clipboard.
+ *
+ * @param clipboard The clipboard to test.
+ * @return true if the view is editable and the clipboard contains "text/plain" data.
+ */
 bool
 BTextView::AcceptsPaste(BClipboard* clipboard)
 {
@@ -1480,6 +1970,12 @@ BTextView::AcceptsPaste(BClipboard* clipboard)
 }
 
 
+/**
+ * @brief Returns whether the view would accept a drag-and-drop of the given message.
+ *
+ * @param message The drag message to evaluate.
+ * @return true if the view is editable and @a message carries "text/plain" data.
+ */
 bool
 BTextView::AcceptsDrop(const BMessage* message)
 {
@@ -1488,6 +1984,17 @@ BTextView::AcceptsDrop(const BMessage* message)
 }
 
 
+/**
+ * @brief Sets the selection to the range [@a startOffset, @a endOffset).
+ *
+ * Both offsets are clamped to [0, TextLength()]. Only the changed portions of
+ * the highlight are redrawn. If start equals end, the selection is collapsed
+ * to a caret at that position.
+ *
+ * @param startOffset The byte offset of the first selected character.
+ * @param endOffset   The byte offset one past the last selected character.
+ * @note Has no effect if the view is not selectable.
+ */
 void
 BTextView::Select(int32 startOffset, int32 endOffset)
 {
@@ -1561,6 +2068,12 @@ BTextView::Select(int32 startOffset, int32 endOffset)
 }
 
 
+/**
+ * @brief Selects all text in the view.
+ *
+ * Places the caret at the end of the buffer and selects the entire text range
+ * [0, TextLength()].
+ */
 void
 BTextView::SelectAll()
 {
@@ -1570,6 +2083,14 @@ BTextView::SelectAll()
 }
 
 
+/**
+ * @brief Returns the byte offsets of the current selection endpoints.
+ *
+ * Both out-parameters are set to 0 if the view is not selectable.
+ *
+ * @param _start Receives the start offset of the selection; may be NULL.
+ * @param _end   Receives the end offset of the selection; may be NULL.
+ */
 void
 BTextView::GetSelection(int32* _start, int32* _end) const
 {
@@ -1589,6 +2110,13 @@ BTextView::GetSelection(int32* _start, int32* _end) const
 }
 
 
+/**
+ * @brief Applies the system document background and text colours to the view.
+ *
+ * When the view is not editable, a tint is applied to the background to
+ * provide a visual distinction. The low colour is set to match the view colour,
+ * and the high colour is set to B_DOCUMENT_TEXT_COLOR.
+ */
 void
 BTextView::AdoptSystemColors()
 {
@@ -1602,6 +2130,14 @@ BTextView::AdoptSystemColors()
 }
 
 
+/**
+ * @brief Returns whether the view is currently using the system document colours.
+ *
+ * Checks that the view, low, and high UI colours are exactly the system
+ * document background and text colours (with the appropriate editability tint).
+ *
+ * @return true if all three colours match the expected system values.
+ */
 bool
 BTextView::HasSystemColors() const
 {
@@ -1616,6 +2152,16 @@ BTextView::HasSystemColors() const
 }
 
 
+/**
+ * @brief Applies a font and/or colour change to the current selection.
+ *
+ * Delegates to SetFontAndColor(int32, int32, ...) with the current selection
+ * offsets as the range.
+ *
+ * @param font  The font to apply, or NULL to leave the font unchanged.
+ * @param mode  A bitmask of B_FONT_* constants controlling which font attributes to change.
+ * @param color The foreground colour to apply, or NULL to leave the colour unchanged.
+ */
 void
 BTextView::SetFontAndColor(const BFont* font, uint32 mode, const rgb_color* color)
 {
@@ -1623,6 +2169,19 @@ BTextView::SetFontAndColor(const BFont* font, uint32 mode, const rgb_color* colo
 }
 
 
+/**
+ * @brief Applies a font and/or colour change to the text in the given byte range.
+ *
+ * For non-stylable views the range is ignored and the whole buffer is updated.
+ * If the change involves font family or size, line breaks are recalculated;
+ * otherwise only the affected lines are redrawn.
+ *
+ * @param startOffset First byte of the range to style.
+ * @param endOffset   One past the last byte of the range to style.
+ * @param font        The font to apply, or NULL.
+ * @param mode        Bitmask of B_FONT_* constants; use B_FONT_ALL to apply everything.
+ * @param color       The foreground colour to apply, or NULL.
+ */
 void
 BTextView::SetFontAndColor(int32 startOffset, int32 endOffset,
 	const BFont* font, uint32 mode, const rgb_color* color)
@@ -1670,6 +2229,13 @@ BTextView::SetFontAndColor(int32 startOffset, int32 endOffset,
 }
 
 
+/**
+ * @brief Retrieves the font and colour in effect at the given byte offset.
+ *
+ * @param offset The byte offset to query.
+ * @param _font  Receives the font at @a offset; may be NULL.
+ * @param _color Receives the text colour at @a offset; may be NULL.
+ */
 void
 BTextView::GetFontAndColor(int32 offset, BFont* _font,
 	rgb_color* _color) const
@@ -1678,6 +2244,18 @@ BTextView::GetFontAndColor(int32 offset, BFont* _font,
 }
 
 
+/**
+ * @brief Retrieves the font, mode mask, and colour for the current selection.
+ *
+ * Inspects all style runs in the current selection and fills in the common
+ * attributes. If the colour varies across the selection, @a _sameColor is set
+ * to false.
+ *
+ * @param _font      Receives the font attributes shared by the whole selection; may be NULL.
+ * @param _mode      Receives a bitmask indicating which font attributes are uniform; may be NULL.
+ * @param _color     Receives the text colour if uniform across the selection; may be NULL.
+ * @param _sameColor Receives true if every run in the selection has the same colour; may be NULL.
+ */
 void
 BTextView::GetFontAndColor(BFont* _font, uint32* _mode,
 	rgb_color* _color, bool* _sameColor) const
@@ -1687,6 +2265,18 @@ BTextView::GetFontAndColor(BFont* _font, uint32* _mode,
 }
 
 
+/**
+ * @brief Applies a text_run_array to the specified byte range.
+ *
+ * For non-stylable views, the offsets are ignored and the first run is applied
+ * to the whole buffer. For stylable views, each run's font and colour are
+ * applied to its sub-range, line breaks are recalculated, and the view is
+ * redrawn.
+ *
+ * @param startOffset First byte of the range to style.
+ * @param endOffset   One past the last byte of the range to style.
+ * @param runs        The run array describing the styles to apply.
+ */
 void
 BTextView::SetRunArray(int32 startOffset, int32 endOffset,
 	const text_run_array* runs)
@@ -1728,6 +2318,17 @@ BTextView::SetRunArray(int32 startOffset, int32 endOffset,
 }
 
 
+/**
+ * @brief Returns a newly allocated text_run_array covering the given byte range.
+ *
+ * The returned array must be freed with FreeRunArray(). Both offsets are
+ * clamped to [0, TextLength()].
+ *
+ * @param startOffset First byte of the range to query.
+ * @param endOffset   One past the last byte of the range to query.
+ * @param _size       If non-NULL, receives the byte size of the returned array.
+ * @return A heap-allocated text_run_array, or NULL on allocation failure.
+ */
 text_run_array*
 BTextView::RunArray(int32 startOffset, int32 endOffset, int32* _size) const
 {
@@ -1762,6 +2363,12 @@ BTextView::RunArray(int32 startOffset, int32 endOffset, int32* _size) const
 }
 
 
+/**
+ * @brief Returns the line number of the character at the given byte offset.
+ *
+ * @param offset The byte offset of the character to query; clamped to [0, TextLength()].
+ * @return The zero-based line number, accounting for the empty last line after a trailing newline.
+ */
 int32
 BTextView::LineAt(int32 offset) const
 {
@@ -1778,6 +2385,12 @@ BTextView::LineAt(int32 offset) const
 }
 
 
+/**
+ * @brief Returns the line number that corresponds to the given point in view coordinates.
+ *
+ * @param point A point in the view's coordinate system.
+ * @return The zero-based line number under @a point.
+ */
 int32
 BTextView::LineAt(BPoint point) const
 {
@@ -1789,6 +2402,17 @@ BTextView::LineAt(BPoint point) const
 }
 
 
+/**
+ * @brief Returns the view-coordinate point corresponding to the given byte offset.
+ *
+ * The returned point is the top-left corner of the character at @a offset.
+ * For the empty last line (after a trailing newline), the point is on the next
+ * logical line.
+ *
+ * @param offset  The byte offset to convert; clamped to [0, TextLength()].
+ * @param _height If non-NULL, receives the pixel height of the line at @a offset.
+ * @return The position of the character at @a offset in view coordinates.
+ */
 BPoint
 BTextView::PointAt(int32 offset, float* _height) const
 {
@@ -1850,6 +2474,16 @@ BTextView::PointAt(int32 offset, float* _height) const
 }
 
 
+/**
+ * @brief Returns the byte offset of the character closest to the given view-coordinate point.
+ *
+ * Performs a left-to-right scan of the line under @a point, expanding tabs,
+ * and returns the offset of the character whose centre is nearest to the
+ * horizontal position.
+ *
+ * @param point A point in the view's coordinate system.
+ * @return The byte offset of the character nearest to @a point.
+ */
 int32
 BTextView::OffsetAt(BPoint point) const
 {
@@ -1928,6 +2562,13 @@ BTextView::OffsetAt(BPoint point) const
 }
 
 
+/**
+ * @brief Returns the byte offset of the first character on the given line.
+ *
+ * @param line The zero-based line number to query.
+ * @return 0 if @a line is before the first line, TextLength() if @a line is
+ *         beyond the last line, or the start offset of @a line otherwise.
+ */
 int32
 BTextView::OffsetAt(int32 line) const
 {
@@ -1941,6 +2582,16 @@ BTextView::OffsetAt(int32 line) const
 }
 
 
+/**
+ * @brief Finds the word boundary around the character at the given offset.
+ *
+ * Sets @a _fromOffset to the start of the word and @a _toOffset to its end.
+ * Both parameters may be NULL if the caller only needs one of the values.
+ *
+ * @param offset      The byte offset of any character within the target word.
+ * @param _fromOffset Receives the start offset of the word; may be NULL.
+ * @param _toOffset   Receives the end offset of the word; may be NULL.
+ */
 void
 BTextView::FindWord(int32 offset, int32* _fromOffset, int32* _toOffset)
 {
@@ -1972,6 +2623,15 @@ BTextView::FindWord(int32 offset, int32* _fromOffset, int32* _toOffset)
 }
 
 
+/**
+ * @brief Returns whether a line break is permitted immediately after the character at @a offset.
+ *
+ * Uses character classification rules (whitespace, punctuation, quotes,
+ * parentheses) to determine appropriate word-wrap break points.
+ *
+ * @param offset The byte offset of the candidate break character.
+ * @return true if the line may wrap after the character at @a offset.
+ */
 bool
 BTextView::CanEndLine(int32 offset)
 {
@@ -2033,6 +2693,14 @@ BTextView::CanEndLine(int32 offset)
 }
 
 
+/**
+ * @brief Returns the pixel width of the rendered text on the given line.
+ *
+ * Trailing newline characters are excluded from the measurement.
+ *
+ * @param lineNumber The zero-based line index to measure.
+ * @return The width in pixels, or 0.0 if @a lineNumber is out of range.
+ */
 float
 BTextView::LineWidth(int32 lineNumber) const
 {
@@ -2051,6 +2719,14 @@ BTextView::LineWidth(int32 lineNumber) const
 }
 
 
+/**
+ * @brief Returns the pixel height of a single line of text.
+ *
+ * Falls back to the initial style's font metrics if no text has been inserted yet.
+ *
+ * @param lineNumber The zero-based line index to measure.
+ * @return The height in pixels of the specified line.
+ */
 float
 BTextView::LineHeight(int32 lineNumber) const
 {
@@ -2073,6 +2749,16 @@ BTextView::LineHeight(int32 lineNumber) const
 }
 
 
+/**
+ * @brief Returns the total pixel height spanning from @a startLine to @a endLine (inclusive).
+ *
+ * Accounts for the extra empty line that appears after a trailing newline at
+ * the very end of the buffer.
+ *
+ * @param startLine Zero-based index of the first line to measure.
+ * @param endLine   Zero-based index of the last line to measure.
+ * @return The combined height in pixels of the specified line range.
+ */
 float
 BTextView::TextHeight(int32 startLine, int32 endLine) const
 {
@@ -2099,6 +2785,18 @@ BTextView::TextHeight(int32 startLine, int32 endLine) const
 }
 
 
+/**
+ * @brief Computes the visual BRegion covered by the text between two byte offsets.
+ *
+ * The resulting region may consist of multiple rectangles when the range
+ * spans more than one line. The first line extends from the start point to
+ * the right edge of the view; the last line extends from the left edge to
+ * the end point; intermediate lines span the full view width.
+ *
+ * @param startOffset First byte of the range to compute; clamped to [0, TextLength()].
+ * @param endOffset   One past the last byte of the range; clamped to [0, TextLength()].
+ * @param outRegion   The BRegion to fill with the selection geometry; must not be NULL.
+ */
 void
 BTextView::GetTextRegion(int32 startOffset, int32 endOffset,
 	BRegion* outRegion) const
@@ -2174,6 +2872,15 @@ BTextView::GetTextRegion(int32 startOffset, int32 endOffset,
 }
 
 
+/**
+ * @brief Scrolls the view so that the character at @a offset is visible.
+ *
+ * Computes the required horizontal and vertical scroll deltas and calls
+ * ScrollBy(), clamping to avoid scrolling out of the text rect bounds.
+ * Also repositions the text rect and updates scroll bars when not word-wrapping.
+ *
+ * @param offset The byte offset of the character to scroll into view.
+ */
 void
 BTextView::ScrollToOffset(int32 offset)
 {
@@ -2218,6 +2925,11 @@ BTextView::ScrollToOffset(int32 offset)
 }
 
 
+/**
+ * @brief Scrolls the view so that the start of the current selection is visible.
+ *
+ * Equivalent to ScrollToOffset(fSelStart).
+ */
 void
 BTextView::ScrollToSelection()
 {
@@ -2225,6 +2937,16 @@ BTextView::ScrollToSelection()
 }
 
 
+/**
+ * @brief Toggles the selection highlight for the given byte range using XOR painting.
+ *
+ * Uses B_OP_INVERT to invert the pixels in the region, making successive
+ * calls toggle the highlight on and off. Both offsets are clamped to
+ * [0, TextLength()].
+ *
+ * @param startOffset First byte of the range to highlight.
+ * @param endOffset   One past the last byte of the range to highlight.
+ */
 void
 BTextView::Highlight(int32 startOffset, int32 endOffset)
 {
@@ -2253,6 +2975,14 @@ BTextView::Highlight(int32 startOffset, int32 endOffset)
 // #pragma mark - Configuration methods
 
 
+/**
+ * @brief Sets the rectangle within which text is rendered and reflowed.
+ *
+ * In non-wrap mode, the rect's right and bottom edges are pinned to the view
+ * bounds. Triggers a full line-break recalculation via _ResetTextRect().
+ *
+ * @param rect The new text rect in view coordinates.
+ */
 void
 BTextView::SetTextRect(BRect rect)
 {
@@ -2272,6 +3002,11 @@ BTextView::SetTextRect(BRect rect)
 }
 
 
+/**
+ * @brief Returns the current text rect in view coordinates.
+ *
+ * @return The BRect within which text is currently rendered.
+ */
 BRect
 BTextView::TextRect() const
 {
@@ -2279,6 +3014,13 @@ BTextView::TextRect() const
 }
 
 
+/**
+ * @brief Resets the text rect to the view bounds minus current insets and recalculates line breaks.
+ *
+ * Called internally whenever the view is resized, word-wrap is toggled, or
+ * the text rect is explicitly changed. Invalidates any area that differs
+ * between the old and new text rects so it gets repainted.
+ */
 void
 BTextView::_ResetTextRect()
 {
@@ -2301,6 +3043,17 @@ BTextView::_ResetTextRect()
 }
 
 
+/**
+ * @brief Explicitly sets the inset distances between the view bounds and the text rect.
+ *
+ * Once this is called, automatic inset calculation is suppressed (the
+ * @c overridden flag is set). Triggers a layout invalidation and a full redraw.
+ *
+ * @param left   Pixels of padding on the left side.
+ * @param top    Pixels of padding on the top.
+ * @param right  Pixels of padding on the right side.
+ * @param bottom Pixels of padding on the bottom.
+ */
 void
 BTextView::SetInsets(float left, float top, float right, float bottom)
 {
@@ -2322,6 +3075,14 @@ BTextView::SetInsets(float left, float top, float right, float bottom)
 }
 
 
+/**
+ * @brief Returns the current inset distances between the view bounds and the text rect.
+ *
+ * @param _left   Receives the left inset in pixels; may be NULL.
+ * @param _top    Receives the top inset in pixels; may be NULL.
+ * @param _right  Receives the right inset in pixels; may be NULL.
+ * @param _bottom Receives the bottom inset in pixels; may be NULL.
+ */
 void
 BTextView::GetInsets(float* _left, float* _top, float* _right,
 	float* _bottom) const
@@ -2337,6 +3098,13 @@ BTextView::GetInsets(float* _left, float* _top, float* _right,
 }
 
 
+/**
+ * @brief Controls whether the view supports multiple font and colour runs.
+ *
+ * When @a stylable is false, all text uses a single uniform style.
+ *
+ * @param stylable true to enable per-character styling, false to disable it.
+ */
 void
 BTextView::SetStylable(bool stylable)
 {
@@ -2344,6 +3112,11 @@ BTextView::SetStylable(bool stylable)
 }
 
 
+/**
+ * @brief Returns whether the view supports per-character font and colour styling.
+ *
+ * @return true if multiple style runs are enabled.
+ */
 bool
 BTextView::IsStylable() const
 {
@@ -2351,6 +3124,14 @@ BTextView::IsStylable() const
 }
 
 
+/**
+ * @brief Sets the width (in pixels) of a tab stop.
+ *
+ * If the view is attached to a window, triggers a full line-break
+ * recalculation and redraw.
+ *
+ * @param width The new tab width in pixels.
+ */
 void
 BTextView::SetTabWidth(float width)
 {
@@ -2364,6 +3145,11 @@ BTextView::SetTabWidth(float width)
 }
 
 
+/**
+ * @brief Returns the current tab-stop width in pixels.
+ *
+ * @return The tab width as set by SetTabWidth().
+ */
 float
 BTextView::TabWidth() const
 {
@@ -2371,6 +3157,14 @@ BTextView::TabWidth() const
 }
 
 
+/**
+ * @brief Controls whether the user can select text in the view.
+ *
+ * If selectability changes while there is an active selection and the view is
+ * currently active, the highlight is toggled immediately.
+ *
+ * @param selectable true to allow selection, false to disable it.
+ */
 void
 BTextView::MakeSelectable(bool selectable)
 {
@@ -2384,6 +3178,11 @@ BTextView::MakeSelectable(bool selectable)
 }
 
 
+/**
+ * @brief Returns whether the user can select text in the view.
+ *
+ * @return true if text selection is enabled.
+ */
 bool
 BTextView::IsSelectable() const
 {
@@ -2391,6 +3190,15 @@ BTextView::IsSelectable() const
 }
 
 
+/**
+ * @brief Controls whether the user can modify the text content.
+ *
+ * Applies or removes the uneditable colour tint, invalidates the null style
+ * when re-enabling editing, and hides the caret or cancels any IME session
+ * when disabling editing.
+ *
+ * @param editable true to allow editing, false to make the view read-only.
+ */
 void
 BTextView::MakeEditable(bool editable)
 {
@@ -2419,6 +3227,11 @@ BTextView::MakeEditable(bool editable)
 }
 
 
+/**
+ * @brief Returns whether the view currently allows text editing.
+ *
+ * @return true if the view is in editable mode.
+ */
 bool
 BTextView::IsEditable() const
 {
@@ -2426,6 +3239,14 @@ BTextView::IsEditable() const
 }
 
 
+/**
+ * @brief Enables or disables automatic word-wrapping at the text rect boundary.
+ *
+ * Toggles the wrap mode, recalculates line breaks accordingly, scrolls the
+ * caret into view, and updates the scroll bars if the bounds change.
+ *
+ * @param wrap true to enable word wrap, false to disable it.
+ */
 void
 BTextView::SetWordWrap(bool wrap)
 {
@@ -2468,6 +3289,11 @@ BTextView::SetWordWrap(bool wrap)
 }
 
 
+/**
+ * @brief Returns whether word wrapping is currently enabled.
+ *
+ * @return true if word wrap is on.
+ */
 bool
 BTextView::DoesWordWrap() const
 {
@@ -2475,6 +3301,14 @@ BTextView::DoesWordWrap() const
 }
 
 
+/**
+ * @brief Sets the maximum number of bytes that the view will accept.
+ *
+ * If the current text already exceeds @a max bytes, the excess is deleted,
+ * respecting multi-byte character boundaries.
+ *
+ * @param max The maximum byte count; use INT32_MAX for no limit.
+ */
 void
 BTextView::SetMaxBytes(int32 max)
 {
@@ -2494,6 +3328,11 @@ BTextView::SetMaxBytes(int32 max)
 }
 
 
+/**
+ * @brief Returns the maximum number of bytes the view will accept.
+ *
+ * @return The current byte limit as set by SetMaxBytes().
+ */
 int32
 BTextView::MaxBytes() const
 {
@@ -2501,6 +3340,14 @@ BTextView::MaxBytes() const
 }
 
 
+/**
+ * @brief Prevents the given character from being typed or pasted into the view.
+ *
+ * The character is added to the internal disallowed-characters list if not
+ * already present. Attempting to insert a disallowed character causes a beep.
+ *
+ * @param character The character code to disallow.
+ */
 void
 BTextView::DisallowChar(uint32 character)
 {
@@ -2511,6 +3358,13 @@ BTextView::DisallowChar(uint32 character)
 }
 
 
+/**
+ * @brief Removes a character from the disallowed-characters list.
+ *
+ * If @a character was not previously disallowed, this call has no effect.
+ *
+ * @param character The character code to re-allow.
+ */
 void
 BTextView::AllowChar(uint32 character)
 {
@@ -2519,6 +3373,14 @@ BTextView::AllowChar(uint32 character)
 }
 
 
+/**
+ * @brief Sets the horizontal text alignment within the text rect.
+ *
+ * Accepts B_ALIGN_LEFT, B_ALIGN_CENTER, or B_ALIGN_RIGHT. Triggers a
+ * text-rect repositioning and a full redraw if the value changes.
+ *
+ * @param align The new alignment value.
+ */
 void
 BTextView::SetAlignment(alignment align)
 {
@@ -2539,6 +3401,11 @@ BTextView::SetAlignment(alignment align)
 }
 
 
+/**
+ * @brief Returns the current horizontal text alignment.
+ *
+ * @return One of B_ALIGN_LEFT, B_ALIGN_CENTER, or B_ALIGN_RIGHT.
+ */
 alignment
 BTextView::Alignment() const
 {
@@ -2546,6 +3413,14 @@ BTextView::Alignment() const
 }
 
 
+/**
+ * @brief Controls whether pressing Enter automatically indents the new line.
+ *
+ * When enabled, the indentation of the current line (leading spaces and tabs)
+ * is reproduced on the next line when Enter is pressed.
+ *
+ * @param state true to enable auto-indent, false to disable it.
+ */
 void
 BTextView::SetAutoindent(bool state)
 {
@@ -2553,6 +3428,11 @@ BTextView::SetAutoindent(bool state)
 }
 
 
+/**
+ * @brief Returns whether auto-indent is enabled.
+ *
+ * @return true if new lines are automatically indented to match the previous line.
+ */
 bool
 BTextView::DoesAutoindent() const
 {
@@ -2560,6 +3440,14 @@ BTextView::DoesAutoindent() const
 }
 
 
+/**
+ * @brief Sets the colour space for the offscreen drawing bitmap.
+ *
+ * If the colour space changes and an offscreen bitmap exists, the old one is
+ * destroyed and a new one is created with the new colour space.
+ *
+ * @param colors The new colour space (e.g. B_RGB32, B_CMAP8).
+ */
 void
 BTextView::SetColorSpace(color_space colors)
 {
@@ -2571,6 +3459,11 @@ BTextView::SetColorSpace(color_space colors)
 }
 
 
+/**
+ * @brief Returns the colour space used for the offscreen drawing bitmap.
+ *
+ * @return The colour_space value as set by SetColorSpace().
+ */
 color_space
 BTextView::ColorSpace() const
 {
@@ -2578,6 +3471,17 @@ BTextView::ColorSpace() const
 }
 
 
+/**
+ * @brief Enables or disables the auto-resize mode used by Tracker rename fields.
+ *
+ * When @a resize is true, the view resizes its container (@a resizeView) to
+ * fit the text width automatically. Word-wrap is always disabled in this mode.
+ * When @a resize is false, a new offscreen bitmap is created if needed.
+ *
+ * @param resize     true to enable auto-resizing, false to disable it.
+ * @param resizeView The parent container view to resize; may be NULL.
+ * @note This mode is primarily used by Tracker for inline file renaming.
+ */
 void
 BTextView::MakeResizable(bool resize, BView* resizeView)
 {
@@ -2614,6 +3518,11 @@ BTextView::MakeResizable(bool resize, BView* resizeView)
 }
 
 
+/**
+ * @brief Returns whether the view is in auto-resize mode.
+ *
+ * @return true if MakeResizable(true, ...) has been called.
+ */
 bool
 BTextView::IsResizable() const
 {
@@ -2621,6 +3530,14 @@ BTextView::IsResizable() const
 }
 
 
+/**
+ * @brief Enables or disables the undo/redo history for this view.
+ *
+ * When @a undo is true and no undo buffer exists, a new UndoBuffer is created.
+ * When @a undo is false, any existing undo buffer is deleted.
+ *
+ * @param undo true to enable undo, false to disable it.
+ */
 void
 BTextView::SetDoesUndo(bool undo)
 {
@@ -2633,6 +3550,11 @@ BTextView::SetDoesUndo(bool undo)
 }
 
 
+/**
+ * @brief Returns whether the undo/redo history is active.
+ *
+ * @return true if undo is enabled (an UndoBuffer exists).
+ */
 bool
 BTextView::DoesUndo() const
 {
@@ -2640,6 +3562,14 @@ BTextView::DoesUndo() const
 }
 
 
+/**
+ * @brief Enables or disables password-masking (typing-hidden) mode.
+ *
+ * When @a enabled is true, all existing text is deleted and new characters
+ * are masked with a placeholder glyph in the underlying TextGapBuffer.
+ *
+ * @param enabled true to hide typed characters (password mode), false to show them.
+ */
 void
 BTextView::HideTyping(bool enabled)
 {
@@ -2650,6 +3580,11 @@ BTextView::HideTyping(bool enabled)
 }
 
 
+/**
+ * @brief Returns whether password-masking mode is active.
+ *
+ * @return true if typed characters are masked (password mode is on).
+ */
 bool
 BTextView::IsTypingHidden() const
 {
@@ -2660,6 +3595,11 @@ BTextView::IsTypingHidden() const
 // #pragma mark - Size methods
 
 
+/**
+ * @brief Resizes the view to its preferred size.
+ *
+ * Delegates to BView::ResizeToPreferred(), which queries PreferredSize().
+ */
 void
 BTextView::ResizeToPreferred()
 {
@@ -2667,6 +3607,16 @@ BTextView::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Returns the view's preferred width and height.
+ *
+ * The preferred size is at least the minimum computed by _ValidateLayoutData().
+ * When the view supports layout (B_SUPPORTS_LAYOUT flag), the layout-computed
+ * minimum is always returned regardless of the current bounds.
+ *
+ * @param _width  Receives the preferred width; may be NULL.
+ * @param _height Receives the preferred height; may be NULL.
+ */
 void
 BTextView::GetPreferredSize(float* _width, float* _height)
 {
@@ -2694,6 +3644,15 @@ BTextView::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Returns the view's minimum size for layout purposes.
+ *
+ * Computes a minimum wide enough for roughly three line-heights and tall
+ * enough for a single line, plus insets. The explicit min size (if set) is
+ * composed with this value via BLayoutUtils::ComposeSize().
+ *
+ * @return The minimum BSize.
+ */
 BSize
 BTextView::MinSize()
 {
@@ -2704,6 +3663,14 @@ BTextView::MinSize()
 }
 
 
+/**
+ * @brief Returns the view's maximum size for layout purposes.
+ *
+ * BTextView can expand to fill any available space, so this returns
+ * B_SIZE_UNLIMITED in both dimensions (composed with any explicit max size).
+ *
+ * @return The maximum BSize.
+ */
 BSize
 BTextView::MaxSize()
 {
@@ -2714,6 +3681,15 @@ BTextView::MaxSize()
 }
 
 
+/**
+ * @brief Returns the view's preferred size for layout purposes.
+ *
+ * In wrap mode this is the minimum width plus extra space; in non-wrap mode
+ * it is the width of the widest line plus insets. Composed with any explicit
+ * preferred size via BLayoutUtils::ComposeSize().
+ *
+ * @return The preferred BSize.
+ */
 BSize
 BTextView::PreferredSize()
 {
@@ -2725,6 +3701,14 @@ BTextView::PreferredSize()
 }
 
 
+/**
+ * @brief Returns whether the view reports a height that depends on its width.
+ *
+ * For non-editable views where all text should be visible, this returns true.
+ * For editable views, the base class implementation is used.
+ *
+ * @return true if the view has a height-for-width dependency.
+ */
 bool
 BTextView::HasHeightForWidth()
 {
@@ -2736,6 +3720,18 @@ BTextView::HasHeightForWidth()
 }
 
 
+/**
+ * @brief Computes the height required to display all text at the given width.
+ *
+ * For editable views, delegates to BView::GetHeightForWidth(). For non-editable
+ * views, temporarily sets the text rect width to @a width, recalculates line
+ * breaks, measures the resulting text height, and restores the original text rect.
+ *
+ * @param width     The hypothetical width to evaluate.
+ * @param min       Receives the minimum height at @a width; may be NULL.
+ * @param max       Receives the maximum height (B_SIZE_UNLIMITED); may be NULL.
+ * @param preferred Receives the preferred height at @a width; may be NULL.
+ */
 void
 BTextView::GetHeightForWidth(float width, float* min, float* max,
 	float* preferred)
@@ -2784,6 +3780,14 @@ BTextView::GetHeightForWidth(float width, float* min, float* max,
 //	#pragma mark - Layout methods
 
 
+/**
+ * @brief Called by the layout system when the view's layout is invalidated.
+ *
+ * Clears the cached layout data so that _ValidateLayoutData() recomputes
+ * the min and preferred sizes on the next layout pass.
+ *
+ * @param descendants true if child views were also invalidated.
+ */
 void
 BTextView::LayoutInvalidated(bool descendants)
 {
@@ -2793,6 +3797,13 @@ BTextView::LayoutInvalidated(bool descendants)
 }
 
 
+/**
+ * @brief Performs layout of the view's contents.
+ *
+ * Validates the layout data, enforces the minimum size, and resets the
+ * text rect to match the new bounds. If a child layout is attached, delegates
+ * to BView::DoLayout() instead.
+ */
 void
 BTextView::DoLayout()
 {
@@ -2822,6 +3833,14 @@ BTextView::DoLayout()
 }
 
 
+/**
+ * @brief Recomputes and caches the minimum and preferred layout sizes if stale.
+ *
+ * The minimum size accommodates three line-heights wide and one line-height
+ * tall, plus insets. The preferred height is the total text height; the
+ * preferred width depends on the wrap mode. In non-wrap mode, the minimum
+ * size is expanded to match the widest line.
+ */
 void
 BTextView::_ValidateLayoutData()
 {
@@ -2864,6 +3883,11 @@ BTextView::_ValidateLayoutData()
 //	#pragma mark -
 
 
+/**
+ * @brief Called after the view and all its children have been attached to a window.
+ *
+ * Delegates to BView::AllAttached(); subclasses may override for post-attach work.
+ */
 void
 BTextView::AllAttached()
 {
@@ -2871,6 +3895,11 @@ BTextView::AllAttached()
 }
 
 
+/**
+ * @brief Called after the view and all its children have been detached from a window.
+ *
+ * Delegates to BView::AllDetached(); subclasses may override for cleanup.
+ */
 void
 BTextView::AllDetached()
 {
@@ -2878,6 +3907,16 @@ BTextView::AllDetached()
 }
 
 
+/**
+ * @brief Allocates a new text_run_array with the given number of entries.
+ *
+ * Uses calloc() for the backing memory and calls BFont constructors explicitly
+ * for each run entry. The caller must free the result with FreeRunArray().
+ *
+ * @param entryCount The number of text_run entries to allocate.
+ * @param outSize    If non-NULL, receives the total byte size of the allocation.
+ * @return A pointer to the allocated array, or NULL on failure.
+ */
 /* static */
 text_run_array*
 BTextView::AllocRunArray(int32 entryCount, int32* outSize)
@@ -2906,6 +3945,13 @@ BTextView::AllocRunArray(int32 entryCount, int32* outSize)
 }
 
 
+/**
+ * @brief Creates a deep copy of the first @a countDelta entries of a text_run_array.
+ *
+ * @param orig       The source run array.
+ * @param countDelta The number of runs from @a orig to copy.
+ * @return A newly allocated copy, or NULL on failure.
+ */
 /* static */
 text_run_array*
 BTextView::CopyRunArray(const text_run_array* orig, int32 countDelta)
@@ -2922,6 +3968,14 @@ BTextView::CopyRunArray(const text_run_array* orig, int32 countDelta)
 }
 
 
+/**
+ * @brief Frees a text_run_array previously allocated by AllocRunArray() or RunArray().
+ *
+ * Calls BFont destructors explicitly before releasing the memory with free().
+ * Passing NULL is safe and has no effect.
+ *
+ * @param array The run array to free; may be NULL.
+ */
 /* static */
 void
 BTextView::FreeRunArray(text_run_array* array)
@@ -2937,6 +3991,18 @@ BTextView::FreeRunArray(text_run_array* array)
 }
 
 
+/**
+ * @brief Serialises a text_run_array to a portable big-endian byte buffer.
+ *
+ * The resulting buffer contains a flattened_text_run_array structure suitable
+ * for storage in a BMessage or file. The caller must free the returned buffer
+ * with free().
+ *
+ * @param runArray The run array to flatten; must not be NULL.
+ * @param _size    If non-NULL, receives the byte size of the returned buffer.
+ * @return A malloc'd buffer containing the serialised data, or NULL on failure.
+ * @see UnflattenRunArray()
+ */
 /* static */
 void*
 BTextView::FlattenRunArray(const text_run_array* runArray, int32* _size)
@@ -2981,6 +4047,18 @@ BTextView::FlattenRunArray(const text_run_array* runArray, int32* _size)
 }
 
 
+/**
+ * @brief Deserialises a flat byte buffer back into a text_run_array.
+ *
+ * Validates the magic cookie and version tag before parsing. Family and style
+ * are applied independently so that the best available match is used even if
+ * the original font is not installed.
+ *
+ * @param data  The buffer previously produced by FlattenRunArray().
+ * @param _size If non-NULL, receives the byte size of the returned array.
+ * @return A newly allocated text_run_array, or NULL if @a data is invalid or allocation fails.
+ * @see FlattenRunArray()
+ */
 /* static */
 text_run_array*
 BTextView::UnflattenRunArray(const void* data, int32* _size)
@@ -3033,6 +4111,18 @@ BTextView::UnflattenRunArray(const void* data, int32* _size)
 }
 
 
+/**
+ * @brief Protected hook: inserts raw text into the gap buffer at the given offset.
+ *
+ * Updates the line buffer, style buffer, and selection offsets. Applies the
+ * run array if stylable, otherwise uses the current null style. Subclasses
+ * may override this to intercept or modify insertions.
+ *
+ * @param text   The bytes to insert.
+ * @param length The number of bytes in @a text.
+ * @param offset The byte offset at which to insert; clamped to [0, TextLength()].
+ * @param runs   Optional run array for styling; may be NULL.
+ */
 void
 BTextView::InsertText(const char* text, int32 length, int32 offset,
 	const text_run_array* runs)
@@ -3073,6 +4163,16 @@ BTextView::InsertText(const char* text, int32 length, int32 offset,
 }
 
 
+/**
+ * @brief Protected hook: removes text from the gap buffer in the given range.
+ *
+ * Synchronises the null style, removes the bytes from the text buffer,
+ * removes the corresponding lines and style runs, and adjusts the selection.
+ * Subclasses may override to intercept or veto deletions.
+ *
+ * @param fromOffset The byte offset of the first character to remove.
+ * @param toOffset   The byte offset one past the last character to remove.
+ */
 void
 BTextView::DeleteText(int32 fromOffset, int32 toOffset)
 {
@@ -3128,10 +4228,11 @@ BTextView::DeleteText(int32 fromOffset, int32 toOffset)
 }
 
 
-/*!	Undoes the last changes.
-
-	\param clipboard A \a clipboard to use for the undo operation.
-*/
+/**
+ * @brief Undoes the last editing change.
+ *
+ * @param clipboard A clipboard to use for the undo operation.
+ */
 void
 BTextView::Undo(BClipboard* clipboard)
 {
@@ -3140,6 +4241,12 @@ BTextView::Undo(BClipboard* clipboard)
 }
 
 
+/**
+ * @brief Returns the current state of the undo/redo buffer.
+ *
+ * @param isRedo If non-NULL, set to true when the next Undo() call would redo.
+ * @return B_UNDO_UNAVAILABLE if undo is disabled, otherwise the current undo_state.
+ */
 undo_state
 BTextView::UndoState(bool* isRedo) const
 {
@@ -3150,6 +4257,19 @@ BTextView::UndoState(bool* isRedo) const
 //	#pragma mark - GetDragParameters() is protected
 
 
+/**
+ * @brief Protected hook: fills a drag message with the selected text and style data.
+ *
+ * Subclasses may override to customise what is placed in the drag message or
+ * to provide a drag bitmap. The default implementation adds the originator
+ * pointer, a B_TRASH_TARGET action, "text/plain" MIME data, and (when stylable)
+ * a "application/x-vnd.Be-text_run_array" chunk.
+ *
+ * @param drag    The message to populate for the drag operation; must not be NULL.
+ * @param bitmap  Receives a drag bitmap to display, or NULL for a rect-based drag.
+ * @param point   Receives the hot-spot within @a bitmap, if used.
+ * @param handler Receives the handler to respond to the drag completion; may be NULL.
+ */
 void
 BTextView::GetDragParameters(BMessage* drag, BBitmap** bitmap, BPoint* point,
 	BHandler** handler)
@@ -3189,27 +4309,38 @@ BTextView::GetDragParameters(BMessage* drag, BBitmap** bitmap, BPoint* point,
 //	#pragma mark - FBC padding and forbidden methods
 
 
+/** @brief FBC padding slot 3; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView3() {}
+/** @brief FBC padding slot 4; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView4() {}
+/** @brief FBC padding slot 5; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView5() {}
+/** @brief FBC padding slot 6; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView6() {}
+/** @brief FBC padding slot 7; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView7() {}
+/** @brief FBC padding slot 8; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView8() {}
+/** @brief FBC padding slot 9; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView9() {}
+/** @brief FBC padding slot 10; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView10() {}
+/** @brief FBC padding slot 11; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView11() {}
+/** @brief FBC padding slot 12; reserved for future binary-compatible additions. */
 void BTextView::_ReservedTextView12() {}
 
 
 // #pragma mark - Private methods
 
 
-/*!	Inits the BTextView object.
-
-	\param textRect The BTextView's text rect.
-	\param initialFont The font which the BTextView will use.
-	\param initialColor The initial color of the text.
-*/
+/**
+ * @brief Initialises all BTextView member variables and allocates core sub-objects.
+ *
+ * @param textRect     The initial text rect; used as the rendering area until the view is resized.
+ * @param initialFont  The font to use for newly entered text; if NULL the view font is used.
+ * @param initialColor The foreground colour for newly entered text; if NULL B_DOCUMENT_TEXT_COLOR is used.
+ */
 void
 BTextView::_InitObject(BRect textRect, const BFont* initialFont,
 	const rgb_color* initialColor)
@@ -3290,7 +4421,14 @@ BTextView::_InitObject(BRect textRect, const BFont* initialFont,
 }
 
 
-//!	Handles when Backspace key is pressed.
+/**
+ * @brief Handles the Backspace key press, deleting one character or one word to the left.
+ *
+ * When Command or Option is held (without Control), the selection is extended
+ * to the previous word start before deletion. Records a TypingUndoBuffer entry.
+ *
+ * @param modifiers The current modifier key mask; pass -1 to read from the current message.
+ */
 void
 BTextView::_HandleBackspace(int32 modifiers)
 {
@@ -3344,7 +4482,17 @@ BTextView::_HandleBackspace(int32 modifiers)
 }
 
 
-//!	Handles when an arrow key is pressed.
+/**
+ * @brief Handles an arrow-key press, moving the caret or scrolling the view.
+ *
+ * For non-editable, non-selectable views the arrow keys scroll by the
+ * configured step amount. For editable/selectable views, left/right move by
+ * character or word (with Command/Option), and up/down move by line or to the
+ * document start/end (with Command/Option). Shift extends the selection.
+ *
+ * @param arrowKey The key code (B_LEFT_ARROW, B_RIGHT_ARROW, B_UP_ARROW, or B_DOWN_ARROW).
+ * @param modifiers The current modifier key mask; pass -1 to read from the current message.
+ */
 void
 BTextView::_HandleArrowKey(uint32 arrowKey, int32 modifiers)
 {
@@ -3520,7 +4668,14 @@ BTextView::_HandleArrowKey(uint32 arrowKey, int32 modifiers)
 }
 
 
-//!	Handles when the Delete key is pressed.
+/**
+ * @brief Handles the Delete (forward-delete) key press.
+ *
+ * When Command or Option is held, the selection is extended to the next word
+ * end before deletion. Records a TypingUndoBuffer entry.
+ *
+ * @param modifiers The current modifier key mask; pass -1 to read from the current message.
+ */
 void
 BTextView::_HandleDelete(int32 modifiers)
 {
@@ -3574,7 +4729,16 @@ BTextView::_HandleDelete(int32 modifiers)
 }
 
 
-//!	Handles when the Page Up, Page Down, Home, or End key is pressed.
+/**
+ * @brief Handles Home, End, Page Up, and Page Down key presses.
+ *
+ * In non-editable, non-selectable views, these keys scroll the view.
+ * In editable/selectable views they move the caret and optionally extend
+ * the selection (with Shift). Command+Home/End jump to the document start/end.
+ *
+ * @param pageKey   The key code (B_HOME, B_END, B_PAGE_UP, or B_PAGE_DOWN).
+ * @param modifiers The current modifier key mask; pass -1 to read from the current message.
+ */
 void
 BTextView::_HandlePageKey(uint32 pageKey, int32 modifiers)
 {
@@ -3751,11 +4915,16 @@ BTextView::_HandlePageKey(uint32 pageKey, int32 modifiers)
 }
 
 
-/*!	Handles when an alpha-numeric key is pressed.
-
-	\param bytes The string or character associated with the key.
-	\param numBytes The amount of bytes containes in "bytes".
-*/
+/**
+ * @brief Inserts one or more printable characters typed by the user.
+ *
+ * Records a TypingUndoBuffer entry, deletes any active selection, handles
+ * auto-indent when the character is a newline, then inserts the character(s)
+ * and scrolls the caret into view.
+ *
+ * @param bytes    The UTF-8 byte sequence of the character(s) to insert.
+ * @param numBytes The number of bytes in @a bytes.
+ */
 void
 BTextView::_HandleAlphaKey(const char* bytes, int32 numBytes)
 {
@@ -3804,13 +4973,17 @@ BTextView::_HandleAlphaKey(const char* bytes, int32 numBytes)
 }
 
 
-/*!	Redraw the text between the two given offsets, recalculating line-breaks
-	if needed.
-
-	\param fromOffset The offset from where to refresh.
-	\param toOffset The offset where to refresh to.
-	\param scrollTo Scroll the view to \a scrollTo offset if not \c INT32_MIN.
-*/
+/**
+ * @brief Redraws the text between the two given offsets, recalculating line breaks if needed.
+ *
+ * Recalculates line breaks for the affected range, erases any area below the
+ * text that shrank, updates the scroll bars if the text height changed, and
+ * optionally scrolls to @a scrollTo.
+ *
+ * @param fromOffset The byte offset from which to begin the refresh.
+ * @param toOffset   The byte offset at which to stop the refresh.
+ * @param scrollTo   If not INT32_MIN, scrolls the view to this byte offset after redrawing.
+ */
 void
 BTextView::_Refresh(int32 fromOffset, int32 toOffset, int32 scrollTo)
 {
@@ -3875,11 +5048,18 @@ BTextView::_Refresh(int32 fromOffset, int32 toOffset, int32 scrollTo)
 }
 
 
-/*!	Recalculate line breaks between two lines.
-
-	\param startLine The line number to start recalculating line breaks.
-	\param endLine The line number to stop recalculating line breaks.
-*/
+/**
+ * @brief Recalculates line breaks for the range from @a startLine to @a endLine.
+ *
+ * Iterates from @a startLine, calling _FindLineBreak() for each line and
+ * inserting, updating, or removing STELine entries as needed. Stops early
+ * when the old and new line layouts converge past the original @a endLine.
+ * Also updates the text rect's bottom and, in non-wrap mode, adjusts the
+ * left/right edges for the widest line.
+ *
+ * @param startLine In/out: first line to recalculate; may be adjusted downward on exit.
+ * @param endLine   In/out: last line to recalculate; set to the last modified line on exit.
+ */
 void
 BTextView::_RecalculateLineBreaks(int32* startLine, int32* endLine)
 {
@@ -3996,6 +5176,12 @@ BTextView::_RecalculateLineBreaks(int32* startLine, int32* endLine)
 }
 
 
+/**
+ * @brief Ensures the text rect has positive width and height.
+ *
+ * If the right edge is at or left of the left edge, or the bottom is at or
+ * above the top, the corresponding dimension is set to exactly 1 pixel.
+ */
 void
 BTextView::_ValidateTextRect()
 {
@@ -4008,6 +5194,20 @@ BTextView::_ValidateTextRect()
 }
 
 
+/**
+ * @brief Finds the byte offset at which a line break should be inserted.
+ *
+ * In non-wrap mode, advances to the next newline. In wrap mode, scans forward
+ * accumulating character widths (expanding tabs) until the text exceeds
+ * @a inOutWidth, then backs up to the last legal break point per CanEndLine().
+ * Falls back to breaking in the middle of a word if no legal break is found.
+ *
+ * @param fromOffset  The byte offset at which the current line begins.
+ * @param _ascent     Receives the maximum ascent of the line's characters.
+ * @param _descent    Receives the maximum descent of the line's characters.
+ * @param inOutWidth  On entry, the available line width; on exit, the actual rendered width.
+ * @return The byte offset of the first character on the next line.
+ */
 int32
 BTextView::_FindLineBreak(int32 fromOffset, float* _ascent, float* _descent,
 	float* inOutWidth)
@@ -4159,6 +5359,15 @@ BTextView::_FindLineBreak(int32 fromOffset, float* _ascent, float* _descent,
 }
 
 
+/**
+ * @brief Returns the byte offset of the first character on the line preceding @a offset.
+ *
+ * Walks backwards through the text looking for a B_ENTER character, then
+ * returns the offset of the character immediately after it.
+ *
+ * @param offset The starting offset; must be > 0.
+ * @return The start offset of the previous line, or 0 if at the beginning.
+ */
 int32
 BTextView::_PreviousLineStart(int32 offset)
 {
@@ -4177,6 +5386,12 @@ BTextView::_PreviousLineStart(int32 offset)
 }
 
 
+/**
+ * @brief Returns the byte offset of the newline character ending the line at @a offset.
+ *
+ * @param offset The starting byte offset.
+ * @return The offset of the B_ENTER that ends the current line, or TextLength() if none.
+ */
 int32
 BTextView::_NextLineEnd(int32 offset)
 {
@@ -4196,6 +5411,15 @@ BTextView::_NextLineEnd(int32 offset)
 }
 
 
+/**
+ * @brief Returns the offset of the boundary before the current character class run.
+ *
+ * Walks backward until the character class changes, returning the offset at which
+ * the transition occurs.
+ *
+ * @param offset The starting byte offset.
+ * @return The offset of the word boundary before @a offset.
+ */
 int32
 BTextView::_PreviousWordBoundary(int32 offset)
 {
@@ -4212,6 +5436,15 @@ BTextView::_PreviousWordBoundary(int32 offset)
 }
 
 
+/**
+ * @brief Returns the offset of the boundary after the current character class run.
+ *
+ * Walks forward until the character class changes, returning the offset at which
+ * the transition occurs.
+ *
+ * @param offset The starting byte offset.
+ * @return The offset of the word boundary after @a offset.
+ */
 int32
 BTextView::_NextWordBoundary(int32 offset)
 {
@@ -4227,6 +5460,15 @@ BTextView::_NextWordBoundary(int32 offset)
 }
 
 
+/**
+ * @brief Returns the byte offset of the start of the word preceding @a offset.
+ *
+ * Skips over non-word characters first, then walks backward through
+ * word characters to find the beginning of the word.
+ *
+ * @param offset The starting byte offset (the search begins at offset - 1).
+ * @return The offset of the first character of the preceding word, or 0.
+ */
 int32
 BTextView::_PreviousWordStart(int32 offset)
 {
@@ -4255,6 +5497,15 @@ BTextView::_PreviousWordStart(int32 offset)
 }
 
 
+/**
+ * @brief Returns the byte offset of the end of the word following @a offset.
+ *
+ * Skips over non-word characters first, then walks forward through word
+ * characters to find the end of the word.
+ *
+ * @param offset The starting byte offset.
+ * @return The offset one past the last character of the current or next word.
+ */
 int32
 BTextView::_NextWordEnd(int32 offset)
 {
@@ -4278,9 +5529,18 @@ BTextView::_NextWordEnd(int32 offset)
 }
 
 
-/*!	Returns the width used by the characters starting at the given
-	offset with the given length, expanding all tab characters as needed.
-*/
+/**
+ * @brief Returns the pixel width of the styled characters in the given range, expanding tabs.
+ *
+ * Iterates through the range looking for tab characters. Between tabs, calls
+ * _StyledWidth(); for each tab, computes the actual tab width via _ActualTabWidth().
+ *
+ * @param offset   The byte offset at which to begin measurement.
+ * @param length   The number of bytes to measure.
+ * @param _ascent  If non-NULL, receives the maximum ascent across all runs.
+ * @param _descent If non-NULL, receives the maximum descent across all runs.
+ * @return The total pixel width of the range including expanded tab stops.
+ */
 float
 BTextView::_TabExpandedStyledWidth(int32 offset, int32 length, float* _ascent,
 	float* _descent) const
@@ -4321,15 +5581,19 @@ BTextView::_TabExpandedStyledWidth(int32 offset, int32 length, float* _ascent,
 }
 
 
-/*!	Calculate the width of the text within the given limits.
-
-	\param fromOffset The offset where to start.
-	\param length The length of the text to examine.
-	\param _ascent A pointer to a float which will contain the maximum ascent.
-	\param _descent A pointer to a float which will contain the maximum descent.
-
-	\return The width for the text within the given limits.
-*/
+/**
+ * @brief Returns the pixel width of the styled text in the given byte range (tabs not expanded).
+ *
+ * Iterates through style runs using the glyph-width cache when available.
+ * If @a length is zero, the font metrics are still queried for the character
+ * at @a fromOffset to allow ascent/descent to be returned.
+ *
+ * @param fromOffset The byte offset at which to begin measurement.
+ * @param length     The number of bytes to measure.
+ * @param _ascent    If non-NULL, receives the maximum ascent across all runs.
+ * @param _descent   If non-NULL, receives the maximum descent across all runs.
+ * @return The total pixel width of the range, or 0.0 if @a length is zero.
+ */
 float
 BTextView::_StyledWidth(int32 fromOffset, int32 length, float* _ascent,
 	float* _descent) const
@@ -4382,7 +5646,15 @@ BTextView::_StyledWidth(int32 fromOffset, int32 length, float* _ascent,
 }
 
 
-//!	Calculate the actual tab width for the given location.
+/**
+ * @brief Calculates the pixel width of a tab stop at the given horizontal position.
+ *
+ * The tab advances to the next multiple of fTabWidth beyond @a location.
+ * If the result rounds to zero, the full fTabWidth is returned instead.
+ *
+ * @param location The current pen x-position relative to the text rect left edge.
+ * @return The width in pixels that the tab character occupies at @a location.
+ */
 float
 BTextView::_ActualTabWidth(float location) const
 {
@@ -4394,6 +5666,17 @@ BTextView::_ActualTabWidth(float location) const
 }
 
 
+/**
+ * @brief Internal helper that inserts text after cancelling any IME session and enforcing the byte limit.
+ *
+ * Collapses any existing selection, clamps the offset, delegates to InsertText(),
+ * then triggers a _Refresh() on the affected range.
+ *
+ * @param text   The text to insert.
+ * @param length The number of bytes from @a text to insert.
+ * @param offset The byte offset at which to insert.
+ * @param runs   Optional run array for styling; may be NULL.
+ */
 void
 BTextView::_DoInsertText(const char* text, int32 length, int32 offset,
 	const text_run_array* runs)
@@ -4418,6 +5701,12 @@ BTextView::_DoInsertText(const char* text, int32 length, int32 offset,
 }
 
 
+/**
+ * @brief Internal helper stub for delete operations (currently unused).
+ *
+ * @param fromOffset Start of the range to delete.
+ * @param toOffset   End of the range to delete.
+ */
 void
 BTextView::_DoDeleteText(int32 fromOffset, int32 toOffset)
 {
@@ -4425,6 +5714,22 @@ BTextView::_DoDeleteText(int32 fromOffset, int32 toOffset)
 }
 
 
+/**
+ * @brief Renders a single line of text to @a view, expanding tabs and highlighting IME regions.
+ *
+ * Moves the pen to the correct position, optionally fills the erase rect,
+ * then iterates through style runs drawing each segment. Tab characters are
+ * expanded to the nearest tab stop. IME inline-input ranges are highlighted
+ * in blue (active) and red (selected within IME).
+ *
+ * @param view        The BView (or offscreen buffer child) to draw into.
+ * @param lineNum     The zero-based line number to draw.
+ * @param startOffset If >=0, the byte offset from which drawing begins within the line;
+ *                    -1 means draw the entire line.
+ * @param erase       If true, the line's background is filled before drawing.
+ * @param eraseRect   The bounding rect used for erasing; modified by this function.
+ * @param inputRegion The BRegion covering the current IME inline-input text.
+ */
 void
 BTextView::_DrawLine(BView* view, const int32 &lineNum,
 	const int32 &startOffset, const bool &erase, BRect &eraseRect,
@@ -4574,6 +5879,19 @@ BTextView::_DrawLine(BView* view, const int32 &lineNum,
 }
 
 
+/**
+ * @brief Draws the range of lines from @a startLine to @a endLine.
+ *
+ * Sets up clipping, optionally uses the offscreen bitmap for double-buffered
+ * drawing, iterates each line via _DrawLine(), and then paints the caret or
+ * selection highlight.
+ *
+ * @param startLine   First line to draw (zero-based).
+ * @param endLine     Last line to draw (zero-based, inclusive).
+ * @param startOffset If >=0, only the portion of the first line from this byte offset
+ *                    onwards is drawn; -1 draws the entire first line.
+ * @param erase       If true, line backgrounds are cleared before drawing the text.
+ */
 void
 BTextView::_DrawLines(int32 startLine, int32 endLine, int32 startOffset,
 	bool erase)
@@ -4676,6 +5994,12 @@ BTextView::_DrawLines(int32 startLine, int32 endLine, int32 startOffset,
 }
 
 
+/**
+ * @brief Invalidates the view rectangle covering the given line range, triggering a Draw() call.
+ *
+ * @param startLine First line to invalidate (zero-based).
+ * @param endLine   Last line to invalidate (zero-based, inclusive).
+ */
 void
 BTextView::_RequestDrawLines(int32 startLine, int32 endLine)
 {
@@ -4693,6 +6017,12 @@ BTextView::_RequestDrawLines(int32 startLine, int32 endLine)
 }
 
 
+/**
+ * @brief Draws or erases the insertion caret at the given byte offset.
+ *
+ * @param offset  The byte offset whose position determines the caret location.
+ * @param visible If true, the caret rect is inverted (drawn); if false, it is invalidated (erased).
+ */
 void
 BTextView::_DrawCaret(int32 offset, bool visible)
 {
@@ -4712,6 +6042,11 @@ BTextView::_DrawCaret(int32 offset, bool visible)
 }
 
 
+/**
+ * @brief Makes the insertion caret visible if it is currently hidden.
+ *
+ * Only acts when the view is active, editable, and the selection is collapsed.
+ */
 inline void
 BTextView::_ShowCaret()
 {
@@ -4720,6 +6055,11 @@ BTextView::_ShowCaret()
 }
 
 
+/**
+ * @brief Hides the insertion caret if it is currently visible.
+ *
+ * Only acts when the selection is collapsed (caret position).
+ */
 inline void
 BTextView::_HideCaret()
 {
@@ -4728,7 +6068,12 @@ BTextView::_HideCaret()
 }
 
 
-//!	Hides the caret if it is being shown, and if it's hidden, shows it.
+/**
+ * @brief Toggles the caret visibility: hides it if shown, shows it if hidden.
+ *
+ * Inverts the fCaretVisible flag, redraws the caret via _DrawCaret(), and
+ * records the current time so the blink timer resets correctly.
+ */
 void
 BTextView::_InvertCaret()
 {
@@ -4738,11 +6083,14 @@ BTextView::_InvertCaret()
 }
 
 
-/*!	Place the dragging caret at the given offset.
-
-	\param offset The offset (zero based within the object's text) where to
-	       place the dragging caret. If it's -1, hide the caret.
-*/
+/**
+ * @brief Moves the drag-and-drop insertion caret to the given byte offset.
+ *
+ * Erases the previous drag caret position and draws a new one. If @a offset
+ * falls within the active selection the drag caret is hidden and -1 is stored.
+ *
+ * @param offset The byte offset where the caret should appear, or -1 to hide it.
+ */
 void
 BTextView::_DragCaret(int32 offset)
 {
@@ -4771,6 +6119,9 @@ BTextView::_DragCaret(int32 offset)
 }
 
 
+/**
+ * @brief Destroys the TextTrackState, stopping mouse-tracking and the auto-scroll pulse.
+ */
 void
 BTextView::_StopMouseTracking()
 {
@@ -4779,6 +6130,12 @@ BTextView::_StopMouseTracking()
 }
 
 
+/**
+ * @brief Finalises a mouse-up event: collapses a drag-detect selection or stops tracking.
+ *
+ * @param where The position of the mouse release in view coordinates.
+ * @return true if a tracking session was active and was ended, false otherwise.
+ */
 bool
 BTextView::_PerformMouseUp(BPoint where)
 {
@@ -4796,6 +6153,17 @@ BTextView::_PerformMouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Handles mouse movement during an active tracking session.
+ *
+ * If the motion exceeds the drag threshold, initiates a drag. Otherwise
+ * extends or shrinks the selection by character, word (double-click), or
+ * line (triple-click) according to the click count.
+ *
+ * @param where The current mouse position in view coordinates.
+ * @param code  The movement code (B_INSIDE_VIEW, etc.).
+ * @return true if the event was consumed by the tracking session.
+ */
 bool
 BTextView::_PerformMouseMoved(BPoint where, uint32 code)
 {
@@ -4884,13 +6252,16 @@ BTextView::_PerformMouseMoved(BPoint where, uint32 code)
 }
 
 
-/*!	Tracks the mouse position, doing special actions like changing the
-	view cursor.
-
-	\param where The point where the mouse has moved.
-	\param message The dragging message, if there is any.
-	\param force Passed as second parameter of SetViewCursor()
-*/
+/**
+ * @brief Updates the view cursor and drag caret as the mouse moves over the view.
+ *
+ * Sets the cursor to I-beam when over selectable/editable text, shows the
+ * drag caret when a drop is possible, and restores the default cursor otherwise.
+ *
+ * @param where   The current mouse position in view coordinates.
+ * @param message The drag message if a drag-and-drop is in progress, or NULL.
+ * @param force   Passed as the second argument to SetViewCursor() to force the update.
+ */
 void
 BTextView::_TrackMouse(BPoint where, const BMessage* message, bool force)
 {
@@ -4907,7 +6278,14 @@ BTextView::_TrackMouse(BPoint where, const BMessage* message, bool force)
 }
 
 
-//!	Tracks the mouse position when the user is dragging some data.
+/**
+ * @brief Updates the drag caret to show where dropped text would land.
+ *
+ * If @a where is within the view bounds, moves the drag caret to the character
+ * offset nearest to @a where via _DragCaret().
+ *
+ * @param where The current drag position in view coordinates.
+ */
 void
 BTextView::_TrackDrag(BPoint where)
 {
@@ -4917,7 +6295,14 @@ BTextView::_TrackDrag(BPoint where)
 }
 
 
-//!	Initiates a drag operation.
+/**
+ * @brief Begins a drag-and-drop operation for the current selection.
+ *
+ * Calls GetDragParameters() to populate the drag message, then starts the
+ * drag with either a bitmap or the selection's bounding rect. Also starts a
+ * recurring _DISPOSE_DRAG_ message runner so the drag can be cancelled if
+ * dropped onto the originating view.
+ */
 void
 BTextView::_InitiateDrag()
 {
@@ -4948,7 +6333,19 @@ BTextView::_InitiateDrag()
 }
 
 
-//!	Handles when some data is dropped on the view.
+/**
+ * @brief Processes a drag-and-drop message that was dropped on the view.
+ *
+ * Filters disallowed characters, records a DropUndoBuffer, handles
+ * internal moves (delete source then insert at new position), and
+ * inserts the dropped text at the drop position. Selects the inserted
+ * text if the view has focus.
+ *
+ * @param message The dropped BMessage containing "text/plain" data.
+ * @param where   The drop position in view coordinates.
+ * @param offset  The offset from the view origin to the drop point.
+ * @return true if the drop was accepted and processed, false otherwise.
+ */
 bool
 BTextView::_MessageDropped(BMessage* message, BPoint where, BPoint offset)
 {
@@ -5022,6 +6419,13 @@ BTextView::_MessageDropped(BMessage* message, BPoint where, BPoint offset)
 }
 
 
+/**
+ * @brief Scrolls the view proportionally when the mouse cursor is outside the view bounds.
+ *
+ * Called periodically by the _PING_ message runner during mouse tracking.
+ * Computes a scroll delta proportional to how far outside the view the cursor
+ * is and applies it via _ScrollBy().
+ */
 void
 BTextView::_PerformAutoScrolling()
 {
@@ -5057,7 +6461,13 @@ BTextView::_PerformAutoScrolling()
 }
 
 
-//!	Updates the scrollbars associated with the object (if any).
+/**
+ * @brief Synchronises the horizontal and vertical scroll bars with the current text dimensions.
+ *
+ * Adjusts range, proportion, and step sizes of any scroll bars attached via
+ * ScrollBar(). The proportion is set so the scroll bar thumb reflects how
+ * much of the total content is currently visible.
+ */
 void
 BTextView::_UpdateScrollbars()
 {
@@ -5097,7 +6507,15 @@ BTextView::_UpdateScrollbars()
 }
 
 
-//!	Scrolls by the given offsets
+/**
+ * @brief Scrolls the view by the given horizontal and vertical deltas.
+ *
+ * Adds the deltas to the current scroll position and delegates to _ScrollTo(),
+ * which clamps the result to the valid scroll range.
+ *
+ * @param horizontal Pixels to scroll horizontally (positive = right).
+ * @param vertical   Pixels to scroll vertically (positive = down).
+ */
 void
 BTextView::_ScrollBy(float horizontal, float vertical)
 {
@@ -5106,7 +6524,15 @@ BTextView::_ScrollBy(float horizontal, float vertical)
 }
 
 
-//!	Scrolls to the given position, making sure not to scroll out of bounds.
+/**
+ * @brief Scrolls the view to an absolute position, clamped to the valid scroll range.
+ *
+ * Calculates the scroll limits from the text rect and layout insets, then
+ * calls BView::ScrollTo() with the clamped coordinates.
+ *
+ * @param x The target horizontal scroll position.
+ * @param y The target vertical scroll position.
+ */
 void
 BTextView::_ScrollTo(float x, float y)
 {
@@ -5135,7 +6561,15 @@ BTextView::_ScrollTo(float x, float y)
 }
 
 
-//!	Autoresizes the view to fit the contained text.
+/**
+ * @brief Resizes the container view to fit the current text width (used in Tracker rename mode).
+ *
+ * Moves the container view to maintain the alignment, then resizes it by the
+ * difference between the old and new text widths. Repositions the text rect
+ * to the top-left inset and scrolls to offset 0.
+ *
+ * @param redraw If true, requests a redraw of the first line after resizing.
+ */
 void
 BTextView::_AutoResize(bool redraw)
 {
@@ -5168,7 +6602,14 @@ BTextView::_AutoResize(bool redraw)
 }
 
 
-//!	Creates a new offscreen BBitmap with an associated BView.
+/**
+ * @brief Creates a new offscreen BBitmap with an embedded BView for double-buffered drawing.
+ *
+ * Deletes any existing offscreen bitmap first. The bitmap is only actually
+ * created when USE_DOUBLEBUFFERING is set to 1; otherwise this is a no-op.
+ *
+ * @param padding Additional horizontal padding to add to the bitmap width.
+ */
 void
 BTextView::_NewOffscreen(float padding)
 {
@@ -5187,7 +6628,9 @@ BTextView::_NewOffscreen(float padding)
 }
 
 
-//!	Deletes the textview's offscreen bitmap, if any.
+/**
+ * @brief Destroys the offscreen BBitmap if one exists, locking it first.
+ */
 void
 BTextView::_DeleteOffscreen()
 {
@@ -5198,9 +6641,13 @@ BTextView::_DeleteOffscreen()
 }
 
 
-/*!	Creates a new offscreen bitmap, highlight the selection, and set the
-	cursor to \c B_CURSOR_I_BEAM.
-*/
+/**
+ * @brief Activates the view: shows the selection highlight, caret, and registers keyboard shortcuts.
+ *
+ * Creates a new offscreen bitmap, highlights any existing selection or shows
+ * the caret, updates the cursor, and installs word-wise, line-wise, and
+ * document-wise navigation/selection/deletion shortcuts on the window.
+ */
 void
 BTextView::_Activate()
 {
@@ -5382,7 +6829,12 @@ BTextView::_Activate()
 }
 
 
-//!	Unhilights the selection, set the cursor to \c B_CURSOR_SYSTEM_DEFAULT.
+/**
+ * @brief Deactivates the view: removes the selection highlight, hides the caret, and unregisters keyboard shortcuts.
+ *
+ * Cancels any IME session, deletes the offscreen bitmap, and removes all
+ * window shortcuts that were installed by _Activate().
+ */
 void
 BTextView::_Deactivate()
 {
@@ -5456,11 +6908,14 @@ BTextView::_Deactivate()
 }
 
 
-/*!	Changes the passed in font to be displayable by the object.
-
-	Set font rotation to 0, removes any font flag, set font spacing
-	to \c B_BITMAP_SPACING and font encoding to \c B_UNICODE_UTF8.
-*/
+/**
+ * @brief Normalises a font so that it can be used for display in BTextView.
+ *
+ * Resets rotation to 0, clears all font flags, sets spacing to
+ * B_BITMAP_SPACING, and sets the encoding to B_UNICODE_UTF8.
+ *
+ * @param font The font to normalise in place; ignored if NULL.
+ */
 void
 BTextView::_NormalizeFont(BFont* font)
 {
@@ -5473,6 +6928,16 @@ BTextView::_NormalizeFont(BFont* font)
 }
 
 
+/**
+ * @brief Applies each run in @a runs to sub-ranges within [@a startOffset, @a endOffset).
+ *
+ * Iterates the run array and calls _ApplyStyleRange() for each run's sub-range,
+ * then invalidates the null style.
+ *
+ * @param startOffset First byte of the styled region.
+ * @param endOffset   One past the last byte of the styled region.
+ * @param runs        The run array to apply; must contain at least one entry.
+ */
 void
 BTextView::_SetRunArray(int32 startOffset, int32 endOffset,
 	const text_run_array* runs)
@@ -5498,12 +6963,15 @@ BTextView::_SetRunArray(int32 startOffset, int32 endOffset,
 }
 
 
-/*!	Returns the character class of the character at the given offset.
-
-	\param offset The offset where the wanted character can be found.
-
-	\return A value which represents the character's classification.
-*/
+/**
+ * @brief Returns the character class of the character at the given byte offset.
+ *
+ * Maps the character to one of the CHAR_CLASS_* constants for use in
+ * word-break and line-break decisions.
+ *
+ * @param offset The byte offset of the character to classify.
+ * @return One of the CHAR_CLASS_* enum values.
+ */
 uint32
 BTextView::_CharClassification(int32 offset) const
 {
@@ -5567,12 +7035,15 @@ BTextView::_CharClassification(int32 offset) const
 }
 
 
-/*!	Returns the offset of the next UTF-8 character.
-
-	\param offset The offset where to start looking.
-
-	\return The offset of the next UTF-8 character.
-*/
+/**
+ * @brief Returns the byte offset of the start of the next UTF-8 character.
+ *
+ * Skips forward past any continuation bytes (0x80–0xBF) to reach the next
+ * initial byte. Returns @a offset unchanged if already at the end of the buffer.
+ *
+ * @param offset The byte offset to advance from.
+ * @return The offset of the first byte of the next UTF-8 character.
+ */
 int32
 BTextView::_NextInitialByte(int32 offset) const
 {
@@ -5586,12 +7057,16 @@ BTextView::_NextInitialByte(int32 offset) const
 }
 
 
-/*!	Returns the offset of the previous UTF-8 character.
-
-	\param offset The offset where to start looking.
-
-	\return The offset of the previous UTF-8 character.
-*/
+/**
+ * @brief Returns the byte offset of the start of the previous UTF-8 character.
+ *
+ * Walks backward from @a offset - 1, skipping continuation bytes (0x80–0xBF)
+ * until an initial byte is found. Returns 0 if @a offset is 0 or if more than
+ * 6 continuation bytes are encountered (malformed input guard).
+ *
+ * @param offset The byte offset to retreat from.
+ * @return The offset of the first byte of the preceding UTF-8 character.
+ */
 int32
 BTextView::_PreviousInitialByte(int32 offset) const
 {
@@ -5609,6 +7084,19 @@ BTextView::_PreviousInitialByte(int32 offset) const
 }
 
 
+/**
+ * @brief Handles a B_GET_PROPERTY scripting request for supported properties.
+ *
+ * Responds to "selection" (returns start and end offsets), "Text" (returns
+ * the text in the requested index/range, blocked in password mode), and
+ * "text_run_array" (currently unsupported, returns false).
+ *
+ * @param message   The original scripting message.
+ * @param specifier The specifier sub-message extracted from @a message.
+ * @param property  The property name string.
+ * @param reply     The reply message to populate with the result.
+ * @return true if the property was handled and @a reply was populated.
+ */
 bool
 BTextView::_GetProperty(BMessage* message, BMessage* specifier,
 	const char* property, BMessage* reply)
@@ -5649,6 +7137,18 @@ BTextView::_GetProperty(BMessage* message, BMessage* specifier,
 }
 
 
+/**
+ * @brief Handles a B_SET_PROPERTY scripting request for supported properties.
+ *
+ * Responds to "selection" (calls Select()) and "Text" (inserts or deletes
+ * text in the specified range). "text_run_array" is unsupported and returns false.
+ *
+ * @param message   The original scripting message.
+ * @param specifier The specifier sub-message extracted from @a message.
+ * @param property  The property name string.
+ * @param reply     The reply message to populate with the result.
+ * @return true if the property was handled and @a reply was populated.
+ */
 bool
 BTextView::_SetProperty(BMessage* message, BMessage* specifier,
 	const char* property, BMessage* reply)
@@ -5691,6 +7191,18 @@ BTextView::_SetProperty(BMessage* message, BMessage* specifier,
 }
 
 
+/**
+ * @brief Handles a B_COUNT_PROPERTIES scripting request.
+ *
+ * Currently handles the "Text" property, replying with the byte length of
+ * the buffer (i.e. TextLength()).
+ *
+ * @param message   The original scripting message.
+ * @param specifier The specifier sub-message.
+ * @param property  The property name string.
+ * @param reply     The reply message to populate with the count.
+ * @return true if the property was handled and @a reply was populated.
+ */
 bool
 BTextView::_CountProperties(BMessage* message, BMessage* specifier,
 	const char* property, BMessage* reply)
@@ -5707,7 +7219,16 @@ BTextView::_CountProperties(BMessage* message, BMessage* specifier,
 }
 
 
-//!	Called when the object receives a \c B_INPUT_METHOD_CHANGED message.
+/**
+ * @brief Handles a B_INPUT_METHOD_CHANGED message from an Input Server method add-on.
+ *
+ * Updates the inline-input state with the new string and clause information.
+ * When the composition is confirmed, feeds each character back through KeyDown()
+ * to allow special-character processing. Otherwise, inserts the transient
+ * composition string and highlights the active and selected sub-ranges.
+ *
+ * @param message The B_INPUT_METHOD_EVENT message with opcode B_INPUT_METHOD_CHANGED.
+ */
 void
 BTextView::_HandleInputMethodChanged(BMessage* message)
 {
@@ -5812,9 +7333,14 @@ BTextView::_HandleInputMethodChanged(BMessage* message)
 }
 
 
-/*!	Called when the object receives a \c B_INPUT_METHOD_LOCATION_REQUEST
-	message.
-*/
+/**
+ * @brief Responds to a B_INPUT_METHOD_LOCATION_REQUEST from an IME method add-on.
+ *
+ * Iterates over each character of the inline input string, converts its
+ * view-coordinate position to screen coordinates, and sends a
+ * B_INPUT_METHOD_LOCATION_REQUEST reply containing the on-screen location and
+ * line height for each UTF-8 character.
+ */
 void
 BTextView::_HandleInputMethodLocationRequest()
 {
@@ -5842,7 +7368,13 @@ BTextView::_HandleInputMethodLocationRequest()
 }
 
 
-//!	Tells the Input Server method add-on to stop the current transaction.
+/**
+ * @brief Cancels any active inline IME input session and notifies the Input Server.
+ *
+ * Clears the InlineInput object, refreshes the affected text range, and sends
+ * a B_INPUT_METHOD_STOPPED event to the IME method messenger. Does nothing if
+ * no IME session is active.
+ */
 void
 BTextView::_CancelInputMethod()
 {
@@ -5865,15 +7397,15 @@ BTextView::_CancelInputMethod()
 }
 
 
-/*!	Returns the line number of the character at the given \a offset.
-
-	\note This will never return the last line (use LineAt() if you
-	      need to be correct about that.) N.B.
-
-	\param offset The offset of the wanted character.
-
-	\return The line number of the character at the given \a offset as an int32.
-*/
+/**
+ * @brief Returns the line number of the character at the given byte offset (internal version).
+ *
+ * @note This may not return the last line correctly for offsets at the end of a
+ *       trailing newline; use the public LineAt() for client-facing queries.
+ *
+ * @param offset The byte offset of the character to locate.
+ * @return The zero-based line number, never exceeding NumLines() - 1.
+ */
 int32
 BTextView::_LineAt(int32 offset) const
 {
@@ -5881,15 +7413,14 @@ BTextView::_LineAt(int32 offset) const
 }
 
 
-/*!	Returns the line number that the given \a point is on.
-
-	\note This will never return the last line (use LineAt() if you
-	      need to be correct about that.) N.B.
-
-	\param point The \a point the get the line number of.
-
-	\return The line number of the given \a point as an int32.
-*/
+/**
+ * @brief Returns the line number that the given view-coordinate point falls on (internal version).
+ *
+ * @note May not return the last line correctly; use LineAt(BPoint) for public use.
+ *
+ * @param point The point in view coordinates to query.
+ * @return The zero-based line number under @a point.
+ */
 int32
 BTextView::_LineAt(const BPoint& point) const
 {
@@ -5897,9 +7428,16 @@ BTextView::_LineAt(const BPoint& point) const
 }
 
 
-/*!	Returns whether or not the given \a offset is on the empty line at the end
-	of the buffer.
-*/
+/**
+ * @brief Returns whether @a offset refers to the empty line after a trailing newline.
+ *
+ * This is true when @a offset equals TextLength(), the buffer is non-empty,
+ * and the last character is B_ENTER. Used by PointAt() and LineAt() to
+ * position the caret on the visually separate empty final line.
+ *
+ * @param offset The byte offset to test.
+ * @return true if @a offset is on the empty last line.
+ */
 bool
 BTextView::_IsOnEmptyLastLine(int32 offset) const
 {
@@ -5908,6 +7446,20 @@ BTextView::_IsOnEmptyLastLine(int32 offset) const
 }
 
 
+/**
+ * @brief Applies a font and colour to a byte range in the style buffer.
+ *
+ * Normalises the font before applying. For non-stylable views the range is
+ * always expanded to the full buffer. Optionally synchronises the null style
+ * before modifying the style runs.
+ *
+ * @param fromOffset    First byte of the range to style.
+ * @param toOffset      One past the last byte of the range to style.
+ * @param mode          Bitmask of B_FONT_* attributes to apply; defaults to B_FONT_ALL.
+ * @param font          The font to apply, or NULL.
+ * @param color         The foreground colour to apply, or NULL.
+ * @param syncNullStyle If true, synchronises the null style to @a fromOffset first.
+ */
 void
 BTextView::_ApplyStyleRange(int32 fromOffset, int32 toOffset, uint32 mode,
 	const BFont* font, const rgb_color* color, bool syncNullStyle)
@@ -5936,6 +7488,13 @@ BTextView::_ApplyStyleRange(int32 fromOffset, int32 toOffset, uint32 mode,
 }
 
 
+/**
+ * @brief Returns the pixel height implied by the current null (insertion) style font.
+ *
+ * Used to determine caret height and the height of an empty last line.
+ *
+ * @return The ceiling of ascent + descent + 1 for the null style font.
+ */
 float
 BTextView::_NullStyleHeight() const
 {
@@ -5948,6 +7507,14 @@ BTextView::_NullStyleHeight() const
 }
 
 
+/**
+ * @brief Displays the right-click context menu at the given position.
+ *
+ * The menu contains Undo, Redo, Cut, Copy, Paste, and Select All items,
+ * each enabled or disabled based on the current edit state.
+ *
+ * @param where The position in view coordinates at which to show the menu.
+ */
 void
 BTextView::_ShowContextMenu(BPoint where)
 {
@@ -5987,6 +7554,16 @@ BTextView::_ShowContextMenu(BPoint where)
 }
 
 
+/**
+ * @brief Removes disallowed characters from a text buffer in-place.
+ *
+ * Also adjusts the run-array offsets to match the compacted buffer.
+ * Does nothing if no characters are disallowed or the disallowed list is empty.
+ *
+ * @param text     The text buffer to filter; modified in place.
+ * @param length   On entry, the byte count; on exit, the filtered byte count.
+ * @param runArray Optional run array whose offsets are updated to match; may be NULL.
+ */
 void
 BTextView::_FilterDisallowedChars(char* text, ssize_t& length,
 	text_run_array* runArray)
@@ -6030,6 +7607,15 @@ BTextView::_FilterDisallowedChars(char* text, ssize_t& length,
 }
 
 
+/**
+ * @brief Recalculates the view insets from the difference between the view bounds and @a rect.
+ *
+ * Does nothing if SetInsets() has been called (the @c overridden flag is set).
+ * Adds default horizontal and vertical padding when the text rect equals the
+ * view bounds and the view is editable or selectable.
+ *
+ * @param rect The text rect to derive the insets from.
+ */
 void
 BTextView::_UpdateInsets(const BRect& rect)
 {
@@ -6063,6 +7649,11 @@ BTextView::_UpdateInsets(const BRect& rect)
 }
 
 
+/**
+ * @brief Returns the usable width of the view interior (bounds minus horizontal insets).
+ *
+ * @return The available width for content in pixels.
+ */
 float
 BTextView::_ViewWidth()
 {
@@ -6072,6 +7663,11 @@ BTextView::_ViewWidth()
 }
 
 
+/**
+ * @brief Returns the usable height of the view interior (bounds minus vertical insets).
+ *
+ * @return The available height for content in pixels.
+ */
 float
 BTextView::_ViewHeight()
 {
@@ -6081,6 +7677,11 @@ BTextView::_ViewHeight()
 }
 
 
+/**
+ * @brief Returns the view's interior rect (bounds contracted by the current insets).
+ *
+ * @return A BRect representing the area inside the insets.
+ */
 BRect
 BTextView::_ViewRect()
 {
@@ -6094,6 +7695,11 @@ BTextView::_ViewRect()
 }
 
 
+/**
+ * @brief Returns the total horizontal extent of the text rect including insets.
+ *
+ * @return The text rect width plus left and right insets in pixels.
+ */
 float
 BTextView::_TextWidth()
 {
@@ -6103,6 +7709,11 @@ BTextView::_TextWidth()
 }
 
 
+/**
+ * @brief Returns the total vertical extent of the text rect including insets.
+ *
+ * @return The text rect height plus top and bottom insets in pixels.
+ */
 float
 BTextView::_TextHeight()
 {
@@ -6112,6 +7723,14 @@ BTextView::_TextHeight()
 }
 
 
+/**
+ * @brief Returns the text rect expanded outward by the current insets.
+ *
+ * This is the inverse of the inset operation: it restores the full bounding
+ * rect that encompasses both the text and its surrounding padding.
+ *
+ * @return A BRect equal to the text rect expanded by all four insets.
+ */
 BRect
 BTextView::_TextRect()
 {
@@ -6125,6 +7744,14 @@ BTextView::_TextRect()
 }
 
 
+/**
+ * @brief Returns the tint factor applied to the background colour when the view is not editable.
+ *
+ * Uses B_DARKEN_1_TINT for light backgrounds and a fixed 0.853 value for dark ones,
+ * matching the visual convention used throughout the system for disabled document views.
+ *
+ * @return A float tint value suitable for use with SetViewUIColor().
+ */
 float
 BTextView::_UneditableTint() const
 {

@@ -1,16 +1,42 @@
 /*
- * Copyright 2001-2010, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval
- *		René Gollent
- *		Alexandre Deckner, alex@zappotek.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval
+ *       René Gollent
+ *       Alexandre Deckner, alex@zappotek.com
  */
 
-/*!	BShelf stores replicant views that are dropped onto it */
+
+/**
+ * @file Shelf.cpp
+ * @brief Implementation of BShelf, a replicant container view
+ *
+ * BShelf accepts BView replicants dropped onto it via BDragger. It archives
+ * and restores replicant state, manages the replicant lifecycle, and provides
+ * scripting access to hosted replicants.
+ *
+ * @see BDragger, BView, BArchivable
+ */
 
 #include <Shelf.h>
 
@@ -45,27 +71,55 @@
 
 namespace {
 
+/** @brief Map from add-on signature to (image_id, reference_count) pairs. */
 typedef std::map<BString, std::pair<image_id, int32> > LoadedImageMap;
 
+/**
+ * @brief Process-wide singleton tracking loaded replicant add-on images.
+ *
+ * Maintains a reference-counted map of add-on images that have been loaded to
+ * satisfy replicant instantiation. When the reference count for an image
+ * reaches zero the image is unloaded via unload_add_on(). Access to the map
+ * is protected by an internal BLocker.
+ */
 struct LoadedImages {
+	/** @brief Map of loaded images keyed by add-on signature. */
 	LoadedImageMap			images;
 
+	/**
+	 * @brief Constructs the LoadedImages singleton with a named lock.
+	 */
 	LoadedImages()
 		:
 		fLock("BShelf loaded image map")
 	{
 	}
 
+	/**
+	 * @brief Acquires the internal lock.
+	 *
+	 * @return true if the lock was acquired, false otherwise.
+	 */
 	bool Lock()
 	{
 		return fLock.Lock();
 	}
 
+	/**
+	 * @brief Releases the internal lock.
+	 */
 	void Unlock()
 	{
 		fLock.Unlock();
 	}
 
+	/**
+	 * @brief Returns the process-wide LoadedImages singleton, creating it if necessary.
+	 *
+	 * Uses pthread_once to guarantee thread-safe one-time initialization.
+	 *
+	 * @return Pointer to the singleton LoadedImages instance.
+	 */
 	static LoadedImages* Default()
 	{
 		if (sDefaultInstance == NULL)
@@ -75,24 +129,43 @@ struct LoadedImages {
 	}
 
 private:
+	/**
+	 * @brief pthread_once callback that allocates the singleton instance.
+	 */
 	static void _InitSingleton()
 	{
 		sDefaultInstance = new LoadedImages;
 	}
 
 private:
+	/** @brief Mutex protecting the images map. */
 	BLocker					fLock;
 
+	/** @brief pthread_once control variable for one-time singleton initialization. */
 	static pthread_once_t	sDefaultInitOnce;
+
+	/** @brief The singleton instance pointer, set by _InitSingleton(). */
 	static LoadedImages*	sDefaultInstance;
 };
 
+/** @brief pthread_once initializer for LoadedImages::sDefaultInstance. */
 pthread_once_t LoadedImages::sDefaultInitOnce = PTHREAD_ONCE_INIT;
+
+/** @brief The process-wide LoadedImages singleton, lazily created by Default(). */
 LoadedImages* LoadedImages::sDefaultInstance = NULL;
 
 }	// unnamed namespace
 
 
+/**
+ * @brief Scripting property table for BShelf.
+ *
+ * Defines the "Replicant" property with count/create (direct specifier) and
+ * delete/get (index, reverse-index, name, or ID specifier) verbs. Used by
+ * ResolveSpecifier() and GetSupportedSuites().
+ *
+ * @see BShelf::ResolveSpecifier(), BShelf::GetSupportedSuites()
+ */
 static property_info sShelfPropertyList[] = {
 	{
 		"Replicant",
@@ -118,6 +191,15 @@ static property_info sShelfPropertyList[] = {
 	{ 0 }
 };
 
+/**
+ * @brief Scripting property table for individual replicants.
+ *
+ * Exposes the "ID" (int32), "Name" (string), "Signature" (string),
+ * "Suites" (property info), and "View" (direct specifier) properties
+ * accessible through the replicant scripting suite "suite/vnd.Be-replicant".
+ *
+ * @see BShelf::MessageReceived(), BShelf::ResolveSpecifier()
+ */
 static property_info sReplicantPropertyList[] = {
 	{
 		"ID",
@@ -160,52 +242,216 @@ static property_info sReplicantPropertyList[] = {
 
 namespace BPrivate {
 
+/**
+ * @brief Internal record tracking a single replicant hosted by a BShelf.
+ *
+ * Each replicant_data entry owns the archived BMessage for the replicant and
+ * holds (non-owning) pointers to the live BView, its BDragger, and the
+ * optional zombie placeholder view. Ownership of the views is managed by
+ * BShelf::_DeleteReplicant() according to the dragger relation.
+ */
 struct replicant_data {
+	/**
+	 * @brief Constructs a fully-initialised replicant record.
+	 *
+	 * @param message  The archived replicant BMessage (ownership transferred).
+	 * @param view     The instantiated replicant view.
+	 * @param dragger  The associated BDragger, or NULL.
+	 * @param relation The spatial relationship between dragger and target view.
+	 * @param id       The unique replicant ID assigned by the shelf.
+	 */
 	replicant_data(BMessage *message, BView *view, BDragger *dragger,
 		BDragger::relation relation, unsigned long id);
+
+	/**
+	 * @brief Constructs a default (empty/error) replicant record.
+	 */
 	replicant_data();
+
+	/**
+	 * @brief Destroys the replicant record and frees the owned BMessage.
+	 */
 	~replicant_data();
 
+	/**
+	 * @brief Searches @a list for the record whose message pointer equals @a msg.
+	 *
+	 * @param list The BList of replicant_data pointers to search.
+	 * @param msg  The BMessage pointer to match.
+	 * @return Pointer to the matching replicant_data, or NULL if not found.
+	 */
 	static replicant_data* Find(BList const *list, BMessage const *msg);
+
+	/**
+	 * @brief Searches @a list for the record whose live view equals @a view.
+	 *
+	 * @param list        The BList of replicant_data pointers to search.
+	 * @param view        The BView pointer to match.
+	 * @param allowZombie If true, also match against zombie_view pointers.
+	 * @return Pointer to the matching replicant_data, or NULL if not found.
+	 */
 	static replicant_data* Find(BList const *list, BView const *view, bool allowZombie);
+
+	/**
+	 * @brief Searches @a list for the record with the given unique @a id.
+	 *
+	 * @param list The BList of replicant_data pointers to search.
+	 * @param id   The unique replicant ID to match.
+	 * @return Pointer to the matching replicant_data, or NULL if not found.
+	 */
 	static replicant_data* Find(BList const *list, unsigned long id);
 
+	/**
+	 * @brief Returns the zero-based index of the record matching @a msg.
+	 *
+	 * @param list The BList of replicant_data pointers to search.
+	 * @param msg  The BMessage pointer to match.
+	 * @return The index of the matching entry, or -1 if not found.
+	 */
 	static int32 IndexOf(BList const *list, BMessage const *msg);
+
+	/**
+	 * @brief Returns the zero-based index of the record matching @a view.
+	 *
+	 * @param list        The BList of replicant_data pointers to search.
+	 * @param view        The BView pointer to match.
+	 * @param allowZombie If true, also match against zombie_view pointers.
+	 * @return The index of the matching entry, or -1 if not found.
+	 */
 	static int32 IndexOf(BList const *list, BView const *view, bool allowZombie);
+
+	/**
+	 * @brief Returns the zero-based index of the record with the given @a id.
+	 *
+	 * @param list The BList of replicant_data pointers to search.
+	 * @param id   The unique replicant ID to match.
+	 * @return The index of the matching entry, or -1 if not found.
+	 */
 	static int32 IndexOf(BList const *list, unsigned long id);
 
+	/**
+	 * @brief Archives this replicant record into @a msg.
+	 *
+	 * Stores the replicant's unique ID, its position, and its archived view
+	 * (or zombie view) message under the keys "uniqueid", "position", and
+	 * "message" respectively.
+	 *
+	 * @param msg The BMessage to archive into.
+	 * @return B_OK on success, or an error code if archiving the view fails.
+	 */
 	status_t Archive(BMessage *msg);
 
+	/** @brief The archived BMessage for this replicant (owned). */
 	BMessage*			message;
+
+	/** @brief The live replicant view (not owned; ownership varies by relation). */
 	BView*				view;
+
+	/** @brief The associated BDragger, or NULL (not owned; varies by relation). */
 	BDragger*			dragger;
+
+	/** @brief Spatial relationship between the dragger and the target view. */
 	BDragger::relation	relation;
+
+	/** @brief Unique ID assigned by the shelf at insertion time. */
 	unsigned long		id;
+
+	/** @brief Status of the last operation on this replicant (B_OK or error). */
 	status_t			error;
+
+	/** @brief Zombie placeholder view shown when instantiation fails (not owned). */
 	BView*				zombie_view;
 };
 
+/**
+ * @brief Message filter installed on the container view to handle object drops.
+ *
+ * Intercepts B_ARCHIVED_OBJECT and B_ABOUT_REQUESTED messages delivered to
+ * the shelf's container view. Dragged replicants are repositioned when the
+ * source is in the same looper; external drops are forwarded to BShelf via
+ * _AddReplicant().
+ *
+ * @see BShelf::_InitData(), ShelfContainerViewFilter::_ObjectDropFilter()
+ */
 class ShelfContainerViewFilter : public BMessageFilter {
 	public:
+		/**
+		 * @brief Constructs the filter for the given shelf and container view.
+		 *
+		 * @param shelf The owning BShelf instance.
+		 * @param view  The container view on which the filter is installed.
+		 */
 		ShelfContainerViewFilter(BShelf *shelf, BView *view);
 
+		/**
+		 * @brief Routes drop and about-requested messages to _ObjectDropFilter().
+		 *
+		 * All other messages are passed through unchanged.
+		 *
+		 * @param msg     The incoming BMessage.
+		 * @param handler In/out pointer to the target BHandler.
+		 * @return B_DISPATCH_MESSAGE or B_SKIP_MESSAGE.
+		 */
 		filter_result	Filter(BMessage *msg, BHandler **handler);
 
 	private:
-		filter_result	_ObjectDropFilter(BMessage *msg, BHandler **handler);
+		/**
+		 * @brief Handles a dropped or about-requested archived object.
+		 *
+		 * If dragging is disallowed and the message was dropped, it is skipped.
+		 * For internal moves the replicant view is repositioned; for external
+		 * drops _AddReplicant() is called and the message is detached from the
+		 * looper.
+		 *
+		 * @param msg      The B_ARCHIVED_OBJECT or B_ABOUT_REQUESTED message.
+		 * @param _handler In/out pointer to the target BHandler.
+		 * @return B_SKIP_MESSAGE always (the message is fully consumed here).
+		 */
+		filter_result	_ObjectDropFilter(BMessage *msg, BHandler **_handler);
 
+		/** @brief The owning BShelf. */
 		BShelf	*fShelf;
+
+		/** @brief The container view this filter is attached to. */
 		BView	*fView;
 };
 
+/**
+ * @brief Message filter installed on each replicant view to intercept delete requests.
+ *
+ * When a kDeleteReplicant message arrives it redirects the handler to the
+ * shelf and attaches a "_target" pointer so BShelf::MessageReceived() can
+ * identify which view to remove.
+ *
+ * @see BShelf::_GetReplicant(), BShelf::MessageReceived()
+ */
 class ReplicantViewFilter : public BMessageFilter {
 	public:
+		/**
+		 * @brief Constructs the filter for the given shelf and replicant view.
+		 *
+		 * @param shelf The owning BShelf instance.
+		 * @param view  The replicant view this filter is attached to.
+		 */
 		ReplicantViewFilter(BShelf *shelf, BView *view);
 
+		/**
+		 * @brief Redirects kDeleteReplicant messages to the shelf handler.
+		 *
+		 * Attaches the replicant's BView pointer as "_target" and redirects
+		 * the handler to the shelf, leaving all other messages unchanged.
+		 *
+		 * @param message The incoming BMessage.
+		 * @param handler In/out pointer to the target BHandler.
+		 * @return B_DISPATCH_MESSAGE always.
+		 */
 		filter_result Filter(BMessage *message, BHandler **handler);
 
 	private:
+		/** @brief The owning BShelf. */
 		BShelf	*fShelf;
+
+		/** @brief The replicant view this filter guards. */
 		BView	*fView;
 };
 
@@ -220,8 +466,19 @@ using BPrivate::ShelfContainerViewFilter;
 //	#pragma mark -
 
 
-/*!	\brief Helper function for BShelf::_AddReplicant()
-*/
+/**
+ * @brief Sends a B_REPLY to the source of a replicant add request if it is waiting.
+ *
+ * Constructs a reply containing the assigned unique ID and the operation status
+ * code, then sends it back via BMessage::SendReply() if the source is blocking.
+ *
+ * @param message  The original request BMessage whose source may be waiting.
+ * @param status   The result code to embed in the reply ("error" field).
+ * @param uniqueID The unique ID assigned to the new replicant ("id" field).
+ * @return The @a status value passed in, for use in a return statement.
+ *
+ * @see BShelf::_AddReplicant()
+ */
 static status_t
 send_reply(BMessage* message, status_t status, uint32 uniqueID)
 {
@@ -236,6 +493,20 @@ send_reply(BMessage* message, status_t status, uint32 uniqueID)
 }
 
 
+/**
+ * @brief Returns whether a replicant of the given class and add-on is already hosted.
+ *
+ * Iterates the shelf's replicant list and checks each entry's archived "class"
+ * and "add_on" fields against the supplied strings. Used to enforce the
+ * "be:load_each_time" uniqueness constraint.
+ *
+ * @param list      The BList of replicant_data entries to search.
+ * @param className The replicant class name to match.
+ * @param addOn     The add-on signature to match.
+ * @return true if a matching replicant already exists, false otherwise.
+ *
+ * @see BShelf::_AddReplicant()
+ */
 static bool
 find_replicant(BList &list, const char *className, const char *addOn)
 {
@@ -258,6 +529,19 @@ find_replicant(BList &list, const char *className, const char *addOn)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a fully-initialised replicant record.
+ *
+ * The dragger field is intentionally left NULL even though a dragger pointer
+ * is accepted; BShelf::_GetReplicant() sets it after determining the
+ * dragger-target relationship.
+ *
+ * @param _message  The archived replicant BMessage (ownership transferred).
+ * @param _view     The instantiated replicant view.
+ * @param _dragger  Unused at construction time; stored as NULL.
+ * @param _relation The spatial relationship between dragger and target view.
+ * @param _id       The unique replicant ID assigned by the shelf.
+ */
 replicant_data::replicant_data(BMessage *_message, BView *_view, BDragger *_dragger,
 	BDragger::relation _relation, unsigned long _id)
 	:
@@ -272,6 +556,12 @@ replicant_data::replicant_data(BMessage *_message, BView *_view, BDragger *_drag
 }
 
 
+/**
+ * @brief Constructs a default (empty/error) replicant record.
+ *
+ * All pointers are NULL and the error field is initialised to B_ERROR.
+ * Used as a sentinel or placeholder before a valid record is populated.
+ */
 replicant_data::replicant_data()
 	:
 	message(NULL),
@@ -284,11 +574,27 @@ replicant_data::replicant_data()
 {
 }
 
+/**
+ * @brief Destroys the replicant record, freeing the owned archived BMessage.
+ *
+ * @note The live view and dragger are NOT deleted here; their lifetimes are
+ *       managed by BShelf::_DeleteReplicant() based on the dragger relation.
+ */
 replicant_data::~replicant_data()
 {
 	delete message;
 }
 
+/**
+ * @brief Archives this replicant record into @a msg.
+ *
+ * Archives the live view (or zombie view if no live view exists) and stores
+ * the result under the "message" key. Also stores the replicant's unique ID
+ * under "uniqueid" and its top-left position under "position".
+ *
+ * @param msg The BMessage to archive into.
+ * @return B_OK on success, or an error code if archiving the view fails.
+ */
 status_t
 replicant_data::Archive(BMessage* msg)
 {
@@ -314,6 +620,13 @@ replicant_data::Archive(BMessage* msg)
 	return result;
 }
 
+/**
+ * @brief Searches @a list for the record whose message pointer equals @a msg.
+ *
+ * @param list The BList of replicant_data pointers to search.
+ * @param msg  The BMessage pointer to match.
+ * @return Pointer to the matching replicant_data, or NULL if not found.
+ */
 //static
 replicant_data *
 replicant_data::Find(BList const *list, BMessage const *msg)
@@ -329,6 +642,14 @@ replicant_data::Find(BList const *list, BMessage const *msg)
 }
 
 
+/**
+ * @brief Searches @a list for the record whose live or zombie view equals @a view.
+ *
+ * @param list        The BList of replicant_data pointers to search.
+ * @param view        The BView pointer to match.
+ * @param allowZombie If true, also test each entry's zombie_view pointer.
+ * @return Pointer to the matching replicant_data, or NULL if not found.
+ */
 //static
 replicant_data *
 replicant_data::Find(BList const *list, BView const *view, bool allowZombie)
@@ -347,6 +668,13 @@ replicant_data::Find(BList const *list, BView const *view, bool allowZombie)
 }
 
 
+/**
+ * @brief Searches @a list for the record whose unique @a id matches.
+ *
+ * @param list The BList of replicant_data pointers to search.
+ * @param id   The unique replicant ID to match.
+ * @return Pointer to the matching replicant_data, or NULL if not found.
+ */
 //static
 replicant_data *
 replicant_data::Find(BList const *list, unsigned long id)
@@ -362,6 +690,13 @@ replicant_data::Find(BList const *list, unsigned long id)
 }
 
 
+/**
+ * @brief Returns the zero-based index of the record whose message equals @a msg.
+ *
+ * @param list The BList of replicant_data pointers to search.
+ * @param msg  The BMessage pointer to match.
+ * @return The index of the matching entry, or -1 if not found.
+ */
 //static
 int32
 replicant_data::IndexOf(BList const *list, BMessage const *msg)
@@ -378,6 +713,14 @@ replicant_data::IndexOf(BList const *list, BMessage const *msg)
 }
 
 
+/**
+ * @brief Returns the zero-based index of the record whose view matches @a view.
+ *
+ * @param list        The BList of replicant_data pointers to search.
+ * @param view        The BView pointer to match.
+ * @param allowZombie If true, also test each entry's zombie_view pointer.
+ * @return The index of the matching entry, or -1 if not found.
+ */
 //static
 int32
 replicant_data::IndexOf(BList const *list, BView const *view, bool allowZombie)
@@ -397,6 +740,13 @@ replicant_data::IndexOf(BList const *list, BView const *view, bool allowZombie)
 }
 
 
+/**
+ * @brief Returns the zero-based index of the record with the given unique @a id.
+ *
+ * @param list The BList of replicant_data pointers to search.
+ * @param id   The unique replicant ID to match.
+ * @return The index of the matching entry, or -1 if not found.
+ */
 //static
 int32
 replicant_data::IndexOf(BList const *list, unsigned long id)
@@ -416,6 +766,14 @@ replicant_data::IndexOf(BList const *list, unsigned long id)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the ShelfContainerViewFilter for the given shelf and container view.
+ *
+ * Registers the filter to intercept messages from any delivery source.
+ *
+ * @param shelf The owning BShelf instance.
+ * @param view  The container view on which this filter will be installed.
+ */
 ShelfContainerViewFilter::ShelfContainerViewFilter(BShelf *shelf, BView *view)
 	: BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE),
 	fShelf(shelf),
@@ -424,6 +782,16 @@ ShelfContainerViewFilter::ShelfContainerViewFilter(BShelf *shelf, BView *view)
 }
 
 
+/**
+ * @brief Routes B_ARCHIVED_OBJECT and B_ABOUT_REQUESTED messages to _ObjectDropFilter().
+ *
+ * All other messages are allowed to pass through with B_DISPATCH_MESSAGE.
+ *
+ * @param msg     The incoming BMessage.
+ * @param handler In/out pointer to the target BHandler.
+ * @return B_DISPATCH_MESSAGE for unhandled messages; the return value of
+ *         _ObjectDropFilter() for object-drop and about-requested messages.
+ */
 filter_result
 ShelfContainerViewFilter::Filter(BMessage *msg, BHandler **handler)
 {
@@ -437,6 +805,19 @@ ShelfContainerViewFilter::Filter(BMessage *msg, BHandler **handler)
 }
 
 
+/**
+ * @brief Handles a dropped or about-requested archived object message.
+ *
+ * If the shelf does not allow dragging and the message was dropped, the
+ * message is skipped. For internal moves (same looper), the replicant's
+ * position is updated. For external drops, _AddReplicant() is called and
+ * the message is detached from the looper.
+ *
+ * @param msg      The B_ARCHIVED_OBJECT or B_ABOUT_REQUESTED message.
+ * @param _handler In/out pointer to the target BHandler; used to obtain the
+ *                 mouse view for coordinate conversion.
+ * @return B_SKIP_MESSAGE always; the message is fully consumed by this handler.
+ */
 filter_result
 ShelfContainerViewFilter::_ObjectDropFilter(BMessage *msg, BHandler **_handler)
 {
@@ -495,6 +876,15 @@ ShelfContainerViewFilter::_ObjectDropFilter(BMessage *msg, BHandler **_handler)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the ReplicantViewFilter for the given shelf and replicant view.
+ *
+ * Registers the filter to intercept messages from any delivery source so that
+ * kDeleteReplicant requests can be redirected to the owning shelf.
+ *
+ * @param shelf The owning BShelf instance.
+ * @param view  The replicant (or zombie) view this filter is attached to.
+ */
 ReplicantViewFilter::ReplicantViewFilter(BShelf *shelf, BView *view)
 	: BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE),
 	fShelf(shelf),
@@ -503,6 +893,19 @@ ReplicantViewFilter::ReplicantViewFilter(BShelf *shelf, BView *view)
 }
 
 
+/**
+ * @brief Redirects kDeleteReplicant messages to the owning shelf handler.
+ *
+ * When a kDeleteReplicant message arrives the handler is redirected to the
+ * shelf and the view's pointer is attached as "_target" so that
+ * BShelf::MessageReceived() can look up the correct replicant_data entry.
+ * All other messages are dispatched normally.
+ *
+ * @param message The incoming BMessage.
+ * @param handler In/out pointer to the target BHandler; set to fShelf for
+ *                kDeleteReplicant messages.
+ * @return B_DISPATCH_MESSAGE always.
+ */
 filter_result
 ReplicantViewFilter::Filter(BMessage *message, BHandler **handler)
 {
@@ -518,6 +921,19 @@ ReplicantViewFilter::Filter(BMessage *message, BHandler **handler)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a BShelf attached to the given container view.
+ *
+ * No persistent state is loaded or saved. Use SetSaveLocation() afterward
+ * if persistence is required.
+ *
+ * @param view       The BView that will act as the replicant container.
+ * @param allowDrags If true, replicants may be re-dragged within the shelf.
+ * @param shelfType  An optional type string used to filter incoming replicants
+ *                   when type enforcement is enabled. NULL for no filtering.
+ *
+ * @see SetSaveLocation(), SetTypeEnforced()
+ */
 BShelf::BShelf(BView *view, bool allowDrags, const char *shelfType)
 	: BHandler(shelfType)
 {
@@ -525,6 +941,20 @@ BShelf::BShelf(BView *view, bool allowDrags, const char *shelfType)
 }
 
 
+/**
+ * @brief Constructs a BShelf that saves and restores state from an entry_ref file.
+ *
+ * The existing replicant state is read from the file identified by @a ref at
+ * construction time. When Save() is called (or the shelf is destroyed) the
+ * state is written back to the same file.
+ *
+ * @param ref        An entry_ref identifying the file used for persistent storage.
+ * @param view       The BView that will act as the replicant container.
+ * @param allowDrags If true, replicants may be re-dragged within the shelf.
+ * @param shelfType  Optional type string for replicant filtering.
+ *
+ * @see Save(), SetSaveLocation(const entry_ref*)
+ */
 BShelf::BShelf(const entry_ref *ref, BView *view, bool allowDrags,
 	const char *shelfType)
 	: BHandler(shelfType)
@@ -533,6 +963,20 @@ BShelf::BShelf(const entry_ref *ref, BView *view, bool allowDrags,
 }
 
 
+/**
+ * @brief Constructs a BShelf that reads initial state from a BDataIO stream.
+ *
+ * The replicant state is read from @a stream at construction time. The stream
+ * is not written back automatically; call Save() or SetSaveLocation() to
+ * configure a save destination.
+ *
+ * @param stream     The BDataIO stream to read archived replicant state from.
+ * @param view       The BView that will act as the replicant container.
+ * @param allowDrags If true, replicants may be re-dragged within the shelf.
+ * @param shelfType  Optional type string for replicant filtering.
+ *
+ * @see Save(), SetSaveLocation(BDataIO*)
+ */
 BShelf::BShelf(BDataIO *stream, BView *view, bool allowDrags,
 	const char *shelfType)
 	: BHandler(shelfType)
@@ -541,6 +985,14 @@ BShelf::BShelf(BDataIO *stream, BView *view, bool allowDrags,
 }
 
 
+/**
+ * @brief Constructs a BShelf from an archived BMessage.
+ *
+ * @param data The BMessage produced by a prior Archive() call.
+ *
+ * @note This constructor is currently unimplemented.
+ * @see Archive(), Instantiate()
+ */
 BShelf::BShelf(BMessage *data)
 	: BHandler(data)
 {
@@ -548,6 +1000,18 @@ BShelf::BShelf(BMessage *data)
 }
 
 
+/**
+ * @brief Destroys the BShelf, saving state and cleaning up all replicants.
+ *
+ * Calls Save() to persist the current replicant state if a save location was
+ * configured. Deletes the BEntry and BFile objects if they are owned by the
+ * shelf (i.e. the entry_ref constructor was used). Destroys all replicant_data
+ * records and detaches the shelf from the container view.
+ *
+ * @note The container view's filter and shelf back-pointer are both cleared
+ *       during destruction. The view itself is not destroyed.
+ * @see Save(), _InitData()
+ */
 BShelf::~BShelf()
 {
 	Save();
@@ -568,6 +1032,16 @@ BShelf::~BShelf()
 }
 
 
+/**
+ * @brief Archives the BShelf into a BMessage (stub — not yet implemented).
+ *
+ * @param data Unused.
+ * @param deep Unused.
+ * @return B_ERROR always; archiving via the BArchivable interface is not
+ *         currently supported. Use Save() / SetSaveLocation() instead.
+ *
+ * @see Save(), _Archive()
+ */
 status_t
 BShelf::Archive(BMessage *data, bool deep) const
 {
@@ -575,6 +1049,14 @@ BShelf::Archive(BMessage *data, bool deep) const
 }
 
 
+/**
+ * @brief Instantiates a BShelf from an archived BMessage (stub — not yet implemented).
+ *
+ * @param data Unused.
+ * @return NULL always.
+ *
+ * @see Archive()
+ */
 BArchivable *
 BShelf::Instantiate(BMessage *data)
 {
@@ -582,6 +1064,25 @@ BShelf::Instantiate(BMessage *data)
 }
 
 
+/**
+ * @brief Handles incoming scripting and lifecycle messages for the shelf.
+ *
+ * Processes the following message types:
+ * - kDeleteReplicant: looks up the target view by "_target" pointer and calls
+ *   DeleteReplicant().
+ * - B_DELETE_PROPERTY / B_GET_PROPERTY / B_GET_SUPPORTED_SUITES on "Replicant":
+ *   resolves the replicant specifier, then deletes, retrieves, or returns suite
+ *   information as appropriate.
+ * - B_COUNT_PROPERTIES on "Replicant": replies with CountReplicants().
+ * - B_CREATE_PROPERTY: reads "data" (BMessage) and "location" (BPoint) from
+ *   the message and calls AddReplicant().
+ *
+ * Unrecognised messages are forwarded to BHandler::MessageReceived().
+ *
+ * @param msg The BMessage to process.
+ *
+ * @see DeleteReplicant(), AddReplicant(), CountReplicants(), ReplicantAt()
+ */
 void
 BShelf::MessageReceived(BMessage *msg)
 {
@@ -699,6 +1200,20 @@ BShelf::MessageReceived(BMessage *msg)
 }
 
 
+/**
+ * @brief Persists the current replicant state to the configured save location.
+ *
+ * If a save location was set via SetSaveLocation(const entry_ref*), a new
+ * BFile is opened (erasing any previous content) and the shelf state is
+ * flattened into it. If a stream was provided via SetSaveLocation(BDataIO*)
+ * that stream is used directly. If no save location is configured, B_ERROR
+ * is returned without writing anything.
+ *
+ * @return B_OK on success; B_ERROR if no save location is set; or a file
+ *         system / message error code on failure.
+ *
+ * @see SetSaveLocation(), _Archive()
+ */
 status_t
 BShelf::Save()
 {
@@ -725,6 +1240,14 @@ BShelf::Save()
 }
 
 
+/**
+ * @brief Sets the dirty flag, indicating whether unsaved changes exist.
+ *
+ * @param state true to mark the shelf as having unsaved changes, false to
+ *              clear the dirty state after a successful save.
+ *
+ * @see IsDirty(), Save()
+ */
 void
 BShelf::SetDirty(bool state)
 {
@@ -732,6 +1255,14 @@ BShelf::SetDirty(bool state)
 }
 
 
+/**
+ * @brief Returns whether the shelf has unsaved changes.
+ *
+ * @return true if the shelf state has been modified since the last Save(),
+ *         false otherwise.
+ *
+ * @see SetDirty(), Save()
+ */
 bool
 BShelf::IsDirty() const
 {
@@ -739,6 +1270,23 @@ BShelf::IsDirty() const
 }
 
 
+/**
+ * @brief Resolves a scripting specifier for the shelf or one of its replicants.
+ *
+ * Matches "Replicant" property specifiers against the shelf property table and
+ * the replicant property table. For replicant sub-properties (ID, Name,
+ * Signature, Suites) the shelf itself is returned as the handler; for the
+ * "View" sub-property the replicant view is returned directly.
+ *
+ * @param msg      The scripting BMessage containing the specifier chain.
+ * @param index    Index of the current specifier within the chain.
+ * @param specifier The current specifier BMessage.
+ * @param form     The specifier form (B_INDEX_SPECIFIER, B_NAME_SPECIFIER, etc.).
+ * @param property The property name string.
+ * @return The BHandler that should handle the message, or NULL on error.
+ *
+ * @see MessageReceived(), GetSupportedSuites()
+ */
 BHandler *
 BShelf::ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier,
 						int32 form, const char *property)
@@ -824,6 +1372,17 @@ BShelf::ResolveSpecifier(BMessage *msg, int32 index, BMessage *specifier,
 }
 
 
+/**
+ * @brief Advertises the scripting suites supported by BShelf.
+ *
+ * Adds "suite/vnd.Be-shelf" and the associated property info to @a message,
+ * then chains to BHandler::GetSupportedSuites().
+ *
+ * @param message The BMessage to populate with suite and property info.
+ * @return B_OK on success, or an error code if adding data to the message fails.
+ *
+ * @see ResolveSpecifier(), MessageReceived()
+ */
 status_t
 BShelf::GetSupportedSuites(BMessage *message)
 {
@@ -839,6 +1398,16 @@ BShelf::GetSupportedSuites(BMessage *message)
 }
 
 
+/**
+ * @brief Dispatches a private perform request to the base BHandler.
+ *
+ * This hook exists for binary compatibility. Application code should not
+ * call this method directly.
+ *
+ * @param d   The perform code identifying the requested operation.
+ * @param arg Opaque argument whose meaning depends on @a d.
+ * @return The result of BHandler::Perform().
+ */
 status_t
 BShelf::Perform(perform_code d, void *arg)
 {
@@ -846,6 +1415,14 @@ BShelf::Perform(perform_code d, void *arg)
 }
 
 
+/**
+ * @brief Returns whether replicants may be re-dragged within this shelf.
+ *
+ * @return true if drag-and-drop repositioning is allowed, false if it is
+ *         suppressed.
+ *
+ * @see SetAllowsDragging()
+ */
 bool
 BShelf::AllowsDragging() const
 {
@@ -853,6 +1430,17 @@ BShelf::AllowsDragging() const
 }
 
 
+/**
+ * @brief Enables or disables drag-and-drop repositioning of replicants.
+ *
+ * When disabled, any dropped message whose source is outside the current
+ * looper will be accepted, but internal moves via dragging are blocked by
+ * ShelfContainerViewFilter.
+ *
+ * @param state true to allow dragging, false to suppress it.
+ *
+ * @see AllowsDragging()
+ */
 void
 BShelf::SetAllowsDragging(bool state)
 {
@@ -860,6 +1448,16 @@ BShelf::SetAllowsDragging(bool state)
 }
 
 
+/**
+ * @brief Returns whether zombie (failed) replicants are tolerated.
+ *
+ * When false, any replicant that fails to instantiate is silently rejected
+ * rather than stored as a zombie entry.
+ *
+ * @return true if zombie replicants are permitted, false otherwise.
+ *
+ * @see SetAllowsZombies(), DisplaysZombies()
+ */
 bool
 BShelf::AllowsZombies() const
 {
@@ -867,6 +1465,14 @@ BShelf::AllowsZombies() const
 }
 
 
+/**
+ * @brief Controls whether failed replicant instantiations are kept as zombies.
+ *
+ * @param state true to allow zombie entries, false to silently reject
+ *              replicants that fail to instantiate.
+ *
+ * @see AllowsZombies(), SetDisplaysZombies()
+ */
 void
 BShelf::SetAllowsZombies(bool state)
 {
@@ -874,6 +1480,16 @@ BShelf::SetAllowsZombies(bool state)
 }
 
 
+/**
+ * @brief Returns whether zombie replicants are shown as placeholder views.
+ *
+ * When true and a replicant fails to instantiate, a _BZombieReplicantView_
+ * is created and displayed in place of the real replicant view.
+ *
+ * @return true if zombie placeholder views are shown, false otherwise.
+ *
+ * @see SetDisplaysZombies(), AllowsZombies()
+ */
 bool
 BShelf::DisplaysZombies() const
 {
@@ -881,6 +1497,15 @@ BShelf::DisplaysZombies() const
 }
 
 
+/**
+ * @brief Controls whether failed replicants are shown as zombie placeholder views.
+ *
+ * Has no effect unless AllowsZombies() is also true.
+ *
+ * @param state true to display zombie placeholder views, false to hide them.
+ *
+ * @see DisplaysZombies(), SetAllowsZombies()
+ */
 void
 BShelf::SetDisplaysZombies(bool state)
 {
@@ -888,6 +1513,16 @@ BShelf::SetDisplaysZombies(bool state)
 }
 
 
+/**
+ * @brief Returns whether type enforcement is active for this shelf.
+ *
+ * When active, only replicants whose "shelf_type" field matches the shelf's
+ * name are accepted.
+ *
+ * @return true if type enforcement is enabled, false otherwise.
+ *
+ * @see SetTypeEnforced(), BShelf::_AddReplicant()
+ */
 bool
 BShelf::IsTypeEnforced() const
 {
@@ -895,6 +1530,16 @@ BShelf::IsTypeEnforced() const
 }
 
 
+/**
+ * @brief Enables or disables type-based filtering of incoming replicants.
+ *
+ * When enabled, BShelf::_AddReplicant() rejects any replicant whose
+ * "shelf_type" field does not match the shelf's name string.
+ *
+ * @param state true to enforce type matching, false to accept all replicants.
+ *
+ * @see IsTypeEnforced()
+ */
 void
 BShelf::SetTypeEnforced(bool state)
 {
@@ -902,6 +1547,17 @@ BShelf::SetTypeEnforced(bool state)
 }
 
 
+/**
+ * @brief Sets a BDataIO stream as the save destination for shelf state.
+ *
+ * Clears any previously set entry_ref save location and marks the shelf dirty.
+ * The shelf does not take ownership of @a data_io.
+ *
+ * @param data_io The stream to write shelf state into when Save() is called.
+ * @return B_OK always.
+ *
+ * @see Save(), SaveLocation(), SetSaveLocation(const entry_ref*)
+ */
 status_t
 BShelf::SetSaveLocation(BDataIO *data_io)
 {
@@ -918,6 +1574,17 @@ BShelf::SetSaveLocation(BDataIO *data_io)
 }
 
 
+/**
+ * @brief Sets a file identified by an entry_ref as the save destination.
+ *
+ * Creates a new BEntry from @a ref and marks the shelf dirty. If a plain
+ * BDataIO stream was previously set (without an entry_ref), it is cleared.
+ *
+ * @param ref The entry_ref identifying the file to use for persistent storage.
+ * @return B_OK always.
+ *
+ * @see Save(), SaveLocation(), SetSaveLocation(BDataIO*)
+ */
 status_t
 BShelf::SetSaveLocation(const entry_ref *ref)
 {
@@ -934,6 +1601,20 @@ BShelf::SetSaveLocation(const entry_ref *ref)
 }
 
 
+/**
+ * @brief Returns the current save destination and optionally its entry_ref.
+ *
+ * If a BDataIO stream was set, that stream is returned and @a ref (if
+ * non-NULL) is set to a default-constructed entry_ref. If an entry_ref file
+ * was configured, the ref is populated via BEntry::GetRef() and NULL is
+ * returned for the stream.
+ *
+ * @param ref If non-NULL, receives the entry_ref of the save file, or a
+ *            default entry_ref if a plain stream is configured.
+ * @return The BDataIO stream if one is set, NULL otherwise.
+ *
+ * @see SetSaveLocation(), Save()
+ */
 BDataIO *
 BShelf::SaveLocation(entry_ref *ref) const
 {
@@ -948,6 +1629,20 @@ BShelf::SaveLocation(entry_ref *ref) const
 }
 
 
+/**
+ * @brief Adds a replicant from an archived BMessage at the given location.
+ *
+ * Delegates to _AddReplicant() with an auto-incremented unique ID. On success
+ * the shelf takes ownership of @a data.
+ *
+ * @param data     The archived replicant BMessage. Ownership is transferred on
+ *                 success only.
+ * @param location The desired top-left position for the replicant in container
+ *                 view coordinates.
+ * @return B_OK on success, or an error code if the replicant was rejected.
+ *
+ * @see _AddReplicant(), DeleteReplicant(), CanAcceptReplicantMessage()
+ */
 status_t
 BShelf::AddReplicant(BMessage *data, BPoint location)
 {
@@ -955,6 +1650,17 @@ BShelf::AddReplicant(BMessage *data, BPoint location)
 }
 
 
+/**
+ * @brief Removes the replicant whose live or zombie view is @a replicant.
+ *
+ * Looks up the replicant_data entry by view pointer (including zombie views)
+ * and calls _DeleteReplicant() to tear it down and fire ReplicantDeleted().
+ *
+ * @param replicant The BView of the replicant to remove.
+ * @return B_OK on success, B_BAD_VALUE if the view is not hosted by this shelf.
+ *
+ * @see _DeleteReplicant(), ReplicantDeleted()
+ */
 status_t
 BShelf::DeleteReplicant(BView *replicant)
 {
@@ -968,6 +1674,14 @@ BShelf::DeleteReplicant(BView *replicant)
 }
 
 
+/**
+ * @brief Removes the replicant identified by its archived BMessage.
+ *
+ * @param data The BMessage pointer previously returned by ReplicantAt().
+ * @return B_OK on success, B_BAD_VALUE if the message is not found.
+ *
+ * @see _DeleteReplicant(), ReplicantAt()
+ */
 status_t
 BShelf::DeleteReplicant(BMessage *data)
 {
@@ -981,6 +1695,14 @@ BShelf::DeleteReplicant(BMessage *data)
 }
 
 
+/**
+ * @brief Removes the replicant at the given zero-based index.
+ *
+ * @param index Zero-based position of the replicant in the hosted list.
+ * @return B_OK on success, B_BAD_INDEX if the index is out of range.
+ *
+ * @see _DeleteReplicant(), CountReplicants()
+ */
 status_t
 BShelf::DeleteReplicant(int32 index)
 {
@@ -992,6 +1714,15 @@ BShelf::DeleteReplicant(int32 index)
 }
 
 
+/**
+ * @brief Returns the number of replicants currently hosted by this shelf.
+ *
+ * Includes both live replicants and zombie placeholder entries.
+ *
+ * @return The total count of hosted replicant entries.
+ *
+ * @see ReplicantAt(), IndexOf()
+ */
 int32
 BShelf::CountReplicants() const
 {
@@ -999,6 +1730,21 @@ BShelf::CountReplicants() const
 }
 
 
+/**
+ * @brief Returns the archived BMessage for the replicant at @a index.
+ *
+ * Optionally provides the live BView, unique ID, and instantiation status for
+ * the replicant. If no replicant exists at @a index the out-parameters are
+ * set to sentinel values and NULL is returned.
+ *
+ * @param index     Zero-based index of the replicant.
+ * @param _view     If non-NULL, receives the live BView (may be NULL for zombies).
+ * @param _uniqueID If non-NULL, receives the unique ID (set to ~0u on failure).
+ * @param _error    If non-NULL, receives the replicant's instantiation status.
+ * @return The archived BMessage for the replicant, or NULL if out of range.
+ *
+ * @see CountReplicants(), IndexOf(), AddReplicant()
+ */
 BMessage *
 BShelf::ReplicantAt(int32 index, BView **_view, uint32 *_uniqueID,
 	status_t *_error) const
@@ -1027,6 +1773,16 @@ BShelf::ReplicantAt(int32 index, BView **_view, uint32 *_uniqueID,
 }
 
 
+/**
+ * @brief Returns the index of the replicant whose live view is @a replicantView.
+ *
+ * Zombie views are not searched; use DeleteReplicant(BView*) for zombie lookup.
+ *
+ * @param replicantView The BView to look up.
+ * @return Zero-based index of the matching entry, or -1 if not found.
+ *
+ * @see ReplicantAt(), CountReplicants()
+ */
 int32
 BShelf::IndexOf(const BView* replicantView) const
 {
@@ -1034,6 +1790,14 @@ BShelf::IndexOf(const BView* replicantView) const
 }
 
 
+/**
+ * @brief Returns the index of the replicant whose archived BMessage is @a archive.
+ *
+ * @param archive The BMessage pointer previously returned by ReplicantAt().
+ * @return Zero-based index of the matching entry, or -1 if not found.
+ *
+ * @see ReplicantAt(), CountReplicants()
+ */
 int32
 BShelf::IndexOf(const BMessage *archive) const
 {
@@ -1041,6 +1805,14 @@ BShelf::IndexOf(const BMessage *archive) const
 }
 
 
+/**
+ * @brief Returns the index of the replicant with the given unique @a id.
+ *
+ * @param id The unique replicant ID as returned by ReplicantAt().
+ * @return Zero-based index of the matching entry, or -1 if not found.
+ *
+ * @see ReplicantAt(), CountReplicants()
+ */
 int32
 BShelf::IndexOf(uint32 id) const
 {
@@ -1048,6 +1820,17 @@ BShelf::IndexOf(uint32 id) const
 }
 
 
+/**
+ * @brief Hook called to determine whether a replicant archive message is acceptable.
+ *
+ * Subclasses may override this to inspect the incoming BMessage and reject
+ * replicants based on custom criteria before instantiation is attempted.
+ *
+ * @param archive The incoming replicant archive message.
+ * @return true if the message should be accepted (default), false to reject it.
+ *
+ * @see CanAcceptReplicantView(), _AddReplicant()
+ */
 bool
 BShelf::CanAcceptReplicantMessage(BMessage*) const
 {
@@ -1055,6 +1838,20 @@ BShelf::CanAcceptReplicantMessage(BMessage*) const
 }
 
 
+/**
+ * @brief Hook called to determine whether an instantiated replicant view is acceptable.
+ *
+ * Called after the replicant has been instantiated but before it is added to
+ * the container view. Subclasses may inspect the frame, view, and archive to
+ * implement custom placement or rejection logic.
+ *
+ * @param frame   The proposed frame rectangle in container view coordinates.
+ * @param view    The newly instantiated BView.
+ * @param archive The archive message associated with the view.
+ * @return true if the view should be accepted (default), false to reject it.
+ *
+ * @see CanAcceptReplicantMessage(), AdjustReplicantBy()
+ */
 bool
 BShelf::CanAcceptReplicantView(BRect, BView*, BMessage*) const
 {
@@ -1062,6 +1859,20 @@ BShelf::CanAcceptReplicantView(BRect, BView*, BMessage*) const
 }
 
 
+/**
+ * @brief Hook called to obtain a fine-grained position adjustment for a replicant.
+ *
+ * Called after CanAcceptReplicantView() has accepted the view. The returned
+ * BPoint is added to the drop or requested position before the view is
+ * moved into place.
+ *
+ * @param frame   The proposed frame rectangle in container view coordinates.
+ * @param archive The archive message associated with the view.
+ * @return The position delta to apply; default implementation returns B_ORIGIN
+ *         (no adjustment).
+ *
+ * @see CanAcceptReplicantView(), _GetReplicant()
+ */
 BPoint
 BShelf::AdjustReplicantBy(BRect, BMessage*) const
 {
@@ -1069,6 +1880,19 @@ BShelf::AdjustReplicantBy(BRect, BMessage*) const
 }
 
 
+/**
+ * @brief Hook called immediately before a replicant is removed from the shelf.
+ *
+ * Subclasses may override this to perform cleanup or notification when a
+ * replicant is deleted. The default implementation is empty.
+ *
+ * @param index     The zero-based index of the replicant being removed.
+ * @param archive   The archived BMessage associated with the replicant.
+ * @param replicant The live (or zombie) BView that is about to be removed,
+ *                  or NULL if no view was instantiated.
+ *
+ * @see DeleteReplicant(), _DeleteReplicant()
+ */
 void
 BShelf::ReplicantDeleted(int32 index, const BMessage *archive,
 	const BView *replicant)
@@ -1076,6 +1900,13 @@ BShelf::ReplicantDeleted(int32 index, const BMessage *archive,
 }
 
 
+/**
+ * @brief Binary-compatibility stub for the first reserved BShelf virtual slot.
+ *
+ * This C-linkage function satisfies the vtable slot reserved for future use.
+ * It is intentionally empty because the corresponding slot was not present in
+ * BeOS R5's libbe.
+ */
 extern "C" void
 _ReservedShelf1__6BShelfFv(BShelf *const, int32, const BMessage*, const BView*)
 {
@@ -1083,20 +1914,35 @@ _ReservedShelf1__6BShelfFv(BShelf *const, int32, const BMessage*, const BView*)
 }
 
 
+/** @brief Reserved virtual slot 2 — intentionally empty. */
 void BShelf::_ReservedShelf2() {}
+/** @brief Reserved virtual slot 3 — intentionally empty. */
 void BShelf::_ReservedShelf3() {}
+/** @brief Reserved virtual slot 4 — intentionally empty. */
 void BShelf::_ReservedShelf4() {}
+/** @brief Reserved virtual slot 5 — intentionally empty. */
 void BShelf::_ReservedShelf5() {}
+/** @brief Reserved virtual slot 6 — intentionally empty. */
 void BShelf::_ReservedShelf6() {}
+/** @brief Reserved virtual slot 7 — intentionally empty. */
 void BShelf::_ReservedShelf7() {}
+/** @brief Reserved virtual slot 8 — intentionally empty. */
 void BShelf::_ReservedShelf8() {}
 
 
+/**
+ * @brief Disabled copy constructor — BShelf objects are not copyable.
+ */
 BShelf::BShelf(const BShelf&)
 {
 }
 
 
+/**
+ * @brief Disabled copy-assignment operator — BShelf objects are not copyable.
+ *
+ * @return Reference to this (never actually used).
+ */
 BShelf &
 BShelf::operator=(const BShelf &)
 {
@@ -1104,6 +1950,22 @@ BShelf::operator=(const BShelf &)
 }
 
 
+/**
+ * @brief Serialises the shelf state and all hosted replicants into @a data.
+ *
+ * Stores the following fields in @a data:
+ * - "_zom_dsp" (bool): whether zombie views are displayed.
+ * - "_zom_alw" (bool): whether zombie replicants are permitted.
+ * - "_sg_cnt"  (int32): the current generation counter.
+ * - "replicant" (BMessage, repeated): one archived replicant_data per entry.
+ *
+ * Also calls BHandler::Archive() to capture the handler name.
+ *
+ * @param data The BMessage to archive into.
+ * @return B_OK on success, or an error code if any field could not be added.
+ *
+ * @see Save(), _InitData()
+ */
 status_t
 BShelf::_Archive(BMessage *data) const
 {
@@ -1136,6 +1998,27 @@ BShelf::_Archive(BMessage *data) const
 }
 
 
+/**
+ * @brief Core initialisation routine called by all BShelf constructors.
+ *
+ * Performs the following steps in order:
+ * 1. Initialises all shelf fields to their defaults.
+ * 2. Opens a read-only BFile from @a entry if provided, otherwise stores
+ *    @a stream directly as the input stream.
+ * 3. Creates and installs the ShelfContainerViewFilter on @a view.
+ * 4. Registers the shelf with the container view via BView::_SetShelf().
+ * 5. If a stream is available, unflattens the archived shelf state and
+ *    restores all replicants by calling AddReplicant() for each entry.
+ *
+ * @param entry      A BEntry pointing to the persistent storage file, or NULL.
+ *                   Ownership is transferred; _InitData() stores the pointer.
+ * @param stream     A BDataIO to read from if no entry is given, or NULL.
+ *                   Not owned by the shelf when passed this way.
+ * @param view       The container BView that will host replicants.
+ * @param allowDrags If true, replicants may be repositioned by dragging.
+ *
+ * @see _Archive(), AddReplicant()
+ */
 void
 BShelf::_InitData(BEntry *entry, BDataIO *stream, BView *view,
 	bool allowDrags)
@@ -1200,6 +2083,24 @@ BShelf::_InitData(BEntry *entry, BDataIO *stream, BView *view,
 }
 
 
+/**
+ * @brief Removes and destroys a single replicant entry.
+ *
+ * Detaches the replicant view and its dragger from the container view, calls
+ * the ReplicantDeleted() hook, removes the item from the internal list, and
+ * then frees the views and dragger according to the dragger relation:
+ * - TARGET_IS_PARENT or TARGET_IS_SIBLING: the replicant view is deleted.
+ * - TARGET_IS_CHILD or TARGET_IS_SIBLING: the dragger is deleted.
+ *
+ * Also decrements the reference count for the replicant's add-on image in the
+ * LoadedImages singleton and unloads it when the count reaches zero.
+ *
+ * @param item The replicant_data entry to remove. The pointer is invalid after
+ *             this call returns.
+ * @return B_OK always.
+ *
+ * @see ReplicantDeleted(), DeleteReplicant()
+ */
 status_t
 BShelf::_DeleteReplicant(replicant_data* item)
 {
@@ -1254,7 +2155,32 @@ BShelf::_DeleteReplicant(replicant_data* item)
 }
 
 
-//! Takes over ownership of \a data on success only
+/**
+ * @brief Validates, instantiates, and hosts a new replicant.
+ *
+ * Takes over ownership of @a data on success only. The following checks are
+ * performed in order before the replicant view is created:
+ * 1. Type enforcement: if enabled, the "shelf_type" field must match the
+ *    shelf's name.
+ * 2. CanAcceptReplicantMessage(): the message-level acceptance hook.
+ * 3. Uniqueness: if "be:load_each_time" is false, duplicate class/add-on
+ *    combinations are rejected.
+ *
+ * After passing validation, the archivable is instantiated via
+ * _InstantiateObject(). If instantiation fails and zombies are allowed and
+ * displayed, a _BZombieReplicantView_ is created instead. The add-on image
+ * reference count is updated in the LoadedImages singleton.
+ *
+ * @param data      The archived replicant BMessage. Ownership is transferred
+ *                  on success only.
+ * @param location  Pointer to the desired top-left BPoint, or NULL to use the
+ *                  view's own archived frame.
+ * @param uniqueID  The unique ID to assign to this replicant entry.
+ * @return B_OK on success; B_ERROR if the replicant was rejected; or another
+ *         error code forwarded via send_reply().
+ *
+ * @see _GetReplicant(), _CreateZombie(), send_reply(), CanAcceptReplicantMessage()
+ */
 status_t
 BShelf::_AddReplicant(BMessage *data, BPoint *location, uint32 uniqueID)
 {
@@ -1361,6 +2287,27 @@ BShelf::_AddReplicant(BMessage *data, BPoint *location, uint32 uniqueID)
 }
 
 
+/**
+ * @brief Resolves the dragger relationship, validates, positions, and adds a replicant view.
+ *
+ * Calls _GetReplicantData() to determine the dragger/target relationship and
+ * locate the actual replicant BView. Then:
+ * 1. Calls CanAcceptReplicantView() — if rejected, the view and dragger are
+ *    freed according to the relation and NULL is returned.
+ * 2. Calls AdjustReplicantBy() to obtain a fine-grained position delta.
+ * 3. Moves the view to @a point plus the delta.
+ * 4. Adds the dragger and/or replicant to the container view as appropriate.
+ * 5. Installs a ReplicantViewFilter on the replicant view.
+ *
+ * @param data     The replicant archive message.
+ * @param view     The top-level BView produced by instantiating the archive.
+ * @param point    Desired top-left position in container view coordinates.
+ * @param dragger  Out-parameter: set to the BDragger if one was found.
+ * @param relation Out-parameter: set to the dragger/target relationship.
+ * @return The replicant BView on success, or NULL if rejected or on error.
+ *
+ * @see _GetReplicantData(), CanAcceptReplicantView(), AdjustReplicantBy()
+ */
 BView *
 BShelf::_GetReplicant(BMessage *data, BView *view, const BPoint &point,
 	BDragger *&dragger, BDragger::relation &relation)
@@ -1408,6 +2355,26 @@ BShelf::_GetReplicant(BMessage *data, BView *view, const BPoint &point,
 }
 
 
+/**
+ * @brief Determines the dragger/target relationship for an instantiated replicant.
+ *
+ * Inspects @a data and @a view to establish whether the replicant uses the
+ * TARGET_IS_SIBLING, TARGET_IS_CHILD, or TARGET_IS_PARENT relationship:
+ * - If a "__widget" sub-message is present, the dragger is instantiated from
+ *   it and the relation is TARGET_IS_SIBLING.
+ * - If @a view is itself a BDragger, the relation is TARGET_IS_CHILD and the
+ *   replicant is the dragger's first child.
+ * - Otherwise the relation is TARGET_IS_PARENT and the dragger is looked up
+ *   by name ("_dragger_") inside the view.
+ *
+ * @param data      The replicant archive message, checked for "__widget".
+ * @param view      The top-level BView produced by archive instantiation.
+ * @param replicant Out: receives the actual replicant BView.
+ * @param dragger   Out: receives the associated BDragger, or NULL.
+ * @param relation  Out: receives the established dragger/target relationship.
+ *
+ * @see _GetReplicant(), BDragger::relation
+ */
 /* static */
 void
 BShelf::_GetReplicantData(BMessage *data, BView *view, BView *&replicant,
@@ -1438,6 +2405,26 @@ BShelf::_GetReplicantData(BMessage *data, BView *view, BView *&replicant,
 }
 
 
+/**
+ * @brief Creates and installs a zombie placeholder view for a failed replicant.
+ *
+ * If @a data was dropped, positions the zombie at the drop point offset from
+ * the container view's screen coordinates. Attaches a child BDragger to the
+ * zombie view, marks it as zombied, sets the archived message on it, installs
+ * a ReplicantViewFilter, and adds it to the container view.
+ *
+ * If the message was not dropped (e.g. loaded from a stream at startup), no
+ * zombie view is created and NULL is returned.
+ *
+ * @param data    The failed replicant archive message. The zombie view stores
+ *                a pointer to this message but does not take ownership.
+ * @param dragger Out-parameter: set to the BDragger child added to the zombie,
+ *                or left unchanged if no zombie is created.
+ * @return The new _BZombieReplicantView_ on success, or NULL if the message
+ *         was not a drop operation.
+ *
+ * @see _AddReplicant(), _BZombieReplicantView_
+ */
 _BZombieReplicantView_ *
 BShelf::_CreateZombie(BMessage *data, BDragger *&dragger)
 {
@@ -1472,6 +2459,21 @@ BShelf::_CreateZombie(BMessage *data, BDragger *&dragger)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to a replicant index and ID.
+ *
+ * Inspects the @a msg what-code (B_INDEX_SPECIFIER, B_REVERSE_INDEX_SPECIFIER,
+ * B_NAME_SPECIFIER, or B_ID_SPECIFIER) and calls ReplicantAt() to locate the
+ * matching replicant. On success, populates @a reply with "index" (int32) and
+ * "ID" (int32) fields.
+ *
+ * @param msg   The specifier BMessage extracted from the scripting chain.
+ * @param reply The BMessage to fill with "index" and "ID" on success.
+ * @return B_OK if a matching replicant was found; B_ERROR or B_NAME_NOT_FOUND
+ *         otherwise.
+ *
+ * @see MessageReceived(), ResolveSpecifier()
+ */
 status_t
 BShelf::_GetProperty(BMessage *msg, BMessage *reply)
 {
@@ -1540,6 +2542,21 @@ BShelf::_GetProperty(BMessage *msg, BMessage *reply)
 }
 
 
+/**
+ * @brief Safely calls instantiate_object(), catching any exceptions.
+ *
+ * Wraps the global instantiate_object() call in a try/catch block so that
+ * a poorly-written replicant constructor that throws an exception does not
+ * crash the host application.
+ *
+ * @param archive The archived BMessage to instantiate from.
+ * @param image   Out-parameter: receives the image_id of the loaded add-on,
+ *                or B_ERROR if the class was found in the current image.
+ * @return The instantiated BArchivable on success, or NULL if instantiation
+ *         failed or threw an exception.
+ *
+ * @see _AddReplicant(), instantiate_object()
+ */
 /* static */
 BArchivable *
 BShelf::_InstantiateObject(BMessage *archive, image_id *image)

@@ -1,13 +1,40 @@
 /*
- * Copyright 2001-2015, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Stefano Ceccherini, stefano.ceccherini@gmail.com
  */
 
-//!	BMenuWindow is a custom BWindow for BMenus.
+
+/**
+ * @file MenuWindow.cpp
+ * @brief Implementation of BMenuWindow, the internal pop-up window used by BMenu
+ *
+ * BMenuWindow is a lightweight, borderless window that hosts a BMenu's content
+ * when it opens as a pop-up. It manages scroll arrows for menus that exceed
+ * the screen height.
+ *
+ * @see BMenu, BWindow
+ */
+
 
 #include <MenuWindow.h>
 
@@ -23,6 +50,12 @@
 
 namespace BPrivate {
 
+/**
+ * @brief Base class for the up- and down-scroll arrow views used by BMenuWindow.
+ *
+ * Maintains an enabled/disabled state. Subclasses draw the specific arrow
+ * direction when enabled, and a dimmed arrow when disabled.
+ */
 class BMenuScroller : public BView {
 public:
 							BMenuScroller(BRect frame);
@@ -35,6 +68,12 @@ private:
 };
 
 
+/**
+ * @brief Internal view that frames and hosts the BMenu inside BMenuWindow.
+ *
+ * Adds the BMenu as a child when attached, removes it when detached, and draws
+ * an "empty" label when the menu has no items.
+ */
 class BMenuFrame : public BView {
 public:
 							BMenuFrame(BMenu* menu);
@@ -55,6 +94,9 @@ private:
 };
 
 
+/**
+ * @brief Scroll arrow view drawn at the top of an overflowing menu.
+ */
 class UpperScroller : public BMenuScroller {
 public:
 							UpperScroller(BRect frame);
@@ -63,6 +105,9 @@ public:
 };
 
 
+/**
+ * @brief Scroll arrow view drawn at the bottom of an overflowing menu.
+ */
 class LowerScroller : public BMenuScroller {
 public:
 							LowerScroller(BRect frame);
@@ -77,9 +122,15 @@ public:
 using namespace BPrivate;
 
 
+/** @brief Fixed height in pixels of each scroll arrow band. */
 const int kScrollerHeight = 12;
 
 
+/**
+ * @brief Constructs a BMenuScroller view with a disabled initial state.
+ *
+ * @param frame The bounding rectangle for this scroll arrow view.
+ */
 BMenuScroller::BMenuScroller(BRect frame)
 	:
 	BView(frame, "menu scroller", 0, B_WILL_DRAW | B_FRAME_EVENTS
@@ -90,6 +141,14 @@ BMenuScroller::BMenuScroller(BRect frame)
 }
 
 
+/**
+ * @brief Returns whether the scroll arrow is currently enabled.
+ *
+ * A disabled scroller draws a dimmed arrow and does not respond to cursor
+ * hover in CheckForScrolling().
+ *
+ * @return true if the scroller is enabled.
+ */
 bool
 BMenuScroller::IsEnabled() const
 {
@@ -97,6 +156,14 @@ BMenuScroller::IsEnabled() const
 }
 
 
+/**
+ * @brief Enables or disables the scroll arrow.
+ *
+ * Does not automatically invalidate the view; the caller is responsible for
+ * calling Invalidate() after changing the state.
+ *
+ * @param enabled true to enable scrolling, false to disable it.
+ */
 void
 BMenuScroller::SetEnabled(bool enabled)
 {
@@ -107,6 +174,12 @@ BMenuScroller::SetEnabled(bool enabled)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the upper scroll arrow view.
+ *
+ * @param frame The bounding rectangle for this view, typically at the top
+ *              of the BMenuWindow.
+ */
 UpperScroller::UpperScroller(BRect frame)
 	:
 	BMenuScroller(frame)
@@ -114,6 +187,15 @@ UpperScroller::UpperScroller(BRect frame)
 }
 
 
+/**
+ * @brief Draws the upward-pointing triangle scroll arrow.
+ *
+ * Fills the background with a slightly darkened menu color, then draws a
+ * filled upward triangle centered horizontally. The triangle is black when
+ * enabled and dimmed to B_DARKEN_2_TINT when disabled.
+ *
+ * @param updateRect The region that needs to be redrawn.
+ */
 void
 UpperScroller::Draw(BRect updateRect)
 {
@@ -139,6 +221,12 @@ UpperScroller::Draw(BRect updateRect)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the lower scroll arrow view.
+ *
+ * @param frame The bounding rectangle for this view, typically at the bottom
+ *              of the BMenuWindow.
+ */
 LowerScroller::LowerScroller(BRect frame)
 	:
 	BMenuScroller(frame)
@@ -146,6 +234,15 @@ LowerScroller::LowerScroller(BRect frame)
 }
 
 
+/**
+ * @brief Draws the downward-pointing triangle scroll arrow.
+ *
+ * Fills the background with a slightly darkened menu color, then draws a
+ * filled downward triangle centered horizontally. The triangle is black when
+ * enabled and dimmed to B_DARKEN_2_TINT when disabled.
+ *
+ * @param updateRect The region that needs to be redrawn.
+ */
 void
 LowerScroller::Draw(BRect updateRect)
 {
@@ -173,6 +270,12 @@ LowerScroller::Draw(BRect updateRect)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a BMenuFrame that will host @a menu.
+ *
+ * @param menu The BMenu to display; it will be added as a child when this
+ *             view is attached to a window.
+ */
 BMenuFrame::BMenuFrame(BMenu *menu)
 	:
 	BView(BRect(0, 0, 1, 1), "menu frame", B_FOLLOW_ALL_SIDES, B_WILL_DRAW),
@@ -181,6 +284,12 @@ BMenuFrame::BMenuFrame(BMenu *menu)
 }
 
 
+/**
+ * @brief Adds the hosted BMenu as a child and matches the frame to the window size.
+ *
+ * Also copies the menu's font onto this view so that font metrics used for the
+ * empty-menu label are consistent with the menu's own metrics.
+ */
 void
 BMenuFrame::AttachedToWindow()
 {
@@ -198,6 +307,9 @@ BMenuFrame::AttachedToWindow()
 }
 
 
+/**
+ * @brief Removes the hosted BMenu from this view's child list when detached.
+ */
 void
 BMenuFrame::DetachedFromWindow()
 {
@@ -206,6 +318,15 @@ BMenuFrame::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Draws the frame background and, for empty menus, a placeholder label.
+ *
+ * When the menu contains no items the frame draws the standard menu background
+ * and a centered, dimmed "empty" string so the user sees a visible (but
+ * non-interactive) pop-up rather than a zero-size window.
+ *
+ * @param updateRect The region that needs to be redrawn.
+ */
 void
 BMenuFrame::Draw(BRect updateRect)
 {
@@ -234,6 +355,13 @@ BMenuFrame::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Responds to layout changes by repositioning open sub-menus.
+ *
+ * Recursively walks open submenus and shifts their windows so they remain
+ * on-screen after the parent menu's layout changes (e.g., after the window
+ * is moved to a different monitor position).
+ */
 void
 BMenuFrame::LayoutChanged()
 {
@@ -248,6 +376,19 @@ BMenuFrame::LayoutChanged()
 }
 
 
+/**
+ * @brief Recursively repositions open submenus to stay within screen bounds.
+ *
+ * Starting from @a menu, finds any open submenu and computes a new position
+ * that keeps it adjacent to its parent item and within @a screenFrame. The
+ * submenu is placed to the right of the parent item when possible, or to the
+ * left if the right side is off-screen. Vertical clamping is applied to keep
+ * the submenu on-screen.
+ *
+ * @param menu        The menu whose open submenus should be repositioned.
+ * @param menuFrame   The current screen-coordinate frame of @a menu.
+ * @param screenFrame The frame of the screen to clamp to.
+ */
 void
 BMenuFrame::MoveSubmenusOver(BMenu* menu, BRect menuFrame, BRect screenFrame)
 {
@@ -323,6 +464,17 @@ BMenuFrame::MoveSubmenusOver(BMenu* menu, BRect menuFrame, BRect screenFrame)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a BMenuWindow with no menu attached.
+ *
+ * Creates a bordered window with menu-appropriate window feel and flags.
+ * Size limits are set to a practical minimum so that BMenu can resize the
+ * window to fit its content.
+ *
+ * @param name The internal window name used for identification.
+ *
+ * @see AttachMenu(), DetachMenu()
+ */
 BMenuWindow::BMenuWindow(const char *name)
 	// The window will be resized by BMenu, so just pass a dummy rect
 	:
@@ -339,12 +491,21 @@ BMenuWindow::BMenuWindow(const char *name)
 }
 
 
+/**
+ * @brief Destroys the BMenuWindow, detaching any hosted menu and scrollers.
+ */
 BMenuWindow::~BMenuWindow()
 {
 	DetachMenu();
 }
 
 
+/**
+ * @brief Dispatches a message by delegating to BWindow::DispatchMessage().
+ *
+ * @param message The message to dispatch.
+ * @param handler The target handler.
+ */
 void
 BMenuWindow::DispatchMessage(BMessage *message, BHandler *handler)
 {
@@ -352,6 +513,17 @@ BMenuWindow::DispatchMessage(BMessage *message, BHandler *handler)
 }
 
 
+/**
+ * @brief Attaches @a menu to this window, making it the hosted menu.
+ *
+ * Creates a BMenuFrame for @a menu, adds it as a child, and gives the menu
+ * keyboard focus. Calling this method when a menu is already attached triggers
+ * a debugger() call.
+ *
+ * @param menu The BMenu to attach; may be NULL (no-op).
+ *
+ * @see DetachMenu(), AttachScrollers()
+ */
 void
 BMenuWindow::AttachMenu(BMenu *menu)
 {
@@ -366,6 +538,14 @@ BMenuWindow::AttachMenu(BMenu *menu)
 }
 
 
+/**
+ * @brief Detaches the hosted menu from this window and frees the frame view.
+ *
+ * Calls DetachScrollers() first, then removes and deletes the BMenuFrame.
+ * Safe to call when no menu is attached.
+ *
+ * @see AttachMenu(), DetachScrollers()
+ */
 void
 BMenuWindow::DetachMenu()
 {
@@ -379,6 +559,16 @@ BMenuWindow::DetachMenu()
 }
 
 
+/**
+ * @brief Creates and attaches scroll arrow views when the menu overflows the window.
+ *
+ * Adds UpperScroller and LowerScroller views to the window and shrinks the
+ * BMenuFrame to make room. Enables the arrows depending on the current scroll
+ * position relative to the scroll limit. If scrollers already exist they are
+ * resized rather than recreated.
+ *
+ * @see DetachScrollers(), TryScrollBy(), TryScrollTo()
+ */
 void
 BMenuWindow::AttachScrollers()
 {
@@ -424,6 +614,15 @@ BMenuWindow::AttachScrollers()
 }
 
 
+/**
+ * @brief Removes and deletes the scroll arrow views and restores the frame size.
+ *
+ * Scrolls the menu back to the top (position 0, 0), then removes and frees
+ * both the upper and lower scroll views. The BMenuFrame is resized back to
+ * fill the full window bounds.
+ *
+ * @see AttachScrollers()
+ */
 void
 BMenuWindow::DetachScrollers()
 {
@@ -453,6 +652,13 @@ BMenuWindow::DetachScrollers()
 }
 
 
+/**
+ * @brief Sets the per-tick scroll step used by the scroll arrows.
+ *
+ * @param step The distance in pixels to scroll each time the arrow is active.
+ *
+ * @see GetSteps()
+ */
 void
 BMenuWindow::SetSmallStep(float step)
 {
@@ -460,6 +666,18 @@ BMenuWindow::SetSmallStep(float step)
 }
 
 
+/**
+ * @brief Returns the small and large scroll step sizes.
+ *
+ * The small step is the per-tick value set by SetSmallStep(). The large step
+ * is the visible frame height minus the small step, or twice the small step
+ * if no menu frame is attached.
+ *
+ * @param _smallStep Receives the small (per-tick) step; may be NULL.
+ * @param _largeStep Receives the large (page) step; may be NULL.
+ *
+ * @see SetSmallStep(), TryScrollBy()
+ */
 void
 BMenuWindow::GetSteps(float* _smallStep, float* _largeStep) const
 {
@@ -474,6 +692,12 @@ BMenuWindow::GetSteps(float* _smallStep, float* _largeStep) const
 }
 
 
+/**
+ * @brief Returns whether scroll arrow views are currently attached.
+ *
+ * @return true if both the upper and lower scrollers are present and the menu
+ *         frame is attached.
+ */
 bool
 BMenuWindow::HasScrollers() const
 {
@@ -482,6 +706,19 @@ BMenuWindow::HasScrollers() const
 }
 
 
+/**
+ * @brief Scrolls the menu if @a cursor is over an active scroll arrow.
+ *
+ * Checks whether the screen-coordinate point @a cursor falls within an enabled
+ * upper or lower scroller, and if so calls _ScrollBy() with ±smallStep. A
+ * brief snooze is inserted to throttle the scroll rate.
+ *
+ * @param cursor The current cursor position in screen coordinates.
+ * @return true if a scroll was performed; false if the cursor is not over an
+ *         active arrow or scrollers are not attached.
+ *
+ * @see TryScrollBy(), HasScrollers()
+ */
 bool
 BMenuWindow::CheckForScrolling(const BPoint &cursor)
 {
@@ -492,6 +729,18 @@ BMenuWindow::CheckForScrolling(const BPoint &cursor)
 }
 
 
+/**
+ * @brief Scrolls the menu by @a step pixels if scrollers are attached.
+ *
+ * A positive @a step scrolls downward; a negative value scrolls upward.
+ * The scroll is clamped to the valid range [0, fLimit].
+ *
+ * @param step The number of pixels to scroll; may be negative.
+ * @return true if scrollers are attached and the scroll was applied;
+ *         false otherwise.
+ *
+ * @see TryScrollTo(), CheckForScrolling()
+ */
 bool
 BMenuWindow::TryScrollBy(const float& step)
 {
@@ -503,6 +752,18 @@ BMenuWindow::TryScrollBy(const float& step)
 }
 
 
+/**
+ * @brief Scrolls the menu to an absolute vertical position.
+ *
+ * Computes the delta between @a where and the current scroll position and
+ * delegates to _ScrollBy().
+ *
+ * @param where The target vertical scroll position in pixels.
+ * @return true if scrollers are attached and the scroll was applied;
+ *         false otherwise.
+ *
+ * @see TryScrollBy()
+ */
 bool
 BMenuWindow::TryScrollTo(const float& where)
 {
@@ -514,6 +775,17 @@ BMenuWindow::TryScrollTo(const float& where)
 }
 
 
+/**
+ * @brief Checks whether @a where is over an active scroller and scrolls if so.
+ *
+ * Converts @a where from screen to window coordinates, then tests against the
+ * lower and upper scroller frames. If the cursor is inside an enabled scroller
+ * the menu is scrolled by ±smallStep and the function returns true after a
+ * brief snooze.
+ *
+ * @param where The cursor position in screen coordinates.
+ * @return true if scrolling occurred; false if no active scroller was hit.
+ */
 bool
 BMenuWindow::_Scroll(const BPoint& where)
 {
@@ -543,6 +815,16 @@ BMenuWindow::_Scroll(const BPoint& where)
 }
 
 
+/**
+ * @brief Scrolls the hosted menu by @a step pixels and updates arrow states.
+ *
+ * Clamps the scroll so that fValue stays within [0, fLimit]. Enables or
+ * disables each arrow view as the boundary is approached or reached, and
+ * invalidates the affected arrow view to trigger a redraw.
+ *
+ * @param step The pixel amount to scroll; positive scrolls downward, negative
+ *             scrolls upward.
+ */
 void
 BMenuWindow::_ScrollBy(const float& step)
 {
@@ -579,4 +861,3 @@ BMenuWindow::_ScrollBy(const float& step)
 		}
 	}
 }
-

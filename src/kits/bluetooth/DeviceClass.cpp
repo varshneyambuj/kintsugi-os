@@ -1,7 +1,37 @@
 /*
- * Copyright 2007-2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file DeviceClass.cpp
+ * @brief Implementation of DeviceClass, the Bluetooth device class descriptor
+ *
+ * DeviceClass encodes the Bluetooth Class of Device (CoD) bitfield that
+ * describes a device's major/minor device class and supported service classes
+ * (e.g., networking, audio, telephony). Helper methods translate the numeric
+ * code to human-readable service and device class strings.
+ *
+ * @see LocalDevice, RemoteDevice
+ */
+
 
 #include <bluetooth/DeviceClass.h>
 #include <bluetooth/debug.h>
@@ -16,6 +46,23 @@
 
 namespace Bluetooth {
 
+/**
+ * @brief Build a comma-separated string of active service class names.
+ *
+ * Inspects the service-class bits of the Class of Device field and appends
+ * each enabled service name to @a serviceClass. If no service class bits are
+ * set the string "Unspecified" is appended instead.
+ *
+ * Service class bits are mapped in order from the Bluetooth specification:
+ * Positioning, Networking, Rendering, Capturing, Object Transfer, Audio,
+ * Telephony, and Information.
+ *
+ * @param serviceClass BString reference that receives the result. The string
+ *                     is appended to — it is the caller's responsibility to
+ *                     initialise or clear it before calling this method.
+ * @see GetMajorDeviceClass()
+ * @see GetMinorDeviceClass()
+ */
 void
 DeviceClass::GetServiceClass(BString& serviceClass)
 {
@@ -42,7 +89,7 @@ DeviceClass::GetServiceClass(BString& serviceClass)
 				} else {
 					serviceClass << ", " << services[s];
 				}
-					
+
 			}
 		}
 
@@ -51,6 +98,20 @@ DeviceClass::GetServiceClass(BString& serviceClass)
 }
 
 
+/**
+ * @brief Append the major device class name to the supplied string.
+ *
+ * Maps the numeric major device class value extracted from the Class of Device
+ * field to its human-readable name (e.g., "Computer", "Phone", "Audio/Video")
+ * and appends it to @a majorClass.
+ *
+ * @param majorClass BString reference that receives the result. Content is
+ *                   appended, not replaced.
+ * @note If the major device class value is outside the range of known classes,
+ *       "Invalid device class!" is appended instead.
+ * @see GetServiceClass()
+ * @see GetMinorDeviceClass()
+ */
 void
 DeviceClass::GetMajorDeviceClass(BString& majorClass)
 {
@@ -74,13 +135,35 @@ DeviceClass::GetMajorDeviceClass(BString& majorClass)
 }
 
 
+/**
+ * @brief Append the minor device class name to the supplied string.
+ *
+ * Interprets the minor device class bits in the context of the major device
+ * class and appends a descriptive label to @a minorClass. The mapping covers
+ * all major class categories defined by the Bluetooth specification, including
+ * computer, phone, LAN access point, audio/video, peripheral, imaging,
+ * wearable, and toy sub-types.
+ *
+ * For the peripheral major class (5), the upper two bits select the input
+ * device type (keyboard, pointing device, or combo) and the lower four bits
+ * select the sub-type (joystick, gamepad, etc.), and both parts are appended
+ * joined by a "/".
+ *
+ * For the imaging major class (6), multiple bits may be set simultaneously,
+ * so multiple sub-type labels can be appended in sequence.
+ *
+ * @param minorClass BString reference that receives the result. Content is
+ *                   appended, not replaced.
+ * @see GetMajorDeviceClass()
+ * @see GetServiceClass()
+ */
 void
 DeviceClass::GetMinorDeviceClass(BString& minorClass)
 {
 	CALLED();
 	uint major = MajorDeviceClass();
 	uint minor = MinorDeviceClass();
-	
+
 	switch (major) {
 		case 0:	/* misc */
 			minorClass << " -";
@@ -89,10 +172,10 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 			switch(minor) {
 				case 0:
 					minorClass << B_TRANSLATE("Uncategorized");
-					break;	
+					break;
 				case 1:
 					minorClass << B_TRANSLATE("Desktop workstation");
-					break;	
+					break;
 				case 2:
 					minorClass << B_TRANSLATE("Server");
 					break;
@@ -103,7 +186,7 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 					minorClass << B_TRANSLATE("Handheld");
 					break;
 				case 5:
-					minorClass << B_TRANSLATE_COMMENT("Palm", 
+					minorClass << B_TRANSLATE_COMMENT("Palm",
 						"A palm-held device");
 					break;
 				case 6:
@@ -227,7 +310,7 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 			}
 			break;
 		case 5:	/* peripheral */
-		{		
+		{
 			switch(minor & 48) {
 				case 16:
 					minorClass << B_TRANSLATE("Keyboard");
@@ -242,10 +325,10 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 				case 48:
 					minorClass << B_TRANSLATE("Combo keyboard/pointing device");
 					if (minor & 15)
-						minorClass << "/";							
+						minorClass << "/";
 					break;
 			}
-			
+
 			switch(minor & 15) {
 				case 0:
 					break;
@@ -307,7 +390,7 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 			switch(minor) {
 				case 1:
 					minorClass << B_TRANSLATE("Robot");
-					break;	
+					break;
 				case 2:
 					minorClass << B_TRANSLATE("Vehicle");
 					break;
@@ -332,6 +415,19 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 }
 
 
+/**
+ * @brief Append a full human-readable description of the Class of Device to a string.
+ *
+ * Formats all three class components — service class, major device class, and
+ * minor device class — separated by " | " delimiters and terminated with a
+ * period, then appends the result to @a string.
+ *
+ * @param string BString reference that receives the formatted dump. Content is
+ *               appended, not replaced.
+ * @see GetServiceClass()
+ * @see GetMajorDeviceClass()
+ * @see GetMinorDeviceClass()
+ */
 void
 DeviceClass::DumpDeviceClass(BString& string)
 {
@@ -348,6 +444,25 @@ DeviceClass::DumpDeviceClass(BString& string)
 }
 
 
+/**
+ * @brief Draw a simple iconic representation of the device class into a BView.
+ *
+ * Renders a filled rounded rectangle using the Bluetooth blue brand colour
+ * and then overlays a white icon that represents the device's major class:
+ * a phone outline for phones (major class 2), a network diagram for LAN
+ * access points (major class 3), a speaker/triangle shape for audio/video
+ * devices (major class 4), or the Bluetooth logo for all other classes.
+ *
+ * The icon is placed relative to @a point using the IconInsets and
+ * PixelsForIcon constants defined in DeviceClass.h.
+ *
+ * @param view  The BView into which the icon will be drawn. The view's high
+ *              colour is modified and restored to black before the method
+ *              returns.
+ * @param point The top-left origin for the icon bounding box in the view's
+ *              coordinate system.
+ * @note The view must already be locked before calling this method.
+ */
 void
 DeviceClass::Draw(BView* view, const BPoint& point)
 {
@@ -358,7 +473,7 @@ DeviceClass::Draw(BView* view, const BPoint& point)
 
 
 	view->SetHighColor(kBlue);
-	view->FillRoundRect(BRect(point.x + IconInsets, point.y + IconInsets, 
+	view->FillRoundRect(BRect(point.x + IconInsets, point.y + IconInsets,
 		point.x + IconInsets + PixelsForIcon, point.y + IconInsets + PixelsForIcon), 5, 5);
 
 	view->SetHighColor(kWhite);
@@ -375,15 +490,15 @@ DeviceClass::Draw(BView* view, const BPoint& point)
 				 point.x + IconInsets + uint(PixelsForIcon*3/4) - 4,
 			 	 point.y + IconInsets + uint(PixelsForIcon*3/4)));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon/4) + 4,
-				 point.y + IconInsets + PixelsForIcon - 6), 
+				 point.y + IconInsets + PixelsForIcon - 6),
 				 BPoint(point.x + IconInsets + uint(PixelsForIcon*3/4) - 4,
 				 point.y + IconInsets + PixelsForIcon - 6));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon/4) + 4,
-				 point.y + IconInsets + PixelsForIcon - 4), 
+				 point.y + IconInsets + PixelsForIcon - 4),
 				 BPoint(point.x + IconInsets + uint(PixelsForIcon*3/4) - 4,
 				 point.y + IconInsets + PixelsForIcon - 4));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon/4) + 4,
-				 point.y + IconInsets + 2), 
+				 point.y + IconInsets + 2),
 				 BPoint(point.x + IconInsets + uint(PixelsForIcon/4) + 4,
 				 point.y + IconInsets + 6));
 			break;
@@ -393,7 +508,7 @@ DeviceClass::Draw(BView* view, const BPoint& point)
 				BPoint(point.x + IconInsets + uint(PixelsForIcon*3/4),
 				 point.y + IconInsets + uint(PixelsForIcon*3/8)));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon*5/8),
-				 point.y + IconInsets + uint(PixelsForIcon/8)));			
+				 point.y + IconInsets + uint(PixelsForIcon/8)));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon*3/4),
 				 point.y + IconInsets + uint(PixelsForIcon*5/8)),
 				BPoint(point.x + IconInsets + uint(PixelsForIcon/4),
@@ -414,7 +529,7 @@ DeviceClass::Draw(BView* view, const BPoint& point)
 				 point.y + IconInsets + uint(PixelsForIcon*7/8)));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon*3/8),
 				 point.y + IconInsets + uint(PixelsForIcon*5/8)));
-			break;			
+			break;
 		default: // Bluetooth Logo
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon/4),
 				 point.y + IconInsets + uint(PixelsForIcon*3/4)),
@@ -426,10 +541,10 @@ DeviceClass::Draw(BView* view, const BPoint& point)
 				 point.y + IconInsets + PixelsForIcon - 2));
 			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon*3/4),
 				 point.y + IconInsets + uint(PixelsForIcon*3/4)));
-			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon/4), 
+			view->StrokeLine(BPoint(point.x + IconInsets + uint(PixelsForIcon/4),
 				point.y + IconInsets + uint(PixelsForIcon/4)));
 			break;
-	}	
+	}
 	view->SetHighColor(kBlack);
 }
 

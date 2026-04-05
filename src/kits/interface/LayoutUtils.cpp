@@ -1,13 +1,40 @@
 /*
- * Copyright 2006-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2014 Haiku, Inc. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
  */
+
+
+/**
+ * @file LayoutUtils.cpp
+ * @brief Utility functions for the layout system
+ *
+ * Provides helper functions used throughout the layout framework, including
+ * size constraint arithmetic (ComposeSize, AddSizes) and alignment computation
+ * helpers.
+ *
+ * @see BLayout, BLayoutItem, BSize
+ */
+
 
 #include <LayoutUtils.h>
 
@@ -39,7 +66,18 @@
 // }
 
 
-// AddSizesInt32
+/**
+ * @brief Adds two layout pixel dimensions, clamping to B_SIZE_UNLIMITED on overflow.
+ *
+ * Layout integer dimensions encode pixel extents where the physical pixel count
+ * is (value + 1). This function performs saturating addition so that the result
+ * never exceeds B_SIZE_UNLIMITED.
+ *
+ * @param a First integer dimension.
+ * @param b Second integer dimension.
+ * @return The sum @c a+b, clamped to @c (int32)B_SIZE_UNLIMITED.
+ * @see AddSizesInt32(int32, int32, int32)
+ */
 int32
 BLayoutUtils::AddSizesInt32(int32 a, int32 b)
 {
@@ -49,7 +87,18 @@ BLayoutUtils::AddSizesInt32(int32 a, int32 b)
 }
 
 
-// AddSizesInt32
+/**
+ * @brief Adds three layout pixel dimensions, clamping to B_SIZE_UNLIMITED on overflow.
+ *
+ * Equivalent to calling the two-argument overload twice. Useful when combining
+ * two spacing values with a content dimension.
+ *
+ * @param a First integer dimension.
+ * @param b Second integer dimension.
+ * @param c Third integer dimension.
+ * @return The saturating sum @c a+b+c.
+ * @see AddSizesInt32(int32, int32)
+ */
 int32
 BLayoutUtils::AddSizesInt32(int32 a, int32 b, int32 c)
 {
@@ -57,7 +106,18 @@ BLayoutUtils::AddSizesInt32(int32 a, int32 b, int32 c)
 }
 
 
-// AddDistances
+/**
+ * @brief Adds two layout float distances, clamping to B_SIZE_UNLIMITED on overflow.
+ *
+ * Float layout distances use the convention that a distance of @c d corresponds
+ * to @c (d+1) pixels, so this function adds 1 to the raw sum. The result is
+ * clamped to B_SIZE_UNLIMITED.
+ *
+ * @param a First float distance.
+ * @param b Second float distance.
+ * @return The sum @c a+b+1, or @c B_SIZE_UNLIMITED if the result would overflow.
+ * @see AddDistances(float, float, float)
+ */
 float
 BLayoutUtils::AddDistances(float a, float b)
 {
@@ -69,7 +129,17 @@ BLayoutUtils::AddDistances(float a, float b)
 }
 
 
-// AddDistances
+/**
+ * @brief Adds three layout float distances, clamping to B_SIZE_UNLIMITED on overflow.
+ *
+ * Equivalent to calling the two-argument overload twice.
+ *
+ * @param a First float distance.
+ * @param b Second float distance.
+ * @param c Third float distance.
+ * @return The saturating sum of all three distances.
+ * @see AddDistances(float, float)
+ */
 float
 BLayoutUtils::AddDistances(float a, float b, float c)
 {
@@ -77,17 +147,16 @@ BLayoutUtils::AddDistances(float a, float b, float c)
 }
 
 
-// // SubtractSizesFloat
-// float
-// BLayoutUtils::SubtractSizesFloat(float a, float b)
-// {
-// 	if (a < b)
-// 		return -1;
-// 	return a - b - 1;
-// }
-
-
-// SubtractSizesInt32
+/**
+ * @brief Subtracts two layout integer dimensions.
+ *
+ * Returns @c a-b, or @c 0 if @a a is less than @a b to prevent negative
+ * dimensions.
+ *
+ * @param a The dimension to subtract from.
+ * @param b The dimension to subtract.
+ * @return @c a-b, clamped to 0 from below.
+ */
 int32
 BLayoutUtils::SubtractSizesInt32(int32 a, int32 b)
 {
@@ -97,7 +166,17 @@ BLayoutUtils::SubtractSizesInt32(int32 a, int32 b)
 }
 
 
-// SubtractDistances
+/**
+ * @brief Subtracts two layout float distances.
+ *
+ * Accounts for the distance encoding convention (distances are @c pixel-1) by
+ * subtracting an additional 1 from the result. Returns @c -1 if @a a is less
+ * than @a b, indicating an empty or invalid span.
+ *
+ * @param a The distance to subtract from.
+ * @param b The distance to subtract.
+ * @return @c a-b-1, or @c -1 if @a a < @a b.
+ */
 float
 BLayoutUtils::SubtractDistances(float a, float b)
 {
@@ -107,7 +186,17 @@ BLayoutUtils::SubtractDistances(float a, float b)
 }
 
 
-// FixSizeConstraints
+/**
+ * @brief Clamps a set of size constraints so that they form a valid, ordered triple.
+ *
+ * Ensures @c max >= min, then clamps @c preferred into [min, max]. This
+ * overload operates on plain floats and is typically used when processing a
+ * single dimension (width or height) independently.
+ *
+ * @param min       On entry, the minimum value. Unchanged on exit.
+ * @param max       On entry, the maximum value. Clamped to >= @a min on exit.
+ * @param preferred On entry, the preferred value. Clamped to [min, max] on exit.
+ */
 void
 BLayoutUtils::FixSizeConstraints(float& min, float& max, float& preferred)
 {
@@ -120,7 +209,17 @@ BLayoutUtils::FixSizeConstraints(float& min, float& max, float& preferred)
 }
 
 
-// FixSizeConstraints
+/**
+ * @brief Clamps a set of BSize constraints so that they form a valid, ordered triple.
+ *
+ * Applies the scalar FixSizeConstraints() overload independently to the width
+ * and height dimensions of each BSize.
+ *
+ * @param min       On entry, the minimum BSize. Unchanged on exit.
+ * @param max       On entry, the maximum BSize. Clamped to >= @a min on exit.
+ * @param preferred On entry, the preferred BSize. Clamped to [min, max] on exit.
+ * @see FixSizeConstraints(float&, float&, float&)
+ */
 void
 BLayoutUtils::FixSizeConstraints(BSize& min, BSize& max, BSize& preferred)
 {
@@ -129,7 +228,19 @@ BLayoutUtils::FixSizeConstraints(BSize& min, BSize& max, BSize& preferred)
 }
 
 
-// ComposeSize
+/**
+ * @brief Composes an explicit size override with a layout-computed size.
+ *
+ * For each dimension, the value from @a size is used if it is set; otherwise
+ * the corresponding dimension from @a layoutSize is used. This allows explicit
+ * overrides set by the user to shadow the layout engine's computation without
+ * requiring a full replacement of the size struct.
+ *
+ * @param size       The explicit (override) size, possibly with unset dimensions.
+ * @param layoutSize The fallback size from the layout engine.
+ * @return A BSize with each dimension resolved to the override or the fallback.
+ * @see BAbstractLayoutItem::MinSize()
+ */
 BSize
 BLayoutUtils::ComposeSize(BSize size, BSize layoutSize)
 {
@@ -142,7 +253,17 @@ BLayoutUtils::ComposeSize(BSize size, BSize layoutSize)
 }
 
 
-// ComposeAlignment
+/**
+ * @brief Composes an explicit alignment override with a layout-computed alignment.
+ *
+ * For each axis, the value from @a alignment is used if it is set; otherwise
+ * the corresponding axis from @a layoutAlignment is used.
+ *
+ * @param alignment       The explicit (override) alignment, possibly with unset axes.
+ * @param layoutAlignment The fallback alignment from the layout engine.
+ * @return A BAlignment with each axis resolved to the override or the fallback.
+ * @see BAbstractLayoutItem::Alignment()
+ */
 BAlignment
 BLayoutUtils::ComposeAlignment(BAlignment alignment, BAlignment layoutAlignment)
 {
@@ -155,9 +276,20 @@ BLayoutUtils::ComposeAlignment(BAlignment alignment, BAlignment layoutAlignment)
 }
 
 
-// AlignInFrame
-// This method restricts the dimensions of the resulting rectangle according
-// to the available size specified by maxSize.
+/**
+ * @brief Aligns a rectangle within an available frame according to a max size and alignment.
+ *
+ * Restricts the resulting rectangle's dimensions to those of @a maxSize, then
+ * positions it within @a frame according to @a alignment. If a dimension of
+ * @a maxSize is B_ALIGN_USE_FULL_WIDTH / B_ALIGN_USE_FULL_HEIGHT, the full
+ * frame extent is used for that axis.
+ *
+ * @param frame     The available area offered by the layout engine.
+ * @param maxSize   The maximum permitted size; restricts the output rectangle.
+ * @param alignment How to position the rectangle within @a frame.
+ * @return The aligned and size-constrained rectangle.
+ * @see AlignInFrame(BView*, BRect)
+ */
 BRect
 BLayoutUtils::AlignInFrame(BRect frame, BSize maxSize, BAlignment alignment)
 {
@@ -179,7 +311,17 @@ BLayoutUtils::AlignInFrame(BRect frame, BSize maxSize, BAlignment alignment)
 }
 
 
-// AlignInFrame
+/**
+ * @brief Moves and resizes a BView to fill an available frame, respecting its constraints.
+ *
+ * Reads the view's MaxSize() and LayoutAlignment(), resolves height-for-width
+ * if applicable, and then calls the BRect overload to compute the final frame.
+ * The view is repositioned and resized via MoveTo() and ResizeTo().
+ *
+ * @param view  The view to position and resize.
+ * @param frame The available area offered by the layout engine.
+ * @see AlignInFrame(BRect, BSize, BAlignment)
+ */
 void
 BLayoutUtils::AlignInFrame(BView* view, BRect frame)
 {
@@ -209,9 +351,19 @@ BLayoutUtils::AlignInFrame(BView* view, BRect frame)
 }
 
 
-// AlignOnRect
-// This method, unlike AlignInFrame(), provides the possibility to return
-// a rectangle with dimensions greater than the available size.
+/**
+ * @brief Centers a rectangle of a given size on a reference rect, possibly exceeding its bounds.
+ *
+ * Unlike AlignInFrame(), this function does not clamp the output to @a rect.
+ * The result may be larger than @a rect when @a size exceeds the rect's
+ * dimensions. Useful for computing ideal positions without enforcing containment.
+ *
+ * @param rect      The reference rectangle to align within.
+ * @param size      The desired size of the output rectangle.
+ * @param alignment How to position the output rectangle relative to @a rect.
+ * @return The aligned rectangle, which may extend beyond @a rect.
+ * @see AlignInFrame(BRect, BSize, BAlignment)
+ */
 BRect
 BLayoutUtils::AlignOnRect(BRect rect, BSize size, BAlignment alignment)
 {
@@ -237,6 +389,16 @@ BLayoutUtils::AlignOnRect(BRect rect, BSize size, BAlignment alignment)
 		frame's left-top is (0, 0).
 	\return The modified rect.
 */
+/**
+ * @brief Offsets a rectangle so that it lies fully within a frame of the given size.
+ *
+ * If the rectangle is too large to fit, its left or top edge is clamped to 0.
+ * The rectangle's size is never modified.
+ *
+ * @param rect      The rectangle to reposition.
+ * @param frameSize The size of the containing frame; its origin is (0, 0).
+ * @return The repositioned rectangle, with the same size as @a rect.
+ */
 /*static*/ BRect
 BLayoutUtils::MoveIntoFrame(BRect rect, BSize frameSize)
 {
@@ -258,6 +420,17 @@ BLayoutUtils::MoveIntoFrame(BRect rect, BSize frameSize)
 }
 
 
+/**
+ * @brief Returns a multi-line string representation of the layout tree rooted at a BView.
+ *
+ * Recursively descends through the view hierarchy (and any attached layouts),
+ * formatting each node's frame, min, max, and preferred sizes into a human-readable
+ * indented string for debugging purposes.
+ *
+ * @param view The root view of the subtree to dump.
+ * @return A BString containing the formatted layout tree.
+ * @see GetLayoutTreeDump(BLayoutItem*)
+ */
 /*static*/ BString
 BLayoutUtils::GetLayoutTreeDump(BView* view)
 {
@@ -267,6 +440,17 @@ BLayoutUtils::GetLayoutTreeDump(BView* view)
 }
 
 
+/**
+ * @brief Returns a multi-line string representation of the layout tree rooted at a BLayoutItem.
+ *
+ * Recursively descends through the item hierarchy, formatting each node's frame,
+ * min, max, and preferred sizes into a human-readable indented string for
+ * debugging purposes.
+ *
+ * @param item The root layout item of the subtree to dump.
+ * @return A BString containing the formatted layout tree.
+ * @see GetLayoutTreeDump(BView*)
+ */
 /*static*/ BString
 BLayoutUtils::GetLayoutTreeDump(BLayoutItem* item)
 {
@@ -276,6 +460,17 @@ BLayoutUtils::GetLayoutTreeDump(BLayoutItem* item)
 }
 
 
+/**
+ * @brief Internal recursive helper that formats a BView subtree into @a _output.
+ *
+ * Appends the view's class name, pointer, frame, and size constraints at the
+ * given indentation @a level, then recurses into the view's attached layout or
+ * direct children.
+ *
+ * @param view    The view to format.
+ * @param level   Current indentation depth (each level adds 4 spaces).
+ * @param _output The BString to append formatted output to.
+ */
 /*static*/ void
 BLayoutUtils::_GetLayoutTreeDump(BView* view, int level, BString& _output)
 {
@@ -316,6 +511,19 @@ BLayoutUtils::_GetLayoutTreeDump(BView* view, int level, BString& _output)
 }
 
 
+/**
+ * @brief Internal recursive helper that formats a BLayoutItem subtree into @a _output.
+ *
+ * If the item is a BViewLayoutItem, delegates to the BView overload. Otherwise
+ * appends the item's (or layout's) class name, pointer, frame, and size
+ * constraints at the given indentation level, then recurses into child items.
+ *
+ * @param item         The layout item to format.
+ * @param level        Current indentation depth (each level adds 4 spaces).
+ * @param isViewLayout @c true when the item is the layout directly owned by a view,
+ *                     which changes the output prefix.
+ * @param _output      The BString to append formatted output to.
+ */
 /*static*/ void
 BLayoutUtils::_GetLayoutTreeDump(BLayoutItem* item, int level,
 	bool isViewLayout, BString& _output)

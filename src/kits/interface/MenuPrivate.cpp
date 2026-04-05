@@ -1,10 +1,39 @@
 /*
- * Copyright 2001-2009, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini, stefano.ceccherini@gmail.com
  */
+
+
+/**
+ * @file MenuPrivate.cpp
+ * @brief Private implementation helpers for BMenu
+ *
+ * Contains shared bitmap data and BPrivate::MenuPrivate, which exposes
+ * internal BMenu operations needed by BMenuBar, BMenuWindow, and related
+ * classes.
+ *
+ * @see BMenu, BMenuBar
+ */
+
 
 #include <MenuPrivate.h>
 
@@ -12,6 +41,11 @@
 #include <Menu.h>
 
 
+/**
+ * @brief Raw B_CMAP8 pixel data for the Shift modifier key icon (24 × 11 pixels).
+ *
+ * Imported into sMenuItemShift during CreateBitmaps().
+ */
 const unsigned char kShiftBits[] = {
 	0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x14,
 	0x1d,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x17,0x14,
@@ -27,6 +61,11 @@ const unsigned char kShiftBits[] = {
 };
 
 
+/**
+ * @brief Raw B_CMAP8 pixel data for the Control modifier key icon (22 × 11 pixels).
+ *
+ * Imported into sMenuItemControl during CreateBitmaps().
+ */
 const unsigned char kCtrlBits[] = {
 	0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x14,
 	0x1d,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x17,0x14,
@@ -42,6 +81,11 @@ const unsigned char kCtrlBits[] = {
 };
 
 
+/**
+ * @brief Raw B_CMAP8 pixel data for the Option modifier key icon (17 × 11 pixels).
+ *
+ * Imported into sMenuItemOption during CreateBitmaps().
+ */
 const unsigned char kOptBits[] = {
 	0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x14,
 	0x1d,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x17,0x14,
@@ -57,6 +101,11 @@ const unsigned char kOptBits[] = {
 };
 
 
+/**
+ * @brief Raw B_CMAP8 pixel data for the Alt modifier key icon (17 × 11 pixels).
+ *
+ * Imported into sMenuItemAlt during CreateBitmaps().
+ */
 const unsigned char kAltBits[] = {
 	0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x14,
 	0x1d,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x17,0x14,
@@ -72,6 +121,11 @@ const unsigned char kAltBits[] = {
 };
 
 
+/**
+ * @brief Raw B_CMAP8 pixel data for the Menu modifier key icon (23 × 11 pixels).
+ *
+ * Imported into sMenuItemMenu during CreateBitmaps().
+ */
 const unsigned char kMenuBits[] = {
 	0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x1d,0x14,
 	0x1d,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x1a,0x17,0x14,
@@ -90,13 +144,28 @@ const unsigned char kMenuBits[] = {
 namespace BPrivate {
 
 
+/** @brief Cached bitmap for the Shift modifier glyph used in menu shortcut display. */
 BBitmap* MenuPrivate::sMenuItemShift;
+
+/** @brief Cached bitmap for the Control modifier glyph used in menu shortcut display. */
 BBitmap* MenuPrivate::sMenuItemControl;
+
+/** @brief Cached bitmap for the Option modifier glyph used in menu shortcut display. */
 BBitmap* MenuPrivate::sMenuItemOption;
+
+/** @brief Cached bitmap for the Alt modifier glyph used in menu shortcut display. */
 BBitmap* MenuPrivate::sMenuItemAlt;
+
+/** @brief Cached bitmap for the Menu modifier glyph used in menu shortcut display. */
 BBitmap* MenuPrivate::sMenuItemMenu;
 
 
+/**
+ * @brief Constructs a MenuPrivate proxy for the given BMenu.
+ *
+ * @param menu The BMenu whose private internals will be accessed through this
+ *             proxy. Must not be NULL.
+ */
 MenuPrivate::MenuPrivate(BMenu* menu)
 	:
 	fMenu(menu)
@@ -104,6 +173,13 @@ MenuPrivate::MenuPrivate(BMenu* menu)
 }
 
 
+/**
+ * @brief Returns the layout mode of the proxied BMenu.
+ *
+ * @return The current menu_layout value (e.g. B_ITEMS_IN_COLUMN).
+ *
+ * @see SetLayout()
+ */
 menu_layout
 MenuPrivate::Layout() const
 {
@@ -111,6 +187,15 @@ MenuPrivate::Layout() const
 }
 
 
+/**
+ * @brief Sets the layout mode of the proxied BMenu directly.
+ *
+ * Bypasses the public API and writes to fMenu->fLayout.
+ *
+ * @param layout The new menu_layout to assign.
+ *
+ * @see Layout()
+ */
 void
 MenuPrivate::SetLayout(menu_layout layout)
 {
@@ -118,6 +203,14 @@ MenuPrivate::SetLayout(menu_layout layout)
 }
 
 
+/**
+ * @brief Notifies the proxied BMenu that @a item has been marked.
+ *
+ * Delegates to BMenu::_ItemMarked(), which updates the radio-group state for
+ * the containing menu.
+ *
+ * @param item The BMenuItem that was just marked.
+ */
 void
 MenuPrivate::ItemMarked(BMenuItem* item)
 {
@@ -125,6 +218,12 @@ MenuPrivate::ItemMarked(BMenuItem* item)
 }
 
 
+/**
+ * @brief Forces the proxied BMenu to refresh its cached font metrics.
+ *
+ * Delegates to BMenu::_CacheFontInfo() so that internal measurements such as
+ * fFontHeight and fAscent are recalculated after a font change.
+ */
 void
 MenuPrivate::CacheFontInfo()
 {
@@ -132,6 +231,13 @@ MenuPrivate::CacheFontInfo()
 }
 
 
+/**
+ * @brief Returns the cached total font height of the proxied BMenu.
+ *
+ * @return The total font height in pixels (ascent + descent + leading).
+ *
+ * @see CacheFontInfo(), Ascent()
+ */
 float
 MenuPrivate::FontHeight() const
 {
@@ -139,6 +245,13 @@ MenuPrivate::FontHeight() const
 }
 
 
+/**
+ * @brief Returns the cached font ascent of the proxied BMenu.
+ *
+ * @return The font ascent in pixels.
+ *
+ * @see CacheFontInfo(), FontHeight()
+ */
 float
 MenuPrivate::Ascent() const
 {
@@ -146,6 +259,14 @@ MenuPrivate::Ascent() const
 }
 
 
+/**
+ * @brief Returns the internal item padding rectangle of the proxied BMenu.
+ *
+ * The padding BRect encodes the left, top, right, and bottom insets applied
+ * around each menu item's content.
+ *
+ * @return A BRect whose sides encode the per-item padding values.
+ */
 BRect
 MenuPrivate::Padding() const
 {
@@ -153,6 +274,16 @@ MenuPrivate::Padding() const
 }
 
 
+/**
+ * @brief Retrieves the item margin insets from the proxied BMenu.
+ *
+ * Delegates to BMenu::GetItemMargins(). Any of the output pointers may be NULL.
+ *
+ * @param left   Receives the left margin; may be NULL.
+ * @param top    Receives the top margin; may be NULL.
+ * @param right  Receives the right margin; may be NULL.
+ * @param bottom Receives the bottom margin; may be NULL.
+ */
 void
 MenuPrivate::GetItemMargins(float* left, float* top, float* right,
 	float* bottom) const
@@ -161,6 +292,17 @@ MenuPrivate::GetItemMargins(float* left, float* top, float* right,
 }
 
 
+/**
+ * @brief Sets the item margin insets on the proxied BMenu.
+ *
+ * Delegates to BMenu::SetItemMargins(), which also triggers a layout
+ * invalidation.
+ *
+ * @param left   The left margin in pixels.
+ * @param top    The top margin in pixels.
+ * @param right  The right margin in pixels.
+ * @param bottom The bottom margin in pixels.
+ */
 void
 MenuPrivate::SetItemMargins(float left, float top, float right, float bottom)
 {
@@ -168,6 +310,15 @@ MenuPrivate::SetItemMargins(float left, float top, float right, float bottom)
 }
 
 
+/**
+ * @brief Returns the current tracking state of the proxied BMenu.
+ *
+ * Delegates to BMenu::_State(), optionally returning the currently selected
+ * item via @a item.
+ *
+ * @param item If non-NULL, receives a pointer to the currently tracked item.
+ * @return An integer representing the menu's tracking state.
+ */
 int
 MenuPrivate::State(BMenuItem** item) const
 {
@@ -175,6 +326,16 @@ MenuPrivate::State(BMenuItem** item) const
 }
 
 
+/**
+ * @brief Installs the proxied BMenu into the given window's handler chain.
+ *
+ * Delegates to BMenu::_Install() so that the menu receives messages from the
+ * window.
+ *
+ * @param window The window to install the menu into.
+ *
+ * @see Uninstall()
+ */
 void
 MenuPrivate::Install(BWindow* window)
 {
@@ -182,6 +343,13 @@ MenuPrivate::Install(BWindow* window)
 }
 
 
+/**
+ * @brief Removes the proxied BMenu from its installed window's handler chain.
+ *
+ * Delegates to BMenu::_Uninstall().
+ *
+ * @see Install()
+ */
 void
 MenuPrivate::Uninstall()
 {
@@ -189,6 +357,15 @@ MenuPrivate::Uninstall()
 }
 
 
+/**
+ * @brief Sets the super-menu of the proxied BMenu.
+ *
+ * Writes directly to BMenu::fSuper without going through a public accessor.
+ *
+ * @param menu The parent BMenu, or NULL to clear the super-menu link.
+ *
+ * @see SetSuperItem()
+ */
 void
 MenuPrivate::SetSuper(BMenu* menu)
 {
@@ -196,6 +373,15 @@ MenuPrivate::SetSuper(BMenu* menu)
 }
 
 
+/**
+ * @brief Sets the super-item (the BMenuItem that owns this submenu).
+ *
+ * Writes directly to BMenu::fSuperitem.
+ *
+ * @param item The owning BMenuItem, or NULL to clear the link.
+ *
+ * @see SetSuper()
+ */
 void
 MenuPrivate::SetSuperItem(BMenuItem* item)
 {
@@ -203,6 +389,15 @@ MenuPrivate::SetSuperItem(BMenuItem* item)
 }
 
 
+/**
+ * @brief Invokes @a item through the proxied BMenu's private invoke path.
+ *
+ * Delegates to BMenu::_InvokeItem(). When @a now is true the invocation is
+ * performed immediately rather than being deferred.
+ *
+ * @param item The BMenuItem to invoke.
+ * @param now  true to invoke immediately; false to defer.
+ */
 void
 MenuPrivate::InvokeItem(BMenuItem* item, bool now)
 {
@@ -210,6 +405,16 @@ MenuPrivate::InvokeItem(BMenuItem* item, bool now)
 }
 
 
+/**
+ * @brief Requests the proxied BMenu to stop tracking.
+ *
+ * Delegates to BMenu::_QuitTracking(). When @a thisMenuOnly is true, only
+ * the proxied menu exits tracking mode; when false, the entire menu hierarchy
+ * is dismissed.
+ *
+ * @param thisMenuOnly true to quit only this menu's tracking; false to quit
+ *                     the full menu hierarchy.
+ */
 void
 MenuPrivate::QuitTracking(bool thisMenuOnly)
 {
@@ -217,6 +422,18 @@ MenuPrivate::QuitTracking(bool thisMenuOnly)
 }
 
 
+/**
+ * @brief Allocates and initializes the shared modifier-key icon bitmaps.
+ *
+ * Creates BBitmap objects for each modifier key (Shift, Control, Option, Alt,
+ * Menu) from the corresponding raw pixel arrays. Must be called once at
+ * application startup before any menu is displayed. Call DeleteBitmaps() to
+ * release the memory.
+ *
+ * @return B_OK on success, or B_NO_MEMORY if any bitmap allocation fails.
+ *
+ * @see DeleteBitmaps(), MenuItemShift(), MenuItemControl()
+ */
 /* static */
 status_t
 MenuPrivate::CreateBitmaps()
@@ -249,6 +466,11 @@ MenuPrivate::CreateBitmaps()
 }
 
 
+/**
+ * @brief Frees all shared modifier-key icon bitmaps created by CreateBitmaps().
+ *
+ * @see CreateBitmaps()
+ */
 /* static */
 void
 MenuPrivate::DeleteBitmaps()
@@ -261,6 +483,14 @@ MenuPrivate::DeleteBitmaps()
 }
 
 
+/**
+ * @brief Returns the Shift modifier key icon bitmap.
+ *
+ * @return A pointer to the shared sMenuItemShift bitmap; valid between
+ *         CreateBitmaps() and DeleteBitmaps() calls.
+ *
+ * @see CreateBitmaps()
+ */
 /* static */
 const BBitmap*
 MenuPrivate::MenuItemShift()
@@ -269,6 +499,18 @@ MenuPrivate::MenuItemShift()
 }
 
 
+/**
+ * @brief Returns the icon bitmap for the system control modifier key.
+ *
+ * The actual bitmap returned depends on the keyboard layout stored in
+ * BMenu::sControlKey: some layouts map the physical control-key position to
+ * the Alt or Option glyph, so the correct visual is selected accordingly.
+ *
+ * @return A pointer to one of sMenuItemControl, sMenuItemAlt, or
+ *         sMenuItemOption depending on the active keyboard layout.
+ *
+ * @see CreateBitmaps(), MenuItemOption(), MenuItemCommand()
+ */
 /* static */
 const BBitmap*
 MenuPrivate::MenuItemControl()
@@ -287,6 +529,17 @@ MenuPrivate::MenuItemControl()
 }
 
 
+/**
+ * @brief Returns the icon bitmap for the system option modifier key.
+ *
+ * Selects the appropriate glyph bitmap based on the keyboard layout stored in
+ * BMenu::sOptionKey; some layouts physically swap the Option and Control keys.
+ *
+ * @return A pointer to one of sMenuItemControl, sMenuItemOption, or
+ *         sMenuItemAlt depending on the active keyboard layout.
+ *
+ * @see CreateBitmaps(), MenuItemControl(), MenuItemCommand()
+ */
 /* static */
 const BBitmap*
 MenuPrivate::MenuItemOption()
@@ -305,6 +558,17 @@ MenuPrivate::MenuItemOption()
 }
 
 
+/**
+ * @brief Returns the icon bitmap for the system command (Alt) modifier key.
+ *
+ * Selects the appropriate glyph bitmap based on the keyboard layout stored in
+ * BMenu::sCommandKey; some layouts physically swap the Command and Control keys.
+ *
+ * @return A pointer to one of sMenuItemControl, sMenuItemOption, or
+ *         sMenuItemAlt depending on the active keyboard layout.
+ *
+ * @see CreateBitmaps(), MenuItemControl(), MenuItemOption()
+ */
 /* static */
 const BBitmap*
 MenuPrivate::MenuItemCommand()
@@ -323,6 +587,14 @@ MenuPrivate::MenuItemCommand()
 }
 
 
+/**
+ * @brief Returns the Menu modifier key icon bitmap.
+ *
+ * @return A pointer to the shared sMenuItemMenu bitmap; valid between
+ *         CreateBitmaps() and DeleteBitmaps() calls.
+ *
+ * @see CreateBitmaps()
+ */
 /* static */
 const BBitmap*
 MenuPrivate::MenuItemMenu()

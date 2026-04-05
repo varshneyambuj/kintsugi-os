@@ -1,11 +1,38 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Marc Flerackers, mflerackers@androme.be
- *		John Scipione, jcipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Marc Flerackers, mflerackers@androme.be
+ *       John Scipione, jcipione@gmail.com
+ */
+
+
+/**
+ * @file BMCPrivate.cpp
+ * @brief Private implementation classes for BMenuField's embedded menu control
+ *
+ * Contains BMCMenuBar and BMCPopUpMenu, internal helper classes used by
+ * BMenuField to display a compact pop-up menu button within a control layout.
+ *
+ * @see BMenuField, BMenuBar, BPopUpMenu
  */
 
 
@@ -22,6 +49,7 @@
 #include <Window.h>
 
 
+/** @brief Pixel width reserved for the pop-up indicator triangle at the right edge. */
 static const float kPopUpIndicatorWidth = 13.0f;
 
 
@@ -60,6 +88,15 @@ _BMCItem_::Instantiate(BMessage *data) {
 //	#pragma mark - _BMCFilter_
 
 
+/**
+ * @brief Construct a message filter for a BMenuField.
+ *
+ * Intercepts messages of the given \a what code delivered to child views of
+ * the BMenuField and redirects them to the parent BMenuField handler.
+ *
+ * @param menuField  The BMenuField that owns this filter.
+ * @param what       The message constant this filter should intercept.
+ */
 _BMCFilter_::_BMCFilter_(BMenuField* menuField, uint32 what)
 	:
 	BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE, what),
@@ -68,11 +105,25 @@ _BMCFilter_::_BMCFilter_(BMenuField* menuField, uint32 what)
 }
 
 
+/**
+ * @brief Destroy the _BMCFilter_.
+ */
 _BMCFilter_::~_BMCFilter_()
 {
 }
 
 
+/**
+ * @brief Intercept B_MOUSE_DOWN messages and re-route them to the parent BMenuField.
+ *
+ * Translates the hit point from the child view's coordinate system to the
+ * parent's, then redirects the handler to the BMenuField so that clicks on
+ * child views (such as the embedded menu bar) are handled centrally.
+ *
+ * @param message  The incoming BMessage to examine.
+ * @param handler  In/out pointer to the message handler; may be replaced.
+ * @return B_DISPATCH_MESSAGE always, so the redirected message is still sent.
+ */
 filter_result
 _BMCFilter_::Filter(BMessage* message, BHandler** handler)
 {
@@ -93,6 +144,17 @@ _BMCFilter_::Filter(BMessage* message, BHandler** handler)
 //	#pragma mark - _BMCMenuBar_
 
 
+/**
+ * @brief Construct a frame-based _BMCMenuBar_ for a BMenuField.
+ *
+ * Used when the BMenuField is created with an explicit BRect. The \a fixedSize
+ * flag determines whether the bar resizes with its content or is pinned to the
+ * field's width.
+ *
+ * @param frame      Initial frame rectangle in the parent's coordinate system.
+ * @param fixedSize  If true, the bar width is fixed to the menu field's width.
+ * @param menuField  The owning BMenuField.
+ */
 _BMCMenuBar_::_BMCMenuBar_(BRect frame, bool fixedSize, BMenuField* menuField)
 	:
 	BMenuBar(frame, "_mc_mb_", B_FOLLOW_LEFT | B_FOLLOW_TOP, B_ITEMS_IN_ROW,
@@ -106,6 +168,14 @@ _BMCMenuBar_::_BMCMenuBar_(BRect frame, bool fixedSize, BMenuField* menuField)
 }
 
 
+/**
+ * @brief Construct a layout-based _BMCMenuBar_ for a BMenuField.
+ *
+ * Used when the BMenuField participates in a layout manager. The bar is
+ * always fixed-size in this mode and relies on the layout for sizing.
+ *
+ * @param menuField  The owning BMenuField.
+ */
 _BMCMenuBar_::_BMCMenuBar_(BMenuField* menuField)
 	:
 	BMenuBar("_mc_mb_", B_ITEMS_IN_ROW),
@@ -118,6 +188,14 @@ _BMCMenuBar_::_BMCMenuBar_(BMenuField* menuField)
 }
 
 
+/**
+ * @brief Unarchive constructor: restore a _BMCMenuBar_ from a BMessage.
+ *
+ * Reads the resize-to-fit flag from the archive to reconstruct fFixedSize.
+ *
+ * @param data  The archive message produced by Archive().
+ * @see Instantiate()
+ */
 _BMCMenuBar_::_BMCMenuBar_(BMessage* data)
 	:
 	BMenuBar(data),
@@ -134,6 +212,9 @@ _BMCMenuBar_::_BMCMenuBar_(BMessage* data)
 }
 
 
+/**
+ * @brief Destroy the _BMCMenuBar_.
+ */
 _BMCMenuBar_::~_BMCMenuBar_()
 {
 }
@@ -142,6 +223,13 @@ _BMCMenuBar_::~_BMCMenuBar_()
 //	#pragma mark - _BMCMenuBar_ public methods
 
 
+/**
+ * @brief Create a new _BMCMenuBar_ from an archived BMessage.
+ *
+ * @param data  The archive message to instantiate from.
+ * @return A new _BMCMenuBar_ if \a data is valid, or NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable*
 _BMCMenuBar_::Instantiate(BMessage* data)
 {
@@ -152,6 +240,14 @@ _BMCMenuBar_::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Finish attaching the menu bar to its window.
+ *
+ * Resolves the owning BMenuField from the parent view, restores the window's
+ * key menu bar (to prevent this embedded bar from hijacking it), configures
+ * the resizing mode for non-layout use, and records the initial width for
+ * FrameResized() delta calculations.
+ */
 void
 _BMCMenuBar_::AttachedToWindow()
 {
@@ -171,6 +267,15 @@ _BMCMenuBar_::AttachedToWindow()
 }
 
 
+/**
+ * @brief Draw the menu bar background, pop-up indicator, and menu items.
+ *
+ * In non-layout (legacy) mode the bar is first resized to match the menu
+ * field's allocated width. The control-look background is then painted with
+ * the current enabled/focused/hovered flags, followed by the menu items.
+ *
+ * @param updateRect  The rectangle that needs repainting.
+ */
 void
 _BMCMenuBar_::Draw(BRect updateRect)
 {
@@ -208,6 +313,16 @@ _BMCMenuBar_::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Track mouse movement to update the hover state and trigger a repaint.
+ *
+ * Sets fIsInside based on whether the pointer is within the view bounds, and
+ * calls Invalidate() when the state changes so the hover highlight is updated.
+ *
+ * @param where        Current mouse position in view coordinates.
+ * @param code         Transit code (B_ENTERED_VIEW, B_EXITED_VIEW, etc.).
+ * @param dragMessage  Drag-and-drop message, or NULL if none.
+ */
 void
 _BMCMenuBar_::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 {
@@ -219,6 +334,16 @@ _BMCMenuBar_::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Handle a resize of the menu bar and keep the parent BMenuField in sync.
+ *
+ * Computes the width delta since the last resize and invalidates the
+ * appropriate portion of the parent BMenuField so that its border decorations
+ * are repainted cleanly.
+ *
+ * @param width   New width of the menu bar.
+ * @param height  New height of the menu bar.
+ */
 void
 _BMCMenuBar_::FrameResized(float width, float height)
 {
@@ -246,6 +371,14 @@ _BMCMenuBar_::FrameResized(float width, float height)
 }
 
 
+/**
+ * @brief Transfer keyboard focus to or from this menu bar.
+ *
+ * Guards against redundant focus changes by checking the current focus state
+ * before forwarding to BMenuBar::MakeFocus().
+ *
+ * @param focused  true to acquire focus, false to release it.
+ */
 void
 _BMCMenuBar_::MakeFocus(bool focused)
 {
@@ -256,6 +389,15 @@ _BMCMenuBar_::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Handle internal and inherited messages for the menu bar.
+ *
+ * The 'TICK' message is sent by a BMessageRunner when the pop-up menu has
+ * been open too long; it synthesizes a B_ESCAPE key event to close it.
+ * All other messages are forwarded to BMenuBar::MessageReceived().
+ *
+ * @param message  The BMessage to process.
+ */
 void
 _BMCMenuBar_::MessageReceived(BMessage* message)
 {
@@ -284,6 +426,15 @@ _BMCMenuBar_::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Set the maximum pixel width for item content, accounting for item margins.
+ *
+ * Subtracts the left and right item margins from \a width before forwarding to
+ * BMenuBar::SetMaxContentWidth() so that the pop-up indicator is not
+ * overdrawn by the item label.
+ *
+ * @param width  The desired maximum content width in pixels.
+ */
 void
 _BMCMenuBar_::SetMaxContentWidth(float width)
 {
@@ -295,6 +446,14 @@ _BMCMenuBar_::SetMaxContentWidth(float width)
 }
 
 
+/**
+ * @brief Enable or disable the menu bar and its owning BMenuField together.
+ *
+ * Forwards the enabled state to the parent BMenuField before calling the
+ * base-class implementation so that both are kept in sync.
+ *
+ * @param enabled  true to enable, false to disable.
+ */
 void
 _BMCMenuBar_::SetEnabled(bool enabled)
 {
@@ -304,6 +463,14 @@ _BMCMenuBar_::SetEnabled(bool enabled)
 }
 
 
+/**
+ * @brief Return the minimum size needed to display the menu bar.
+ *
+ * Adds the pop-up indicator width to the BMenuBar preferred size and composes
+ * the result with any explicit minimum size set on the view.
+ *
+ * @return The minimum BSize for this view.
+ */
 BSize
 _BMCMenuBar_::MinSize()
 {
@@ -318,6 +485,14 @@ _BMCMenuBar_::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum size of the menu bar.
+ *
+ * Limits the maximum width to the preferred width (unlike the unlimited default
+ * BMenuBar behaviour) so the BMenuField can constrain its embedded bar.
+ *
+ * @return The maximum BSize for this view.
+ */
 BSize
 _BMCMenuBar_::MaxSize()
 {
@@ -333,6 +508,14 @@ _BMCMenuBar_::MaxSize()
 //	#pragma mark - _BMCMenuBar_ private methods
 
 
+/**
+ * @brief Shared initialisation called by all constructors.
+ *
+ * Sets the B_FRAME_EVENTS and B_FULL_UPDATE_ON_RESIZE flags, applies a
+ * B_BORDER_CONTENTS border style, and adjusts the item margins so that the
+ * label is vertically centred and the pop-up indicator fits within the right
+ * margin.
+ */
 void
 _BMCMenuBar_::_Init()
 {

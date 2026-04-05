@@ -1,15 +1,40 @@
 /*
- * Copyright 2001-2012, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Rene Gollent (rene@gollent.com)
- *		Alexandre Deckner (alex@zappotek.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2012, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Rene Gollent (rene@gollent.com)
+ *       Alexandre Deckner (alex@zappotek.com)
  */
 
 
-//!	BDragger represents a replicant "handle".
+/**
+ * @file Dragger.cpp
+ * @brief Implementation of BDragger, the replicant drag handle view
+ *
+ * BDragger is a small view (usually shown in a corner of its parent) that allows
+ * the user to drag the parent view and drop it onto a BShelf to create a replicant.
+ * It manages the drag initiation and drop protocol.
+ *
+ * @see BShelf, BView
+ */
 
 
 #include <pthread.h>
@@ -47,8 +72,10 @@ using BPrivate::gSystemCatalog;
 	gSystemCatalog.GetString(B_TRANSLATE_MARK(str), "Dragger")
 
 
+/** @brief Internal message code sent by DragTrackingFilter when a drag gesture begins. */
 static const uint32 kMsgDragStarted = 'Drgs';
 
+/** @brief Raw 8×8 pixel bitmap data (B_CMAP8) for the drag-handle icon. */
 static const unsigned char kHandBitmap[] = {
 	255, 255,   0,   0,   0, 255, 255, 255,
 	255, 255,   0, 131, 131,   0, 255, 255,
@@ -63,9 +90,21 @@ static const unsigned char kHandBitmap[] = {
 
 namespace {
 
+/**
+ * @brief Process-wide singleton that tracks all BDragger instances and their
+ *        shared visibility state.
+ *
+ * DraggerManager maintains a locked list of every BDragger that is currently
+ * attached to a window so that ShowAllDraggers() / HideAllDraggers() can
+ * broadcast a visibility change to all of them at once.  The singleton is
+ * initialised lazily via pthread_once.
+ */
 struct DraggerManager {
+	/** @brief Whether draggers are currently set to be drawn. */
 	bool	visible;
+	/** @brief Whether @a visible has been initialised from the app server. */
 	bool	visibleInitialized;
+	/** @brief List of all currently attached BDragger instances (unowned). */
 	BList	list;
 
 	DraggerManager()
@@ -76,16 +115,26 @@ struct DraggerManager {
 	{
 	}
 
+	/** @brief Acquires the internal BLocker; returns @c true on success. */
 	bool Lock()
 	{
 		return fLock.Lock();
 	}
 
+	/** @brief Releases the internal BLocker. */
 	void Unlock()
 	{
 		fLock.Unlock();
 	}
 
+	/**
+	 * @brief Returns the process-wide DraggerManager singleton.
+	 *
+	 * Initialises the singleton on first call using pthread_once so that
+	 * the operation is thread-safe without requiring a pre-existing lock.
+	 *
+	 * @return Pointer to the singleton DraggerManager instance.
+	 */
 	static DraggerManager* Default()
 	{
 		if (sDefaultInstance == NULL)
@@ -95,6 +144,7 @@ struct DraggerManager {
 	}
 
 private:
+	/** @brief pthread_once helper that allocates the singleton on the heap. */
 	static void _InitSingleton()
 	{
 		sDefaultInstance = new DraggerManager;
@@ -113,6 +163,21 @@ DraggerManager* DraggerManager::sDefaultInstance = NULL;
 }	// unnamed namespace
 
 
+/**
+ * @brief Constructs a BDragger with an explicit frame rectangle.
+ *
+ * Creates the dragger with the legacy frame-based BView constructor.
+ * @a target specifies the view that will be dragged; the relationship
+ * between the dragger and the target is determined later by
+ * _DetermineRelationship().
+ *
+ * @param frame        The frame rectangle of the dragger in its parent's
+ *                     coordinate system.
+ * @param target       The view to be dragged, or @c NULL.
+ * @param resizingMode BView resizing mode flags (e.g. B_FOLLOW_RIGHT).
+ * @param flags        BView creation flags.
+ * @see BDragger(BView*, uint32)
+ */
 BDragger::BDragger(BRect frame, BView* target, uint32 resizingMode,
 	uint32 flags)
 	:
@@ -130,6 +195,16 @@ BDragger::BDragger(BRect frame, BView* target, uint32 resizingMode,
 }
 
 
+/**
+ * @brief Constructs a BDragger without an explicit frame rectangle.
+ *
+ * Uses the layout-aware BView constructor; size is determined by the
+ * layout engine at attachment time.
+ *
+ * @param target  The view to be dragged, or @c NULL.
+ * @param flags   BView creation flags.
+ * @see BDragger(BRect, BView*, uint32, uint32)
+ */
 BDragger::BDragger(BView* target, uint32 flags)
 	:
 	BView("_dragger_", flags),
@@ -146,6 +221,16 @@ BDragger::BDragger(BView* target, uint32 flags)
 }
 
 
+/**
+ * @brief Archive-reconstruction constructor used by Instantiate().
+ *
+ * Restores a BDragger from a flattened BMessage archive.  The target
+ * view relationship and optional custom pop-up menu are restored from
+ * the archive fields "_rel" and "_popup" respectively.
+ *
+ * @param data  The BMessage archive produced by Archive().
+ * @see Archive(), Instantiate()
+ */
 BDragger::BDragger(BMessage* data)
 	:
 	BView(data),
@@ -174,6 +259,9 @@ BDragger::BDragger(BMessage* data)
 }
 
 
+/**
+ * @brief Destroys the BDragger and frees its pop-up menu and bitmap resources.
+ */
 BDragger::~BDragger()
 {
 	delete fPopUp;
@@ -181,6 +269,16 @@ BDragger::~BDragger()
 }
 
 
+/**
+ * @brief Creates a BDragger from a BMessage archive (BArchivable hook).
+ *
+ * Validates the archive class name and constructs a new BDragger via the
+ * archive constructor.
+ *
+ * @param data  The archive message to instantiate from.
+ * @return A newly allocated BDragger, or @c NULL if validation fails.
+ * @see Archive()
+ */
 BArchivable	*
 BDragger::Instantiate(BMessage* data)
 {
@@ -190,6 +288,19 @@ BDragger::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Flattens the BDragger into a BMessage for archiving.
+ *
+ * Calls the base BView::Archive() and then adds the target relationship
+ * ("_rel") and, if a custom pop-up menu is set, the archived pop-up
+ * menu ("_popup").
+ *
+ * @param data   The message to store archive data into.
+ * @param deep   If @c true, child views are archived recursively.
+ * @return B_OK on success, or the first error encountered.
+ * @retval B_OK On success.
+ * @see Instantiate()
+ */
 status_t
 BDragger::Archive(BMessage* data, bool deep) const
 {
@@ -220,6 +331,15 @@ BDragger::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Called when the dragger is added to a window hierarchy.
+ *
+ * Configures the background transparency, resolves the target relationship,
+ * registers with the DraggerManager list, and installs the drag-tracking
+ * message filter.  Zombie draggers are rendered with a special color.
+ *
+ * @see DetachedFromWindow(), _DetermineRelationship(), _AddToList()
+ */
 void
 BDragger::AttachedToWindow()
 {
@@ -239,6 +359,14 @@ BDragger::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the dragger is removed from the window hierarchy.
+ *
+ * Unregisters the dragger from the DraggerManager list so that global
+ * show/hide broadcasts no longer target it.
+ *
+ * @see AttachedToWindow(), _RemoveFromList()
+ */
 void
 BDragger::DetachedFromWindow()
 {
@@ -246,6 +374,16 @@ BDragger::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Draws the drag-handle bitmap in the lower-right corner of the view.
+ *
+ * The bitmap is only drawn when draggers are globally visible and the
+ * shelf (if any) permits dragging.  Zombie draggers use the same drawing
+ * path but may in the future render differently.
+ *
+ * @param update  The dirty rectangle that needs to be redrawn.
+ * @see AreDraggersDrawn(), BShelf::AllowsDragging()
+ */
 void
 BDragger::Draw(BRect update)
 {
@@ -265,6 +403,17 @@ BDragger::Draw(BRect update)
 }
 
 
+/**
+ * @brief Handles a mouse-button-down event on the dragger.
+ *
+ * If the secondary (right) mouse button is pressed while the dragger is
+ * on a shelf, the replicant context pop-up menu is displayed.  Primary
+ * button presses are handled by the DragTrackingFilter which posts
+ * kMsgDragStarted when the pointer moves far enough.
+ *
+ * @param where  The mouse position in the dragger's local coordinates.
+ * @see _ShowPopUp(), MessageReceived()
+ */
 void
 BDragger::MouseDown(BPoint where)
 {
@@ -279,6 +428,11 @@ BDragger::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Handles a mouse-button-up event; delegates to the base class.
+ *
+ * @param point  The mouse position in the dragger's local coordinates.
+ */
 void
 BDragger::MouseUp(BPoint point)
 {
@@ -286,6 +440,13 @@ BDragger::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Handles mouse-moved events; delegates to the base class.
+ *
+ * @param point  The current mouse position in the dragger's local coordinates.
+ * @param code   B_ENTERED_VIEW, B_INSIDE_VIEW, or B_EXITED_VIEW.
+ * @param msg    Optional drag message if a drag is in progress.
+ */
 void
 BDragger::MouseMoved(BPoint point, uint32 code, const BMessage* msg)
 {
@@ -293,6 +454,22 @@ BDragger::MouseMoved(BPoint point, uint32 code, const BMessage* msg)
 }
 
 
+/**
+ * @brief Dispatches messages directed at the dragger.
+ *
+ * Handles three internal messages:
+ * - B_TRASH_TARGET: the user dropped the replicant on the Trash; posts a
+ *   delete request to the shelf, or shows an explanatory alert if unshelved.
+ * - _SHOW_DRAG_HANDLES_: the global dragger-visibility setting changed;
+ *   shows or hides this dragger accordingly.
+ * - kMsgDragStarted: the drag-tracking filter reports that a drag gesture
+ *   has begun; archives the target and initiates DragMessage().
+ *
+ * All other messages are forwarded to BView::MessageReceived().
+ *
+ * @param msg  The message to handle.
+ * @see AttachedToWindow(), MouseDown()
+ */
 void
 BDragger::MessageReceived(BMessage* msg)
 {
@@ -361,6 +538,7 @@ BDragger::MessageReceived(BMessage* msg)
 }
 
 
+/** @brief Forwards a FrameMoved notification to the base BView. */
 void
 BDragger::FrameMoved(BPoint newPosition)
 {
@@ -368,6 +546,7 @@ BDragger::FrameMoved(BPoint newPosition)
 }
 
 
+/** @brief Forwards a FrameResized notification to the base BView. */
 void
 BDragger::FrameResized(float newWidth, float newHeight)
 {
@@ -375,6 +554,17 @@ BDragger::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Makes all BDragger instances in the process visible.
+ *
+ * Sends AS_SET_SHOW_ALL_DRAGGERS(true) to the app server and updates the
+ * DraggerManager cache so that subsequently attached draggers also become
+ * visible without an extra round-trip.
+ *
+ * @return B_OK on success, or an app-server communication error code.
+ * @retval B_OK On success.
+ * @see HideAllDraggers(), AreDraggersDrawn()
+ */
 status_t
 BDragger::ShowAllDraggers()
 {
@@ -394,6 +584,16 @@ BDragger::ShowAllDraggers()
 }
 
 
+/**
+ * @brief Makes all BDragger instances in the process invisible.
+ *
+ * Sends AS_SET_SHOW_ALL_DRAGGERS(false) to the app server and updates the
+ * DraggerManager cache.
+ *
+ * @return B_OK on success, or an app-server communication error code.
+ * @retval B_OK On success.
+ * @see ShowAllDraggers(), AreDraggersDrawn()
+ */
 status_t
 BDragger::HideAllDraggers()
 {
@@ -413,6 +613,15 @@ BDragger::HideAllDraggers()
 }
 
 
+/**
+ * @brief Returns whether dragger views are currently set to be drawn.
+ *
+ * Checks the DraggerManager's cached value; if not yet initialised,
+ * queries the app server via AS_GET_SHOW_ALL_DRAGGERS and caches the result.
+ *
+ * @return @c true if draggers should be drawn, @c false otherwise.
+ * @see ShowAllDraggers(), HideAllDraggers()
+ */
 bool
 BDragger::AreDraggersDrawn()
 {
@@ -435,6 +644,7 @@ BDragger::AreDraggersDrawn()
 }
 
 
+/** @brief Scripting hook; delegates to BView::ResolveSpecifier(). */
 BHandler*
 BDragger::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 form, const char* property)
@@ -443,6 +653,7 @@ BDragger::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/** @brief Scripting hook; delegates to BView::GetSupportedSuites(). */
 status_t
 BDragger::GetSupportedSuites(BMessage* data)
 {
@@ -450,6 +661,19 @@ BDragger::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Binary-compatibility perform hook; dispatches layout perform codes.
+ *
+ * Handles PERFORM_CODE_MIN_SIZE, PERFORM_CODE_MAX_SIZE,
+ * PERFORM_CODE_PREFERRED_SIZE, PERFORM_CODE_LAYOUT_ALIGNMENT,
+ * PERFORM_CODE_HAS_HEIGHT_FOR_WIDTH, PERFORM_CODE_GET_HEIGHT_FOR_WIDTH,
+ * PERFORM_CODE_SET_LAYOUT, PERFORM_CODE_LAYOUT_INVALIDATED, and
+ * PERFORM_CODE_DO_LAYOUT.  All other codes are forwarded to BView::Perform().
+ *
+ * @param code   The perform operation code.
+ * @param _data  Opaque pointer to the perform data structure.
+ * @return B_OK on success, or B_NAME_NOT_FOUND for unknown codes.
+ */
 status_t
 BDragger::Perform(perform_code code, void* _data)
 {
@@ -506,6 +730,7 @@ BDragger::Perform(perform_code code, void* _data)
 }
 
 
+/** @brief Delegates to BView::ResizeToPreferred(). */
 void
 BDragger::ResizeToPreferred()
 {
@@ -513,6 +738,7 @@ BDragger::ResizeToPreferred()
 }
 
 
+/** @brief Delegates to BView::GetPreferredSize(). */
 void
 BDragger::GetPreferredSize(float* _width, float* _height)
 {
@@ -520,6 +746,7 @@ BDragger::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/** @brief Delegates to BView::MakeFocus(). */
 void
 BDragger::MakeFocus(bool state)
 {
@@ -527,6 +754,7 @@ BDragger::MakeFocus(bool state)
 }
 
 
+/** @brief Delegates to BView::AllAttached(). */
 void
 BDragger::AllAttached()
 {
@@ -534,6 +762,7 @@ BDragger::AllAttached()
 }
 
 
+/** @brief Delegates to BView::AllDetached(). */
 void
 BDragger::AllDetached()
 {
@@ -541,6 +770,19 @@ BDragger::AllDetached()
 }
 
 
+/**
+ * @brief Replaces the dragger's pop-up menu with a custom one.
+ *
+ * Takes ownership of @a menu.  The previous custom menu (if any) is deleted.
+ * Has no effect and returns B_ERROR if @a menu is @c NULL or is already the
+ * current pop-up.
+ *
+ * @param menu  The new BPopUpMenu to use; must not be @c NULL and must differ
+ *              from the existing pop-up.
+ * @return B_OK on success, B_ERROR if @a menu was rejected.
+ * @retval B_OK On success.
+ * @see PopUp()
+ */
 status_t
 BDragger::SetPopUp(BPopUpMenu* menu)
 {
@@ -554,6 +796,16 @@ BDragger::SetPopUp(BPopUpMenu* menu)
 }
 
 
+/**
+ * @brief Returns the current pop-up menu, building the default one if needed.
+ *
+ * If no custom pop-up has been set and a target view exists, calls
+ * _BuildDefaultPopUp() to create the standard "About / Remove replicant"
+ * menu before returning it.
+ *
+ * @return The current BPopUpMenu, or @c NULL if there is no target view.
+ * @see SetPopUp(), _BuildDefaultPopUp()
+ */
 BPopUpMenu*
 BDragger::PopUp() const
 {
@@ -564,6 +816,12 @@ BDragger::PopUp() const
 }
 
 
+/**
+ * @brief Returns whether the dragger is currently hosted in a BShelf.
+ *
+ * @return @c true if the dragger has been placed on a shelf, @c false if it
+ *         is still in its originating application window.
+ */
 bool
 BDragger::InShelf() const
 {
@@ -571,6 +829,12 @@ BDragger::InShelf() const
 }
 
 
+/**
+ * @brief Returns the view that this dragger is associated with.
+ *
+ * @return Pointer to the target BView, or @c NULL if none has been set.
+ * @see _SetViewToDrag()
+ */
 BView*
 BDragger::Target() const
 {
@@ -578,6 +842,17 @@ BDragger::Target() const
 }
 
 
+/**
+ * @brief Returns a custom bitmap to use as the drag image, or @c NULL.
+ *
+ * The default implementation returns @c NULL, causing the system to use the
+ * target view's bounds rectangle as the drag outline.  Subclasses may
+ * override this to supply a translucent drag image.
+ *
+ * @param offset  Output: the bitmap's hot-spot offset relative to the cursor.
+ * @param mode    Output: the drawing mode to use when rendering the bitmap.
+ * @return @c NULL (base-class implementation always returns @c NULL).
+ */
 BBitmap*
 BDragger::DragBitmap(BPoint* offset, drawing_mode* mode)
 {
@@ -585,6 +860,11 @@ BDragger::DragBitmap(BPoint* offset, drawing_mode* mode)
 }
 
 
+/**
+ * @brief Returns whether the dragger's visibility is in transition.
+ *
+ * @return @c true while a show/hide transition is in progress.
+ */
 bool
 BDragger::IsVisibilityChanging() const
 {
@@ -597,6 +877,7 @@ void BDragger::_ReservedDragger3() {}
 void BDragger::_ReservedDragger4() {}
 
 
+/** @brief Unimplemented copy-assignment operator; returns @c *this unchanged. */
 BDragger&
 BDragger::operator=(const BDragger&)
 {
@@ -604,6 +885,17 @@ BDragger::operator=(const BDragger&)
 }
 
 
+/**
+ * @brief Updates the DraggerManager cache and broadcasts a visibility change.
+ *
+ * Called by the app server (via BApplication) when the global dragger
+ * visibility setting changes.  Updates the cached visibility flag and posts
+ * _SHOW_DRAG_HANDLES_ to every registered BDragger so each can show or hide
+ * itself accordingly.
+ *
+ * @param visible  @c true if draggers should now be drawn, @c false to hide.
+ * @see ShowAllDraggers(), HideAllDraggers()
+ */
 /*static*/ void
 BDragger::_UpdateShowAllDraggers(bool visible)
 {
@@ -621,6 +913,14 @@ BDragger::_UpdateShowAllDraggers(bool visible)
 }
 
 
+/**
+ * @brief Initialises the drag-handle bitmap used by Draw().
+ *
+ * Allocates an 8×8 B_CMAP8 BBitmap and fills it with the kHandBitmap pixel
+ * data.  Called from every constructor.
+ *
+ * @see Draw()
+ */
 void
 BDragger::_InitData()
 {
@@ -629,6 +929,15 @@ BDragger::_InitData()
 }
 
 
+/**
+ * @brief Registers this dragger in the DraggerManager list.
+ *
+ * Also applies the current global visibility setting: if draggers are
+ * hidden and this dragger is not the child of its target, it hides itself
+ * immediately.
+ *
+ * @see _RemoveFromList(), AttachedToWindow()
+ */
 void
 BDragger::_AddToList()
 {
@@ -650,6 +959,14 @@ BDragger::_AddToList()
 }
 
 
+/**
+ * @brief Removes this dragger from the DraggerManager list.
+ *
+ * Called from DetachedFromWindow() so that global broadcasts no longer
+ * target this dragger after it has been removed from its window.
+ *
+ * @see _AddToList(), DetachedFromWindow()
+ */
 void
 BDragger::_RemoveFromList()
 {
@@ -659,6 +976,18 @@ BDragger::_RemoveFromList()
 }
 
 
+/**
+ * @brief Determines and caches the geometric relationship between the dragger
+ *        and its target view.
+ *
+ * If @a fTarget is set, the relationship is detected by comparing the target
+ * with this view's parent and first child.  If @a fTarget is @c NULL it is
+ * resolved from the cached @a fRelation value.  When the dragger is the
+ * parent of its target, it is repositioned to remain within the parent bounds.
+ *
+ * @return B_OK on success, B_ERROR if the relationship cannot be determined.
+ * @retval B_OK On success.
+ */
 status_t
 BDragger::_DetermineRelationship()
 {
@@ -691,6 +1020,17 @@ BDragger::_DetermineRelationship()
 }
 
 
+/**
+ * @brief Sets the view to be dragged and refreshes the relationship cache.
+ *
+ * @a target must belong to the same window as the dragger.
+ *
+ * @param target  The new target view.
+ * @return B_OK on success, B_ERROR if @a target is in a different window.
+ * @retval B_OK On success.
+ * @retval B_ERROR If @a target belongs to a different window.
+ * @see _DetermineRelationship()
+ */
 status_t
 BDragger::_SetViewToDrag(BView* target)
 {
@@ -706,6 +1046,15 @@ BDragger::_SetViewToDrag(BView* target)
 }
 
 
+/**
+ * @brief Records the BShelf that is hosting this dragger.
+ *
+ * Called by BShelf internals when the dragger's replicant is placed on
+ * or removed from a shelf.
+ *
+ * @param shelf  The shelf hosting this dragger, or @c NULL.
+ * @see InShelf()
+ */
 void
 BDragger::_SetShelf(BShelf* shelf)
 {
@@ -713,6 +1062,15 @@ BDragger::_SetShelf(BShelf* shelf)
 }
 
 
+/**
+ * @brief Marks the dragger as a zombie and updates its visual appearance.
+ *
+ * A zombie dragger is one whose replicant view could not be instantiated.
+ * When @a state is @c true the background and low colors are set to the
+ * zombie indicator color.
+ *
+ * @param state  @c true to enter zombie mode, @c false to clear it.
+ */
 void
 BDragger::_SetZombied(bool state)
 {
@@ -725,6 +1083,16 @@ BDragger::_SetZombied(bool state)
 }
 
 
+/**
+ * @brief Builds the default "About / Remove replicant" pop-up menu.
+ *
+ * Creates a non-locking B_ITEMS_IN_COLUMN BPopUpMenu with two items:
+ * an "About <app>" item that sends B_ABOUT_REQUESTED, and a
+ * "Remove replicant" item that sends kDeleteReplicant.  The resulting
+ * menu is stored in @a fPopUp.
+ *
+ * @see PopUp(), SetPopUp(), _ShowPopUp()
+ */
 void
 BDragger::_BuildDefaultPopUp()
 {
@@ -747,6 +1115,17 @@ BDragger::_BuildDefaultPopUp()
 }
 
 
+/**
+ * @brief Displays the replicant context pop-up menu at the given position.
+ *
+ * Converts @a where to screen coordinates, ensures the pop-up exists (building
+ * the default one if necessary), sets all menu items' target to the replicant
+ * view, and runs the menu synchronously.
+ *
+ * @param target  The replicant view that will receive menu item messages.
+ * @param where   The click location in the dragger's local coordinates.
+ * @see _BuildDefaultPopUp(), PopUp()
+ */
 void
 BDragger::_ShowPopUp(BView* target, BPoint where)
 {

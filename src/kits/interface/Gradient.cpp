@@ -1,11 +1,40 @@
 /*
- * Copyright 2006-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Artur Wyszynski <harakash@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2009, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Artur Wyszynski <harakash@gmail.com>
  */
+
+
+/**
+ * @file Gradient.cpp
+ * @brief Implementation of BGradient, the abstract base class for gradient fills
+ *
+ * BGradient defines the color stop list shared by all gradient types. Concrete
+ * subclasses (BGradientLinear, BGradientRadial, etc.) add geometry-specific
+ * parameters. Gradients are used with BView drawing calls.
+ *
+ * @see BGradientLinear, BGradientRadial, BGradientConic, BView
+ */
+
 
 #include "Gradient.h"
 
@@ -24,7 +53,12 @@
 #include <GradientConic.h>
 
 
-// constructor
+/**
+ * @brief Construct a ColorStop from an rgb_color and a normalized offset.
+ *
+ * @param c The RGBA color value for this stop.
+ * @param o The position of this stop along the gradient, in the range [0, 255].
+ */
 BGradient::ColorStop::ColorStop(const rgb_color c, float o)
 {
 	color.red = c.red;
@@ -35,7 +69,15 @@ BGradient::ColorStop::ColorStop(const rgb_color c, float o)
 }
 
 
-// constructor
+/**
+ * @brief Construct a ColorStop from individual RGBA components and a normalized offset.
+ *
+ * @param r Red component (0–255).
+ * @param g Green component (0–255).
+ * @param b Blue component (0–255).
+ * @param a Alpha component (0–255).
+ * @param o The position of this stop along the gradient, in the range [0, 255].
+ */
 BGradient::ColorStop::ColorStop(uint8 r, uint8 g, uint8 b, uint8 a, float o)
 {
 	color.red = r;
@@ -46,7 +88,11 @@ BGradient::ColorStop::ColorStop(uint8 r, uint8 g, uint8 b, uint8 a, float o)
 }
 
 
-// constructor
+/**
+ * @brief Copy-construct a ColorStop from another ColorStop.
+ *
+ * @param other The ColorStop to copy.
+ */
 BGradient::ColorStop::ColorStop(const ColorStop& other)
 {
 	color.red = other.color.red;
@@ -57,7 +103,9 @@ BGradient::ColorStop::ColorStop(const ColorStop& other)
 }
 
 
-// constructor
+/**
+ * @brief Construct a default ColorStop with opaque black at offset 0.
+ */
 BGradient::ColorStop::ColorStop()
 {
 	color.red = 0;
@@ -68,7 +116,12 @@ BGradient::ColorStop::ColorStop()
 }
 
 
-// operator!=
+/**
+ * @brief Test whether two ColorStop objects differ in any field.
+ *
+ * @param other The ColorStop to compare against.
+ * @return true if any color component or the offset differs; false if identical.
+ */
 bool
 BGradient::ColorStop::operator!=(const ColorStop& other) const
 {
@@ -80,6 +133,13 @@ BGradient::ColorStop::operator!=(const ColorStop& other) const
 }
 
 
+/**
+ * @brief Comparator used by stable_sort to order ColorStop pointers by ascending offset.
+ *
+ * @param left  Pointer to the left-hand ColorStop.
+ * @param right Pointer to the right-hand ColorStop.
+ * @return true if left->offset is strictly less than right->offset.
+ */
 static bool
 sort_color_stops_by_offset(const BGradient::ColorStop* left,
 	const BGradient::ColorStop* right)
@@ -91,7 +151,12 @@ sort_color_stops_by_offset(const BGradient::ColorStop* left,
 // #pragma mark -
 
 
-// constructor
+/**
+ * @brief Construct a default BGradient with no color stops and type TYPE_NONE.
+ *
+ * The color stop list is pre-allocated for four entries as a reasonable
+ * default capacity.
+ */
 BGradient::BGradient()
 	: BArchivable(),
 	fColorStops(4),
@@ -100,6 +165,11 @@ BGradient::BGradient()
 }
 
 
+/**
+ * @brief Copy-construct a BGradient, duplicating all color stops and geometry.
+ *
+ * @param other The gradient to copy from.
+ */
 BGradient::BGradient(const BGradient& other)
 	: BArchivable(),
 	fColorStops(std::max((int32)4, other.CountColorStops()))
@@ -108,7 +178,17 @@ BGradient::BGradient(const BGradient& other)
 }
 
 
-// constructor
+/**
+ * @brief Construct a BGradient by unarchiving a previously archived BMessage.
+ *
+ * Restores color stops and all geometry fields for every supported gradient
+ * type from the message. Missing fields default to 0.0.
+ *
+ * @param archive The BMessage containing the archived gradient state.
+ * @note If @p archive is NULL the gradient is left in its default state
+ *       (TYPE_NONE, no color stops).
+ * @see Archive()
+ */
 BGradient::BGradient(BMessage* archive)
 	: BArchivable(archive),
 	fColorStops(4),
@@ -174,14 +254,32 @@ BGradient::BGradient(BMessage* archive)
 }
 
 
-// destructor
+/**
+ * @brief Destroy the BGradient and free all color stops.
+ *
+ * Calls MakeEmpty() to delete every heap-allocated ColorStop before the
+ * object itself is released.
+ */
 BGradient::~BGradient()
 {
 	MakeEmpty();
 }
 
 
-// Archive
+/**
+ * @brief Archive the gradient into a BMessage.
+ *
+ * Serializes all color stops (color and offset fields) followed by the
+ * gradient type and every geometry field for all supported gradient types.
+ * The class name "BGradient" is appended last so that Instantiate() can
+ * identify the archive.
+ *
+ * @param into The message to write into; must not be NULL.
+ * @param deep If true, child objects are archived recursively (forwarded to
+ *             BArchivable::Archive()).
+ * @return B_OK on success, or a negative error code on the first failure.
+ * @see BGradient(BMessage*)
+ */
 status_t
 BGradient::Archive(BMessage* into, bool deep) const
 {
@@ -254,7 +352,15 @@ BGradient::Archive(BMessage* into, bool deep) const
 }
 
 
-// operator=
+/**
+ * @brief Assign the state of another BGradient to this object.
+ *
+ * Copies the color stop list and all geometry fields from @p other, replacing
+ * any existing state.  Self-assignment is handled safely.
+ *
+ * @param other The gradient to copy from.
+ * @return A reference to this gradient.
+ */
 BGradient&
 BGradient::operator=(const BGradient& other)
 {
@@ -286,7 +392,13 @@ BGradient::operator=(const BGradient& other)
 }
 
 
-// operator==
+/**
+ * @brief Test whether two gradients are identical in type and color stops.
+ *
+ * @param other The gradient to compare against.
+ * @return true if the type and every color stop are equal; false otherwise.
+ * @see ColorStopsAreEqual()
+ */
 bool
 BGradient::operator==(const BGradient& other) const
 {
@@ -294,7 +406,12 @@ BGradient::operator==(const BGradient& other) const
 }
 
 
-// operator!=
+/**
+ * @brief Test whether two gradients differ in type or any color stop.
+ *
+ * @param other The gradient to compare against.
+ * @return true if the gradients are not equal; false if they are identical.
+ */
 bool
 BGradient::operator!=(const BGradient& other) const
 {
@@ -302,7 +419,14 @@ BGradient::operator!=(const BGradient& other) const
 }
 
 
-// ColorStopsAreEqual
+/**
+ * @brief Check whether the color stop lists of two gradients are identical.
+ *
+ * Compares the count, type, and each individual ColorStop in order.
+ *
+ * @param other The gradient whose color stops are compared with this one's.
+ * @return true if both gradients have the same type and identical stop lists.
+ */
 bool
 BGradient::ColorStopsAreEqual(const BGradient& other) const
 {
@@ -325,7 +449,13 @@ BGradient::ColorStopsAreEqual(const BGradient& other) const
 }
 
 
-// SetColorStops
+/**
+ * @brief Replace this gradient's color stop list with a copy of another gradient's.
+ *
+ * Clears all existing stops via MakeEmpty() before adding new ones.
+ *
+ * @param other The gradient whose color stops are copied into this object.
+ */
 void
 BGradient::SetColorStops(const BGradient& other)
 {
@@ -335,7 +465,16 @@ BGradient::SetColorStops(const BGradient& other)
 }
 
 
-// AddColor
+/**
+ * @brief Add a color at the correct sorted position in the stop list.
+ *
+ * The stop is inserted so that the list remains sorted by ascending offset.
+ * Offsets outside [0, 255] are rejected.
+ *
+ * @param color  The RGBA color value for the new stop.
+ * @param offset Position along the gradient in the range [0, 255].
+ * @return The index at which the stop was inserted, or -1 on failure.
+ */
 int32
 BGradient::AddColor(const rgb_color& color, float offset)
 {
@@ -360,7 +499,13 @@ BGradient::AddColor(const rgb_color& color, float offset)
 }
 
 
-// AddColorStop
+/**
+ * @brief Insert a copy of a ColorStop at an explicit index.
+ *
+ * @param colorStop The stop to copy and insert.
+ * @param index     The position in the list at which to insert the stop.
+ * @return true on success; false if memory allocation or list insertion fails.
+ */
 bool
 BGradient::AddColorStop(const ColorStop& colorStop, int32 index)
 {
@@ -373,7 +518,12 @@ BGradient::AddColorStop(const ColorStop& colorStop, int32 index)
 }
 
 
-// RemoveColor
+/**
+ * @brief Remove and delete the color stop at the given index.
+ *
+ * @param index Zero-based index of the stop to remove.
+ * @return true if the stop was found and removed; false if the index is invalid.
+ */
 bool
 BGradient::RemoveColor(int32 index)
 {
@@ -386,7 +536,15 @@ BGradient::RemoveColor(int32 index)
 }
 
 
-// SetColorStop
+/**
+ * @brief Replace the color and offset of an existing stop.
+ *
+ * The stop is only modified when the new value differs from the existing one.
+ *
+ * @param index Zero-based index of the stop to modify.
+ * @param color The new ColorStop value (color + offset) to apply.
+ * @return true if the stop existed and its value changed; false otherwise.
+ */
 bool
 BGradient::SetColorStop(int32 index, const ColorStop& color)
 {
@@ -401,7 +559,13 @@ BGradient::SetColorStop(int32 index, const ColorStop& color)
 }
 
 
-// SetColor
+/**
+ * @brief Change the RGBA color of an existing stop, leaving its offset unchanged.
+ *
+ * @param index Zero-based index of the stop to modify.
+ * @param color The new rgb_color value.
+ * @return true if the stop existed and its color changed; false otherwise.
+ */
 bool
 BGradient::SetColor(int32 index, const rgb_color& color)
 {
@@ -414,7 +578,15 @@ BGradient::SetColor(int32 index, const rgb_color& color)
 }
 
 
-// SetOffset
+/**
+ * @brief Change the offset of an existing stop, leaving its color unchanged.
+ *
+ * @param index  Zero-based index of the stop to modify.
+ * @param offset The new offset value in the range [0, 255].
+ * @return true if the stop existed and its offset changed; false otherwise.
+ * @note Changing the offset does not automatically re-sort the stop list.
+ *       Call SortColorStopsByOffset() afterwards if sorted order is required.
+ */
 bool
 BGradient::SetOffset(int32 index, float offset)
 {
@@ -427,7 +599,11 @@ BGradient::SetOffset(int32 index, float offset)
 }
 
 
-// CountColorStops
+/**
+ * @brief Return the number of color stops in the gradient.
+ *
+ * @return The count of color stops currently held by this gradient.
+ */
 int32
 BGradient::CountColorStops() const
 {
@@ -435,7 +611,13 @@ BGradient::CountColorStops() const
 }
 
 
-// ColorStopAt
+/**
+ * @brief Return a pointer to the color stop at the given index, with bounds checking.
+ *
+ * @param index Zero-based index of the desired stop.
+ * @return Pointer to the ColorStop, or NULL if @p index is out of range.
+ * @see ColorStopAtFast()
+ */
 BGradient::ColorStop*
 BGradient::ColorStopAt(int32 index) const
 {
@@ -443,7 +625,15 @@ BGradient::ColorStopAt(int32 index) const
 }
 
 
-// ColorStopAtFast
+/**
+ * @brief Return a pointer to the color stop at the given index without bounds checking.
+ *
+ * This is the fast variant; the caller must ensure @p index is valid.
+ *
+ * @param index Zero-based index of the desired stop.
+ * @return Pointer to the ColorStop.
+ * @see ColorStopAt()
+ */
 BGradient::ColorStop*
 BGradient::ColorStopAtFast(int32 index) const
 {
@@ -451,7 +641,14 @@ BGradient::ColorStopAtFast(int32 index) const
 }
 
 
-// ColorStops
+/**
+ * @brief Return a pointer to the first element of the internal color stop array.
+ *
+ * Useful for passing the stop array directly to a renderer. Returns NULL when
+ * the gradient has no stops.
+ *
+ * @return Pointer to the first ColorStop, or NULL if the list is empty.
+ */
 BGradient::ColorStop*
 BGradient::ColorStops() const
 {
@@ -462,7 +659,13 @@ BGradient::ColorStops() const
 }
 
 
-// SortColorStopsByOffset
+/**
+ * @brief Sort the color stops in ascending order of their offset values.
+ *
+ * Uses a stable sort so that stops with identical offsets retain their
+ * original relative order, which allows sharp color transitions to be
+ * represented by two consecutive stops at the same offset.
+ */
 void
 BGradient::SortColorStopsByOffset()
 {
@@ -476,7 +679,11 @@ BGradient::SortColorStopsByOffset()
 }
 
 
-// MakeEmpty
+/**
+ * @brief Delete all color stops and reset the list to empty.
+ *
+ * Each heap-allocated ColorStop is deleted before the internal list is cleared.
+ */
 void
 BGradient::MakeEmpty()
 {
@@ -487,6 +694,17 @@ BGradient::MakeEmpty()
 }
 
 
+/**
+ * @brief Serialize the gradient to a binary stream.
+ *
+ * Writes the gradient type, stop count, each ColorStop, and the
+ * geometry fields for the active gradient type. The stream is not
+ * rewound before writing.
+ *
+ * @param stream The destination stream; must not be NULL.
+ * @return B_OK on success.
+ * @see Unflatten()
+ */
 status_t
 BGradient::Flatten(BDataIO* stream) const
 {
@@ -535,6 +753,13 @@ BGradient::Flatten(BDataIO* stream) const
 }
 
 
+/**
+ * @brief Allocate the concrete BGradient subclass appropriate for the given type.
+ *
+ * @param type The gradient type identifying which subclass to create.
+ * @return A newly allocated gradient object, or NULL if allocation fails or the
+ *         type is unrecognized.
+ */
 static BGradient*
 gradient_for_type(BGradient::Type type)
 {
@@ -556,6 +781,22 @@ gradient_for_type(BGradient::Type type)
 }
 
 
+/**
+ * @brief Deserialize a gradient from a binary stream previously written by Flatten().
+ *
+ * Reads the type and stop count first, then allocates the matching subclass via
+ * gradient_for_type(), populates its color stops, and finally reads the
+ * geometry fields for the active type. On success @p output is set to the
+ * newly allocated gradient and ownership is transferred to the caller.
+ *
+ * @param[out] output Receives the newly allocated gradient on success; set to
+ *                    NULL on entry and on failure.
+ * @param      stream The source stream positioned at the start of a flattened
+ *                    gradient; must not be NULL.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or a negative
+ *         stream error code on read failure.
+ * @see Flatten()
+ */
 status_t
 BGradient::Unflatten(BGradient *&output, BDataIO* stream)
 {

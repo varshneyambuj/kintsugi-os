@@ -1,16 +1,43 @@
 /*
- * Copyright 2001-2025 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Alexandre Deckner, alex@zappotek.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval
- *		Marc Flerackers, mflerackers@androme.be
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2025 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Alexandre Deckner, alex@zappotek.com
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval
+ *       Marc Flerackers, mflerackers@androme.be
+ *       John Scipione, jscipione@gmail.com
  */
 
-/**	BColorControl displays a palette of selectable colors. */
+
+/**
+ * @file ColorControl.cpp
+ * @brief Implementation of BColorControl, a color picker control
+ *
+ * BColorControl displays a color selection palette in one of several cell-based
+ * or ramp-based layouts. It notifies its target when the selected color changes,
+ * and supports both 8-bit (256-color) and 32-bit (true-color) modes.
+ *
+ * @see BControl, BColorConversion
+ */
+
 
 #include <ColorControl.h>
 
@@ -35,17 +62,50 @@ using BPrivate::gSystemCatalog;
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "ColorControl"
 
+/** @brief Internal message code sent when the user edits an RGB text field. */
 static const uint32 kMsgColorEntered = 'ccol';
+
+/** @brief Minimum allowed cell size in pixels for palette-mode display. */
 static const float kMinCellSize = 6.0f;
+
+/** @brief Stroke width (in pixels) used to draw the selector ring outline. */
 static const float kSelectorPenSize = 2.0f;
+
+/** @brief Radius (in pixels) of the color selector ellipse drawn on each ramp. */
 static const float kSelectorSize = 4.0f;
+
+/** @brief Horizontal padding (in pixels) between the selector edge and the ramp border. */
 static const float kSelectorHSpacing = 2.0f;
+
+/** @brief Horizontal gap (in pixels) between the palette area and the RGB text fields. */
 static const float kTextFieldsHSpacing = 6.0f;
+
+/** @brief Reference font size used to scale cell size proportionally to the current font. */
 static const float kDefaultFontSize = 12.0f;
+
+/** @brief Inset (in pixels) between the outer view frame and the palette bevel border. */
 static const float kBevelSpacing = 2.0f;
+
+/** @brief Number of color ramps rendered in true-color mode (white, red, green, blue). */
 static const uint32 kRampCount = 4;
 
 
+/**
+ * @brief Constructs a BColorControl with an explicit frame rectangle.
+ *
+ * Creates all three RGB text controls, sets the initial color to black, and
+ * calls ResizeToPreferred() so the view fits the requested cell size and layout.
+ *
+ * @param leftTop        Top-left corner of the control in its parent's coordinate system.
+ * @param layout         Initial palette cell arrangement (e.g. B_CELLS_32x8).
+ * @param cellSize       Logical cell size in points; scaled by the current font size.
+ * @param name           Name used to identify this view in the view hierarchy.
+ * @param message        Invocation message sent to the target when the color changes.
+ * @param useOffscreen   When @c true, the palette is pre-rendered into an offscreen
+ *                       bitmap for flicker-free updates.
+ *
+ * @see _InitData(), SetCellSize(), SetLayout()
+ */
 BColorControl::BColorControl(BPoint leftTop, color_control_layout layout,
 	float cellSize, const char* name, BMessage* message, bool useOffscreen)
 	:
@@ -60,6 +120,17 @@ BColorControl::BColorControl(BPoint leftTop, color_control_layout layout,
 }
 
 
+/**
+ * @brief Archive-restoration constructor.
+ *
+ * Reconstructs a BColorControl from a flattened BMessage produced by Archive().
+ * The child text controls are located via FindView() rather than re-created, so
+ * the archived child views must already be present in @a data.
+ *
+ * @param data  Archive message previously written by Archive().
+ *
+ * @see Archive(), Instantiate()
+ */
 BColorControl::BColorControl(BMessage* data)
 	:
 	BControl(data),
@@ -80,12 +151,34 @@ BColorControl::BColorControl(BMessage* data)
 }
 
 
+/**
+ * @brief Destroys the BColorControl and frees the offscreen bitmap, if any.
+ */
 BColorControl::~BColorControl()
 {
 	delete fOffscreenBitmap;
 }
 
 
+/**
+ * @brief Initializes all internal state shared by every constructor path.
+ *
+ * Detects whether the main screen is in 8-bit palette mode, computes the row
+ * and column counts from @a layout, scales the cell size to the current font,
+ * and creates (or reconnects) the three RGB text controls. When @a data is
+ * non-NULL the function is in restore mode and looks up existing child views
+ * instead of creating new ones.
+ *
+ * @param layout        Desired cell arrangement for palette mode.
+ * @param size          Requested cell size in points.
+ * @param useOffscreen  @c true to allocate and populate an offscreen bitmap.
+ * @param data          Non-NULL when restoring from an archive; @c NULL on
+ *                      first-time construction.
+ *
+ * @note Palette-mode detection reads the main screen color space only once at
+ *       construction time; runtime workspace or color-space changes are handled
+ *       separately via B_SCREEN_CHANGED in MessageReceived().
+ */
 void
 BColorControl::_InitData(color_control_layout layout, float size,
 	bool useOffscreen, BMessage* data)
@@ -205,6 +298,17 @@ BColorControl::_InitData(color_control_layout layout, float size,
 }
 
 
+/**
+ * @brief Positions the palette frame and the three RGB text controls.
+ *
+ * Computes fPaletteFrame from the current column count, row count, and cell
+ * size, then decides whether the text controls are stacked one-per-ramp or
+ * packed tightly at the top, and moves them to their final positions to the
+ * right of the palette area.
+ *
+ * @note Call ResizeToPreferred() after this method to propagate the new layout
+ *       to the view's frame.
+ */
 void
 BColorControl::_LayoutView()
 {
@@ -237,6 +341,15 @@ BColorControl::_LayoutView()
 }
 
 
+/**
+ * @brief Creates a BColorControl instance from a flattened archive message.
+ *
+ * @param data  Archive message produced by Archive().
+ * @return A newly allocated BColorControl on success, or @c NULL if @a data
+ *         does not describe a BColorControl object.
+ *
+ * @see Archive()
+ */
 BArchivable*
 BColorControl::Instantiate(BMessage* data)
 {
@@ -247,6 +360,19 @@ BColorControl::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Flattens the BColorControl into a BMessage for persistence or cloning.
+ *
+ * Stores the palette layout, cell size, and offscreen-bitmap flag in addition
+ * to all fields archived by BControl::Archive().
+ *
+ * @param data  Destination message to receive the archived fields.
+ * @param deep  When @c true, child views (the RGB text controls) are also archived.
+ * @return @c B_OK on success, or the first error code encountered while adding
+ *         fields to @a data.
+ *
+ * @see Instantiate()
+ */
 status_t
 BColorControl::Archive(BMessage* data, bool deep) const
 {
@@ -265,6 +391,19 @@ BColorControl::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Overrides BView::SetLayout() to expose the inherited method hidden
+ *        by the color_control_layout overload.
+ *
+ * C++ name lookup hides all base-class overloads when a derived class declares
+ * a method with the same name. This forwarder restores access to
+ * BControl::SetLayout(BLayout*) so that layout managers can attach a BLayout
+ * to this view.
+ *
+ * @param layout  The BLayout to associate with this view.
+ *
+ * @see SetLayout(color_control_layout)
+ */
 void
 BColorControl::SetLayout(BLayout* layout)
 {
@@ -274,6 +413,19 @@ BColorControl::SetLayout(BLayout* layout)
 }
 
 
+/**
+ * @brief Sets the currently selected color by its packed 32-bit integer value.
+ *
+ * The value is encoded as 0xRRGGBB00 (red in the high byte, blue in the
+ * second-lowest byte, alpha forced to 255). In palette mode the nearest
+ * indexed color is looked up on the screen; in true-color mode the palette
+ * ramp area is invalidated so Draw() repaints the selectors. The three RGB
+ * text controls are always updated to reflect the clamped color.
+ *
+ * @param value  Packed color value in BControl's native encoding.
+ *
+ * @see ValueAsColor(), SetValue(rgb_color)
+ */
 void
 BColorControl::SetValue(int32 value)
 {
@@ -322,6 +474,16 @@ BColorControl::SetValue(int32 value)
 }
 
 
+/**
+ * @brief Returns the current color as an rgb_color struct.
+ *
+ * Unpacks the 32-bit integer stored by BControl::Value() into red, green,
+ * and blue components. Alpha is always returned as 255.
+ *
+ * @return The currently selected color.
+ *
+ * @see SetValue()
+ */
 rgb_color
 BColorControl::ValueAsColor()
 {
@@ -337,6 +499,15 @@ BColorControl::ValueAsColor()
 }
 
 
+/**
+ * @brief Enables or disables the control and its three RGB text fields.
+ *
+ * Forwards the call to BControl::SetEnabled() and then propagates the enabled
+ * state to fRedText, fGreenText, and fBlueText so that keyboard input into
+ * the text fields is also gated by the enabled state.
+ *
+ * @param enabled  @c true to enable, @c false to disable.
+ */
 void
 BColorControl::SetEnabled(bool enabled)
 {
@@ -348,6 +519,15 @@ BColorControl::SetEnabled(bool enabled)
 }
 
 
+/**
+ * @brief Called when the view is attached to a window.
+ *
+ * Adopts the parent view's colors, redirects the text-control messages to
+ * this view as their target, and populates the offscreen bitmap if one was
+ * requested.
+ *
+ * @see DetachedFromWindow(), _InitOffscreen()
+ */
 void
 BColorControl::AttachedToWindow()
 {
@@ -364,6 +544,20 @@ BColorControl::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles messages directed at this control.
+ *
+ * Processes three cases:
+ * - A dropped B_RGB_COLOR_TYPE message sets the color and invokes the target.
+ * - kMsgColorEntered (sent by the text controls) parses the three text fields
+ *   and applies the entered color.
+ * - B_SCREEN_CHANGED rebuilds the entire control when the display switches
+ *   between 8-bit palette mode and true-color mode.
+ *
+ * All other messages are forwarded to BControl::MessageReceived().
+ *
+ * @param message  The incoming message to handle.
+ */
 void
 BColorControl::MessageReceived(BMessage* message)
 {
@@ -429,6 +623,17 @@ BColorControl::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Draws the color palette or ramp area and the selection indicators.
+ *
+ * When an offscreen bitmap is available it is blitted directly; otherwise
+ * _DrawColorArea() paints into this view. Selection indicators are always
+ * drawn on top via _DrawSelectors().
+ *
+ * @param updateRect  The region that requires repainting, in view coordinates.
+ *
+ * @see _DrawColorArea(), _DrawSelectors()
+ */
 void
 BColorControl::Draw(BRect updateRect)
 {
@@ -441,6 +646,19 @@ BColorControl::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Renders the palette grid or the four color ramps into @a target.
+ *
+ * In palette mode, draws a bordered grid and fills each cell with the
+ * corresponding system color. In true-color mode, draws four horizontal
+ * gradient ramps (white/gray, red, green, blue) using _DrawColorRamp().
+ * Only cells or ramp columns that intersect @a updateRect are redrawn.
+ *
+ * @param target      The BView to draw into (may be an offscreen view).
+ * @param updateRect  Clipping rectangle for incremental updates.
+ *
+ * @see _DrawColorRamp(), _RampFrame(), Draw()
+ */
 void
 BColorControl::_DrawColorArea(BView* target, BRect updateRect)
 {
@@ -470,6 +688,7 @@ BColorControl::_DrawColorArea(BView* target, BRect updateRect)
 			target->StrokeLine(BPoint(x, fPaletteFrame.top),
 				BPoint(x, fPaletteFrame.bottom));
 		}
+
 		for (int yi = 0; yi < fRows + 1; yi++) {
 			float y = fPaletteFrame.top + float(yi) * fCellSize;
 			target->StrokeLine(BPoint(fPaletteFrame.left, y),
@@ -512,6 +731,19 @@ BColorControl::_DrawColorArea(BView* target, BRect updateRect)
 }
 
 
+/**
+ * @brief Draws the selection indicators on top of the palette or ramp area.
+ *
+ * In palette mode, strokes a white rectangle around the currently selected
+ * color cell. In true-color mode, draws a double-ring ellipse selector on each
+ * of the three color ramps (red, green, blue) at the position corresponding to
+ * the current channel value. The focused ramp receives an additional inner ring
+ * to indicate keyboard focus.
+ *
+ * @param target  The BView to draw into.
+ *
+ * @see _SelectorPosition(), _RampFrame(), Draw()
+ */
 void
 BColorControl::_DrawSelectors(BView* target)
 {
@@ -550,6 +782,23 @@ BColorControl::_DrawSelectors(BView* target)
 }
 
 
+/**
+ * @brief Fills a single color ramp rectangle with a linear gradient.
+ *
+ * Iterates over the columns of @a rect that intersect @a updateRect, computing
+ * the interpolated color for each column based on @a baseColor and @a compColor,
+ * and draws a vertical line per column using BView::AddLine() for efficiency.
+ *
+ * @param rect        Bounding rectangle of this ramp within the view.
+ * @param target      The BView to draw into.
+ * @param baseColor   The full-intensity channel color (e.g., pure red).
+ * @param compColor   The zero-intensity color added as an offset.
+ * @param flag        Reserved for future use; currently unused.
+ * @param focused     Reserved for future use; currently unused.
+ * @param updateRect  Clip rectangle; only columns intersecting this rect are drawn.
+ *
+ * @see _DrawColorArea(), _RampFrame()
+ */
 void
 BColorControl::_DrawColorRamp(BRect rect, BView* target,
 	rgb_color baseColor, rgb_color compColor, int16 flag, bool focused,
@@ -582,6 +831,19 @@ BColorControl::_DrawColorRamp(BRect rect, BView* target,
 }
 
 
+/**
+ * @brief Computes the center point of the selector ellipse for a given shade.
+ *
+ * Maps the 0–255 channel value @a shade to a horizontal position within
+ * @a rampRect, accounting for the selector radius and horizontal spacing so
+ * the selector never clips outside the ramp border.
+ *
+ * @param rampRect  The bounding rectangle of the ramp.
+ * @param shade     The channel value (0–255) to map to an x-coordinate.
+ * @return The center point of the selector circle in view coordinates.
+ *
+ * @see _DrawSelectors(), _RampFrame()
+ */
 BPoint
 BColorControl::_SelectorPosition(const BRect& rampRect, uint8 shade) const
 {
@@ -593,6 +855,16 @@ BColorControl::_SelectorPosition(const BRect& rampRect, uint8 shade) const
 }
 
 
+/**
+ * @brief Returns the outer bounding rectangle of the palette or ramp area.
+ *
+ * Expands fPaletteFrame outward by kBevelSpacing on all sides to include the
+ * bevel border drawn around the color area.
+ *
+ * @return The outer palette frame in view coordinates.
+ *
+ * @see _RampFrame(), _LayoutView()
+ */
 BRect
 BColorControl::_PaletteFrame() const
 {
@@ -600,6 +872,17 @@ BColorControl::_PaletteFrame() const
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of a single color ramp strip.
+ *
+ * Divides fPaletteFrame evenly into kRampCount horizontal bands and returns
+ * the band at index @a rampIndex (0 = white/gray, 1 = red, 2 = green, 3 = blue).
+ *
+ * @param rampIndex  Zero-based index of the ramp (0–3).
+ * @return The bounding rectangle of the requested ramp in view coordinates.
+ *
+ * @see _DrawColorRamp(), _SelectorPosition(), kRampCount
+ */
 BRect
 BColorControl::_RampFrame(uint8 rampIndex) const
 {
@@ -612,6 +895,17 @@ BColorControl::_RampFrame(uint8 rampIndex) const
 }
 
 
+/**
+ * @brief Scales the requested cell size to the current font and enforces the minimum.
+ *
+ * The cell size is proportional to the ratio of the current font size to
+ * kDefaultFontSize, so the palette scales naturally when the system font
+ * changes. The result is clamped to kMinCellSize.
+ *
+ * @param size  Requested cell size in font-size-relative points.
+ *
+ * @see SetCellSize(), kMinCellSize, kDefaultFontSize
+ */
 void
 BColorControl::_SetCellSize(float size)
 {
@@ -622,6 +916,15 @@ BColorControl::_SetCellSize(float size)
 }
 
 
+/**
+ * @brief Returns the vertical spacing between successive RGB text controls.
+ *
+ * Takes the larger of the text control's own height and one-third of the
+ * palette area's height, ensuring the controls fit within the ramp bands when
+ * the palette is tall enough.
+ *
+ * @return Vertical offset in pixels between adjacent text control tops.
+ */
 float
 BColorControl::_TextRectOffset()
 {
@@ -630,6 +933,17 @@ BColorControl::_TextRectOffset()
 }
 
 
+/**
+ * @brief Returns the bounding rectangle of the selector drawn over a palette cell.
+ *
+ * Converts the flat color index @a colorIndex to a row/column position within
+ * fPaletteFrame and returns the corresponding cell rectangle.
+ *
+ * @param colorIndex  Index into the system color list (0–255).
+ * @return The cell rectangle in view coordinates.
+ *
+ * @see _DrawSelectors(), SetValue()
+ */
 BRect
 BColorControl::_PaletteSelectorFrame(uint8 colorIndex) const
 {
@@ -641,6 +955,15 @@ BColorControl::_PaletteSelectorFrame(uint8 colorIndex) const
 }
 
 
+/**
+ * @brief Renders the color area into the offscreen bitmap's child view.
+ *
+ * Locks the offscreen bitmap, retrieves its embedded BView, calls
+ * _DrawColorArea() to paint the full palette or ramp content, and syncs the
+ * view before unlocking. Must be called after the bitmap has been allocated.
+ *
+ * @see AttachedToWindow(), _DrawColorArea()
+ */
 void
 BColorControl::_InitOffscreen()
 {
@@ -655,6 +978,21 @@ BColorControl::_InitOffscreen()
 }
 
 
+/**
+ * @brief Invalidates the bounding box of a ramp selector so it is repainted.
+ *
+ * Calculates the invalidation radius from kSelectorSize and kSelectorPenSize,
+ * expanding it when @a focused is @c true to include the outer focus ring.
+ * Does nothing in palette mode or for out-of-range ramp indices.
+ *
+ * @param ramp    Ramp index (1 = red, 2 = green, 3 = blue); values outside
+ *                [1, 3] are silently ignored.
+ * @param color   The current color used to locate the selector position.
+ * @param focused @c true if the ramp currently has keyboard focus, which
+ *                requires a larger invalidation region.
+ *
+ * @see _SelectorPosition(), _RampFrame(), MakeFocus()
+ */
 void
 BColorControl::_InvalidateSelector(int16 ramp, rgb_color color, bool focused)
 {
@@ -677,6 +1015,16 @@ BColorControl::_InvalidateSelector(int16 ramp, rgb_color color, bool focused)
 }
 
 
+/**
+ * @brief Sets the display cell size and resizes the control to fit.
+ *
+ * Delegates to _SetCellSize() for font-scaled clamping, then calls
+ * ResizeToPreferred() to recompute the layout and adjust the view frame.
+ *
+ * @param size  Desired cell size in font-size-relative points.
+ *
+ * @see CellSize(), _SetCellSize()
+ */
 void
 BColorControl::SetCellSize(float size)
 {
@@ -685,6 +1033,13 @@ BColorControl::SetCellSize(float size)
 }
 
 
+/**
+ * @brief Returns the current (font-scaled) cell size in pixels.
+ *
+ * @return The cell size as stored in fCellSize after font scaling.
+ *
+ * @see SetCellSize()
+ */
 float
 BColorControl::CellSize() const
 {
@@ -692,6 +1047,17 @@ BColorControl::CellSize() const
 }
 
 
+/**
+ * @brief Changes the palette cell arrangement and refreshes the display.
+ *
+ * Updates fColumns and fRows to match @a layout, then calls ResizeToPreferred()
+ * and Invalidate() to rebuild the view geometry and repaint.
+ *
+ * @param layout  One of B_CELLS_4x64, B_CELLS_8x32, B_CELLS_16x16,
+ *                B_CELLS_32x8, or B_CELLS_64x4.
+ *
+ * @see Layout(), SetLayout(BLayout*)
+ */
 void
 BColorControl::SetLayout(color_control_layout layout)
 {
@@ -727,6 +1093,17 @@ BColorControl::SetLayout(color_control_layout layout)
 }
 
 
+/**
+ * @brief Returns the current palette cell layout constant.
+ *
+ * Examines fColumns and fRows to reconstruct the color_control_layout enum
+ * value. Defaults to B_CELLS_32x8 if the current state does not match any
+ * known layout (which should not occur during normal use).
+ *
+ * @return The active color_control_layout value.
+ *
+ * @see SetLayout(color_control_layout)
+ */
 color_control_layout
 BColorControl::Layout() const
 {
@@ -749,6 +1126,14 @@ BColorControl::Layout() const
 }
 
 
+/**
+ * @brief Called when the parent window gains or loses activation.
+ *
+ * Forwards to BControl::WindowActivated() for default handling such as
+ * updating focus ring rendering.
+ *
+ * @param state  @c true if the window became active, @c false if it deactivated.
+ */
 void
 BColorControl::WindowActivated(bool state)
 {
@@ -756,6 +1141,22 @@ BColorControl::WindowActivated(bool state)
 }
 
 
+/**
+ * @brief Handles keyboard navigation and color adjustment in true-color mode.
+ *
+ * In true-color mode:
+ * - Up/Down arrows cycle the keyboard focus among the three color ramps.
+ * - Left/Right arrows decrement or increment the focused channel by 1, or by 5
+ *   when the key is being held down (auto-repeat count exceeds 4).
+ *
+ * All key events are also forwarded to BControl::KeyDown() for default
+ * handling (tab navigation, etc.).
+ *
+ * @param bytes     Pointer to the UTF-8 byte sequence of the pressed key.
+ * @param numBytes  Length of the byte sequence.
+ *
+ * @see MakeFocus(), SetValue(), fFocusedRamp
+ */
 void
 BColorControl::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -865,6 +1266,16 @@ BColorControl::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Called when a mouse button is released over the control.
+ *
+ * Clears the active ramp tracking state and releases the mouse event capture
+ * that was established in MouseDown().
+ *
+ * @param point  The cursor position in view coordinates at button release.
+ *
+ * @see MouseDown(), MouseMoved()
+ */
 void
 BColorControl::MouseUp(BPoint point)
 {
@@ -873,6 +1284,19 @@ BColorControl::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Handles a mouse button press to select a color.
+ *
+ * Ignores the event when the control is disabled or the click falls outside
+ * the palette area. In palette mode, maps the click to a color cell index and
+ * sets that indexed color. In true-color mode, determines which ramp the click
+ * landed on and sets the corresponding channel to the interpolated shade.
+ * Begins tracking to support drag-to-change via MouseMoved().
+ *
+ * @param point  The cursor position in view coordinates at button press.
+ *
+ * @see MouseUp(), MouseMoved(), SetValue()
+ */
 void
 BColorControl::MouseDown(BPoint point)
 {
@@ -921,6 +1345,20 @@ BColorControl::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Tracks the cursor to update the color while a button is held down.
+ *
+ * Does nothing when the control is not in tracking mode. In palette mode,
+ * updates the selected color as the cursor moves over different cells. In
+ * true-color mode, updates the channel associated with fClickedRamp based on
+ * the cursor's horizontal position within the ramp area.
+ *
+ * @param point    The current cursor position in view coordinates.
+ * @param transit  Entry/exit transit code (B_INSIDE_VIEW, B_EXITED_VIEW, etc.).
+ * @param message  Non-NULL when a drag-and-drop is in progress; @c NULL otherwise.
+ *
+ * @see MouseDown(), MouseUp(), SetValue()
+ */
 void
 BColorControl::MouseMoved(BPoint point, uint32 transit,
 	const BMessage* message)
@@ -962,6 +1400,13 @@ BColorControl::MouseMoved(BPoint point, uint32 transit,
 }
 
 
+/**
+ * @brief Called when the view is removed from its window.
+ *
+ * Forwards to BControl::DetachedFromWindow() for default cleanup.
+ *
+ * @see AttachedToWindow()
+ */
 void
 BColorControl::DetachedFromWindow()
 {
@@ -969,6 +1414,18 @@ BColorControl::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Returns the minimum size needed to display the control at its current settings.
+ *
+ * Computes the required width as the palette width plus text-field spacing and
+ * the width of the widest text control. The height is the larger of the palette
+ * height and the bottom edge of the blue text field.
+ *
+ * @param[out] _width   Receives the preferred width, or is left unchanged if NULL.
+ * @param[out] _height  Receives the preferred height, or is left unchanged if NULL.
+ *
+ * @see ResizeToPreferred(), PreferredSize()
+ */
 void
 BColorControl::GetPreferredSize(float* _width, float* _height)
 {
@@ -989,6 +1446,14 @@ BColorControl::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Repositions internal child views and resizes the control to its preferred size.
+ *
+ * Calls _LayoutView() to recompute the palette frame and text-control positions,
+ * then delegates to BControl::ResizeToPreferred() to adjust the view's own frame.
+ *
+ * @see GetPreferredSize(), _LayoutView()
+ */
 void
 BColorControl::ResizeToPreferred()
 {
@@ -997,6 +1462,15 @@ BColorControl::ResizeToPreferred()
 }
 
 
+/**
+ * @brief Sends the invocation message to the control's target.
+ *
+ * Provides a public override point and forwards directly to BControl::Invoke().
+ * Pass @c NULL to use the message set at construction time.
+ *
+ * @param message  Message to send, or @c NULL to use the default message.
+ * @return @c B_OK on success, or an error code from BInvoker::Invoke().
+ */
 status_t
 BColorControl::Invoke(BMessage* message)
 {
@@ -1004,6 +1478,15 @@ BColorControl::Invoke(BMessage* message)
 }
 
 
+/**
+ * @brief Called when the control's frame position changes.
+ *
+ * Forwards to BControl::FrameMoved() for default handling.
+ *
+ * @param newPosition  The new top-left position of the frame in parent coordinates.
+ *
+ * @see FrameResized()
+ */
 void
 BColorControl::FrameMoved(BPoint newPosition)
 {
@@ -1011,6 +1494,16 @@ BColorControl::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Called when the control's frame dimensions change.
+ *
+ * Forwards to BControl::FrameResized() for default handling.
+ *
+ * @param newWidth   The new frame width in pixels.
+ * @param newHeight  The new frame height in pixels.
+ *
+ * @see FrameMoved()
+ */
 void
 BColorControl::FrameResized(float newWidth, float newHeight)
 {
@@ -1018,6 +1511,21 @@ BColorControl::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate message handler.
+ *
+ * Forwards to BControl::ResolveSpecifier() which handles all standard
+ * BControl and BView scripting properties.
+ *
+ * @param message    The scripting message containing the specifier chain.
+ * @param index      Current position in the specifier chain.
+ * @param specifier  The specifier at @a index.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @return The BHandler that should process the scripting message.
+ *
+ * @see GetSupportedSuites()
+ */
 BHandler*
 BColorControl::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 form, const char* property)
@@ -1027,6 +1535,17 @@ BColorControl::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by this control.
+ *
+ * Forwards to BControl::GetSupportedSuites() which advertises the standard
+ * suite names for BControl and BView.
+ *
+ * @param data  Message into which the supported suite names are added.
+ * @return @c B_OK on success.
+ *
+ * @see ResolveSpecifier()
+ */
 status_t
 BColorControl::GetSupportedSuites(BMessage* data)
 {
@@ -1034,6 +1553,18 @@ BColorControl::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Gives or removes keyboard focus from the control.
+ *
+ * When focus is gained in true-color mode, initializes fFocusedRamp to 1 (the
+ * red ramp) so that arrow-key navigation has a defined starting point.
+ * When focus is lost, fFocusedRamp is set to -1. Forwards to
+ * BControl::MakeFocus() for focus ring repainting.
+ *
+ * @param focused  @c true to give focus, @c false to remove it.
+ *
+ * @see KeyDown(), fFocusedRamp
+ */
 void
 BColorControl::MakeFocus(bool focused)
 {
@@ -1042,6 +1573,13 @@ BColorControl::MakeFocus(bool focused)
 }
 
 
+/**
+ * @brief Called after all siblings have been attached to the window.
+ *
+ * Forwards to BControl::AllAttached() for default handling.
+ *
+ * @see AllDetached(), AttachedToWindow()
+ */
 void
 BColorControl::AllAttached()
 {
@@ -1049,6 +1587,13 @@ BColorControl::AllAttached()
 }
 
 
+/**
+ * @brief Called after all siblings have been detached from the window.
+ *
+ * Forwards to BControl::AllDetached() for default handling.
+ *
+ * @see AllAttached(), DetachedFromWindow()
+ */
 void
 BColorControl::AllDetached()
 {
@@ -1056,6 +1601,16 @@ BColorControl::AllDetached()
 }
 
 
+/**
+ * @brief Sets a vector icon for this control.
+ *
+ * Forwards to BControl::SetIcon(); BColorControl does not use an icon
+ * internally but exposes this method so subclasses and callers can assign one.
+ *
+ * @param icon   Bitmap containing the icon data in a supported format.
+ * @param flags  Icon-assignment flags passed to BControl::SetIcon().
+ * @return @c B_OK on success, or an error code from BControl::SetIcon().
+ */
 status_t
 BColorControl::SetIcon(const BBitmap* icon, uint32 flags)
 {
@@ -1063,6 +1618,23 @@ BColorControl::SetIcon(const BBitmap* icon, uint32 flags)
 }
 
 
+/**
+ * @brief Implements the binary-compatibility perform hook for late-bound virtual calls.
+ *
+ * Dispatches perform codes introduced after the original ABI freeze to the
+ * correct BColorControl virtual method without requiring a vtable slot change.
+ * Handled codes include MinSize, MaxSize, PreferredSize, LayoutAlignment,
+ * HasHeightForWidth, GetHeightForWidth, SetLayout, LayoutInvalidated,
+ * DoLayout, and SetIcon. Unrecognized codes are forwarded to
+ * BControl::Perform().
+ *
+ * @param code   A PERFORM_CODE_* constant identifying the operation.
+ * @param _data  Pointer to a perform_data_* struct appropriate for @a code.
+ * @return @c B_OK for handled codes, or the result of BControl::Perform()
+ *         for unhandled ones.
+ *
+ * @see BControl::Perform()
+ */
 status_t
 BColorControl::Perform(perform_code code, void* _data)
 {

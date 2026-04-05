@@ -1,7 +1,36 @@
 /*
- * Copyright 2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- * Copyright 2008 Mika Lindqvist
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *   Copyright 2008 Mika Lindqvist
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CommandManager.cpp
+ * @brief HCI command packet builder for the Bluetooth Kit
+ *
+ * Provides internal helper functions to construct Host Controller Interface
+ * (HCI) command packets for controlling local Bluetooth adapters. Commands
+ * are built from OGF/OCF opcode pairs and optional parameter payloads,
+ * ready for submission to the Bluetooth server.
+ *
+ * @see LocalDevice, DiscoveryAgent
  */
 
 
@@ -13,6 +42,27 @@
 #include "CompanyIdentifiers.h"
 
 
+/**
+ * @brief Allocate and populate a raw HCI command packet header.
+ *
+ * Allocates a contiguous memory block large enough to hold the
+ * hci_command_header followed by \a psize bytes of parameter data.
+ * The opcode is packed from \a ogf and \a ocf and stored in
+ * little-endian byte order.  If \a param is non-NULL and \a psize is
+ * non-zero, \a *param is set to point to the parameter region immediately
+ * following the header so the caller can fill it in.
+ *
+ * @param ogf      Opcode Group Field identifying the HCI command group.
+ * @param ocf      Opcode Command Field identifying the specific command.
+ * @param param    Output pointer-to-pointer that receives the address of the
+ *                 parameter payload region, or NULL if no parameters are needed.
+ * @param psize    Size in bytes of the command-specific parameter payload.
+ * @param outsize  Output pointer that receives the total allocated size
+ *                 (header + payload).
+ * @return A pointer to the allocated command buffer on success, or NULL if
+ *         the allocation fails.
+ * @note The caller is responsible for freeing the returned buffer with free().
+ */
 inline void*
 buildCommand(uint8 ogf, uint8 ocf, void** param, size_t psize,
 	size_t* outsize)
@@ -44,6 +94,23 @@ buildCommand(uint8 ogf, uint8 ocf, void** param, size_t psize,
 
 // Request that do not need any input parameter
 // Output reply can be fit in 32 bits field without talking status into account
+/**
+ * @brief Send a parameter-less HCI command and optionally retrieve a 32-bit result.
+ *
+ * Builds a no-parameter HCI command from \a ofg and \a ocf, sends it to the
+ * Bluetooth server via \a messenger, waits for a CommandComplete event, and
+ * returns the controller's status code.  If \a result is non-NULL and the
+ * reply carries a "result" field, that value is also stored.
+ *
+ * @param ofg       Opcode Group Field of the command to send.
+ * @param ocf       Opcode Command Field of the command to send.
+ * @param result    Optional output pointer for a 32-bit result value embedded
+ *                  in the reply message, or NULL if not needed.
+ * @param hId       The HCI device ID of the target local adapter.
+ * @param messenger A BMessenger connected to the Bluetooth server.
+ * @return The HCI status byte from the CommandComplete event, or BT_ERROR if
+ *         the send fails.
+ */
 status_t
 NonParameterCommandRequest(uint8 ofg, uint8 ocf, int32* result, hci_id hId,
 	BMessenger* messenger)
@@ -77,6 +144,14 @@ NonParameterCommandRequest(uint8 ofg, uint8 ocf, int32* result, hci_id hId,
 #endif
 
 
+/**
+ * @brief Build an HCI Reset command packet.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReset(size_t* outsize)
 {
@@ -86,6 +161,16 @@ buildReset(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI ReadLocalName command packet.
+ *
+ * Requests the human-readable name stored in the local controller.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReadLocalName(size_t* outsize)
 {
@@ -95,6 +180,16 @@ buildReadLocalName(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI ReadClassOfDevice command packet.
+ *
+ * Requests the 3-byte Class of Device record stored in the local controller.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReadClassOfDevice(size_t* outsize)
 {
@@ -104,6 +199,16 @@ buildReadClassOfDevice(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI ReadScanEnable command packet.
+ *
+ * Requests the current inquiry- and page-scan enable state from the controller.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReadScan(size_t* outsize)
 {
@@ -113,6 +218,21 @@ buildReadScan(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI WriteScanEnable command packet.
+ *
+ * Sets the inquiry- and page-scan enable bits in the controller according to
+ * \a scanmode.
+ *
+ * @param scanmode The desired scan-enable byte (0 = no scans,
+ *                 1 = inquiry scan only, 2 = page scan only,
+ *                 3 = inquiry and page scan).
+ * @param outsize  Output pointer that receives the total size of the allocated
+ *                 command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildReadScan()
+ */
 void*
 buildWriteScan(uint8 scanmode, size_t* outsize)
 {
@@ -135,6 +255,20 @@ buildWriteScan(uint8 scanmode, size_t* outsize)
 #endif
 
 
+/**
+ * @brief Build an HCI RemoteNameRequest command packet.
+ *
+ * Requests the user-friendly name of a remote Bluetooth device.
+ *
+ * @param bdaddr         Bluetooth address of the remote device.
+ * @param pscan_rep_mode Page-scan repetition mode reported during inquiry.
+ * @param clock_offset   Clock offset obtained during the inquiry response,
+ *                       used to speed up paging.
+ * @param outsize        Output pointer that receives the total size of the
+ *                       allocated command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildRemoteNameRequest(bdaddr_t bdaddr, uint8 pscan_rep_mode,
 	uint16 clock_offset, size_t* outsize)
@@ -154,6 +288,23 @@ buildRemoteNameRequest(bdaddr_t bdaddr, uint8 pscan_rep_mode,
 }
 
 
+/**
+ * @brief Build an HCI Inquiry command packet.
+ *
+ * Starts a general or limited inquiry scan to discover nearby Bluetooth devices.
+ *
+ * @param lap     Lower Address Part of the inquiry access code (e.g.
+ *                0x9E8B33 for GIAC or 0x9E8B00 for LIAC).
+ * @param length  Maximum duration of the inquiry in units of 1.28 seconds
+ *                (range 1–48, i.e. 1.28–61.44 s).
+ * @param num_rsp Maximum number of inquiry responses before the inquiry stops;
+ *                0 means unlimited.
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildInquiryCancel()
+ */
 void*
 buildInquiry(uint32 lap, uint8 length, uint8 num_rsp, size_t* outsize)
 {
@@ -175,6 +326,17 @@ buildInquiry(uint32 lap, uint8 length, uint8 num_rsp, size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI InquiryCancel command packet.
+ *
+ * Instructs the controller to stop an ongoing inquiry immediately.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildInquiry()
+ */
 void*
 buildInquiryCancel(size_t* outsize)
 {
@@ -183,6 +345,22 @@ buildInquiryCancel(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI PinCodeRequestReply command packet.
+ *
+ * Supplies a PIN code to the controller in response to a PIN Code Request event
+ * during legacy pairing.
+ *
+ * @param bdaddr   Bluetooth address of the remote device that requested the PIN.
+ * @param length   Length of the PIN code in bytes (1–16).
+ * @param pincode  The PIN code bytes; must be exactly \a length bytes long.
+ * @param outsize  Output pointer that receives the total size of the allocated
+ *                 command buffer.
+ * @return A heap-allocated command buffer on success, NULL if \a length exceeds
+ *         HCI_PIN_SIZE, or NULL on allocation failure.  The caller must free
+ *         the buffer with free().
+ * @see buildPinCodeRequestNegativeReply()
+ */
 void*
 buildPinCodeRequestReply(bdaddr_t bdaddr, uint8 length, char pincode[16],
 	size_t* outsize)
@@ -206,6 +384,19 @@ buildPinCodeRequestReply(bdaddr_t bdaddr, uint8 length, char pincode[16],
 }
 
 
+/**
+ * @brief Build an HCI PinCodeRequestNegativeReply command packet.
+ *
+ * Rejects a PIN Code Request event, causing the pairing attempt to fail.
+ *
+ * @param bdaddr  Bluetooth address of the remote device whose PIN request
+ *                is being rejected.
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildPinCodeRequestReply()
+ */
 void*
 buildPinCodeRequestNegativeReply(bdaddr_t bdaddr, size_t* outsize)
 {
@@ -225,6 +416,21 @@ buildPinCodeRequestNegativeReply(bdaddr_t bdaddr, size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI AcceptConnectionRequest command packet.
+ *
+ * Accepts an incoming connection request from a remote device and optionally
+ * requests a role switch.
+ *
+ * @param bdaddr  Bluetooth address of the remote device requesting the connection.
+ * @param role    Desired role after connection: 0x00 to become master,
+ *                0x01 to remain slave.
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildRejectConnectionRequest()
+ */
 void*
 buildAcceptConnectionRequest(bdaddr_t bdaddr, uint8 role, size_t* outsize)
 {
@@ -243,6 +449,19 @@ buildAcceptConnectionRequest(bdaddr_t bdaddr, uint8 role, size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI RejectConnectionRequest command packet.
+ *
+ * Declines an incoming connection request from a remote device.
+ *
+ * @param bdaddr  Bluetooth address of the remote device whose connection
+ *                request is being rejected.
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildAcceptConnectionRequest()
+ */
 void*
 buildRejectConnectionRequest(bdaddr_t bdaddr, size_t* outsize)
 {
@@ -261,6 +480,26 @@ buildRejectConnectionRequest(bdaddr_t bdaddr, size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI IOCapabilityRequestReply command packet.
+ *
+ * Responds to an IO Capability Request event during Secure Simple Pairing,
+ * advertising the local device's IO capabilities, OOB data availability,
+ * and authentication requirements.
+ *
+ * @param bdaddr         Bluetooth address of the remote device that issued
+ *                       the IO Capability Request.
+ * @param capability     Local IO capability code (e.g. NoInputNoOutput,
+ *                       DisplayYesNo).
+ * @param oob_data       0x00 if no OOB data is available, 0x01 if present.
+ * @param authentication Authentication requirements byte (e.g. MITM
+ *                       protection preference).
+ * @param outsize        Output pointer that receives the total size of the
+ *                       allocated command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildUserConfirmReply()
+ */
 void*
 buildIOCapabilityRequestReply(bdaddr_t bdaddr, uint8 capability, uint8 oob_data,
 	uint8 authentication, size_t* outsize)
@@ -283,6 +522,19 @@ buildIOCapabilityRequestReply(bdaddr_t bdaddr, uint8 capability, uint8 oob_data,
 }
 
 
+/**
+ * @brief Build an HCI UserConfirmationRequestReply command packet.
+ *
+ * Confirms the numeric comparison value during Secure Simple Pairing,
+ * indicating that the user has accepted the displayed passkey.
+ *
+ * @param bdaddr  Bluetooth address of the remote device involved in pairing.
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ * @see buildIOCapabilityRequestReply()
+ */
 void*
 buildUserConfirmReply(bdaddr_t bdaddr, size_t* outsize)
 {
@@ -299,6 +551,19 @@ buildUserConfirmReply(bdaddr_t bdaddr, size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI AuthenticationRequested command packet.
+ *
+ * Initiates authentication for an existing ACL connection identified by
+ * \a handle.
+ *
+ * @param handle  The ACL connection handle returned when the connection was
+ *                established.
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildAuthenticationRequested(uint16 handle, size_t* outsize)
 {
@@ -320,6 +585,17 @@ buildAuthenticationRequested(uint16 handle, size_t* outsize)
 #endif
 
 
+/**
+ * @brief Build an HCI ReadLocalVersionInformation command packet.
+ *
+ * Requests the HCI, LMP, and manufacturer version information from the
+ * local controller.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReadLocalVersionInformation(size_t* outsize)
 {
@@ -329,6 +605,17 @@ buildReadLocalVersionInformation(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI ReadBufferSize command packet.
+ *
+ * Requests the maximum ACL and SCO data packet lengths and the total number
+ * of data packets the controller can buffer.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReadBufferSize(size_t* outsize)
 {
@@ -338,6 +625,16 @@ buildReadBufferSize(size_t* outsize)
 }
 
 
+/**
+ * @brief Build an HCI ReadBdAddr command packet.
+ *
+ * Requests the 48-bit Bluetooth device address stored in the local controller.
+ *
+ * @param outsize Output pointer that receives the total size of the allocated
+ *                command buffer.
+ * @return A heap-allocated command buffer on success, or NULL on allocation
+ *         failure.  The caller must free it with free().
+ */
 void*
 buildReadBdAddr(size_t* outsize)
 {
@@ -347,6 +644,7 @@ buildReadBdAddr(size_t* outsize)
 }
 
 
+/** @brief Human-readable names for HCI Link Control commands, indexed by OCF - 1. */
 const char* linkControlCommands[] = {
 	"Inquiry",
 	"Inquiry Cancel",
@@ -403,6 +701,7 @@ const char* linkControlCommands[] = {
 };
 
 
+/** @brief Human-readable names for HCI Link Policy commands, indexed by OCF - 1. */
 const char* linkPolicyCommands[] = {
 	"Hold Mode",
 	"Reserved",
@@ -424,6 +723,7 @@ const char* linkPolicyCommands[] = {
 };
 
 
+/** @brief Human-readable names for HCI Controller and Baseband commands, indexed by OCF - 1. */
 const char* controllerBasebandCommands[] = {
 	"Set Event Mask",
 	"Reserved",
@@ -524,6 +824,7 @@ const char* controllerBasebandCommands[] = {
 };
 
 
+/** @brief Human-readable names for HCI Informational Parameters commands, indexed by OCF - 1. */
 const char* informationalParametersCommands[] = {
 	"Read Local Version Information",
 	"Read Local Supported Commands",
@@ -537,6 +838,7 @@ const char* informationalParametersCommands[] = {
 };
 
 
+/** @brief Human-readable names for HCI Status Parameters commands, indexed by OCF - 1. */
 const char* statusParametersCommands[] = {
 	"Read Failed Contact Counter",
 	"Reset Failed Contact Counter",
@@ -548,6 +850,7 @@ const char* statusParametersCommands[] = {
 };
 
 
+/** @brief Human-readable names for HCI Testing commands, indexed by OCF - 1. */
 const char* testingCommands[] = {
 	"Read Loopback Mode",
 	"Write Loopback Mode",
@@ -556,6 +859,7 @@ const char* testingCommands[] = {
 };
 
 
+/** @brief Human-readable names for Bluetooth HCI events, indexed by event code - 1. */
 const char* bluetoothEvents[] = {
 	"Inquiry Complete",
 	"Inquiry Result",
@@ -621,6 +925,7 @@ const char* bluetoothEvents[] = {
 };
 
 
+/** @brief Human-readable Bluetooth HCI error code strings, indexed by error code value. */
 const char* bluetoothErrors[] = {
 	"No Error",
 	"Unknown Command",
@@ -681,8 +986,10 @@ const char* bluetoothErrors[] = {
 };
 
 
+/** @brief Printable version strings for each HCI specification revision, indexed by version code. */
 const char* hciVersion[] = { "1.0B" , "1.1" , "1.2" , "2.0" , "2.1",
 	"3.0", "4.0", "4.1", "4.2", "5.0", "5.1", "5.2"};
+/** @brief Printable version strings for each LMP specification revision, indexed by version code. */
 const char* lmpVersion[] = { "1.0" , "1.1" , "1.2" , "2.0" , "2.1",
 	"3.0", "4.0", "4.1", "4.2", "5.0", "5.1", "5.2"};
 
@@ -691,6 +998,15 @@ const char* lmpVersion[] = { "1.0" , "1.1" , "1.2" , "2.0" , "2.1",
 #endif
 
 
+/**
+ * @brief Return the printable HCI specification version string for a version code.
+ *
+ * @param ver HCI version code as reported by the ReadLocalVersionInformation command.
+ * @return A constant string such as "2.1" or "4.2".
+ * @note No bounds checking is performed; passing an out-of-range value will
+ *       read beyond the hciVersion array.
+ * @see BluetoothLmpVersion()
+ */
 const char*
 BluetoothHciVersion(uint16 ver)
 {
@@ -699,6 +1015,15 @@ BluetoothHciVersion(uint16 ver)
 }
 
 
+/**
+ * @brief Return the printable LMP specification version string for a version code.
+ *
+ * @param ver LMP version code as reported by the ReadLocalVersionInformation command.
+ * @return A constant string such as "2.1" or "4.2".
+ * @note No bounds checking is performed; passing an out-of-range value will
+ *       read beyond the lmpVersion array.
+ * @see BluetoothHciVersion()
+ */
 const char*
 BluetoothLmpVersion(uint16 ver)
 {
@@ -707,6 +1032,18 @@ BluetoothLmpVersion(uint16 ver)
 }
 
 
+/**
+ * @brief Return the human-readable name for a packed HCI command opcode.
+ *
+ * Decodes the OGF from \a opcode and dispatches into the appropriate
+ * per-group command name table to look up the OCF.
+ *
+ * @param opcode The packed 16-bit HCI opcode (OGF in bits 15:10, OCF in bits 9:0).
+ * @return A constant string naming the command, "Vendor specific command" for
+ *         OGF_VENDOR_CMD, or "Unknown command" if the OGF is not recognized.
+ * @note OCF values are treated as 1-based indices into each group's array.
+ *       Passing an OCF beyond the array bounds will cause undefined behaviour.
+ */
 const char*
 BluetoothCommandOpcode(uint16 opcode)
 {
@@ -751,6 +1088,13 @@ BluetoothCommandOpcode(uint16 opcode)
 }
 
 
+/**
+ * @brief Return the human-readable name for a Bluetooth HCI event code.
+ *
+ * @param event The 8-bit HCI event code (1-based, matching the HCI specification).
+ * @return A constant string naming the event, or "Event out of Range!" if
+ *         \a event falls outside the bluetoothEvents table.
+ */
 const char*
 BluetoothEvent(uint8 event)
 {
@@ -762,6 +1106,18 @@ BluetoothEvent(uint8 event)
 }
 
 
+/**
+ * @brief Return the company name string for a Bluetooth manufacturer identifier.
+ *
+ * Looks up \a manufacturer in the Bluetooth Assigned Numbers company
+ * identifier table.
+ *
+ * @param manufacturer The 16-bit manufacturer identifier as assigned by the
+ *                     Bluetooth SIG.
+ * @return The company name string, "internal use" for the reserved value
+ *         0xFFFF, or "not assigned" if the identifier is beyond the table.
+ * @see BluetoothError()
+ */
 const char*
 BluetoothManufacturer(uint16 manufacturer)
 {
@@ -775,6 +1131,14 @@ BluetoothManufacturer(uint16 manufacturer)
 }
 
 
+/**
+ * @brief Return the human-readable description for a Bluetooth HCI error code.
+ *
+ * @param error The 8-bit HCI error code returned by the controller.
+ * @return A constant string describing the error, or "not specified" if
+ *         \a error is beyond the bluetoothErrors table.
+ * @see BluetoothEvent()
+ */
 const char*
 BluetoothError(uint8 error)
 {

@@ -1,13 +1,42 @@
 /*
- * Copyright 2001-2020 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Stefano Ceccherini, burton666@libero.it
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Marc Flerackers, mflerackers@androme.be
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Stefano Ceccherini, burton666@libero.it
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Marc Flerackers, mflerackers@androme.be
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file ScrollBar.cpp
+ * @brief Implementation of BScrollBar, a scroll bar control
+ *
+ * BScrollBar implements horizontal and vertical scroll bars that control the
+ * position of an associated BScrollView target. It manages thumb size, step
+ * sizes, and range, keeping them synchronized with the target view's content
+ * area.
+ *
+ * @see BScrollView, BView, BControlLook
  */
 
 
@@ -38,6 +67,12 @@
 #endif
 
 
+/**
+ * @brief Logical directions used when drawing or identifying arrow buttons.
+ *
+ * Values are passed to BControlLook drawing helpers and used internally to
+ * map a screen region to the arrow it represents.
+ */
 typedef enum {
 	ARROW_LEFT = 0,
 	ARROW_RIGHT,
@@ -47,33 +82,67 @@ typedef enum {
 } arrow_direction;
 
 
+/** @brief Maximum permitted thumb (knob) size in pixels. */
 #define SCROLL_BAR_MAXIMUM_KNOB_SIZE	50
+/** @brief Minimum permitted thumb (knob) size in pixels. */
 #define SCROLL_BAR_MINIMUM_KNOB_SIZE	9
 
+/** @brief Scripting command code: scroll the bar by a value. */
 #define SBC_SCROLLBYVALUE	0
+/** @brief Scripting command code: toggle double-arrow mode. */
 #define SBC_SETDOUBLE		1
+/** @brief Scripting command code: set proportional thumb mode. */
 #define SBC_SETPROPORTIONAL	2
+/** @brief Scripting command code: set the visual style. */
 #define SBC_SETSTYLE		3
 
 // Quick constants for determining which arrow is down and are defined with
 // respect to double arrow mode. ARROW1 and ARROW4 refer to the outer pair of
 // arrows and ARROW2 and ARROW3 refer to the inner ones. ARROW1 points left/up
 // and ARROW4 points right/down.
+/** @brief Index of the first (outermost left/top) arrow button. */
 #define ARROW1	0
+/** @brief Index of the second (inner left/top) arrow button used in double-arrow mode. */
 #define ARROW2	1
+/** @brief Index of the third (inner right/bottom) arrow button used in double-arrow mode. */
 #define ARROW3	2
+/** @brief Index of the fourth (outermost right/bottom) arrow button. */
 #define ARROW4	3
+/** @brief Sentinel value indicating the drag thumb is the active element. */
 #define THUMB	4
+/** @brief Sentinel value indicating no arrow button is currently active. */
 #define NOARROW	-1
 
 
+/** @brief Initial delay in microseconds before auto-scroll repeating begins. */
 static const bigtime_t kRepeatDelay = 300000;
 
 
 // Because the R5 version kept a lot of data on server-side, we need to kludge
 // our way into binary compatibility
+
+/**
+ * @brief Private implementation data for BScrollBar.
+ *
+ * Holds all state that the original BeOS R5 ABI kept server-side, including
+ * thumb geometry, the auto-scroll repeater thread, arrow-button enabled
+ * states, and the system scroll_bar_info settings.  One instance is owned
+ * by every BScrollBar object.
+ *
+ * @note This class must not be exposed in the public header because its size
+ *       is part of the binary-compatibility strategy.
+ */
 class BScrollBar::Private {
 public:
+	/**
+	 * @brief Construct the private data block for a given scroll bar.
+	 *
+	 * Reads system-wide scroll_bar_info settings and scales the minimum knob
+	 * size to the current plain-font size so the thumb remains legible at
+	 * different font sizes.
+	 *
+	 * @param scrollBar The owning BScrollBar; stored as a back-pointer.
+	 */
 	Private(BScrollBar* scrollBar)
 	:
 	fScrollBar(scrollBar),
@@ -104,6 +173,13 @@ public:
 				(be_plain_font->Size() / 12.0f));
 	}
 
+	/**
+	 * @brief Destroy the private data block.
+	 *
+	 * Signals the auto-scroll repeater thread to exit and waits for it to
+	 * terminate before returning, ensuring no dangling thread accesses the
+	 * deleted object.
+	 */
 	~Private()
 	{
 		if (fRepeaterThread >= 0) {
@@ -113,43 +189,99 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Draw a single arrow button on the scroll bar.
+	 *
+	 * Delegates to BControlLook::DrawScrollBarButton() after computing the
+	 * appropriate pressed/enabled flags.
+	 *
+	 * @param owner     The BScrollBar that owns this button.
+	 * @param direction Which arrow direction to render.
+	 * @param frame     Bounding rectangle for the button in the owner's
+	 *                  coordinate system.
+	 * @param down      Pass true when the button is in the pressed state.
+	 */
 	void DrawScrollBarButton(BScrollBar* owner, arrow_direction direction,
 		BRect frame, bool down = false);
 
+	/**
+	 * @brief Thread entry point for the auto-scroll repeater.
+	 *
+	 * Called by spawn_thread(); casts \a data to a Private pointer and
+	 * delegates to ButtonRepeaterThread().
+	 *
+	 * @param data Pointer to the owning BScrollBar::Private instance.
+	 * @return Always returns 0.
+	 */
 	static int32 button_repeater_thread(void* data);
 
+	/**
+	 * @brief Auto-scroll repeater thread body.
+	 *
+	 * Waits for the initial kRepeatDelay to elapse, then repeatedly adjusts
+	 * the scroll-bar value by fThumbInc every 25 ms until fExitRepeater is
+	 * set.  The loop also handles page-scroll stopping logic when the thumb
+	 * would pass the cursor position.
+	 *
+	 * @return Always returns 0.
+	 */
 	int32 ButtonRepeaterThread();
 
+	/** @brief Back-pointer to the owning BScrollBar. */
 	BScrollBar*			fScrollBar;
+	/** @brief Whether the scroll bar is interactive (mirrors window-active state). */
 	bool				fEnabled;
 
 	// TODO: This should be a static, initialized by
 	// _init_interface_kit() at application startup-time,
 	// like BMenu::sMenuInfo
+	/** @brief Cached system-wide scroll bar preferences (double arrows, knob style, etc.). */
 	scroll_bar_info		fScrollBarInfo;
 
+	/** @brief Thread ID of the active auto-scroll repeater, or -1 when idle. */
 	thread_id			fRepeaterThread;
+	/** @brief Set to true to signal the repeater thread to exit cleanly. */
 	volatile bool		fExitRepeater;
+	/** @brief Absolute timestamp (system_time) after which repeating begins. */
 	bigtime_t			fRepeaterDelay;
 
+	/** @brief Current bounding rectangle of the drag thumb in view coordinates. */
 	BRect				fThumbFrame;
+	/** @brief Whether the repeater thread should fire its next scroll step. */
 	volatile bool		fDoRepeat;
+	/** @brief Offset from the cursor to the thumb's top-left corner at drag start. */
 	BPoint				fClickOffset;
 
+	/** @brief Scroll amount applied per repeater tick (positive = forward). */
 	float				fThumbInc;
+	/** @brief Value at which page-scroll auto-repeat should stop. */
 	float				fStopValue;
 
+	/** @brief Whether the up/left arrow buttons are currently enabled. */
 	bool				fUpArrowsEnabled;
+	/** @brief Whether the down/right arrow buttons are currently enabled. */
 	bool				fDownArrowsEnabled;
 
+	/** @brief Whether the scroll bar's border is drawn in the focused/highlighted style. */
 	bool				fBorderHighlighted;
 
+	/** @brief Index of the arrow button currently pressed, or NOARROW / THUMB. */
 	int8				fButtonDown;
 };
 
 
 // This thread is spawned when a button is initially pushed and repeatedly scrolls
 // the scrollbar by a little bit after a short delay
+
+/**
+ * @brief Static thread entry point for the auto-scroll repeater.
+ *
+ * Forwards execution to the instance method ButtonRepeaterThread() on the
+ * BScrollBar::Private object pointed to by \a data.
+ *
+ * @param data Opaque pointer cast to BScrollBar::Private*.
+ * @return Return value of ButtonRepeaterThread().
+ */
 int32
 BScrollBar::Private::button_repeater_thread(void* data)
 {
@@ -158,6 +290,18 @@ BScrollBar::Private::button_repeater_thread(void* data)
 }
 
 
+/**
+ * @brief Auto-scroll repeater thread body.
+ *
+ * Waits until fRepeaterDelay elapses, then loops every 25 ms: while
+ * fDoRepeat is true it advances the scroll-bar value by fThumbInc.  When
+ * scrolling through the empty trough (NOARROW mode) it stops as soon as the
+ * thumb reaches fStopValue.  The thread terminates when fExitRepeater is set,
+ * then clears fRepeaterThread to -1 inside the looper lock so the next mouse
+ * press can start a fresh thread.
+ *
+ * @return Always 0.
+ */
 int32
 BScrollBar::Private::ButtonRepeaterThread()
 {
@@ -203,6 +347,23 @@ BScrollBar::Private::ButtonRepeaterThread()
 //	#pragma mark - BScrollBar
 
 
+/**
+ * @brief Construct a layout-unaware BScrollBar with an explicit frame.
+ *
+ * Creates a scroll bar in the traditional (non-layout) mode.  The resizing
+ * mode is set automatically: B_FOLLOW_TOP_BOTTOM|B_FOLLOW_RIGHT for vertical
+ * bars, B_FOLLOW_LEFT_RIGHT|B_FOLLOW_BOTTOM for horizontal ones.
+ *
+ * @param frame     Position and size of the scroll bar in the parent's
+ *                  coordinate system.
+ * @param name      View name; may be NULL.
+ * @param target    View to scroll; may be NULL and set later via SetTarget().
+ * @param min       Minimum scroll value (usually 0).
+ * @param max       Maximum scroll value.
+ * @param direction B_HORIZONTAL or B_VERTICAL.
+ * @see SetTarget()
+ * @see SetRange()
+ */
 BScrollBar::BScrollBar(BRect frame, const char* name, BView* target,
 	float min, float max, orientation direction)
 	:
@@ -233,6 +394,20 @@ BScrollBar::BScrollBar(BRect frame, const char* name, BView* target,
 }
 
 
+/**
+ * @brief Construct a layout-aware BScrollBar without an explicit frame.
+ *
+ * Use this constructor when the scroll bar will be managed by a BLayout.
+ * The frame is determined at layout time; explicit resizing modes are not set.
+ *
+ * @param name      View name; may be NULL.
+ * @param target    View to scroll; may be NULL and set later via SetTarget().
+ * @param min       Minimum scroll value (usually 0).
+ * @param max       Maximum scroll value.
+ * @param direction B_HORIZONTAL or B_VERTICAL.
+ * @see SetTarget()
+ * @see SetRange()
+ */
 BScrollBar::BScrollBar(const char* name, BView* target,
 	float min, float max, orientation direction)
 	:
@@ -258,6 +433,17 @@ BScrollBar::BScrollBar(const char* name, BView* target,
 }
 
 
+/**
+ * @brief Reconstruct a BScrollBar from an archived BMessage.
+ *
+ * Restores range, step sizes, current value, orientation, and proportion
+ * from the archive fields written by Archive().  The scroll target is not
+ * archived and must be re-attached after instantiation if needed.
+ *
+ * @param data Archive message produced by Archive().
+ * @see Archive()
+ * @see Instantiate()
+ */
 BScrollBar::BScrollBar(BMessage* data)
 	:
 	BView(data),
@@ -303,6 +489,15 @@ BScrollBar::BScrollBar(BMessage* data)
 }
 
 
+/**
+ * @brief Destroy the BScrollBar.
+ *
+ * Detaches this scroll bar from its target view (clearing the target's
+ * fVerScroller or fHorScroller pointer) and then releases all private data,
+ * including the auto-scroll repeater thread if it is still running.
+ *
+ * @see SetTarget()
+ */
 BScrollBar::~BScrollBar()
 {
 	SetTarget((BView*)NULL);
@@ -310,6 +505,14 @@ BScrollBar::~BScrollBar()
 }
 
 
+/**
+ * @brief Create a new BScrollBar from an archived BMessage.
+ *
+ * @param data Archive message, typically obtained from BMessage::Instantiate().
+ * @return A heap-allocated BScrollBar on success, or NULL if \a data does
+ *         not represent a valid BScrollBar archive.
+ * @see Archive()
+ */
 BArchivable*
 BScrollBar::Instantiate(BMessage* data)
 {
@@ -319,6 +522,19 @@ BScrollBar::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archive the BScrollBar state into a BMessage.
+ *
+ * Stores the scroll range ("_range"), small and large step sizes ("_steps"),
+ * current value ("_val"), orientation ("_orient"), and thumb proportion
+ * ("_prop").  The scroll target is not archived.
+ *
+ * @param data  Message to write the archive fields into.
+ * @param deep  If true, child views are recursively archived (passed to
+ *              BView::Archive()).
+ * @return B_OK on success, or the first error code encountered.
+ * @see Instantiate()
+ */
 status_t
 BScrollBar::Archive(BMessage* data, bool deep) const
 {
@@ -356,6 +572,12 @@ BScrollBar::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Called after all descendants have been attached to the window.
+ *
+ * Delegates to BView::AllAttached(). Override in a subclass if post-attach
+ * initialisation that depends on the complete view hierarchy is required.
+ */
 void
 BScrollBar::AllAttached()
 {
@@ -363,6 +585,12 @@ BScrollBar::AllAttached()
 }
 
 
+/**
+ * @brief Called after all descendants have been detached from the window.
+ *
+ * Delegates to BView::AllDetached(). Override in a subclass for any
+ * cleanup that must happen after the full hierarchy has been removed.
+ */
 void
 BScrollBar::AllDetached()
 {
@@ -370,6 +598,14 @@ BScrollBar::AllDetached()
 }
 
 
+/**
+ * @brief Called when the view is added to a window's view hierarchy.
+ *
+ * Delegates to BView::AttachedToWindow(). Subclasses may override this to
+ * perform window-specific initialisation.
+ *
+ * @see DetachedFromWindow()
+ */
 void
 BScrollBar::AttachedToWindow()
 {
@@ -377,6 +613,14 @@ BScrollBar::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when the view is removed from a window's view hierarchy.
+ *
+ * Delegates to BView::DetachedFromWindow(). Subclasses may override this to
+ * release window-specific resources.
+ *
+ * @see AttachedToWindow()
+ */
 void
 BScrollBar::DetachedFromWindow()
 {
@@ -384,6 +628,18 @@ BScrollBar::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Paint the scroll bar into the current update region.
+ *
+ * Draws, in order: the outer border, all arrow buttons (one or two pairs
+ * depending on the double-arrow setting), the trough background on both
+ * sides of the thumb, and finally the thumb itself.  All drawing is
+ * delegated to the current be_control_look instance so that the appearance
+ * follows the active GUI theme.
+ *
+ * @param updateRect  The invalid rectangle that needs to be repainted,
+ *                    in the view's own coordinate system.
+ */
 void
 BScrollBar::Draw(BRect updateRect)
 {
@@ -521,6 +777,15 @@ BScrollBar::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Called when the view's position within its parent changes.
+ *
+ * Delegates to BView::FrameMoved(). Override in a subclass if the scroll
+ * bar needs to respond to position changes.
+ *
+ * @param newPosition The view's new left-top corner in the parent's
+ *                    coordinate system.
+ */
 void
 BScrollBar::FrameMoved(BPoint newPosition)
 {
@@ -528,6 +793,15 @@ BScrollBar::FrameMoved(BPoint newPosition)
 }
 
 
+/**
+ * @brief Called when the view's size changes.
+ *
+ * Recalculates the thumb frame to reflect the new bar length so that the
+ * thumb stays correctly positioned and proportioned after a resize.
+ *
+ * @param newWidth  New width of the view.
+ * @param newHeight New height of the view.
+ */
 void
 BScrollBar::FrameResized(float newWidth, float newHeight)
 {
@@ -535,6 +809,20 @@ BScrollBar::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Handle messages delivered to the scroll bar.
+ *
+ * Processes two message codes beyond the default BView behaviour:
+ * - B_VALUE_CHANGED: reads the "value" int32 field and calls ValueChanged().
+ * - B_MOUSE_WHEEL_CHANGED: converts wheel deltas to a scroll step and calls
+ *   ScrollWithMouseWheelDelta() (needed because BView's default handler only
+ *   forwards wheel events to attached scroll bars, which a scroll bar itself
+ *   does not have).
+ *
+ * All other messages are passed to BView::MessageReceived().
+ *
+ * @param message The incoming message.
+ */
 void
 BScrollBar::MessageReceived(BMessage* message)
 {
@@ -572,6 +860,25 @@ BScrollBar::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a mouse-button press inside the scroll bar.
+ *
+ * Determines what was clicked — the thumb, an arrow button, or the empty
+ * trough — and begins the appropriate action:
+ * - Secondary button anywhere: jump to the clicked position (absolute scroll).
+ * - Primary button on thumb: begin thumb drag.
+ * - Primary button on an arrow: scroll by one step and start the auto-scroll
+ *   repeater thread.
+ * - Primary button in the trough: page-scroll toward the click and start the
+ *   repeater, which stops when the thumb reaches the cursor.
+ *
+ * Holding Shift while clicking an arrow scrolls by fLargeStep instead of
+ * fSmallStep.
+ *
+ * @param where Click position in the view's coordinate system.
+ * @see MouseMoved()
+ * @see MouseUp()
+ */
 void
 BScrollBar::MouseDown(BPoint where)
 {
@@ -676,6 +983,22 @@ BScrollBar::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Handle mouse movement during a drag or hover.
+ *
+ * While the thumb is being dragged, maps the current cursor position to a
+ * scroll value and calls SetValue().  While an arrow button is held, suspends
+ * or resumes the auto-scroll repeater based on whether the cursor is still
+ * inside the button's rectangle.  While performing a trough page-scroll,
+ * updates the stop value so the thumb tracks the cursor.
+ *
+ * @param where       Current cursor position in view coordinates.
+ * @param code        Transit code (B_INSIDE_VIEW, B_OUTSIDE_VIEW, etc.).
+ * @param dragMessage Message associated with a drag-and-drop operation, or
+ *                    NULL when none is in progress.
+ * @see MouseDown()
+ * @see MouseUp()
+ */
 void
 BScrollBar::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 {
@@ -712,6 +1035,18 @@ BScrollBar::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Handle a mouse-button release inside the scroll bar.
+ *
+ * Invalidates the thumb or the previously pressed arrow button so it is
+ * redrawn in its released state, then clears the active-button state and
+ * signals the auto-scroll repeater thread to stop.
+ *
+ * @param where Release position in the view's coordinate system (unused but
+ *              required by the BView override signature).
+ * @see MouseDown()
+ * @see MouseMoved()
+ */
 void
 BScrollBar::MouseUp(BPoint where)
 {
@@ -726,6 +1061,14 @@ BScrollBar::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Called when the owning window gains or loses activation.
+ *
+ * Enables or disables the scroll bar to match the window's active state and
+ * triggers a full redraw so the visual appearance reflects the change.
+ *
+ * @param active True when the window becomes active, false when it loses focus.
+ */
 void
 BScrollBar::WindowActivated(bool active)
 {
@@ -734,6 +1077,21 @@ BScrollBar::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Set the current scroll position.
+ *
+ * Clamps \a value to [fMin, fMax], rounds it to the nearest integer, and
+ * updates the thumb frame and arrow-button enabled states.  If the clamped
+ * value differs from the current value, ValueChanged() is called so that the
+ * target view is scrolled accordingly.
+ *
+ * NaN and infinite values are silently ignored.
+ *
+ * @param value Desired scroll position.
+ * @see Value()
+ * @see ValueChanged()
+ * @see SetRange()
+ */
 void
 BScrollBar::SetValue(float value)
 {
@@ -759,6 +1117,12 @@ BScrollBar::SetValue(float value)
 }
 
 
+/**
+ * @brief Return the current scroll position.
+ *
+ * @return The current value, always in the range [fMin, fMax].
+ * @see SetValue()
+ */
 float
 BScrollBar::Value() const
 {
@@ -766,6 +1130,20 @@ BScrollBar::Value() const
 }
 
 
+/**
+ * @brief Respond to a change in the scroll-bar value.
+ *
+ * Scrolls the target view (if any) so that its bounds origin matches
+ * \a newValue along the bar's axis, then calls SetValue() to keep the
+ * internal state consistent and synchronise the thumb position.
+ *
+ * This hook is called by SetValue() and also by MessageReceived() when a
+ * B_VALUE_CHANGED message arrives from the target BScrollView.
+ *
+ * @param newValue The new scroll position.
+ * @see SetValue()
+ * @see SetTarget()
+ */
 void
 BScrollBar::ValueChanged(float newValue)
 {
@@ -789,6 +1167,21 @@ BScrollBar::ValueChanged(float newValue)
 }
 
 
+/**
+ * @brief Set the thumb size relative to the visible content area.
+ *
+ * \a value represents the ratio of the visible area to the total content
+ * area: 1.0 means the entire content is visible (bar is disabled), 0.0 is a
+ * special case that causes the thumb size to be derived from fLargeStep.
+ * Values outside [0, 1] are clamped.
+ *
+ * If the change alters the bar's enabled/disabled state, the entire bar is
+ * invalidated to trigger a full redraw.
+ *
+ * @param value Proportion in [0.0, 1.0].
+ * @see Proportion()
+ * @see SetRange()
+ */
 void
 BScrollBar::SetProportion(float value)
 {
@@ -817,6 +1210,12 @@ BScrollBar::SetProportion(float value)
 }
 
 
+/**
+ * @brief Return the current thumb proportion.
+ *
+ * @return The last value set by SetProportion(), in [0.0, 1.0].
+ * @see SetProportion()
+ */
 float
 BScrollBar::Proportion() const
 {
@@ -824,6 +1223,19 @@ BScrollBar::Proportion() const
 }
 
 
+/**
+ * @brief Set the minimum and maximum scroll values.
+ *
+ * If \a min > \a max, or either value is NaN or infinite, both are reset to
+ * 0.  Both values are rounded to the nearest integer.  If the current value
+ * falls outside the new range, SetValue() is called to clamp and synchronise
+ * it; otherwise only the thumb frame is recalculated.
+ *
+ * @param min New minimum scroll value.
+ * @param max New maximum scroll value.
+ * @see GetRange()
+ * @see SetValue()
+ */
 void
 BScrollBar::SetRange(float min, float max)
 {
@@ -851,6 +1263,15 @@ BScrollBar::SetRange(float min, float max)
 }
 
 
+/**
+ * @brief Retrieve the current scroll range.
+ *
+ * Either output pointer may be NULL if the caller does not need that value.
+ *
+ * @param min Receives the minimum scroll value; may be NULL.
+ * @param max Receives the maximum scroll value; may be NULL.
+ * @see SetRange()
+ */
 void
 BScrollBar::GetRange(float* min, float* max) const
 {
@@ -862,6 +1283,19 @@ BScrollBar::GetRange(float* min, float* max) const
 }
 
 
+/**
+ * @brief Set the small and large scroll step sizes.
+ *
+ * The small step is used when an arrow button is clicked; the large step is
+ * used for page scrolling (trough clicks) and as the default proportion base
+ * when SetProportion() has never been called.  Both values are rounded to
+ * the nearest integer.
+ *
+ * @param smallStep Amount to scroll per arrow-button click.
+ * @param largeStep Amount to scroll per trough click (page scroll).
+ * @note Unlike R5, steps may be set before the view is attached to a window.
+ * @see GetSteps()
+ */
 void
 BScrollBar::SetSteps(float smallStep, float largeStep)
 {
@@ -895,6 +1329,15 @@ BScrollBar::SetSteps(float smallStep, float largeStep)
 }
 
 
+/**
+ * @brief Retrieve the current small and large scroll step sizes.
+ *
+ * Either output pointer may be NULL if the caller does not need that value.
+ *
+ * @param smallStep Receives the small step value; may be NULL.
+ * @param largeStep Receives the large step value; may be NULL.
+ * @see SetSteps()
+ */
 void
 BScrollBar::GetSteps(float* smallStep, float* largeStep) const
 {
@@ -906,6 +1349,18 @@ BScrollBar::GetSteps(float* smallStep, float* largeStep) const
 }
 
 
+/**
+ * @brief Attach the scroll bar to a target view.
+ *
+ * Clears the back-pointer on the previous target (if any), then stores the
+ * new target and sets its fVerScroller or fHorScroller pointer to this scroll
+ * bar so that BScrollView and BView's wheel-scroll logic can find it.
+ * Passing NULL detaches the scroll bar without setting a new target.
+ *
+ * @param target View to scroll, or NULL to detach.
+ * @see Target()
+ * @see SetTarget(const char*)
+ */
 void
 BScrollBar::SetTarget(BView* target)
 {
@@ -927,6 +1382,19 @@ BScrollBar::SetTarget(BView* target)
 }
 
 
+/**
+ * @brief Attach the scroll bar to a view identified by name.
+ *
+ * Looks up the named view in the owning window and, if found, attaches it as
+ * the scroll target.  The scroll bar must already be attached to a window
+ * before this overload is called; passing a NULL name is a no-op.
+ *
+ * @param targetName Name of the view to attach as the scroll target.
+ * @note Requires the scroll bar to be attached to a window; calls debugger()
+ *       if it is not.
+ * @see Target()
+ * @see SetTarget(BView*)
+ */
 void
 BScrollBar::SetTarget(const char* targetName)
 {
@@ -945,6 +1413,12 @@ BScrollBar::SetTarget(const char* targetName)
 }
 
 
+/**
+ * @brief Return the current scroll target.
+ *
+ * @return Pointer to the target BView, or NULL if none has been set.
+ * @see SetTarget()
+ */
 BView*
 BScrollBar::Target() const
 {
@@ -952,6 +1426,15 @@ BScrollBar::Target() const
 }
 
 
+/**
+ * @brief Change the scroll bar's orientation at runtime.
+ *
+ * Switching between B_HORIZONTAL and B_VERTICAL invalidates the layout and
+ * triggers a full repaint.  Has no effect if the orientation is unchanged.
+ *
+ * @param direction B_HORIZONTAL or B_VERTICAL.
+ * @see Orientation()
+ */
 void
 BScrollBar::SetOrientation(orientation direction)
 {
@@ -964,6 +1447,12 @@ BScrollBar::SetOrientation(orientation direction)
 }
 
 
+/**
+ * @brief Return the scroll bar's current orientation.
+ *
+ * @return B_HORIZONTAL or B_VERTICAL.
+ * @see SetOrientation()
+ */
 orientation
 BScrollBar::Orientation() const
 {
@@ -971,6 +1460,16 @@ BScrollBar::Orientation() const
 }
 
 
+/**
+ * @brief Set whether the scroll bar's border is drawn in the highlighted style.
+ *
+ * The highlighted border is typically used when the scroll bar has keyboard
+ * focus.  Only the single border pixel is invalidated, keeping the repaint
+ * area minimal.
+ *
+ * @param highlight True to enable the focus highlight, false to remove it.
+ * @return B_OK on success.
+ */
 status_t
 BScrollBar::SetBorderHighlighted(bool highlight)
 {
@@ -991,6 +1490,18 @@ BScrollBar::SetBorderHighlighted(bool highlight)
 }
 
 
+/**
+ * @brief Report the preferred width and height for this scroll bar.
+ *
+ * For a vertical bar, the preferred width is the standard scroll-bar width
+ * and the preferred height is the minimum usable height.  For a horizontal
+ * bar the roles are swapped.  Either output pointer may be NULL.
+ *
+ * @param _width  Receives the preferred width; may be NULL.
+ * @param _height Receives the preferred height; may be NULL.
+ * @see MinSize()
+ * @see PreferredSize()
+ */
 void
 BScrollBar::GetPreferredSize(float* _width, float* _height)
 {
@@ -1010,6 +1521,12 @@ BScrollBar::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Resize the scroll bar to its preferred dimensions.
+ *
+ * Delegates to BView::ResizeToPreferred(), which queries GetPreferredSize()
+ * and adjusts the view frame accordingly.
+ */
 void
 BScrollBar::ResizeToPreferred()
 {
@@ -1018,6 +1535,14 @@ BScrollBar::ResizeToPreferred()
 
 
 
+/**
+ * @brief Grant or remove keyboard focus from this scroll bar.
+ *
+ * Delegates to BView::MakeFocus(). Override in a subclass if the scroll bar
+ * needs custom focus-change behaviour (e.g., calling SetBorderHighlighted()).
+ *
+ * @param focus True to give focus, false to remove it.
+ */
 void
 BScrollBar::MakeFocus(bool focus)
 {
@@ -1025,6 +1550,17 @@ BScrollBar::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Return the minimum layout size of the scroll bar.
+ *
+ * Composes the explicit minimum size (set by the programmer) with the
+ * intrinsic minimum computed by _MinSize(), returning the larger of each
+ * dimension.
+ *
+ * @return The minimum BSize for use by BLayout.
+ * @see MaxSize()
+ * @see PreferredSize()
+ */
 BSize
 BScrollBar::MinSize()
 {
@@ -1032,6 +1568,17 @@ BScrollBar::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum layout size of the scroll bar.
+ *
+ * The fixed dimension (height for a horizontal bar, width for a vertical bar)
+ * is set to the preferred size.  The scrolling dimension is set to
+ * B_SIZE_UNLIMITED so the layout can expand the bar as much as desired.
+ *
+ * @return The maximum BSize for use by BLayout.
+ * @see MinSize()
+ * @see PreferredSize()
+ */
 BSize
 BScrollBar::MaxSize()
 {
@@ -1045,6 +1592,17 @@ BScrollBar::MaxSize()
 }
 
 
+/**
+ * @brief Return the preferred layout size of the scroll bar.
+ *
+ * Composes the explicit preferred size (if any) with the value returned by
+ * GetPreferredSize().
+ *
+ * @return The preferred BSize for use by BLayout.
+ * @see MinSize()
+ * @see MaxSize()
+ * @see GetPreferredSize()
+ */
 BSize
 BScrollBar::PreferredSize()
 {
@@ -1054,6 +1612,17 @@ BScrollBar::PreferredSize()
 }
 
 
+/**
+ * @brief Report the scripting suites this scroll bar supports.
+ *
+ * Delegates to BView::GetSupportedSuites(). Subclasses that add scripting
+ * properties should override this method and append their suite information
+ * before calling the base implementation.
+ *
+ * @param message Message to fill with suite names and property descriptions.
+ * @return B_OK on success, or an error code on failure.
+ * @see ResolveSpecifier()
+ */
 status_t
 BScrollBar::GetSupportedSuites(BMessage* message)
 {
@@ -1061,6 +1630,20 @@ BScrollBar::GetSupportedSuites(BMessage* message)
 }
 
 
+/**
+ * @brief Resolve a scripting specifier to the appropriate handler.
+ *
+ * Delegates to BView::ResolveSpecifier(). Override in a subclass to handle
+ * additional scroll-bar-specific scripting properties.
+ *
+ * @param message   The scripting message being resolved.
+ * @param index     Index of the current specifier in the message.
+ * @param specifier The specifier message extracted from \a message.
+ * @param what      Specifier type constant (e.g. B_NAME_SPECIFIER).
+ * @param property  Name of the property being accessed.
+ * @return The BHandler that should handle the scripted operation.
+ * @see GetSupportedSuites()
+ */
 BHandler*
 BScrollBar::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -1069,6 +1652,24 @@ BScrollBar::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Execute a binary-compatibility perform operation.
+ *
+ * Handles the standard set of layout-related perform codes
+ * (PERFORM_CODE_MIN_SIZE, PERFORM_CODE_MAX_SIZE, PERFORM_CODE_PREFERRED_SIZE,
+ * PERFORM_CODE_LAYOUT_ALIGNMENT, PERFORM_CODE_HAS_HEIGHT_FOR_WIDTH,
+ * PERFORM_CODE_GET_HEIGHT_FOR_WIDTH, PERFORM_CODE_SET_LAYOUT,
+ * PERFORM_CODE_LAYOUT_INVALIDATED, PERFORM_CODE_DO_LAYOUT) by calling the
+ * corresponding BScrollBar virtual methods and writing the return value into
+ * the appropriately typed data struct pointed to by \a _data.  Unknown codes
+ * are forwarded to BView::Perform().
+ *
+ * @param code  Identifies the operation to perform (PERFORM_CODE_* constant).
+ * @param _data Operation-specific input/output data struct; cast determined
+ *              by \a code.
+ * @return B_OK if the code was handled, or the result of BView::Perform()
+ *         for unrecognised codes.
+ */
 status_t
 BScrollBar::Perform(perform_code code, void* _data)
 {
@@ -1155,6 +1756,16 @@ BScrollBar::operator=(const BScrollBar&)
 }
 
 
+/**
+ * @brief Determine whether double-arrow mode is active and there is room for it.
+ *
+ * Even if the system setting requests double arrows, this method returns false
+ * when the bar is too short to display four arrow buttons plus a minimum-size
+ * thumb, gracefully falling back to single-arrow mode.
+ *
+ * @return True when double-arrow buttons should be drawn and used for hit
+ *         testing, false otherwise.
+ */
 bool
 BScrollBar::_DoubleArrows() const
 {
@@ -1173,6 +1784,19 @@ BScrollBar::_DoubleArrows() const
 }
 
 
+/**
+ * @brief Recalculate and update the thumb's bounding rectangle.
+ *
+ * Computes the thumb size from the current proportion (or from fLargeStep
+ * when proportion is 0), clamps it to the minimum knob size, and then
+ * positions the thumb within the trough based on the current value relative
+ * to [fMin, fMax].  If the frame changes and the view is attached to a
+ * window, the union of the old and new frames is invalidated so only the
+ * affected area is redrawn.
+ *
+ * Called by SetValue(), SetProportion(), SetRange(), FrameResized(), and the
+ * archive constructor.
+ */
 void
 BScrollBar::_UpdateThumbFrame()
 {
@@ -1268,6 +1892,19 @@ BScrollBar::_UpdateThumbFrame()
 }
 
 
+/**
+ * @brief Map a view-coordinate point to the corresponding scroll value.
+ *
+ * Converts the position of the thumb's top-left corner (as given by
+ * \a where) into the scroll value it represents, accounting for arrow-button
+ * sizes and double-arrow mode.  Used during thumb dragging and secondary-
+ * button absolute scrolling.
+ *
+ * @param where  Point in the view's coordinate system, typically the current
+ *               cursor position offset by fClickOffset.
+ * @return The scroll value that corresponds to \a where, rounded to the
+ *         nearest integer and in the range [fMin, fMax+1].
+ */
 float
 BScrollBar::_ValueFor(BPoint where) const
 {
@@ -1311,6 +1948,18 @@ BScrollBar::_ValueFor(BPoint where) const
 }
 
 
+/**
+ * @brief Identify which arrow button (if any) contains a given point.
+ *
+ * Performs hit-testing against all arrow-button rectangles in order:
+ * ARROW1, then (in double-arrow mode) ARROW2 and ARROW3, then ARROW4.
+ *
+ * @param where Point to test in the view's coordinate system.
+ * @return ARROW1, ARROW2, ARROW3, or ARROW4 if \a where is inside one of
+ *         the buttons, or NOARROW if the point falls in the trough or outside
+ *         the bar.
+ * @see _ButtonRectFor()
+ */
 int32
 BScrollBar::_ButtonFor(BPoint where) const
 {
@@ -1362,6 +2011,17 @@ BScrollBar::_ButtonFor(BPoint where) const
 }
 
 
+/**
+ * @brief Return the bounding rectangle of an arrow button.
+ *
+ * Computes the rectangle for the given ARROW1–ARROW4 index, adjusted for
+ * the current orientation and double-arrow layout.  Results are undefined
+ * for THUMB and NOARROW.
+ *
+ * @param button  Arrow index: ARROW1, ARROW2, ARROW3, or ARROW4.
+ * @return The button's bounding rectangle in the view's coordinate system.
+ * @see _ButtonFor()
+ */
 BRect
 BScrollBar::_ButtonRectFor(int32 button) const
 {
@@ -1415,6 +2075,15 @@ BScrollBar::_ButtonRectFor(int32 button) const
 }
 
 
+/**
+ * @brief Update the stop value used by the auto-scroll repeater.
+ *
+ * Computes the scroll value that would place the thumb centred under \a where
+ * and stores it in fPrivateData->fStopValue.  The repeater thread checks this
+ * value and halts page-scrolling once the thumb reaches it.
+ *
+ * @param where Current cursor position in the view's coordinate system.
+ */
 void
 BScrollBar::_UpdateTargetValue(BPoint where)
 {
@@ -1428,6 +2097,16 @@ BScrollBar::_UpdateTargetValue(BPoint where)
 }
 
 
+/**
+ * @brief Refresh the enabled state of the arrow buttons and repaint as needed.
+ *
+ * Compares the current value against fMin and fMax to determine whether the
+ * up/left and down/right buttons should be enabled.  When a state changes,
+ * only the affected button rectangles are invalidated so the redraw is kept
+ * minimal.  In double-arrow mode both buttons of each direction are updated.
+ *
+ * Called by SetValue() and SetRange().
+ */
 void
 BScrollBar::_UpdateArrowButtons()
 {
@@ -1449,6 +2128,20 @@ BScrollBar::_UpdateArrowButtons()
 }
 
 
+/**
+ * @brief Apply system-wide scroll_bar_info settings to a specific BScrollBar.
+ *
+ * Updates the double-arrow flag, proportional mode, knob style, and minimum
+ * knob size stored in the bar's private data.  If the double-arrow setting
+ * changes, the thumb frame is offset immediately to compensate.
+ *
+ * @param info  Pointer to the new scroll_bar_info settings to apply.
+ * @param bar   The BScrollBar to update.
+ * @return B_OK on success.
+ * @retval B_BAD_VALUE If either pointer is NULL, the knob style is out of
+ *                     range [0, 2], or the min_knob_size is outside
+ *                     [SCROLL_BAR_MINIMUM_KNOB_SIZE, SCROLL_BAR_MAXIMUM_KNOB_SIZE].
+ */
 status_t
 control_scrollbar(scroll_bar_info* info, BScrollBar* bar)
 {
@@ -1491,6 +2184,18 @@ control_scrollbar(scroll_bar_info* info, BScrollBar* bar)
 }
 
 
+/**
+ * @brief Compute the intrinsic minimum size of the scroll bar.
+ *
+ * For a horizontal bar the minimum width accommodates two arrow buttons
+ * (each B_V_SCROLL_BAR_WIDTH wide) plus two minimum knob lengths.
+ * For a vertical bar the roles are swapped.
+ *
+ * This value is composed with any explicit minimum size by MinSize().
+ *
+ * @return The intrinsic minimum BSize.
+ * @see MinSize()
+ */
 BSize
 BScrollBar::_MinSize() const
 {

@@ -1,11 +1,38 @@
 /*
- * Copyright 2009, Stephan Aßmus <superstippi@gmx.de>
- * Copyright 2012-2020 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		John Scipione, jscipione@gmail.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2020 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file HaikuControlLook.cpp
+ * @brief Implementation of HaikuControlLook, the default visual style for controls
+ *
+ * HaikuControlLook is the concrete implementation of BControlLook that renders
+ * the default Haiku-style appearance for all standard Interface Kit controls.
+ * It is installed as be_control_look at application startup.
+ *
+ * @see BControlLook, BView
  */
 
 
@@ -28,14 +55,25 @@
 
 namespace BPrivate {
 
+/** @brief Tint multiplier applied to gradient tints when the mouse hovers over a control. */
 static const float kHoverTintFactor = 0.85;
 
+/** @brief Width of the pop-up indicator region appended to split-button controls. */
 static const int32 kButtonPopUpIndicatorWidth = B_USE_ITEM_SPACING;
 
+/** @brief Fully-opaque black used for desktop label outlines. */
 static const rgb_color kBlack = { 0, 0, 0, 255 };
+
+/** @brief Fully-opaque white used for desktop label glows. */
 static const rgb_color kWhite = { 255, 255, 255, 255 };
 
 
+/**
+ * @brief Constructs the HaikuControlLook renderer.
+ *
+ * Initialises the cached desktop-label outline flag to @c false; the flag is
+ * lazily refreshed on the first DrawLabel() call against a desktop window.
+ */
 HaikuControlLook::HaikuControlLook()
 	:
 	fCachedOutline(false)
@@ -43,11 +81,19 @@ HaikuControlLook::HaikuControlLook()
 }
 
 
+/**
+ * @brief Destroys the HaikuControlLook renderer.
+ */
 HaikuControlLook::~HaikuControlLook()
 {
 }
 
 
+/**
+ * @brief Returns the default alignment for control labels.
+ *
+ * @return A BAlignment with horizontal left and vertical centre alignment.
+ */
 BAlignment
 HaikuControlLook::DefaultLabelAlignment() const
 {
@@ -55,6 +101,14 @@ HaikuControlLook::DefaultLabelAlignment() const
 }
 
 
+/**
+ * @brief Returns the default spacing between a label and an adjacent icon or control.
+ *
+ * The value is half the current plain-font point size, rounded up to the
+ * nearest pixel.
+ *
+ * @return Spacing in pixels.
+ */
 float
 HaikuControlLook::DefaultLabelSpacing() const
 {
@@ -62,6 +116,13 @@ HaikuControlLook::DefaultLabelSpacing() const
 }
 
 
+/**
+ * @brief Returns the default spacing between adjacent items in a list or menu.
+ *
+ * The value is 85% of the current plain-font point size, rounded up.
+ *
+ * @return Spacing in pixels.
+ */
 float
 HaikuControlLook::DefaultItemSpacing() const
 {
@@ -69,6 +130,17 @@ HaikuControlLook::DefaultItemSpacing() const
 }
 
 
+/**
+ * @brief Derives the control-look flags for a BControl from its current state.
+ *
+ * Inspects the control's enabled state, focus, value, and parent flags, then
+ * assembles the corresponding @c B_IS_CONTROL, @c B_DISABLED, @c B_FOCUSED,
+ * @c B_ACTIVATED, @c B_PARTIALLY_ACTIVATED, and @c B_BLEND_FRAME bits.
+ *
+ * @param control The control whose state is queried; must not be @c NULL.
+ * @return A bitmask of BControlLook flag constants appropriate for rendering.
+ * @see BControlLook::Flags()
+ */
 uint32
 HaikuControlLook::Flags(BControl* control) const
 {
@@ -105,6 +177,19 @@ HaikuControlLook::Flags(BControl* control) const
 // #pragma mark -
 
 
+/**
+ * @brief Draws the outer frame of a button with square corners.
+ *
+ * Delegates to _DrawButtonFrame() using a corner radius of 0 on all corners.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The button bounding rectangle; inset by each drawn border.
+ * @param updateRect  The dirty region; drawing is skipped when outside this rect.
+ * @param base        The button's base colour used to derive frame tints.
+ * @param background  The parent background colour used for the outer edge.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED, @c B_FOCUSED).
+ * @param borders     Which sides to draw (combination of @c B_*_BORDER constants).
+ */
 void
 HaikuControlLook::DrawButtonFrame(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, const rgb_color& background, uint32 flags,
@@ -115,6 +200,20 @@ HaikuControlLook::DrawButtonFrame(BView* view, BRect& rect, const BRect& updateR
 }
 
 
+/**
+ * @brief Draws the outer frame of a button with uniform rounded corners.
+ *
+ * Applies the same @a radius to all four corners.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The button bounding rectangle; inset by each drawn border.
+ * @param updateRect  The dirty region.
+ * @param radius      Corner radius in pixels, applied uniformly.
+ * @param base        The button's base colour.
+ * @param background  The parent background colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawButtonFrame(BView* view, BRect& rect, const BRect& updateRect,
 	float radius, const rgb_color& base, const rgb_color& background, uint32 flags,
@@ -125,6 +224,23 @@ HaikuControlLook::DrawButtonFrame(BView* view, BRect& rect, const BRect& updateR
 }
 
 
+/**
+ * @brief Draws the outer frame of a button with individually specified corner radii.
+ *
+ * Each corner radius may differ, allowing pill, tab, and other asymmetric shapes.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The button bounding rectangle; inset by each drawn border.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The button's base colour.
+ * @param background         The parent background colour.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides to draw.
+ */
 void
 HaikuControlLook::DrawButtonFrame(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -138,6 +254,20 @@ HaikuControlLook::DrawButtonFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the filled background surface of a button with square corners.
+ *
+ * Paints the bevel and gradient fill inside the frame already drawn by
+ * DrawButtonFrame().  The pop-up indicator region is not included.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The area to fill; inset by bevel borders after drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The button's base colour used to derive the gradient.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides receive a bevel line.
+ * @param orientation Gradient direction: @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawButtonBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -148,6 +278,18 @@ HaikuControlLook::DrawButtonBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the filled background of a button with uniform rounded corners.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The area to fill; inset after drawing.
+ * @param updateRect  The dirty region.
+ * @param radius      Corner radius applied uniformly to all four corners.
+ * @param base        The button's base colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides receive a bevel line.
+ * @param orientation Gradient direction.
+ */
 void
 HaikuControlLook::DrawButtonBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float radius, const rgb_color& base, uint32 flags,
@@ -158,6 +300,21 @@ HaikuControlLook::DrawButtonBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the filled background of a button with individually specified corner radii.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The area to fill; inset after drawing.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The button's base colour.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides receive a bevel line.
+ * @param orientation        Gradient direction.
+ */
 void
 HaikuControlLook::DrawButtonBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -170,6 +327,20 @@ HaikuControlLook::DrawButtonBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the background surface of a menu bar.
+ *
+ * Draws a frame bevel and fills the bar with a top-to-bottom gradient.
+ * When the @c B_ACTIVATED flag is set (menu open), darker tints are used to
+ * give a pressed appearance.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The menu-bar bounding rectangle; inset by drawn borders.
+ * @param updateRect  The dirty region.
+ * @param base        The menu-bar base colour.
+ * @param flags       Control-look flags (e.g. @c B_ACTIVATED).
+ * @param borders     Which sides receive a frame line.
+ */
 void
 HaikuControlLook::DrawMenuBarBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -216,6 +387,20 @@ HaikuControlLook::DrawMenuBarBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the outer frame of a menu field with square corners.
+ *
+ * Delegates to _DrawButtonFrame() using zero corner radii, producing the same
+ * frame appearance as a plain button.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The menu-field bounding rectangle; inset by drawn borders.
+ * @param updateRect  The dirty region.
+ * @param base        The menu field's base colour.
+ * @param background  The parent background colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawMenuFieldFrame(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base,
@@ -226,6 +411,18 @@ HaikuControlLook::DrawMenuFieldFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the outer frame of a menu field with uniform rounded corners.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The menu-field bounding rectangle; inset by drawn borders.
+ * @param updateRect  The dirty region.
+ * @param radius      Corner radius applied uniformly to all four corners.
+ * @param base        The menu field's base colour.
+ * @param background  The parent background colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawMenuFieldFrame(BView* view, BRect& rect,
 	const BRect& updateRect, float radius, const rgb_color& base,
@@ -236,6 +433,21 @@ HaikuControlLook::DrawMenuFieldFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the outer frame of a menu field with individually specified corner radii.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The menu-field bounding rectangle; inset by drawn borders.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The menu field's base colour.
+ * @param background         The parent background colour.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides to draw.
+ */
 void
 HaikuControlLook::DrawMenuFieldFrame(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius,
@@ -249,6 +461,19 @@ HaikuControlLook::DrawMenuFieldFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the menu-field background with square corners, optionally including a pop-up indicator.
+ *
+ * When @a popupIndicator is @c true the field is split into a label area and
+ * an indicator area that contains a down-arrow marker.
+ *
+ * @param view            The view to draw into.
+ * @param rect            The menu-field bounding rectangle; updated on return.
+ * @param updateRect      The dirty region.
+ * @param base            The menu field's base colour.
+ * @param popupIndicator  If @c true, render the pop-up indicator region.
+ * @param flags           Control-look flags.
+ */
 void
 HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, bool popupIndicator,
@@ -259,6 +484,19 @@ HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the interior background of a menu field (label side only) with square corners.
+ *
+ * Used for the label portion of a split menu field when the pop-up indicator
+ * is rendered separately.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The area to fill; inset by drawn borders.
+ * @param updateRect  The dirty region.
+ * @param base        The menu field's base colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides receive a bevel line.
+ */
 void
 HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -269,6 +507,17 @@ HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the menu-field background with uniform rounded corners.
+ *
+ * @param view            The view to draw into.
+ * @param rect            The menu-field bounding rectangle; updated on return.
+ * @param updateRect      The dirty region.
+ * @param radius          Corner radius applied uniformly to all four corners.
+ * @param base            The menu field's base colour.
+ * @param popupIndicator  If @c true, render the pop-up indicator region.
+ * @param flags           Control-look flags.
+ */
 void
 HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float radius, const rgb_color& base,
@@ -279,6 +528,20 @@ HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the menu-field background with individually specified corner radii.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The menu-field bounding rectangle; updated on return.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The menu field's base colour.
+ * @param popupIndicator     If @c true, render the pop-up indicator region.
+ * @param flags              Control-look flags.
+ */
 void
 HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -291,6 +554,19 @@ HaikuControlLook::DrawMenuFieldBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the background of an open menu panel.
+ *
+ * Paints a one-pixel bevel frame and then fills the interior with the solid
+ * @a base colour.  Disabled menus use lighter bevel colours.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The menu panel bounding rectangle; inset by drawn borders.
+ * @param updateRect  The dirty region.
+ * @param base        The menu's background colour.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param borders     Which sides receive a bevel line.
+ */
 void
 HaikuControlLook::DrawMenuBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -323,6 +599,20 @@ HaikuControlLook::DrawMenuBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the background of a single menu item.
+ *
+ * Renders a bevel frame and gradient fill appropriate for the item's state.
+ * Activated items use a subtle tint, disabled items appear lighter, and
+ * normal items receive the full bevel contrast.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The item bounding rectangle; inset by drawn borders.
+ * @param updateRect  The dirty region.
+ * @param base        The item's background colour (typically the selection colour).
+ * @param flags       Control-look flags (e.g. @c B_ACTIVATED, @c B_DISABLED).
+ * @param borders     Which sides receive a bevel line.
+ */
 void
 HaikuControlLook::DrawMenuItemBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -363,6 +653,21 @@ HaikuControlLook::DrawMenuItemBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws a progress/status bar with a filled and an unfilled region.
+ *
+ * Paints a recessed outer frame, then two interior segments: the filled
+ * (progress) side uses a glossy gradient in @a barColor, and the unfilled
+ * side uses a lighter gradient derived from @a base.  A shadow line is drawn
+ * between the two regions.
+ *
+ * @param view              The view to draw into.
+ * @param rect              The status-bar bounding rectangle; inset during drawing.
+ * @param updateRect        The dirty region.
+ * @param base              The unfilled background colour.
+ * @param barColor          The colour of the filled progress region.
+ * @param progressPosition  Pixel X-coordinate of the fill boundary within @a rect.
+ */
 void
 HaikuControlLook::DrawStatusBar(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, const rgb_color& barColor, float progressPosition)
@@ -416,6 +721,20 @@ HaikuControlLook::DrawStatusBar(BView* view, BRect& rect, const BRect& updateRec
 }
 
 
+/**
+ * @brief Draws a check box control, including its frame, fill, and optional check mark.
+ *
+ * Paints a recessed bevel frame, a gradient fill, and—when the control is
+ * activated or partially activated—an X-shaped mark or a horizontal bar
+ * respectively, scaled to the current font size.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The check-box bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The control's base colour.
+ * @param flags       Control-look flags (e.g. @c B_ACTIVATED, @c B_PARTIALLY_ACTIVATED,
+ *                    @c B_FOCUSED, @c B_DISABLED, @c B_CLICKED).
+ */
 void
 HaikuControlLook::DrawCheckBox(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, uint32 flags)
@@ -497,6 +816,19 @@ HaikuControlLook::DrawCheckBox(BView* view, BRect& rect, const BRect& updateRect
 }
 
 
+/**
+ * @brief Draws a radio button control, including its elliptical frame, fill, and dot mark.
+ *
+ * Renders three concentric ellipses for the bevel/border/fill layers, then
+ * paints a filled dot when the control is activated.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The radio-button bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The control's base colour.
+ * @param flags       Control-look flags (e.g. @c B_ACTIVATED, @c B_FOCUSED,
+ *                    @c B_DISABLED, @c B_CLICKED).
+ */
 void
 HaikuControlLook::DrawRadioButton(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, uint32 flags)
@@ -568,6 +900,20 @@ HaikuControlLook::DrawRadioButton(BView* view, BRect& rect, const BRect& updateR
 }
 
 
+/**
+ * @brief Draws the outer border stroke of a scroll bar.
+ *
+ * Strokes a one-pixel border around the entire scroll-bar area.  When the
+ * scroll target is focused, the leading edge is drawn in the keyboard
+ * navigation highlight colour.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The scroll-bar bounding rectangle.
+ * @param updateRect  The dirty region.
+ * @param base        The scroll-bar base colour.
+ * @param flags       Control-look flags (e.g. @c B_FOCUSED, @c B_DISABLED).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawScrollBarBorder(BView* view, BRect rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -623,6 +969,22 @@ HaikuControlLook::DrawScrollBarBorder(BView* view, BRect rect,
 }
 
 
+/**
+ * @brief Draws one of the arrow buttons at the end of a scroll bar.
+ *
+ * Renders the button background using DrawButtonBackground() and overlays
+ * an arrow glyph via DrawArrowShape().
+ *
+ * @param view        The view to draw into.
+ * @param rect        The button bounding rectangle.
+ * @param updateRect  The dirty region.
+ * @param base        The button's base colour.
+ * @param text        The arrow glyph colour.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param direction   Arrow direction constant (e.g. @c B_LEFT_ARROW).
+ * @param orientation Scroll bar orientation.
+ * @param down        @c true when the button is being pressed.
+ */
 void
 HaikuControlLook::DrawScrollBarButton(BView* view, BRect rect,
 	const BRect& updateRect, const rgb_color& base, const rgb_color& text,
@@ -650,6 +1012,20 @@ HaikuControlLook::DrawScrollBarButton(BView* view, BRect rect,
 	view->PopState();
 }
 
+/**
+ * @brief Draws the trough background of a scroll bar in two separate segments.
+ *
+ * Convenience overload that calls the single-rect overload for each of the
+ * two segments (above/below or left/right of the thumb).
+ *
+ * @param view        The view to draw into.
+ * @param rect1       First background segment; inset during drawing.
+ * @param rect2       Second background segment; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The scroll-bar base colour.
+ * @param flags       Control-look flags.
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawScrollBarBackground(BView* view, BRect& rect1,
 	BRect& rect2, const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -660,6 +1036,19 @@ HaikuControlLook::DrawScrollBarBackground(BView* view, BRect& rect1,
 }
 
 
+/**
+ * @brief Draws the trough background of a scroll bar in a single rectangle.
+ *
+ * Paints edge lines and a gradient fill along the scroll direction.  Enabled
+ * bars use darker edge tints; disabled bars use lighter ones.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The background rectangle; inset by painted edges.
+ * @param updateRect  The dirty region.
+ * @param base        The scroll-bar base colour.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawScrollBarBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -756,6 +1145,22 @@ HaikuControlLook::DrawScrollBarBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the draggable thumb of a scroll bar.
+ *
+ * Renders the thumb surface (using DrawButtonBackground() when enabled, or a
+ * plain bevel when disabled) and then overlays the optional knob decoration
+ * (dots or lines) controlled by @a knobStyle.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The thumb bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The scroll-bar base colour (knob colours are derived from
+ *                    @c B_SCROLL_BAR_THUMB_COLOR).
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ * @param knobStyle   One of @c B_KNOB_NONE, @c B_KNOB_DOTS, or @c B_KNOB_LINES.
+ */
 void
 HaikuControlLook::DrawScrollBarThumb(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -945,6 +1350,24 @@ HaikuControlLook::DrawScrollBarThumb(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the frame around a scroll view, including scroll-bar borders and corner fill.
+ *
+ * Handles @c B_NO_BORDER, @c B_PLAIN_BORDER, and @c B_FANCY_BORDER styles.
+ * When both scroll bars are present, the corner rectangle between them is
+ * filled with @a base.  Each scroll-bar border receives its own recessed-frame
+ * treatment for the fancy style.
+ *
+ * @param view                     The view to draw into.
+ * @param rect                     The scroll view bounding rectangle; inset during drawing.
+ * @param updateRect               The dirty region.
+ * @param verticalScrollBarFrame   The vertical scroll bar's frame (invalid = absent).
+ * @param horizontalScrollBarFrame The horizontal scroll bar's frame (invalid = absent).
+ * @param base                     The view background colour.
+ * @param borderStyle              @c B_NO_BORDER, @c B_PLAIN_BORDER, or @c B_FANCY_BORDER.
+ * @param flags                    Control-look flags (e.g. @c B_FOCUSED).
+ * @param _borders                 Which sides of the outer frame to draw.
+ */
 void
 HaikuControlLook::DrawScrollViewFrame(BView* view, BRect& rect,
 	const BRect& updateRect, BRect verticalScrollBarFrame,
@@ -1029,6 +1452,24 @@ HaikuControlLook::DrawScrollViewFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws a triangular arrow glyph inside @a rect.
+ *
+ * Computes three vertices for the chosen @a direction, then strokes a filled
+ * BShape with a pen width proportional to the rectangle size.  The arrow is
+ * dimmed when @c B_DISABLED is set in @a flags.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The bounding rectangle for the arrow glyph; inset during drawing.
+ * @param updateRect  The dirty region (unused — drawing is always performed).
+ * @param base        The colour from which the arrow colour is derived.
+ * @param direction   One of @c B_LEFT_ARROW, @c B_RIGHT_ARROW, @c B_UP_ARROW,
+ *                    @c B_DOWN_ARROW, @c B_LEFT_UP_ARROW, @c B_RIGHT_UP_ARROW,
+ *                    @c B_RIGHT_DOWN_ARROW, or @c B_LEFT_DOWN_ARROW.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param tint        Tint applied to @a base to produce the arrow colour; dimmed
+ *                    further when the control is disabled.
+ */
 void
 HaikuControlLook::DrawArrowShape(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 direction,
@@ -1111,6 +1552,13 @@ HaikuControlLook::DrawArrowShape(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Returns the default fill colour for a slider bar.
+ *
+ * @param base  The panel background colour; currently unused — the result is
+ *              always derived from @c B_PANEL_BACKGROUND_COLOR.
+ * @return A slightly darkened version of the panel background colour.
+ */
 rgb_color
 HaikuControlLook::SliderBarColor(const rgb_color& base)
 {
@@ -1118,6 +1566,22 @@ HaikuControlLook::SliderBarColor(const rgb_color& base)
 }
 
 
+/**
+ * @brief Draws a slider bar with separately coloured left and right fill regions.
+ *
+ * Splits @a rect at @a sliderScale into two sub-rects and draws each half
+ * using the single-colour overload, clipped to the respective region.
+ *
+ * @param view            The view to draw into.
+ * @param rect            The full slider-bar bounding rectangle.
+ * @param updateRect      The dirty region.
+ * @param base            The panel background colour (used to erase corners).
+ * @param leftFillColor   Fill colour for the region to the left of the thumb.
+ * @param rightFillColor  Fill colour for the region to the right of the thumb.
+ * @param sliderScale     Thumb position as a fraction [0, 1] of the bar width/height.
+ * @param flags           Control-look flags.
+ * @param orientation     @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawSliderBar(BView* view, BRect rect, const BRect& updateRect,
 	const rgb_color& base, rgb_color leftFillColor, rgb_color rightFillColor,
@@ -1158,6 +1622,21 @@ HaikuControlLook::DrawSliderBar(BView* view, BRect rect, const BRect& updateRect
 }
 
 
+/**
+ * @brief Draws a slider bar with a single uniform fill colour.
+ *
+ * Paints rounded end caps via _DrawRoundBarCorner() and a straight bar
+ * segment with a four-line edge/frame bevel, then fills the interior with
+ * a two-stop gradient derived from @a fillColor.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The slider-bar bounding rectangle.
+ * @param updateRect  The dirty region.
+ * @param base        The panel background colour (used to clear corner areas).
+ * @param fillColor   The bar fill colour; blended with @a base when disabled.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED, @c B_BLEND_FRAME).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawSliderBar(BView* view, BRect rect, const BRect& updateRect,
 	const rgb_color& base, rgb_color fillColor, uint32 flags,
@@ -1311,6 +1790,20 @@ HaikuControlLook::DrawSliderBar(BView* view, BRect rect, const BRect& updateRect
 }
 
 
+/**
+ * @brief Draws the rectangular thumb widget of a slider control.
+ *
+ * Renders a framed button background with an alpha-blended drop shadow and
+ * a central orientation line (vertical groove for horizontal sliders, or
+ * horizontal groove for vertical sliders).
+ *
+ * @param view        The view to draw into.
+ * @param rect        The thumb bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The thumb's base colour.
+ * @param flags       Control-look flags (e.g. @c B_FOCUSED, @c B_DISABLED).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawSliderThumb(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, uint32 flags, orientation orientation)
@@ -1397,6 +1890,18 @@ HaikuControlLook::DrawSliderThumb(BView* view, BRect& rect, const BRect& updateR
 }
 
 
+/**
+ * @brief Draws a triangular slider thumb using the base colour for both frame and fill.
+ *
+ * Convenience overload that passes @a base as the fill colour.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The thumb bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The thumb's base colour (used for frame and fill).
+ * @param flags       Control-look flags.
+ * @param orientation @c B_HORIZONTAL (points up) or @c B_VERTICAL (points left).
+ */
 void
 HaikuControlLook::DrawSliderTriangle(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -1406,6 +1911,21 @@ HaikuControlLook::DrawSliderTriangle(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws a triangular slider thumb with a separate fill colour.
+ *
+ * Builds a BShape pointing toward the slider bar, strokes a shadow using
+ * alpha blending, draws the frame outline, and fills the interior with a
+ * glossy gradient or a simple gradient when disabled.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The thumb bounding rectangle; inset by 1 px for the shadow.
+ * @param updateRect  The dirty region.
+ * @param base        The colour used to derive the frame tints.
+ * @param fill        The fill colour used for the interior gradient.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED, @c B_FOCUSED, @c B_HOVER).
+ * @param orientation @c B_HORIZONTAL (triangle points up) or @c B_VERTICAL (points left).
+ */
 void
 HaikuControlLook::DrawSliderTriangle(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, const rgb_color& fill,
@@ -1527,6 +2047,22 @@ HaikuControlLook::DrawSliderTriangle(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws tick marks along the edge(s) of a slider bar.
+ *
+ * Distributes @a count evenly-spaced hash marks above/left and/or
+ * below/right of the slider track.  Each mark is two pixels wide:
+ * a dark line and a light offset line for a bevelled appearance.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The area in which to draw the hash marks.
+ * @param updateRect  The dirty region.
+ * @param base        The control's base colour used to derive light/dark tints.
+ * @param count       The total number of marks to draw (minimum 2).
+ * @param location    @c B_HASH_MARKS_TOP, @c B_HASH_MARKS_BOTTOM, or both OR'd together.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::DrawSliderHashMarks(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, int32 count,
@@ -1617,6 +2153,24 @@ HaikuControlLook::DrawSliderHashMarks(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the frame strip behind all tabs of a tab view.
+ *
+ * Selects the appropriate border sides based on @a side and @a borderStyle,
+ * then calls DrawInactiveTab() to paint the entire frame rectangle in the
+ * inactive tab style.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The tab-frame bounding rectangle; may be widened by 1 px
+ *                    when @a borderStyle is @c B_PLAIN_BORDER.
+ * @param updateRect  The dirty region.
+ * @param base        The tab background colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which outer sides of the tab frame are drawn.
+ * @param borderStyle @c B_NO_BORDER, @c B_PLAIN_BORDER, or @c B_FANCY_BORDER.
+ * @param side        Which edge of the content area the tabs are attached to
+ *                    (e.g. @c BTabView::kTopSide).
+ */
 void
 HaikuControlLook::DrawTabFrame(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -1651,6 +2205,22 @@ HaikuControlLook::DrawTabFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the currently selected (active) tab of a tab view.
+ *
+ * Paints rounded corners on the two leading edges of the tab appropriate for
+ * @a side, then draws the edge, frame, and bevel layers before filling with a
+ * vertical gradient.  The active tab appears lighter than inactive tabs and
+ * stands proud of the tab frame.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The active tab bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The tab background colour.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param borders     Which sides receive a border line.
+ * @param side        Tab attachment edge (e.g. @c B_TOP_BORDER, @c B_LEFT_BORDER).
+ */
 void
 HaikuControlLook::DrawActiveTab(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -1833,6 +2403,22 @@ HaikuControlLook::DrawActiveTab(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws an inactive (unselected) tab of a tab view.
+ *
+ * The inactive tab is inset from the leading edge by 4 pixels to appear
+ * recessed relative to the active tab, and its background strip is filled
+ * with the @a base colour.  Bevel and frame lines are drawn in darker tints
+ * than the active tab.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The inactive-tab bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The tab background colour.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param borders     Which sides receive a border line.
+ * @param side        Tab attachment edge (e.g. @c BTabView::kTopSide).
+ */
 void
 HaikuControlLook::DrawInactiveTab(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -1935,6 +2521,21 @@ HaikuControlLook::DrawInactiveTab(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws a splitter divider bar between two panes.
+ *
+ * Optionally draws a raised border around the splitter, then fills the
+ * background on both sides of the centre line and paints a repeating
+ * three-pixel pattern of background/shadow/light dots along the divider.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The splitter bounding rectangle.
+ * @param updateRect  The dirty region.
+ * @param base        The splitter's base colour; darkened by 1 tint when clicked.
+ * @param orientation @c B_HORIZONTAL (the divider runs left-right) or @c B_VERTICAL.
+ * @param flags       Control-look flags (e.g. @c B_CLICKED, @c B_ACTIVATED).
+ * @param borders     Which sides receive a raised border; pass 0 to suppress borders.
+ */
 void
 HaikuControlLook::DrawSplitter(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, orientation orientation, uint32 flags,
@@ -2050,6 +2651,21 @@ HaikuControlLook::DrawSplitter(BView* view, BRect& rect, const BRect& updateRect
 // #pragma mark -
 
 
+/**
+ * @brief Draws a plain or fancy border around an arbitrary rectangular area.
+ *
+ * For @c B_FANCY_BORDER a recessed outer edge is drawn first; then a single
+ * dark frame stroke is applied.  Focused controls use the keyboard navigation
+ * highlight colour.  @c B_NO_BORDER is a no-op.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The bordered rectangle; inset by drawn layers.
+ * @param updateRect  The dirty region.
+ * @param base        The background colour used to derive the frame tint.
+ * @param borderStyle @c B_NO_BORDER, @c B_PLAIN_BORDER, or @c B_FANCY_BORDER.
+ * @param flags       Control-look flags (e.g. @c B_FOCUSED).
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawBorder(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, border_style borderStyle, uint32 flags,
@@ -2074,6 +2690,20 @@ HaikuControlLook::DrawBorder(BView* view, BRect& rect, const BRect& updateRect,
 }
 
 
+/**
+ * @brief Draws a single-pixel raised bevel border.
+ *
+ * Uses a light tint on the top and left edges and a shadow tint on the
+ * bottom and right edges.  Disabled controls use the base colour on all sides
+ * (flat appearance).
+ *
+ * @param view        The view to draw into.
+ * @param rect        The bordered rectangle; inset by drawn edges.
+ * @param updateRect  The dirty region.
+ * @param base        The background colour used to derive the bevel tints.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawRaisedBorder(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -2095,6 +2725,22 @@ HaikuControlLook::DrawRaisedBorder(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the border around a text input control.
+ *
+ * Renders a recessed outer frame followed by a dark inner frame.  The frame
+ * colour is overridden by the keyboard-navigation highlight when focused, and
+ * by @c B_FAILURE_COLOR when the @c B_INVALID flag is set.  Alpha-blended
+ * rendering is used when @c B_BLEND_FRAME is set.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The text-control bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The control's background colour.
+ * @param flags       Control-look flags (e.g. @c B_FOCUSED, @c B_INVALID,
+ *                    @c B_DISABLED, @c B_BLEND_FRAME).
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawTextControlBorder(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -2165,6 +2811,19 @@ HaikuControlLook::DrawTextControlBorder(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws a three-layer group-box frame.
+ *
+ * Paints an outer shadow, a darker inner frame, and an inner highlight in
+ * three consecutive _DrawFrame() calls, giving the appearance of a recessed
+ * panel border suitable for grouping controls.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The group-frame bounding rectangle; inset by each drawn layer.
+ * @param updateRect  The dirty region.
+ * @param base        The panel background colour used to derive the bevel tints.
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::DrawGroupFrame(BView* view, BRect& rect, const BRect& updateRect,
 	const rgb_color& base, uint32 borders)
@@ -2184,6 +2843,21 @@ HaikuControlLook::DrawGroupFrame(BView* view, BRect& rect, const BRect& updateRe
 }
 
 
+/**
+ * @brief Draws a text label using the default alignment.
+ *
+ * Convenience overload that uses DefaultLabelAlignment() and passes @c NULL
+ * for the icon.
+ *
+ * @param view        The view to draw into.
+ * @param label       The UTF-8 string to draw; @c NULL is silently ignored.
+ * @param rect        The bounding rectangle available for the label.
+ * @param updateRect  The dirty region.
+ * @param base        The background colour used for disabled-colour blending.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param textColor   Optional override for the text colour; pass @c NULL to use
+ *                    the default derived from the parent view or UI colour.
+ */
 void
 HaikuControlLook::DrawLabel(BView* view, const char* label, BRect rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -2194,6 +2868,20 @@ HaikuControlLook::DrawLabel(BView* view, const char* label, BRect rect,
 }
 
 
+/**
+ * @brief Draws a text label with explicit alignment.
+ *
+ * Convenience overload that passes @c NULL for the icon.
+ *
+ * @param view        The view to draw into.
+ * @param label       The UTF-8 string to draw.
+ * @param rect        The bounding rectangle available for the label.
+ * @param updateRect  The dirty region.
+ * @param base        The background colour used for disabled-colour blending.
+ * @param flags       Control-look flags.
+ * @param alignment   How to align the label within @a rect.
+ * @param textColor   Optional text colour override; @c NULL uses the default.
+ */
 void
 HaikuControlLook::DrawLabel(BView* view, const char* label, BRect rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -2204,6 +2892,24 @@ HaikuControlLook::DrawLabel(BView* view, const char* label, BRect rect,
 }
 
 
+/**
+ * @brief Draws a text label at an explicit baseline position.
+ *
+ * Handles desktop-window label rendering including glow/outline effects
+ * (reading the workspace background configuration) and disabled-state colour
+ * blending.  For desktop labels the glow colour is chosen to contrast with
+ * the desktop colour.
+ *
+ * @param view       The view to draw into.
+ * @param label      The UTF-8 string to draw.
+ * @param base       The background colour used for disabled-colour blending and
+ *                   desktop brightness comparisons.
+ * @param flags      Control-look flags (e.g. @c B_DISABLED, @c B_IGNORE_OUTLINE).
+ * @param where      The baseline origin for the string.
+ * @param textColor  Optional text colour override; @c NULL uses the default.
+ * @note Desktop-label outline settings are cached per-workspace and refreshed
+ *       lazily on each workspace change.
+ */
 void
 HaikuControlLook::DrawLabel(BView* view, const char* label, const rgb_color& base,
 	uint32 flags, const BPoint& where, const rgb_color* textColor)
@@ -2319,6 +3025,24 @@ HaikuControlLook::DrawLabel(BView* view, const char* label, const rgb_color& bas
 }
 
 
+/**
+ * @brief Draws a label with an optional icon bitmap, respecting alignment.
+ *
+ * If both @a label and @a icon are provided the icon is placed to the left
+ * of the text with DefaultLabelSpacing() between them.  The combined width is
+ * aligned within @a rect according to @a alignment.  The label string is
+ * truncated with an ellipsis if it exceeds the available width.
+ *
+ * @param view        The view to draw into.
+ * @param label       The UTF-8 label string; @c NULL renders the icon only.
+ * @param icon        Optional icon bitmap; @c NULL renders the label only.
+ * @param rect        The bounding rectangle for the label + icon.
+ * @param updateRect  The dirty region.
+ * @param base        The background colour used for disabled-colour blending.
+ * @param flags       Control-look flags (e.g. @c B_DISABLED).
+ * @param alignment   Alignment of the combined content within @a rect.
+ * @param textColor   Optional text colour override; @c NULL uses the default.
+ */
 void
 HaikuControlLook::DrawLabel(BView* view, const char* label, const BBitmap* icon,
 	BRect rect, const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -2392,6 +3116,19 @@ HaikuControlLook::DrawLabel(BView* view, const char* label, const BBitmap* icon,
 }
 
 
+/**
+ * @brief Returns the pixel insets consumed by a control frame on each side.
+ *
+ * The inset values are scaled proportionally to the current plain-font size
+ * so that controls scale correctly with user font-size preferences.
+ *
+ * @param frameType  The type of frame (e.g. @c B_BUTTON_FRAME, @c B_TEXT_CONTROL_FRAME).
+ * @param flags      Control-look flags; @c B_DEFAULT_BUTTON increases the button inset.
+ * @param[out] _left    Left inset in pixels.
+ * @param[out] _top     Top inset in pixels.
+ * @param[out] _right   Right inset in pixels.
+ * @param[out] _bottom  Bottom inset in pixels.
+ */
 void
 HaikuControlLook::GetFrameInsets(frame_type frameType, uint32 flags, float& _left,
 	float& _top, float& _right, float& _bottom)
@@ -2422,6 +3159,21 @@ HaikuControlLook::GetFrameInsets(frame_type frameType, uint32 flags, float& _lef
 }
 
 
+/**
+ * @brief Returns the pixel insets consumed by a control background on each side.
+ *
+ * Most backgrounds use a uniform 1-pixel inset.  Scroll-bar backgrounds and
+ * the button-with-pop-up background have asymmetric insets that are returned
+ * directly without font scaling.
+ *
+ * @param backgroundType  The type of background (e.g. @c B_BUTTON_BACKGROUND,
+ *                        @c B_HORIZONTAL_SCROLL_BAR_BACKGROUND).
+ * @param flags           Control-look flags (currently unused).
+ * @param[out] _left    Left inset in pixels.
+ * @param[out] _top     Top inset in pixels.
+ * @param[out] _right   Right inset in pixels.
+ * @param[out] _bottom  Bottom inset in pixels.
+ */
 void
 HaikuControlLook::GetBackgroundInsets(background_type backgroundType,
 	uint32 flags, float& _left, float& _top, float& _right, float& _bottom)
@@ -2464,6 +3216,20 @@ HaikuControlLook::GetBackgroundInsets(background_type backgroundType,
 }
 
 
+/**
+ * @brief Draws the background of a button that includes a pop-up indicator, with square corners.
+ *
+ * Delegates to _DrawButtonBackground() with @c popupIndicator = @c true, causing
+ * a right-side separator and down-arrow marker to be rendered.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The full button+indicator bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param base        The button's base colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides receive a bevel line.
+ * @param orientation Gradient direction.
+ */
 void
 HaikuControlLook::DrawButtonWithPopUpBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, uint32 flags,
@@ -2474,6 +3240,18 @@ HaikuControlLook::DrawButtonWithPopUpBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the background of a button with a pop-up indicator and uniform rounded corners.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The full button+indicator bounding rectangle; inset during drawing.
+ * @param updateRect  The dirty region.
+ * @param radius      Corner radius applied uniformly.
+ * @param base        The button's base colour.
+ * @param flags       Control-look flags.
+ * @param borders     Which sides receive a bevel line.
+ * @param orientation Gradient direction.
+ */
 void
 HaikuControlLook::DrawButtonWithPopUpBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float radius, const rgb_color& base, uint32 flags,
@@ -2484,6 +3262,21 @@ HaikuControlLook::DrawButtonWithPopUpBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the background of a button with a pop-up indicator and individual corner radii.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The full button+indicator bounding rectangle; inset during drawing.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The button's base colour.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides receive a bevel line.
+ * @param orientation        Gradient direction.
+ */
 void
 HaikuControlLook::DrawButtonWithPopUpBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -2499,6 +3292,25 @@ HaikuControlLook::DrawButtonWithPopUpBackground(BView* view, BRect& rect,
 // #pragma mark -
 
 
+/**
+ * @brief Internal implementation for all DrawButtonFrame() overloads.
+ *
+ * Draws the default-button indicator ring (if @c B_DEFAULT_BUTTON is set),
+ * the outer recessed edge, optional rounded corners, and the dark frame border.
+ * Flat buttons that are neither hovered nor focused skip all drawing.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The button bounding rectangle; inset by each drawn layer.
+ * @param updateRect         The dirty region; drawing is skipped when rect is invalid.
+ * @param leftTopRadius      Radius of the top-left rounded corner (0 = square).
+ * @param rightTopRadius     Radius of the top-right rounded corner.
+ * @param leftBottomRadius   Radius of the bottom-left rounded corner.
+ * @param rightBottomRadius  Radius of the bottom-right rounded corner.
+ * @param base               The button's base colour.
+ * @param background         The parent background colour for the outer edge.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides to draw.
+ */
 void
 HaikuControlLook::_DrawButtonFrame(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -2657,6 +3469,20 @@ HaikuControlLook::_DrawButtonFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the outer recessed (shadow/light) edge shared by many control types.
+ *
+ * Computes the edge shadow and light colours via _EdgeColor() and calls
+ * _DrawFrame().  When @c B_BLEND_FRAME is set the drawing mode is temporarily
+ * switched to @c B_OP_ALPHA.
+ *
+ * @param view     The view to draw into.
+ * @param rect     The bounding rectangle; inset by the drawn edges.
+ * @param base     The colour from which edge tints are derived.
+ * @param flags    Control-look flags (e.g. @c B_DISABLED, @c B_BLEND_FRAME,
+ *                 @c B_DEFAULT_BUTTON).
+ * @param borders  Which sides to draw.
+ */
 void
 HaikuControlLook::_DrawOuterResessedFrame(BView* view, BRect& rect,
 	const rgb_color& base, uint32 flags, uint32 borders)
@@ -2680,6 +3506,22 @@ HaikuControlLook::_DrawOuterResessedFrame(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Strokes one border line per selected side and insets @a rect accordingly.
+ *
+ * Each enabled side is drawn with its own colour, then the corresponding edge
+ * of @a rect is moved inward by one pixel, so the caller's rect reflects the
+ * remaining drawable interior after the call.
+ *
+ * @param view     The view to draw into.
+ * @param rect     The bounding rectangle; modified in-place as borders are drawn.
+ * @param left     Colour for the left border.
+ * @param top      Colour for the top border.
+ * @param right    Colour for the right border.
+ * @param bottom   Colour for the bottom border.
+ * @param borders  Bitmask of @c B_LEFT_BORDER, @c B_TOP_BORDER,
+ *                 @c B_RIGHT_BORDER, @c B_BOTTOM_BORDER.
+ */
 void
 HaikuControlLook::_DrawFrame(BView* view, BRect& rect, const rgb_color& left,
 	const rgb_color& top, const rgb_color& right, const rgb_color& bottom,
@@ -2716,6 +3558,25 @@ HaikuControlLook::_DrawFrame(BView* view, BRect& rect, const rgb_color& left,
 }
 
 
+/**
+ * @brief Strokes border lines with separate colours for the top-right and bottom-left corners.
+ *
+ * Overload used when the corner pixels need a colour different from the
+ * adjacent edge — for example, to produce the "corner bead" seen in some
+ * control frames.  The top edge terminates one pixel before the right corner,
+ * which is drawn in @a rightTop; similarly the left edge terminates before the
+ * bottom-left corner drawn in @a leftBottom.
+ *
+ * @param view        The view to draw into.
+ * @param rect        The bounding rectangle; modified in-place as borders are drawn.
+ * @param left        Colour for the left border (exclusive of the bottom-left corner).
+ * @param top         Colour for the top border (exclusive of the top-right corner).
+ * @param right       Colour for the right border.
+ * @param bottom      Colour for the bottom border.
+ * @param rightTop    Colour for the single top-right corner pixel.
+ * @param leftBottom  Colour for the single bottom-left corner pixel.
+ * @param borders     Which sides to draw.
+ */
 void
 HaikuControlLook::_DrawFrame(BView* view, BRect& rect, const rgb_color& left,
 	const rgb_color& top, const rgb_color& right, const rgb_color& bottom,
@@ -2767,6 +3628,27 @@ HaikuControlLook::_DrawFrame(BView* view, BRect& rect, const rgb_color& left,
 }
 
 
+/**
+ * @brief Internal implementation for all DrawButtonBackground() and
+ *        DrawButtonWithPopUpBackground() overloads.
+ *
+ * Determines whether the button should be painted flat or with the full bevel
+ * and gradient treatment, then dispatches to _DrawFlatButtonBackground() or
+ * _DrawNonFlatButtonBackground() respectively.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The button bounding rectangle; inset during drawing.
+ * @param updateRect         The dirty region; drawing is skipped when rect is invalid.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The button's base colour.
+ * @param popupIndicator     @c true to render the pop-up arrow indicator region.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides receive a bevel line.
+ * @param orientation        Gradient direction.
+ */
 void
 HaikuControlLook::_DrawButtonBackground(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -2805,6 +3687,22 @@ HaikuControlLook::_DrawButtonBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the background for a flat (undecorated) button state.
+ *
+ * Fills the rectangle with the solid @a base colour after calling _DrawFrame()
+ * for inset accounting.  When @a popupIndicator is @c true the indicator
+ * sub-region is filled and a pop-up arrow is drawn.
+ *
+ * @param view            The view to draw into.
+ * @param rect            The button bounding rectangle; inset during drawing.
+ * @param updateRect      The dirty region.
+ * @param base            The flat fill colour (typically the parent background).
+ * @param popupIndicator  @c true to render the pop-up arrow.
+ * @param flags           Control-look flags.
+ * @param borders         Which sides to account for in the inset.
+ * @param orientation     Orientation (passed through to the indicator region).
+ */
 void
 HaikuControlLook::_DrawFlatButtonBackground(BView* view, BRect& rect,
 	const BRect& updateRect, const rgb_color& base, bool popupIndicator,
@@ -2830,6 +3728,27 @@ HaikuControlLook::_DrawFlatButtonBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the fully bevelled, gradient-filled button background.
+ *
+ * Handles optional rounded corners, the inner bevel (active state uses shadow
+ * lines; normal state uses _DrawFrame()), the pop-up indicator separator and
+ * arrow, and the final gradient fill.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The button bounding rectangle; inset during drawing.
+ * @param updateRect         The dirty region.
+ * @param clipping           Initial clipping region; corners are excluded from it.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The button's base colour.
+ * @param popupIndicator     @c true to render the pop-up indicator region.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides receive a bevel line.
+ * @param orientation        Gradient direction.
+ */
 void
 HaikuControlLook::_DrawNonFlatButtonBackground(BView* view, BRect& rect,
 	const BRect& updateRect, BRegion& clipping, float leftTopRadius,
@@ -2991,6 +3910,17 @@ HaikuControlLook::_DrawNonFlatButtonBackground(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the small downward-pointing triangle used as a pop-up indicator.
+ *
+ * Centres a filled triangle within @a rect.  The marker colour is a dark tint
+ * of @a base; disabled controls receive a lighter tint.
+ *
+ * @param view   The view to draw into.
+ * @param rect   The rectangle in which the triangle is centred.
+ * @param base   The button's base colour used to derive the marker colour.
+ * @param flags  Control-look flags (e.g. @c B_DISABLED).
+ */
 void
 HaikuControlLook::_DrawPopUpMarker(BView* view, const BRect& rect,
 	const rgb_color& base, uint32 flags)
@@ -3020,6 +3950,27 @@ HaikuControlLook::_DrawPopUpMarker(BView* view, const BRect& rect,
 }
 
 
+/**
+ * @brief Draws the outer (split) view of a menu-field background.
+ *
+ * When @a popupIndicator is @c true, @a rect is split into a label portion
+ * and an indicator portion separated by a spacing gap.  Each portion is drawn
+ * independently using _DrawMenuFieldBackgroundInside(), and the pop-up marker
+ * is overlaid on the indicator portion.  On return @a rect holds the label
+ * portion only.  When @a popupIndicator is @c false the entire rect is filled
+ * as a single segment.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The full menu-field rectangle; updated to the label area.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The menu field's base colour.
+ * @param popupIndicator     @c true to draw the indicator arrow region.
+ * @param flags              Control-look flags.
+ */
 void
 HaikuControlLook::_DrawMenuFieldBackgroundOutside(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -3069,6 +4020,24 @@ HaikuControlLook::_DrawMenuFieldBackgroundOutside(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws the interior gradient fill for one segment of a menu-field background.
+ *
+ * Handles rounded corners using ellipse clipping, then draws the bevel frame
+ * and gradient fill.  The right-hand segment (indicator side) uses a slightly
+ * darker base colour derived from @a base.
+ *
+ * @param view               The view to draw into.
+ * @param rect               The segment bounding rectangle; inset during drawing.
+ * @param updateRect         The dirty region.
+ * @param leftTopRadius      Radius of the top-left corner.
+ * @param rightTopRadius     Radius of the top-right corner.
+ * @param leftBottomRadius   Radius of the bottom-left corner.
+ * @param rightBottomRadius  Radius of the bottom-right corner.
+ * @param base               The segment base colour.
+ * @param flags              Control-look flags.
+ * @param borders            Which sides receive a bevel line.
+ */
 void
 HaikuControlLook::_DrawMenuFieldBackgroundInside(BView* view, BRect& rect,
 	const BRect& updateRect, float leftTopRadius, float rightTopRadius,
@@ -3269,6 +4238,21 @@ HaikuControlLook::_DrawMenuFieldBackgroundInside(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Draws both the frame and background of a top-left rounded tab corner.
+ *
+ * Convenience wrapper that calls _DrawRoundCornerFrameLeftTop() followed by
+ * _DrawRoundCornerBackgroundLeftTop().
+ *
+ * @param view          The view to draw into.
+ * @param cornerRect    The corner bounding rectangle; inset by each drawn layer.
+ * @param updateRect    The dirty region.
+ * @param background    The background colour to paint before the ellipse.
+ * @param edgeColor     The outer edge tint colour.
+ * @param frameColor    The frame colour applied inside the edge.
+ * @param bevelColor    The bevel colour applied inside the frame.
+ * @param fillGradient  The gradient used to fill the interior.
+ */
 void
 HaikuControlLook::_DrawRoundCornerLeftTop(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3282,6 +4266,20 @@ HaikuControlLook::_DrawRoundCornerLeftTop(BView* view, BRect& cornerRect,
 }
 
 
+/**
+ * @brief Draws the edge and frame layers of a top-left rounded corner.
+ *
+ * Clips to the corner rect, fills the background, then paints two concentric
+ * quarter-ellipses (edge and frame) and advances @a cornerRect inward by two
+ * pixels so the caller can continue with the bevel/fill.
+ *
+ * @param view        The view to draw into.
+ * @param cornerRect  The corner bounding rectangle; inset by 2 px after drawing.
+ * @param updateRect  The dirty region.
+ * @param background  The background colour.
+ * @param edgeColor   The outer edge colour.
+ * @param frameColor  The frame colour.
+ */
 void
 HaikuControlLook::_DrawRoundCornerFrameLeftTop(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3319,6 +4317,18 @@ HaikuControlLook::_DrawRoundCornerFrameLeftTop(BView* view, BRect& cornerRect,
 }
 
 
+/**
+ * @brief Draws the bevel and gradient fill of a top-left rounded corner.
+ *
+ * Clips to the corner rect and paints a bevel ellipse followed by a slightly
+ * smaller gradient-filled ellipse.
+ *
+ * @param view          The view to draw into.
+ * @param cornerRect    The corner bounding rectangle (already advanced past the frame).
+ * @param updateRect    The dirty region.
+ * @param bevelColor    The solid bevel colour.
+ * @param fillGradient  The linear gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerBackgroundLeftTop(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& bevelColor,
@@ -3345,6 +4355,25 @@ HaikuControlLook::_DrawRoundCornerBackgroundLeftTop(BView* view, BRect& cornerRe
 }
 
 
+/**
+ * @brief Draws both the frame and background of a top-right rounded tab corner.
+ *
+ * Convenience wrapper that calls _DrawRoundCornerFrameRightTop() followed by
+ * _DrawRoundCornerBackgroundRightTop().  Each corner side may carry a distinct
+ * edge and frame colour to blend the top and right edges of the tab.
+ *
+ * @param view            The view to draw into.
+ * @param cornerRect      The corner bounding rectangle; inset by each drawn layer.
+ * @param updateRect      The dirty region.
+ * @param background      The background colour.
+ * @param edgeTopColor    The outer edge colour along the top of the corner.
+ * @param edgeRightColor  The outer edge colour along the right of the corner.
+ * @param frameTopColor   The frame colour along the top.
+ * @param frameRightColor The frame colour along the right.
+ * @param bevelTopColor   The bevel colour along the top.
+ * @param bevelRightColor The bevel colour along the right.
+ * @param fillGradient    The gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerRightTop(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3361,6 +4390,22 @@ HaikuControlLook::_DrawRoundCornerRightTop(BView* view, BRect& cornerRect,
 }
 
 
+/**
+ * @brief Draws the edge and frame layers of a top-right rounded corner.
+ *
+ * Clips to the corner rect, fills the background, then paints two concentric
+ * quarter-ellipses with gradient colours (top-to-right) for both the edge and
+ * frame layers, advancing @a cornerRect inward by two pixels.
+ *
+ * @param view            The view to draw into.
+ * @param cornerRect      The corner bounding rectangle; inset by 2 px after drawing.
+ * @param updateRect      The dirty region.
+ * @param background      The background colour.
+ * @param edgeTopColor    Edge colour at the top of the corner.
+ * @param edgeRightColor  Edge colour at the right of the corner.
+ * @param frameTopColor   Frame colour at the top.
+ * @param frameRightColor Frame colour at the right.
+ */
 void
 HaikuControlLook::_DrawRoundCornerFrameRightTop(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3411,6 +4456,19 @@ HaikuControlLook::_DrawRoundCornerFrameRightTop(BView* view, BRect& cornerRect,
 }
 
 
+/**
+ * @brief Draws the bevel and gradient fill of a top-right rounded corner.
+ *
+ * Paints a gradient bevel ellipse followed by a smaller gradient-filled ellipse,
+ * both anchored to the top-right of the corner rectangle.
+ *
+ * @param view            The view to draw into.
+ * @param cornerRect      The corner bounding rectangle.
+ * @param updateRect      The dirty region.
+ * @param bevelTopColor   Bevel colour at the top of the gradient.
+ * @param bevelRightColor Bevel colour at the right of the gradient.
+ * @param fillGradient    The gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerBackgroundRightTop(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& bevelTopColor,
@@ -3441,6 +4499,24 @@ HaikuControlLook::_DrawRoundCornerBackgroundRightTop(BView* view, BRect& cornerR
 }
 
 
+/**
+ * @brief Draws both the frame and background of a bottom-left rounded tab corner.
+ *
+ * Convenience wrapper that calls _DrawRoundCornerFrameLeftBottom() then
+ * _DrawRoundCornerBackgroundLeftBottom().
+ *
+ * @param view              The view to draw into.
+ * @param cornerRect        The corner bounding rectangle; inset by each drawn layer.
+ * @param updateRect        The dirty region.
+ * @param background        The background colour.
+ * @param edgeLeftColor     Outer edge colour along the left side.
+ * @param edgeBottomColor   Outer edge colour along the bottom.
+ * @param frameLeftColor    Frame colour along the left side.
+ * @param frameBottomColor  Frame colour along the bottom.
+ * @param bevelLeftColor    Bevel colour along the left side.
+ * @param bevelBottomColor  Bevel colour along the bottom.
+ * @param fillGradient      The gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerLeftBottom(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3457,6 +4533,21 @@ HaikuControlLook::_DrawRoundCornerLeftBottom(BView* view, BRect& cornerRect,
 }
 
 
+/**
+ * @brief Draws the edge and frame layers of a bottom-left rounded corner.
+ *
+ * Clips, fills the background, then paints two concentric quarter-ellipses
+ * with gradient colours (left-to-bottom), advancing @a cornerRect inward.
+ *
+ * @param view              The view to draw into.
+ * @param cornerRect        The corner bounding rectangle; inset by 2 px after drawing.
+ * @param updateRect        The dirty region.
+ * @param background        The background colour.
+ * @param edgeLeftColor     Edge colour along the left.
+ * @param edgeBottomColor   Edge colour along the bottom.
+ * @param frameLeftColor    Frame colour along the left.
+ * @param frameBottomColor  Frame colour along the bottom.
+ */
 void
 HaikuControlLook::_DrawRoundCornerFrameLeftBottom(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3507,6 +4598,19 @@ HaikuControlLook::_DrawRoundCornerFrameLeftBottom(BView* view, BRect& cornerRect
 }
 
 
+/**
+ * @brief Draws the bevel and gradient fill of a bottom-left rounded corner.
+ *
+ * Paints a gradient bevel ellipse then a smaller gradient-filled ellipse,
+ * both anchored to the bottom-left of the corner rectangle.
+ *
+ * @param view              The view to draw into.
+ * @param cornerRect        The corner bounding rectangle.
+ * @param updateRect        The dirty region.
+ * @param bevelLeftColor    Bevel colour at the top of the gradient (left side).
+ * @param bevelBottomColor  Bevel colour at the bottom of the gradient.
+ * @param fillGradient      The gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerBackgroundLeftBottom(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& bevelLeftColor,
@@ -3537,6 +4641,21 @@ HaikuControlLook::_DrawRoundCornerBackgroundLeftBottom(BView* view, BRect& corne
 }
 
 
+/**
+ * @brief Draws both the frame and background of a bottom-right rounded tab corner.
+ *
+ * Convenience wrapper that calls _DrawRoundCornerFrameRightBottom() then
+ * _DrawRoundCornerBackgroundRightBottom().
+ *
+ * @param view          The view to draw into.
+ * @param cornerRect    The corner bounding rectangle; inset by each drawn layer.
+ * @param updateRect    The dirty region.
+ * @param background    The background colour.
+ * @param edgeColor     The outer edge colour.
+ * @param frameColor    The frame colour.
+ * @param bevelColor    The bevel colour.
+ * @param fillGradient  The gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerRightBottom(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3550,6 +4669,19 @@ HaikuControlLook::_DrawRoundCornerRightBottom(BView* view, BRect& cornerRect,
 }
 
 
+/**
+ * @brief Draws the edge and frame layers of a bottom-right rounded corner.
+ *
+ * Clips, fills the background, then paints two concentric quarter-ellipses
+ * anchored to the bottom-right, advancing @a cornerRect inward by two pixels.
+ *
+ * @param view        The view to draw into.
+ * @param cornerRect  The corner bounding rectangle; inset by 2 px after drawing.
+ * @param updateRect  The dirty region.
+ * @param background  The background colour.
+ * @param edgeColor   The outer edge colour.
+ * @param frameColor  The frame colour.
+ */
 void
 HaikuControlLook::_DrawRoundCornerFrameRightBottom(BView* view, BRect& cornerRect,
 	const BRect& updateRect, const rgb_color& background,
@@ -3587,6 +4719,18 @@ HaikuControlLook::_DrawRoundCornerFrameRightBottom(BView* view, BRect& cornerRec
 }
 
 
+/**
+ * @brief Draws the bevel and gradient fill of a bottom-right rounded corner.
+ *
+ * Paints a solid bevel ellipse then a smaller gradient-filled ellipse, both
+ * anchored to the bottom-right of the corner rectangle.
+ *
+ * @param view          The view to draw into.
+ * @param cornerRect    The corner bounding rectangle.
+ * @param updateRect    The dirty region.
+ * @param bevelColor    The solid bevel colour.
+ * @param fillGradient  The gradient for the interior fill.
+ */
 void
 HaikuControlLook::_DrawRoundCornerBackgroundRightBottom(BView* view,
 	BRect& cornerRect, const BRect& updateRect, const rgb_color& bevelColor,
@@ -3613,6 +4757,28 @@ HaikuControlLook::_DrawRoundCornerBackgroundRightBottom(BView* view,
 }
 
 
+/**
+ * @brief Draws one rounded end cap of a slider bar.
+ *
+ * Paints three concentric ellipses (edge, frame, fill) using gradient colours
+ * oriented along the slider axis.  After each ellipse the rectangle is inset
+ * by the supplied amounts to produce the layered bevel appearance.
+ *
+ * @param view             The view to draw into.
+ * @param rect             The end-cap bounding rectangle; inset between ellipses.
+ * @param updateRect       The dirty region; drawing is skipped outside this area.
+ * @param edgeLightColor   Light edge colour at the gradient start.
+ * @param edgeShadowColor  Shadow edge colour at the gradient end.
+ * @param frameLightColor  Light frame colour.
+ * @param frameShadowColor Shadow frame colour.
+ * @param fillLightColor   Light fill colour.
+ * @param fillShadowColor  Shadow fill colour.
+ * @param leftInset        Amount to inset @a rect on the left between layers.
+ * @param topInset         Amount to inset @a rect on the top between layers.
+ * @param rightInset       Amount to inset @a rect on the right between layers (negative = shrink).
+ * @param bottomInset      Amount to inset @a rect on the bottom between layers (negative = shrink).
+ * @param orientation      @c B_HORIZONTAL or @c B_VERTICAL, controls gradient direction.
+ */
 void
 HaikuControlLook::_DrawRoundBarCorner(BView* view, BRect& rect,
 	const BRect& updateRect,
@@ -3670,6 +4836,19 @@ HaikuControlLook::_DrawRoundBarCorner(BView* view, BRect& rect,
 }
 
 
+/**
+ * @brief Computes the outer edge colour for buttons and borders.
+ *
+ * Returns either a shadow (dark/transparent) or light colour depending on
+ * @a shadow.  When @c B_BLEND_FRAME is set an alpha-only colour is returned;
+ * otherwise a tint of @a base is used.  Both @c B_DEFAULT_BUTTON and
+ * @c B_DISABLED flags further adjust the result.
+ *
+ * @param base    The base colour from which the edge tint is derived.
+ * @param shadow  @c true for the shadow edge, @c false for the light edge.
+ * @param flags   Control-look flags.
+ * @return The computed edge colour.
+ */
 rgb_color
 HaikuControlLook::_EdgeColor(const rgb_color& base, bool shadow, uint32 flags)
 {
@@ -3709,6 +4888,17 @@ HaikuControlLook::_EdgeColor(const rgb_color& base, bool shadow, uint32 flags)
 }
 
 
+/**
+ * @brief Computes the light (top/left) frame border colour.
+ *
+ * Returns the keyboard-navigation colour when @c B_FOCUSED is set.  When
+ * @c B_ACTIVATED is set, the roles of light and shadow are swapped by
+ * delegating to _FrameShadowColor().
+ *
+ * @param base   The control's base colour.
+ * @param flags  Control-look flags.
+ * @return The light frame colour.
+ */
 rgb_color
 HaikuControlLook::_FrameLightColor(const rgb_color& base, uint32 flags)
 {
@@ -3740,6 +4930,16 @@ HaikuControlLook::_FrameLightColor(const rgb_color& base, uint32 flags)
 }
 
 
+/**
+ * @brief Computes the shadow (bottom/right) frame border colour.
+ *
+ * Returns the keyboard-navigation colour when @c B_FOCUSED is set.  When
+ * @c B_ACTIVATED is set, the roles of light and shadow are swapped.
+ *
+ * @param base   The control's base colour.
+ * @param flags  Control-look flags.
+ * @return The shadow frame colour.
+ */
 rgb_color
 HaikuControlLook::_FrameShadowColor(const rgb_color& base, uint32 flags)
 {
@@ -3779,6 +4979,16 @@ HaikuControlLook::_FrameShadowColor(const rgb_color& base, uint32 flags)
 }
 
 
+/**
+ * @brief Computes the inner bevel light colour for buttons.
+ *
+ * Activated buttons use a dark tint; disabled buttons use a slightly
+ * lightened tint; normal buttons use a very light (near-white) tint.
+ *
+ * @param base   The control's base colour.
+ * @param flags  Control-look flags.
+ * @return The bevel light colour.
+ */
 rgb_color
 HaikuControlLook::_BevelLightColor(const rgb_color& base, uint32 flags)
 {
@@ -3795,6 +5005,16 @@ HaikuControlLook::_BevelLightColor(const rgb_color& base, uint32 flags)
 }
 
 
+/**
+ * @brief Computes the inner bevel shadow colour for buttons.
+ *
+ * Activated buttons use the same tint as the bevel light (no bevel); disabled
+ * buttons return the base colour; normal buttons use a slight dark tint.
+ *
+ * @param base   The control's base colour.
+ * @param flags  Control-look flags.
+ * @return The bevel shadow colour.
+ */
 rgb_color
 HaikuControlLook::_BevelShadowColor(const rgb_color& base, uint32 flags)
 {
@@ -3811,6 +5031,18 @@ HaikuControlLook::_BevelShadowColor(const rgb_color& base, uint32 flags)
 }
 
 
+/**
+ * @brief Fills a rectangle with a two-stop linear gradient derived from @a base.
+ *
+ * Constructs the gradient via _MakeGradient() and calls view->FillRect().
+ *
+ * @param view        The view to draw into.
+ * @param rect        The rectangle to fill.
+ * @param base        The colour from which gradient stops are tinted.
+ * @param topTint     Tint factor for the leading stop (top or left).
+ * @param bottomTint  Tint factor for the trailing stop (bottom or right).
+ * @param orientation @c B_HORIZONTAL (top-to-bottom) or @c B_VERTICAL (left-to-right).
+ */
 void
 HaikuControlLook::_FillGradient(BView* view, const BRect& rect,
 	const rgb_color& base, float topTint, float bottomTint,
@@ -3822,6 +5054,22 @@ HaikuControlLook::_FillGradient(BView* view, const BRect& rect,
 }
 
 
+/**
+ * @brief Fills a rectangle with a four-stop glossy gradient derived from @a base.
+ *
+ * Constructs the gradient via _MakeGlossyGradient() and calls view->FillRect().
+ * The two middle stops are placed at gradient offsets 132 and 136 to create a
+ * sharp gloss sheen near the centre.
+ *
+ * @param view         The view to draw into.
+ * @param rect         The rectangle to fill.
+ * @param base         The colour from which gradient stops are tinted.
+ * @param topTint      Tint for the leading stop.
+ * @param middle1Tint  Tint for the first middle stop (just before the sheen).
+ * @param middle2Tint  Tint for the second middle stop (just after the sheen).
+ * @param bottomTint   Tint for the trailing stop.
+ * @param orientation  @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::_FillGlossyGradient(BView* view, const BRect& rect,
 	const rgb_color& base, float topTint, float middle1Tint,
@@ -3834,6 +5082,20 @@ HaikuControlLook::_FillGlossyGradient(BView* view, const BRect& rect,
 }
 
 
+/**
+ * @brief Populates a BGradientLinear with a two-stop gradient derived from @a base.
+ *
+ * The gradient runs from top to bottom for @c B_HORIZONTAL orientation, and
+ * from left to right for @c B_VERTICAL.  Existing colour stops are not cleared;
+ * callers should pass a freshly constructed or emptied gradient.
+ *
+ * @param gradient    The gradient object to populate.
+ * @param rect        Used to determine the gradient start and end points.
+ * @param base        The colour from which stops are tinted.
+ * @param topTint     Tint factor for the leading stop.
+ * @param bottomTint  Tint factor for the trailing stop.
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::_MakeGradient(BGradientLinear& gradient, const BRect& rect,
 	const rgb_color& base, float topTint, float bottomTint,
@@ -3849,6 +5111,21 @@ HaikuControlLook::_MakeGradient(BGradientLinear& gradient, const BRect& rect,
 }
 
 
+/**
+ * @brief Populates a BGradientLinear with a four-stop glossy gradient.
+ *
+ * Places stops at offsets 0, 132, 136, and 255 to produce a sharp gloss
+ * transition at approximately 52% of the gradient length.
+ *
+ * @param gradient    The gradient object to populate.
+ * @param rect        Used to determine the gradient start and end points.
+ * @param base        The colour from which stops are tinted.
+ * @param topTint     Tint for the leading stop.
+ * @param middle1Tint Tint for the first middle stop (offset 132).
+ * @param middle2Tint Tint for the second middle stop (offset 136).
+ * @param bottomTint  Tint for the trailing stop.
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::_MakeGlossyGradient(BGradientLinear& gradient, const BRect& rect,
 	const rgb_color& base, float topTint, float middle1Tint,
@@ -3867,6 +5144,19 @@ HaikuControlLook::_MakeGlossyGradient(BGradientLinear& gradient, const BRect& re
 }
 
 
+/**
+ * @brief Populates a BGradientLinear with the standard button surface gradient.
+ *
+ * Activated buttons use a simple two-stop gradient; normal buttons use the
+ * four-stop glossy gradient.  Disabled buttons blend the tints toward
+ * @c B_NO_TINT; hovered buttons multiply tints by @c kHoverTintFactor.
+ *
+ * @param gradient    The gradient object to populate.
+ * @param rect        Used to determine the gradient endpoints.
+ * @param base        The button's base colour.
+ * @param flags       Control-look flags (e.g. @c B_ACTIVATED, @c B_DISABLED, @c B_HOVER).
+ * @param orientation @c B_HORIZONTAL or @c B_VERTICAL.
+ */
 void
 HaikuControlLook::_MakeButtonGradient(BGradientLinear& gradient, BRect& rect,
 	const rgb_color& base, uint32 flags, orientation orientation) const
@@ -3902,6 +5192,18 @@ HaikuControlLook::_MakeButtonGradient(BGradientLinear& gradient, BRect& rect,
 }
 
 
+/**
+ * @brief Determines the mark colour for radio buttons and check boxes.
+ *
+ * Returns @c false (no mark) when neither @c B_ACTIVATED, @c B_PARTIALLY_ACTIVATED,
+ * nor @c B_CLICKED is set.  Otherwise blends @c B_CONTROL_MARK_COLOR with
+ * @a base according to the activation and click state.
+ *
+ * @param base   The control's base colour used for blending.
+ * @param color  On return, contains the mark colour to use.
+ * @param flags  Control-look flags.
+ * @return @c true if a mark should be drawn; @c false otherwise.
+ */
 bool
 HaikuControlLook::_RadioButtonAndCheckBoxMarkColor(const rgb_color& base,
 	rgb_color& color, uint32 flags) const
