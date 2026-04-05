@@ -1,13 +1,39 @@
 /*
- * Copyright 2001-2019, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Ingo Weinhold, bonefish@@users.sf.net
- *		Jacob Secunda
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2019 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Ingo Weinhold, bonefish@@users.sf.net
+ *       Jacob Secunda
  */
 
+
+/**
+ * @file AppMisc.cpp
+ * @brief Miscellaneous application utility functions in the BPrivate namespace.
+ *
+ * Provides helper functions for retrieving application paths, entry_refs,
+ * team information, port lookups, and desktop server connections. These
+ * utilities are used internally by the application kit and are not part of
+ * the public API.
+ */
 
 #include <AppMisc.h>
 
@@ -141,6 +167,11 @@ current_team()
 }
 
 
+/** @brief Resets the cached team ID after a fork.
+ *
+ *  Must be called after fork() so that the child process re-queries its
+ *  own team ID on the next call to current_team().
+ */
 void
 init_team_after_fork()
 {
@@ -243,6 +274,13 @@ create_desktop_connection(ServerLink* link, const char* name, int32 capacity)
 static port_id sServerPort = -1;
 
 
+/** @brief Returns the port ID of the app_server.
+ *
+ *  Lazily looks up and caches the app_server port by name. Used only in
+ *  the test-mode build (HAIKU_TARGET_PLATFORM_LIBBE_TEST).
+ *
+ *  @return The app_server port ID, or a negative error code if not found.
+ */
 port_id
 get_app_server_port()
 {

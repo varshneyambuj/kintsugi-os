@@ -1,16 +1,39 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		DarkWyrm, bpmagic@columbus.rr.com
- *		Axel Dörfler, axeld@pinc-software.de
- *		Erik Jaesler, erik@cgsoftware.com
- *		Ingo Weinhold, bonefish@@users.sf.net
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm, bpmagic@columbus.rr.com
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Erik Jaesler, erik@cgsoftware.com
+ *       Ingo Weinhold, bonefish@@users.sf.net
  */
 
-
-// BLooper class spawns a thread that runs a message loop.
+/**
+ * @file Looper.cpp
+ * @brief Implementation of BLooper, the message loop thread class.
+ *
+ * BLooper spawns a dedicated thread that receives messages from a port and an
+ * internal queue, dispatches them to the appropriate BHandler, and applies
+ * message filters at both the looper and handler levels. It also provides
+ * locking primitives, handler management, and scripting support.
+ */
 
 
 #include <Looper.h>
@@ -97,6 +120,16 @@ struct _loop_data_ {
 //	#pragma mark -
 
 
+/** @brief Construct a BLooper with a name, thread priority, and port capacity.
+ *  @param name Human-readable name for this looper and its thread.
+ *  @param priority Thread priority for the looper's message loop thread.
+ *  @param portCapacity Maximum number of messages the looper's port can hold.
+ *                      Defaults to B_LOOPER_PORT_DEFAULT_CAPACITY if <= 0.
+ *  @note The looper is locked upon construction. Call Run() to start the
+ *        message loop thread.
+ *  @see Run()
+ *  @see _InitData()
+ */
 BLooper::BLooper(const char* name, int32 priority, int32 portCapacity)
 	:
 	BHandler(name)
@@ -105,6 +138,17 @@ BLooper::BLooper(const char* name, int32 priority, int32 portCapacity)
 }
 
 
+/** @brief Destroy the BLooper.
+ *
+ *  Cleans up the message port, drains remaining messages (auto-replying),
+ *  removes and detaches all child handlers, deletes common filters, and
+ *  releases the lock semaphore. The looper is removed from the global looper
+ *  list.
+ *
+ *  @note Calling delete on a running looper triggers a debugger call. Use
+ *        Quit() instead, which will delete the looper at the appropriate time.
+ *  @see Quit()
+ */
 BLooper::~BLooper()
 {
 	if (fRunCalled && !fTerminating) {
@@ -165,6 +209,13 @@ BLooper::~BLooper()
 }
 
 
+/** @brief Construct a BLooper from an archived BMessage.
+ *  @param data The archive message. The port capacity is read from "_port_cap"
+ *              and the thread priority from "_prio". Missing fields use
+ *              defaults.
+ *  @see Instantiate()
+ *  @see Archive()
+ */
 BLooper::BLooper(BMessage* data)
 	: BHandler(data)
 {
@@ -180,6 +231,12 @@ BLooper::BLooper(BMessage* data)
 }
 
 
+/** @brief Create a new BLooper from an archived BMessage.
+ *  @param data The archive message to instantiate from.
+ *  @return A new BLooper if \a data is a valid BLooper archive, or NULL if
+ *          validation fails.
+ *  @see Archive()
+ */
 BArchivable*
 BLooper::Instantiate(BMessage* data)
 {
@@ -190,6 +247,14 @@ BLooper::Instantiate(BMessage* data)
 }
 
 
+/** @brief Archive the BLooper into a BMessage.
+ *  @param data The message to archive into.
+ *  @param deep If true, child objects are archived recursively.
+ *  @return B_OK on success, or an error code on failure.
+ *  @note Archives the port capacity ("_port_cap") and thread priority ("_prio")
+ *        in addition to the base BHandler fields.
+ *  @see Instantiate()
+ */
 status_t
 BLooper::Archive(BMessage* data, bool deep) const
 {
@@ -210,6 +275,14 @@ BLooper::Archive(BMessage* data, bool deep) const
 }
 
 
+/** @brief Post a message to this looper by command code.
+ *  @param command The message command code.
+ *  @return B_OK on success, or an error code on failure.
+ *  @note A temporary BMessage is constructed from \a command and posted to this
+ *        looper's own handler.
+ *  @see PostMessage(BMessage*)
+ *  @see _PostMessage()
+ */
 status_t
 BLooper::PostMessage(uint32 command)
 {
@@ -218,6 +291,13 @@ BLooper::PostMessage(uint32 command)
 }
 
 
+/** @brief Post a BMessage to this looper.
+ *  @param message The message to post. The message is copied; the caller
+ *                 retains ownership.
+ *  @return B_OK on success, or an error code on failure.
+ *  @see PostMessage(uint32)
+ *  @see PostMessage(BMessage*, BHandler*, BHandler*)
+ */
 status_t
 BLooper::PostMessage(BMessage* message)
 {
@@ -225,6 +305,13 @@ BLooper::PostMessage(BMessage* message)
 }
 
 
+/** @brief Post a message by command code to a specific handler with a reply target.
+ *  @param command The message command code.
+ *  @param handler The target handler for the message; must belong to this looper.
+ *  @param replyTo The handler to receive any reply, or NULL.
+ *  @return B_OK on success, or an error code on failure.
+ *  @see PostMessage(BMessage*, BHandler*, BHandler*)
+ */
 status_t
 BLooper::PostMessage(uint32 command, BHandler* handler, BHandler* replyTo)
 {
@@ -233,6 +320,14 @@ BLooper::PostMessage(uint32 command, BHandler* handler, BHandler* replyTo)
 }
 
 
+/** @brief Post a BMessage to a specific handler with a reply target.
+ *  @param message The message to post. The message is copied; the caller
+ *                 retains ownership.
+ *  @param handler The target handler for the message; must belong to this looper.
+ *  @param replyTo The handler to receive any reply, or NULL.
+ *  @return B_OK on success, or an error code on failure.
+ *  @see _PostMessage()
+ */
 status_t
 BLooper::PostMessage(BMessage* message, BHandler* handler, BHandler* replyTo)
 {
@@ -240,6 +335,15 @@ BLooper::PostMessage(BMessage* message, BHandler* handler, BHandler* replyTo)
 }
 
 
+/** @brief Dispatch a message to a target handler.
+ *  @param message The message to dispatch.
+ *  @param handler The handler that should process the message.
+ *  @note Handles _QUIT_ internally by setting the terminating flag. For
+ *        B_QUIT_REQUESTED directed at the looper itself, calls _QuitRequested().
+ *        All other messages are forwarded to handler->MessageReceived().
+ *  @see MessageReceived()
+ *  @see _QuitRequested()
+ */
 void
 BLooper::DispatchMessage(BMessage* message, BHandler* handler)
 {
@@ -271,6 +375,14 @@ BLooper::DispatchMessage(BMessage* message, BHandler* handler)
 }
 
 
+/** @brief Handle an incoming message for the looper itself.
+ *  @param message The message to process.
+ *  @note Handles scripting property queries for "Handlers" (GET) and "Handler"
+ *        (COUNT). Messages without specifiers or unrecognized scripting messages
+ *        are forwarded to BHandler::MessageReceived().
+ *  @see BHandler::MessageReceived()
+ *  @see ResolveSpecifier()
+ */
 void
 BLooper::MessageReceived(BMessage* message)
 {
@@ -327,6 +439,11 @@ BLooper::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Return the message currently being dispatched.
+ *  @return The current BMessage, or NULL if no message is being dispatched.
+ *  @note The returned pointer is valid only during the current dispatch cycle.
+ *  @see DetachCurrentMessage()
+ */
 BMessage*
 BLooper::CurrentMessage() const
 {
@@ -334,6 +451,13 @@ BLooper::CurrentMessage() const
 }
 
 
+/** @brief Detach and return the message currently being dispatched.
+ *  @return The current BMessage. The caller takes ownership. Returns NULL if
+ *          no message is being dispatched.
+ *  @note After calling this, CurrentMessage() will return NULL and the looper
+ *        will not delete the message when dispatch completes.
+ *  @see CurrentMessage()
+ */
 BMessage*
 BLooper::DetachCurrentMessage()
 {
@@ -343,6 +467,16 @@ BLooper::DetachCurrentMessage()
 }
 
 
+/** @brief Dispatch a message that originated outside the normal looper queue.
+ *  @param message The externally supplied message to dispatch.
+ *  @param handler The handler that should process the message.
+ *  @param _detached Set to true on return if the message was detached during
+ *                   dispatch (i.e., DetachCurrentMessage() was called).
+ *  @note The looper must be locked. The previous fLastMessage is saved and
+ *        restored after dispatch.
+ *  @see DispatchMessage()
+ *  @see DetachCurrentMessage()
+ */
 void
 BLooper::DispatchExternalMessage(BMessage* message, BHandler* handler,
 	bool& _detached)
@@ -359,6 +493,10 @@ BLooper::DispatchExternalMessage(BMessage* message, BHandler* handler,
 }
 
 
+/** @brief Return the looper's message queue.
+ *  @return The BMessageQueue used by this looper's direct target.
+ *  @see IsMessageWaiting()
+ */
 BMessageQueue*
 BLooper::MessageQueue() const
 {
@@ -366,6 +504,12 @@ BLooper::MessageQueue() const
 }
 
 
+/** @brief Check whether there are messages waiting to be processed.
+ *  @return true if the message queue is not empty or there is data on the
+ *          message port, false otherwise.
+ *  @note The looper must be locked before calling this method.
+ *  @see MessageQueue()
+ */
 bool
 BLooper::IsMessageWaiting() const
 {
@@ -383,6 +527,14 @@ BLooper::IsMessageWaiting() const
 }
 
 
+/** @brief Add a handler to this looper.
+ *  @param handler The handler to add. Must not already belong to another looper.
+ *                 If NULL, this method does nothing.
+ *  @note The looper must be locked. The handler's next handler is set to this
+ *        looper (unless the handler is the looper itself, to avoid a cycle).
+ *  @see RemoveHandler()
+ *  @see CountHandlers()
+ */
 void
 BLooper::AddHandler(BHandler* handler)
 {
@@ -400,6 +552,15 @@ BLooper::AddHandler(BHandler* handler)
 }
 
 
+/** @brief Remove a handler from this looper.
+ *  @param handler The handler to remove. If NULL, returns false.
+ *  @return true if the handler was found and removed, false otherwise.
+ *  @note The looper must be locked. If the removed handler is the preferred
+ *        handler, the preferred handler is cleared. The handler's looper and
+ *        next handler pointers are reset to NULL.
+ *  @see AddHandler()
+ *  @see SetPreferredHandler()
+ */
 bool
 BLooper::RemoveHandler(BHandler* handler)
 {
@@ -421,6 +582,12 @@ BLooper::RemoveHandler(BHandler* handler)
 }
 
 
+/** @brief Return the number of handlers attached to this looper.
+ *  @return The handler count.
+ *  @note The looper must be locked.
+ *  @see AddHandler()
+ *  @see HandlerAt()
+ */
 int32
 BLooper::CountHandlers() const
 {
@@ -430,6 +597,13 @@ BLooper::CountHandlers() const
 }
 
 
+/** @brief Return the handler at the given index.
+ *  @param index Zero-based index of the handler.
+ *  @return The BHandler at \a index, or NULL if the index is out of range.
+ *  @note The looper must be locked.
+ *  @see CountHandlers()
+ *  @see IndexOf()
+ */
 BHandler*
 BLooper::HandlerAt(int32 index) const
 {
@@ -439,6 +613,13 @@ BLooper::HandlerAt(int32 index) const
 }
 
 
+/** @brief Return the index of a handler in this looper's handler list.
+ *  @param handler The handler to look up.
+ *  @return The zero-based index of \a handler, or a negative value if not found.
+ *  @note The looper must be locked.
+ *  @see HandlerAt()
+ *  @see CountHandlers()
+ */
 int32
 BLooper::IndexOf(BHandler* handler) const
 {
@@ -448,6 +629,12 @@ BLooper::IndexOf(BHandler* handler) const
 }
 
 
+/** @brief Return the preferred handler for this looper.
+ *  @return The preferred BHandler, or NULL if none is set.
+ *  @note Messages without a specific target handler are dispatched to the
+ *        preferred handler.
+ *  @see SetPreferredHandler()
+ */
 BHandler*
 BLooper::PreferredHandler() const
 {
@@ -455,6 +642,13 @@ BLooper::PreferredHandler() const
 }
 
 
+/** @brief Set the preferred handler for this looper.
+ *  @param handler The handler to designate as preferred. Must belong to this
+ *                 looper and be in the handler list. Pass NULL to clear.
+ *  @note If \a handler does not belong to this looper or is not in the handler
+ *        list, the preferred handler is set to NULL.
+ *  @see PreferredHandler()
+ */
 void
 BLooper::SetPreferredHandler(BHandler* handler)
 {
@@ -466,6 +660,15 @@ BLooper::SetPreferredHandler(BHandler* handler)
 }
 
 
+/** @brief Spawn the message loop thread and start processing messages.
+ *  @return The thread_id of the newly spawned thread, or a negative error code.
+ *  @note The looper must be locked when Run() is called. It is unlocked before
+ *        the thread is resumed. Calling Run() more than once triggers a
+ *        debugger call.
+ *  @see Loop()
+ *  @see Quit()
+ *  @see _task0_()
+ */
 thread_id
 BLooper::Run()
 {
@@ -495,6 +698,14 @@ BLooper::Run()
 }
 
 
+/** @brief Run the message loop in the calling thread.
+ *  @note Unlike Run(), this does not spawn a new thread. The calling thread
+ *        becomes the looper thread and blocks in the message loop. The looper
+ *        must be locked. Calling Loop() or Run() more than once triggers a
+ *        debugger call.
+ *  @see Run()
+ *  @see task_looper()
+ */
 void
 BLooper::Loop()
 {
@@ -513,6 +724,19 @@ BLooper::Loop()
 }
 
 
+/** @brief Request the looper to quit.
+ *
+ *  If called before Run(), deletes the looper immediately. If called from the
+ *  looper's own thread, sets the terminating flag and deletes the looper. If
+ *  called from another thread, posts a _QUIT_ message and waits for the looper
+ *  thread to finish processing remaining messages and exit.
+ *
+ *  @note The looper must be locked before calling Quit(). When called from
+ *        another thread, QuitRequested() is not invoked -- the looper simply
+ *        terminates after draining its queue.
+ *  @see QuitRequested()
+ *  @see Run()
+ */
 void
 BLooper::Quit()
 {
@@ -570,6 +794,13 @@ BLooper::Quit()
 }
 
 
+/** @brief Hook called to determine whether the looper may quit.
+ *  @return true to allow quitting, false to deny. The default implementation
+ *          always returns true.
+ *  @note Subclasses can override this to perform cleanup or deny quit requests.
+ *  @see Quit()
+ *  @see _QuitRequested()
+ */
 bool
 BLooper::QuitRequested()
 {
@@ -577,6 +808,15 @@ BLooper::QuitRequested()
 }
 
 
+/** @brief Lock the looper.
+ *  @return true if the lock was acquired, false on failure (e.g., the looper
+ *          has been deleted).
+ *  @note Supports nested locking -- a thread that already holds the lock can
+ *        call Lock() again without deadlocking.
+ *  @see Unlock()
+ *  @see LockWithTimeout()
+ *  @see _Lock()
+ */
 bool
 BLooper::Lock()
 {
@@ -585,6 +825,13 @@ BLooper::Lock()
 }
 
 
+/** @brief Unlock the looper.
+ *  @note Must be called once for each successful Lock() call. When the owner
+ *        count reaches zero, the lock semaphore is released so that other
+ *        threads may acquire it.
+ *  @see Lock()
+ *  @see LockWithTimeout()
+ */
 void
 BLooper::Unlock()
 {
@@ -616,6 +863,13 @@ PRINT(("BLooper::Unlock() done\n"));
 }
 
 
+/** @brief Check whether the looper is locked by the calling thread.
+ *  @return true if the calling thread holds the lock, false otherwise (including
+ *          if the looper has been deleted).
+ *  @note Uses both a cached stack page check and a thread ID comparison for
+ *        fast lock verification.
+ *  @see Lock()
+ */
 bool
 BLooper::IsLocked() const
 {
@@ -630,6 +884,13 @@ BLooper::IsLocked() const
 }
 
 
+/** @brief Lock the looper with a timeout.
+ *  @param timeout Maximum time in microseconds to wait for the lock.
+ *  @return B_OK if the lock was acquired, or an error code (e.g., B_TIMED_OUT).
+ *  @see Lock()
+ *  @see Unlock()
+ *  @see _Lock()
+ */
 status_t
 BLooper::LockWithTimeout(bigtime_t timeout)
 {
@@ -637,6 +898,11 @@ BLooper::LockWithTimeout(bigtime_t timeout)
 }
 
 
+/** @brief Return the thread ID of the looper's message loop thread.
+ *  @return The thread_id, or B_ERROR if the looper has not been started.
+ *  @see Run()
+ *  @see Team()
+ */
 thread_id
 BLooper::Thread() const
 {
@@ -644,6 +910,10 @@ BLooper::Thread() const
 }
 
 
+/** @brief Return the team ID of the process that owns this looper.
+ *  @return The team_id of the current team.
+ *  @see Thread()
+ */
 team_id
 BLooper::Team() const
 {
@@ -651,6 +921,11 @@ BLooper::Team() const
 }
 
 
+/** @brief Find the looper whose message loop is running on the given thread.
+ *  @param thread The thread_id to look up.
+ *  @return The BLooper running on \a thread, or NULL if none is found.
+ *  @see Thread()
+ */
 BLooper*
 BLooper::LooperForThread(thread_id thread)
 {
@@ -658,6 +933,11 @@ BLooper::LooperForThread(thread_id thread)
 }
 
 
+/** @brief Return the thread that currently holds the looper lock.
+ *  @return The thread_id of the locking thread, or a negative value if unlocked.
+ *  @see Lock()
+ *  @see CountLocks()
+ */
 thread_id
 BLooper::LockingThread() const
 {
@@ -665,6 +945,11 @@ BLooper::LockingThread() const
 }
 
 
+/** @brief Return the number of nested locks held by the owning thread.
+ *  @return The current lock nesting count.
+ *  @see Lock()
+ *  @see LockingThread()
+ */
 int32
 BLooper::CountLocks() const
 {
@@ -672,6 +957,11 @@ BLooper::CountLocks() const
 }
 
 
+/** @brief Return the total number of pending lock requests.
+ *  @return The atomic count of threads waiting for or holding the lock.
+ *  @see CountLocks()
+ *  @see Sem()
+ */
 int32
 BLooper::CountLockRequests() const
 {
@@ -679,6 +969,11 @@ BLooper::CountLockRequests() const
 }
 
 
+/** @brief Return the semaphore used for locking this looper.
+ *  @return The sem_id of the lock semaphore.
+ *  @see Lock()
+ *  @see CountLockRequests()
+ */
 sem_id
 BLooper::Sem() const
 {
@@ -686,6 +981,20 @@ BLooper::Sem() const
 }
 
 
+/** @brief Determine the handler for a scripting message.
+ *  @param message The scripting message being resolved.
+ *  @param index Current index into the specifier stack.
+ *  @param specifier The current specifier message.
+ *  @param what The specifier form (e.g., B_DIRECT_SPECIFIER,
+ *              B_INDEX_SPECIFIER).
+ *  @param property The property name being targeted.
+ *  @return A pointer to the BHandler that should handle the message, or NULL if
+ *          the specifier could not be resolved.
+ *  @note Handles "Handler" (by index) and looper-internal properties. Falls
+ *        through to BHandler::ResolveSpecifier() for unrecognized properties.
+ *  @see GetSupportedSuites()
+ *  @see BHandler::ResolveSpecifier()
+ */
 BHandler*
 BLooper::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 what, const char* property)
@@ -748,6 +1057,16 @@ BLooper::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/** @brief Report the scripting suites supported by this looper.
+ *  @param data The message to populate with suite information. Receives a
+ *              "suites" string field ("suite/vnd.Be-looper") and a "messages"
+ *              flattened BPropertyInfo. Also includes suites from
+ *              BHandler::GetSupportedSuites().
+ *  @return B_OK on success, B_BAD_VALUE if \a data is NULL, or another error
+ *          code on failure.
+ *  @see ResolveSpecifier()
+ *  @see BHandler::GetSupportedSuites()
+ */
 status_t
 BLooper::GetSupportedSuites(BMessage* data)
 {
@@ -766,6 +1085,15 @@ BLooper::GetSupportedSuites(BMessage* data)
 }
 
 
+/** @brief Add a common message filter to this looper.
+ *  @param filter The message filter to add. Must not already belong to another
+ *                looper. The looper takes ownership. If NULL, does nothing.
+ *  @note The looper must be locked. Common filters are applied to all messages
+ *        before handler-specific filters.
+ *  @see RemoveCommonFilter()
+ *  @see SetCommonFilterList()
+ *  @see CommonFilterList()
+ */
 void
 BLooper::AddCommonFilter(BMessageFilter* filter)
 {
@@ -787,6 +1115,13 @@ BLooper::AddCommonFilter(BMessageFilter* filter)
 }
 
 
+/** @brief Remove a common message filter from this looper.
+ *  @param filter The filter to remove. Ownership is returned to the caller.
+ *  @return true if the filter was found and removed, false otherwise.
+ *  @note The looper must be locked.
+ *  @see AddCommonFilter()
+ *  @see SetCommonFilterList()
+ */
 bool
 BLooper::RemoveCommonFilter(BMessageFilter* filter)
 {
@@ -803,6 +1138,16 @@ BLooper::RemoveCommonFilter(BMessageFilter* filter)
 }
 
 
+/** @brief Replace the entire common filter list for this looper.
+ *  @param filters The new list of BMessageFilter pointers, or NULL to clear.
+ *                 The looper takes ownership of both the list and its filters.
+ *                 Any previously installed common filters are deleted.
+ *  @note The looper must be locked. Each filter in \a filters must not already
+ *        belong to a looper, otherwise a debugger call is triggered.
+ *  @see AddCommonFilter()
+ *  @see RemoveCommonFilter()
+ *  @see CommonFilterList()
+ */
 void
 BLooper::SetCommonFilterList(BList* filters)
 {
@@ -840,6 +1185,12 @@ BLooper::SetCommonFilterList(BList* filters)
 }
 
 
+/** @brief Return the list of common message filters for this looper.
+ *  @return The BList of BMessageFilter pointers, or NULL if none are installed.
+ *  @see AddCommonFilter()
+ *  @see RemoveCommonFilter()
+ *  @see SetCommonFilterList()
+ */
 BList*
 BLooper::CommonFilterList() const
 {
@@ -847,6 +1198,11 @@ BLooper::CommonFilterList() const
 }
 
 
+/** @brief Reserved virtual hook for binary compatibility.
+ *  @param d The perform code identifying the operation.
+ *  @param arg Pointer to operation-specific data.
+ *  @return The result of BHandler::Perform().
+ */
 status_t
 BLooper::Perform(perform_code d, void* arg)
 {
@@ -855,6 +1211,13 @@ BLooper::Perform(perform_code d, void* arg)
 }
 
 
+/** @brief Read a message from the looper's port.
+ *  @param timeout Maximum time in microseconds to wait for a message.
+ *  @return A new BMessage read from the port, or NULL on timeout or error.
+ *  @note This is a convenience wrapper around ReadMessageFromPort().
+ *  @see ReadMessageFromPort()
+ *  @see ReadRawFromPort()
+ */
 BMessage*
 BLooper::MessageFromPort(bigtime_t timeout)
 {
@@ -886,12 +1249,30 @@ BLooper::operator=(const BLooper& other)
 #endif
 
 
+/** @brief Private constructor used internally to create a looper on an existing
+ *         port.
+ *  @param priority Thread priority for the looper.
+ *  @param port An existing port_id to use, or a negative value to create a new
+ *              port.
+ *  @param name The looper name.
+ *  @note This constructor is not part of the public API.
+ *  @see _InitData()
+ */
 BLooper::BLooper(int32 priority, port_id port, const char* name)
 {
 	_InitData(name, priority, port, B_LOOPER_PORT_DEFAULT_CAPACITY);
 }
 
 
+/** @brief Internal implementation for all PostMessage() variants.
+ *  @param msg The message to post.
+ *  @param handler The target handler for the message.
+ *  @param replyTo The handler to receive any reply, or NULL.
+ *  @return B_OK on success, or an error code on failure.
+ *  @note Constructs a BMessenger targeting \a handler within this looper and
+ *        sends the message through it.
+ *  @see PostMessage()
+ */
 status_t
 BLooper::_PostMessage(BMessage* msg, BHandler* handler, BHandler* replyTo)
 {
@@ -967,6 +1348,16 @@ BLooper::_Lock(BLooper* looper, port_id port, bigtime_t timeout)
 }
 
 
+/** @brief Complete the lock acquisition by waiting on the semaphore.
+ *  @param looper The looper being locked.
+ *  @param oldCount The previous atomic count before this lock request.
+ *  @param thread The thread_id of the requesting thread.
+ *  @param sem The lock semaphore to acquire.
+ *  @param timeout Maximum time in microseconds to wait.
+ *  @return B_OK on success, or an error code (e.g., B_TIMED_OUT).
+ *  @note On success, sets the looper's owner, cached stack, and owner count.
+ *  @see _Lock()
+ */
 status_t
 BLooper::_LockComplete(BLooper* looper, int32 oldCount, thread_id thread,
 	sem_id sem, bigtime_t timeout)
@@ -993,6 +1384,16 @@ BLooper::_LockComplete(BLooper* looper, int32 oldCount, thread_id thread,
 }
 
 
+/** @brief Initialize the looper's internal data structures.
+ *  @param name The looper name (defaults to "anonymous looper" if NULL).
+ *  @param priority The thread priority for the message loop.
+ *  @param port An existing port_id to use, or a negative value to create one.
+ *  @param portCapacity The maximum port message capacity.
+ *  @note Called by all constructors. Creates the lock semaphore, the message
+ *        port, registers the looper in the global looper list (which also locks
+ *        it), and adds this looper as its own first handler.
+ *  @see Run()
+ */
 void
 BLooper::_InitData(const char* name, int32 priority, port_id port,
 	int32 portCapacity)
@@ -1036,6 +1437,13 @@ BLooper::_InitData(const char* name, int32 priority, port_id port,
 }
 
 
+/** @brief Add a message to the looper's internal message queue.
+ *  @param message The message to enqueue.
+ *  @note If called from a different thread than the looper's own thread and the
+ *        message becomes the next to be processed while the port is empty, a
+ *        zero-length write is issued to the port to wake up the looper.
+ *  @see _AddMessagePriv()
+ */
 void
 BLooper::AddMessage(BMessage* message)
 {
@@ -1052,6 +1460,12 @@ BLooper::AddMessage(BMessage* message)
 }
 
 
+/** @brief Add a message directly to the internal queue without waking the port.
+ *  @param message The message to enqueue.
+ *  @note This is the low-level enqueue operation. It does not perform any
+ *        port-level wakeup signaling.
+ *  @see AddMessage()
+ */
 void
 BLooper::_AddMessagePriv(BMessage* message)
 {
@@ -1063,6 +1477,14 @@ BLooper::_AddMessagePriv(BMessage* message)
 }
 
 
+/** @brief Static thread entry point for the looper's message loop.
+ *  @param arg Pointer to the BLooper instance (cast to void*).
+ *  @return B_OK always.
+ *  @note Locks the looper, calls task_looper() to run the message loop, and
+ *        deletes the looper when the loop exits.
+ *  @see Run()
+ *  @see task_looper()
+ */
 status_t
 BLooper::_task0_(void* arg)
 {
@@ -1082,6 +1504,14 @@ BLooper::_task0_(void* arg)
 }
 
 
+/** @brief Read raw data from the looper's message port.
+ *  @param msgCode Output parameter receiving the port message code.
+ *  @param timeout Maximum time in microseconds to wait for data.
+ *  @return A newly allocated buffer containing the raw message data, or NULL on
+ *          timeout or error. The caller must free the returned buffer.
+ *  @see ReadMessageFromPort()
+ *  @see ConvertToMessage()
+ */
 void*
 BLooper::ReadRawFromPort(int32* msgCode, bigtime_t timeout)
 {
@@ -1120,6 +1550,16 @@ BLooper::ReadRawFromPort(int32* msgCode, bigtime_t timeout)
 }
 
 
+/** @brief Read a BMessage from the looper's message port.
+ *  @param timeout Maximum time in microseconds to wait for a message.
+ *  @return A new BMessage read from the port, or NULL on timeout or error.
+ *          The caller takes ownership of the returned message.
+ *  @note Reads raw data via ReadRawFromPort() and converts it to a BMessage
+ *        using ConvertToMessage().
+ *  @see ReadRawFromPort()
+ *  @see ConvertToMessage()
+ *  @see MessageFromPort()
+ */
 BMessage*
 BLooper::ReadMessageFromPort(bigtime_t timeout)
 {
@@ -1139,6 +1579,14 @@ BLooper::ReadMessageFromPort(bigtime_t timeout)
 }
 
 
+/** @brief Convert raw port data into a BMessage.
+ *  @param buffer The raw buffer previously read from the port.
+ *  @param code The port message code (unused in current implementation).
+ *  @return A new BMessage unflattened from \a buffer, or NULL if \a buffer is
+ *          NULL or unflattening fails.
+ *  @see ReadRawFromPort()
+ *  @see ReadMessageFromPort()
+ */
 BMessage*
 BLooper::ConvertToMessage(void* buffer, int32 code)
 {
@@ -1158,6 +1606,20 @@ BLooper::ConvertToMessage(void* buffer, int32 code)
 }
 
 
+/** @brief Main message loop implementation.
+ *
+ *  Unlocks the looper, then enters a two-level loop: the outer loop reads
+ *  messages from the port and enqueues them; the inner loop dequeues messages,
+ *  resolves target handlers, applies message filters, and dispatches. The loop
+ *  continues until the fTerminating flag is set.
+ *
+ *  @note The looper must be locked on entry; it is unlocked before entering the
+ *        loop. The looper is left locked when terminating.
+ *  @see _task0_()
+ *  @see Run()
+ *  @see DispatchMessage()
+ *  @see _TopLevelFilter()
+ */
 void
 BLooper::task_looper()
 {
@@ -1280,6 +1742,14 @@ BLooper::task_looper()
 }
 
 
+/** @brief Handle a B_QUIT_REQUESTED message internally.
+ *  @param message The quit request message.
+ *  @note Calls QuitRequested(). If it returns true, calls Quit(). A reply is
+ *        sent to the message source if the source is waiting or the message
+ *        contains a "_shutdown_" field from the registrar.
+ *  @see QuitRequested()
+ *  @see Quit()
+ */
 void
 BLooper::_QuitRequested(BMessage* message)
 {
@@ -1304,6 +1774,12 @@ BLooper::_QuitRequested(BMessage* message)
 }
 
 
+/** @brief Assert that the looper is locked by the calling thread.
+ *  @return true if the looper is locked, false otherwise. On failure, triggers
+ *          a debugger call.
+ *  @see Lock()
+ *  @see IsLocked()
+ */
 bool
 BLooper::AssertLocked() const
 {
@@ -1316,6 +1792,17 @@ BLooper::AssertLocked() const
 }
 
 
+/** @brief Apply top-level message filtering before dispatch.
+ *  @param message The message to filter.
+ *  @param target The initially resolved target handler.
+ *  @return The final target handler after filtering, or NULL if the message
+ *          should be skipped.
+ *  @note Applies common looper filters first, then handler-specific filters.
+ *        Verifies that the final target belongs to this looper.
+ *  @see _HandlerFilter()
+ *  @see _ApplyFilters()
+ *  @see CommonFilterList()
+ */
 BHandler*
 BLooper::_TopLevelFilter(BMessage* message, BHandler* target)
 {
@@ -1338,6 +1825,17 @@ BLooper::_TopLevelFilter(BMessage* message, BHandler* target)
 }
 
 
+/** @brief Apply handler-specific message filters iteratively.
+ *  @param message The message to filter.
+ *  @param target The target handler whose filters should be applied.
+ *  @return The final target handler after filtering, or NULL if the message
+ *          should be skipped.
+ *  @note Repeatedly applies the target handler's filter list. If a filter
+ *        redirects to a different handler, that handler's filters are applied
+ *        next. Iteration stops when the target stabilizes or becomes NULL.
+ *  @see _TopLevelFilter()
+ *  @see _ApplyFilters()
+ */
 BHandler*
 BLooper::_HandlerFilter(BMessage* message, BHandler* target)
 {
@@ -1358,6 +1856,18 @@ BLooper::_HandlerFilter(BMessage* message, BHandler* target)
 }
 
 
+/** @brief Apply a list of message filters to a message.
+ *  @param list The filter list to iterate (may be NULL).
+ *  @param message The message being filtered.
+ *  @param target The current target handler.
+ *  @return The (possibly modified) target handler, or NULL if a filter returned
+ *          B_SKIP_MESSAGE.
+ *  @note For each filter, checks command, delivery, and source conditions. If
+ *        all conditions match, the filter's function or Filter() method is
+ *        called. Filters may modify the target handler.
+ *  @see _TopLevelFilter()
+ *  @see _HandlerFilter()
+ */
 BHandler*
 BLooper::_ApplyFilters(BList* list, BMessage* message, BHandler* target)
 {
@@ -1408,6 +1918,13 @@ BLooper::_ApplyFilters(BList* list, BMessage* message, BHandler* target)
 }
 
 
+/** @brief Lightweight lock assertion for use within handler dispatch.
+ *  @note This is a cheaper alternative to AssertLocked() that avoids a call to
+ *        gLooperList.IsLooperValid(). It is safe to use when the looper is
+ *        known to be valid (e.g., during message dispatch). Triggers a debugger
+ *        call if the lock is not held.
+ *  @see AssertLocked()
+ */
 void
 BLooper::check_lock()
 {
@@ -1424,6 +1941,16 @@ BLooper::check_lock()
 }
 
 
+/** @brief Iteratively resolve nested scripting specifiers to a final handler.
+ *  @param target The initial target handler.
+ *  @param message The scripting message containing the specifier stack.
+ *  @return The final resolved BHandler, or NULL if resolution fails or the
+ *          resolved handler does not belong to this looper.
+ *  @note Loops through the specifier stack calling ResolveSpecifier() on each
+ *        handler until the target stabilizes or the specifier stack is
+ *        exhausted.
+ *  @see ResolveSpecifier()
+ */
 BHandler*
 BLooper::resolve_specifier(BHandler* target, BMessage* message)
 {
@@ -1466,9 +1993,13 @@ BLooper::resolve_specifier(BHandler* target, BMessage* message)
 }
 
 
-/*!	Releases all eventually nested locks. Must be called with the lock
-	actually held.
-*/
+/** @brief Release all nested locks, fully unlocking the looper.
+ *  @note Must be called while the lock is actually held. Resets the owner count
+ *        and owner thread, then releases the lock semaphore if other threads
+ *        are waiting.
+ *  @see Lock()
+ *  @see Unlock()
+ */
 void
 BLooper::UnlockFully()
 {
@@ -1491,6 +2022,11 @@ BLooper::UnlockFully()
 //	#pragma mark -
 
 
+/** @brief Return the message port of a BLooper.
+ *  @param looper The looper whose port to retrieve.
+ *  @return The port_id of the looper's message port.
+ *  @note This is an internal helper function, not part of the public API.
+ */
 port_id
 _get_looper_port_(const BLooper* looper)
 {

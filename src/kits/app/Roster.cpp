@@ -1,10 +1,41 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+
+/** @file Roster.cpp
+ *  @brief Implementation of BRoster -- the application roster manager.
+ *
+ *  BRoster provides the interface for querying, launching, and managing
+ *  running applications.  It communicates with the registrar server to
+ *  maintain the system-wide roster of applications and supports features
+ *  such as MIME-type-based application lookup, broadcasting messages to
+ *  all running applications, application watching, activation, and
+ *  management of recently used documents, folders, and applications.
+ *
+ *  The global @c be_roster pointer is the primary access point for
+ *  applications to interact with the roster.
  */
 
 
@@ -551,6 +582,13 @@ BRoster::ArgVector::Unset()
 //	#pragma mark - BRoster
 
 
+/** @brief Constructs a BRoster and connects to the registrar.
+ *
+ *  Initializes the internal messenger that communicates with the
+ *  registrar server.  In normal operation, applications use the
+ *  global @c be_roster pointer rather than constructing their own
+ *  BRoster instances.
+ */
 BRoster::BRoster()
 	:
 	fMessenger(),
@@ -562,6 +600,11 @@ BRoster::BRoster()
 }
 
 
+/** @brief Destructor.
+ *
+ *  BRoster holds no resources that require explicit cleanup beyond
+ *  the BMessenger members which are destroyed automatically.
+ */
 BRoster::~BRoster()
 {
 }
@@ -570,6 +613,11 @@ BRoster::~BRoster()
 //	#pragma mark - Querying for apps
 
 
+/** @brief Checks whether an application with the given signature is running.
+ *  @param signature The MIME application signature to look up.
+ *  @return @c true if a matching application is running, @c false otherwise.
+ *  @see TeamFor(const char*)
+ */
 bool
 BRoster::IsRunning(const char* signature) const
 {
@@ -577,6 +625,11 @@ BRoster::IsRunning(const char* signature) const
 }
 
 
+/** @brief Checks whether an application launched from the given entry is running.
+ *  @param ref An entry_ref identifying the application executable.
+ *  @return @c true if a matching application is running, @c false otherwise.
+ *  @see TeamFor(entry_ref*)
+ */
 bool
 BRoster::IsRunning(entry_ref* ref) const
 {
@@ -584,6 +637,12 @@ BRoster::IsRunning(entry_ref* ref) const
 }
 
 
+/** @brief Returns the team ID of a running application identified by signature.
+ *  @param signature The MIME application signature to look up.
+ *  @return The team ID on success, or a negative error code if no matching
+ *          application is running.
+ *  @see GetAppInfo(const char*, app_info*)
+ */
 team_id
 BRoster::TeamFor(const char* signature) const
 {
@@ -599,6 +658,12 @@ BRoster::TeamFor(const char* signature) const
 }
 
 
+/** @brief Returns the team ID of a running application identified by entry_ref.
+ *  @param ref An entry_ref identifying the application executable.
+ *  @return The team ID on success, or a negative error code if no matching
+ *          application is running.
+ *  @see GetAppInfo(entry_ref*, app_info*)
+ */
 team_id
 BRoster::TeamFor(entry_ref* ref) const
 {
@@ -613,6 +678,15 @@ BRoster::TeamFor(entry_ref* ref) const
 }
 
 
+/** @brief Retrieves the team IDs of all running applications.
+ *
+ *  Sends a request to the registrar and populates @a teamIDList with
+ *  team_id values cast to @c void*.
+ *
+ *  @param teamIDList Pointer to a BList to be populated with team IDs.
+ *                    Must not be @c NULL.
+ *  @see GetAppList(const char*, BList*)
+ */
 void
 BRoster::GetAppList(BList* teamIDList) const
 {
@@ -643,6 +717,16 @@ BRoster::GetAppList(BList* teamIDList) const
 }
 
 
+/** @brief Retrieves the team IDs of all running instances of a given app.
+ *
+ *  Only applications whose signature matches @a signature are included.
+ *
+ *  @param signature The MIME application signature to filter by.
+ *                   Must not be @c NULL.
+ *  @param teamIDList Pointer to a BList to be populated with team IDs.
+ *                    Must not be @c NULL.
+ *  @see GetAppList(BList*)
+ */
 void
 BRoster::GetAppList(const char* signature, BList* teamIDList) const
 {
@@ -672,6 +756,18 @@ BRoster::GetAppList(const char* signature, BList* teamIDList) const
 }
 
 
+/** @brief Retrieves information about a running app identified by signature.
+ *
+ *  Queries the registrar for the app_info of the application whose
+ *  signature matches @a signature.
+ *
+ *  @param signature The MIME application signature. Must not be @c NULL.
+ *  @param info      Pointer to an app_info structure to fill in.
+ *                   Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if parameters are @c NULL,
+ *          or @c B_ERROR if no matching application is found.
+ *  @see GetRunningAppInfo(), GetActiveAppInfo()
+ */
 status_t
 BRoster::GetAppInfo(const char* signature, app_info* info) const
 {
@@ -701,6 +797,19 @@ BRoster::GetAppInfo(const char* signature, app_info* info) const
 }
 
 
+/** @brief Retrieves information about a running app identified by entry_ref.
+ *
+ *  Queries the registrar for the app_info of the application whose
+ *  executable matches @a ref.
+ *
+ *  @param ref  An entry_ref identifying the application executable.
+ *              Must not be @c NULL.
+ *  @param info Pointer to an app_info structure to fill in.
+ *              Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if parameters are @c NULL,
+ *          or @c B_ERROR if no matching application is found.
+ *  @see GetAppInfo(const char*, app_info*)
+ */
 status_t
 BRoster::GetAppInfo(entry_ref* ref, app_info* info) const
 {
@@ -726,6 +835,16 @@ BRoster::GetAppInfo(entry_ref* ref, app_info* info) const
 }
 
 
+/** @brief Retrieves information about a running application by team ID.
+ *
+ *  @param team The team ID of the target application. Must be >= 0.
+ *  @param info Pointer to an app_info structure to fill in.
+ *              Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if @a info is @c NULL,
+ *          @c B_BAD_TEAM_ID if @a team is negative, or @c B_ERROR if the
+ *          team is not registered.
+ *  @see GetAppInfo(), GetActiveAppInfo()
+ */
 status_t
 BRoster::GetRunningAppInfo(team_id team, app_info* info) const
 {
@@ -752,6 +871,17 @@ BRoster::GetRunningAppInfo(team_id team, app_info* info) const
 }
 
 
+/** @brief Retrieves information about the currently active application.
+ *
+ *  The active application is the one that currently has focus on the
+ *  desktop.
+ *
+ *  @param info Pointer to an app_info structure to fill in.
+ *              Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if @a info is @c NULL,
+ *          or @c B_ERROR if the active app cannot be determined.
+ *  @see GetRunningAppInfo(), ActivateApp()
+ */
 status_t
 BRoster::GetActiveAppInfo(app_info* info) const
 {
@@ -774,6 +904,18 @@ BRoster::GetActiveAppInfo(app_info* info) const
 }
 
 
+/** @brief Finds the application associated with a given MIME type.
+ *
+ *  Searches for the preferred application for @a mimeType and returns
+ *  a reference to its executable.
+ *
+ *  @param mimeType The MIME type string. Must not be @c NULL.
+ *  @param app      Pointer to an entry_ref to receive the found application.
+ *                  Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if parameters are @c NULL,
+ *          or an error code if no application could be found.
+ *  @see FindApp(entry_ref*, entry_ref*), _ResolveApp()
+ */
 status_t
 BRoster::FindApp(const char* mimeType, entry_ref* app) const
 {
@@ -784,6 +926,19 @@ BRoster::FindApp(const char* mimeType, entry_ref* app) const
 }
 
 
+/** @brief Finds the application associated with a given file.
+ *
+ *  Determines which application should handle the file referred to by
+ *  @a ref and returns a reference to its executable.
+ *
+ *  @param ref Pointer to an entry_ref identifying the file.
+ *             Must not be @c NULL.
+ *  @param app Pointer to an entry_ref to receive the found application.
+ *             Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if parameters are @c NULL,
+ *          or an error code if no application could be found.
+ *  @see FindApp(const char*, entry_ref*), _ResolveApp()
+ */
 status_t
 BRoster::FindApp(entry_ref* ref, entry_ref* app) const
 {
@@ -798,6 +953,14 @@ BRoster::FindApp(entry_ref* ref, entry_ref* app) const
 //	#pragma mark - Launching, activating, and broadcasting to apps
 
 
+/** @brief Broadcasts a message to all running applications.
+ *
+ *  Uses the default application messenger as the reply target.
+ *
+ *  @param message The message to broadcast. Must not be @c NULL.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see Broadcast(BMessage*, BMessenger)
+ */
 status_t
 BRoster::Broadcast(BMessage* message) const
 {
@@ -805,6 +968,17 @@ BRoster::Broadcast(BMessage* message) const
 }
 
 
+/** @brief Broadcasts a message to all running applications with a
+ *         custom reply target.
+ *
+ *  Sends a copy of @a message to every registered application except the
+ *  caller.  Replies are directed to @a replyTo.
+ *
+ *  @param message The message to broadcast. Must not be @c NULL.
+ *  @param replyTo The BMessenger that should receive replies.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if @a message is @c NULL,
+ *          or an error code on failure.
+ */
 status_t
 BRoster::Broadcast(BMessage* message, BMessenger replyTo) const
 {
@@ -832,6 +1006,18 @@ BRoster::Broadcast(BMessage* message, BMessenger replyTo) const
 }
 
 
+/** @brief Starts watching for application roster events.
+ *
+ *  Registers @a target to receive notifications when applications are
+ *  launched, quit, or activated, according to the bits set in
+ *  @a eventMask (e.g. @c B_REQUEST_LAUNCHED, @c B_REQUEST_QUIT,
+ *  @c B_REQUEST_ACTIVATED).
+ *
+ *  @param target    The BMessenger to receive watch notifications.
+ *  @param eventMask Bitmask indicating which events to watch for.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see StopWatching()
+ */
 status_t
 BRoster::StartWatching(BMessenger target, uint32 eventMask) const
 {
@@ -857,6 +1043,15 @@ BRoster::StartWatching(BMessenger target, uint32 eventMask) const
 }
 
 
+/** @brief Stops watching for application roster events.
+ *
+ *  Unregisters @a target so it no longer receives roster notifications
+ *  previously requested via StartWatching().
+ *
+ *  @param target The BMessenger that was previously registered.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see StartWatching()
+ */
 status_t
 BRoster::StopWatching(BMessenger target) const
 {
@@ -880,6 +1075,15 @@ BRoster::StopWatching(BMessenger target) const
 }
 
 
+/** @brief Activates (brings to front) the application with the given team ID.
+ *
+ *  Sends a request to the app_server to make the specified team's windows
+ *  the active windows on the desktop.
+ *
+ *  @param team The team ID of the application to activate.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see GetActiveAppInfo()
+ */
 status_t
 BRoster::ActivateApp(team_id team) const
 {
@@ -912,6 +1116,21 @@ BRoster::ActivateApp(team_id team) const
 }
 
 
+/** @brief Launches an application by MIME type with an initial message.
+ *
+ *  Finds and launches the preferred application for @a mimeType.  If
+ *  @a initialMessage is non-NULL it is sent to the application before
+ *  ReadyToRun().
+ *
+ *  @param mimeType       The MIME type for which to launch an app.
+ *                        Must not be @c NULL.
+ *  @param initialMessage Optional message sent to the app on launch.
+ *                        May be @c NULL.
+ *  @param _appTeam       Optional pointer to receive the launched team ID.
+ *  @return @c B_OK on success, @c B_ALREADY_RUNNING if the app was already
+ *          running (single-launch), or another error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::Launch(const char* mimeType, BMessage* initialMessage,
 	team_id* _appTeam) const
@@ -928,6 +1147,17 @@ BRoster::Launch(const char* mimeType, BMessage* initialMessage,
 }
 
 
+/** @brief Launches an application by MIME type with a list of messages.
+ *
+ *  @param mimeType    The MIME type for which to launch an app.
+ *                     Must not be @c NULL.
+ *  @param messageList Optional list of BMessages sent on launch.
+ *                     May be @c NULL.
+ *  @param _appTeam    Optional pointer to receive the launched team ID.
+ *  @return @c B_OK on success, @c B_ALREADY_RUNNING if already running,
+ *          or another error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::Launch(const char* mimeType, BList* messageList,
 	team_id* _appTeam) const
@@ -940,6 +1170,18 @@ BRoster::Launch(const char* mimeType, BList* messageList,
 }
 
 
+/** @brief Launches an application by MIME type with command-line arguments.
+ *
+ *  The arguments are delivered via a @c B_ARGV_RECEIVED message.
+ *
+ *  @param mimeType The MIME type for which to launch an app.
+ *                  Must not be @c NULL.
+ *  @param argc     Number of elements in @a args.
+ *  @param args     The argument vector.
+ *  @param _appTeam Optional pointer to receive the launched team ID.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::Launch(const char* mimeType, int argc, const char* const* args,
 	team_id* _appTeam) const
@@ -952,6 +1194,19 @@ BRoster::Launch(const char* mimeType, int argc, const char* const* args,
 }
 
 
+/** @brief Launches an application for a file with an initial message.
+ *
+ *  Finds and launches the preferred application for the file identified
+ *  by @a ref.  The file reference is delivered via @c B_REFS_RECEIVED.
+ *
+ *  @param ref            An entry_ref identifying the file/application.
+ *                        Must not be @c NULL.
+ *  @param initialMessage Optional message sent to the app on launch.
+ *                        May be @c NULL.
+ *  @param _appTeam       Optional pointer to receive the launched team ID.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::Launch(const entry_ref* ref, const BMessage* initialMessage,
 	team_id* _appTeam) const
@@ -968,6 +1223,16 @@ BRoster::Launch(const entry_ref* ref, const BMessage* initialMessage,
 }
 
 
+/** @brief Launches an application for a file with a list of messages.
+ *
+ *  @param ref         An entry_ref identifying the file/application.
+ *                     Must not be @c NULL.
+ *  @param messageList Optional list of BMessages sent on launch.
+ *                     May be @c NULL.
+ *  @param appTeam     Optional pointer to receive the launched team ID.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::Launch(const entry_ref* ref, const BList* messageList,
 	team_id* appTeam) const
@@ -980,6 +1245,16 @@ BRoster::Launch(const entry_ref* ref, const BList* messageList,
 }
 
 
+/** @brief Launches an application for a file with command-line arguments.
+ *
+ *  @param ref     An entry_ref identifying the file/application.
+ *                 Must not be @c NULL.
+ *  @param argc    Number of elements in @a args.
+ *  @param args    The argument vector.
+ *  @param appTeam Optional pointer to receive the launched team ID.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::Launch(const entry_ref* ref, int argc, const char* const* args,
 	team_id* appTeam) const
@@ -1024,6 +1299,20 @@ Launch__C7BRosterP9entry_refiPPcPl(BRoster* roster, entry_ref* ref,
 //	#pragma mark - Recent document and app support
 
 
+/** @brief Retrieves recently used documents, optionally filtered by type
+ *         and/or application signature.
+ *
+ *  The returned @a refList message contains entry_ref values for the
+ *  most recently used documents.
+ *
+ *  @param refList   Pointer to a BMessage to receive the results.
+ *                   Must not be @c NULL.
+ *  @param maxCount  Maximum number of entries to return. Must be > 0.
+ *  @param fileType  Optional MIME type to filter by. May be @c NULL.
+ *  @param signature Optional application signature to filter by.
+ *                   May be @c NULL.
+ *  @see GetRecentDocuments(BMessage*, int32, const char*[], int32, const char*)
+ */
 void
 BRoster::GetRecentDocuments(BMessage* refList, int32 maxCount,
 	const char* fileType, const char* signature) const
@@ -1070,6 +1359,18 @@ BRoster::GetRecentDocuments(BMessage* refList, int32 maxCount,
 }
 
 
+/** @brief Retrieves recently used documents filtered by multiple file types.
+ *
+ *  @param refList        Pointer to a BMessage to receive the results.
+ *                        Must not be @c NULL.
+ *  @param maxCount       Maximum number of entries to return. Must be > 0.
+ *  @param fileTypes      Array of MIME type strings to filter by.
+ *                        May be @c NULL.
+ *  @param fileTypesCount Number of elements in @a fileTypes.
+ *  @param signature      Optional application signature to filter by.
+ *                        May be @c NULL.
+ *  @see GetRecentDocuments(BMessage*, int32, const char*, const char*)
+ */
 void
 BRoster::GetRecentDocuments(BMessage* refList, int32 maxCount,
 	const char* fileTypes[], int32 fileTypesCount,
@@ -1117,6 +1418,14 @@ BRoster::GetRecentDocuments(BMessage* refList, int32 maxCount,
 }
 
 
+/** @brief Retrieves recently used folders.
+ *
+ *  @param refList   Pointer to a BMessage to receive the results.
+ *                   Must not be @c NULL.
+ *  @param maxCount  Maximum number of entries to return. Must be > 0.
+ *  @param signature Optional application signature to filter by.
+ *                   May be @c NULL.
+ */
 void
 BRoster::GetRecentFolders(BMessage* refList, int32 maxCount,
 	const char* signature) const
@@ -1160,6 +1469,12 @@ BRoster::GetRecentFolders(BMessage* refList, int32 maxCount,
 }
 
 
+/** @brief Retrieves recently launched applications.
+ *
+ *  @param refList  Pointer to a BMessage to receive the results.
+ *                  Must not be @c NULL.
+ *  @param maxCount Maximum number of entries to return. Must be > 0.
+ */
 void
 BRoster::GetRecentApps(BMessage* refList, int32 maxCount) const
 {
@@ -1198,6 +1513,17 @@ BRoster::GetRecentApps(BMessage* refList, int32 maxCount) const
 }
 
 
+/** @brief Adds a document to the recent documents list.
+ *
+ *  If @a signature is @c NULL the calling application's signature is
+ *  used instead.
+ *
+ *  @param document  An entry_ref identifying the document file.
+ *                   Must not be @c NULL.
+ *  @param signature Optional application signature to associate.
+ *                   May be @c NULL.
+ *  @see GetRecentDocuments()
+ */
 void
 BRoster::AddToRecentDocuments(const entry_ref* document,
 	const char* signature) const
@@ -1245,6 +1571,17 @@ BRoster::AddToRecentDocuments(const entry_ref* document,
 }
 
 
+/** @brief Adds a folder to the recent folders list.
+ *
+ *  If @a signature is @c NULL the calling application's signature is
+ *  used instead.
+ *
+ *  @param folder    An entry_ref identifying the folder.
+ *                   Must not be @c NULL.
+ *  @param signature Optional application signature to associate.
+ *                   May be @c NULL.
+ *  @see GetRecentFolders()
+ */
 void
 BRoster::AddToRecentFolders(const entry_ref* folder,
 	const char* signature) const
@@ -1294,24 +1631,22 @@ BRoster::AddToRecentFolders(const entry_ref* folder,
 //	#pragma mark - Private or reserved
 
 
-/*!	Shuts down the system.
-
-	When \c synchronous is \c true and the method succeeds, it doesn't return.
-
-	\param reboot If \c true, the system will be rebooted instead of being
-	       powered off.
-	\param confirm If \c true, the user will be asked to confirm to shut down
-	       the system.
-	\param synchronous If \c false, the method will return as soon as the
-	       shutdown process has been initiated successfully (or an error
-	       occurred). Otherwise the method doesn't return, if successfully.
-
-	\return A status code, \c B_OK on success or another error code in case
-	        something went wrong.
-	\retval B_SHUTTING_DOWN, when there's already a shutdown process in
-	        progress,
-	\retval B_SHUTDOWN_CANCELLED, when the user cancelled the shutdown process,
-*/
+/** @brief Shuts down the system.
+ *
+ *  When @a synchronous is @c true and the method succeeds, it does not
+ *  return.
+ *
+ *  @param reboot      If @c true, the system will be rebooted instead of
+ *                     being powered off.
+ *  @param confirm     If @c true, the user will be asked to confirm the
+ *                     shutdown.
+ *  @param synchronous If @c false, the method returns as soon as the
+ *                     shutdown process has been initiated.  Otherwise it
+ *                     does not return on success.
+ *  @return @c B_OK on success, @c B_SHUTTING_DOWN if already in progress,
+ *          @c B_SHUTDOWN_CANCELLED if the user cancelled, or another
+ *          error code.
+ */
 status_t
 BRoster::_ShutDown(bool reboot, bool confirm, bool synchronous)
 {
@@ -1343,14 +1678,14 @@ BRoster::_ShutDown(bool reboot, bool confirm, bool synchronous)
 }
 
 
-/*!	Checks whether a shutdown process is in progress.
-
-	\param inProgress: Pointer to a pre-allocated bool to be filled in
-	       by this method, indicating whether or not a shutdown process
-	       is in progress.
-	\return A status code, \c B_OK on success or another error code in case
-	        something went wrong.
-*/
+/** @brief Checks whether a system shutdown is currently in progress.
+ *
+ *  @param inProgress Pointer to a bool to be filled in with @c true if
+ *                    a shutdown is in progress, @c false otherwise.
+ *                    May be @c NULL.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _ShutDown()
+ */
 status_t
 BRoster::_IsShutDownInProgress(bool* inProgress)
 {
@@ -1380,48 +1715,31 @@ BRoster::_IsShutDownInProgress(bool* inProgress)
 
 
 
-/*!	(Pre-)Registers an application with the registrar.
-
-	This methods is invoked either to register or to pre-register an
-	application. Full registration is requested by supplying \c true via
-	\a fullRegistration.
-
-	A full registration requires \a signature, \a ref, \a flags, \a team,
-	\a thread and \a port to contain valid values. No token will be return
-	via \a pToken.
-
-	For a pre-registration \a signature, \a ref, \a flags must be valid.
-	\a team and \a thread are optional and should be set to -1, if they are
-	unknown. If no team ID is supplied, \a pToken should be valid and, if the
-	the pre-registration succeeds, will be filled with a unique token assigned
-	by the roster.
-
-	In both cases the registration may fail, if single/exclusive launch is
-	requested and an instance of the application is already running. Then
-	\c B_ALREADY_RUNNING is returned and the team ID of the running instance
-	is passed back via \a otherTeam, if supplied.
-
-	\param signature The application's signature
-	\param ref An entry_ref referring to the app's executable
-	\param flags The application's flags
-	\param team The application's team ID
-	\param thread The application's main thread
-	\param port The application's looper port
-	\param fullRegistration \c true for full, \c false for pre-registration
-	\param pToken A pointer to a pre-allocated uint32 into which the token
-	       assigned by the registrar is written (may be \c NULL)
-	\param otherTeam A pointer to a pre-allocated team_id into which the
-	       team ID of the already running instance of a single/exclusive
-	       launch application is written (may be \c NULL)
-
-	\return A status code
-	\retval B_OK Everything went fine.
-	\retval B_ENTRY_NOT_FOUND \a ref didn't refer to a file.
-	\retval B_ALREADY_RUNNING The application requested a single/exclusive
-	        launch and an instance was already running.
-	\retval B_REG_ALREADY_REGISTERED An application with the team ID \a team
-	        was already registered.
-*/
+/** @brief (Pre-)Registers an application with the registrar.
+ *
+ *  Full registration requires all parameters to be valid.  For
+ *  pre-registration, @a team and @a thread may be -1; a unique token
+ *  is returned via @a pToken.  Registration may fail with
+ *  @c B_ALREADY_RUNNING if single/exclusive launch is requested and an
+ *  instance is already running.
+ *
+ *  @param signature        The application's MIME signature.
+ *  @param ref              An entry_ref to the application executable.
+ *  @param flags            The application's launch flags.
+ *  @param team             The team ID, or -1 for pre-registration.
+ *  @param thread           The main thread ID, or -1.
+ *  @param port             The looper port ID, or -1.
+ *  @param fullRegistration @c true for full registration, @c false for
+ *                          pre-registration.
+ *  @param pToken           Receives the registration token on success.
+ *                          May be @c NULL.
+ *  @param otherTeam        Receives the team ID of an already-running
+ *                          instance on @c B_ALREADY_RUNNING. May be @c NULL.
+ *  @return @c B_OK on success, @c B_ALREADY_RUNNING if a single-launch
+ *          app is already running, @c B_REG_ALREADY_REGISTERED if the
+ *          team is already registered, or another error code.
+ *  @see _RemovePreRegApp(), _RemoveApp()
+ */
 status_t
 BRoster::_AddApplication(const char* signature, const entry_ref* ref,
 	uint32 flags, team_id team, thread_id thread, port_id port,
@@ -1488,19 +1806,16 @@ BRoster::_AddApplication(const char* signature, const entry_ref* ref,
 }
 
 
-/*!	Sets an application's signature.
-
-	The application must be registered or at pre-registered with a valid
-	team ID.
-
-	\param team The app's team ID.
-	\param signature The app's new signature.
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_REG_APP_NOT_REGISTERED The supplied team ID did not identify a
-	        registered application.
-*/
+/** @brief Sets a registered application's signature.
+ *
+ *  The application must already be registered or pre-registered with a
+ *  valid team ID.
+ *
+ *  @param team      The application's team ID.
+ *  @param signature The new MIME signature string.
+ *  @return @c B_OK on success, @c B_REG_APP_NOT_REGISTERED if the team
+ *          is not registered, or another error code.
+ */
 status_t
 BRoster::_SetSignature(team_id team, const char* signature) const
 {
@@ -1529,29 +1844,31 @@ BRoster::_SetSignature(team_id team, const char* signature) const
 }
 
 
-//!	\todo Really needed?
+/** @brief Sets the thread ID for a registered application (stub).
+ *
+ *  @param team   The application's team ID.
+ *  @param thread The application's main thread ID.
+ *  @todo Determine if this method is still needed.
+ */
 void
 BRoster::_SetThread(team_id team, thread_id thread) const
 {
 }
 
 
-/*!	Sets the team and thread IDs of a pre-registered application.
-
-	After an application has been pre-registered via AddApplication(), without
-	supplying a team ID, the team and thread IDs have to be set using this
-	method.
-
-	\param entryToken The token identifying the application (returned by
-	       AddApplication())
-	\param thread The app's thread ID
-	\param team The app's team ID
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_REG_APP_NOT_PRE_REGISTERED The supplied token did not identify a
-	        pre-registered application.
-*/
+/** @brief Sets the team and thread IDs for a pre-registered application.
+ *
+ *  After pre-registration via _AddApplication() without a team ID, this
+ *  method must be called to assign the actual team and thread IDs.
+ *
+ *  @param entryToken The pre-registration token returned by _AddApplication().
+ *  @param thread     The application's main thread ID.
+ *  @param team       The application's team ID.
+ *  @param _port      Optional pointer to receive the assigned looper port.
+ *  @return @c B_OK on success, @c B_REG_APP_NOT_PRE_REGISTERED if the
+ *          token is invalid, or another error code.
+ *  @see _AddApplication()
+ */
 status_t
 BRoster::_SetThreadAndTeam(uint32 entryToken, thread_id thread,
 	team_id team, port_id* _port) const
@@ -1586,22 +1903,20 @@ BRoster::_SetThreadAndTeam(uint32 entryToken, thread_id thread,
 }
 
 
-/*!	Completes the registration process for a pre-registered application.
-
-	After an application has been pre-registered via AddApplication() and
-	after assigning it a team ID (via SetThreadAndTeam()) the application is
-	still pre-registered and must complete the registration.
-
-	\param team The app's team ID
-	\param thread The app's thread ID
-	\param thread The app looper port
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_REG_APP_NOT_PRE_REGISTERED \a team did not identify an existing
-	        application or the identified application was already fully
-	        registered.
-*/
+/** @brief Completes registration for a pre-registered application.
+ *
+ *  After pre-registration and assignment of thread/team IDs, this
+ *  method finalizes the registration so the application is fully
+ *  registered in the roster.
+ *
+ *  @param team   The application's team ID.
+ *  @param thread The application's main thread ID.
+ *  @param port   The application's looper port ID.
+ *  @return @c B_OK on success, @c B_REG_APP_NOT_PRE_REGISTERED if the
+ *          team is not pre-registered or is already fully registered,
+ *          or another error code.
+ *  @see _AddApplication(), _SetThreadAndTeam()
+ */
 status_t
 BRoster::_CompleteRegistration(team_id team, thread_id thread,
 	port_id port) const
@@ -1634,25 +1949,23 @@ BRoster::_CompleteRegistration(team_id team, thread_id thread,
 }
 
 
-/*!	Returns whether an application is registered.
-
-	If the application is indeed pre-registered and \a info is not \c NULL,
-	the methods fills in the app_info structure pointed to by \a info.
-
-	\param ref An entry_ref referring to the app's executable
-	\param team The app's team ID. May be -1, if \a token is given.
-	\param token The app's pre-registration token. May be 0, if \a team is
-	       given.
-	\param preRegistered: Pointer to a pre-allocated bool to be filled in
-	       by this method, indicating whether or not the app was
-	       pre-registered.
-	\param info A pointer to a pre-allocated app_info structure to be filled
-	       in by this method (may be \c NULL)
-
-	\return \c B_OK, if the application is registered and all requested
-	        information could be retrieved, or another error code, if the app
-	        is not registered or an error occurred.
-*/
+/** @brief Checks whether an application is registered with the registrar.
+ *
+ *  If the application is registered, @a preRegistered indicates whether
+ *  it is only pre-registered, and @a info (if non-NULL) is filled with
+ *  the application's info.
+ *
+ *  @param ref           An entry_ref for the application executable.
+ *                       May be @c NULL.
+ *  @param team          The team ID, or -1 if @a token is used instead.
+ *  @param token         The pre-registration token, or 0 if @a team is used.
+ *  @param preRegistered Pointer to a bool set to @c true if the app is
+ *                       pre-registered, @c false if fully registered.
+ *                       May be @c NULL.
+ *  @param info          Pointer to an app_info to fill in. May be @c NULL.
+ *  @return @c B_OK if registered, or an error code if not registered or
+ *          an error occurred.
+ */
 status_t
 BRoster::_IsAppRegistered(const entry_ref* ref, team_id team,
 	uint32 token, bool* preRegistered, app_info* info) const
@@ -1696,20 +2009,17 @@ BRoster::_IsAppRegistered(const entry_ref* ref, team_id team,
 }
 
 
-/*!	Completely unregisters a pre-registered application.
-
-	This method can only be used to unregister applications that don't have
-	a team ID assigned yet. All other applications must be unregistered via
-	RemoveApp().
-
-	\param entryToken The token identifying the application (returned by
-	       AddApplication())
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_REG_APP_NOT_PRE_REGISTERED The supplied token did not identify
-	        a pre-registered application.
-*/
+/** @brief Unregisters a pre-registered application that has no team ID.
+ *
+ *  This method only works for applications that have not yet been
+ *  assigned a team ID.  Applications with a team ID must be unregistered
+ *  via _RemoveApp().
+ *
+ *  @param entryToken The pre-registration token returned by _AddApplication().
+ *  @return @c B_OK on success, @c B_REG_APP_NOT_PRE_REGISTERED if the
+ *          token does not identify a pre-registered application.
+ *  @see _RemoveApp()
+ */
 status_t
 BRoster::_RemovePreRegApp(uint32 entryToken) const
 {
@@ -1735,19 +2045,16 @@ BRoster::_RemovePreRegApp(uint32 entryToken) const
 }
 
 
-/*!	Unregisters a (pre-)registered application.
-
-	This method must be used to unregister applications that already have
-	a team ID assigned, i.e. also for pre-registered application for which
-	SetThreadAndTeam() has already been invoked.
-
-	\param team The app's team ID
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_REG_APP_NOT_REGISTERED The supplied team ID does not identify a
-	        (pre-)registered application.
-*/
+/** @brief Unregisters a (pre-)registered application by team ID.
+ *
+ *  Use this for applications that have a team ID assigned (including
+ *  pre-registered applications after _SetThreadAndTeam()).
+ *
+ *  @param team The application's team ID.
+ *  @return @c B_OK on success, @c B_REG_APP_NOT_REGISTERED if the team
+ *          is not registered, or another error code.
+ *  @see _RemovePreRegApp()
+ */
 status_t
 BRoster::_RemoveApp(team_id team) const
 {
@@ -1773,6 +2080,13 @@ BRoster::_RemoveApp(team_id team) const
 }
 
 
+/** @brief Notifies the app_server that an application has crashed.
+ *
+ *  Sends an @c AS_APP_CRASHED message so the desktop can clean up
+ *  resources associated with the crashed application.
+ *
+ *  @param team The team ID of the crashed application.
+ */
 void
 BRoster::_ApplicationCrashed(team_id team)
 {
@@ -1787,14 +2101,16 @@ BRoster::_ApplicationCrashed(team_id team)
 }
 
 
-/*!	Tells the registrar which application is currently active.
-
-	It's called from within the app_server when the active application is
-	changed.
-
-	As it's called in the event loop, it must run asynchronously and cannot
-	wait for a reply.
-*/
+/** @brief Notifies the registrar of the currently active application.
+ *
+ *  Called by the app_server when the active application changes.
+ *  Because this runs in the event loop, the message is sent
+ *  asynchronously without waiting for a reply.
+ *
+ *  @param team The team ID of the newly active application.
+ *  @return @c B_OK on success, @c B_BAD_TEAM_ID if @a team is negative,
+ *          or another error code.
+ */
 status_t
 BRoster::_UpdateActiveApp(team_id team) const
 {
@@ -1812,72 +2128,33 @@ BRoster::_UpdateActiveApp(team_id team) const
 }
 
 
-/*!	Launches the application associated with the supplied MIME type or
-	the entry referred to by the supplied entry_ref.
-
-	The application to be started is searched the same way FindApp() does it.
-
-	At least one of \a mimeType or \a ref must not be \c NULL. If \a mimeType
-	is supplied, \a ref is ignored for finding the application.
-
-	If \a ref does refer to an application executable, that application is
-	launched. Otherwise the respective application is searched and launched,
-	and \a ref is sent to it in a \c B_REFS_RECEIVED message, unless other
-	arguments are passed via \a argc and \a args -- then the entry_ref is
-	converted into a path (C-string) and added to the argument vector.
-
-	\a messageList contains messages to be sent to the application
-	"on launch", i.e. before ReadyToRun() is invoked on the BApplication
-	object. The caller retains ownership of the supplied BList and the
-	contained BMessages. In case the method fails with \c B_ALREADY_RUNNING
-	the messages are delivered to the already running instance. The same
-	applies to the \c B_REFS_RECEIVED message.
-
-	The supplied \a argc and \a args are (if containing at least one argument)
-	put into a \c B_ARGV_RECEIVED message and sent to the launched application
-	"on launch". The caller retains ownership of the supplied \a args.
-	In case the method fails with \c B_ALREADY_RUNNING the message is
-	delivered to the already running instance. The same applies to the
-	\c B_REFS_RECEIVED message, if no arguments are supplied via \a argc and
-	\args.
-
-	If \a launchSuspended is set to true, the main thread of the loaded app
-	(returned in \a appThread) is kept in the suspended state and not
-	automatically resumed.
-
-	\param mimeType MIME type for which the application shall be launched.
-	       May be \c NULL.
-	\param ref entry_ref referring to the file for which an application shall
-	       be launched. May be \c NULL.
-	\param messageList Optional list of messages to be sent to the application
-	       "on launch". May be \c NULL.
-	\param argc Specifies the number of elements in \a args.
-	\param args An array of C-strings to be sent as B_ARGV_RECEIVED messaged
-	       to the launched application.
-	\param appTeam Pointer to a pre-allocated team_id variable to be set to
-	       the team ID of the launched application.
-	\param appThread Pointer to a pre-allocated thread_id variable to
-		   be set to the thread ID of the launched main thread.
-	\param _appPort Pointer to a pre-allocated port_id variable to
-		   be set to the port ID of the launched application.
-	\param _appToken Pointer to a pre-allocated uint32 variable to
-		   be set to the token of the launched application.
-	\param launchSuspended Indicates whether to keep the app thread in the
-		   suspended state or resume it.
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE \c NULL \a mimeType
-	\retval B_LAUNCH_FAILED_NO_PREFERRED_APP Neither with the supplied type
-	        nor with its supertype (if the supplied isn't a supertype itself)
-	        a preferred application is associated.
-	\retval B_LAUNCH_FAILED_APP_NOT_FOUND The supplied type is not installed
-	        or its preferred application could not be found.
-	\retval B_LAUNCH_FAILED_APP_IN_TRASH The supplied type's preferred
-	        application was in the trash.
-	\retval B_LAUNCH_FAILED_EXECUTABLE The found application was not
-	        executable.
-*/
+/** @brief Core implementation that launches an application by MIME type
+ *         or entry_ref.
+ *
+ *  At least one of @a mimeType or @a ref must be non-NULL.  The
+ *  application is resolved the same way FindApp() does.  Messages in
+ *  @a messageList are sent before ReadyToRun(); @a argc/@a args are
+ *  delivered as @c B_ARGV_RECEIVED.  If @a launchSuspended is @c true
+ *  the main thread is not resumed.
+ *
+ *  @param mimeType        MIME type to resolve. May be @c NULL.
+ *  @param ref             Entry_ref for the file/application. May be @c NULL.
+ *  @param messageList     Optional list of BMessages to send on launch.
+ *  @param argc            Number of elements in @a args.
+ *  @param args            Argument vector for @c B_ARGV_RECEIVED.
+ *  @param environment     Environment variable array for load_image().
+ *  @param _appTeam        Receives the launched team ID. May be @c NULL.
+ *  @param _appThread      Receives the main thread ID. May be @c NULL.
+ *  @param _appPort        Receives the looper port ID. May be @c NULL.
+ *  @param _appToken       Receives the registration token. May be @c NULL.
+ *  @param launchSuspended If @c true, the main thread is kept suspended.
+ *  @return @c B_OK on success, @c B_ALREADY_RUNNING if a single-launch
+ *          app was already running, @c B_LAUNCH_FAILED_NO_PREFERRED_APP,
+ *          @c B_LAUNCH_FAILED_APP_NOT_FOUND,
+ *          @c B_LAUNCH_FAILED_APP_IN_TRASH,
+ *          @c B_LAUNCH_FAILED_EXECUTABLE, or another error code.
+ *  @see FindApp(), _ResolveApp(), _SendToRunning()
+ */
 status_t
 BRoster::_LaunchApp(const char* mimeType, const entry_ref* ref,
 	const BList* messageList, int argc, const char* const* args,
@@ -2067,57 +2344,45 @@ BRoster::_LaunchApp(const char* mimeType, const entry_ref* ref,
 }
 
 
+/** @brief Sets the application flags for a registered app (stub).
+ *
+ *  @param team  The application's team ID.
+ *  @param flags The new application flags.
+ */
 void
 BRoster::_SetAppFlags(team_id team, uint32 flags) const
 {
 }
 
 
+/** @brief Dumps the roster state for debugging purposes (stub).
+ */
 void
 BRoster::_DumpRoster() const
 {
 }
 
 
-/*!	Finds an application associated with a MIME type or a file.
-
-	It does also supply the caller with some more information about the
-	application, like signature, app flags and whether the supplied
-	MIME type/entry_ref already identified an application.
-
-	At least one of \a inType or \a ref must not be \c NULL. If \a inType is
-	supplied, \a ref is ignored.
-
-	If \a ref refers to a link, it is updated with the entry_ref for the
-	resolved entry.
-
-	\see FindApp() for how the application is searched.
-
-	\a signature is set to a string with length 0, if the found
-	application has no signature.
-
-	\param inType The MIME type for which an application shall be found.
-	       May be \c NULL.
-	\param ref The file for which an application shall be found.
-	       May be \c NULL.
-	\param appRef A pointer to a pre-allocated entry_ref to be filled with
-	       a reference to the found application's executable. May be \c NULL.
-	\param signature A pointer to a pre-allocated char buffer of at
-	       least size \c B_MIME_TYPE_LENGTH to be filled with the signature of
-	       the found application. May be \c NULL.
-	\param appFlags A pointer to a pre-allocated uint32 variable to be filled
-	       with the app flags of the found application. May be \c NULL.
-	\param wasDocument A pointer to a pre-allocated bool variable to be set to
-	       \c true, if the supplied file was not identifying an application,
-	       to \c false otherwise. Has no meaning, if a \a inType is supplied.
-	       May be \c NULL.
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE \c NULL \a inType and \a ref.
-
-	\see FindApp() for other error codes.
-*/
+/** @brief Resolves the preferred application for a MIME type or file.
+ *
+ *  At least one of @a inType or @a ref must be non-NULL.  If @a inType
+ *  is supplied, @a ref is ignored.  Symbolic links in @a ref are
+ *  resolved.  Also returns the application signature, flags, and whether
+ *  the input identified a document rather than an app.
+ *
+ *  @param inType       The MIME type. May be @c NULL.
+ *  @param ref          The file entry_ref. May be @c NULL.
+ *  @param _appRef      Receives the resolved application entry_ref.
+ *                      May be @c NULL.
+ *  @param _signature   Buffer of at least @c B_MIME_TYPE_LENGTH to receive
+ *                      the application's signature. May be @c NULL.
+ *  @param _appFlags    Receives the application's flags. May be @c NULL.
+ *  @param _wasDocument Set to @c true if the input was a document, @c false
+ *                      if it was already an application. May be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if both @a inType and @a ref
+ *          are @c NULL, or another error code.
+ *  @see FindApp(), _TranslateRef(), _TranslateType()
+ */
 status_t
 BRoster::_ResolveApp(const char* inType, entry_ref* ref,
 	entry_ref* _appRef, char* _signature, uint32* _appFlags,
@@ -2201,33 +2466,26 @@ BRoster::_ResolveApp(const char* inType, entry_ref* ref,
 }
 
 
-/*!	\brief Finds an application associated with a file.
-
-	\a appMeta is left unmodified, if the file is executable, but has no
-	signature.
-
-	\see FindApp() for how the application is searched.
-
-	If \a ref refers to a link, it is updated with the entry_ref for the
-	resolved entry.
-
-	\param ref The file for which an application shall be found.
-	\param appMeta A pointer to a pre-allocated BMimeType to be set to the
-	       signature of the found application.
-	\param appRef A pointer to a pre-allocated entry_ref to be filled with
-	       a reference to the found application's executable.
-	\param appFile A pointer to a pre-allocated BFile to be set to the
-	       executable of the found application.
-	\param wasDocument A pointer to a pre-allocated bool variable to be set to
-	       \c true, if the supplied file was not identifying an application,
-	       to \c false otherwise. May be \c NULL.
-
-	\return A status code.
-	\retval B_OK: Everything went fine.
-	\retval B_BAD_VALUE: \c NULL \a ref, \a appMeta, \a appRef or \a appFile.
-
-	\see FindApp() for other error codes.
-*/
+/** @brief Finds the application associated with a file reference.
+ *
+ *  Resolves symbolic links, checks executability, and determines the
+ *  application that should handle the file.  @a appMeta is left
+ *  unmodified if the file is executable but has no signature.
+ *
+ *  @param ref          The file entry_ref.  Updated if it was a symlink.
+ *                      Must not be @c NULL.
+ *  @param appMeta      Receives the found application's MIME type.
+ *                      Must not be @c NULL.
+ *  @param appRef       Receives the found application's entry_ref.
+ *                      Must not be @c NULL.
+ *  @param appFile      Receives the found application's BFile.
+ *                      Must not be @c NULL.
+ *  @param _wasDocument Set to @c true if @a ref was a document rather
+ *                      than an application. May be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if required parameters are
+ *          @c NULL, or another error code.
+ *  @see _TranslateType(), _ResolveApp()
+ */
 status_t
 BRoster::_TranslateRef(entry_ref* ref, BMimeType* appMeta,
 	entry_ref* appRef, BFile* appFile, bool* _wasDocument) const
@@ -2349,25 +2607,24 @@ BRoster::_TranslateRef(entry_ref* ref, BMimeType* appMeta,
 }
 
 
-/*!	Finds an application associated with a MIME type.
-
-	\see FindApp() for how the application is searched.
-
-	\param mimeType The MIME type for which an application shall be found.
-	\param appMeta A pointer to a pre-allocated BMimeType to be set to the
-	       signature of the found application.
-	\param appRef A pointer to a pre-allocated entry_ref to be filled with
-	       a reference to the found application's executable.
-	\param appFile A pointer to a pre-allocated BFile to be set to the
-	       executable of the found application.
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE \c NULL \a mimeType, \a appMeta, \a appRef or
-	        \a appFile.
-
-	\see FindApp() for other error codes.
-*/
+/** @brief Finds the preferred application for a MIME type.
+ *
+ *  Iterates over preferred and supporting applications in priority
+ *  order, attempting to resolve each via app hints and filesystem
+ *  queries until a usable application is found.
+ *
+ *  @param mimeType The MIME type string. Must not be @c NULL.
+ *  @param appMeta  Receives the found application's BMimeType.
+ *                  Must not be @c NULL.
+ *  @param appRef   Receives the found application's entry_ref.
+ *                  Must not be @c NULL.
+ *  @param appFile  Receives the found application's BFile.
+ *                  Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if parameters are @c NULL,
+ *          @c B_LAUNCH_FAILED_NO_PREFERRED_APP if no suitable application
+ *          was found, or another error code.
+ *  @see _TranslateRef(), _ResolveApp()
+ */
 status_t
 BRoster::_TranslateType(const char* mimeType, BMimeType* appMeta,
 	entry_ref* appRef, BFile* appFile) const
@@ -2538,21 +2795,20 @@ BRoster::_TranslateType(const char* mimeType, BMimeType* appMeta,
 }
 
 
-/*!	Gets the type of a file either from the node info or by sniffing.
-
-	The method first tries to get the file type from the supplied node info. If
-	that didn't work, the given entry ref is sniffed.
-
-	\param file An entry_ref referring to the file in question.
-	\param nodeInfo A BNodeInfo initialized to the file.
-	\param mimeType A pointer to a pre-allocated char buffer of at least size
-	       \c B_MIME_TYPE_LENGTH to be filled with the MIME type sniffed for
-	       the file.
-
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE \c NULL \a file, \a nodeInfo or \a mimeType.
-*/
+/** @brief Determines a file's MIME type from node info or by sniffing.
+ *
+ *  First attempts to read the type from the file's attributes via
+ *  @a nodeInfo.  If that fails, updates the file's MIME info or
+ *  falls back to BMimeType::GuessMimeType().
+ *
+ *  @param file     An entry_ref for the file. Must not be @c NULL.
+ *  @param nodeInfo A BNodeInfo initialized to the file's node.
+ *                  Must not be @c NULL.
+ *  @param mimeType Buffer of at least @c B_MIME_TYPE_LENGTH to receive
+ *                  the determined MIME type. Must not be @c NULL.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if parameters are @c NULL
+ *          or the sniffed type is invalid, or another error code.
+ */
 status_t
 BRoster::_GetFileType(const entry_ref* file, BNodeInfo* nodeInfo,
 	char* mimeType) const
@@ -2585,33 +2841,24 @@ BRoster::_GetFileType(const entry_ref* file, BNodeInfo* nodeInfo,
 }
 
 
-/*!	Sends messages to a running team.
-
-	In particular those messages are \c B_ARGV_RECEIVED, \c B_REFS_RECEIVED,
-	\c B_READY_TO_RUN and other, arbitrary, ones.
-
-	If \a messageList is not \c NULL or empty, those messages are sent first,
-	then follow \c B_ARGV_RECEIVED, \c B_REFS_RECEIVED and finally
-	\c B_READ_TO_RUN.
-
-	\c B_ARGV_RECEIVED is sent only, if \a args is not \c NULL and contains
-	more than one element. \c B_REFS_RECEIVED is sent only, if \a ref is not
-	\c NULL.
-
-	The ownership of all supplied objects retains to the caller.
-
-	\param team The team ID of the target application.
-	\param argc Number of elements in \a args.
-	\param args Argument vector to be sent to the target. May be \c NULL.
-	\param messageList List of BMessages to be sent to the target. May be
-	       \c NULL or empty.
-	\param ref entry_ref to be sent to the target. May be \c NULL.
-	\param alreadyRunning \c true, if the target app is not newly launched,
-	       but was already running, \c false otherwise (a \c B_READY_TO_RUN
-	       message will be sent in this case).
-
-	\return \c B_OK if everything went fine, or an error code otherwise.
-*/
+/** @brief Delivers launch-time messages to a running application.
+ *
+ *  Sends custom messages from @a messageList, then @c B_ARGV_RECEIVED
+ *  (if @a args has > 1 element), @c B_REFS_RECEIVED (if @a ref is
+ *  non-NULL), and @c B_READY_TO_RUN (for newly launched apps).
+ *  Ownership of all supplied objects is retained by the caller.
+ *
+ *  @param team           The target application's team ID.
+ *  @param argc           Number of elements in @a args.
+ *  @param args           Argument vector. May be @c NULL.
+ *  @param messageList    List of BMessages to send first. May be @c NULL.
+ *  @param ref            entry_ref for @c B_REFS_RECEIVED. May be @c NULL.
+ *  @param alreadyRunning @c true if the app was already running (no
+ *                        @c B_READY_TO_RUN will be sent), @c false for
+ *                        newly launched apps.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _LaunchApp()
+ */
 status_t
 BRoster::_SendToRunning(team_id team, int argc, const char* const* args,
 	const BList* messageList, const entry_ref* ref,
@@ -2670,9 +2917,15 @@ BRoster::_SendToRunning(team_id team, int argc, const char* const* args,
 }
 
 
-/*!	Allows to use certain functionality of the BRoster class without
-	accessing the registrar.
-*/
+/** @brief Enables or disables registrar-free operation.
+ *
+ *  When @a noRegistrar is @c true, methods that would normally
+ *  communicate with the registrar skip those calls.  Used during
+ *  early boot or in testing environments.
+ *
+ *  @param noRegistrar @c true to bypass the registrar, @c false for
+ *                     normal operation.
+ */
 void
 BRoster::_SetWithoutRegistrar(bool noRegistrar)
 {
@@ -2680,6 +2933,11 @@ BRoster::_SetWithoutRegistrar(bool noRegistrar)
 }
 
 
+/** @brief Initializes the internal messenger to the registrar.
+ *
+ *  Looks up the registrar's port via the launch roster and configures
+ *  the internal BMessenger to communicate with it.
+ */
 void
 BRoster::_InitMessenger()
 {
@@ -2717,6 +2975,15 @@ BRoster::_InitMessenger()
 }
 
 
+/** @brief Lazily initializes the MIME messenger (called via __init_once).
+ *
+ *  Sends a @c B_REG_GET_MIME_MESSENGER request to the registrar and
+ *  stores the returned messenger in @c fMimeMessenger.
+ *
+ *  @param data Pointer to the BRoster instance (cast from @c void*).
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _MimeMessenger()
+ */
 /*static*/ status_t
 BRoster::_InitMimeMessenger(void* data)
 {
@@ -2743,6 +3010,14 @@ BRoster::_InitMimeMessenger(void* data)
 }
 
 
+/** @brief Returns the MIME messenger, initializing it on first call.
+ *
+ *  Uses __init_once to ensure the MIME messenger is initialized exactly
+ *  once in a thread-safe manner.
+ *
+ *  @return A reference to the MIME messenger.
+ *  @see _InitMimeMessenger()
+ */
 BMessenger&
 BRoster::_MimeMessenger()
 {
@@ -2751,9 +3026,13 @@ BRoster::_MimeMessenger()
 }
 
 
-/*!	Sends a request to the roster to add the application with the
-	given signature to the front of the recent apps list.
-*/
+/** @brief Adds an application to the front of the recent apps list.
+ *
+ *  Sends a @c B_REG_ADD_TO_RECENT_APPS request to the registrar.
+ *
+ *  @param signature The MIME signature of the application to add.
+ *  @see GetRecentApps()
+ */
 void
 BRoster::_AddToRecentApps(const char* signature) const
 {
@@ -2786,7 +3065,8 @@ BRoster::_AddToRecentApps(const char* signature) const
 }
 
 
-//!	Sends a request to the roster to clear the recent documents list.
+/** @brief Clears the system's recent documents list.
+ */
 void
 BRoster::_ClearRecentDocuments() const
 {
@@ -2796,7 +3076,8 @@ BRoster::_ClearRecentDocuments() const
 }
 
 
-//!	Sends a request to the roster to clear the recent documents list.
+/** @brief Clears the system's recent folders list.
+ */
 void
 BRoster::_ClearRecentFolders() const
 {
@@ -2806,7 +3087,8 @@ BRoster::_ClearRecentFolders() const
 }
 
 
-//! \brief Sends a request to the roster to clear the recent documents list.
+/** @brief Clears the system's recent applications list.
+ */
 void
 BRoster::_ClearRecentApps() const
 {
@@ -2816,13 +3098,14 @@ BRoster::_ClearRecentApps() const
 }
 
 
-/*!	Loads the system's recently used document, folder, and
-	application lists from the specified file.
-
-	\note The current lists are cleared before loading the new lists
-
-	\param filename The name of the file to load from
-*/
+/** @brief Loads recently used lists from a file.
+ *
+ *  The current recent documents, folders, and applications lists are
+ *  cleared before loading the new data from @a filename.
+ *
+ *  @param filename The path of the file to load from.
+ *  @see _SaveRecentLists()
+ */
 void
 BRoster::_LoadRecentLists(const char* filename) const
 {
@@ -2855,11 +3138,14 @@ BRoster::_LoadRecentLists(const char* filename) const
 }
 
 
-/*!	Saves the system's recently used document, folder, and
-	application lists to the specified file.
-
-	\param filename The name of the file to save to
-*/
+/** @brief Saves recently used lists to a file.
+ *
+ *  Persists the current recent documents, folders, and applications
+ *  lists to @a filename.
+ *
+ *  @param filename The path of the file to save to.
+ *  @see _LoadRecentLists()
+ */
 void
 BRoster::_SaveRecentLists(const char* filename) const
 {

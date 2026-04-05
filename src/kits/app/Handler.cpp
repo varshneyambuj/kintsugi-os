@@ -1,10 +1,37 @@
 /*
- * Copyright 2001-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Erik Jaesler, erik@cgsoftware.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Erik Jaesler, erik@cgsoftware.com
+ */
+
+/**
+ * @file Handler.cpp
+ * @brief Implementation of BHandler, the base class for message handling in the
+ *        application framework.
+ *
+ * BHandler provides the foundation for receiving and dispatching BMessage
+ * objects. Handlers are typically attached to a BLooper, which delivers
+ * messages to them. This file also contains the BPrivate::ObserverList helper
+ * class used to implement the observer notification pattern.
  */
 
 
@@ -30,10 +57,14 @@ using std::vector;
 using BPrivate::gDefaultTokens;
 
 
+/** @brief Archive field name used to store the handler's name. */
 static const char* kArchiveNameField = "_name";
 
+/** @brief Internal message code used to register a new observer. */
 static const uint32 kMsgStartObserving = '_OBS';
+/** @brief Internal message code used to unregister an existing observer. */
 static const uint32 kMsgStopObserving = '_OBP';
+/** @brief Field name carrying the messenger target in observer messages. */
 static const char* kObserveTarget = "be:observe_target";
 
 
@@ -87,6 +118,10 @@ static property_info sHandlerPropInfo[] = {
 	{ 0 }
 };
 
+/** @brief Callback that deletes a BMessageFilter; used with BList::DoForEach().
+ *  @param filter Pointer to the BMessageFilter to delete.
+ *  @return Always returns false so iteration continues through the entire list.
+ */
 bool FilterDeleter(void* filter);
 
 namespace BPrivate {
@@ -122,6 +157,13 @@ using namespace BPrivate;
 //	#pragma mark -
 
 
+/** @brief Construct a BHandler with an optional name.
+ *  @param name Human-readable name for this handler, or NULL for unnamed.
+ *  @note The handler is not attached to any looper after construction; it must
+ *        be added to a BLooper via BLooper::AddHandler() before it can receive
+ *        messages.
+ *  @see BLooper::AddHandler()
+ */
 BHandler::BHandler(const char* name)
 	: BArchivable(),
 	fName(NULL)
@@ -130,6 +172,16 @@ BHandler::BHandler(const char* name)
 }
 
 
+/** @brief Destroy the BHandler.
+ *
+ *  Removes the handler from its looper (if any), deletes all owned message
+ *  filters and the observer list, and releases the token allocated during
+ *  construction.
+ *
+ *  @note The handler's looper is locked and unlocked during destruction if
+ *        the handler still belongs to one.
+ *  @see BLooper::RemoveHandler()
+ */
 BHandler::~BHandler()
 {
 	if (LockLooper()) {
@@ -155,6 +207,13 @@ BHandler::~BHandler()
 }
 
 
+/** @brief Construct a BHandler from an archived BMessage.
+ *  @param data The archive message containing the handler's state. The handler
+ *              name is read from the "_name" field if present.
+ *  @note This is the unarchiving constructor used by Instantiate().
+ *  @see Instantiate()
+ *  @see Archive()
+ */
 BHandler::BHandler(BMessage* data)
 	: BArchivable(data),
 	fName(NULL)
@@ -168,6 +227,12 @@ BHandler::BHandler(BMessage* data)
 }
 
 
+/** @brief Create a new BHandler from an archived BMessage.
+ *  @param data The archive message to instantiate from.
+ *  @return A new BHandler if \a data is a valid BHandler archive, or NULL if
+ *          validation fails.
+ *  @see Archive()
+ */
 BArchivable*
 BHandler::Instantiate(BMessage* data)
 {
@@ -178,6 +243,13 @@ BHandler::Instantiate(BMessage* data)
 }
 
 
+/** @brief Archive the BHandler into a BMessage.
+ *  @param data The message to archive into.
+ *  @param deep If true, child objects are archived as well (unused for
+ *              BHandler, passed to BArchivable).
+ *  @return B_OK on success, or an error code on failure.
+ *  @see Instantiate()
+ */
 status_t
 BHandler::Archive(BMessage* data, bool deep) const
 {
@@ -192,6 +264,20 @@ BHandler::Archive(BMessage* data, bool deep) const
 }
 
 
+/** @brief Handle an incoming message.
+ *  @param message The message to process.
+ *
+ *  Default implementation handles observer registration/deregistration,
+ *  scripting property queries (B_GET_PROPERTY for Messenger, Suites, and
+ *  InternalName), and B_GET_SUPPORTED_SUITES. Unrecognized messages are
+ *  forwarded to the next handler in the chain, or replied to with
+ *  B_MESSAGE_NOT_UNDERSTOOD if no next handler exists.
+ *
+ *  @note Subclasses should call the base implementation for any messages they
+ *        do not handle.
+ *  @see SetNextHandler()
+ *  @see GetSupportedSuites()
+ */
 void
 BHandler::MessageReceived(BMessage* message)
 {
@@ -283,6 +369,11 @@ BHandler::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Return the looper this handler is attached to.
+ *  @return The owning BLooper, or NULL if the handler is not attached to any
+ *          looper.
+ *  @see BLooper::AddHandler()
+ */
 BLooper*
 BHandler::Looper() const
 {
@@ -290,6 +381,10 @@ BHandler::Looper() const
 }
 
 
+/** @brief Set the handler's name.
+ *  @param name The new name, or NULL to clear the name. The string is copied.
+ *  @see Name()
+ */
 void
 BHandler::SetName(const char* name)
 {
@@ -303,6 +398,10 @@ BHandler::SetName(const char* name)
 }
 
 
+/** @brief Return the handler's name.
+ *  @return The handler name, or NULL if no name has been set.
+ *  @see SetName()
+ */
 const char*
 BHandler::Name() const
 {
@@ -310,6 +409,14 @@ BHandler::Name() const
 }
 
 
+/** @brief Set the next handler in the message-forwarding chain.
+ *  @param handler The handler to forward unrecognized messages to, or NULL to
+ *                 end the chain. Must belong to the same looper as this handler.
+ *  @note The handler must already belong to a looper, and that looper must be
+ *        locked when calling this method.
+ *  @see NextHandler()
+ *  @see MessageReceived()
+ */
 void
 BHandler::SetNextHandler(BHandler* handler)
 {
@@ -332,6 +439,10 @@ BHandler::SetNextHandler(BHandler* handler)
 }
 
 
+/** @brief Return the next handler in the message-forwarding chain.
+ *  @return The next BHandler, or NULL if none has been set.
+ *  @see SetNextHandler()
+ */
 BHandler*
 BHandler::NextHandler() const
 {
@@ -339,6 +450,13 @@ BHandler::NextHandler() const
 }
 
 
+/** @brief Add a message filter to this handler.
+ *  @param filter The message filter to add. The handler takes ownership.
+ *  @note The owning looper (if any) must be locked before calling this method.
+ *  @see RemoveFilter()
+ *  @see SetFilterList()
+ *  @see FilterList()
+ */
 void
 BHandler::AddFilter(BMessageFilter* filter)
 {
@@ -358,6 +476,14 @@ BHandler::AddFilter(BMessageFilter* filter)
 }
 
 
+/** @brief Remove a message filter from this handler.
+ *  @param filter The message filter to remove. Ownership is returned to the
+ *                caller.
+ *  @return true if the filter was found and removed, false otherwise.
+ *  @note The owning looper (if any) must be locked before calling this method.
+ *  @see AddFilter()
+ *  @see SetFilterList()
+ */
 bool
 BHandler::RemoveFilter(BMessageFilter* filter)
 {
@@ -376,6 +502,15 @@ BHandler::RemoveFilter(BMessageFilter* filter)
 }
 
 
+/** @brief Replace the entire filter list for this handler.
+ *  @param filters The new list of BMessageFilter pointers, or NULL to clear.
+ *                 The handler takes ownership of both the list and its filters.
+ *                 Any previously installed filters are deleted.
+ *  @note The owning looper (if any) must be locked before calling this method.
+ *  @see AddFilter()
+ *  @see RemoveFilter()
+ *  @see FilterList()
+ */
 void
 BHandler::SetFilterList(BList* filters)
 {
@@ -411,6 +546,13 @@ BHandler::SetFilterList(BList* filters)
 }
 
 
+/** @brief Return the list of message filters installed on this handler.
+ *  @return The BList of BMessageFilter pointers, or NULL if no filters are
+ *          installed.
+ *  @see AddFilter()
+ *  @see RemoveFilter()
+ *  @see SetFilterList()
+ */
 BList*
 BHandler::FilterList()
 {
@@ -418,6 +560,15 @@ BHandler::FilterList()
 }
 
 
+/** @brief Lock the handler's looper.
+ *  @return true if the looper was successfully locked, false if the handler has
+ *          no looper or the looper could not be locked.
+ *  @note This performs a "pseudo-atomic" operation: it caches the looper
+ *        pointer, locks it, and then verifies that the looper has not changed.
+ *        If it has, the lock is released and false is returned.
+ *  @see LockLooperWithTimeout()
+ *  @see UnlockLooper()
+ */
 bool
 BHandler::LockLooper()
 {
@@ -437,6 +588,14 @@ BHandler::LockLooper()
 }
 
 
+/** @brief Lock the handler's looper with a timeout.
+ *  @param timeout Maximum time in microseconds to wait for the lock.
+ *  @return B_OK if the looper was locked, B_BAD_VALUE if the handler has no
+ *          looper, B_MISMATCHED_VALUES if the looper changed during locking,
+ *          or another error code from BLooper::LockWithTimeout().
+ *  @see LockLooper()
+ *  @see UnlockLooper()
+ */
 status_t
 BHandler::LockLooperWithTimeout(bigtime_t timeout)
 {
@@ -458,6 +617,12 @@ BHandler::LockLooperWithTimeout(bigtime_t timeout)
 }
 
 
+/** @brief Unlock the handler's looper.
+ *  @note The looper must have been previously locked by LockLooper() or
+ *        LockLooperWithTimeout().
+ *  @see LockLooper()
+ *  @see LockLooperWithTimeout()
+ */
 void
 BHandler::UnlockLooper()
 {
@@ -465,6 +630,19 @@ BHandler::UnlockLooper()
 }
 
 
+/** @brief Determine the handler for a scripting message.
+ *  @param message The scripting message being resolved.
+ *  @param index Current index into the specifier stack.
+ *  @param specifier The current specifier message.
+ *  @param what The specifier form (e.g., B_DIRECT_SPECIFIER).
+ *  @param property The property name being targeted.
+ *  @return A pointer to the BHandler that should handle the message, or NULL if
+ *          the specifier could not be resolved.
+ *  @note If the property matches one of the built-in handler properties
+ *        (Suites, Messenger, InternalName), this handler is returned. Otherwise
+ *        a B_MESSAGE_NOT_UNDERSTOOD reply is sent.
+ *  @see GetSupportedSuites()
+ */
 BHandler*
 BHandler::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -483,6 +661,14 @@ BHandler::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/** @brief Report the scripting suites supported by this handler.
+ *  @param data The message to populate with suite information. Receives a
+ *              "suites" string field ("suite/vnd.Be-handler") and a "messages"
+ *              flattened BPropertyInfo.
+ *  @return B_OK on success, B_BAD_VALUE if \a data is NULL, or another error
+ *          code on failure.
+ *  @see ResolveSpecifier()
+ */
 status_t
 BHandler::GetSupportedSuites(BMessage* data)
 {
@@ -524,6 +710,17 @@ BMessage: what =  (0x0, or 0)
 }
 
 
+/** @brief Start watching a target for a specific state change via BMessenger.
+ *  @param target The messenger identifying the handler to watch.
+ *  @param what The change code to observe.
+ *  @return B_OK on success, or an error code if the notification message could
+ *          not be delivered.
+ *  @note This sends a kMsgStartObserving message to \a target, causing it to
+ *        add this handler's messenger to its observer list.
+ *  @see StopWatching(BMessenger, uint32)
+ *  @see StartWatchingAll(BMessenger)
+ *  @see SendNotices()
+ */
 status_t
 BHandler::StartWatching(BMessenger target, uint32 what)
 {
@@ -535,6 +732,13 @@ BHandler::StartWatching(BMessenger target, uint32 what)
 }
 
 
+/** @brief Start watching a target for all state changes via BMessenger.
+ *  @param target The messenger identifying the handler to watch.
+ *  @return B_OK on success, or an error code if the notification message could
+ *          not be delivered.
+ *  @see StartWatching(BMessenger, uint32)
+ *  @see StopWatchingAll(BMessenger)
+ */
 status_t
 BHandler::StartWatchingAll(BMessenger target)
 {
@@ -542,6 +746,14 @@ BHandler::StartWatchingAll(BMessenger target)
 }
 
 
+/** @brief Stop watching a target for a specific state change via BMessenger.
+ *  @param target The messenger identifying the handler to stop watching.
+ *  @param what The change code to stop observing.
+ *  @return B_OK on success, or an error code if the notification message could
+ *          not be delivered.
+ *  @see StartWatching(BMessenger, uint32)
+ *  @see StopWatchingAll(BMessenger)
+ */
 status_t
 BHandler::StopWatching(BMessenger target, uint32 what)
 {
@@ -553,6 +765,13 @@ BHandler::StopWatching(BMessenger target, uint32 what)
 }
 
 
+/** @brief Stop watching a target for all state changes via BMessenger.
+ *  @param target The messenger identifying the handler to stop watching.
+ *  @return B_OK on success, or an error code if the notification message could
+ *          not be delivered.
+ *  @see StopWatching(BMessenger, uint32)
+ *  @see StartWatchingAll(BMessenger)
+ */
 status_t
 BHandler::StopWatchingAll(BMessenger target)
 {
@@ -560,6 +779,17 @@ BHandler::StopWatchingAll(BMessenger target)
 }
 
 
+/** @brief Start watching this handler for a specific state change via direct
+ *         BHandler pointer.
+ *  @param handler The handler that wants to observe changes on this handler.
+ *  @param what The change code to observe.
+ *  @return B_OK on success, B_NO_MEMORY if the observer list could not be
+ *          allocated.
+ *  @note This is the local (in-process) variant that registers the observer
+ *        directly in this handler's observer list.
+ *  @see StopWatching(BHandler*, uint32)
+ *  @see SendNotices()
+ */
 status_t
 BHandler::StartWatching(BHandler* handler, uint32 what)
 {
@@ -571,6 +801,14 @@ BHandler::StartWatching(BHandler* handler, uint32 what)
 }
 
 
+/** @brief Start watching this handler for all state changes via direct
+ *         BHandler pointer.
+ *  @param handler The handler that wants to observe all changes on this handler.
+ *  @return B_OK on success, B_NO_MEMORY if the observer list could not be
+ *          allocated.
+ *  @see StartWatching(BHandler*, uint32)
+ *  @see StopWatchingAll(BHandler*)
+ */
 status_t
 BHandler::StartWatchingAll(BHandler* handler)
 {
@@ -578,6 +816,15 @@ BHandler::StartWatchingAll(BHandler* handler)
 }
 
 
+/** @brief Stop watching this handler for a specific state change via direct
+ *         BHandler pointer.
+ *  @param handler The handler to remove from the observer list.
+ *  @param what The change code to stop observing.
+ *  @return B_OK on success, B_NO_MEMORY if the observer list could not be
+ *          allocated.
+ *  @see StartWatching(BHandler*, uint32)
+ *  @see StopWatchingAll(BHandler*)
+ */
 status_t
 BHandler::StopWatching(BHandler* handler, uint32 what)
 {
@@ -589,6 +836,14 @@ BHandler::StopWatching(BHandler* handler, uint32 what)
 }
 
 
+/** @brief Stop watching this handler for all state changes via direct
+ *         BHandler pointer.
+ *  @param handler The handler to remove from the observer list.
+ *  @return B_OK on success, B_NO_MEMORY if the observer list could not be
+ *          allocated.
+ *  @see StopWatching(BHandler*, uint32)
+ *  @see StartWatchingAll(BHandler*)
+ */
 status_t
 BHandler::StopWatchingAll(BHandler* handler)
 {
@@ -596,6 +851,11 @@ BHandler::StopWatchingAll(BHandler* handler)
 }
 
 
+/** @brief Reserved virtual hook for binary compatibility.
+ *  @param d The perform code identifying the operation.
+ *  @param arg Pointer to operation-specific data.
+ *  @return The result of BArchivable::Perform().
+ */
 status_t
 BHandler::Perform(perform_code d, void* arg)
 {
@@ -603,6 +863,15 @@ BHandler::Perform(perform_code d, void* arg)
 }
 
 
+/** @brief Send change notifications to all registered observers.
+ *  @param what The change code identifying the type of change.
+ *  @param notice An optional message containing additional information about
+ *                the change. May be NULL.
+ *  @note Observers registered for \a what and those registered for all changes
+ *        (B_OBSERVER_OBSERVE_ALL) will both be notified.
+ *  @see StartWatching()
+ *  @see IsWatched()
+ */
 void
 BHandler::SendNotices(uint32 what, const BMessage* notice)
 {
@@ -611,6 +880,11 @@ BHandler::SendNotices(uint32 what, const BMessage* notice)
 }
 
 
+/** @brief Check whether this handler has any registered observers.
+ *  @return true if at least one observer is registered, false otherwise.
+ *  @see StartWatching()
+ *  @see SendNotices()
+ */
 bool
 BHandler::IsWatched() const
 {
@@ -618,6 +892,12 @@ BHandler::IsWatched() const
 }
 
 
+/** @brief Initialize internal handler data structures.
+ *  @param name The handler's name (may be NULL).
+ *  @note Called by all constructors. Sets up the name, clears the looper,
+ *        next handler, filter list, and observer list, and acquires a new
+ *        token from the default token space.
+ */
 void
 BHandler::_InitData(const char* name)
 {
@@ -632,6 +912,12 @@ BHandler::_InitData(const char* name)
 }
 
 
+/** @brief Lazily create and return the observer list.
+ *  @return The observer list, or NULL if allocation fails.
+ *  @note The observer list is created on first access using nothrow new.
+ *  @see SendNotices()
+ *  @see StartWatching()
+ */
 ObserverList*
 BHandler::_ObserverList()
 {
@@ -642,6 +928,14 @@ BHandler::_ObserverList()
 }
 
 
+/** @brief Set the looper that owns this handler.
+ *  @param looper The new owning looper, or NULL to detach from any looper.
+ *  @note This is an internal method called by BLooper::AddHandler() and
+ *        BLooper::RemoveHandler(). It also updates the direct message target
+ *        token and propagates the looper to all installed message filters.
+ *  @see Looper()
+ *  @see BLooper::AddHandler()
+ */
 void
 BHandler::SetLooper(BLooper* looper)
 {
@@ -691,16 +985,23 @@ void BHandler::_ReservedHandler4() {}
 //	#pragma mark -
 
 
+/** @brief Construct an empty observer list. */
 ObserverList::ObserverList()
 {
 }
 
 
+/** @brief Destroy the observer list, releasing all observer references. */
 ObserverList::~ObserverList()
 {
 }
 
 
+/** @brief Convert raw handler pointers to messengers where possible.
+ *  @param what The change code whose handler list to validate.
+ *  @note Handlers that can be resolved to a valid BMessenger are migrated to
+ *        the messenger map and removed from the handler map.
+ */
 void
 ObserverList::_ValidateHandlers(uint32 what)
 {
@@ -722,6 +1023,12 @@ ObserverList::_ValidateHandlers(uint32 what)
 }
 
 
+/** @brief Deliver a notice to all observers registered for a given change code.
+ *  @param what The change code identifying which observers to notify.
+ *  @param notice The notification message to send.
+ *  @note Invalid messengers are pruned during delivery.
+ *  @see _ValidateHandlers()
+ */
 void
 ObserverList::_SendNotices(uint32 what, BMessage* notice)
 {
@@ -747,6 +1054,14 @@ ObserverList::_SendNotices(uint32 what, BMessage* notice)
 }
 
 
+/** @brief Send observer notifications for a state change.
+ *  @param what The change code identifying the type of change.
+ *  @param notice An optional message with extra information; may be NULL.
+ *  @return B_OK always.
+ *  @note A copy of \a notice is created with what set to
+ *        B_OBSERVER_NOTICE_CHANGE. Notices are sent to observers of both the
+ *        specific \a what code and B_OBSERVER_OBSERVE_ALL.
+ */
 status_t
 ObserverList::SendNotices(uint32 what, const BMessage* notice)
 {
@@ -769,6 +1084,14 @@ ObserverList::SendNotices(uint32 what, const BMessage* notice)
 }
 
 
+/** @brief Register a handler as an observer for a specific change code.
+ *  @param handler The handler to register.
+ *  @param what The change code to observe.
+ *  @return B_OK on success, B_BAD_HANDLER if \a handler is NULL.
+ *  @note If the handler can already be resolved to a valid BMessenger, it is
+ *        stored as a messenger instead. Duplicate registrations are silently
+ *        ignored.
+ */
 status_t
 ObserverList::Add(const BHandler* handler, uint32 what)
 {
@@ -794,6 +1117,11 @@ ObserverList::Add(const BHandler* handler, uint32 what)
 }
 
 
+/** @brief Register a messenger as an observer for a specific change code.
+ *  @param messenger The messenger to register.
+ *  @param what The change code to observe.
+ *  @return B_OK on success. Duplicate registrations are silently ignored.
+ */
 status_t
 ObserverList::Add(const BMessenger &messenger, uint32 what)
 {
@@ -811,6 +1139,12 @@ ObserverList::Add(const BMessenger &messenger, uint32 what)
 }
 
 
+/** @brief Unregister a handler from observing a specific change code.
+ *  @param handler The handler to remove.
+ *  @param what The change code to stop observing.
+ *  @return B_OK if the handler was found and removed, B_BAD_HANDLER if
+ *          \a handler is NULL or was not registered.
+ */
 status_t
 ObserverList::Remove(const BHandler* handler, uint32 what)
 {
@@ -839,6 +1173,12 @@ ObserverList::Remove(const BHandler* handler, uint32 what)
 }
 
 
+/** @brief Unregister a messenger from observing a specific change code.
+ *  @param messenger The messenger to remove.
+ *  @param what The change code to stop observing.
+ *  @return B_OK if the messenger was found and removed, B_BAD_HANDLER
+ *          otherwise.
+ */
 status_t
 ObserverList::Remove(const BMessenger &messenger, uint32 what)
 {
@@ -859,6 +1199,9 @@ ObserverList::Remove(const BMessenger &messenger, uint32 what)
 }
 
 
+/** @brief Check whether the observer list has any registered observers.
+ *  @return true if both the handler map and the messenger map are empty.
+ */
 bool
 ObserverList::IsEmpty()
 {
@@ -869,6 +1212,10 @@ ObserverList::IsEmpty()
 //	#pragma mark -
 
 
+/** @brief Delete a single BMessageFilter; used as a BList::DoForEach() callback.
+ *  @param _filter Pointer to the BMessageFilter to delete.
+ *  @return Always returns false so the list continues iterating.
+ */
 bool
 FilterDeleter(void* _filter)
 {

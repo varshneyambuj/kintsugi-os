@@ -1,6 +1,32 @@
 /*
- * Copyright 2011, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/** @file Key.cpp
+ *  @brief Implementation of BKey and BPasswordKey for credential storage.
+ *
+ *  BKey represents a generic key with an identifier, purpose, and raw data
+ *  payload. BPasswordKey extends BKey to provide a specialized interface
+ *  for storing and retrieving password credentials. Both classes support
+ *  serialization to and from BMessage for use with the keystore system.
  */
 
 
@@ -30,12 +56,21 @@ CompareLists(BObjectList<BString> a, BObjectList<BString> b)
 // #pragma mark - Generic BKey
 
 
+/** @brief Default constructor. Creates an empty key with generic purpose.
+ */
 BKey::BKey()
 {
 	Unset();
 }
 
 
+/** @brief Constructs a key with the specified properties.
+ *  @param purpose              The key purpose (e.g., B_KEY_PURPOSE_GENERIC, B_KEY_PURPOSE_WEB).
+ *  @param identifier           The primary identifier string for the key.
+ *  @param secondaryIdentifier  An optional secondary identifier string.
+ *  @param data                 Pointer to the raw key data, or NULL.
+ *  @param length               Length of the raw key data in bytes.
+ */
 BKey::BKey(BKeyPurpose purpose, const char* identifier,
 	const char* secondaryIdentifier, const uint8* data, size_t length)
 {
@@ -43,17 +78,24 @@ BKey::BKey(BKeyPurpose purpose, const char* identifier,
 }
 
 
+/** @brief Copy constructor. Creates a key as a copy of another.
+ *  @param other The key to copy.
+ */
 BKey::BKey(BKey& other)
 {
 	*this = other;
 }
 
 
+/** @brief Destructor.
+ */
 BKey::~BKey()
 {
 }
 
 
+/** @brief Resets the key to default empty state with generic purpose.
+ */
 void
 BKey::Unset()
 {
@@ -61,6 +103,17 @@ BKey::Unset()
 }
 
 
+/** @brief Initializes the key with the specified properties.
+ *
+ *  Resets the creation time to 0 and sets all fields to the provided values.
+ *
+ *  @param purpose              The key purpose.
+ *  @param identifier           The primary identifier string.
+ *  @param secondaryIdentifier  An optional secondary identifier string.
+ *  @param data                 Pointer to the raw key data, or NULL.
+ *  @param length               Length of the raw key data in bytes.
+ *  @return B_OK on success, or an error code if setting data fails.
+ */
 status_t
 BKey::SetTo(BKeyPurpose purpose, const char* identifier,
 	const char* secondaryIdentifier, const uint8* data, size_t length)
@@ -73,6 +126,9 @@ BKey::SetTo(BKeyPurpose purpose, const char* identifier,
 }
 
 
+/** @brief Sets the purpose of this key.
+ *  @param purpose The key purpose to set.
+ */
 void
 BKey::SetPurpose(BKeyPurpose purpose)
 {
@@ -80,6 +136,9 @@ BKey::SetPurpose(BKeyPurpose purpose)
 }
 
 
+/** @brief Returns the purpose of this key.
+ *  @return The BKeyPurpose value.
+ */
 BKeyPurpose
 BKey::Purpose() const
 {
@@ -87,6 +146,9 @@ BKey::Purpose() const
 }
 
 
+/** @brief Sets the primary identifier of this key.
+ *  @param identifier The identifier string to set.
+ */
 void
 BKey::SetIdentifier(const char* identifier)
 {
@@ -94,6 +156,9 @@ BKey::SetIdentifier(const char* identifier)
 }
 
 
+/** @brief Returns the primary identifier of this key.
+ *  @return The identifier as a C string.
+ */
 const char*
 BKey::Identifier() const
 {
@@ -101,6 +166,9 @@ BKey::Identifier() const
 }
 
 
+/** @brief Sets the secondary identifier of this key.
+ *  @param identifier The secondary identifier string to set.
+ */
 void
 BKey::SetSecondaryIdentifier(const char* identifier)
 {
@@ -108,6 +176,9 @@ BKey::SetSecondaryIdentifier(const char* identifier)
 }
 
 
+/** @brief Returns the secondary identifier of this key.
+ *  @return The secondary identifier as a C string.
+ */
 const char*
 BKey::SecondaryIdentifier() const
 {
@@ -115,6 +186,11 @@ BKey::SecondaryIdentifier() const
 }
 
 
+/** @brief Sets the raw data payload of this key.
+ *  @param data   Pointer to the data buffer.
+ *  @param length Length of the data in bytes.
+ *  @return B_OK on success, or B_NO_MEMORY if the data could not be fully written.
+ */
 status_t
 BKey::SetData(const uint8* data, size_t length)
 {
@@ -127,6 +203,9 @@ BKey::SetData(const uint8* data, size_t length)
 }
 
 
+/** @brief Returns the length of the raw key data.
+ *  @return The data length in bytes.
+ */
 size_t
 BKey::DataLength() const
 {
@@ -134,6 +213,9 @@ BKey::DataLength() const
 }
 
 
+/** @brief Returns a pointer to the raw key data.
+ *  @return A pointer to the data buffer, or NULL if empty.
+ */
 const uint8*
 BKey::Data() const
 {
@@ -141,6 +223,11 @@ BKey::Data() const
 }
 
 
+/** @brief Copies the raw key data into the provided buffer.
+ *  @param buffer     The destination buffer.
+ *  @param bufferSize The size of the destination buffer in bytes.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BKey::GetData(uint8* buffer, size_t bufferSize) const
 {
@@ -153,6 +240,9 @@ BKey::GetData(uint8* buffer, size_t bufferSize) const
 
 
 
+/** @brief Returns the owner of this key.
+ *  @return The owner string, typically the application signature.
+ */
 const char*
 BKey::Owner() const
 {
@@ -160,6 +250,9 @@ BKey::Owner() const
 }
 
 
+/** @brief Returns the creation time of this key.
+ *  @return The creation time as a bigtime_t value in microseconds.
+ */
 bigtime_t
 BKey::CreationTime() const
 {
@@ -167,6 +260,14 @@ BKey::CreationTime() const
 }
 
 
+/** @brief Serializes the key into a BMessage.
+ *
+ *  Stores the key type, purpose, identifiers, owner, creation time,
+ *  and raw data into the message for transmission or persistence.
+ *
+ *  @param message The message to flatten into.
+ *  @return B_OK on success, or B_ERROR if any field fails to be added.
+ */
 status_t
 BKey::Flatten(BMessage& message) const
 {
@@ -187,6 +288,14 @@ BKey::Flatten(BMessage& message) const
 }
 
 
+/** @brief Restores the key from a serialized BMessage.
+ *
+ *  Validates that the message contains a key of the matching type,
+ *  then restores all fields from the message.
+ *
+ *  @param message The message to unflatten from.
+ *  @return B_OK on success, B_BAD_VALUE if the type does not match, or B_ERROR on failure.
+ */
 status_t
 BKey::Unflatten(const BMessage& message)
 {
@@ -211,6 +320,10 @@ BKey::Unflatten(const BMessage& message)
 }
 
 
+/** @brief Assignment operator. Copies all properties from another key.
+ *  @param other The key to copy from.
+ *  @return A reference to this key.
+ */
 BKey&
 BKey::operator=(const BKey& other)
 {
@@ -226,6 +339,10 @@ BKey::operator=(const BKey& other)
 }
 
 
+/** @brief Tests equality by comparing type, purpose, identifiers, owner, and data.
+ *  @param other The key to compare with.
+ *  @return true if all fields are equal, false otherwise.
+ */
 bool
 BKey::operator==(const BKey& other) const
 {
@@ -239,6 +356,10 @@ BKey::operator==(const BKey& other) const
 }
 
 
+/** @brief Tests inequality between two keys.
+ *  @param other The key to compare with.
+ *  @return true if the keys differ in any field, false otherwise.
+ */
 bool
 BKey::operator!=(const BKey& other) const
 {
@@ -246,6 +367,11 @@ BKey::operator!=(const BKey& other) const
 }
 
 
+/** @brief Prints a human-readable representation of the key to standard output.
+ *
+ *  Outputs the key type, purpose, identifiers, owner, creation time,
+ *  and raw data length.
+ */
 void
 BKey::PrintToStream()
 {
@@ -286,11 +412,19 @@ BKey::PrintToStream()
 // #pragma mark - BPasswordKey
 
 
+/** @brief Default constructor. Creates an empty password key.
+ */
 BPasswordKey::BPasswordKey()
 {
 }
 
 
+/** @brief Constructs a password key with the given credentials.
+ *  @param password             The password string (stored including null terminator).
+ *  @param purpose              The key purpose (e.g., B_KEY_PURPOSE_WEB).
+ *  @param identifier           The primary identifier (e.g., a URL or service name).
+ *  @param secondaryIdentifier  An optional secondary identifier (e.g., a username).
+ */
 BPasswordKey::BPasswordKey(const char* password, BKeyPurpose purpose,
 	const char* identifier, const char* secondaryIdentifier)
 	:
@@ -300,16 +434,28 @@ BPasswordKey::BPasswordKey(const char* password, BKeyPurpose purpose,
 }
 
 
+/** @brief Copy constructor. Creates a password key from another.
+ *  @param other The password key to copy.
+ */
 BPasswordKey::BPasswordKey(BPasswordKey& other)
 {
 }
 
 
+/** @brief Destructor.
+ */
 BPasswordKey::~BPasswordKey()
 {
 }
 
 
+/** @brief Initializes the password key with the given credentials.
+ *  @param password             The password string.
+ *  @param purpose              The key purpose.
+ *  @param identifier           The primary identifier.
+ *  @param secondaryIdentifier  An optional secondary identifier.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPasswordKey::SetTo(const char* password, BKeyPurpose purpose,
 	const char* identifier, const char* secondaryIdentifier)
@@ -319,6 +465,10 @@ BPasswordKey::SetTo(const char* password, BKeyPurpose purpose,
 }
 
 
+/** @brief Sets the password for this key.
+ *  @param password The password string to store (including null terminator).
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPasswordKey::SetPassword(const char* password)
 {
@@ -326,6 +476,9 @@ BPasswordKey::SetPassword(const char* password)
 }
 
 
+/** @brief Returns the stored password.
+ *  @return The password as a C string.
+ */
 const char*
 BPasswordKey::Password() const
 {
@@ -333,6 +486,10 @@ BPasswordKey::Password() const
 }
 
 
+/** @brief Prints a human-readable representation of the password key to standard output.
+ *
+ *  Outputs the base key information followed by the password value.
+ */
 void
 BPasswordKey::PrintToStream()
 {

@@ -1,9 +1,35 @@
 /*
- * Copyright 2001-2009, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Gabe Yoder (gyoder@stny.rr.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009, Haiku Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Gabe Yoder (gyoder@stny.rr.com)
+ */
+
+
+/** @file Clipboard.cpp
+ *  @brief Implementation of BClipboard, the system clipboard interface.
+ *
+ *  BClipboard provides access to named system clipboards, allowing
+ *  applications to copy and paste data. It communicates with the
+ *  registrar service to synchronize clipboard contents across
+ *  applications.
  */
 
 
@@ -28,6 +54,15 @@
 using namespace BPrivate;
 
 
+/** @brief Constructs a BClipboard object for the named clipboard.
+ *
+ *  If \a name is NULL, the clipboard defaults to "system". The constructor
+ *  registers the clipboard with the registrar service and obtains a
+ *  messenger for clipboard communication.
+ *
+ *  @param name      The name of the clipboard, or NULL for the system clipboard.
+ *  @param transient Whether the clipboard is transient (not currently used).
+ */
 BClipboard::BClipboard(const char *name, bool transient)
 	:
 	fLock("clipboard")
@@ -53,6 +88,8 @@ BClipboard::BClipboard(const char *name, bool transient)
 }
 
 
+/** @brief Destroys the BClipboard object and frees associated resources.
+ */
 BClipboard::~BClipboard()
 {
 	free(fName);
@@ -60,6 +97,9 @@ BClipboard::~BClipboard()
 }
 
 
+/** @brief Returns the name of this clipboard.
+ *  @return The clipboard name as a C string.
+ */
 const char *
 BClipboard::Name() const
 {
@@ -109,6 +149,10 @@ BClipboard::SystemCount() const
 }
 
 
+/** @brief Registers a messenger to receive notifications when the clipboard changes.
+ *  @param target The BMessenger that will receive clipboard change notifications.
+ *  @return B_OK on success, B_BAD_VALUE if target is invalid, or B_ERROR on failure.
+ */
 status_t
 BClipboard::StartWatching(BMessenger target)
 {
@@ -127,6 +171,10 @@ BClipboard::StartWatching(BMessenger target)
 }
 
 
+/** @brief Unregisters a messenger from receiving clipboard change notifications.
+ *  @param target The BMessenger to stop notifying.
+ *  @return B_OK on success, B_BAD_VALUE if target is invalid, or B_ERROR on failure.
+ */
 status_t
 BClipboard::StopWatching(BMessenger target)
 {
@@ -145,6 +193,14 @@ BClipboard::StopWatching(BMessenger target)
 }
 
 
+/** @brief Locks the clipboard for exclusive access and downloads current data.
+ *
+ *  The clipboard must be locked before reading or modifying its data.
+ *  When running with a registrar, the current clipboard contents are
+ *  downloaded from the system after acquiring the lock.
+ *
+ *  @return true if the lock was acquired successfully, false otherwise.
+ */
 bool
 BClipboard::Lock()
 {
@@ -163,6 +219,8 @@ BClipboard::Lock()
 }
 
 
+/** @brief Unlocks the clipboard, releasing exclusive access.
+ */
 void
 BClipboard::Unlock()
 {
@@ -170,6 +228,9 @@ BClipboard::Unlock()
 }
 
 
+/** @brief Checks whether the clipboard is currently locked.
+ *  @return true if the clipboard is locked, false otherwise.
+ */
 bool
 BClipboard::IsLocked() const
 {
@@ -177,6 +238,12 @@ BClipboard::IsLocked() const
 }
 
 
+/** @brief Clears all data from the clipboard.
+ *
+ *  The clipboard must be locked before calling this method.
+ *
+ *  @return B_OK on success, or B_NOT_ALLOWED if the clipboard is not locked.
+ */
 status_t
 BClipboard::Clear()
 {
@@ -187,6 +254,14 @@ BClipboard::Clear()
 }
 
 
+/** @brief Commits the current clipboard data to the system.
+ *
+ *  This is a convenience overload that calls Commit(false), meaning
+ *  the commit will not fail even if the clipboard has been modified
+ *  by another application since it was last downloaded.
+ *
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BClipboard::Commit()
 {
@@ -194,6 +269,16 @@ BClipboard::Commit()
 }
 
 
+/** @brief Commits the current clipboard data to the system.
+ *
+ *  Uploads the local clipboard data to the system clipboard service.
+ *  The clipboard must be locked before calling this method. On success,
+ *  the local commit count is updated to match the system count.
+ *
+ *  @param failIfChanged If true, the commit will fail if another application
+ *                       has modified the clipboard since the last download.
+ *  @return B_OK on success, B_NOT_ALLOWED if not locked, or an error code.
+ */
 status_t
 BClipboard::Commit(bool failIfChanged)
 {
@@ -219,6 +304,13 @@ BClipboard::Commit(bool failIfChanged)
 }
 
 
+/** @brief Reverts the local clipboard data to the current system clipboard contents.
+ *
+ *  Clears local data and re-downloads the clipboard from the system service.
+ *  The clipboard must be locked before calling this method.
+ *
+ *  @return B_OK on success, B_NOT_ALLOWED if not locked, or an error code.
+ */
 status_t
 BClipboard::Revert()
 {
@@ -233,6 +325,9 @@ BClipboard::Revert()
 }
 
 
+/** @brief Returns the messenger of the application that last committed data.
+ *  @return A BMessenger identifying the data source application.
+ */
 BMessenger
 BClipboard::DataSource() const
 {
@@ -240,6 +335,13 @@ BClipboard::DataSource() const
 }
 
 
+/** @brief Returns a pointer to the BMessage containing the clipboard data.
+ *
+ *  The clipboard must be locked before calling this method.
+ *  The returned message can be used to add or read clipboard data.
+ *
+ *  @return A pointer to the clipboard data message, or NULL if not locked.
+ */
 BMessage *
 BClipboard::Data() const
 {
@@ -271,6 +373,13 @@ void BClipboard::_ReservedClipboard2() {}
 void BClipboard::_ReservedClipboard3() {}
 
 
+/** @brief Asserts that the clipboard is locked, invoking the debugger if not.
+ *
+ *  This is a private helper used internally to validate that the clipboard
+ *  lock is held before performing operations that require it.
+ *
+ *  @return true if the clipboard is locked, false otherwise.
+ */
 bool
 BClipboard::_AssertLocked() const
 {
@@ -283,6 +392,14 @@ BClipboard::_AssertLocked() const
 }
 
 
+/** @brief Downloads the current clipboard contents from the system service.
+ *
+ *  Retrieves the clipboard data, data source messenger, and commit count
+ *  from the registrar clipboard handler.
+ *
+ *  @param force If true, forces a re-download (currently ignored).
+ *  @return B_OK on success, or B_ERROR on failure.
+ */
 status_t
 BClipboard::_DownloadFromSystem(bool force)
 {

@@ -1,9 +1,36 @@
 /*
- * Copyright 2001-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Ingo Weinhold (bonefish@users.sf.net)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold (bonefish@users.sf.net)
+ */
+
+
+/** @file Messenger.cpp
+ *  @brief Implementation of BMessenger for inter-application and
+ *         intra-application messaging.
+ *
+ *  BMessenger provides the ability to send BMessage objects to local or
+ *  remote BHandler/BLooper targets identified by team ID, port, and
+ *  handler token.  It is the primary mechanism for inter-object and
+ *  inter-application communication in the Application Kit.
  */
 
 
@@ -39,6 +66,11 @@ using BPrivate::gLooperList;
 using BPrivate::BLooperList;
 
 
+/** @brief Default constructor, creates an uninitialized BMessenger.
+ *
+ *  The messenger is not valid until initialized via SetTo(), assignment,
+ *  or one of the parameterized constructors.
+ */
 BMessenger::BMessenger()
 	:
 	fPort(-1),
@@ -48,6 +80,19 @@ BMessenger::BMessenger()
 }
 
 
+/** @brief Constructs a BMessenger targeting an application by signature.
+ *
+ *  Looks up a running application whose signature matches @a signature
+ *  and targets its preferred handler.  If @a team is >= 0, the
+ *  application is identified by team ID and the signature is verified.
+ *
+ *  @param signature The MIME application signature (e.g.
+ *         "application/x-vnd.MyApp"). May be @c NULL if @a team is valid.
+ *  @param team      The target application's team ID, or a negative value
+ *                   to look up by signature alone.
+ *  @param result    Optional pointer to receive the initialization status.
+ *  @see _InitData(const char*, team_id, status_t*)
+ */
 BMessenger::BMessenger(const char* signature, team_id team, status_t* result)
 	:
 	fPort(-1),
@@ -58,6 +103,18 @@ BMessenger::BMessenger(const char* signature, team_id team, status_t* result)
 }
 
 
+/** @brief Constructs a BMessenger targeting a local BHandler and/or BLooper.
+ *
+ *  If @a handler is non-NULL and @a looper is NULL, the handler's owning
+ *  looper is used.  If both are supplied the handler must belong to that
+ *  looper.  A NULL handler with a non-NULL looper targets the looper's
+ *  preferred handler.
+ *
+ *  @param handler  The target handler. May be @c NULL.
+ *  @param looper   The target looper. May be @c NULL.
+ *  @param _result  Optional pointer to receive the initialization status.
+ *  @see _InitData(const BHandler*, const BLooper*, status_t*)
+ */
 BMessenger::BMessenger(const BHandler* handler, const BLooper* looper,
 	status_t* _result)
 	:
@@ -69,6 +126,13 @@ BMessenger::BMessenger(const BHandler* handler, const BLooper* looper,
 }
 
 
+/** @brief Copy constructor.
+ *
+ *  Creates a BMessenger that targets the same handler, port, and team as
+ *  @a other.
+ *
+ *  @param other The BMessenger to copy.
+ */
 BMessenger::BMessenger(const BMessenger& other)
 	:
 	fPort(other.fPort),
@@ -78,6 +142,10 @@ BMessenger::BMessenger(const BMessenger& other)
 }
 
 
+/** @brief Destructor.
+ *
+ *  BMessenger holds no resources that require explicit cleanup.
+ */
 BMessenger::~BMessenger()
 {
 }
@@ -86,6 +154,9 @@ BMessenger::~BMessenger()
 //	#pragma mark - Target
 
 
+/** @brief Returns whether the messenger's target lives in the calling team.
+ *  @return @c true if the target is in the same team, @c false otherwise.
+ */
 bool
 BMessenger::IsTargetLocal() const
 {
@@ -93,6 +164,16 @@ BMessenger::IsTargetLocal() const
 }
 
 
+/** @brief Returns the target BHandler and optionally the target BLooper.
+ *
+ *  If the target is not local, or the handler token is invalid, returns
+ *  @c NULL and sets @a _looper (if provided) to @c NULL.
+ *
+ *  @param _looper Optional pointer to a BLooper pointer that will be set
+ *                 to the target looper. May be @c NULL.
+ *  @return The target BHandler, or @c NULL if it cannot be resolved.
+ *  @see IsTargetLocal()
+ */
 BHandler*
 BMessenger::Target(BLooper** _looper) const
 {
@@ -111,6 +192,17 @@ BMessenger::Target(BLooper** _looper) const
 }
 
 
+/** @brief Locks the target looper if it is local.
+ *
+ *  Resolves the target looper and attempts to lock it.  After locking,
+ *  verifies that the looper's port still matches to guard against the
+ *  looper being deleted and replaced between resolution and locking.
+ *
+ *  @return @c true if the looper was successfully locked, @c false if the
+ *          target is not local, the looper could not be resolved, or
+ *          the lock attempt failed.
+ *  @see LockTargetWithTimeout()
+ */
 bool
 BMessenger::LockTarget() const
 {
@@ -128,6 +220,17 @@ BMessenger::LockTarget() const
 }
 
 
+/** @brief Locks the target looper with a timeout.
+ *
+ *  Like LockTarget(), but allows specifying a maximum time to wait for
+ *  the lock.  After acquiring the lock the looper port is validated.
+ *
+ *  @param timeout Maximum time in microseconds to wait for the lock.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if the looper could not be
+ *          resolved, @c B_BAD_PORT_ID if the port changed after locking,
+ *          or the result of BLooper::LockWithTimeout() on timeout/error.
+ *  @see LockTarget()
+ */
 status_t
 BMessenger::LockTargetWithTimeout(bigtime_t timeout) const
 {
@@ -150,6 +253,16 @@ BMessenger::LockTargetWithTimeout(bigtime_t timeout) const
 //	#pragma mark - Message sending
 
 
+/** @brief Sends a message identified by a command constant.
+ *
+ *  Constructs a BMessage from @a command and sends it asynchronously.
+ *  Replies are directed to @a replyTo.
+ *
+ *  @param command  The message command constant (becomes BMessage::what).
+ *  @param replyTo  The BHandler that should receive the reply. May be @c NULL.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see SendMessage(BMessage*, BHandler*, bigtime_t)
+ */
 status_t
 BMessenger::SendMessage(uint32 command, BHandler* replyTo) const
 {
@@ -158,6 +271,18 @@ BMessenger::SendMessage(uint32 command, BHandler* replyTo) const
 }
 
 
+/** @brief Sends a BMessage asynchronously with a reply handler.
+ *
+ *  Wraps @a replyTo in a BMessenger and delegates to the BMessenger-based
+ *  overload.
+ *
+ *  @param message  The message to send. Must not be @c NULL.
+ *  @param replyTo  The BHandler that should receive the reply. May be @c NULL.
+ *  @param timeout  Delivery timeout in microseconds.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if @a message is @c NULL,
+ *          or another error code on failure.
+ *  @see SendMessage(BMessage*, BMessenger, bigtime_t)
+ */
 status_t
 BMessenger::SendMessage(BMessage* message, BHandler* replyTo,
 	bigtime_t timeout) const
@@ -176,6 +301,17 @@ BMessenger::SendMessage(BMessage* message, BHandler* replyTo,
 }
 
 
+/** @brief Sends a BMessage asynchronously with a reply messenger.
+ *
+ *  This is the core asynchronous send.  The message is delivered to the
+ *  target port; replies are directed to @a replyTo.
+ *
+ *  @param message  The message to send. Must not be @c NULL.
+ *  @param replyTo  A BMessenger that should receive the reply.
+ *  @param timeout  Delivery timeout in microseconds.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if @a message is @c NULL,
+ *          or another error code on failure.
+ */
 status_t
 BMessenger::SendMessage(BMessage* message, BMessenger replyTo,
 	bigtime_t timeout) const
@@ -188,6 +324,17 @@ BMessenger::SendMessage(BMessage* message, BMessenger replyTo,
 }
 
 
+/** @brief Sends a command and waits synchronously for a reply.
+ *
+ *  Constructs a BMessage from @a command, sends it, and blocks until a
+ *  reply is received or the timeout expires.
+ *
+ *  @param command The message command constant.
+ *  @param reply   Pointer to a BMessage that will receive the reply.
+ *                 Must not be @c NULL.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see SendMessage(BMessage*, BMessage*, bigtime_t, bigtime_t)
+ */
 status_t
 BMessenger::SendMessage(uint32 command, BMessage* reply) const
 {
@@ -197,6 +344,19 @@ BMessenger::SendMessage(uint32 command, BMessage* reply) const
 }
 
 
+/** @brief Sends a BMessage synchronously and waits for a reply.
+ *
+ *  Delivers @a message to the target and blocks until a reply is received
+ *  or @a replyTimeout expires.  The reply is written into @a reply.
+ *
+ *  @param message         The message to send. Must not be @c NULL.
+ *  @param reply           Pointer to a BMessage to receive the reply.
+ *                         Must not be @c NULL.
+ *  @param deliveryTimeout Maximum time in microseconds to wait for delivery.
+ *  @param replyTimeout    Maximum time in microseconds to wait for the reply.
+ *  @return @c B_OK on success, @c B_BAD_VALUE if @a message or @a reply
+ *          is @c NULL, or another error code on failure.
+ */
 status_t
 BMessenger::SendMessage(BMessage* message, BMessage* reply,
 	bigtime_t deliveryTimeout, bigtime_t replyTimeout) const
@@ -218,6 +378,14 @@ BMessenger::SendMessage(BMessage* message, BMessage* reply,
 //	#pragma mark - Operators and misc
 
 
+/** @brief Re-targets the messenger to an application by signature.
+ *
+ *  @param signature The target application's MIME signature.
+ *  @param team      The target application's team ID, or a negative value
+ *                   to look up by signature.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _InitData(const char*, team_id, status_t*)
+ */
 status_t
 BMessenger::SetTo(const char* signature, team_id team)
 {
@@ -228,6 +396,13 @@ BMessenger::SetTo(const char* signature, team_id team)
 }
 
 
+/** @brief Re-targets the messenger to a local BHandler and/or BLooper.
+ *
+ *  @param handler The target handler. May be @c NULL.
+ *  @param looper  The target looper. May be @c NULL.
+ *  @return @c B_OK on success, or an error code on failure.
+ *  @see _InitData(const BHandler*, const BLooper*, status_t*)
+ */
 status_t
 BMessenger::SetTo(const BHandler* handler, const BLooper* looper)
 {
@@ -238,6 +413,14 @@ BMessenger::SetTo(const BHandler* handler, const BLooper* looper)
 }
 
 
+/** @brief Copy-assignment operator.
+ *
+ *  Makes this messenger target the same handler, port, and team as
+ *  @a other.  Self-assignment is safe.
+ *
+ *  @param other The BMessenger to copy from.
+ *  @return A reference to this object.
+ */
 BMessenger&
 BMessenger::operator=(const BMessenger& other)
 {
@@ -251,6 +434,14 @@ BMessenger::operator=(const BMessenger& other)
 }
 
 
+/** @brief Equality operator.
+ *
+ *  Two messengers are equal if they target the same port and handler
+ *  token.  The team ID is intentionally not compared.
+ *
+ *  @param other The BMessenger to compare with.
+ *  @return @c true if both messengers target the same endpoint.
+ */
 bool
 BMessenger::operator==(const BMessenger& other) const
 {
@@ -259,6 +450,13 @@ BMessenger::operator==(const BMessenger& other) const
 }
 
 
+/** @brief Returns whether this messenger targets a valid destination.
+ *
+ *  Checks that the internal port is non-negative and that the port still
+ *  exists in the kernel.
+ *
+ *  @return @c true if the messenger is valid, @c false otherwise.
+ */
 bool
 BMessenger::IsValid() const
 {
@@ -267,6 +465,9 @@ BMessenger::IsValid() const
 }
 
 
+/** @brief Returns the team ID of the target application.
+ *  @return The target team ID, or a negative value if uninitialized.
+ */
 team_id
 BMessenger::Team() const
 {
@@ -274,6 +475,12 @@ BMessenger::Team() const
 }
 
 
+/** @brief Returns a hash value suitable for use in hash tables.
+ *
+ *  The hash is computed from the port and handler token.
+ *
+ *  @return A 32-bit hash value.
+ */
 uint32
 BMessenger::HashValue() const
 {
@@ -284,14 +491,15 @@ BMessenger::HashValue() const
 //	#pragma mark - Private or reserved
 
 
-/*!	Sets the messenger's team, target looper port and handler token.
-
-	To target the preferred handler, use \c B_PREFERRED_TOKEN as token.
-
-	\param team The target's team.
-	\param port The target looper port.
-	\param token The target handler token.
-*/
+/** @brief Sets the messenger's team, target looper port, and handler token.
+ *
+ *  This is a low-level setter used by BMessenger::Private.  To target the
+ *  preferred handler, pass @c B_PREFERRED_TOKEN as @a token.
+ *
+ *  @param team  The target team ID.
+ *  @param port  The target looper port ID.
+ *  @param token The target handler token.
+ */
 void
 BMessenger::_SetTo(team_id team, port_id port, int32 token)
 {
@@ -301,20 +509,20 @@ BMessenger::_SetTo(team_id team, port_id port, int32 token)
 }
 
 
-/*!	Initializes the BMessenger object's data given the signature and/or
-	team ID of a target.
-
-	When only a signature is given, and multiple instances of the application
-	are running it is undeterminate which one is chosen as the target. In case
-	only a team ID is passed, the target application is identified uniquely.
-	If both are supplied, the application identified by the team ID must have
-	a matching signature, otherwise the initilization fails.
-
-	\param signature The target application's signature. May be \c NULL.
-	\param team The target application's team ID. May be < 0.
-	\param result An optional pointer to a pre-allocated status_t into which
-		   the result of the initialization is written.
-*/
+/** @brief Initializes the messenger from an application signature and/or
+ *         team ID.
+ *
+ *  When only a signature is given and multiple instances of the application
+ *  are running, it is indeterminate which one is chosen as the target.
+ *  When only a team ID is passed, the target application is identified
+ *  uniquely.  If both are supplied, the application identified by the team
+ *  ID must have a matching signature, otherwise the initialization fails
+ *  with @c B_MISMATCHED_VALUES.
+ *
+ *  @param signature The target application's MIME signature. May be @c NULL.
+ *  @param team      The target application's team ID. May be < 0.
+ *  @param _result   Optional pointer to receive the initialization status.
+ */
 void
 BMessenger::_InitData(const char* signature, team_id team, status_t* _result)
 {
@@ -371,19 +579,18 @@ BMessenger::_InitData(const char* signature, team_id team, status_t* _result)
 }
 
 
-/*!	Initializes the BMessenger to target the local BHandler and/or BLooper.
-
-	When a \c NULL handler is supplied, the preferred handler in the given
-	looper is targeted. If no looper is supplied the looper the given handler
-	belongs to is used -- that means in particular, that the handler must
-	already belong to a looper. If both are supplied the handler must actually
-	belong to looper.
-
-	\param handler The target handler. May be \c NULL.
-	\param looper The target looper. May be \c NULL.
-	\param result An optional pointer to a pre-allocated status_t into which
-	       the result of the initialization is written.
-*/
+/** @brief Initializes the messenger to target a local BHandler/BLooper.
+ *
+ *  When a @c NULL handler is supplied, the preferred handler in the given
+ *  looper is targeted.  If no looper is supplied, the handler's owning
+ *  looper is used -- the handler must therefore already belong to a looper.
+ *  If both are supplied, the handler must actually belong to the specified
+ *  looper.
+ *
+ *  @param handler The target handler. May be @c NULL.
+ *  @param looper  The target looper. May be @c NULL.
+ *  @param _result Optional pointer to receive the initialization status.
+ */
 void
 BMessenger::_InitData(const BHandler* handler, const BLooper* looper,
 	status_t* _result)
@@ -424,6 +631,16 @@ BMessenger::_InitData(const BHandler* handler, const BLooper* looper,
 //	#pragma mark - Operator functions
 
 
+/** @brief Less-than comparison for BMessenger objects.
+ *
+ *  Provides a strict weak ordering suitable for use in ordered containers
+ *  (e.g. std::map).  Ordering is based on port, then handler token, then
+ *  preferred-target status.  The team ID is not considered.
+ *
+ *  @param _a The left-hand operand.
+ *  @param _b The right-hand operand.
+ *  @return @c true if @a _a is ordered before @a _b.
+ */
 bool
 operator<(const BMessenger& _a, const BMessenger& _b)
 {
@@ -444,6 +661,13 @@ operator<(const BMessenger& _a, const BMessenger& _b)
 }
 
 
+/** @brief Inequality comparison for BMessenger objects.
+ *
+ *  @param a The left-hand operand.
+ *  @param b The right-hand operand.
+ *  @return @c true if @a a and @a b do not target the same endpoint.
+ *  @see BMessenger::operator==()
+ */
 bool
 operator!=(const BMessenger& a, const BMessenger& b)
 {

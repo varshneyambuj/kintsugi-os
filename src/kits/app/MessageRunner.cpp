@@ -1,9 +1,35 @@
 /*
- * Copyright 2001-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+
+/**
+ * @file MessageRunner.cpp
+ * @brief Implementation of BMessageRunner for periodic and deferred message delivery.
+ *
+ * BMessageRunner arranges for a BMessage to be sent to a target BMessenger
+ * at a specified interval, a specified number of times. The actual scheduling
+ * is delegated to the registrar via the roster private API.
  */
 
 
@@ -19,6 +45,15 @@
 using namespace BPrivate;
 
 
+/** @brief Construct a message runner that sends a message pointer at regular intervals.
+ *
+ *  Replies to the delivered messages are directed to be_app_messenger.
+ *
+ *  @param target The messenger to send messages to.
+ *  @param message The message to send. The runner copies the message internally.
+ *  @param interval Time in microseconds between successive sends.
+ *  @param count Number of times to send the message; a negative value means unlimited.
+ */
 BMessageRunner::BMessageRunner(BMessenger target, const BMessage* message,
 	bigtime_t interval, int32 count)
 	:
@@ -28,6 +63,15 @@ BMessageRunner::BMessageRunner(BMessenger target, const BMessage* message,
 }
 
 
+/** @brief Construct a message runner that sends a message reference at regular intervals.
+ *
+ *  Replies to the delivered messages are directed to be_app_messenger.
+ *
+ *  @param target The messenger to send messages to.
+ *  @param message The message to send (passed by reference).
+ *  @param interval Time in microseconds between successive sends.
+ *  @param count Number of times to send the message; a negative value means unlimited.
+ */
 BMessageRunner::BMessageRunner(BMessenger target, const BMessage& message,
 	bigtime_t interval, int32 count)
 	:
@@ -37,6 +81,13 @@ BMessageRunner::BMessageRunner(BMessenger target, const BMessage& message,
 }
 
 
+/** @brief Construct a message runner with an explicit reply target (pointer variant).
+ *  @param target The messenger to send messages to.
+ *  @param message The message to send.
+ *  @param interval Time in microseconds between successive sends.
+ *  @param count Number of times to send the message; a negative value means unlimited.
+ *  @param replyTo The messenger that should receive replies to the delivered messages.
+ */
 BMessageRunner::BMessageRunner(BMessenger target, const BMessage* message,
 	bigtime_t interval, int32 count, BMessenger replyTo)
 	:
@@ -46,6 +97,13 @@ BMessageRunner::BMessageRunner(BMessenger target, const BMessage* message,
 }
 
 
+/** @brief Construct a message runner with an explicit reply target (reference variant).
+ *  @param target The messenger to send messages to.
+ *  @param message The message to send (passed by reference).
+ *  @param interval Time in microseconds between successive sends.
+ *  @param count Number of times to send the message; a negative value means unlimited.
+ *  @param replyTo The messenger that should receive replies to the delivered messages.
+ */
 BMessageRunner::BMessageRunner(BMessenger target, const BMessage& message,
 	bigtime_t interval, int32 count, BMessenger replyTo)
 	:
@@ -55,6 +113,11 @@ BMessageRunner::BMessageRunner(BMessenger target, const BMessage& message,
 }
 
 
+/** @brief Destroy the message runner, unregistering it from the registrar.
+ *
+ *  Any pending scheduled sends are cancelled. If the runner was already
+ *  invalid, the destructor does nothing.
+ */
 BMessageRunner::~BMessageRunner()
 {
 	if (fToken < B_OK)
@@ -73,6 +136,9 @@ BMessageRunner::~BMessageRunner()
 }
 
 
+/** @brief Check whether the message runner was successfully initialized.
+ *  @return B_OK if the runner is valid, or an error code describing the failure.
+ */
 status_t
 BMessageRunner::InitCheck() const
 {
@@ -80,6 +146,10 @@ BMessageRunner::InitCheck() const
 }
 
 
+/** @brief Change the time interval between message sends.
+ *  @param interval The new interval in microseconds.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMessageRunner::SetInterval(bigtime_t interval)
 {
@@ -87,6 +157,10 @@ BMessageRunner::SetInterval(bigtime_t interval)
 }
 
 
+/** @brief Change the number of remaining message sends.
+ *  @param count The new send count; a negative value means unlimited.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMessageRunner::SetCount(int32 count)
 {
@@ -94,6 +168,13 @@ BMessageRunner::SetCount(int32 count)
 }
 
 
+/** @brief Retrieve the current interval and remaining count from the registrar.
+ *  @param interval Pointer to receive the current interval in microseconds;
+ *                  may be NULL if not needed.
+ *  @param count Pointer to receive the remaining send count; may be NULL if
+ *               not needed.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BMessageRunner::GetInfo(bigtime_t* interval, int32* count) const
 {
@@ -137,6 +218,18 @@ BMessageRunner::GetInfo(bigtime_t* interval, int32* count) const
 }
 
 
+/** @brief Start a detached message runner that is not tied to any object lifetime.
+ *
+ *  The runner sends messages independently; there is no BMessageRunner object
+ *  to manage. Replies go to be_app_messenger.
+ *
+ *  @param target The messenger to send messages to.
+ *  @param message The message to send.
+ *  @param interval Time in microseconds between successive sends.
+ *  @param count Number of times to send the message. Must be positive for
+ *               detached runners.
+ *  @return B_OK on success, or an error code on failure.
+ */
 /*static*/ status_t
 BMessageRunner::StartSending(BMessenger target, const BMessage* message,
 	bigtime_t interval, int32 count)
@@ -148,6 +241,15 @@ BMessageRunner::StartSending(BMessenger target, const BMessage* message,
 }
 
 
+/** @brief Start a detached message runner with an explicit reply target.
+ *  @param target The messenger to send messages to.
+ *  @param message The message to send.
+ *  @param interval Time in microseconds between successive sends.
+ *  @param count Number of times to send the message. Must be positive for
+ *               detached runners.
+ *  @param replyTo The messenger that should receive replies.
+ *  @return B_OK on success, or an error code on failure.
+ */
 /*static*/ status_t
 BMessageRunner::StartSending(BMessenger target, const BMessage* message,
 	bigtime_t interval, int32 count, BMessenger replyTo)

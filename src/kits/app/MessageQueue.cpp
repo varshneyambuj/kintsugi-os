@@ -1,14 +1,37 @@
 /*
- * Copyright 2001-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Unknown? Eric?
- *		Axel Dörfler, axeld@pinc-software.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Unknown? Eric?
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
 
-// Queue for holding BMessages
+/**
+ * @file MessageQueue.cpp
+ * @brief Implementation of BMessageQueue, a thread-safe FIFO queue for BMessage objects.
+ *
+ * BMessageQueue provides a locked, singly-linked list that stores BMessage pointers
+ * in insertion order. It is used internally by BLooper to queue incoming messages
+ * for sequential dispatch.
+ */
 
 
 #include <MessageQueue.h>
@@ -16,6 +39,7 @@
 #include <Message.h>
 
 
+/** @brief Construct an empty message queue. */
 BMessageQueue::BMessageQueue()
 	:
 	fHead(NULL),
@@ -26,6 +50,7 @@ BMessageQueue::BMessageQueue()
 }
 
 
+/** @brief Destroy the message queue, deleting all remaining messages. */
 BMessageQueue::~BMessageQueue()
 {
 	if (!Lock())
@@ -41,6 +66,14 @@ BMessageQueue::~BMessageQueue()
 }
 
 
+/** @brief Append a message to the tail of the queue.
+ *
+ *  The message's queue link is set to NULL and it becomes the new tail.
+ *  If the message is NULL or the queue lock cannot be acquired, the call
+ *  is silently ignored.
+ *
+ *  @param message The BMessage to add. Ownership is transferred to the queue.
+ */
 void
 BMessageQueue::AddMessage(BMessage* message)
 {
@@ -68,6 +101,14 @@ BMessageQueue::AddMessage(BMessage* message)
 }
 
 
+/** @brief Remove a specific message from the queue without deleting it.
+ *
+ *  Walks the linked list to locate the given message and unlinks it.
+ *  The caller regains ownership of the message. If the message is not
+ *  found, or is NULL, the call is silently ignored.
+ *
+ *  @param message The BMessage to remove from the queue.
+ */
 void
 BMessageQueue::RemoveMessage(BMessage* message)
 {
@@ -98,6 +139,9 @@ BMessageQueue::RemoveMessage(BMessage* message)
 }
 
 
+/** @brief Return the number of messages currently in the queue.
+ *  @return The message count.
+ */
 int32
 BMessageQueue::CountMessages() const
 {
@@ -105,6 +149,9 @@ BMessageQueue::CountMessages() const
 }
 
 
+/** @brief Check whether the queue contains no messages.
+ *  @return true if the queue is empty, false otherwise.
+ */
 bool
 BMessageQueue::IsEmpty() const
 {
@@ -112,6 +159,11 @@ BMessageQueue::IsEmpty() const
 }
 
 
+/** @brief Find a message by its zero-based position in the queue.
+ *  @param index The zero-based index of the desired message.
+ *  @return Pointer to the message at the given index, or NULL if the index
+ *          is out of range or the lock cannot be acquired.
+ */
 BMessage*
 BMessageQueue::FindMessage(int32 index) const
 {
@@ -134,6 +186,12 @@ BMessageQueue::FindMessage(int32 index) const
 }
 
 
+/** @brief Find the nth message with a specific command code.
+ *  @param what The message command code to search for.
+ *  @param index The zero-based occurrence index among messages matching @a what.
+ *  @return Pointer to the matching message, or NULL if no match is found,
+ *          the index is out of range, or the lock cannot be acquired.
+ */
 BMessage*
 BMessageQueue::FindMessage(uint32 what, int32 index) const
 {
@@ -158,6 +216,9 @@ BMessageQueue::FindMessage(uint32 what, int32 index) const
 }
 
 
+/** @brief Acquire the queue's lock, blocking until it is available.
+ *  @return true if the lock was successfully acquired, false on error.
+ */
 bool
 BMessageQueue::Lock()
 {
@@ -165,6 +226,7 @@ BMessageQueue::Lock()
 }
 
 
+/** @brief Release the queue's lock. */
 void
 BMessageQueue::Unlock()
 {
@@ -172,6 +234,9 @@ BMessageQueue::Unlock()
 }
 
 
+/** @brief Check whether the queue's lock is currently held by any thread.
+ *  @return true if the lock is held, false otherwise.
+ */
 bool
 BMessageQueue::IsLocked() const
 {
@@ -179,6 +244,14 @@ BMessageQueue::IsLocked() const
 }
 
 
+/** @brief Remove and return the message at the head of the queue.
+ *
+ *  The caller takes ownership of the returned message and is responsible
+ *  for deleting it. If the queue is empty or the lock cannot be acquired,
+ *  NULL is returned.
+ *
+ *  @return Pointer to the dequeued message, or NULL if the queue is empty.
+ */
 BMessage*
 BMessageQueue::NextMessage()
 {
@@ -206,6 +279,10 @@ BMessageQueue::NextMessage()
 }
 
 
+/** @brief Check whether a given message is at the head of the queue.
+ *  @param message The message to test.
+ *  @return true if @a message is the next message to be dequeued, false otherwise.
+ */
 bool
 BMessageQueue::IsNextMessage(const BMessage* message) const
 {
@@ -214,8 +291,13 @@ BMessageQueue::IsNextMessage(const BMessage* message) const
 }
 
 
-// This method is only here for R5 binary compatibility!
-// It should be dropped as soon as possible (it misses the const qualifier).
+/** @brief Non-const overload of IsLocked for R5 binary compatibility.
+ *
+ *  This method exists solely for backward compatibility with the R5 ABI
+ *  and should not be used in new code. Prefer the const overload.
+ *
+ *  @return true if the lock is held, false otherwise.
+ */
 bool
 BMessageQueue::IsLocked()
 {

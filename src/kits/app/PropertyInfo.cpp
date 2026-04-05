@@ -1,11 +1,38 @@
 /*
- * Copyright 2001-2005 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2005 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
  */
 
+
+/**
+ * @file PropertyInfo.cpp
+ * @brief Implementation of BPropertyInfo for scripting property metadata.
+ *
+ * BPropertyInfo stores and manages property_info and value_info arrays that
+ * describe the scripting interface of a BHandler. It supports matching
+ * incoming scripting messages against declared properties, and implements
+ * the BFlattenable interface for serialization and deserialization of
+ * property metadata with cross-endian support.
+ */
 
 #include <ByteOrder.h>
 #include <DataIO.h>
@@ -17,6 +44,17 @@
 #include <stdlib.h>
 
 
+/** @brief Constructs a BPropertyInfo from property and value info arrays.
+ *
+ *  The arrays are expected to be null-terminated (the last entry has a
+ *  NULL name field). The counts are computed automatically by iterating
+ *  each array.
+ *
+ *  @param propertyInfo Pointer to the property_info array, or NULL.
+ *  @param valueInfo Pointer to the value_info array, or NULL.
+ *  @param freeOnDelete If true, the arrays (and their string members) will
+ *                      be freed when this object is destroyed.
+ */
 BPropertyInfo::BPropertyInfo(property_info* propertyInfo, value_info* valueInfo,
 	bool freeOnDelete)
 	:
@@ -38,12 +76,29 @@ BPropertyInfo::BPropertyInfo(property_info* propertyInfo, value_info* valueInfo,
 }
 
 
+/** @brief Destroys the BPropertyInfo, freeing heap-allocated data if applicable. */
 BPropertyInfo::~BPropertyInfo()
 {
 	FreeMem();
 }
 
 
+/** @brief Finds a property matching the given scripting message parameters.
+ *
+ *  Iterates through the property_info array looking for an entry whose
+ *  name matches the property, whose commands match the message's what
+ *  code (at the given specifier index), and whose specifiers match the
+ *  given form.
+ *
+ *  @param message The scripting message to match against.
+ *  @param index The specifier index in the message (0 for direct property).
+ *  @param specifier The specifier BMessage (unused in the matching logic).
+ *  @param form The specifier form (e.g., B_DIRECT_SPECIFIER).
+ *  @param property The property name to look up.
+ *  @param data If non-NULL and a match is found, receives the extra_data
+ *              field of the matched property_info entry.
+ *  @return The index of the matching property, or B_ERROR if no match.
+ */
 int32 BPropertyInfo::FindMatch(BMessage* message, int32 index,
 	BMessage* specifier, int32 form, const char* property, void* data) const
 {
@@ -67,6 +122,13 @@ int32 BPropertyInfo::FindMatch(BMessage* message, int32 index,
 }
 
 
+/** @brief Returns whether the flattened representation has a fixed size.
+ *
+ *  Always returns false since the flattened size depends on the number
+ *  and contents of the property and value info entries.
+ *
+ *  @return false always.
+ */
 bool
 BPropertyInfo::IsFixedSize() const
 {
@@ -74,6 +136,9 @@ BPropertyInfo::IsFixedSize() const
 }
 
 
+/** @brief Returns the type code for the flattened data format.
+ *  @return B_PROPERTY_INFO_TYPE.
+ */
 type_code
 BPropertyInfo::TypeCode() const
 {
@@ -81,6 +146,14 @@ BPropertyInfo::TypeCode() const
 }
 
 
+/** @brief Computes the number of bytes needed to flatten this object.
+ *
+ *  Calculates the total serialization size including the header, all
+ *  property_info entries (names, usage strings, commands, specifiers,
+ *  types, and compound types), and all value_info entries.
+ *
+ *  @return The total flattened size in bytes.
+ */
 ssize_t
 BPropertyInfo::FlattenedSize() const
 {
@@ -149,6 +222,17 @@ BPropertyInfo::FlattenedSize() const
 }
 
 
+/** @brief Serializes the property and value info into a flat buffer.
+ *
+ *  Writes all property_info and value_info data into the supplied buffer
+ *  in a platform-aware binary format. The first byte indicates the host
+ *  endianness for cross-platform deserialization.
+ *
+ *  @param buffer Pointer to the destination buffer.
+ *  @param numBytes Size of the destination buffer in bytes.
+ *  @return B_OK on success, B_NO_MEMORY if the buffer is too small,
+ *          B_BAD_VALUE if buffer is NULL.
+ */
 status_t
 BPropertyInfo::Flatten(void* buffer, ssize_t numBytes) const
 {
@@ -248,6 +332,11 @@ BPropertyInfo::Flatten(void* buffer, ssize_t numBytes) const
 }
 
 
+/** @brief Checks whether the given type code is accepted for unflattening.
+ *
+ *  @param code The type code to check.
+ *  @return true if code is B_PROPERTY_INFO_TYPE, false otherwise.
+ */
 bool
 BPropertyInfo::AllowsTypeCode(type_code code) const
 {
@@ -255,6 +344,18 @@ BPropertyInfo::AllowsTypeCode(type_code code) const
 }
 
 
+/** @brief Deserializes property and value info from a flat buffer.
+ *
+ *  Reconstructs the property_info and value_info arrays from serialized
+ *  data. Handles byte-swapping if the data was serialized on a platform
+ *  with different endianness. Any previously held data is freed first.
+ *
+ *  @param code The type code of the flattened data (must be B_PROPERTY_INFO_TYPE).
+ *  @param buffer Pointer to the source buffer containing flattened data.
+ *  @param numBytes Size of the source buffer in bytes.
+ *  @return B_OK on success, B_BAD_TYPE if code is not allowed,
+ *          B_BAD_VALUE if buffer is NULL.
+ */
 status_t
 BPropertyInfo::Unflatten(type_code code, const void* buffer,
 	ssize_t numBytes)
@@ -396,6 +497,9 @@ BPropertyInfo::Unflatten(type_code code, const void* buffer,
 }
 
 
+/** @brief Returns the property_info array.
+ *  @return Pointer to the null-terminated property_info array, or NULL.
+ */
 const property_info*
 BPropertyInfo::Properties() const
 {
@@ -403,6 +507,9 @@ BPropertyInfo::Properties() const
 }
 
 
+/** @brief Returns the value_info array.
+ *  @return Pointer to the null-terminated value_info array, or NULL.
+ */
 const value_info*
 BPropertyInfo::Values() const
 {
@@ -410,6 +517,9 @@ BPropertyInfo::Values() const
 }
 
 
+/** @brief Returns the number of property_info entries.
+ *  @return The count of entries in the property_info array.
+ */
 int32
 BPropertyInfo::CountProperties() const
 {
@@ -417,6 +527,9 @@ BPropertyInfo::CountProperties() const
 }
 
 
+/** @brief Returns the number of value_info entries.
+ *  @return The count of entries in the value_info array.
+ */
 int32
 BPropertyInfo::CountValues() const
 {
@@ -424,6 +537,11 @@ BPropertyInfo::CountValues() const
 }
 
 
+/** @brief Prints all property info entries to standard output.
+ *
+ *  Outputs a formatted table showing each property's name, commands
+ *  (as four-character codes), types, and specifiers.
+ */
 void
 BPropertyInfo::PrintToStream() const
 {
@@ -461,6 +579,17 @@ BPropertyInfo::PrintToStream() const
 }
 
 
+/** @brief Checks if a property_info entry matches the given command.
+ *
+ *  If the property has no commands specified (wildcard), it matches any
+ *  command. Otherwise, the command must appear in the property's commands
+ *  array and index must be 0 (direct property access).
+ *
+ *  @param what The message command code to match.
+ *  @param index The specifier nesting index (0 for direct access).
+ *  @param propertyInfo The property_info entry to check.
+ *  @return true if the command matches, false otherwise.
+ */
 bool
 BPropertyInfo::FindCommand(uint32 what, int32 index,
 	property_info* propertyInfo)
@@ -482,6 +611,15 @@ BPropertyInfo::FindCommand(uint32 what, int32 index,
 }
 
 
+/** @brief Checks if a property_info entry matches the given specifier form.
+ *
+ *  If the property has no specifiers specified (wildcard), it matches any
+ *  form. Otherwise, the form must appear in the property's specifiers array.
+ *
+ *  @param form The specifier form to match (e.g., B_DIRECT_SPECIFIER).
+ *  @param propertyInfo The property_info entry to check.
+ *  @return true if the specifier matches, false otherwise.
+ */
 bool
 BPropertyInfo::FindSpecifier(uint32 form, property_info* propertyInfo)
 {
@@ -508,11 +646,23 @@ void BPropertyInfo::_ReservedPropertyInfo3() {}
 void BPropertyInfo::_ReservedPropertyInfo4() {}
 
 
+/** @brief Private copy constructor (intentionally unimplemented).
+ *
+ *  BPropertyInfo objects are not copyable. This exists only to prevent
+ *  accidental copying.
+ */
 BPropertyInfo::BPropertyInfo(const BPropertyInfo &)
 {
 }
 
 
+/** @brief Private assignment operator (intentionally unimplemented).
+ *
+ *  BPropertyInfo objects are not assignable. This exists only to prevent
+ *  accidental assignment.
+ *
+ *  @return Reference to this object (no-op).
+ */
 BPropertyInfo&
 BPropertyInfo::operator=(const BPropertyInfo &)
 {
@@ -520,6 +670,13 @@ BPropertyInfo::operator=(const BPropertyInfo &)
 }
 
 
+/** @brief Frees all heap-allocated property and value info data.
+ *
+ *  Only frees memory if fInHeap is true (i.e., data was allocated on the
+ *  heap, typically via Unflatten()). Frees all name and usage strings,
+ *  compound type pair names, and the arrays themselves. Resets fInHeap
+ *  to false after cleanup.
+ */
 void
 BPropertyInfo::FreeMem()
 {

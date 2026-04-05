@@ -1,14 +1,36 @@
 /*
- * Copyright 2001-2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Frans van Nispen (xlr8@tref.nl)
- *		Gabe Yoder (gyoder@stny.rr.com)
- *		Axel Dörfler, axeld@pinc-software.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Frans van Nispen (xlr8@tref.nl)
+ *       Gabe Yoder (gyoder@stny.rr.com)
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
-/**	BCursor describes a view-wide or application-wide cursor. */
+/** @file Cursor.cpp
+ *  @brief Implementation of BCursor, a class representing a mouse cursor.
+ *
+ *  BCursor describes a view-wide or application-wide cursor. Cursor data
+ *  is managed server-side by the app_server, and BCursor communicates
+ *  with it to create, clone, and delete cursor resources.
+ */
 
 
 #include <AppDefs.h>
@@ -23,6 +45,14 @@ const BCursor *B_CURSOR_SYSTEM_DEFAULT;
 const BCursor *B_CURSOR_I_BEAM;
 	// these are initialized in BApplication::InitData()
 
+/** @brief Constructs a cursor from legacy 68-byte cursor data.
+ *
+ *  The cursor data must be a 68-byte block with a 16x16 pixel, 1-bit
+ *  depth cursor format (size byte = 16, depth byte = 1), or one of the
+ *  predefined constants B_HAND_CURSOR or B_I_BEAM_CURSOR.
+ *
+ *  @param cursorData Pointer to the raw cursor data, or a predefined cursor constant.
+ */
 BCursor::BCursor(const void *cursorData)
 	:
 	fServerToken(-1),
@@ -58,6 +88,9 @@ BCursor::BCursor(const void *cursorData)
 }
 
 
+/** @brief Constructs a cursor from a predefined system cursor ID.
+ *  @param id The system cursor identifier (e.g., B_CURSOR_ID_SYSTEM_DEFAULT).
+ */
 BCursor::BCursor(BCursorID id)
 	:
 	fServerToken(id),
@@ -66,6 +99,9 @@ BCursor::BCursor(BCursorID id)
 }
 
 
+/** @brief Copy constructor. Clones the cursor from another BCursor.
+ *  @param other The BCursor to copy.
+ */
 BCursor::BCursor(const BCursor& other)
 	:
 	fServerToken(-1),
@@ -75,6 +111,13 @@ BCursor::BCursor(const BCursor& other)
 }
 
 
+/** @brief Constructs a cursor from an archived BMessage.
+ *
+ *  This constructor is currently a stub and does not restore cursor
+ *  data from the archive (undefined behavior on BeOS).
+ *
+ *  @param data The archived message (not used).
+ */
 BCursor::BCursor(BMessage *data)
 {
 	// undefined on BeOS
@@ -83,6 +126,14 @@ BCursor::BCursor(BMessage *data)
 }
 
 
+/** @brief Constructs a cursor from a bitmap and a hotspot position.
+ *
+ *  Sends the bitmap data to the app_server to create a new cursor
+ *  resource. The bitmap can be of any supported color space and size.
+ *
+ *  @param bitmap  The bitmap to use as the cursor image.
+ *  @param hotspot The point within the bitmap that represents the cursor tip.
+ */
 BCursor::BCursor(const BBitmap* bitmap, const BPoint& hotspot)
 	:
 	fServerToken(-1),
@@ -119,12 +170,17 @@ BCursor::BCursor(const BBitmap* bitmap, const BPoint& hotspot)
 }
 
 
+/** @brief Destroys the cursor and frees server-side cursor resources.
+ */
 BCursor::~BCursor()
 {
 	_FreeCursorData();
 }
 
 
+/** @brief Returns the initialization status of the cursor.
+ *  @return B_OK if the cursor was created successfully, or an error code.
+ */
 status_t
 BCursor::InitCheck() const
 {
@@ -132,6 +188,15 @@ BCursor::InitCheck() const
 }
 
 
+/** @brief Archives the cursor into a BMessage.
+ *
+ *  This is currently a stub and does not archive any cursor data
+ *  (not implemented on BeOS).
+ *
+ *  @param into The message to archive into.
+ *  @param deep Whether to perform a deep archive.
+ *  @return B_OK.
+ */
 status_t
 BCursor::Archive(BMessage *into, bool deep) const
 {
@@ -140,6 +205,13 @@ BCursor::Archive(BMessage *into, bool deep) const
 }
 
 
+/** @brief Creates a new BCursor from an archived message.
+ *
+ *  This is currently a stub and always returns NULL (not implemented on BeOS).
+ *
+ *  @param data The archived message.
+ *  @return Always NULL.
+ */
 BArchivable	*
 BCursor::Instantiate(BMessage *data)
 {
@@ -148,6 +220,15 @@ BCursor::Instantiate(BMessage *data)
 }
 
 
+/** @brief Assigns another cursor to this one by cloning its server-side data.
+ *
+ *  If the other cursor owns server-side data, a clone request is sent
+ *  to the app_server. Self-assignment and assignment of an equal cursor
+ *  are handled as no-ops.
+ *
+ *  @param other The cursor to copy from.
+ *  @return A reference to this cursor.
+ */
 BCursor&
 BCursor::operator=(const BCursor& other)
 {
@@ -175,6 +256,10 @@ BCursor::operator=(const BCursor& other)
 }
 
 
+/** @brief Tests whether two cursors refer to the same server-side cursor.
+ *  @param other The cursor to compare with.
+ *  @return true if both cursors have the same server token.
+ */
 bool
 BCursor::operator==(const BCursor& other) const
 {
@@ -182,6 +267,10 @@ BCursor::operator==(const BCursor& other) const
 }
 
 
+/** @brief Tests whether two cursors refer to different server-side cursors.
+ *  @param other The cursor to compare with.
+ *  @return true if the cursors have different server tokens.
+ */
 bool
 BCursor::operator!=(const BCursor& other) const
 {
@@ -189,6 +278,14 @@ BCursor::operator!=(const BCursor& other) const
 }
 
 
+/** @brief Performs an action identified by a perform_code.
+ *
+ *  Reserved for future use by the system. Currently a no-op.
+ *
+ *  @param d   The perform code identifying the action.
+ *  @param arg Argument data for the action.
+ *  @return B_OK.
+ */
 status_t
 BCursor::Perform(perform_code d, void *arg)
 {
@@ -202,6 +299,12 @@ void BCursor::_ReservedCursor3() {}
 void BCursor::_ReservedCursor4() {}
 
 
+/** @brief Releases server-side cursor resources.
+ *
+ *  Sends a delete message to the app_server to deallocate the cursor
+ *  data associated with this object's server token. Only sends the
+ *  message if this cursor owns the server-side resource.
+ */
 void
 BCursor::_FreeCursorData()
 {

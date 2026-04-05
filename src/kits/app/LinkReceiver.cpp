@@ -1,16 +1,40 @@
 /*
- * Copyright 2001-2011, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Pahtz <pahtz@yahoo.com.au>
- *		Axel Dörfler
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Artur Wyszynski <harakash@gmail.com>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2011 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pahtz <pahtz@yahoo.com.au>
+ *       Axel Dörfler
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Artur Wyszynski <harakash@gmail.com>
  */
 
 
-/*! Class for low-overhead port-based messaging */
+/**
+ * @file LinkReceiver.cpp
+ * @brief Implementation of BPrivate::LinkReceiver for low-level port-based message receiving.
+ *
+ * Provides the receiver side of the lightweight inter-process communication
+ * mechanism used between client applications and the app_server. Messages are
+ * read from a kernel port and deserialized into typed data including primitives,
+ * strings, regions, shapes, and gradients.
+ */
 
 
 #include <LinkReceiver.h>
@@ -54,6 +78,9 @@
 namespace BPrivate {
 
 
+/** @brief Constructs a LinkReceiver attached to the specified port.
+ *  @param port The kernel port ID from which messages will be received.
+ */
 LinkReceiver::LinkReceiver(port_id port)
 	:
 	fReceivePort(port), fRecvBuffer(NULL), fRecvPosition(0), fRecvStart(0),
@@ -63,12 +90,16 @@ LinkReceiver::LinkReceiver(port_id port)
 }
 
 
+/** @brief Destroys the LinkReceiver and frees the internal receive buffer. */
 LinkReceiver::~LinkReceiver()
 {
 	free(fRecvBuffer);
 }
 
 
+/** @brief Sets the kernel port from which messages will be received.
+ *  @param port The new port ID to receive messages from.
+ */
 void
 LinkReceiver::SetPort(port_id port)
 {
@@ -76,6 +107,19 @@ LinkReceiver::SetPort(port_id port)
 }
 
 
+/** @brief Retrieves the next message from the port link buffer.
+ *
+ *  Advances to the next message in the internal buffer, or reads from the
+ *  port if the buffer is exhausted. The message code is returned via the
+ *  output parameter and the read position is set to the start of the
+ *  message payload.
+ *
+ *  @param code Output parameter that receives the message code.
+ *  @param timeout Maximum time to wait for a message. Use B_INFINITE_TIMEOUT
+ *                 to block indefinitely.
+ *  @return B_OK on success, or an error code if the read failed or the
+ *          message header is malformed.
+ */
 status_t
 LinkReceiver::GetNextMessage(int32 &code, bigtime_t timeout)
 {
@@ -123,6 +167,13 @@ LinkReceiver::GetNextMessage(int32 &code, bigtime_t timeout)
 }
 
 
+/** @brief Checks whether there are more messages available to read.
+ *
+ *  Returns true if there are unread messages remaining in the internal
+ *  buffer or if the underlying port has pending messages.
+ *
+ *  @return true if messages are available, false otherwise.
+ */
 bool
 LinkReceiver::HasMessages() const
 {
@@ -131,6 +182,14 @@ LinkReceiver::HasMessages() const
 }
 
 
+/** @brief Checks whether the current message requires a reply.
+ *
+ *  Inspects the flags field of the current message header to determine
+ *  if the sender expects a reply.
+ *
+ *  @return true if the current message has the kNeedsReply flag set,
+ *          false otherwise or if no message is loaded.
+ */
 bool
 LinkReceiver::NeedsReply() const
 {
@@ -142,6 +201,9 @@ LinkReceiver::NeedsReply() const
 }
 
 
+/** @brief Returns the code of the current message.
+ *  @return The message code, or B_ERROR if no message is currently loaded.
+ */
 int32
 LinkReceiver::Code() const
 {
@@ -153,6 +215,11 @@ LinkReceiver::Code() const
 }
 
 
+/** @brief Resets the internal receive buffer state to empty.
+ *
+ *  Clears all buffer position tracking variables, effectively discarding
+ *  any remaining unread data. Does not free the buffer memory itself.
+ */
 void
 LinkReceiver::ResetBuffer()
 {
@@ -163,6 +230,17 @@ LinkReceiver::ResetBuffer()
 }
 
 
+/** @brief Ensures the receive buffer is large enough for the next port read.
+ *
+ *  For fixed-size configurations (kInitialBufferSize == kMaxBufferSize),
+ *  allocates the buffer once. For dynamic configurations, queries the port
+ *  for the pending message size and grows the buffer as needed, up to
+ *  kMaxBufferSize.
+ *
+ *  @param timeout Maximum time to wait when querying the port buffer size.
+ *  @return B_OK on success, B_NO_MEMORY if allocation fails, or an error
+ *          from port_buffer_size_etc().
+ */
 status_t
 LinkReceiver::AdjustReplyBuffer(bigtime_t timeout)
 {
@@ -218,6 +296,15 @@ LinkReceiver::AdjustReplyBuffer(bigtime_t timeout)
 }
 
 
+/** @brief Reads raw data from the kernel port into the internal buffer.
+ *
+ *  Resets the buffer, adjusts its size if necessary, and reads from the
+ *  port. Invalid messages (those not using kLinkCode) are silently
+ *  discarded. Retries automatically on B_INTERRUPTED.
+ *
+ *  @param timeout Maximum time to wait for data on the port.
+ *  @return B_OK on success, or an error code from the port read.
+ */
 status_t
 LinkReceiver::ReadFromPort(bigtime_t timeout)
 {
@@ -265,6 +352,18 @@ LinkReceiver::ReadFromPort(bigtime_t timeout)
 }
 
 
+/** @brief Reads raw bytes from the current message payload.
+ *
+ *  Copies the specified number of bytes from the current read position in
+ *  the message buffer into the caller-supplied buffer. For very large
+ *  reads (>= kMaxBufferSize), the data is transferred via a shared memory
+ *  area rather than inline in the buffer.
+ *
+ *  @param data Pointer to the destination buffer.
+ *  @param passedSize Number of bytes to read.
+ *  @return B_OK on success, B_BAD_VALUE if data is NULL or size is invalid,
+ *          B_NO_INIT if GetNextMessage() has not been called.
+ */
 status_t
 LinkReceiver::Read(void *data, ssize_t passedSize)
 {
@@ -318,6 +417,18 @@ LinkReceiver::Read(void *data, ssize_t passedSize)
 }
 
 
+/** @brief Reads a length-prefixed string, allocating memory for it.
+ *
+ *  Reads a 32-bit length prefix followed by the string data. The returned
+ *  string is null-terminated and allocated with malloc(); the caller is
+ *  responsible for freeing it.
+ *
+ *  @param _string Output parameter receiving the newly allocated string.
+ *  @param _length Optional output parameter receiving the string length
+ *                 (excluding the null terminator).
+ *  @return B_OK on success, B_NO_MEMORY if allocation fails, or another
+ *          error code on read failure.
+ */
 status_t
 LinkReceiver::ReadString(char** _string, size_t* _length)
 {
@@ -364,6 +475,15 @@ err:
 }
 
 
+/** @brief Reads a length-prefixed string into a BString.
+ *
+ *  Reads a 32-bit length prefix followed by the string data directly into
+ *  the supplied BString object.
+ *
+ *  @param string The BString to receive the read data.
+ *  @param _length Optional output parameter receiving the string length.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 LinkReceiver::ReadString(BString &string, size_t* _length)
 {
@@ -409,6 +529,17 @@ err:
 }
 
 
+/** @brief Reads a length-prefixed string into a caller-supplied buffer.
+ *
+ *  Reads a 32-bit length prefix followed by the string data into the
+ *  provided fixed-size buffer. Returns B_BUFFER_OVERFLOW if the string
+ *  (including null terminator) would exceed bufferLength.
+ *
+ *  @param buffer Pointer to the destination character buffer.
+ *  @param bufferLength Size of the destination buffer in bytes.
+ *  @return B_OK on success, B_BUFFER_OVERFLOW if the buffer is too small,
+ *          or another error code on read failure.
+ */
 status_t
 LinkReceiver::ReadString(char *buffer, size_t bufferLength)
 {
@@ -445,6 +576,16 @@ err:
 }
 
 
+/** @brief Reads a serialized BRegion from the message.
+ *
+ *  Deserializes a BRegion by reading the rectangle count, bounding
+ *  rectangle, and individual clipping rectangles. On failure, the region
+ *  is set to empty.
+ *
+ *  @param region Pointer to the BRegion to populate.
+ *  @return B_OK on success, B_NO_MEMORY if the region cannot be resized,
+ *          or another error code on read failure.
+ */
 status_t
 LinkReceiver::ReadRegion(BRegion* region)
 {
@@ -465,6 +606,15 @@ LinkReceiver::ReadRegion(BRegion* region)
 }
 
 
+/** @brief Reads a serialized BShape from the message.
+ *
+ *  Deserializes a BShape by reading the operation count, point count,
+ *  operation list, and point list, then populating the shape via its
+ *  private interface.
+ *
+ *  @param shape Pointer to the BShape to populate.
+ *  @return B_OK on success, or an error code on read failure.
+ */
 status_t
 LinkReceiver::ReadShape(BShape* shape)
 {
@@ -485,6 +635,11 @@ LinkReceiver::ReadShape(BShape* shape)
 }
 
 
+/** @brief Factory function that creates a BGradient subclass for the given type.
+ *  @param type The gradient type enumeration value.
+ *  @return A newly allocated BGradient subclass, or NULL on unknown type or
+ *          allocation failure.
+ */
 static BGradient*
 gradient_for_type(BGradient::Type type)
 {
@@ -506,6 +661,18 @@ gradient_for_type(BGradient::Type type)
 }
 
 
+/** @brief Reads a serialized BGradient from the message.
+ *
+ *  Deserializes a gradient by reading its type, color stops, and
+ *  type-specific parameters (e.g., start/end points for linear, center
+ *  and radius for radial). A new BGradient subclass is allocated and
+ *  returned via the output parameter.
+ *
+ *  @param _gradient Output parameter receiving the newly allocated gradient.
+ *                   The caller takes ownership.
+ *  @return B_OK on success, B_NO_MEMORY if allocation fails, or another
+ *          error code on read failure.
+ */
 status_t
 LinkReceiver::ReadGradient(BGradient** _gradient)
 {

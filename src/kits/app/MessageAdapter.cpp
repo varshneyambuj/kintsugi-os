@@ -1,10 +1,36 @@
 /*
- * Copyright 2005-2015, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2015, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Michael Lotz <mmlr@mlotz.ch>
+ */
+
+
+/**
+ * @file MessageAdapter.cpp
+ * @brief Implementation of MessageAdapter for converting between BMessage wire formats.
+ *
+ * MessageAdapter handles flattening and unflattening BMessage objects to and from
+ * the R5, Dano, and KMessage binary formats. This enables cross-version and
+ * cross-endian message interoperability.
  */
 
 
@@ -93,6 +119,10 @@ struct dano_variable_size_array {
 } _PACKED;
 
 
+/** @brief Round a value up to the next multiple of 8.
+ *  @param value The value to round up.
+ *  @return The smallest multiple of 8 that is greater than or equal to @a value.
+ */
 inline int32
 pad_to_8(int32 value)
 {
@@ -100,6 +130,11 @@ pad_to_8(int32 value)
 }
 
 
+/** @brief Compute the flattened size of a BMessage in the given wire format.
+ *  @param format The target wire format (e.g., MESSAGE_FORMAT_R5).
+ *  @param from The message whose flattened size is to be computed.
+ *  @return The size in bytes, or -1 if the format is unsupported.
+ */
 /*static*/ ssize_t
 MessageAdapter::FlattenedSize(uint32 format, const BMessage *from)
 {
@@ -113,6 +148,13 @@ MessageAdapter::FlattenedSize(uint32 format, const BMessage *from)
 }
 
 
+/** @brief Flatten a BMessage into a caller-supplied byte buffer.
+ *  @param format The target wire format.
+ *  @param from The message to flatten.
+ *  @param buffer Destination buffer (must be large enough for the flattened data).
+ *  @param size On output, the number of bytes written.
+ *  @return B_OK on success, or B_ERROR if the format is unsupported.
+ */
 /*static*/ status_t
 MessageAdapter::Flatten(uint32 format, const BMessage *from, char *buffer,
 	ssize_t *size)
@@ -127,6 +169,14 @@ MessageAdapter::Flatten(uint32 format, const BMessage *from, char *buffer,
 }
 
 
+/** @brief Flatten a BMessage and write it to a BDataIO stream.
+ *  @param format The target wire format.
+ *  @param from The message to flatten.
+ *  @param stream The output stream to write the flattened data to.
+ *  @param size On output, the number of bytes written; may be NULL.
+ *  @return B_OK on success, B_NO_MEMORY on allocation failure, or B_ERROR
+ *          if the format is unsupported or a write error occurs.
+ */
 /*static*/ status_t
 MessageAdapter::Flatten(uint32 format, const BMessage *from, BDataIO *stream,
 	ssize_t *size)
@@ -165,6 +215,18 @@ MessageAdapter::Flatten(uint32 format, const BMessage *from, BDataIO *stream,
 }
 
 
+/** @brief Reconstruct a BMessage from a flattened byte buffer.
+ *
+ *  Detects the format from the magic bytes and dispatches to the appropriate
+ *  R5, Dano, or KMessage deserializer. The target message is emptied before
+ *  population.
+ *
+ *  @param format The wire format identifier found at the start of the buffer.
+ *  @param into The BMessage to populate with the unflattened data.
+ *  @param buffer Source buffer containing the flattened message.
+ *  @return B_OK on success, B_NOT_A_MESSAGE if the format is unrecognized,
+ *          or another error code on parse failure.
+ */
 /*static*/ status_t
 MessageAdapter::Unflatten(uint32 format, BMessage *into, const char *buffer)
 {
@@ -217,6 +279,13 @@ MessageAdapter::Unflatten(uint32 format, BMessage *into, const char *buffer)
 }
 
 
+/** @brief Reconstruct a BMessage by reading flattened data from a BDataIO stream.
+ *  @param format The wire format identifier (R5, Dano, etc.).
+ *  @param into The BMessage to populate with the unflattened data.
+ *  @param stream The input stream to read the flattened data from.
+ *  @return B_OK on success, B_NOT_A_MESSAGE if the format is unrecognized,
+ *          or another error code on parse failure.
+ */
 /*static*/ status_t
 MessageAdapter::Unflatten(uint32 format, BMessage *into, BDataIO *stream)
 {
@@ -239,6 +308,17 @@ MessageAdapter::Unflatten(uint32 format, BMessage *into, BDataIO *stream)
 }
 
 
+/** @brief Convert a BMessage to its KMessage representation.
+ *
+ *  Iterates over all fields in the source BMessage and adds them to the
+ *  target KMessage. Fixed-size fields are added as arrays; variable-size
+ *  fields are added item by item.
+ *
+ *  @param from The source BMessage to convert.
+ *  @param to The destination KMessage to populate.
+ *  @return B_OK on success, B_BAD_VALUE if @a from is NULL, or another
+ *          error code on conversion failure.
+ */
 /*static*/ status_t
 MessageAdapter::ConvertToKMessage(const BMessage* from, KMessage& to)
 {
@@ -277,6 +357,16 @@ MessageAdapter::ConvertToKMessage(const BMessage* from, KMessage& to)
 }
 
 
+/** @brief Convert a KMessage into a BMessage.
+ *
+ *  Empties the target BMessage, copies the 'what' code, target token, and
+ *  reply information, then iterates over KMessage fields. Nested KMessage
+ *  fields of type B_MESSAGE_TYPE are recursively converted.
+ *
+ *  @param fromMessage The source KMessage to convert.
+ *  @param toMessage The destination BMessage to populate.
+ *  @return B_OK on success, or B_BAD_VALUE if either argument is NULL.
+ */
 /*static*/ status_t
 MessageAdapter::_ConvertFromKMessage(const KMessage *fromMessage,
 	BMessage *toMessage)
@@ -338,6 +428,15 @@ MessageAdapter::_ConvertFromKMessage(const KMessage *fromMessage,
 }
 
 
+/** @brief Compute the flattened size of a BMessage in R5 wire format.
+ *
+ *  Accounts for the R5 header (including optional target and reply info),
+ *  all field headers and data (with padding for variable-size fields), and
+ *  the terminating pseudo-field byte.
+ *
+ *  @param from The message whose R5 flattened size is to be computed.
+ *  @return The total size in bytes required for the R5 flattened representation.
+ */
 /*static*/ ssize_t
 MessageAdapter::_R5FlattenedSize(const BMessage *from)
 {
@@ -401,6 +500,18 @@ MessageAdapter::_R5FlattenedSize(const BMessage *from)
 }
 
 
+/** @brief Flatten a BMessage into a byte buffer using the R5 wire format.
+ *
+ *  Writes the R5 header, optional target/reply info, field descriptors, field
+ *  data, and a terminating pseudo-field. Variable-size field items are
+ *  padded to 8-byte boundaries. A checksum is computed over the header.
+ *
+ *  @param format The exact format variant (R5 or R5_SWAPPED).
+ *  @param from The message to flatten.
+ *  @param buffer Destination buffer.
+ *  @param size On output, the total number of bytes written.
+ *  @return B_OK on success.
+ */
 /*static*/ status_t
 MessageAdapter::_FlattenR5Message(uint32 format, const BMessage *from,
 	char *buffer, ssize_t *size)
@@ -544,6 +655,17 @@ MessageAdapter::_FlattenR5Message(uint32 format, const BMessage *from,
 }
 
 
+/** @brief Reconstruct a BMessage from an R5-format stream.
+ *
+ *  Reads the R5 header, optional target/reply information, and iterates
+ *  over field descriptors to rebuild all message data. Handles both
+ *  native and byte-swapped R5 formats.
+ *
+ *  @param format MESSAGE_FORMAT_R5 or MESSAGE_FORMAT_R5_SWAPPED.
+ *  @param into The BMessage to populate (emptied first).
+ *  @param stream The input stream positioned after the format magic word.
+ *  @return B_OK on success, or an error code on parse failure.
+ */
 /*static*/ status_t
 MessageAdapter::_UnflattenR5Message(uint32 format, BMessage *into,
 	BDataIO *stream)
@@ -700,6 +822,19 @@ MessageAdapter::_UnflattenR5Message(uint32 format, BMessage *into,
 }
 
 
+/** @brief Reconstruct a BMessage from a Dano-format stream.
+ *
+ *  Reads section headers and processes single-item, fixed-size array, and
+ *  variable-size array data sections. Informational sections (offset table,
+ *  target info, index table, end-of-data) are discarded. Handles both
+ *  native and byte-swapped Dano formats.
+ *
+ *  @param format MESSAGE_FORMAT_DANO or MESSAGE_FORMAT_DANO_SWAPPED.
+ *  @param into The BMessage to populate (emptied first).
+ *  @param stream The input stream positioned after the format magic word.
+ *  @return B_OK on success, B_BAD_DATA on malformed input, or another
+ *          error code on failure.
+ */
 /*static*/ status_t
 MessageAdapter::_UnflattenDanoMessage(uint32 format, BMessage *into,
 	BDataIO *stream)

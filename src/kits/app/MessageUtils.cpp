@@ -1,12 +1,36 @@
 /*
- * Copyright 2001-2005, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Erik Jaesler (erik@cgsoftware.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2005, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Erik Jaesler (erik@cgsoftware.com)
  */
 
-/**	Extra messaging utility functions */
+
+/**
+ * @file MessageUtils.cpp
+ * @brief Utility functions for BMessage serialization helpers.
+ *
+ * Provides checksum computation and flatten/unflatten/byte-swap routines for
+ * entry_ref and node_ref structures used by the messaging system.
+ */
+
 
 #include <string.h>
 #include <ByteOrder.h>
@@ -15,6 +39,15 @@
 
 namespace BPrivate {
 
+/** @brief Calculate a simple additive checksum over a byte buffer.
+ *
+ *  Processes the buffer in 4-byte big-endian words, accumulating a running sum.
+ *  Any remaining bytes (fewer than 4) are appended as a partial word.
+ *
+ *  @param buffer Pointer to the data to checksum.
+ *  @param size Number of bytes in the buffer.
+ *  @return The computed 32-bit checksum.
+ */
 uint32
 CalculateChecksum(const uint8 *buffer, int32 size)
 {
@@ -36,7 +69,18 @@ CalculateChecksum(const uint8 *buffer, int32 size)
 }
 
 
-/* entry_ref support functions */
+/** @brief Flatten an entry_ref into a byte buffer.
+ *
+ *  Serializes the device, directory, and name fields of the entry_ref into
+ *  the provided buffer. On success, @a size is updated to the number of
+ *  bytes written.
+ *
+ *  @param buffer Destination buffer for the flattened data.
+ *  @param size On entry, the available buffer size; on exit, the number of
+ *              bytes actually written.
+ *  @param ref The entry_ref to flatten.
+ *  @return B_OK on success, or B_BUFFER_OVERFLOW if the buffer is too small.
+ */
 status_t
 entry_ref_flatten(char *buffer, size_t *size, const entry_ref *ref)
 {
@@ -64,6 +108,17 @@ entry_ref_flatten(char *buffer, size_t *size, const entry_ref *ref)
 }
 
 
+/** @brief Reconstruct an entry_ref from a previously flattened byte buffer.
+ *
+ *  Deserializes device, directory, and name fields. On failure the ref is
+ *  reset to a default-constructed entry_ref.
+ *
+ *  @param ref Pointer to the entry_ref to populate.
+ *  @param buffer Source buffer containing the flattened data.
+ *  @param size Number of bytes available in @a buffer.
+ *  @return B_OK on success, B_BAD_VALUE if the buffer is too small, or
+ *          B_NO_MEMORY if the name could not be allocated.
+ */
 status_t
 entry_ref_unflatten(entry_ref *ref, const char *buffer, size_t size)
 {
@@ -92,6 +147,15 @@ entry_ref_unflatten(entry_ref *ref, const char *buffer, size_t size)
 }
 
 
+/** @brief Byte-swap a flattened entry_ref in place for endian conversion.
+ *
+ *  Swaps the device (int32) and directory (int64) fields stored at the
+ *  beginning of the buffer. The name string is left untouched.
+ *
+ *  @param buffer Buffer containing the flattened entry_ref.
+ *  @param size Number of bytes available in @a buffer.
+ *  @return B_OK on success, or B_BAD_VALUE if the buffer is too small.
+ */
 status_t
 entry_ref_swap(char *buffer, size_t size)
 {
@@ -109,7 +173,15 @@ entry_ref_swap(char *buffer, size_t size)
 }
 
 
-/* node_ref support functions */
+/** @brief Flatten a node_ref into a byte buffer.
+ *
+ *  Serializes the device and node fields into the provided buffer.
+ *
+ *  @param buffer Destination buffer for the flattened data.
+ *  @param size On entry, the available buffer size. Not modified on output.
+ *  @param ref The node_ref to flatten.
+ *  @return B_OK on success, or B_BUFFER_OVERFLOW if the buffer is too small.
+ */
 status_t
 node_ref_flatten(char *buffer, size_t *size, const node_ref *ref)
 {
@@ -125,6 +197,15 @@ node_ref_flatten(char *buffer, size_t *size, const node_ref *ref)
 }
 
 
+/** @brief Reconstruct a node_ref from a previously flattened byte buffer.
+ *
+ *  On failure the ref is reset to a default-constructed node_ref.
+ *
+ *  @param ref Pointer to the node_ref to populate.
+ *  @param buffer Source buffer containing the flattened data.
+ *  @param size Number of bytes available in @a buffer.
+ *  @return B_OK on success, or B_BAD_VALUE if the buffer is too small.
+ */
 status_t
 node_ref_unflatten(node_ref *ref, const char *buffer, size_t size)
 {
@@ -142,6 +223,15 @@ node_ref_unflatten(node_ref *ref, const char *buffer, size_t size)
 }
 
 
+/** @brief Byte-swap a flattened node_ref in place for endian conversion.
+ *
+ *  Swaps the device (int32) and node (int64) fields stored at the
+ *  beginning of the buffer.
+ *
+ *  @param buffer Buffer containing the flattened node_ref.
+ *  @param size Number of bytes available in @a buffer.
+ *  @return B_OK on success, or B_BAD_VALUE if the buffer is too small.
+ */
 status_t
 node_ref_swap(char *buffer, size_t size)
 {

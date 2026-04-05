@@ -1,11 +1,43 @@
 /*
- * Copyright 2001-2015 Haiku, inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jerome Duval
- *		Erik Jaesler, erik@cgsoftware.com
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015 Haiku, inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jerome Duval
+ *       Erik Jaesler, erik@cgsoftware.com
+ */
+
+
+/**
+ * @file Application.cpp
+ * @brief Implementation of BApplication, the central application class.
+ *
+ * BApplication is the fundamental class for any application with a message
+ * loop. Every application must create exactly one BApplication (or subclass)
+ * instance, which becomes the global @c be_app. BApplication manages the
+ * connection to the app_server and the registrar, handles the main message
+ * loop, dispatches system messages (argv, refs, activation, pulse), and
+ * provides cursor control and window/looper enumeration. It also supports
+ * the BeOS scripting protocol for introspection of windows and loopers.
+ *
+ * @see BLooper, BWindow, BRoster, BCursor
  */
 
 
@@ -54,16 +86,34 @@
 using namespace BPrivate;
 
 
+/** @brief Default name for the BApplication's BLooper message port. */
 static const char* kDefaultLooperName = "AppLooperPort";
 
+/** @brief The global application instance pointer, set during BApplication construction. */
 BApplication* be_app = NULL;
+
+/** @brief A BMessenger targeting the global BApplication instance. */
 BMessenger be_app_messenger;
 
+/** @brief pthread_once control for one-time initialization of application resources. */
 pthread_once_t sAppResourcesInitOnce = PTHREAD_ONCE_INIT;
+
+/** @brief Cached application resources, lazily initialized via _InitAppResources(). */
 BResources* BApplication::sAppResources = NULL;
+
+/**
+ * @brief List of non-window loopers registered to be quit when the application exits.
+ * @see BApplication::RegisterLooper(), BApplication::UnregisterLooper()
+ */
 BObjectList<BLooper> sOnQuitLooperList;
 
 
+/**
+ * @brief Indices into sPropertyInfo for scripting property resolution.
+ *
+ * These constants identify which scripting property and specifier combination
+ * matched in ResolveSpecifier() and ScriptReceived().
+ */
 enum {
 	kWindowByIndex,
 	kWindowByName,
@@ -74,6 +124,16 @@ enum {
 };
 
 
+/**
+ * @brief Scripting property table for BApplication.
+ *
+ * Defines the properties exposed via the BeOS scripting protocol, including
+ * "Window" (by index or name), "Looper" (by index, ID, or name),
+ * "Name" (GET), and count properties for windows and loopers.
+ *
+ * @see BApplication::ResolveSpecifier(), BApplication::ScriptReceived()
+ * @see BApplication::GetSupportedSuites()
+ */
 static property_info sPropertyInfo[] = {
 	{
 		"Window",
@@ -217,7 +277,18 @@ check_app_signature(const char* signature)
 
 
 #ifndef RUN_WITHOUT_REGISTRAR
-// Fills the passed BMessage with B_ARGV_RECEIVED infos.
+/**
+ * @brief Populates a BMessage with B_ARGV_RECEIVED data from the process's argc/argv.
+ *
+ * Sets the message's @c what field to @c B_ARGV_RECEIVED and attaches the
+ * argument count ("argc"), each argument string ("argv"), and the current
+ * working directory ("cwd").
+ *
+ * @param message The BMessage to fill; its @c what field will be overwritten.
+ *
+ * @note Uses the global __libc_argc and __libc_argv symbols provided by the C library.
+ * @see BApplication::_InitData(), BApplication::_ArgvReceived()
+ */
 static void
 fill_argv_message(BMessage &message)
 {
@@ -246,6 +317,19 @@ fill_argv_message(BMessage &message)
 //	#pragma mark - BApplication
 
 
+/**
+ * @brief Constructs a BApplication with the given MIME signature.
+ *
+ * Initializes the application with GUI support enabled. If initialization
+ * fails, the application will call exit(0).
+ *
+ * @param signature The application's MIME signature (e.g. "application/x-vnd.MyApp").
+ *                  Must begin with "application/" and be a valid MIME type.
+ *
+ * @note Only one BApplication instance may exist at a time; creating a second
+ *       will trigger a debugger() call.
+ * @see _InitData(), BApplication(const char*, status_t*)
+ */
 BApplication::BApplication(const char* signature)
 	:
 	BLooper(kDefaultLooperName)
@@ -254,6 +338,18 @@ BApplication::BApplication(const char* signature)
 }
 
 
+/**
+ * @brief Constructs a BApplication with the given MIME signature, returning errors.
+ *
+ * Identical to the single-argument constructor, but instead of calling exit()
+ * on failure, the initialization error code is stored in @a _error.
+ *
+ * @param signature The application's MIME signature.
+ * @param _error    If non-NULL, receives the initialization status code.
+ *                  B_OK on success, or an error code on failure.
+ *
+ * @see _InitData(), InitCheck()
+ */
 BApplication::BApplication(const char* signature, status_t* _error)
 	:
 	BLooper(kDefaultLooperName)
@@ -262,6 +358,24 @@ BApplication::BApplication(const char* signature, status_t* _error)
 }
 
 
+/**
+ * @brief Constructs a BApplication with extended options for port, looper name, and GUI.
+ *
+ * This constructor allows fine-grained control over the message port, the
+ * looper thread name, and whether the GUI context (app_server connection)
+ * should be initialized. If @a port is negative, a port is obtained from
+ * the launch daemon via _GetPort().
+ *
+ * @param signature  The application's MIME signature.
+ * @param looperName The name for the looper thread, or NULL for the default.
+ * @param port       The message port to use, or a negative value to auto-acquire.
+ * @param initGUI    If true, connect to the app_server and initialize the GUI context.
+ * @param _error     If non-NULL, receives the initialization status code.
+ *
+ * @note When @a port is negative, the port ownership flag (fOwnsPort) is set
+ *       to false, since the port was acquired externally.
+ * @see _InitData(), _GetPort()
+ */
 BApplication::BApplication(const char* signature, const char* looperName,
 	port_id port, bool initGUI, status_t* _error)
 	:
@@ -274,6 +388,17 @@ BApplication::BApplication(const char* signature, const char* looperName,
 }
 
 
+/**
+ * @brief Constructs a BApplication from an archived BMessage.
+ *
+ * Unarchives the application signature from the "mime_sig" field and the
+ * pulse rate from the "_pulse" field. Used by the BArchivable instantiation
+ * mechanism.
+ *
+ * @param data The archived BMessage containing "mime_sig" and optionally "_pulse".
+ *
+ * @see Instantiate(), Archive()
+ */
 BApplication::BApplication(BMessage* data)
 	// Note: BeOS calls the private BLooper(int32, port_id, const char*)
 	// constructor here, test if it's needed
@@ -292,16 +417,19 @@ BApplication::BApplication(BMessage* data)
 
 
 #ifdef __HAIKU_BEOS_COMPATIBLE
+/** @brief Legacy BeOS R3 constructor (stub, not implemented). */
 BApplication::BApplication(uint32 signature)
 {
 }
 
 
+/** @brief Legacy BeOS copy constructor (stub, not implemented). */
 BApplication::BApplication(const BApplication &rhs)
 {
 }
 
 
+/** @brief Legacy BeOS assignment operator (stub, not implemented). */
 BApplication&
 BApplication::operator=(const BApplication &rhs)
 {
@@ -310,6 +438,23 @@ BApplication::operator=(const BApplication &rhs)
 #endif
 
 
+/**
+ * @brief Destroys the BApplication, quitting all windows and cleaning up resources.
+ *
+ * The destructor performs the following in order:
+ * 1. Locks the application.
+ * 2. Quits all windows via _QuitAllWindows() with force.
+ * 3. Quits all registered non-window loopers from sOnQuitLooperList.
+ * 4. Unregisters this application from the roster.
+ * 5. Notifies app_server that the application is quitting and tears down the
+ *    server link.
+ * 6. Deletes the server memory allocator.
+ * 7. Sets the global be_app to NULL.
+ *
+ * @note The application must be locked before destruction. The destructor
+ *       acquires the lock itself.
+ * @see Quit(), _QuitAllWindows(), RegisterLooper()
+ */
 BApplication::~BApplication()
 {
 	Lock();
@@ -349,6 +494,32 @@ BApplication::~BApplication()
 }
 
 
+/**
+ * @brief Core initialization routine called by all constructors.
+ *
+ * Performs the complete setup of the BApplication instance:
+ * 1. Verifies no other BApplication instance exists.
+ * 2. Initializes internal state (server link, pulse, workspace).
+ * 3. Validates the application MIME signature.
+ * 4. Resolves the application's entry_ref and reads BAppFileInfo.
+ * 5. Registers with (or completes pre-registration at) the registrar.
+ * 6. Handles B_ALREADY_RUNNING for single/exclusive launch modes by
+ *    forwarding argv to the existing instance.
+ * 7. Posts B_ARGV_RECEIVED and B_READY_TO_RUN messages to self.
+ * 8. Sets the global be_app and be_app_messenger.
+ * 9. Optionally connects to the app_server via _InitGUIContext().
+ *
+ * @param signature The application's MIME signature string.
+ * @param initGUI   If true, establish the app_server connection and
+ *                  initialize the GUI (Interface Kit) context.
+ * @param _error    If non-NULL, receives the initialization status.
+ *                  If NULL and initialization fails, exit(0) is called.
+ *
+ * @note This method enforces the singleton constraint on BApplication:
+ *       only one instance may exist per team. A debugger() call is triggered
+ *       if a second instance is detected.
+ * @see _InitGUIContext(), _ConnectToServer(), check_app_signature()
+ */
 void
 BApplication::_InitData(const char* signature, bool initGUI, status_t* _error)
 {
@@ -542,6 +713,15 @@ DBG(OUT("BApplication::InitData() done\n"));
 }
 
 
+/**
+ * @brief Retrieves a message port from the launch daemon for the given signature.
+ *
+ * @param signature The application's MIME signature used to look up the port.
+ *
+ * @return The port_id obtained from the BLaunchRoster, or a negative error code.
+ *
+ * @see BLaunchRoster::GetPort()
+ */
 port_id
 BApplication::_GetPort(const char* signature)
 {
@@ -549,6 +729,18 @@ BApplication::_GetPort(const char* signature)
 }
 
 
+/**
+ * @brief Creates a new BApplication from an archived BMessage.
+ *
+ * Validates that @a data represents a "BApplication" archive, then constructs
+ * a new instance via the BMessage constructor.
+ *
+ * @param data The archived BMessage to instantiate from.
+ *
+ * @return A new BApplication instance, or NULL if validation fails.
+ *
+ * @see Archive(), BApplication(BMessage*)
+ */
 BArchivable*
 BApplication::Instantiate(BMessage* data)
 {
@@ -559,6 +751,19 @@ BApplication::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives the BApplication into a BMessage.
+ *
+ * Stores the base BLooper archive data, the application's MIME signature
+ * ("mime_sig"), and the current pulse rate ("_pulse").
+ *
+ * @param data The BMessage to archive into.
+ * @param deep If true, child BHandlers are archived as well (passed to BLooper::Archive).
+ *
+ * @return B_OK on success, or an error code if archiving fails.
+ *
+ * @see Instantiate(), BLooper::Archive()
+ */
 status_t
 BApplication::Archive(BMessage* data, bool deep) const
 {
@@ -579,6 +784,15 @@ BApplication::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Returns the initialization status of the BApplication.
+ *
+ * @return B_OK if the application was initialized successfully, or an error
+ *         code describing the failure (e.g. B_BAD_VALUE for an invalid
+ *         signature, B_ALREADY_RUNNING for single-launch conflicts).
+ *
+ * @see _InitData()
+ */
 status_t
 BApplication::InitCheck() const
 {
@@ -586,6 +800,20 @@ BApplication::InitCheck() const
 }
 
 
+/**
+ * @brief Starts the application's main message loop.
+ *
+ * Enters the BLooper message dispatching loop (via Loop()). This method
+ * does not return until the application quits. After the loop exits, the
+ * pulse runner is deleted.
+ *
+ * @return The thread_id of the application's main thread, or a negative
+ *         error code if InitCheck() was not B_OK.
+ *
+ * @note Must be called from the main thread. Only call once per application
+ *       lifetime.
+ * @see Quit(), QuitRequested(), BLooper::Loop()
+ */
 thread_id
 BApplication::Run()
 {
@@ -599,6 +827,21 @@ BApplication::Run()
 }
 
 
+/**
+ * @brief Terminates the application's message loop and deletes the object.
+ *
+ * Behavior depends on the calling context:
+ * - If Run() has not been called, the BApplication is deleted immediately.
+ * - If called from a thread other than the looper thread, a _QUIT_ message
+ *   is posted to the looper's port. This may block if the port is full.
+ * - If called from the looper thread, sets fTerminating to true, causing
+ *   the message loop to exit naturally.
+ *
+ * @note The application MUST be locked before calling Quit(). If it is not,
+ *       an error is printed and the method attempts to lock it. Failure to
+ *       lock causes an early return.
+ * @see Run(), QuitRequested()
+ */
 void
 BApplication::Quit()
 {
@@ -643,6 +886,17 @@ BApplication::Quit()
 }
 
 
+/**
+ * @brief Hook called to determine if the application may quit.
+ *
+ * Delegates to _QuitAllWindows() without forcing. Each window's
+ * QuitRequested() is called; if any window refuses, the application
+ * will not quit.
+ *
+ * @return true if all windows agreed to quit, false if any window refused.
+ *
+ * @see _QuitAllWindows(), BWindow::QuitRequested()
+ */
 bool
 BApplication::QuitRequested()
 {
@@ -650,6 +904,14 @@ BApplication::QuitRequested()
 }
 
 
+/**
+ * @brief Hook called at regular intervals when a pulse rate is set.
+ *
+ * Subclasses override this to perform periodic work. The interval is
+ * configured via SetPulseRate(). The default implementation does nothing.
+ *
+ * @see SetPulseRate(), DispatchMessage()
+ */
 void
 BApplication::Pulse()
 {
@@ -657,6 +919,18 @@ BApplication::Pulse()
 }
 
 
+/**
+ * @brief Hook called when the application has finished launching and is ready to run.
+ *
+ * This is invoked in response to the B_READY_TO_RUN message posted during
+ * _InitData(). It is called exactly once, after all B_ARGV_RECEIVED and
+ * B_REFS_RECEIVED messages from launch have been processed. Subclasses
+ * typically override this to open their initial window.
+ *
+ * The default implementation does nothing.
+ *
+ * @see _InitData(), DispatchMessage()
+ */
 void
 BApplication::ReadyToRun()
 {
@@ -664,6 +938,22 @@ BApplication::ReadyToRun()
 }
 
 
+/**
+ * @brief Handles messages not dispatched by DispatchMessage().
+ *
+ * Processes the following message types:
+ * - B_COUNT_PROPERTIES / B_GET_PROPERTY / B_SET_PROPERTY: Delegates to
+ *   ScriptReceived() for BeOS scripting protocol handling.
+ * - B_SILENT_RELAUNCH: Activates this application when a single-launch app
+ *   is re-launched without arguments.
+ * - kMsgAppServerStarted: Triggers reconnection to the app_server via
+ *   _ReconnectToServer().
+ * - All other messages are forwarded to BLooper::MessageReceived().
+ *
+ * @param message The incoming BMessage to handle.
+ *
+ * @see ScriptReceived(), _ReconnectToServer(), BLooper::MessageReceived()
+ */
 void
 BApplication::MessageReceived(BMessage* message)
 {
@@ -701,6 +991,19 @@ BApplication::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Hook called when the application receives command-line arguments.
+ *
+ * Invoked when a B_ARGV_RECEIVED message is dispatched, either at launch
+ * or when a running single-launch application is re-launched with arguments.
+ * The default implementation does nothing; subclasses override this to
+ * process command-line parameters.
+ *
+ * @param argc The number of arguments (always >= 1; argv[0] is the app path).
+ * @param argv A NULL-terminated array of argument strings.
+ *
+ * @see _ArgvReceived(), DispatchMessage()
+ */
 void
 BApplication::ArgvReceived(int32 argc, char** argv)
 {
@@ -708,6 +1011,18 @@ BApplication::ArgvReceived(int32 argc, char** argv)
 }
 
 
+/**
+ * @brief Hook called when the application is activated or deactivated.
+ *
+ * Dispatched in response to a B_APP_ACTIVATED message from the app_server.
+ * The default implementation does nothing; subclasses override this to
+ * respond to activation changes (e.g. updating menus or focus state).
+ *
+ * @param active true if the application has become the active (foreground)
+ *               application, false if it has been deactivated.
+ *
+ * @see DispatchMessage()
+ */
 void
 BApplication::AppActivated(bool active)
 {
@@ -715,6 +1030,18 @@ BApplication::AppActivated(bool active)
 }
 
 
+/**
+ * @brief Hook called when the application receives file references.
+ *
+ * Dispatched in response to a B_REFS_RECEIVED message, typically when files
+ * are dropped on the application icon or opened via Tracker. DispatchMessage()
+ * adds the referenced entries to the recent documents/folders lists before
+ * calling this hook. The default implementation does nothing.
+ *
+ * @param message The B_REFS_RECEIVED message containing "refs" entry_ref fields.
+ *
+ * @see DispatchMessage()
+ */
 void
 BApplication::RefsReceived(BMessage* message)
 {
@@ -722,6 +1049,15 @@ BApplication::RefsReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Hook called when the user requests "About" information.
+ *
+ * Dispatched in response to a B_ABOUT_REQUESTED message, typically from a
+ * menu item. Subclasses override this to display an about dialog. The
+ * default implementation does nothing.
+ *
+ * @see DispatchMessage()
+ */
 void
 BApplication::AboutRequested()
 {
@@ -729,6 +1065,26 @@ BApplication::AboutRequested()
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate handler.
+ *
+ * Matches the incoming specifier against sPropertyInfo to find windows or
+ * loopers by index, name, or ID. If the specifier targets a window or
+ * looper, the message is forwarded to that object. If the specifier targets
+ * the application itself (e.g. "Name"), returns @c this. Unrecognized
+ * specifiers are delegated to BLooper::ResolveSpecifier().
+ *
+ * @param message   The scripting message being resolved.
+ * @param index     The current specifier index in the message.
+ * @param specifier The current specifier BMessage.
+ * @param what      The specifier type (e.g. B_INDEX_SPECIFIER, B_NAME_SPECIFIER).
+ * @param property  The property name being targeted.
+ *
+ * @return The BHandler that should handle the message, or NULL if the
+ *         message was forwarded or an error reply was sent.
+ *
+ * @see ScriptReceived(), GetSupportedSuites(), sPropertyInfo
+ */
 BHandler*
 BApplication::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -848,6 +1204,14 @@ BApplication::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Shows the mouse cursor if it was previously hidden.
+ *
+ * Sends an AS_SHOW_CURSOR message to the app_server to make the cursor
+ * visible again after a call to HideCursor() or ObscureCursor().
+ *
+ * @see HideCursor(), ObscureCursor(), IsCursorHidden()
+ */
 void
 BApplication::ShowCursor()
 {
@@ -857,6 +1221,15 @@ BApplication::ShowCursor()
 }
 
 
+/**
+ * @brief Hides the mouse cursor.
+ *
+ * Sends an AS_HIDE_CURSOR message to the app_server. The cursor remains
+ * hidden until ShowCursor() is called. Unlike ObscureCursor(), movement
+ * does not automatically restore visibility.
+ *
+ * @see ShowCursor(), ObscureCursor(), IsCursorHidden()
+ */
 void
 BApplication::HideCursor()
 {
@@ -866,6 +1239,15 @@ BApplication::HideCursor()
 }
 
 
+/**
+ * @brief Hides the cursor until the mouse is moved.
+ *
+ * Sends an AS_OBSCURE_CURSOR message to the app_server. The cursor
+ * disappears immediately but reappears automatically on the next mouse
+ * movement. Useful during keyboard input to avoid visual clutter.
+ *
+ * @see ShowCursor(), HideCursor(), IsCursorHidden()
+ */
 void
 BApplication::ObscureCursor()
 {
@@ -875,6 +1257,16 @@ BApplication::ObscureCursor()
 }
 
 
+/**
+ * @brief Queries whether the mouse cursor is currently hidden.
+ *
+ * Sends an AS_QUERY_CURSOR_HIDDEN message to the app_server and waits
+ * synchronously for a reply.
+ *
+ * @return true if the cursor is hidden, false otherwise.
+ *
+ * @see ShowCursor(), HideCursor(), ObscureCursor()
+ */
 bool
 BApplication::IsCursorHidden() const
 {
@@ -887,6 +1279,17 @@ BApplication::IsCursorHidden() const
 }
 
 
+/**
+ * @brief Sets the cursor from raw cursor data.
+ *
+ * Wraps the raw data in a temporary BCursor and calls the BCursor-based
+ * SetCursor() overload with synchronous mode enabled.
+ *
+ * @param cursorData Pointer to raw cursor bitmap data in the format expected
+ *                   by the BCursor(const void*) constructor.
+ *
+ * @see SetCursor(const BCursor*, bool), BCursor
+ */
 void
 BApplication::SetCursor(const void* cursorData)
 {
@@ -896,6 +1299,19 @@ BApplication::SetCursor(const void* cursorData)
 }
 
 
+/**
+ * @brief Sets the application cursor to the given BCursor.
+ *
+ * Sends an AS_SET_CURSOR message to the app_server with the cursor's
+ * server-side token. When @a sync is true, the call blocks until the
+ * app_server confirms the cursor change.
+ *
+ * @param cursor Pointer to the BCursor to activate.
+ * @param sync   If true, the call is synchronous (waits for server reply).
+ *               If false, the message is sent asynchronously.
+ *
+ * @see SetCursor(const void*), ShowCursor(), HideCursor()
+ */
 void
 BApplication::SetCursor(const BCursor* cursor, bool sync)
 {
@@ -912,6 +1328,15 @@ BApplication::SetCursor(const BCursor* cursor, bool sync)
 }
 
 
+/**
+ * @brief Returns the number of windows owned by this application.
+ *
+ * Counts only on-screen windows, excluding menu windows and offscreen windows.
+ *
+ * @return The number of visible, non-menu windows.
+ *
+ * @see WindowAt(), _CountWindows()
+ */
 int32
 BApplication::CountWindows() const
 {
@@ -920,6 +1345,19 @@ BApplication::CountWindows() const
 }
 
 
+/**
+ * @brief Returns the window at the given index.
+ *
+ * Returns only on-screen windows, excluding menu windows and offscreen windows.
+ * The index is zero-based among non-menu windows.
+ *
+ * @param index Zero-based index of the window to retrieve.
+ *
+ * @return Pointer to the BWindow at the given index, or NULL if the index
+ *         is out of range.
+ *
+ * @see CountWindows(), _WindowAt()
+ */
 BWindow*
 BApplication::WindowAt(int32 index) const
 {
@@ -928,6 +1366,16 @@ BApplication::WindowAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the total number of loopers (including windows) in this team.
+ *
+ * Acquires the global looper list lock to safely count all registered loopers.
+ *
+ * @return The number of loopers, or B_ERROR if the looper list lock could
+ *         not be acquired.
+ *
+ * @see LooperAt(), CountWindows()
+ */
 int32
 BApplication::CountLoopers() const
 {
@@ -940,6 +1388,20 @@ BApplication::CountLoopers() const
 }
 
 
+/**
+ * @brief Returns the looper at the given index from the global looper list.
+ *
+ * Acquires the global looper list lock and retrieves the looper at the
+ * specified zero-based index. The list includes all loopers (windows and
+ * non-windows) in this team.
+ *
+ * @param index Zero-based index of the looper to retrieve.
+ *
+ * @return Pointer to the BLooper at the given index, or NULL if the index
+ *         is out of range or the looper list lock could not be acquired.
+ *
+ * @see CountLoopers(), WindowAt()
+ */
 BLooper*
 BApplication::LooperAt(int32 index) const
 {
@@ -952,6 +1414,21 @@ BApplication::LooperAt(int32 index) const
 }
 
 
+/**
+ * @brief Registers a non-window looper to be quit when the application exits.
+ *
+ * Adds the looper to sOnQuitLooperList so that BApplication's destructor
+ * will lock and quit it during shutdown. Only non-window BLoopers may be
+ * registered; passing a BWindow returns B_BAD_VALUE, since windows are
+ * managed separately via _QuitAllWindows().
+ *
+ * @param looper The BLooper to register. Must not be a BWindow.
+ *
+ * @return B_OK on success, B_BAD_VALUE if @a looper is a BWindow,
+ *         B_ERROR if the looper is already registered or could not be added.
+ *
+ * @see UnregisterLooper(), ~BApplication()
+ */
 status_t
 BApplication::RegisterLooper(BLooper* looper)
 {
@@ -969,6 +1446,19 @@ BApplication::RegisterLooper(BLooper* looper)
 }
 
 
+/**
+ * @brief Unregisters a non-window looper from the on-quit list.
+ *
+ * Removes the looper from sOnQuitLooperList so it will no longer be
+ * automatically quit during application shutdown.
+ *
+ * @param looper The BLooper to unregister. Must not be a BWindow.
+ *
+ * @return B_OK on success, B_BAD_VALUE if @a looper is a BWindow,
+ *         B_ERROR if the looper was not registered or could not be removed.
+ *
+ * @see RegisterLooper()
+ */
 status_t
 BApplication::UnregisterLooper(BLooper* looper)
 {
@@ -986,6 +1476,16 @@ BApplication::UnregisterLooper(BLooper* looper)
 }
 
 
+/**
+ * @brief Returns whether the application is still in the launching phase.
+ *
+ * The application is considered "launching" until ReadyToRun() has been
+ * called (i.e. until the B_READY_TO_RUN message has been dispatched).
+ *
+ * @return true if ReadyToRun() has not yet been called, false otherwise.
+ *
+ * @see ReadyToRun()
+ */
 bool
 BApplication::IsLaunching() const
 {
@@ -993,6 +1493,13 @@ BApplication::IsLaunching() const
 }
 
 
+/**
+ * @brief Returns the application's MIME signature string.
+ *
+ * @return The MIME signature passed to the constructor (e.g. "application/x-vnd.MyApp").
+ *
+ * @see _InitData()
+ */
 const char*
 BApplication::Signature() const
 {
@@ -1000,6 +1507,17 @@ BApplication::Signature() const
 }
 
 
+/**
+ * @brief Retrieves information about this running application from the roster.
+ *
+ * @param info Pointer to an app_info structure to be filled with the
+ *             application's registration data (signature, ref, team, etc.).
+ *
+ * @return B_OK on success, B_NO_INIT if be_app or be_roster is NULL,
+ *         or another error from the roster.
+ *
+ * @see BRoster::GetRunningAppInfo()
+ */
 status_t
 BApplication::GetAppInfo(app_info* info) const
 {
@@ -1009,6 +1527,20 @@ BApplication::GetAppInfo(app_info* info) const
 }
 
 
+/**
+ * @brief Returns the application's resource file, lazily initialized.
+ *
+ * On the first call, invokes _InitAppResources() via pthread_once to open
+ * the application's executable file and load its resources. Subsequent
+ * calls return the cached BResources pointer.
+ *
+ * @return Pointer to the application's BResources object, or NULL if the
+ *         resources could not be loaded.
+ *
+ * @note This is a static method and may be called before Run() or even
+ *       before a BApplication instance is created.
+ * @see _InitAppResources()
+ */
 BResources*
 BApplication::AppResources()
 {
@@ -1019,6 +1551,26 @@ BApplication::AppResources()
 }
 
 
+/**
+ * @brief Dispatches a message to the appropriate hook method.
+ *
+ * If @a handler is not @c this, delegates to BLooper::DispatchMessage().
+ * Otherwise, handles the following system messages directly:
+ * - B_ARGV_RECEIVED: Calls _ArgvReceived() to parse and forward to ArgvReceived().
+ * - B_REFS_RECEIVED: Adds refs to recent lists, then calls RefsReceived().
+ * - B_READY_TO_RUN: Calls ReadyToRun() exactly once.
+ * - B_ABOUT_REQUESTED: Calls AboutRequested().
+ * - B_PULSE: Calls Pulse().
+ * - B_APP_ACTIVATED: Extracts the "active" flag and calls AppActivated().
+ * - B_COLORS_UPDATED: Forwards to all non-offscreen windows.
+ * - _SHOW_DRAG_HANDLES_: Updates dragger visibility.
+ * - All others: Delegates to BLooper::DispatchMessage().
+ *
+ * @param message The BMessage to dispatch.
+ * @param handler The target BHandler for the message.
+ *
+ * @see MessageReceived(), ReadyToRun(), ArgvReceived(), RefsReceived()
+ */
 void
 BApplication::DispatchMessage(BMessage* message, BHandler* handler)
 {
@@ -1127,6 +1679,22 @@ BApplication::DispatchMessage(BMessage* message, BHandler* handler)
 }
 
 
+/**
+ * @brief Sets the interval for B_PULSE messages.
+ *
+ * Creates or reconfigures a BMessageRunner that posts B_PULSE messages to
+ * the application at the specified interval. Setting the rate to zero
+ * disables pulse messages. The granularity is 100,000 microseconds (0.1s)
+ * as documented in the BeBook.
+ *
+ * @param rate The desired pulse interval in microseconds. Values below zero
+ *             are clamped to zero. The actual rate is rounded down to the
+ *             nearest 100,000 microsecond boundary.
+ *
+ * @note This method locks the application internally. If the lock cannot
+ *       be acquired, the call has no effect.
+ * @see Pulse(), DispatchMessage()
+ */
 void
 BApplication::SetPulseRate(bigtime_t rate)
 {
@@ -1157,6 +1725,19 @@ BApplication::SetPulseRate(bigtime_t rate)
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by this application.
+ *
+ * Adds the "suite/vnd.Be-application" suite name and the flattened
+ * sPropertyInfo table to @a data, then chains to BLooper::GetSupportedSuites().
+ *
+ * @param data The BMessage to populate with suite information.
+ *
+ * @return B_OK on success, B_BAD_VALUE if @a data is NULL, or another
+ *         error code if adding data fails.
+ *
+ * @see ResolveSpecifier(), ScriptReceived(), sPropertyInfo
+ */
 status_t
 BApplication::GetSupportedSuites(BMessage* data)
 {
@@ -1175,6 +1756,19 @@ BApplication::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Performs a reserved virtual function call for binary compatibility.
+ *
+ * Delegates to BLooper::Perform(). This mechanism allows future additions
+ * to the vtable without breaking binary compatibility.
+ *
+ * @param d   The perform_code identifying the operation.
+ * @param arg Operation-specific argument data.
+ *
+ * @return The result from BLooper::Perform().
+ *
+ * @see BLooper::Perform()
+ */
 status_t
 BApplication::Perform(perform_code d, void* arg)
 {
@@ -1182,6 +1776,7 @@ BApplication::Perform(perform_code d, void* arg)
 }
 
 
+/** @brief Reserved virtual function slots for future binary-compatible extensions. */
 void BApplication::_ReservedApplication1() {}
 void BApplication::_ReservedApplication2() {}
 void BApplication::_ReservedApplication3() {}
@@ -1192,6 +1787,30 @@ void BApplication::_ReservedApplication7() {}
 void BApplication::_ReservedApplication8() {}
 
 
+/**
+ * @brief Handles scripting property requests for the application.
+ *
+ * Processes B_GET_PROPERTY and B_COUNT_PROPERTIES requests for the
+ * following properties:
+ * - "Loopers": Returns BMessengers for all loopers.
+ * - "Windows": Returns BMessengers for all windows.
+ * - "Window": Returns a BMessenger for a specific window (by index or name).
+ * - "Looper": Returns a BMessenger for a specific looper (by index, name, or ID).
+ * - "Name": Returns the application's name.
+ * - "Looper" (COUNT): Returns the count of loopers.
+ * - "Window" (COUNT): Returns the count of windows.
+ *
+ * @param message   The scripting request message.
+ * @param index     The current specifier index.
+ * @param specifier The current specifier BMessage.
+ * @param what      The specifier type (e.g. B_INDEX_SPECIFIER).
+ * @param property  The property name being queried.
+ *
+ * @return true if the message was handled and a reply was sent, false if
+ *         the syntax was not recognized (caller should handle it).
+ *
+ * @see ResolveSpecifier(), MessageReceived(), GetSupportedSuites()
+ */
 bool
 BApplication::ScriptReceived(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -1334,6 +1953,18 @@ BApplication::ScriptReceived(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Begins tracking a selection rectangle on screen.
+ *
+ * Sends an AS_BEGIN_RECT_TRACKING message to the app_server to display
+ * a selection rectangle at the given position.
+ *
+ * @param rect       The initial bounding rectangle for the tracking feedback.
+ * @param trackWhole If true, tracks the entire rectangle; if false, tracks
+ *                   only the outline.
+ *
+ * @see EndRectTracking()
+ */
 void
 BApplication::BeginRectTracking(BRect rect, bool trackWhole)
 {
@@ -1345,6 +1976,14 @@ BApplication::BeginRectTracking(BRect rect, bool trackWhole)
 }
 
 
+/**
+ * @brief Ends selection rectangle tracking on screen.
+ *
+ * Sends an AS_END_RECT_TRACKING message to the app_server to stop
+ * displaying the selection rectangle.
+ *
+ * @see BeginRectTracking()
+ */
 void
 BApplication::EndRectTracking()
 {
@@ -1354,6 +1993,17 @@ BApplication::EndRectTracking()
 }
 
 
+/**
+ * @brief Creates and initializes the server-side memory allocator.
+ *
+ * Allocates a new ServerMemoryAllocator instance used for sharing memory
+ * areas with the app_server (e.g. for bitmaps and shared read-only data).
+ *
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or an error
+ *         from ServerMemoryAllocator::InitCheck().
+ *
+ * @see _ConnectToServer(), ServerMemoryAllocator
+ */
 status_t
 BApplication::_SetupServerAllocator()
 {
@@ -1365,6 +2015,23 @@ BApplication::_SetupServerAllocator()
 }
 
 
+/**
+ * @brief Initializes the GUI context: app_server connection, Interface Kit, and cursors.
+ *
+ * Performs three initialization steps in order:
+ * 1. Connects to the app_server via _ConnectToServer().
+ * 2. Initializes the Interface Kit via _init_interface_kit_() (which depends
+ *    on be_app being set and the server link being active).
+ * 3. Creates the global system cursors (B_CURSOR_SYSTEM_DEFAULT, B_CURSOR_I_BEAM).
+ * 4. Records the initial workspace number.
+ *
+ * @return B_OK on success, or an error code from _ConnectToServer() or
+ *         _init_interface_kit_().
+ *
+ * @note This method must be called after be_app has been set, since
+ *       AppServerLink construction depends on the global be_app pointer.
+ * @see _ConnectToServer(), _InitData()
+ */
 status_t
 BApplication::_InitGUIContext()
 {
@@ -1391,6 +2058,26 @@ BApplication::_InitGUIContext()
 }
 
 
+/**
+ * @brief Establishes a connection to the app_server.
+ *
+ * Creates a desktop connection port link, then sends an AS_CREATE_APP message
+ * to register this application with the app_server. The server responds with
+ * a dedicated communication port, a shared read-only memory area, and the
+ * server's team ID. After successful registration:
+ * - The server link is reconfigured to talk to the application's dedicated
+ *   server port instead of the main app_server port.
+ * - The server memory allocator is set up via _SetupServerAllocator().
+ * - The shared read-only area is mapped into fServerReadOnlyMemory.
+ *
+ * @return B_OK on success, B_ERROR if the server rejected the connection
+ *         (triggers a debugger() call), or another error from port creation
+ *         or memory allocation.
+ *
+ * @note A debugger() call is triggered if the app_server cannot provide a
+ *       communication port, which is a fatal condition.
+ * @see _InitGUIContext(), _ReconnectToServer(), _SetupServerAllocator()
+ */
 status_t
 BApplication::_ConnectToServer()
 {
@@ -1451,6 +2138,19 @@ BApplication::_ConnectToServer()
 }
 
 
+/**
+ * @brief Reconnects to the app_server after a server restart.
+ *
+ * Checks whether the current server connection is still valid by querying
+ * the server's team. If the connection is stale (server team no longer
+ * exists), tears down the old connection, re-establishes it via
+ * _ConnectToServer(), and notifies all windows with kMsgAppServerStarted
+ * so they can reconnect their server-side state. Also reconnects bitmaps
+ * and pictures.
+ *
+ * @note A debugger() call is triggered if reconnection fails.
+ * @see _ConnectToServer(), MessageReceived()
+ */
 void
 BApplication::_ReconnectToServer()
 {
@@ -1484,6 +2184,13 @@ BApplication::_ReconnectToServer()
 }
 
 
+/**
+ * @name Drag-and-drop support (unimplemented stubs)
+ *
+ * These methods are intended to handle drag-and-drop operations but are
+ * not yet implemented. They are compiled out via @c \#if @c 0.
+ * @{
+ */
 #if 0
 void
 BApplication::send_drag(BMessage* message, int32 vs_token, BPoint offset,
@@ -1507,8 +2214,32 @@ BApplication::write_drag(_BSession_* session, BMessage* message)
 	// TODO: implement
 }
 #endif
+/** @} */
 
 
+/**
+ * @brief Iterates over all windows, asking each to quit.
+ *
+ * Walks the window list and for each window:
+ * 1. Locks the window.
+ * 2. Skips file panel windows unless @a quitFilePanels is true.
+ * 3. If not forcing, calls QuitRequested(); if the window refuses, returns false.
+ * 4. Re-locks and calls Quit() on the window.
+ * 5. Restarts iteration from the beginning (the list may have changed).
+ *
+ * @param quitFilePanels If true, file panel windows are also quit. If false,
+ *                       they are skipped.
+ * @param force          If true, windows are quit unconditionally without
+ *                       calling QuitRequested().
+ *
+ * @return true if all targeted windows were quit, false if any window
+ *         refused to quit (only possible when @a force is false).
+ *
+ * @note Window pointers may become stale if a window is quit by a previously
+ *       quit window. Lock() on a stale pointer returns false, which is handled
+ *       gracefully.
+ * @see _QuitAllWindows(), QuitRequested()
+ */
 bool
 BApplication::_WindowQuitLoop(bool quitFilePanels, bool force)
 {
@@ -1554,6 +2285,23 @@ BApplication::_WindowQuitLoop(bool quitFilePanels, bool force)
 }
 
 
+/**
+ * @brief Quits all application windows in two passes.
+ *
+ * First pass: quits non-file-panel windows. Second pass: quits file panel
+ * windows. The application is temporarily unlocked during this process to
+ * avoid deadlocks, since BWindow::QuitRequested() may need to lock the
+ * application.
+ *
+ * @param force If true, windows are quit unconditionally. If false, each
+ *              window's QuitRequested() is consulted.
+ *
+ * @return true if all windows were quit, false if any window refused.
+ *
+ * @note The application must be locked when calling this method. It is
+ *       temporarily unlocked internally and re-locked before returning.
+ * @see _WindowQuitLoop(), QuitRequested(), ~BApplication()
+ */
 bool
 BApplication::_QuitAllWindows(bool force)
 {
@@ -1573,6 +2321,20 @@ BApplication::_QuitAllWindows(bool force)
 }
 
 
+/**
+ * @brief Parses a B_ARGV_RECEIVED message and calls the ArgvReceived() hook.
+ *
+ * Extracts the "argc" and "argv" fields from the message, builds a
+ * NULL-terminated argv array by strdup'ing each string, calls
+ * ArgvReceived() with the parsed arguments, then frees the array.
+ *
+ * @param message The B_ARGV_RECEIVED BMessage containing "argc" (int32)
+ *                and "argv" (string array) fields.
+ *
+ * @note On memory allocation failure, the method returns early without
+ *       calling the hook. On parse errors, a diagnostic is printed.
+ * @see ArgvReceived(), DispatchMessage(), fill_argv_message()
+ */
 void
 BApplication::_ArgvReceived(BMessage* message)
 {
@@ -1621,6 +2383,13 @@ BApplication::_ArgvReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the workspace that was active when the application launched.
+ *
+ * @return The workspace index recorded during _InitGUIContext().
+ *
+ * @see _InitGUIContext()
+ */
 uint32
 BApplication::InitialWorkspace()
 {
@@ -1628,6 +2397,20 @@ BApplication::InitialWorkspace()
 }
 
 
+/**
+ * @brief Counts windows, optionally including menu windows.
+ *
+ * Iterates the global looper list and counts entries that are BWindow
+ * instances, excluding offscreen windows and optionally excluding
+ * BMenuWindow instances.
+ *
+ * @param includeMenus If true, BMenuWindow instances are counted.
+ *                     If false, they are excluded.
+ *
+ * @return The number of matching windows.
+ *
+ * @see CountWindows(), _WindowAt()
+ */
 int32
 BApplication::_CountWindows(bool includeMenus) const
 {
@@ -1644,6 +2427,22 @@ BApplication::_CountWindows(bool includeMenus) const
 }
 
 
+/**
+ * @brief Returns the window at the given logical index, optionally including menu windows.
+ *
+ * Acquires the global looper list lock and iterates through all loopers.
+ * Offscreen windows and (optionally) BMenuWindow instances are skipped
+ * when computing the effective index.
+ *
+ * @param index        Zero-based logical index among matching windows.
+ * @param includeMenus If true, BMenuWindow instances are included in indexing.
+ *                     If false, they are skipped.
+ *
+ * @return Pointer to the BWindow at the given logical index, or NULL if
+ *         the index is out of range or the looper list lock cannot be acquired.
+ *
+ * @see WindowAt(), _CountWindows()
+ */
 BWindow*
 BApplication::_WindowAt(uint32 index, bool includeMenus) const
 {
@@ -1668,6 +2467,17 @@ BApplication::_WindowAt(uint32 index, bool includeMenus) const
 }
 
 
+/**
+ * @brief One-time initializer for the application's resource file (static, called via pthread_once).
+ *
+ * Resolves the application's entry_ref (from GetAppInfo() if running, or
+ * from BPrivate::get_app_ref() if not yet running), opens the executable
+ * as a read-only BFile, and creates a BResources instance from it. The
+ * result is stored in the static sAppResources member.
+ *
+ * @note Called exactly once via pthread_once from AppResources(). Thread-safe.
+ * @see AppResources()
+ */
 /*static*/ void
 BApplication::_InitAppResources()
 {

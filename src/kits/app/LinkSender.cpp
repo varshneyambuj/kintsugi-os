@@ -1,13 +1,39 @@
 /*
- * Copyright 2001-2005, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Pahtz <pahtz@yahoo.com.au>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2005 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pahtz <pahtz@yahoo.com.au>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
-/** Class for low-overhead port-based messaging */
+/**
+ * @file LinkSender.cpp
+ * @brief Implementation of BPrivate::LinkSender for low-level port-based message sending.
+ *
+ * Provides the sender side of the lightweight inter-process communication
+ * mechanism used between client applications and the app_server. Messages are
+ * assembled in an internal buffer and flushed to a kernel port. Supports
+ * attaching typed data including primitives, strings, regions, shapes, and
+ * gradients. Large payloads exceeding kMaxBufferSize are transferred via
+ * shared memory areas.
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +78,9 @@ static const size_t kWatermark = kInitialBufferSize - 24;
 
 namespace BPrivate {
 
+/** @brief Constructs a LinkSender attached to the specified port.
+ *  @param port The kernel port ID to which messages will be sent.
+ */
 LinkSender::LinkSender(port_id port)
 	:
 	fPort(port),
@@ -66,12 +95,16 @@ LinkSender::LinkSender(port_id port)
 }
 
 
+/** @brief Destroys the LinkSender and frees the internal send buffer. */
 LinkSender::~LinkSender()
 {
 	free(fBuffer);
 }
 
 
+/** @brief Sets the kernel port to which messages will be sent.
+ *  @param port The new destination port ID.
+ */
 void
 LinkSender::SetPort(port_id port)
 {
@@ -79,6 +112,18 @@ LinkSender::SetPort(port_id port)
 }
 
 
+/** @brief Begins composing a new message with the given code.
+ *
+ *  Finalizes (or cancels) any previously started message, then writes a
+ *  new message_header into the buffer. If necessary, the buffer is flushed
+ *  to make room for the new message.
+ *
+ *  @param code The message code identifying this message type.
+ *  @param minSize Minimum payload size hint (excluding the header) used to
+ *                 pre-allocate buffer space. Defaults to 0.
+ *  @return B_OK on success, B_NO_MEMORY if buffer allocation fails, or an
+ *          error from Flush().
+ */
 status_t
 LinkSender::StartMessage(int32 code, size_t minSize)
 {
@@ -121,6 +166,17 @@ LinkSender::StartMessage(int32 code, size_t minSize)
 }
 
 
+/** @brief Finalizes the current message being composed.
+ *
+ *  Records the total message size in the header and optionally sets the
+ *  needsReply flag. After this call, the buffer write position advances
+ *  to the start of the next message slot.
+ *
+ *  @param needsReply If true, the kNeedsReply flag is set in the message
+ *                    header so the receiver knows a reply is expected.
+ *  @return B_OK on success, or the current error status if the message
+ *          was not properly started.
+ */
 status_t
 LinkSender::EndMessage(bool needsReply)
 {
@@ -141,6 +197,12 @@ LinkSender::EndMessage(bool needsReply)
 }
 
 
+/** @brief Discards the current in-progress message.
+ *
+ *  Rewinds the buffer write position back to the start of the current
+ *  message and resets the error status, effectively canceling the message
+ *  without sending it.
+ */
 void
 LinkSender::CancelMessage()
 {
@@ -149,6 +211,20 @@ LinkSender::CancelMessage()
 }
 
 
+/** @brief Appends raw data to the current message.
+ *
+ *  Copies the supplied data into the send buffer as part of the current
+ *  message payload. For very large payloads (>= kMaxBufferSize), data is
+ *  transferred via a shared memory area instead of being buffered inline.
+ *  If insufficient buffer space remains, completed messages are flushed
+ *  first.
+ *
+ *  @param passedData Pointer to the data to attach.
+ *  @param passedSize Number of bytes to attach.
+ *  @return B_OK on success, B_BAD_VALUE if size is zero, B_NO_INIT if
+ *          StartMessage() has not been called, or another error code on
+ *          failure.
+ */
 status_t
 LinkSender::Attach(const void *passedData, size_t passedSize)
 {
@@ -215,6 +291,17 @@ LinkSender::Attach(const void *passedData, size_t passedSize)
 }
 
 
+/** @brief Appends a length-prefixed string to the current message.
+ *
+ *  Writes a 32-bit length prefix followed by the string data. If the
+ *  string is NULL, an empty string is attached. Strings exceeding
+ *  kMaxStringSize are truncated to zero length.
+ *
+ *  @param string The null-terminated string to attach, or NULL for empty.
+ *  @param length The number of characters to attach, or -1 to use the
+ *                full string length.
+ *  @return B_OK on success, or an error code from Attach().
+ */
 status_t
 LinkSender::AttachString(const char *string, int32 length)
 {
@@ -245,6 +332,14 @@ LinkSender::AttachString(const char *string, int32 length)
 }
 
 
+/** @brief Serializes and appends a BRegion to the current message.
+ *
+ *  Writes the region's rectangle count, bounding rectangle, and
+ *  individual clipping rectangles into the message buffer.
+ *
+ *  @param region The BRegion to serialize and attach.
+ *  @return B_OK on success, or an error code from Attach().
+ */
 status_t
 LinkSender::AttachRegion(const BRegion& region)
 {
@@ -259,6 +354,14 @@ LinkSender::AttachRegion(const BRegion& region)
 }
 
 
+/** @brief Serializes and appends a BShape to the current message.
+ *
+ *  Writes the shape's operation count, point count, operation list, and
+ *  point list into the message buffer.
+ *
+ *  @param shape The BShape to serialize and attach.
+ *  @return B_OK unconditionally (individual Attach errors are deferred).
+ */
 status_t
 LinkSender::AttachShape(BShape& shape)
 {
@@ -278,6 +381,15 @@ LinkSender::AttachShape(BShape& shape)
 }
 
 
+/** @brief Serializes and appends a BGradient to the current message.
+ *
+ *  Writes the gradient type, color stop count, individual color stops,
+ *  and type-specific parameters (e.g., start/end for linear, center/radius
+ *  for radial) into the message buffer.
+ *
+ *  @param gradient The BGradient to serialize and attach.
+ *  @return B_OK on success, or an error code from Attach().
+ */
 status_t
 LinkSender::AttachGradient(const BGradient& gradient)
 {
@@ -355,6 +467,19 @@ LinkSender::AttachGradient(const BGradient& gradient)
 }
 
 
+/** @brief Resizes the internal send buffer to accommodate the given size.
+ *
+ *  Allocates a new buffer if the current one is too small. The size is
+ *  clamped to at least kInitialBufferSize and at most kMaxBufferSize,
+ *  rounded up to a page boundary for larger sizes.
+ *
+ *  @param newSize The minimum required buffer size in bytes.
+ *  @param _oldBuffer If non-NULL, receives the pointer to the previous
+ *                    buffer (caller must free it). If NULL, the old buffer
+ *                    is freed automatically.
+ *  @return B_OK on success, B_NO_MEMORY if allocation fails, or
+ *          B_BUFFER_OVERFLOW if newSize exceeds kMaxBufferSize.
+ */
 status_t
 LinkSender::AdjustBuffer(size_t newSize, char **_oldBuffer)
 {
@@ -389,6 +514,16 @@ LinkSender::AdjustBuffer(size_t newSize, char **_oldBuffer)
 }
 
 
+/** @brief Flushes all completed messages and preserves the current incomplete one.
+ *
+ *  Temporarily hides the in-progress message, flushes all completed
+ *  messages to the port, then moves the incomplete message to the start
+ *  of a (potentially resized) buffer so composition can continue.
+ *
+ *  @param newBufferSize The minimum buffer size needed after the flush,
+ *                       accounting for the incomplete message and new data.
+ *  @return B_OK on success, or an error code from Flush() or AdjustBuffer().
+ */
 status_t
 LinkSender::FlushCompleted(size_t newBufferSize)
 {
@@ -420,6 +555,18 @@ LinkSender::FlushCompleted(size_t newBufferSize)
 }
 
 
+/** @brief Writes all buffered messages to the destination port.
+ *
+ *  Finalizes the current message (if any), then writes the entire buffer
+ *  contents to the kernel port as a single port message. After a
+ *  successful flush the buffer is reset.
+ *
+ *  @param timeout Maximum time to wait for the port write. Use
+ *                 B_INFINITE_TIMEOUT to block indefinitely.
+ *  @param needsReply If true, sets the needsReply flag on the last
+ *                    message before flushing.
+ *  @return B_OK on success, or an error code from write_port().
+ */
 status_t
 LinkSender::Flush(bigtime_t timeout, bool needsReply)
 {

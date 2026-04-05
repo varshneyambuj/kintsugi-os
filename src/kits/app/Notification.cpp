@@ -1,11 +1,36 @@
 /*
- * Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
- *		Stephan Aßmus, superstippi@gmx.de
- *		Brian Hill, supernova@tycho.email
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Brian Hill, supernova@tycho.email
+ */
+
+
+/** @file Notification.cpp
+ *  @brief Implementation of BNotification, the system notification interface.
+ *
+ *  BNotification allows applications to display system notifications to the
+ *  user. Notifications can include a title, content, icon, progress bar, and
+ *  on-click actions such as launching an application or opening a file.
  */
 
 
@@ -25,6 +50,15 @@
 #include <Roster.h>
 
 
+/** @brief Constructs a new notification of the specified type.
+ *
+ *  Automatically determines the source application signature, name,
+ *  and icon from the running application's info.
+ *
+ *  @param type The notification type (e.g., B_INFORMATION_NOTIFICATION,
+ *              B_IMPORTANT_NOTIFICATION, B_ERROR_NOTIFICATION,
+ *              B_PROGRESS_NOTIFICATION).
+ */
 BNotification::BNotification(notification_type type)
 	:
 	BArchivable(),
@@ -55,6 +89,13 @@ BNotification::BNotification(notification_type type)
 }
 
 
+/** @brief Constructs a notification from an archived BMessage.
+ *
+ *  Restores all notification properties from the archive, including type,
+ *  title, content, group, icon, on-click references, and arguments.
+ *
+ *  @param archive The archived message to restore from.
+ */
 BNotification::BNotification(BMessage* archive)
 	:
 	BArchivable(archive),
@@ -127,6 +168,11 @@ BNotification::BNotification(BMessage* archive)
 }
 
 
+/** @brief Destroys the notification and frees all associated resources.
+ *
+ *  Releases the on-click file, icon bitmap, entry references, and
+ *  argument strings.
+ */
 BNotification::~BNotification()
 {
 	delete fFile;
@@ -140,6 +186,9 @@ BNotification::~BNotification()
 }
 
 
+/** @brief Returns the initialization status of the notification.
+ *  @return B_OK if the notification was initialized successfully, or an error code.
+ */
 status_t
 BNotification::InitCheck() const
 {
@@ -147,6 +196,10 @@ BNotification::InitCheck() const
 }
 
 
+/** @brief Creates a new BNotification from an archived message.
+ *  @param archive The archived message to instantiate from.
+ *  @return A new BNotification object, or NULL if instantiation validation fails.
+ */
 BArchivable*
 BNotification::Instantiate(BMessage* archive)
 {
@@ -157,6 +210,15 @@ BNotification::Instantiate(BMessage* archive)
 }
 
 
+/** @brief Archives the notification into a BMessage.
+ *
+ *  Stores all notification properties including source info, type, group,
+ *  title, content, message ID, progress, on-click targets, and icon.
+ *
+ *  @param archive The message to archive into.
+ *  @param deep    Whether to perform a deep archive (includes child objects).
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNotification::Archive(BMessage* archive, bool deep) const
 {
@@ -222,6 +284,9 @@ BNotification::Archive(BMessage* archive, bool deep) const
 }
 
 
+/** @brief Returns the MIME signature of the source application.
+ *  @return The source application's MIME signature string.
+ */
 const char*
 BNotification::SourceSignature() const
 {
@@ -229,6 +294,9 @@ BNotification::SourceSignature() const
 }
 
 
+/** @brief Returns the name of the source application.
+ *  @return The source application name string.
+ */
 const char*
 BNotification::SourceName() const
 {
@@ -236,6 +304,9 @@ BNotification::SourceName() const
 }
 
 
+/** @brief Returns the type of this notification.
+ *  @return The notification_type value.
+ */
 notification_type
 BNotification::Type() const
 {
@@ -243,6 +314,9 @@ BNotification::Type() const
 }
 
 
+/** @brief Returns the group name of this notification.
+ *  @return The group name string, or NULL if no group is set.
+ */
 const char*
 BNotification::Group() const
 {
@@ -252,6 +326,9 @@ BNotification::Group() const
 }
 
 
+/** @brief Sets the group name for this notification.
+ *  @param group The group name to assign.
+ */
 void
 BNotification::SetGroup(const BString& group)
 {
@@ -259,6 +336,9 @@ BNotification::SetGroup(const BString& group)
 }
 
 
+/** @brief Returns the title of this notification.
+ *  @return The title string, or NULL if no title is set.
+ */
 const char*
 BNotification::Title() const
 {
@@ -268,6 +348,9 @@ BNotification::Title() const
 }
 
 
+/** @brief Sets the title of this notification.
+ *  @param title The title string to assign.
+ */
 void
 BNotification::SetTitle(const BString& title)
 {
@@ -275,6 +358,9 @@ BNotification::SetTitle(const BString& title)
 }
 
 
+/** @brief Returns the content text of this notification.
+ *  @return The content string, or NULL if no content is set.
+ */
 const char*
 BNotification::Content() const
 {
@@ -284,6 +370,9 @@ BNotification::Content() const
 }
 
 
+/** @brief Sets the content text of this notification.
+ *  @param content The content string to assign.
+ */
 void
 BNotification::SetContent(const BString& content)
 {
@@ -291,6 +380,12 @@ BNotification::SetContent(const BString& content)
 }
 
 
+/** @brief Returns the message ID of this notification.
+ *
+ *  The message ID can be used to update or replace an existing notification.
+ *
+ *  @return The message ID string, or NULL if no ID is set.
+ */
 const char*
 BNotification::MessageID() const
 {
@@ -300,6 +395,9 @@ BNotification::MessageID() const
 }
 
 
+/** @brief Sets the message ID for this notification.
+ *  @param id The message ID string to assign.
+ */
 void
 BNotification::SetMessageID(const BString& id)
 {
@@ -307,6 +405,12 @@ BNotification::SetMessageID(const BString& id)
 }
 
 
+/** @brief Returns the progress value for a progress notification.
+ *
+ *  Only meaningful for notifications of type B_PROGRESS_NOTIFICATION.
+ *
+ *  @return The progress value between 0.0 and 1.0, or -1 if not a progress notification.
+ */
 float
 BNotification::Progress() const
 {
@@ -316,6 +420,12 @@ BNotification::Progress() const
 }
 
 
+/** @brief Sets the progress value for a progress notification.
+ *
+ *  The value is clamped to the range [0.0, 1.0].
+ *
+ *  @param progress The progress value to set.
+ */
 void
 BNotification::SetProgress(float progress)
 {
@@ -328,6 +438,9 @@ BNotification::SetProgress(float progress)
 }
 
 
+/** @brief Returns the MIME signature of the application to launch on click.
+ *  @return The on-click application signature, or NULL if not set.
+ */
 const char*
 BNotification::OnClickApp() const
 {
@@ -337,6 +450,9 @@ BNotification::OnClickApp() const
 }
 
 
+/** @brief Sets the application to launch when the notification is clicked.
+ *  @param app The MIME signature of the target application.
+ */
 void
 BNotification::SetOnClickApp(const BString& app)
 {
@@ -344,6 +460,9 @@ BNotification::SetOnClickApp(const BString& app)
 }
 
 
+/** @brief Returns the file reference to open when the notification is clicked.
+ *  @return A pointer to the on-click entry_ref, or NULL if not set.
+ */
 const entry_ref*
 BNotification::OnClickFile() const
 {
@@ -351,6 +470,10 @@ BNotification::OnClickFile() const
 }
 
 
+/** @brief Sets the file to open when the notification is clicked.
+ *  @param file The entry_ref of the file, or NULL to clear.
+ *  @return B_OK on success, or B_NO_MEMORY if allocation fails.
+ */
 status_t
 BNotification::SetOnClickFile(const entry_ref* file)
 {
@@ -367,6 +490,10 @@ BNotification::SetOnClickFile(const entry_ref* file)
 }
 
 
+/** @brief Adds an entry reference to the on-click reference list.
+ *  @param ref The entry_ref to add.
+ *  @return B_OK on success, B_BAD_VALUE if ref is NULL, or B_NO_MEMORY on failure.
+ */
 status_t
 BNotification::AddOnClickRef(const entry_ref* ref)
 {
@@ -381,6 +508,9 @@ BNotification::AddOnClickRef(const entry_ref* ref)
 }
 
 
+/** @brief Returns the number of on-click entry references.
+ *  @return The count of on-click references.
+ */
 int32
 BNotification::CountOnClickRefs() const
 {
@@ -388,6 +518,10 @@ BNotification::CountOnClickRefs() const
 }
 
 
+/** @brief Returns the on-click entry reference at the given index.
+ *  @param index The zero-based index of the reference.
+ *  @return A pointer to the entry_ref, or NULL if the index is out of range.
+ */
 const entry_ref*
 BNotification::OnClickRefAt(int32 index) const
 {
@@ -395,6 +529,10 @@ BNotification::OnClickRefAt(int32 index) const
 }
 
 
+/** @brief Adds a command-line argument to the on-click argument list.
+ *  @param arg The argument string to add.
+ *  @return B_OK on success, or B_NO_MEMORY if allocation fails.
+ */
 status_t
 BNotification::AddOnClickArg(const BString& arg)
 {
@@ -406,6 +544,9 @@ BNotification::AddOnClickArg(const BString& arg)
 }
 
 
+/** @brief Returns the number of on-click command-line arguments.
+ *  @return The count of on-click arguments.
+ */
 int32
 BNotification::CountOnClickArgs() const
 {
@@ -413,6 +554,10 @@ BNotification::CountOnClickArgs() const
 }
 
 
+/** @brief Returns the on-click argument string at the given index.
+ *  @param index The zero-based index of the argument.
+ *  @return The argument string, or NULL if the index is out of range.
+ */
 const char*
 BNotification::OnClickArgAt(int32 index) const
 {
@@ -420,6 +565,9 @@ BNotification::OnClickArgAt(int32 index) const
 }
 
 
+/** @brief Returns the notification icon bitmap.
+ *  @return A pointer to the icon BBitmap, or NULL if no icon is set.
+ */
 const BBitmap*
 BNotification::Icon() const
 {
@@ -427,6 +575,13 @@ BNotification::Icon() const
 }
 
 
+/** @brief Sets the notification icon.
+ *
+ *  A copy of the provided bitmap is made. Pass NULL to clear the icon.
+ *
+ *  @param icon The bitmap to use as the icon, or NULL to clear.
+ *  @return B_OK on success, or B_NO_MEMORY if allocation fails.
+ */
 status_t
 BNotification::SetIcon(const BBitmap* icon)
 {
@@ -444,6 +599,16 @@ BNotification::SetIcon(const BBitmap* icon)
 }
 
 
+/** @brief Sends the notification to the notification server for display.
+ *
+ *  Archives the notification and sends it to the system notification
+ *  server. An optional timeout can be specified to control how long
+ *  the notification is displayed.
+ *
+ *  @param timeout Duration in microseconds to display the notification,
+ *                 or 0 for the default duration.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNotification::Send(bigtime_t timeout)
 {

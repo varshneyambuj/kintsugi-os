@@ -1,9 +1,44 @@
 /*
- * Copyright 2005-2017 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Michael Lotz, mmlr@mlotz.ch
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2017 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz, mmlr@mlotz.ch
+ */
+
+
+/**
+ * @file Message.cpp
+ * @brief Implementation of the BMessage class, the core data container and
+ *        inter-application messaging primitive.
+ *
+ * BMessage is the fundamental unit of communication in the application
+ * framework. It carries a command code (@c what) and an arbitrary collection
+ * of typed, named data fields. Messages are used for application scripting,
+ * drag-and-drop, clipboard transfers, and general inter-thread / inter-team
+ * communication via BMessenger and BLooper.
+ *
+ * Internally, message data is stored in three contiguous buffers: a
+ * message_header, an array of field_header descriptors, and a raw data
+ * segment. Fields are located by a hash table embedded in the header.
+ * Large messages can be transmitted through shared memory areas instead
+ * of being copied through ports, using a copy-on-write scheme.
  */
 
 
@@ -67,6 +102,7 @@ const char* B_PROPERTY_ENTRY = "property";
 const char* B_PROPERTY_NAME_ENTRY = "name";
 
 
+/** @brief Forward declaration of static helper that reads a reply from a port. */
 static status_t handle_reply(port_id replyPort, int32* pCode,
 	bigtime_t timeout, BMessage* reply);
 
@@ -83,6 +119,11 @@ port_id BMessage::sReplyPorts[sNumReplyPorts];
 int32 BMessage::sReplyPortInUse[sNumReplyPorts];
 
 
+/**
+ * @brief Prints a typed value to stdout by calling its PrintToStream() method.
+ * @param pointer Raw byte pointer to the typed data.
+ * @tparam Type The data type (must have a PrintToStream() member).
+ */
 template<typename Type>
 static void
 print_to_stream_type(uint8* pointer)
@@ -92,6 +133,12 @@ print_to_stream_type(uint8* pointer)
 }
 
 
+/**
+ * @brief Prints a typed value to stdout using a printf-style format with two arguments.
+ * @param format A printf format string expecting two values (e.g. hex and decimal).
+ * @param pointer Raw byte pointer to the typed data.
+ * @tparam Type The data type to interpret at the pointer location.
+ */
 template<typename Type>
 static void
 print_type(const char* format, uint8* pointer)
@@ -101,6 +148,12 @@ print_type(const char* format, uint8* pointer)
 }
 
 
+/**
+ * @brief Prints a typed value to stdout using a printf-style format with three arguments.
+ * @param format A printf format string expecting three values (e.g. hex, decimal, char).
+ * @param pointer Raw byte pointer to the typed data.
+ * @tparam Type The data type to interpret at the pointer location.
+ */
 template<typename Type>
 static void
 print_type3(const char* format, uint8* pointer)
@@ -110,6 +163,19 @@ print_type3(const char* format, uint8* pointer)
 }
 
 
+/**
+ * @brief Reads a reply message from a port, with a timeout.
+ *
+ * Waits for data on @a replyPort up to @a timeout microseconds, reads the
+ * raw buffer, and unflattens it into @a reply. Used internally by the
+ * synchronous SendReply / _SendMessage paths.
+ *
+ * @param replyPort The port to read the reply from.
+ * @param _code     Receives the port message code.
+ * @param timeout   Maximum time to wait, in microseconds.
+ * @param reply     The BMessage to populate with the reply data.
+ * @return B_OK on success, or an error code on failure.
+ */
 static status_t
 handle_reply(port_id replyPort, int32* _code, bigtime_t timeout,
 	BMessage* reply)
@@ -144,6 +210,12 @@ handle_reply(port_id replyPort, int32* _code, bigtime_t timeout,
 //	#pragma mark -
 
 
+/**
+ * @brief Default constructor; creates an empty message with what = 0.
+ *
+ * Initializes all internal buffers to NULL and sets up a fresh message
+ * header via _InitCommon().
+ */
 BMessage::BMessage()
 {
 	DEBUG_FUNCTION_ENTER;
@@ -151,6 +223,11 @@ BMessage::BMessage()
 }
 
 
+/**
+ * @brief Constructs a message by copying from a pointer to another BMessage.
+ * @param other Pointer to the source message to copy.
+ * @note Delivery flags (reply-required, was-delivered, etc.) are not copied.
+ */
 BMessage::BMessage(BMessage* other)
 {
 	DEBUG_FUNCTION_ENTER;
@@ -159,6 +236,10 @@ BMessage::BMessage(BMessage* other)
 }
 
 
+/**
+ * @brief Constructs a message with the given command code.
+ * @param _what The message command code (also stored in the public @c what member).
+ */
 BMessage::BMessage(uint32 _what)
 {
 	DEBUG_FUNCTION_ENTER;
@@ -168,6 +249,12 @@ BMessage::BMessage(uint32 _what)
 }
 
 
+/**
+ * @brief Copy constructor; creates a deep copy of @a other.
+ * @param other The source message to copy.
+ * @note Delivery flags (reply-required, was-delivered, etc.) are stripped
+ *       from the clone.
+ */
 BMessage::BMessage(const BMessage& other)
 {
 	DEBUG_FUNCTION_ENTER;
@@ -176,6 +263,12 @@ BMessage::BMessage(const BMessage& other)
 }
 
 
+/**
+ * @brief Destructor.
+ *
+ * Clears all data. If a reply is still expected (IsSourceWaiting()), a
+ * B_NO_REPLY message is sent automatically before destruction.
+ */
 BMessage::~BMessage()
 {
 	DEBUG_FUNCTION_ENTER;
@@ -183,6 +276,16 @@ BMessage::~BMessage()
 }
 
 
+/**
+ * @brief Copy-assignment operator; performs a deep copy of @a other.
+ *
+ * Clears the current contents, then copies the header, field descriptors,
+ * and data buffer from @a other. Delivery-related flags are stripped from
+ * the copy, and the shared-area reference is not inherited.
+ *
+ * @param other The source message to copy.
+ * @return A reference to this message.
+ */
 BMessage&
 BMessage::operator=(const BMessage& other)
 {
@@ -242,6 +345,11 @@ BMessage::operator=(const BMessage& other)
 }
 
 
+/**
+ * @brief Allocates memory for a BMessage from the block cache.
+ * @param size The requested allocation size in bytes.
+ * @return Pointer to the allocated memory.
+ */
 void*
 BMessage::operator new(size_t size)
 {
@@ -250,6 +358,12 @@ BMessage::operator new(size_t size)
 }
 
 
+/**
+ * @brief Non-throwing allocation of a BMessage from the block cache.
+ * @param size    The requested allocation size in bytes.
+ * @param noThrow The std::nothrow tag.
+ * @return Pointer to the allocated memory, or NULL on failure.
+ */
 void*
 BMessage::operator new(size_t size, const std::nothrow_t& noThrow)
 {
@@ -258,6 +372,12 @@ BMessage::operator new(size_t size, const std::nothrow_t& noThrow)
 }
 
 
+/**
+ * @brief Placement new operator; returns the provided pointer unchanged.
+ * @param size    Unused allocation size.
+ * @param pointer The pre-allocated memory location.
+ * @return The same @a pointer passed in.
+ */
 void*
 BMessage::operator new(size_t, void* pointer)
 {
@@ -266,6 +386,11 @@ BMessage::operator new(size_t, void* pointer)
 }
 
 
+/**
+ * @brief Returns memory for a BMessage back to the block cache.
+ * @param pointer The memory to release.
+ * @param size    The size of the allocation.
+ */
 void
 BMessage::operator delete(void* pointer, size_t size)
 {
@@ -276,6 +401,20 @@ BMessage::operator delete(void* pointer, size_t size)
 }
 
 
+/**
+ * @brief Compares the data payload of this message with another.
+ *
+ * Checks whether all fields in this message have identical counterparts
+ * (same name, type, count, and raw data) in @a other. Optionally ignores
+ * field ordering and recursively compares nested BMessages.
+ *
+ * @param other            The message to compare against.
+ * @param ignoreFieldOrder If true, fields are matched by name regardless of
+ *                         their storage order.
+ * @param deep             If true, nested B_MESSAGE_TYPE fields are compared
+ *                         recursively via HasSameData().
+ * @return true if the data payloads are equivalent, false otherwise.
+ */
 bool
 BMessage::HasSameData(const BMessage& other, bool ignoreFieldOrder,
 	bool deep) const
@@ -340,6 +479,16 @@ BMessage::HasSameData(const BMessage& other, bool ignoreFieldOrder,
 }
 
 
+/**
+ * @brief Initializes all internal member variables to their default state.
+ *
+ * Resets pointers (fHeader, fFields, fData, fOriginal, fQueueLink,
+ * fArchivingPointer) to NULL, zeroes counters, and sets @c what to 0.
+ * Optionally calls _InitHeader() to allocate and populate the message header.
+ *
+ * @param initHeader If true, _InitHeader() is called to allocate the header.
+ * @return B_OK on success, or B_NO_MEMORY if header allocation fails.
+ */
 status_t
 BMessage::_InitCommon(bool initHeader)
 {
@@ -365,6 +514,16 @@ BMessage::_InitCommon(bool initHeader)
 }
 
 
+/**
+ * @brief Allocates (if needed) and initializes the message_header struct.
+ *
+ * Sets the format to MESSAGE_FORMAT_HAIKU, marks the message as valid, copies
+ * the current @c what value, resets the specifier index, and fills the hash
+ * table with -1 (indicating empty buckets). Port and token fields for reply
+ * routing are set to invalid/null values.
+ *
+ * @return B_OK on success, or B_NO_MEMORY if allocation fails.
+ */
 status_t
 BMessage::_InitHeader()
 {
@@ -395,6 +554,17 @@ BMessage::_InitHeader()
 }
 
 
+/**
+ * @brief Frees all internal resources and resets the message to an
+ *        uninitialized state.
+ *
+ * If a reply is still expected (IsSourceWaiting()), a B_NO_REPLY message is
+ * sent before cleanup. If data is backed by a shared area, _Dereference()
+ * is called to release it. All heap-allocated buffers (header, fields, data)
+ * are freed, and the cached original message is deleted.
+ *
+ * @return B_OK always.
+ */
 status_t
 BMessage::_Clear()
 {
@@ -430,6 +600,21 @@ BMessage::_Clear()
 }
 
 
+/**
+ * @brief Retrieves information about a field by index, optionally filtered by type.
+ *
+ * If @a typeRequested is B_ANY_TYPE the field at absolute @a index is
+ * returned. Otherwise, the index counts only fields whose type matches
+ * @a typeRequested.
+ *
+ * @param typeRequested Type filter (B_ANY_TYPE for no filter).
+ * @param index         Zero-based index into the (filtered) field list.
+ * @param nameFound     Receives the field name (may be NULL).
+ * @param typeFound     Receives the field's type code (may be NULL).
+ * @param countFound    Receives the number of items in the field (may be NULL).
+ * @return B_OK on success, B_BAD_INDEX if @a index is out of range,
+ *         B_BAD_TYPE if no fields match @a typeRequested, or B_NO_INIT.
+ */
 status_t
 BMessage::GetInfo(type_code typeRequested, int32 index, char** nameFound,
 	type_code* typeFound, int32* countFound) const
@@ -475,6 +660,13 @@ BMessage::GetInfo(type_code typeRequested, int32 index, char** nameFound,
 }
 
 
+/**
+ * @brief Retrieves the type and item count of a named field.
+ * @param name       The field name to look up.
+ * @param typeFound  Receives the field's type code (may be NULL).
+ * @param countFound Receives the number of items (may be NULL).
+ * @return B_OK on success, or B_NAME_NOT_FOUND / B_NO_INIT on error.
+ */
 status_t
 BMessage::GetInfo(const char* name, type_code* typeFound,
 	int32* countFound) const
@@ -497,6 +689,13 @@ BMessage::GetInfo(const char* name, type_code* typeFound,
 }
 
 
+/**
+ * @brief Retrieves the type and fixed-size flag of a named field.
+ * @param name      The field name to look up.
+ * @param typeFound Receives the field's type code (may be NULL).
+ * @param fixedSize Receives true if items have a fixed size (may be NULL).
+ * @return B_OK on success, or B_NAME_NOT_FOUND / B_NO_INIT on error.
+ */
 status_t
 BMessage::GetInfo(const char* name, type_code* typeFound, bool* fixedSize)
 	const
@@ -516,6 +715,14 @@ BMessage::GetInfo(const char* name, type_code* typeFound, bool* fixedSize)
 }
 
 
+/**
+ * @brief Retrieves the type, item count, and fixed-size flag of a named field.
+ * @param name       The field name to look up.
+ * @param typeFound  Receives the field's type code (may be NULL).
+ * @param countFound Receives the number of items (may be NULL).
+ * @param fixedSize  Receives true if items have a fixed size (may be NULL).
+ * @return B_OK on success, or B_NAME_NOT_FOUND / B_NO_INIT on error.
+ */
 status_t
 BMessage::GetInfo(const char* name, type_code* typeFound, int32* countFound,
 	bool* fixedSize) const
@@ -537,6 +744,11 @@ BMessage::GetInfo(const char* name, type_code* typeFound, int32* countFound,
 }
 
 
+/**
+ * @brief Returns the number of named fields, optionally filtered by type.
+ * @param type The type code to filter by, or B_ANY_TYPE for all fields.
+ * @return The number of matching fields, or 0 if the message is uninitialized.
+ */
 int32
 BMessage::CountNames(type_code type) const
 {
@@ -558,6 +770,10 @@ BMessage::CountNames(type_code type) const
 }
 
 
+/**
+ * @brief Tests whether the message contains any data fields.
+ * @return true if the message has no fields or is uninitialized.
+ */
 bool
 BMessage::IsEmpty() const
 {
@@ -566,6 +782,14 @@ BMessage::IsEmpty() const
 }
 
 
+/**
+ * @brief Tests whether this message is a system-defined message.
+ *
+ * System messages have a @c what code whose four characters follow the
+ * convention: underscore followed by three uppercase letters (e.g. '_QRY').
+ *
+ * @return true if the message is a system-defined message.
+ */
 bool
 BMessage::IsSystem() const
 {
@@ -588,6 +812,10 @@ BMessage::IsSystem() const
 }
 
 
+/**
+ * @brief Tests whether this message is a reply to a previous message.
+ * @return true if the MESSAGE_FLAG_IS_REPLY flag is set.
+ */
 bool
 BMessage::IsReply() const
 {
@@ -596,6 +824,13 @@ BMessage::IsReply() const
 }
 
 
+/**
+ * @brief Prints a human-readable representation of the message to stdout.
+ *
+ * Outputs the @c what code (as a four-character constant or hex) followed by
+ * each field with its name, type, and value(s). Nested BMessages are
+ * printed recursively with indentation.
+ */
 void
 BMessage::PrintToStream() const
 {
@@ -604,6 +839,15 @@ BMessage::PrintToStream() const
 }
 
 
+/**
+ * @brief Internal recursive helper for PrintToStream().
+ *
+ * Prints the message contents with the given indentation prefix for nested
+ * messages. Does not print the closing brace; the caller is responsible for
+ * that.
+ *
+ * @param indent Whitespace prefix for each output line (grows with nesting).
+ */
 void
 BMessage::_PrintToStream(const char* indent) const
 {
@@ -766,6 +1010,18 @@ BMessage::_PrintToStream(const char* indent) const
 }
 
 
+/**
+ * @brief Renames an existing field.
+ *
+ * Finds the field named @a oldEntry, removes it from its hash chain,
+ * resizes the data buffer to accommodate the new name length, and
+ * re-inserts it under the @a newEntry hash bucket.
+ *
+ * @param oldEntry The current field name.
+ * @param newEntry The desired new field name.
+ * @return B_OK on success, B_NAME_NOT_FOUND if @a oldEntry does not exist,
+ *         B_BAD_VALUE if either argument is NULL, or B_NO_INIT.
+ */
 status_t
 BMessage::Rename(const char* oldEntry, const char* newEntry)
 {
@@ -820,6 +1076,10 @@ BMessage::Rename(const char* oldEntry, const char* newEntry)
 }
 
 
+/**
+ * @brief Tests whether this message was delivered to a target handler/looper.
+ * @return true if the MESSAGE_FLAG_WAS_DELIVERED flag is set.
+ */
 bool
 BMessage::WasDelivered() const
 {
@@ -829,6 +1089,10 @@ BMessage::WasDelivered() const
 }
 
 
+/**
+ * @brief Tests whether the sender is synchronously waiting for a reply.
+ * @return true if a reply is required and has not yet been sent.
+ */
 bool
 BMessage::IsSourceWaiting() const
 {
@@ -839,6 +1103,11 @@ BMessage::IsSourceWaiting() const
 }
 
 
+/**
+ * @brief Tests whether the message was sent from a different team (process).
+ * @return true if the message was delivered and the sender's team differs
+ *         from the current team.
+ */
 bool
 BMessage::IsSourceRemote() const
 {
@@ -849,6 +1118,16 @@ BMessage::IsSourceRemote() const
 }
 
 
+/**
+ * @brief Returns a BMessenger that addresses the sender of this message.
+ *
+ * Constructs a messenger from the reply_team, reply_port, and reply_target
+ * stored in the header. If the message was not delivered, an invalid
+ * BMessenger is returned.
+ *
+ * @return A BMessenger targeting the original sender, or an invalid
+ *         messenger if the message was never delivered.
+ */
 BMessenger
 BMessage::ReturnAddress() const
 {
@@ -863,6 +1142,15 @@ BMessage::ReturnAddress() const
 }
 
 
+/**
+ * @brief Returns the previous message in a reply chain, if any.
+ *
+ * When a reply is sent without a required-reply flag, the original message
+ * is embedded under the "_previous_" field. This method lazily unflattens
+ * and caches that embedded message.
+ *
+ * @return A pointer to the previous BMessage, or NULL if none exists.
+ */
 const BMessage*
 BMessage::Previous() const
 {
@@ -881,6 +1169,10 @@ BMessage::Previous() const
 }
 
 
+/**
+ * @brief Tests whether this message was delivered via a drag-and-drop operation.
+ * @return true if the MESSAGE_FLAG_WAS_DROPPED flag is set.
+ */
 bool
 BMessage::WasDropped() const
 {
@@ -890,6 +1182,16 @@ BMessage::WasDropped() const
 }
 
 
+/**
+ * @brief Returns the screen location where the message was dropped.
+ *
+ * The drop point and optional offset are stored internally as
+ * "_drop_point_" and "_drop_offset_" fields during a drag-and-drop.
+ *
+ * @param offset If non-NULL, receives the offset of the drop from the
+ *               dragged bitmap or rect's origin.
+ * @return The screen coordinate where the drop occurred.
+ */
 BPoint
 BMessage::DropPoint(BPoint* offset) const
 {
@@ -901,6 +1203,12 @@ BMessage::DropPoint(BPoint* offset) const
 }
 
 
+/**
+ * @brief Sends a simple reply with only a command code.
+ * @param command The what-code for the reply message.
+ * @param replyTo Handler to receive replies to the reply (may be NULL).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::SendReply(uint32 command, BHandler* replyTo)
 {
@@ -910,6 +1218,14 @@ BMessage::SendReply(uint32 command, BHandler* replyTo)
 }
 
 
+/**
+ * @brief Sends an asynchronous reply to the sender of this message.
+ * @param reply   The reply message to send.
+ * @param replyTo Handler to receive replies to the reply (may be NULL).
+ * @param timeout Maximum time to wait for the reply port, in microseconds.
+ * @return B_OK on success, B_DUPLICATE_REPLY if already replied,
+ *         B_BAD_REPLY if the message was never delivered, or other error.
+ */
 status_t
 BMessage::SendReply(BMessage* reply, BHandler* replyTo, bigtime_t timeout)
 {
@@ -919,6 +1235,18 @@ BMessage::SendReply(BMessage* reply, BHandler* replyTo, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Sends an asynchronous reply to the sender via a BMessenger.
+ *
+ * If the original message had a reply-required flag, the reply is marked
+ * as such and a duplicate-reply check is performed. For non-required replies,
+ * the original message is embedded in the reply under "_previous_".
+ *
+ * @param reply   The reply message to send.
+ * @param replyTo Messenger to receive replies to the reply.
+ * @param timeout Maximum time to wait for the reply port, in microseconds.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::SendReply(BMessage* reply, BMessenger replyTo, bigtime_t timeout)
 {
@@ -963,6 +1291,12 @@ BMessage::SendReply(BMessage* reply, BMessenger replyTo, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Sends a simple synchronous reply and waits for a reply to the reply.
+ * @param command      The what-code for the reply message.
+ * @param replyToReply Receives the reply to the reply (may be NULL).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::SendReply(uint32 command, BMessage* replyToReply)
 {
@@ -972,6 +1306,19 @@ BMessage::SendReply(uint32 command, BMessage* replyToReply)
 }
 
 
+/**
+ * @brief Sends a synchronous reply and waits for a reply to the reply.
+ *
+ * Combines sending a reply to the original sender with a synchronous wait
+ * for that sender's response. Both the send and the receive have
+ * independent timeouts.
+ *
+ * @param reply        The reply message to send.
+ * @param replyToReply Receives the reply-to-reply message.
+ * @param sendTimeout  Maximum time to wait for the send, in microseconds.
+ * @param replyTimeout Maximum time to wait for the response, in microseconds.
+ * @return B_OK on success, B_DUPLICATE_REPLY if already replied, or other error.
+ */
 status_t
 BMessage::SendReply(BMessage* reply, BMessage* replyToReply,
 	bigtime_t sendTimeout, bigtime_t replyTimeout)
@@ -1020,6 +1367,11 @@ BMessage::SendReply(BMessage* reply, BMessage* replyToReply,
 }
 
 
+/**
+ * @brief Returns the number of bytes needed to flatten this message.
+ * @return The total flattened size (header + fields + data), or B_NO_INIT
+ *         if the message is uninitialized.
+ */
 ssize_t
 BMessage::FlattenedSize() const
 {
@@ -1032,6 +1384,18 @@ BMessage::FlattenedSize() const
 }
 
 
+/**
+ * @brief Flattens the message into a pre-allocated buffer.
+ *
+ * Serializes the message header, field descriptors, and data into a
+ * contiguous byte array. The public @c what member is synced to the
+ * header before writing.
+ *
+ * @param buffer Destination buffer (must be at least FlattenedSize() bytes).
+ * @param size   Available size in bytes.
+ * @return B_OK on success, B_BUFFER_OVERFLOW if @a size is too small,
+ *         B_BAD_VALUE if @a buffer is NULL, or B_NO_INIT.
+ */
 status_t
 BMessage::Flatten(char* buffer, ssize_t size) const
 {
@@ -1061,6 +1425,15 @@ BMessage::Flatten(char* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Flattens the message to a BDataIO stream.
+ *
+ * Writes the header, field descriptors, and data sequentially to @a stream.
+ *
+ * @param stream The output stream to write to.
+ * @param size   If non-NULL, receives the total number of bytes written.
+ * @return B_OK on success, B_BAD_VALUE if @a stream is NULL, or B_NO_INIT.
+ */
 status_t
 BMessage::Flatten(BDataIO* stream, ssize_t* size) const
 {
@@ -1129,6 +1502,20 @@ BMessage::Flatten(BDataIO* stream, ssize_t* size) const
 	an area behind or deleting one that is still in use.
 */
 
+/**
+ * @brief Flattens the message data into a shared memory area for
+ *        efficient inter-team transfer.
+ *
+ * Allocates a heap copy of the header and creates a shared area containing
+ * the field descriptors and raw data. The header's message_area field is
+ * set to the created area ID, and the PASS_BY_AREA flag is raised.
+ * If the message has no fields or data the area is not created.
+ *
+ * @param _header Receives a malloc'd copy of the message header (caller
+ *                must free it). Set to NULL on failure.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, B_NO_INIT
+ *         if the message is uninitialized, or a negative area error code.
+ */
 status_t
 BMessage::_FlattenToArea(message_header** _header) const
 {
@@ -1170,6 +1557,17 @@ BMessage::_FlattenToArea(message_header** _header) const
 }
 
 
+/**
+ * @brief Sets up read-only access to message data stored in a shared area.
+ *
+ * After receiving a message whose data was passed by area, this method
+ * makes the area read-only and points fFields and fData into the area's
+ * address space. The PASS_BY_AREA flag is cleared so that subsequent
+ * read operations work transparently.
+ *
+ * @return B_OK on success, B_NO_INIT if uninitialized, or B_BAD_VALUE
+ *         if the area does not belong to the current team.
+ */
 status_t
 BMessage::_Reference()
 {
@@ -1201,6 +1599,14 @@ BMessage::_Reference()
 }
 
 
+/**
+ * @brief Releases the shared memory area backing this message's data.
+ *
+ * Deletes the area identified by fHeader->message_area and resets fFields
+ * and fData to NULL. Called during _Clear() or before _CopyForWrite().
+ *
+ * @return B_OK on success, or B_NO_INIT if uninitialized.
+ */
 status_t
 BMessage::_Dereference()
 {
@@ -1216,6 +1622,17 @@ BMessage::_Dereference()
 }
 
 
+/**
+ * @brief Copies area-backed data into private heap buffers so the message
+ *        can be modified.
+ *
+ * This is the "copy-on-write" step. When a message references data in a
+ * read-only shared area, any mutating operation must first call this method
+ * to obtain writable copies of fFields and fData. The shared area is then
+ * released via _Dereference().
+ *
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or B_NO_INIT.
+ */
 status_t
 BMessage::_CopyForWrite()
 {
@@ -1256,6 +1673,15 @@ BMessage::_CopyForWrite()
 }
 
 
+/**
+ * @brief Validates the internal consistency of the message after unflattening.
+ *
+ * Iterates over all field headers to check that next_field indices and
+ * data offsets stay within bounds. If corruption is detected, the message
+ * is emptied via MakeEmpty() and B_BAD_VALUE is returned.
+ *
+ * @return B_OK if valid, B_NO_INIT if uninitialized, or B_BAD_VALUE if corrupt.
+ */
 status_t
 BMessage::_ValidateMessage()
 {
@@ -1285,6 +1711,16 @@ BMessage::_ValidateMessage()
 }
 
 
+/**
+ * @brief Reconstructs a message from a flat byte buffer.
+ *
+ * Detects the format by inspecting the first four bytes. Native
+ * (MESSAGE_FORMAT_HAIKU) buffers are handled in-line; other formats
+ * (e.g. R5) are dispatched to BPrivate::MessageAdapter.
+ *
+ * @param flatBuffer Pointer to the serialized message data.
+ * @return B_OK on success, B_BAD_VALUE if @a flatBuffer is NULL or corrupt.
+ */
 status_t
 BMessage::Unflatten(const char* flatBuffer)
 {
@@ -1301,6 +1737,17 @@ BMessage::Unflatten(const char* flatBuffer)
 }
 
 
+/**
+ * @brief Reconstructs a message by reading from a BDataIO stream.
+ *
+ * Reads the header, field descriptors, and data from @a stream. If the
+ * header indicates pass-by-area, the shared area is referenced instead
+ * of reading data from the stream. The message is validated after loading.
+ *
+ * @param stream The input stream to read from.
+ * @return B_OK on success, B_BAD_VALUE if @a stream is NULL or data is
+ *         corrupt, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BMessage::Unflatten(BDataIO* stream)
 {
@@ -1381,6 +1828,15 @@ BMessage::Unflatten(BDataIO* stream)
 }
 
 
+/**
+ * @brief Adds a direct specifier for the given property.
+ *
+ * Creates a B_DIRECT_SPECIFIER message containing the property name and
+ * appends it to the specifier stack.
+ *
+ * @param property The property name to specify.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddSpecifier(const char* property)
 {
@@ -1394,6 +1850,12 @@ BMessage::AddSpecifier(const char* property)
 }
 
 
+/**
+ * @brief Adds an index specifier for the given property.
+ * @param property The property name to specify.
+ * @param index    The zero-based index to target.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddSpecifier(const char* property, int32 index)
 {
@@ -1411,6 +1873,13 @@ BMessage::AddSpecifier(const char* property, int32 index)
 }
 
 
+/**
+ * @brief Adds a range specifier for the given property.
+ * @param property The property name to specify.
+ * @param index    The starting index of the range.
+ * @param range    The number of items in the range (must be >= 0).
+ * @return B_OK on success, B_BAD_VALUE if @a range is negative, or an error code.
+ */
 status_t
 BMessage::AddSpecifier(const char* property, int32 index, int32 range)
 {
@@ -1435,6 +1904,12 @@ BMessage::AddSpecifier(const char* property, int32 index, int32 range)
 }
 
 
+/**
+ * @brief Adds a name specifier for the given property.
+ * @param property The property name to specify.
+ * @param name     The name to match within the property.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddSpecifier(const char* property, const char* name)
 {
@@ -1452,6 +1927,15 @@ BMessage::AddSpecifier(const char* property, const char* name)
 }
 
 
+/**
+ * @brief Pushes a pre-built specifier message onto the specifier stack.
+ *
+ * Adds @a specifier under the B_SPECIFIER_ENTRY field name, increments
+ * the current specifier index, and sets the HAS_SPECIFIERS flag.
+ *
+ * @param specifier The specifier message to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddSpecifier(const BMessage* specifier)
 {
@@ -1466,6 +1950,11 @@ BMessage::AddSpecifier(const BMessage* specifier)
 }
 
 
+/**
+ * @brief Sets the index of the current specifier in the specifier stack.
+ * @param index Zero-based index into the specifier array.
+ * @return B_OK on success, B_BAD_INDEX if @a index is out of range.
+ */
 status_t
 BMessage::SetCurrentSpecifier(int32 index)
 {
@@ -1487,6 +1976,19 @@ BMessage::SetCurrentSpecifier(int32 index)
 }
 
 
+/**
+ * @brief Retrieves the current specifier from the specifier stack.
+ *
+ * Returns information about the specifier at the current_specifier index.
+ * This is typically called by a scripting handler during message dispatch.
+ *
+ * @param index     Receives the current specifier index (may be NULL).
+ * @param specifier Receives the specifier message (may be NULL).
+ * @param _what     Receives the specifier's what-code (may be NULL).
+ * @param property  Receives the property name from the specifier (may be NULL).
+ * @return B_OK on success, B_BAD_SCRIPT_SYNTAX if no valid specifier exists,
+ *         or B_NO_INIT.
+ */
 status_t
 BMessage::GetCurrentSpecifier(int32* index, BMessage* specifier, int32* _what,
 	const char** property) const
@@ -1520,6 +2022,10 @@ BMessage::GetCurrentSpecifier(int32* index, BMessage* specifier, int32* _what,
 }
 
 
+/**
+ * @brief Tests whether this message has any specifiers.
+ * @return true if the MESSAGE_FLAG_HAS_SPECIFIERS flag is set.
+ */
 bool
 BMessage::HasSpecifiers() const
 {
@@ -1529,6 +2035,15 @@ BMessage::HasSpecifiers() const
 }
 
 
+/**
+ * @brief Pops the current specifier by decrementing the specifier index.
+ *
+ * Used by scripting handlers after processing a specifier, so that the
+ * next handler in the chain sees the previous specifier.
+ *
+ * @return B_OK on success, B_BAD_VALUE if no specifier is active or the
+ *         message was not delivered, or B_NO_INIT.
+ */
 status_t
 BMessage::PopSpecifier()
 {
@@ -1547,6 +2062,15 @@ BMessage::PopSpecifier()
 }
 
 
+/**
+ * @brief Adjusts all field offsets that are at or beyond a given position.
+ *
+ * Called after data is inserted or removed at @a offset to keep every
+ * field_header::offset consistent with the new data layout.
+ *
+ * @param offset The byte offset in fData where insertion/removal occurred.
+ * @param change The signed byte delta (positive for insertion, negative for removal).
+ */
 void
 BMessage::_UpdateOffsets(uint32 offset, int32 change)
 {
@@ -1561,6 +2085,18 @@ BMessage::_UpdateOffsets(uint32 offset, int32 change)
 }
 
 
+/**
+ * @brief Grows or shrinks the raw data buffer at the given offset.
+ *
+ * Handles both in-place expansion (when fDataAvailable is sufficient) and
+ * reallocation with geometric growth. For shrinks, excess pre-allocated
+ * space is trimmed if it exceeds MAX_DATA_PREALLOCATION. After resizing,
+ * _UpdateOffsets() is called to fix all field offsets.
+ *
+ * @param offset The byte position in fData at which to insert or remove bytes.
+ * @param change The number of bytes to add (positive) or remove (negative).
+ * @return B_OK on success, or B_NO_MEMORY if reallocation fails.
+ */
 status_t
 BMessage::_ResizeData(uint32 offset, int32 change)
 {
@@ -1634,6 +2170,15 @@ BMessage::_ResizeData(uint32 offset, int32 change)
 }
 
 
+/**
+ * @brief Computes a hash value for a field name.
+ *
+ * Uses a simple rotate-XOR algorithm to distribute names across the
+ * hash table buckets in the message header.
+ *
+ * @param name The null-terminated field name to hash.
+ * @return A 32-bit hash value (must be taken modulo hash_table_size).
+ */
 uint32
 BMessage::_HashName(const char* name) const
 {
@@ -1650,6 +2195,19 @@ BMessage::_HashName(const char* name) const
 }
 
 
+/**
+ * @brief Looks up a field by name (and optionally type) using the hash table.
+ *
+ * Walks the hash chain for @a name. If a matching field is found and
+ * @a type is not B_ANY_TYPE, the field's type is also verified.
+ *
+ * @param name   The null-terminated field name to search for.
+ * @param type   Required type code, or B_ANY_TYPE to accept any type.
+ * @param result Receives a pointer to the matching field_header.
+ * @return B_OK on success, B_NAME_NOT_FOUND if the field does not exist,
+ *         B_BAD_TYPE if the name exists but the type does not match,
+ *         B_BAD_VALUE if @a name is NULL, or B_NO_INIT.
+ */
 status_t
 BMessage::_FindField(const char* name, type_code type, field_header** result)
 	const
@@ -1687,6 +2245,19 @@ BMessage::_FindField(const char* name, type_code type, field_header** result)
 }
 
 
+/**
+ * @brief Creates a new empty field with the given name and type.
+ *
+ * Grows the fFields array if necessary (with geometric pre-allocation),
+ * appends the new field to the hash chain, writes the name into the data
+ * buffer via _ResizeData(), and sets the VALID and optional FIXED_SIZE flags.
+ *
+ * @param name        The null-terminated field name.
+ * @param type        The type code for the new field.
+ * @param isFixedSize true if all items in the field will have the same size.
+ * @param result      Receives a pointer to the newly created field_header.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or B_NO_INIT.
+ */
 status_t
 BMessage::_AddField(const char* name, type_code type, bool isFixedSize,
 	field_header** result)
@@ -1736,6 +2307,17 @@ BMessage::_AddField(const char* name, type_code type, bool isFixedSize,
 }
 
 
+/**
+ * @brief Removes a field and its data from the message.
+ *
+ * Shrinks the data buffer, fixes up the hash table and next_field links
+ * in all remaining field headers, and compacts the fFields array. Excess
+ * pre-allocated field slots are reclaimed if they exceed
+ * MAX_FIELD_PREALLOCATION.
+ *
+ * @param field Pointer to the field_header to remove (must be valid).
+ * @return B_OK on success, or an error from _ResizeData().
+ */
 status_t
 BMessage::_RemoveField(field_header* field)
 {
@@ -1787,6 +2369,22 @@ BMessage::_RemoveField(field_header* field)
 }
 
 
+/**
+ * @brief Adds a raw data item to a named field.
+ *
+ * If the field does not exist it is created. For fixed-size fields the item
+ * size must match any existing items. For variable-size fields a uint32
+ * length prefix is stored before each item.
+ *
+ * @param name        The field name.
+ * @param type        The type code.
+ * @param data        Pointer to the data to add.
+ * @param numBytes    Size of the data in bytes.
+ * @param isFixedSize true if the field stores fixed-size items.
+ * @param count       Hint for expected number of items (currently unused).
+ * @return B_OK on success, B_BAD_VALUE if @a data is NULL or @a numBytes <= 0,
+ *         B_NO_INIT, or B_NO_MEMORY.
+ */
 status_t
 BMessage::AddData(const char* name, type_code type, const void* data,
 	ssize_t numBytes, bool isFixedSize, int32 count)
@@ -1856,6 +2454,17 @@ BMessage::AddData(const char* name, type_code type, const void* data,
 }
 
 
+/**
+ * @brief Removes a single data item from a named field by index.
+ *
+ * If the field has only one item, the entire field is removed. Otherwise
+ * the item at @a index is excised and the field's count and data_size are
+ * adjusted.
+ *
+ * @param name  The field name.
+ * @param index Zero-based index of the item to remove.
+ * @return B_OK on success, B_BAD_INDEX, B_NAME_NOT_FOUND, or B_NO_INIT.
+ */
 status_t
 BMessage::RemoveData(const char* name, int32 index)
 {
@@ -1912,6 +2521,11 @@ BMessage::RemoveData(const char* name, int32 index)
 }
 
 
+/**
+ * @brief Removes an entire named field and all its items from the message.
+ * @param name The field name to remove.
+ * @return B_OK on success, B_NAME_NOT_FOUND, or B_NO_INIT.
+ */
 status_t
 BMessage::RemoveName(const char* name)
 {
@@ -1935,6 +2549,14 @@ BMessage::RemoveName(const char* name)
 }
 
 
+/**
+ * @brief Removes all fields and data, resetting the message to an empty state.
+ *
+ * Calls _Clear() to free all buffers and then _InitHeader() to set up a
+ * fresh header. The @c what code is preserved.
+ *
+ * @return B_OK on success.
+ */
 status_t
 BMessage::MakeEmpty()
 {
@@ -1944,6 +2566,20 @@ BMessage::MakeEmpty()
 }
 
 
+/**
+ * @brief Retrieves a pointer to raw data for an item within a named field.
+ *
+ * Returns a direct pointer into the message's data buffer. The pointer
+ * remains valid only as long as the message is not modified.
+ *
+ * @param name     The field name.
+ * @param type     Required type code, or B_ANY_TYPE.
+ * @param index    Zero-based index of the item within the field.
+ * @param data     Receives a pointer to the item's raw data.
+ * @param numBytes If non-NULL, receives the size of the item in bytes.
+ * @return B_OK on success, B_BAD_VALUE, B_BAD_INDEX, B_NAME_NOT_FOUND,
+ *         or B_BAD_TYPE.
+ */
 status_t
 BMessage::FindData(const char* name, type_code type, int32 index,
 	const void** data, ssize_t* numBytes) const
@@ -1980,6 +2616,20 @@ BMessage::FindData(const char* name, type_code type, int32 index,
 }
 
 
+/**
+ * @brief Replaces the raw data of an item within a named field.
+ *
+ * For fixed-size fields, @a numBytes must match the existing item size.
+ * For variable-size fields, the data buffer is resized as needed.
+ *
+ * @param name     The field name.
+ * @param type     Required type code.
+ * @param index    Zero-based index of the item to replace.
+ * @param data     Pointer to the replacement data.
+ * @param numBytes Size of the replacement data in bytes.
+ * @return B_OK on success, B_BAD_VALUE, B_BAD_INDEX, B_NAME_NOT_FOUND,
+ *         or B_BAD_TYPE.
+ */
 status_t
 BMessage::ReplaceData(const char* name, type_code type, int32 index,
 	const void* data, ssize_t numBytes)
@@ -2035,6 +2685,13 @@ BMessage::ReplaceData(const char* name, type_code type, int32 index,
 }
 
 
+/**
+ * @brief Tests whether a named field contains an item at the given index.
+ * @param name  The field name.
+ * @param type  Required type code, or B_ANY_TYPE.
+ * @param index Zero-based index within the field.
+ * @return true if the item exists, false otherwise.
+ */
 bool
 BMessage::HasData(const char* name, type_code type, int32 index) const
 {
@@ -2051,7 +2708,12 @@ BMessage::HasData(const char* name, type_code type, int32 index) const
 }
 
 
-/* Static functions for cache initialization and cleanup */
+/**
+ * @brief One-time static initialization of reply ports and the block cache.
+ *
+ * Creates three cached reply ports and the BBlockCache used by operator
+ * new/delete. Called during application startup by BApplication.
+ */
 void
 BMessage::_StaticInit()
 {
@@ -2068,6 +2730,12 @@ BMessage::_StaticInit()
 }
 
 
+/**
+ * @brief Re-creates reply ports after a fork(), since ports are per-team.
+ *
+ * Called in the child process after fork to replace the inherited (now
+ * invalid) reply ports with fresh ones.
+ */
 void
 BMessage::_StaticReInitForkedChild()
 {
@@ -2084,6 +2752,9 @@ BMessage::_StaticReInitForkedChild()
 }
 
 
+/**
+ * @brief Deletes the cached reply ports during application shutdown.
+ */
 void
 BMessage::_StaticCleanup()
 {
@@ -2097,6 +2768,9 @@ BMessage::_StaticCleanup()
 }
 
 
+/**
+ * @brief Deletes the BBlockCache used for BMessage allocations.
+ */
 void
 BMessage::_StaticCacheCleanup()
 {
@@ -2106,6 +2780,15 @@ BMessage::_StaticCacheCleanup()
 }
 
 
+/**
+ * @brief Atomically acquires one of the cached reply ports.
+ *
+ * Uses atomic_add to find a free slot among sNumReplyPorts cached ports.
+ * If all cached ports are in use, returns -1 and the caller must create
+ * a temporary port.
+ *
+ * @return Index of the acquired cached port, or -1 if none is available.
+ */
 int32
 BMessage::_StaticGetCachedReplyPort()
 {
@@ -2127,6 +2810,25 @@ BMessage::_StaticGetCachedReplyPort()
 }
 
 
+/**
+ * @brief Internal: sends this message asynchronously to a port.
+ *
+ * Chooses the most efficient delivery path:
+ * - Local targets in the same team get a direct queue insertion via
+ *   BDirectMessageTarget, avoiding the port entirely.
+ * - Large messages (> 10 pages) are sent by shared area.
+ * - Messages flagged as KMessage replies are converted and sent via KMessage.
+ * - All other messages are flattened to a buffer and written to the port.
+ *
+ * @param port          Destination port.
+ * @param portOwner     Team that owns the port (-1 to look it up).
+ * @param token         Target handler token.
+ * @param timeout       Send timeout in microseconds.
+ * @param replyRequired If true, the REPLY_REQUIRED flag is set in the header.
+ * @param replyTo       Messenger to receive replies; updated to be_app_messenger
+ *                      if invalid.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::_SendMessage(port_id port, team_id portOwner, int32 token,
 	bigtime_t timeout, bool replyRequired, BMessenger& replyTo) const
@@ -2280,7 +2982,24 @@ BMessage::_SendMessage(port_id port, team_id portOwner, int32 token,
 }
 
 
-// Sends a message and waits synchronously for a reply.
+/**
+ * @brief Internal: sends this message synchronously and waits for a reply.
+ *
+ * Acquires a cached reply port (or creates a temporary one), transfers its
+ * ownership to the target team, sends the message via the asynchronous
+ * _SendMessage() overload with reply-required set, and then waits on the
+ * reply port via handle_reply(). The reply port is reclaimed or recreated
+ * after use.
+ *
+ * @param port         Destination port.
+ * @param portOwner    Team that owns the destination port.
+ * @param token        Target handler token.
+ * @param reply        Receives the reply message.
+ * @param sendTimeout  Send timeout in microseconds.
+ * @param replyTimeout Reply-wait timeout in microseconds.
+ * @return B_OK on success, B_ERROR if already waiting for a reply, or
+ *         another error code.
+ */
 status_t
 BMessage::_SendMessage(port_id port, team_id portOwner, int32 token,
 	BMessage* reply, bigtime_t sendTimeout, bigtime_t replyTimeout) const
@@ -2397,6 +3116,21 @@ error:
 }
 
 
+/**
+ * @brief Sends an already-flattened message buffer through a port.
+ *
+ * Detects the message format (Haiku native, Haiku swapped, R5, or KMessage)
+ * by inspecting the magic bytes, patches the target token and was-delivered
+ * flag into the header, and writes the buffer to the port.
+ *
+ * @param data    Pointer to the flattened message data.
+ * @param size    Size of the data in bytes.
+ * @param port    Destination port.
+ * @param token   Target handler token to patch into the header.
+ * @param timeout Send timeout in microseconds.
+ * @return B_OK on success, B_NOT_A_MESSAGE if the format is unrecognized,
+ *         B_BAD_VALUE if @a data is NULL, or a port error.
+ */
 status_t
 BMessage::_SendFlattenedMessage(void* data, int32 size, port_id port,
 	int32 token, bigtime_t timeout)
@@ -2438,13 +3172,37 @@ BMessage::_SendFlattenedMessage(void* data, int32 size, port_id port,
 }
 
 
+/** @brief Reserved virtual function slot 1 for future binary compatibility. */
 void BMessage::_ReservedMessage1() {}
+/** @brief Reserved virtual function slot 2 for future binary compatibility. */
 void BMessage::_ReservedMessage2() {}
+/** @brief Reserved virtual function slot 3 for future binary compatibility. */
 void BMessage::_ReservedMessage3() {}
 
 
 // #pragma mark - Macro definitions for data access methods
 
+
+/**
+ * @brief Macro-generated type-specific accessor functions.
+ *
+ * The DEFINE_FUNCTIONS macro expands to Add##typeName, Find##typeName (two
+ * overloads), Replace##typeName (two overloads), Get##typeName (two
+ * overloads), Set##typeName, and Has##typeName for each primitive type.
+ *
+ * For each generated function:
+ * - @b Add adds a value to the message.
+ * - @b Find retrieves a value by name and optional index.
+ * - @b Replace replaces a value at a given name and optional index.
+ * - @b Has tests for existence of a value at a given name and index.
+ *
+ * All functions delegate to AddData / FindData / ReplaceData / HasData.
+ *
+ * @param name  The field name.
+ * @param value / p  The value to add/replace, or pointer to receive the found value.
+ * @param index Zero-based item index (defaults to 0 in single-index overloads).
+ * @return B_OK on success, or an error code (for status_t-returning functions).
+ */
 
 /* Relay functions from here on (Add... -> AddData, Find... -> FindData) */
 
@@ -2518,6 +3276,10 @@ DEFINE_FUNCTIONS(rgb_color, Color, B_RGB_32_BIT_TYPE);
 
 #undef DEFINE_FUNCTIONS
 
+/**
+ * @brief Macro-generated Has##typeName functions for types that do not use
+ *        DEFINE_FUNCTIONS (e.g. Alignment, String, Pointer, Messenger, etc.).
+ */
 #define DEFINE_HAS_FUNCTION(typeName, typeCode)								\
 bool																		\
 BMessage::Has##typeName(const char* name, int32 index) const				\
@@ -2537,6 +3299,10 @@ DEFINE_HAS_FUNCTION(Message, B_MESSAGE_TYPE);
 #undef DEFINE_HAS_FUNCTION
 
 
+/**
+ * @brief Macro-generated convenience Find##typeName(name, index) functions
+ *        that return a value directly (using a default on failure).
+ */
 #define DEFINE_LAZY_FIND_FUNCTION(type, typeName, initialize)				\
 type																		\
 BMessage::Find##typeName(const char* name, int32 index) const				\
@@ -2561,6 +3327,12 @@ DEFINE_LAZY_FIND_FUNCTION(double, Double, 0);
 #undef DEFINE_LAZY_FIND_FUNCTION
 
 
+/**
+ * @brief Macro-generated Get##typeName / Set##typeName for primitive types.
+ *
+ * Get returns the stored value or a caller-supplied default. Set creates
+ * or replaces a single-item field via SetData().
+ */
 #define DEFINE_SET_GET_FUNCTIONS(type, typeName, typeCode)					\
 type																		\
 BMessage::Get##typeName(const char* name, type defaultValue) const			\
@@ -2604,6 +3376,12 @@ DEFINE_SET_GET_FUNCTIONS(rgb_color, Color, B_RGB_32_BIT_TYPE);
 #undef DEFINE_SET_GET_FUNCTION
 
 
+/**
+ * @brief Gets a pointer value from the message, returning a default on failure.
+ * @param name         The field name.
+ * @param defaultValue Value to return if the field is not found.
+ * @return The stored pointer, or @a defaultValue.
+ */
 const void*
 BMessage::GetPointer(const char* name, const void* defaultValue) const
 {
@@ -2611,6 +3389,13 @@ BMessage::GetPointer(const char* name, const void* defaultValue) const
 }
 
 
+/**
+ * @brief Gets a pointer value by name and index, returning a default on failure.
+ * @param name         The field name.
+ * @param index        Zero-based item index.
+ * @param defaultValue Value to return if the item is not found.
+ * @return The stored pointer, or @a defaultValue.
+ */
 const void*
 BMessage::GetPointer(const char* name, int32 index,
 	const void* defaultValue) const
@@ -2623,6 +3408,12 @@ BMessage::GetPointer(const char* name, int32 index,
 }
 
 
+/**
+ * @brief Sets (creates or replaces) a pointer field.
+ * @param name  The field name.
+ * @param value The pointer value to store.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::SetPointer(const char* name, const void* value)
 {
@@ -2630,6 +3421,10 @@ BMessage::SetPointer(const char* name, const void* value)
 }
 
 
+/**
+ * @brief Macro-generated Get/Set for types passed by const reference
+ *        (BPoint, BRect, BSize, BAlignment).
+ */
 #define DEFINE_SET_GET_BY_REFERENCE_FUNCTIONS(type, typeName, typeCode)		\
 type																		\
 BMessage::Get##typeName(const char* name, const type& defaultValue) const	\
@@ -2665,6 +3460,12 @@ DEFINE_SET_GET_BY_REFERENCE_FUNCTIONS(BAlignment, Alignment, B_ALIGNMENT_TYPE);
 #undef DEFINE_SET_GET_BY_REFERENCE_FUNCTIONS
 
 
+/**
+ * @brief Adds a BAlignment value to the message.
+ * @param name      The field name.
+ * @param alignment The alignment value to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddAlignment(const char* name, const BAlignment& alignment)
 {
@@ -2673,6 +3474,12 @@ BMessage::AddAlignment(const char* name, const BAlignment& alignment)
 }
 
 
+/**
+ * @brief Adds a C string to the message.
+ * @param name   The field name.
+ * @param string The null-terminated string to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddString(const char* name, const char* string)
 {
@@ -2681,6 +3488,12 @@ BMessage::AddString(const char* name, const char* string)
 }
 
 
+/**
+ * @brief Adds a BString to the message.
+ * @param name   The field name.
+ * @param string The BString to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddString(const char* name, const BString& string)
 {
@@ -2689,6 +3502,12 @@ BMessage::AddString(const char* name, const BString& string)
 }
 
 
+/**
+ * @brief Adds all strings from a BStringList to the message under one field name.
+ * @param name The field name.
+ * @param list The list of strings to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddStrings(const char* name, const BStringList& list)
 {
@@ -2703,6 +3522,12 @@ BMessage::AddStrings(const char* name, const BStringList& list)
 }
 
 
+/**
+ * @brief Adds a pointer value to the message.
+ * @param name    The field name.
+ * @param pointer The pointer to store.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddPointer(const char* name, const void* pointer)
 {
@@ -2710,6 +3535,12 @@ BMessage::AddPointer(const char* name, const void* pointer)
 }
 
 
+/**
+ * @brief Adds a BMessenger value to the message.
+ * @param name      The field name.
+ * @param messenger The messenger to store.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddMessenger(const char* name, BMessenger messenger)
 {
@@ -2717,6 +3548,12 @@ BMessage::AddMessenger(const char* name, BMessenger messenger)
 }
 
 
+/**
+ * @brief Adds an entry_ref to the message.
+ * @param name The field name.
+ * @param ref  The entry_ref to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddRef(const char* name, const entry_ref* ref)
 {
@@ -2732,6 +3569,12 @@ BMessage::AddRef(const char* name, const entry_ref* ref)
 }
 
 
+/**
+ * @brief Adds a node_ref to the message.
+ * @param name The field name.
+ * @param ref  The node_ref to add.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddNodeRef(const char* name, const node_ref* ref)
 {
@@ -2747,6 +3590,17 @@ BMessage::AddNodeRef(const char* name, const node_ref* ref)
 }
 
 
+/**
+ * @brief Adds a nested BMessage to the message.
+ *
+ * The nested message is flattened and stored as a variable-size data item
+ * of type B_MESSAGE_TYPE.
+ *
+ * @param name    The field name.
+ * @param message The BMessage to nest.
+ * @return B_OK on success, B_BAD_VALUE if @a message is NULL, B_NO_MEMORY,
+ *         or an error code.
+ */
 status_t
 BMessage::AddMessage(const char* name, const BMessage* message)
 {
@@ -2771,6 +3625,13 @@ BMessage::AddMessage(const char* name, const BMessage* message)
 }
 
 
+/**
+ * @brief Adds a BFlattenable object to the message (non-const overload).
+ * @param name   The field name.
+ * @param object The flattenable object to add.
+ * @param count  Hint for expected number of items (unused).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::AddFlat(const char* name, BFlattenable* object, int32 count)
 {
@@ -2778,6 +3639,18 @@ BMessage::AddFlat(const char* name, BFlattenable* object, int32 count)
 }
 
 
+/**
+ * @brief Adds a BFlattenable object to the message.
+ *
+ * Flattens the object into a temporary buffer and adds the data under the
+ * object's own TypeCode().
+ *
+ * @param name   The field name.
+ * @param object The flattenable object to add.
+ * @param count  Hint for expected number of items (unused).
+ * @return B_OK on success, B_BAD_VALUE if @a object is NULL, B_NO_MEMORY,
+ *         or an error code.
+ */
 status_t
 BMessage::AddFlat(const char* name, const BFlattenable* object, int32 count)
 {
@@ -2798,6 +3671,15 @@ BMessage::AddFlat(const char* name, const BFlattenable* object, int32 count)
 }
 
 
+/**
+ * @brief Appends all fields and data from another message into this one.
+ *
+ * Iterates over every field in @a other and adds each item individually
+ * via AddData(), preserving names, types, and fixed-size flags.
+ *
+ * @param other The source message whose fields are appended.
+ * @return B_OK on success, or the first error encountered.
+ */
 status_t
 BMessage::Append(const BMessage& other)
 {
@@ -2827,6 +3709,12 @@ BMessage::Append(const BMessage& other)
 }
 
 
+/**
+ * @brief Finds a BAlignment value by name.
+ * @param name      The field name.
+ * @param alignment Receives the alignment value.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindAlignment(const char* name, BAlignment* alignment) const
 {
@@ -2834,6 +3722,13 @@ BMessage::FindAlignment(const char* name, BAlignment* alignment) const
 }
 
 
+/**
+ * @brief Finds a BAlignment value by name and index.
+ * @param name      The field name.
+ * @param index     Zero-based item index.
+ * @param alignment Receives the alignment value.
+ * @return B_OK on success, B_BAD_VALUE, B_ERROR if size mismatch, or an error code.
+ */
 status_t
 BMessage::FindAlignment(const char* name, int32 index, BAlignment* alignment)
 	const
@@ -2859,6 +3754,12 @@ BMessage::FindAlignment(const char* name, int32 index, BAlignment* alignment)
 }
 
 
+/**
+ * @brief Finds a string by name (first item).
+ * @param name   The field name.
+ * @param string Receives a pointer to the string data.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindString(const char* name, const char** string) const
 {
@@ -2866,6 +3767,13 @@ BMessage::FindString(const char* name, const char** string) const
 }
 
 
+/**
+ * @brief Finds a string by name and index.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param string Receives a pointer to the string data.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindString(const char* name, int32 index, const char** string) const
 {
@@ -2874,6 +3782,12 @@ BMessage::FindString(const char* name, int32 index, const char** string) const
 }
 
 
+/**
+ * @brief Finds a string by name and copies it into a BString (first item).
+ * @param name   The field name.
+ * @param string Receives the string value.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindString(const char* name, BString* string) const
 {
@@ -2881,6 +3795,13 @@ BMessage::FindString(const char* name, BString* string) const
 }
 
 
+/**
+ * @brief Finds a string by name and index, copying it into a BString.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param string Receives the string value.
+ * @return B_OK on success, B_BAD_VALUE if @a string is NULL, or an error code.
+ */
 status_t
 BMessage::FindString(const char* name, int32 index, BString* string) const
 {
@@ -2896,6 +3817,14 @@ BMessage::FindString(const char* name, int32 index, BString* string) const
 }
 
 
+/**
+ * @brief Finds all strings under a field name and populates a BStringList.
+ * @param name The field name.
+ * @param list Receives the list of strings.
+ * @return B_OK on success, B_BAD_VALUE if @a list is NULL,
+ *         B_NAME_NOT_FOUND, B_BAD_DATA if the field is not B_STRING_TYPE,
+ *         or B_NO_MEMORY.
+ */
 status_t
 BMessage::FindStrings(const char* name, BStringList* list) const
 {
@@ -2926,6 +3855,12 @@ BMessage::FindStrings(const char* name, BStringList* list) const
 }
 
 
+/**
+ * @brief Finds a pointer value by name (first item).
+ * @param name    The field name.
+ * @param pointer Receives the pointer value.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindPointer(const char* name, void** pointer) const
 {
@@ -2933,6 +3868,13 @@ BMessage::FindPointer(const char* name, void** pointer) const
 }
 
 
+/**
+ * @brief Finds a pointer value by name and index.
+ * @param name    The field name.
+ * @param index   Zero-based item index.
+ * @param pointer Receives the pointer value.
+ * @return B_OK on success, B_BAD_VALUE if @a pointer is NULL, or an error code.
+ */
 status_t
 BMessage::FindPointer(const char* name, int32 index, void** pointer) const
 {
@@ -2953,6 +3895,12 @@ BMessage::FindPointer(const char* name, int32 index, void** pointer) const
 }
 
 
+/**
+ * @brief Finds a BMessenger value by name (first item).
+ * @param name      The field name.
+ * @param messenger Receives the messenger value.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindMessenger(const char* name, BMessenger* messenger) const
 {
@@ -2960,6 +3908,13 @@ BMessage::FindMessenger(const char* name, BMessenger* messenger) const
 }
 
 
+/**
+ * @brief Finds a BMessenger value by name and index.
+ * @param name      The field name.
+ * @param index     Zero-based item index.
+ * @param messenger Receives the messenger value.
+ * @return B_OK on success, B_BAD_VALUE if @a messenger is NULL, or an error code.
+ */
 status_t
 BMessage::FindMessenger(const char* name, int32 index,
 	BMessenger* messenger) const
@@ -2981,6 +3936,12 @@ BMessage::FindMessenger(const char* name, int32 index,
 }
 
 
+/**
+ * @brief Finds an entry_ref by name (first item).
+ * @param name The field name.
+ * @param ref  Receives the entry_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindRef(const char* name, entry_ref* ref) const
 {
@@ -2988,6 +3949,13 @@ BMessage::FindRef(const char* name, entry_ref* ref) const
 }
 
 
+/**
+ * @brief Finds an entry_ref by name and index.
+ * @param name  The field name.
+ * @param index Zero-based item index.
+ * @param ref   Receives the entry_ref.
+ * @return B_OK on success, B_BAD_VALUE if @a ref is NULL, or an error code.
+ */
 status_t
 BMessage::FindRef(const char* name, int32 index, entry_ref* ref) const
 {
@@ -3008,6 +3976,12 @@ BMessage::FindRef(const char* name, int32 index, entry_ref* ref) const
 }
 
 
+/**
+ * @brief Finds a node_ref by name (first item).
+ * @param name The field name.
+ * @param ref  Receives the node_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindNodeRef(const char* name, node_ref* ref) const
 {
@@ -3015,6 +3989,13 @@ BMessage::FindNodeRef(const char* name, node_ref* ref) const
 }
 
 
+/**
+ * @brief Finds a node_ref by name and index.
+ * @param name  The field name.
+ * @param index Zero-based item index.
+ * @param ref   Receives the node_ref.
+ * @return B_OK on success, B_BAD_VALUE if @a ref is NULL, or an error code.
+ */
 status_t
 BMessage::FindNodeRef(const char* name, int32 index, node_ref* ref) const
 {
@@ -3035,6 +4016,12 @@ BMessage::FindNodeRef(const char* name, int32 index, node_ref* ref) const
 }
 
 
+/**
+ * @brief Finds a nested BMessage by name (first item).
+ * @param name    The field name.
+ * @param message Receives the unflattened message.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindMessage(const char* name, BMessage* message) const
 {
@@ -3042,6 +4029,13 @@ BMessage::FindMessage(const char* name, BMessage* message) const
 }
 
 
+/**
+ * @brief Finds a nested BMessage by name and index.
+ * @param name    The field name.
+ * @param index   Zero-based item index.
+ * @param message Receives the unflattened message.
+ * @return B_OK on success, B_BAD_VALUE if @a message is NULL, or an error code.
+ */
 status_t
 BMessage::FindMessage(const char* name, int32 index, BMessage* message) const
 {
@@ -3062,6 +4056,12 @@ BMessage::FindMessage(const char* name, int32 index, BMessage* message) const
 }
 
 
+/**
+ * @brief Finds and unflattens a BFlattenable object by name (first item).
+ * @param name   The field name.
+ * @param object The flattenable object to populate.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindFlat(const char* name, BFlattenable* object) const
 {
@@ -3069,6 +4069,13 @@ BMessage::FindFlat(const char* name, BFlattenable* object) const
 }
 
 
+/**
+ * @brief Finds and unflattens a BFlattenable object by name and index.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param object The flattenable object to populate.
+ * @return B_OK on success, B_BAD_VALUE if @a object is NULL, or an error code.
+ */
 status_t
 BMessage::FindFlat(const char* name, int32 index, BFlattenable* object) const
 {
@@ -3087,6 +4094,14 @@ BMessage::FindFlat(const char* name, int32 index, BFlattenable* object) const
 }
 
 
+/**
+ * @brief Finds raw data by name and type (first item convenience overload).
+ * @param name     The field name.
+ * @param type     Required type code, or B_ANY_TYPE.
+ * @param data     Receives a pointer to the raw data.
+ * @param numBytes Receives the size of the data in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::FindData(const char* name, type_code type, const void** data,
 	ssize_t* numBytes) const
@@ -3095,6 +4110,12 @@ BMessage::FindData(const char* name, type_code type, const void** data,
 }
 
 
+/**
+ * @brief Replaces the first BAlignment value in a named field.
+ * @param name      The field name.
+ * @param alignment The replacement value.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceAlignment(const char* name, const BAlignment& alignment)
 {
@@ -3103,6 +4124,13 @@ BMessage::ReplaceAlignment(const char* name, const BAlignment& alignment)
 }
 
 
+/**
+ * @brief Replaces a BAlignment value at the given index in a named field.
+ * @param name      The field name.
+ * @param index     Zero-based item index.
+ * @param alignment The replacement value.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceAlignment(const char* name, int32 index,
 	const BAlignment& alignment)
@@ -3112,6 +4140,12 @@ BMessage::ReplaceAlignment(const char* name, int32 index,
 }
 
 
+/**
+ * @brief Replaces the first string in a named field.
+ * @param name   The field name.
+ * @param string The replacement C string.
+ * @return B_OK on success, B_BAD_VALUE if @a string is NULL, or an error code.
+ */
 status_t
 BMessage::ReplaceString(const char* name, const char* string)
 {
@@ -3122,6 +4156,13 @@ BMessage::ReplaceString(const char* name, const char* string)
 }
 
 
+/**
+ * @brief Replaces a string at the given index in a named field.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param string The replacement C string.
+ * @return B_OK on success, B_BAD_VALUE if @a string is NULL, or an error code.
+ */
 status_t
 BMessage::ReplaceString(const char* name, int32 index, const char* string)
 {
@@ -3132,6 +4173,12 @@ BMessage::ReplaceString(const char* name, int32 index, const char* string)
 }
 
 
+/**
+ * @brief Replaces the first string in a named field with a BString.
+ * @param name   The field name.
+ * @param string The replacement BString.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceString(const char* name, const BString& string)
 {
@@ -3140,6 +4187,13 @@ BMessage::ReplaceString(const char* name, const BString& string)
 }
 
 
+/**
+ * @brief Replaces a string at the given index with a BString.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param string The replacement BString.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceString(const char* name, int32 index, const BString& string)
 {
@@ -3148,6 +4202,12 @@ BMessage::ReplaceString(const char* name, int32 index, const BString& string)
 }
 
 
+/**
+ * @brief Replaces the first pointer value in a named field.
+ * @param name    The field name.
+ * @param pointer The replacement pointer.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplacePointer(const char* name, const void* pointer)
 {
@@ -3155,6 +4215,13 @@ BMessage::ReplacePointer(const char* name, const void* pointer)
 }
 
 
+/**
+ * @brief Replaces a pointer value at the given index.
+ * @param name    The field name.
+ * @param index   Zero-based item index.
+ * @param pointer The replacement pointer.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplacePointer(const char* name, int32 index, const void* pointer)
 {
@@ -3162,6 +4229,12 @@ BMessage::ReplacePointer(const char* name, int32 index, const void* pointer)
 }
 
 
+/**
+ * @brief Replaces the first BMessenger value in a named field.
+ * @param name      The field name.
+ * @param messenger The replacement messenger.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceMessenger(const char* name, BMessenger messenger)
 {
@@ -3170,6 +4243,13 @@ BMessage::ReplaceMessenger(const char* name, BMessenger messenger)
 }
 
 
+/**
+ * @brief Replaces a BMessenger value at the given index.
+ * @param name      The field name.
+ * @param index     Zero-based item index.
+ * @param messenger The replacement messenger.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceMessenger(const char* name, int32 index, BMessenger messenger)
 {
@@ -3178,6 +4258,12 @@ BMessage::ReplaceMessenger(const char* name, int32 index, BMessenger messenger)
 }
 
 
+/**
+ * @brief Replaces the first entry_ref in a named field.
+ * @param name The field name.
+ * @param ref  The replacement entry_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceRef(const char* name, const entry_ref* ref)
 {
@@ -3185,6 +4271,13 @@ BMessage::ReplaceRef(const char* name, const entry_ref* ref)
 }
 
 
+/**
+ * @brief Replaces an entry_ref at the given index.
+ * @param name  The field name.
+ * @param index Zero-based item index.
+ * @param ref   The replacement entry_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceRef(const char* name, int32 index, const entry_ref* ref)
 {
@@ -3200,6 +4293,12 @@ BMessage::ReplaceRef(const char* name, int32 index, const entry_ref* ref)
 }
 
 
+/**
+ * @brief Replaces the first node_ref in a named field.
+ * @param name The field name.
+ * @param ref  The replacement node_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceNodeRef(const char* name, const node_ref* ref)
 {
@@ -3207,6 +4306,13 @@ BMessage::ReplaceNodeRef(const char* name, const node_ref* ref)
 }
 
 
+/**
+ * @brief Replaces a node_ref at the given index.
+ * @param name  The field name.
+ * @param index Zero-based item index.
+ * @param ref   The replacement node_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceNodeRef(const char* name, int32 index, const node_ref* ref)
 {
@@ -3222,6 +4328,12 @@ BMessage::ReplaceNodeRef(const char* name, int32 index, const node_ref* ref)
 }
 
 
+/**
+ * @brief Replaces the first nested BMessage in a named field.
+ * @param name    The field name.
+ * @param message The replacement message.
+ * @return B_OK on success, B_BAD_VALUE if @a message is NULL, or an error code.
+ */
 status_t
 BMessage::ReplaceMessage(const char* name, const BMessage* message)
 {
@@ -3229,6 +4341,13 @@ BMessage::ReplaceMessage(const char* name, const BMessage* message)
 }
 
 
+/**
+ * @brief Replaces a nested BMessage at the given index.
+ * @param name    The field name.
+ * @param index   Zero-based item index.
+ * @param message The replacement message.
+ * @return B_OK on success, B_BAD_VALUE if @a message is NULL, or an error code.
+ */
 status_t
 BMessage::ReplaceMessage(const char* name, int32 index, const BMessage* message)
 {
@@ -3250,6 +4369,12 @@ BMessage::ReplaceMessage(const char* name, int32 index, const BMessage* message)
 }
 
 
+/**
+ * @brief Replaces the first BFlattenable object in a named field.
+ * @param name   The field name.
+ * @param object The replacement flattenable object.
+ * @return B_OK on success, B_BAD_VALUE if @a object is NULL, or an error code.
+ */
 status_t
 BMessage::ReplaceFlat(const char* name, BFlattenable* object)
 {
@@ -3257,6 +4382,13 @@ BMessage::ReplaceFlat(const char* name, BFlattenable* object)
 }
 
 
+/**
+ * @brief Replaces a BFlattenable object at the given index.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param object The replacement flattenable object.
+ * @return B_OK on success, B_BAD_VALUE if @a object is NULL, or an error code.
+ */
 status_t
 BMessage::ReplaceFlat(const char* name, int32 index, BFlattenable* object)
 {
@@ -3278,6 +4410,14 @@ BMessage::ReplaceFlat(const char* name, int32 index, BFlattenable* object)
 }
 
 
+/**
+ * @brief Replaces the first raw data item in a named field (convenience overload).
+ * @param name     The field name.
+ * @param type     Required type code.
+ * @param data     Pointer to the replacement data.
+ * @param numBytes Size of the replacement data in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::ReplaceData(const char* name, type_code type, const void* data,
 	ssize_t numBytes)
@@ -3286,6 +4426,12 @@ BMessage::ReplaceData(const char* name, type_code type, const void* data,
 }
 
 
+/**
+ * @brief Tests whether a BFlattenable-compatible field exists (first item).
+ * @param name   The field name.
+ * @param object A flattenable whose TypeCode() is used for the type check.
+ * @return true if the field exists with the matching type.
+ */
 bool
 BMessage::HasFlat(const char* name, const BFlattenable* object) const
 {
@@ -3293,6 +4439,13 @@ BMessage::HasFlat(const char* name, const BFlattenable* object) const
 }
 
 
+/**
+ * @brief Tests whether a BFlattenable-compatible field exists at an index.
+ * @param name   The field name.
+ * @param index  Zero-based item index.
+ * @param object A flattenable whose TypeCode() is used for the type check.
+ * @return true if the item exists with the matching type.
+ */
 bool
 BMessage::HasFlat(const char* name, int32 index, const BFlattenable* object)
 	const
@@ -3301,6 +4454,12 @@ BMessage::HasFlat(const char* name, int32 index, const BFlattenable* object)
 }
 
 
+/**
+ * @brief Gets a string value, returning a default on failure (first item).
+ * @param name         The field name.
+ * @param defaultValue Value to return if the field is not found.
+ * @return The stored string, or @a defaultValue.
+ */
 const char*
 BMessage::GetString(const char* name, const char* defaultValue) const
 {
@@ -3308,6 +4467,13 @@ BMessage::GetString(const char* name, const char* defaultValue) const
 }
 
 
+/**
+ * @brief Gets a string value by name and index, returning a default on failure.
+ * @param name         The field name.
+ * @param index        Zero-based item index.
+ * @param defaultValue Value to return if the item is not found.
+ * @return The stored string, or @a defaultValue.
+ */
 const char*
 BMessage::GetString(const char* name, int32 index,
 	const char* defaultValue) const
@@ -3320,6 +4486,12 @@ BMessage::GetString(const char* name, int32 index,
 }
 
 
+/**
+ * @brief Sets (creates or replaces) a string field from a BString.
+ * @param name  The field name.
+ * @param value The string value to store.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::SetString(const char* name, const BString& value)
 {
@@ -3328,6 +4500,12 @@ BMessage::SetString(const char* name, const BString& value)
 }
 
 
+/**
+ * @brief Sets (creates or replaces) a string field from a C string.
+ * @param name  The field name.
+ * @param value The null-terminated string to store.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BMessage::SetString(const char* name, const char* value)
 {
@@ -3335,6 +4513,22 @@ BMessage::SetString(const char* name, const char* value)
 }
 
 
+/**
+ * @brief Creates or replaces a single-item field with the given raw data.
+ *
+ * Attempts ReplaceData() first; if the field does not exist, falls back to
+ * AddData(). This is the common implementation behind all Set##typeName
+ * convenience functions.
+ *
+ * @param name      The field name.
+ * @param type      The type code.
+ * @param data      Pointer to the data.
+ * @param numBytes  Size of the data in bytes.
+ * @param fixedSize true if the field stores fixed-size items.
+ * @param count     Hint for expected number of items (unused).
+ * @return B_OK on success, B_BAD_VALUE if @a data is NULL or @a numBytes <= 0,
+ *         or an error code from ReplaceData/AddData.
+ */
 status_t
 BMessage::SetData(const char* name, type_code type, const void* data,
 	ssize_t numBytes, bool fixedSize, int count)

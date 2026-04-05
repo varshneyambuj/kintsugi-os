@@ -1,11 +1,35 @@
 /*
- * Copyright 2006-2012, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2012 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
+/** @file ServerMemoryAllocator.cpp
+ *  @brief BPrivate::ServerMemoryAllocator implementation for shared memory management.
+ *
+ *  Manages cloned memory areas shared between the application and the app_server.
+ *  Areas are reference-counted so that multiple clients can share the same
+ *  local clone. This class provides no internal locking; callers must hold
+ *  an AppServerLink (which provides the necessary synchronization).
+ */
 
 /*!	Note, this class don't provide any locking whatsoever - you are
 	supposed to have a BPrivate::AppServerLink object around which
@@ -24,18 +48,23 @@
 #endif
 
 
+/** @brief Total virtual address space to reserve for cloned areas (128 MB). */
 static const size_t kReservedSize = 128 * 1024 * 1024;
+
+/** @brief Maximum area size eligible for address space reservation (32 MB). */
 static const size_t kReserveMaxSize = 32 * 1024 * 1024;
 
 
 namespace BPrivate {
 
 
+/** @brief Default constructor. */
 ServerMemoryAllocator::ServerMemoryAllocator()
 {
 }
 
 
+/** @brief Destructor. Deletes all locally cloned areas. */
 ServerMemoryAllocator::~ServerMemoryAllocator()
 {
 	while (!fAreas.empty()) {
@@ -47,6 +76,9 @@ ServerMemoryAllocator::~ServerMemoryAllocator()
 }
 
 
+/** @brief Checks initialization status.
+ *  @return Always returns B_OK.
+ */
 status_t
 ServerMemoryAllocator::InitCheck()
 {
@@ -54,6 +86,21 @@ ServerMemoryAllocator::InitCheck()
 }
 
 
+/** @brief Clones a server-side memory area into this process's address space.
+ *
+ *  If the area has already been cloned, the existing clone's reference count
+ *  is incremented. Otherwise, a new clone is created. For writable areas
+ *  smaller than kReserveMaxSize, virtual address space is pre-reserved to
+ *  allow future area resizing without relocation.
+ *
+ *  @param serverArea The server-side area ID to clone.
+ *  @param _area Output: receives the local clone's area ID.
+ *  @param _base Output: receives a pointer to the clone's base address.
+ *  @param size The size of the area to clone.
+ *  @param readOnly If true, the clone is created as read-only.
+ *  @return B_OK on success, B_NO_MEMORY on allocation failure, or another
+ *          error code if cloning fails.
+ */
 status_t
 ServerMemoryAllocator::AddArea(area_id serverArea, area_id& _area,
 	uint8*& _base, size_t size, bool readOnly)
@@ -114,6 +161,13 @@ ServerMemoryAllocator::AddArea(area_id serverArea, area_id& _area,
 }
 
 
+/** @brief Removes a reference to a cloned area, deleting it when unreferenced.
+ *
+ *  Decrements the reference count for the specified server area. When the
+ *  count reaches zero, the local clone is deleted and the mapping is removed.
+ *
+ *  @param serverArea The server-side area ID whose clone should be released.
+ */
 void
 ServerMemoryAllocator::RemoveArea(area_id serverArea)
 {
