@@ -12,8 +12,6 @@ An operating system for sub-1 watt computers. Kintsugi OS takes the proven BeOS/
 
 Kintsugi OS is a hard fork of [Haiku OS](https://www.haiku-os.org), rebuilt for a different era of computing. Where Haiku targets the desktop, Kintsugi targets the edge — small, low-power devices that interact with the physical world.
 
-The BeOS lineage brings a clean, responsive, single-user OS model with a fast IPC system, a unified object-oriented API, and a kernel designed for real-time responsiveness. These properties, largely wasted on desktop hardware, are exactly what edge computing needs.
-
 ---
 
 ## Target Platform
@@ -61,6 +59,8 @@ New contributions are licensed under **Apache 2.0**. Portions derived from Haiku
 ## Acknowledgements
 
 Kintsugi OS is built upon the extraordinary work of the [Haiku project](https://www.haiku-os.org) and its contributors. Haiku is an open-source reimplementation of [BeOS](https://en.wikipedia.org/wiki/BeOS) — a visionary operating system from the late 1990s that was decades ahead of its time in its approach to multimedia, real-time performance, and OS design.
+
+The BeOS lineage brings a clean, responsive, single-user OS model with a fast IPC system, a unified object-oriented API, and a kernel designed for real-time responsiveness. These properties, largely wasted on desktop hardware, are exactly what edge computing needs.
 
 We are deeply grateful to:
 
