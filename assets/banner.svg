@@ -1,117 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 155" width="560" height="155">
-  <defs>
-    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
-      <feGaussianBlur stdDeviation="2.5" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 160" width="660" height="160">
+  <rect width="660" height="160" fill="#0d1117" rx="10"/>
 
-  <!-- background -->
-  <rect width="560" height="155" fill="#0d1117" rx="10"/>
+  <!-- subtle gold crack lines — the kintsugi motif -->
+  <path d="M80,165 Q180,90 260,110 T420,60 T580,95 T700,50"
+        stroke="#FFD700" stroke-width="0.8" fill="none" opacity="0.15"/>
+  <path d="M0,120 Q120,80 200,100 T380,55 T560,80 T700,40"
+        stroke="#DAA520" stroke-width="0.5" fill="none" opacity="0.1"/>
 
-  <!-- kintsugi crack motif -->
-  <path d="M0,145 Q80,105 170,125 Q270,98 380,115 Q460,102 560,118"
-        stroke="#FFD700" stroke-width="0.8" fill="none" opacity="0.12"/>
-  <path d="M40,155 Q130,115 210,130 Q310,108 420,122 Q490,112 560,128"
-        stroke="#DAA520" stroke-width="0.5" fill="none" opacity="0.08"/>
+  <!-- ASCII art: KINTSUGI -->
+  <text font-family="'Courier New',Courier,monospace" font-size="13.5" font-weight="bold" xml:space="preserve">
+    <tspan x="28" y="30"  fill="#FFD700">██╗  ██╗██╗███╗   ██╗████████╗███████╗██╗   ██╗ ██████╗ ██╗</tspan>
+    <tspan x="28" y="47"  fill="#FFC200">██║ ██╔╝██║████╗  ██║╚══██╔══╝██╔════╝██║   ██║██╔════╝ ██║</tspan>
+    <tspan x="28" y="64"  fill="#FFB300">█████╔╝ ██║██╔██╗ ██║   ██║   ███████╗██║   ██║██║  ███╗██║</tspan>
+    <tspan x="28" y="81"  fill="#FFA000">██╔═██╗ ██║██║╚██╗██║   ██║   ╚════██║██║   ██║██║   ██║██║</tspan>
+    <tspan x="28" y="98"  fill="#FF8C00">██║  ██╗██║██║ ╚████║   ██║   ███████║╚██████╔╝╚██████╔╝██║</tspan>
+    <tspan x="28" y="115" fill="#E65100">╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝</tspan>
+  </text>
 
-  <!-- pixel art KINTSUGI — each rect is one 11×11 pixel at 12px grid -->
-  <g filter="url(#glow)">
-
-    <!-- ── ROW 0  y=25  #FFD700 ── -->
-    <g fill="#FFD700">
-      <!-- K  sx=20  --> <rect x="20" y="25" width="11" height="11"/><rect x="68" y="25" width="11" height="11"/>
-      <!-- I  sx=92  --> <rect x="92" y="25" width="11" height="11"/><rect x="104" y="25" width="11" height="11"/><rect x="116" y="25" width="11" height="11"/>
-      <!-- N  sx=140 --> <rect x="140" y="25" width="11" height="11"/><rect x="188" y="25" width="11" height="11"/>
-      <!-- T  sx=212 --> <rect x="212" y="25" width="11" height="11"/><rect x="224" y="25" width="11" height="11"/><rect x="236" y="25" width="11" height="11"/><rect x="248" y="25" width="11" height="11"/><rect x="260" y="25" width="11" height="11"/>
-      <!-- S  sx=284 --> <rect x="296" y="25" width="11" height="11"/><rect x="308" y="25" width="11" height="11"/><rect x="320" y="25" width="11" height="11"/>
-      <!-- U  sx=356 --> <rect x="356" y="25" width="11" height="11"/><rect x="404" y="25" width="11" height="11"/>
-      <!-- G  sx=428 --> <rect x="440" y="25" width="11" height="11"/><rect x="452" y="25" width="11" height="11"/><rect x="464" y="25" width="11" height="11"/>
-      <!-- I  sx=500 --> <rect x="500" y="25" width="11" height="11"/><rect x="512" y="25" width="11" height="11"/><rect x="524" y="25" width="11" height="11"/>
-    </g>
-
-    <!-- ── ROW 1  y=37  #FFCC00 ── -->
-    <g fill="#FFCC00">
-      <!-- K --> <rect x="20" y="37" width="11" height="11"/><rect x="56" y="37" width="11" height="11"/>
-      <!-- I --> <rect x="104" y="37" width="11" height="11"/>
-      <!-- N --> <rect x="140" y="37" width="11" height="11"/><rect x="152" y="37" width="11" height="11"/><rect x="188" y="37" width="11" height="11"/>
-      <!-- T --> <rect x="236" y="37" width="11" height="11"/>
-      <!-- S --> <rect x="284" y="37" width="11" height="11"/><rect x="332" y="37" width="11" height="11"/>
-      <!-- U --> <rect x="356" y="37" width="11" height="11"/><rect x="404" y="37" width="11" height="11"/>
-      <!-- G --> <rect x="428" y="37" width="11" height="11"/><rect x="476" y="37" width="11" height="11"/>
-      <!-- I --> <rect x="512" y="37" width="11" height="11"/>
-    </g>
-
-    <!-- ── ROW 2  y=49  #FFC107 ── -->
-    <g fill="#FFC107">
-      <!-- K --> <rect x="20" y="49" width="11" height="11"/><rect x="44" y="49" width="11" height="11"/>
-      <!-- I --> <rect x="104" y="49" width="11" height="11"/>
-      <!-- N --> <rect x="140" y="49" width="11" height="11"/><rect x="164" y="49" width="11" height="11"/><rect x="188" y="49" width="11" height="11"/>
-      <!-- T --> <rect x="236" y="49" width="11" height="11"/>
-      <!-- S --> <rect x="284" y="49" width="11" height="11"/>
-      <!-- U --> <rect x="356" y="49" width="11" height="11"/><rect x="404" y="49" width="11" height="11"/>
-      <!-- G --> <rect x="428" y="49" width="11" height="11"/>
-      <!-- I --> <rect x="512" y="49" width="11" height="11"/>
-    </g>
-
-    <!-- ── ROW 3  y=61  #FFB300 ── -->
-    <g fill="#FFB300">
-      <!-- K --> <rect x="20" y="61" width="11" height="11"/><rect x="32" y="61" width="11" height="11"/>
-      <!-- I --> <rect x="104" y="61" width="11" height="11"/>
-      <!-- N --> <rect x="140" y="61" width="11" height="11"/><rect x="176" y="61" width="11" height="11"/><rect x="188" y="61" width="11" height="11"/>
-      <!-- T --> <rect x="236" y="61" width="11" height="11"/>
-      <!-- S --> <rect x="296" y="61" width="11" height="11"/><rect x="308" y="61" width="11" height="11"/><rect x="320" y="61" width="11" height="11"/>
-      <!-- U --> <rect x="356" y="61" width="11" height="11"/><rect x="404" y="61" width="11" height="11"/>
-      <!-- G --> <rect x="428" y="61" width="11" height="11"/><rect x="452" y="61" width="11" height="11"/><rect x="464" y="61" width="11" height="11"/><rect x="476" y="61" width="11" height="11"/>
-      <!-- I --> <rect x="512" y="61" width="11" height="11"/>
-    </g>
-
-    <!-- ── ROW 4  y=73  #FFA000 ── -->
-    <g fill="#FFA000">
-      <!-- K --> <rect x="20" y="73" width="11" height="11"/><rect x="44" y="73" width="11" height="11"/>
-      <!-- I --> <rect x="104" y="73" width="11" height="11"/>
-      <!-- N --> <rect x="140" y="73" width="11" height="11"/><rect x="188" y="73" width="11" height="11"/>
-      <!-- T --> <rect x="236" y="73" width="11" height="11"/>
-      <!-- S --> <rect x="332" y="73" width="11" height="11"/>
-      <!-- U --> <rect x="356" y="73" width="11" height="11"/><rect x="404" y="73" width="11" height="11"/>
-      <!-- G --> <rect x="428" y="73" width="11" height="11"/><rect x="476" y="73" width="11" height="11"/>
-      <!-- I --> <rect x="512" y="73" width="11" height="11"/>
-    </g>
-
-    <!-- ── ROW 5  y=85  #FF8F00 ── -->
-    <g fill="#FF8F00">
-      <!-- K --> <rect x="20" y="85" width="11" height="11"/><rect x="56" y="85" width="11" height="11"/>
-      <!-- I --> <rect x="104" y="85" width="11" height="11"/>
-      <!-- N --> <rect x="140" y="85" width="11" height="11"/><rect x="188" y="85" width="11" height="11"/>
-      <!-- T --> <rect x="236" y="85" width="11" height="11"/>
-      <!-- S --> <rect x="284" y="85" width="11" height="11"/><rect x="332" y="85" width="11" height="11"/>
-      <!-- U --> <rect x="356" y="85" width="11" height="11"/><rect x="404" y="85" width="11" height="11"/>
-      <!-- G --> <rect x="428" y="85" width="11" height="11"/><rect x="476" y="85" width="11" height="11"/>
-      <!-- I --> <rect x="512" y="85" width="11" height="11"/>
-    </g>
-
-    <!-- ── ROW 6  y=97  #E65100 ── -->
-    <g fill="#E65100">
-      <!-- K --> <rect x="20" y="97" width="11" height="11"/><rect x="68" y="97" width="11" height="11"/>
-      <!-- I --> <rect x="92" y="97" width="11" height="11"/><rect x="104" y="97" width="11" height="11"/><rect x="116" y="97" width="11" height="11"/>
-      <!-- N --> <rect x="140" y="97" width="11" height="11"/><rect x="188" y="97" width="11" height="11"/>
-      <!-- T --> <rect x="236" y="97" width="11" height="11"/>
-      <!-- S --> <rect x="296" y="97" width="11" height="11"/><rect x="308" y="97" width="11" height="11"/><rect x="320" y="97" width="11" height="11"/>
-      <!-- U --> <rect x="368" y="97" width="11" height="11"/><rect x="380" y="97" width="11" height="11"/><rect x="392" y="97" width="11" height="11"/>
-      <!-- G --> <rect x="440" y="97" width="11" height="11"/><rect x="452" y="97" width="11" height="11"/><rect x="464" y="97" width="11" height="11"/>
-      <!-- I --> <rect x="500" y="97" width="11" height="11"/><rect x="512" y="97" width="11" height="11"/><rect x="524" y="97" width="11" height="11"/>
-    </g>
-
-  </g><!-- /glow -->
-
-  <!-- gold rule -->
-  <line x1="20" y1="118" x2="540" y2="118" stroke="#FFD700" stroke-width="0.8" opacity="0.45"/>
+  <!-- thin gold rule -->
+  <line x1="28" y1="127" x2="632" y2="127" stroke="#FFD700" stroke-width="0.6" opacity="0.4"/>
 
   <!-- tagline -->
-  <text x="280" y="138"
-        font-family="'Courier New', Courier, monospace"
-        font-size="11"
-        fill="#666666"
+  <text x="330" y="148"
+        font-family="'Courier New',Courier,monospace"
+        font-size="11.5"
+        fill="#888888"
         text-anchor="middle"
-        letter-spacing="1.8">金継ぎ  ·  OS  ·  sub-1W  ·  edge  ·  agent-native</text>
+        letter-spacing="1.5">金継ぎ  ·  sub-1 watt  ·  edge computing  ·  agent-native</text>
 </svg>
