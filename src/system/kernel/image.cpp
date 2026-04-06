@@ -61,6 +61,10 @@
 
 #define ADD_DEBUGGER_COMMANDS
 
+#ifdef ADD_DEBUGGER_COMMANDS
+static int dump_images_list(int argc, char **argv);
+#endif
+
 
 namespace {
 

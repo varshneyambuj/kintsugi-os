@@ -5,6 +5,7 @@ SubDir HAIKU_TOP src apps ;
 # add the HaikuSubInclude line here to re-enable.
 
 HaikuSubInclude aboutsystem ;
+HaikuSubInclude networkstatus ;
 HaikuSubInclude deskbar ;
 HaikuSubInclude devices ;
 HaikuSubInclude haikudepot ;

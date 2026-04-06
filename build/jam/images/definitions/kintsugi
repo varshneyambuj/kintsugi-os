@@ -149,11 +149,22 @@ DESKBAR_APPLICATIONS =
 
 DESKBAR_DESKTOP_APPLETS = ;
 
-# No preference panels.
-# To add preferences:
-#   1. Add SubInclude to srck/preferences/Jamfile
-#   2. Add the preference name here
-SYSTEM_PREFERENCES = ;
+SYSTEM_PREFERENCES = [ FFilterByBuildFeatures
+	Appearance
+	Backgrounds
+	<preference>Deskbar
+	FileTypes
+	Input
+	Keymap
+	Locale
+	Network
+	Notifications
+	Screen
+	Shortcuts
+	Time
+	<preference>Tracker
+	VirtualMemory
+] ;
 
 SYSTEM_DEMOS = ;
 
