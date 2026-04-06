@@ -1,5 +1,7 @@
 <div align="center">
   <img src="./assets/banner.svg" alt="Kintsugi OS" width="700"/>
+  <br/><br/>
+  <img src="./assets/kintsugi.jpg" alt="Kintsugi pottery — broken ceramic repaired with gold" width="360" style="border-radius:8px"/>
 </div>
 
 > *Kintsugi (金継ぎ) — the Japanese art of repairing broken pottery with gold, making the fractures part of the beauty.*
