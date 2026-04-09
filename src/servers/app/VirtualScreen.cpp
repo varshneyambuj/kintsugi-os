@@ -1,11 +1,33 @@
 /*
- * Copyright 2005-2013, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2013, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
  *		Axel Dörfler, axeld@pinc-software.de
  */
 
+/** @file VirtualScreen.cpp
+ *  @brief Aggregates one or more physical screens into a unified virtual display surface.
+ */
 
 #include "VirtualScreen.h"
 
@@ -15,6 +37,7 @@
 #include <new>
 
 
+/** @brief Constructs an empty VirtualScreen with no screens attached. */
 VirtualScreen::VirtualScreen()
 	:
 	fScreenList(4),
@@ -24,12 +47,19 @@ VirtualScreen::VirtualScreen()
 }
 
 
+/** @brief Destructor. Releases all acquired screens. */
 VirtualScreen::~VirtualScreen()
 {
 	_Reset();
 }
 
 
+/** @brief Releases all screens and resets internal state to empty.
+ *
+ *  Releases every screen held in the screen list back to the global
+ *  ScreenManager, empties the list, and resets the cached frame,
+ *  drawing engine, and hardware interface pointers to NULL/zero.
+ */
 void
 VirtualScreen::_Reset()
 {
@@ -49,6 +79,20 @@ VirtualScreen::_Reset()
 }
 
 
+/** @brief Acquires screens from the ScreenManager and applies stored configurations.
+ *
+ *  Resets the current screen list, then asks the global ScreenManager for all
+ *  screens appropriate for \a desktop.  Each acquired screen is added via
+ *  AddScreen() which attempts to restore its saved display mode from
+ *  \a configurations.  If \a _changedScreens is non-NULL it is set to a
+ *  bitmask indicating which screen indices changed their display mode compared
+ *  to the previous configuration.
+ *
+ *  @param desktop         The Desktop that will own the screens.
+ *  @param configurations  Stored screen configurations to apply where possible.
+ *  @param _changedScreens Optional output bitmask of changed screen indices.
+ *  @return B_OK on success, or an error code if screen acquisition fails.
+ */
 status_t
 VirtualScreen::SetConfiguration(Desktop& desktop,
 	ScreenConfigurations& configurations, uint32* _changedScreens)
@@ -109,6 +153,18 @@ VirtualScreen::SetConfiguration(Desktop& desktop,
 }
 
 
+/** @brief Adds a single screen to the virtual display and applies its display mode.
+ *
+ *  Attempts to restore the screen's display mode from \a configurations.  If
+ *  no valid saved configuration is found the method falls back to the screen's
+ *  preferred mode, then to 1024x768 and 800x600 at 32-bit colour.  On success
+ *  the screen is appended to the internal list and the cached drawing engine
+ *  and hardware interface pointers are updated (single-screen implementation).
+ *
+ *  @param screen          The Screen object to add.
+ *  @param configurations  Stored screen configurations to try first.
+ *  @return B_OK on success, or B_NO_MEMORY / a driver error code on failure.
+ */
 status_t
 VirtualScreen::AddScreen(Screen* screen, ScreenConfigurations& configurations)
 {
@@ -160,6 +216,10 @@ VirtualScreen::AddScreen(Screen* screen, ScreenConfigurations& configurations)
 }
 
 
+/** @brief Removes a screen from the virtual display (not yet implemented).
+ *  @param screen The screen to remove.
+ *  @return Always returns B_ERROR until dynamic hot-plug support is implemented.
+ */
 status_t
 VirtualScreen::RemoveScreen(Screen* screen)
 {
@@ -168,6 +228,13 @@ VirtualScreen::RemoveScreen(Screen* screen)
 }
 
 
+/** @brief Recalculates the bounding frame that spans all attached screens.
+ *
+ *  Iterates over every screen and sums their widths horizontally while
+ *  tracking the maximum height.  The resulting frame is stored in fFrame.
+ *  Note: the current implementation does not account for screen position
+ *  offsets (suitable for single or side-by-side layouts only).
+ */
 void
 VirtualScreen::UpdateFrame()
 {
@@ -192,6 +259,9 @@ VirtualScreen::UpdateFrame()
 
 /*!	Returns the smallest frame that spans over all screens
 */
+/** @brief Returns the bounding rectangle that encompasses all screens.
+ *  @return The virtual frame in screen coordinates (origin at 0,0).
+ */
 BRect
 VirtualScreen::Frame() const
 {
@@ -199,6 +269,10 @@ VirtualScreen::Frame() const
 }
 
 
+/** @brief Returns the Screen at the given list index.
+ *  @param index Zero-based index into the screen list.
+ *  @return Pointer to the Screen, or NULL if \a index is out of range.
+ */
 Screen*
 VirtualScreen::ScreenAt(int32 index) const
 {
@@ -210,6 +284,15 @@ VirtualScreen::ScreenAt(int32 index) const
 }
 
 
+/** @brief Finds a Screen by its identifier.
+ *
+ *  Iterates the screen list and returns the first screen whose ID matches
+ *  \a id.  The special value B_MAIN_SCREEN_ID.id always matches the last
+ *  screen in the list.
+ *
+ *  @param id The screen identifier to search for.
+ *  @return Pointer to the matching Screen, or NULL if not found.
+ */
 Screen*
 VirtualScreen::ScreenByID(int32 id) const
 {
@@ -224,6 +307,10 @@ VirtualScreen::ScreenByID(int32 id) const
 }
 
 
+/** @brief Returns the frame rectangle of the screen at the given list index.
+ *  @param index Zero-based index into the screen list.
+ *  @return The screen's frame, or BRect(0,0,0,0) if \a index is out of range.
+ */
 BRect
 VirtualScreen::ScreenFrameAt(int32 index) const
 {
@@ -235,6 +322,9 @@ VirtualScreen::ScreenFrameAt(int32 index) const
 }
 
 
+/** @brief Returns the number of screens currently managed by this VirtualScreen.
+ *  @return The screen count.
+ */
 int32
 VirtualScreen::CountScreens() const
 {
@@ -242,6 +332,17 @@ VirtualScreen::CountScreens() const
 }
 
 
+/** @brief Looks up the best matching stored display mode for \a screen.
+ *
+ *  Queries \a configurations for a configuration that best fits the given
+ *  screen's identity and monitor information.  If a match is found the mode
+ *  is written into \a mode and the configuration is marked as current.
+ *
+ *  @param screen         The screen whose mode should be retrieved.
+ *  @param configurations The pool of stored screen configurations to search.
+ *  @param mode           Output parameter filled with the found display mode.
+ *  @return B_OK if a configuration was found, B_NAME_NOT_FOUND otherwise.
+ */
 status_t
 VirtualScreen::_GetMode(Screen* screen, ScreenConfigurations& configurations,
 	display_mode& mode) const
@@ -259,4 +360,3 @@ VirtualScreen::_GetMode(Screen* screen, ScreenConfigurations& configurations,
 
 	return B_OK;
 }
-

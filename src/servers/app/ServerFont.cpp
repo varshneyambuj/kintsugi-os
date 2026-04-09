@@ -1,13 +1,35 @@
 /*
- * Copyright 2001-2016, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Jérôme Duval, jerome.duval@free.fr
- *		Michael Lotz <mmlr@mlotz.ch>
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2016, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Jérôme Duval, jerome.duval@free.fr
+ *       Michael Lotz <mmlr@mlotz.ch>
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
+
+/** @file ServerFont.cpp
+    @brief Server-side font object wrapping a FreeType FontStyle with metrics and glyph query operations. */
 
 
 #include "ServerFont.h"
@@ -42,6 +64,10 @@
 
 
 // functions needed to convert a freetype vector graphics to a BShape
+
+/** @brief Converts a FreeType 26.6 fixed-point vector to a BPoint.
+    @param vector Pointer to the FT_Vector to convert.
+    @return The resulting BPoint in floating-point coordinates. */
 inline BPoint
 VectorToPoint(const FT_Vector *vector)
 {
@@ -52,6 +78,10 @@ VectorToPoint(const FT_Vector *vector)
 }
 
 
+/** @brief FreeType outline decomposition callback: move-to.
+    @param to   Target point for the move.
+    @param user Pointer to the target BShape.
+    @return 0 on success. */
 int
 MoveToFunc(const FT_Vector *to, void *user)
 {
@@ -60,6 +90,10 @@ MoveToFunc(const FT_Vector *to, void *user)
 }
 
 
+/** @brief FreeType outline decomposition callback: line-to.
+    @param to   Target endpoint of the line.
+    @param user Pointer to the target BShape.
+    @return 0 on success. */
 int
 LineToFunc(const FT_Vector *to, void *user)
 {
@@ -68,6 +102,11 @@ LineToFunc(const FT_Vector *to, void *user)
 }
 
 
+/** @brief FreeType outline decomposition callback: conic (quadratic) Bezier.
+    @param control  Single control point of the conic curve.
+    @param to       Target endpoint.
+    @param user     Pointer to the target BShape.
+    @return 0 on success. */
 int
 ConicToFunc(const FT_Vector *control, const FT_Vector *to, void *user)
 {
@@ -82,6 +121,12 @@ ConicToFunc(const FT_Vector *control, const FT_Vector *to, void *user)
 }
 
 
+/** @brief FreeType outline decomposition callback: cubic Bezier.
+    @param control1 First control point.
+    @param control2 Second control point.
+    @param to       Target endpoint.
+    @param user     Pointer to the target BShape.
+    @return 0 on success. */
 int
 CubicToFunc(const FT_Vector *control1, const FT_Vector *control2, const FT_Vector *to, void *user)
 {
@@ -96,6 +141,9 @@ CubicToFunc(const FT_Vector *control1, const FT_Vector *control2, const FT_Vecto
 }
 
 
+/** @brief Returns whether the given Unicode code point is a whitespace character.
+    @param charCode The Unicode code point to test.
+    @return true if charCode is a recognised whitespace character. */
 inline bool
 is_white_space(uint32 charCode)
 {
@@ -119,15 +167,14 @@ is_white_space(uint32 charCode)
 //	#pragma mark -
 
 
-/*!
-	\brief Constructor
-	\param style Style object to which the ServerFont belongs
-	\param size Character size in points
-	\param rotation Rotation in degrees
-	\param shear Shear (slant) in degrees. 45 <= shear <= 135
-	\param flags Style flags as defined in <Font.h>
-	\param spacing String spacing flag as defined in <Font.h>
-*/
+/** @brief Constructs a ServerFont from a FontStyle with explicit metrics parameters.
+    @param style          The FontStyle this font is an instance of.
+    @param size           Character size in points.
+    @param rotation       Rotation in degrees.
+    @param shear          Shear (slant) in degrees; 45 <= shear <= 135.
+    @param falseBoldWidth Width added to each glyph for synthetic bold.
+    @param flags          Style flags as defined in Font.h.
+    @param spacing        String spacing mode as defined in Font.h. */
 ServerFont::ServerFont(FontStyle& style, float size, float rotation,
 		float shear, float falseBoldWidth, uint16 flags, uint8 spacing)
 	:
@@ -146,6 +193,7 @@ ServerFont::ServerFont(FontStyle& style, float size, float rotation,
 }
 
 
+/** @brief Default constructor. Initialises the font to the global default plain font. */
 ServerFont::ServerFont()
 	:
 	fStyle(NULL)
@@ -154,10 +202,8 @@ ServerFont::ServerFont()
 }
 
 
-/*!
-	\brief Copy Constructor
-	\param font ServerFont to copy
-*/
+/** @brief Copy constructor.
+    @param font The ServerFont to copy from. */
 ServerFont::ServerFont(const ServerFont &font)
 	:
 	fStyle(NULL)
@@ -166,19 +212,15 @@ ServerFont::ServerFont(const ServerFont &font)
 }
 
 
-/*!
-	\brief Removes itself as a dependency of its owning style.
-*/
+/** @brief Destructor. Removes the font's reference to its owning FontStyle. */
 ServerFont::~ServerFont()
 {
 }
 
 
-/*!
-	\brief Returns a copy of the specified font
-	\param The font to copy from.
-	\return A copy of the specified font
-*/
+/** @brief Assignment operator; copies all font attributes from another ServerFont.
+    @param font The source ServerFont to copy from.
+    @return Reference to this ServerFont. */
 ServerFont&
 ServerFont::operator=(const ServerFont& font)
 {
@@ -199,6 +241,9 @@ ServerFont::operator=(const ServerFont& font)
 }
 
 
+/** @brief Equality comparison operator.
+    @param other The ServerFont to compare against.
+    @return true if all font attributes (family, style, size, rotation, shear, etc.) are equal. */
 bool
 ServerFont::operator==(const ServerFont& other) const
 {
@@ -213,10 +258,8 @@ ServerFont::operator==(const ServerFont& other) const
 }
 
 
-/*!
-	\brief Returns the number of strikes in the font
-	\return The number of strikes in the font
-*/
+/** @brief Returns the number of tuned (hinted) strike sizes available for this font.
+    @return The count of tuned strikes in the underlying FontStyle. */
 int32
 ServerFont::CountTuned()
 {
@@ -224,10 +267,8 @@ ServerFont::CountTuned()
 }
 
 
-/*!
-	\brief Returns the file format of the font.
-	\return Mostly B_TRUETYPE_WINDOWS :)
-*/
+/** @brief Returns the file format of the font.
+    @return The font_file_format (typically B_TRUETYPE_WINDOWS). */
 font_file_format
 ServerFont::FileFormat()
 {
@@ -235,6 +276,8 @@ ServerFont::FileFormat()
 }
 
 
+/** @brief Returns the style name of this font.
+    @return A C string containing the style name. */
 const char*
 ServerFont::Style() const
 {
@@ -242,6 +285,8 @@ ServerFont::Style() const
 }
 
 
+/** @brief Returns the family name of this font.
+    @return A C string containing the family name. */
 const char*
 ServerFont::Family() const
 {
@@ -249,6 +294,8 @@ ServerFont::Family() const
 }
 
 
+/** @brief Sets the FontStyle for this font, updating face and direction accordingly.
+    @param style Pointer to the new FontStyle. No-op if style is NULL or already set. */
 void
 ServerFont::SetStyle(FontStyle* style)
 {
@@ -264,14 +311,11 @@ ServerFont::SetStyle(FontStyle* style)
 }
 
 
-/*!
-	\brief Sets the ServerFont instance to whatever font is specified
-	This method will lock the font manager.
-
-	\param familyID ID number of the family to set
-	\param styleID ID number of the style to set
-	\return B_OK if successful, B_ERROR if not
-*/
+/** @brief Sets the font family and style by numeric IDs, searching the global and app font managers.
+    @param familyID    Numeric family identifier.
+    @param styleID     Numeric style identifier within the family.
+    @param fontManager Optional AppFontManager used as a fallback for application-installed fonts.
+    @return B_OK on success, B_ERROR if the specified family/style combination was not found. */
 status_t
 ServerFont::SetFamilyAndStyle(uint16 familyID, uint16 styleID,
 	AppFontManager* fontManager)
@@ -305,11 +349,10 @@ ServerFont::SetFamilyAndStyle(uint16 familyID, uint16 styleID,
 }
 
 
-/*!
-	\brief Sets the ServerFont instance to whatever font is specified
-	\param fontID the combination of family and style ID numbers
-	\return B_OK if successful, B_ERROR if not
-*/
+/** @brief Sets the font family and style from a combined 32-bit font ID.
+    @param fontID      The combined family/style ID (family in upper 16 bits, style in lower 16 bits).
+    @param fontManager Optional AppFontManager used as a fallback.
+    @return B_OK on success, B_ERROR if the font was not found. */
 status_t
 ServerFont::SetFamilyAndStyle(uint32 fontID, AppFontManager* fontManager)
 {
@@ -320,6 +363,8 @@ ServerFont::SetFamilyAndStyle(uint32 fontID, AppFontManager* fontManager)
 }
 
 
+/** @brief Sets the font size in points, invalidating the cached bounding box.
+    @param value The new font size in points. */
 void
 ServerFont::SetSize(float value)
 {
@@ -330,6 +375,9 @@ ServerFont::SetSize(float value)
 }
 
 
+/** @brief Sets the font face flags, searching for a matching style within the same family if needed.
+    @param face The face flags to apply (e.g. B_BOLD_FACE, B_ITALIC_FACE).
+    @return B_OK on success, B_ERROR if no matching style was found. */
 status_t
 ServerFont::SetFace(uint16 face)
 {
@@ -373,10 +421,9 @@ ServerFont::SetFace(uint16 face)
 }
 
 
-/*!
-	\brief Gets the ID values for the ServerFont instance in one shot
-	\return the combination of family and style ID numbers
-*/
+/** @brief Returns the combined family and style ID for this font.
+    @return A 32-bit value with the family ID in the upper 16 bits and style ID in the lower 16 bits,
+            or 0 if no style is set. */
 uint32
 ServerFont::GetFamilyAndStyle() const
 {
@@ -387,6 +434,12 @@ ServerFont::GetFamilyAndStyle() const
 }
 
 
+/** @brief Retrieves a transformed FreeType face, locking the FontStyle.
+
+    The caller MUST release the face via PutTransformedFace() when done.
+    @param rotate If true, applies the font's rotation to the face matrix.
+    @param shear  If true, applies the font's shear to the face matrix.
+    @return The FT_Face on success, or NULL if unavailable. */
 FT_Face
 ServerFont::GetTransformedFace(bool rotate, bool shear) const
 {
@@ -424,6 +477,8 @@ ServerFont::GetTransformedFace(bool rotate, bool shear) const
 }
 
 
+/** @brief Releases a transformed FreeType face obtained from GetTransformedFace(), unlocking the FontStyle.
+    @param face The FT_Face to release. */
 void
 ServerFont::PutTransformedFace(FT_Face face) const
 {
@@ -433,6 +488,11 @@ ServerFont::PutTransformedFace(FT_Face face) const
 }
 
 
+/** @brief Decomposes the outlines of the specified characters into BShape objects.
+    @param charArray  UTF-8 encoded string of characters to decompose.
+    @param numChars   Number of characters in charArray.
+    @param shapeArray Caller-allocated array of BShape pointers to receive the outlines.
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_NO_MEMORY or B_ERROR on failure. */
 status_t
 ServerFont::GetGlyphShapes(const char charArray[], int32 numChars,
 	BShape* shapeArray[]) const
@@ -472,12 +532,10 @@ ServerFont::GetGlyphShapes(const char charArray[], int32 numChars,
 
 #ifdef FONTCONFIG_ENABLED
 
-/*!
-	\brief For a given codepoint, do a binary search of the defined unicode
-	blocks to figure out which one contains the codepoint.
-	\param codePoint is the point to find
-	\param startGuess is the starting point for the binary search (default 0)
-*/
+/** @brief Binary-searches the Unicode block map for the block containing the given code point.
+    @param codePoint  The Unicode code point to locate.
+    @param startGuess Starting index for the binary search (0 for no hint).
+    @return Index into kUnicodeBlockMap of the enclosing block, or -1 if not found. */
 static
 int32
 FindBlockForCodepoint(uint32 codePoint, uint32 startGuess)
@@ -511,13 +569,12 @@ FindBlockForCodepoint(uint32 codePoint, uint32 startGuess)
 	return -1;
 }
 
-/*!
-	\brief parses charmap from fontconfig.  See fontconfig docs for FcCharSetFirstPage
-	and FcCharSetNextPage for details on format.
-	\param charMap is a fontconfig character map
-	\param baseCodePoint is the base codepoint returned by fontconfig
-	\param blocksForMap is a unicode_block to store the bitmap of contained blocks
-*/
+/** @brief Parses a fontconfig character map page and updates the unicode_block bitmap.
+
+    See fontconfig docs for FcCharSetFirstPage and FcCharSetNextPage for details on format.
+    @param charMap        A fontconfig character map page.
+    @param baseCodePoint  The base code point returned by fontconfig for this page.
+    @param blocksForMap   The unicode_block to update with the blocks found in the map. */
 static
 void
 ParseFcMap(FcChar32 charMap[], FcChar32 baseCodePoint, unicode_block& blocksForMap)
@@ -609,11 +666,9 @@ ParseFcMap(FcChar32 charMap[], FcChar32 baseCodePoint, unicode_block& blocksForM
 #endif // FONTCONFIG_ENABLED
 
 
-/*!
-	\brief Gets a bitmap that indicates which Unicode blocks are in the font.
-	\param unicode_block to store bitmap in
-	\return B_OK; bitmap will be empty if something went wrong
-*/
+/** @brief Returns a bitmap indicating which Unicode blocks are covered by this font.
+    @param blocksForFont Output parameter receiving the unicode_block bitmap.
+    @return B_OK; the bitmap will be empty if fontconfig is not available or an error occurred. */
 status_t
 ServerFont::GetUnicodeBlocks(unicode_block& blocksForFont)
 {
@@ -646,14 +701,11 @@ ServerFont::GetUnicodeBlocks(unicode_block& blocksForFont)
 	return B_OK;
 }
 
-/*!
-	\brief Checks if a unicode block specified by a start and end point is defined
-	in the current font
-	\param start of unicode block
-	\param end of unicode block
-	\param hasBlock boolean to store whether the font contains the specified block
-	\return B_OK; hasBlock will be false if something goes wrong
-*/
+/** @brief Checks whether the font contains any character in the given Unicode code-point range.
+    @param start     Start of the Unicode block range (inclusive).
+    @param end       End of the Unicode block range (inclusive).
+    @param hasBlock  Output parameter set to true if at least one code point in [start, end] is present.
+    @return B_OK; hasBlock will be false if fontconfig is unavailable or an error occurred. */
 status_t
 ServerFont::IncludesUnicodeBlock(uint32 start, uint32 end, bool& hasBlock)
 {
@@ -691,6 +743,13 @@ ServerFont::IncludesUnicodeBlock(uint32 start, uint32 end, bool& hasBlock)
 }
 
 
+/** @brief Fills a boolean array indicating which characters in the string have glyphs in this font.
+    @param string       UTF-8 encoded string to query.
+    @param numBytes     Length in bytes of the string.
+    @param numChars     Number of characters to query.
+    @param hasArray     Caller-allocated boolean array of numChars entries to fill.
+    @param useFallbacks If true, also checks fallback fonts when a glyph is missing.
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_ERROR if the font cache is unavailable. */
 status_t
 ServerFont::GetHasGlyphs(const char* string, int32 numBytes, int32 numChars, bool* hasArray,
 	bool useFallbacks) const
@@ -731,8 +790,12 @@ ServerFont::GetHasGlyphs(const char* string, int32 numBytes, int32 numChars, boo
 }
 
 
+/** @brief Helper consumer class that retrieves glyph edge (inset) information. */
 class EdgesConsumer {
  public:
+	/** @brief Constructs an EdgesConsumer.
+	    @param edges Caller-allocated array of edge_info to fill.
+	    @param size  The font size in points, used to normalise edge values. */
 	EdgesConsumer(edge_info* edges, float size)
 		:
 		fEdges(edges),
@@ -740,15 +803,33 @@ class EdgesConsumer {
 	{
 	}
 
+	/** @brief Returns false; vector data is not required for edge queries. */
 	bool NeedsVector() { return false; }
+	/** @brief Called before layout begins; no-op. */
 	void Start() {}
+	/** @brief Called after layout ends; no-op. */
 	void Finish(double x, double y) {}
+	/** @brief Sets edge values to zero for an empty (missing) glyph.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param x        Current pen x position.
+	    @param y        Current pen y position. */
 	void ConsumeEmptyGlyph(int32 index, uint32 charCode, double x, double y)
 	{
 		fEdges[index].left = 0.0;
 		fEdges[index].right = 0.0;
 	}
 
+	/** @brief Stores normalised inset values for a glyph.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param glyph    The cached glyph providing inset data.
+	    @param entry    The font cache entry (unused here).
+	    @param x        Current pen x position.
+	    @param y        Current pen y position.
+	    @param advanceX Horizontal advance (unused here).
+	    @param advanceY Vertical advance (unused here).
+	    @return true always. */
 	bool ConsumeGlyph(int32 index, uint32 charCode, const GlyphCache* glyph,
 		FontCacheEntry* entry, double x, double y, double advanceX,
 			double advanceY)
@@ -764,6 +845,12 @@ class EdgesConsumer {
 };
 
 
+/** @brief Returns glyph edge (inset) information for each character in a string.
+    @param string   UTF-8 encoded string.
+    @param numBytes Length in bytes of the string.
+    @param numChars Number of characters to process.
+    @param edges    Caller-allocated array of edge_info to fill.
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_ERROR if layout failed. */
 status_t
 ServerFont::GetEdges(const char* string, int32 numBytes, int32 numChars,
 	edge_info* edges) const
@@ -798,8 +885,13 @@ ServerFont::GetEdges(const char* string, int32 numBytes, int32 numChars,
 }
 
 
+/** @brief Helper consumer class that computes BPoint escapements for each glyph. */
 class BPointEscapementConsumer {
 public:
+	/** @brief Constructs a BPointEscapementConsumer.
+	    @param escapements Caller-allocated array of BPoint escapements to fill.
+	    @param offsets     Optional caller-allocated array of BPoint offsets to fill.
+	    @param size        The font size in points, used to normalise escapement values. */
 	BPointEscapementConsumer(BPoint* escapements, BPoint* offsets, float size)
 		:
 		fEscapements(escapements),
@@ -808,14 +900,32 @@ public:
 	{
 	}
 
+	/** @brief Returns false; vector data is not required. */
 	bool NeedsVector() { return false; }
+	/** @brief Called before layout begins; no-op. */
 	void Start() {}
+	/** @brief Called after layout ends; no-op. */
 	void Finish(double x, double y) {}
+	/** @brief Sets escapement to zero for a missing glyph.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param x        Current pen x position.
+	    @param y        Current pen y position. */
 	void ConsumeEmptyGlyph(int32 index, uint32 charCode, double x, double y)
 	{
 		_Set(index, 0, 0);
 	}
 
+	/** @brief Stores the normalised advance as an escapement.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param glyph    The cached glyph (unused here).
+	    @param entry    The font cache entry (unused here).
+	    @param x        Current pen x position.
+	    @param y        Current pen y position.
+	    @param advanceX Horizontal advance in font units.
+	    @param advanceY Vertical advance in font units.
+	    @return true always. */
 	bool ConsumeGlyph(int32 index, uint32 charCode, const GlyphCache* glyph,
 		FontCacheEntry* entry, double x, double y, double advanceX,
 			double advanceY)
@@ -824,6 +934,11 @@ public:
 	}
 
 private:
+	/** @brief Sets the escapement and optional offset for a single glyph.
+	    @param index The glyph index.
+	    @param x     Horizontal advance in font units.
+	    @param y     Vertical advance in font units.
+	    @return true always. */
 	inline bool _Set(int32 index, double x, double y)
 	{
 		fEscapements[index].x = x / fSize;
@@ -846,6 +961,14 @@ private:
 };
 
 
+/** @brief Returns the BPoint escapements (normalised advances) for each character in a string.
+    @param string           UTF-8 encoded string.
+    @param numBytes         Length in bytes of the string.
+    @param numChars         Number of characters.
+    @param delta            Escapement deltas for space and non-space characters.
+    @param escapementArray  Caller-allocated BPoint array of numChars entries.
+    @param offsetArray      Optional caller-allocated BPoint offset array.
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_ERROR if layout failed. */
 status_t
 ServerFont::GetEscapements(const char* string, int32 numBytes, int32 numChars,
 	escapement_delta delta, BPoint escapementArray[],
@@ -866,8 +989,12 @@ ServerFont::GetEscapements(const char* string, int32 numBytes, int32 numChars,
 }
 
 
+/** @brief Helper consumer class that computes float width escapements for each glyph. */
 class WidthEscapementConsumer {
 public:
+	/** @brief Constructs a WidthEscapementConsumer.
+	    @param widths Caller-allocated float array to fill with normalised widths.
+	    @param size   The font size in points. */
 	WidthEscapementConsumer(float* widths, float size)
 		:
 		fWidths(widths),
@@ -875,14 +1002,32 @@ public:
 	{
 	}
 
+	/** @brief Returns false; vector data is not required. */
 	bool NeedsVector() { return false; }
+	/** @brief Called before layout begins; no-op. */
 	void Start() {}
+	/** @brief Called after layout ends; no-op. */
 	void Finish(double x, double y) {}
+	/** @brief Sets the width to zero for a missing glyph.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param x        Current pen x position.
+	    @param y        Current pen y position. */
 	void ConsumeEmptyGlyph(int32 index, uint32 charCode, double x, double y)
 	{
 		fWidths[index] = 0.0;
 	}
 
+	/** @brief Stores the normalised horizontal advance as the width.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param glyph    The cached glyph (unused here).
+	    @param entry    The font cache entry (unused here).
+	    @param x        Current pen x position.
+	    @param y        Current pen y position.
+	    @param advanceX Horizontal advance in font units.
+	    @param advanceY Vertical advance (unused here).
+	    @return true always. */
 	bool ConsumeGlyph(int32 index, uint32 charCode, const GlyphCache* glyph,
 		FontCacheEntry* entry, double x, double y, double advanceX,
 			double advanceY)
@@ -898,6 +1043,13 @@ public:
 
 
 
+/** @brief Returns float width escapements for each character in a string.
+    @param string      UTF-8 encoded string.
+    @param numBytes    Length in bytes of the string.
+    @param numChars    Number of characters.
+    @param delta       Escapement deltas for space and non-space characters.
+    @param widthArray  Caller-allocated float array of numChars entries.
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_ERROR if layout failed. */
 status_t
 ServerFont::GetEscapements(const char* string, int32 numBytes, int32 numChars,
 	escapement_delta delta, float widthArray[]) const
@@ -915,8 +1067,13 @@ ServerFont::GetEscapements(const char* string, int32 numBytes, int32 numChars,
 }
 
 
+/** @brief Helper consumer class that computes per-glyph or string-level bounding boxes. */
 class BoundingBoxConsumer {
  public:
+	/** @brief Constructs a BoundingBoxConsumer.
+	    @param transform  The affine transform to apply to glyph outlines.
+	    @param rectArray  Optional caller-allocated BRect array for per-glyph boxes.
+	    @param asString   If true, accumulates a single string-level bounding box instead. */
 	BoundingBoxConsumer(Transformable& transform, BRect* rectArray,
 			bool asString)
 		:
@@ -931,11 +1088,29 @@ class BoundingBoxConsumer {
 	{
 	}
 
+	/** @brief Returns false; vector data is not required. */
 	bool NeedsVector() { return false; }
+	/** @brief Called before layout begins; no-op. */
 	void Start() {}
+	/** @brief Called after layout ends; no-op. */
 	void Finish(double x, double y) {}
+	/** @brief No-op for empty glyphs (no contribution to bounding box).
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param x        Current pen x position.
+	    @param y        Current pen y position. */
 	void ConsumeEmptyGlyph(int32 index, uint32 charCode, double x, double y) {}
 
+	/** @brief Computes the bounding box for a single glyph and stores or accumulates it.
+	    @param index    The glyph index.
+	    @param charCode The Unicode code point.
+	    @param glyph    The cached glyph providing raster or outline data.
+	    @param entry    The font cache entry used for outline adaptor initialisation.
+	    @param x        Current pen x position.
+	    @param y        Current pen y position.
+	    @param advanceX Horizontal advance (unused here).
+	    @param advanceY Vertical advance (unused here).
+	    @return true always. */
 	bool ConsumeGlyph(int32 index, uint32 charCode, const GlyphCache* glyph,
 		FontCacheEntry* entry, double x, double y, double advanceX,
 			double advanceY)
@@ -1006,6 +1181,16 @@ class BoundingBoxConsumer {
 };
 
 
+/** @brief Returns per-character or string bounding boxes for a UTF-8 string.
+    @param string            UTF-8 encoded string.
+    @param numBytes          Length in bytes of the string.
+    @param numChars          Number of characters.
+    @param rectArray         Caller-allocated BRect array of numChars entries.
+    @param stringEscapement  If true, applies the delta to escapement computation.
+    @param mode              Metric mode (currently unused).
+    @param delta             Escapement delta for space and non-space characters.
+    @param asString          If true, returns a single string-level bounding box in rectArray[0].
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_ERROR if layout failed. */
 status_t
 ServerFont::GetBoundingBoxes(const char* string, int32 numBytes, int32 numChars,
 	BRect rectArray[], bool stringEscapement, font_metric_mode mode,
@@ -1026,6 +1211,14 @@ ServerFont::GetBoundingBoxes(const char* string, int32 numBytes, int32 numChars,
 }
 
 
+/** @brief Returns string-level bounding boxes for an array of UTF-8 strings.
+    @param charArray   Array of UTF-8 string pointers.
+    @param lengthArray Array of byte lengths, one per string.
+    @param numStrings  Number of strings.
+    @param rectArray   Caller-allocated BRect array of numStrings entries.
+    @param mode        Metric mode (currently unused).
+    @param deltaArray  Escapement delta array, one per string.
+    @return B_OK on success; B_BAD_DATA if arguments are invalid; B_ERROR if layout failed for any string. */
 status_t
 ServerFont::GetBoundingBoxesForStrings(char *charArray[], size_t lengthArray[],
 	int32 numStrings, BRect rectArray[], font_metric_mode mode,
@@ -1057,18 +1250,28 @@ ServerFont::GetBoundingBoxesForStrings(char *charArray[], size_t lengthArray[],
 }
 
 
+/** @brief Helper consumer that computes the total advance width of a string. */
 class StringWidthConsumer {
  public:
+	/** @brief Constructs a StringWidthConsumer with width initialised to zero. */
 	StringWidthConsumer()
 		:
 		width(0.0)
 	{
 	}
 
+	/** @brief Returns false; vector data is not required. */
 	bool NeedsVector() { return false; }
+	/** @brief Called before layout begins; no-op. */
 	void Start() {}
+	/** @brief Captures the final pen x position as the string width.
+	    @param x Final pen x position after all glyphs.
+	    @param y Final pen y position (unused). */
 	void Finish(double x, double y) { width = x; }
+	/** @brief No-op for empty glyphs. */
 	void ConsumeEmptyGlyph(int32 index, uint32 charCode, double x, double y) {}
+	/** @brief No-op; width is derived from the final pen position.
+	    @return true always. */
 	bool ConsumeGlyph(int32 index, uint32 charCode, const GlyphCache* glyph,
 		FontCacheEntry* entry, double x, double y, double advanceX,
 			double advanceY)
@@ -1080,6 +1283,11 @@ class StringWidthConsumer {
 };
 
 
+/** @brief Returns the total pixel width of a UTF-8 string in this font.
+    @param string     UTF-8 encoded string.
+    @param numBytes   Length in bytes of the string.
+    @param deltaArray Optional escapement delta (may be NULL).
+    @return The total advance width in pixels, or 0.0 if the string is empty or layout fails. */
 float
 ServerFont::StringWidth(const char *string, int32 numBytes,
 	const escapement_delta* deltaArray) const
@@ -1097,10 +1305,8 @@ ServerFont::StringWidth(const char *string, int32 numBytes,
 }
 
 
-/*!
-	\brief Returns a BRect which encloses the entire font
-	\return A BRect which encloses the entire font
-*/
+/** @brief Returns a BRect that encloses the entire font at its current size.
+    @return A BRect enclosing the font's global bounding box. */
 BRect
 ServerFont::BoundingBox()
 {
@@ -1151,10 +1357,8 @@ ServerFont::BoundingBox()
 }
 
 
-/*!
-	\brief Obtains the height values for characters in the font in its current state
-	\param fh pointer to a font_height object to receive the values for the font
-*/
+/** @brief Retrieves the ascent, descent, and leading height values for this font.
+    @param height Reference to a font_height struct to fill with the metric values. */
 void
 ServerFont::GetHeight(font_height& height) const
 {
@@ -1162,6 +1366,10 @@ ServerFont::GetHeight(font_height& height) const
 }
 
 
+/** @brief Truncates a BString to fit within a given pixel width using the specified truncation mode.
+    @param inOut  Pointer to the BString to truncate in place.
+    @param mode   One of the B_TRUNCATE_* constants specifying where to truncate.
+    @param width  Maximum allowed pixel width for the resulting string. */
 void
 ServerFont::TruncateString(BString* inOut, uint32 mode, float width) const
 {
@@ -1190,6 +1398,8 @@ ServerFont::TruncateString(BString* inOut, uint32 mode, float width) const
 }
 
 
+/** @brief Builds and returns the embedded affine transform (shear + rotation) for this font.
+    @return A Transformable encoding the font's shear and rotation. */
 Transformable
 ServerFont::EmbeddedTransformation() const
 {
@@ -1203,6 +1413,9 @@ ServerFont::EmbeddedTransformation() const
 }
 
 
+/** @brief Sets the raw font data buffer on the underlying FontStyle, used for embedded font data.
+    @param location Pointer to the FreeType byte buffer holding the font data.
+    @param size     Size in bytes of the font data buffer. */
 void
 ServerFont::SetFontData(FT_Byte* location, uint32 size)
 {

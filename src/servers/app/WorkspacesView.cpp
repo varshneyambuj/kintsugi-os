@@ -1,12 +1,35 @@
 /*
- * Copyright 2005-2009, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Haiku Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
  *		Axel Dörfler, axeld@pinc-software.de
  *		Stephan Aßmus <superstippi@gmx.de>
  */
 
+/** @file WorkspacesView.cpp
+ *  @brief Server-side view that renders a miniature overview of all workspaces
+ *         and handles mouse-driven window and workspace switching.
+ */
 
 #include "WorkspacesView.h"
 
@@ -23,6 +46,19 @@
 #include <WindowPrivate.h>
 
 
+/** @brief Constructs a WorkspacesView.
+ *
+ *  Delegates to the View base constructor and initialises tracking variables
+ *  to their idle state.  Sets the low colour to white and the high colour to
+ *  black for the initial draw state.
+ *
+ *  @param frame          The view's frame rectangle.
+ *  @param scrollingOffset The initial scroll offset applied to the view bounds.
+ *  @param name           The view name.
+ *  @param token          The server-side token that identifies this view.
+ *  @param resizeMode     The resize mode flags controlling layout behaviour.
+ *  @param flags          Additional view flags.
+ */
 WorkspacesView::WorkspacesView(BRect frame, BPoint scrollingOffset,
 		const char* name, int32 token, uint32 resizeMode, uint32 flags)
 	:
@@ -36,11 +72,20 @@ WorkspacesView::WorkspacesView(BRect frame, BPoint scrollingOffset,
 }
 
 
+/** @brief Destructor. */
 WorkspacesView::~WorkspacesView()
 {
 }
 
 
+/** @brief Called when this view is attached to a Window.
+ *
+ *  Registers the view with both the window (incrementing its workspaces-view
+ *  count) and the desktop's global workspaces-view list so that the view
+ *  receives update notifications when workspace or window state changes.
+ *
+ *  @param window The Window this view is being attached to.
+ */
 void
 WorkspacesView::AttachedToWindow(::Window* window)
 {
@@ -51,6 +96,11 @@ WorkspacesView::AttachedToWindow(::Window* window)
 }
 
 
+/** @brief Called when this view is detached from its Window.
+ *
+ *  Unregisters the view from the desktop's workspaces-view list and decrements
+ *  the owning window's workspaces-view count before delegating to the base class.
+ */
 void
 WorkspacesView::DetachedFromWindow()
 {
@@ -61,6 +111,14 @@ WorkspacesView::DetachedFromWindow()
 }
 
 
+/** @brief Retrieves the current workspace grid dimensions.
+ *
+ *  Reads the number of workspace columns and rows from the desktop settings
+ *  and writes them into the output parameters.
+ *
+ *  @param columns Output parameter set to the number of workspace columns.
+ *  @param rows    Output parameter set to the number of workspace rows.
+ */
 void
 WorkspacesView::_GetGrid(int32& columns, int32& rows)
 {
@@ -73,6 +131,10 @@ WorkspacesView::_GetGrid(int32& columns, int32& rows)
 
 /*!	\brief Returns the frame of the screen for the specified workspace.
 */
+/** @brief Returns the physical screen frame for the workspace at index \a i.
+ *  @param i Zero-based workspace index.
+ *  @return The screen frame in screen coordinates for that workspace.
+ */
 BRect
 WorkspacesView::_ScreenFrame(int32 i)
 {
@@ -83,6 +145,15 @@ WorkspacesView::_ScreenFrame(int32 i)
 /*!	\brief Returns the frame of the specified workspace within the
 		workspaces view.
 */
+/** @brief Computes the view-local rectangle occupied by workspace \a i.
+ *
+ *  Divides the view's bounds evenly among all workspace cells and returns the
+ *  cell rectangle for workspace \a i.  The rightmost column and bottom row are
+ *  extended to the view edge to eliminate rounding gaps.
+ *
+ *  @param i Zero-based workspace index.
+ *  @return The workspace cell rectangle in screen coordinates.
+ */
 BRect
 WorkspacesView::_WorkspaceAt(int32 i)
 {
@@ -119,6 +190,16 @@ WorkspacesView::_WorkspaceAt(int32 i)
 	If, for some reason, there is no workspace located under \where,
 	an empty rectangle is returned, and \a index is set to -1.
 */
+/** @brief Finds the workspace cell that contains the screen point \a where.
+ *
+ *  Iterates over all workspace cells in reverse order (front to back) and
+ *  returns the frame and index of the first cell that contains \a where.
+ *
+ *  @param where  The point to test in screen coordinates.
+ *  @param index  Output parameter set to the workspace index, or -1 if none.
+ *  @return The workspace cell rectangle, or an empty BRect if \a where is
+ *          outside all cells.
+ */
 BRect
 WorkspacesView::_WorkspaceAt(BPoint where, int32& index)
 {
@@ -136,6 +217,18 @@ WorkspacesView::_WorkspaceAt(BPoint where, int32& index)
 }
 
 
+/** @brief Scales and positions a window frame into the corresponding workspace cell.
+ *
+ *  Applies uniform scaling from \a screenFrame to \a workspaceFrame space,
+ *  offsets to the cell origin, and snaps coordinates to integer pixels.
+ *
+ *  @param workspaceFrame The destination cell rectangle in screen coordinates.
+ *  @param screenFrame    The full physical screen rectangle.
+ *  @param windowFrame    The window frame in screen coordinates.
+ *  @param windowPosition The actual top-left position of the window (may differ
+ *                        from windowFrame.LeftTop() for non-current workspaces).
+ *  @return The scaled and offset window frame within the workspace cell.
+ */
 BRect
 WorkspacesView::_WindowFrame(const BRect& workspaceFrame,
 	const BRect& screenFrame, const BRect& windowFrame,
@@ -164,6 +257,21 @@ WorkspacesView::_WindowFrame(const BRect& workspaceFrame,
 }
 
 
+/** @brief Draws a single window's miniature representation into a workspace cell.
+ *
+ *  Skips desktop-feel and hidden windows.  Draws the title tab (if any),
+ *  the window border, the white fill, and a truncated title string.  Colours
+ *  are dimmed for inactive workspaces.  The drawn area is subtracted from
+ *  \a backgroundRegion so subsequent windows can avoid overdraw.
+ *
+ *  @param drawingEngine      The engine used for all drawing operations.
+ *  @param workspaceFrame     The workspace cell rectangle in screen coordinates.
+ *  @param screenFrame        The full physical screen rectangle for the workspace.
+ *  @param window             The Window to render.
+ *  @param windowPosition     The window's top-left anchor position for this workspace.
+ *  @param backgroundRegion   Region tracking undrawn background area; updated in place.
+ *  @param workspaceActive    True if \a workspace is the currently active workspace.
+ */
 void
 WorkspacesView::_DrawWindow(DrawingEngine* drawingEngine,
 	const BRect& workspaceFrame, const BRect& screenFrame, ::Window* window,
@@ -285,6 +393,18 @@ WorkspacesView::_DrawWindow(DrawingEngine* drawingEngine,
 }
 
 
+/** @brief Draws a complete workspace cell including its background and all windows.
+ *
+ *  Draws the active/selected border, then iterates over the workspace's
+ *  windows from front to back using _DrawWindow() (which removes each drawn
+ *  area from \a redraw).  Finally fills the remaining clipped area with the
+ *  workspace background colour.
+ *
+ *  @param drawingEngine The engine used for all drawing operations.
+ *  @param redraw        The region that needs to be repainted; used as the
+ *                       clipping region throughout.
+ *  @param index         Zero-based workspace index to draw.
+ */
 void
 WorkspacesView::_DrawWorkspace(DrawingEngine* drawingEngine,
 	BRegion& redraw, int32 index)
@@ -345,6 +465,9 @@ WorkspacesView::_DrawWorkspace(DrawingEngine* drawingEngine,
 }
 
 
+/** @brief Applies a darkening tint to \a color in place.
+ *  @param color The colour to darken; modified in place.
+ */
 void
 WorkspacesView::_DarkenColor(rgb_color& color) const
 {
@@ -352,6 +475,7 @@ WorkspacesView::_DarkenColor(rgb_color& color) const
 }
 
 
+/** @brief Marks this view's entire screen-space bounds as dirty to trigger a repaint. */
 void
 WorkspacesView::_Invalidate() const
 {
@@ -363,6 +487,18 @@ WorkspacesView::_Invalidate() const
 }
 
 
+/** @brief Draws the full workspaces overview.
+ *
+ *  Renders the grid lines separating workspace cells (excluding the active
+ *  workspace cell to reduce flicker), then draws each workspace cell from
+ *  back to front using _DrawWorkspace().  Restores the server window's draw
+ *  state after rendering.
+ *
+ *  @param drawingEngine          The engine used for all drawing.
+ *  @param effectiveClipping      The effective clipping region for this draw pass.
+ *  @param windowContentClipping  The window content clipping region.
+ *  @param deep                   Unused by this override; reserved for child views.
+ */
 void
 WorkspacesView::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 	const BRegion* windowContentClipping, bool deep)
@@ -420,6 +556,16 @@ WorkspacesView::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipp
 }
 
 
+/** @brief Handles mouse-button-down events for workspace and window selection.
+ *
+ *  Resets tracking state, then (if the primary button is pressed) determines
+ *  which workspace and window were clicked.  Applies modifier-key shortcuts:
+ *  Control activates or minimises the clicked window; Option sends it behind.
+ *  Without modifiers, the window is selected for dragging if it is movable.
+ *
+ *  @param message The mouse-down BMessage containing button and modifier info.
+ *  @param where   The click position in screen coordinates.
+ */
 void
 WorkspacesView::MouseDown(BMessage* message, BPoint where)
 {
@@ -501,6 +647,15 @@ WorkspacesView::MouseDown(BMessage* message, BPoint where)
 }
 
 
+/** @brief Handles mouse-button-up events.
+ *
+ *  If no drag occurred and a workspace was selected, switches to that workspace.
+ *  Clears the selection highlight by invalidating the view if a window was
+ *  selected.  Resets all tracking state.
+ *
+ *  @param message The mouse-up BMessage (unused beyond signature compatibility).
+ *  @param where   The release position in screen coordinates.
+ */
 void
 WorkspacesView::MouseUp(BMessage* message, BPoint where)
 {
@@ -521,6 +676,16 @@ WorkspacesView::MouseUp(BMessage* message, BPoint where)
 }
 
 
+/** @brief Handles mouse-movement events for dragging windows between workspaces.
+ *
+ *  If a window is being dragged and has moved more than 2 pixels from the
+ *  click point, it is repositioned (and if necessary moved to a new workspace)
+ *  to track the mouse.  If only a workspace is selected (no window), the
+ *  selection highlight follows the pointer.
+ *
+ *  @param message The mouse-moved BMessage containing the current button state.
+ *  @param where   The current pointer position in screen coordinates.
+ */
 void
 WorkspacesView::MouseMoved(BMessage* message, BPoint where)
 {
@@ -595,6 +760,13 @@ WorkspacesView::MouseMoved(BMessage* message, BPoint where)
 }
 
 
+/** @brief Notifies the view that a window's state has changed.
+ *
+ *  Triggers a full repaint of the workspaces view.  A more targeted
+ *  implementation could narrow the dirty region, but this ensures correctness.
+ *
+ *  @param window The window whose state changed (currently unused).
+ */
 void
 WorkspacesView::WindowChanged(::Window* window)
 {
@@ -603,10 +775,16 @@ WorkspacesView::WindowChanged(::Window* window)
 }
 
 
+/** @brief Notifies the view that a window has been removed from the desktop.
+ *
+ *  Clears the selected-window pointer if it refers to the window being removed
+ *  to prevent use-after-free during subsequent mouse events.
+ *
+ *  @param window The window that has been removed.
+ */
 void
 WorkspacesView::WindowRemoved(::Window* window)
 {
 	if (fSelectedWindow == window)
 		fSelectedWindow = NULL;
 }
-

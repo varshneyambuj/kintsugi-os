@@ -1,13 +1,35 @@
 /*
- * Copyright 2001-2016, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Stephan Aßmus <superstippi@gmx.de>
- * 		Christian Packmann
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2016, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Christian Packmann
  */
+
+/** @file AppServer.cpp
+    @brief Entry point and top-level manager for the Kintsugi OS application server. */
 
 
 #include "AppServer.h"
@@ -42,12 +64,14 @@ BTokenSpace gTokenSpace;
 uint32 gAppServerSIMDFlags = 0;
 
 
-/*!	\brief Constructor
-
-	This loads the default fonts, allocates all the major global variables,
-	spawns the main housekeeping threads, loads user preferences for the UI
-	and decorator, and allocates various locks.
-*/
+/** @brief Constructs the AppServer, initialising all major subsystems.
+ *
+ * Loads default fonts, allocates global objects (InputManager, GlobalFontManager,
+ * ScreenManager, BitmapManager), spawns housekeeping threads, and notifies the
+ * registrar that the server has (re)started.
+ *
+ * @param status Output parameter set to B_OK on success or an error code on failure.
+ */
 AppServer::AppServer(status_t* status)
 	:
 	SERVER_BASE("application/x-vnd.Haiku-app_server", "picasso", -1, false,
@@ -88,9 +112,11 @@ AppServer::AppServer(status_t* status)
 }
 
 
-/*!	\brief Destructor
-	Reached only when the server is asked to shut down in Test mode.
-*/
+/** @brief Destructor — reached only in test mode when the server is asked to shut down.
+ *
+ * Deletes the bitmap manager, then requests quit on the screen and font managers
+ * and closes the system log.
+ */
 AppServer::~AppServer()
 {
 	delete gBitmapManager;
@@ -105,6 +131,14 @@ AppServer::~AppServer()
 }
 
 
+/** @brief Handles incoming BMessages directed at the AppServer.
+ *
+ * Currently only processes AS_GET_DESKTOP, which locates or creates a Desktop
+ * object for the requesting user and returns its message port. Unrecognised
+ * messages are silently ignored (scripting is not supported).
+ *
+ * @param message The incoming BMessage to process.
+ */
 void
 AppServer::MessageReceived(BMessage* message)
 {
@@ -151,6 +185,12 @@ AppServer::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Handles quit requests; in test mode tears down all desktops and exits.
+ *
+ * In normal (non-test) mode the server refuses to quit and returns false.
+ *
+ * @return false in production mode; does not return in test mode (calls exit()).
+ */
 bool
 AppServer::QuitRequested()
 {
@@ -177,8 +217,16 @@ AppServer::QuitRequested()
 }
 
 
-/*!	\brief Creates a desktop object for an authorized user
-*/
+/** @brief Creates and initialises a new Desktop for the given user.
+ *
+ * Allocates a Desktop object, calls Init() and Run() on it, and adds it to
+ * the internal desktop list. If any step fails the desktop is destroyed and
+ * NULL is returned.
+ *
+ * @param userID       POSIX user ID of the session owner.
+ * @param targetScreen Optional target screen identifier string; may be NULL.
+ * @return             Pointer to the new Desktop on success, or NULL on failure.
+ */
 Desktop*
 AppServer::_CreateDesktop(uid_t userID, const char* targetScreen)
 {
@@ -207,8 +255,15 @@ AppServer::_CreateDesktop(uid_t userID, const char* targetScreen)
 }
 
 
-/*!	\brief Finds the desktop object that belongs to a certain user
-*/
+/** @brief Looks up the Desktop belonging to a specific user and target screen.
+ *
+ * Iterates the list of active desktops under the desktop lock and returns the
+ * first one whose user ID and target screen match the given values.
+ *
+ * @param userID       POSIX user ID to search for.
+ * @param targetScreen Optional target screen string; NULL matches a NULL target.
+ * @return             Pointer to the matching Desktop, or NULL if not found.
+ */
 Desktop*
 AppServer::_FindDesktop(uid_t userID, const char* targetScreen)
 {
@@ -232,6 +287,15 @@ AppServer::_FindDesktop(uid_t userID, const char* targetScreen)
 //	#pragma mark -
 
 
+/** @brief Application entry point — creates the AppServer and runs its message loop.
+ *
+ * Seeds the random number generator, constructs an AppServer, and calls Run()
+ * if initialisation succeeded.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return EXIT_SUCCESS if the server ran and exited cleanly, EXIT_FAILURE otherwise.
+ */
 int
 main(int argc, char** argv)
 {

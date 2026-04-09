@@ -1,8 +1,27 @@
 /*
- * Copyright 2001-2020, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
  *		DarkWyrm, bpmagic@columbus.rr.com
  *		Adi Oanca, adioanca@gmail.com
  *		Stephan Aßmus, superstippi@gmx.de
@@ -13,6 +32,10 @@
  *		Jacob Secunda, secundja@gmail.com
  */
 
+/** @file Window.cpp
+ *  @brief Server-side window object managing layout, clipping, update sessions,
+ *         input dispatch, workspace membership, and window stacking.
+ */
 
 #include "Window.h"
 
@@ -70,6 +93,21 @@ using std::nothrow;
 //static rgb_color sCurrentColor = (rgb_color){ 255, 0, 255, 255 };
 
 
+/** @brief Constructs a Window with the given geometry, behaviour, and drawing engine.
+ *
+ *  Validates look and feel values, sets flags, allocates a decorator (unless
+ *  B_NO_BORDER_WINDOW_LOOK), and allocates a WindowBehaviour (unless this is an
+ *  offscreen window).  For desktop-feel windows the frame is reset to the origin.
+ *
+ *  @param frame         The initial window frame in screen coordinates.
+ *  @param name          The window title string.
+ *  @param look          The window look (border style).
+ *  @param feel          The window feel (behaviour class).
+ *  @param flags         Window flags (e.g. B_NOT_MOVABLE).
+ *  @param workspaces    Bitmask of workspaces this window should appear on.
+ *  @param window        The ServerWindow that owns this Window.
+ *  @param drawingEngine The DrawingEngine used to render into this window.
+ */
 Window::Window(const BRect& frame, const char *name,
 		window_look look, window_feel feel, uint32 flags, uint32 workspaces,
 		::ServerWindow* window, DrawingEngine* drawingEngine)
@@ -167,6 +205,11 @@ Window::Window(const BRect& frame, const char *name,
 }
 
 
+/** @brief Destructor.
+ *
+ *  Detaches the top view from the window, detaches from the window stack, and
+ *  releases any decorator resources held by the decorator manager.
+ */
 Window::~Window()
 {
 	if (fTopView.IsSet()) {
@@ -179,6 +222,13 @@ Window::~Window()
 }
 
 
+/** @brief Returns whether the window was initialised successfully.
+ *
+ *  Checks that a drawing engine is present and (for non-offscreen windows)
+ *  that a window behaviour was allocated.
+ *
+ *  @return B_OK if the window is ready for use, B_NO_MEMORY otherwise.
+ */
 status_t
 Window::InitCheck() const
 {
@@ -190,6 +240,14 @@ Window::InitCheck() const
 }
 
 
+/** @brief Updates the visible region of this window based on available screen area.
+ *
+ *  Called from the Desktop thread.  Resets the visible region to the full
+ *  window region then clips it against \a stillAvailableOnScreen.  Marks the
+ *  visible-content and effective-drawing regions as invalid.
+ *
+ *  @param stillAvailableOnScreen The region of screen space not occluded by other windows.
+ */
 void
 Window::SetClipping(BRegion* stillAvailableOnScreen)
 {
@@ -205,6 +263,12 @@ Window::SetClipping(BRegion* stillAvailableOnScreen)
 }
 
 
+/** @brief Fills \a region with the full window region including the decorator border.
+ *
+ *  Starts from the decorator border region and then includes the client frame.
+ *
+ *  @param region Output parameter filled with the complete window region.
+ */
 void
 Window::GetFullRegion(BRegion* region)
 {
@@ -217,6 +281,13 @@ Window::GetFullRegion(BRegion* region)
 }
 
 
+/** @brief Fills \a region with the decorator border (non-client) region.
+ *
+ *  If a decorator is present, returns its footprint; otherwise returns an
+ *  empty region.
+ *
+ *  @param region Output parameter filled with the border region.
+ */
 void
 Window::GetBorderRegion(BRegion* region)
 {
@@ -231,6 +302,13 @@ Window::GetBorderRegion(BRegion* region)
 }
 
 
+/** @brief Fills \a region with the window's client content region.
+ *
+ *  Lazily computes the content region by calling _UpdateContentRegion() when
+ *  the cached region is no longer valid.
+ *
+ *  @param region Output parameter filled with the content region.
+ */
 void
 Window::GetContentRegion(BRegion* region)
 {
@@ -245,6 +323,12 @@ Window::GetContentRegion(BRegion* region)
 }
 
 
+/** @brief Returns the visible content region (intersection of content and visible regions).
+ *
+ *  Lazily computes and caches the result.
+ *
+ *  @return Reference to the cached visible content region.
+ */
 BRegion&
 Window::VisibleContentRegion()
 {
@@ -263,6 +347,9 @@ Window::VisibleContentRegion()
 // #pragma mark -
 
 
+/** @brief Propagates the window's current position to all workspace anchors
+ *         when B_SAME_POSITION_IN_ALL_WORKSPACES is set.
+ */
 void
 Window::_PropagatePosition()
 {
@@ -275,6 +362,16 @@ Window::_PropagatePosition()
 }
 
 
+/** @brief Moves the window by (\a x, \a y) pixels.
+ *
+ *  Offsets the frame, dirty and expose regions, view tree, and decorator.
+ *  Propagates the move to all stacked windows unless \a moveStack is false.
+ *  Sends a B_WINDOW_MOVED message to the client.
+ *
+ *  @param x          Horizontal pixel offset.
+ *  @param y          Vertical pixel offset.
+ *  @param moveStack  If true, move all other windows in the stack by the same amount.
+ */
 void
 Window::MoveBy(int32 x, int32 y, bool moveStack)
 {
@@ -330,6 +427,17 @@ Window::MoveBy(int32 x, int32 y, bool moveStack)
 }
 
 
+/** @brief Resizes the window by (\a x, \a y) pixels, honouring size limits.
+ *
+ *  Computes the wanted size, clamps it against all stacked windows' limits,
+ *  resizes the top view and decorator, propagates the resize to other stacked
+ *  windows when \a resizeStack is true, and sends a B_WINDOW_RESIZED message.
+ *
+ *  @param x            Horizontal size delta.
+ *  @param y            Vertical size delta.
+ *  @param dirtyRegion  Region to accumulate dirty areas into.
+ *  @param resizeStack  If true, resize all other windows in the stack too.
+ */
 void
 Window::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion, bool resizeStack)
 {
@@ -396,6 +504,15 @@ Window::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion, bool resizeStack)
 }
 
 
+/** @brief Applies a resize-outline delta, enforcing size limits, and updates the decorator.
+ *
+ *  Used during live (outline) resize.  Clamps the delta against all stacked
+ *  windows' size limits, then asks the decorator to render the outline and
+ *  recalculates the content region.
+ *
+ *  @param delta       The desired resize delta as a BPoint (x = width, y = height change).
+ *  @param dirtyRegion Region to accumulate dirty areas into.
+ */
 void
 Window::SetOutlinesDelta(BPoint delta, BRegion* dirtyRegion)
 {
@@ -432,6 +549,16 @@ Window::SetOutlinesDelta(BPoint delta, BRegion* dirtyRegion)
 }
 
 
+/** @brief Scrolls \a view by (\a dx, \a dy) and triggers a content redraw.
+ *
+ *  Executed in the ServerWindow thread with the read lock held.  Ignored
+ *  for the top view or when the delta is zero.  Marks the affected region
+ *  dirty via _TriggerContentRedraw().
+ *
+ *  @param view The view to scroll.
+ *  @param dx   Horizontal scroll amount.
+ *  @param dy   Vertical scroll amount.
+ */
 void
 Window::ScrollViewBy(View* view, int32 dx, int32 dy)
 {
@@ -460,6 +587,18 @@ Window::ScrollViewBy(View* view, int32 dx, int32 dy)
 
 
 //! Takes care of invalidating parts that could not be copied
+/** @brief Copies visible content within the window and marks uncopyable parts dirty.
+ *
+ *  Executed in the ServerWindow thread with the read lock held.  Computes the
+ *  intersection of \a region with the visible content at both the source and
+ *  destination positions, blits the copyable area via the drawing engine, and
+ *  adds the remaining area to the dirty region.  Excludes the copied area from
+ *  any pending update session so the client does not repaint it redundantly.
+ *
+ *  @param region   The region to copy (in screen coordinates at the source location).
+ *  @param xOffset  Horizontal copy offset.
+ *  @param yOffset  Vertical copy offset.
+ */
 void
 Window::CopyContents(BRegion* region, int32 xOffset, int32 yOffset)
 {
@@ -551,6 +690,13 @@ Window::CopyContents(BRegion* region, int32 xOffset, int32 yOffset)
 // #pragma mark -
 
 
+/** @brief Sets the top-level view for this window.
+ *
+ *  Detaches any existing top view, sets the new one, aligns its position and
+ *  size to match the window frame, and calls AttachedToWindow() on it.
+ *
+ *  @param topView The new top-level View.
+ */
 void
 Window::SetTopView(View* topView)
 {
@@ -580,6 +726,10 @@ Window::SetTopView(View* topView)
 }
 
 
+/** @brief Returns the deepest view that contains the screen point \a where.
+ *  @param where The point to test in screen coordinates.
+ *  @return Pointer to the matching view.
+ */
 View*
 Window::ViewAt(const BPoint& where)
 {
@@ -587,6 +737,10 @@ Window::ViewAt(const BPoint& where)
 }
 
 
+/** @brief Returns the window anchor structure for the given list index.
+ *  @param index The workspace or list index.
+ *  @return Reference to the anchor (next, previous, position).
+ */
 window_anchor&
 Window::Anchor(int32 index)
 {
@@ -594,6 +748,10 @@ Window::Anchor(int32 index)
 }
 
 
+/** @brief Returns the next window in the ordered list at \a index.
+ *  @param index The list index.
+ *  @return Pointer to the next Window, or NULL if this is the last.
+ */
 Window*
 Window::NextWindow(int32 index) const
 {
@@ -601,6 +759,10 @@ Window::NextWindow(int32 index) const
 }
 
 
+/** @brief Returns the previous window in the ordered list at \a index.
+ *  @param index The list index.
+ *  @return Pointer to the previous Window, or NULL if this is the first.
+ */
 Window*
 Window::PreviousWindow(int32 index) const
 {
@@ -608,6 +770,7 @@ Window::PreviousWindow(int32 index) const
 }
 
 
+/** @brief Returns the decorator associated with this window's stack, or NULL. */
 ::Decorator*
 Window::Decorator() const
 {
@@ -617,6 +780,14 @@ Window::Decorator() const
 }
 
 
+/** @brief Reloads the decorator after a decorator theme change.
+ *
+ *  Only the first window in the stack allocates a new decorator; subsequent
+ *  windows return true immediately.  Rebuilds all tab entries for stacked
+ *  windows and allocates a new WindowBehaviour.
+ *
+ *  @return true if the reload succeeded (or was not needed), false on failure.
+ */
 bool
 Window::ReloadDecor()
 {
@@ -673,6 +844,9 @@ Window::ReloadDecor()
 }
 
 
+/** @brief Sets the Screen this window is displayed on.
+ *  @param screen The screen to associate with this window.
+ */
 void
 Window::SetScreen(const ::Screen* screen)
 {
@@ -682,6 +856,9 @@ Window::SetScreen(const ::Screen* screen)
 }
 
 
+/** @brief Returns the Screen this window is currently displayed on.
+ *  @return Pointer to the Screen, or NULL if not yet assigned.
+ */
 const ::Screen*
 Window::Screen() const
 {
@@ -694,6 +871,16 @@ Window::Screen() const
 // #pragma mark -
 
 
+/** @brief Returns the effective drawing region for \a view.
+ *
+ *  Builds the effective drawing region from the visible content region,
+ *  intersected with (or excluding) the current/pending update session's
+ *  dirty region depending on whether an update is in progress.  The result
+ *  is further clipped to the view's screen-and-user clipping.
+ *
+ *  @param view   The view requesting the drawing region.
+ *  @param region Output region filled with the effective drawing area.
+ */
 void
 Window::GetEffectiveDrawingRegion(View* view, BRegion& region)
 {
@@ -730,6 +917,10 @@ Window::GetEffectiveDrawingRegion(View* view, BRegion& region)
 }
 
 
+/** @brief Returns true if the drawing region for \a view has changed since last call.
+ *  @param view The view to check.
+ *  @return true if the effective drawing region or the view's screen clipping is invalid.
+ */
 bool
 Window::DrawingRegionChanged(View* view) const
 {
@@ -737,6 +928,14 @@ Window::DrawingRegionChanged(View* view) const
 }
 
 
+/** @brief Merges the given dirty and expose regions into the window's dirty region.
+ *
+ *  If the dirty region was empty before this call, a redraw message is
+ *  requested from the ServerWindow so the client initiates a new update cycle.
+ *
+ *  @param dirtyRegion  The newly dirty region to incorporate.
+ *  @param exposeRegion The newly exposed region to incorporate.
+ */
 void
 Window::ProcessDirtyRegion(const BRegion& dirtyRegion, const BRegion& exposeRegion)
 {
@@ -766,6 +965,12 @@ Window::ProcessDirtyRegion(const BRegion& dirtyRegion, const BRegion& exposeRegi
 }
 
 
+/** @brief Redraws the accumulated dirty region and resets it to empty.
+ *
+ *  Executed from ServerWindow with the read lock held.  Draws the decorator
+ *  border, then triggers content redraw for the dirty and expose sub-regions
+ *  of the visible content area.  Only operates on the top-layer stack window.
+ */
 void
 Window::RedrawDirtyRegion()
 {
@@ -802,6 +1007,9 @@ Window::RedrawDirtyRegion()
 }
 
 
+/** @brief Marks a region on the desktop dirty, causing all affected windows to redraw.
+ *  @param regionOnScreen The screen-space region to mark dirty.
+ */
 void
 Window::MarkDirty(BRegion& regionOnScreen)
 {
@@ -814,6 +1022,14 @@ Window::MarkDirty(BRegion& regionOnScreen)
 }
 
 
+/** @brief Marks content-only dirty and expose regions for this window.
+ *
+ *  Clips both regions to the visible content area and triggers a content
+ *  redraw.  Ignores hidden and offscreen windows.
+ *
+ *  @param dirtyRegion  The dirty region (clipped in place).
+ *  @param exposeRegion The expose region (clipped in place).
+ */
 void
 Window::MarkContentDirty(BRegion& dirtyRegion, BRegion& exposeRegion)
 {
@@ -830,6 +1046,14 @@ Window::MarkContentDirty(BRegion& dirtyRegion, BRegion& exposeRegion)
 }
 
 
+/** @brief Asynchronously marks a content region dirty.
+ *
+ *  Adds \a dirtyRegion to the window's dirty region after clipping to visible
+ *  content.  Sends a redraw request if the region was previously empty.
+ *  Does not block waiting for the redraw to complete.
+ *
+ *  @param dirtyRegion The dirty region (clipped in place).
+ */
 void
 Window::MarkContentDirtyAsync(BRegion& dirtyRegion)
 {
@@ -847,6 +1071,14 @@ Window::MarkContentDirtyAsync(BRegion& dirtyRegion)
 }
 
 
+/** @brief Invalidates a specific region of \a view, triggering a redraw.
+ *
+ *  Converts the region to screen space, clips to the visible content area
+ *  and the view's screen-and-user clipping, then triggers content redraw.
+ *
+ *  @param view        The view whose region should be invalidated.
+ *  @param viewRegion  The region in view local coordinates to invalidate.
+ */
 void
 Window::InvalidateView(View* view, BRegion& viewRegion)
 {
@@ -868,6 +1100,7 @@ Window::InvalidateView(View* view, BRegion& viewRegion)
 }
 
 // DisableUpdateRequests
+/** @brief Prevents further update messages from being sent to the client. */
 void
 Window::DisableUpdateRequests()
 {
@@ -876,6 +1109,7 @@ Window::DisableUpdateRequests()
 
 
 // EnableUpdateRequests
+/** @brief Re-enables update message delivery and sends any pending update. */
 void
 Window::EnableUpdateRequests()
 {
@@ -903,6 +1137,19 @@ Window::EnableUpdateRequests()
 	\param _clickTarget Set by the method to a value identifying the clicked
 		element. If not explicitly set, an invalid click target is assumed.
 */
+/** @brief Dispatches a mouse-down event to the window behaviour or the view under the cursor.
+ *
+ *  Passes the event to the WindowBehaviour first (for decorator hit-testing).
+ *  If the behaviour does not consume it, the click is delivered to the view
+ *  at \a where.  Focus and activation logic is applied for windows that do not
+ *  accept first click.
+ *
+ *  @param message         The mouse-down BMessage.
+ *  @param where           The click position in screen coordinates.
+ *  @param lastClickTarget The ClickTarget of the previous click.
+ *  @param clickCount      In/out click count; may be reset to 1 by the method.
+ *  @param _clickTarget    Output: set to a ClickTarget identifying the clicked element.
+ */
 void
 Window::MouseDown(BMessage* message, BPoint where,
 	const ClickTarget& lastClickTarget, int32& clickCount,
@@ -969,6 +1216,12 @@ Window::MouseDown(BMessage* message, BPoint where,
 }
 
 
+/** @brief Dispatches a mouse-up event to the window behaviour and the view under the cursor.
+ *
+ *  @param message     The mouse-up BMessage.
+ *  @param where       The release position in screen coordinates.
+ *  @param _viewToken  Output: set to the token of the view that received the event.
+ */
 void
 Window::MouseUp(BMessage* message, BPoint where, int32* _viewToken)
 {
@@ -984,6 +1237,17 @@ Window::MouseUp(BMessage* message, BPoint where, int32* _viewToken)
 }
 
 
+/** @brief Dispatches a mouse-moved event to the window behaviour and the view under the cursor.
+ *
+ *  Ignores events that are not the latest mouse position (pointer history).
+ *  Updates the application's active cursor to match the view under the pointer.
+ *
+ *  @param message             The mouse-moved BMessage.
+ *  @param where               The current pointer position in screen coordinates.
+ *  @param _viewToken          Output: set to the token of the view under the pointer.
+ *  @param isLatestMouseMoved  If false, the event is part of pointer history and is skipped.
+ *  @param isFake              True if this is a synthesised (fake) mouse event.
+ */
 void
 Window::MouseMoved(BMessage *message, BPoint where, int32* _viewToken,
 	bool isLatestMouseMoved, bool isFake)
@@ -1010,6 +1274,9 @@ Window::MouseMoved(BMessage *message, BPoint where, int32* _viewToken,
 }
 
 
+/** @brief Notifies the window behaviour of a keyboard modifier change.
+ *  @param modifiers The new modifier key bitmask.
+ */
 void
 Window::ModifiersChanged(int32 modifiers)
 {
@@ -1020,6 +1287,11 @@ Window::ModifiersChanged(int32 modifiers)
 // #pragma mark -
 
 
+/** @brief Sends a B_WORKSPACE_ACTIVATED message to the client.
+ *
+ *  @param index  The workspace index that changed activation state.
+ *  @param active True if the workspace became active, false if deactivated.
+ */
 void
 Window::WorkspaceActivated(int32 index, bool active)
 {
@@ -1032,6 +1304,11 @@ Window::WorkspaceActivated(int32 index, bool active)
 }
 
 
+/** @brief Sends a B_WORKSPACES_CHANGED message to the client and updates the bitmask.
+ *
+ *  @param oldWorkspaces The previous workspace bitmask.
+ *  @param newWorkspaces The new workspace bitmask.
+ */
 void
 Window::WorkspacesChanged(uint32 oldWorkspaces, uint32 newWorkspaces)
 {
@@ -1046,6 +1323,9 @@ Window::WorkspacesChanged(uint32 oldWorkspaces, uint32 newWorkspaces)
 }
 
 
+/** @brief Sends a B_WINDOW_ACTIVATED message to the client.
+ *  @param active True if this window became the active (focus) window.
+ */
 void
 Window::Activated(bool active)
 {
@@ -1058,6 +1338,11 @@ Window::Activated(bool active)
 //# pragma mark -
 
 
+/** @brief Changes the window title and redraws the decorator tab.
+ *
+ *  @param name  The new title string.
+ *  @param dirty Region that is dirtied by the title change (passed to the decorator).
+ */
 void
 Window::SetTitle(const char* name, BRegion& dirty)
 {
@@ -1074,6 +1359,14 @@ Window::SetTitle(const char* name, BRegion& dirty)
 }
 
 
+/** @brief Sets the keyboard focus state and redraws the decorator accordingly.
+ *
+ *  Marks the decorator footprint region dirty so the focus highlight is
+ *  repainted, updates the internal focus flag, informs the decorator, and
+ *  calls Activated().
+ *
+ *  @param focus True to grant focus to this window, false to take it away.
+ */
 void
 Window::SetFocus(bool focus)
 {
@@ -1103,6 +1396,9 @@ Window::SetFocus(bool focus)
 }
 
 
+/** @brief Sets the window's hidden flag and propagates it to the top view.
+ *  @param hidden True to hide the window, false to show it.
+ */
 void
 Window::SetHidden(bool hidden)
 {
@@ -1117,6 +1413,9 @@ Window::SetHidden(bool hidden)
 }
 
 
+/** @brief Sets the show level used to determine effective visibility.
+ *  @param showLevel The new show level (>0 means hidden).
+ */
 void
 Window::SetShowLevel(int32 showLevel)
 {
@@ -1127,6 +1426,9 @@ Window::SetShowLevel(int32 showLevel)
 }
 
 
+/** @brief Sets the minimised state of the window.
+ *  @param minimized True to mark the window as minimised.
+ */
 void
 Window::SetMinimized(bool minimized)
 {
@@ -1137,6 +1439,13 @@ Window::SetMinimized(bool minimized)
 }
 
 
+/** @brief Returns whether the window is effectively visible on screen.
+ *
+ *  Offscreen windows are always "visible" for drawing purposes.  Normal windows
+ *  must not be hidden and must be assigned to a valid workspace.
+ *
+ *  @return true if the window should be drawn.
+ */
 bool
 Window::IsVisible() const
 {
@@ -1154,6 +1463,9 @@ Window::IsVisible() const
 }
 
 
+/** @brief Returns true if the window is currently being dragged by the user.
+ *  @return true if the window behaviour reports a drag in progress.
+ */
 bool
 Window::IsDragging() const
 {
@@ -1163,6 +1475,9 @@ Window::IsDragging() const
 }
 
 
+/** @brief Returns true if the window is currently being resized by the user.
+ *  @return true if the window behaviour reports a resize in progress.
+ */
 bool
 Window::IsResizing() const
 {
@@ -1172,6 +1487,17 @@ Window::IsResizing() const
 }
 
 
+/** @brief Sets the minimum and maximum size limits for the window.
+ *
+ *  Clamps any negative minimums to zero, stores the new limits, then asks the
+ *  decorator to contribute its own minimum requirements.  Finally calls
+ *  _ObeySizeLimits() to resize the window if it currently violates the new limits.
+ *
+ *  @param minWidth  Minimum allowed width.
+ *  @param maxWidth  Maximum allowed width.
+ *  @param minHeight Minimum allowed height.
+ *  @param maxHeight Maximum allowed height.
+ */
 void
 Window::SetSizeLimits(int32 minWidth, int32 maxWidth, int32 minHeight,
 	int32 maxHeight)
@@ -1198,6 +1524,13 @@ Window::SetSizeLimits(int32 minWidth, int32 maxWidth, int32 minHeight,
 }
 
 
+/** @brief Retrieves the current size limits.
+ *
+ *  @param minWidth  Output: minimum allowed width.
+ *  @param maxWidth  Output: maximum allowed width.
+ *  @param minHeight Output: minimum allowed height.
+ *  @param maxHeight Output: maximum allowed height.
+ */
 void
 Window::GetSizeLimits(int32* minWidth, int32* maxWidth,
 	int32* minHeight, int32* maxHeight) const
@@ -1209,6 +1542,13 @@ Window::GetSizeLimits(int32* minWidth, int32* maxWidth,
 }
 
 
+/** @brief Sets the horizontal tab location within the decorator.
+ *
+ *  @param location   The new tab position as a float in the range [0, 1].
+ *  @param isShifting True if tabs are being interactively shifted (drag in progress).
+ *  @param dirty      Region dirtied by the tab move.
+ *  @return true if the decorator accepted the new location.
+ */
 bool
 Window::SetTabLocation(float location, bool isShifting, BRegion& dirty)
 {
@@ -1222,6 +1562,9 @@ Window::SetTabLocation(float location, bool isShifting, BRegion& dirty)
 }
 
 
+/** @brief Returns the current tab location within the decorator.
+ *  @return Tab position as a float, or 0.0 if there is no decorator.
+ */
 float
 Window::TabLocation() const
 {
@@ -1234,6 +1577,15 @@ Window::TabLocation() const
 }
 
 
+/** @brief Applies decorator settings from a BMessage.
+ *
+ *  Handles the special 'prVu' message for decorator preview.  Otherwise
+ *  delegates to the decorator's SetSettings().
+ *
+ *  @param settings The settings BMessage.
+ *  @param dirty    Region dirtied by the settings change.
+ *  @return true if the settings were applied successfully.
+ */
 bool
 Window::SetDecoratorSettings(const BMessage& settings, BRegion& dirty)
 {
@@ -1253,6 +1605,13 @@ Window::SetDecoratorSettings(const BMessage& settings, BRegion& dirty)
 }
 
 
+/** @brief Retrieves the current decorator settings into \a settings.
+ *
+ *  Also queries the desktop for any global decorator settings.
+ *
+ *  @param settings Output BMessage to fill with decorator settings.
+ *  @return true if the decorator provided settings.
+ */
 bool
 Window::GetDecoratorSettings(BMessage* settings)
 {
@@ -1267,6 +1626,9 @@ Window::GetDecoratorSettings(BMessage* settings)
 }
 
 
+/** @brief Notifies the decorator that system fonts have changed.
+ *  @param updateRegion Region to accumulate dirty areas caused by the font change.
+ */
 void
 Window::FontsChanged(BRegion* updateRegion)
 {
@@ -1278,6 +1640,9 @@ Window::FontsChanged(BRegion* updateRegion)
 }
 
 
+/** @brief Notifies the decorator that system colours have changed.
+ *  @param updateRegion Region to accumulate dirty areas caused by the colour change.
+ */
 void
 Window::ColorsChanged(BRegion* updateRegion)
 {
@@ -1289,6 +1654,15 @@ Window::ColorsChanged(BRegion* updateRegion)
 }
 
 
+/** @brief Sets the window look (border style) and updates the decorator.
+ *
+ *  Invalidates the content and effective drawing regions because the decorator
+ *  footprint may change.  Allocates a new decorator if needed for the new look,
+ *  or removes it for B_NO_BORDER_WINDOW_LOOK.
+ *
+ *  @param look         The new window_look value.
+ *  @param updateRegion Region to accumulate dirty areas into.
+ */
 void
 Window::SetLook(window_look look, BRegion* updateRegion)
 {
@@ -1331,6 +1705,14 @@ Window::SetLook(window_look look, BRegion* updateRegion)
 }
 
 
+/** @brief Sets the window feel and updates flags accordingly.
+ *
+ *  Clears the subset list when transitioning away from subset modal/floating.
+ *  Re-applies valid flags for the new feel and propagates position for
+ *  non-normal windows.
+ *
+ *  @param feel The new window_feel value.
+ */
 void
 Window::SetFeel(window_feel feel)
 {
@@ -1355,6 +1737,15 @@ Window::SetFeel(window_feel feel)
 }
 
 
+/** @brief Sets the window flags, filtering those invalid for the current feel.
+ *
+ *  Stores the original flags, applies the valid subset, and notifies the
+ *  decorator so it can update its appearance (e.g. resize handle).  Enforces
+ *  size limits if the decorator's minimum requirements change.
+ *
+ *  @param flags        The desired set of window flags.
+ *  @param updateRegion Region to accumulate dirty areas into.
+ */
 void
 Window::SetFlags(uint32 flags, BRegion* updateRegion)
 {
@@ -1394,6 +1785,10 @@ Window::SetFlags(uint32 flags, BRegion* updateRegion)
 /*!	Returns whether or not a window is in the workspace list with the
 	specified \a index.
 */
+/** @brief Returns whether this window is assigned to the workspace at \a index.
+ *  @param index Zero-based workspace index.
+ *  @return true if the corresponding bit in the workspace bitmask is set.
+ */
 bool
 Window::InWorkspace(int32 index) const
 {
@@ -1401,6 +1796,9 @@ Window::InWorkspace(int32 index) const
 }
 
 
+/** @brief Returns whether this window can appear at the front of the z-order.
+ *  @return false for desktop, menu, or B_AVOID_FRONT windows; true otherwise.
+ */
 bool
 Window::SupportsFront()
 {
@@ -1413,6 +1811,9 @@ Window::SupportsFront()
 }
 
 
+/** @brief Returns whether this window has a modal feel.
+ *  @return true for B_MODAL_SUBSET, B_MODAL_APP, or B_MODAL_ALL feel.
+ */
 bool
 Window::IsModal() const
 {
@@ -1420,6 +1821,9 @@ Window::IsModal() const
 }
 
 
+/** @brief Returns whether this window has a floating feel.
+ *  @return true for B_FLOATING_SUBSET, B_FLOATING_APP, or B_FLOATING_ALL feel.
+ */
 bool
 Window::IsFloating() const
 {
@@ -1427,6 +1831,9 @@ Window::IsFloating() const
 }
 
 
+/** @brief Returns whether this window has a normal (non-modal, non-floating) feel.
+ *  @return true for any feel that is not modal or floating.
+ */
 bool
 Window::IsNormal() const
 {
@@ -1434,6 +1841,13 @@ Window::IsNormal() const
 }
 
 
+/** @brief Returns whether a visible modal window requires this window to be blocked.
+ *
+ *  Walks the windows above this one in the current workspace and checks
+ *  whether any visible modal window includes this window in its subset.
+ *
+ *  @return true if a modal window blocks interaction with this window.
+ */
 bool
 Window::HasModal() const
 {
@@ -1457,6 +1871,18 @@ Window::HasModal() const
 	\param workspace the workspace on which this check should be made. If
 		the value is -1, the window's current workspace will be used.
 */
+/** @brief Returns the window immediately behind the furthest-back position this window may occupy.
+ *
+ *  Desktop windows are always backmost (returns NULL for this window when it is
+ *  the desktop).  Searches backward from \a window (or from the previous window
+ *  in the stack) and returns the first window this window must remain in front of.
+ *
+ *  @param window    Starting point for the backward search, or NULL to start from the
+ *                   previous window in the workspace list.
+ *  @param workspace The workspace index to check, or -1 to use the current workspace.
+ *  @return The window that constrains how far back this window can go, or NULL
+ *          if it can go all the way to the back.
+ */
 Window*
 Window::Backmost(Window* window, int32 workspace)
 {
@@ -1493,6 +1919,16 @@ Window::Backmost(Window* window, int32 workspace)
 	\param workspace the workspace on which this check should be made. If
 		the value is -1, the window's current workspace will be used.
 */
+/** @brief Returns the window immediately in front of the frontmost position this window may occupy.
+ *
+ *  Searches forward from \a first (or the next window in the stack) and returns
+ *  the first window that must remain in front of this window.
+ *
+ *  @param first     Starting point for the forward search, or NULL to start from the
+ *                   next window in the workspace list.
+ *  @param workspace The workspace index to check, or -1 to use the current workspace.
+ *  @return The constraining window, or NULL if this window can be frontmost.
+ */
 Window*
 Window::Frontmost(Window* first, int32 workspace)
 {
@@ -1522,6 +1958,10 @@ Window::Frontmost(Window* first, int32 workspace)
 }
 
 
+/** @brief Adds \a window to this window's modal/floating subset.
+ *  @param window The window to add.
+ *  @return true if the window was added successfully.
+ */
 bool
 Window::AddToSubset(Window* window)
 {
@@ -1529,6 +1969,9 @@ Window::AddToSubset(Window* window)
 }
 
 
+/** @brief Removes \a window from this window's modal/floating subset.
+ *  @param window The window to remove.
+ */
 void
 Window::RemoveFromSubset(Window* window)
 {
@@ -1540,6 +1983,16 @@ Window::RemoveFromSubset(Window* window)
 	If a window is in the subset of this window, it means it should always
 	appear behind this window.
 */
+/** @brief Returns whether \a window is in the subset of this window.
+ *
+ *  A window in the subset must always appear behind this window.  Menu
+ *  windows are always above all windows of their application.  The method
+ *  handles the fixed ordering of special feel values and delegates to the
+ *  subset list for B_MODAL_SUBSET and B_FLOATING_SUBSET feels.
+ *
+ *  @param window The candidate window to test.
+ *  @return true if \a window is in this window's subset.
+ */
 bool
 Window::HasInSubset(const Window* window) const
 {
@@ -1578,6 +2031,9 @@ Window::HasInSubset(const Window* window) const
 
 /*!	\brief Collects all workspaces views in this window and puts it into \a list
 */
+/** @brief Collects all WorkspacesView instances in this window's view tree.
+ *  @param list Output list to append found views into.
+ */
 void
 Window::FindWorkspacesViews(BObjectList<WorkspacesView>& list) const
 {
@@ -1592,6 +2048,15 @@ Window::FindWorkspacesViews(BObjectList<WorkspacesView>& list) const
 	of its subset windows is visible there. Floating windows also need
 	to have a subset as front window to be visible.
 */
+/** @brief Computes the set of workspaces on which this modal/floating window should appear.
+ *
+ *  Returns B_ALL_WORKSPACES for all-workspace modal/floating feels.  For
+ *  app-scoped feels, returns the application's current workspace set.  For
+ *  subset feels, unions the workspaces of all visible subset windows (with an
+ *  additional constraint for floating subsets requiring a normal front window).
+ *
+ *  @return A workspace bitmask indicating where this window should be visible.
+ */
 uint32
 Window::SubsetWorkspaces() const
 {
@@ -1646,6 +2111,10 @@ Window::SubsetWorkspaces() const
 	specified \a index.
 	See SubsetWorkspaces().
 */
+/** @brief Returns whether this window's subset workspaces include the one at \a index.
+ *  @param index Zero-based workspace index.
+ *  @return true if the subset workspace bitmask has the bit for \a index set.
+ */
 bool
 Window::InSubsetWorkspace(int32 index) const
 {
@@ -1657,6 +2126,10 @@ Window::InSubsetWorkspace(int32 index) const
 
 
 /*static*/ bool
+/** @brief Returns whether \a look is a valid window_look constant.
+ *  @param look The look value to validate.
+ *  @return true if \a look is a recognised window look.
+ */
 Window::IsValidLook(window_look look)
 {
 	return look == B_TITLED_WINDOW_LOOK
@@ -1671,6 +2144,10 @@ Window::IsValidLook(window_look look)
 
 
 /*static*/ bool
+/** @brief Returns whether \a feel is a valid window_feel constant.
+ *  @param feel The feel value to validate.
+ *  @return true if \a feel is a recognised window feel.
+ */
 Window::IsValidFeel(window_feel feel)
 {
 	return feel == B_NORMAL_WINDOW_FEEL
@@ -1689,6 +2166,10 @@ Window::IsValidFeel(window_feel feel)
 
 
 /*static*/ bool
+/** @brief Returns whether \a feel represents a modal window feel.
+ *  @param feel The feel value to test.
+ *  @return true for B_MODAL_SUBSET, B_MODAL_APP, or B_MODAL_ALL.
+ */
 Window::IsModalFeel(window_feel feel)
 {
 	return feel == B_MODAL_SUBSET_WINDOW_FEEL
@@ -1698,6 +2179,10 @@ Window::IsModalFeel(window_feel feel)
 
 
 /*static*/ bool
+/** @brief Returns whether \a feel represents a floating window feel.
+ *  @param feel The feel value to test.
+ *  @return true for B_FLOATING_SUBSET, B_FLOATING_APP, or B_FLOATING_ALL.
+ */
 Window::IsFloatingFeel(window_feel feel)
 {
 	return feel == B_FLOATING_SUBSET_WINDOW_FEEL
@@ -1707,6 +2192,9 @@ Window::IsFloatingFeel(window_feel feel)
 
 
 /*static*/ uint32
+/** @brief Returns the bitmask of all flag bits valid for any window feel.
+ *  @return Bitmask of valid window flags.
+ */
 Window::ValidWindowFlags()
 {
 	return B_NOT_MOVABLE
@@ -1734,6 +2222,13 @@ Window::ValidWindowFlags()
 
 
 /*static*/ uint32
+/** @brief Returns the valid flags bitmask filtered for the given feel.
+ *
+ *  For modal feels, B_AVOID_FOCUS and B_AVOID_FRONT are removed.
+ *
+ *  @param feel The feel whose valid flag mask to compute.
+ *  @return Bitmask of valid window flags for \a feel.
+ */
 Window::ValidWindowFlags(window_feel feel)
 {
 	uint32 flags = ValidWindowFlags();
@@ -1747,6 +2242,17 @@ Window::ValidWindowFlags(window_feel feel)
 // #pragma mark - private
 
 
+/** @brief Shifts the part of \a region that intersects \a regionToShift by the given offset.
+ *
+ *  Extracts the common intersection of \a region and \a regionToShift,
+ *  removes it from \a region, offsets it, and re-includes it.  Used to
+ *  move dirty regions during window move operations.
+ *
+ *  @param region         The region to modify in place.
+ *  @param regionToShift  The region defining which part of \a region to move.
+ *  @param xOffset        Horizontal shift amount.
+ *  @param yOffset        Vertical shift amount.
+ */
 void
 Window::_ShiftPartOfRegion(BRegion* region, BRegion* regionToShift,
 	int32 xOffset, int32 yOffset)
@@ -1767,6 +2273,15 @@ Window::_ShiftPartOfRegion(BRegion* region, BRegion* regionToShift,
 }
 
 
+/** @brief Transfers dirty content to the pending update session and exposes backgrounds.
+ *
+ *  Skips invisible, empty, or window-screen windows.  Adds \a dirty to the
+ *  pending update session, sends an update message if none is in flight, and
+ *  immediately draws exposed backgrounds to avoid stamping artifacts.
+ *
+ *  @param dirty  The dirty region (transferred to the pending update session).
+ *  @param expose The exposed region to paint backgrounds for immediately.
+ */
 void
 Window::_TriggerContentRedraw(BRegion& dirty, const BRegion& expose)
 {
@@ -1790,6 +2305,12 @@ Window::_TriggerContentRedraw(BRegion& dirty, const BRegion& expose)
 }
 
 
+/** @brief Draws the dirty portion of the window border using the decorator.
+ *
+ *  Intersects the decorator footprint with the visible and dirty regions,
+ *  then asks the decorator to draw within that clipped area.  Copies the
+ *  result to the front buffer and resyncs the draw state.
+ */
 void
 Window::_DrawBorder()
 {
@@ -1840,6 +2361,14 @@ fWindow->ResyncDrawState();
 	in turn is only called from MessageReceived() with
 	the clipping lock held
 */
+/** @brief Moves the content dirty region into the pending update session.
+ *
+ *  If the region is non-empty, sets the pending session as in-use and includes
+ *  the region.  If no update has been requested yet, sends the update message.
+ *  Requires the clipping read lock to be held by the caller.
+ *
+ *  @param contentDirtyRegion The dirty region to transfer.
+ */
 void
 Window::_TransferToUpdateSession(BRegion* contentDirtyRegion)
 {
@@ -1863,6 +2392,11 @@ Window::_TransferToUpdateSession(BRegion* contentDirtyRegion)
 }
 
 
+/** @brief Sends an _UPDATE_ message to the client BWindow if updates are enabled.
+ *
+ *  If sending fails the dirty region continues to grow until a future attempt
+ *  succeeds.  Sets fUpdateRequested and invalidates the effective drawing region.
+ */
 void
 Window::_SendUpdateMessage()
 {
@@ -1882,6 +2416,15 @@ Window::_SendUpdateMessage()
 }
 
 
+/** @brief Begins an update cycle for this window.
+ *
+ *  Swaps the pending and current update sessions, draws the background of the
+ *  dirty region immediately (so it is ready for client drawing), and sends the
+ *  update metadata (window geometry and dirty view tokens) to the client via
+ *  \a link.  Suppresses copy-to-front during the update.
+ *
+ *  @param link The PortLink used to reply to the client's AS_BEGIN_UPDATE request.
+ */
 void
 Window::BeginUpdate(BPrivate::PortLink& link)
 {
@@ -1967,6 +2510,13 @@ Window::BeginUpdate(BPrivate::PortLink& link)
 }
 
 
+/** @brief Ends the current update cycle.
+ *
+ *  Re-enables copy-to-front, copies the updated dirty region to the front
+ *  buffer, marks the current session as unused, and resets the update flag.
+ *  If a new pending session accumulated during the update, sends another
+ *  update message immediately.
+ */
 void
 Window::EndUpdate()
 {
@@ -2000,6 +2550,11 @@ Window::EndUpdate()
 }
 
 
+/** @brief Recomputes and caches the content region.
+ *
+ *  Sets the content region to the full window frame, then excludes the
+ *  decorator's footprint so only the client area remains.
+ */
 void
 Window::_UpdateContentRegion()
 {
@@ -2014,6 +2569,12 @@ Window::_UpdateContentRegion()
 }
 
 
+/** @brief Resizes the window to comply with its current size limits.
+ *
+ *  Normalises the limits (ensures max >= min), then computes how far the
+ *  current frame violates them.  Delegates the actual resize to the desktop
+ *  (if present) or directly to ResizeBy().
+ */
 void
 Window::_ObeySizeLimits()
 {
@@ -2060,6 +2621,7 @@ Window::_ObeySizeLimits()
 // #pragma mark - UpdateSession
 
 
+/** @brief Constructs an empty, unused UpdateSession. */
 Window::UpdateSession::UpdateSession()
 	:
 	fDirtyRegion(),
@@ -2068,6 +2630,9 @@ Window::UpdateSession::UpdateSession()
 }
 
 
+/** @brief Includes \a additionalDirty into this session's dirty region.
+ *  @param additionalDirty The region to add.
+ */
 void
 Window::UpdateSession::Include(BRegion* additionalDirty)
 {
@@ -2075,6 +2640,9 @@ Window::UpdateSession::Include(BRegion* additionalDirty)
 }
 
 
+/** @brief Excludes \a dirtyInNextSession from this session's dirty region.
+ *  @param dirtyInNextSession The region to remove.
+ */
 void
 Window::UpdateSession::Exclude(BRegion* dirtyInNextSession)
 {
@@ -2082,6 +2650,10 @@ Window::UpdateSession::Exclude(BRegion* dirtyInNextSession)
 }
 
 
+/** @brief Offsets the session's dirty region by (\a x, \a y).
+ *  @param x Horizontal offset.
+ *  @param y Vertical offset.
+ */
 void
 Window::UpdateSession::MoveBy(int32 x, int32 y)
 {
@@ -2089,6 +2661,13 @@ Window::UpdateSession::MoveBy(int32 x, int32 y)
 }
 
 
+/** @brief Marks the session as used or unused.
+ *
+ *  When set to unused the dirty region is cleared so it does not carry
+ *  stale data into the next update cycle.
+ *
+ *  @param used true to mark as in-use, false to reset and clear the region.
+ */
 void
 Window::UpdateSession::SetUsed(bool used)
 {
@@ -2098,6 +2677,9 @@ Window::UpdateSession::SetUsed(bool used)
 }
 
 
+/** @brief Returns the zero-based position of this window within its stack.
+ *  @return The stack index, or -1 if the window is not part of a stack.
+ */
 int32
 Window::PositionInStack() const
 {
@@ -2107,6 +2689,16 @@ Window::PositionInStack() const
 }
 
 
+/** @brief Removes this window from its current WindowStack.
+ *
+ *  If the stack has more than one window the window is unlinked, its decorator
+ *  tab removed, and the remaining stack is updated (new top-layer window, focus
+ *  propagation, look reload).  If \a ownStackNeeded is true a new single-window
+ *  stack is created for this window.
+ *
+ *  @param ownStackNeeded If true, allocate a new stack for this window after removal.
+ *  @return false if the window was not part of any stack; true otherwise.
+ */
 bool
 Window::DetachFromWindowStack(bool ownStackNeeded)
 {
@@ -2154,6 +2746,15 @@ Window::DetachFromWindowStack(bool ownStackNeeded)
 }
 
 
+/** @brief Adds \a window to this window's stack.
+ *
+ *  Moves \a window to match this window's frame, adds it to the stack at the
+ *  position immediately after this window, transfers the decorator tab, and
+ *  triggers a rebuild/redraw.
+ *
+ *  @param window The window to stack onto this window.
+ *  @return true if the window was successfully added.
+ */
 bool
 Window::AddWindowToStack(Window* window)
 {
@@ -2205,6 +2806,14 @@ Window::AddWindowToStack(Window* window)
 }
 
 
+/** @brief Returns the stacked window whose tab is at screen point \a where.
+ *
+ *  If the decorator reports a valid tab index the corresponding window from the
+ *  stack is returned; otherwise this window is returned as the default.
+ *
+ *  @param where The screen point to hit-test.
+ *  @return The window whose tab covers \a where.
+ */
 Window*
 Window::StackedWindowAt(const BPoint& where)
 {
@@ -2221,6 +2830,12 @@ Window::StackedWindowAt(const BPoint& where)
 }
 
 
+/** @brief Returns the top-layer window of this window's stack.
+ *
+ *  If this window has no stack it is its own top-layer window.
+ *
+ *  @return The top-layer Window in the stack.
+ */
 Window*
 Window::TopLayerStackWindow()
 {
@@ -2230,6 +2845,9 @@ Window::TopLayerStackWindow()
 }
 
 
+/** @brief Returns (or lazily creates) the WindowStack for this window.
+ *  @return The WindowStack, or NULL if allocation failed.
+ */
 WindowStack*
 Window::GetWindowStack()
 {
@@ -2239,6 +2857,13 @@ Window::GetWindowStack()
 }
 
 
+/** @brief Moves this window to the top layer of its stack.
+ *
+ *  Updates the decorator's drawing engine to this window's engine, reloads the
+ *  look, and moves this window to the top of the layer ordering.
+ *
+ *  @return true if the move succeeded.
+ */
 bool
 Window::MoveToTopStackLayer()
 {
@@ -2252,6 +2877,12 @@ Window::MoveToTopStackLayer()
 }
 
 
+/** @brief Moves this window to position \a to within the stack tab order.
+ *
+ *  @param to       The target tab position.
+ *  @param isMoving True if the move is part of an interactive drag.
+ *  @return true if the move and decorator tab update both succeeded.
+ */
 bool
 Window::MoveToStackPosition(int32 to, bool isMoving)
 {
@@ -2271,6 +2902,13 @@ Window::MoveToStackPosition(int32 to, bool isMoving)
 }
 
 
+/** @brief Creates and initialises a new single-window WindowStack for this window.
+ *
+ *  Allocates a decorator (unless B_NO_BORDER_WINDOW_LOOK) and creates the
+ *  stack, adding this window as its sole member.
+ *
+ *  @return Pointer to the new WindowStack, or NULL on allocation failure.
+ */
 WindowStack*
 Window::_InitWindowStack()
 {
@@ -2292,6 +2930,9 @@ Window::_InitWindowStack()
 }
 
 
+/** @brief Constructs a WindowStack owning the given decorator.
+ *  @param decorator The decorator to associate with this stack (may be NULL).
+ */
 WindowStack::WindowStack(::Decorator* decorator)
 	:
 	fDecorator(decorator)
@@ -2300,11 +2941,15 @@ WindowStack::WindowStack(::Decorator* decorator)
 }
 
 
+/** @brief Destructor. */
 WindowStack::~WindowStack()
 {
 }
 
 
+/** @brief Replaces the stack's decorator.
+ *  @param decorator The new decorator, or NULL to remove it.
+ */
 void
 WindowStack::SetDecorator(::Decorator* decorator)
 {
@@ -2312,6 +2957,9 @@ WindowStack::SetDecorator(::Decorator* decorator)
 }
 
 
+/** @brief Returns the stack's decorator.
+ *  @return Pointer to the Decorator, or NULL if none.
+ */
 ::Decorator*
 WindowStack::Decorator()
 {
@@ -2319,6 +2967,9 @@ WindowStack::Decorator()
 }
 
 
+/** @brief Returns the topmost window in the layer ordering.
+ *  @return The top-layer Window, or NULL if the stack is empty.
+ */
 Window*
 WindowStack::TopLayerWindow() const
 {
@@ -2326,6 +2977,9 @@ WindowStack::TopLayerWindow() const
 }
 
 
+/** @brief Returns the number of windows in this stack.
+ *  @return The window count.
+ */
 int32
 WindowStack::CountWindows()
 {
@@ -2333,6 +2987,10 @@ WindowStack::CountWindows()
 }
 
 
+/** @brief Returns the window at the given tab-order position.
+ *  @param index Zero-based tab index.
+ *  @return The Window at \a index, or NULL if out of range.
+ */
 Window*
 WindowStack::WindowAt(int32 index)
 {
@@ -2340,6 +2998,15 @@ WindowStack::WindowAt(int32 index)
 }
 
 
+/** @brief Adds \a window to the stack at the given position.
+ *
+ *  Also adds the window to the layer ordering list.  Both additions must
+ *  succeed; if the layer order addition fails, the tab addition is rolled back.
+ *
+ *  @param window   The window to add.
+ *  @param position Tab position to insert at (-1 to append).
+ *  @return true if both additions succeeded.
+ */
 bool
 WindowStack::AddWindow(Window* window, int32 position)
 {
@@ -2357,6 +3024,10 @@ WindowStack::AddWindow(Window* window, int32 position)
 }
 
 
+/** @brief Removes \a window from both the tab list and the layer order list.
+ *  @param window The window to remove.
+ *  @return true if the window was found and removed from the tab list.
+ */
 bool
 WindowStack::RemoveWindow(Window* window)
 {
@@ -2368,6 +3039,10 @@ WindowStack::RemoveWindow(Window* window)
 }
 
 
+/** @brief Moves \a window to the top of the layer ordering.
+ *  @param window The window to promote to the top layer.
+ *  @return true if the move succeeded.
+ */
 bool
 WindowStack::MoveToTopLayer(Window* window)
 {
@@ -2377,6 +3052,11 @@ WindowStack::MoveToTopLayer(Window* window)
 }
 
 
+/** @brief Moves a window from tab position \a from to tab position \a to.
+ *  @param from The current tab index.
+ *  @param to   The target tab index.
+ *  @return true if the move succeeded.
+ */
 bool
 WindowStack::Move(int32 from, int32 to)
 {

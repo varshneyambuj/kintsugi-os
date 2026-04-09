@@ -1,11 +1,33 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file BitmapManager.cpp
+    @brief Singleton manager responsible for creating, tracking, and destroying server-side bitmaps. */
 
 
 /*!	Whenever a ServerBitmap associated with a client-side BBitmap needs to be
@@ -41,10 +63,14 @@
 using std::nothrow;
 
 
-//! The one and only bitmap manager for the server, created by the AppServer
+/** @brief The global BitmapManager instance created by the AppServer. */
 BitmapManager *gBitmapManager = NULL;
 
 
+/** @brief Comparison function used to sort ServerApp pointers in the overlay app list.
+    @param a First ServerApp pointer.
+    @param b Second ServerApp pointer.
+    @return Negative, zero, or positive depending on pointer ordering. */
 int
 compare_app_pointer(const ServerApp* a, const ServerApp* b)
 {
@@ -55,7 +81,7 @@ compare_app_pointer(const ServerApp* a, const ServerApp* b)
 //	#pragma mark -
 
 
-//! Sets up stuff to be ready to allocate space for bitmaps
+/** @brief Constructor. Initialises internal data structures ready to allocate bitmaps. */
 BitmapManager::BitmapManager()
 	:
 	fBitmapList(1024),
@@ -64,7 +90,7 @@ BitmapManager::BitmapManager()
 }
 
 
-//! Deallocates everything associated with the manager
+/** @brief Destructor. Deallocates all ServerBitmaps still tracked by the manager. */
 BitmapManager::~BitmapManager()
 {
 	int32 count = fBitmapList.CountItems();
@@ -73,15 +99,16 @@ BitmapManager::~BitmapManager()
 }
 
 
-/*!	\brief Allocates a new ServerBitmap.
-
-	\param bounds Size of the bitmap
-	\param space Color space of the bitmap
-	\param flags Bitmap flags as defined in Bitmap.h
-	\param bytesPerRow Number of bytes per row.
-	\param screen Screen id of the screen associated with it. Unused.
-	\return A new ServerBitmap or NULL if unable to allocate one.
-*/
+/** @brief Allocates a new ServerBitmap and registers it with the token space.
+    @param allocator        Client memory allocator to use, or NULL for server-heap allocation.
+    @param hwInterface      Hardware interface used for overlay queries.
+    @param bounds           Pixel dimensions of the new bitmap.
+    @param space            Color space of the new bitmap.
+    @param flags            Bitmap flags as defined in Bitmap.h.
+    @param bytesPerRow      Bytes per row, or -1 for the default.
+    @param screen           Screen id (currently unused).
+    @param _allocationFlags Optional pointer that receives allocation type flags on success.
+    @return A new ServerBitmap on success, or NULL if allocation failed. */
 ServerBitmap*
 BitmapManager::CreateBitmap(ClientMemoryAllocator* allocator,
 	HWInterface& hwInterface, BRect bounds, color_space space, uint32 flags,
@@ -188,6 +215,14 @@ BitmapManager::CreateBitmap(ClientMemoryAllocator* allocator,
 }
 
 
+/** @brief Creates a ServerBitmap by cloning an area from a client process.
+    @param clientArea  The area_id of the client-side memory area to clone.
+    @param areaOffset  Byte offset within the client area where the bitmap data begins.
+    @param bounds      Pixel dimensions of the bitmap.
+    @param space       Color space of the bitmap.
+    @param flags       Bitmap flags as defined in Bitmap.h.
+    @param bytesPerRow Bytes per row.
+    @return A new ServerBitmap on success, or NULL if cloning failed. */
 ServerBitmap*
 BitmapManager::CloneFromClient(area_id clientArea, int32 areaOffset,
 	BRect bounds, color_space space, uint32 flags, int32 bytesPerRow)
@@ -217,8 +252,8 @@ BitmapManager::CloneFromClient(area_id clientArea, int32 areaOffset,
 }
 
 
-/*!	\brief Called when a ServerBitmap is deleted.
-*/
+/** @brief Called when a ServerBitmap is being deleted; removes it from the manager's tracking.
+    @param bitmap Pointer to the ServerBitmap that is being removed. */
 void
 BitmapManager::BitmapRemoved(ServerBitmap* bitmap)
 {
@@ -235,6 +270,7 @@ BitmapManager::BitmapRemoved(ServerBitmap* bitmap)
 }
 
 
+/** @brief Suspends all hardware overlays and notifies owning applications to release their locks. */
 void
 BitmapManager::SuspendOverlays()
 {
@@ -263,6 +299,7 @@ BitmapManager::SuspendOverlays()
 }
 
 
+/** @brief Resumes all previously suspended hardware overlays and notifies owning applications. */
 void
 BitmapManager::ResumeOverlays()
 {
@@ -291,4 +328,3 @@ BitmapManager::ResumeOverlays()
 		bitmap->Overlay()->Resume(bitmap);
 	}
 }
-

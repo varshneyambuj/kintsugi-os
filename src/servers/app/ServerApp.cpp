@@ -1,20 +1,42 @@
 /*
- * Copyright 2001-2016, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Adrian Oanca <adioanca@cotty.iren.ro>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Stefano Ceccherini (burton666@libero.it)
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval, jerome.duval@free.fr
- *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
- *		Philippe Saint-Pierre, stpere@gmail.com
- *		Wim van der Meer, <WPJvanderMeer@gmail.com>
- *		Joseph Groover <looncraz@looncraz.net>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2016, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Adrian Oanca <adioanca@cotty.iren.ro>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Stefano Ceccherini (burton666@libero.it)
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval, jerome.duval@free.fr
+ *       Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ *       Philippe Saint-Pierre, stpere@gmail.com
+ *       Wim van der Meer, <WPJvanderMeer@gmail.com>
+ *       Joseph Groover <looncraz@looncraz.net>
  */
 
+
+/** @file ServerApp.cpp
+    @brief Server-side counterpart to BApplication; manages per-application state and resources. */
 
 /*!	\class ServerApp ServerApp.h
 	\brief Counterpart to BApplication within the app_server
@@ -88,6 +110,19 @@ static const uint32 kMsgUpdateShowAllDraggers = '_adg';
 static const uint32 kMsgAppQuit = 'appQ';
 
 
+/** @brief Constructs a ServerApp representing a client BApplication.
+ *
+ * Creates and configures the message port, transfers port ownership to the
+ * client team, records current system fonts, and allocates the per-app font
+ * manager and client memory allocator.
+ *
+ * @param desktop          The Desktop this application belongs to.
+ * @param clientReplyPort  Port used to send replies back to the BApplication.
+ * @param clientLooperPort Port of the BApplication's BLooper.
+ * @param clientTeam       Team ID of the client process.
+ * @param clientToken      Handler token of the BApplication within its looper.
+ * @param signature        MIME type signature of the application.
+ */
 ServerApp::ServerApp(Desktop* desktop, port_id clientReplyPort,
 		port_id clientLooperPort, team_id clientTeam,
 		int32 clientToken, const char* signature)
@@ -152,6 +187,11 @@ ServerApp::ServerApp(Desktop* desktop, port_id clientReplyPort,
 }
 
 
+/** @brief Destructor — quits all owned ServerWindows and releases all resources.
+ *
+ * Signals all child windows to quit, waits for them to exit, reverts temporary
+ * display mode changes, deletes owned bitmaps and pictures, and releases cursors.
+ */
 ServerApp::~ServerApp()
 {
 	STRACE(("*ServerApp %s:~ServerApp()\n", Signature()));
@@ -215,8 +255,13 @@ ServerApp::~ServerApp()
 }
 
 
-/*!	\brief Checks if the application was initialized correctly
-*/
+/** @brief Checks whether the ServerApp was initialised correctly.
+ *
+ * Verifies that the message port, client reply port, window list lock, and
+ * memory allocator are all valid.
+ *
+ * @return B_OK if fully initialised, or the first encountered error code.
+ */
 status_t
 ServerApp::InitCheck()
 {
@@ -236,6 +281,10 @@ ServerApp::InitCheck()
 }
 
 
+/** @brief Quits the application with no shutdown semaphore.
+ *
+ * Convenience overload; delegates to Quit(sem_id) with an invalid semaphore value.
+ */
 void
 ServerApp::Quit()
 {
@@ -243,12 +292,17 @@ ServerApp::Quit()
 }
 
 
-/*!	\brief This quits the application and deletes it. You're not supposed
-		to call its destructor directly.
-
-	At the point you're calling this method, the application should already
-	be removed from the application list.
-*/
+/** @brief Quits the application and schedules its deletion.
+ *
+ * This is the preferred way to destroy a ServerApp. The destructor must not be
+ * called directly. At the time this method is called the application should
+ * already have been removed from the application list. If the looper thread has
+ * not yet started the object is deleted immediately; otherwise a quit message is
+ * posted so the thread can exit cleanly.
+ *
+ * @param shutdownSemaphore Optional semaphore that will be released after the
+ *                          application has fully quit; pass -1 if not needed.
+ */
 void
 ServerApp::Quit(sem_id shutdownSemaphore)
 {
@@ -266,12 +320,14 @@ ServerApp::Quit(sem_id shutdownSemaphore)
 }
 
 
-/*!	\brief Sets the ServerApp's active status
-	\param value The new status of the ServerApp.
-
-	This changes an internal flag and also sets the current cursor to the one
-	specified by the application
-*/
+/** @brief Sets the ServerApp's active status.
+ *
+ * Updates the internal active flag. When transitioning to active, notifies the
+ * registrar, restores the application cursor if a window is under the mouse,
+ * and shows the cursor according to the hide level.
+ *
+ * @param value true to mark this application as the active one, false otherwise.
+ */
 void
 ServerApp::Activate(bool value)
 {
@@ -294,6 +350,10 @@ ServerApp::Activate(bool value)
 }
 
 
+/** @brief Updates the per-view cursor and notifies the desktop.
+ *
+ * @param cursor The new view-level cursor; the desktop cursor is updated immediately.
+ */
 void
 ServerApp::SetCurrentCursor(ServerCursor* cursor)
 {
@@ -303,6 +363,12 @@ ServerApp::SetCurrentCursor(ServerCursor* cursor)
 }
 
 
+/** @brief Returns the cursor that should be active for this application.
+ *
+ * Prefers the view-level cursor; falls back to the application-level cursor.
+ *
+ * @return Pointer to the active ServerCursor, or NULL if none is set.
+ */
 ServerCursor*
 ServerApp::CurrentCursor() const
 {
@@ -313,6 +379,11 @@ ServerApp::CurrentCursor() const
 }
 
 
+/** @brief Adds a ServerWindow to this application's window list.
+ *
+ * @param window The ServerWindow to register.
+ * @return true on success, false if the list could not be extended.
+ */
 bool
 ServerApp::AddWindow(ServerWindow* window)
 {
@@ -322,6 +393,10 @@ ServerApp::AddWindow(ServerWindow* window)
 }
 
 
+/** @brief Removes a ServerWindow from this application's window list.
+ *
+ * @param window The ServerWindow to deregister.
+ */
 void
 ServerApp::RemoveWindow(ServerWindow* window)
 {
@@ -331,6 +406,11 @@ ServerApp::RemoveWindow(ServerWindow* window)
 }
 
 
+/** @brief Returns whether this application has a visible, normal window in the given workspace.
+ *
+ * @param index Zero-based workspace index to test.
+ * @return true if at least one normal, non-hidden window is in the workspace.
+ */
 bool
 ServerApp::InWorkspace(int32 index) const
 {
@@ -359,6 +439,12 @@ ServerApp::InWorkspace(int32 index) const
 }
 
 
+/** @brief Returns a bitmask of all workspaces occupied by this application's windows.
+ *
+ * Only normal, non-hidden, non-offscreen windows contribute to the result.
+ *
+ * @return Bitmask where bit N is set if the application has a window in workspace N.
+ */
 uint32
 ServerApp::Workspaces() const
 {
@@ -387,10 +473,15 @@ ServerApp::Workspaces() const
 }
 
 
-/*!	\brief Acquires a reference of the desired bitmap, if available.
-	\param token ID token of the bitmap to find
-	\return The bitmap having that ID or NULL if not found
-*/
+/** @brief Acquires a reference to the bitmap with the given token.
+ *
+ * Looks up the bitmap in the application's bitmap map. If found, increments
+ * its reference count before returning it; the caller is responsible for
+ * releasing the reference when done.
+ *
+ * @param token ID token of the bitmap to find; must be >= 1.
+ * @return Pointer to the referenced ServerBitmap, or NULL if not found.
+ */
 ServerBitmap*
 ServerApp::GetBitmap(int32 token) const
 {
@@ -409,6 +500,12 @@ ServerApp::GetBitmap(int32 token) const
 }
 
 
+/** @brief Creates a new ServerPicture, optionally as a copy of an existing one.
+ *
+ * @param original If non-NULL, the new picture is initialised as a copy of this one.
+ *                 Pass NULL to create an empty picture.
+ * @return Newly created ServerPicture with this ServerApp as owner, or NULL on failure.
+ */
 ServerPicture*
 ServerApp::CreatePicture(const ServerPicture* original)
 {
@@ -425,6 +522,11 @@ ServerApp::CreatePicture(const ServerPicture* original)
 }
 
 
+/** @brief Acquires a reference to the picture with the given token.
+ *
+ * @param token ID token of the picture; must be >= 1.
+ * @return Pointer to the referenced ServerPicture, or NULL if not found.
+ */
 ServerPicture*
 ServerApp::GetPicture(int32 token) const
 {
@@ -443,7 +545,13 @@ ServerApp::GetPicture(int32 token) const
 }
 
 
-/*! To be called only by ServerPicture itself.*/
+/** @brief Registers a picture in the application's picture map.
+ *
+ * Must only be called by ServerPicture itself during ownership transfer.
+ *
+ * @param picture The ServerPicture to register; its Owner() must be NULL at entry.
+ * @return true on success, false if memory allocation failed.
+ */
 bool
 ServerApp::AddPicture(ServerPicture* picture)
 {
@@ -461,7 +569,12 @@ ServerApp::AddPicture(ServerPicture* picture)
 }
 
 
-/*! To be called only by ServerPicture itself.*/
+/** @brief Removes a picture from the application's picture map.
+ *
+ * Must only be called by ServerPicture itself during ownership release.
+ *
+ * @param picture The ServerPicture to deregister; its Owner() must equal this ServerApp.
+ */
 void
 ServerApp::RemovePicture(ServerPicture* picture)
 {
@@ -473,9 +586,12 @@ ServerApp::RemovePicture(ServerPicture* picture)
 }
 
 
-/*!	\brief Send a message to the ServerApp's BApplication
-	\param message The message to send
-*/
+/** @brief Sends a BMessage to the client BApplication's handler messenger.
+ *
+ * Logs an error to syslog if the send fails.
+ *
+ * @param message The BMessage to deliver to the client application.
+ */
 void
 ServerApp::SendMessageToClient(BMessage* message) const
 {
@@ -491,6 +607,13 @@ ServerApp::SendMessageToClient(BMessage* message) const
 // #pragma mark - private methods
 
 
+/** @brief Fills \a name with the looper thread name for this application.
+ *
+ * The name is formatted as "a:<team>:<signature-leaf>".
+ *
+ * @param name   Buffer to receive the null-terminated name string.
+ * @param length Size of the buffer in bytes.
+ */
 void
 ServerApp::_GetLooperName(char* name, size_t length)
 {
@@ -498,14 +621,15 @@ ServerApp::_GetLooperName(char* name, size_t length)
 }
 
 
-/*!	\brief Handler function for BApplication API messages
-	\param code Identifier code for the message. Equivalent to BMessage::what
-	\param buffer Any attachments
-
-	Note that the buffer's exact format is determined by the particular message.
-	All attachments are placed in the buffer via a PortLink, so it will be a
-	matter of casting and incrementing an index variable to access them.
-*/
+/** @brief Dispatches incoming BApplication protocol messages.
+ *
+ * Decodes the message code and reads any attached data from the link, then
+ * performs the requested operation (e.g. window creation, bitmap allocation,
+ * cursor management, font queries, workspace control).
+ *
+ * @param code Identifier code for the message, equivalent to BMessage::what.
+ * @param link LinkReceiver positioned at the start of the message payload.
+ */
 void
 ServerApp::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 {
@@ -3565,8 +3689,12 @@ ServerApp::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 }
 
 
-/*!	\brief The thread function ServerApps use to monitor messages
-*/
+/** @brief Main message loop executed by this ServerApp's dedicated thread.
+ *
+ * Sends the initial handshake (message port, shared read-only area, team ID)
+ * to the client, then reads and dispatches messages until the application quits
+ * or the client's port disappears.
+ */
 void
 ServerApp::_MessageLooper()
 {
@@ -3652,6 +3780,17 @@ ServerApp::_MessageLooper()
 }
 
 
+/** @brief Reads window-creation parameters from the link and spawns a ServerWindow.
+ *
+ * Handles both AS_CREATE_WINDOW and AS_CREATE_OFFSCREEN_WINDOW. Reads frame,
+ * look, feel, flags, workspace, handler token, reply port, looper port, and
+ * title from the link, then constructs and runs the appropriate ServerWindow.
+ *
+ * @param code            Message code; AS_CREATE_WINDOW or AS_CREATE_OFFSCREEN_WINDOW.
+ * @param link            LinkReceiver carrying the window parameters.
+ * @param clientReplyPort Output parameter filled with the client's reply port.
+ * @return                B_OK on success, or an error code on failure.
+ */
 status_t
 ServerApp::_CreateWindow(int32 code, BPrivate::LinkReceiver& link,
 	port_id& clientReplyPort)
@@ -3739,6 +3878,10 @@ ServerApp::_CreateWindow(int32 code, BPrivate::LinkReceiver& link,
 }
 
 
+/** @brief Returns whether the mouse cursor is currently over any window owned by this app.
+ *
+ * @return true if at least one window from this application is under the mouse pointer.
+ */
 bool
 ServerApp::_HasWindowUnderMouse()
 {
@@ -3755,6 +3898,11 @@ ServerApp::_HasWindowUnderMouse()
 }
 
 
+/** @brief Inserts a bitmap into the application's bitmap map and sets its owner.
+ *
+ * @param bitmap The ServerBitmap to register; must not already be in the map.
+ * @return true on success, false if memory allocation failed.
+ */
 bool
 ServerApp::_AddBitmap(ServerBitmap* bitmap)
 {
@@ -3771,6 +3919,12 @@ ServerApp::_AddBitmap(ServerBitmap* bitmap)
 }
 
 
+/** @brief Removes a bitmap from the map and notifies the BitmapManager.
+ *
+ * The caller must hold fMapLocker before calling this method.
+ *
+ * @param bitmap The ServerBitmap to remove and release.
+ */
 void
 ServerApp::_DeleteBitmap(ServerBitmap* bitmap)
 {
@@ -3781,6 +3935,13 @@ ServerApp::_DeleteBitmap(ServerBitmap* bitmap)
 }
 
 
+/** @brief Looks up a bitmap by token without acquiring a reference.
+ *
+ * The caller must hold fMapLocker before calling this method.
+ *
+ * @param token The bitmap token to search for.
+ * @return Pointer to the ServerBitmap, or NULL if not found.
+ */
 ServerBitmap*
 ServerApp::_FindBitmap(int32 token) const
 {
@@ -3794,6 +3955,13 @@ ServerApp::_FindBitmap(int32 token) const
 }
 
 
+/** @brief Looks up a picture by token without acquiring a reference.
+ *
+ * The caller must hold fMapLocker before calling this method.
+ *
+ * @param token The picture token to search for.
+ * @return Pointer to the ServerPicture, or NULL if not found.
+ */
 ServerPicture*
 ServerApp::_FindPicture(int32 token) const
 {

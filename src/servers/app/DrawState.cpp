@@ -1,16 +1,38 @@
 /*
- * Copyright 2001-2018, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Adi Oanca <adioanca@mymail.ro>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Michael Pfeiffer <laplace@users.sourceforge.net>
- *		Julian Harnath <julian.harnath@rwth-aachen.de>
- *		Joseph Groover <looncraz@looncraz.net>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2018, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Adi Oanca <adioanca@mymail.ro>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Michael Pfeiffer <laplace@users.sourceforge.net>
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
+ *       Joseph Groover <looncraz@looncraz.net>
  */
+
+/** @file DrawState.cpp
+    @brief Data classes for working with BView states and draw parameters. */
 
 //!	Data classes for working with BView states and draw parameters
 
@@ -31,6 +53,7 @@
 using std::nothrow;
 
 
+/** @brief Default constructor. Initialises all drawing parameters to their documented defaults. */
 DrawState::DrawState()
 	:
 	fOrigin(0.0f, 0.0f),
@@ -68,6 +91,8 @@ DrawState::DrawState()
 }
 
 
+/** @brief Copy constructor. Duplicates all state parameters from another DrawState.
+    @param other The source DrawState to copy from. */
 DrawState::DrawState(const DrawState& other)
 	:
 	fOrigin(other.fOrigin),
@@ -114,11 +139,14 @@ DrawState::DrawState(const DrawState& other)
 }
 
 
+/** @brief Destructor. */
 DrawState::~DrawState()
 {
 }
 
 
+/** @brief Creates a new DrawState derived from this one and links them via fPreviousState.
+    @return A pointer to the new DrawState, or NULL on allocation failure. */
 DrawState*
 DrawState::PushState()
 {
@@ -137,6 +165,8 @@ DrawState::PushState()
 }
 
 
+/** @brief Detaches and returns the previous state, effectively popping this state off the stack.
+    @return Pointer to the previous DrawState, transferring ownership to the caller. */
 DrawState*
 DrawState::PopState()
 {
@@ -144,6 +174,10 @@ DrawState::PopState()
 }
 
 
+/** @brief Reads font attributes from a link message, applying only those indicated by the mask.
+    @param link        The link receiver to read from.
+    @param fontManager Optional AppFontManager to look up application-specific fonts.
+    @return A bitmask indicating which font attributes were received. */
 uint16
 DrawState::ReadFontFromLink(BPrivate::LinkReceiver& link,
 	AppFontManager* fontManager)
@@ -210,6 +244,8 @@ DrawState::ReadFontFromLink(BPrivate::LinkReceiver& link,
 }
 
 
+/** @brief Reads the complete view state from a link message, updating combined transforms and optional clipping.
+    @param link The link receiver containing a serialised ViewSetStateInfo and optional clipping region. */
 void
 DrawState::ReadFromLink(BPrivate::LinkReceiver& link)
 {
@@ -271,6 +307,8 @@ DrawState::ReadFromLink(BPrivate::LinkReceiver& link)
 }
 
 
+/** @brief Serialises the complete view state (font, pen, colors, transform, clipping) to a link message.
+    @param link The link sender to write into. */
 void
 DrawState::WriteToLink(BPrivate::LinkSender& link) const
 {
@@ -322,6 +360,8 @@ DrawState::WriteToLink(BPrivate::LinkSender& link) const
 }
 
 
+/** @brief Sets the local drawing origin and recomputes the combined origin relative to any parent state.
+    @param origin The new origin in parent-state coordinate space. */
 void
 DrawState::SetOrigin(BPoint origin)
 {
@@ -340,6 +380,8 @@ DrawState::SetOrigin(BPoint origin)
 }
 
 
+/** @brief Sets the local scale factor and recomputes the combined scale; also updates the scaled font size.
+    @param scale The new scale factor. No-op if scale equals the current value. */
 void
 DrawState::SetScale(float scale)
 {
@@ -362,6 +404,8 @@ DrawState::SetScale(float scale)
 }
 
 
+/** @brief Sets the local affine transform and recomputes the combined transform.
+    @param transform The new BAffineTransform. No-op if equal to the current value. */
 void
 DrawState::SetTransform(BAffineTransform transform)
 {
@@ -379,9 +423,11 @@ DrawState::SetTransform(BAffineTransform transform)
 }
 
 
-/* Can be used to temporarily disable all BAffineTransforms in the state
-   stack, and later reenable them.
-*/
+/** @brief Temporarily enables or disables all BAffineTransforms in the state stack.
+
+    Can be used to temporarily disable all BAffineTransforms in the state
+    stack, and later reenable them.
+    @param enabled If true, re-applies the current transform; if false, resets the combined transform to identity. */
 void
 DrawState::SetTransformEnabled(bool enabled)
 {
@@ -395,6 +441,8 @@ DrawState::SetTransformEnabled(bool enabled)
 }
 
 
+/** @brief Creates a flattened (squashed) copy of this state, collapsing the state stack into a single level.
+    @return A new DrawState that is a pushed child of a copy of this state, or NULL on failure. */
 DrawState*
 DrawState::Squash() const
 {
@@ -403,6 +451,8 @@ DrawState::Squash() const
 }
 
 
+/** @brief Sets the user-defined clipping region for this state.
+    @param region Pointer to the BRegion to use as clipping, or NULL to remove clipping. */
 void
 DrawState::SetClippingRegion(const BRegion* region)
 {
@@ -417,6 +467,8 @@ DrawState::SetClippingRegion(const BRegion* region)
 }
 
 
+/** @brief Returns whether any clipping region exists in this state or any parent state.
+    @return true if a clipping region is set anywhere in the state stack. */
 bool
 DrawState::HasClipping() const
 {
@@ -428,6 +480,8 @@ DrawState::HasClipping() const
 }
 
 
+/** @brief Returns whether this specific state level has its own clipping region.
+    @return true if this state (not a parent) has a clipping region. */
 bool
 DrawState::HasAdditionalClipping() const
 {
@@ -435,6 +489,9 @@ DrawState::HasAdditionalClipping() const
 }
 
 
+/** @brief Computes the effective clipping region by intersecting all regions in the state stack.
+    @param region Output parameter receiving the combined clipping region.
+    @return true if a combined region was computed, false if there is no clipping. */
 bool
 DrawState::GetCombinedClippingRegion(BRegion* region) const
 {
@@ -457,6 +514,10 @@ DrawState::GetCombinedClippingRegion(BRegion* region) const
 }
 
 
+/** @brief Clips the drawing area to the given rectangle, handling transforms and inverse clipping.
+    @param rect    The clipping rectangle in current coordinate space.
+    @param inverse If true, excludes the rectangle rather than restricting to it.
+    @return true if the alpha mask geometry needs to be updated after this call. */
 bool
 DrawState::ClipToRect(BRect rect, bool inverse)
 {
@@ -520,6 +581,9 @@ DrawState::ClipToRect(BRect rect, bool inverse)
 }
 
 
+/** @brief Clips the drawing area to an arbitrary shape, creating or updating an AlphaMask.
+    @param shape   Pointer to the shape_data describing the clip shape.
+    @param inverse If true, clips to the complement of the shape. */
 void
 DrawState::ClipToShape(shape_data* shape, bool inverse)
 {
@@ -536,6 +600,8 @@ DrawState::ClipToShape(shape_data* shape, bool inverse)
 }
 
 
+/** @brief Sets the alpha mask for this draw state.
+    @param mask Pointer to the AlphaMask to use. Replaces any existing mask. */
 void
 DrawState::SetAlphaMask(AlphaMask* mask)
 {
@@ -545,6 +611,8 @@ DrawState::SetAlphaMask(AlphaMask* mask)
 }
 
 
+/** @brief Returns the current alpha mask.
+    @return Pointer to the AlphaMask, or NULL if none is set. */
 AlphaMask*
 DrawState::GetAlphaMask() const
 {
@@ -555,6 +623,8 @@ DrawState::GetAlphaMask() const
 // #pragma mark -
 
 
+/** @brief Applies this state's combined origin and scale to a SimpleTransform.
+    @param transform The transform object to modify in place. */
 void
 DrawState::Transform(SimpleTransform& transform) const
 {
@@ -563,6 +633,8 @@ DrawState::Transform(SimpleTransform& transform) const
 }
 
 
+/** @brief Applies the inverse of this state's combined origin and scale to a SimpleTransform.
+    @param transform The transform object to modify in place. */
 void
 DrawState::InverseTransform(SimpleTransform& transform) const
 {
@@ -575,6 +647,8 @@ DrawState::InverseTransform(SimpleTransform& transform) const
 // #pragma mark -
 
 
+/** @brief Sets the high (foreground) color.
+    @param color The new high color as an rgb_color. */
 void
 DrawState::SetHighColor(rgb_color color)
 {
@@ -582,6 +656,8 @@ DrawState::SetHighColor(rgb_color color)
 }
 
 
+/** @brief Sets the low (background) color.
+    @param color The new low color as an rgb_color. */
 void
 DrawState::SetLowColor(rgb_color color)
 {
@@ -589,6 +665,9 @@ DrawState::SetLowColor(rgb_color color)
 }
 
 
+/** @brief Sets the high color using a UI color constant and an optional tint.
+    @param which The color_which constant identifying the UI color role.
+    @param tint  Tint factor to apply to the UI color (B_NO_TINT for none). */
 void
 DrawState::SetHighUIColor(color_which which, float tint)
 {
@@ -597,6 +676,9 @@ DrawState::SetHighUIColor(color_which which, float tint)
 }
 
 
+/** @brief Returns the UI color constant and tint for the high color.
+    @param tint Optional output pointer that receives the tint value.
+    @return The color_which constant for the high UI color. */
 color_which
 DrawState::HighUIColor(float* tint) const
 {
@@ -607,6 +689,9 @@ DrawState::HighUIColor(float* tint) const
 }
 
 
+/** @brief Sets the low color using a UI color constant and an optional tint.
+    @param which The color_which constant identifying the UI color role.
+    @param tint  Tint factor to apply to the UI color (B_NO_TINT for none). */
 void
 DrawState::SetLowUIColor(color_which which, float tint)
 {
@@ -615,6 +700,9 @@ DrawState::SetLowUIColor(color_which which, float tint)
 }
 
 
+/** @brief Returns the UI color constant and tint for the low color.
+    @param tint Optional output pointer that receives the tint value.
+    @return The color_which constant for the low UI color. */
 color_which
 DrawState::LowUIColor(float* tint) const
 {
@@ -625,6 +713,8 @@ DrawState::LowUIColor(float* tint) const
 }
 
 
+/** @brief Sets the drawing pattern.
+    @param pattern The Pattern object to use for subsequent drawing operations. */
 void
 DrawState::SetPattern(const Pattern& pattern)
 {
@@ -632,6 +722,9 @@ DrawState::SetPattern(const Pattern& pattern)
 }
 
 
+/** @brief Sets the drawing mode if the mode is not locked.
+    @param mode The drawing_mode to set.
+    @return true if the mode was applied, false if the drawing mode is locked. */
 bool
 DrawState::SetDrawingMode(drawing_mode mode)
 {
@@ -643,6 +736,10 @@ DrawState::SetDrawingMode(drawing_mode mode)
 }
 
 
+/** @brief Sets the alpha blending mode if the drawing mode is not locked.
+    @param srcMode The source alpha mode.
+    @param fncMode The alpha compositing function.
+    @return true if the modes were applied, false if the drawing mode is locked. */
 bool
 DrawState::SetBlendingMode(source_alpha srcMode, alpha_function fncMode)
 {
@@ -655,6 +752,8 @@ DrawState::SetBlendingMode(source_alpha srcMode, alpha_function fncMode)
 }
 
 
+/** @brief Locks or unlocks the drawing mode to prevent changes via SetDrawingMode() or SetBlendingMode().
+    @param locked If true, the drawing mode is locked against further changes. */
 void
 DrawState::SetDrawingModeLocked(bool locked)
 {
@@ -663,6 +762,8 @@ DrawState::SetDrawingModeLocked(bool locked)
 
 
 
+/** @brief Sets the current pen position in unscaled view coordinates.
+    @param location The new pen location as a BPoint. */
 void
 DrawState::SetPenLocation(BPoint location)
 {
@@ -670,6 +771,8 @@ DrawState::SetPenLocation(BPoint location)
 }
 
 
+/** @brief Returns the current pen position in unscaled view coordinates.
+    @return The pen location as a BPoint. */
 BPoint
 DrawState::PenLocation() const
 {
@@ -677,6 +780,8 @@ DrawState::PenLocation() const
 }
 
 
+/** @brief Sets the unscaled pen size.
+    @param size The new pen size in view units. */
 void
 DrawState::SetPenSize(float size)
 {
@@ -684,7 +789,8 @@ DrawState::SetPenSize(float size)
 }
 
 
-//! returns the scaled pen size
+/** @brief Returns the scaled pen size, enforcing the minimum size of 1.0.
+    @return The pen size scaled by fCombinedScale, clamped to a minimum of 1.0. */
 float
 DrawState::PenSize() const
 {
@@ -699,7 +805,8 @@ DrawState::PenSize() const
 }
 
 
-//! returns the unscaled pen size
+/** @brief Returns the unscaled pen size, enforcing the minimum size of 1.0.
+    @return The raw pen size clamped to a minimum of 1.0. */
 float
 DrawState::UnscaledPenSize() const
 {
@@ -711,7 +818,12 @@ DrawState::UnscaledPenSize() const
 }
 
 
-//! sets the font to be already scaled by fScale
+/** @brief Sets the font, scaling the font size by fCombinedScale.
+
+    The font is assumed to carry an already unscaled size; this method
+    applies the current combined scale when storing it.
+    @param font  The source ServerFont.
+    @param flags Bitmask of B_FONT_* constants indicating which attributes to copy. */
 void
 DrawState::SetFont(const ServerFont& font, uint32 flags)
 {
@@ -750,6 +862,8 @@ DrawState::SetFont(const ServerFont& font, uint32 flags)
 }
 
 
+/** @brief Forces font anti-aliasing on or off regardless of the font's own settings.
+    @param aliasing If true, force aliased (non-antialiased) rendering. */
 void
 DrawState::SetForceFontAliasing(bool aliasing)
 {
@@ -757,6 +871,8 @@ DrawState::SetForceFontAliasing(bool aliasing)
 }
 
 
+/** @brief Enables or disables sub-pixel precise coordinate rendering.
+    @param precise If true, coordinates are treated with sub-pixel precision. */
 void
 DrawState::SetSubPixelPrecise(bool precise)
 {
@@ -764,6 +880,8 @@ DrawState::SetSubPixelPrecise(bool precise)
 }
 
 
+/** @brief Sets the line cap mode for stroked lines.
+    @param mode The cap_mode value to apply. */
 void
 DrawState::SetLineCapMode(cap_mode mode)
 {
@@ -771,6 +889,8 @@ DrawState::SetLineCapMode(cap_mode mode)
 }
 
 
+/** @brief Sets the line join mode for stroked paths.
+    @param mode The join_mode value to apply. */
 void
 DrawState::SetLineJoinMode(join_mode mode)
 {
@@ -778,6 +898,8 @@ DrawState::SetLineJoinMode(join_mode mode)
 }
 
 
+/** @brief Sets the miter limit for miter-style line joins.
+    @param limit The maximum miter length before the join falls back to bevel. */
 void
 DrawState::SetMiterLimit(float limit)
 {
@@ -785,6 +907,8 @@ DrawState::SetMiterLimit(float limit)
 }
 
 
+/** @brief Sets the fill rule for complex (self-intersecting) paths.
+    @param fillRule An integer fill rule constant (e.g. B_NONZERO or B_EVEN_ODD). */
 void
 DrawState::SetFillRule(int32 fillRule)
 {
@@ -792,6 +916,7 @@ DrawState::SetFillRule(int32 fillRule)
 }
 
 
+/** @brief Prints a human-readable summary of all draw state parameters to standard output. */
 void
 DrawState::PrintToStream() const
 {
@@ -834,4 +959,3 @@ DrawState::PrintToStream() const
 	printf("\t Face: %d\n", fFont.Face());
 	printf("\t Flags: %" B_PRIu32 "\n", fFont.Flags());
 }
-

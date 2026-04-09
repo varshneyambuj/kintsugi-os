@@ -1,13 +1,32 @@
 /*
- * Copyright 2001-2024, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2024, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
  */
 
-
-/*!	Handles the system's cursor infrastructure */
+/** @file CursorManager.cpp
+ *  @brief Handles the system's cursor infrastructure, including all standard cursors. */
 
 
 #include "CursorManager.h"
@@ -30,6 +49,9 @@
 #include "CursorData.cpp"
 
 
+/**
+ * @brief Constructs the CursorManager and initializes its lock.
+ */
 CursorManager::CursorManager()
 	:
 	BLocker("CursorManager")
@@ -37,12 +59,23 @@ CursorManager::CursorManager()
 }
 
 
+/**
+ * @brief Destroys the CursorManager, releasing all registered cursors.
+ */
 CursorManager::~CursorManager()
 {
 	ReleaseCursors();
 }
 
 
+/**
+ * @brief Initializes all standard system cursors at the given display scale.
+ *
+ * Renders each cursor from its HVIF vector data at a size proportional to
+ * @a scale times 22 pixels. A scale below 1.0 is clamped to 1.0.
+ *
+ * @param scale Display scale factor (1.0 = standard 22 px cursors).
+ */
 void
 CursorManager::InitializeCursors(float scale)
 {
@@ -102,6 +135,12 @@ CursorManager::InitializeCursors(float scale)
 }
 
 
+/**
+ * @brief Releases all cursors registered with this manager.
+ *
+ * Each cursor's manager pointer is cleared, its token is removed from the
+ * token space, and its reference is released.
+ */
 void
 CursorManager::ReleaseCursors()
 {
@@ -115,6 +154,15 @@ CursorManager::ReleaseCursors()
 }
 
 
+/**
+ * @brief Creates or reuses a cursor for the given team from raw cursor data.
+ *
+ * If a matching cursor (same team and data) already exists it is reused.
+ *
+ * @param clientTeam The owning application team ID.
+ * @param cursorData Pointer to 68-byte R5-format cursor data.
+ * @return A new (or existing) ServerCursor, or NULL on failure.
+ */
 ServerCursor*
 CursorManager::CreateCursor(team_id clientTeam, const uint8* cursorData)
 {
@@ -138,6 +186,16 @@ CursorManager::CreateCursor(team_id clientTeam, const uint8* cursorData)
 }
 
 
+/**
+ * @brief Creates a cursor from a bitmap rectangle and format.
+ * @param clientTeam  The owning application team ID.
+ * @param r           Bounding rectangle of the cursor bitmap.
+ * @param format      Color space of the cursor bitmap.
+ * @param flags       Cursor flags.
+ * @param hotspot     Hotspot position within the cursor bitmap.
+ * @param bytesPerRow Row stride of the cursor bitmap in bytes.
+ * @return A newly allocated ServerCursor, or NULL on failure.
+ */
 ServerCursor*
 CursorManager::CreateCursor(team_id clientTeam, BRect r, color_space format,
 	int32 flags, BPoint hotspot, int32 bytesPerRow)
@@ -161,10 +219,16 @@ CursorManager::CreateCursor(team_id clientTeam, BRect r, color_space format,
 }
 
 
-/*!	\brief Registers a cursor with the manager.
-	\param cursor ServerCursor object to register
-	\return The token assigned to the cursor or B_ERROR if cursor is NULL
-*/
+/**
+ * @brief Registers a cursor with the manager and assigns it a token.
+ *
+ * If @a token is -1 a new token is allocated; otherwise the provided token
+ * is used (replacing any existing cursor at that token).
+ *
+ * @param cursor The ServerCursor to register (must not be NULL).
+ * @param token  Desired token, or -1 to allocate automatically.
+ * @return The assigned token on success, B_BAD_VALUE or B_ERROR on failure.
+ */
 int32
 CursorManager::AddCursor(ServerCursor* cursor, int32 token)
 {
@@ -197,10 +261,13 @@ CursorManager::AddCursor(ServerCursor* cursor, int32 token)
 }
 
 
-/*!	\brief Removes a cursor.
-
-	If this was the last reference to this cursor, it will be deleted.
-*/
+/**
+ * @brief Removes a cursor from the manager.
+ *
+ * If this was the last reference to the cursor, it will be deleted.
+ *
+ * @param cursor The ServerCursor to remove.
+ */
 void
 CursorManager::RemoveCursor(ServerCursor* cursor)
 {
@@ -214,9 +281,10 @@ CursorManager::RemoveCursor(ServerCursor* cursor)
 }
 
 
-/*!	\brief Removes and deletes all of an application's cursors
-	\param signature Signature to which the cursors belong
-*/
+/**
+ * @brief Removes and deletes all cursors belonging to the given team.
+ * @param team The team ID whose cursors should be deleted.
+ */
 void
 CursorManager::DeleteCursors(team_id team)
 {
@@ -236,14 +304,15 @@ CursorManager::DeleteCursors(team_id team)
 }
 
 
-/*!	\brief Sets all the cursors from a specified CursorSet
-	\param path Path to the cursor set
-
-	All cursors in the set will be assigned. If the set does not specify a
-	cursor for a particular cursor specifier, it will remain unchanged.
-	This function will fail if passed a NULL path, an invalid path, or the
-	path to a non-CursorSet file.
-*/
+/**
+ * @brief Applies all cursors from the specified CursorSet file.
+ *
+ * All cursors defined in the set are assigned. If the set does not specify a
+ * cursor for a particular system cursor ID, it remains unchanged. The function
+ * fails silently if @a path is NULL, invalid, or not a CursorSet file.
+ *
+ * @param path Path to the cursor set file.
+ */
 void
 CursorManager::SetCursorSet(const char* path)
 {
@@ -294,11 +363,11 @@ CursorManager::SetCursorSet(const char* path)
 }
 
 
-/*!	\brief Acquire the cursor which is used for a particular system cursor
-	\param which Which system cursor to get
-	\return Pointer to the particular cursor used or NULL if which is
-	invalid or the cursor has not been assigned
-*/
+/**
+ * @brief Returns the cursor used for a particular system cursor ID.
+ * @param which The BCursorID identifying which system cursor to retrieve.
+ * @return Pointer to the ServerCursor, or NULL if @a which is invalid or unset.
+ */
 ServerCursor*
 CursorManager::GetCursor(BCursorID which)
 {
@@ -370,10 +439,11 @@ CursorManager::GetCursor(BCursorID which)
 }
 
 
-/*!	\brief Internal function which finds the cursor with a particular ID
-	\param token ID of the cursor to find
-	\return The cursor or NULL if not found
-*/
+/**
+ * @brief Finds a registered cursor by its token.
+ * @param token The token of the cursor to look up.
+ * @return Pointer to the matching ServerCursor, or NULL if not found.
+ */
 ServerCursor*
 CursorManager::FindCursor(int32 token)
 {
@@ -390,6 +460,18 @@ CursorManager::FindCursor(int32 token)
 }
 
 
+/**
+ * @brief Renders a vector cursor icon into a composite RGBA32 bitmap with shadow.
+ *
+ * The icon is rendered at a slightly larger internal size and then cropped.
+ * A drop shadow is composited beneath the cursor pixels.
+ *
+ * @param size           Side length of the output bitmap in pixels.
+ * @param vector         HVIF vector data.
+ * @param vectorSize     Byte length of @a vector.
+ * @param shadowStrength Alpha multiplier for the shadow (0.0–1.0).
+ * @return A BBitmap in B_RGBA32 format containing the composited cursor.
+ */
 BBitmap
 CursorManager::_RenderVectorCursor(uint32 size, const uint8* vector,
 	uint32 vectorSize, float shadowStrength)
@@ -464,11 +546,18 @@ CursorManager::_RenderVectorCursor(uint32 size, const uint8* vector,
 }
 
 
-/*!	\brief Initializes a predefined system cursor.
-
-	This method must only be called in the CursorManager's constructor,
-	as it may throw exceptions.
-*/
+/**
+ * @brief Initializes a predefined system cursor member from HVIF data.
+ *
+ * This method must only be called during CursorManager construction.
+ *
+ * @param cursorMember Reference to the cursor pointer to initialize.
+ * @param id           The BCursorID this cursor represents.
+ * @param vector       HVIF vector data (NULL for the no-cursor placeholder).
+ * @param vectorSize   Byte length of @a vector.
+ * @param hotSpot      Hotspot position in unscaled cursor coordinates.
+ * @param scale        Display scale factor.
+ */
 void
 CursorManager::_InitCursor(ServerCursor*& cursorMember, BCursorID id,
 	const uint8* vector, uint32 vectorSize, const BPoint& hotSpot, float scale)
@@ -491,6 +580,12 @@ CursorManager::_InitCursor(ServerCursor*& cursorMember, BCursorID id,
 }
 
 
+/**
+ * @brief Loads a cursor from a CursorSet and registers it under the given ID.
+ * @param cursorMember Reference to the cursor pointer to update on success.
+ * @param set          The CursorSet to search in.
+ * @param id           The BCursorID to load.
+ */
 void
 CursorManager::_LoadCursor(ServerCursor*& cursorMember, const CursorSet& set,
 	BCursorID id)
@@ -503,6 +598,13 @@ CursorManager::_LoadCursor(ServerCursor*& cursorMember, const CursorSet& set,
 }
 
 
+/**
+ * @brief Searches the cursor list for a cursor owned by @a clientTeam with
+ *        matching raw cursor data.
+ * @param clientTeam The owning team ID to match.
+ * @param cursorData Pointer to 68-byte R5-format cursor data to compare.
+ * @return Matching ServerCursor, or NULL if not found.
+ */
 ServerCursor*
 CursorManager::_FindCursor(team_id clientTeam, const uint8* cursorData)
 {
@@ -519,6 +621,13 @@ CursorManager::_FindCursor(team_id clientTeam, const uint8* cursorData)
 }
 
 
+/**
+ * @brief Internal helper that removes a cursor from the list and token space.
+ *
+ * Does not release the cursor's reference; callers are responsible for that.
+ *
+ * @param cursor The ServerCursor to remove.
+ */
 void
 CursorManager::_RemoveCursor(ServerCursor* cursor)
 {

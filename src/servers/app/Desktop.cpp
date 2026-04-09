@@ -1,20 +1,42 @@
 /*
- * Copyright 2001-2020, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Adrian Oanca, adioanca@cotty.iren.ro
- *		Stephan Aßmus, superstippi@gmx.de
- *		Axel Dörfler, axeld@pinc-software.de
- *		Andrej Spielmann, andrej.spielmann@seh.ox.ac.uk
- *		Brecht Machiels, brecht@mos6581.org
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Ingo Weinhold, ingo_weinhold@gmx.de
- *		Joseph Groover, looncraz@looncraz.net
- *		Tri-Edge AI
- *		Jacob Secunda, secundja@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2020, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Adrian Oanca, adioanca@cotty.iren.ro
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Andrej Spielmann, andrej.spielmann@seh.ox.ac.uk
+ *       Brecht Machiels, brecht@mos6581.org
+ *       Clemens Zeidler, haiku@clemens-zeidler.de
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *       Joseph Groover, looncraz@looncraz.net
+ *       Tri-Edge AI
+ *       Jacob Secunda, secundja@gmail.com
  */
 
+
+/** @file Desktop.cpp
+    @brief Manages the desktop session: windows, workspaces, event dispatching, and screen configuration. */
 
 /*!	Class used to encapsulate desktop management */
 
@@ -412,6 +434,14 @@ workspace_in_workspaces(int32 index, uint32 workspaces)
 //	#pragma mark -
 
 
+/** @brief Constructs the Desktop for the given user session.
+ *
+ * Initialises all internal lists, locks, and state variables, creates the
+ * message port, and registers the StackAndTile and decorator listeners.
+ *
+ * @param userID       POSIX user ID of the session owner.
+ * @param targetScreen Optional target screen identifier; may be NULL.
+ */
 Desktop::Desktop(uid_t userID, const char* targetScreen)
 	:
 	MessageLooper("desktop"),
@@ -468,6 +498,7 @@ Desktop::Desktop(uid_t userID, const char* targetScreen)
 }
 
 
+/** @brief Destructor — releases the shared read-only area, message port, and target screen string. */
 Desktop::~Desktop()
 {
 	delete_area(fSharedReadOnlyArea);
@@ -478,14 +509,25 @@ Desktop::~Desktop()
 
 
 void
+/** @brief Registers a DesktopListener with this desktop.
+ *
+ * @param listener The listener to register; must not already be in the list.
+ */
 Desktop::RegisterListener(DesktopListener* listener)
 {
 	DesktopObservable::RegisterListener(listener, this);
 }
 
 
-/*!	This method is allowed to throw exceptions.
-*/
+/** @brief Initialises the desktop after construction.
+ *
+ * Sets up the colour map, shared read-only memory area, desktop settings,
+ * workspace configurations, virtual screen, event dispatcher, keyboard and
+ * mouse filters, and the initial cursor. This method is allowed to throw
+ * exceptions.
+ *
+ * @return B_OK on success, or an error code if a critical subsystem fails.
+ */
 status_t
 Desktop::Init()
 {
@@ -606,11 +648,13 @@ Desktop::Init()
 }
 
 
-/*!	\brief Send a quick (no attachments) message to all applications.
-
-	Quite useful for notification for things like server shutdown, system
-	color changes, etc.
-*/
+/** @brief Sends a code-only message to every registered application.
+ *
+ * Useful for server-wide notifications such as shutdown or system colour
+ * changes.
+ *
+ * @param code Message code to broadcast.
+ */
 void
 Desktop::BroadcastToAllApps(int32 code)
 {
@@ -622,8 +666,10 @@ Desktop::BroadcastToAllApps(int32 code)
 }
 
 
-/*!	\brief Send a quick (no attachments) message to all windows.
-*/
+/** @brief Sends a code-only message to every window's ServerWindow.
+ *
+ * @param code Message code to broadcast.
+ */
 void
 Desktop::BroadcastToAllWindows(int32 code)
 {
@@ -636,6 +682,11 @@ Desktop::BroadcastToAllWindows(int32 code)
 }
 
 
+/** @brief Adds the message port of every window as a target in a DelayedMessage.
+ *
+ * @param message The DelayedMessage to populate.
+ * @return The number of window targets added.
+ */
 int32
 Desktop::GetAllWindowTargets(DelayedMessage& message)
 {
@@ -652,6 +703,11 @@ Desktop::GetAllWindowTargets(DelayedMessage& message)
 }
 
 
+/** @brief Adds the message port of every application as a target in a DelayedMessage.
+ *
+ * @param message The DelayedMessage to populate.
+ * @return The number of application targets added.
+ */
 int32
 Desktop::GetAllAppTargets(DelayedMessage& message)
 {
@@ -664,6 +720,16 @@ Desktop::GetAllAppTargets(DelayedMessage& message)
 }
 
 
+/** @brief Processes a keyboard event and notifies listeners.
+ *
+ * Delivers modifier changes to the window currently under the mouse pointer
+ * and allows desktop listeners to intercept the event.
+ *
+ * @param what      Message code (e.g. B_KEY_DOWN, B_MODIFIERS_CHANGED).
+ * @param key       The key code.
+ * @param modifiers Active modifier flags.
+ * @return B_DISPATCH_MESSAGE to forward the event, B_SKIP_MESSAGE to consume it.
+ */
 filter_result
 Desktop::KeyEvent(uint32 what, int32 key, int32 modifiers)
 {
@@ -691,6 +757,13 @@ Desktop::KeyEvent(uint32 what, int32 key, int32 modifiers)
 // #pragma mark - Mouse and cursor methods
 
 
+/** @brief Sets the active application cursor on the hardware interface.
+ *
+ * Falls back to the system default cursor if \a newCursor is NULL. The cursor
+ * is only applied to the hardware if no management cursor is currently set.
+ *
+ * @param newCursor The cursor to activate; NULL reverts to the system default.
+ */
 void
 Desktop::SetCursor(ServerCursor* newCursor)
 {
@@ -709,6 +782,10 @@ Desktop::SetCursor(ServerCursor* newCursor)
 }
 
 
+/** @brief Returns a reference to the currently active application cursor.
+ *
+ * @return ServerCursorReference holding the active cursor.
+ */
 ServerCursorReference
 Desktop::Cursor() const
 {
@@ -716,6 +793,13 @@ Desktop::Cursor() const
 }
 
 
+/** @brief Sets a management (decorator/system) cursor that overrides the app cursor.
+ *
+ * When \a newCursor is non-NULL it takes priority over the application cursor
+ * on the hardware interface. Passing NULL restores the application cursor.
+ *
+ * @param newCursor The management cursor, or NULL to clear it.
+ */
 void
 Desktop::SetManagementCursor(ServerCursor* newCursor)
 {
@@ -730,6 +814,14 @@ Desktop::SetManagementCursor(ServerCursor* newCursor)
 }
 
 
+/** @brief Records the latest mouse position, button state, and updates focus if needed.
+ *
+ * Must be called with the all-windows write lock held.
+ *
+ * @param position        Current mouse position in screen coordinates.
+ * @param buttons         Current mouse button bitmask.
+ * @param windowUnderMouse The window currently under the mouse pointer, or NULL.
+ */
 void
 Desktop::SetLastMouseState(const BPoint& position, int32 buttons,
 	Window* windowUnderMouse)
@@ -746,6 +838,11 @@ Desktop::SetLastMouseState(const BPoint& position, int32 buttons,
 }
 
 
+/** @brief Returns the last recorded mouse position and button state.
+ *
+ * @param position Output parameter for the last mouse position.
+ * @param buttons  Output parameter for the last mouse button bitmask.
+ */
 void
 Desktop::GetLastMouseState(BPoint* position, int32* buttons) const
 {
@@ -757,6 +854,15 @@ Desktop::GetLastMouseState(BPoint* position, int32* buttons) const
 //	#pragma mark - Screen methods
 
 
+/** @brief Changes the display mode of a screen in the specified workspace.
+ *
+ * @param workspace   Workspace index, or B_CURRENT_WORKSPACE_INDEX.
+ * @param id          Screen identifier.
+ * @param mode        The new display_mode to apply.
+ * @param makeDefault If true, the new mode is also stored as the workspace default.
+ * @return B_OK on success, B_BAD_VALUE for an invalid workspace, B_NAME_NOT_FOUND
+ *         if the screen ID is unknown, or a driver error code.
+ */
 status_t
 Desktop::SetScreenMode(int32 workspace, int32 id, const display_mode& mode,
 	bool makeDefault)
@@ -827,6 +933,13 @@ Desktop::SetScreenMode(int32 workspace, int32 id, const display_mode& mode,
 }
 
 
+/** @brief Retrieves the current display mode for a screen in the given workspace.
+ *
+ * @param workspace Workspace index, or B_CURRENT_WORKSPACE_INDEX.
+ * @param id        Screen identifier.
+ * @param mode      Output parameter to receive the display_mode.
+ * @return B_OK on success, B_BAD_VALUE or B_NAME_NOT_FOUND on error.
+ */
 status_t
 Desktop::GetScreenMode(int32 workspace, int32 id, display_mode& mode)
 {
@@ -859,6 +972,13 @@ Desktop::GetScreenMode(int32 workspace, int32 id, display_mode& mode)
 }
 
 
+/** @brief Retrieves the frame rectangle for a screen in the given workspace.
+ *
+ * @param workspace Workspace index, or B_CURRENT_WORKSPACE_INDEX.
+ * @param id        Screen identifier.
+ * @param frame     Output parameter to receive the screen frame in screen coordinates.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 Desktop::GetScreenFrame(int32 workspace, int32 id, BRect& frame)
 {
@@ -891,6 +1011,10 @@ Desktop::GetScreenFrame(int32 workspace, int32 id, BRect& frame)
 }
 
 
+/** @brief Reverts display modes in the specified workspaces back to stored defaults.
+ *
+ * @param workspaces Bitmask of workspaces to revert; a value of 0 is a no-op.
+ */
 void
 Desktop::RevertScreenModes(uint32 workspaces)
 {
@@ -939,6 +1063,12 @@ Desktop::RevertScreenModes(uint32 workspaces)
 }
 
 
+/** @brief Sets the display brightness for the given screen and persists it.
+ *
+ * @param id         Screen identifier.
+ * @param brightness Target brightness value (0.0–1.0).
+ * @return B_OK on success, or a hardware interface error code.
+ */
 status_t
 Desktop::SetBrightness(int32 id, float brightness)
 {
@@ -962,6 +1092,13 @@ Desktop::SetBrightness(int32 id, float brightness)
 }
 
 
+/** @brief Acquires the direct screen lock for the given team.
+ *
+ * Times out after 1 second if the lock cannot be obtained.
+ *
+ * @param team The team ID that is requesting direct screen access.
+ * @return B_OK on success, or B_TIMED_OUT if the lock was not released in time.
+ */
 status_t
 Desktop::LockDirectScreen(team_id team)
 {
@@ -976,6 +1113,12 @@ Desktop::LockDirectScreen(team_id team)
 }
 
 
+/** @brief Releases the direct screen lock held by the given team.
+ *
+ * @param team The team ID that previously acquired the direct screen lock.
+ * @return B_OK if the lock was released, B_PERMISSION_DENIED if the team
+ *         does not own the lock.
+ */
 status_t
 Desktop::UnlockDirectScreen(team_id team)
 {
@@ -992,8 +1135,13 @@ Desktop::UnlockDirectScreen(team_id team)
 // #pragma mark - Workspaces methods
 
 
-/*!	Changes the current workspace to the one specified by \a index.
-*/
+/** @brief Posts an asynchronous workspace-switch message to the desktop thread.
+ *
+ * Safe to call from any thread; the actual switch is performed in the looper.
+ *
+ * @param index           The target workspace index.
+ * @param moveFocusWindow If true, the focused window is moved to the new workspace.
+ */
 void
 Desktop::SetWorkspaceAsync(int32 index, bool moveFocusWindow)
 {
@@ -1005,9 +1153,14 @@ Desktop::SetWorkspaceAsync(int32 index, bool moveFocusWindow)
 }
 
 
-/*!	Changes the current workspace to the one specified by \a index.
-	You must not hold any window lock when calling this method.
-*/
+/** @brief Switches the active workspace synchronously.
+ *
+ * The caller must not hold any window lock. The call is a no-op if
+ * \a index is already the current workspace or out of range.
+ *
+ * @param index           The target workspace index.
+ * @param moveFocusWindow If true, the focused window follows to the new workspace.
+ */
 void
 Desktop::SetWorkspace(int32 index, bool moveFocusWindow)
 {
@@ -1027,6 +1180,15 @@ Desktop::SetWorkspace(int32 index, bool moveFocusWindow)
 }
 
 
+/** @brief Changes the workspace grid dimensions.
+ *
+ * If the current workspace would be out of range with the new layout, switches
+ * to the last available workspace.
+ *
+ * @param newColumns New number of workspace columns (>= 1).
+ * @param newRows    New number of workspace rows (>= 1).
+ * @return B_OK on success, B_BAD_VALUE if the product is out of range.
+ */
 status_t
 Desktop::SetWorkspacesLayout(int32 newColumns, int32 newRows)
 {
@@ -1057,8 +1219,14 @@ Desktop::SetWorkspacesLayout(int32 newColumns, int32 newRows)
 }
 
 
-/*!	Returns the virtual screen frame of the workspace specified by \a index.
-*/
+/** @brief Returns the virtual screen frame for the workspace at the given index.
+ *
+ * Falls back to the current virtual screen frame if the index is invalid or
+ * no stored configuration is available.
+ *
+ * @param index Zero-based workspace index.
+ * @return BRect describing the workspace's virtual screen area.
+ */
 BRect
 Desktop::WorkspaceFrame(int32 index) const
 {
@@ -1078,9 +1246,12 @@ Desktop::WorkspaceFrame(int32 index) const
 }
 
 
-/*!	\brief Stores the workspace configuration.
-	You must hold the window lock when calling this method.
-*/
+/** @brief Persists the current workspace screen configuration to settings.
+ *
+ * The window lock must be held by the caller.
+ *
+ * @param index Zero-based workspace index whose configuration will be stored.
+ */
 void
 Desktop::StoreWorkspaceConfiguration(int32 index)
 {
@@ -1096,6 +1267,12 @@ Desktop::StoreWorkspaceConfiguration(int32 index)
 }
 
 
+/** @brief Registers a WorkspacesView so it can be notified of workspace changes.
+ *
+ * The view is only registered if its window exists and is not hidden.
+ *
+ * @param view The WorkspacesView to register.
+ */
 void
 Desktop::AddWorkspacesView(WorkspacesView* view)
 {
@@ -1109,6 +1286,10 @@ Desktop::AddWorkspacesView(WorkspacesView* view)
 }
 
 
+/** @brief Deregisters a WorkspacesView from workspace-change notifications.
+ *
+ * @param view The WorkspacesView to deregister.
+ */
 void
 Desktop::RemoveWorkspacesView(WorkspacesView* view)
 {
@@ -1120,8 +1301,14 @@ Desktop::RemoveWorkspacesView(WorkspacesView* view)
 //	#pragma mark - Methods for Window manipulation
 
 
-/*!	\brief Activates or focusses the window based on the pointer position.
-*/
+/** @brief Activates or focuses a window depending on the current mouse mode.
+ *
+ * In click-to-focus mode, brings the window to the front only if it is not
+ * already the window under the mouse pointer; otherwise just focuses it.
+ * In focus-follows-mouse mode, always activates.
+ *
+ * @param window The Window to select.
+ */
 void
 Desktop::SelectWindow(Window* window)
 {
@@ -1138,13 +1325,13 @@ Desktop::SelectWindow(Window* window)
 }
 
 
-/*!	\brief Tries to move the specified window to the front of the screen,
-		and make it the focus window.
-
-	If there are any modal windows on this screen, it might not actually
-	become the frontmost window, though, as modal windows stay in front
-	of their subset.
-*/
+/** @brief Brings a window to the front and gives it the keyboard focus.
+ *
+ * If modal windows are present in the window's subset, those windows will
+ * remain in front and the target window may not become the absolute front.
+ *
+ * @param window The Window to activate; NULL clears fFront and fBack.
+ */
 void
 Desktop::ActivateWindow(Window* window)
 {
@@ -1271,6 +1458,12 @@ Desktop::ActivateWindow(Window* window)
 }
 
 
+/** @brief Sends a window behind another window or to the back of the z-order.
+ *
+ * @param window    The Window to send behind.
+ * @param behindOf  The Window it should be placed behind; NULL sends it to the back.
+ * @param sendStack If true, the entire WindowStack containing the window is moved.
+ */
 void
 Desktop::SendWindowBehind(Window* window, Window* behindOf, bool sendStack)
 {
@@ -1344,6 +1537,14 @@ Desktop::SendWindowBehind(Window* window, Window* behindOf, bool sendStack)
 }
 
 
+/** @brief Makes a hidden window visible and activates it.
+ *
+ * The window is added to the focus list and shown on the current workspace
+ * if it belongs there. A fake mouse-moved event is sent so the window
+ * receives an enter notification if the pointer is over it.
+ *
+ * @param window The Window to show.
+ */
 void
 Desktop::ShowWindow(Window* window)
 {
@@ -1383,6 +1584,14 @@ Desktop::ShowWindow(Window* window)
 }
 
 
+/** @brief Hides a visible window and optionally marks it as minimized.
+ *
+ * Removes the window from the focus list, ends any active mouse event, and
+ * triggers a fake mouse-moved so that other windows under the pointer are notified.
+ *
+ * @param window        The Window to hide.
+ * @param fromMinimize  If true, the hide is treated as a minimization operation.
+ */
 void
 Desktop::HideWindow(Window* window, bool fromMinimize)
 {
@@ -1442,6 +1651,14 @@ Desktop::HideWindow(Window* window, bool fromMinimize)
 }
 
 
+/** @brief Minimizes or restores a window.
+ *
+ * Hiding calls HideWindow(); restoring calls ActivateWindow(). Notifies
+ * desktop listeners of the change.
+ *
+ * @param window   The Window to minimise or restore.
+ * @param minimize true to minimize, false to restore.
+ */
 void
 Desktop::MinimizeWindow(Window* window, bool minimize)
 {
@@ -1462,6 +1679,17 @@ Desktop::MinimizeWindow(Window* window, bool minimize)
 }
 
 
+/** @brief Moves a window by the specified delta.
+ *
+ * Promotes to the top-layer stack window automatically. If a workspace other
+ * than the current one is specified, the anchor position for that workspace
+ * is adjusted without affecting the current display.
+ *
+ * @param window    The Window to move.
+ * @param x         Horizontal delta in pixels.
+ * @param y         Vertical delta in pixels.
+ * @param workspace Workspace to apply the move to; -1 uses the current workspace.
+ */
 void
 Desktop::MoveWindowBy(Window* window, float x, float y, int32 workspace)
 {
@@ -1556,6 +1784,15 @@ Desktop::MoveWindowBy(Window* window, float x, float y, int32 workspace)
 }
 
 
+/** @brief Resizes a window by the specified delta.
+ *
+ * Handles dirty region computation, blitting of unchanged areas, and
+ * notification to direct-access clients about buffer geometry changes.
+ *
+ * @param window The Window to resize.
+ * @param x      Horizontal size delta in pixels.
+ * @param y      Vertical size delta in pixels.
+ */
 void
 Desktop::ResizeWindowBy(Window* window, float x, float y)
 {
@@ -1626,6 +1863,11 @@ Desktop::ResizeWindowBy(Window* window, float x, float y)
 }
 
 
+/** @brief Updates the outline delta used during interactive window resize.
+ *
+ * @param window The Window being interactively resized.
+ * @param delta  The outline displacement to apply.
+ */
 void
 Desktop::SetWindowOutlinesDelta(Window* window, BPoint delta)
 {
@@ -1645,6 +1887,13 @@ Desktop::SetWindowOutlinesDelta(Window* window, BPoint delta)
 }
 
 
+/** @brief Sets the tab position on a window's title bar and triggers redraw.
+ *
+ * @param window     The Window whose tab position should change.
+ * @param location   New tab position along the title bar.
+ * @param isShifting true if the user is currently dragging the tab interactively.
+ * @return true if the tab position actually changed.
+ */
 bool
 Desktop::SetWindowTabLocation(Window* window, float location, bool isShifting)
 {
@@ -1661,6 +1910,12 @@ Desktop::SetWindowTabLocation(Window* window, float location, bool isShifting)
 }
 
 
+/** @brief Applies decorator settings to a window and redraws as needed.
+ *
+ * @param window   The Window whose decorator settings should change.
+ * @param settings BMessage containing the new decorator configuration.
+ * @return true if the window's own settings changed.
+ */
 bool
 Desktop::SetWindowDecoratorSettings(Window* window, const BMessage& settings)
 {
@@ -1676,6 +1931,12 @@ Desktop::SetWindowDecoratorSettings(Window* window, const BMessage& settings)
 }
 
 
+/** @brief Changes the set of workspaces a window belongs to.
+ *
+ * @param window     The Window whose workspace membership should change.
+ * @param workspaces New workspace bitmask; B_CURRENT_WORKSPACE is expanded to the
+ *                   current workspace for normal windows.
+ */
 void
 Desktop::SetWindowWorkspaces(Window* window, uint32 workspaces)
 {
@@ -1698,10 +1959,13 @@ Desktop::SetWindowWorkspaces(Window* window, uint32 workspaces)
 }
 
 
-/*!	\brief Adds the window to the desktop.
-	At this point, the window is still hidden and must be shown explicitly
-	via ShowWindow().
-*/
+/** @brief Registers a window with the desktop.
+ *
+ * The window starts hidden; call ShowWindow() to display it. Sets the window's
+ * workspace membership and notifies desktop listeners.
+ *
+ * @param window The Window to add; must not already be in the desktop's window list.
+ */
 void
 Desktop::AddWindow(Window *window)
 {
@@ -1727,6 +1991,13 @@ Desktop::AddWindow(Window *window)
 }
 
 
+/** @brief Deregisters a window from the desktop and removes it from all workspaces.
+ *
+ * Hides the window if currently visible, removes it from event dispatching,
+ * and notifies desktop listeners.
+ *
+ * @param window The Window to remove.
+ */
 void
 Desktop::RemoveWindow(Window *window)
 {
@@ -1751,6 +2022,12 @@ Desktop::RemoveWindow(Window *window)
 }
 
 
+/** @brief Adds a window to a modal/floating subset's tracking list.
+ *
+ * @param subset The modal or floating window whose subset is being extended.
+ * @param window The window to add to the subset.
+ * @return true on success, false if the window is already in the subset.
+ */
 bool
 Desktop::AddWindowToSubset(Window* subset, Window* window)
 {
@@ -1763,6 +2040,11 @@ Desktop::AddWindowToSubset(Window* subset, Window* window)
 }
 
 
+/** @brief Removes a window from a modal/floating subset's tracking list.
+ *
+ * @param subset The modal or floating window whose subset is being reduced.
+ * @param window The window to remove from the subset.
+ */
 void
 Desktop::RemoveWindowFromSubset(Window* subset, Window* window)
 {
@@ -1772,6 +2054,12 @@ Desktop::RemoveWindowFromSubset(Window* subset, Window* window)
 }
 
 
+/** @brief Notifies a window that system fonts have changed and triggers redraw.
+ *
+ * Also reinitialises cursor sizes based on the new bold font size.
+ *
+ * @param window The Window to update.
+ */
 void
 Desktop::FontsChanged(Window* window)
 {
@@ -1786,6 +2074,14 @@ Desktop::FontsChanged(Window* window)
 }
 
 
+/** @brief Propagates a UI colour change to a window and triggers redraw if needed.
+ *
+ * Only window decoration colours (tab, text, border) trigger a decorator redraw.
+ *
+ * @param window The Window to update.
+ * @param which  The colour role that changed.
+ * @param color  The new colour value.
+ */
 void
 Desktop::ColorUpdated(Window* window, color_which which, rgb_color color)
 {
@@ -1811,6 +2107,11 @@ Desktop::ColorUpdated(Window* window, color_which which, rgb_color color)
 }
 
 
+/** @brief Changes a window's visual look (decoration style) and redraws.
+ *
+ * @param window  The Window whose look should change.
+ * @param newLook The new window_look value.
+ */
 void
 Desktop::SetWindowLook(Window* window, window_look newLook)
 {
@@ -1830,6 +2131,11 @@ Desktop::SetWindowLook(Window* window, window_look newLook)
 }
 
 
+/** @brief Changes a window's feel (behaviour category) and updates ordering.
+ *
+ * @param window  The Window whose feel should change.
+ * @param newFeel The new window_feel value.
+ */
 void
 Desktop::SetWindowFeel(Window* window, window_feel newFeel)
 {
@@ -1933,6 +2239,11 @@ Desktop::SetWindowFeel(Window* window, window_feel newFeel)
 }
 
 
+/** @brief Updates a window's flags and triggers a redraw if decorators change.
+ *
+ * @param window   The Window whose flags should change.
+ * @param newFlags The new flags bitmask.
+ */
 void
 Desktop::SetWindowFlags(Window *window, uint32 newFlags)
 {
@@ -1950,6 +2261,11 @@ Desktop::SetWindowFlags(Window *window, uint32 newFlags)
 }
 
 
+/** @brief Changes a window's title and redraws the decoration.
+ *
+ * @param window The Window whose title should change.
+ * @param title  New null-terminated title string.
+ */
 void
 Desktop::SetWindowTitle(Window *window, const char* title)
 {
@@ -1962,9 +2278,13 @@ Desktop::SetWindowTitle(Window *window, const char* title)
 }
 
 
-/*!	Returns the window under the mouse cursor.
-	You need to have acquired the All Windows lock when calling this method.
-*/
+/** @brief Returns the topmost visible window that contains the given point.
+ *
+ * The all-windows lock must be held by the caller.
+ *
+ * @param where Screen coordinate to test.
+ * @return The Window under the point, or NULL if no window contains it.
+ */
 Window*
 Desktop::WindowAt(BPoint where)
 {
@@ -1978,6 +2298,10 @@ Desktop::WindowAt(BPoint where)
 }
 
 
+/** @brief Sets the window that should receive mouse events while a button is held.
+ *
+ * @param window The Window to lock mouse events to; NULL releases the lock.
+ */
 void
 Desktop::SetMouseEventWindow(Window* window)
 {
@@ -1985,6 +2309,11 @@ Desktop::SetMouseEventWindow(Window* window)
 }
 
 
+/** @brief Records which view within which window is currently under the mouse.
+ *
+ * @param window    The Window currently under the mouse; may be NULL.
+ * @param viewToken Token of the view under the mouse within \a window.
+ */
 void
 Desktop::SetViewUnderMouse(const Window* window, int32 viewToken)
 {
@@ -1993,6 +2322,11 @@ Desktop::SetViewUnderMouse(const Window* window, int32 viewToken)
 }
 
 
+/** @brief Returns the view token of the view under the mouse within a given window.
+ *
+ * @param window The Window to query; must be the current window under the mouse.
+ * @return The view token, or B_NULL_TOKEN if \a window is not under the mouse.
+ */
 int32
 Desktop::ViewUnderMouse(const Window* window)
 {
@@ -2003,11 +2337,14 @@ Desktop::ViewUnderMouse(const Window* window)
 }
 
 
-/*!	Returns the current keyboard event target candidate - which is either the
-	top-most window (in case it has the kAcceptKeyboardFocusFlag flag set), or
-	the one having focus.
-	The window lock must be held when calling this function.
-*/
+/** @brief Returns the current keyboard event target.
+ *
+ * Prefers the topmost non-hidden window if it has kAcceptKeyboardFocusFlag;
+ * otherwise returns the currently focused window's event target.
+ * The window lock must be held when calling this function.
+ *
+ * @return Pointer to the EventTarget, or NULL if there are no eligible windows.
+ */
 EventTarget*
 Desktop::KeyboardEventTarget()
 {
@@ -2027,16 +2364,14 @@ Desktop::KeyboardEventTarget()
 }
 
 
-/*!	Tries to set the focus to the specified \a focus window. It will make sure,
-	however, that the window actually can have focus. You are allowed to pass
-	in a NULL pointer for \a focus.
-
-	Besides the B_AVOID_FOCUS flag, a modal window, or a BWindowScreen can both
-	prevent it from getting focus.
-
-	In any case, this method makes sure that there is a focus window, if there
-	is any window at all, that is.
-*/
+/** @brief Attempts to give keyboard focus to the specified window.
+ *
+ * Respects B_AVOID_FOCUS, B_LOCK_WINDOW_FOCUS, modal-window constraints, and
+ * BWindowScreen presence. Always ensures some window has focus if any eligible
+ * window exists. Passing NULL selects an appropriate window automatically.
+ *
+ * @param nextFocus The Window to focus; NULL to auto-select.
+ */
 void
 Desktop::SetFocusWindow(Window* nextFocus)
 {
@@ -2148,6 +2483,12 @@ Desktop::SetFocusWindow(Window* nextFocus)
 }
 
 
+/** @brief Locks or unlocks the focused window so SetFocusWindow() cannot change it.
+ *
+ * Only effective while mouse buttons are pressed. Used by BView::SetMouseEventMask().
+ *
+ * @param window The window to lock focus to; NULL unlocks it.
+ */
 void
 Desktop::SetFocusLocked(const Window* window)
 {
@@ -2165,6 +2506,12 @@ Desktop::SetFocusLocked(const Window* window)
 }
 
 
+/** @brief Searches all windows for one matching the given client handler token and team.
+ *
+ * @param token  Client-side handler token (BWindow's BHandler token).
+ * @param teamID The team that owns the window.
+ * @return Matching Window, or NULL if not found.
+ */
 Window*
 Desktop::FindWindowByClientToken(int32 token, team_id teamID)
 {
@@ -2180,6 +2527,11 @@ Desktop::FindWindowByClientToken(int32 token, team_id teamID)
 }
 
 
+/** @brief Searches all windows for one whose event target matches the given messenger.
+ *
+ * @param messenger The BMessenger to match against each window's event target.
+ * @return The matching EventTarget, or NULL if not found.
+ */
 ::EventTarget*
 Desktop::FindTarget(BMessenger& messenger)
 {
@@ -2193,6 +2545,11 @@ Desktop::FindTarget(BMessenger& messenger)
 }
 
 
+/** @brief Triggers redraw messages to all windows intersecting the dirty region.
+ *
+ * @param dirtyRegion  The screen region that needs repainting.
+ * @param exposeRegion The newly exposed region (e.g. from a window being hidden).
+ */
 void
 Desktop::MarkDirty(BRegion& dirtyRegion, BRegion& exposeRegion)
 {
@@ -2208,6 +2565,7 @@ Desktop::MarkDirty(BRegion& dirtyRegion, BRegion& exposeRegion)
 }
 
 
+/** @brief Marks the entire virtual screen dirty and triggers a full redraw. */
 void
 Desktop::Redraw()
 {
@@ -2216,8 +2574,11 @@ Desktop::Redraw()
 }
 
 
-/*!	\brief Redraws the background (ie. the desktop window, if any).
-*/
+/** @brief Redraws the desktop background (the desktop window, if any).
+ *
+ * Sends a redraw request to the background window and clears the screen
+ * to the background colour in areas not covered by any window.
+ */
 void
 Desktop::RedrawBackground()
 {
@@ -2257,6 +2618,15 @@ Desktop::RedrawBackground()
 }
 
 
+/** @brief Reloads the decorator for all windows when the decorator add-on changes.
+ *
+ * Unregisters the old add-on's desktop listeners, reloads the decorator for
+ * each window, triggers redraws of the border regions, and registers the new
+ * add-on's listeners.
+ *
+ * @param oldDecor The decorator add-on being replaced; NULL if there was none.
+ * @return true if all windows successfully loaded the new decorator.
+ */
 bool
 Desktop::ReloadDecor(DecorAddOn* oldDecor)
 {
@@ -2298,6 +2668,10 @@ Desktop::ReloadDecor(DecorAddOn* oldDecor)
 }
 
 
+/** @brief Sends minimize notifications to all windows belonging to a team.
+ *
+ * @param team The team whose windows should be minimized.
+ */
 void
 Desktop::MinimizeApplication(team_id team)
 {
@@ -2315,6 +2689,10 @@ Desktop::MinimizeApplication(team_id team)
 }
 
 
+/** @brief Restores and activates all windows belonging to a team.
+ *
+ * @param team The team whose windows should be brought to the front.
+ */
 void
 Desktop::BringApplicationToFront(team_id team)
 {
@@ -2333,6 +2711,11 @@ Desktop::BringApplicationToFront(team_id team)
 }
 
 
+/** @brief Performs a minimise or bring-to-front action on a window by token.
+ *
+ * @param windowToken Server-side token identifying the target window.
+ * @param action      B_MINIMIZE_WINDOW or B_BRING_TO_FRONT.
+ */
 void
 Desktop::WindowAction(int32 windowToken, int32 action)
 {
@@ -2362,6 +2745,14 @@ Desktop::WindowAction(int32 windowToken, int32 action)
 }
 
 
+/** @brief Writes the list of window server tokens to a LinkSender.
+ *
+ * Current-workspace windows are listed first in front-to-back order, then
+ * windows from other workspaces in their list order.
+ *
+ * @param team   If >= B_OK, filters to only include windows belonging to this team.
+ * @param sender The LinkSender to write the reply to.
+ */
 void
 Desktop::WriteWindowList(team_id team, BPrivate::LinkSender& sender)
 {
@@ -2405,6 +2796,11 @@ Desktop::WriteWindowList(team_id team, BPrivate::LinkSender& sender)
 }
 
 
+/** @brief Writes detailed window information for a specific window to a LinkSender.
+ *
+ * @param serverToken The server-side token identifying the window.
+ * @param sender      The LinkSender to write the reply to.
+ */
 void
 Desktop::WriteWindowInfo(int32 serverToken, BPrivate::LinkSender& sender)
 {
@@ -2452,6 +2848,11 @@ Desktop::WriteWindowInfo(int32 serverToken, BPrivate::LinkSender& sender)
 }
 
 
+/** @brief Writes the front-to-back window order for a workspace to a LinkSender.
+ *
+ * @param workspace Workspace index; negative uses the current workspace.
+ * @param sender    The LinkSender to write the reply to.
+ */
 void
 Desktop::WriteWindowOrder(int32 workspace, BPrivate::LinkSender& sender)
 {
@@ -2484,6 +2885,13 @@ Desktop::WriteWindowOrder(int32 workspace, BPrivate::LinkSender& sender)
 }
 
 
+/** @brief Writes the ordered list of application team IDs for a workspace to a LinkSender.
+ *
+ * Teams are listed in the order their front window appears, from front to back.
+ *
+ * @param workspace Workspace index; negative uses the current workspace.
+ * @param sender    The LinkSender to write the reply to.
+ */
 void
 Desktop::WriteApplicationOrder(int32 workspace, BPrivate::LinkSender& sender)
 {
@@ -2552,6 +2960,7 @@ Desktop::WriteApplicationOrder(int32 workspace, BPrivate::LinkSender& sender)
 }
 
 
+/** @brief Attempts to launch the input_server if it is not already running. */
 void
 Desktop::_LaunchInputServer()
 {
@@ -2584,6 +2993,13 @@ Desktop::_LaunchInputServer()
 }
 
 
+/** @brief Fills \a name with the desktop looper thread name.
+ *
+ * Format is "d:<uid>:<targetScreen>" or "d:<uid>:baron" when there is no target screen.
+ *
+ * @param name   Buffer to receive the name string.
+ * @param length Size of the buffer in bytes.
+ */
 void
 Desktop::_GetLooperName(char* name, size_t length)
 {
@@ -2592,6 +3008,7 @@ Desktop::_GetLooperName(char* name, size_t length)
 }
 
 
+/** @brief Terminates all registered applications and waits for them to exit. */
 void
 Desktop::_PrepareQuit()
 {
@@ -2618,6 +3035,14 @@ Desktop::_PrepareQuit()
 }
 
 
+/** @brief Dispatches desktop-level protocol messages.
+ *
+ * Handles application creation/deletion, direct screen access, workspace
+ * changes, screen mode changes, brightness, and event-dispatcher messages.
+ *
+ * @param code Message identifier code.
+ * @param link LinkReceiver positioned at the start of the message payload.
+ */
 void
 Desktop::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 {
@@ -2896,6 +3321,10 @@ Desktop::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 }
 
 
+/** @brief Returns the window list for the current workspace.
+ *
+ * @return Reference to the current workspace's WindowList.
+ */
 WindowList&
 Desktop::CurrentWindows()
 {
@@ -2903,6 +3332,10 @@ Desktop::CurrentWindows()
 }
 
 
+/** @brief Returns the list containing all windows on all workspaces.
+ *
+ * @return Reference to the global WindowList.
+ */
 WindowList&
 Desktop::AllWindows()
 {
@@ -2910,6 +3343,13 @@ Desktop::AllWindows()
 }
 
 
+/** @brief Finds the window whose client looper port matches the given port ID.
+ *
+ * The window lock must be multi-read or write locked by the caller.
+ *
+ * @param port The client looper port to search for.
+ * @return The matching Window, or NULL if not found.
+ */
 Window*
 Desktop::WindowForClientLooperPort(port_id port)
 {
@@ -2924,6 +3364,11 @@ Desktop::WindowForClientLooperPort(port_id port)
 }
 
 
+/** @brief Returns the window list for the given workspace index.
+ *
+ * @param index A workspace index in the range [0, kMaxWorkspaces).
+ * @return Reference to the workspace's WindowList.
+ */
 WindowList&
 Desktop::_Windows(int32 index)
 {
@@ -2932,6 +3377,7 @@ Desktop::_Windows(int32 index)
 }
 
 
+/** @brief Applies all accumulated pending colour changes to settings and windows. */
 void
 Desktop::_FlushPendingColors()
 {
@@ -2980,6 +3426,15 @@ Desktop::_FlushPendingColors()
 }
 
 
+/** @brief Synchronises floating window visibility across workspace transitions.
+ *
+ * Shows/hides floating subset and app-floating windows based on whether their
+ * subset is present in the target workspace.
+ *
+ * @param previousWorkspace Source workspace index; -1 uses the current workspace.
+ * @param nextWorkspace     Target workspace index; -1 defaults to previousWorkspace.
+ * @param mouseEventWindow  Window currently capturing mouse events (may be NULL).
+ */
 void
 Desktop::_UpdateFloating(int32 previousWorkspace, int32 nextWorkspace,
 	Window* mouseEventWindow)
@@ -3034,9 +3489,10 @@ Desktop::_UpdateFloating(int32 previousWorkspace, int32 nextWorkspace,
 }
 
 
-/*!	Search the visible windows for a valid back window
-	(only desktop windows can't be back windows)
-*/
+/** @brief Updates fBack to the backmost eligible visible window.
+ *
+ * Desktop windows (kDesktopWindowFeel) are excluded from being the back window.
+ */
 void
 Desktop::_UpdateBack()
 {
@@ -3053,13 +3509,14 @@ Desktop::_UpdateBack()
 }
 
 
-/*!	Search the visible windows for a valid front window
-	(only normal and modal windows can be front windows)
-
-	The only place where you don't want to update floating windows is
-	during a workspace change - because then you'll call _UpdateFloating()
-	yourself.
-*/
+/** @brief Updates fFront to the frontmost eligible visible normal or modal window.
+ *
+ * Only normal and modal windows qualify. Pass updateFloating as false when
+ * performing a workspace change, because _UpdateFloating() will be called
+ * separately in that case.
+ *
+ * @param updateFloating If true, floating windows are also updated after fFront changes.
+ */
 void
 Desktop::_UpdateFront(bool updateFloating)
 {
@@ -3080,6 +3537,10 @@ Desktop::_UpdateFront(bool updateFloating)
 }
 
 
+/** @brief Updates both fBack and fFront. Convenience wrapper for _UpdateBack() and _UpdateFront().
+ *
+ * @param updateFloating Forwarded to _UpdateFront(); see its documentation.
+ */
 void
 Desktop::_UpdateFronts(bool updateFloating)
 {
@@ -3088,6 +3549,11 @@ Desktop::_UpdateFronts(bool updateFloating)
 }
 
 
+/** @brief Returns whether the given window has a visible modal window in its subset.
+ *
+ * @param window The window to test; NULL always returns false.
+ * @return true if a modal window that covers \a window is currently visible.
+ */
 bool
 Desktop::_WindowHasModal(Window* window) const
 {
@@ -3108,8 +3574,14 @@ Desktop::_WindowHasModal(Window* window) const
 }
 
 
-/*!	Determines whether or not the specified \a window can have focus at all.
-*/
+/** @brief Returns whether the given window is eligible to receive keyboard focus.
+ *
+ * A window cannot have focus if it is NULL, not in the current workspace,
+ * has the B_AVOID_FOCUS flag, has an active modal over it, or is hidden.
+ *
+ * @param window The window to test.
+ * @return true if the window can have focus.
+ */
 bool
 Desktop::_WindowCanHaveFocus(Window* window) const
 {
@@ -3121,8 +3593,12 @@ Desktop::_WindowCanHaveFocus(Window* window) const
 }
 
 
-/*!	You must at least hold a single window lock when calling this method.
-*/
+/** @brief Notifies all WorkspacesViews that a window has changed.
+ *
+ * At least the single-window lock must be held by the caller.
+ *
+ * @param window The Window that changed; NULL triggers a general workspaces update.
+ */
 void
 Desktop::_WindowChanged(Window* window)
 {
@@ -3137,8 +3613,12 @@ Desktop::_WindowChanged(Window* window)
 }
 
 
-/*!	You must at least hold a single window lock when calling this method.
-*/
+/** @brief Notifies all WorkspacesViews that a window has been removed.
+ *
+ * At least the single-window lock must be held by the caller.
+ *
+ * @param window The Window that was removed.
+ */
 void
 Desktop::_WindowRemoved(Window* window)
 {
@@ -3153,9 +3633,15 @@ Desktop::_WindowRemoved(Window* window)
 }
 
 
-/*!	Shows the window on the screen - it does this independently of the
-	Window::IsHidden() state.
-*/
+/** @brief Makes a window visible on screen regardless of its IsHidden() state.
+ *
+ * Rebuilds clipping, marks the window's visible region dirty, and optionally
+ * propagates the dirty region to other overlapping windows.
+ *
+ * @param window              The Window to show on screen.
+ * @param affectsOtherWindows If true, uses MarkDirty() so overlapping windows
+ *                            also redraw; otherwise only the window itself redraws.
+ */
 void
 Desktop::_ShowWindow(Window* window, bool affectsOtherWindows)
 {
@@ -3182,9 +3668,13 @@ Desktop::_ShowWindow(Window* window, bool affectsOtherWindows)
 }
 
 
-/*!	Hides the window from the screen - it does this independently of the
-	Window::IsHidden() state.
-*/
+/** @brief Removes a window from the screen regardless of its IsHidden() state.
+ *
+ * Stops direct frame buffer access if active, rebuilds clipping, and marks the
+ * previously visible region dirty so it gets redrawn.
+ *
+ * @param window The Window to hide from screen.
+ */
 void
 Desktop::_HideWindow(Window* window)
 {
@@ -3209,12 +3699,15 @@ Desktop::_HideWindow(Window* window)
 }
 
 
-/*!	Updates the workspaces of all subset windows with regard to the
-	specifed window.
-	If newIndex is not -1, it will move all subset windows that belong to
-	the specifed window to the new workspace; this form is only called by
-	SetWorkspace().
-*/
+/** @brief Updates the workspace membership of all subset windows for a given normal window.
+ *
+ * If \a newIndex is not -1, moves all subset windows belonging to the specified
+ * window to the new workspace. This overload is only called by SetWorkspace().
+ *
+ * @param window        The normal window whose subset windows should be updated.
+ * @param previousIndex The workspace the window was previously on; -1 if N/A.
+ * @param newIndex      The workspace the window is moving to; -1 if N/A.
+ */
 void
 Desktop::_UpdateSubsetWorkspaces(Window* window, int32 previousIndex,
 	int32 newIndex)
@@ -3250,8 +3743,15 @@ Desktop::_UpdateSubsetWorkspaces(Window* window, int32 previousIndex,
 }
 
 
-/*!	\brief Adds or removes the window to or from the workspaces it's on.
-*/
+/** @brief Updates a window's presence in workspace lists after its workspace mask changes.
+ *
+ * Adds the window to any newly included workspaces and removes it from any
+ * workspaces it is no longer in, triggering appropriate show/hide operations.
+ *
+ * @param window        The Window whose workspaces are changing.
+ * @param oldWorkspaces Previous workspace bitmask.
+ * @param newWorkspaces New workspace bitmask.
+ */
 void
 Desktop::_ChangeWindowWorkspaces(Window* window, uint32 oldWorkspaces,
 	uint32 newWorkspaces)
@@ -3328,6 +3828,16 @@ Desktop::_ChangeWindowWorkspaces(Window* window, uint32 oldWorkspaces,
 }
 
 
+/** @brief Moves all windows in the list to the front of the current workspace.
+ *
+ * Handles clipping and dirty region management so that newly revealed portions
+ * are redrawn and the previously visible content does not need redrawing.
+ *
+ * @param windows     The list of windows to move to the front.
+ * @param list        The list index used when iterating (kWorkingList, etc.).
+ * @param wereVisible If true, the windows were visible before the move and their
+ *                    existing visible regions are excluded from the dirty region.
+ */
 void
 Desktop::_BringWindowsToFront(WindowList& windows, int32 list, bool wereVisible)
 {
@@ -3368,9 +3878,13 @@ Desktop::_BringWindowsToFront(WindowList& windows, int32 list, bool wereVisible)
 }
 
 
-/*!	Returns the last focussed non-hidden subset window belonging to the
-	specified \a window.
-*/
+/** @brief Returns the most recently focused visible window in the subset of \a window.
+ *
+ * Used to decide whether a floating window should be shown when its parent becomes front.
+ *
+ * @param window The parent window whose subset is searched.
+ * @return The last focused non-hidden subset window, or NULL if none exists.
+ */
 Window*
 Desktop::_LastFocusSubsetWindow(Window* window)
 {
@@ -3388,11 +3902,13 @@ Desktop::_LastFocusSubsetWindow(Window* window)
 }
 
 
-/*!	\brief Checks whether or not a fake mouse moved message needs to be sent
-	to the previous mouse window.
-
-	You need to have the all window lock held when calling this method.
-*/
+/** @brief Checks whether a fake mouse-moved event should be sent after a window change.
+ *
+ * The all-windows lock must be held by the caller.
+ *
+ * @param lastWindowUnderMouse The window that was under the mouse before the change.
+ * @return true if the window currently under the mouse differs from \a lastWindowUnderMouse.
+ */
 bool
 Desktop::_CheckSendFakeMouseMoved(const Window* lastWindowUnderMouse)
 {
@@ -3401,15 +3917,15 @@ Desktop::_CheckSendFakeMouseMoved(const Window* lastWindowUnderMouse)
 }
 
 
-/*!	\brief Sends a fake B_MOUSE_MOVED event to the window under the mouse,
-		and also updates the current view under the mouse.
-
-	This has only to be done in case the view changed without mouse movement,
-	ie. because of a workspace change, a closing window, or programmatic window
-	movement.
-
-	You must not have locked any windows when calling this method.
-*/
+/** @brief Sends a synthetic B_MOUSE_MOVED to the window under the mouse.
+ *
+ * Only needed when the view under the mouse changes without actual mouse
+ * movement — for example, during a workspace switch, after a window closes,
+ * or after programmatic window repositioning. The caller must not hold any
+ * window lock.
+ *
+ * @param window If non-NULL, targets this window; otherwise uses WindowAt() to find it.
+ */
 void
 Desktop::_SendFakeMouseMoved(Window* window)
 {
@@ -3444,6 +3960,13 @@ Desktop::_SendFakeMouseMoved(Window* window)
 }
 
 
+/** @brief Returns the screen that should host a window with the given frame.
+ *
+ * Currently always returns the first screen; multi-screen placement is a TODO.
+ *
+ * @param frame The window frame in screen coordinates.
+ * @return Pointer to the chosen Screen.
+ */
 Screen*
 Desktop::_DetermineScreenFor(BRect frame)
 {
@@ -3454,6 +3977,14 @@ Desktop::_DetermineScreenFor(BRect frame)
 }
 
 
+/** @brief Recomputes the clipping region for every window in the current workspace.
+ *
+ * Iterates all visible windows from back to front, assigning each one its
+ * clip region from the remaining available screen area.
+ *
+ * @param stillAvailableOnScreen Output parameter receiving the screen area not
+ *                               covered by any visible window after clipping.
+ */
 void
 Desktop::_RebuildClippingForAllWindows(BRegion& stillAvailableOnScreen)
 {
@@ -3482,6 +4013,11 @@ Desktop::_RebuildClippingForAllWindows(BRegion& stillAvailableOnScreen)
 }
 
 
+/** @brief Dispatches dirty-region redraw requests to all intersecting windows.
+ *
+ * @param dirtyRegion  The screen region that needs repainting.
+ * @param exposeRegion The newly exposed region to include in window updates.
+ */
 void
 Desktop::_TriggerWindowRedrawing(BRegion& dirtyRegion, BRegion& exposeRegion)
 {
@@ -3495,6 +4031,13 @@ Desktop::_TriggerWindowRedrawing(BRegion& dirtyRegion, BRegion& exposeRegion)
 }
 
 
+/** @brief Fills newly exposed background regions with the workspace colour.
+ *
+ * Compares the new background region with the previously stored one and fills
+ * only the newly uncovered area using the drawing engine.
+ *
+ * @param background The current background region (area not covered by windows).
+ */
 void
 Desktop::_SetBackground(BRegion& background)
 {
@@ -3520,7 +4063,13 @@ Desktop::_SetBackground(BRegion& background)
 }
 
 
-//!	The all window lock must be held when calling this function.
+/** @brief Rebuilds clipping and triggers redraw after a window's region has changed.
+ *
+ * The all-windows write lock must be held when calling this function.
+ *
+ * @param changedWindow The Window whose frame or decorations changed.
+ * @param dirty         The region that became dirty due to the change.
+ */
 void
 Desktop::RebuildAndRedrawAfterWindowChange(Window* changedWindow,
 	BRegion& dirty)
@@ -3563,7 +4112,10 @@ Desktop::RebuildAndRedrawAfterWindowChange(Window* changedWindow,
 }
 
 
-//! Suspend all windows with direct access to the frame buffer
+/** @brief Stops direct frame buffer access for all windows that are currently using it.
+ *
+ * The window lock must be held by the caller.
+ */
 void
 Desktop::_SuspendDirectFrameBufferAccess()
 {
@@ -3577,7 +4129,11 @@ Desktop::_SuspendDirectFrameBufferAccess()
 }
 
 
-//! Resume all windows with direct access to the frame buffer
+/** @brief Resumes direct frame buffer access for all eligible windows.
+ *
+ * Only windows in the current workspace that support direct access and are
+ * not hidden are restarted. The window lock must be held by the caller.
+ */
 void
 Desktop::_ResumeDirectFrameBufferAccess()
 {
@@ -3596,6 +4152,12 @@ Desktop::_ResumeDirectFrameBufferAccess()
 }
 
 
+/** @brief Handles a hardware screen change event.
+ *
+ * Sets the screen to its preferred mode and delegates to _ScreenChanged().
+ *
+ * @param screen The Screen whose configuration has changed.
+ */
 void
 Desktop::ScreenChanged(Screen* screen)
 {
@@ -3609,6 +4171,14 @@ Desktop::ScreenChanged(Screen* screen)
 }
 
 
+/** @brief Applies a screen configuration change to the desktop.
+ *
+ * Updates the cached screen region, rebuilds window clipping, redraws the
+ * background and dirty windows, and broadcasts B_SCREEN_CHANGED to all windows
+ * on the affected screen. The all-windows write lock must be held.
+ *
+ * @param screen The Screen whose configuration has changed.
+ */
 void
 Desktop::_ScreenChanged(Screen* screen)
 {
@@ -3649,8 +4219,14 @@ Desktop::_ScreenChanged(Screen* screen)
 }
 
 
-/*!	\brief activate one of the app's windows.
-*/
+/** @brief Activates the most appropriate window for the given team.
+ *
+ * First searches the current workspace for a visible normal window belonging to
+ * the team; if not found, searches all windows across all workspaces.
+ *
+ * @param team The team ID whose window should be activated.
+ * @return B_OK if a suitable window was found and activated, B_BAD_VALUE otherwise.
+ */
 status_t
 Desktop::_ActivateApp(team_id team)
 {
@@ -3688,6 +4264,12 @@ Desktop::_ActivateApp(team_id team)
 }
 
 
+/** @brief Applies the screen configuration for the current workspace.
+ *
+ * Waits for direct-screen-lock holders to release the lock, then calls
+ * VirtualScreen::SetConfiguration() and notifies affected screens of the change.
+ * The all-windows write lock must be held.
+ */
 void
 Desktop::_SetCurrentWorkspaceConfiguration()
 {
@@ -3719,9 +4301,16 @@ Desktop::_SetCurrentWorkspaceConfiguration()
 }
 
 
-/*!	Changes the current workspace to the one specified by \a index.
-	You must hold the all window lock when calling this method.
-*/
+/** @brief Performs the actual workspace switch.
+ *
+ * Moves windows between workspace lists, updates floating/subset windows,
+ * restores window positions, applies the new screen configuration, and
+ * triggers redraws. The all-windows write lock must be held by the caller.
+ *
+ * @param index           Target workspace index.
+ * @param moveFocusWindow If true, the focus window (or mouse-event window) is
+ *                        moved to the new workspace along with the switch.
+ */
 void
 Desktop::_SetWorkspace(int32 index, bool moveFocusWindow)
 {

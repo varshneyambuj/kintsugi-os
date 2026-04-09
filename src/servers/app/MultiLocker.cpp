@@ -1,10 +1,32 @@
 /*
- * Copyright 2005-2009, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 1999, Be Incorporated.   All Rights Reserved.
- * This file may be used under the terms of the Be Sample Code License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Copyright 1999, Be Incorporated.   All Rights Reserved.
+ *   This file may be used under the terms of the Be Sample Code License.
  */
+
+/** @file MultiLocker.cpp
+ *  @brief Reader-writer lock supporting multiple concurrent readers and exclusive writers. */
 
 
 #include "MultiLocker.h"
@@ -23,6 +45,15 @@
 const int32 LARGE_NUMBER = 100000;
 
 
+/**
+ * @brief Constructs a MultiLocker with the given name.
+ *
+ * In non-debug mode an rw_lock is used. In debug mode a semaphore is created
+ * and a per-thread tracking array is allocated based on the system's maximum
+ * thread count.
+ *
+ * @param baseName Name for the underlying lock/semaphore.
+ */
 MultiLocker::MultiLocker(const char* baseName)
 	:
 #if DEBUG
@@ -65,6 +96,11 @@ MultiLocker::MultiLocker(const char* baseName)
 }
 
 
+/**
+ * @brief Destroys the MultiLocker, acquiring write lock and releasing resources.
+ *
+ * When TIMING is enabled, performance statistics are printed to stdout.
+ */
 MultiLocker::~MultiLocker()
 {
 	// become the writer
@@ -97,6 +133,10 @@ MultiLocker::~MultiLocker()
 }
 
 
+/**
+ * @brief Returns the initialization status.
+ * @return B_OK if fully initialized, B_NO_INIT otherwise.
+ */
 status_t
 MultiLocker::InitCheck()
 {
@@ -108,6 +148,10 @@ MultiLocker::InitCheck()
 //	#pragma mark - Standard versions
 
 
+/**
+ * @brief Returns whether the calling thread currently holds the write lock.
+ * @return true if the current thread is the write lock holder.
+ */
 bool
 MultiLocker::IsWriteLocked() const
 {
@@ -130,6 +174,10 @@ MultiLocker::IsWriteLocked() const
 }
 
 
+/**
+ * @brief Acquires a shared read lock.
+ * @return true if the lock was acquired successfully.
+ */
 bool
 MultiLocker::ReadLock()
 {
@@ -149,6 +197,10 @@ MultiLocker::ReadLock()
 }
 
 
+/**
+ * @brief Acquires an exclusive write lock.
+ * @return true if the lock was acquired successfully.
+ */
 bool
 MultiLocker::WriteLock()
 {
@@ -168,6 +220,10 @@ MultiLocker::WriteLock()
 }
 
 
+/**
+ * @brief Releases a previously acquired read lock.
+ * @return true if the lock was released successfully.
+ */
 bool
 MultiLocker::ReadUnlock()
 {
@@ -187,6 +243,10 @@ MultiLocker::ReadUnlock()
 }
 
 
+/**
+ * @brief Releases a previously acquired write lock.
+ * @return true if the lock was released successfully.
+ */
 bool
 MultiLocker::WriteUnlock()
 {
@@ -210,6 +270,10 @@ MultiLocker::WriteUnlock()
 //	#pragma mark - Debug versions
 
 
+/**
+ * @brief Debug version: returns whether the calling thread holds the write lock.
+ * @return true if the current thread is the recorded write lock holder.
+ */
 bool
 MultiLocker::IsWriteLocked() const
 {
@@ -232,6 +296,14 @@ MultiLocker::IsWriteLocked() const
 }
 
 
+/**
+ * @brief Debug version: acquires a shared read lock.
+ *
+ * Supports nested acquisition by writers. Detects and reports illegal nested
+ * ReadLock() calls from the same thread.
+ *
+ * @return true if the lock was acquired.
+ */
 bool
 MultiLocker::ReadLock()
 {
@@ -262,6 +334,14 @@ MultiLocker::ReadLock()
 }
 
 
+/**
+ * @brief Debug version: acquires an exclusive write lock.
+ *
+ * Supports nested acquisition. Detects and reports an attempt to upgrade a
+ * read lock to a write lock (which would deadlock).
+ *
+ * @return true if the lock was acquired.
+ */
 bool
 MultiLocker::WriteLock()
 {
@@ -297,6 +377,13 @@ MultiLocker::WriteLock()
 }
 
 
+/**
+ * @brief Debug version: releases a shared read lock.
+ *
+ * Writers use nest-count decrement instead of semaphore release.
+ *
+ * @return true if the unlock was successful.
+ */
 bool
 MultiLocker::ReadUnlock()
 {
@@ -320,6 +407,15 @@ MultiLocker::ReadUnlock()
 }
 
 
+/**
+ * @brief Debug version: releases an exclusive write lock.
+ *
+ * Nested write locks decrement the nest count. The outermost unlock clears
+ * the writer thread and releases the semaphore. Non-writers calling this
+ * function trigger a debugger.
+ *
+ * @return true if the unlock was successful.
+ */
 bool
 MultiLocker::WriteUnlock()
 {
@@ -347,6 +443,10 @@ MultiLocker::WriteUnlock()
 }
 
 
+/**
+ * @brief Debug version: returns whether the calling thread holds a read lock.
+ * @return true if the current thread has an active read lock.
+ */
 bool
 MultiLocker::IsReadLocked() const
 {
@@ -380,6 +480,11 @@ MultiLocker::IsReadLocked() const
 /* traversing a list of cached information.  As this is only for a debug mode, the extra memory */
 /* was not deemed to be a problem */
 
+/**
+ * @brief Marks the current thread as holding a read lock in the debug array.
+ *
+ * Triggers a debugger if the slot is already occupied (nested ReadLock).
+ */
 void
 MultiLocker::_RegisterThread()
 {
@@ -392,6 +497,9 @@ MultiLocker::_RegisterThread()
 }
 
 
+/**
+ * @brief Clears the current thread's entry in the debug read-lock tracking array.
+ */
 void
 MultiLocker::_UnregisterThread()
 {

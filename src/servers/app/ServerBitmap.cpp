@@ -1,11 +1,33 @@
 /*
- * Copyright 2001-2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file ServerBitmap.cpp
+    @brief Server-side bitmap classes used by the app_server for offscreen rendering and cursor storage. */
 
 
 #include "ServerBitmap.h"
@@ -46,16 +68,14 @@ using namespace BPrivate;
 */
 
 
-/*!	\brief Constructor called by the BitmapManager (only).
-	\param rect Size of the bitmap.
-	\param space Color space of the bitmap
-	\param flags Various bitmap flags to tweak the bitmap as defined in Bitmap.h
-	\param bytesperline Number of bytes in each row. -1 implies the default
-		value. Any value less than the the default will less than the default
-		will be overridden, but any value greater than the default will result
-		in the number of bytes specified.
-	\param screen Screen assigned to the bitmap.
-*/
+/** @brief Constructor called by the BitmapManager only.
+    @param rect        Size of the bitmap (width and height are derived from this).
+    @param space       Color space of the bitmap.
+    @param flags       Various bitmap flags as defined in Bitmap.h.
+    @param bytesPerRow Number of bytes per row. -1 implies the default value. Any value
+                       less than the default will be overridden; any value greater will
+                       be honoured as-is.
+    @param screen      Screen assigned to the bitmap. */
 ServerBitmap::ServerBitmap(BRect rect, color_space space, uint32 flags,
 		int32 bytesPerRow, screen_id screen)
 	:
@@ -80,7 +100,8 @@ ServerBitmap::ServerBitmap(BRect rect, color_space space, uint32 flags,
 }
 
 
-//! Copy constructor does not copy the buffer.
+/** @brief Copy constructor. Does not copy the pixel buffer; only metadata is duplicated.
+    @param bitmap Pointer to the source ServerBitmap. If NULL, the new bitmap has zero dimensions. */
 ServerBitmap::ServerBitmap(const ServerBitmap* bitmap)
 	:
 	fMemory(NULL),
@@ -104,6 +125,7 @@ ServerBitmap::ServerBitmap(const ServerBitmap* bitmap)
 }
 
 
+/** @brief Destructor. Frees the pixel buffer or client memory as appropriate. */
 ServerBitmap::~ServerBitmap()
 {
 	if (fMemory != NULL) {
@@ -114,11 +136,10 @@ ServerBitmap::~ServerBitmap()
 }
 
 
-/*!	\brief Internal function used by subclasses
+/** @brief Allocates a heap buffer for the bitmap's pixel data.
 
-	Subclasses should call this so the buffer can automagically
-	be allocated on the heap.
-*/
+    Subclasses should call this so the buffer can automatically
+    be allocated on the heap. */
 void
 ServerBitmap::AllocateBuffer()
 {
@@ -130,6 +151,12 @@ ServerBitmap::AllocateBuffer()
 }
 
 
+/** @brief Imports pixel data from an external buffer, converting color spaces if necessary.
+    @param bits        Pointer to the source pixel data.
+    @param bitsLength  Length in bytes of the source buffer.
+    @param bytesPerRow Number of bytes per row in the source buffer.
+    @param colorSpace  Color space of the source data.
+    @return B_OK on success, B_BAD_VALUE if any argument is invalid. */
 status_t
 ServerBitmap::ImportBits(const void *bits, int32 bitsLength, int32 bytesPerRow,
 	color_space colorSpace)
@@ -142,6 +169,16 @@ ServerBitmap::ImportBits(const void *bits, int32 bitsLength, int32 bytesPerRow,
 }
 
 
+/** @brief Imports a sub-region of pixel data, converting color spaces if necessary.
+    @param bits        Pointer to the source pixel data.
+    @param bitsLength  Length in bytes of the source buffer.
+    @param bytesPerRow Number of bytes per row in the source buffer.
+    @param colorSpace  Color space of the source data.
+    @param from        Source origin within the source buffer.
+    @param to          Destination origin within this bitmap's buffer.
+    @param width       Width in pixels of the region to import.
+    @param height      Height in pixels of the region to import.
+    @return B_OK on success, B_BAD_VALUE if any argument is invalid. */
 status_t
 ServerBitmap::ImportBits(const void *bits, int32 bitsLength, int32 bytesPerRow,
 	color_space colorSpace, BPoint from, BPoint to, int32 width, int32 height)
@@ -155,6 +192,8 @@ ServerBitmap::ImportBits(const void *bits, int32 bitsLength, int32 bytesPerRow,
 }
 
 
+/** @brief Returns the area_id of the shared memory area backing this bitmap.
+    @return A valid area_id, or B_ERROR if the bitmap has no shared memory. */
 area_id
 ServerBitmap::Area() const
 {
@@ -165,6 +204,8 @@ ServerBitmap::Area() const
 }
 
 
+/** @brief Returns the byte offset of the pixel buffer within its shared memory area.
+    @return The byte offset, or 0 if there is no shared memory. */
 uint32
 ServerBitmap::AreaOffset() const
 {
@@ -175,6 +216,8 @@ ServerBitmap::AreaOffset() const
 }
 
 
+/** @brief Assigns a hardware overlay object to this bitmap.
+    @param overlay Pointer to the Overlay to associate. */
 void
 ServerBitmap::SetOverlay(::Overlay* overlay)
 {
@@ -182,6 +225,8 @@ ServerBitmap::SetOverlay(::Overlay* overlay)
 }
 
 
+/** @brief Returns the hardware overlay associated with this bitmap, if any.
+    @return Pointer to the Overlay, or NULL if none is assigned. */
 ::Overlay*
 ServerBitmap::Overlay() const
 {
@@ -189,6 +234,8 @@ ServerBitmap::Overlay() const
 }
 
 
+/** @brief Sets the owning ServerApp for this bitmap.
+    @param owner Pointer to the ServerApp that owns this bitmap. */
 void
 ServerBitmap::SetOwner(ServerApp* owner)
 {
@@ -196,6 +243,8 @@ ServerBitmap::SetOwner(ServerApp* owner)
 }
 
 
+/** @brief Returns the ServerApp that owns this bitmap.
+    @return Pointer to the owning ServerApp. */
 ServerApp*
 ServerBitmap::Owner() const
 {
@@ -203,6 +252,7 @@ ServerBitmap::Owner() const
 }
 
 
+/** @brief Prints a short description of the bitmap to standard output. */
 void
 ServerBitmap::PrintToStream()
 {
@@ -215,6 +265,12 @@ ServerBitmap::PrintToStream()
 //	#pragma mark -
 
 
+/** @brief Constructs a UtilityBitmap and allocates its pixel buffer on the heap.
+    @param rect        Dimensions of the bitmap.
+    @param space       Color space.
+    @param flags       Bitmap flags as defined in Bitmap.h.
+    @param bytesPerRow Bytes per row; -1 for the default.
+    @param screen      Screen id. */
 UtilityBitmap::UtilityBitmap(BRect rect, color_space space, uint32 flags,
 		int32 bytesPerRow, screen_id screen)
 	:
@@ -224,6 +280,8 @@ UtilityBitmap::UtilityBitmap(BRect rect, color_space space, uint32 flags,
 }
 
 
+/** @brief Constructs a UtilityBitmap as a deep copy of another ServerBitmap.
+    @param bitmap Pointer to the source bitmap whose pixel data is copied. */
 UtilityBitmap::UtilityBitmap(const ServerBitmap* bitmap)
 	:
 	ServerBitmap(bitmap)
@@ -235,6 +293,11 @@ UtilityBitmap::UtilityBitmap(const ServerBitmap* bitmap)
 }
 
 
+/** @brief Constructs a UtilityBitmap from already-padded raw pixel data.
+    @param alreadyPaddedData Pointer to the raw pixel data (must include row padding).
+    @param width             Width in pixels.
+    @param height            Height in pixels.
+    @param format            Color space of the raw data. */
 UtilityBitmap::UtilityBitmap(const uint8* alreadyPaddedData, uint32 width,
 		uint32 height, color_space format)
 	:
@@ -246,6 +309,7 @@ UtilityBitmap::UtilityBitmap(const uint8* alreadyPaddedData, uint32 width,
 }
 
 
+/** @brief Destructor. */
 UtilityBitmap::~UtilityBitmap()
 {
 }

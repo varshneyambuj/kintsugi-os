@@ -1,11 +1,32 @@
 /*
- * Copyright 2001-2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
  */
 
+/** @file RGBColor.cpp
+    @brief Color class providing 32-bit RGBA storage with lazy conversion to 8-, 15-, and 16-bit formats. */
 
 #include "RGBColor.h"
 #include "SystemPalette.h"
@@ -67,15 +88,10 @@ SetRGBColor16(rgb_color *col,uint16 color)
 }
 #endif
 
-/*!
-	\brief Finds the index of the closest matching color in a rgb_color palette array
-	\param palette Array of 256 rgb_color objects
-	\param color Color to match
-	\return Index of the closest matching color
-
-	Note that passing a NULL palette will always return 0 and passing an array of less
-	than 256 rgb_colors will cause a crash.
-*/
+/** @brief Finds the index of the closest matching color in a 256-entry rgb_color palette.
+    @param palette Array of 256 rgb_color objects to search.
+    @param color   The target color to match.
+    @return Index of the closest matching palette entry, or 0 if palette is NULL. */
 static uint8
 FindClosestColor(const rgb_color *palette, rgb_color color)
 {
@@ -104,13 +120,9 @@ FindClosestColor(const rgb_color *palette, rgb_color color)
 }
 
 
-/*!
-	\brief Constructs a RGBA15 color which best matches a given 32-bit color
-	\param color Color to match
-	\return The closest matching color's value
-
-	Format is ARGB, 1:5:5:5
-*/
+/** @brief Constructs the closest RGBA15 (1:5:5:5) representation of a 32-bit color.
+    @param color The source 32-bit color.
+    @return A 16-bit value in ARGB 1:5:5:5 format. */
 static uint16
 FindClosestColor15(rgb_color color)
 {
@@ -129,13 +141,9 @@ FindClosestColor15(rgb_color color)
 }
 
 
-/*!
-	\brief Constructs a RGB16 color which best matches a given 32-bit color
-	\param color Color to match
-	\return The closest matching color's value
-
-	Format is RGB, 5:6:5
-*/
+/** @brief Constructs the closest RGB16 (5:6:5) representation of a 32-bit color.
+    @param color The source 32-bit color.
+    @return A 16-bit value in RGB 5:6:5 format. */
 static uint16
 FindClosestColor16(rgb_color color)
 {
@@ -154,36 +162,30 @@ FindClosestColor16(rgb_color color)
 //	#pragma mark -
 
 
-/*!
-	\brief Create an RGBColor from specified values
-	\param red red
-	\param green green
-	\param blue blue
-	\param alpha alpha, defaults to 255
-*/
+/** @brief Constructs an RGBColor from individual uint8 component values.
+    @param r Red component (0–255).
+    @param g Green component (0–255).
+    @param b Blue component (0–255).
+    @param a Alpha component (0–255), defaults to 255. */
 RGBColor::RGBColor(uint8 r, uint8 g, uint8 b, uint8 a)
 {
 	SetColor(r,g,b,a);
 }
 
 
-/*!
-	\brief Create an RGBColor from specified values
-	\param red red
-	\param green green
-	\param blue blue
-	\param alpha alpha, defaults to 255
-*/
+/** @brief Constructs an RGBColor from individual int component values.
+    @param r Red component.
+    @param g Green component.
+    @param b Blue component.
+    @param a Alpha component, defaults to 255. */
 RGBColor::RGBColor(int r, int g, int b, int a)
 {
 	SetColor(r, g, b, a);
 }
 
 
-/*!
-	\brief Create an RGBColor from an rgb_color
-	\param color color to initialize from
-*/
+/** @brief Constructs an RGBColor from an existing rgb_color struct.
+    @param color The rgb_color to initialise from. */
 RGBColor::RGBColor(const rgb_color &color)
 {
 	SetColor(color);
@@ -200,20 +202,16 @@ RGBColor::RGBColor(uint16 color)
 }
 #endif
 
-/*!
-	\brief Create an RGBColor from an index color
-	\param color color to initialize from
-*/
+/** @brief Constructs an RGBColor from a system-palette index.
+    @param color Index into the 256-entry system palette. */
 RGBColor::RGBColor(uint8 color)
 {
 	SetColor(color);
 }
 
 
-/*!
-	\brief Copy Contructor
-	\param color color to initialize from
-*/
+/** @brief Copy constructor.
+    @param color The RGBColor to copy from. */
 RGBColor::RGBColor(const RGBColor &color)
 {
 	fColor32 = color.fColor32;
@@ -226,19 +224,15 @@ RGBColor::RGBColor(const RGBColor &color)
 }
 
 
-/*!
-	\brief Create an RGBColor with the values(0,0,0,0)
-*/
+/** @brief Default constructor. Initialises the color to (0, 0, 0, 0). */
 RGBColor::RGBColor()
 {
 	SetColor(0, 0, 0, 0);
 }
 
 
-/*!
-	\brief Returns the color as the closest 8-bit color in the palette
-	\return The palette index for the current color
-*/
+/** @brief Returns the closest 8-bit palette index for the current color.
+    @return A palette index in the range [0, 255]. */
 uint8
 RGBColor::GetColor8() const
 {
@@ -251,10 +245,8 @@ RGBColor::GetColor8() const
 }
 
 
-/*!
-	\brief Returns the color as the closest 15-bit color
-	\return 15-bit value of the current color plus 1-bit alpha
-*/
+/** @brief Returns the closest 15-bit (ARGB 1:5:5:5) representation of the current color.
+    @return A 16-bit value encoding the color in ARGB 1:5:5:5 format. */
 uint16
 RGBColor::GetColor15() const
 {
@@ -267,10 +259,8 @@ RGBColor::GetColor15() const
 }
 
 
-/*!
-	\brief Returns the color as the closest 16-bit color
-	\return 16-bit value of the current color
-*/
+/** @brief Returns the closest 16-bit (RGB 5:6:5) representation of the current color.
+    @return A 16-bit value encoding the color in RGB 5:6:5 format. */
 uint16
 RGBColor::GetColor16() const
 {
@@ -283,10 +273,8 @@ RGBColor::GetColor16() const
 }
 
 
-/*!
-	\brief Returns the color as a 32-bit color
-	\return current color, including alpha
-*/
+/** @brief Returns the color as a 32-bit RGBA value.
+    @return The color as an rgb_color struct including alpha. */
 rgb_color
 RGBColor::GetColor32() const
 {
@@ -294,13 +282,11 @@ RGBColor::GetColor32() const
 }
 
 
-/*!
-	\brief Set the object to specified values
-	\param red red
-	\param green green
-	\param blue blue
-	\param alpha alpha, defaults to 255
-*/
+/** @brief Sets the color from individual uint8 component values.
+    @param r Red component (0–255).
+    @param g Green component (0–255).
+    @param b Blue component (0–255).
+    @param a Alpha component (0–255). */
 void
 RGBColor::SetColor(uint8 r, uint8 g, uint8 b, uint8 a)
 {
@@ -313,13 +299,11 @@ RGBColor::SetColor(uint8 r, uint8 g, uint8 b, uint8 a)
 }
 
 
-/*!
-	\brief Set the object to specified values
-	\param red red
-	\param green green
-	\param blue blue
-	\param alpha alpha, defaults to 255
-*/
+/** @brief Sets the color from individual int component values.
+    @param r Red component.
+    @param g Green component.
+    @param b Blue component.
+    @param a Alpha component. */
 void
 RGBColor::SetColor(int r, int g, int b, int a)
 {
@@ -349,10 +333,8 @@ RGBColor::SetColor(uint16 col16)
 #endif
 
 
-/*!
-	\brief Set the object to specified index in the palette
-	\param col8 color to copy
-*/
+/** @brief Sets the color from a system-palette index.
+    @param col8 Index into the 256-entry system palette. */
 void
 RGBColor::SetColor(uint8 col8)
 {
@@ -365,10 +347,8 @@ RGBColor::SetColor(uint8 col8)
 }
 
 
-/*!
-	\brief Set the object to specified color
-	\param color color to copy
-*/
+/** @brief Sets the color from an rgb_color struct.
+    @param color The source rgb_color. */
 void
 RGBColor::SetColor(const rgb_color &color)
 {
@@ -377,10 +357,8 @@ RGBColor::SetColor(const rgb_color &color)
 }
 
 
-/*!
-	\brief Set the object to specified color
-	\param color color to copy
-*/
+/** @brief Sets the color by copying all cached values from another RGBColor.
+    @param color The source RGBColor to copy from. */
 void
 RGBColor::SetColor(const RGBColor &color)
 {
@@ -394,10 +372,9 @@ RGBColor::SetColor(const RGBColor &color)
 }
 
 
-/*!
-	\brief Set the object to specified color
-	\param color color to copy
-*/
+/** @brief Assignment operator from another RGBColor.
+    @param color The source RGBColor.
+    @return A const reference to this object. */
 const RGBColor&
 RGBColor::operator=(const RGBColor &color)
 {
@@ -413,10 +390,9 @@ RGBColor::operator=(const RGBColor &color)
 }
 
 
-/*!
-	\brief Set the object to specified color
-	\param color color to copy
-*/
+/** @brief Assignment operator from an rgb_color struct.
+    @param color The source rgb_color.
+    @return A const reference to this object. */
 const RGBColor&
 RGBColor::operator=(const rgb_color &color)
 {
@@ -427,9 +403,7 @@ RGBColor::operator=(const rgb_color &color)
 }
 
 
-/*!
-	\brief Prints the 32-bit values of the color to standard out
-*/
+/** @brief Prints the 32-bit RGBA component values to standard output. */
 void
 RGBColor::PrintToStream(void) const
 {
@@ -438,10 +412,9 @@ RGBColor::PrintToStream(void) const
 }
 
 
-/*!
-	\brief Overloaded comaparison
-	\return true if all color elements are exactly equal
-*/
+/** @brief Compares this color to an rgb_color for exact equality.
+    @param color The rgb_color to compare against.
+    @return true if all RGBA components are identical. */
 bool
 RGBColor::operator==(const rgb_color &color) const
 {
@@ -452,10 +425,9 @@ RGBColor::operator==(const rgb_color &color) const
 }
 
 
-/*!
-	\brief Overloaded comaparison
-	\return true if all color elements are exactly equal
-*/
+/** @brief Compares this color to another RGBColor for exact equality.
+    @param color The RGBColor to compare against.
+    @return true if all RGBA components are identical. */
 bool
 RGBColor::operator==(const RGBColor &color) const
 {
@@ -466,6 +438,9 @@ RGBColor::operator==(const RGBColor &color) const
 }
 
 
+/** @brief Inequality comparison operator against an rgb_color.
+    @param color The rgb_color to compare against.
+    @return true if any RGBA component differs. */
 bool
 RGBColor::operator!=(const rgb_color &color) const
 {
@@ -476,6 +451,9 @@ RGBColor::operator!=(const rgb_color &color) const
 }
 
 
+/** @brief Inequality comparison operator against another RGBColor.
+    @param color The RGBColor to compare against.
+    @return true if any RGBA component differs. */
 bool
 RGBColor::operator!=(const RGBColor &color) const
 {
@@ -486,6 +464,8 @@ RGBColor::operator!=(const RGBColor &color) const
 }
 
 
+/** @brief Returns whether this color is the transparent magic color (B_TRANSPARENT_COLOR).
+    @return true if the color equals B_TRANSPARENT_COLOR. */
 bool
 RGBColor::IsTransparentMagic() const
 {

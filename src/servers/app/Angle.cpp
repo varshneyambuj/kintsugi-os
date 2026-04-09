@@ -1,29 +1,51 @@
-//------------------------------------------------------------------------------
-//	Copyright (c) 2001-2002, Haiku, Inc.
-//
-//	Permission is hereby granted, free of charge, to any person obtaining a
-//	copy of this software and associated documentation files (the "Software"),
-//	to deal in the Software without restriction, including without limitation
-//	the rights to use, copy, modify, merge, publish, distribute, sublicense,
-//	and/or sell copies of the Software, and to permit persons to whom the
-//	Software is furnished to do so, subject to the following conditions:
-//
-//	The above copyright notice and this permission notice shall be included in
-//	all copies or substantial portions of the Software.
-//
-//	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-//	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-//	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-//	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-//	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-//	FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-//	DEALINGS IN THE SOFTWARE.
-//
-//	File Name:		Angle.cpp
-//	Author:			DarkWyrm <bpmagic@columbus.rr.com>
-//	Description:	Angle class for speeding up trig functions
-//
-//------------------------------------------------------------------------------
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2001-2002, Haiku, Inc.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a
+ *   copy of this software and associated documentation files (the "Software"),
+ *   to deal in the Software without restriction, including without limitation
+ *   the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ *   and/or sell copies of the Software, and to permit persons to whom the
+ *   Software is furnished to do so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice shall be included in
+ *   all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ *   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ *   DEALINGS IN THE SOFTWARE.
+ *
+ *   File Name:   Angle.cpp
+ *   Author:      DarkWyrm <bpmagic@columbus.rr.com>
+ *   Description: Angle class for speeding up trig functions
+ */
+
+/** @file Angle.cpp
+    @brief Angle class providing fast look-up-table-based trigonometric operations. */
+
 #include "Angle.h"
 #include <math.h>
 
@@ -36,29 +58,27 @@ static float sSinTable[360];
 static float sCosTable[360];
 static float sTanTable[360];
 
-/*!
-	\brief Constructor
-	\param angle Value in degrees
-*/
+/** @brief Constructs an Angle with the given value in degrees.
+    @param angle Value in degrees. The look-up tables are initialised if needed. */
 Angle::Angle(float angle)
 	: fAngleValue(angle)
 {
 	_InitTrigTables();
 }
 
-//! Constructor
+/** @brief Default constructor. Initialises the angle to 0 degrees. */
 Angle::Angle()
 	: fAngleValue(0)
 {
 	_InitTrigTables();
 }
 
-//! Empty destructor
+/** @brief Destructor. */
 Angle::~Angle()
 {
 }
 
-//! Constrains angle to 0 <= angle <= 360
+/** @brief Constrains the angle value to the range [0, 360). */
 void
 Angle::Normalize()
 {
@@ -69,21 +89,17 @@ Angle::Normalize()
         fAngleValue += 360;
 }
 
-/*!
-	\brief Obtains the sine of the angle
-	\return The sine of the angle
-*/
+/** @brief Returns the sine of the angle using a pre-computed look-up table.
+    @return The sine of the current angle value. */
 float
 Angle::Sine()
 {
 	return sSinTable[(int)fAngleValue];
 }
 
-/*!
-	\brief Calculates an angle given a float value
-	\param value Number between 0 and 1 inclusive
-	\return The angle obtained or 0 if value passed was invalid
-*/
+/** @brief Computes an Angle whose sine equals the given value via reverse look-up.
+    @param value A number in the range [0, 1].
+    @return The corresponding angle, or Angle(0) if value is out of range. */
 Angle
 Angle::InvSine(float value)
 {
@@ -109,21 +125,17 @@ Angle::InvSine(float value)
 }
 
 
-/*!
-	\brief Obtains the cosine of the angle
-	\return The cosine of the angle
-*/
+/** @brief Returns the cosine of the angle using a pre-computed look-up table.
+    @return The cosine of the current angle value. */
 float
 Angle::Cosine(void)
 {
 	return sCosTable[(int)fAngleValue];
 }
 
-/*!
-	\brief Calculates an angle given a float value
-	\param value Number between 0 and 1 inclusive
-	\return The angle obtained or 0 if value passed was invalid
-*/
+/** @brief Computes an Angle whose cosine equals the given value via reverse look-up.
+    @param value A number in the range [0, 1].
+    @return The corresponding angle, or Angle(0) if value is out of range. */
 Angle
 Angle::InvCosine(float value)
 {
@@ -148,10 +160,9 @@ Angle::InvCosine(float value)
 	return Angle(i);		// value is closer to previous
 }
 
-/*!
-	\brief Obtains the tangent of the angle
-	\return The tangent of the angle
-*/
+/** @brief Returns the tangent of the angle using a pre-computed look-up table.
+    @param status Optional pointer set to 0 if the tangent is undefined (90 or 270 degrees).
+    @return The tangent value, or 0.0 if the angle is 90 or 270 degrees. */
 float
 Angle::Tangent(int *status)
 {
@@ -164,11 +175,9 @@ Angle::Tangent(int *status)
 	return sTanTable[(int)fAngleValue];
 }
 
-/*!
-	\brief Returns the inverse tangent of a value given
-	\param value Number between 0 and 1 inclusive
-	\return The angle found or 0 if value was invalid
-*/
+/** @brief Computes an Angle whose tangent equals the given value via reverse look-up.
+    @param value A number in the range [0, 1].
+    @return The corresponding angle, or Angle(0) if value is out of range. */
 Angle
 Angle::InvTangent(float value)
 {
@@ -188,14 +197,12 @@ Angle::InvTangent(float value)
 	return Angle(i);		// value is closer to previous
 }
 
-/*!
-	\brief Returns a value based on what quadrant the angle is in
-	\return
-	- \c 1: 0 <= angle <90
-	- \c 2: 90 <= angle < 180
-	- \c 3: 180 <= angle < 270
-	- \c 4: 270 <= angle < 360
-*/
+/** @brief Returns the quadrant number (1–4) that the angle falls in.
+    @return
+    - 1: 0 <= angle < 90
+    - 2: 90 <= angle < 180
+    - 3: 180 <= angle < 270
+    - 4: 270 <= angle < 360 */
 uint8
 Angle::Quadrant()
 {
@@ -213,10 +220,8 @@ Angle::Quadrant()
 	return 4;
 }
 
-/*!
-	\brief Obtains the angle constrained to between 0 and 180 inclusive
-	\return The constrained value
-*/
+/** @brief Returns the angle constrained to the range [0, 180).
+    @return A new Angle in the range [0, 180). */
 Angle
 Angle::Constrain180()
 {
@@ -230,10 +235,8 @@ Angle::Constrain180()
 	return Angle(value);
 }
 
-/*!
-	\brief Obtains the angle constrained to between 0 and 90 inclusive
-	\return The constrained value
-*/
+/** @brief Returns the angle constrained to the range [0, 90).
+    @return A new Angle in the range [0, 90). */
 Angle
 Angle::Constrain90()
 {
@@ -247,10 +250,8 @@ Angle::Constrain90()
 	return Angle(value);
 }
 
-/*!
-	\brief Sets the angle's value and normalizes the value
-	\param angle Value in degrees
-*/
+/** @brief Sets the angle to the given value and normalises it into [0, 360).
+    @param angle Value in degrees. */
 void
 Angle::SetValue(float angle)
 {
@@ -259,13 +260,15 @@ Angle::SetValue(float angle)
 }
 
 
+/** @brief Returns the current angle value in degrees without normalisation.
+    @return The angle in degrees. */
 float
 Angle::Value() const
 {
 	return fAngleValue;
 }
 
-//! Initializes the global trig tables
+/** @brief Initialises the global sine, cosine, and tangent look-up tables if not yet done. */
 void
 Angle::_InitTrigTables()
 {
@@ -301,6 +304,9 @@ Angle::_InitTrigTables()
 }
 
 
+/** @brief Assignment operator from another Angle.
+    @param from The source Angle.
+    @return Reference to this Angle. */
 Angle&
 Angle::operator=(const Angle &from)
 {
@@ -309,6 +315,9 @@ Angle::operator=(const Angle &from)
 }
 
 
+/** @brief Assignment operator from a float value in degrees.
+    @param from The float value to assign.
+    @return Reference to this Angle. */
 Angle&
 Angle::operator=(const float &from)
 {
@@ -317,6 +326,9 @@ Angle::operator=(const float &from)
 }
 
 
+/** @brief Assignment operator from a long integer value in degrees.
+    @param from The long value to assign.
+    @return Reference to this Angle. */
 Angle&
 Angle::operator=(const long &from)
 {
@@ -325,6 +337,9 @@ Angle::operator=(const long &from)
 }
 
 
+/** @brief Assignment operator from an int value in degrees.
+    @param from The integer value to assign.
+    @return Reference to this Angle. */
 Angle&
 Angle::operator=(const int &from)
 {
@@ -333,6 +348,9 @@ Angle::operator=(const int &from)
 }
 
 
+/** @brief Equality comparison operator.
+    @param from The Angle to compare against.
+    @return true if both angles have exactly the same value. */
 bool
 Angle::operator==(const Angle &from)
 {
@@ -340,6 +358,9 @@ Angle::operator==(const Angle &from)
 }
 
 
+/** @brief Inequality comparison operator.
+    @param from The Angle to compare against.
+    @return true if the angles have different values. */
 bool
 Angle::operator!=(const Angle &from)
 {
@@ -347,6 +368,9 @@ Angle::operator!=(const Angle &from)
 }
 
 
+/** @brief Greater-than comparison operator.
+    @param from The Angle to compare against.
+    @return true if this angle is greater than from. */
 bool
 Angle::operator>(const Angle &from)
 {
@@ -354,6 +378,9 @@ Angle::operator>(const Angle &from)
 }
 
 
+/** @brief Less-than comparison operator.
+    @param from The Angle to compare against.
+    @return true if this angle is less than from. */
 bool
 Angle::operator<(const Angle &from)
 {
@@ -361,6 +388,9 @@ Angle::operator<(const Angle &from)
 }
 
 
+/** @brief Greater-than-or-equal comparison operator.
+    @param from The Angle to compare against.
+    @return true if this angle is greater than or equal to from. */
 bool
 Angle::operator>=(const Angle &from)
 {
@@ -368,6 +398,9 @@ Angle::operator>=(const Angle &from)
 }
 
 
+/** @brief Less-than-or-equal comparison operator.
+    @param from The Angle to compare against.
+    @return true if this angle is less than or equal to from. */
 bool
 Angle::operator<=(const Angle &from)
 {

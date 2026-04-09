@@ -1,11 +1,33 @@
 /*
- * Copyright 2008-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini <stefano.ceccherini@gmail.com>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini <stefano.ceccherini@gmail.com>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file DirectWindowInfo.cpp
+ *  @brief Manages BDirectWindow buffer state and synchronization with the client. */
 
 
 #include "DirectWindowInfo.h"
@@ -21,6 +43,12 @@
 #include "clipping.h"
 
 
+/**
+ * @brief Constructs a DirectWindowInfo, creating the shared buffer area and semaphores.
+ *
+ * The shared area is initialized with B_DIRECT_STOP state. The synchronization
+ * semaphores are created for use between the server and the BDirectWindow client.
+ */
 DirectWindowInfo::DirectWindowInfo()
 	:
 	fBufferInfo(NULL),
@@ -43,6 +71,12 @@ DirectWindowInfo::DirectWindowInfo()
 }
 
 
+/**
+ * @brief Destroys the DirectWindowInfo, invalidating the client buffer and releasing resources.
+ *
+ * Sets buffer bits and bytes_per_row to zero so that a still-running client
+ * will notice the window has been destroyed.
+ */
 DirectWindowInfo::~DirectWindowInfo()
 {
 	// this should make the client die in case it's still running
@@ -55,6 +89,10 @@ DirectWindowInfo::~DirectWindowInfo()
 }
 
 
+/**
+ * @brief Checks whether the object was constructed successfully.
+ * @return B_OK if the area and both semaphores are valid, or an error code.
+ */
 status_t
 DirectWindowInfo::InitCheck() const
 {
@@ -69,6 +107,11 @@ DirectWindowInfo::InitCheck() const
 }
 
 
+/**
+ * @brief Fills @a data with the IPC identifiers needed for client synchronization.
+ * @param data Output structure that receives the buffer area and semaphore IDs.
+ * @return B_OK always.
+ */
 status_t
 DirectWindowInfo::GetSyncData(direct_window_sync_data& data) const
 {
@@ -80,6 +123,22 @@ DirectWindowInfo::GetSyncData(direct_window_sync_data& data) const
 }
 
 
+/**
+ * @brief Updates the direct buffer state and synchronizes with the client.
+ *
+ * When @a bufferState includes B_BUFFER_RESET or the bits area is not yet set,
+ * the full buffer description (bits, row stride, pixel format, color space,
+ * layout, orientation) is updated from @a buffer. The clip list and window
+ * bounds are updated for any non-stop state. A synchronization round-trip with
+ * the client is performed at the end.
+ *
+ * @param bufferState  New direct buffer state flags.
+ * @param driverState  New driver state (-1 to leave unchanged).
+ * @param buffer       The rendering buffer supplying geometry information.
+ * @param windowFrame  Window frame in screen coordinates.
+ * @param clipRegion   Current visible clip region of the window.
+ * @return B_OK on success, or an error from the synchronization semaphores.
+ */
 status_t
 DirectWindowInfo::SetState(direct_buffer_state bufferState,
 	direct_driver_state driverState, RenderingBuffer* buffer,
@@ -171,6 +230,11 @@ DirectWindowInfo::SetState(direct_buffer_state bufferState,
 }
 
 
+/**
+ * @brief Records the original frame and feel before entering full-screen mode.
+ * @param frame The window frame to restore when leaving full screen.
+ * @param feel  The window feel to restore when leaving full screen.
+ */
 void
 DirectWindowInfo::EnableFullScreen(const BRect& frame, window_feel feel)
 {
@@ -180,6 +244,9 @@ DirectWindowInfo::EnableFullScreen(const BRect& frame, window_feel feel)
 }
 
 
+/**
+ * @brief Marks the window as no longer in full-screen mode.
+ */
 void
 DirectWindowInfo::DisableFullScreen()
 {
@@ -187,6 +254,15 @@ DirectWindowInfo::DisableFullScreen()
 }
 
 
+/**
+ * @brief Releases the synchronization semaphore and waits for the client to acknowledge.
+ *
+ * Releases fSem to trigger a BDirectWindow::DirectConnected() call in the
+ * client, then acquires fAcknowledgeSem (with a 500 ms timeout) to wait for
+ * the client to return from that callback.
+ *
+ * @return B_OK on success, or an error if the client does not respond in time.
+ */
 status_t
 DirectWindowInfo::_SynchronizeWithClient()
 {

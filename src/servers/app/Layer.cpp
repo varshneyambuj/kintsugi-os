@@ -1,7 +1,31 @@
 /*
- * Copyright 2015 Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015 Julian Harnath <julian.harnath@rwth-aachen.de>
+ *   All rights reserved. Distributed under the terms of the MIT license.
  */
+
+/** @file Layer.cpp
+ *  @brief Off-screen compositing layer that records drawing commands and blends them with opacity.
+ */
+
 #include "Layer.h"
 
 #include "AlphaMask.h"
@@ -14,8 +38,19 @@
 #include "View.h"
 
 
+/** @brief A Canvas implementation that directs drawing into an off-screen layer bitmap.
+ *
+ *  LayerCanvas bridges the generic Canvas interface with a specific DrawingEngine
+ *  and bitmap bounds so that the recorded picture commands stored in a Layer can
+ *  be replayed into an isolated bitmap without affecting the main screen surface.
+ */
 class LayerCanvas : public Canvas {
 public:
+	/** @brief Constructs a LayerCanvas.
+	 *  @param drawingEngine The DrawingEngine pointed at the layer bitmap.
+	 *  @param drawState     The draw state to inherit from the parent canvas.
+	 *  @param bitmapBounds  The bounds of the backing bitmap in canvas coordinates.
+	 */
 	LayerCanvas(DrawingEngine* drawingEngine, DrawState* drawState,
 		BRect bitmapBounds)
 		:
@@ -26,25 +61,39 @@ public:
 		fDrawState.SetTo(drawState);
 	}
 
+	/** @brief Returns the DrawingEngine used to render into the layer bitmap.
+	 *  @return Pointer to the layer's DrawingEngine.
+	 */
 	virtual DrawingEngine* GetDrawingEngine() const
 	{
 		return fDrawingEngine;
 	}
 
+	/** @brief Returns a ServerPicture by token (always NULL for a layer canvas).
+	 *  @param token The picture token (unused).
+	 *  @return Always NULL.
+	 */
 	virtual ServerPicture* GetPicture(int32 token) const
 	{
 		return NULL;
 	}
 
+	/** @brief No-op: layer canvases do not maintain a local clipping hierarchy. */
 	virtual void RebuildClipping(bool)
 	{
 	}
 
+	/** @brief Pushes the current draw state to the underlying DrawingEngine. */
 	virtual void ResyncDrawState()
 	{
 		fDrawingEngine->SetDrawState(fDrawState.Get());
 	}
 
+	/** @brief Recomputes the current drawing region and constrains the engine to it.
+	 *
+	 *  Combines any draw-state clipping with the bitmap bounds and applies the
+	 *  result to the DrawingEngine via ConstrainClippingRegion().
+	 */
 	virtual void UpdateCurrentDrawingRegion()
 	{
 		bool hasDrawStateClipping = fDrawState->GetCombinedClippingRegion(
@@ -59,16 +108,25 @@ public:
 		fDrawingEngine->ConstrainClippingRegion(&fCurrentDrawingRegion);
 	}
 
+	/** @brief Returns the bounds of the backing bitmap.
+	 *  @return The bitmap bounds as an IntRect.
+	 */
 	virtual	IntRect Bounds() const
 	{
 		return fBitmapBounds;
 	}
 
 protected:
+	/** @brief No-op: LayerCanvas coordinates are already in screen space.
+	 *  @param transform The transform to populate (left unchanged).
+	 */
 	virtual void _LocalToScreenTransform(SimpleTransform&) const
 	{
 	}
 
+	/** @brief No-op: LayerCanvas coordinates are already in screen space.
+	 *  @param transform The transform to populate (left unchanged).
+	 */
 	virtual void _ScreenToLocalTransform(SimpleTransform&) const
 	{
 	}
@@ -80,6 +138,9 @@ private:
 };
 
 
+/** @brief Constructs a Layer with the given opacity.
+ *  @param opacity The alpha opacity value (0 = fully transparent, 255 = fully opaque).
+ */
 Layer::Layer(uint8 opacity)
 	:
 	fOpacity(opacity),
@@ -88,11 +149,19 @@ Layer::Layer(uint8 opacity)
 }
 
 
+/** @brief Destructor. */
 Layer::~Layer()
 {
 }
 
 
+/** @brief Pushes a nested layer onto the picture stack.
+ *
+ *  Delegates to the underlying ServerPicture::PushPicture() mechanism so that
+ *  nested layer commands are recorded within the parent layer's picture stream.
+ *
+ *  @param layer The child Layer to push onto the stack.
+ */
 void
 Layer::PushLayer(Layer* layer)
 {
@@ -100,6 +169,9 @@ Layer::PushLayer(Layer* layer)
 }
 
 
+/** @brief Pops the topmost layer from the picture stack and returns it.
+ *  @return The Layer that was on top of the stack, cast from ServerPicture*.
+ */
 Layer*
 Layer::PopLayer()
 {
@@ -107,6 +179,21 @@ Layer::PopLayer()
 }
 
 
+/** @brief Renders the layer's recorded picture commands into a new bitmap.
+ *
+ *  Determines the bounding box of all drawing commands via
+ *  PictureBoundingBoxPlayer, allocates an RGBA bitmap of that size, creates
+ *  an isolated LayerCanvas, replays the picture into it, and returns the
+ *  resulting bitmap.  The caller takes ownership of the returned bitmap.
+ *
+ *  Alpha mask geometry is temporarily adjusted to the bitmap origin during
+ *  rendering and restored afterwards.  The parent canvas's draw state is
+ *  updated to reflect any push/pop state changes that occurred during playback.
+ *
+ *  @param canvas The parent Canvas providing the current draw state and transforms.
+ *  @return A newly allocated UtilityBitmap containing the rendered layer, or NULL
+ *          on failure (invalid bounding box or allocation error).
+ */
 UtilityBitmap*
 Layer::RenderToBitmap(Canvas* canvas)
 {
@@ -178,6 +265,14 @@ Layer::RenderToBitmap(Canvas* canvas)
 }
 
 
+/** @brief Returns the top-left offset of the layer bitmap within canvas coordinates.
+ *
+ *  This value is set during RenderToBitmap() to the top-left of the computed
+ *  bounding box and can be used by the caller to composite the resulting bitmap
+ *  at the correct position on the parent surface.
+ *
+ *  @return The top-left offset as an IntPoint.
+ */
 IntPoint
 Layer::LeftTopOffset() const
 {
@@ -185,6 +280,9 @@ Layer::LeftTopOffset() const
 }
 
 
+/** @brief Returns the layer's opacity.
+ *  @return Opacity in the range [0, 255].
+ */
 uint8
 Layer::Opacity() const
 {
@@ -192,6 +290,16 @@ Layer::Opacity() const
 }
 
 
+/** @brief Computes the axis-aligned bounding box of all drawing commands in this layer.
+ *
+ *  Uses PictureBoundingBoxPlayer to replay the recorded commands with bounding-box
+ *  tracking enabled.  The resulting box is expanded by 2 pixels on the
+ *  bottom-right edges to compensate for sub-pixel rounding differences in Painter.
+ *
+ *  @param canvas The parent Canvas providing the current draw state for playback.
+ *  @return The bounding box in canvas coordinates, or an invalid BRect if the
+ *          layer contains no drawable content.
+ */
 BRect
 Layer::_DetermineBoundingBox(Canvas* canvas)
 {
@@ -215,6 +323,15 @@ Layer::_DetermineBoundingBox(Canvas* canvas)
 }
 
 
+/** @brief Allocates a zeroed RGBA bitmap with the given bounds.
+ *
+ *  The bitmap is created in B_RGBA32 colour space with all pixels initialised
+ *  to transparent black so that the layer starts fully transparent before
+ *  drawing commands are replayed into it.
+ *
+ *  @param bounds The size and position of the bitmap in canvas coordinates.
+ *  @return A newly allocated UtilityBitmap, or NULL on allocation failure.
+ */
 UtilityBitmap*
 Layer::_AllocateBitmap(const BRect& bounds)
 {

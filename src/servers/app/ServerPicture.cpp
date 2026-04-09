@@ -1,14 +1,36 @@
 /*
- * Copyright 2001-2019, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
- *		Marcus Overhagen <marcus@overhagen.de>
- *		Julian Harnath <julian.harnath@rwth-aachen.de>
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2019, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *       Marcus Overhagen <marcus@overhagen.de>
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
+
+/** @file ServerPicture.cpp
+    @brief Server-side picture (recorded drawing command sequence) and canvas playback implementation. */
 
 #include "ServerPicture.h"
 
@@ -47,20 +69,57 @@
 using std::stack;
 
 
+/** @brief Helper that iterates over a BShape and issues drawing commands to a Canvas or gradient engine. */
 class ShapePainter : public BShapeIterator {
 public:
+	/** @brief Constructs a ShapePainter.
+	    @param canvas   The target Canvas to draw to.
+	    @param gradient Optional gradient to apply; NULL for solid drawing. */
 	ShapePainter(Canvas* canvas, BGradient* gradient);
+
+	/** @brief Destructor. */
 	virtual ~ShapePainter();
 
+	/** @brief Iterates the given shape, accumulating operations.
+	    @param shape The BShape to iterate.
+	    @return B_OK on success, or a memory error code. */
 	status_t Iterate(const BShape* shape);
 
+	/** @brief Records a MoveTo operation.
+	    @param point The target point.
+	    @return B_OK or B_NO_MEMORY. */
 	virtual status_t IterateMoveTo(BPoint* point);
+
+	/** @brief Records a sequence of LineTo operations.
+	    @param lineCount Number of line endpoints.
+	    @param linePts   Array of line endpoint points.
+	    @return B_OK or B_NO_MEMORY. */
 	virtual status_t IterateLineTo(int32 lineCount, BPoint* linePts);
+
+	/** @brief Records a sequence of BezierTo operations.
+	    @param bezierCount Number of cubic Bezier segments.
+	    @param bezierPts   Array of control/endpoint points (3 per segment).
+	    @return B_OK or B_NO_MEMORY. */
 	virtual status_t IterateBezierTo(int32 bezierCount, BPoint* bezierPts);
+
+	/** @brief Records a Close operation.
+	    @return B_OK or B_NO_MEMORY. */
 	virtual status_t IterateClose();
+
+	/** @brief Records an ArcTo operation.
+	    @param rx              X radius of the arc ellipse.
+	    @param ry              Y radius of the arc ellipse.
+	    @param angle           Rotation angle of the ellipse.
+	    @param largeArc        If true, use the large arc.
+	    @param counterClockWise If true, arc is counter-clockwise.
+	    @param point           Target endpoint.
+	    @return B_OK or B_NO_MEMORY. */
 	virtual status_t IterateArcTo(float& rx, float& ry,
 		float& angle, bool largeArc, bool counterClockWise, BPoint& point);
 
+	/** @brief Issues the accumulated shape operations to the canvas drawing engine.
+	    @param frame  The bounding frame of the shape.
+	    @param filled If true, fills the shape; otherwise strokes it. */
 	void Draw(BRect frame, bool filled);
 
 private:
@@ -71,6 +130,9 @@ private:
 };
 
 
+/** @brief Constructs a ShapePainter.
+    @param canvas   The target Canvas.
+    @param gradient Optional gradient; NULL for solid drawing. */
 ShapePainter::ShapePainter(Canvas* canvas, BGradient* gradient)
 	:
 	fCanvas(canvas),
@@ -79,6 +141,7 @@ ShapePainter::ShapePainter(Canvas* canvas, BGradient* gradient)
 }
 
 
+/** @brief Destructor. */
 ShapePainter::~ShapePainter()
 {
 }
@@ -237,74 +300,305 @@ ShapePainter::Draw(BRect frame, bool filled)
 // #pragma mark - drawing functions
 
 
+/** @brief Concrete PicturePlayerCallbacks implementation that plays back drawing commands onto a Canvas. */
 class CanvasCallbacks: public BPrivate::PicturePlayerCallbacks {
 public:
+	/** @brief Constructs CanvasCallbacks targeting the given canvas.
+	    @param canvas   The target Canvas for all drawing operations.
+	    @param pictures List of nested ServerPictures available for DrawPicture callbacks. */
 	CanvasCallbacks(Canvas* const canvas, BObjectList<ServerPicture>& pictures);
 
+	/** @brief Moves the current pen by the given delta.
+	    @param where The delta to add to the current pen position. */
 	virtual void MovePenBy(const BPoint& where);
+
+	/** @brief Strokes a line on the canvas.
+	    @param start Start point in view coordinates.
+	    @param end   End point in view coordinates. */
 	virtual void StrokeLine(const BPoint& start, const BPoint& end);
+
+	/** @brief Draws a rectangle (filled or stroked) on the canvas.
+	    @param rect The rectangle in view coordinates.
+	    @param fill If true, fill; otherwise stroke. */
 	virtual void DrawRect(const BRect& rect, bool fill);
+
+	/** @brief Draws a rounded rectangle on the canvas.
+	    @param rect   The bounding rectangle in view coordinates.
+	    @param radii  Corner radii as (x, y).
+	    @param fill   If true, fill; otherwise stroke. */
 	virtual void DrawRoundRect(const BRect& rect, const BPoint& radii, bool fill);
+
+	/** @brief Draws a cubic Bezier curve on the canvas.
+	    @param controlPoints Four control points in view coordinates.
+	    @param fill          If true, fill; otherwise stroke. */
 	virtual void DrawBezier(const BPoint controlPoints[4], bool fill);
+
+	/** @brief Draws an arc on the canvas.
+	    @param center     Center of the arc's ellipse.
+	    @param radii      Semi-axes of the ellipse.
+	    @param startTheta Start angle in degrees.
+	    @param arcTheta   Arc sweep in degrees.
+	    @param fill       If true, fill; otherwise stroke. */
 	virtual void DrawArc(const BPoint& center, const BPoint& radii, float startTheta,
 		float arcTheta, bool fill);
+
+	/** @brief Draws an ellipse on the canvas.
+	    @param rect Bounding rectangle of the ellipse.
+	    @param fill If true, fill; otherwise stroke. */
 	virtual void DrawEllipse(const BRect& rect, bool fill);
+
+	/** @brief Draws a polygon on the canvas.
+	    @param numPoints Number of vertices.
+	    @param points    Array of vertex points.
+	    @param isClosed  If true, close the polygon.
+	    @param fill      If true, fill; otherwise stroke. */
 	virtual void DrawPolygon(size_t numPoints, const BPoint points[], bool isClosed, bool fill);
+
+	/** @brief Draws a BShape on the canvas.
+	    @param shape The shape to draw.
+	    @param fill  If true, fill; otherwise stroke. */
 	virtual void DrawShape(const BShape& shape, bool fill);
+
+	/** @brief Draws a string on the canvas at the current pen location.
+	    @param string            The string to draw.
+	    @param length            Length in bytes.
+	    @param spaceEscapement   Extra escapement for space characters.
+	    @param nonSpaceEscapement Extra escapement for non-space characters. */
 	virtual void DrawString(const char* string, size_t length, float spaceEscapement,
 		float nonSpaceEscapement);
+
+	/** @brief Draws raw pixel data onto the canvas.
+	    @param source      Source rectangle within the pixel data.
+	    @param destination Destination rectangle on the canvas.
+	    @param width       Width of the pixel buffer.
+	    @param height      Height of the pixel buffer.
+	    @param bytesPerRow Bytes per row in the pixel buffer.
+	    @param pixelFormat Color space of the pixel data.
+	    @param flags       Drawing flags.
+	    @param data        Pointer to the raw pixel data.
+	    @param length      Length in bytes of the pixel data. */
 	virtual void DrawPixels(const BRect& source, const BRect& destination, uint32 width,
 		uint32 height, size_t bytesPerRow, color_space pixelFormat, uint32 flags, const void* data,
 		size_t length);
+
+	/** @brief Draws a nested ServerPicture at the given location.
+	    @param where The drawing offset.
+	    @param token Token of the nested ServerPicture. */
 	virtual void DrawPicture(const BPoint& where, int32 token);
+
+	/** @brief Sets the user clipping region from an array of rectangles.
+	    @param numRects Number of clipping rectangles.
+	    @param rects    Array of clipping_rect structures. */
 	virtual void SetClippingRects(size_t numRects, const clipping_rect rects[]);
+
+	/** @brief Clips to the alpha mask derived from a picture.
+	    @param token         Token of the clip picture.
+	    @param where         Offset for the clip picture.
+	    @param clipToInverse If true, clip to the inverse of the picture mask. */
 	virtual void ClipToPicture(int32 token, const BPoint& where, bool clipToInverse);
+
+	/** @brief Pushes the current canvas draw state. */
 	virtual void PushState();
+
+	/** @brief Pops the current canvas draw state. */
 	virtual void PopState();
+
+	/** @brief Called on entry to a state-change block; no-op. */
 	virtual void EnterStateChange();
+
+	/** @brief Called on exit from a state-change block; resyncs the draw state. */
 	virtual void ExitStateChange();
+
+	/** @brief Called on entry to a font-state block; no-op. */
 	virtual void EnterFontState();
+
+	/** @brief Called on exit from a font-state block; updates the engine font. */
 	virtual void ExitFontState();
+
+	/** @brief Sets the drawing origin in the current draw state.
+	    @param origin The new origin. */
 	virtual void SetOrigin(const BPoint& origin);
+
+	/** @brief Sets the pen location in the current draw state.
+	    @param location The new pen location. */
 	virtual void SetPenLocation(const BPoint& location);
+
+	/** @brief Sets the drawing mode on the canvas and drawing engine.
+	    @param mode The drawing_mode to apply. */
 	virtual void SetDrawingMode(drawing_mode mode);
+
+	/** @brief Sets the line cap, join, and miter parameters on the canvas and drawing engine.
+	    @param capMode    The cap_mode to apply.
+	    @param joinMode   The join_mode to apply.
+	    @param miterLimit The miter limit to apply. */
 	virtual void SetLineMode(cap_mode capMode, join_mode joinMode, float miterLimit);
+
+	/** @brief Sets the pen size on the canvas and drawing engine.
+	    @param size The new pen size. */
 	virtual void SetPenSize(float size);
+
+	/** @brief Sets the high (foreground) color on the canvas and drawing engine.
+	    @param color The new high color. */
 	virtual void SetForeColor(const rgb_color& color);
+
+	/** @brief Sets the low (background) color on the canvas and drawing engine.
+	    @param color The new low color. */
 	virtual void SetBackColor(const rgb_color& color);
+
+	/** @brief Sets the stipple pattern on the canvas and drawing engine.
+	    @param patter The new stipple pattern. */
 	virtual void SetStipplePattern(const pattern& patter);
+
+	/** @brief Sets the drawing scale and resyncs the draw state.
+	    @param scale The new scale factor. */
 	virtual void SetScale(float scale);
+
+	/** @brief Sets the font family in the current draw state.
+	    @param familyName The font family name.
+	    @param length     Length in bytes. */
 	virtual void SetFontFamily(const char* familyName, size_t length);
+
+	/** @brief Sets the font style in the current draw state.
+	    @param styleName The font style name.
+	    @param length    Length in bytes. */
 	virtual void SetFontStyle(const char* styleName, size_t length);
+
+	/** @brief Sets the font spacing in the current draw state.
+	    @param spacing The spacing mode. */
 	virtual void SetFontSpacing(uint8 spacing);
+
+	/** @brief Sets the font size in the current draw state.
+	    @param size The font size in points. */
 	virtual void SetFontSize(float size);
+
+	/** @brief Sets the font rotation in the current draw state.
+	    @param rotation The rotation angle in degrees. */
 	virtual void SetFontRotation(float rotation);
+
+	/** @brief Sets the font encoding in the current draw state.
+	    @param encoding The encoding mode. */
 	virtual void SetFontEncoding(uint8 encoding);
+
+	/** @brief Sets the font flags in the current draw state.
+	    @param flags The font flags. */
 	virtual void SetFontFlags(uint32 flags);
+
+	/** @brief Sets the font shear in the current draw state.
+	    @param shear The shear angle in radians (converted to degrees internally). */
 	virtual void SetFontShear(float shear);
+
+	/** @brief Sets the font face in the current draw state.
+	    @param face The face flags. */
 	virtual void SetFontFace(uint16 face);
-	virtual void SetBlendingMode(source_alpha alphaSourceMode, alpha_function alphaFunctionMode);
+
+	/** @brief Sets the blending mode on the canvas.
+	    @param alphaSrcMode  Source alpha mode.
+	    @param alphaFncMode  Alpha compositing function. */
+	virtual void SetBlendingMode(source_alpha alphaSrcMode, alpha_function alphaFunctionMode);
+
+	/** @brief Sets the affine transform on the canvas and drawing engine.
+	    @param transform The new BAffineTransform. */
 	virtual void SetTransform(const BAffineTransform& transform);
+
+	/** @brief Applies a pre-translation to the canvas transform.
+	    @param x Translation along X.
+	    @param y Translation along Y. */
 	virtual void TranslateBy(double x, double y);
+
+	/** @brief Applies a pre-scale to the canvas transform.
+	    @param x Scale factor along X.
+	    @param y Scale factor along Y. */
 	virtual void ScaleBy(double x, double y);
+
+	/** @brief Applies a pre-rotation to the canvas transform.
+	    @param angleRadians Rotation angle in radians. */
 	virtual void RotateBy(double angleRadians);
+
+	/** @brief Blends a compositing layer onto the canvas.
+	    @param layer Pointer to the Layer to blend. */
 	virtual void BlendLayer(Layer* layer);
+
+	/** @brief Clips the canvas to a rectangle, optionally inverting.
+	    @param rect    The clipping rectangle.
+	    @param inverse If true, clip to the complement. */
 	virtual void ClipToRect(const BRect& rect, bool inverse);
+
+	/** @brief Clips the canvas to an arbitrary shape.
+	    @param opCount  Number of shape operations.
+	    @param opList   Array of shape operation codes.
+	    @param ptCount  Number of shape points.
+	    @param ptList   Array of shape points.
+	    @param inverse  If true, clip to the complement. */
 	virtual void ClipToShape(int32 opCount, const uint32 opList[], int32 ptCount,
 		const BPoint ptList[], bool inverse);
+
+	/** @brief Draws a string at multiple explicit locations.
+	    @param string        The string to draw.
+	    @param length        Length in bytes.
+	    @param locations     Array of drawing locations.
+	    @param locationCount Number of locations. */
 	virtual void DrawStringLocations(const char* string, size_t length, const BPoint locations[],
 		size_t locationCount);
+
+	/** @brief Draws a gradient-filled rectangle.
+	    @param rect     The rectangle.
+	    @param gradient The gradient to fill with.
+	    @param fill     Ignored; rectangles are always filled here. */
 	virtual void DrawRectGradient(const BRect& rect, BGradient& gradient, bool fill);
+
+	/** @brief Draws a gradient-filled rounded rectangle.
+	    @param rect     The bounding rectangle.
+	    @param radii    Corner radii.
+	    @param gradient The gradient.
+	    @param fill     Ignored. */
 	virtual void DrawRoundRectGradient(const BRect& rect, const BPoint& radii, BGradient& gradient,
 		bool fill);
+
+	/** @brief Draws a gradient-filled Bezier curve.
+	    @param controlPoints Four control points.
+	    @param gradient      The gradient.
+	    @param fill          Ignored. */
 	virtual void DrawBezierGradient(const BPoint controlPoints[4], BGradient& gradient, bool fill);
+
+	/** @brief Draws a gradient-filled arc.
+	    @param center     Center of the arc's ellipse.
+	    @param radii      Semi-axes.
+	    @param startTheta Start angle in degrees.
+	    @param arcTheta   Arc sweep in degrees.
+	    @param gradient   The gradient.
+	    @param fill       Ignored. */
 	virtual void DrawArcGradient(const BPoint& center, const BPoint& radii, float startTheta,
 		float arcTheta, BGradient& gradient, bool fill);
+
+	/** @brief Draws a gradient-filled ellipse.
+	    @param rect     Bounding rectangle.
+	    @param gradient The gradient.
+	    @param fill     Ignored. */
 	virtual void DrawEllipseGradient(const BRect& rect, BGradient& gradient, bool fill);
+
+	/** @brief Draws a gradient-filled polygon.
+	    @param numPoints Number of vertices.
+	    @param points    Vertex points.
+	    @param isClosed  If true, close the polygon.
+	    @param gradient  The gradient.
+	    @param fill      Ignored. */
 	virtual void DrawPolygonGradient(size_t numPoints, const BPoint points[], bool isClosed,
 		BGradient& gradient, bool fill);
+
+	/** @brief Draws a gradient-filled shape.
+	    @param shape    The BShape to draw.
+	    @param gradient The gradient.
+	    @param fill     Ignored. */
 	virtual void DrawShapeGradient(const BShape& shape, BGradient& gradient, bool fill);
+
+	/** @brief Sets the fill rule on the canvas and drawing engine.
+	    @param fillRule The fill rule constant. */
 	virtual void SetFillRule(int32 fillRule);
+
+	/** @brief Strokes a line with a gradient.
+	    @param start    Start point.
+	    @param end      End point.
+	    @param gradient The gradient to apply. */
 	virtual void StrokeLineGradient(const BPoint& start, const BPoint& end, BGradient& gradient);
 
 private:
@@ -313,6 +607,9 @@ private:
 };
 
 
+/** @brief Constructs CanvasCallbacks targeting the given canvas.
+    @param canvas   The target Canvas.
+    @param pictures List of nested ServerPictures. */
 CanvasCallbacks::CanvasCallbacks(Canvas* const canvas, BObjectList<ServerPicture>& pictures)
 	:
 	fCanvas(canvas),
@@ -321,6 +618,10 @@ CanvasCallbacks::CanvasCallbacks(Canvas* const canvas, BObjectList<ServerPicture
 }
 
 
+/** @brief Computes the axis-aligned bounding frame of a polygon.
+    @param points    Pointer to the array of polygon vertices.
+    @param numPoints Number of vertices.
+    @param _frame    Output BRect receiving the bounding frame. */
 static void
 get_polygon_frame(const BPoint* points, uint32 numPoints, BRect* _frame)
 {
@@ -1047,6 +1348,7 @@ CanvasCallbacks::ClipToShape(int32 opCount, const uint32 opList[],
 // #pragma mark - ServerPicture
 
 
+/** @brief Default constructor. Creates an empty ServerPicture backed by a BMallocIO buffer. */
 ServerPicture::ServerPicture()
 	:
 	fFile(NULL),
@@ -1059,6 +1361,8 @@ ServerPicture::ServerPicture()
 }
 
 
+/** @brief Copy constructor. Duplicates the picture data from an existing ServerPicture.
+    @param picture The source ServerPicture to copy from. */
 ServerPicture::ServerPicture(const ServerPicture& picture)
 	:
 	fFile(NULL),
@@ -1084,6 +1388,9 @@ ServerPicture::ServerPicture(const ServerPicture& picture)
 }
 
 
+/** @brief Constructs a ServerPicture backed by a file at a given byte offset.
+    @param fileName Path to the file containing the picture data.
+    @param offset   Byte offset within the file where the picture data begins. */
 ServerPicture::ServerPicture(const char* fileName, int32 offset)
 	:
 	fFile(NULL),
@@ -1109,6 +1416,7 @@ ServerPicture::ServerPicture(const char* fileName, int32 offset)
 }
 
 
+/** @brief Destructor. Releases all nested picture references and removes the token. */
 ServerPicture::~ServerPicture()
 {
 	ASSERT(fOwner == NULL);
@@ -1128,6 +1436,9 @@ ServerPicture::~ServerPicture()
 }
 
 
+/** @brief Transfers ownership of this picture to the given ServerApp.
+    @param owner The new owning ServerApp, or NULL to detach from the current owner.
+    @return true on success, false if the new owner could not add this picture. */
 bool
 ServerPicture::SetOwner(ServerApp* owner)
 {
@@ -1155,6 +1466,7 @@ ServerPicture::SetOwner(ServerApp* owner)
 }
 
 
+/** @brief Opens a state-change recording block in the picture data stream. */
 void
 ServerPicture::EnterStateChange()
 {
@@ -1162,6 +1474,7 @@ ServerPicture::EnterStateChange()
 }
 
 
+/** @brief Closes the current state-change recording block. */
 void
 ServerPicture::ExitStateChange()
 {
@@ -1169,6 +1482,8 @@ ServerPicture::ExitStateChange()
 }
 
 
+/** @brief Records the essential draw state of the given canvas into this picture.
+    @param canvas The canvas whose state (origin, pen, colors, etc.) is to be recorded. */
 void
 ServerPicture::SyncState(Canvas* canvas)
 {
@@ -1192,6 +1507,9 @@ ServerPicture::SyncState(Canvas* canvas)
 }
 
 
+/** @brief Records the font state into this picture for the attributes indicated by mask.
+    @param font The ServerFont whose attributes are to be recorded.
+    @param mask Bitmask of B_FONT_* constants indicating which attributes to record. */
 void
 ServerPicture::WriteFontState(const ServerFont& font, uint16 mask)
 {
@@ -1239,6 +1557,8 @@ ServerPicture::WriteFontState(const ServerFont& font, uint16 mask)
 }
 
 
+/** @brief Plays back this picture's recorded commands onto the given canvas.
+    @param target The Canvas that receives all drawing operations. */
 void
 ServerPicture::Play(Canvas* target)
 {
@@ -1256,8 +1576,8 @@ ServerPicture::Play(Canvas* target)
 }
 
 
-/*!	Acquires a reference to the pushed picture.
-*/
+/** @brief Pushes (acquires) a picture onto the picture stack, acquiring a reference.
+    @param picture The picture to push. Only one picture may be pushed at a time. */
 void
 ServerPicture::PushPicture(ServerPicture* picture)
 {
@@ -1268,8 +1588,8 @@ ServerPicture::PushPicture(ServerPicture* picture)
 }
 
 
-/*!	Returns a reference with the popped picture.
-*/
+/** @brief Pops and returns the previously pushed picture, transferring ownership.
+    @return Pointer to the popped ServerPicture, or NULL if none was pushed. */
 ServerPicture*
 ServerPicture::PopPicture()
 {
@@ -1277,6 +1597,8 @@ ServerPicture::PopPicture()
 }
 
 
+/** @brief Appends a picture to this picture (equivalent to PushPicture).
+    @param picture The picture to append. */
 void
 ServerPicture::AppendPicture(ServerPicture* picture)
 {
@@ -1285,6 +1607,9 @@ ServerPicture::AppendPicture(ServerPicture* picture)
 }
 
 
+/** @brief Nests a picture inside this picture's sub-picture list.
+    @param picture The picture to nest.
+    @return The index of the nested picture within the sub-picture list, or -1 on failure. */
 int32
 ServerPicture::NestPicture(ServerPicture* picture)
 {
@@ -1303,6 +1628,8 @@ ServerPicture::NestPicture(ServerPicture* picture)
 }
 
 
+/** @brief Returns the total size in bytes of the picture's data buffer.
+    @return Size in bytes, or 0 if no data buffer is set. */
 off_t
 ServerPicture::DataLength() const
 {
@@ -1314,6 +1641,9 @@ ServerPicture::DataLength() const
 }
 
 
+/** @brief Reads picture data from a link message and stores it in the internal buffer.
+    @param link The link receiver containing the picture data.
+    @return B_OK on success, B_NO_MEMORY or B_ERROR on failure. */
 status_t
 ServerPicture::ImportData(BPrivate::LinkReceiver& link)
 {
@@ -1338,6 +1668,9 @@ ServerPicture::ImportData(BPrivate::LinkReceiver& link)
 }
 
 
+/** @brief Exports this picture's data (and nested picture tokens) through a port link.
+    @param link The PortLink to write the picture data into.
+    @return B_OK on success, B_NO_MEMORY or B_ERROR on failure. */
 status_t
 ServerPicture::ExportData(BPrivate::PortLink& link)
 {

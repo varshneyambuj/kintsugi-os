@@ -1,12 +1,32 @@
 /*
- * Copyright 2005-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
-/**	Manages all available physical screens */
+/** @file ScreenManager.cpp
+ *  @brief Manages all available physical screens. */
 
 
 #include "ScreenManager.h"
@@ -36,6 +56,10 @@ using std::nothrow;
 ScreenManager* gScreenManager;
 
 
+/**
+ * @brief Listens for hardware interface change notifications and forwards them
+ *        to the owning ScreenManager.
+ */
 class ScreenChangeListener : public HWInterfaceListener {
 public:
 								ScreenChangeListener(ScreenManager& manager,
@@ -49,6 +73,11 @@ virtual	void					ScreenChanged(HWInterface* interface);
 };
 
 
+/**
+ * @brief Constructs the listener, associating it with a manager and screen.
+ * @param manager The ScreenManager to notify on screen changes.
+ * @param screen  The Screen object this listener is bound to.
+ */
 ScreenChangeListener::ScreenChangeListener(ScreenManager& manager,
 	Screen* screen)
 	:
@@ -58,6 +87,10 @@ ScreenChangeListener::ScreenChangeListener(ScreenManager& manager,
 }
 
 
+/**
+ * @brief Called by the hardware interface when a screen change is detected.
+ * @param interface The hardware interface that changed.
+ */
 void
 ScreenChangeListener::ScreenChanged(HWInterface* interface)
 {
@@ -65,6 +98,10 @@ ScreenChangeListener::ScreenChanged(HWInterface* interface)
 }
 
 
+/**
+ * @brief Constructs the ScreenManager, scanning available drivers and setting
+ *        up directory monitoring.
+ */
 ScreenManager::ScreenManager()
 	:
 	BLooper("screen manager"),
@@ -88,11 +125,22 @@ ScreenManager::ScreenManager()
 }
 
 
+/**
+ * @brief Destroys the ScreenManager.
+ */
 ScreenManager::~ScreenManager()
 {
 }
 
 
+/**
+ * @brief Returns the Screen at the given index in the screen list.
+ *
+ * The caller must hold the ScreenManager lock before calling this method.
+ *
+ * @param index Zero-based index into the managed screen list.
+ * @return Pointer to the Screen, or NULL if the index is out of range.
+ */
 Screen*
 ScreenManager::ScreenAt(int32 index) const
 {
@@ -107,6 +155,13 @@ ScreenManager::ScreenAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the number of screens currently managed.
+ *
+ * The caller must hold the ScreenManager lock before calling this method.
+ *
+ * @return Total number of screens in the screen list.
+ */
 int32
 ScreenManager::CountScreens() const
 {
@@ -117,6 +172,21 @@ ScreenManager::CountScreens() const
 }
 
 
+/**
+ * @brief Acquires one or more screens on behalf of a screen owner.
+ *
+ * Free screens are assigned to @a owner and added to @a list. If no free
+ * screens are available and @a target is specified, a new remote screen is
+ * created for that target.
+ *
+ * @param owner     The object that will own the acquired screens.
+ * @param wishList  Array of preferred screen IDs (currently ignored).
+ * @param wishCount Number of entries in @a wishList.
+ * @param target    Optional identifier for a remote screen target.
+ * @param force     Whether to force acquisition (currently unused).
+ * @param list      Output list that receives the acquired Screen objects.
+ * @return B_OK if at least one screen was acquired, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 ScreenManager::AcquireScreens(ScreenOwner* owner, int32* wishList,
 	int32 wishCount, const char* target, bool force, ScreenList& list)
@@ -158,6 +228,10 @@ ScreenManager::AcquireScreens(ScreenOwner* owner, int32* wishList,
 }
 
 
+/**
+ * @brief Releases all screens in @a list, making them available for other owners.
+ * @param list List of Screen objects to release.
+ */
 void
 ScreenManager::ReleaseScreens(ScreenList& list)
 {
@@ -176,6 +250,10 @@ ScreenManager::ReleaseScreens(ScreenList& list)
 }
 
 
+/**
+ * @brief Notifies the owner of @a screen that its configuration has changed.
+ * @param screen The Screen whose configuration changed.
+ */
 void
 ScreenManager::ScreenChanged(Screen* screen)
 {
@@ -189,6 +267,12 @@ ScreenManager::ScreenChanged(Screen* screen)
 }
 
 
+/**
+ * @brief Scans for and loads available graphics drivers.
+ *
+ * Currently loads a single AccelerantHWInterface. Multi-monitor support
+ * would require iterating through multiple drivers.
+ */
 void
 ScreenManager::_ScanDrivers()
 {
@@ -213,6 +297,15 @@ ScreenManager::_ScanDrivers()
 }
 
 
+/**
+ * @brief Creates a Screen for the given hardware interface and registers it.
+ *
+ * Ownership of @a interface transfers to the newly created Screen on success.
+ * If initialization fails, @a interface is deleted.
+ *
+ * @param interface The hardware interface to wrap in a Screen.
+ * @return Pointer to the newly added screen_item, or NULL on failure.
+ */
 ScreenManager::screen_item*
 ScreenManager::_AddHWInterface(HWInterface* interface)
 {
@@ -249,6 +342,10 @@ ScreenManager::_AddHWInterface(HWInterface* interface)
 }
 
 
+/**
+ * @brief Handles incoming BMessages, including node monitor notifications.
+ * @param message The message to process.
+ */
 void
 ScreenManager::MessageReceived(BMessage* message)
 {

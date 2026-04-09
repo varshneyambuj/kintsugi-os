@@ -1,7 +1,29 @@
 /*
- * Copyright 2005-2009, Axel Dörfler, axeld@pinc-software.de.
- * This file may be used under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   This file may be used under the terms of the MIT License.
  */
+
+/** @file ScreenConfigurations.cpp
+ *  @brief Stores and retrieves per-monitor screen configuration settings. */
 
 
 #include "ScreenConfigurations.h"
@@ -13,6 +35,9 @@
 #include <Message.h>
 
 
+/**
+ * @brief Constructs an empty ScreenConfigurations container.
+ */
 ScreenConfigurations::ScreenConfigurations()
 	:
 	fConfigurations(10)
@@ -20,11 +45,19 @@ ScreenConfigurations::ScreenConfigurations()
 }
 
 
+/**
+ * @brief Destroys the ScreenConfigurations container, freeing all stored configs.
+ */
 ScreenConfigurations::~ScreenConfigurations()
 {
 }
 
 
+/**
+ * @brief Returns the currently active configuration for the given screen ID.
+ * @param id The screen identifier to search for.
+ * @return Pointer to the current screen_configuration, or NULL if not found.
+ */
 screen_configuration*
 ScreenConfigurations::CurrentByID(int32 id) const
 {
@@ -39,6 +72,18 @@ ScreenConfigurations::CurrentByID(int32 id) const
 }
 
 
+/**
+ * @brief Finds the best-matching stored configuration for the given screen.
+ *
+ * When @a info is NULL, only the screen ID is used for matching. When monitor
+ * information is provided, vendor, name, product ID, serial number, and
+ * production date are scored to find the closest match.
+ *
+ * @param id          The screen identifier.
+ * @param info        Optional monitor information for more precise matching.
+ * @param _exactMatch If non-NULL, set to true when the serial number matches.
+ * @return Pointer to the best matching screen_configuration, or NULL.
+ */
 screen_configuration*
 ScreenConfigurations::BestFit(int32 id, const monitor_info* info,
 	bool* _exactMatch) const
@@ -102,6 +147,18 @@ ScreenConfigurations::BestFit(int32 id, const monitor_info* info,
 }
 
 
+/**
+ * @brief Stores or updates a screen configuration.
+ *
+ * If a matching configuration already exists and is an exact match (or has
+ * no monitor info), it is updated in place. Otherwise a new entry is created.
+ *
+ * @param id    The screen identifier.
+ * @param info  Optional monitor information (may be NULL).
+ * @param frame The screen's frame rectangle.
+ * @param mode  The active display mode.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails.
+ */
 status_t
 ScreenConfigurations::Set(int32 id, const monitor_info* info,
 	const BRect& frame, const display_mode& mode)
@@ -143,6 +200,11 @@ ScreenConfigurations::Set(int32 id, const monitor_info* info,
 }
 
 
+/**
+ * @brief Sets the brightness value for the configuration with the given ID.
+ * @param id         The screen identifier (currently applied to all configs).
+ * @param brightness The brightness value to store.
+ */
 void
 ScreenConfigurations::SetBrightness(int32 id, float brightness)
 {
@@ -153,6 +215,11 @@ ScreenConfigurations::SetBrightness(int32 id, float brightness)
 }
 
 
+/**
+ * @brief Returns the brightness for the first stored configuration.
+ * @param id The screen identifier (currently unused).
+ * @return The stored brightness value, or -1 if no configuration exists.
+ */
 float
 ScreenConfigurations::Brightness(int32 id)
 {
@@ -165,6 +232,10 @@ ScreenConfigurations::Brightness(int32 id)
 }
 
 
+/**
+ * @brief Removes and deletes the given configuration from the container.
+ * @param configuration The configuration to remove (may be NULL, which is a no-op).
+ */
 void
 ScreenConfigurations::Remove(screen_configuration* configuration)
 {
@@ -176,9 +247,15 @@ ScreenConfigurations::Remove(screen_configuration* configuration)
 }
 
 
-/*!	Stores all configurations as separate BMessages into the provided
-	\a settings container.
-*/
+/**
+ * @brief Stores all configurations as separate BMessages into @a settings.
+ *
+ * Each screen configuration is serialized into a child "screen" message within
+ * the provided container message.
+ *
+ * @param settings The BMessage that receives the serialized configurations.
+ * @return B_OK on success.
+ */
 status_t
 ScreenConfigurations::Store(BMessage& settings) const
 {
@@ -215,6 +292,15 @@ ScreenConfigurations::Store(BMessage& settings) const
 }
 
 
+/**
+ * @brief Restores configurations from a previously stored BMessage.
+ *
+ * All current configurations are discarded before loading. Entries with
+ * missing or invalid mandatory fields are silently skipped.
+ *
+ * @param settings The BMessage containing serialized screen configurations.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails during loading.
+ */
 status_t
 ScreenConfigurations::Restore(const BMessage& settings)
 {

@@ -1,12 +1,34 @@
 /*
- * Copyright 2001-2013, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Adi Oanca <adioanca@myrealbox.com>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Stephan Aßmus, <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2013, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Adi Oanca <adioanca@myrealbox.com>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Stephan Aßmus, <superstippi@gmx.de>
  */
+
+/** @file Screen.cpp
+ *  @brief Represents a physical display screen and manages its display modes. */
 
 
 #include "Screen.h"
@@ -23,6 +45,12 @@
 #include <stdio.h>
 
 
+/**
+ * @brief Computes the refresh frequency of a display mode in Hz.
+ * @param mode The display mode whose timing information is used.
+ * @return The refresh frequency rounded to one decimal place, or 0.0 if timing
+ *         product is zero.
+ */
 static float
 get_mode_frequency(const display_mode& mode)
 {
@@ -39,6 +67,11 @@ get_mode_frequency(const display_mode& mode)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a Screen backed by the given hardware interface.
+ * @param interface The HWInterface that drives this screen.
+ * @param id Numeric identifier assigned to this screen.
+ */
 Screen::Screen(::HWInterface *interface, int32 id)
 	:
 	fID(id),
@@ -48,6 +81,9 @@ Screen::Screen(::HWInterface *interface, int32 id)
 }
 
 
+/**
+ * @brief Constructs an uninitialized Screen with no hardware interface.
+ */
 Screen::Screen()
 	:
 	fID(-1)
@@ -55,15 +91,24 @@ Screen::Screen()
 }
 
 
+/**
+ * @brief Destroys the Screen, shutting down the underlying hardware interface.
+ */
 Screen::~Screen()
 {
 	Shutdown();
 }
 
 
-/*! Finds the mode in the mode list that is closest to the mode specified.
-	As long as the mode list is not empty, this method will always succeed.
-*/
+/**
+ * @brief Initializes the screen by initializing the hardware interface.
+ *
+ * Finds the mode in the mode list that is closest to the mode specified.
+ * As long as the mode list is not empty, this method will always succeed.
+ *
+ * @return B_OK on success, B_NO_INIT if no hardware interface is set, or
+ *         another error code from the hardware interface.
+ */
 status_t
 Screen::Initialize()
 {
@@ -78,6 +123,9 @@ Screen::Initialize()
 }
 
 
+/**
+ * @brief Shuts down the hardware interface associated with this screen.
+ */
 void
 Screen::Shutdown()
 {
@@ -86,6 +134,15 @@ Screen::Shutdown()
 }
 
 
+/**
+ * @brief Sets the display mode to the given mode structure.
+ *
+ * If the requested mode is identical to the current mode, the call is a no-op.
+ * Overlay bitmaps are suspended during the mode switch.
+ *
+ * @param mode The desired display mode.
+ * @return B_OK on success, or an error code from the hardware interface.
+ */
 status_t
 Screen::SetMode(const display_mode& mode)
 {
@@ -105,6 +162,14 @@ Screen::SetMode(const display_mode& mode)
 }
 
 
+/**
+ * @brief Sets the display mode by individual parameters.
+ * @param width  Desired virtual width in pixels.
+ * @param height Desired virtual height in pixels.
+ * @param colorSpace Desired color space identifier.
+ * @param timing Display timing parameters.
+ * @return B_OK on success, or an error code from the hardware interface.
+ */
 status_t
 Screen::SetMode(uint16 width, uint16 height, uint32 colorSpace,
 	const display_timing& timing)
@@ -122,6 +187,21 @@ Screen::SetMode(uint16 width, uint16 height, uint32 colorSpace,
 }
 
 
+/**
+ * @brief Selects and applies the best matching mode from the hardware mode list.
+ *
+ * When @a strict is false and no exact match is found, the first available mode
+ * is used as a fallback. The pixel clock may be adjusted to match the requested
+ * frequency.
+ *
+ * @param width      Desired display width in pixels (hard constraint).
+ * @param height     Desired display height in pixels.
+ * @param colorSpace Desired color space.
+ * @param frequency  Desired refresh frequency in Hz.
+ * @param strict     If true, fail when no matching mode is found.
+ * @return B_OK on success, B_ERROR if no suitable mode is found in strict mode,
+ *         or an error code from the hardware interface.
+ */
 status_t
 Screen::SetBestMode(uint16 width, uint16 height, uint32 colorSpace,
 	float frequency, bool strict)
@@ -177,6 +257,10 @@ Screen::SetBestMode(uint16 width, uint16 height, uint32 colorSpace,
 }
 
 
+/**
+ * @brief Sets the screen to the hardware's preferred mode.
+ * @return B_OK on success, or an error code if the preferred mode is unavailable.
+ */
 status_t
 Screen::SetPreferredMode()
 {
@@ -189,6 +273,10 @@ Screen::SetPreferredMode()
 }
 
 
+/**
+ * @brief Retrieves the current display mode as a display_mode structure.
+ * @param mode Output parameter filled with the current display mode.
+ */
 void
 Screen::GetMode(display_mode& mode) const
 {
@@ -196,6 +284,13 @@ Screen::GetMode(display_mode& mode) const
 }
 
 
+/**
+ * @brief Retrieves the current display mode as individual parameters.
+ * @param width      Receives the current virtual width in pixels.
+ * @param height     Receives the current virtual height in pixels.
+ * @param colorspace Receives the current color space.
+ * @param frequency  Receives the current refresh frequency in Hz.
+ */
 void
 Screen::GetMode(uint16 &width, uint16 &height, uint32 &colorspace,
 	float &frequency) const
@@ -210,6 +305,11 @@ Screen::GetMode(uint16 &width, uint16 &height, uint32 &colorspace,
 }
 
 
+/**
+ * @brief Retrieves monitor information from the hardware interface.
+ * @param info Output parameter filled with the monitor information.
+ * @return B_OK on success, or an error code if the information is unavailable.
+ */
 status_t
 Screen::GetMonitorInfo(monitor_info& info) const
 {
@@ -217,6 +317,10 @@ Screen::GetMonitorInfo(monitor_info& info) const
 }
 
 
+/**
+ * @brief Sets the frame rectangle of this screen (multi-monitor placeholder).
+ * @param rect The desired frame rectangle (currently unused).
+ */
 void
 Screen::SetFrame(const BRect& rect)
 {
@@ -224,6 +328,10 @@ Screen::SetFrame(const BRect& rect)
 }
 
 
+/**
+ * @brief Returns the frame rectangle of this screen in screen coordinates.
+ * @return A BRect covering the full virtual display area, origin at (0, 0).
+ */
 BRect
 Screen::Frame() const
 {
@@ -234,6 +342,10 @@ Screen::Frame() const
 }
 
 
+/**
+ * @brief Returns the current color space of the screen.
+ * @return The color_space value corresponding to the active display mode.
+ */
 color_space
 Screen::ColorSpace() const
 {
@@ -244,10 +356,22 @@ Screen::ColorSpace() const
 }
 
 
-/*!	\brief Returns the mode that matches the given criteria best.
-	The "width" argument is the only hard argument, the rest will be adapted
-	as needed.
-*/
+/**
+ * @brief Returns the mode that matches the given criteria best.
+ *
+ * The "width" argument is the only hard argument; the rest will be adapted
+ * as needed. A composite score is computed for each candidate mode and the
+ * mode with the lowest score is selected.
+ *
+ * @param modes      Array of available display modes.
+ * @param count      Number of entries in @a modes.
+ * @param width      Required display width (hard constraint).
+ * @param height     Preferred display height.
+ * @param colorSpace Preferred color space.
+ * @param frequency  Preferred refresh frequency in Hz.
+ * @return Index into @a modes of the best match, or -1 if no mode has the
+ *         required width.
+ */
 int32
 Screen::_FindBestMode(const display_mode* modes, uint32 count,
 	uint16 width, uint16 height, uint32 colorSpace, float frequency) const

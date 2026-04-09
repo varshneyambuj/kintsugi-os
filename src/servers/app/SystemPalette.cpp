@@ -1,11 +1,33 @@
 /*
- * Copyright 2001-2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Stefano Ceccherini (burton666@libero.it)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Stefano Ceccherini (burton666@libero.it)
  */
+
+/** @file SystemPalette.cpp
+ *  @brief Initialization and access functions for the system 8-bit color palette. */
 
 //! Methods to initialize and get the system color_map.
 
@@ -22,20 +44,20 @@
 static color_map sColorMap;
 
 
-// color_distance
-/*!	\brief Returns the "distance" between two RGB colors.
-
-	This functions defines an metric on the RGB color space. The distance
-	between two colors is 0, if and only if the colors are equal.
-
-	\param red1 Red component of the first color.
-	\param green1 Green component of the first color.
-	\param blue1 Blue component of the first color.
-	\param red2 Red component of the second color.
-	\param green2 Green component of the second color.
-	\param blue2 Blue component of the second color.
-	\return The distance between the given colors.
-*/
+/**
+ * @brief Returns the "distance" between two RGB colors.
+ *
+ * Defines a perceptual metric on the RGB color space using psycho-visual
+ * weights. The distance is 0 if and only if the two colors are identical.
+ *
+ * @param red1   Red component of the first color.
+ * @param green1 Green component of the first color.
+ * @param blue1  Blue component of the first color.
+ * @param red2   Red component of the second color.
+ * @param green2 Green component of the second color.
+ * @param blue2  Blue component of the second color.
+ * @return Perceptual distance between the two colors (larger = more different).
+ */
 static inline uint32
 color_distance(uint8 red1, uint8 green1, uint8 blue1,
 			   uint8 red2, uint8 green2, uint8 blue2)
@@ -54,6 +76,12 @@ color_distance(uint8 red1, uint8 green1, uint8 blue1,
 }
 
 
+/**
+ * @brief Finds the palette index whose color is closest to @a color.
+ * @param color   The target RGB color.
+ * @param palette Array of 256 rgb_color entries to search.
+ * @return The palette index (0–255) of the closest matching color.
+ */
 static inline uint8
 FindClosestColor(const rgb_color &color, const rgb_color *palette)
 {
@@ -72,6 +100,15 @@ FindClosestColor(const rgb_color &color, const rgb_color *palette)
 }
 
 
+/**
+ * @brief Returns the bitwise inverse of @a color.
+ *
+ * (255, 255, 255) is treated as a special case and returned unchanged, matching
+ * original BeOS behavior.
+ *
+ * @param color The source RGB color.
+ * @return The inverted color.
+ */
 static inline rgb_color
 InvertColor(const rgb_color &color)
 {
@@ -91,6 +128,16 @@ InvertColor(const rgb_color &color)
 }
 
 
+/**
+ * @brief Fills @a map's color list, index map, and inversion map from @a palette.
+ *
+ * The index_map is a 32768-entry table mapping 15-bit (5-5-5) RGB values to
+ * the closest palette index. The inversion_map maps each palette entry to the
+ * closest entry to its inverted color.
+ *
+ * @param palette Array of 256 rgb_color entries.
+ * @param map     Output color_map structure to populate.
+ */
 static void
 FillColorMap(const rgb_color *palette, color_map *map)
 {
@@ -115,8 +162,11 @@ FillColorMap(const rgb_color *palette, color_map *map)
 }
 
 
-/*!	\brief Initializes the system color_map.
-*/
+/**
+ * @brief Initializes the system color_map from the built-in system palette.
+ *
+ * Must be called once during system startup before any 8-bit color operations.
+ */
 void
 InitializeColorMap()
 {
@@ -124,9 +174,10 @@ InitializeColorMap()
 }
 
 
-/*!	\brief Returns a pointer to the system palette.
-	\return A pointer to the system palette.
-*/
+/**
+ * @brief Returns a pointer to the 256-entry system palette.
+ * @return Pointer to the system palette's rgb_color array.
+ */
 const rgb_color *
 SystemPalette()
 {
@@ -134,9 +185,10 @@ SystemPalette()
 }
 
 
-/*!	\brief Returns a pointer to the system color_map structure.
-	\return A pointer to the system color_map.
-*/
+/**
+ * @brief Returns a pointer to the system color_map structure.
+ * @return Pointer to the global color_map including index and inversion maps.
+ */
 const color_map *
 SystemColorMap()
 {

@@ -1,20 +1,42 @@
 /*
- * Copyright 2001-2019, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Adrian Oanca <adioanca@gmail.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Stefano Ceccherini <stefano.ceccherini@gmail.com>
- *		Axel Dörfler <axeld@pinc-software.de>
- *		Artur Wyszynski <harakash@gmail.com>
- *		Philippe Saint-Pierre <stpere@gmail.com>
- *		Brecht Machiels <brecht@mos6581.org>
- *		Julian Harnath <julian.harnath@rwth-aachen.de>
- *		Joseph Groover <looncraz@looncraz.net>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2019, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Adrian Oanca <adioanca@gmail.com>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Stefano Ceccherini <stefano.ceccherini@gmail.com>
+ *       Axel Dörfler <axeld@pinc-software.de>
+ *       Artur Wyszynski <harakash@gmail.com>
+ *       Philippe Saint-Pierre <stpere@gmail.com>
+ *       Brecht Machiels <brecht@mos6581.org>
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
+ *       Joseph Groover <looncraz@looncraz.net>
  */
 
+
+/** @file ServerWindow.cpp
+    @brief Server-side peer of BWindow; dispatches all BWindow protocol messages to Desktop, Window, and View. */
 
 /*!	\class ServerWindow
 
@@ -153,9 +175,17 @@ compare_message_profiles(const void* _a, const void* _b)
 //	#pragma mark -
 
 
-/*!	Sets up the basic BWindow counterpart - you have to call Init() before
-	you can actually use it, though.
-*/
+/** @brief Constructs the basic BWindow server peer.
+ *
+ * Initialises internal state but does not create the Window object or message
+ * port. You must call Init() before the ServerWindow is usable.
+ *
+ * @param title       Title string for the window; NULL or empty yields "Unnamed Window".
+ * @param app         The owning ServerApp.
+ * @param clientPort  The reply port for sending messages to the BWindow.
+ * @param looperPort  The BWindow's looper port.
+ * @param clientToken Handler token of the BWindow within its looper.
+ */
 ServerWindow::ServerWindow(const char* title, ServerApp* app,
 		port_id clientPort, port_id looperPort, int32 clientToken)
 	:
@@ -195,8 +225,11 @@ ServerWindow::ServerWindow(const char* title, ServerApp* app,
 }
 
 
-/*! Tears down all connections the main app_server objects, and deletes some
-	internals.
+/** @brief Destructor — tears down all connections to app_server objects.
+ *
+ * Removes the server token, detaches from the desktop and owning application,
+ * frees the title string, deletes the message port and death semaphore.
+ * Optionally prints profiling data if PROFILE_MESSAGE_LOOP is enabled.
 */
 ServerWindow::~ServerWindow()
 {
@@ -258,6 +291,19 @@ ServerWindow::~ServerWindow()
 }
 
 
+/** @brief Initialises the ServerWindow and creates its associated Window object.
+ *
+ * Registers with the owning application, creates the message port, and calls
+ * MakeWindow() to produce the Window instance. If the window is not offscreen
+ * it is immediately added to the Desktop.
+ *
+ * @param frame     Initial frame rectangle for the window.
+ * @param look      Visual decoration style (window_look).
+ * @param feel      Window behavior category (window_feel).
+ * @param flags     Miscellaneous window flags.
+ * @param workspace Bitmask of workspaces the window should appear in.
+ * @return          B_OK on success, B_NO_MEMORY if allocation failed.
+ */
 status_t
 ServerWindow::Init(BRect frame, window_look look, window_feel feel,
 	uint32 flags, uint32 workspace)
@@ -295,11 +341,13 @@ ServerWindow::Init(BRect frame, window_look look, window_feel feel,
 }
 
 
-/*!	Returns the ServerWindow's Window, if it exists and has been
-	added to the Desktop already.
-	In other words, you cannot assume this method will always give you
-	a valid pointer.
-*/
+/** @brief Returns the Window object only if it has been added to the Desktop.
+ *
+ * The Window may not yet exist (Init() not called) or may have been removed;
+ * callers must not assume this always returns a valid pointer.
+ *
+ * @return Pointer to the associated Window, or NULL if not yet on the Desktop.
+ */
 Window*
 ServerWindow::Window() const
 {
@@ -310,6 +358,11 @@ ServerWindow::Window() const
 }
 
 
+/** @brief Prepares the ServerWindow for quitting by hiding it first.
+ *
+ * If called from the looper thread, hides the window directly; otherwise
+ * posts AS_INTERNAL_HIDE_WINDOW so the looper thread handles it.
+ */
 void
 ServerWindow::_PrepareQuit()
 {
@@ -323,6 +376,14 @@ ServerWindow::_PrepareQuit()
 }
 
 
+/** @brief Fills \a name with the looper thread name for this window.
+ *
+ * Formatted as "w:<team>:<title>". Falls back to "Unnamed Window" if the
+ * title is NULL or empty.
+ *
+ * @param name   Buffer to receive the null-terminated name string.
+ * @param length Size of the buffer in bytes.
+ */
 void
 ServerWindow::_GetLooperName(char* name, size_t length)
 {
@@ -334,8 +395,11 @@ ServerWindow::_GetLooperName(char* name, size_t length)
 }
 
 
-/*! Shows the window's Window.
-*/
+/** @brief Shows the window's underlying Window object on the desktop.
+ *
+ * Caller must not hold the single-window lock; this method unlocks and
+ * relocks around the Desktop::ShowWindow() call to avoid deadlocks.
+ */
 void
 ServerWindow::_Show()
 {
@@ -357,9 +421,11 @@ ServerWindow::_Show()
 }
 
 
-/*! Hides the window's Window. You need to have all windows locked when
-	calling this function.
-*/
+/** @brief Hides the window's underlying Window object on the desktop.
+ *
+ * The caller must hold all windows locked before calling this function.
+ * Unlocks and relocks the single-window lock around Desktop::HideWindow().
+ */
 void
 ServerWindow::_Hide()
 {
@@ -374,6 +440,11 @@ ServerWindow::_Hide()
 }
 
 
+/** @brief Requests an asynchronous redraw of this window.
+ *
+ * Posts an AS_REDRAW message (failure is non-fatal) and increments the
+ * pending-redraw counter atomically.
+ */
 void
 ServerWindow::RequestRedraw()
 {
@@ -386,6 +457,13 @@ ServerWindow::RequestRedraw()
 }
 
 
+/** @brief Updates the window title and renames the looper thread accordingly.
+ *
+ * Duplicates the string, renames the thread if it is running, and notifies
+ * the Desktop. If memory allocation fails the old title is preserved.
+ *
+ * @param newTitle New title string; NULL is treated as an empty string.
+ */
 void
 ServerWindow::SetTitle(const char* newTitle)
 {
@@ -414,7 +492,10 @@ ServerWindow::SetTitle(const char* newTitle)
 }
 
 
-//! Requests that the ServerWindow's BWindow quit
+/** @brief Sends a B_QUIT_REQUESTED message to the client BWindow.
+ *
+ * Only sends a port message; no lock must be held by the caller.
+ */
 void
 ServerWindow::NotifyQuitRequested()
 {
@@ -427,6 +508,13 @@ ServerWindow::NotifyQuitRequested()
 }
 
 
+/** @brief Sends a minimize/restore request to the client BWindow.
+ *
+ * Only affects normal windows (B_NORMAL_WINDOW_FEEL). The client is
+ * responsible for carrying out the actual minimization.
+ *
+ * @param minimize true to request minimization, false to request restore.
+ */
 void
 ServerWindow::NotifyMinimize(bool minimize)
 {
@@ -443,7 +531,10 @@ ServerWindow::NotifyMinimize(bool minimize)
 }
 
 
-//! Sends a message to the client to perform a Zoom
+/** @brief Sends a B_ZOOM message to the client BWindow requesting a zoom action.
+ *
+ * Only sends a port message; no lock must be held by the caller.
+ */
 void
 ServerWindow::NotifyZoom()
 {
@@ -454,6 +545,13 @@ ServerWindow::NotifyZoom()
 }
 
 
+/** @brief Populates a window_info structure with current window state.
+ *
+ * Fills team, server token, thread, client token, looper port, workspaces,
+ * layer, feel, flags, frame coordinates, show/hide level, and minimized state.
+ *
+ * @param info Output structure to be populated.
+ */
 void
 ServerWindow::GetInfo(window_info& info)
 {
@@ -490,6 +588,11 @@ ServerWindow::GetInfo(window_info& info)
 }
 
 
+/** @brief Resynchronises the drawing state for the current view.
+ *
+ * Pushes the current view's draw state back to the drawing engine so that
+ * subsequent drawing operations use up-to-date parameters.
+ */
 void
 ServerWindow::ResyncDrawState()
 {
@@ -497,6 +600,16 @@ ServerWindow::ResyncDrawState()
 }
 
 
+/** @brief Reads a View description from the link and instantiates it.
+ *
+ * Reads token, name, frame, scrolling offset, resize mask, event mask,
+ * event options, flags, hidden state, view colour, and parent token from
+ * the link. Creates a WorkspacesView or plain View accordingly.
+ *
+ * @param link    LinkReceiver positioned at the view descriptor data.
+ * @param _parent If non-NULL, receives the parent View looked up by token.
+ * @return        Newly created View, or NULL on failure.
+ */
 View*
 ServerWindow::_CreateView(BPrivate::LinkReceiver& link, View** _parent)
 {
@@ -591,9 +704,16 @@ fDesktop->LockAllWindows();
 }
 
 
-/*!	Dispatches all window messages, and those view messages that
-	don't need a valid fCurrentView (ie. view creation).
-*/
+/** @brief Dispatches window-level messages and view messages that do not require a current view.
+ *
+ * Handles window show/hide, minimise, activate, title change, view creation
+ * and deletion, drawing state management, and other BWindow protocol messages.
+ * View-specific drawing operations that require a valid fCurrentView are
+ * handled by _DispatchViewMessage().
+ *
+ * @param code Message identifier code.
+ * @param link LinkReceiver positioned at the start of the message payload.
+ */
 void
 ServerWindow::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 {
@@ -1199,9 +1319,15 @@ ServerWindow::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 }
 
 
-/*!
-	Dispatches all view messages that need a valid fCurrentView.
-*/
+/** @brief Dispatches view messages that require a valid current view (fCurrentView).
+ *
+ * Checks picture recording first via _DispatchPictureMessage(), then handles
+ * scrolling, invalidation, clipping, view property changes, font settings, and
+ * other view-level drawing operations.
+ *
+ * @param code Message identifier code.
+ * @param link LinkReceiver positioned at the start of the message payload.
+ */
 void
 ServerWindow::_DispatchViewMessage(int32 code,
 	BPrivate::LinkReceiver &link)
@@ -2471,10 +2597,15 @@ fDesktop->LockSingleWindow();
 }
 
 
-/*!	Dispatches all view drawing messages.
-	The desktop clipping must be read locked when entering this method.
-	Requires a valid fCurrentView.
-*/
+/** @brief Dispatches all view-level drawing messages.
+ *
+ * The desktop clipping must be read-locked when entering this method.
+ * Requires a valid fCurrentView. Handles primitive drawing operations such as
+ * lines, shapes, bitmaps, strings, gradients, and state push/pop.
+ *
+ * @param code Message identifier code for the drawing operation.
+ * @param link LinkReceiver positioned at the start of the drawing payload.
+ */
 void
 ServerWindow::_DispatchViewDrawingMessage(int32 code,
 	BPrivate::LinkReceiver &link)
@@ -3275,6 +3406,16 @@ ServerWindow::_DispatchViewDrawingMessage(int32 code,
 }
 
 
+/** @brief Intercepts drawing messages and records them into a ServerPicture if one is active.
+ *
+ * If the current view is not recording a picture, returns false immediately so
+ * normal drawing dispatch can proceed. When recording, all supported drawing
+ * operations are replayed into the picture's recording buffer.
+ *
+ * @param code Message identifier code.
+ * @param link LinkReceiver positioned at the start of the message payload.
+ * @return true if the message was consumed by picture recording, false otherwise.
+ */
 bool
 ServerWindow::_DispatchPictureMessage(int32 code, BPrivate::LinkReceiver& link)
 {
@@ -4213,10 +4354,13 @@ ServerWindow::_DispatchPictureMessage(int32 code, BPrivate::LinkReceiver& link)
 }
 
 
-/*!	\brief Message-dispatching loop for the ServerWindow
-
-	Watches the ServerWindow's message port and dispatches as necessary
-*/
+/** @brief Main message-dispatching loop for the ServerWindow thread.
+ *
+ * Sends the initial handshake (message port, frame, size limits) to the
+ * BWindow client, then reads messages from the port and dispatches them via
+ * _DispatchMessage(), _DispatchViewMessage(), or _DispatchViewDrawingMessage()
+ * depending on the message code and locking requirements.
+ */
 void
 ServerWindow::_MessageLooper()
 {
@@ -4387,6 +4531,13 @@ ServerWindow::_MessageLooper()
 }
 
 
+/** @brief Notifies the BWindow client that the screen configuration has changed.
+ *
+ * Forwards the screen-changed message to the client and, if this is a
+ * full-screen direct window, resizes it to fill the new screen geometry.
+ *
+ * @param message The B_SCREEN_CHANGED message describing the new configuration.
+ */
 void
 ServerWindow::ScreenChanged(const BMessage* message)
 {
@@ -4397,6 +4548,13 @@ ServerWindow::ScreenChanged(const BMessage* message)
 }
 
 
+/** @brief Sends a BMessage directly to a handler in the client BWindow's looper.
+ *
+ * @param msg    The message to send.
+ * @param target Handler token to target; defaults to the BWindow's own token
+ *               when B_NULL_TOKEN is passed.
+ * @return B_OK on success, or an error code if delivery failed.
+ */
 status_t
 ServerWindow::SendMessageToClient(const BMessage* msg, int32 target) const
 {
@@ -4410,6 +4568,19 @@ ServerWindow::SendMessageToClient(const BMessage* msg, int32 target) const
 }
 
 
+/** @brief Factory method that creates the Window object for this ServerWindow.
+ *
+ * The default implementation creates a standard Window using the desktop's
+ * hardware-interface drawing engine. Offscreen subclasses override this.
+ *
+ * @param frame     Initial window frame rectangle.
+ * @param name      Window title string.
+ * @param look      Visual decoration style.
+ * @param feel      Window behaviour category.
+ * @param flags     Miscellaneous window flags.
+ * @param workspace Workspace bitmask.
+ * @return Newly allocated Window, or NULL on allocation failure.
+ */
 Window*
 ServerWindow::MakeWindow(BRect frame, const char* name,
 	window_look look, window_feel feel, uint32 flags, uint32 workspace)
@@ -4421,6 +4592,15 @@ ServerWindow::MakeWindow(BRect frame, const char* name,
 }
 
 
+/** @brief Updates the DirectWindow connection state after buffer or driver changes.
+ *
+ * Requires the desktop window lock to be held. If the state update fails
+ * (e.g. client semaphore timeout), the DirectWindowInfo is discarded and the
+ * error is logged.
+ *
+ * @param bufferState New direct_buffer_state bitmask.
+ * @param driverState New direct_driver_state bitmask.
+ */
 void
 ServerWindow::HandleDirectConnection(int32 bufferState, int32 driverState)
 {
@@ -4455,6 +4635,13 @@ ServerWindow::HandleDirectConnection(int32 bufferState, int32 driverState)
 }
 
 
+/** @brief Sets the current view and invalidates the cached drawing region.
+ *
+ * Updates the drawing engine's draw state to match the new view's current
+ * state. No-ops if the view is already current.
+ *
+ * @param view The View to make current; may be NULL to clear the current view.
+ */
 void
 ServerWindow::_SetCurrentView(View* view)
 {
@@ -4489,6 +4676,13 @@ ServerWindow::_SetCurrentView(View* view)
 }
 
 
+/** @brief Pushes the given view's draw state to the drawing engine.
+ *
+ * Computes the screen-space pen origin and calls DrawingEngine::SetDrawState()
+ * to synchronise the engine with the view's current drawing parameters.
+ *
+ * @param view The View whose state should be applied; may be NULL (no-op).
+ */
 void
 ServerWindow::_UpdateDrawState(View* view)
 {
@@ -4510,6 +4704,11 @@ ServerWindow::_UpdateDrawState(View* view)
 }
 
 
+/** @brief Refreshes the cached drawing region for the current view if it is stale.
+ *
+ * Calls Window::GetEffectiveDrawingRegion() only when the cached region is
+ * invalid or the window's drawing region has changed since the last call.
+ */
 void
 ServerWindow::_UpdateCurrentDrawingRegion()
 {
@@ -4521,6 +4720,15 @@ ServerWindow::_UpdateCurrentDrawingRegion()
 }
 
 
+/** @brief Returns whether the given message code requires the all-windows lock.
+ *
+ * Certain operations (title change, subset management, feel/look changes,
+ * workspace operations, etc.) must be performed with the global window lock
+ * held rather than the single-window lock.
+ *
+ * @param code Message code to test.
+ * @return true if the all-windows lock is required, false otherwise.
+ */
 bool
 ServerWindow::_MessageNeedsAllWindowsLocked(uint32 code) const
 {
@@ -4552,6 +4760,7 @@ ServerWindow::_MessageNeedsAllWindowsLocked(uint32 code) const
 }
 
 
+/** @brief Resizes and repositions the window to fill its current screen. */
 void
 ServerWindow::_ResizeToFullScreen()
 {
@@ -4575,6 +4784,14 @@ ServerWindow::_ResizeToFullScreen()
 }
 
 
+/** @brief Enables BDirectWindow access for this window.
+ *
+ * Allocates a DirectWindowInfo structure. Fails if the hardware interface does
+ * not provide a front buffer or if direct window mode is already active.
+ *
+ * @return B_OK on success, B_UNSUPPORTED if the driver does not support direct
+ *         window mode, B_NO_MEMORY on allocation failure, or another error code.
+ */
 status_t
 ServerWindow::_EnableDirectWindowMode()
 {
@@ -4603,6 +4820,14 @@ ServerWindow::_EnableDirectWindowMode()
 }
 
 
+/** @brief Enables or disables full-screen mode for a BDirectWindow.
+ *
+ * When enabling, hides the cursor, saves the original frame, and resizes the
+ * window to cover the entire screen. When disabling, restores the original
+ * frame and shows the cursor again. Also sets the window feel to kWindowScreenFeel.
+ *
+ * @param enable true to enter full-screen mode, false to exit it.
+ */
 void
 ServerWindow::_DirectWindowSetFullScreen(bool enable)
 {

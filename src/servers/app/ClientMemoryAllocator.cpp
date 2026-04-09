@@ -1,11 +1,32 @@
 /*
- * Copyright 2006-2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2013, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
+/** @file ClientMemoryAllocator.cpp
+ *  @brief Pool-based memory allocator that serves shared areas to client applications. */
 
 /*!	This class manages a pool of areas for one client. The client is supposed
 	to clone these areas into its own address space to access the data.
@@ -33,6 +54,10 @@ typedef block_list::Iterator block_iterator;
 typedef chunk_list::Iterator chunk_iterator;
 
 
+/**
+ * @brief Constructs a ClientMemoryAllocator for the given application.
+ * @param application The ServerApp that owns this allocator.
+ */
 ClientMemoryAllocator::ClientMemoryAllocator(ServerApp* application)
 	:
 	fApplication(application),
@@ -41,6 +66,9 @@ ClientMemoryAllocator::ClientMemoryAllocator(ServerApp* application)
 }
 
 
+/**
+ * @brief Destroys the allocator, deleting all areas and freeing all metadata.
+ */
 ClientMemoryAllocator::~ClientMemoryAllocator()
 {
 	// delete all areas and chunks/blocks that are still allocated
@@ -64,6 +92,17 @@ ClientMemoryAllocator::~ClientMemoryAllocator()
 }
 
 
+/**
+ * @brief Allocates a block of @a size bytes from the managed area pool.
+ *
+ * If no suitable free block exists a new chunk (area) is created or an
+ * existing one is resized. A detached allocator (fApplication == NULL)
+ * always returns NULL.
+ *
+ * @param size     Number of bytes to allocate.
+ * @param _address Output parameter set to the block descriptor on success.
+ * @return Pointer to the allocated memory, or NULL on failure.
+ */
 void*
 ClientMemoryAllocator::Allocate(size_t size, block** _address)
 {
@@ -121,6 +160,14 @@ ClientMemoryAllocator::Allocate(size_t size, block** _address)
 }
 
 
+/**
+ * @brief Returns a previously allocated block to the free pool.
+ *
+ * Adjacent free blocks within the same chunk are merged. If the chunk becomes
+ * completely free it is deleted and the area is released.
+ *
+ * @param freeBlock The block descriptor to free (NULL is silently ignored).
+ */
 void
 ClientMemoryAllocator::Free(block* freeBlock)
 {
@@ -189,6 +236,12 @@ ClientMemoryAllocator::Free(block* freeBlock)
 }
 
 
+/**
+ * @brief Detaches this allocator from its owning application.
+ *
+ * After detaching, no further allocations are permitted, but existing
+ * allocations remain valid.
+ */
 void
 ClientMemoryAllocator::Detach()
 {
@@ -197,6 +250,9 @@ ClientMemoryAllocator::Detach()
 }
 
 
+/**
+ * @brief Prints a debug dump of all chunks and free blocks to the kernel log.
+ */
 void
 ClientMemoryAllocator::Dump()
 {
@@ -223,6 +279,16 @@ ClientMemoryAllocator::Dump()
 }
 
 
+/**
+ * @brief Creates or extends a chunk to satisfy an allocation of @a size bytes.
+ *
+ * The size is rounded up to a multiple of B_PAGE_SIZE. Existing chunks are
+ * tried for in-place resize first; if none can be resized a new area is
+ * created (minimum 32 pages).
+ *
+ * @param size Minimum number of bytes required.
+ * @return A free block covering the newly available memory, or NULL on failure.
+ */
 struct block*
 ClientMemoryAllocator::_AllocateChunk(size_t size)
 {
@@ -308,6 +374,9 @@ ClientMemoryAllocator::_AllocateChunk(size_t size)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an unattached ClientMemory object.
+ */
 ClientMemory::ClientMemory()
 	:
 	fAllocator(NULL),
@@ -316,6 +385,9 @@ ClientMemory::ClientMemory()
 }
 
 
+/**
+ * @brief Destroys the ClientMemory, freeing its block if one was allocated.
+ */
 ClientMemory::~ClientMemory()
 {
 	if (fAllocator != NULL) {
@@ -326,6 +398,12 @@ ClientMemory::~ClientMemory()
 }
 
 
+/**
+ * @brief Allocates @a size bytes from the given allocator.
+ * @param allocator The ClientMemoryAllocator to allocate from.
+ * @param size      Number of bytes to allocate.
+ * @return Pointer to the allocated memory, or NULL on failure.
+ */
 void*
 ClientMemory::Allocate(ClientMemoryAllocator* allocator, size_t size)
 {
@@ -335,6 +413,10 @@ ClientMemory::Allocate(ClientMemoryAllocator* allocator, size_t size)
 }
 
 
+/**
+ * @brief Returns the area ID that contains this allocation.
+ * @return The area_id, or B_ERROR if no allocation has been made.
+ */
 area_id
 ClientMemory::Area()
 {
@@ -344,6 +426,10 @@ ClientMemory::Area()
 }
 
 
+/**
+ * @brief Returns a pointer to the allocated memory.
+ * @return Pointer to the base of the allocation, or 0 if unallocated.
+ */
 uint8*
 ClientMemory::Address()
 {
@@ -353,6 +439,10 @@ ClientMemory::Address()
 }
 
 
+/**
+ * @brief Returns the byte offset of this allocation from the start of its area.
+ * @return The offset in bytes, or 0 if unallocated.
+ */
 uint32
 ClientMemory::AreaOffset()
 {
@@ -369,6 +459,9 @@ static BLocker sLocker("ClonedAreaMemory allocator");
 static BPrivate::ServerMemoryAllocator sClonedAreaMemoryAllocator;
 
 
+/**
+ * @brief Constructs an unattached ClonedAreaMemory object.
+ */
 ClonedAreaMemory::ClonedAreaMemory()
 	:
 	fArea(-1),
@@ -379,6 +472,9 @@ ClonedAreaMemory::ClonedAreaMemory()
 }
 
 
+/**
+ * @brief Destroys the ClonedAreaMemory, removing the cloned area from the allocator.
+ */
 ClonedAreaMemory::~ClonedAreaMemory()
 {
 	BAutolock locker(sLocker);
@@ -386,6 +482,12 @@ ClonedAreaMemory::~ClonedAreaMemory()
 }
 
 
+/**
+ * @brief Clones @a area into the server's address space and returns a pointer to it.
+ * @param area   The area to clone.
+ * @param offset Byte offset within the area to use as the effective base.
+ * @return Pointer to the cloned memory at @a offset, or NULL on failure.
+ */
 void*
 ClonedAreaMemory::Clone(area_id area, uint32 offset)
 {
@@ -399,6 +501,10 @@ ClonedAreaMemory::Clone(area_id area, uint32 offset)
 }
 
 
+/**
+ * @brief Returns the cloned area ID.
+ * @return The area_id of the cloned area.
+ */
 area_id
 ClonedAreaMemory::Area()
 {
@@ -406,6 +512,10 @@ ClonedAreaMemory::Area()
 }
 
 
+/**
+ * @brief Returns a pointer to the cloned memory at the stored offset.
+ * @return Pointer to fBase + fOffset.
+ */
 uint8*
 ClonedAreaMemory::Address()
 {
@@ -413,6 +523,10 @@ ClonedAreaMemory::Address()
 }
 
 
+/**
+ * @brief Returns the byte offset within the cloned area.
+ * @return The stored offset.
+ */
 uint32
 ClonedAreaMemory::AreaOffset()
 {

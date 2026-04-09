@@ -1,10 +1,32 @@
 /*
- * Copyright 2001-2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
  */
+
+/** @file CursorSet.cpp
+ *  @brief Container for a named set of cursor bitmaps associated with system cursor IDs. */
 
 
 #include "CursorSet.h"
@@ -22,10 +44,10 @@
 #include <new>
 
 
-/*!
-	\brief Constructor
-	\name Name of the cursor set.
-*/
+/**
+ * @brief Constructs a CursorSet with the given name.
+ * @param name Name of the cursor set. "Untitled" is used when @a name is NULL.
+ */
 CursorSet::CursorSet(const char *name)
 	: BMessage()
 {
@@ -33,15 +55,12 @@ CursorSet::CursorSet(const char *name)
 }
 
 
-/*!
-	\brief Saves the data in the cursor set to a file
-	\param path Path of the file to save to.
-	\param saveflags BFile open file flags. B_READ_WRITE is implied.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: path is NULL
-	- \c other value: See BFile::SetTo and BMessage::Flatten return codes
-*/
+/**
+ * @brief Saves the cursor set data to a file.
+ * @param path      Path of the file to save to.
+ * @param saveFlags BFile open flags (B_READ_WRITE is always added).
+ * @return B_OK on success, B_BAD_VALUE if @a path is NULL, or a BFile/BMessage error code.
+ */
 status_t
 CursorSet::Save(const char *path, int32 saveFlags)
 {
@@ -57,14 +76,11 @@ CursorSet::Save(const char *path, int32 saveFlags)
 }
 
 
-/*!
-	\brief Loads the data into the cursor set from a file
-	\param path Path of the file to load from.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: path is NULL
-	- \c other value: See BFile::SetTo and BMessage::Flatten return codes
-*/
+/**
+ * @brief Loads cursor set data from a file.
+ * @param path Path of the file to load from.
+ * @return B_OK on success, B_BAD_VALUE if @a path is NULL, or a BFile/BMessage error code.
+ */
 status_t
 CursorSet::Load(const char *path)
 {
@@ -80,16 +96,13 @@ CursorSet::Load(const char *path)
 }
 
 
-/*!
-	\brief Adds the cursor to the set and replaces any existing entry for the given specifier
-	\param which System cursor specifier defined in CursorSet.h
-	\param cursor BBitmap to represent the new cursor. Size should be 48x48 or less.
-	\param hotspot The recipient of the hotspot for the cursor
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: cursor is NULL
-	- \c other value: See BMessage::AddMessage return codes.
-*/
+/**
+ * @brief Adds a cursor bitmap to the set, replacing any existing entry for @a which.
+ * @param which   System cursor specifier (BCursorID).
+ * @param cursor  BBitmap representing the cursor (must not be NULL, max 48x48).
+ * @param hotspot The cursor hotspot position within the bitmap.
+ * @return B_OK on success, B_BAD_VALUE if @a cursor is NULL, or a BMessage error code.
+ */
 status_t
 CursorSet::AddCursor(BCursorID which, const BBitmap *cursor,
 	const BPoint &hotspot)
@@ -116,15 +129,16 @@ CursorSet::AddCursor(BCursorID which, const BBitmap *cursor,
 }
 
 
-/*!
-	\brief Adds the cursor to the set and replaces any existing entry for the given specifier
-	\param which System cursor specifier defined in CursorSet.h
-	\param data R5 cursor data pointer
-	\return B_BAD_VALUE if data is NULL, otherwise B_OK
-
-	When possible, it is better to use the BBitmap version of AddCursor because this
-	function must convert the R5 cursor data into a BBitmap
-*/
+/**
+ * @brief Adds a cursor to the set from R5 68-byte cursor data.
+ *
+ * The R5 cursor data is converted to a BBitmap internally. Prefer the BBitmap
+ * overload of AddCursor() when possible.
+ *
+ * @param which System cursor specifier (BCursorID).
+ * @param data  Pointer to 68-byte R5 cursor data (must not be NULL).
+ * @return B_OK on success, B_BAD_VALUE if @a data is NULL.
+ */
 status_t
 CursorSet::AddCursor(BCursorID which, uint8 *data)
 {
@@ -142,10 +156,10 @@ CursorSet::AddCursor(BCursorID which, uint8 *data)
 }
 
 
-/*!
-	\brief Removes the data associated with the specifier from the cursor set
-	\param which System cursor specifier defined in CursorSet.h
-*/
+/**
+ * @brief Removes the cursor associated with @a which from this set.
+ * @param which System cursor specifier (BCursorID).
+ */
 void
 CursorSet::RemoveCursor(BCursorID which)
 {
@@ -153,19 +167,18 @@ CursorSet::RemoveCursor(BCursorID which)
 }
 
 
-/*!
-	\brief Retrieves a cursor from the set.
-	\param which System cursor specifier defined in CursorSet.h
-	\param cursor Bitmap** to receive a newly-allocated BBitmap containing the appropriate data
-	\param hotspot The recipient of the hotspot for the cursor
-	\return
-	- \c B_OK: Success
-	- \c B_BAD_VALUE: a NULL parameter was passed
-	- \c B_NAME_NOT_FOUND: The specified cursor does not exist in this set
-	- \c B_ERROR: An internal error occurred
-
-	BBitmaps created by this function are the responsibility of the caller.
-*/
+/**
+ * @brief Retrieves a cursor bitmap and hotspot from the set.
+ *
+ * The returned BBitmap is heap-allocated and the caller takes ownership.
+ *
+ * @param which     System cursor specifier (BCursorID).
+ * @param _cursor   Output pointer to a newly allocated BBitmap.
+ * @param _hotspot  Output hotspot position.
+ * @return B_OK on success, B_BAD_VALUE if either output pointer is NULL,
+ *         B_NAME_NOT_FOUND if the cursor is not in the set, B_ERROR on
+ *         internal data inconsistency.
+ */
 status_t
 CursorSet::FindCursor(BCursorID which, BBitmap **_cursor, BPoint *_hotspot)
 {
@@ -207,18 +220,17 @@ CursorSet::FindCursor(BCursorID which, BBitmap **_cursor, BPoint *_hotspot)
 }
 
 
-/*!
-	\brief Retrieves a cursor from the set.
-	\param which System cursor specifier defined in CursorSet.h
-	\param cursor ServerCursor** to receive a newly-allocated ServerCursor containing the appropriate data
-	\return
-	- \c B_OK: Success
-	- \c B_BAD_VALUE: a NULL parameter was passed
-	- \c B_NAME_NOT_FOUND: The specified cursor does not exist in this set
-	- \c B_ERROR: An internal error occurred
-
-	BBitmaps created by this function are the responsibility of the caller.
-*/
+/**
+ * @brief Retrieves a cursor as a ServerCursor from the set.
+ *
+ * The returned ServerCursor is heap-allocated and the caller takes ownership.
+ *
+ * @param which   System cursor specifier (BCursorID).
+ * @param _cursor Output pointer to a newly allocated ServerCursor.
+ * @return B_OK on success, B_BAD_VALUE if @a _cursor is NULL,
+ *         B_NAME_NOT_FOUND if the cursor is not in the set, B_ERROR on
+ *         internal data inconsistency.
+ */
 status_t
 CursorSet::FindCursor(BCursorID which, ServerCursor **_cursor) const
 {
@@ -260,10 +272,10 @@ CursorSet::FindCursor(BCursorID which, ServerCursor **_cursor) const
 }
 
 
-/*!
-	\brief Returns the name of the set
-	\return The name of the set
-*/
+/**
+ * @brief Returns the name of this cursor set.
+ * @return A pointer to the name string, or NULL if the name cannot be found.
+ */
 const char *
 CursorSet::GetName()
 {
@@ -275,12 +287,13 @@ CursorSet::GetName()
 }
 
 
-/*!
-	\brief Renames the cursor set
-	\param name new name of the set.
-
-	This function will fail if given a NULL name
-*/
+/**
+ * @brief Renames the cursor set.
+ *
+ * The function silently ignores a NULL @a name.
+ *
+ * @param name The new name for the set.
+ */
 void
 CursorSet::SetName(const char *name)
 {
@@ -292,11 +305,11 @@ CursorSet::SetName(const char *name)
 }
 
 
-/*!
-	\brief Returns a string for the specified cursor attribute
-	\param which System cursor specifier defined in CursorSet.h
-	\return Name for the cursor specifier
-*/
+/**
+ * @brief Maps a BCursorID to its string key used in the internal BMessage.
+ * @param which The system cursor specifier to convert.
+ * @return A string literal naming the cursor, or "Invalid" for unknown IDs.
+ */
 const char *
 CursorSet::_CursorWhichToString(BCursorID which) const
 {
@@ -362,13 +375,15 @@ CursorSet::_CursorWhichToString(BCursorID which) const
 	}
 }
 
-/*!
-	\brief Creates a new BBitmap from R5 cursor data
-	\param data Pointer to data in the R5 cursor data format
-	\return NULL if data was NULL, otherwise a new BBitmap
-
-	BBitmaps returned by this function are always in the RGBA32 color space
-*/
+/**
+ * @brief Creates a new BBitmap from R5 68-byte cursor data in RGBA32 format.
+ *
+ * The 1-bit monochrome cursor and mask data are expanded to a 16x16 RGBA32
+ * bitmap. Bytes are swapped to correct for little-endian byte order.
+ *
+ * @param data Pointer to 68-byte R5 cursor data (NULL returns NULL).
+ * @return A heap-allocated BBitmap in B_RGBA32 format, or NULL on failure.
+ */
 BBitmap *
 CursorSet::_CursorDataToBitmap(uint8 *data)
 {

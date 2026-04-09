@@ -1,10 +1,32 @@
 /*
- * Copyright 2005, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file EventStream.cpp
+ *  @brief Abstract event stream and input-server-backed event stream implementation. */
 
 
 #include "EventStream.h"
@@ -21,16 +43,26 @@
 #include <string.h>
 
 
+/**
+ * @brief Constructs a base EventStream object.
+ */
 EventStream::EventStream()
 {
 }
 
 
+/**
+ * @brief Destroys the EventStream.
+ */
 EventStream::~EventStream()
 {
 }
 
 
+/**
+ * @brief Indicates whether this stream supports a dedicated cursor thread.
+ * @return false by default; subclasses may override.
+ */
 bool
 EventStream::SupportsCursorThread() const
 {
@@ -38,6 +70,16 @@ EventStream::SupportsCursorThread() const
 }
 
 
+/**
+ * @brief Waits up to @a timeout microseconds for the next cursor position.
+ *
+ * The base implementation always returns B_ERROR. Subclasses that support a
+ * cursor thread must override this method.
+ *
+ * @param where   Output parameter filled with the new cursor position.
+ * @param timeout Maximum wait time in microseconds.
+ * @return B_ERROR in the base implementation.
+ */
 status_t
 EventStream::GetNextCursorPosition(BPoint& where, bigtime_t timeout)
 {
@@ -48,6 +90,14 @@ EventStream::GetNextCursorPosition(BPoint& where, bigtime_t timeout)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an InputServerStream connected to the given input server messenger.
+ *
+ * Sends an IS_ACQUIRE_INPUT message to the input server and records the
+ * returned event port and cursor semaphore.
+ *
+ * @param messenger A BMessenger targeting the input server.
+ */
 InputServerStream::InputServerStream(BMessenger& messenger)
 	:
 	fInputServer(messenger),
@@ -75,6 +125,9 @@ InputServerStream::InputServerStream(BMessenger& messenger)
 
 
 #if TEST_MODE
+/**
+ * @brief Constructs an InputServerStream for test mode using a named port.
+ */
 InputServerStream::InputServerStream()
 	:
 	fQuitting(false),
@@ -86,12 +139,19 @@ InputServerStream::InputServerStream()
 #endif
 
 
+/**
+ * @brief Destroys the InputServerStream, releasing the shared cursor area.
+ */
 InputServerStream::~InputServerStream()
 {
 	delete_area(fCursorArea);
 }
 
 
+/**
+ * @brief Checks whether the underlying event port is still valid.
+ * @return true if the port is usable, false otherwise.
+ */
 bool
 InputServerStream::IsValid()
 {
@@ -103,6 +163,9 @@ InputServerStream::IsValid()
 }
 
 
+/**
+ * @brief Signals the stream to stop processing events and exit its loops.
+ */
 void
 InputServerStream::SendQuit()
 {
@@ -112,6 +175,10 @@ InputServerStream::SendQuit()
 }
 
 
+/**
+ * @brief Notifies the input server of updated screen bounds.
+ * @param bounds The new screen bounding rectangle.
+ */
 void
 InputServerStream::UpdateScreenBounds(BRect bounds)
 {
@@ -122,6 +189,17 @@ InputServerStream::UpdateScreenBounds(BRect bounds)
 }
 
 
+/**
+ * @brief Blocks until the next input event is available, then returns it.
+ *
+ * Drains the event port completely before returning so that the internal
+ * queue stays fresh. The latest B_MOUSE_MOVED event pointer is tracked for
+ * B_NO_POINTER_HISTORY support.
+ *
+ * @param _event Output pointer set to the next BMessage event (caller owns it).
+ * @return true while events are available, false when the port has been deleted
+ *         (i.e. the input server has died).
+ */
 bool
 InputServerStream::GetNextEvent(BMessage** _event)
 {
@@ -160,6 +238,17 @@ InputServerStream::GetNextEvent(BMessage** _event)
 }
 
 
+/**
+ * @brief Reads the next cursor position from the shared cursor area.
+ *
+ * Blocks on the cursor semaphore for up to @a timeout microseconds.
+ * After reading, signals the input server that the position has been consumed.
+ *
+ * @param where   Output parameter filled with the cursor position.
+ * @param timeout Maximum wait time in microseconds.
+ * @return B_OK on success, B_TIMED_OUT on timeout, B_ERROR if the semaphore
+ *         has become invalid.
+ */
 status_t
 InputServerStream::GetNextCursorPosition(BPoint &where, bigtime_t timeout)
 {
@@ -201,6 +290,15 @@ InputServerStream::GetNextCursorPosition(BPoint &where, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Inserts an already-constructed event at the front of the internal queue.
+ *
+ * Also writes a marker to the event port so that a blocked GetNextEvent() call
+ * wakes up.
+ *
+ * @param event The BMessage event to insert (stream takes ownership).
+ * @return B_OK on success, B_BAD_PORT_ID if the port is no longer valid.
+ */
 status_t
 InputServerStream::InsertEvent(BMessage* event)
 {
@@ -216,6 +314,10 @@ InputServerStream::InsertEvent(BMessage* event)
 }
 
 
+/**
+ * @brief Returns the most recent B_MOUSE_MOVED event seen by this stream.
+ * @return Pointer to the latest mouse-moved BMessage, or NULL if none received.
+ */
 BMessage*
 InputServerStream::PeekLatestMouseMoved()
 {
@@ -223,6 +325,17 @@ InputServerStream::PeekLatestMouseMoved()
 }
 
 
+/**
+ * @brief Reads and deserializes a single message from the event port.
+ *
+ * Blocks for up to @a timeout microseconds. Returns B_BAD_PORT_ID when the
+ * port has been deleted and B_INTERRUPTED when an "inserted message" marker
+ * ('insm') is read.
+ *
+ * @param _message Output pointer set to the deserialized BMessage.
+ * @param timeout  Maximum wait time in microseconds (default B_INFINITE_TIMEOUT).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InputServerStream::_MessageFromPort(BMessage** _message, bigtime_t timeout)
 {
@@ -285,4 +398,3 @@ InputServerStream::_MessageFromPort(BMessage** _message, bigtime_t timeout)
 	*_message = message.Detach();
 	return B_OK;
 }
-

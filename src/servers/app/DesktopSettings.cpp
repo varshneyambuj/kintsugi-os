@@ -1,14 +1,36 @@
 /*
- * Copyright 2005-2015, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler, axeld@pinc-software.de
- *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
- *		Joseph Groover <looncraz@looncraz.net>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2015, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
+ *       Joseph Groover <looncraz@looncraz.net>
  */
 
+
+/** @file DesktopSettings.cpp
+    @brief Persistence and accessor layer for desktop-wide user preferences (fonts, mouse, colours, workspaces). */
 
 #include "DesktopSettings.h"
 #include "DesktopSettingsPrivate.h"
@@ -31,6 +53,11 @@
 #include "SystemPalette.h"
 
 
+/** @brief Constructs the settings object, applying defaults and then loading saved state.
+ *
+ * @param shared Pointer to the server read-only shared memory area that stores
+ *               the colour map and UI colours visible to client applications.
+ */
 DesktopSettingsPrivate::DesktopSettingsPrivate(server_read_only_memory* shared)
 	:
 	fShared(*shared)
@@ -41,11 +68,17 @@ DesktopSettingsPrivate::DesktopSettingsPrivate(server_read_only_memory* shared)
 }
 
 
+/** @brief Destructor. */
 DesktopSettingsPrivate::~DesktopSettingsPrivate()
 {
 }
 
 
+/** @brief Resets all settings to built-in default values.
+ *
+ * Sets fonts, mouse mode, scroll bar info, menu info, workspace layout,
+ * colour map, UI colours, and subpixel rendering globals to defaults.
+ */
 void
 DesktopSettingsPrivate::_SetDefaults()
 {
@@ -92,6 +125,14 @@ DesktopSettingsPrivate::_SetDefaults()
 }
 
 
+/** @brief Resolves and returns the base directory used for settings files.
+ *
+ * Combines B_USER_SETTINGS_DIRECTORY with "system/app_server", creating the
+ * directory if it does not exist.
+ *
+ * @param path Output BPath set to the settings directory.
+ * @return B_OK on success, or an error code if the directory cannot be located or created.
+ */
 status_t
 DesktopSettingsPrivate::_GetPath(BPath& path)
 {
@@ -107,6 +148,14 @@ DesktopSettingsPrivate::_GetPath(BPath& path)
 }
 
 
+/** @brief Loads all settings from disk, overriding defaults where saved data exists.
+ *
+ * Reads workspace layout, font, mouse, appearance, and dragger settings from
+ * their respective files in the app_server settings directory.
+ *
+ * @return B_OK if the load completed without fatal errors; individual settings
+ *         may still have been left at defaults if their files were missing.
+ */
 status_t
 DesktopSettingsPrivate::_Load()
 {
@@ -339,6 +388,15 @@ DesktopSettingsPrivate::_Load()
 }
 
 
+/** @brief Persists the specified subset of settings to disk.
+ *
+ * Uses a bitmask to select which setting groups to save; the available flags
+ * are kWorkspacesSettings, kFontSettings, kMouseSettings, kDraggerSettings,
+ * and kAppearanceSettings.
+ *
+ * @param mask Bitmask of setting groups to write.
+ * @return B_OK on success, or an error code if any file operation failed.
+ */
 status_t
 DesktopSettingsPrivate::Save(uint32 mask)
 {
@@ -477,6 +535,10 @@ DesktopSettingsPrivate::Save(uint32 mask)
 }
 
 
+/** @brief Sets the default plain (body text) font and persists it.
+ *
+ * @param font The new default plain ServerFont.
+ */
 void
 DesktopSettingsPrivate::SetDefaultPlainFont(const ServerFont &font)
 {
@@ -485,6 +547,10 @@ DesktopSettingsPrivate::SetDefaultPlainFont(const ServerFont &font)
 }
 
 
+/** @brief Returns the current default plain font.
+ *
+ * @return Const reference to the plain ServerFont.
+ */
 const ServerFont &
 DesktopSettingsPrivate::DefaultPlainFont() const
 {
@@ -492,6 +558,10 @@ DesktopSettingsPrivate::DefaultPlainFont() const
 }
 
 
+/** @brief Sets the default bold font and persists it.
+ *
+ * @param font The new default bold ServerFont.
+ */
 void
 DesktopSettingsPrivate::SetDefaultBoldFont(const ServerFont &font)
 {
@@ -500,6 +570,10 @@ DesktopSettingsPrivate::SetDefaultBoldFont(const ServerFont &font)
 }
 
 
+/** @brief Returns the current default bold font.
+ *
+ * @return Const reference to the bold ServerFont.
+ */
 const ServerFont &
 DesktopSettingsPrivate::DefaultBoldFont() const
 {
@@ -507,6 +581,10 @@ DesktopSettingsPrivate::DefaultBoldFont() const
 }
 
 
+/** @brief Sets the default fixed-width font and persists it.
+ *
+ * @param font The new default fixed-width ServerFont.
+ */
 void
 DesktopSettingsPrivate::SetDefaultFixedFont(const ServerFont &font)
 {
@@ -515,6 +593,10 @@ DesktopSettingsPrivate::SetDefaultFixedFont(const ServerFont &font)
 }
 
 
+/** @brief Returns the current default fixed-width font.
+ *
+ * @return Const reference to the fixed ServerFont.
+ */
 const ServerFont &
 DesktopSettingsPrivate::DefaultFixedFont() const
 {
@@ -522,6 +604,10 @@ DesktopSettingsPrivate::DefaultFixedFont() const
 }
 
 
+/** @brief Sets scroll bar appearance parameters and persists them.
+ *
+ * @param info New scroll_bar_info to apply.
+ */
 void
 DesktopSettingsPrivate::SetScrollBarInfo(const scroll_bar_info& info)
 {
@@ -530,6 +616,10 @@ DesktopSettingsPrivate::SetScrollBarInfo(const scroll_bar_info& info)
 }
 
 
+/** @brief Returns the current scroll bar appearance parameters.
+ *
+ * @return Const reference to the current scroll_bar_info.
+ */
 const scroll_bar_info&
 DesktopSettingsPrivate::ScrollBarInfo() const
 {
@@ -537,6 +627,11 @@ DesktopSettingsPrivate::ScrollBarInfo() const
 }
 
 
+/** @brief Sets menu appearance parameters and updates the menu background UI colour.
+ *
+ * @param info New menu_info to apply; the background colour is also propagated
+ *             to B_MENU_BACKGROUND_COLOR via SetUIColor().
+ */
 void
 DesktopSettingsPrivate::SetMenuInfo(const menu_info& info)
 {
@@ -547,6 +642,10 @@ DesktopSettingsPrivate::SetMenuInfo(const menu_info& info)
 }
 
 
+/** @brief Returns the current menu appearance parameters.
+ *
+ * @return Const reference to the current menu_info.
+ */
 const menu_info&
 DesktopSettingsPrivate::MenuInfo() const
 {
@@ -554,6 +653,10 @@ DesktopSettingsPrivate::MenuInfo() const
 }
 
 
+/** @brief Sets the mouse focus mode and persists it.
+ *
+ * @param mode The new mode_mouse value.
+ */
 void
 DesktopSettingsPrivate::SetMouseMode(const mode_mouse mode)
 {
@@ -562,6 +665,10 @@ DesktopSettingsPrivate::SetMouseMode(const mode_mouse mode)
 }
 
 
+/** @brief Sets the focus-follows-mouse mode and persists it.
+ *
+ * @param mode The new mode_focus_follows_mouse value.
+ */
 void
 DesktopSettingsPrivate::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 {
@@ -570,6 +677,10 @@ DesktopSettingsPrivate::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 }
 
 
+/** @brief Returns the current mouse focus mode.
+ *
+ * @return The active mode_mouse value.
+ */
 mode_mouse
 DesktopSettingsPrivate::MouseMode() const
 {
@@ -577,6 +688,10 @@ DesktopSettingsPrivate::MouseMode() const
 }
 
 
+/** @brief Returns the current focus-follows-mouse mode.
+ *
+ * @return The active mode_focus_follows_mouse value.
+ */
 mode_focus_follows_mouse
 DesktopSettingsPrivate::FocusFollowsMouseMode() const
 {
@@ -584,6 +699,10 @@ DesktopSettingsPrivate::FocusFollowsMouseMode() const
 }
 
 
+/** @brief Sets whether the first click activates and is delivered to a window.
+ *
+ * @param acceptFirstClick true to accept the first click, false to discard it.
+ */
 void
 DesktopSettingsPrivate::SetAcceptFirstClick(const bool acceptFirstClick)
 {
@@ -592,6 +711,10 @@ DesktopSettingsPrivate::SetAcceptFirstClick(const bool acceptFirstClick)
 }
 
 
+/** @brief Returns whether the first click on an inactive window is delivered to it.
+ *
+ * @return true if the first click is accepted, false otherwise.
+ */
 bool
 DesktopSettingsPrivate::AcceptFirstClick() const
 {
@@ -599,6 +722,10 @@ DesktopSettingsPrivate::AcceptFirstClick() const
 }
 
 
+/** @brief Sets whether dragger handles are shown globally.
+ *
+ * @param show true to show all draggers, false to hide them.
+ */
 void
 DesktopSettingsPrivate::SetShowAllDraggers(bool show)
 {
@@ -607,6 +734,10 @@ DesktopSettingsPrivate::SetShowAllDraggers(bool show)
 }
 
 
+/** @brief Returns whether dragger handles are shown globally.
+ *
+ * @return true if all draggers are visible.
+ */
 bool
 DesktopSettingsPrivate::ShowAllDraggers() const
 {
@@ -614,6 +745,13 @@ DesktopSettingsPrivate::ShowAllDraggers() const
 }
 
 
+/** @brief Sets the workspace grid layout and persists it.
+ *
+ * Validates and clamps the supplied dimensions before storing them.
+ *
+ * @param columns Number of workspace columns.
+ * @param rows    Number of workspace rows.
+ */
 void
 DesktopSettingsPrivate::SetWorkspacesLayout(int32 columns, int32 rows)
 {
@@ -625,6 +763,10 @@ DesktopSettingsPrivate::SetWorkspacesLayout(int32 columns, int32 rows)
 }
 
 
+/** @brief Returns the total number of workspaces (columns * rows).
+ *
+ * @return Total workspace count.
+ */
 int32
 DesktopSettingsPrivate::WorkspacesCount() const
 {
@@ -632,6 +774,10 @@ DesktopSettingsPrivate::WorkspacesCount() const
 }
 
 
+/** @brief Returns the number of workspace columns.
+ *
+ * @return Column count.
+ */
 int32
 DesktopSettingsPrivate::WorkspacesColumns() const
 {
@@ -639,6 +785,10 @@ DesktopSettingsPrivate::WorkspacesColumns() const
 }
 
 
+/** @brief Returns the number of workspace rows.
+ *
+ * @return Row count.
+ */
 int32
 DesktopSettingsPrivate::WorkspacesRows() const
 {
@@ -646,6 +796,11 @@ DesktopSettingsPrivate::WorkspacesRows() const
 }
 
 
+/** @brief Stores a workspace configuration message for a specific workspace index.
+ *
+ * @param index   Zero-based workspace index; ignored if out of range.
+ * @param message The configuration BMessage to store.
+ */
 void
 DesktopSettingsPrivate::SetWorkspacesMessage(int32 index, BMessage& message)
 {
@@ -656,6 +811,11 @@ DesktopSettingsPrivate::SetWorkspacesMessage(int32 index, BMessage& message)
 }
 
 
+/** @brief Returns the stored configuration message for a specific workspace.
+ *
+ * @param index Zero-based workspace index.
+ * @return Pointer to the BMessage, or NULL if the index is out of range.
+ */
 const BMessage*
 DesktopSettingsPrivate::WorkspacesMessage(int32 index) const
 {
@@ -666,6 +826,15 @@ DesktopSettingsPrivate::WorkspacesMessage(int32 index) const
 }
 
 
+/** @brief Sets a single UI colour and persists the appearance settings.
+ *
+ * Also updates the menu_info background colour if \a which is
+ * B_MENU_BACKGROUND_COLOR.
+ *
+ * @param which   The colour role to update.
+ * @param color   The new colour value.
+ * @param changed If non-NULL, set to true when the colour actually changed.
+ */
 void
 DesktopSettingsPrivate::SetUIColor(color_which which, const rgb_color color,
 									bool* changed)
@@ -687,6 +856,16 @@ DesktopSettingsPrivate::SetUIColor(color_which which, const rgb_color color,
 }
 
 
+/** @brief Batch-updates multiple UI colours from a BMessage and persists them.
+ *
+ * Iterates all B_RGB_32_BIT_TYPE fields in \a colors, maps each field name to
+ * a color_which index, and updates the shared colour array. Entries that cannot
+ * be mapped are skipped with changed[i] set to false.
+ *
+ * @param colors  BMessage whose fields are named UI colour constants.
+ * @param changed Optional array (one entry per color in \a colors) indicating
+ *                which colours actually changed; may be NULL.
+ */
 void
 DesktopSettingsPrivate::SetUIColors(const BMessage& colors, bool* changed)
 {
@@ -728,6 +907,11 @@ DesktopSettingsPrivate::SetUIColors(const BMessage& colors, bool* changed)
 }
 
 
+/** @brief Returns the current value of a UI colour.
+ *
+ * @param which The colour role to query.
+ * @return The colour, or {0,0,0,0} if the role is invalid.
+ */
 rgb_color
 DesktopSettingsPrivate::UIColor(color_which which) const
 {
@@ -740,6 +924,10 @@ DesktopSettingsPrivate::UIColor(color_which which) const
 }
 
 
+/** @brief Enables or disables subpixel antialiasing and persists the setting.
+ *
+ * @param subpix true to enable subpixel antialiasing, false to disable it.
+ */
 void
 DesktopSettingsPrivate::SetSubpixelAntialiasing(bool subpix)
 {
@@ -748,6 +936,10 @@ DesktopSettingsPrivate::SetSubpixelAntialiasing(bool subpix)
 }
 
 
+/** @brief Returns whether subpixel antialiasing is enabled.
+ *
+ * @return true if subpixel antialiasing is active.
+ */
 bool
 DesktopSettingsPrivate::SubpixelAntialiasing() const
 {
@@ -755,6 +947,10 @@ DesktopSettingsPrivate::SubpixelAntialiasing() const
 }
 
 
+/** @brief Sets the global font hinting mode and persists it.
+ *
+ * @param hinting The new HINTING_MODE_* value.
+ */
 void
 DesktopSettingsPrivate::SetHinting(uint8 hinting)
 {
@@ -763,6 +959,10 @@ DesktopSettingsPrivate::SetHinting(uint8 hinting)
 }
 
 
+/** @brief Returns the current global font hinting mode.
+ *
+ * @return The active hinting mode constant.
+ */
 uint8
 DesktopSettingsPrivate::Hinting() const
 {
@@ -770,6 +970,10 @@ DesktopSettingsPrivate::Hinting() const
 }
 
 
+/** @brief Sets the subpixel average weight for LCD font rendering and persists it.
+ *
+ * @param averageWeight The new weight value (0–255).
+ */
 void
 DesktopSettingsPrivate::SetSubpixelAverageWeight(uint8 averageWeight)
 {
@@ -778,6 +982,10 @@ DesktopSettingsPrivate::SetSubpixelAverageWeight(uint8 averageWeight)
 }
 
 
+/** @brief Returns the current subpixel average weight.
+ *
+ * @return Weight value in the range 0–255.
+ */
 uint8
 DesktopSettingsPrivate::SubpixelAverageWeight() const
 {
@@ -785,6 +993,10 @@ DesktopSettingsPrivate::SubpixelAverageWeight() const
 }
 
 
+/** @brief Sets whether subpixel rendering uses RGB (true) or BGR (false) ordering.
+ *
+ * @param subpixelOrdering true for RGB, false for BGR.
+ */
 void
 DesktopSettingsPrivate::SetSubpixelOrderingRegular(bool subpixelOrdering)
 {
@@ -793,6 +1005,10 @@ DesktopSettingsPrivate::SetSubpixelOrderingRegular(bool subpixelOrdering)
 }
 
 
+/** @brief Returns whether subpixel rendering is in RGB order.
+ *
+ * @return true for RGB ordering, false for BGR.
+ */
 bool
 DesktopSettingsPrivate::IsSubpixelOrderingRegular() const
 {
@@ -800,6 +1016,12 @@ DesktopSettingsPrivate::IsSubpixelOrderingRegular() const
 }
 
 
+/** @brief Sets the path to the ControlLook add-on and persists it.
+ *
+ * @param path File-system path to the ControlLook shared library; empty string
+ *             resets to the system default.
+ * @return B_OK on success, or an error code from Save().
+ */
 status_t
 DesktopSettingsPrivate::SetControlLook(const char* path)
 {
@@ -808,6 +1030,10 @@ DesktopSettingsPrivate::SetControlLook(const char* path)
 }
 
 
+/** @brief Returns the path to the currently active ControlLook add-on.
+ *
+ * @return BString containing the path, or an empty string for the default.
+ */
 const BString&
 DesktopSettingsPrivate::ControlLook() const
 {
@@ -815,6 +1041,14 @@ DesktopSettingsPrivate::ControlLook() const
 }
 
 
+/** @brief Validates and clamps workspace column/row values to acceptable bounds.
+ *
+ * Ensures both values are at least 1. If their product exceeds kMaxWorkspaces,
+ * both are reset to 2 (the default 2x2 layout).
+ *
+ * @param columns Column count to validate and clamp (modified in place).
+ * @param rows    Row count to validate and clamp (modified in place).
+ */
 void
 DesktopSettingsPrivate::_ValidateWorkspacesLayout(int32& columns,
 	int32& rows) const
@@ -835,6 +1069,10 @@ DesktopSettingsPrivate::_ValidateWorkspacesLayout(int32& columns,
 //	#pragma mark - read access
 
 
+/** @brief Constructs a read-only view of the desktop settings.
+ *
+ * @param desktop The Desktop whose settings will be accessed.
+ */
 DesktopSettings::DesktopSettings(Desktop* desktop)
 	:
 	fSettings(desktop->fSettings.Get())
@@ -843,6 +1081,10 @@ DesktopSettings::DesktopSettings(Desktop* desktop)
 }
 
 
+/** @brief Copies the default plain font into \a font.
+ *
+ * @param font Output parameter to receive the default plain ServerFont.
+ */
 void
 DesktopSettings::GetDefaultPlainFont(ServerFont &font) const
 {
@@ -850,6 +1092,10 @@ DesktopSettings::GetDefaultPlainFont(ServerFont &font) const
 }
 
 
+/** @brief Copies the default bold font into \a font.
+ *
+ * @param font Output parameter to receive the default bold ServerFont.
+ */
 void
 DesktopSettings::GetDefaultBoldFont(ServerFont &font) const
 {
@@ -857,6 +1103,10 @@ DesktopSettings::GetDefaultBoldFont(ServerFont &font) const
 }
 
 
+/** @brief Copies the default fixed-width font into \a font.
+ *
+ * @param font Output parameter to receive the default fixed ServerFont.
+ */
 void
 DesktopSettings::GetDefaultFixedFont(ServerFont &font) const
 {
@@ -864,6 +1114,10 @@ DesktopSettings::GetDefaultFixedFont(ServerFont &font) const
 }
 
 
+/** @brief Copies the scroll bar appearance parameters into \a info.
+ *
+ * @param info Output parameter to receive the current scroll_bar_info.
+ */
 void
 DesktopSettings::GetScrollBarInfo(scroll_bar_info& info) const
 {
@@ -871,6 +1125,10 @@ DesktopSettings::GetScrollBarInfo(scroll_bar_info& info) const
 }
 
 
+/** @brief Copies the menu appearance parameters into \a info.
+ *
+ * @param info Output parameter to receive the current menu_info.
+ */
 void
 DesktopSettings::GetMenuInfo(menu_info& info) const
 {
@@ -878,6 +1136,10 @@ DesktopSettings::GetMenuInfo(menu_info& info) const
 }
 
 
+/** @brief Returns the current mouse focus mode.
+ *
+ * @return The active mode_mouse value.
+ */
 mode_mouse
 DesktopSettings::MouseMode() const
 {
@@ -885,6 +1147,10 @@ DesktopSettings::MouseMode() const
 }
 
 
+/** @brief Returns the current focus-follows-mouse mode.
+ *
+ * @return The active mode_focus_follows_mouse value.
+ */
 mode_focus_follows_mouse
 DesktopSettings::FocusFollowsMouseMode() const
 {
@@ -892,6 +1158,10 @@ DesktopSettings::FocusFollowsMouseMode() const
 }
 
 
+/** @brief Returns whether the first click on an inactive window is delivered to it.
+ *
+ * @return true if first-click acceptance is enabled.
+ */
 bool
 DesktopSettings::AcceptFirstClick() const
 {
@@ -899,6 +1169,10 @@ DesktopSettings::AcceptFirstClick() const
 }
 
 
+/** @brief Returns whether all dragger handles are globally visible.
+ *
+ * @return true if all draggers are shown.
+ */
 bool
 DesktopSettings::ShowAllDraggers() const
 {
@@ -906,6 +1180,10 @@ DesktopSettings::ShowAllDraggers() const
 }
 
 
+/** @brief Returns the total number of workspaces.
+ *
+ * @return Workspace count (columns * rows).
+ */
 int32
 DesktopSettings::WorkspacesCount() const
 {
@@ -913,6 +1191,10 @@ DesktopSettings::WorkspacesCount() const
 }
 
 
+/** @brief Returns the number of workspace columns.
+ *
+ * @return Column count.
+ */
 int32
 DesktopSettings::WorkspacesColumns() const
 {
@@ -920,6 +1202,10 @@ DesktopSettings::WorkspacesColumns() const
 }
 
 
+/** @brief Returns the number of workspace rows.
+ *
+ * @return Row count.
+ */
 int32
 DesktopSettings::WorkspacesRows() const
 {
@@ -927,6 +1213,11 @@ DesktopSettings::WorkspacesRows() const
 }
 
 
+/** @brief Returns the stored configuration message for a workspace.
+ *
+ * @param index Zero-based workspace index.
+ * @return Pointer to the BMessage, or NULL if out of range.
+ */
 const BMessage*
 DesktopSettings::WorkspacesMessage(int32 index) const
 {
@@ -934,6 +1225,11 @@ DesktopSettings::WorkspacesMessage(int32 index) const
 }
 
 
+/** @brief Returns the current value of a UI colour.
+ *
+ * @param which The colour role to query.
+ * @return The colour value.
+ */
 rgb_color
 DesktopSettings::UIColor(color_which which) const
 {
@@ -941,6 +1237,10 @@ DesktopSettings::UIColor(color_which which) const
 }
 
 
+/** @brief Returns whether subpixel antialiasing is enabled.
+ *
+ * @return true if subpixel antialiasing is active.
+ */
 bool
 DesktopSettings::SubpixelAntialiasing() const
 {
@@ -948,6 +1248,10 @@ DesktopSettings::SubpixelAntialiasing() const
 }
 
 
+/** @brief Returns the current global font hinting mode.
+ *
+ * @return The active hinting mode constant.
+ */
 uint8
 DesktopSettings::Hinting() const
 {
@@ -955,6 +1259,10 @@ DesktopSettings::Hinting() const
 }
 
 
+/** @brief Returns the current subpixel average weight.
+ *
+ * @return Weight value in the range 0–255.
+ */
 uint8
 DesktopSettings::SubpixelAverageWeight() const
 {
@@ -962,6 +1270,10 @@ DesktopSettings::SubpixelAverageWeight() const
 }
 
 
+/** @brief Returns whether subpixel rendering uses RGB ordering.
+ *
+ * @return true for RGB, false for BGR.
+ */
 bool
 DesktopSettings::IsSubpixelOrderingRegular() const
 {
@@ -970,6 +1282,10 @@ DesktopSettings::IsSubpixelOrderingRegular() const
 }
 
 
+/** @brief Returns the path to the currently active ControlLook add-on.
+ *
+ * @return BString containing the path, or an empty string for the default.
+ */
 const BString&
 DesktopSettings::ControlLook() const
 {
@@ -979,6 +1295,13 @@ DesktopSettings::ControlLook() const
 //	#pragma mark - write access
 
 
+/** @brief Constructs a write-capable settings accessor and acquires all-windows lock.
+ *
+ * Inherits the read-access desktop settings and additionally locks all windows
+ * so that changes can be applied atomically.
+ *
+ * @param desktop The Desktop whose settings will be modified.
+ */
 LockedDesktopSettings::LockedDesktopSettings(Desktop* desktop)
 	:
 	DesktopSettings(desktop),
@@ -993,12 +1316,17 @@ LockedDesktopSettings::LockedDesktopSettings(Desktop* desktop)
 }
 
 
+/** @brief Destructor — releases the all-windows lock. */
 LockedDesktopSettings::~LockedDesktopSettings()
 {
 	fDesktop->UnlockAllWindows();
 }
 
 
+/** @brief Sets the default plain font.
+ *
+ * @param font The new default plain ServerFont.
+ */
 void
 LockedDesktopSettings::SetDefaultPlainFont(const ServerFont &font)
 {
@@ -1007,6 +1335,11 @@ LockedDesktopSettings::SetDefaultPlainFont(const ServerFont &font)
 
 
 void
+/** @brief Sets the default bold font and broadcasts the change to all windows.
+ *
+ * @param font The new default bold ServerFont.
+ */
+void
 LockedDesktopSettings::SetDefaultBoldFont(const ServerFont &font)
 {
 	fSettings->SetDefaultBoldFont(font);
@@ -1014,6 +1347,10 @@ LockedDesktopSettings::SetDefaultBoldFont(const ServerFont &font)
 }
 
 
+/** @brief Sets the default fixed-width font.
+ *
+ * @param font The new default fixed ServerFont.
+ */
 void
 LockedDesktopSettings::SetDefaultFixedFont(const ServerFont &font)
 {
@@ -1021,6 +1358,10 @@ LockedDesktopSettings::SetDefaultFixedFont(const ServerFont &font)
 }
 
 
+/** @brief Sets scroll bar appearance parameters.
+ *
+ * @param info New scroll_bar_info to apply.
+ */
 void
 LockedDesktopSettings::SetScrollBarInfo(const scroll_bar_info& info)
 {
@@ -1028,6 +1369,10 @@ LockedDesktopSettings::SetScrollBarInfo(const scroll_bar_info& info)
 }
 
 
+/** @brief Sets menu appearance parameters.
+ *
+ * @param info New menu_info to apply.
+ */
 void
 LockedDesktopSettings::SetMenuInfo(const menu_info& info)
 {
@@ -1035,6 +1380,10 @@ LockedDesktopSettings::SetMenuInfo(const menu_info& info)
 }
 
 
+/** @brief Sets the mouse focus mode.
+ *
+ * @param mode The new mode_mouse value.
+ */
 void
 LockedDesktopSettings::SetMouseMode(const mode_mouse mode)
 {
@@ -1042,6 +1391,10 @@ LockedDesktopSettings::SetMouseMode(const mode_mouse mode)
 }
 
 
+/** @brief Sets the focus-follows-mouse mode.
+ *
+ * @param mode The new mode_focus_follows_mouse value.
+ */
 void
 LockedDesktopSettings::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 {
@@ -1049,6 +1402,10 @@ LockedDesktopSettings::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 }
 
 
+/** @brief Sets whether the first click on an inactive window is delivered to it.
+ *
+ * @param acceptFirstClick true to accept, false to discard the first click.
+ */
 void
 LockedDesktopSettings::SetAcceptFirstClick(const bool acceptFirstClick)
 {
@@ -1056,6 +1413,10 @@ LockedDesktopSettings::SetAcceptFirstClick(const bool acceptFirstClick)
 }
 
 
+/** @brief Sets whether dragger handles are globally visible.
+ *
+ * @param show true to show all draggers, false to hide them.
+ */
 void
 LockedDesktopSettings::SetShowAllDraggers(bool show)
 {
@@ -1063,6 +1424,11 @@ LockedDesktopSettings::SetShowAllDraggers(bool show)
 }
 
 
+/** @brief Batch-updates multiple UI colours.
+ *
+ * @param colors  BMessage mapping colour role names to rgb_color values.
+ * @param changed Array (indexed by colour) indicating which entries changed.
+ */
 void
 LockedDesktopSettings::SetUIColors(const BMessage& colors, bool* changed)
 {
@@ -1070,6 +1436,10 @@ LockedDesktopSettings::SetUIColors(const BMessage& colors, bool* changed)
 }
 
 
+/** @brief Enables or disables subpixel antialiasing.
+ *
+ * @param subpix true to enable, false to disable.
+ */
 void
 LockedDesktopSettings::SetSubpixelAntialiasing(bool subpix)
 {
@@ -1077,6 +1447,10 @@ LockedDesktopSettings::SetSubpixelAntialiasing(bool subpix)
 }
 
 
+/** @brief Sets the global font hinting mode.
+ *
+ * @param hinting The new HINTING_MODE_* value.
+ */
 void
 LockedDesktopSettings::SetHinting(uint8 hinting)
 {
@@ -1084,12 +1458,20 @@ LockedDesktopSettings::SetHinting(uint8 hinting)
 }
 
 
+/** @brief Sets the subpixel average weight for LCD font rendering.
+ *
+ * @param averageWeight Weight value in the range 0–255.
+ */
 void
 LockedDesktopSettings::SetSubpixelAverageWeight(uint8 averageWeight)
 {
 	fSettings->SetSubpixelAverageWeight(averageWeight);
 }
 
+/** @brief Sets whether subpixel rendering uses RGB (true) or BGR (false) ordering.
+ *
+ * @param subpixelOrdering true for RGB, false for BGR.
+ */
 void
 LockedDesktopSettings::SetSubpixelOrderingRegular(bool subpixelOrdering)
 {
@@ -1097,6 +1479,11 @@ LockedDesktopSettings::SetSubpixelOrderingRegular(bool subpixelOrdering)
 }
 
 
+/** @brief Sets the ControlLook add-on path and persists it.
+ *
+ * @param path File-system path to the ControlLook shared library.
+ * @return B_OK on success, or an error code from the underlying save.
+ */
 status_t
 LockedDesktopSettings::SetControlLook(const char* path)
 {

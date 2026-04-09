@@ -1,12 +1,34 @@
 /*
- * Copyright 2001-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm <bpmagic@columbus.rr.com>
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm <bpmagic@columbus.rr.com>
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file ServerCursor.cpp
+    @brief Server-side cursor implementation descended from ServerBitmap, managed by CursorManager. */
 
 
 /*!	Although descended from ServerBitmaps, ServerCursors are not handled by
@@ -30,16 +52,13 @@
 using std::nothrow;
 
 
-/*!	\brief Constructor
-
-	\param r Size of the cursor
-	\param cspace Color space of the cursor
-	\param flags ServerBitmap flags. See Bitmap.h.
-	\param hotspot Hotspot of the cursor
-	\param bytesperline Bytes per row for the cursor. See
-		ServerBitmap::ServerBitmap()
-
-*/
+/** @brief Constructs a ServerCursor with explicit geometry and format.
+    @param r          Size of the cursor as a BRect.
+    @param format     Color space of the cursor bitmap.
+    @param flags      ServerBitmap flags (see Bitmap.h).
+    @param hotspot    The hotspot point within the cursor bounds.
+    @param bytesPerRow Bytes per row; see ServerBitmap::ServerBitmap().
+    @param screen     Screen id to associate with the cursor. */
 ServerCursor::ServerCursor(BRect r, color_space format, int32 flags,
 		BPoint hotspot, int32 bytesPerRow, screen_id screen)
 	:
@@ -54,10 +73,9 @@ ServerCursor::ServerCursor(BRect r, color_space format, int32 flags,
 }
 
 
-/*!	\brief Constructor
-	\param data Pointer to 68-byte cursor data array. See BeBook entry for
-		BCursor for details
-*/
+/** @brief Constructs a ServerCursor from a legacy 68-byte BeOS cursor data array.
+    @param data Pointer to a 68-byte array in the BeOS cursor format (BCursor).
+                If NULL, creates an empty cursor. */
 ServerCursor::ServerCursor(const uint8* data)
 	:
 	ServerBitmap(BRect(0, 0, 15, 15), B_RGBA32, 0),
@@ -120,10 +138,11 @@ ServerCursor::ServerCursor(const uint8* data)
 }
 
 
-/*!	\brief Constructor
-	\param data Pointer to bitmap data in memory,
-	the padding bytes should be contained when format less than 32 bpp.
-*/
+/** @brief Constructs a ServerCursor from pre-padded bitmap data in memory.
+    @param alreadyPaddedData Pointer to the bitmap data including row padding.
+    @param width             Width of the cursor in pixels.
+    @param height            Height of the cursor in pixels.
+    @param format            Color space of the bitmap data. */
 ServerCursor::ServerCursor(const uint8* alreadyPaddedData, uint32 width,
 		uint32 height, color_space format)
 	:
@@ -139,9 +158,8 @@ ServerCursor::ServerCursor(const uint8* alreadyPaddedData, uint32 width,
 }
 
 
-/*!	\brief Copy constructor
-	\param cursor cursor to copy
-*/
+/** @brief Copy constructor. Duplicates the cursor's pixel data and legacy cursor data.
+    @param cursor Pointer to the source ServerCursor. May be NULL. */
 ServerCursor::ServerCursor(const ServerCursor* cursor)
 	:
 	ServerBitmap(cursor),
@@ -167,16 +185,15 @@ ServerCursor::ServerCursor(const ServerCursor* cursor)
 }
 
 
-//!	Frees the heap space allocated for the cursor's image data
+/** @brief Destructor. Frees the heap space allocated for the cursor's legacy image data. */
 ServerCursor::~ServerCursor()
 {
 	delete[] fCursorData;
 }
 
 
-/*!	\brief Sets the cursor's hotspot
-	\param pt New location of hotspot, constrained to the cursor's boundaries.
-*/
+/** @brief Sets the cursor's hotspot, constraining it to the cursor's bounding rectangle.
+    @param hotSpot New hotspot location. Values outside the cursor bounds are clamped. */
 void
 ServerCursor::SetHotSpot(BPoint hotSpot)
 {
@@ -185,6 +202,8 @@ ServerCursor::SetHotSpot(BPoint hotSpot)
 }
 
 
+/** @brief Registers this cursor with a CursorManager.
+    @param manager Pointer to the CursorManager that now manages this cursor. */
 void
 ServerCursor::AttachedToManager(CursorManager* manager)
 {

@@ -1,10 +1,32 @@
 /*
- * Copyright 2005-2009, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file EventDispatcher.cpp
+ *  @brief Per-desktop input event dispatcher that routes events to client windows. */
 
 
 #include "EventDispatcher.h"
@@ -82,6 +104,9 @@ static const float kStandardImportance = 0.9f;
 static const float kListenerImportance = 0.8f;
 
 
+/**
+ * @brief Constructs an empty EventTarget with no listeners.
+ */
 EventTarget::EventTarget()
 	:
 	fListeners(2)
@@ -89,11 +114,18 @@ EventTarget::EventTarget()
 }
 
 
+/**
+ * @brief Destroys the EventTarget.
+ */
 EventTarget::~EventTarget()
 {
 }
 
 
+/**
+ * @brief Associates this target with the given messenger.
+ * @param messenger The BMessenger used to send events to the target.
+ */
 void
 EventTarget::SetTo(const BMessenger& messenger)
 {
@@ -101,6 +133,12 @@ EventTarget::SetTo(const BMessenger& messenger)
 }
 
 
+/**
+ * @brief Searches for a listener with the given token.
+ * @param token  The listener token to search for.
+ * @param _index If non-NULL, receives the index of the found listener.
+ * @return Pointer to the matching event_listener, or NULL if not found.
+ */
 event_listener*
 EventTarget::FindListener(int32 token, int32* _index)
 {
@@ -118,6 +156,16 @@ EventTarget::FindListener(int32 token, int32* _index)
 }
 
 
+/**
+ * @brief Removes a temporary listener or clears its temporary fields.
+ *
+ * If the listener has no permanent event mask it is deleted; otherwise only
+ * its temporary fields are cleared.
+ *
+ * @param listener The listener to process.
+ * @param index    The index of the listener in the internal list.
+ * @return true if the listener was removed and deleted, false otherwise.
+ */
 bool
 EventTarget::_RemoveTemporaryListener(event_listener* listener, int32 index)
 {
@@ -145,6 +193,9 @@ EventTarget::_RemoveTemporaryListener(event_listener* listener, int32 index)
 }
 
 
+/**
+ * @brief Removes or clears temporary state for all listeners on this target.
+ */
 void
 EventTarget::RemoveTemporaryListeners()
 {
@@ -156,6 +207,11 @@ EventTarget::RemoveTemporaryListeners()
 }
 
 
+/**
+ * @brief Removes the temporary listener identified by @a token.
+ * @param token The token of the listener to remove.
+ * @return true if a listener was removed, false if not found.
+ */
 bool
 EventTarget::RemoveTemporaryListener(int32 token)
 {
@@ -168,6 +224,15 @@ EventTarget::RemoveTemporaryListener(int32 token)
 }
 
 
+/**
+ * @brief Removes the listener identified by @a token.
+ *
+ * If the listener still has a temporary event mask it is not deleted;
+ * instead its permanent fields are cleared.
+ *
+ * @param token The token of the listener to remove.
+ * @return true if the listener was fully removed and deleted, false otherwise.
+ */
 bool
 EventTarget::RemoveListener(int32 token)
 {
@@ -189,6 +254,14 @@ EventTarget::RemoveListener(int32 token)
 }
 
 
+/**
+ * @brief Adds a listener to this target, or updates it if already present.
+ * @param token     The token identifying the listener (view token).
+ * @param eventMask Bitmask of event types to listen for.
+ * @param options   Listener option flags.
+ * @param temporary Whether this is a temporary (mouse-grab) listener.
+ * @return true on success, false if allocation fails.
+ */
 bool
 EventTarget::AddListener(int32 token, uint32 eventMask,
 	uint32 options, bool temporary)
@@ -222,6 +295,10 @@ EventTarget::AddListener(int32 token, uint32 eventMask,
 //	#pragma mark -
 
 
+/**
+ * @brief Default implementation; removes nothing.
+ * @param target The EventTarget to remove (ignored by the base class).
+ */
 void
 EventFilter::RemoveTarget(EventTarget* target)
 {
@@ -231,6 +308,9 @@ EventFilter::RemoveTarget(EventTarget* target)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an EventDispatcher with no active stream or filters.
+ */
 EventDispatcher::EventDispatcher()
 	:
 	BLocker("event dispatcher"),
@@ -254,12 +334,20 @@ EventDispatcher::EventDispatcher()
 }
 
 
+/**
+ * @brief Destroys the EventDispatcher, stopping the event and cursor threads.
+ */
 EventDispatcher::~EventDispatcher()
 {
 	_Unset();
 }
 
 
+/**
+ * @brief Attaches the dispatcher to the given event stream and starts its threads.
+ * @param stream The EventStream to read events from (NULL disassociates).
+ * @return B_OK on success, or an error code if thread creation fails.
+ */
 status_t
 EventDispatcher::SetTo(EventStream* stream)
 {
@@ -275,6 +363,10 @@ EventDispatcher::SetTo(EventStream* stream)
 }
 
 
+/**
+ * @brief Checks whether the dispatcher is fully initialized and running.
+ * @return B_OK if the stream is set and threads are running, B_NO_INIT otherwise.
+ */
 status_t
 EventDispatcher::InitCheck()
 {
@@ -288,6 +380,9 @@ EventDispatcher::InitCheck()
 }
 
 
+/**
+ * @brief Stops the event/cursor threads and releases the current event stream.
+ */
 void
 EventDispatcher::_Unset()
 {
@@ -307,6 +402,10 @@ EventDispatcher::_Unset()
 }
 
 
+/**
+ * @brief Spawns the event loop thread (and optionally the cursor thread).
+ * @return B_OK on success, or the error returned by spawn_thread/resume_thread.
+ */
 status_t
 EventDispatcher::_Run()
 {
@@ -330,9 +429,10 @@ EventDispatcher::_Run()
 }
 
 
-/*!
-	\brief Removes any reference to the target, but doesn't delete it.
-*/
+/**
+ * @brief Removes any reference to the target without deleting it.
+ * @param target The EventTarget to deregister from focus, mouse, and listener lists.
+ */
 void
 EventDispatcher::RemoveTarget(EventTarget& target)
 {
@@ -352,13 +452,20 @@ EventDispatcher::RemoveTarget(EventTarget& target)
 }
 
 
-/*!
-	\brief Adds the specified listener or updates its event mask and options
-		if already added.
-
-	It follows the BView semantics in that specifiying an event mask of zero
-	leaves the event mask untouched and just updates the options.
-*/
+/**
+ * @brief Adds the specified listener or updates its event mask and options
+ *        if already added.
+ *
+ * Follows BView semantics: specifying an event mask of zero leaves the event
+ * mask untouched and only updates the options.
+ *
+ * @param target    The EventTarget to add or update.
+ * @param token     Token identifying the specific view listener.
+ * @param eventMask Bitmask of events to listen for.
+ * @param options   Listener option flags.
+ * @param temporary Whether this is a temporary listener (requires mouse button down).
+ * @return true if the listener was added or updated, false on failure.
+ */
 bool
 EventDispatcher::_AddListener(EventTarget& target, int32 token,
 	uint32 eventMask, uint32 options, bool temporary)
@@ -411,6 +518,9 @@ EventDispatcher::_AddListener(EventTarget& target, int32 token,
 }
 
 
+/**
+ * @brief Removes all temporary listeners from every registered target.
+ */
 void
 EventDispatcher::_RemoveTemporaryListeners()
 {
@@ -422,6 +532,14 @@ EventDispatcher::_RemoveTemporaryListeners()
 }
 
 
+/**
+ * @brief Adds a permanent listener to @a target.
+ * @param target    The EventTarget receiving the listener.
+ * @param token     Token identifying the specific view.
+ * @param eventMask Bitmask of events to listen for.
+ * @param options   Listener option flags (only B_NO_POINTER_HISTORY is honored).
+ * @return true on success, false on failure.
+ */
 bool
 EventDispatcher::AddListener(EventTarget& target, int32 token,
 	uint32 eventMask, uint32 options)
@@ -433,6 +551,14 @@ EventDispatcher::AddListener(EventTarget& target, int32 token,
 }
 
 
+/**
+ * @brief Adds a temporary listener to @a target (active only while mouse is pressed).
+ * @param target    The EventTarget receiving the listener.
+ * @param token     Token identifying the specific view.
+ * @param eventMask Bitmask of events to listen for.
+ * @param options   Listener option flags.
+ * @return true on success, false if no mouse button is currently pressed.
+ */
 bool
 EventDispatcher::AddTemporaryListener(EventTarget& target,
 	int32 token, uint32 eventMask, uint32 options)
@@ -441,6 +567,11 @@ EventDispatcher::AddTemporaryListener(EventTarget& target,
 }
 
 
+/**
+ * @brief Removes a permanent listener from @a target.
+ * @param target The EventTarget from which to remove the listener.
+ * @param token  Token of the listener to remove.
+ */
 void
 EventDispatcher::RemoveListener(EventTarget& target, int32 token)
 {
@@ -452,6 +583,11 @@ EventDispatcher::RemoveListener(EventTarget& target, int32 token)
 }
 
 
+/**
+ * @brief Removes a temporary listener from @a target.
+ * @param target The EventTarget from which to remove the listener.
+ * @param token  Token of the temporary listener to remove.
+ */
 void
 EventDispatcher::RemoveTemporaryListener(EventTarget& target, int32 token)
 {
@@ -463,6 +599,10 @@ EventDispatcher::RemoveTemporaryListener(EventTarget& target, int32 token)
 }
 
 
+/**
+ * @brief Sets the mouse event filter.
+ * @param filter The EventFilter to use for mouse events (ownership transferred).
+ */
 void
 EventDispatcher::SetMouseFilter(EventFilter* filter)
 {
@@ -475,6 +615,10 @@ EventDispatcher::SetMouseFilter(EventFilter* filter)
 }
 
 
+/**
+ * @brief Sets the keyboard event filter.
+ * @param filter The EventFilter to use for keyboard events (ownership transferred).
+ */
 void
 EventDispatcher::SetKeyboardFilter(EventFilter* filter)
 {
@@ -487,6 +631,11 @@ EventDispatcher::SetKeyboardFilter(EventFilter* filter)
 }
 
 
+/**
+ * @brief Returns the last known mouse position and button state.
+ * @param where   Receives the last cursor position in screen coordinates.
+ * @param buttons Receives the last button bitmask.
+ */
 void
 EventDispatcher::GetMouse(BPoint& where, int32& buttons)
 {
@@ -497,6 +646,11 @@ EventDispatcher::GetMouse(BPoint& where, int32& buttons)
 }
 
 
+/**
+ * @brief Injects a fake B_MOUSE_MOVED event directed at a specific target view.
+ * @param target    The EventTarget to receive the fake move.
+ * @param viewToken The token of the view within the target window.
+ */
 void
 EventDispatcher::SendFakeMouseMoved(EventTarget& target, int32 viewToken)
 {
@@ -514,6 +668,10 @@ EventDispatcher::SendFakeMouseMoved(EventTarget& target, int32 viewToken)
 }
 
 
+/**
+ * @brief Processes a fake mouse-moved message, sending transit events as needed.
+ * @param message The fake mouse-moved BMessage to process.
+ */
 void
 EventDispatcher::_SendFakeMouseMoved(BMessage* message)
 {
@@ -567,6 +725,10 @@ EventDispatcher::_SendFakeMouseMoved(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the time elapsed since the last input event.
+ * @return Idle time in microseconds.
+ */
 bigtime_t
 EventDispatcher::IdleTime()
 {
@@ -575,6 +737,10 @@ EventDispatcher::IdleTime()
 }
 
 
+/**
+ * @brief Returns whether a dedicated cursor thread is running.
+ * @return true if the cursor thread is active, false otherwise.
+ */
 bool
 EventDispatcher::HasCursorThread()
 {
@@ -582,10 +748,14 @@ EventDispatcher::HasCursorThread()
 }
 
 
-/*!
-	\brief Sets the HWInterface to use when moving the mouse cursor.
-		\a interface is allowed to be NULL.
-*/
+/**
+ * @brief Sets the hardware interface used to move the mouse cursor.
+ *
+ * @a interface is allowed to be NULL to detach from the current hardware.
+ * The last cursor position is adopted from the new interface when non-NULL.
+ *
+ * @param interface The HWInterface whose cursor should be moved.
+ */
 void
 EventDispatcher::SetHWInterface(HWInterface* interface)
 {
@@ -599,6 +769,12 @@ EventDispatcher::SetHWInterface(HWInterface* interface)
 }
 
 
+/**
+ * @brief Begins a drag-and-drop operation with the given message and cursor bitmap.
+ * @param message          The drag message (copied internally).
+ * @param bitmap           The bitmap to display under the cursor while dragging.
+ * @param offsetFromCursor Offset of the bitmap's top-left from the cursor hotspot.
+ */
 void
 EventDispatcher::SetDragMessage(BMessage& message,
 	ServerBitmap* bitmap, const BPoint& offsetFromCursor)
@@ -620,6 +796,10 @@ EventDispatcher::SetDragMessage(BMessage& message,
 }
 
 
+/**
+ * @brief Associates this dispatcher with the given Desktop.
+ * @param desktop The Desktop instance that owns this dispatcher.
+ */
 void
 EventDispatcher::SetDesktop(Desktop* desktop)
 {
@@ -630,17 +810,18 @@ EventDispatcher::SetDesktop(Desktop* desktop)
 //	#pragma mark - Message methods
 
 
-/*!
-	\brief Sends \a message to the provided \a messenger.
-
-	TODO: the following feature is not yet implemented:
-	If the message could not be delivered immediately, it is included
-	in a waiting message queue with a fixed length - the least important
-	messages are removed first when that gets full.
-
-	Returns "false" if the target port does not exist anymore, "true"
-	if it doesn't.
-*/
+/**
+ * @brief Sends @a message to the provided @a messenger.
+ *
+ * TODO: If the message could not be delivered immediately, it should be included
+ * in a waiting message queue with a fixed length - the least important
+ * messages are removed first when that gets full.
+ *
+ * @param messenger  The BMessenger to deliver the message to.
+ * @param message    The BMessage to send.
+ * @param importance Delivery priority (higher = more important, kept longer).
+ * @return false if the target port no longer exists, true otherwise.
+ */
 bool
 EventDispatcher::_SendMessage(BMessenger& messenger, BMessage* message,
 	float importance)
@@ -663,6 +844,19 @@ EventDispatcher::_SendMessage(BMessenger& messenger, BMessage* message,
 }
 
 
+/**
+ * @brief Adds listener tokens for the given event mask to @a message.
+ *
+ * Optionally skips tokens for listeners that have B_NO_POINTER_HISTORY set
+ * and are receiving an older mouse-moved event.
+ *
+ * @param message         The message to add tokens to.
+ * @param target          The EventTarget whose listeners are inspected.
+ * @param eventMask       Only listeners matching this mask are included.
+ * @param nextMouseMoved  The latest mouse-moved event (for history filtering).
+ * @param _viewToken      In/out: focus view token; cleared when skipped.
+ * @return true if at least one token was added, false otherwise.
+ */
 bool
 EventDispatcher::_AddTokens(BMessage* message, EventTarget* target,
 	uint32 eventMask, BMessage* nextMouseMoved, int32* _viewToken)
@@ -698,6 +892,10 @@ EventDispatcher::_AddTokens(BMessage* message, EventTarget* target,
 }
 
 
+/**
+ * @brief Removes all listener tokens previously added to @a message.
+ * @param message The message whose token field should be cleared.
+ */
 void
 EventDispatcher::_RemoveTokens(BMessage* message)
 {
@@ -705,6 +903,10 @@ EventDispatcher::_RemoveTokens(BMessage* message)
 }
 
 
+/**
+ * @brief Marks @a message so it is fed to the focus handler.
+ * @param message The message to mark.
+ */
 void
 EventDispatcher::_SetFeedFocus(BMessage* message)
 {
@@ -713,6 +915,10 @@ EventDispatcher::_SetFeedFocus(BMessage* message)
 }
 
 
+/**
+ * @brief Clears the feed-focus mark from @a message.
+ * @param message The message to unmark.
+ */
 void
 EventDispatcher::_UnsetFeedFocus(BMessage* message)
 {
@@ -720,6 +926,9 @@ EventDispatcher::_UnsetFeedFocus(BMessage* message)
 }
 
 
+/**
+ * @brief Delivers the pending drag message to the last mouse target as a drop.
+ */
 void
 EventDispatcher::_DeliverDragMessage()
 {
@@ -748,6 +957,14 @@ EventDispatcher::_DeliverDragMessage()
 //	#pragma mark - Event loops
 
 
+/**
+ * @brief Main event processing loop; runs in the event thread.
+ *
+ * Continuously dequeues events from the stream, routes them through the
+ * appropriate filters, and dispatches them to target windows and listeners.
+ * The loop exits when the stream signals quit (input server died), after
+ * which the desktop is notified.
+ */
 void
 EventDispatcher::_EventLoop()
 {
@@ -988,6 +1205,13 @@ EventDispatcher::_EventLoop()
 }
 
 
+/**
+ * @brief Dedicated cursor movement loop; runs in the cursor thread.
+ *
+ * Reads cursor positions from the stream at high priority and moves the
+ * hardware cursor immediately. Also inserts B_MOUSE_IDLE events when the
+ * cursor has not moved for the tool-tip delay duration.
+ */
 void
 EventDispatcher::_CursorLoop()
 {
@@ -1018,6 +1242,11 @@ EventDispatcher::_CursorLoop()
 }
 
 
+/**
+ * @brief Thread entry point for the event loop thread.
+ * @param _dispatcher Pointer to the owning EventDispatcher.
+ * @return B_OK always.
+ */
 /*static*/
 status_t
 EventDispatcher::_event_looper(void* _dispatcher)
@@ -1030,6 +1259,11 @@ EventDispatcher::_event_looper(void* _dispatcher)
 }
 
 
+/**
+ * @brief Thread entry point for the cursor loop thread.
+ * @param _dispatcher Pointer to the owning EventDispatcher.
+ * @return B_OK always.
+ */
 /*static*/
 status_t
 EventDispatcher::_cursor_looper(void* _dispatcher)

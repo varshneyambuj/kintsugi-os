@@ -1,13 +1,35 @@
 /*
- * Copyright 2001-2015, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
- *		Marcus Overhagen <marcus@overhagen.de>
- *      Julian Harnath <julian.harnath@rwth-aachen.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2015, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *       Marcus Overhagen <marcus@overhagen.de>
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
  */
+
+/** @file PictureBoundingBoxPlayer.cpp
+    @brief Computes the bounding box of a ServerPicture by replaying its drawing commands without rendering. */
 
 #include "PictureBoundingBoxPlayer.h"
 
@@ -50,8 +72,15 @@ typedef PictureBoundingBoxPlayer::State BoundingBoxState;
 // #pragma mark - PictureBoundingBoxPlayer::State
 
 
+/** @brief Internal state object used while computing the picture bounding box.
+
+    Manages the draw state stack and accumulates the running bounding box
+    rectangle as picture commands are replayed. */
 class PictureBoundingBoxPlayer::State {
 public:
+	/** @brief Constructs the State, initialising the bounding box to an inverted rectangle.
+	    @param drawState  The draw state to squash and use as the initial rendering context.
+	    @param boundingBox Pointer to the output BRect that will receive the computed bounding box. */
 	State(const DrawState* drawState, BRect* boundingBox)
 		:
 		fDrawState(drawState->Squash()),
@@ -60,15 +89,19 @@ public:
 		fBoundingBox->Set(INT_MAX, INT_MAX, INT_MIN, INT_MIN);
 	}
 
+	/** @brief Destructor. */
 	~State()
 	{
 	}
 
+	/** @brief Returns the current draw state.
+	    @return Pointer to the active DrawState. */
 	DrawState* GetDrawState()
 	{
 		return fDrawState.Get();
 	}
 
+	/** @brief Pushes a new draw state, saving the current one. */
 	void PushDrawState()
 	{
 		DrawState* previousState = fDrawState.Detach();
@@ -79,12 +112,15 @@ public:
 		fDrawState.SetTo(newState);
 	}
 
+	/** @brief Pops the current draw state, restoring the previous one. */
 	void PopDrawState()
 	{
 		if (fDrawState->PreviousState() != NULL)
 			fDrawState.SetTo(fDrawState->PopState());
 	}
 
+	/** @brief Returns the pen-to-local coordinate transform for the current draw state.
+	    @return A SimpleTransform encoding the pen-space to canvas-local mapping. */
 	SimpleTransform PenToLocalTransform() const
 	{
 		SimpleTransform transform;
@@ -92,6 +128,8 @@ public:
 		return transform;
 	}
 
+	/** @brief Expands the accumulated bounding box to include the given rectangle.
+	    @param rect The rectangle to include; it is affine-transformed before inclusion. */
 	void IncludeRect(BRect& rect)
 	{
 		_AffineTransformRect(rect);
@@ -99,6 +137,9 @@ public:
 	}
 
 private:
+	/** @brief Applies the combined affine transform of the draw state to a rectangle.
+	    @param rect The rectangle to transform in place; becomes the axis-aligned bounding box
+	               of the transformed corners. */
 	void _AffineTransformRect(BRect& rect)
 	{
 		BAffineTransform transform = fDrawState->CombinedTransform();
@@ -143,74 +184,305 @@ private:
 // #pragma mark - Picture playback hooks
 
 
+/** @brief Concrete PicturePlayerCallbacks implementation that accumulates a bounding box
+    by processing each drawing command without issuing any actual rendering. */
 class BoundingBoxCallbacks: public BPrivate::PicturePlayerCallbacks {
 public:
+	/** @brief Constructs BoundingBoxCallbacks backed by the given BoundingBoxState.
+	    @param state Pointer to the BoundingBoxState that accumulates the bounding box. */
 	BoundingBoxCallbacks(BoundingBoxState* const state);
 
+	/** @brief Updates the pen location by the given delta.
+	    @param where The delta to add to the current pen location. */
 	virtual void MovePenBy(const BPoint& where);
+
+	/** @brief Expands the bounding box to include a stroked line.
+	    @param start The line start point.
+	    @param end   The line end point. */
 	virtual void StrokeLine(const BPoint& start, const BPoint& end);
+
+	/** @brief Expands the bounding box to include a drawn rectangle.
+	    @param rect The rectangle to include.
+	    @param fill If false, the pen size is added to the rectangle extents. */
 	virtual void DrawRect(const BRect& rect, bool fill);
+
+	/** @brief Expands the bounding box to include a drawn rounded rectangle.
+	    @param rect   The rectangle to include.
+	    @param radii  Corner radii (not used for bounding box calculation).
+	    @param fill   If false, the pen size is added to the rectangle extents. */
 	virtual void DrawRoundRect(const BRect& rect, const BPoint& radii, bool fill);
+
+	/** @brief Expands the bounding box to include a drawn Bezier curve.
+	    @param controlPoints Array of four control points.
+	    @param fill          If false, pen size is added to the extents. */
 	virtual void DrawBezier(const BPoint controlPoints[4], bool fill);
+
+	/** @brief Expands the bounding box to include a drawn arc.
+	    @param center     Center of the arc's ellipse.
+	    @param radii      Semi-axes of the arc's ellipse.
+	    @param startTheta Start angle in degrees.
+	    @param arcTheta   Arc sweep in degrees.
+	    @param fill       If false, pen size is added to the extents. */
 	virtual void DrawArc(const BPoint& center, const BPoint& radii, float startTheta,
 		float arcTheta, bool fill);
+
+	/** @brief Expands the bounding box to include a drawn ellipse.
+	    @param rect The bounding rectangle of the ellipse.
+	    @param fill If false, pen size is added to the extents. */
 	virtual void DrawEllipse(const BRect& rect, bool fill);
+
+	/** @brief Expands the bounding box to include a drawn polygon.
+	    @param numPoints Number of vertices.
+	    @param points    Array of vertex points.
+	    @param isClosed  Whether the polygon is closed.
+	    @param fill      If false, pen size is added to the extents. */
 	virtual void DrawPolygon(size_t numPoints, const BPoint points[], bool isClosed, bool fill);
+
+	/** @brief Expands the bounding box to include a drawn shape.
+	    @param shape The BShape to include.
+	    @param fill  If false, pen size is added to the extents. */
 	virtual void DrawShape(const BShape& shape, bool fill);
+
+	/** @brief Expands the bounding box to include drawn text.
+	    @param string            The string to measure.
+	    @param length            Length in bytes of the string.
+	    @param spaceEscapement   Extra escapement for space characters.
+	    @param nonSpaceEscapement Extra escapement for non-space characters. */
 	virtual void DrawString(const char* string, size_t length, float spaceEscapement,
 		float nonSpaceEscapement);
+
+	/** @brief Expands the bounding box to include drawn pixels (bitmap data).
+	    @param source      Source rectangle in the pixel data.
+	    @param destination Destination rectangle on the canvas.
+	    @param width       Width of the pixel buffer.
+	    @param height      Height of the pixel buffer.
+	    @param bytesPerRow Bytes per row in the pixel buffer.
+	    @param pixelFormat Color space of the pixel data.
+	    @param flags       Drawing flags.
+	    @param data        Pointer to the raw pixel data.
+	    @param length      Length in bytes of the pixel data. */
 	virtual void DrawPixels(const BRect& source, const BRect& destination, uint32 width,
 		uint32 height, size_t bytesPerRow, color_space pixelFormat, uint32 flags, const void* data,
 		size_t length);
+
+	/** @brief Placeholder for nested picture drawing; not yet implemented.
+	    @param where  Where to draw the nested picture.
+	    @param token  Token of the nested ServerPicture. */
 	virtual void DrawPicture(const BPoint& where, int32 token);
+
+	/** @brief Placeholder for setting clipping rectangles; not yet implemented.
+	    @param numRects Number of clipping rectangles.
+	    @param rects    Array of clipping_rect structures. */
 	virtual void SetClippingRects(size_t numRects, const clipping_rect rects[]);
+
+	/** @brief Placeholder for picture-based clipping; not yet implemented.
+	    @param token         Token of the clip picture.
+	    @param where         Offset for the clip picture.
+	    @param clipToInverse If true, clip to the inverse. */
 	virtual void ClipToPicture(int32 token, const BPoint& where, bool clipToInverse);
+
+	/** @brief Pushes the current draw state. */
 	virtual void PushState();
+
+	/** @brief Pops the current draw state, restoring the previous one. */
 	virtual void PopState();
+
+	/** @brief Called on entry to a state-change block; no action needed. */
 	virtual void EnterStateChange();
+
+	/** @brief Called on exit from a state-change block; no action needed. */
 	virtual void ExitStateChange();
+
+	/** @brief Called on entry to a font-state block; no action needed. */
 	virtual void EnterFontState();
+
+	/** @brief Called on exit from a font-state block; no action needed. */
 	virtual void ExitFontState();
+
+	/** @brief Sets the drawing origin in the current draw state.
+	    @param origin The new origin point. */
 	virtual void SetOrigin(const BPoint& origin);
+
+	/** @brief Sets the pen location in the current draw state.
+	    @param location The new pen location. */
 	virtual void SetPenLocation(const BPoint& location);
+
+	/** @brief No-op: drawing mode does not affect bounding box computation.
+	    @param mode The drawing mode (ignored). */
 	virtual void SetDrawingMode(drawing_mode mode);
+
+	/** @brief Sets the line cap, join, and miter parameters in the current draw state.
+	    @param capMode    The cap_mode to apply.
+	    @param joinMode   The join_mode to apply.
+	    @param miterLimit The miter limit to apply. */
 	virtual void SetLineMode(cap_mode capMode, join_mode joinMode, float miterLimit);
+
+	/** @brief Sets the pen size in the current draw state.
+	    @param size The new pen size. */
 	virtual void SetPenSize(float size);
+
+	/** @brief Sets the high (foreground) color in the current draw state.
+	    @param color The new high color. */
 	virtual void SetForeColor(const rgb_color& color);
+
+	/** @brief Sets the low (background) color in the current draw state.
+	    @param color The new low color. */
 	virtual void SetBackColor(const rgb_color& color);
+
+	/** @brief Sets the stipple pattern in the current draw state.
+	    @param patter The new stipple pattern. */
 	virtual void SetStipplePattern(const pattern& patter);
+
+	/** @brief Sets the scale in the current draw state.
+	    @param scale The new scale factor. */
 	virtual void SetScale(float scale);
+
+	/** @brief Sets the font family in the current draw state.
+	    @param familyName The font family name.
+	    @param length     Length in bytes of the family name string. */
 	virtual void SetFontFamily(const char* familyName, size_t length);
+
+	/** @brief Sets the font style in the current draw state.
+	    @param styleName The font style name.
+	    @param length    Length in bytes of the style name string. */
 	virtual void SetFontStyle(const char* styleName, size_t length);
+
+	/** @brief Sets the font spacing in the current draw state.
+	    @param spacing The spacing mode to apply. */
 	virtual void SetFontSpacing(uint8 spacing);
+
+	/** @brief Sets the font size in the current draw state.
+	    @param size The font size in points. */
 	virtual void SetFontSize(float size);
+
+	/** @brief Sets the font rotation in the current draw state.
+	    @param rotation The rotation angle in degrees. */
 	virtual void SetFontRotation(float rotation);
+
+	/** @brief Sets the font encoding in the current draw state.
+	    @param encoding The encoding mode to apply. */
 	virtual void SetFontEncoding(uint8 encoding);
+
+	/** @brief Sets the font flags in the current draw state.
+	    @param flags The font flags to apply. */
 	virtual void SetFontFlags(uint32 flags);
+
+	/** @brief Sets the font shear in the current draw state.
+	    @param shear The shear angle in degrees. */
 	virtual void SetFontShear(float shear);
+
+	/** @brief Sets the font face in the current draw state.
+	    @param face The face flags to apply. */
 	virtual void SetFontFace(uint16 face);
+
+	/** @brief No-op: blending mode does not affect bounding box computation.
+	    @param alphaSourceMode   Source alpha mode (ignored).
+	    @param alphaFunctionMode Alpha function mode (ignored). */
 	virtual void SetBlendingMode(source_alpha alphaSourceMode, alpha_function alphaFunctionMode);
+
+	/** @brief Sets the affine transform in the current draw state.
+	    @param transform The new BAffineTransform to apply. */
 	virtual void SetTransform(const BAffineTransform& transform);
+
+	/** @brief Applies a pre-translation to the current draw state's transform.
+	    @param x Translation along X.
+	    @param y Translation along Y. */
 	virtual void TranslateBy(double x, double y);
+
+	/** @brief Applies a pre-scale to the current draw state's transform.
+	    @param x Scale factor along X.
+	    @param y Scale factor along Y. */
 	virtual void ScaleBy(double x, double y);
+
+	/** @brief Applies a pre-rotation to the current draw state's transform.
+	    @param angleRadians Rotation angle in radians. */
 	virtual void RotateBy(double angleRadians);
+
+	/** @brief Recursively computes the bounding box of a nested layer and includes it.
+	    @param layer Pointer to the nested Layer. */
 	virtual void BlendLayer(Layer* layer);
+
+	/** @brief Placeholder for rect clipping; not yet implemented.
+	    @param rect    The clipping rectangle.
+	    @param inverse If true, clip to the complement. */
 	virtual void ClipToRect(const BRect& rect, bool inverse);
+
+	/** @brief Placeholder for shape clipping; not yet implemented.
+	    @param opCount  Number of shape operations.
+	    @param opList   Array of shape operation codes.
+	    @param ptCount  Number of shape points.
+	    @param ptList   Array of shape points.
+	    @param inverse  If true, clip to the complement. */
 	virtual void ClipToShape(int32 opCount, const uint32 opList[], int32 ptCount,
 		const BPoint ptList[], bool inverse);
+
+	/** @brief Placeholder for drawing a string at multiple locations; not yet implemented.
+	    @param string        The string to draw.
+	    @param length        Length in bytes.
+	    @param locations     Array of drawing locations.
+	    @param locationCount Number of locations. */
 	virtual void DrawStringLocations(const char* string, size_t length, const BPoint locations[],
 		size_t locationCount);
+
+	/** @brief Expands the bounding box to include a gradient-filled rectangle.
+	    @param rect     The rectangle to include.
+	    @param gradient The gradient (transform is applied to it).
+	    @param fill     If false, pen size is added to the extents. */
 	virtual void DrawRectGradient(const BRect& rect, BGradient& gradient, bool fill);
+
+	/** @brief Expands the bounding box to include a gradient-filled rounded rectangle.
+	    @param rect     The rectangle to include.
+	    @param radii    Corner radii.
+	    @param gradient The gradient.
+	    @param fill     If false, pen size is added to the extents. */
 	virtual void DrawRoundRectGradient(const BRect& rect, const BPoint& radii, BGradient& gradient,
 		bool fill);
+
+	/** @brief Expands the bounding box to include a gradient-filled Bezier curve.
+	    @param controlPoints Four control points of the curve.
+	    @param gradient      The gradient.
+	    @param fill          If false, pen size is added to the extents. */
 	virtual void DrawBezierGradient(const BPoint controlPoints[4], BGradient& gradient, bool fill);
+
+	/** @brief Expands the bounding box to include a gradient-filled arc.
+	    @param center     Center of the arc's ellipse.
+	    @param radii      Semi-axes of the ellipse.
+	    @param startTheta Start angle in degrees.
+	    @param arcTheta   Arc sweep in degrees.
+	    @param gradient   The gradient.
+	    @param fill       If false, pen size is added to the extents. */
 	virtual void DrawArcGradient(const BPoint& center, const BPoint& radii, float startTheta,
 		float arcTheta, BGradient& gradient, bool fill);
+
+	/** @brief Expands the bounding box to include a gradient-filled ellipse.
+	    @param rect     Bounding rectangle of the ellipse.
+	    @param gradient The gradient.
+	    @param fill     If false, pen size is added to the extents. */
 	virtual void DrawEllipseGradient(const BRect& rect, BGradient& gradient, bool fill);
+
+	/** @brief Expands the bounding box to include a gradient-filled polygon.
+	    @param numPoints Number of vertices.
+	    @param points    Array of vertex points.
+	    @param isClosed  Whether the polygon is closed.
+	    @param gradient  The gradient.
+	    @param fill      If false, pen size is added to the extents. */
 	virtual void DrawPolygonGradient(size_t numPoints, const BPoint points[], bool isClosed,
 		BGradient& gradient, bool fill);
+
+	/** @brief Expands the bounding box to include a gradient-filled shape.
+	    @param shape    The BShape to include.
+	    @param gradient The gradient.
+	    @param fill     If false, pen size is added to the extents. */
 	virtual void DrawShapeGradient(const BShape& shape, BGradient& gradient, bool fill);
+
+	/** @brief Placeholder for setting the fill rule; not yet implemented.
+	    @param fillRule The fill rule constant. */
 	virtual void SetFillRule(int32 fillRule);
+
+	/** @brief Expands the bounding box to include a gradient-stroked line.
+	    @param start    The line start point.
+	    @param end      The line end point.
+	    @param gradient The gradient applied to the stroke. */
 	virtual void StrokeLineGradient(const BPoint& start, const BPoint& end, BGradient& gradient);
 
 private:
@@ -218,6 +490,8 @@ private:
 };
 
 
+/** @brief Constructs BoundingBoxCallbacks with the given state.
+    @param state Pointer to the BoundingBoxState to accumulate results in. */
 BoundingBoxCallbacks::BoundingBoxCallbacks(BoundingBoxState* const state)
 	:
 	fState(state)
@@ -225,6 +499,10 @@ BoundingBoxCallbacks::BoundingBoxCallbacks(BoundingBoxState* const state)
 }
 
 
+/** @brief Computes the axis-aligned bounding frame of a polygon.
+    @param points    Pointer to the array of polygon vertices.
+    @param numPoints Number of vertices.
+    @param frame     Output BRect receiving the bounding frame. */
 static void
 get_polygon_frame(const BPoint* points, int32 numPoints, BRect* frame)
 {
@@ -254,6 +532,9 @@ get_polygon_frame(const BPoint* points, int32 numPoints, BRect* frame)
 }
 
 
+/** @brief Expands a rectangle outward by half the current pen size plus one pixel.
+    @param state The BoundingBoxState holding the current draw state.
+    @param rect  The rectangle to expand in place. */
 template<class RectType>
 static void
 expand_rect_for_pen_size(BoundingBoxState* state, RectType& rect)
@@ -332,6 +613,10 @@ BoundingBoxCallbacks::DrawRoundRect(const BRect& _rect,
 }
 
 
+/** @brief Computes an approximate bounding rectangle for a Bezier curve by enclosing its four control points.
+    @param state      The BoundingBoxState holding the current draw state.
+    @param viewPoints Array of four control points in view coordinates.
+    @param outRect    Output BRect receiving the bounding rectangle. */
 static void
 determine_bounds_bezier(BoundingBoxState* state, const BPoint viewPoints[4],
 	BRect& outRect)
@@ -401,6 +686,11 @@ BoundingBoxCallbacks::DrawArc(const BPoint& center,
 }
 
 
+/** @brief Computes the bounding rectangle of a transformed polygon.
+    @param state      The BoundingBoxState holding the current draw state.
+    @param numPoints  Number of vertices.
+    @param viewPoints Array of vertex points in view coordinates.
+    @param outRect    Output BRect receiving the bounding rectangle. */
 static void
 determine_bounds_polygon(BoundingBoxState* state, int32 numPoints,
 	const BPoint* viewPoints, BRect& outRect)
@@ -920,6 +1210,11 @@ BoundingBoxCallbacks::StrokeLineGradient(const BPoint& start, const BPoint& end,
 }
 
 
+/** @brief Replays the given picture's drawing commands to compute its bounding box.
+    @param picture       The ServerPicture whose bounding box is to be determined.
+    @param drawState     The draw state to use as the rendering context.
+    @param outBoundingBox Output parameter receiving the computed bounding box.
+                          Will be an invalid rect if the picture is empty. */
 /* static */ void
 PictureBoundingBoxPlayer::Play(ServerPicture* picture,
 	const DrawState* drawState, BRect* outBoundingBox)

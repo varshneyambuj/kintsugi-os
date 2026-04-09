@@ -1,8 +1,27 @@
 /*
- * Copyright (c) 2001-2015, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2001-2015, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
  *		DarkWyrm <bpmagic@columbus.rr.com>
  *		Adi Oanca <adioanca@gmail.com>
  *		Axel Dörfler, axeld@pinc-software.de
@@ -12,6 +31,11 @@
  *		Julian Harnath <julian.harnath@rwth-aachen.de>
  *		Joseph Groover <looncraz@looncraz.net>
  */
+
+/** @file View.cpp
+ *  @brief Server-side view tree node handling layout, clipping, drawing, and input events.
+ */
+
 #include "View.h"
 
 #include <new>
@@ -49,6 +73,17 @@
 using std::nothrow;
 
 
+/** @brief Adjusts \a frame in place according to \a resizingMode and parent deltas.
+ *
+ *  Interprets the 16-bit field of \a resizingMode to determine which edges of
+ *  \a frame follow (or centre relative to) the parent's right and bottom edges
+ *  when the parent grows by (\a x, \a y) pixels.
+ *
+ *  @param frame       The frame rectangle to update.
+ *  @param resizingMode The low 16 bits of the view's resize mode flags.
+ *  @param x           Horizontal pixel delta applied to the parent.
+ *  @param y           Vertical pixel delta applied to the parent.
+ */
 void
 resize_frame(IntRect& frame, uint32 resizingMode, int32 x, int32 y)
 {
@@ -81,6 +116,19 @@ resize_frame(IntRect& frame, uint32 resizingMode, int32 x, int32 y)
 //	#pragma mark -
 
 
+/** @brief Constructs a View with the given geometry and attributes.
+ *
+ *  All child and sibling pointers start as NULL.  The view begins visible
+ *  (fHidden == false) with a white view colour.  The draw state's sub-pixel
+ *  precision flag is initialised from the B_SUBPIXEL_PRECISE view flag.
+ *
+ *  @param frame          The initial frame rectangle in parent coordinates.
+ *  @param scrollingOffset The initial scrolling offset applied to bounds.
+ *  @param name           The view's name string.
+ *  @param token          The server-side handler token for this view.
+ *  @param resizeMode     Resize mode flags controlling edge-following behaviour.
+ *  @param flags          View flags (e.g. B_SUBPIXEL_PRECISE, B_DRAW_ON_CHILDREN).
+ */
 View::View(IntRect frame, IntPoint scrollingOffset, const char* name,
 		int32 token, uint32 resizeMode, uint32 flags)
 	:
@@ -131,6 +179,7 @@ View::View(IntRect frame, IntPoint scrollingOffset, const char* name,
 }
 
 
+/** @brief Destructor. Recursively deletes all child views. */
 View::~View()
 {
 	// iterate over children and delete each one
@@ -143,6 +192,9 @@ View::~View()
 }
 
 
+/** @brief Returns the view's bounds rectangle in local (scrolled) coordinates.
+ *  @return The bounds rectangle with its origin at the scrolling offset.
+ */
 IntRect
 View::Bounds() const
 {
@@ -153,6 +205,15 @@ View::Bounds() const
 }
 
 
+/** @brief Clips \a bounds to the portion visible within the top-level view hierarchy.
+ *
+ *  Intersects \a bounds with this view's own bounds, converts to parent
+ *  coordinates, and recurses up the parent chain until the top view is
+ *  reached.  The result is always in top-view-local screen coordinates.
+ *
+ *  @param bounds In/out parameter: on entry the rectangle in local coordinates;
+ *                on exit the visible rectangle in top-view coordinates.
+ */
 void
 View::ConvertToVisibleInTopView(IntRect* bounds) const
 {
@@ -166,6 +227,14 @@ View::ConvertToVisibleInTopView(IntRect* bounds) const
 }
 
 
+/** @brief Called when this view is attached to a Window.
+ *
+ *  Records the owning window, detects the desktop-background special case,
+ *  registers the view token in the window's server-app token space, then
+ *  recursively attaches all child views.
+ *
+ *  @param window The Window this view is being attached to.
+ */
 void
 View::AttachedToWindow(::Window* window)
 {
@@ -187,6 +256,11 @@ View::AttachedToWindow(::Window* window)
 }
 
 
+/** @brief Called when this view is detached from its Window.
+ *
+ *  Removes the view token from the server-app token space, clears fWindow,
+ *  and recursively detaches all child views.
+ */
 void
 View::DetachedFromWindow()
 {
@@ -204,6 +278,9 @@ View::DetachedFromWindow()
 // #pragma mark -
 
 
+/** @brief Returns the DrawingEngine of the owning Window.
+ *  @return Pointer to the window's DrawingEngine.
+ */
 DrawingEngine*
 View::GetDrawingEngine() const
 {
@@ -211,6 +288,10 @@ View::GetDrawingEngine() const
 }
 
 
+/** @brief Retrieves a ServerPicture by token via the owning window's app.
+ *  @param token The picture token.
+ *  @return Pointer to the ServerPicture, or NULL if not found.
+ */
 ServerPicture*
 View::GetPicture(int32 token) const
 {
@@ -218,6 +299,7 @@ View::GetPicture(int32 token) const
 }
 
 
+/** @brief Resyncs the draw state with the server window. */
 void
 View::ResyncDrawState()
 {
@@ -225,6 +307,7 @@ View::ResyncDrawState()
 }
 
 
+/** @brief Updates the current drawing region via the server window. */
 void
 View::UpdateCurrentDrawingRegion()
 {
@@ -232,6 +315,14 @@ View::UpdateCurrentDrawingRegion()
 }
 
 
+/** @brief Appends \a view as the last child of this view.
+ *
+ *  Sets the parent pointer of \a view to this view, links it into the sibling
+ *  list, updates the visibility flag, rebuilds clipping, and (if a window is
+ *  attached) triggers a redraw of the newly visible area.
+ *
+ *  @param view The view to add. Must not already have a parent.
+ */
 void
 View::AddChild(View* view)
 {
@@ -273,6 +364,15 @@ View::AddChild(View* view)
 }
 
 
+/** @brief Removes \a view from this view's child list.
+ *
+ *  Unlinks \a view from the sibling list, clears any overlay, rebuilds
+ *  clipping, detaches from the window, and triggers a redraw of the now-
+ *  exposed area.
+ *
+ *  @param view The child view to remove. Must be a direct child of this view.
+ *  @return true on success, false if \a view is not a child of this view.
+ */
 bool
 View::RemoveChild(View* view)
 {
@@ -329,6 +429,13 @@ View::RemoveChild(View* view)
 }
 
 
+/** @brief Returns the topmost view in this view's ancestor chain.
+ *
+ *  Recursively walks up the parent chain until a view with no parent is found.
+ *  That view is the top view (typically the window's content view).
+ *
+ *  @return Pointer to the topmost ancestor view.
+ */
 View*
 View::TopView()
 {
@@ -342,6 +449,14 @@ View::TopView()
 }
 
 
+/** @brief Counts the number of child views.
+ *
+ *  When \a deep is true the count includes all descendants recursively;
+ *  when false only direct children are counted.
+ *
+ *  @param deep If true, count descendants at all levels.
+ *  @return The total child (and optionally descendant) count.
+ */
 uint32
 View::CountChildren(bool deep) const
 {
@@ -356,6 +471,13 @@ View::CountChildren(bool deep) const
 }
 
 
+/** @brief Populates \a tokenMap with pointers to all descendant views.
+ *
+ *  Performs a depth-first traversal and adds each descendant view pointer to
+ *  \a tokenMap.
+ *
+ *  @param tokenMap The BList to append view pointers into.
+ */
 void
 View::CollectTokensForChildren(BList* tokenMap) const
 {
@@ -405,6 +527,15 @@ View::MarkAt(DrawingEngine* engine, const BPoint& where, int32 level)
 #endif
 
 
+/** @brief Searches this view and its descendants for views matching \a flags.
+ *
+ *  Adds matching views to \a list until \a left reaches zero (indicating the
+ *  desired count has been found), then stops the search early.
+ *
+ *  @param flags The flag bitmask to match against each view's flags.
+ *  @param list  The list to which matching views are appended.
+ *  @param left  In/out counter of remaining views to find; decremented per match.
+ */
 void
 View::FindViews(uint32 flags, BObjectList<View>& list, int32& left)
 {
@@ -422,6 +553,10 @@ View::FindViews(uint32 flags, BObjectList<View>& list, int32& left)
 }
 
 
+/** @brief Returns true if \a view is this view or any of its descendants.
+ *  @param view The view to search for.
+ *  @return true if found within the sub-tree, false otherwise.
+ */
 bool
 View::HasView(View* view)
 {
@@ -437,6 +572,17 @@ View::HasView(View* view)
 }
 
 
+/** @brief Returns the deepest visible view that contains \a where.
+ *
+ *  First checks that this view is visible and that \a where falls within its
+ *  frame (converted to screen coordinates via the parent transform).  Then
+ *  recurses into children, returning the deepest match.  If no child matches
+ *  this view itself is returned.
+ *
+ *  @param where The test point in screen coordinates.
+ *  @return The deepest matching view, or NULL if this view is hidden or does
+ *          not contain \a where.
+ */
 View*
 View::ViewAt(const BPoint& where)
 {
@@ -463,6 +609,9 @@ View::ViewAt(const BPoint& where)
 // #pragma mark -
 
 
+/** @brief Sets the view's name string.
+ *  @param string The new name.
+ */
 void
 View::SetName(const char* string)
 {
@@ -470,6 +619,14 @@ View::SetName(const char* string)
 }
 
 
+/** @brief Sets the view flags and propagates side effects.
+ *
+ *  Updates the draw state's sub-pixel precision from B_SUBPIXEL_PRECISE.
+ *  If the B_TRANSPARENT_BACKGROUND flag changes state and this view has a
+ *  parent, triggers a clipping rebuild on the parent.
+ *
+ *  @param flags The new set of view flags.
+ */
 void
 View::SetFlags(uint32 flags)
 {
@@ -489,6 +646,18 @@ View::SetFlags(uint32 flags)
 }
 
 
+/** @brief Sets the view bitmap used to paint the view background.
+ *
+ *  If a previous bitmap had an overlay and the new bitmap also has one, the
+ *  overlay token is transferred.  If the old bitmap had an overlay and no new
+ *  bitmap is provided, the overlay is hidden.
+ *
+ *  @param bitmap       The new background ServerBitmap, or NULL to clear it.
+ *  @param sourceRect   The source rectangle within \a bitmap to draw from.
+ *  @param destRect     The destination rectangle in view coordinates.
+ *  @param resizingMode Controls how \a destRect scales when the view is resized.
+ *  @param options      Tiling and scaling option flags (e.g. B_TILE_BITMAP).
+ */
 void
 View::SetViewBitmap(ServerBitmap* bitmap, IntRect sourceRect,
 	IntRect destRect, int32 resizingMode, int32 options)
@@ -516,6 +685,9 @@ View::SetViewBitmap(ServerBitmap* bitmap, IntRect sourceRect,
 }
 
 
+/** @brief Returns the overlay associated with the view bitmap, if any.
+ *  @return Pointer to the Overlay, or NULL if the view bitmap has no overlay.
+ */
 ::Overlay*
 View::_Overlay() const
 {
@@ -526,6 +698,7 @@ View::_Overlay() const
 }
 
 
+/** @brief Reconfigures the overlay geometry to match the current view destination. */
 void
 View::_UpdateOverlayView() const
 {
@@ -544,6 +717,11 @@ View::_UpdateOverlayView() const
 	This method is called whenever the window is resized or moved - would
 	be nice to have a better solution for this, though.
 */
+/** @brief Propagates overlay geometry updates after window moves or resizes.
+ *
+ *  If this view has an overlay bitmap, reconfigures it.  Otherwise recursively
+ *  asks all children to update their overlays.
+ */
 void
 View::UpdateOverlay()
 {
@@ -565,6 +743,12 @@ View::UpdateOverlay()
 // #pragma mark -
 
 
+/** @brief Populates \a transform with the cumulative offset from local to screen coordinates.
+ *
+ *  Walks the parent chain summing frame-minus-scrollingOffset deltas.
+ *
+ *  @param transform The SimpleTransform to add the offset to.
+ */
 void
 View::_LocalToScreenTransform(SimpleTransform& transform) const
 {
@@ -581,6 +765,12 @@ View::_LocalToScreenTransform(SimpleTransform& transform) const
 }
 
 
+/** @brief Populates \a transform with the cumulative offset from screen to local coordinates.
+ *
+ *  Walks the parent chain summing scrollingOffset-minus-frame deltas.
+ *
+ *  @param transform The SimpleTransform to add the offset to.
+ */
 void
 View::_ScreenToLocalTransform(SimpleTransform& transform) const
 {
@@ -600,6 +790,17 @@ View::_ScreenToLocalTransform(SimpleTransform& transform) const
 // #pragma mark -
 
 
+/** @brief Moves the view by (\a x, \a y) pixels.
+ *
+ *  Updates the frame and, when visible and parented and a dirty region is
+ *  provided, marks both the old and new on-screen bounds as dirty.  Adjusts
+ *  the screen clipping accordingly: if this is the top view the clipping is
+ *  moved directly; otherwise it is invalidated so it is rebuilt on next use.
+ *
+ *  @param x            Horizontal pixel offset (positive = right).
+ *  @param y            Vertical pixel offset (positive = down).
+ *  @param dirtyRegion  Region to accumulate dirty areas into, or NULL to skip.
+ */
 void
 View::MoveBy(int32 x, int32 y, BRegion* dirtyRegion)
 {
@@ -673,6 +874,19 @@ View::MoveBy(int32 x, int32 y, BRegion* dirtyRegion)
 }
 
 
+/** @brief Resizes the view by (\a x, \a y) pixels.
+ *
+ *  Expands or contracts the right and bottom edges of the frame.  When visible
+ *  and attached to a window the newly exposed or covered pixels are added to
+ *  \a dirtyRegion (unless B_FULL_UPDATE_ON_RESIZE is set, in which case the
+ *  whole view is dirtied).  Children are notified via ParentResized() and
+ *  the view bitmap destination is adjusted.  Local clipping is rebuilt at the
+ *  end.
+ *
+ *  @param x           Horizontal size delta (positive = wider).
+ *  @param y           Vertical size delta (positive = taller).
+ *  @param dirtyRegion Region to accumulate dirty areas into, or NULL to skip.
+ */
 void
 View::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion)
 {
@@ -742,6 +956,17 @@ View::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion)
 }
 
 
+/** @brief Adjusts this view's frame when the parent is resized.
+ *
+ *  Applies resize_frame() to compute the new frame based on the view's resize
+ *  mode, then calls MoveBy() and ResizeBy() as needed.  If the frame does not
+ *  change the screen clipping is still invalidated because the parent size
+ *  change may expose or hide parts of this view.
+ *
+ *  @param x           Horizontal parent size delta.
+ *  @param y           Vertical parent size delta.
+ *  @param dirtyRegion Region to accumulate dirty areas into.
+ */
 void
 View::ParentResized(int32 x, int32 y, BRegion* dirtyRegion)
 {
@@ -767,6 +992,16 @@ View::ParentResized(int32 x, int32 y, BRegion* dirtyRegion)
 }
 
 
+/** @brief Scrolls the view's contents by (\a x, \a y) pixels.
+ *
+ *  If the view is not visible or not attached to a window, just updates the
+ *  scrolling offset.  Otherwise performs a blit of the still-visible region,
+ *  marks the uncovered area dirty, and rebuilds clipping.
+ *
+ *  @param x            Horizontal scroll amount (positive scrolls content left).
+ *  @param y            Vertical scroll amount (positive scrolls content up).
+ *  @param dirtyRegion  Region to accumulate dirty (uncovered) areas into.
+ */
 void
 View::ScrollBy(int32 x, int32 y, BRegion* dirtyRegion)
 {
@@ -825,6 +1060,17 @@ View::ScrollBy(int32 x, int32 y, BRegion* dirtyRegion)
 }
 
 
+/** @brief Blits a rectangular region of the view's contents to another location.
+ *
+ *  Applies any active affine dilation transform to the source and destination
+ *  rectangles, computes the visible portion that can be copied directly, blits
+ *  it, then marks the remainder dirty.  The clipping is constrained to the
+ *  combined screen-and-user clipping of this view.
+ *
+ *  @param src                   The source rectangle in local coordinates.
+ *  @param dst                   The destination rectangle in local coordinates.
+ *  @param windowContentClipping The window's content clipping region.
+ */
 void
 View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 {
@@ -915,6 +1161,14 @@ View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 // #pragma mark -
 
 
+/** @brief Propagates a UI colour change to this view and all its descendants.
+ *
+ *  Updates the view colour, high colour, and low colour if they are bound to
+ *  \a which.  Then recurses into all children.
+ *
+ *  @param which The colour constant that changed (e.g. B_PANEL_BACKGROUND_COLOR).
+ *  @param color The new colour value.
+ */
 void
 View::ColorUpdated(color_which which, rgb_color color)
 {
@@ -937,6 +1191,15 @@ View::ColorUpdated(color_which which, rgb_color color)
 }
 
 
+/** @brief Binds the view colour to a UI colour constant with an optional tint.
+ *
+ *  If \a which is not B_NO_COLOR the view colour is updated immediately from
+ *  the current desktop settings.  The binding is remembered so that future
+ *  colour-change notifications update the view automatically.
+ *
+ *  @param which The UI colour constant to bind to.
+ *  @param tint  The tint factor to apply on top of the UI colour.
+ */
 void
 View::SetViewUIColor(color_which which, float tint)
 {
@@ -950,6 +1213,11 @@ View::SetViewUIColor(color_which which, float tint)
 }
 
 
+/** @brief Returns the UI colour constant this view's colour is bound to.
+ *
+ *  @param tint Optional output parameter filled with the tint factor.
+ *  @return The bound colour constant, or B_NO_COLOR if not bound.
+ */
 color_which
 View::ViewUIColor(float* tint)
 {
@@ -963,6 +1231,12 @@ View::ViewUIColor(float* tint)
 // #pragma mark -
 
 
+/** @brief Pushes the current draw state onto the draw state stack.
+ *
+ *  A new DrawState is created inheriting from the current one.  The
+ *  B_SUBPIXEL_PRECISE flag is propagated to the new state since it is a view
+ *  flag in the BeAPI but stored in the draw state internally.
+ */
 void
 View::PushState()
 {
@@ -980,6 +1254,12 @@ View::PushState()
 }
 
 
+/** @brief Pops the topmost draw state from the stack.
+ *
+ *  Warns if no state is available to pop.  If the popped state had additional
+ *  user clipping, triggers a clipping rebuild since that clipping is no longer
+ *  active.
+ */
 void
 View::PopState()
 {
@@ -1004,6 +1284,10 @@ View::PopState()
 // #pragma mark -
 
 
+/** @brief Sets the event mask and options for this view.
+ *  @param eventMask Bitmask of event types this view wants to receive.
+ *  @param options   Event delivery option flags.
+ */
 void
 View::SetEventMask(uint32 eventMask, uint32 options)
 {
@@ -1012,6 +1296,9 @@ View::SetEventMask(uint32 eventMask, uint32 options)
 }
 
 
+/** @brief Sets the cursor displayed when the pointer is over this view.
+ *  @param cursor The new ServerCursor, or NULL to use the default cursor.
+ */
 void
 View::SetCursor(ServerCursor* cursor)
 {
@@ -1022,6 +1309,9 @@ View::SetCursor(ServerCursor* cursor)
 }
 
 
+/** @brief Associates a ServerPicture with this view for layer blending.
+ *  @param picture The picture to associate, or NULL to clear.
+ */
 void
 View::SetPicture(ServerPicture* picture)
 {
@@ -1032,6 +1322,7 @@ View::SetPicture(ServerPicture* picture)
 }
 
 
+/** @brief Blends the topmost picture layer into the view if one exists. */
 void
 View::BlendAllLayers()
 {
@@ -1044,6 +1335,17 @@ View::BlendAllLayers()
 }
 
 
+/** @brief Draws this view's background and, when \a deep is true, all children.
+ *
+ *  Paints the view bitmap (with optional tiling) and then fills the remaining
+ *  visible region with the view colour.  Skips drawing if the view is not
+ *  visible.  If \a deep is true recurses into all child views.
+ *
+ *  @param drawingEngine          The engine to draw with.
+ *  @param effectiveClipping      The effective clipping region for this draw pass.
+ *  @param windowContentClipping  The window's content clipping region.
+ *  @param deep                   If true, also draw all descendant views.
+ */
 void
 View::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 	const BRegion* windowContentClipping, bool deep)
@@ -1199,6 +1501,10 @@ View::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 // #pragma mark -
 
 
+/** @brief Hook called when a mouse button is pressed over this view.
+ *  @param message The mouse-down BMessage.
+ *  @param where   The click position in screen coordinates.
+ */
 void
 View::MouseDown(BMessage* message, BPoint where)
 {
@@ -1206,6 +1512,10 @@ View::MouseDown(BMessage* message, BPoint where)
 }
 
 
+/** @brief Hook called when a mouse button is released over this view.
+ *  @param message The mouse-up BMessage.
+ *  @param where   The release position in screen coordinates.
+ */
 void
 View::MouseUp(BMessage* message, BPoint where)
 {
@@ -1213,6 +1523,10 @@ View::MouseUp(BMessage* message, BPoint where)
 }
 
 
+/** @brief Hook called when the mouse pointer moves over this view.
+ *  @param message The mouse-moved BMessage.
+ *  @param where   The current pointer position in screen coordinates.
+ */
 void
 View::MouseMoved(BMessage* message, BPoint where)
 {
@@ -1223,6 +1537,14 @@ View::MouseMoved(BMessage* message, BPoint where)
 // #pragma mark -
 
 
+/** @brief Sets or clears the hidden flag and triggers a redraw.
+ *
+ *  Propagates the visibility change recursively through children via
+ *  UpdateVisibleDeep().  Rebuilds clipping and marks the affected area dirty
+ *  if the effective visibility changed.
+ *
+ *  @param hidden true to hide the view, false to show it.
+ */
 void
 View::SetHidden(bool hidden)
 {
@@ -1254,6 +1576,9 @@ View::SetHidden(bool hidden)
 }
 
 
+/** @brief Returns the view's hidden state (not accounting for parent visibility).
+ *  @return true if this view is explicitly hidden.
+ */
 bool
 View::IsHidden() const
 {
@@ -1261,6 +1586,13 @@ View::IsHidden() const
 }
 
 
+/** @brief Recursively updates the effective visibility flag based on parent visibility.
+ *
+ *  A view is visible only when it is not hidden and its parent (if any) is visible.
+ *  Also handles overlay show/hide when visibility transitions.
+ *
+ *  @param parentVisible The effective visibility of this view's parent.
+ */
 void
 View::UpdateVisibleDeep(bool parentVisible)
 {
@@ -1286,6 +1618,7 @@ View::UpdateVisibleDeep(bool parentVisible)
 // #pragma mark -
 
 
+/** @brief Marks this view and all descendants as needing background repainting. */
 void
 View::MarkBackgroundDirty()
 {
@@ -1297,6 +1630,16 @@ View::MarkBackgroundDirty()
 }
 
 
+/** @brief Adds view tokens and dirty rects for views intersecting \a region to \a link.
+ *
+ *  Used during the update protocol to tell the client BWindow which views need
+ *  to be repainted and what their dirty rectangles are.  Skips non-visible
+ *  views and recursively processes children.
+ *
+ *  @param link                  The PortLink to append token/rect pairs to.
+ *  @param region                The region to test intersection against.
+ *  @param windowContentClipping The window's content clipping for screen clipping queries.
+ */
 void
 View::AddTokensForViewsInRegion(BPrivate::PortLink& link, BRegion& region,
 	BRegion* windowContentClipping)
@@ -1329,6 +1672,7 @@ View::AddTokensForViewsInRegion(BPrivate::PortLink& link, BRegion& region,
 }
 
 
+/** @brief Prints a human-readable description of this view's state to stdout. */
 void
 View::PrintToStream() const
 {
@@ -1369,6 +1713,16 @@ View::PrintToStream() const
 }
 
 
+/** @brief Rebuilds the local clipping region for this view and optionally its descendants.
+ *
+ *  Sets the local clipping to this view's bounds, then excludes all visible,
+ *  non-transparent child frames.  If the draw state has additional user
+ *  clipping, that is incorporated into fUserClipping.  When \a deep is true,
+ *  all descendants rebuild their clipping as well.  Invalidates the combined
+ *  screen-and-user clipping cache.
+ *
+ *  @param deep If true, recursively rebuild clipping for all children.
+ */
 void
 View::RebuildClipping(bool deep)
 {
@@ -1425,6 +1779,18 @@ View::RebuildClipping(bool deep)
 }
 
 
+/** @brief Returns the combined screen and user clipping region.
+ *
+ *  If no user clipping is set, returns the screen clipping directly.
+ *  Otherwise builds (on first call) a combined region that is the intersection
+ *  of the user clipping (transformed to screen space) and the screen clipping.
+ *  The combined region is cached until invalidated.
+ *
+ *  @param windowContentClipping The window's content clipping passed through to
+ *                               _ScreenClipping().
+ *  @param force                 If true, forces recomputation of the screen clipping.
+ *  @return Reference to the combined clipping region.
+ */
 BRegion&
 View::ScreenAndUserClipping(const BRegion* windowContentClipping, bool force) const
 {
@@ -1448,6 +1814,11 @@ View::ScreenAndUserClipping(const BRegion* windowContentClipping, bool force) co
 }
 
 
+/** @brief Marks this view's screen clipping and all descendants' as invalid.
+ *
+ *  Called whenever geometry changes may affect screen-space clipping.  The
+ *  clipping will be lazily recomputed on next access via _ScreenClipping().
+ */
 void
 View::InvalidateScreenClipping()
 {
@@ -1476,6 +1847,17 @@ View::InvalidateScreenClipping()
 }
 
 
+/** @brief Returns the screen-space clipping region for this view.
+ *
+ *  Computes the screen clipping lazily by transforming the local clipping to
+ *  screen space, intersecting with the portion of the bounds visible through
+ *  all ancestor views, and then intersecting with the window content clipping.
+ *
+ *  @param windowContentClipping The window's content clipping region.
+ *  @param force                 If true, forces recomputation even if the cached
+ *                               region is still marked valid.
+ *  @return Reference to the cached screen clipping region.
+ */
 BRegion&
 View::_ScreenClipping(const BRegion* windowContentClipping, bool force) const
 {
@@ -1502,6 +1884,16 @@ View::_ScreenClipping(const BRegion* windowContentClipping, bool force) const
 }
 
 
+/** @brief Moves the cached screen clipping by (\a x, \a y) pixels.
+ *
+ *  Offsets the cached screen clipping region in place when valid, instead of
+ *  invalidating it, to avoid an unnecessary recompute after a simple move.
+ *  When \a deep is true, also moves the screen clipping of all descendants.
+ *
+ *  @param x    Horizontal offset in pixels.
+ *  @param y    Vertical offset in pixels.
+ *  @param deep If true, recursively move children's screen clipping too.
+ */
 void
 View::_MoveScreenClipping(int32 x, int32 y, bool deep)
 {
@@ -1517,4 +1909,3 @@ View::_MoveScreenClipping(int32 x, int32 y, bool deep)
 		}
 	}
 }
-

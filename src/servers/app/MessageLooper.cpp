@@ -1,10 +1,32 @@
 /*
- * Copyright 2005-2016, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2016, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
  */
+
+/** @file MessageLooper.cpp
+    @brief Implements the MessageLooper base class providing a dedicated message-dispatch thread. */
 
 
 #include "MessageLooper.h"
@@ -16,6 +38,13 @@
 #include <Autolock.h>
 
 
+/** @brief Constructs a MessageLooper with the given name.
+ *
+ * Initialises the underlying BLocker, stores a copy of the name, and sets
+ * thread and semaphore handles to their sentinel values.
+ *
+ * @param name Human-readable name used for the looper thread and lock.
+ */
 MessageLooper::MessageLooper(const char* name)
 	:
 	BLocker(name),
@@ -27,12 +56,21 @@ MessageLooper::MessageLooper(const char* name)
 }
 
 
+/** @brief Destructor — frees the duplicated name string. */
 MessageLooper::~MessageLooper()
 {
 	free((void*)fName);
 }
 
 
+/** @brief Spawns and resumes the message-dispatch thread.
+ *
+ * Acquires the looper lock, derives the thread name via _GetLooperName(),
+ * spawns the thread at B_DISPLAY_PRIORITY, and resumes it. If either step
+ * fails the looper is marked as quitting.
+ *
+ * @return B_OK on success, or an appropriate error code on failure.
+ */
 status_t
 MessageLooper::Run()
 {
@@ -61,6 +99,12 @@ MessageLooper::Run()
 }
 
 
+/** @brief Requests the looper to stop processing messages and destroys itself.
+ *
+ * Sets the quitting flag and calls _PrepareQuit(). If called from the looper's
+ * own thread the object is deleted directly; otherwise a kMsgQuitLooper message
+ * is posted so the thread can terminate cleanly.
+ */
 void
 MessageLooper::Quit()
 {
@@ -84,10 +128,13 @@ MessageLooper::Quit()
 }
 
 
-/*!
-	\brief Send a message to the looper without any attachments
-	\param code ID code of the message to post
-*/
+/** @brief Sends a code-only message to the looper's message port.
+ *
+ * @param code    ID code of the message to post.
+ * @param timeout Maximum time (in microseconds) to wait for the port,
+ *                or B_INFINITE_TIMEOUT to wait indefinitely.
+ * @return B_OK on success, or an error code if the send failed.
+ */
 status_t
 MessageLooper::PostMessage(int32 code, bigtime_t timeout)
 {
@@ -97,6 +144,15 @@ MessageLooper::PostMessage(int32 code, bigtime_t timeout)
 }
 
 
+/** @brief Blocks until the specified semaphore is released (looper death signal) or times out.
+ *
+ * Retries automatically on B_INTERRUPTED so spurious wake-ups are transparent
+ * to the caller.
+ *
+ * @param semaphore The semaphore to wait on (typically the looper's death semaphore).
+ * @param timeout   Maximum wait time in microseconds.
+ * @return B_OK if the semaphore was acquired, B_TIMED_OUT if the timeout expired.
+ */
 /*static*/
 status_t
 MessageLooper::WaitForQuit(sem_id semaphore, bigtime_t timeout)
@@ -113,6 +169,10 @@ MessageLooper::WaitForQuit(sem_id semaphore, bigtime_t timeout)
 }
 
 
+/** @brief Hook called just before the looper exits; subclasses may override to flush state.
+ *
+ * The default implementation does nothing.
+ */
 void
 MessageLooper::_PrepareQuit()
 {
@@ -120,6 +180,14 @@ MessageLooper::_PrepareQuit()
 }
 
 
+/** @brief Fills \a name with the looper's thread name.
+ *
+ * Uses the stored name string if available, otherwise falls back to
+ * "unnamed looper".
+ *
+ * @param name   Buffer to receive the null-terminated name.
+ * @param length Size of the buffer in bytes.
+ */
 void
 MessageLooper::_GetLooperName(char* name, size_t length)
 {
@@ -130,12 +198,26 @@ MessageLooper::_GetLooperName(char* name, size_t length)
 }
 
 
+/** @brief Hook for subclasses to handle a decoded message.
+ *
+ * The default implementation is a no-op; subclasses must override this method
+ * to process application-specific messages.
+ *
+ * @param code Message identifier code.
+ * @param link LinkReceiver positioned at the start of the message payload.
+ */
 void
 MessageLooper::_DispatchMessage(int32 code, BPrivate::LinkReceiver &link)
 {
 }
 
 
+/** @brief Main message-processing loop executed by the looper thread.
+ *
+ * Reads messages from the link receiver in a loop, acquires the looper lock,
+ * and either quits (on kMsgQuitLooper) or delegates to _DispatchMessage().
+ * Exits if the underlying port is unexpectedly destroyed.
+ */
 void
 MessageLooper::_MessageLooper()
 {
@@ -165,9 +247,11 @@ MessageLooper::_MessageLooper()
 }
 
 
-/*!
-	\brief Message-dispatching loop starter
-*/
+/** @brief Static thread entry point that forwards execution to _MessageLooper().
+ *
+ * @param _looper Pointer to the MessageLooper instance cast from void*.
+ * @return Always returns 0.
+ */
 /*static*/
 int32
 MessageLooper::_message_thread(void* _looper)
@@ -177,4 +261,3 @@ MessageLooper::_message_thread(void* _looper)
 	looper->_MessageLooper();
 	return 0;
 }
-

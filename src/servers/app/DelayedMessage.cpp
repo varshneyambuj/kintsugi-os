@@ -1,10 +1,32 @@
 /*
- * Copyright 2015, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *			Joseph Groover <looncraz@looncraz.net>
-*/
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Joseph Groover <looncraz@looncraz.net>
+ */
+
+/** @file DelayedMessage.cpp
+ *  @brief Deferred server-protocol message delivery with optional merge semantics. */
 
 
 #include "DelayedMessage.h"
@@ -174,7 +196,17 @@ private:
 // #pragma mark -
 
 
-
+/**
+ * @brief Constructs a DelayedMessage with the given protocol code and delay.
+ *
+ * The delay is clamped to DM_MINIMUM_DELAY if smaller. When @a isSpecificTime
+ * is true @a delay is treated as an absolute system time; otherwise as a
+ * relative offset from now.
+ *
+ * @param code          Server protocol message code.
+ * @param delay         Delivery delay in microseconds (or absolute time).
+ * @param isSpecificTime If true @a delay is an absolute timestamp.
+ */
 DelayedMessage::DelayedMessage(int32 code, bigtime_t delay,
 		bool isSpecificTime)
 	:
@@ -185,6 +217,12 @@ DelayedMessage::DelayedMessage(int32 code, bigtime_t delay,
 }
 
 
+/**
+ * @brief Destroys the DelayedMessage.
+ *
+ * If the message was never flushed (handed off), the data is deleted here,
+ * effectively canceling the message at low cost.
+ */
 DelayedMessage::~DelayedMessage()
 {
 	// Message is canceled without a handoff.
@@ -193,6 +231,11 @@ DelayedMessage::~DelayedMessage()
 }
 
 
+/**
+ * @brief Adds a delivery target port.
+ * @param port The port_id to deliver the message to.
+ * @return true if the target was added, false if already present or on error.
+ */
 bool
 DelayedMessage::AddTarget(port_id port)
 {
@@ -203,6 +246,11 @@ DelayedMessage::AddTarget(port_id port)
 }
 
 
+/**
+ * @brief Configures merge behavior for this message.
+ * @param mode  The DMMergeMode controlling how duplicate messages are handled.
+ * @param match Bitmask selecting which attachment fields must match for a merge.
+ */
 void
 DelayedMessage::SetMerge(DMMergeMode mode, uint32 match)
 {
@@ -213,6 +261,11 @@ DelayedMessage::SetMerge(DMMergeMode mode, uint32 match)
 }
 
 
+/**
+ * @brief Sets a callback to invoke when delivery to a port fails.
+ * @param callback Function called with (code, port, data) on failure.
+ * @param data     User data passed through to the callback.
+ */
 void
 DelayedMessage::SetFailureCallback(void (*callback)(int32, port_id, void*),
 	void* data)
@@ -224,7 +277,12 @@ DelayedMessage::SetFailureCallback(void (*callback)(int32, port_id, void*),
 }
 
 
-//! Attach data to message. Memory is not allocated nor copied until handoff.
+/**
+ * @brief Attaches data to the message. Memory is not copied until handoff.
+ * @param data Pointer to the data to attach (must remain valid until Flush()).
+ * @param size Number of bytes to attach.
+ * @return B_OK on success, B_NO_MEMORY, B_ERROR, or B_BAD_VALUE on failure.
+ */
 status_t
 DelayedMessage::Attach(const void* data, size_t size)
 {
@@ -241,6 +299,15 @@ DelayedMessage::Attach(const void* data, size_t size)
 }
 
 
+/**
+ * @brief Schedules the message for delivery at its configured time.
+ *
+ * At least one target must be set before calling Flush(). On success the
+ * message data is handed off to the DelayedMessageSender and this object
+ * must not be modified further.
+ *
+ * @return B_OK on success, B_NO_MEMORY, B_ERROR, or B_BAD_VALUE on failure.
+ */
 status_t
 DelayedMessage::Flush()
 {
@@ -257,9 +324,14 @@ DelayedMessage::Flush()
 }
 
 
-/*!	The data handoff occurs upon scheduling and reduces copies to only
-	when a message is actually scheduled. Canceled messages have low cost.
-*/
+/**
+ * @brief Transfers ownership of the internal data to the caller.
+ *
+ * Data is copied from the original source locations here. The handoff reduces
+ * allocation overhead for messages that are ultimately canceled.
+ *
+ * @return Pointer to the DelayedMessageData on success, NULL otherwise.
+ */
 DelayedMessageData*
 DelayedMessage::HandOff()
 {
@@ -278,6 +350,11 @@ DelayedMessage::HandOff()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an Attachment holding a const pointer and size.
+ * @param _data Pointer to the source data (not copied yet).
+ * @param _size Number of bytes the attachment covers.
+ */
 Attachment::Attachment(const void* _data, size_t _size)
 	:
 	constData(_data),
@@ -287,6 +364,9 @@ Attachment::Attachment(const void* _data, size_t _size)
 }
 
 
+/**
+ * @brief Destroys the Attachment, freeing the copied data buffer if present.
+ */
 Attachment::~Attachment()
 {
 	free(data);
@@ -296,6 +376,12 @@ Attachment::~Attachment()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs DelayedMessageData for the given code and delivery time.
+ * @param code          Server protocol code.
+ * @param delay         Delivery delay or absolute time in microseconds.
+ * @param isSpecificTime If true @a delay is an absolute timestamp.
+ */
 DelayedMessageData::DelayedMessageData(int32 code, bigtime_t delay,
 	bool isSpecificTime)
 	:
@@ -315,11 +401,19 @@ DelayedMessageData::DelayedMessageData(int32 code, bigtime_t delay,
 }
 
 
+/**
+ * @brief Destroys the DelayedMessageData.
+ */
 DelayedMessageData::~DelayedMessageData()
 {
 }
 
 
+/**
+ * @brief Adds a delivery target, rejecting duplicates.
+ * @param port The port_id to add (must be > 0).
+ * @return true if added, false if already present or invalid.
+ */
 bool
 DelayedMessageData::AddTarget(port_id port)
 {
@@ -336,6 +430,10 @@ DelayedMessageData::AddTarget(port_id port)
 }
 
 
+/**
+ * @brief Removes a target port by value.
+ * @param port The port_id to remove (B_BAD_PORT_ID is ignored).
+ */
 void
 DelayedMessageData::RemoveTarget(port_id port)
 {
@@ -353,6 +451,10 @@ DelayedMessageData::RemoveTarget(port_id port)
 }
 
 
+/**
+ * @brief Returns the number of registered delivery targets.
+ * @return Count of target ports.
+ */
 int32
 DelayedMessageData::CountTargets() const
 {
@@ -360,6 +462,14 @@ DelayedMessageData::CountTargets() const
 }
 
 
+/**
+ * @brief Merges target ports from @a other into this object.
+ *
+ * Failure to add one target does not abort the loop; it may simply mean the
+ * target is already present.
+ *
+ * @param other The source DelayedMessageData whose targets are merged.
+ */
 void
 DelayedMessageData::MergeTargets(DelayedMessageData* other)
 {
@@ -370,7 +480,14 @@ DelayedMessageData::MergeTargets(DelayedMessageData* other)
 }
 
 
-//! Copy data from original location - merging failed
+/**
+ * @brief Copies attachment data from the original source locations.
+ *
+ * After a successful copy, IsValid() returns true. This is called at handoff
+ * time so that canceled messages have no allocation cost.
+ *
+ * @return true on success, false if any allocation fails.
+ */
 bool
 DelayedMessageData::CopyData()
 {
@@ -394,6 +511,17 @@ DelayedMessageData::CopyData()
 }
 
 
+/**
+ * @brief Attempts to merge @a other's data into this message.
+ *
+ * Merging is possible only when both messages have the same code, the same
+ * merge mode (and neither is DM_NO_MERGE), and the same number of attachments.
+ * DM_MERGE_CANCEL merges targets only; DM_MERGE_DUPLICATES and DM_MERGE_REPLACE
+ * additionally compare and/or replace attachment data.
+ *
+ * @param other The DelayedMessageData to merge from.
+ * @return true if the merge succeeded, false otherwise.
+ */
 bool
 DelayedMessageData::MergeData(DelayedMessageData* other)
 {
@@ -454,6 +582,10 @@ DelayedMessageData::MergeData(DelayedMessageData* other)
 }
 
 
+/**
+ * @brief Returns whether this object's data has been copied and is ready for sending.
+ * @return true after a successful CopyData(), false otherwise.
+ */
 bool
 DelayedMessageData::IsValid() const
 {
@@ -461,6 +593,12 @@ DelayedMessageData::IsValid() const
 }
 
 
+/**
+ * @brief Stores a pointer and size as a new attachment entry.
+ * @param data Pointer to the source data (not copied yet).
+ * @param size Number of bytes to attach.
+ * @return B_OK on success, B_NO_MEMORY or B_ERROR on failure.
+ */
 status_t
 DelayedMessageData::Attach(const void* data, size_t size)
 {
@@ -479,6 +617,13 @@ DelayedMessageData::Attach(const void* data, size_t size)
 }
 
 
+/**
+ * @brief Compares two attachment slots according to the current merge mode and mask.
+ * @param one   The existing (already-copied) attachment.
+ * @param two   The incoming (not-yet-copied) attachment.
+ * @param index Zero-based slot index used with the merge mask.
+ * @return true if the attachments are considered equivalent for the current mode.
+ */
 bool
 DelayedMessageData::Compare(Attachment* one, Attachment* two, int32 index)
 {
@@ -499,6 +644,11 @@ DelayedMessageData::Compare(Attachment* one, Attachment* two, int32 index)
 }
 
 
+/**
+ * @brief Configures the merge mode and mask for this message.
+ * @param mode The DMMergeMode to set.
+ * @param mask Bitmask selecting attachment fields that participate in merge comparison.
+ */
 void
 DelayedMessageData::SetMerge(DMMergeMode mode, uint32 mask)
 {
@@ -507,6 +657,10 @@ DelayedMessageData::SetMerge(DMMergeMode mode, uint32 mask)
 }
 
 
+/**
+ * @brief Invokes the failure callback if one has been set.
+ * @param port The port_id that failed to receive the message.
+ */
 void
 DelayedMessageData::SendFailed(port_id port)
 {
@@ -515,6 +669,11 @@ DelayedMessageData::SendFailed(port_id port)
 }
 
 
+/**
+ * @brief Registers a failure callback and associated user data.
+ * @param callback Function to call on delivery failure.
+ * @param data     User data passed through to the callback.
+ */
 void
 DelayedMessageData::SetFailureCallback(FailureCallback callback, void* data)
 {
@@ -526,6 +685,10 @@ DelayedMessageData::SetFailureCallback(FailureCallback callback, void* data)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a ScheduledMessage by handing off data from @a message.
+ * @param message The DelayedMessage whose data is taken over.
+ */
 ScheduledMessage::ScheduledMessage(DelayedMessage& message)
 	:
 	fData(message.HandOff())
@@ -533,12 +696,19 @@ ScheduledMessage::ScheduledMessage(DelayedMessage& message)
 }
 
 
+/**
+ * @brief Destroys the ScheduledMessage, freeing the owned DelayedMessageData.
+ */
 ScheduledMessage::~ScheduledMessage()
 {
 	delete fData;
 }
 
 
+/**
+ * @brief Returns the number of remaining delivery targets.
+ * @return Target count, or 0 if the data is invalid.
+ */
 int32
 ScheduledMessage::CountTargets() const
 {
@@ -549,6 +719,10 @@ ScheduledMessage::CountTargets() const
 }
 
 
+/**
+ * @brief Returns the absolute system time at which this message should be sent.
+ * @return Scheduled delivery time in microseconds, or 0 if invalid.
+ */
 bigtime_t
 ScheduledMessage::ScheduledTime() const
 {
@@ -559,7 +733,13 @@ ScheduledMessage::ScheduledTime() const
 }
 
 
-//! Send our message and data to their intended target(s)
+/**
+ * @brief Sends the message to all registered targets and returns the sent count.
+ *
+ * Targets that fail with a non-timeout error have the failure callback invoked.
+ *
+ * @return Number of targets successfully reached.
+ */
 int32
 ScheduledMessage::SendMessage()
 {
@@ -584,6 +764,16 @@ ScheduledMessage::SendMessage()
 }
 
 
+/**
+ * @brief Serializes and sends the message to a single target port.
+ *
+ * Uses a BPrivate::LinkSender with a 1-second flush timeout. Successfully
+ * sent or port-deleted targets are removed from the target list.
+ *
+ * @param port The destination port_id.
+ * @return B_OK on success, B_BAD_VALUE for B_BAD_PORT_ID, B_BAD_DATA if invalid,
+ *         or a LinkSender error code.
+ */
 status_t
 ScheduledMessage::SendMessageToPort(port_id port)
 {
@@ -624,6 +814,10 @@ ScheduledMessage::SendMessageToPort(port_id port)
 }
 
 
+/**
+ * @brief Returns whether this ScheduledMessage holds valid, sendable data.
+ * @return true if the data is non-NULL and valid.
+ */
 bool
 ScheduledMessage::IsValid() const
 {
@@ -631,6 +825,11 @@ ScheduledMessage::IsValid() const
 }
 
 
+/**
+ * @brief Attempts to merge the incoming @a other message into this one.
+ * @param other The DelayedMessage to merge from.
+ * @return true if the merge succeeded, false otherwise.
+ */
 bool
 ScheduledMessage::Merge(DelayedMessage& other)
 {
@@ -641,6 +840,11 @@ ScheduledMessage::Merge(DelayedMessage& other)
 }
 
 
+/**
+ * @brief Orders messages by scheduled delivery time (earliest first).
+ * @param other The ScheduledMessage to compare with.
+ * @return true if this message is scheduled earlier than @a other.
+ */
 bool
 ScheduledMessage::operator<(const ScheduledMessage& other) const
 {
@@ -651,6 +855,12 @@ ScheduledMessage::operator<(const ScheduledMessage& other) const
 }
 
 
+/**
+ * @brief Comparator function for sorting ScheduledMessage objects.
+ * @param one First message.
+ * @param two Second message.
+ * @return Negative if one < two, positive otherwise.
+ */
 int
 CompareMessages(const ScheduledMessage* one, const ScheduledMessage* two)
 {
@@ -661,6 +871,9 @@ CompareMessages(const ScheduledMessage* one, const ScheduledMessage* two)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the global DelayedMessageSender and starts its worker thread.
+ */
 DelayedMessageSender::DelayedMessageSender()
 	:
 	fLock("DelayedMessageSender"),
@@ -675,6 +888,9 @@ DelayedMessageSender::DelayedMessageSender()
 }
 
 
+/**
+ * @brief Destroys the DelayedMessageSender, signaling the worker thread to exit.
+ */
 DelayedMessageSender::~DelayedMessageSender()
 {
 	// write the exit message to our port
@@ -688,6 +904,12 @@ DelayedMessageSender::~DelayedMessageSender()
 }
 
 
+/**
+ * @brief Schedules @a message for delivery, merging with an existing pending
+ *        message when possible.
+ * @param message The DelayedMessage to schedule.
+ * @return B_OK on success, B_NO_MEMORY or B_BAD_DATA on failure.
+ */
 status_t
 DelayedMessageSender::ScheduleMessage(DelayedMessage& message)
 {
@@ -722,6 +944,10 @@ DelayedMessageSender::ScheduleMessage(DelayedMessage& message)
 }
 
 
+/**
+ * @brief Returns the number of messages currently waiting to be sent.
+ * @return Count of pending ScheduledMessage objects.
+ */
 int32
 DelayedMessageSender::CountDelayedMessages() const
 {
@@ -730,6 +956,10 @@ DelayedMessageSender::CountDelayedMessages() const
 }
 
 
+/**
+ * @brief Returns the total number of messages sent since construction.
+ * @return Cumulative sent message count.
+ */
 int64
 DelayedMessageSender::CountSentMessages() const
 {
@@ -737,6 +967,12 @@ DelayedMessageSender::CountSentMessages() const
 }
 
 
+/**
+ * @brief Main loop for the sender thread; waits on a port and sends due messages.
+ *
+ * Reads from fPort with a timeout based on the next scheduled wakeup time.
+ * On timeout, calls _SendDelayedMessages(). On kExitMessage, returns.
+ */
 void
 DelayedMessageSender::_MessageLoop()
 {
@@ -784,6 +1020,11 @@ DelayedMessageSender::_MessageLoop()
 }
 
 
+/**
+ * @brief Thread entry point for the sender thread.
+ * @param sender Pointer to the owning DelayedMessageSender.
+ * @return 0 always.
+ */
 int32
 DelayedMessageSender::_thread_func(void* sender)
 {
@@ -792,7 +1033,15 @@ DelayedMessageSender::_thread_func(void* sender)
 }
 
 
-//! Sends pending messages, call ONLY from sender thread!
+/**
+ * @brief Sends all messages whose scheduled time has arrived.
+ *
+ * Must only be called from the sender thread. Acquires the lock with a short
+ * timeout to avoid contention. Removes fully-delivered messages from the list
+ * and updates the next wakeup time.
+ *
+ * @return Number of successful deliveries in this call.
+ */
 int32
 DelayedMessageSender::_SendDelayedMessages()
 {
@@ -858,6 +1107,10 @@ DelayedMessageSender::_SendDelayedMessages()
 }
 
 
+/**
+ * @brief Sends a wakeup notification to the sender thread if needed.
+ * @param when The absolute system time at which a wakeup is required.
+ */
 void
 DelayedMessageSender::_Wakeup(bigtime_t when)
 {
@@ -872,4 +1125,3 @@ DelayedMessageSender::_Wakeup(bigtime_t when)
 	status_t error = sender.Flush(30000);
 	atomic_set(&fWakeupRetry, (int32)error == B_TIMED_OUT);
 }
-

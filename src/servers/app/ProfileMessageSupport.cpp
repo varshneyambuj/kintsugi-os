@@ -1,10 +1,32 @@
 /*
- * Copyright 2007-2016, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2016, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
+
+/** @file ProfileMessageSupport.cpp
+ *  @brief Maps server protocol message codes to human-readable name strings. */
 
 
 #include "ProfileMessageSupport.h"
@@ -12,6 +34,15 @@
 #include <ServerProtocol.h>
 
 
+/**
+ * @brief Returns the symbolic name for a server protocol message code.
+ *
+ * Uses a macro-generated switch to map each AS_* constant directly to its
+ * stringified name. Useful for debugging and profiling output.
+ *
+ * @param code The uint32 server protocol message code to look up.
+ * @return A string literal naming the code, or "unknown code" if unrecognized.
+ */
 const char*
 string_for_message_code(uint32 code)
 {
