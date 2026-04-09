@@ -1,7 +1,29 @@
 /*
- * Copyright 2009, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work from the Haiku project:
+ *   Copyright 2009, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ * Author:
+ *   Ambuj Varshney, ambuj@kintsugi-os.org
  */
+
+/** @file scsi.h
+ *  @brief SCSI device type constants, ioctl codes, and data structures for disk/CD/audio control. */
+
 #ifndef _SCSI_H
 #define _SCSI_H
 
@@ -38,12 +60,14 @@
 #define B_SCSI_NETWORK_MASK			(1 << (B_SCSI_NETWORK))
 
 
+/** @brief General SCSI bus management ioctl codes. */
 enum {
 	B_SCSI_SCAN_FOR_DEVICES = B_DEVICE_OP_CODES_END + 1,
 	B_SCSI_ENABLE_PROFILING
 };
 
 
+/** @brief SCSI device ioctl codes for inquiry, eject, and raw command passthrough. */
 enum {
 	B_SCSI_INQUIRY = B_DEVICE_OP_CODES_END + 100,
 	B_SCSI_EJECT,
@@ -52,11 +76,13 @@ enum {
 };
 
 
+/** @brief Buffer for SCSI INQUIRY response data. */
 typedef struct {
 	uchar	inquiry_data[36];
 } scsi_inquiry;
 
 
+/** @brief SCSI CD audio ioctl codes. */
 enum {
 	B_SCSI_GET_TOC = B_DEVICE_OP_CODES_END + 200,
 	B_SCSI_PLAY_TRACK,
@@ -73,11 +99,13 @@ enum {
 };
 
 
+/** @brief Buffer for the full CD Table of Contents. */
 typedef struct {
 	uchar	toc_data[804];
 } scsi_toc;
 
 
+/** @brief Specifies a track/index range for CD audio playback. */
 typedef struct {
 	uchar	start_track;
 	uchar	start_index;
@@ -86,6 +114,7 @@ typedef struct {
 } scsi_play_track;
 
 
+/** @brief Specifies an MSF (minute/second/frame) position range for CD audio playback. */
 typedef struct {
 	uchar	start_m;
 	uchar	start_s;
@@ -96,11 +125,13 @@ typedef struct {
 } scsi_play_position;
 
 
+/** @brief Current CD playback position data returned by B_SCSI_GET_POSITION. */
 typedef struct {
 	uchar	position[16];
 } scsi_position;
 
 
+/** @brief CD audio volume and channel routing settings used by B_SCSI_SET/GET_VOLUME. */
 typedef struct {
 	uchar	flags;
 	uchar	port0_channel;
@@ -124,6 +155,7 @@ typedef struct {
 #define B_SCSI_PORT3_VOLUME		0x80
 
 
+/** @brief Parameters for reading raw CD sector data via B_SCSI_READ_CD. */
 typedef struct {
 	uchar	start_m;
 	uchar	start_s;
@@ -137,18 +169,21 @@ typedef struct {
 } scsi_read_cd;
 
 
+/** @brief Parameters for CD scanning (fast-forward / rewind) via B_SCSI_SCAN. */
 typedef struct {
 	char	speed;
 	char	direction;
 } scsi_scan;
 
 
+/** @brief Block address and data mode for B_SCSI_DATA_MODE queries. */
 typedef struct {
 	off_t	block;
 	int32	mode;
 } scsi_data_mode;
 
 
+/** @brief Parameters for a raw SCSI pass-through command (B_RAW_DEVICE_COMMAND). */
 typedef struct {
 	uint8		command[16];
 	uint8		command_length;
@@ -163,6 +198,7 @@ typedef struct {
 } raw_device_command;
 
 
+/** @brief Flags for the raw_device_command flags field. */
 enum {
 	B_RAW_DEVICE_DATA_IN			= 0x01,
 	B_RAW_DEVICE_REPORT_RESIDUAL	= 0x02,

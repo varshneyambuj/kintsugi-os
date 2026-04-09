@@ -1,7 +1,29 @@
 /*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from Haiku, Inc. covered by:
  * Copyright 2009-2012, Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
+
+/** @file MediaNode.h
+ *  @brief Defines BMediaNode, the base class for all Media Kit participants.
+ */
+
 #ifndef _MEDIA_NODE_H
 #define _MEDIA_NODE_H
 
@@ -20,65 +42,70 @@ class BMediaAddOn;
 class BTimeSource;
 
 
+/** @brief Lightweight descriptor identifying a registered media node instance. */
 class media_node {
 public:
 								media_node();
 								~media_node();
 
-			media_node_id		node;
-			port_id				port;
-			uint32				kind;
+			media_node_id		node;  /**< Unique node ID assigned by the media server. */
+			port_id				port;  /**< The node's control port. */
+			uint32				kind;  /**< Bitmask of node_kind flags. */
 
-	static const media_node		null;
+	static const media_node		null;  /**< Represents an invalid/unset node. */
 
 private:
 			uint32				_reserved_[3];
 };
 
 
+/** @brief Describes one input connection endpoint of a media node. */
 struct media_input {
 								media_input();
 								~media_input();
 
-			media_node			node;
-			media_source		source;
-			media_destination	destination;
-			media_format		format;
-			char				name[B_MEDIA_NAME_LENGTH];
+			media_node			node;        /**< The consumer node. */
+			media_source		source;      /**< The connected producer source. */
+			media_destination	destination; /**< This input's destination handle. */
+			media_format		format;      /**< The format negotiated for this connection. */
+			char				name[B_MEDIA_NAME_LENGTH]; /**< Human-readable input name. */
 
 private:
 			uint32				_reserved_media_input_[4];
 };
 
 
+/** @brief Describes one output connection endpoint of a media node. */
 struct media_output {
 								media_output();
 								~media_output();
 
-			media_node			node;
-			media_source		source;
-			media_destination	destination;
-			media_format		format;
-			char				name[B_MEDIA_NAME_LENGTH];
+			media_node			node;        /**< The producer node. */
+			media_source		source;      /**< This output's source handle. */
+			media_destination	destination; /**< The connected consumer destination. */
+			media_format		format;      /**< The format negotiated for this connection. */
+			char				name[B_MEDIA_NAME_LENGTH]; /**< Human-readable output name. */
 
 private:
 			uint32				_reserved_media_output_[4];
 };
 
 
+/** @brief Information about a running (live) node as returned by BMediaRoster::GetLiveNodes(). */
 struct live_node_info {
 								live_node_info();
 								~live_node_info();
 
-			media_node			node;
-			BPoint				hint_point;
-			char				name[B_MEDIA_NAME_LENGTH];
+			media_node			node;        /**< The live node. */
+			BPoint				hint_point;  /**< Suggested position in a node graph view. */
+			char				name[B_MEDIA_NAME_LENGTH]; /**< Node display name. */
 
 private:
 			char				reserved[160];
 };
 
 
+/** @brief Carries information about a completed or failed asynchronous media request. */
 struct media_request_info {
 			enum what_code {
 				B_SET_VIDEO_CLIPPING_FOR = 1,
@@ -89,29 +116,30 @@ struct media_request_info {
 				B_FORMAT_CHANGED = 4097
 			};
 
-			what_code			what;
-			int32				change_tag;
-			status_t			status;
-			void*				cookie;
-			void*				user_data;
-			media_source		source;
-			media_destination	destination;
-			media_format		format;
+			what_code			what;        /**< The type of request. */
+			int32				change_tag;  /**< Tag matching the original request. */
+			status_t			status;      /**< Result of the request. */
+			void*				cookie;      /**< User-supplied cookie from the request. */
+			void*				user_data;   /**< Additional user data. */
+			media_source		source;      /**< Source involved in the request. */
+			media_destination	destination; /**< Destination involved in the request. */
+			media_format		format;      /**< Format associated with the request. */
 
 			uint32				_reserved_[32];
 };
 
 
+/** @brief Carries named attribute data associated with a media node. */
 struct media_node_attribute {
 			enum {
-				B_R40_COMPILED = 1,
-				B_USER_ATTRIBUTE_NAME = 0x1000000,
+				B_R40_COMPILED = 1,             /**< Node was compiled for R4.0. */
+				B_USER_ATTRIBUTE_NAME = 0x1000000, /**< First user-defined attribute. */
 				B_FIRST_USER_ATTRIBUTE
 			};
 
-			uint32				what;
-			uint32				flags;
-			int64				data;
+			uint32				what;   /**< Attribute type identifier. */
+			uint32				flags;  /**< Attribute flags. */
+			int64				data;   /**< Attribute value. */
 };
 
 
@@ -124,16 +152,19 @@ namespace BPrivate {
 } // BPrivate::media
 
 
-/*!	BMediaNode is the indirect base class for all Media Kit participants.
-	However, you should use the more specific BBufferConsumer, BBufferProducer
-	and others rather than BMediaNode directly. It's OK to multiply inherit.
-*/
+/** @brief The indirect base class for all Media Kit participants.
+ *
+ *  BMediaNode is the indirect base class for all Media Kit participants.
+ *  However, you should use the more specific BBufferConsumer, BBufferProducer
+ *  and others rather than BMediaNode directly.  It's OK to multiply inherit.
+ */
 class BMediaNode {
 protected:
 	// NOTE: Call Release() to destroy a node.
 	virtual								~BMediaNode();
 
 public:
+			/** @brief Run mode that governs how a node handles timing constraints. */
 			enum run_mode {
 				B_OFFLINE = 1,
 					// This mode has no realtime constraint.
@@ -148,24 +179,58 @@ public:
 					// Buffers will always be late.
 			};
 
+	/** @brief Increments the reference count and returns this node.
+	 *  @return This node pointer (for chaining).
+	 */
 			BMediaNode*			Acquire();
+
+	/** @brief Decrements the reference count and destroys the node when it reaches zero.
+	 *  @return This node pointer if still alive, or NULL if destroyed.
+	 */
 			BMediaNode*			Release();
 
+	/** @brief Returns the node's human-readable name.
+	 *  @return The name string.
+	 */
 			const char*			Name() const;
+
+	/** @brief Returns the system-assigned node ID.
+	 *  @return The media_node_id.
+	 */
 			media_node_id		ID() const;
+
+	/** @brief Returns the bitmask of node_kind flags.
+	 *  @return The kinds bitmask.
+	 */
 			uint64				Kinds() const;
+
+	/** @brief Returns a media_node descriptor for this node.
+	 *  @return A media_node struct.
+	 */
 			media_node			Node() const;
+
+	/** @brief Returns the current run mode.
+	 *  @return The run_mode value.
+	 */
 			run_mode			RunMode() const;
+
+	/** @brief Returns the time source governing this node's performance time.
+	 *  @return Pointer to the BTimeSource.
+	 */
 			BTimeSource*		TimeSource() const;
 
-	// ID of the port used to listen to control messages.
+	/** @brief Returns the port ID used to receive control messages.
+	 *  @return The control port_id.
+	 */
 	virtual	port_id				ControlPort() const;
 
-	// Who instantiated this node or NULL for application internal class.
+	/** @brief Returns the add-on that instantiated this node, or NULL if application-internal.
+	 *  @param internalID On return, the flavor ID within the add-on.
+	 *  @return Pointer to the BMediaAddOn, or NULL.
+	 */
 	virtual	BMediaAddOn*		AddOn(int32* internalID) const = 0;
 
-	// Message constants which will be sent to anyone watching the
-	// MediaRoster. The message field "be:node_id" will contain the node ID.
+	/** @brief Error codes sent as "be:node_id" fields in media notification messages. */
 			enum node_error {
 				// Note that these belong with the notifications in
 				// MediaDefs.h! They are here to provide compiler type
@@ -182,77 +247,127 @@ public:
 			};
 
 protected:
-	// Sends one of the above codes to anybody who's watching. You can
-	// provide an optional message with additional information.
+	/** @brief Broadcasts an error notification to all watchers.
+	 *  @param what One of the node_error codes.
+	 *  @param info Optional additional BMessage with error details.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReportError(node_error what,
 									const BMessage* info = NULL);
 
-	// When you've handled a stop request, call this function. If anyone is
-	// listening for stop information from you, they will be notified.
-	// Especially important for offline capable Nodes.
+	/** @brief Notifies the system that this node has stopped.
+	 *  @param performanceTime The performance time at which the node stopped.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			NodeStopped(bigtime_t performanceTime);
+
+	/** @brief Called when a previously registered timer expires.
+	 *  @param notifyPerformanceTime The performance time of the timer event.
+	 *  @param cookie The cookie supplied when AddTimer() was called.
+	 *  @param error B_OK on normal expiry, or an error code.
+	 */
 			void				TimerExpired(bigtime_t notifyPerformanceTime,
 									int32 cookie, status_t error = B_OK);
 
-	// NOTE: Constructor initializes the reference count to 1.
+	/** @brief Constructs a media node with the given name; reference count starts at 1.
+	 *  @param name Human-readable name for the node.
+	 */
 	explicit					BMediaNode(const char* name);
 
+	/** @brief Waits for a message to arrive on the control port.
+	 *  @param waitUntil Absolute real time to wait until.
+	 *  @param flags Reserved; pass 0.
+	 *  @param _reserved_ Reserved; pass NULL.
+	 *  @return B_OK when a message is received, or B_TIMED_OUT.
+	 */
 				status_t		WaitForMessage(bigtime_t waitUntil,
 									uint32 flags = 0, void* _reserved_ = 0);
 
-	// These don't return errors; instead, they use the global error condition
-	// reporter. A node is required to have a queue of at least one pending
-	// command (plus TimeWarp) and is recommended to allow for at least one
-	// pending command of each type. Allowing an arbitrary number of
-	// outstanding commands might be nice, but apps cannot depend on that
-	// happening.
+	/** @brief Called to start the node at the given performance time. */
 	virtual	void				Start(bigtime_t atPerformanceTime);
+	/** @brief Called to stop the node at the given performance time. */
 	virtual	void				Stop(bigtime_t atPerformanceTime,
 									bool immediate);
+	/** @brief Called to seek the node to a new media position. */
 	virtual	void				Seek(bigtime_t toMediaTime,
 									bigtime_t atPerformanceTime);
+	/** @brief Called to change the node's run mode. */
 	virtual	void				SetRunMode(run_mode mode);
+	/** @brief Called to warp the performance clock to a new value. */
 	virtual	void				TimeWarp(bigtime_t atRealTime,
 									bigtime_t toPerformanceTime);
+	/** @brief Called to prepare the node for playback (optional pre-buffering). */
 	virtual	void				Preroll();
+	/** @brief Called to set a new time source for this node. */
 	virtual	void				SetTimeSource(BTimeSource* timeSource);
 
 public:
+	/** @brief Dispatches an incoming port message to the appropriate handler.
+	 *  @param message The message code.
+	 *  @param data Pointer to the message payload.
+	 *  @param size Size of the payload in bytes.
+	 *  @return B_OK if handled, or an error code.
+	 */
 	virtual	status_t			HandleMessage(int32 message, const void* data,
 									size_t size);
 
-	// Call this with messages you and your superclasses don't recognize.
+	/** @brief Handles a message that was not recognized by the node or its superclasses.
+	 *  @param code The unrecognized message code.
+	 *  @param buffer Pointer to the message data.
+	 *  @param size Size of the message data in bytes.
+	 */
 			void				HandleBadMessage(int32 code,
 									const void* buffer, size_t size);
 
-	// Called from derived system classes; you don't need to
+	/** @brief Adds a node kind flag to this node's kinds bitmask.
+	 *  @param kind The node_kind flag to add.
+	 */
 			void				AddNodeKind(uint64 kind);
 
-	// These just call the default global versions for now.
+	/** @brief Allocates memory from the system heap. */
 			void*				operator new(size_t size);
+	/** @brief Allocates memory using the no-throw policy. */
 			void*				operator new(size_t size,
 									const std::nothrow_t&) throw();
+	/** @brief Frees memory allocated by operator new. */
 			void				operator delete(void* ptr);
+	/** @brief Frees memory allocated by the no-throw new. */
 			void				operator delete(void* ptr,
 									const std::nothrow_t&) throw();
 
 protected:
-	// Hook method which is called when requests have completed, or failed.
+	/** @brief Called when a pending request has completed or failed.
+	 *  @param info Details about the completed request.
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			RequestCompleted(
 									const media_request_info & info);
 
+	/** @brief Called by the framework to delete this node object.
+	 *  @param node The node to delete (same as this).
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			DeleteHook(BMediaNode* node);
 
+	/** @brief Called after the node has been registered with the media server. */
 	virtual	void				NodeRegistered();
 
 public:
 
-	// Fill out your attributes in the provided array, returning however
-	// many you have.
+	/** @brief Fills in node-specific attribute data.
+	 *  @param _attributes Array to receive attribute entries.
+	 *  @param inMaxCount Capacity of the array.
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			GetNodeAttributes(
 									media_node_attribute* _attributes,
 									size_t inMaxCount);
 
+	/** @brief Schedules a timer event at the given performance time.
+	 *  @param atPerformanceTime The performance time to fire the timer.
+	 *  @param cookie An arbitrary value returned in TimerExpired().
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			AddTimer(bigtime_t atPerformanceTime,
 									int32 cookie);
 

@@ -1,7 +1,29 @@
 /*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from Haiku, Inc. covered by:
  * Copyright 2009, Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
+
+/** @file MediaDefs.h
+ *  @brief Basic data types, constants, and structures for the Media Kit.
+ */
+
 #ifndef _MEDIA_DEFS_H
 #define _MEDIA_DEFS_H
 
@@ -21,9 +43,11 @@ struct media_node;
 #endif
 
 
+/** @brief Maximum length (including NUL terminator) of a media name string. */
 #define B_MEDIA_NAME_LENGTH 64
 
 
+/** @brief Notification message 'what' field constants sent to media watchers. */
 /* Notification messages 'what' fields */
 enum {
 	/* Note that BMediaNode::node_error also belongs in here! */
@@ -55,6 +79,7 @@ enum {
 };
 
 
+/** @brief Identifies the kind of data carried by a media buffer or stream. */
 enum media_type {
 	B_MEDIA_NO_TYPE			= -1,
 	B_MEDIA_UNKNOWN_TYPE	= 0,
@@ -78,6 +103,7 @@ enum media_type {
 };
 
 
+/** @brief Flags describing the capabilities of a media node. */
 enum node_kind {
 	B_BUFFER_PRODUCER		= 0x1,
 	B_BUFFER_CONSUMER		= 0x2,
@@ -93,6 +119,7 @@ enum node_kind {
 };
 
 
+/** @brief Describes the scan order of video pixels in a frame. */
 enum video_orientation {
 	/* Which pixel is first and how do we scan each "line"? */
 	B_VIDEO_TOP_LEFT_RIGHT	= 1,	/* This is the typical progressive scan */
@@ -101,6 +128,7 @@ enum video_orientation {
 };
 
 
+/** @brief Versioning and private flags for media format descriptors. */
 /* data */
 enum media_flags
 {
@@ -111,6 +139,7 @@ enum media_flags
 };
 
 
+/** @brief Status codes reported by a buffer producer to its consumers. */
 /* for producer status */
 enum media_producer_status {
 	B_DATA_NOT_AVAILABLE			= 1,
@@ -119,6 +148,7 @@ enum media_producer_status {
 };
 
 
+/** @brief Flags for enabling real-time scheduling and allocation. */
 /* realtime flags */
 enum media_realtime_flags {
 	B_MEDIA_REALTIME_ALLOCATOR		= 0x1,
@@ -127,17 +157,23 @@ enum media_realtime_flags {
 	B_MEDIA_REALTIME_ANYKIND		= 0xffff
 };
 
+/** @brief Per-frame flags conveying key-frame information. */
 enum media_frame_flags {
 	B_MEDIA_KEY_FRAME				= 0x1
 };
 
+/** @brief Quality hint constants for encoder and format negotiation. */
 #define B_MEDIA_ANY_QUALITY			0.0f
+/** @brief Low quality hint (0.1). */
 #define B_MEDIA_LOW_QUALITY			0.1f
+/** @brief Medium quality hint (0.5). */
 #define B_MEDIA_MEDIUM_QUALITY		0.5f
+/** @brief High quality hint (1.0). */
 #define B_MEDIA_HIGH_QUALITY		1.0f
 
 
 #ifndef _MULTI_AUDIO_H	/* #define in protocol header */
+/** @brief Bitmask values identifying individual audio channels in a multi-channel layout. */
 enum media_multi_channels {
 	B_CHANNEL_LEFT					= 0x00001,
 	B_CHANNEL_RIGHT					= 0x00002,
@@ -160,6 +196,7 @@ enum media_multi_channels {
 };
 
 
+/** @brief Matrix encoding flags for multi-channel audio downmix identification. */
 enum media_multi_matrix {
 	B_MATRIX_PROLOGIC_LR			= 0x1,
 	B_MATRIX_AMBISONIC_WXYZ			= 0x4
@@ -167,12 +204,16 @@ enum media_multi_matrix {
 #endif // !_MULTI_AUDIO_H
 
 
+/** @brief Unique identifier for a media node instance. */
 typedef int32 media_node_id;
+/** @brief Unique identifier for a shared media buffer. */
 typedef int32 media_buffer_id;
+/** @brief Unique identifier for a loaded media add-on. */
 typedef int32 media_addon_id;
 
 
 #if defined(__cplusplus)
+/** @brief Identifies the consumer endpoint of a media connection. */
 struct media_destination {
 								media_destination();
 								media_destination(port_id, int32);
@@ -192,6 +233,7 @@ private:
 };
 
 
+/** @brief Identifies the producer endpoint of a media connection. */
 struct media_source {
 								media_source();
 								media_source(port_id, int32);
@@ -209,14 +251,23 @@ private:
 };
 
 
+/** @brief Compares two media_destination objects for equality. */
 bool operator==(const media_destination& a, const media_destination& b);
+/** @brief Compares two media_destination objects for inequality. */
 bool operator!=(const media_destination& a, const media_destination& b);
+/** @brief Provides a total order on media_destination for use in sorted containers. */
 bool operator<(const media_destination& a, const media_destination& b);
+/** @brief Compares two media_source objects for equality. */
 bool operator==(const media_source& a, const media_source& b);
+/** @brief Compares two media_source objects for inequality. */
 bool operator!=(const media_source& a, const media_source& b);
+/** @brief Provides a total order on media_source for use in sorted containers. */
 bool operator<(const media_source& a, const media_source& b);
+/** @brief Compares two media_node objects for equality. */
 bool operator==(const media_node& a, const media_node& b);
+/** @brief Compares two media_node objects for inequality. */
 bool operator!=(const media_node& a, const media_node& b);
+/** @brief Provides a total order on media_node for use in sorted containers. */
 bool operator<(const media_node& a, const media_node& b);
 
 
@@ -227,6 +278,7 @@ bool operator<(const media_node& a, const media_node& b);
 /* Buffers contain typed data. Type is not part of the */
 /* buffer header; it's negotiated out-of-bounds by nodes. */
 
+/** @brief Byte-order constants for media data. */
 enum {
 	B_MEDIA_BIG_ENDIAN			= 1,
 	B_MEDIA_LITTLE_ENDIAN		= 2,
@@ -241,6 +293,7 @@ enum {
 struct media_multi_audio_format;
 
 
+/** @brief Describes the layout of uncompressed (raw) audio data. */
 struct media_raw_audio_format {
 	// possible values for "format"
 	enum {
@@ -282,6 +335,7 @@ struct media_raw_audio_format {
 };
 
 
+/** @brief Per-buffer header for raw audio data. */
 struct media_audio_header {
 	// TODO: Refine this structure and put actual data at the end
 	int32		_reserved_[14];
@@ -291,6 +345,7 @@ struct media_audio_header {
 };
 
 
+/** @brief Extended audio information for multi-channel (surround) layouts. */
 struct media_multi_audio_info {
 	uint32		channel_mask;	// bitmask
 	int16		valid_bits;		// if < 32, for B_AUDIO_INT
@@ -301,6 +356,7 @@ struct media_multi_audio_info {
 };
 
 
+/** @brief Combines raw audio format with multi-channel layout information. */
 struct media_multi_audio_format : public media_raw_audio_format,
 	public media_multi_audio_info {
 
@@ -308,6 +364,7 @@ struct media_multi_audio_format : public media_raw_audio_format,
 };
 
 
+/** @brief Describes the format of compressed (encoded) audio data. */
 struct media_encoded_audio_format {
 	enum audio_encoding {
 		B_ANY
@@ -327,6 +384,7 @@ struct media_encoded_audio_format {
 };
 
 
+/** @brief Per-buffer header for encoded audio data. */
 struct media_encoded_audio_header {
 	// NOTE: More data fields need to go to the end
 	int32		_reserved_0[14];
@@ -339,6 +397,7 @@ struct media_encoded_audio_header {
 
 };
 
+/** @brief Flags describing the field dominance of interlaced video. */
 enum media_display_flags {
 	B_F1_DOMINANT		= 0x1,	// The first buffer sent (temporally) will
 								// be an F1 field.
@@ -351,6 +410,7 @@ enum media_display_flags {
 };
 
 
+/** @brief Describes the on-screen geometry and pixel format of a video display. */
 struct media_video_display_info {
 	color_space	format;
 	uint32		line_width;
@@ -370,6 +430,7 @@ struct media_video_display_info {
 };
 
 
+/** @brief Describes the format of uncompressed (raw) video data. */
 struct media_raw_video_format {
 	float		field_rate;
 	uint32		interlace;		// Number of fields per frame: 1 means
@@ -396,6 +457,7 @@ struct media_raw_video_format {
 };
 
 
+/** @brief Per-buffer header for raw video data. */
 struct media_video_header {
 	uint32		_reserved_[8];		// NOTE: Keep reserved data at the top!
 
@@ -420,6 +482,7 @@ struct media_video_header {
 };
 
 
+/** @brief Describes the format of compressed (encoded) video data. */
 struct media_encoded_video_format {
 	enum video_encoding {
 		B_ANY
@@ -447,6 +510,7 @@ struct media_encoded_video_format {
 };
 
 
+/** @brief Per-buffer header for encoded video data. */
 struct media_encoded_video_header {
 	// NOTE: More data fields need to go at the end of this structure.
 	int32		_reserved_1[9];
@@ -471,6 +535,7 @@ struct media_encoded_video_header {
 	uint16		line_count;			// number of actual lines in buffer
 };
 
+/** @brief Describes the format of a multiplexed (multistream) media container. */
 struct media_multistream_format {
 	enum {
 		B_ANY					= 0,
@@ -526,6 +591,7 @@ struct media_multistream_format {
 };
 
 
+/** @brief Per-buffer header for multistream container data. */
 struct media_multistream_header {
 	uint32	_reserved_[14];
 	uchar	unused_mask;			// mask of unused bits for the last byte
@@ -540,9 +606,11 @@ struct media_multistream_header {
 };
 
 
+/** @brief Type code used to identify codec information blobs. */
 extern const type_code B_CODEC_TYPE_INFO;
 
 
+/** @brief Flags describing buffer layout and update characteristics. */
 enum media_format_flags {
 	B_MEDIA_RETAINED_DATA			= 0x1,
 	B_MEDIA_MULTIPLE_BUFFERS		= 0x2,
@@ -552,6 +620,11 @@ enum media_format_flags {
 											// in new code.
 };
 
+/** @brief Describes the complete format of a media stream, used during connection negotiation.
+ *
+ *  A field value of 0 typically means "wildcard" (any value is acceptable).
+ *  The structure must not exceed 192 bytes.
+ */
 // NOTE: A field of 0 typically means "anything" or "wildcard".
 // NOTE: This structure should not be bigger than 192 bytes!
 struct media_format {
@@ -580,31 +653,58 @@ public:
 		char						_reserved_[96];	 // pad to 96 bytes
 	} u;
 
+	/** @brief Returns true if the format carries video data (raw or encoded). */
 	bool 			IsVideo() const;
 
+	/** @brief Returns the video frame width in pixels. */
 	uint32  		Width() const;
+	/** @brief Returns the video frame height in pixels. */
 	uint32 			Height() const;
+	/** @brief Returns the color space of the video format. */
 	color_space  	ColorSpace() const;
 
+	/** @brief Returns a mutable reference to the video frame width. */
 	uint32& 		Width();
+	/** @brief Returns a mutable reference to the video frame height. */
 	uint32& 		Height();
+	/** @brief Returns a mutable reference to the color space. */
 	color_space& 	ColorSpace();
 
+	/** @brief Returns true if the format carries audio data (raw or encoded). */
 	bool 			IsAudio() const;
+	/** @brief Returns the audio sample format code. */
 	uint32 			AudioFormat() const;
+	/** @brief Returns a mutable reference to the audio sample format code. */
 	uint32& 		AudioFormat();
+	/** @brief Returns the size of one audio frame in bytes. */
 	uint32 			AudioFrameSize() const;
 
+	/** @brief Returns the encoding identifier for compressed formats. */
 	uint32			Encoding() const;
 
+	/** @brief Returns true if this format is compatible with another (wildcard-aware). */
 	bool			Matches(const media_format* other) const;
+	/** @brief Replaces wildcard fields in this format with values from another format. */
 	void			SpecializeTo(const media_format* other);
 
+	/** @brief Attaches opaque codec metadata to this format.
+	 *  @param data Pointer to the metadata blob.
+	 *  @param size Size of the blob in bytes.
+	 *  @return B_OK on success, or an error code.
+	 */
 	status_t		SetMetaData(const void* data, size_t size);
+
+	/** @brief Returns a pointer to the attached metadata blob, or NULL. */
 	const void*		MetaData() const;
+	/** @brief Returns the size in bytes of the attached metadata blob. */
 	int32			MetaDataSize() const;
 
+	/** @brief Deserializes a previously flattened format from a raw buffer.
+	 *  @param flatBuffer Pointer to the flat representation.
+	 */
 	void			Unflatten(const char *flatBuffer);
+
+	/** @brief Resets all fields to their wildcard (zero) values. */
 	void			Clear();
 
 					media_format();
@@ -615,51 +715,75 @@ public:
 };
 
 
+/** @brief Compares two raw audio formats for equality. */
 bool operator==(const media_raw_audio_format& a,
 	const media_raw_audio_format& b);
 
+/** @brief Compares two multi-audio info structures for equality. */
 bool operator==(const media_multi_audio_info& a,
 	const media_multi_audio_info& b);
 
+/** @brief Compares two multi-channel audio formats for equality. */
 bool operator==(const media_multi_audio_format& a,
 	const media_multi_audio_format& b);
 
+/** @brief Compares two encoded audio formats for equality. */
 bool operator==(const media_encoded_audio_format& a,
 	const media_encoded_audio_format& b);
 
+/** @brief Compares two video display info structures for equality. */
 bool operator==(const media_video_display_info& a,
 	const media_video_display_info& b);
 
+/** @brief Compares two raw video formats for equality. */
 bool operator==(const media_raw_video_format& a,
 	const media_raw_video_format& b);
 
+/** @brief Compares two encoded video formats for equality. */
 bool operator==(const media_encoded_video_format& a,
 	const media_encoded_video_format& b);
 
+/** @brief Compares two multistream vid_info structures for equality. */
 bool operator==(const media_multistream_format::vid_info& a,
 	const media_multistream_format::vid_info& b);
 
+/** @brief Compares two multistream avi_info structures for equality. */
 bool operator==(const media_multistream_format::avi_info& a,
 	const media_multistream_format::avi_info & b);
 
+/** @brief Compares two multistream formats for equality. */
 bool operator==(const media_multistream_format& a,
 	const media_multistream_format& b);
 
+/** @brief Compares two media_format objects for equality. */
 bool operator==(const media_format& a, const media_format& b);
 
 
+/** @brief Returns true if format a can be fed to something expecting format b (wildcard-aware).
+ *  @param a The candidate format.
+ *  @param b The required format.
+ *  @return True if compatible.
+ */
 bool format_is_compatible(const media_format & a, const media_format & b);
 	// Returns true if a and b are compatible (accounting for wildcards)
 	// (a is the format you want to feed to something accepting b
 
+/** @brief Formats a media_format into a human-readable string.
+ *  @param f The format to describe.
+ *  @param buf Destination character buffer.
+ *  @param size Capacity of the buffer in bytes.
+ *  @return True if the format was written successfully.
+ */
 bool string_for_format(const media_format & f, char * buf, size_t size);
 
 
+/** @brief An opaque tag used by codecs to accelerate seeking to key frames. */
 struct media_seek_tag {
 	char	data[16];
 };
 
 
+/** @brief Carries SMPTE-style time-code information in a buffer header. */
 struct media_header_time_code {
 	int8	type;		//	See TimeCode.h; don't use the "DEFAULT" value
 	int8	_reserved;
@@ -671,6 +795,7 @@ struct media_header_time_code {
 };
 
 
+/** @brief Header prepended to every media buffer, describing its contents and timing. */
 // Broadcast() fills in fields marked with "//+"
 struct media_header {
 	media_type		type;			// what kind of data (for union)
@@ -707,6 +832,7 @@ struct media_header {
 };
 
 
+/** @brief Opaque identifier for a media file format plug-in. */
 struct media_file_format_id {
 	ino_t	node;
 	dev_t	device;
@@ -714,10 +840,13 @@ struct media_file_format_id {
 };
 
 
+/** @brief Compares two media_file_format_id values for equality. */
 bool operator==(const media_file_format_id& a, const media_file_format_id& b);
+/** @brief Provides a total order on media_file_format_id for sorted containers. */
 bool operator<(const media_file_format_id& a, const media_file_format_id& b);
 
 
+/** @brief Identifies the container family of a media file format. */
 typedef enum {
 	B_ANY_FORMAT_FAMILY			= 0,
 	B_BEOS_FORMAT_FAMILY		= 1,
@@ -734,6 +863,7 @@ typedef enum {
 } media_format_family;
 
 
+/** @brief Describes a media container file format and its capabilities. */
 struct media_file_format {
 	// Possible flags for capabilities bitmask
 	enum {
@@ -766,17 +896,24 @@ struct media_file_format {
 };
 
 
+/** @brief Iterates over all available media file format plug-ins.
+ *  @param cookie In/out iteration cookie; initialize to 0 before first call.
+ *  @param mfi On return, filled with the next media_file_format.
+ *  @return B_OK while more formats exist, B_BAD_INDEX when done.
+ */
 // Initialize the cookie to 0 and keep calling this function to iterate
 // over all available media file format writers.
 status_t get_next_file_format(int32* cookie, media_file_format* mfi);
 
 
+/** @brief Maximum size of a message readable from a media port (for HandleMessage()). */
 // A buffer of this size is guaranteed to be large enough to hold any
 // message, which your service thread can read from read_port() and
 // passes on to HandleMessage().
 const size_t B_MEDIA_MESSAGE_SIZE = 16384;
 
 
+/** @brief MIME signature of the media server application. */
 extern const char* B_MEDIA_SERVER_SIGNATURE;
 
 class media_node;
@@ -787,6 +924,13 @@ struct dormant_node_info;
 struct buffer_clone_info;
 
 
+/** @brief Launches the media server and its companion processes.
+ *  @param timeout Maximum time to wait for launch completion.
+ *  @param progress Optional callback invoked at each launch stage.
+ *  @param cookie Arbitrary pointer passed to the progress callback.
+ *  @param flags Optional flags controlling launch behaviour.
+ *  @return B_OK on success, or an error code.
+ */
 // Functions which control the shutdown and launching process of the
 // media_server and it's friends. You can provide a call back hook which
 // will be called during various steps of the process. This callback should
@@ -800,6 +944,12 @@ status_t launch_media_server(bigtime_t timeout = B_INFINITE_TIMEOUT,
 	bool (*progress)(int stage, const char* message, void* cookie) = NULL,
 	void* cookie = NULL, uint32 flags = 0);
 
+/** @brief Shuts down the media server and its companion processes.
+ *  @param timeout Maximum time to wait for shutdown completion.
+ *  @param progress Optional callback invoked at each shutdown stage.
+ *  @param cookie Arbitrary pointer passed to the progress callback.
+ *  @return B_OK on success, or an error code.
+ */
 status_t shutdown_media_server(bigtime_t timeout = B_INFINITE_TIMEOUT,
 	bool (*progress)(int stage, const char* message, void* cookie) = NULL,
 	void* cookie = NULL);
@@ -810,6 +960,7 @@ status_t shutdown_media_server(bigtime_t timeout = B_INFINITE_TIMEOUT,
 // unless you get them from BSoundFile.
 
 
+/** @brief Legacy byte-order constants (use B_MEDIA_BIG_ENDIAN / B_MEDIA_LITTLE_ENDIAN instead). */
 // values for byte_ordering
 enum {
 	B_BIG_ENDIAN,
@@ -817,6 +968,7 @@ enum {
 };
 
 
+/** @brief Legacy sample-format constants (use media_raw_audio_format::B_AUDIO_* instead). */
 // values for sample_format
 enum {
 	B_UNDEFINED_SAMPLES,
@@ -829,6 +981,7 @@ enum {
 // #pragma mark - encoders and file writers
 
 
+/** @brief Control block passed to an encoder for each frame or chunk to encode. */
 struct media_encode_info {
 	uint32		flags;					// B_MEDIA_KEY_FRAME, set before every
 										// use
@@ -851,6 +1004,7 @@ struct media_encode_info {
 };
 
 
+/** @brief Quality and bit-rate parameters for an encoder. */
 struct encode_parameters {
 	float		quality;				// 0.0-1.0 , 1.0 is high quality
 
@@ -864,6 +1018,7 @@ struct encode_parameters {
 };
 
 
+/** @brief Hints passed to a decoder controlling decode timing and codec-specific data. */
 struct media_decode_info {
 	bigtime_t	time_to_decode;			// 0 - hurry up, B_INFINITE_TIMEOUT
 										// - don't care

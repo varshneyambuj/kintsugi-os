@@ -1,7 +1,29 @@
 /*
- * Copyright 2009, Haiku Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work from the Haiku project:
+ *   Copyright 2009, Haiku Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ * Author:
+ *   Ambuj Varshney, ambuj@kintsugi-os.org
  */
+
+/** @file TranslatorFormats.h
+ *  @brief Standard translator group/format type codes and wire-format data structures. */
+
 #ifndef _TRANSLATOR_FORMATS_H
 #define _TRANSLATOR_FORMATS_H
 
@@ -25,8 +47,7 @@ extern char B_TRANSLATOR_EXT_SOUND_MARKER[];
 extern char B_TRANSLATOR_EXT_SOUND_LOOP[];
 
 
-// Standard formats
-
+/** @brief High-level media-type groups used as the group field in translation_format. */
 enum TranslatorGroups {
 	B_TRANSLATOR_BITMAP		= 'bits',
 	B_TRANSLATOR_PICTURE	= 'pict',
@@ -39,6 +60,7 @@ enum TranslatorGroups {
 };
 
 
+/** @brief Specific file-format type codes used as the type field in translation_format. */
 enum {
 	// Bitmap formats
 	B_GIF_FORMAT			= 'GIF ',
@@ -66,7 +88,7 @@ enum {
 };
 
 
-// Bitmap format (always in big endian)
+/** @brief Wire-format bitmap header exchanged between translators (always big-endian). */
 struct TranslatorBitmap {
 	uint32		magic;		// B_TRANSLATOR_BITMAP
 	BRect		bounds;
@@ -78,7 +100,7 @@ struct TranslatorBitmap {
 };
 
 
-// Sound format (always in big endian)
+/** @brief Wire-format sound header exchanged between translators (always big-endian). */
 struct TranslatorSound {
 	uint32		magic;		// B_TRANSLATOR_SOUND
 	uint32		channels;
@@ -89,13 +111,14 @@ struct TranslatorSound {
 };
 
 
-// Text format (always in big endian)
+/** @brief Common record header prepended to every styled-text stream chunk. */
 struct TranslatorStyledTextRecordHeader {
 	uint32		magic;
 	uint32		header_size;
 	uint32		data_size;
 };
 
+/** @brief Styled-text stream header record identifying the overall STXT stream. */
 struct TranslatorStyledTextStreamHeader {
 	enum {
 		STREAM_HEADER_MAGIC = 'STXT'
@@ -105,6 +128,7 @@ struct TranslatorStyledTextStreamHeader {
 	int32		version;
 };
 
+/** @brief Styled-text record header for the plain-text chunk. */
 struct TranslatorStyledTextTextHeader {
 	enum {
 		TEXT_HEADER_MAGIC = 'TEXT'
@@ -116,6 +140,7 @@ struct TranslatorStyledTextTextHeader {
 	// actual data follows
 };
 
+/** @brief Styled-text record header for the style (run-array) chunk. */
 struct TranslatorStyledTextStyleHeader {
 	enum {
 		STYLE_HEADER_MAGIC = 'STYL'

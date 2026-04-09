@@ -1,7 +1,29 @@
 /*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from Haiku, Inc. covered by:
  * Copyright 2009, Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
+
+/** @file MediaEventLooper.h
+ *  @brief Defines BMediaEventLooper, a BMediaNode subclass with a timed event dispatch loop.
+ */
+
 #ifndef _MEDIA_EVENT_LOOPER_H
 #define _MEDIA_EVENT_LOOPER_H
 
@@ -10,93 +32,181 @@
 #include <TimedEventQueue.h>
 
 
-/*! BMediaEventLooper spawns a thread which calls WaitForMessage, pushes
-	BMediaNode messages onto its BTimedEventQueues. informs you when it
-	is time to handle an event. Report your event latency, push other events
-	onto the queue and override HandleEvent to do your work.
-*/
+/** @brief BMediaNode subclass that manages a dedicated control thread and timed event queues.
+ *
+ *  BMediaEventLooper spawns a thread that calls WaitForMessage(), pushes BMediaNode
+ *  messages onto BTimedEventQueues, and invokes HandleEvent() at the appropriate
+ *  performance time.  Override HandleEvent() to perform your node's work.
+ */
 class BMediaEventLooper : public virtual BMediaNode {
 protected:
+	/** @brief Run-state values for this looper's control thread. */
 	enum run_state {
-		B_IN_DISTRESS		= -1,
-		B_UNREGISTERED,
-		B_STOPPED,
-		B_STARTED,
-		B_QUITTING,
-		B_TERMINATED,
-		B_USER_RUN_STATES	= 0x4000
+		B_IN_DISTRESS		= -1,  /**< Node is in an error state. */
+		B_UNREGISTERED,            /**< Node has not been registered yet. */
+		B_STOPPED,                 /**< Node is stopped. */
+		B_STARTED,                 /**< Node is running. */
+		B_QUITTING,                /**< Node is in the process of quitting. */
+		B_TERMINATED,              /**< Node has terminated. */
+		B_USER_RUN_STATES	= 0x4000 /**< First value available for subclass use. */
 	};
 
 protected:
+	/** @brief Constructs the looper.
+	 *  @param apiVersion The API version to use; defaults to B_BEOS_VERSION.
+	 */
 	explicit					BMediaEventLooper(
 									uint32 apiVersion = B_BEOS_VERSION);
 	virtual						~BMediaEventLooper();
 
 protected:
 	// BMediaNode interface
+
+	/** @brief Called after the node is registered; must call Run() here. */
 	virtual	void				NodeRegistered();
+
+	/** @brief Pushes a B_START event onto the event queue.
+	 *  @param performanceTime The performance time at which to start.
+	 */
 	virtual	void				Start(bigtime_t performanceTime);
+
+	/** @brief Pushes a B_STOP event onto the event queue.
+	 *  @param performanceTime The performance time at which to stop.
+	 *  @param immediate If true, stop without waiting for the queue.
+	 */
 	virtual	void				Stop(bigtime_t performanceTime,
 									bool immediate);
+
+	/** @brief Pushes a B_SEEK event onto the event queue.
+	 *  @param mediaTime The media time to seek to.
+	 *  @param performanceTime The performance time at which to apply the seek.
+	 */
 	virtual	void				Seek(bigtime_t mediaTime,
 									bigtime_t performanceTime);
+
+	/** @brief Pushes a B_WARP event onto the real-time event queue.
+	 *  @param atRealTime The real time at which the warp takes effect.
+	 *  @param toPerformanceTime The new performance time to warp to.
+	 */
 	virtual	void				TimeWarp(bigtime_t atRealTime,
 									bigtime_t toPerformanceTime);
+
+	/** @brief Schedules a timer event.
+	 *  @param atPerformanceTime The performance time at which to fire.
+	 *  @param cookie An arbitrary value passed back in HandleEvent().
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			AddTimer(bigtime_t atPerformanceTime,
 									int32 cookie);
+
+	/** @brief Notifies the looper of a change in run mode.
+	 *  @param mode The new run_mode value.
+	 */
 	virtual	void 				SetRunMode(run_mode mode);
 
 protected:
 	// BMediaEventLooper Hook functions
 
-	// NOTE: You must override this method to handle your events!
-	// You should not call HandleEvent directly.
+	/** @brief Called when it is time to handle a scheduled event.
+	 *  @param event The event to handle.
+	 *  @param lateness How late the event is being handled, in microseconds.
+	 *  @param realTimeEvent True if the event came from the real-time queue.
+	 */
 	virtual void				HandleEvent(const media_timed_event* event,
 									bigtime_t lateness,
 									bool realTimeEvent = false) = 0;
 
-	// Override this method to properly clean up any custom events you have
-	// added to your event queue.
+	/** @brief Override to clean up resources associated with a custom event.
+	 *  @param event The event being removed from the queue.
+	 */
 	virtual void				CleanUpEvent(const media_timed_event* event);
 
-	// NOTE: Called in offline mode to determine the current time of the node.
-	// Update your internal information whenever it changes.
+	/** @brief Returns the current time for offline-mode nodes.
+	 *  @return Current performance time in microseconds.
+	 */
 	virtual	bigtime_t			OfflineTime();
 
-	// NOTE: Override this method only if you know what you are doing!
-	// The default control loop function waits for messages, pops events
-	// off the queue and calls DispatchEvent.
+	/** @brief Override only if you need a custom control loop implementation. */
 	virtual	void				ControlLoop();
 
+	/** @brief Returns the thread ID of the control thread.
+	 *  @return The thread_id, or B_BAD_THREAD_ID if not yet started.
+	 */
 			thread_id			ControlThread();
 
 protected:
+	/** @brief Returns the timed event queue for performance-time events.
+	 *  @return Pointer to the BTimedEventQueue.
+	 */
 			BTimedEventQueue* 	EventQueue();
+
+	/** @brief Returns the timed event queue for real-time events.
+	 *  @return Pointer to the real-time BTimedEventQueue.
+	 */
 			BTimedEventQueue*	RealTimeQueue();
 
+	/** @brief Returns the current thread priority of the control thread.
+	 *  @return The priority value.
+	 */
 			int32				Priority() const;
+
+	/** @brief Returns the current run state.
+	 *  @return One of the run_state enum values.
+	 */
 			int32				RunState() const;
+
+	/** @brief Returns the reported event latency.
+	 *  @return Latency in microseconds.
+	 */
 			bigtime_t			EventLatency() const;
+
+	/** @brief Returns the buffer duration used for scheduling.
+	 *  @return Duration in microseconds.
+	 */
 			bigtime_t			BufferDuration() const;
+
+	/** @brief Returns the estimated scheduling latency.
+	 *  @return Scheduling latency in microseconds.
+	 */
 			bigtime_t			SchedulingLatency() const;
 
-	// NOTE: Use the priority constants from OS.h or suggest_thread_priority
-	// from scheduler.h. The passed priority will be clamped to be in range 5
-	// to 120.
+	/** @brief Sets the priority of the control thread.
+	 *  @param priority Thread priority (clamped to 5-120).
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SetPriority(int32 priority);
+
+	/** @brief Sets the current run state.
+	 *  @param state The new run_state value.
+	 */
 			void				SetRunState(run_state state);
+
+	/** @brief Sets the event latency reported to the Media Kit.
+	 *  @param latency Latency in microseconds.
+	 */
 			void				SetEventLatency(bigtime_t latency);
+
+	/** @brief Sets the buffer duration used for scheduling decisions.
+	 *  @param duration Buffer duration in microseconds.
+	 */
 			void				SetBufferDuration(bigtime_t duration);
+
+	/** @brief Sets the current offline-mode time reference.
+	 *  @param offTime The current offline performance time.
+	 */
 			void				SetOfflineTime(bigtime_t offTime);
 
-	// Spawns and resumes the control thread - must be called from
-	// NodeRegistered().
+	/** @brief Spawns and starts the control thread; call from NodeRegistered(). */
 			void				Run();
 
-	// Quits the control thread - must be called from your destructor.
+	/** @brief Stops the control thread; call from your destructor. */
 			void				Quit();
 
-	// Calls HandleEvent and does BMediaEventLooper event work
+	/** @brief Calls HandleEvent() and performs internal event-queue maintenance.
+	 *  @param event The event to dispatch.
+	 *  @param lateness How late the dispatch is, in microseconds.
+	 *  @param realTimeEvent True if the event came from the real-time queue.
+	 */
 			void				DispatchEvent(const media_timed_event* event,
 									bigtime_t lateness,
 									bool realTimeEvent = false);

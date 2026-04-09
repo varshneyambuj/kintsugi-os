@@ -1,15 +1,34 @@
 /*
- * Copyright 2009, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work from the Haiku project:
+ *   Copyright 2009, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  *
  * Definitions for the SCSI Common Access Method as implemented in Haiku.
  *
  * See also "Draft Proposed American National Standard, SCSI-2 Common
  * Access Method Transport and SCSI Interface Module", Revision 12,
- * ANSI refernce number X3.232-199x.
+ * ANSI reference number X3.232-199x.
  *
-*/
+ * Author:
+ *   Ambuj Varshney, ambuj@kintsugi-os.org
+ */
+
+/** @file CAM.h
+ *  @brief SCSI Common Access Method (CAM) CCB structures, status codes, and module interfaces. */
 
 #ifndef _CAM_H
 #define _CAM_H
@@ -37,6 +56,7 @@ typedef uint16 U16;
 
 /* Haiku specific additions */
 
+/** @brief Per-operation I/O statistics record used internally by the SCSI subsystem. */
 typedef struct {
 	uint32	serial;		/* operation serial number                    */
 	uint32	micros;		/* operation time in microseconds (4294s max) */
@@ -110,7 +130,7 @@ typedef struct {
 /* Structure definitions for the CAM control blocks, CCB's for the
 subsystem. */
 
-/* Common CCB header definition. */
+/** @brief Common header prepended to every CAM Control Block (CCB). */
 typedef struct ccb_header
 {
 	uint32		phys_addr;		/* physical address of this CCB */
@@ -126,14 +146,14 @@ typedef struct ccb_header
 
 /* Common SCSI functions. */
 
-/* Union definition for the CDB space in the SCSI I/O request CCB */
+/** @brief Union holding either a pointer to a CDB or an inline CDB byte array. */
 typedef union cdb_un
 {
 	uchar*	cam_cdb_ptr;				/* Pointer to the CDB bytes to send */
 	uchar	cam_cdb_bytes[IOCDBLEN];	/* Area for the CDB to send */
 } CDB_UN;
 
-/* Get device type CCB */
+/** @brief CCB for retrieving device type information (XPT_GDEV_TYPE). */
 typedef struct ccb_getdev
 {
 	CCB_HEADER	cam_ch;			/* Header information fields */
@@ -141,7 +161,7 @@ typedef struct ccb_getdev
 	uchar		cam_pd_type;	/* Periph device type from the TLUN */
 } CCB_GETDEV;
 
-/* Path inquiry CCB */
+/** @brief CCB for querying HBA/SIM path capabilities (XPT_PATH_INQ). */
 typedef struct ccb_pathinq
 {
 	CCB_HEADER	cam_ch;						/* Header information fields */
@@ -162,13 +182,13 @@ typedef struct ccb_pathinq
 	uchar*		cam_osd_usage;				/* Ptr for the OSD specific area */
 } CCB_PATHINQ;
 
-/* Release SIM Queue CCB */
+/** @brief CCB for releasing a frozen SIM queue (XPT_REL_SIMQ). */
 typedef struct ccb_relsim
 {
 	CCB_HEADER	cam_ch;				/* Header information fields */
 } CCB_RELSIM;
 
-/* SCSI I/O Request CCB */
+/** @brief CCB for issuing a SCSI I/O request (XPT_SCSI_IO). */
 typedef struct ccb_scsiio
 {
 	CCB_HEADER	cam_ch;				/* Header information fields */
@@ -198,7 +218,7 @@ typedef struct ccb_scsiio
 	uchar		cam_sim_priv[SIM_PRIV];	/* SIM private data area */
 } CCB_SCSIIO;
 
-/* Set Async Callback CCB */
+/** @brief CCB for registering an asynchronous event callback (XPT_SASYNC_CB). */
 typedef struct ccb_setasync
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -208,7 +228,7 @@ typedef struct ccb_setasync
 	uchar		pdrv_buf_len;			/* The size of the buffer */
 } CCB_SETASYNC;
 
-/* Set device type CCB */
+/** @brief CCB for setting the device type in the EDT (XPT_SDEV_TYPE). */
 typedef struct ccb_setdev
 {
 	CCB_HEADER	cam_ch;				/* Header information fields */
@@ -217,26 +237,26 @@ typedef struct ccb_setdev
 
 /* SCSI Control Functions. */
 
-/* Abort XPT Request CCB */
+/** @brief CCB for aborting a previously submitted CCB (XPT_ABORT). */
 typedef struct ccb_abort
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
 	CCB_HEADER*	cam_abort_ch;			/* Pointer to the CCB to abort */
 } CCB_ABORT;
 
-/* Reset SCSI Bus CCB */
+/** @brief CCB for resetting the SCSI bus (XPT_RESET_BUS). */
 typedef struct ccb_resetbus
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
 } CCB_RESETBUS;
 
-/* Reset SCSI Device CCB */
+/** @brief CCB for issuing a Bus Device Reset to a target (XPT_RESET_DEV). */
 typedef struct ccb_resetdev
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
 } CCB_RESETDEV;
 
-/* Terminate I/O Process Request CCB */
+/** @brief CCB for terminating an in-progress I/O operation (XPT_TERM_IO). */
 typedef struct ccb_termio
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -245,7 +265,7 @@ typedef struct ccb_termio
 
 /* Target mode structures. */
 
-/* Host Target Mode Version 1 Enable LUN CCB */
+/** @brief CCB for enabling a LUN in Host Target Mode v1 (XPT_EN_LUN). */
 typedef struct ccb_en_lun
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -255,7 +275,7 @@ typedef struct ccb_en_lun
 	uint16		cam_ccb_listcnt;		/* Count of Target CCBs in the list */
 } CCB_EN_LUN;
 
-/* Enable LUN CCB (HTM V2) */
+/** @brief CCB for enabling a LUN in Host Target Mode v2 (XPT_EN_LUN, HTM V2). */
 typedef struct ccb_enable_lun
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -268,7 +288,7 @@ typedef struct ccb_enable_lun
 	uchar		cam_sim_priv[SIM_PRIV];	/* SIM private data area */
 } CCB_ENABLE_LUN;
 
-/* Immediate Notify CCB */
+/** @brief CCB for receiving an immediate notify event in target mode (XPT_IMMED_NOTIFY). */
 typedef struct ccb_immed_notify
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -282,7 +302,7 @@ typedef struct ccb_immed_notify
 	uchar		cam_msg_args[7];		/* Message Arguments */
 } CCB_IMMED_NOTIFY;
 
-/* Notify Acknowledge CCB */
+/** @brief CCB for acknowledging a notify event in target mode (XPT_NOTIFY_ACK). */
 typedef struct ccb_notify_ack
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -291,7 +311,7 @@ typedef struct ccb_notify_ack
 	uchar		cam_rsvd;
 } CCB_NOTIFY_ACK;
 
-/* Accept Target I/O CCB */
+/** @brief CCB for accepting a target I/O request in host target mode (XPT_ACCEPT_TARG). */
 typedef struct ccb_accept_targ
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -322,11 +342,12 @@ typedef struct ccb_accept_targ
 	uchar		cam_sim_priv[SIM_PRIV];	/* SIM private data area */
 } CCB_ACCEPT_TARG;
 
-/* Continue Target I/O CCB */
+/** @brief CCB for continuing an accepted target I/O connection (XPT_CONT_TARG). */
 typedef CCB_ACCEPT_TARG CCB_CONT_TARG;
 
 /* HBA engine structures. */
 
+/** @brief CCB for querying an HBA compression/encryption engine (XPT_ENG_INQ). */
 typedef struct ccb_eng_inq
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -336,6 +357,7 @@ typedef struct ccb_eng_inq
 	uint32		cam_eng_memory;			/* Returned engine memory size */
 } CCB_ENG_INQ;
 
+/** @brief CCB for executing an HBA engine request (XPT_ENG_EXEC). Must match SCSIIO size. */
 typedef struct ccb_eng_exec	/* NOTE: must match SCSIIO size */
 {
 	CCB_HEADER	cam_ch;					/* Header information fields */
@@ -370,12 +392,14 @@ entries. */
 
 typedef struct sim_module_info sim_module_info;
 
+/** @brief Module info structure identifying a SCSI Interface Module (SIM). */
 struct sim_module_info {
 	module_info	minfo;
 };
 
 typedef struct CAM_SIM_ENTRY CAM_SIM_ENTRY;
 
+/** @brief Entry point table for a SCSI Interface Module (SIM). */
 struct CAM_SIM_ENTRY {
 	status_t	(*sim_init)();
 	int32		(*sim_action)();
@@ -529,12 +553,11 @@ SIM's default timeout can take effect. */
 
 /* ---------------------------------------------------------------------- */
 
-/* Typedef for a scatter/gather list element. */
-
+/** @brief One element of a scatter/gather list describing a discontiguous memory region. */
 typedef struct sg_elem
 {
 	uchar*		cam_sg_address;		/* Scatter/Gather address */
-	uint32		cam_sg_count;			/* Scatter/Gather count */
+	uint32		cam_sg_count;		/* Scatter/Gather count */
 } SG_ELEM;
 
 /* ---------------------------------------------------------------------- */
@@ -571,10 +594,7 @@ typedef struct sg_elem
 
 #define XPT_CCB_INVALID	-1	/* for signaling a bad CCB to free */
 
-/* The typedef for the Async callback information.	This structure is used to
-store the supplied info from the Set Async Callback CCB, in the EDT table
-in a linked list structure. */
-
+/** @brief Linked-list node storing asynchronous callback registration info from CCB_SETASYNC. */
 typedef struct async_info
 {
 	struct async_info*	cam_async_next;			/* pointer to the next structure */
@@ -584,11 +604,7 @@ typedef struct async_info
 	uchar*				cam_async_ptr;			/* Address for the "information */
 } ASYNC_INFO;
 
-/* The CAM EDT table contains the device information for all the
-devices, SCSI ID and LUN, for all the SCSI busses in the system.	The
-table contains a CAM_EDT_ENTRY structure for each device on the bus.
-*/
-
+/** @brief One entry in the CAM Enumeration Device Table (EDT) for a B/T/L triple. */
 typedef struct cam_edt_entry
 {
 	int32		cam_tlun_found;			/* Flag for the existence of the target/LUN */
@@ -614,6 +630,7 @@ typedef struct cam_edt_entry
 #define TYPE_ID		16						/* ASCII string len for TYPE ID */
 #define VERS		 8						/* ASCII string len for SIM & HBA vers */
 
+/** @brief Vendor-unique extended path inquiry CCB with version and controller identity fields. */
 typedef struct ccb_extended_pathinq
 {
 	CCB_PATHINQ	cam_path;					/* Default path inquiry */
@@ -628,6 +645,7 @@ typedef struct ccb_extended_pathinq
 	Vendor unique flags supported by Haiku (cam_vu_flags)
 --- */
 
+/** @brief Haiku-specific vendor-unique flags for the cam_vu_flags CCB field. */
 enum {
 	VU_RESERVED_0			=	0x0001,
 	VU_RESERVED_1			=	0x0002,
@@ -642,6 +660,7 @@ enum {
 
 typedef struct cam_for_driver_module_info cam_for_driver_module_info;
 
+/** @brief Bus manager module interface used by peripheral SCSI drivers to submit CCBs. */
 struct cam_for_driver_module_info {
 	bus_manager_info	minfo;
 	CCB_HEADER*			(*xpt_ccb_alloc)(void);
@@ -657,6 +676,7 @@ struct cam_for_driver_module_info {
 
 typedef struct cam_for_sim_module_info cam_for_sim_module_info;
 
+/** @brief Bus manager module interface used by SCSI SIMs to register and deregister buses. */
 struct cam_for_sim_module_info {
 	bus_manager_info	minfo;
 	long				(*xpt_bus_register)(CAM_SIM_ENTRY* sim);
@@ -666,10 +686,7 @@ struct cam_for_sim_module_info {
 #define	B_CAM_FOR_SIM_MODULE_NAME		"bus_managers/scsi/sim/v1"
 
 
-/* General Union for Kernel Space allocation.	Contains all the possible CCB
-structures.	This union should never be used for manipulating CCB's its only
-use is for the allocation and deallocation of raw CCB space. */
-
+/** @brief Union spanning all CCB types; used only for allocating raw CCB memory. */
 typedef union ccb_size_union
 {
 	CCB_SCSIIO			csio;	/* Please keep this first, for debug/print */

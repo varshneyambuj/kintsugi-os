@@ -1,7 +1,29 @@
 /*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from Haiku, Inc. covered by:
  * Copyright 2002-2010, Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
+
+/** @file MediaTrack.h
+ *  @brief Defines BMediaTrack for reading and writing individual streams within a media file.
+ */
+
 #ifndef _MEDIA_TRACK_H
 #define _MEDIA_TRACK_H
 
@@ -21,32 +43,20 @@ class BView;
 class BParameterWeb;
 
 
+/** @brief Flags for SeekToTime() and SeekToFrame() controlling seek direction. */
 enum media_seek_type {
-	B_MEDIA_SEEK_CLOSEST_FORWARD	= 1,
-	B_MEDIA_SEEK_CLOSEST_BACKWARD	= 2,
-	B_MEDIA_SEEK_DIRECTION_MASK		= 3
+	B_MEDIA_SEEK_CLOSEST_FORWARD	= 1, /**< Seek to nearest key frame after the target. */
+	B_MEDIA_SEEK_CLOSEST_BACKWARD	= 2, /**< Seek to nearest key frame before the target. */
+	B_MEDIA_SEEK_DIRECTION_MASK		= 3  /**< Mask for extracting direction bits. */
 };
 
 
-// BMediaTrack gives access to a particular media track in a media file
-// (as represented by BMediaFile).
-//
-// You always instantiate a BMediaTrack through BMediaFile::TrackAt()
-// or BMediaFile::CreateTrack().  When a BMediaTrack object is
-// constructed it finds the necessary decoder or encoder for the type
-// of data stored in the track.
-//
-// Unless you created the BMediaFile() in B_MEDIA_REPLACE_MODE, you
-// can only access a track for reading or writing, not both.
-//
-// If InitCheck() indicates no errors, then the track is ready to be
-// used to read and write frames using ReadFrames() and WriteFrames().
-// For video data you should always only read one frame.
-//
-// You can seek a track with SeekToTime() and SeekToFrame().
-//
-// If no codec could be found for the track, it is still possible to
-// access the encoded data using ReadChunk().
+/** @brief Provides access to one audio or video stream within a BMediaFile.
+ *
+ *  BMediaTrack objects are obtained from BMediaFile::TrackAt() (for reading)
+ *  or BMediaFile::CreateTrack() (for writing).  Access is either read-only or
+ *  write-only unless B_MEDIA_REPLACE_MODE was used.
+ */
 class BMediaTrack {
 protected:
 	// Use BMediaFile::ReleaseTrack() instead -- or it will go away
@@ -55,156 +65,244 @@ protected:
 
 public:
 
-	// for read-only access the BMediaTrack should be instantiated
-	// through BMediaFile::TrackAt()
-
-	// for write-only access the BMediaTrack should be instantiated
-	// through BMediaFile::CreateTrack()
-
+	/** @brief Returns the initialization status.
+	 *  @return B_OK if the track is ready, or an error code.
+	 */
 			status_t			InitCheck() const;
 
-	// Get information about the codec being used.
+	/** @brief Returns information about the codec in use for this track.
+	 *  @param _codecInfo On return, filled with the media_codec_info.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			GetCodecInfo(
 									media_codec_info* _codecInfo) const;
 
-
-	// EncodedFormat returns information about the track's
-	// "native" encoded format.
-
+	/** @brief Returns the native compressed format of this track.
+	 *  @param _format On return, the encoded media_format.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			EncodedFormat(media_format* _format) const;
 
-	// DecodedFormat is used to negotiate the format that the codec will
-	// use when decoding the track's data.  You pass in the format that
-	// that you want; the codec will find and return its "best fit"
-	// format.  (inout_format is used as both the input and the returned
-	// format.)  The format is typically of the B_MEDIA_RAW_AUDIO or
-	// B_MEDIA_RAW_VIDEO flavor.
-	// The data returned through ReadFrames() will be in the format that's
- 	// returned by this function.
-
+	/** @brief Negotiates the raw output format for decoding.
+	 *  @param _format In/out: desired format; set to the format actually used.
+	 *  @param flags Reserved; pass 0.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			DecodedFormat(media_format* _format,
 									uint32 flags = 0);
 
-	// CountFrames and Duration return the total number of frame and the
-	// total duration (expressed in microseconds) of a track.
-
+	/** @brief Returns the total number of frames in this track.
+	 *  @return Frame count.
+	 */
 			int64				CountFrames() const;
+
+	/** @brief Returns the total duration of this track in microseconds.
+	 *  @return Duration in microseconds.
+	 */
 			bigtime_t			Duration() const;
 
-	// Returns in _data hierarchical meta-data about the track.
-	// The fields in the message shall follow a defined naming-scheme,
-	// such that applications can find the same information in different
-	// types of tracks.
+	/** @brief Returns hierarchical meta-data about this track.
+	 *  @param _data On return, a BMessage containing named metadata fields.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			GetMetaData(BMessage* _data) const;
 
-	// CurrentFrame and CurrentTime return the current position (expressed in
-	// microseconds) within the track, expressed in frame index and time.
-
+	/** @brief Returns the current read position as a frame index.
+	 *  @return Current frame index.
+	 */
 			int64				CurrentFrame() const;
+
+	/** @brief Returns the current read position in microseconds.
+	 *  @return Current performance time in microseconds.
+	 */
 			bigtime_t			CurrentTime() const;
 
-	// ReadFrames() fills a buffer with the next frames/samples. For a video
-	// track,  it decodes the next frame of video in the passed buffer. For
-	// an audio track, it fills the buffers with the next N samples, as
-	// negotiated by DecodedFormat().  However, if it reaches the end of the
-	// file and was not able to fill the whole  buffer, it returns a partial
-	// buffer.  Upon return, out_frameCount contains the actual number of
-	// frame/samples returned, and the start time for the frame, expressed
-	// in microseconds, is in the media_header structure.
-
+	/** @brief Decodes the next frame(s) into the supplied buffer.
+	 *  @param buffer Destination buffer for decoded data.
+	 *  @param _frameCount On return, the number of frames decoded.
+	 *  @param header If non-NULL, receives the media_header for the frame.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReadFrames(void* buffer, int64* _frameCount,
 									media_header* header = NULL);
 
+	/** @brief Decodes the next frame(s) with decode control parameters.
+	 *  @param buffer Destination buffer for decoded data.
+	 *  @param _frameCount On return, the number of frames decoded.
+	 *  @param header On return, the media_header for the frame.
+	 *  @param info Decode control parameters.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReadFrames(void* buffer, int64* _frameCount,
 									media_header* header,
 									media_decode_info* info);
 
+	/** @brief Replaces frames at the current position (B_MEDIA_REPLACE_MODE only).
+	 *  @param buffer Pointer to the replacement frame data.
+	 *  @param _frameCount On return, the number of frames replaced.
+	 *  @param header The media_header for the replacement data.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReplaceFrames(const void* buffer,
 									int64* _frameCount,
 									const media_header* header);
 
-
-	// SeekToTime and SeekToFrame are used for seeking to a particular
-	// position in a track, expressed in either frames or microseconds.
-	// They return whatever position they were able to seek to. For example,
-	// a video codec may not be able to seek to arbitrary frames, but only to
-	// key frames. In this case, it would return the closest key frame before
-	// the specified seek point.
-	//
-	// If you want to explicitly seek to the nearest keyframe _before_ this
-	// frame or _after_ this frame, pass B_MEDIA_SEEK_CLOSEST_FORWARD or
-	// B_MEDIA_SEEK_CLOSEST_BACKWARD as the flags field.
-
+	/** @brief Seeks to a position in the track expressed as a time in microseconds.
+	 *  @param _time In/out: target time; updated to the actual seek position.
+	 *  @param flags Seek direction flags (B_MEDIA_SEEK_CLOSEST_*).
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SeekToTime(bigtime_t* _time, int32 flags = 0);
+
+	/** @brief Seeks to a position in the track expressed as a frame index.
+	 *  @param _frame In/out: target frame; updated to the actual seek position.
+	 *  @param flags Seek direction flags (B_MEDIA_SEEK_CLOSEST_*).
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SeekToFrame(int64* _frame, int32 flags = 0);
 
+	/** @brief Finds the nearest key frame at or around the given time.
+	 *  @param _time In/out: target time; updated to the key frame time.
+	 *  @param flags Seek direction flags.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			FindKeyFrameForTime(bigtime_t* _time,
 									int32 flags = 0) const;
+
+	/** @brief Finds the nearest key frame at or around the given frame index.
+	 *  @param _frame In/out: target frame; updated to the key frame index.
+	 *  @param flags Seek direction flags.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			FindKeyFrameForFrame(int64* _frame,
 									int32 flags = 0) const;
 
-	// ReadChunk returns, in _buffer, the next _size bytes of
-	// data from the track.  The data is not decoded -- it will be
-	// in its native encoded format (as specified by EncodedFormat()).
-	// You can not mix calling ReadChunk() and ReadFrames() -- either
-	// you access the track raw (i.e. with ReadChunk) or you access
-	// it with ReadFrames.
-
+	/** @brief Reads the next raw encoded chunk from the track without decoding.
+	 *  @param _buffer On return, points to the encoded chunk data.
+	 *  @param _size On return, the size of the chunk in bytes.
+	 *  @param _header If non-NULL, receives the media_header.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReadChunk(char** _buffer, int32* _size,
 									media_header* _header = NULL);
 
-
-	//
-	// Write-only Functions
-	//
+	/** @brief Embeds a copyright string in this track.
+	 *  @param copyright The copyright text.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			AddCopyright(const char* copyright);
+
+	/** @brief Adds codec-specific track metadata.
+	 *  @param code Format-defined metadata code.
+	 *  @param data Pointer to the metadata value.
+	 *  @param size Size of the value in bytes.
+	 *  @param flags Reserved; pass 0.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			AddTrackInfo(uint32 code, const void* data,
 									size_t size, uint32 flags = 0);
 
-	// Write frameCount of data to the track. This data is passed
-	// through the encoder that was specified when the MediaTrack
-	// was constructed.
-	// Pass B_MEDIA_KEY_FRAME for flags if it is.
-
+	/** @brief Encodes and writes frames to the track.
+	 *  @param data Pointer to the raw input data.
+	 *  @param frameCount Number of frames to write.
+	 *  @param flags B_MEDIA_KEY_FRAME if this is a key frame.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			WriteFrames(const void* data, int32 frameCount,
 									int32 flags = 0);
+
+	/** @brief Encodes and writes frames with encode control parameters.
+	 *  @param data Pointer to the raw input data.
+	 *  @param frameCount Number of frames to write.
+	 *  @param info Encoding control parameters.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			WriteFrames(const void* data, int64 frameCount,
 									media_encode_info* info);
 
-	// Write a raw chunk of (presumably already encoded data) to
-	// the file.
-	// Pass B_MEDIA_KEY_FRAME for flags if it is.
-
+	/** @brief Writes a raw encoded chunk to the track.
+	 *  @param data Pointer to the encoded data.
+	 *  @param size Size of the data in bytes.
+	 *  @param flags B_MEDIA_KEY_FRAME if this is a key frame.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			WriteChunk(const void* data, size_t size,
 									uint32 flags = 0);
+
+	/** @brief Writes a raw encoded chunk with encode control parameters.
+	 *  @param data Pointer to the encoded data.
+	 *  @param size Size of the data in bytes.
+	 *  @param info Encoding metadata for this chunk.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			WriteChunk(const void* data, size_t size,
 									media_encode_info* info);
 
-	// Flush all buffered encoded datas to disk. You should call it after
-	// writing the last frame to be sure all datas are flushed at the right
-	// offset into the file.
+	/** @brief Flushes all buffered encoded data to the file.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			Flush();
 
-	// These are for controlling the underlying encoder and track parameters
-	// returns a copy of the parameter web
+	/** @brief Returns a copy of the encoder parameter web for this track.
+	 *  @param _web On return, a pointer to the BParameterWeb (caller owns it).
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			GetParameterWeb(BParameterWeb** _web);
+
+	/** @brief Reads an encoder parameter value.
+	 *  @param id The parameter ID to query.
+	 *  @param value Buffer that receives the current value.
+	 *  @param size In: buffer capacity; Out: bytes written.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t 			GetParameterValue(int32 id, void* value,
 									size_t* size);
+
+	/** @brief Sets an encoder parameter value.
+	 *  @param id The parameter ID to set.
+	 *  @param value Pointer to the new value.
+	 *  @param size Size of the value in bytes.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SetParameterValue(int32 id, const void* value,
 									size_t size);
+
+	/** @brief Returns a view for displaying encoder parameters.
+	 *  @return Pointer to a BView, or NULL if unavailable.
+	 */
 			BView*				GetParameterView();
 
-	// This is a simplified control API, only one parameter low=0.0, high=1.0
-	// Return B_ERROR if it's not supported by the current encoder.
+	/** @brief Returns the encoding quality as a normalized value.
+	 *  @param _quality On return, quality in [0.0, 1.0].
+	 *  @return B_OK on success, B_ERROR if not supported.
+	 */
 			status_t			GetQuality(float* _quality);
+
+	/** @brief Sets the encoding quality.
+	 *  @param quality Desired quality in [0.0, 1.0].
+	 *  @return B_OK on success, B_ERROR if not supported.
+	 */
 			status_t			SetQuality(float quality);
 
+	/** @brief Retrieves the current encoding parameters.
+	 *  @param parameters On return, the current encode_parameters.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t 			GetEncodeParameters(
 									encode_parameters* parameters) const;
+
+	/** @brief Applies new encoding parameters.
+	 *  @param parameters The encode_parameters to apply.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t 			SetEncodeParameters(
 									encode_parameters* parameters);
 
-
+	/** @brief Extensibility hook for future or platform-specific use.
+	 *  @param code Selector code.
+	 *  @param data Arbitrary data pointer.
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			Perform(int32 code, void* data);
 
 private:

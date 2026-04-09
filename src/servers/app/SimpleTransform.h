@@ -1,13 +1,32 @@
 /*
- * Copyright (c) 2001-2015, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2025, Kintsugi OS Contributors.
  *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work from the Haiku project, originally
+ * distributed under the MIT License.
+ * Copyright (c) 2001-2015, Haiku, Inc.
  * Authors:
  *		Axel Dörfler, axeld@pinc-software.de
  *		Stephan Aßmus <superstippi@gmx.de>
  *		Adrien Destugues <pulkomandy@pulkomandy.tk>
  *		Julian Harnath <julian.harnath@rwth-aachen.de>
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
  */
+
+/** @file SimpleTransform.h
+ *  @brief Lightweight 2-D scale-and-translate transform applied to drawing primitives. */
 
 #ifndef SIMPLE_TRANSFORM_H
 #define SIMPLE_TRANSFORM_H
@@ -24,35 +43,48 @@
 #include "IntRect.h"
 
 
+/** @brief Encapsulates a uniform scale and a 2-D pixel offset transform. */
 class SimpleTransform {
 public:
+	/** @brief Constructs an identity transform (scale 1.0, zero offset). */
 	SimpleTransform()
 		:
 		fScale(1.0)
 	{
 	}
 
+	/** @brief Adds a pixel offset to the current translation.
+	 *  @param x Horizontal offset to add.
+	 *  @param y Vertical offset to add. */
 	void AddOffset(float x, float y)
 	{
 		fOffset.x += x;
 		fOffset.y += y;
 	}
 
+	/** @brief Sets the uniform scale factor.
+	 *  @param scale New scale value. */
 	void SetScale(float scale)
 	{
 		fScale = scale;
 	}
 
+	/** @brief Applies the transform to a BPoint in place.
+	 *  @param point Point to transform. */
 	void Apply(BPoint* point) const
 	{
 		_Apply(point->x, point->y);
 	}
 
+	/** @brief Applies the transform to an IntPoint in place.
+	 *  @param point Integer point to transform. */
 	void Apply(IntPoint* point) const
 	{
 		_Apply(point->x, point->y);
 	}
 
+	/** @brief Applies the transform to a BRect in place.
+	 *  @param rect Rectangle to transform. */
 	void Apply(BRect* rect) const
 	{
 		if (fScale == 1.0) {
@@ -63,6 +95,8 @@ public:
 		}
 	}
 
+	/** @brief Applies the transform to an IntRect in place.
+	 *  @param rect Integer rectangle to transform. */
 	void Apply(IntRect* rect) const
 	{
 		if (fScale == 1.0) {
@@ -73,6 +107,8 @@ public:
 		}
 	}
 
+	/** @brief Applies the transform to a BRegion in place.
+	 *  @param region Region to transform. */
 	void Apply(BRegion* region) const
 	{
 		if (fScale == 1.0) {
@@ -105,6 +141,8 @@ public:
 		}
 	}
 
+	/** @brief Applies the transform to a BGradient's control points in place.
+	 *  @param gradient Gradient whose control points are transformed. */
 	void Apply(BGradient* gradient) const
 	{
 		switch (gradient->GetType()) {
@@ -188,6 +226,10 @@ public:
 		gradient->SortColorStopsByOffset();
 	}
 
+	/** @brief Transforms an array of BPoints from source to destination.
+	 *  @param destination Output array.
+	 *  @param source      Input array.
+	 *  @param count       Number of points. */
 	void Apply(BPoint* destination, const BPoint* source, int32 count) const
 	{
 		// TODO: optimize this, it should be smarter
@@ -199,6 +241,10 @@ public:
 		}
 	}
 
+	/** @brief Transforms an array of BRects from source to destination.
+	 *  @param destination Output array.
+	 *  @param source      Input array.
+	 *  @param count       Number of rectangles. */
 	void Apply(BRect* destination, const BRect* source, int32 count) const
 	{
 		// TODO: optimize this, it should be smarter
@@ -210,6 +256,10 @@ public:
 		}
 	}
 
+	/** @brief Transforms an array of BRegions from source to destination.
+	 *  @param destination Output array.
+	 *  @param source      Input array.
+	 *  @param count       Number of regions. */
 	void Apply(BRegion* destination, const BRegion* source, int32 count) const
 	{
 		// TODO: optimize this, it should be smarter

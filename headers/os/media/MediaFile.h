@@ -1,7 +1,29 @@
 /*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from Haiku, Inc. covered by:
  * Copyright 2002-2009, Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT license.
  */
+
+/** @file MediaFile.h
+ *  @brief Defines BMediaFile, the top-level interface for reading and writing media files.
+ */
+
 #ifndef _MEDIA_FILE_H
 #define	_MEDIA_FILE_H
 
@@ -31,127 +53,235 @@ class BUrl;
 class BView;
 
 
-// flags for the BMediaFile constructor
+/** @brief Flags for the BMediaFile constructor controlling read/write behaviour. */
 enum {
-	B_MEDIA_FILE_REPLACE_MODE    = 0x00000001,
-	B_MEDIA_FILE_NO_READ_AHEAD   = 0x00000002,
-	B_MEDIA_FILE_UNBUFFERED      = 0x00000006,
-	B_MEDIA_FILE_BIG_BUFFERS     = 0x00000008
+	B_MEDIA_FILE_REPLACE_MODE    = 0x00000001, /**< Replace the existing file. */
+	B_MEDIA_FILE_NO_READ_AHEAD   = 0x00000002, /**< Disable read-ahead buffering. */
+	B_MEDIA_FILE_UNBUFFERED      = 0x00000006, /**< Disable all buffering. */
+	B_MEDIA_FILE_BIG_BUFFERS     = 0x00000008  /**< Use large I/O buffers. */
 };
 
-// BMediaFile represents a media file (AVI, Quicktime, MPEG, AIFF, WAV, etc)
-//
-// To read a file you construct a BMediaFile with an entry_ref, get the
-// BMediaTracks out of it and use those to read the data.
-//
-// To write a file you construct a BMediaFile with an entry ref and an id as
-// returned by get_next_file_format().   You then CreateTrack() to create
-// various audio & video tracks.  Once you're done creating tracks, call
-// CommitHeader(), then write data to each track and call CloseFile() when
-// you're done.
-//
-
+/** @brief Represents a media container file (AVI, QuickTime, MPEG, AIFF, WAV, etc.).
+ *
+ *  To read a file, construct BMediaFile with an entry_ref or BDataIO source,
+ *  then use TrackAt() to obtain BMediaTrack objects for each stream.
+ *
+ *  To write a file, construct BMediaFile with an entry_ref and a media_file_format
+ *  obtained from get_next_file_format(); create tracks with CreateTrack(), call
+ *  CommitHeader() once all tracks are defined, write data via BMediaTrack, and
+ *  finally call CloseFile().
+ */
 class BMediaFile {
 public:
-	//	these four constructors are used for read-only access
+	/** @brief Opens an existing file for read-only access.
+	 *  @param ref Entry reference identifying the file to open.
+	 */
 								BMediaFile(const entry_ref* ref);
+
+	/** @brief Opens a BDataIO source for read-only access.
+	 *  @param source The data source to read from (e.g. a BFile).
+	 */
 								BMediaFile(BDataIO* source);
-									// BFile is a BDataIO
+
+	/** @brief Opens an existing file for read-only access with flags.
+	 *  @param ref Entry reference identifying the file.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(const entry_ref* ref, int32 flags);
+
+	/** @brief Opens a BDataIO source for read-only access with flags.
+	 *  @param source The data source to read from.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(BDataIO* source, int32 flags);
 
-	//	these three constructors are for read-write access
+	/** @brief Creates or opens a file for read-write access with a specific format.
+	 *  @param ref Entry reference for the file.
+	 *  @param mfi The container format to use for writing.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(const entry_ref* ref,
 									const media_file_format* mfi,
 									int32 flags = 0);
+
+	/** @brief Creates or opens a BDataIO destination for read-write access.
+	 *  @param destination The data sink to write to.
+	 *  @param mfi The container format to use for writing.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(BDataIO* destination,
 								   const media_file_format* mfi,
 								   int32 flags = 0);
+
+	/** @brief Constructs a writer with no file yet; call SetTo() to bind it.
+	 *  @param mfi The container format to use for writing.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(const media_file_format* mfi,
 								   	int32 flags = 0);
-									// set file later using SetTo()
 
-	// Additional constructors used to stream data from protocols
-	// supported by the Streamer API
+	/** @brief Opens a URL-based stream for read-only access.
+	 *  @param url The URL to stream from.
+	 */
 								BMediaFile(const BUrl& url);
+
+	/** @brief Opens a URL-based stream for read-only access with flags.
+	 *  @param url The URL to stream from.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(const BUrl& url, int32 flags);
-	// Read-Write streaming constructor
+
+	/** @brief Creates a URL-based stream for read-write access.
+	 *  @param destination The destination URL.
+	 *  @param mfi The container format to use.
+	 *  @param flags Combination of B_MEDIA_FILE_* flag values.
+	 */
 								BMediaFile(const BUrl& destination,
 								   const media_file_format* mfi,
 								   int32 flags = 0);
 
 	virtual						~BMediaFile();
 
+	/** @brief Binds this object to a file entry for reading.
+	 *  @param ref Entry reference identifying the file.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SetTo(const entry_ref* ref);
+
+	/** @brief Binds this object to a BDataIO source for reading.
+	 *  @param destination The data source or sink.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SetTo(BDataIO* destination);
-	// The streaming equivalent of SetTo
+
+	/** @brief Binds this object to a URL for streaming.
+	 *  @param url The URL to open.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SetTo(const BUrl& url);
 
+	/** @brief Returns the initialization status.
+	 *  @return B_OK if the file is ready, or an error code.
+	 */
 			status_t			InitCheck() const;
 
-	// Get info about the underlying file format.
+	/** @brief Returns the container format of the open file.
+	 *  @param mfi On return, filled with the media_file_format.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			GetFileFormatInfo(
 									media_file_format* mfi) const;
 
-	// Returns in _data hierarchical meta-data about the stream.
-	// The fields in the message shall follow a defined naming-scheme,
-	// such that applications can find the same information in different
-	// types of files.
+	/** @brief Returns hierarchical meta-data about the file.
+	 *  @param _data On return, a BMessage containing named metadata fields.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			GetMetaData(BMessage* _data) const;
 
-	//
-	// These functions are for read-only access to a media file.
-	// The data is read using the BMediaTrack object.
-	//
+	/** @brief Returns the copyright string embedded in the file, if any.
+	 *  @return Pointer to the copyright string, or NULL.
+	 */
 			const char*			Copyright() const;
+
+	/** @brief Returns the number of media tracks in the file.
+	 *  @return Track count.
+	 */
 			int32				CountTracks() const;
 
-	// Can be called multiple times with the same index.  You must call
-	// ReleaseTrack() when you're done with a track.
+	/** @brief Returns the BMediaTrack for the given track index.
+	 *  @param index Zero-based track index.
+	 *  @return Pointer to the BMediaTrack; call ReleaseTrack() when done.
+	 */
 			BMediaTrack*		TrackAt(int32 index);
 
-	// Release the resource used by a given BMediaTrack object, to reduce
-	// the memory usage of your application. The specific 'track' object
-	// can no longer be used, but you can create another one by calling
-	// TrackAt() with the same track index.
+	/** @brief Releases the resources held by a specific track object.
+	 *  @param track The track to release.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReleaseTrack(BMediaTrack* track);
 
-	// A convenience. Deleting a BMediaFile will also call this.
+	/** @brief Releases all tracks; also called automatically when the file is deleted.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			ReleaseAllTracks();
 
-
-	// Create and add a track to the media file
+	/** @brief Creates and adds an encoded track to the file.
+	 *  @param mf The raw format of data that will be written to this track.
+	 *  @param mci The codec to use for encoding.
+	 *  @param flags Reserved; pass 0.
+	 *  @return Pointer to the new BMediaTrack, or NULL on error.
+	 */
 			BMediaTrack*		CreateTrack(media_format* mf,
 									const media_codec_info* mci,
 									uint32 flags = 0);
-	// Create and add a raw track to the media file (it has no encoder)
+
+	/** @brief Creates and adds a raw (unencoded) track to the file.
+	 *  @param mf The raw format of data to store in this track.
+	 *  @param flags Reserved; pass 0.
+	 *  @return Pointer to the new BMediaTrack, or NULL on error.
+	 */
 			BMediaTrack*		CreateTrack(media_format* mf,
 									uint32 flags = 0);
 
-	// Lets you set the copyright info for the entire file
+	/** @brief Embeds a copyright string in the file.
+	 *  @param data The copyright text.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			AddCopyright(const char* data);
 
-	// Call this to add user-defined chunks to a file (if they're supported)
+	/** @brief Adds a format-specific data chunk to the file.
+	 *  @param type Format-defined chunk type code.
+	 *  @param data Pointer to the chunk data.
+	 *  @param size Size of the chunk in bytes.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			AddChunk(int32 type, const void* data,
 									size_t size);
 
-	// After you have added all the tracks you want, call this
+	/** @brief Commits the file header after all tracks have been created.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			CommitHeader();
 
-	// After you have written all the data to the track objects, call this
+	/** @brief Finalizes the file after all data has been written.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			CloseFile();
 
-	// This is for controlling file format parameters
-
-	// returns a copy of the parameter web
+	/** @brief Returns a copy of the parameter web for file-format control.
+	 *  @param outWeb On return, a pointer to the BParameterWeb (caller owns it).
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			GetParameterWeb(BParameterWeb** outWeb);
+
+	/** @brief Reads a file-format parameter value.
+	 *  @param id The parameter ID to query.
+	 *  @param value Buffer that receives the current value.
+	 *  @param size In: buffer capacity; Out: bytes written.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t 			GetParameterValue(int32 id,	void* value,
 									size_t* size);
+
+	/** @brief Sets a file-format parameter value.
+	 *  @param id The parameter ID to set.
+	 *  @param value Pointer to the new value data.
+	 *  @param size Size of the value in bytes.
+	 *  @return B_OK on success, or an error code.
+	 */
 			status_t			SetParameterValue(int32 id,	const void* value,
 									size_t size);
+
+	/** @brief Returns a view suitable for displaying this file's parameters.
+	 *  @return Pointer to a BView, or NULL if unavailable.
+	 */
 			BView*				GetParameterView();
 
-	// For the future...
+	/** @brief Extensibility hook for future use.
+	 *  @param selector Selector code.
+	 *  @param data Arbitrary data pointer.
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual	status_t			Perform(int32 selector, void* data);
 
 private:

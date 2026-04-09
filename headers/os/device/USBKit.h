@@ -1,7 +1,30 @@
 /*
- * Copyright 2007-2008, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file incorporates work from the Haiku project:
+ *   Copyright 2007-2008, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ * Author:
+ *   Ambuj Varshney, ambuj@kintsugi-os.org
  */
+
+/** @file USBKit.h
+ *  @brief USB device enumeration and data transfer classes (roster, device, configuration,
+ *         interface, and endpoint). */
+
 #ifndef _USBKIT_H
 #define _USBKIT_H
 
@@ -17,31 +40,35 @@ class BUSBInterface;
 class BUSBEndpoint;
 
 
-/*	The BUSBRoster class can be used to watch for devices that get attached or
-	removed from the USB bus.
-	You subclass the roster and implement the pure virtual DeviceAdded() and
-	DeviceRemoved() hooks. */
+/** @brief Watches for USB devices being attached or removed from the bus.
+ *
+ *  Subclass this and implement the pure virtual DeviceAdded() and
+ *  DeviceRemoved() hooks, then call Start() to begin watching. */
 class BUSBRoster {
 public:
 									BUSBRoster();
 virtual								~BUSBRoster();
 
-		// The DeviceAdded() hook will be called when a new device gets
-		// attached to the USB bus. The hook is called with an initialized
-		// BUSBDevice object. If you return B_OK from your hook the object
-		// will stay valid and the DeviceRemoved() hook will be called for
-		// it. Otherwise the object is deleted and DeviceRemoved() is not
-		// called.
+	/** @brief Called when a new USB device is attached to the bus.
+	 *
+	 *  Return B_OK to retain the BUSBDevice object (DeviceRemoved() will later
+	 *  be called for it). Any other return causes the object to be deleted
+	 *  immediately and DeviceRemoved() will not be called.
+	 *  @param device Newly attached, initialized device object.
+	 *  @return B_OK to keep the device, or any error to release it. */
 virtual	status_t					DeviceAdded(BUSBDevice *device) = 0;
 
-		// When a device gets detached from the bus that you hold a
-		// BUSBDevice object for (gotten through DeviceAdded()) the
-		// DeviceRemoved() hook will be called. The device object gets
-		// invalid and will be deleted as soon as you return from the hook
-		// so be sure to remove all references to it.
+	/** @brief Called when a device previously accepted by DeviceAdded() is detached.
+	 *
+	 *  The device object becomes invalid and will be deleted as soon as this
+	 *  hook returns; remove all references to it before returning.
+	 *  @param device The device being detached. */
 virtual	void						DeviceRemoved(BUSBDevice *device) = 0;
 
+	/** @brief Starts watching the USB bus for device changes. */
 		void						Start();
+
+	/** @brief Stops watching the USB bus. */
 		void						Stop();
 
 private:
@@ -56,82 +83,139 @@ virtual	void						_ReservedUSBRoster5();
 };
 
 
-/*	The BUSBDevice presents an interface to a USB device. You can either get
-	it through the BUSBRoster or by creating one yourself and setting it to
-	a valid raw usb device (with a path of "/dev/bus/usb/x").
-	The device class provides direct accessors for descriptor fields as well
-	as convenience functions to directly get string representations of fields.
-	The BUSBDevice also provides access for the BUSBConfiguration objects of
-	a device. These objects and all of their child objects depend on the
-	parent device and will be deleted as soon as the device object is
-	destroyed. */
+/** @brief Represents a USB device and provides access to its descriptors and configurations.
+ *
+ *  Can be obtained through BUSBRoster or constructed directly with a raw device path
+ *  (e.g. "/dev/bus/usb/x"). Child configuration and interface objects are owned by
+ *  this device and become invalid when the device is destroyed. */
 class BUSBDevice {
 public:
 									BUSBDevice(const char *path = NULL);
 virtual								~BUSBDevice();
 
+	/** @brief Returns B_OK if the device was opened and initialized successfully.
+	 *  @return B_OK if valid, or an error code. */
 virtual	status_t					InitCheck();
 
+	/** @brief Opens the device at the given raw path.
+	 *  @param path Path to the raw USB device (e.g. "/dev/bus/usb/x").
+	 *  @return B_OK on success, or an error code. */
 		status_t					SetTo(const char *path);
+
+	/** @brief Closes and resets the device, releasing all resources. */
 		void						Unset();
 
-		// Returns the location on the bus represented as hub/device sequence.
+	/** @brief Returns the bus location as a hub/device path string.
+	 *  @return Null-terminated location string owned by this object. */
 		const char *				Location() const;
+
+	/** @brief Returns whether this device is a USB hub.
+	 *  @return true if the device is a hub. */
 		bool						IsHub() const;
 
-		// These are direct accessors to descriptor fields.
+	/** @brief Returns the USB specification version supported by the device.
+	 *  @return BCD-encoded USB version (e.g. 0x0200 for USB 2.0). */
 		uint16						USBVersion() const;
+
+	/** @brief Returns the device class code from the device descriptor.
+	 *  @return Class code byte. */
 		uint8						Class() const;
+
+	/** @brief Returns the device subclass code from the device descriptor.
+	 *  @return Subclass code byte. */
 		uint8						Subclass() const;
+
+	/** @brief Returns the device protocol code from the device descriptor.
+	 *  @return Protocol code byte. */
 		uint8						Protocol() const;
+
+	/** @brief Returns the maximum packet size for endpoint 0.
+	 *  @return Maximum packet size in bytes. */
 		uint8						MaxEndpoint0PacketSize() const;
+
+	/** @brief Returns the vendor ID from the device descriptor.
+	 *  @return Vendor ID. */
 		uint16						VendorID() const;
+
+	/** @brief Returns the product ID from the device descriptor.
+	 *  @return Product ID. */
 		uint16						ProductID() const;
+
+	/** @brief Returns the device release version in BCD format.
+	 *  @return BCD version number. */
 		uint16						Version() const;
 
-		// The string functions return the string representation of the
-		// descriptor data. The strings are decoded to normal 0 terminated
-		// C strings and are cached and owned by the object.
-		// If a string is not available an empty string is returned.
+	/** @brief Returns the manufacturer string decoded to a C string.
+	 *  @return Null-terminated string owned by this object; empty if unavailable. */
 		const char *				ManufacturerString() const;
+
+	/** @brief Returns the product string decoded to a C string.
+	 *  @return Null-terminated string owned by this object; empty if unavailable. */
 		const char *				ProductString() const;
+
+	/** @brief Returns the serial number string decoded to a C string.
+	 *  @return Null-terminated string owned by this object; empty if unavailable. */
 		const char *				SerialNumberString() const;
 
+	/** @brief Returns a pointer to the raw device descriptor.
+	 *  @return Pointer to usb_device_descriptor owned by this object. */
 		const usb_device_descriptor *
 									Descriptor() const;
 
-		// GetStringDescriptor() can be used to retrieve the raw
-		// usb_string_descriptor with a given index. The strings contained
-		// in these descriptors are usually two-byte unicode encoded.
+	/** @brief Reads a raw string descriptor by index.
+	 *  @param index String descriptor index.
+	 *  @param descriptor Buffer to receive the raw descriptor.
+	 *  @param length Size of the buffer.
+	 *  @return Number of bytes copied. */
 		size_t						GetStringDescriptor(uint32 index,
 										usb_string_descriptor *descriptor,
 										size_t length) const;
 
-		// Use the DecodeStringDescriptor() convenience function to get a
-		// 0-terminated c string for a given string index. Note that this
-		// will allocate the string as "new char[];" and needs to be deleted
-		// like "delete[] string;" by the caller.
+	/** @brief Decodes a string descriptor to a new null-terminated C string.
+	 *
+	 *  The caller must delete the returned string with delete[].
+	 *  @param index String descriptor index.
+	 *  @return Newly allocated C string, or NULL on failure. */
 		char *						DecodeStringDescriptor(uint32 index) const;
 
+	/** @brief Retrieves a raw USB descriptor of the specified type.
+	 *  @param type Descriptor type.
+	 *  @param index Descriptor index.
+	 *  @param languageID Language ID for string descriptors.
+	 *  @param data Buffer to receive the descriptor.
+	 *  @param length Size of the buffer.
+	 *  @return Number of bytes copied. */
 		size_t						GetDescriptor(uint8 type, uint8 index,
 										uint16 languageID, void *data,
 										size_t length) const;
 
-		// With ConfigurationAt() or ActiveConfiguration() you can get an
-		// object that represents the configuration at a certain index or at
-		// the index that is currently configured. Note that the index does not
-		// necessarily correspond to the configuration_value present in the
-		// configuration descriptor.
-		// Use the returned object as an argument to SetConfiguration() to
-		// change the active configuration of a device.
+	/** @brief Returns the number of configurations the device supports.
+	 *  @return Configuration count. */
 		uint32						CountConfigurations() const;
+
+	/** @brief Returns the configuration object at the given index.
+	 *  @param index Zero-based configuration index.
+	 *  @return Pointer to BUSBConfiguration owned by this device, or NULL. */
 		const BUSBConfiguration *	ConfigurationAt(uint32 index) const;
 
+	/** @brief Returns the currently active configuration object.
+	 *  @return Pointer to the active BUSBConfiguration, or NULL. */
 		const BUSBConfiguration *	ActiveConfiguration() const;
+
+	/** @brief Sets the active configuration.
+	 *  @param configuration Configuration to activate (must be from this device).
+	 *  @return B_OK on success, or an error code. */
 		status_t					SetConfiguration(
 										const BUSBConfiguration *configuration);
 
-		// ControlTransfer() sends requests using the default pipe.
+	/** @brief Sends a control request on the default pipe (endpoint 0).
+	 *  @param requestType bmRequestType byte.
+	 *  @param request bRequest byte.
+	 *  @param value wValue field.
+	 *  @param index wIndex field.
+	 *  @param length wLength / data buffer size.
+	 *  @param data Buffer for data phase (in or out).
+	 *  @return Number of bytes transferred, or a negative error code. */
 		ssize_t						ControlTransfer(uint8 requestType,
 										uint8 request, uint16 value,
 										uint16 index, uint16 length,
@@ -159,41 +243,44 @@ mutable	char *						fSerialNumberString;
 };
 
 
-/*	A BUSBConfiguration object represents one of possibly multiple
-	configurations a device might have. A valid object can only be gotten
-	through the ConfigurationAt() or ActiveConfiguration() methods of a
-	BUSBDevice.
-	The BUSBConfiguration provides further access into the configuration by
-	providing CountInterfaces() and InterfaceAt() to retrieve BUSBInterface
-	objects. */
+/** @brief Represents one configuration of a USB device.
+ *
+ *  Valid objects are obtained only through BUSBDevice::ConfigurationAt() or
+ *  BUSBDevice::ActiveConfiguration(). Child interface objects are owned by
+ *  this configuration and become invalid when it is deleted. */
 class BUSBConfiguration {
 public:
-		// Device() returns the parent device of this configuration. This
-		// configuration is located at the index returned by Index() within
-		// that parent device.
+	/** @brief Returns the index of this configuration within its parent device.
+	 *  @return Zero-based configuration index. */
 		uint32						Index() const;
+
+	/** @brief Returns the parent device of this configuration.
+	 *  @return Pointer to the owning BUSBDevice. */
 		const BUSBDevice *			Device() const;
 
-		// Gets a descriptive string for this configuration, if available.
-		// Otherwise an empty string is returned.
+	/** @brief Returns a descriptive string for this configuration.
+	 *  @return Null-terminated string owned by this object; empty if unavailable. */
 		const char *				ConfigurationString() const;
 
+	/** @brief Returns a pointer to the raw configuration descriptor.
+	 *  @return Pointer to usb_configuration_descriptor owned by this object. */
 		const usb_configuration_descriptor *
 									Descriptor() const;
 
-		// With CountInterfaces() and InterfaceAt() you can iterate through
-		// the child interfaces of this configuration. It is the only valid
-		// way to get a BUSBInterface object.
-		// Note that the interface objects retrieved using InterfaceAt() will
-		// be invalid and deleted as soon as this configuration gets deleted.
+	/** @brief Returns the number of interfaces in this configuration.
+	 *  @return Interface count. */
 		uint32						CountInterfaces() const;
+
+	/** @brief Returns the interface object at the given index.
+	 *  @param index Zero-based interface index.
+	 *  @return Pointer to BUSBInterface owned by this configuration, or NULL. */
 		const BUSBInterface *		InterfaceAt(uint32 index) const;
 
 private:
 friend	class BUSBDevice;
-									BUSBConfiguration(BUSBDevice *device,
+								BUSBConfiguration(BUSBDevice *device,
 										uint32 index, int rawFD);
-									~BUSBConfiguration();
+								~BUSBConfiguration();
 
 		BUSBDevice *				fDevice;
 		uint32						fIndex;
@@ -208,80 +295,93 @@ mutable	char *						fConfigurationString;
 };
 
 
-/*	The BUSBInterface class can be used to access the descriptor fields of
-	an underleying USB interface. Most importantly though it can be used to
-	iterate over and retrieve BUSBEndpoint objects that can be used to
-	transfer data over the bus. */
+/** @brief Represents a single interface within a USB configuration.
+ *
+ *  Provides access to descriptor fields, endpoints, and alternate interface settings.
+ *  Valid objects are obtained only through BUSBConfiguration::InterfaceAt(). */
 class BUSBInterface {
 public:
-		// Configuration() returns the parent configuration of this interface.
-		// This interface is located at the index returned by Index() in that
-		// parent configuration and represents the alternate interface returned
-		// by AlternateIndex().
-		// Device() is a convenience function to directly reach the parent
-		// device of this interface instead of going through the configuration.
+	/** @brief Returns the interface index within its parent configuration.
+	 *  @return Zero-based interface index. */
 		uint32						Index() const;
+
+	/** @brief Returns the alternate setting index currently active on this interface.
+	 *  @return Alternate interface index. */
 		uint32						AlternateIndex() const;
+
+	/** @brief Returns the parent configuration of this interface.
+	 *  @return Pointer to the owning BUSBConfiguration. */
 		const BUSBConfiguration *	Configuration() const;
+
+	/** @brief Returns the parent device of this interface.
+	 *  @return Pointer to the parent BUSBDevice. */
 		const BUSBDevice *			Device() const;
 
-		// These are accessors to descriptor fields. InterfaceString() tries
-		// to return a descriptive string for the interface. If no string is
-		// available an empty string is returned.
+	/** @brief Returns the interface class code.
+	 *  @return Class code byte. */
 		uint8						Class() const;
+
+	/** @brief Returns the interface subclass code.
+	 *  @return Subclass code byte. */
 		uint8						Subclass() const;
+
+	/** @brief Returns the interface protocol code.
+	 *  @return Protocol code byte. */
 		uint8						Protocol() const;
+
+	/** @brief Returns the descriptive string for this interface.
+	 *  @return Null-terminated string owned by this object; empty if unavailable. */
 		const char *				InterfaceString() const;
 
+	/** @brief Returns a pointer to the raw interface descriptor.
+	 *  @return Pointer to usb_interface_descriptor owned by this object. */
 		const usb_interface_descriptor *
 									Descriptor() const;
 
-		// Use OtherDescriptorAt() to get generic descriptors of an interface.
-		// These are usually device/interface class specific or they may
-		// represent vendor specific extensions.
+	/** @brief Retrieves a class- or vendor-specific descriptor by index.
+	 *  @param index Zero-based descriptor index.
+	 *  @param descriptor Buffer to receive the descriptor.
+	 *  @param length Size of the buffer.
+	 *  @return B_OK on success, or an error code. */
 		status_t					OtherDescriptorAt(uint32 index,
 										usb_descriptor *descriptor,
 										size_t length) const;
 
-		// CountEndpoints() and EndpointAt() can be used to iterate over the
-		// available endpoints within an interface. EndpointAt() is the only
-		// valid way to get BUSBEndpoint object. Note that these objects will
-		// get invalid and deleted as soon as the parent interface is deleted.
+	/** @brief Returns the number of endpoints in this interface alternate.
+	 *  @return Endpoint count. */
 		uint32						CountEndpoints() const;
+
+	/** @brief Returns the endpoint object at the given index.
+	 *  @param index Zero-based endpoint index.
+	 *  @return Pointer to BUSBEndpoint owned by this interface, or NULL. */
 		const BUSBEndpoint *		EndpointAt(uint32 index) const;
 
-		// Using CountAlternates() you can retrieve the number of alternate
-		// interfaces for this interface. Note that this interface itself
-		// counts as an alternate so an alternate count of one really means
-		// that you are currently using the sole interface present.
-		// AlternateAt() returns the interface descriptor of the alternate
-		// interface with the specified index. Using that you can peek at the
-		// attributes of that alternate (including endpoints) without having to
-		// switch to this alternate interface.
-		// Note that you cannot use any endpoint you retrieve through an
-		// interface you get through AlternateAt(). Even if you switch to that
-		// alternate later on, you cannot use an interface returned by
-		// AlternateAt(). Instead switch to that alternate using the interface
-		// you got from the configuration and then use this switched interface
-		// to enumerate the endpoints.
-		// ActiveAlternateIndex() returns the index of the currently active
-		// alternate interface.
-		// With SetAlternate() you can switch this BUSBInterface object to the
-		// alternate interface at the specified index. Note that all endpoints
-		// retrieved through EndpointAt() will become invalid and will be
-		// deleted as soon as you set an alternate interface (even if the
-		// resulting interface is the same you were using before).
+	/** @brief Returns the number of alternate settings for this interface.
+	 *  @return Alternate count (includes the current alternate). */
 		uint32						CountAlternates() const;
+
+	/** @brief Returns the index of the currently active alternate setting.
+	 *  @return Active alternate index. */
 		uint32						ActiveAlternateIndex() const;
+
+	/** @brief Returns the interface descriptor for an alternate setting without switching.
+	 *  @param alternateIndex Zero-based alternate index.
+	 *  @return Pointer to BUSBInterface for inspection only; do not use its endpoints. */
 		const BUSBInterface *		AlternateAt(uint32 alternateIndex) const;
+
+	/** @brief Switches this interface to the specified alternate setting.
+	 *
+	 *  All endpoint objects previously retrieved via EndpointAt() become invalid.
+	 *  @param alternateIndex Zero-based alternate index to activate.
+	 *  @return B_OK on success, or an error code. */
 		status_t					SetAlternate(uint32 alternateIndex);
 
 private:
 friend	class BUSBConfiguration;
-									BUSBInterface(BUSBConfiguration *config,
+								BUSBInterface(BUSBConfiguration *config,
 										uint32 index, uint32 alternate,
 										int rawFD);
-									~BUSBInterface();
+								~BUSBInterface();
 
 		void						_UpdateDescriptorAndEndpoints();
 
@@ -302,65 +402,115 @@ mutable	char *						fInterfaceString;
 };
 
 
-/*	The BUSBEndpoint represent a device endpoint that can be used to send or
-	receive data. It also allows to query endpoint characteristics like
-	endpoint type or direction. */
+/** @brief Represents a USB endpoint and provides synchronous data transfer methods.
+ *
+ *  Valid objects are obtained only through BUSBInterface::EndpointAt(). */
 class BUSBEndpoint {
 public:
-		// Interface() returns the parent interface of this endpoint.
-		// This endpoint is located at the index returned by Index() in the
-		// parent interface.
-		// Configuration() and Device() are convenience functions to directly
-		// reach the parent configuration or device of this endpoint instead
-		// of going through the parent objects.
+	/** @brief Returns the endpoint index within its parent interface.
+	 *  @return Zero-based endpoint index. */
 		uint32						Index() const;
+
+	/** @brief Returns the parent interface of this endpoint.
+	 *  @return Pointer to the owning BUSBInterface. */
 		const BUSBInterface *		Interface() const;
+
+	/** @brief Returns the parent configuration of this endpoint.
+	 *  @return Pointer to the parent BUSBConfiguration. */
 		const BUSBConfiguration *	Configuration() const;
+
+	/** @brief Returns the parent device of this endpoint.
+	 *  @return Pointer to the parent BUSBDevice. */
 		const BUSBDevice *			Device() const;
 
-		// These methods can be used to check for endpoint characteristics.
+	/** @brief Returns whether this is a bulk endpoint.
+	 *  @return true if bulk transfer type. */
 		bool						IsBulk() const;
+
+	/** @brief Returns whether this is an interrupt endpoint.
+	 *  @return true if interrupt transfer type. */
 		bool						IsInterrupt() const;
+
+	/** @brief Returns whether this is an isochronous endpoint.
+	 *  @return true if isochronous transfer type. */
 		bool						IsIsochronous() const;
+
+	/** @brief Returns whether this is a control endpoint.
+	 *  @return true if control transfer type. */
 		bool						IsControl() const;
 
+	/** @brief Returns whether data flows into the host on this endpoint.
+	 *  @return true if direction is IN. */
 		bool						IsInput() const;
+
+	/** @brief Returns whether data flows out from the host on this endpoint.
+	 *  @return true if direction is OUT. */
 		bool						IsOutput() const;
 
+	/** @brief Returns the maximum packet size of this endpoint.
+	 *  @return Maximum packet size in bytes. */
 		uint16						MaxPacketSize() const;
+
+	/** @brief Returns the polling interval for interrupt or isochronous endpoints.
+	 *  @return Interval in frames or microframes. */
 		uint8						Interval() const;
 
+	/** @brief Returns a pointer to the raw endpoint descriptor.
+	 *  @return Pointer to usb_endpoint_descriptor owned by this object. */
 		const usb_endpoint_descriptor *
 									Descriptor() const;
 
-		// These methods initiate transfers to or from the endpoint. All
-		// transfers are synchronous and the actually transfered amount of
-		// data is returned as a result. A negative value indicates an error.
-		// Which transfer type to use depends on the endpoint type.
+	/** @brief Performs a synchronous control transfer on this endpoint.
+	 *  @param requestType bmRequestType byte.
+	 *  @param request bRequest byte.
+	 *  @param value wValue field.
+	 *  @param index wIndex field.
+	 *  @param length wLength / data buffer size.
+	 *  @param data Buffer for data phase.
+	 *  @return Bytes transferred, or a negative error code. */
 		ssize_t						ControlTransfer(uint8 requestType,
 										uint8 request, uint16 value,
 										uint16 index, uint16 length,
 										void *data) const;
+
+	/** @brief Performs a synchronous interrupt transfer.
+	 *  @param data Buffer for the transfer.
+	 *  @param length Size of the buffer.
+	 *  @return Bytes transferred, or a negative error code. */
 		ssize_t						InterruptTransfer(void *data,
 										size_t length) const;
+
+	/** @brief Performs a synchronous bulk transfer.
+	 *  @param data Buffer for the transfer.
+	 *  @param length Size of the buffer.
+	 *  @return Bytes transferred, or a negative error code. */
 		ssize_t						BulkTransfer(void *data,
 										size_t length) const;
+
+	/** @brief Performs a synchronous isochronous transfer.
+	 *  @param data Buffer for the transfer.
+	 *  @param length Total buffer size.
+	 *  @param packetDescriptors Per-packet descriptor array.
+	 *  @param packetCount Number of packets in the descriptor array.
+	 *  @return Bytes transferred, or a negative error code. */
 		ssize_t						IsochronousTransfer(void *data,
 										size_t length,
 										usb_iso_packet_descriptor *packetDescriptors,
 										uint32 packetCount)	const;
 
-		// These are convenience methods for getting and clearing the halt
-		// state of an endpoint. They use the control pipe of the device to
-		// send the corresponding requests.
+	/** @brief Returns whether this endpoint is in the halted (stalled) state.
+	 *  @return true if the endpoint is stalled. */
 		bool						IsStalled() const;
+
+	/** @brief Clears the halt condition on this endpoint.
+	 *  @return B_OK on success, or an error code. */
 		status_t					ClearStall() const;
 
 private:
 friend	class BUSBInterface;
-									BUSBEndpoint(BUSBInterface *interface,
+								BUSBEndpoint(BUSBInterface *interface,
 										uint32 index, int rawFD);
-									~BUSBEndpoint();
+								~BUSBEndpoint();
 
 		BUSBInterface *				fInterface;
 		uint32						fIndex;

@@ -1,11 +1,27 @@
 /*
- * Copyright 2001-2006, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Frans van Nispen
- *		Stephan Aßmus <superstippi@gmx.de>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2001-2006, Haiku, Inc. All Rights Reserved.
+ * Original authors: Frans van Nispen, Stephan Aßmus <superstippi@gmx.de>.
  */
+
+/** @file IntPoint.h
+    @brief Integer-coordinate point type used internally by the app server. */
 
 #ifndef	INT_POINT_H
 #define	INT_POINT_H
@@ -14,6 +30,7 @@
 
 class IntRect;
 
+/** @brief A 2-D point with integer coordinates, convertible to and from BPoint. */
 class IntPoint {
  public:
 			int32				x;
@@ -23,13 +40,24 @@ class IntPoint {
 								IntPoint(int32 X, int32 Y);
 								IntPoint(const IntPoint& p);
 								IntPoint(const BPoint& p);
-		
+
+			/** @brief Assigns the coordinates of another IntPoint to this one.
+			    @param p The source IntPoint.
+			    @return Reference to this IntPoint. */
 			IntPoint&			operator=(const IntPoint& p);
+
+			/** @brief Sets both coordinates at once.
+			    @param x New x coordinate.
+			    @param y New y coordinate. */
 			void				Set(int32 x, int32 y);
 
+			/** @brief Constrains this point to lie within the given IntRect.
+			    @param r The bounding rectangle. */
 			void				ConstrainTo(const IntRect& r);
+
+			/** @brief Prints the coordinates to stdout for debugging. */
 			void				PrintToStream() const;
-			
+
 			IntPoint			operator+(const IntPoint& p) const;
 			IntPoint			operator-(const IntPoint& p) const;
 			IntPoint&			operator+=(const IntPoint& p);
