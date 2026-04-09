@@ -1,18 +1,48 @@
 /*
- * Copyright 2002-2015, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Markus Himmel, markus@himmel-villmar.de
- *		Michael Wilber
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2015, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Markus Himmel, markus@himmel-villmar.de
+ *       Michael Wilber
  */
 
-/*!
-	This class is the guts of the translation kit, it makes the
-	whole thing happen. It bridges the applications using this
-	object with the translators that the apps need to access.
-*/
+
+/**
+ * @file TranslatorRoster.cpp
+ * @brief Central coordinator for the Translation Kit
+ *
+ * Implements BTranslatorRoster, the main entry point for locating and
+ * invoking translators. The public API is a thin shell over the internal
+ * BTranslatorRoster::Private class, which manages translator discovery,
+ * add-on loading/unloading (both make_nth_translator() and C-style function
+ * pointer add-ons), directory node monitoring for hot-plug, and per-roster
+ * change notification. The default singleton roster is thread-safely
+ * initialized on first use.
+ *
+ * @see Translator.cpp, FuncTranslator.cpp, TranslationUtils.cpp
+ */
+
 
 #include <TranslatorRoster.h>
 
@@ -40,6 +70,15 @@
 
 namespace BPrivate {
 
+
+/**
+ * @brief RAII guard that conditionally removes a translator entry_ref on destruction.
+ *
+ * Used in Private::CreateTranslators() to replace an existing translator that
+ * has lower directory priority: the old translator's ref is placed into
+ * quarantine, and if the new one succeeds Remove() is called so the old one
+ * is evicted; if the new one fails, the destructor leaves the old one in place.
+ */
 class QuarantineTranslatorImage {
 public:
 								QuarantineTranslatorImage(
@@ -56,6 +95,7 @@ private:
 };
 
 }	// namespace BPrivate
+
 
 // Extensions used in the extension BMessage, defined in TranslatorFormats.h
 char B_TRANSLATOR_EXT_HEADER_ONLY[]			= "/headerOnly";
@@ -76,16 +116,11 @@ BTranslatorRoster* BTranslatorRoster::sDefaultRoster = NULL;
 
 namespace BPrivate {
 
-/*!
-	The purpose of this class is to put a translator entry_ref into - and remove
-	it from the list of translators on destruction (if Remove() was called
-	before).
 
-	This is used in Private::CreateTranslators() in case a translator hides a
-	previous one (ie. if you install a translator in the user's translators
-	directory that has the same name as one in the system's directory, it will
-	hide this entry).
-*/
+/**
+ * @brief Constructs a QuarantineTranslatorImage for the given private roster.
+ * @param privateRoster The roster instance that will perform the removal.
+ */
 QuarantineTranslatorImage::QuarantineTranslatorImage(
 	BTranslatorRoster::Private& privateRoster)
 	:
@@ -95,6 +130,10 @@ QuarantineTranslatorImage::QuarantineTranslatorImage(
 }
 
 
+/**
+ * @brief Destroys the guard, removing the quarantined ref from the roster if
+ *     Remove() was called.
+ */
 QuarantineTranslatorImage::~QuarantineTranslatorImage()
 {
 	if (fRef.device == -1 || !fRemove)
@@ -104,6 +143,10 @@ QuarantineTranslatorImage::~QuarantineTranslatorImage()
 }
 
 
+/**
+ * @brief Registers an entry_ref to be removed on destruction if Remove() is called.
+ * @param ref The entry_ref of the translator to potentially evict.
+ */
 void
 QuarantineTranslatorImage::Put(const entry_ref& ref)
 {
@@ -111,18 +154,31 @@ QuarantineTranslatorImage::Put(const entry_ref& ref)
 }
 
 
+/**
+ * @brief Marks the quarantined ref for removal when the guard is destroyed.
+ */
 void
 QuarantineTranslatorImage::Remove()
 {
 	fRemove = true;
 }
 
+
 }	// namespace BPrivate
 
 
-//	#pragma mark -
+//	#pragma mark - BTranslatorRoster::Private
 
 
+/**
+ * @brief Constructs the private roster implementation.
+ *
+ * Detects safe-mode and user add-on disable flags via safemode options.
+ * Checks for an ABI mismatch and sets fABISubDirectory so that translators
+ * matching the running ABI can be found in gcc2 / gcc4 subdirectories.
+ * Registers itself as a BHandler with the running BApplication so it can
+ * receive node monitor and B_DELETE_TRANSLATOR messages.
+ */
 BTranslatorRoster::Private::Private()
 	:
 	BHandler("translator roster"),
@@ -176,6 +232,13 @@ BTranslatorRoster::Private::Private()
 }
 
 
+/**
+ * @brief Destroys the private roster, releasing all translators and unloading images.
+ *
+ * Stops node monitoring, removes this handler from the looper, releases every
+ * registered BTranslator (which may trigger B_DELETE_TRANSLATOR), and
+ * unloads all add-on images that are no longer referenced.
+ */
 BTranslatorRoster::Private::~Private()
 {
 	stop_watching(this);
@@ -211,6 +274,16 @@ BTranslatorRoster::Private::~Private()
 }
 
 
+/**
+ * @brief Handles node monitor events and B_DELETE_TRANSLATOR messages.
+ *
+ * B_NODE_MONITOR with B_ENTRY_CREATED, B_ENTRY_MOVED, or B_ENTRY_REMOVED
+ * opcodes update the translator map accordingly. B_DELETE_TRANSLATOR is sent
+ * by a BTranslator whose refcount has reached zero; this handler deletes the
+ * object and unloads the add-on image.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 BTranslatorRoster::Private::MessageReceived(BMessage* message)
 {
@@ -336,6 +409,13 @@ BTranslatorRoster::Private::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Adds the standard system and user translator directories to the roster.
+ *
+ * Directories are added in priority order (user non-packaged, user packaged,
+ * system non-packaged, system packaged). In safe mode, only system directories
+ * are used. Each directory is created if it does not exist.
+ */
 void
 BTranslatorRoster::Private::AddDefaultPaths()
 {
@@ -360,13 +440,16 @@ BTranslatorRoster::Private::AddDefaultPaths()
 }
 
 
-/*!
-	Adds the colon separated list of directories to the roster.
-
-	Note, the order in which these directories are added to actually matters,
-	translators with the same name will be taken from the earlier directory
-	first. See _CompareTranslatorDirectoryPriority().
-*/
+/**
+ * @brief Adds a colon-separated list of directory paths to the roster.
+ *
+ * The order of directories matters: translators in earlier directories have
+ * higher priority over those with the same name in later directories.
+ *
+ * @param paths Colon-delimited string of directory paths.
+ * @return B_OK if at least one translator was loaded, or the last error
+ *     encountered if none could be loaded. B_BAD_VALUE if \a paths is NULL.
+ */
 status_t
 BTranslatorRoster::Private::AddPaths(const char* paths)
 {
@@ -406,12 +489,18 @@ BTranslatorRoster::Private::AddPaths(const char* paths)
 }
 
 
-/*!
-	Adds a new directory to the roster.
-
-	Note, the order in which these directories are added to actually matters,
-	see AddPaths().
-*/
+/**
+ * @brief Adds a single translator directory to the roster.
+ *
+ * If an ABI subdirectory (gcc2/gcc4) exists under \a path, it is used
+ * instead. Starts node monitoring on the directory and loads all translator
+ * add-ons found within it.
+ *
+ * @param path Absolute path of the directory to scan.
+ * @param _added If non-NULL, set to the number of translators successfully
+ *     loaded from this directory.
+ * @return B_OK on success, or an error code if the directory cannot be opened.
+ */
 status_t
 BTranslatorRoster::Private::AddPath(const char* path, int32* _added)
 {
@@ -469,6 +558,18 @@ BTranslatorRoster::Private::AddPath(const char* path, int32* _added)
 }
 
 
+/**
+ * @brief Registers a BTranslator object in the roster's internal map.
+ *
+ * Thread-safe. Assigns the next available ID to the translator and records
+ * its image ID, node inode, and entry_ref for future lookup.
+ *
+ * @param translator The translator to register (not yet Acquire()'d here).
+ * @param image The image_id of the add-on, or -1 for built-in translators.
+ * @param ref Optional entry_ref of the add-on file.
+ * @param node Inode number of the add-on file for node-ref matching.
+ * @return B_OK on success, or B_NO_MEMORY if the map cannot be extended.
+ */
 status_t
 BTranslatorRoster::Private::AddTranslator(BTranslator* translator,
 	image_id image, const entry_ref* ref, ino_t node)
@@ -494,6 +595,10 @@ BTranslatorRoster::Private::AddTranslator(BTranslator* translator,
 }
 
 
+/**
+ * @brief Removes all translators loaded from the given entry_ref.
+ * @param ref The entry_ref identifying the add-on file to evict.
+ */
 void
 BTranslatorRoster::Private::RemoveTranslators(entry_ref& ref)
 {
@@ -501,6 +606,14 @@ BTranslatorRoster::Private::RemoveTranslators(entry_ref& ref)
 }
 
 
+/**
+ * @brief Looks up a BTranslator by its assigned ID.
+ *
+ * The roster must be locked by the caller before calling this function.
+ *
+ * @param id The translator_id to look up.
+ * @return Pointer to the BTranslator, or NULL if not found.
+ */
 BTranslator*
 BTranslatorRoster::Private::FindTranslator(translator_id id)
 {
@@ -517,6 +630,18 @@ BTranslatorRoster::Private::FindTranslator(translator_id id)
 }
 
 
+/**
+ * @brief Reads the required C-style function symbols from a loaded add-on image.
+ *
+ * Looks for translatorName, translatorInfo, translatorVersion, inputFormats,
+ * outputFormats, Identify, and Translate. MakeConfig and GetConfigMessage are
+ * optional and silently skipped if absent.
+ *
+ * @param image The loaded add-on image to inspect.
+ * @param data Filled with the symbol pointers and metadata on success.
+ * @return B_OK if all required symbols were found, or B_BAD_TYPE if any
+ *     required symbol is missing.
+ */
 status_t
 BTranslatorRoster::Private::GetTranslatorData(image_id image,
 	translator_data& data)
@@ -556,6 +681,20 @@ BTranslatorRoster::Private::GetTranslatorData(image_id image,
 }
 
 
+/**
+ * @brief Loads the add-on at \a ref and registers the translator(s) it provides.
+ *
+ * If an existing translator with the same filename has higher directory
+ * priority, the new add-on is ignored. If the new one has higher priority,
+ * the old translator is quarantined and replaced on success. Supports both
+ * make_nth_translator() (post-R4.5) and C-style add-ons. Thread-safe.
+ *
+ * @param ref entry_ref of the add-on file to load.
+ * @param count Incremented for each translator successfully registered.
+ * @param update If non-NULL, translator IDs of newly added translators are
+ *     appended to this message for change notification.
+ * @return B_OK on success, or an error code if the add-on cannot be loaded.
+ */
 status_t
 BTranslatorRoster::Private::CreateTranslators(const entry_ref& ref,
 	int32& count, BMessage* update)
@@ -651,6 +790,15 @@ BTranslatorRoster::Private::CreateTranslators(const entry_ref& ref,
 }
 
 
+/**
+ * @brief Registers a messenger to receive change notifications.
+ *
+ * Once at least one watcher is registered, lazy scanning is disabled and
+ * any pending rescan entries are processed immediately.
+ *
+ * @param target The messenger to notify on translator additions/removals.
+ * @return B_OK on success, or B_NO_MEMORY if the list cannot be extended.
+ */
 status_t
 BTranslatorRoster::Private::StartWatching(BMessenger target)
 {
@@ -672,6 +820,14 @@ BTranslatorRoster::Private::StartWatching(BMessenger target)
 }
 
 
+/**
+ * @brief Unregisters a messenger from change notifications.
+ *
+ * If the watcher list becomes empty, lazy scanning is re-enabled.
+ *
+ * @param target The messenger to remove.
+ * @return B_OK on success, or B_BAD_VALUE if \a target is not registered.
+ */
 status_t
 BTranslatorRoster::Private::StopWatching(BMessenger target)
 {
@@ -693,6 +849,15 @@ BTranslatorRoster::Private::StopWatching(BMessenger target)
 }
 
 
+/**
+ * @brief Archives the file paths of all registered disk-based translators.
+ *
+ * Appends "be:translator_path" strings to \a archive, one per translator.
+ * Used by BTranslatorRoster::Archive().
+ *
+ * @param archive The BMessage to append paths to.
+ * @return B_OK.
+ */
 status_t
 BTranslatorRoster::Private::StoreTranslators(BMessage& archive)
 {
@@ -713,6 +878,21 @@ BTranslatorRoster::Private::StoreTranslators(BMessage& archive)
 }
 
 
+/**
+ * @brief Identifies the best translator for the data in \a source.
+ *
+ * Iterates all registered translators, calling Identify() on each. Returns
+ * the translator_info for the one with the highest quality × capability score.
+ *
+ * @param source The stream to identify.
+ * @param ioExtension Optional extension message; updated with the winning
+ *     translator's extension data if non-NULL.
+ * @param hintType Type hint (0 = unknown).
+ * @param hintMIME MIME hint (NULL = unknown).
+ * @param wantType Desired output type (0 = any).
+ * @param _info Set to the best translator_info on success.
+ * @return B_OK on success, or B_NO_TRANSLATOR if no translator matched.
+ */
 status_t
 BTranslatorRoster::Private::Identify(BPositionIO* source,
 	BMessage* ioExtension, uint32 hintType, const char* hintMIME,
@@ -767,6 +947,21 @@ BTranslatorRoster::Private::Identify(BPositionIO* source,
 }
 
 
+/**
+ * @brief Returns all translators capable of handling \a source.
+ *
+ * The returned array is sorted by quality × capability (best first). The
+ * caller must delete[] the array when done.
+ *
+ * @param source The stream to identify.
+ * @param ioExtension Optional extension message.
+ * @param hintType Type hint (0 = unknown).
+ * @param hintMIME MIME hint (NULL = unknown).
+ * @param wantType Desired output type (0 = any).
+ * @param _info Set to a newly allocated array of matching translator_info.
+ * @param _numInfo Set to the number of entries in \a _info.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTranslatorRoster::Private::GetTranslators(BPositionIO* source,
 	BMessage* ioExtension, uint32 hintType, const char* hintMIME,
@@ -819,6 +1014,15 @@ BTranslatorRoster::Private::GetTranslators(BPositionIO* source,
 }
 
 
+/**
+ * @brief Returns an array of all registered translator IDs.
+ *
+ * The caller must delete[] the array when done.
+ *
+ * @param _ids Set to a newly allocated array of translator_id values.
+ * @param _count Set to the number of entries in \a _ids.
+ * @return B_OK on success, or B_NO_MEMORY.
+ */
 status_t
 BTranslatorRoster::Private::GetAllTranslators(translator_id** _ids,
 	int32* _count)
@@ -846,6 +1050,13 @@ BTranslatorRoster::Private::GetAllTranslators(translator_id** _ids,
 }
 
 
+/**
+ * @brief Returns the entry_ref for the add-on file of a translator.
+ * @param id The translator to look up.
+ * @param ref Set to the entry_ref on success.
+ * @return B_OK on success, B_NO_TRANSLATOR if not found, or B_ERROR if the
+ *     add-on file no longer exists on disk.
+ */
 status_t
 BTranslatorRoster::Private::GetRefFor(translator_id id, entry_ref& ref)
 {
@@ -865,6 +1076,16 @@ BTranslatorRoster::Private::GetRefFor(translator_id id, entry_ref& ref)
 }
 
 
+/**
+ * @brief Deletes a translator whose refcount has reached zero and unloads its image.
+ *
+ * Called from MessageReceived() in response to a B_DELETE_TRANSLATOR message.
+ * Erases the translator from the map, deletes the object, decrements the
+ * per-image reference count, and unloads the image if it reaches zero.
+ *
+ * @param id The translator_id being deleted.
+ * @param self Pointer to the BTranslator object to delete.
+ */
 void
 BTranslatorRoster::Private::_TranslatorDeleted(translator_id id, BTranslator* self)
 {
@@ -887,6 +1108,15 @@ BTranslatorRoster::Private::_TranslatorDeleted(translator_id id, BTranslator* se
 }
 
 
+/**
+ * @brief Compares two translator_info structs by quality × capability weight.
+ *
+ * Used as a qsort comparator in GetTranslators() to sort results best-first.
+ *
+ * @param _a Pointer to the first translator_info.
+ * @param _b Pointer to the second translator_info.
+ * @return -1 if a is better, 1 if b is better, 0 if equal.
+ */
 /*static*/ int
 BTranslatorRoster::Private::_CompareSupport(const void* _a, const void* _b)
 {
@@ -905,15 +1135,14 @@ BTranslatorRoster::Private::_CompareSupport(const void* _a, const void* _b)
 }
 
 
-/*!
-	In lazy mode, freshly installed translator are not scanned immediately
-	when they become available. Instead, they are put into a set.
-
-	When a method is called that may be interested in these new translators,
-	they are scanned on the fly. Since lazy mode also means that this roster
-	does not have any listeners, we don't need to notify anyone about those
-	changes.
-*/
+/**
+ * @brief Processes all entries queued for rescanning since the last translation call.
+ *
+ * In lazy mode, newly installed translators are not loaded immediately; they
+ * are added to fRescanEntries. This method loads them when a translation
+ * method is next called. It does not notify listeners (lazy mode implies no
+ * watchers).
+ */
 void
 BTranslatorRoster::Private::_RescanChanged()
 {
@@ -927,10 +1156,17 @@ BTranslatorRoster::Private::_RescanChanged()
 }
 
 
-/*!
-	Tests if the hints provided for a source stream are compatible to
-	the formats the translator exports.
-*/
+/**
+ * @brief Checks whether any of the provided formats match the given type/MIME hints.
+ *
+ * A MIME hint without a '/' is treated as a super-type prefix match.
+ *
+ * @param formats The array of translation_format entries to check.
+ * @param formatsCount Number of entries in \a formats.
+ * @param hintType Type constant to match, or 0 to skip type matching.
+ * @param hintMIME MIME string to match, or NULL to skip MIME matching.
+ * @return Pointer to the first matching format, or NULL if none matched.
+ */
 const translation_format*
 BTranslatorRoster::Private::_CheckHints(const translation_format* formats,
 	int32 formatsCount, uint32 hintType, const char* hintMIME)
@@ -956,6 +1192,11 @@ BTranslatorRoster::Private::_CheckHints(const translation_format* formats,
 }
 
 
+/**
+ * @brief Looks up a translator_item by numeric ID.
+ * @param id The translator_id to find.
+ * @return Pointer to the translator_item, or NULL if not found.
+ */
 const translator_item*
 BTranslatorRoster::Private::_FindTranslator(translator_id id) const
 {
@@ -967,6 +1208,11 @@ BTranslatorRoster::Private::_FindTranslator(translator_id id) const
 }
 
 
+/**
+ * @brief Looks up a translator_item by add-on filename.
+ * @param name The filename (not full path) of the add-on.
+ * @return Pointer to the translator_item, or NULL if not found.
+ */
 const translator_item*
 BTranslatorRoster::Private::_FindTranslator(const char* name) const
 {
@@ -987,6 +1233,11 @@ BTranslatorRoster::Private::_FindTranslator(const char* name) const
 }
 
 
+/**
+ * @brief Looks up a translator_item by entry_ref.
+ * @param ref The entry_ref to match against.
+ * @return Pointer to the translator_item, or NULL if not found.
+ */
 const translator_item*
 BTranslatorRoster::Private::_FindTranslator(entry_ref& ref) const
 {
@@ -1007,6 +1258,11 @@ BTranslatorRoster::Private::_FindTranslator(entry_ref& ref) const
 }
 
 
+/**
+ * @brief Looks up a translator_item by node_ref (device + inode).
+ * @param nodeRef The node_ref to match against.
+ * @return Mutable pointer to the translator_item, or NULL if not found.
+ */
 translator_item*
 BTranslatorRoster::Private::_FindTranslator(node_ref& nodeRef)
 {
@@ -1028,12 +1284,16 @@ BTranslatorRoster::Private::_FindTranslator(node_ref& nodeRef)
 }
 
 
-/*!
-	Directories added to the roster have a certain priority - the first entry
-	to be added has the highest priority; if a translator with the same name
-	is to be found in two directories, the one with the higher priority is
-	chosen.
-*/
+/**
+ * @brief Compares the directory priorities of two translator entry_refs.
+ *
+ * Priority is determined by the order directories were added to the roster;
+ * the first-added directory has the highest priority.
+ *
+ * @param a The first entry_ref.
+ * @param b The second entry_ref.
+ * @return -1 if a's directory has higher priority, 1 if b's does, 0 if equal.
+ */
 int32
 BTranslatorRoster::Private::_CompareTranslatorDirectoryPriority(
 	const entry_ref& a, const entry_ref& b) const
@@ -1063,6 +1323,11 @@ BTranslatorRoster::Private::_CompareTranslatorDirectoryPriority(
 }
 
 
+/**
+ * @brief Returns whether the given node_ref corresponds to a monitored directory.
+ * @param nodeRef The node_ref to check.
+ * @return \c true if the directory is in the watch list.
+ */
 bool
 BTranslatorRoster::Private::_IsKnownDirectory(const node_ref& nodeRef) const
 {
@@ -1079,6 +1344,15 @@ BTranslatorRoster::Private::_IsKnownDirectory(const node_ref& nodeRef) const
 }
 
 
+/**
+ * @brief Removes all translators matching the given node_ref and/or entry_ref.
+ *
+ * Releases each matched translator, records its ID in a B_TRANSLATOR_REMOVED
+ * message, erases it from the map, and notifies all registered listeners.
+ *
+ * @param nodeRef If non-NULL, matches translators by device + inode.
+ * @param ref If non-NULL, matches translators by entry_ref.
+ */
 void
 BTranslatorRoster::Private::_RemoveTranslators(const node_ref* nodeRef,
 	const entry_ref* ref)
@@ -1110,6 +1384,11 @@ BTranslatorRoster::Private::_RemoveTranslators(const node_ref* nodeRef,
 }
 
 
+/**
+ * @brief Converts a node_ref + name to an entry_ref and calls _EntryAdded(entry_ref).
+ * @param nodeRef The directory node containing the new entry.
+ * @param name The filename of the new entry.
+ */
 void
 BTranslatorRoster::Private::_EntryAdded(const node_ref& nodeRef,
 	const char* name)
@@ -1123,14 +1402,15 @@ BTranslatorRoster::Private::_EntryAdded(const node_ref& nodeRef,
 }
 
 
-/*!
-	In lazy mode, the entry is marked to be rescanned on next use of any
-	translation method (that could make use of it).
-	In non-lazy mode, the translators for this entry are created directly
-	and listeners notified.
-
-	Called by the node monitor handling.
-*/
+/**
+ * @brief Handles a newly discovered translator file.
+ *
+ * In lazy mode, adds the entry to the rescan set for deferred processing.
+ * In non-lazy mode, immediately loads the translator and notifies listeners
+ * with a B_TRANSLATOR_ADDED message.
+ *
+ * @param ref The entry_ref of the new translator file.
+ */
 void
 BTranslatorRoster::Private::_EntryAdded(const entry_ref& ref)
 {
@@ -1151,6 +1431,10 @@ BTranslatorRoster::Private::_EntryAdded(const entry_ref& ref)
 }
 
 
+/**
+ * @brief Sends a BMessage to all registered change-notification messengers.
+ * @param update The message to broadcast.
+ */
 void
 BTranslatorRoster::Private::_NotifyListeners(BMessage& update) const
 {
@@ -1163,9 +1447,13 @@ BTranslatorRoster::Private::_NotifyListeners(BMessage& update) const
 }
 
 
-//	#pragma mark -
+//	#pragma mark - BTranslatorReleaseDelegate
 
 
+/**
+ * @brief Constructs a BTranslatorReleaseDelegate wrapping the given translator.
+ * @param translator The translator to wrap; it must already be Acquire()'d.
+ */
 BTranslatorReleaseDelegate::BTranslatorReleaseDelegate(BTranslator* translator)
 	:
 	fUnderlying(translator)
@@ -1173,6 +1461,11 @@ BTranslatorReleaseDelegate::BTranslatorReleaseDelegate(BTranslator* translator)
 }
 
 
+/**
+ * @brief Releases the underlying translator and destroys this delegate.
+ *
+ * May only be called once; the delegate deletes itself after releasing.
+ */
 void
 BTranslatorReleaseDelegate::Release()
 {
@@ -1182,15 +1475,23 @@ BTranslatorReleaseDelegate::Release()
 }
 
 
-//	#pragma mark -
+//	#pragma mark - BTranslatorRoster
 
 
+/** @brief Constructs an empty BTranslatorRoster with no translators loaded. */
 BTranslatorRoster::BTranslatorRoster()
 {
 	_Initialize();
 }
 
 
+/**
+ * @brief Constructs a BTranslatorRoster from an archived set of translator paths.
+ *
+ * Reads "be:translator_path" strings from \a model and loads each add-on.
+ *
+ * @param model A BMessage previously created by Archive(), or NULL.
+ */
 BTranslatorRoster::BTranslatorRoster(BMessage* model)
 {
 	_Initialize();
@@ -1210,6 +1511,13 @@ BTranslatorRoster::BTranslatorRoster(BMessage* model)
 }
 
 
+/**
+ * @brief Destroys the BTranslatorRoster.
+ *
+ * Clears the default roster pointer if this is the default instance, then
+ * deletes the private implementation (which releases all translators and
+ * unloads add-on images).
+ */
 BTranslatorRoster::~BTranslatorRoster()
 {
 	// If the default BTranslatorRoster is being
@@ -1222,6 +1530,9 @@ BTranslatorRoster::~BTranslatorRoster()
 }
 
 
+/**
+ * @brief Allocates and initializes the private implementation object.
+ */
 void
 BTranslatorRoster::_Initialize()
 {
@@ -1229,6 +1540,12 @@ BTranslatorRoster::_Initialize()
 }
 
 
+/**
+ * @brief Archives the roster's translator paths into \a into for later reconstruction.
+ * @param into The BMessage to archive into.
+ * @param deep Passed to BArchivable::Archive() (unused here).
+ * @return B_OK on success.
+ */
 status_t
 BTranslatorRoster::Archive(BMessage* into, bool deep) const
 {
@@ -1240,6 +1557,11 @@ BTranslatorRoster::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Instantiates a BTranslatorRoster from an archived BMessage.
+ * @param from A BMessage previously created by Archive().
+ * @return A new BTranslatorRoster, or NULL if \a from is invalid.
+ */
 BArchivable*
 BTranslatorRoster::Instantiate(BMessage* from)
 {
@@ -1250,6 +1572,14 @@ BTranslatorRoster::Instantiate(BMessage* from)
 }
 
 
+/**
+ * @brief Returns the default shared BTranslatorRoster, creating it if needed.
+ *
+ * Thread-safe via atomic spin: if two threads race to create the default
+ * roster, one creates it while the other spins until fDefaultRoster is set.
+ *
+ * @return Pointer to the default BTranslatorRoster (never NULL after first call).
+ */
 BTranslatorRoster*
 BTranslatorRoster::Default()
 {
@@ -1283,15 +1613,16 @@ BTranslatorRoster::Default()
 }
 
 
-/*!
-	This function takes a string of colon delimited paths, and adds
-	the translators from those paths to this BTranslatorRoster.
-
-	If load_path is NULL, it parses the environment variable
-	TRANSLATORS. If that does not exist, it uses the system paths:
-		/boot/home/config/add-ons/Translators,
-		/system/add-ons/Translators.
-*/
+/**
+ * @brief Loads translators from a colon-separated list of directory paths.
+ *
+ * If \a path is NULL, the TRANSLATORS environment variable is consulted; if
+ * that is also unset, the standard system and user translator directories are
+ * used.
+ *
+ * @param path Colon-separated directory paths, or NULL for defaults.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTranslatorRoster::AddTranslators(const char* path)
 {
@@ -1306,18 +1637,15 @@ BTranslatorRoster::AddTranslators(const char* path)
 }
 
 
-/*!
-	Adds a BTranslator based object to the BTranslatorRoster.
-	When you add a BTranslator roster, it is Acquire()'d by
-	BTranslatorRoster; it is Release()'d when the
-	BTranslatorRoster is deleted.
-
-	\param translator the translator to be added to the
-		BTranslatorRoster
-
-	\return B_BAD_VALUE, if translator is NULL,
-		B_OK if all went well
-*/
+/**
+ * @brief Adds a single BTranslator object to the roster.
+ *
+ * The roster Acquire()'s the translator; it will be Release()'d when the
+ * roster is destroyed.
+ *
+ * @param translator The BTranslator to add.
+ * @return B_OK on success, or B_BAD_VALUE if \a translator is NULL.
+ */
 status_t
 BTranslatorRoster::AddTranslator(BTranslator* translator)
 {
@@ -1328,6 +1656,15 @@ BTranslatorRoster::AddTranslator(BTranslator* translator)
 }
 
 
+/**
+ * @brief Tests whether the file at \a ref is a valid translator add-on.
+ *
+ * Loads the add-on temporarily and checks for either make_nth_translator()
+ * or the required C-style symbols, then unloads it.
+ *
+ * @param ref Entry reference for the file to test.
+ * @return \c true if the file is a recognized translator add-on.
+ */
 bool
 BTranslatorRoster::IsTranslator(entry_ref* ref)
 {
@@ -1355,23 +1692,18 @@ BTranslatorRoster::IsTranslator(entry_ref* ref)
 }
 
 
-/*!
-	This function determines which translator is best suited
-	to convert the data from \a source.
-
-	\param source the data to be identified
-	\param ioExtension the configuration data for the translator
-	\param _info the information about the chosen translator is put here
-	\param hintType a hint about the type of data that is in \a source, set
-		it to zero if the type is not known
-	\param hintMIME a hint about the MIME type of \a source, set it to NULL
-		if the type is not known.
-	\param wantType the desired output type - if zero, any type is okay.
-
-	\return B_OK, identification of \a source was successful,
-		B_NO_TRANSLATOR, no appropriate translator found,
-		and other errors from accessing the source stream
-*/
+/**
+ * @brief Identifies the single best translator for the data in \a source.
+ *
+ * @param source The data stream to identify.
+ * @param ioExtension Optional extension message; updated on success.
+ * @param _info Set to the winning translator_info on success.
+ * @param hintType Type hint (0 = unknown).
+ * @param hintMIME MIME hint (NULL = unknown).
+ * @param wantType Desired output type (0 = any).
+ * @return B_OK on success, B_NO_TRANSLATOR if no match, B_BAD_VALUE if
+ *     \a source or \a _info is NULL.
+ */
 status_t
 BTranslatorRoster::Identify(BPositionIO* source, BMessage* ioExtension,
 	translator_info* _info, uint32 hintType, const char* hintMIME,
@@ -1385,29 +1717,20 @@ BTranslatorRoster::Identify(BPositionIO* source, BMessage* ioExtension,
 }
 
 
-/*!
-	Finds all translators capable of handling the data in \a source
-	and puts them into the outInfo array (which you must delete
-	yourself when you are done with it). Specifying a value for
-	\a hintType, \a hintMIME and/or \a wantType causes only the
-	translators that satisfy them to be included in the outInfo.
-
-	\param source the data to be translated
-	\param ioExtension the configuration data for the translator
-	\param _info, the array of acceptable translators is stored here if
-		the function succeeds. It's the caller's responsibility to free
-		the array using delete[].
-	\param _numInfo, number of entries in the \a _info array
-	\param hintType a hint about the type of data that is in \a source, set
-		it to zero if the type is not known
-	\param hintMIME a hint about the MIME type of \a source, set it to NULL
-		if the type is not known.
-	\param wantType the desired output type - if zero, any type is okay.
-
-	\return B_OK, successfully indentified the data in \a source
-		B_NO_TRANSLATOR, no translator could handle \a source
-		other errors, problems using \a source
-*/
+/**
+ * @brief Returns all translators capable of handling \a source.
+ *
+ * The caller must delete[] the returned \a _info array.
+ *
+ * @param source The data stream to identify.
+ * @param ioExtension Optional extension message.
+ * @param _info Set to a caller-owned array of matching translator_info.
+ * @param _numInfo Set to the number of entries in \a _info.
+ * @param hintType Type hint (0 = unknown).
+ * @param hintMIME MIME hint (NULL = unknown).
+ * @param wantType Desired output type (0 = any).
+ * @return B_OK on success, B_BAD_VALUE if required parameters are NULL.
+ */
 status_t
 BTranslatorRoster::GetTranslators(BPositionIO* source, BMessage* ioExtension,
 	translator_info** _info, int32* _numInfo, uint32 hintType,
@@ -1421,14 +1744,15 @@ BTranslatorRoster::GetTranslators(BPositionIO* source, BMessage* ioExtension,
 }
 
 
-/*!
-	Returns an array in \a _ids of all of the translators stored by this
-	object.
-	You must free the array using delete[] when you are done with it.
-
-	\param _ids the array is stored there (you own the array).
-	\param _count number of IDs in the array.
-*/
+/**
+ * @brief Returns an array of all registered translator IDs.
+ *
+ * The caller must delete[] the returned \a _ids array.
+ *
+ * @param _ids Set to a caller-owned array of translator_id values.
+ * @param _count Set to the number of entries in \a _ids.
+ * @return B_OK on success, B_BAD_VALUE if either parameter is NULL.
+ */
 status_t
 BTranslatorRoster::GetAllTranslators(translator_id** _ids, int32* _count)
 {
@@ -1439,20 +1763,18 @@ BTranslatorRoster::GetAllTranslators(translator_id** _ids, int32* _count)
 }
 
 
-/*!
-	Returns information about the translator with the specified
-	translator \a id.
-	You must not free any of the data you get back.
-
-	\param id identifies which translator you want info for
-	\param _name the translator name is put here
-	\param _info the translator description is put here
-	\param _version the translation version is put here
-
-	\return B_OK if successful,
-		B_BAD_VALUE, if all parameters are NULL
-		B_NO_TRANSLATOR, \id didn't identify an existing translator
-*/
+/**
+ * @brief Returns metadata for the translator identified by \a id.
+ *
+ * The returned string pointers are owned by the translator and must not be freed.
+ *
+ * @param id The translator to query.
+ * @param _name Set to the translator's name string, if non-NULL.
+ * @param _info Set to the translator's description string, if non-NULL.
+ * @param _version Set to the translator's version integer, if non-NULL.
+ * @return B_OK on success, B_BAD_VALUE if all output pointers are NULL, or
+ *     B_NO_TRANSLATOR if \a id is not recognized.
+ */
 status_t
 BTranslatorRoster::GetTranslatorInfo(translator_id id, const char** _name,
 	const char** _info, int32* _version)
@@ -1477,19 +1799,17 @@ BTranslatorRoster::GetTranslatorInfo(translator_id id, const char** _name,
 }
 
 
-/*!
-	Returns all of the input formats for the translator specified
-	by \a id.
-	You must not free any of the data you get back.
-
-	\param id identifies which translator you want the input formats for
-	\param _formats array of input formats
-	\param _numFormats number of formats in the array
-
-	\return B_OK if successful,
-		B_BAD_VALUE, if any parameter is NULL
-		B_NO_TRANSLATOR, \id didn't identify an existing translator
-*/
+/**
+ * @brief Returns the input formats for the translator identified by \a id.
+ *
+ * The returned array is owned by the translator and must not be freed.
+ *
+ * @param id The translator to query.
+ * @param _formats Set to the array of input translation_format entries.
+ * @param _numFormats Set to the number of entries in \a _formats.
+ * @return B_OK on success, B_BAD_VALUE if parameters are NULL, or
+ *     B_NO_TRANSLATOR if \a id is not recognized.
+ */
 status_t
 BTranslatorRoster::GetInputFormats(translator_id id,
 	const translation_format** _formats, int32* _numFormats)
@@ -1508,19 +1828,17 @@ BTranslatorRoster::GetInputFormats(translator_id id,
 }
 
 
-/*!
-	Returns all of the output formats for the translator specified
-	by \a id.
-	You must not free any of the data you get back.
-
-	\param id identifies which translator you want the output formats for
-	\param _formats array of output formats
-	\param _numFormats number of formats in the array
-
-	\return B_OK if successful,
-		B_BAD_VALUE, if any parameter is NULL
-		B_NO_TRANSLATOR, \id didn't identify an existing translator
-*/
+/**
+ * @brief Returns the output formats for the translator identified by \a id.
+ *
+ * The returned array is owned by the translator and must not be freed.
+ *
+ * @param id The translator to query.
+ * @param _formats Set to the array of output translation_format entries.
+ * @param _numFormats Set to the number of entries in \a _formats.
+ * @return B_OK on success, B_BAD_VALUE if parameters are NULL, or
+ *     B_NO_TRANSLATOR if \a id is not recognized.
+ */
 status_t
 BTranslatorRoster::GetOutputFormats(translator_id id,
 	const translation_format** _formats, int32* _numFormats)
@@ -1539,26 +1857,24 @@ BTranslatorRoster::GetOutputFormats(translator_id id,
 }
 
 
-/*!
-	This function is the whole point of the Translation Kit.
-	This is for translating the data in \a source to \a destination
-	using the format \a wantOutType.
-
-	\param source the data to be translated
-	\param ioExtension the configuration data for the translator
-	\param info information about translator to use (can be NULL, in which
-		case the \a source is identified first)
-	\param destination where \a source is translated to
-	\param hintType a hint about the type of data that is in \a source, set
-		it to zero if the type is not known
-	\param hintMIME a hint about the MIME type of \a source, set it to NULL
-		if the type is not known.
-	\param wantType the desired output type - if zero, any type is okay.
-
-	\return B_OK, translation of \a source was successful,
-		B_NO_TRANSLATOR, no appropriate translator found,
-		and other errors from accessing the source and destination streams
-*/
+/**
+ * @brief Translates data from \a source to \a destination.
+ *
+ * If \a info is NULL, the source is automatically identified first. The
+ * translator is Acquire()'d for the duration of the call so that it cannot
+ * be unloaded mid-translation.
+ *
+ * @param source The data stream to translate.
+ * @param info Pre-identified translator_info, or NULL to auto-identify.
+ * @param ioExtension Optional extension message with translator parameters.
+ * @param destination The stream to write translated output into.
+ * @param wantOutType The desired output format type.
+ * @param hintType Type hint for auto-identification (0 = unknown).
+ * @param hintMIME MIME hint for auto-identification (NULL = unknown).
+ * @return B_OK on success, B_NO_TRANSLATOR if no suitable translator was
+ *     found, B_BAD_VALUE if required parameters are NULL, or an error from
+ *     the translator or the I/O streams.
+ */
 status_t
 BTranslatorRoster::Translate(BPositionIO* source, const translator_info* info,
 	BMessage* ioExtension, BPositionIO* destination, uint32 wantOutType,
@@ -1608,22 +1924,22 @@ BTranslatorRoster::Translate(BPositionIO* source, const translator_info* info,
 }
 
 
-/*!
-	This function is the whole point of the Translation Kit.
-	This is for translating the data in \a source to \a destination
-	using the format \a wantOutType and the translator identified
-	by \a id.
-
-	\param id the translator to be used
-	\param source the data to be translated
-	\param ioExtension the configuration data for the translator
-	\param destination where \a source is translated to
-	\param wantType the desired output type - if zero, any type is okay.
-
-	\return B_OK, translation of \a source was successful,
-		B_NO_TRANSLATOR, no appropriate translator found,
-		and other errors from accessing the source and destination streams
-*/
+/**
+ * @brief Translates data from \a source to \a destination using a specific translator.
+ *
+ * Unlike the other Translate() overload, this one selects the translator by
+ * \a id rather than auto-detecting from the source data. The translator is
+ * still identified against the source before translating to populate a
+ * translator_info.
+ *
+ * @param id The translator_id of the translator to use.
+ * @param source The data stream to translate.
+ * @param ioExtension Optional extension message with translator parameters.
+ * @param destination The stream to write translated output into.
+ * @param wantOutType The desired output format type.
+ * @return B_OK on success, B_NO_TRANSLATOR if \a id is not found, or an
+ *     error from the I/O streams or translator.
+ */
 status_t
 BTranslatorRoster::Translate(translator_id id, BPositionIO* source,
 	BMessage* ioExtension, BPositionIO* destination, uint32 wantOutType)
@@ -1669,19 +1985,18 @@ BTranslatorRoster::Translate(translator_id id, BPositionIO* source,
 }
 
 
-/*!
-	Creates a BView in \a _view for configuring the translator specified
-	by \a id. Not all translators support this, though.
-
-	\param id identifies which translator you want the input formats for
-	\param ioExtension the configuration data for the translator
-	\param _view the view for configuring the translator
-	\param _extent the bounds for the (resizable) view
-
-	\return B_OK if successful,
-		B_BAD_VALUE, if any parameter is NULL
-		B_NO_TRANSLATOR, \id didn't identify an existing translator
-*/
+/**
+ * @brief Creates a configuration BView for the translator identified by \a id.
+ *
+ * Not all translators support this; those that don't return B_ERROR.
+ *
+ * @param id The translator to create a view for.
+ * @param ioExtension Optional extension message.
+ * @param _view Set to the newly created BView on success.
+ * @param _extent Set to the preferred bounds for the view.
+ * @return B_OK on success, B_BAD_VALUE if \a _view or \a _extent is NULL, or
+ *     B_NO_TRANSLATOR if \a id is not recognized.
+ */
 status_t
 BTranslatorRoster::MakeConfigurationView(translator_id id,
 	BMessage* ioExtension, BView** _view, BRect* _extent)
@@ -1699,6 +2014,15 @@ BTranslatorRoster::MakeConfigurationView(translator_id id,
 }
 
 
+/**
+ * @brief Acquires the translator identified by \a id and returns a release delegate.
+ *
+ * The caller is responsible for calling Release() on the returned delegate
+ * when done. This prevents the translator from being unloaded while in use.
+ *
+ * @param id The translator to acquire.
+ * @return A new BTranslatorReleaseDelegate, or NULL if \a id is not found.
+ */
 BTranslatorReleaseDelegate*
 BTranslatorRoster::AcquireTranslator(int32 id)
 {
@@ -1713,17 +2037,17 @@ BTranslatorRoster::AcquireTranslator(int32 id)
 }
 
 
-/*!
-	Gets the configuration setttings for the translator
-	specified by \a id and puts them into \a ioExtension.
-
-	\param id identifies which translator you want the input formats for
-	\param ioExtension the configuration data for the translator
-
-	\return B_OK if successful,
-		B_BAD_VALUE, if \a ioExtension is NULL
-		B_NO_TRANSLATOR, \id didn't identify an existing translator
-*/
+/**
+ * @brief Retrieves the current configuration settings for a translator.
+ *
+ * Populates \a ioExtension with the translator's current settings as
+ * name/value pairs. Not all translators support this.
+ *
+ * @param id The translator to query.
+ * @param ioExtension BMessage to receive the settings.
+ * @return B_OK on success, B_BAD_VALUE if \a ioExtension is NULL, or
+ *     B_NO_TRANSLATOR if \a id is not recognized.
+ */
 status_t
 BTranslatorRoster::GetConfigurationMessage(translator_id id,
 	BMessage* ioExtension)
@@ -1741,18 +2065,14 @@ BTranslatorRoster::GetConfigurationMessage(translator_id id,
 }
 
 
-/*!
-	Gets the entry_ref for the given translator (of course, this works only
-	for disk based translators).
-
-	\param id identifies which translator you want the input formats for
-	\param ref the entry ref is stored there
-
-	\return B_OK if successful,
-		B_ERROR, if this is not a disk based translator
-		B_BAD_VALUE, if \a ref is NULL
-		B_NO_TRANSLATOR, \id didn't identify an existing translator
-*/
+/**
+ * @brief Returns the entry_ref for the add-on file of a disk-based translator.
+ *
+ * @param id The translator to query.
+ * @param ref Set to the entry_ref on success.
+ * @return B_OK on success, B_BAD_VALUE if \a ref is NULL, B_NO_TRANSLATOR if
+ *     \a id is not recognized, or B_ERROR if the translator is not disk-based.
+ */
 status_t
 BTranslatorRoster::GetRefFor(translator_id id, entry_ref* ref)
 {
@@ -1763,6 +2083,12 @@ BTranslatorRoster::GetRefFor(translator_id id, entry_ref* ref)
 }
 
 
+/**
+ * @brief Registers a messenger to receive B_TRANSLATOR_ADDED and
+ *     B_TRANSLATOR_REMOVED notifications.
+ * @param target The messenger to register.
+ * @return B_OK on success, or B_NO_MEMORY.
+ */
 status_t
 BTranslatorRoster::StartWatching(BMessenger target)
 {
@@ -1770,6 +2096,11 @@ BTranslatorRoster::StartWatching(BMessenger target)
 }
 
 
+/**
+ * @brief Unregisters a previously registered change-notification messenger.
+ * @param target The messenger to remove.
+ * @return B_OK on success, or B_BAD_VALUE if not registered.
+ */
 status_t
 BTranslatorRoster::StopWatching(BMessenger target)
 {
@@ -1780,11 +2111,13 @@ BTranslatorRoster::StopWatching(BMessenger target)
 //	#pragma mark - private
 
 
+/** @brief Private copy constructor (not implemented; copying is not supported). */
 BTranslatorRoster::BTranslatorRoster(const BTranslatorRoster &other)
 {
 }
 
 
+/** @brief Private assignment operator (not implemented; copying is not supported). */
 BTranslatorRoster &
 BTranslatorRoster::operator=(const BTranslatorRoster &tr)
 {
@@ -1794,6 +2127,13 @@ BTranslatorRoster::operator=(const BTranslatorRoster &tr)
 
 #if __GNUC__ == 2	// gcc 2
 
+/**
+ * @brief Returns a version string for the Translation Kit (gcc 2 only).
+ * @param outCurVersion Set to the current version constant.
+ * @param outMinVersion Set to the minimum supported version constant.
+ * @param inAppVersion Unused; reserved for future ABI checking.
+ * @return A static string describing the Translation Kit version.
+ */
 /*static*/ const char*
 BTranslatorRoster::Version(int32* outCurVersion, int32* outMinVersion,
 	int32 inAppVersion)
@@ -1816,6 +2156,9 @@ BTranslatorRoster::Version(int32* outCurVersion, int32* outMinVersion,
 }
 
 #endif	// gcc 2
+
+
+//	#pragma mark - FBC protection
 
 
 void BTranslatorRoster::ReservedTranslatorRoster1() {}

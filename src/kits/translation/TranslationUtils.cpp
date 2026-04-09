@@ -1,13 +1,44 @@
 /*
- * Copyright 2002-2007, Haiku Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Wilber
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2007, Haiku Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Wilber
+ *       Axel Dörfler, axeld@pinc-software.de
  */
 
-/*! Utility functions for the Translation Kit */
+
+/**
+ * @file TranslationUtils.cpp
+ * @brief Convenience utilities for the Translation Kit
+ *
+ * Implements BTranslationUtils, a collection of static helper functions for
+ * the most common translation tasks: loading bitmaps from files or application
+ * resources, reading and writing styled text, building "Save As" menus from
+ * the available translator output formats, and retrieving per-translator
+ * default settings.
+ *
+ * @see BitmapStream.cpp, TranslatorRoster.cpp
+ */
 
 
 #include <Application.h>
@@ -39,47 +70,43 @@
 using namespace BPrivate;
 
 
+/** @brief Constructs a BTranslationUtils object (not meant to be instantiated). */
 BTranslationUtils::BTranslationUtils()
 {
 }
 
 
+/** @brief Destroys the BTranslationUtils object. */
 BTranslationUtils::~BTranslationUtils()
 {
 }
 
 
+/** @brief Copy constructor (no-op; BTranslationUtils holds no state). */
 BTranslationUtils::BTranslationUtils(const BTranslationUtils &kUtils)
 {
 }
 
 
+/** @brief Assignment operator (no-op; BTranslationUtils holds no state). */
 BTranslationUtils &
 BTranslationUtils::operator=(const BTranslationUtils &kUtils)
 {
 	return *this;
 }
 
-// ---------------------------------------------------------------
-// GetBitmap
-//
-// Returns a BBitmap object for the bitmap file or resource
-// kName. The user has to delete this object. It first tries
-// to open kName as a file, then as a resource.
-//
-// Preconditions:
-//
-// Parameters: kName, the name of the bitmap file or resource to
-//                    be returned
-//             roster, BTranslatorRoster used to do the translation
-//
-// Postconditions:
-//
-// Returns: NULL, if the file could not be opened and the
-//                resource couldn't be found or couldn't be
-//                translated to a BBitmap
-//          BBitmap * to the bitmap reference by kName
-// ---------------------------------------------------------------
+
+/**
+ * @brief Loads a bitmap by name, trying a file path first then an app resource.
+ *
+ * First attempts GetBitmapFile(\a kName), then falls back to loading an
+ * application resource of type B_TRANSLATOR_BITMAP named \a kName.
+ * The caller owns the returned object.
+ *
+ * @param kName File path or resource name identifying the bitmap.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BBitmap, or NULL on failure.
+ */
 BBitmap *
 BTranslationUtils::GetBitmap(const char *kName, BTranslatorRoster *roster)
 {
@@ -93,25 +120,19 @@ BTranslationUtils::GetBitmap(const char *kName, BTranslatorRoster *roster)
 	return pBitmap;
 }
 
-// ---------------------------------------------------------------
-// GetBitmap
-//
-// Returns a BBitmap object for the bitmap resource identified by
-// the type type with the resource id, id.
-// The user has to delete this object.
-//
-// Preconditions:
-//
-// Parameters: type, the type of resource to be loaded
-//             id, the id for the resource to be loaded
-//             roster, BTranslatorRoster used to do the translation
-//
-// Postconditions:
-//
-// Returns: NULL, if the resource couldn't be loaded or couldn't
-//                be translated to a BBitmap
-//          BBitmap * to the bitmap identified by type and id
-// ---------------------------------------------------------------
+
+/**
+ * @brief Loads a bitmap from an application resource identified by type and id.
+ *
+ * Retrieves the resource via BApplication::AppResources(), wraps the raw data
+ * in a BMemoryIO, and translates it to B_TRANSLATOR_BITMAP.
+ * The caller owns the returned object.
+ *
+ * @param type The resource type constant.
+ * @param id The resource id.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BBitmap, or NULL on failure.
+ */
 BBitmap *
 BTranslationUtils::GetBitmap(uint32 type, int32 id, BTranslatorRoster *roster)
 {
@@ -138,26 +159,18 @@ BTranslationUtils::GetBitmap(uint32 type, int32 id, BTranslatorRoster *roster)
 		// Translate the data in memio using the BTranslatorRoster roster
 }
 
-// ---------------------------------------------------------------
-// GetBitmap
-//
-// Returns a BBitmap object for the bitmap resource identified by
-// the type type with the resource name, kName.
-// The user has to delete this object. Note that a resource type
-// and name does not uniquely identify a resource in a file.
-//
-// Preconditions:
-//
-// Parameters: type, the type of resource to be loaded
-//             kName, the name of the resource to be loaded
-//             roster, BTranslatorRoster used to do the translation
-//
-// Postconditions:
-//
-// Returns: NULL, if the resource couldn't be loaded or couldn't
-//                be translated to a BBitmap
-//          BBitmap * to the bitmap identified by type and kName
-// ---------------------------------------------------------------
+
+/**
+ * @brief Loads a bitmap from an application resource identified by type and name.
+ *
+ * Note that a type/name pair does not uniquely identify a resource — only
+ * the first match is used. The caller owns the returned object.
+ *
+ * @param type The resource type constant.
+ * @param kName The resource name string.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BBitmap, or NULL on failure.
+ */
 BBitmap *
 BTranslationUtils::GetBitmap(uint32 type, const char *kName,
 	BTranslatorRoster *roster)
@@ -182,23 +195,17 @@ BTranslationUtils::GetBitmap(uint32 type, const char *kName,
 		// Translate the data in memio using the BTranslatorRoster roster
 }
 
-// ---------------------------------------------------------------
-// GetBitmapFile
-//
-// Returns a BBitmap object for the bitmap file named kName.
-// The user has to delete this object.
-//
-// Preconditions:
-//
-// Parameters: kName, the name of the bitmap file
-//             roster, BTranslatorRoster used to do the translation
-//
-// Postconditions:
-//
-// Returns: NULL, if the file couldn't be opened or couldn't
-//                be translated to a BBitmap
-//          BBitmap * to the bitmap file named kName
-// ---------------------------------------------------------------
+
+/**
+ * @brief Loads a bitmap from a file on disk.
+ *
+ * Relative paths are resolved against the directory containing the
+ * application's executable. The caller owns the returned object.
+ *
+ * @param kName Path to the bitmap file (absolute or relative to the app).
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BBitmap, or NULL if the file cannot be opened or translated.
+ */
 BBitmap *
 BTranslationUtils::GetBitmapFile(const char *kName, BTranslatorRoster *roster)
 {
@@ -231,23 +238,16 @@ BTranslationUtils::GetBitmapFile(const char *kName, BTranslatorRoster *roster)
 		// Translate the data in memio using the BTranslatorRoster roster
 }
 
-// ---------------------------------------------------------------
-// GetBitmap
-//
-// Returns a BBitmap object for the bitmap file with the entry_ref
-// kRef. The user has to delete this object.
-//
-// Preconditions:
-//
-// Parameters: kRef, the entry_ref for the bitmap file
-//             roster, BTranslatorRoster used to do the translation
-//
-// Postconditions:
-//
-// Returns: NULL, if the file couldn't be opened or couldn't
-//                be translated to a BBitmap
-//          BBitmap * to the bitmap file referenced by kRef
-// ---------------------------------------------------------------
+
+/**
+ * @brief Loads a bitmap from the file identified by \a kRef.
+ *
+ * The caller owns the returned object.
+ *
+ * @param kRef Entry reference for the bitmap file.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BBitmap, or NULL on failure.
+ */
 BBitmap *
 BTranslationUtils::GetBitmap(const entry_ref *kRef, BTranslatorRoster *roster)
 {
@@ -259,24 +259,18 @@ BTranslationUtils::GetBitmap(const entry_ref *kRef, BTranslatorRoster *roster)
 		// Translate the data in bitmapFile using the BTranslatorRoster roster
 }
 
-// ---------------------------------------------------------------
-// GetBitmap
-//
-// Returns a BBitmap object from the BPositionIO *stream. The
-// user must delete the returned object. This GetBitmap function
-// is used by the other GetBitmap functions to do all of the
-// "real" work.
-//
-// Preconditions:
-//
-// Parameters: stream, the stream with bitmap data in it
-//             roster, BTranslatorRoster used to do the translation
-//
-// Postconditions:
-//
-// Returns: NULL, if the stream couldn't be translated to a BBitmap
-//          BBitmap * for the bitmap data from pio if successful
-// ---------------------------------------------------------------
+
+/**
+ * @brief Translates bitmap data from a BPositionIO stream into a BBitmap.
+ *
+ * This is the core GetBitmap() implementation used by all other overloads.
+ * It asks the roster to translate \a stream to B_TRANSLATOR_BITMAP format,
+ * then detaches and returns the resulting BBitmap. The caller owns the result.
+ *
+ * @param stream The stream containing the image data to translate.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BBitmap, or NULL if the stream cannot be translated.
+ */
 BBitmap *
 BTranslationUtils::GetBitmap(BPositionIO *stream, BTranslatorRoster *roster)
 {
@@ -307,23 +301,20 @@ BTranslationUtils::GetBitmap(BPositionIO *stream, BTranslatorRoster *roster)
 }
 
 
-/*!
-	This function translates the styled text in fromStream and
-	inserts it at the end of the text in intoView, using the
-	BTranslatorRoster *roster to do the translation. The structs
-	that make it possible to work with the translated data are
-	defined in
-	/boot/develop/headers/be/translation/TranslatorFormats.h
-
-	\param source the stream with the styled text
-	\param intoView the view where the test will be inserted
-		roster, BTranslatorRoster used to do the translation
-	\param the encoding to use, defaults to UTF-8
-
-	\return B_BAD_VALUE, if fromStream or intoView is NULL
-	\return B_ERROR, if any other error occurred
-	\return B_OK, if successful
-*/
+/**
+ * @brief Reads styled text from \a source and appends it to \a intoView.
+ *
+ * Translates \a source to B_STYLED_TEXT_FORMAT using the specified roster,
+ * then parses the STXT/TEXT/STYL record structure and inserts the text and
+ * run array at the end of \a intoView's existing content.
+ *
+ * @param source The stream containing the styled text data.
+ * @param intoView The BTextView to append the translated text into.
+ * @param encoding Optional encoding name (e.g. "UTF-8"); NULL means UTF-8.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return B_OK on success, B_BAD_VALUE if parameters are invalid, B_BAD_TYPE
+ *     if the stream header is not recognized, or another error code.
+ */
 status_t
 BTranslationUtils::GetStyledText(BPositionIO* source, BTextView* intoView,
 	const char* encoding, BTranslatorRoster* roster)
@@ -437,6 +428,16 @@ BTranslationUtils::GetStyledText(BPositionIO* source, BTextView* intoView,
 }
 
 
+/**
+ * @brief Reads styled text from \a source and appends it to \a intoView (UTF-8).
+ *
+ * Convenience overload that calls GetStyledText() with NULL encoding (UTF-8).
+ *
+ * @param source The stream containing the styled text data.
+ * @param intoView The BTextView to append the translated text into.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTranslationUtils::GetStyledText(BPositionIO* source, BTextView* intoView,
 	BTranslatorRoster* roster)
@@ -445,27 +446,21 @@ BTranslationUtils::GetStyledText(BPositionIO* source, BTextView* intoView,
 }
 
 
-/*!
-	This function takes styled text data from fromView and writes it to
-	intoStream.  The plain text data and styled text data are combined
-	when they are written to intoStream.  This is different than how
-	a save operation in StyledEdit works.  With StyledEdit, it writes
-	plain text data to the file, but puts the styled text data in
-	the "styles" attribute.  In other words, this function writes
-	styled text data to files in a manner that isn't human readable.
-
-	So, if you want to write styled text
-	data to a file, and you want it to behave the way StyledEdit does,
-	you want to use the BTranslationUtils::WriteStyledEditFile() function.
-
-	\param fromView, the view with the styled text in it
-	\param intoStream, the stream where the styled text is put
-		roster, not used
-
-	\return B_BAD_VALUE, if fromView or intoStream is NULL
-	\return B_ERROR, if anything else went wrong
-	\return B_NO_ERROR, if successful
-*/
+/**
+ * @brief Writes styled text from \a fromView into \a intoStream.
+ *
+ * Combines the plain text and style run array from \a fromView into a single
+ * B_STYLED_TEXT_FORMAT stream (STXT + TEXT + STYL record sequence). This
+ * produces a non-human-readable format; use WriteStyledEditFile() if you
+ * want StyledEdit-compatible output (plain text in the file, styles as an
+ * attribute).
+ *
+ * @param fromView The BTextView containing the styled text.
+ * @param intoStream The stream to write the encoded styled text data into.
+ * @param roster Not used; reserved for future use.
+ * @return B_OK on success, B_BAD_VALUE if parameters are NULL, or B_ERROR
+ *     if any write step fails.
+ */
 status_t
 BTranslationUtils::PutStyledText(BTextView *fromView, BPositionIO *intoStream,
 	BTranslatorRoster *roster)
@@ -595,26 +590,23 @@ BTranslationUtils::PutStyledText(BTextView *fromView, BPositionIO *intoStream,
 }
 
 
-/*!
-	\brief Writes the styled text data from \a view to the specified \a file.
-
-	This function is similar to PutStyledText() except that it
-	only writes styled text data to files and it puts the
-	plain text data in the file and stores the styled data as
-	the attribute "styles".
-
-	You can use PutStyledText() to write styled text data
-	to files, but it writes the data in a format that isn't
-	human readable.
-
-	\param view the view with the styled text
-	\param file the file where the styled text is written to
-	\param the encoding to use, defaults to UTF-8
-
-	\return B_BAD_VALUE, if either parameter is NULL
-		B_OK, if successful, and any possible file error
-		if writing failed.
-*/
+/**
+ * @brief Writes styled text from \a view to \a file in StyledEdit format.
+ *
+ * Writes the plain text content to the file body, then stores the style run
+ * array in the "styles" extended attribute and word-wrap / alignment settings
+ * in their respective attributes. If no MIME type is set, sets it to
+ * "text/plain". If an \a encoding is specified, the text is converted from
+ * UTF-8 before writing.
+ *
+ * Unlike PutStyledText(), the output is human-readable as a plain text file.
+ *
+ * @param view The BTextView containing the styled text.
+ * @param file The BFile to write the styled text into.
+ * @param encoding Optional target encoding name, or NULL for UTF-8.
+ * @return B_OK on success, B_BAD_VALUE if either parameter is NULL, or an
+ *     error code from file I/O.
+ */
 status_t
 BTranslationUtils::WriteStyledEditFile(BTextView* view, BFile* file, const char *encoding)
 {
@@ -738,6 +730,15 @@ BTranslationUtils::WriteStyledEditFile(BTextView* view, BFile* file, const char 
 }
 
 
+/**
+ * @brief Writes styled text from \a view to \a file in StyledEdit format (UTF-8).
+ *
+ * Convenience overload that calls WriteStyledEditFile() with NULL encoding.
+ *
+ * @param view The BTextView containing the styled text.
+ * @param file The BFile to write to.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BTranslationUtils::WriteStyledEditFile(BTextView* view, BFile* file)
 {
@@ -745,18 +746,17 @@ BTranslationUtils::WriteStyledEditFile(BTextView* view, BFile* file)
 }
 
 
-/*!
-	Each translator can have default settings, set by the
-	"translations" control panel. You can read these settings to
-	pass on to a translator using one of these functions.
-
-	\param forTranslator, the translator the settings are for
-		roster, the roster used to get the settings
-
-	\return BMessage of configuration data for forTranslator - you own
-		this message and have to free it when you're done with it.
-	\return NULL, if anything went wrong
-*/
+/**
+ * @brief Returns the default configuration settings for a translator.
+ *
+ * Retrieves the settings stored by the "Translations" control panel for the
+ * translator identified by \a forTranslator. The caller owns the returned
+ * BMessage and must delete it.
+ *
+ * @param forTranslator The translator_id whose settings to retrieve.
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return A new BMessage with the settings, or NULL on failure.
+ */
 BMessage *
 BTranslationUtils::GetDefaultSettings(translator_id forTranslator,
 	BTranslatorRoster *roster)
@@ -784,25 +784,17 @@ BTranslationUtils::GetDefaultSettings(translator_id forTranslator,
 }
 
 
-// ---------------------------------------------------------------
-// GetDefaultSettings
-//
-// Attempts to find the translator settings for
-// the translator named kTranslatorName with a version of
-// translatorVersion.
-//
-// Preconditions:
-//
-// Parameters: kTranslatorName, the name of the translator
-//                              the settings are for
-//             translatorVersion, the version of the translator
-//                                to retrieve
-//
-// Postconditions:
-//
-// Returns: NULL, if anything went wrong
-//          BMessage * of configuration data for kTranslatorName
-// ---------------------------------------------------------------
+/**
+ * @brief Returns the default settings for a translator identified by name and version.
+ *
+ * Scans all translators in the default roster and returns the settings for
+ * the first one matching both \a kTranslatorName and \a translatorVersion.
+ * The caller owns the returned BMessage and must delete it.
+ *
+ * @param kTranslatorName The exact name string of the translator.
+ * @param translatorVersion The exact version number of the translator.
+ * @return A new BMessage with the settings, or NULL on failure or if not found.
+ */
 BMessage *
 BTranslationUtils::GetDefaultSettings(const char *kTranslatorName,
 	int32 translatorVersion)
@@ -838,41 +830,25 @@ BTranslationUtils::GetDefaultSettings(const char *kTranslatorName,
 }
 
 
-// ---------------------------------------------------------------
-// AddTranslationItems
-//
-// Envious of that "Save As" menu in ShowImage? Well, you can have your own!
-// AddTranslationItems will add menu items for all translations from the
-// basic format you specify (B_TRANSLATOR_BITMAP, B_TRANSLATOR_TEXT etc).
-// The translator ID and format constant chosen will be added to the message
-// that is sent to you when the menu item is selected.
-//
-// The following code is a modified version of code
-// written by Jon Watte from
-// http://www.b500.com/bepage/TranslationKit2.html
-//
-// Preconditions:
-//
-// Parameters: intoMenu, the menu where the entries are created
-//             fromType, the type of translators to put on
-//                       intoMenu
-//             kModel, the BMessage model for creating the menu
-//                     if NULL, B_TRANSLATION_MENU is used
-//             kTranslationIdName, the name used for
-//                                 translator_id in the menuitem,
-//                                 if NULL, be:translator is used
-//             kTranslatorTypeName, the name used for
-//                                  output format id in the menuitem
-//             roster, BTranslatorRoster used to find translators
-//                     if NULL, the default translators are used
-//
-//
-// Postconditions:
-//
-// Returns: B_BAD_VALUE, if intoMenu is NULL
-//          B_OK, if successful
-//          error value if not successful
-// ---------------------------------------------------------------
+/**
+ * @brief Populates a BMenu with one item per translator output format.
+ *
+ * For each translator that accepts \a fromType as input, adds a BMenuItem for
+ * every output format it supports (excluding \a fromType itself). Menu items
+ * carry the translator_id and output format type in their BMessage. Items are
+ * sorted alphabetically by format name.
+ *
+ * @param intoMenu The menu to add items to.
+ * @param fromType The source data type (e.g. B_TRANSLATOR_BITMAP).
+ * @param kModel BMessage template for item messages, or NULL for
+ *     B_TRANSLATION_MENU.
+ * @param kTranslatorIdName Key name for the translator_id field in the item
+ *     message, or NULL for "be:translator".
+ * @param kTranslatorTypeName Key name for the output format field in the item
+ *     message, or NULL for "be:type".
+ * @param roster The translator roster to use, or NULL for the default.
+ * @return B_OK on success, or B_BAD_VALUE if \a intoMenu is NULL.
+ */
 status_t
 BTranslationUtils::AddTranslationItems(BMenu *intoMenu, uint32 fromType,
 	const BMessage *kModel, const char *kTranslatorIdName,
@@ -951,6 +927,16 @@ BTranslationUtils::AddTranslationItems(BMenu *intoMenu, uint32 fromType,
 }
 
 
+/**
+ * @brief Allocates and fills a translator_info from a translator_id and format.
+ *
+ * Used internally by AddTranslationItems() to build sortable info objects.
+ * The caller is responsible for deleting the returned object.
+ *
+ * @param id The translator_id to record.
+ * @param format The output translation_format to record.
+ * @return A new heap-allocated translator_info.
+ */
 translator_info*
 BTranslationUtils::_BuildTranslatorInfo(const translator_id id, const translation_format* format)
 {
@@ -969,6 +955,16 @@ BTranslationUtils::_BuildTranslatorInfo(const translator_id id, const translatio
 }
 
 
+/**
+ * @brief Comparison function for sorting translator_info objects by name.
+ *
+ * Used by AddTranslationItems() to sort the output format list alphabetically
+ * (case-insensitive) before adding menu items.
+ *
+ * @param info1 First translator_info to compare.
+ * @param info2 Second translator_info to compare.
+ * @return Negative if info1 < info2, zero if equal, positive if info1 > info2.
+ */
 int
 BTranslationUtils::_CompareTranslatorInfoByName(const translator_info* info1, const translator_info* info2)
 {
