@@ -1334,7 +1334,6 @@ LockedDesktopSettings::SetDefaultPlainFont(const ServerFont &font)
 }
 
 
-void
 /** @brief Sets the default bold font and broadcasts the change to all windows.
  *
  * @param font The new default bold ServerFont.
