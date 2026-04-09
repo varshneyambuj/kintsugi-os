@@ -1,9 +1,42 @@
 /*
- * Copyright 2002-2012 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christopher ML Zumwalt May (zummy@users.sf.net)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2012 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christopher ML Zumwalt May (zummy@users.sf.net)
+ */
+
+
+/**
+ * @file GameSound.cpp
+ * @brief Abstract base class for all Game Kit sound objects
+ *
+ * Implements BGameSound, which provides the common interface for gain and pan
+ * control, playback start/stop, and attribute get/set. All concrete sound
+ * classes (BSimpleGameSound, BFileGameSound, BStreamingGameSound, etc.) derive
+ * from this class. Each instance acquires a reference to the shared
+ * BGameSoundDevice singleton on construction and releases it on destruction.
+ *
+ * @see GameSoundDevice.cpp, SimpleGameSound.cpp, FileGameSound.cpp
  */
 
 
@@ -19,9 +52,15 @@
 using std::nothrow;
 
 
-// Local Defines ---------------------------------------------------------------
-
-// BGameSound class ------------------------------------------------------------
+/**
+ * @brief Constructs a BGameSound using the default (or provided) device.
+ *
+ * The \a device parameter is currently ignored; the BeBook documents that
+ * BGameSoundDevice must always be NULL. The shared default device is acquired
+ * automatically.
+ *
+ * @param device Unused; pass NULL.
+ */
 BGameSound::BGameSound(BGameSoundDevice *device)
 	:
 	fSound(-1)
@@ -34,6 +73,10 @@ BGameSound::BGameSound(BGameSoundDevice *device)
 }
 
 
+/**
+ * @brief Copy constructor. Shares the same default device as \a other.
+ * @param other The BGameSound to copy format information from.
+ */
 BGameSound::BGameSound(const BGameSound &other)
 	:
 	fSound(-1)
@@ -46,6 +89,9 @@ BGameSound::BGameSound(const BGameSound &other)
 }
 
 
+/**
+ * @brief Destroys the BGameSound, releasing the sound buffer and the device reference.
+ */
 BGameSound::~BGameSound()
 {
 	if (fSound >= 0)
@@ -55,6 +101,10 @@ BGameSound::~BGameSound()
 }
 
 
+/**
+ * @brief Returns the initialization status of this sound object.
+ * @return B_OK if the device is available, or an error code on failure.
+ */
 status_t
 BGameSound::InitCheck() const
 {
@@ -62,6 +112,14 @@ BGameSound::InitCheck() const
 }
 
 
+/**
+ * @brief Returns the game sound device used by this object.
+ *
+ * @note Per the BeBook specification, this should return NULL when the default
+ *     device is in use, but the current implementation returns the device pointer.
+ *
+ * @return Pointer to the BGameSoundDevice, or NULL if no device is set.
+ */
 BGameSoundDevice *
 BGameSound::Device() const
 {
@@ -70,6 +128,14 @@ BGameSound::Device() const
 }
 
 
+/**
+ * @brief Returns the sound buffer ID assigned to this sound.
+ *
+ * @note Should be 0 if no sound has been selected, but is currently
+ *     initialized to -1 in the constructors.
+ *
+ * @return The \c gs_id handle, or -1 if not yet initialized.
+ */
 gs_id
 BGameSound::ID() const
 {
@@ -79,6 +145,10 @@ BGameSound::ID() const
 }
 
 
+/**
+ * @brief Returns the audio format descriptor for this sound.
+ * @return A const reference to the \c gs_audio_format of the sound buffer.
+ */
 const gs_audio_format &
 BGameSound::Format() const
 {
@@ -86,6 +156,10 @@ BGameSound::Format() const
 }
 
 
+/**
+ * @brief Starts playback of the sound.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BGameSound::StartPlaying()
 {
@@ -94,6 +168,10 @@ BGameSound::StartPlaying()
 }
 
 
+/**
+ * @brief Returns whether the sound is currently playing.
+ * @return \c true if the sound is actively playing.
+ */
 bool
 BGameSound::IsPlaying()
 {
@@ -101,6 +179,10 @@ BGameSound::IsPlaying()
 }
 
 
+/**
+ * @brief Stops playback of the sound.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BGameSound::StopPlaying()
 {
@@ -109,6 +191,13 @@ BGameSound::StopPlaying()
 }
 
 
+/**
+ * @brief Sets the playback gain (volume) of the sound.
+ *
+ * @param gain     Target gain in the range [0.0, 1.0].
+ * @param duration Ramp duration in microseconds (0 for immediate change).
+ * @return B_OK on success, or an error code if the attribute cannot be set.
+ */
 status_t
 BGameSound::SetGain(float gain, bigtime_t duration)
 {
@@ -123,6 +212,13 @@ BGameSound::SetGain(float gain, bigtime_t duration)
 }
 
 
+/**
+ * @brief Sets the stereo pan position of the sound.
+ *
+ * @param pan      Pan position in the range [-1.0 (full left), 1.0 (full right)].
+ * @param duration Ramp duration in microseconds (0 for immediate change).
+ * @return B_OK on success, or an error code if the attribute cannot be set.
+ */
 status_t
 BGameSound::SetPan(float pan, bigtime_t duration)
 {
@@ -137,6 +233,10 @@ BGameSound::SetPan(float pan, bigtime_t duration)
 }
 
 
+/**
+ * @brief Returns the current gain (volume) of the sound.
+ * @return The current gain value, or 0.0 on error.
+ */
 float
 BGameSound::Gain()
 {
@@ -152,6 +252,10 @@ BGameSound::Gain()
 }
 
 
+/**
+ * @brief Returns the current stereo pan position of the sound.
+ * @return The current pan value in [-1.0, 1.0], or 0.0 on error.
+ */
 float
 BGameSound::Pan()
 {
@@ -167,6 +271,12 @@ BGameSound::Pan()
 }
 
 
+/**
+ * @brief Sets multiple sound attributes at once.
+ * @param inAttributes     Array of \c gs_attribute structs describing the changes.
+ * @param inAttributeCount Number of elements in \a inAttributes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BGameSound::SetAttributes(gs_attribute *inAttributes, size_t inAttributeCount)
 {
@@ -174,6 +284,12 @@ BGameSound::SetAttributes(gs_attribute *inAttributes, size_t inAttributeCount)
 }
 
 
+/**
+ * @brief Retrieves multiple sound attributes at once.
+ * @param outAttributes    Array of \c gs_attribute structs to fill.
+ * @param inAttributeCount Number of elements in \a outAttributes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BGameSound::GetAttributes(gs_attribute *outAttributes, size_t inAttributeCount)
 {
@@ -181,14 +297,18 @@ BGameSound::GetAttributes(gs_attribute *outAttributes, size_t inAttributeCount)
 }
 
 
+/**
+ * @brief Extension hook for subclasses (not currently implemented).
+ * @return B_ERROR always.
+ */
 status_t
-BGameSound::Perform(int32 selector,
-					void *data)
+BGameSound::Perform(int32 selector, void *data)
 {
 	return B_ERROR;
 }
 
 
+/** @brief Custom operator new — delegates to the global allocator. */
 void *
 BGameSound::operator new(size_t size)
 {
@@ -196,6 +316,7 @@ BGameSound::operator new(size_t size)
 }
 
 
+/** @brief Non-throwing operator new — delegates to the global nothrow allocator. */
 void *
 BGameSound::operator new(size_t size, const std::nothrow_t &nt) throw()
 {
@@ -203,6 +324,7 @@ BGameSound::operator new(size_t size, const std::nothrow_t &nt) throw()
 }
 
 
+/** @brief Custom operator delete — delegates to the global deallocator. */
 void
 BGameSound::operator delete(void *ptr)
 {
@@ -211,7 +333,7 @@ BGameSound::operator delete(void *ptr)
 
 
 #if !__MWERKS__
-//	there's a bug in MWCC under R4.1 and earlier
+/** @brief Non-throwing operator delete — delegates to the global nothrow deallocator. */
 void
 BGameSound::operator delete(void *ptr, const std::nothrow_t &nt) throw()
 {
@@ -220,6 +342,10 @@ BGameSound::operator delete(void *ptr, const std::nothrow_t &nt) throw()
 #endif
 
 
+/**
+ * @brief Sets the size of the memory pool used for sound data (stub).
+ * @return B_ERROR — not implemented.
+ */
 status_t
 BGameSound::SetMemoryPoolSize(size_t in_poolSize)
 {
@@ -227,6 +353,10 @@ BGameSound::SetMemoryPoolSize(size_t in_poolSize)
 }
 
 
+/**
+ * @brief Locks the memory pool into physical RAM (stub).
+ * @return B_ERROR — not implemented.
+ */
 status_t
 BGameSound::LockMemoryPool(bool in_lockInCore)
 {
@@ -234,6 +364,11 @@ BGameSound::LockMemoryPool(bool in_lockInCore)
 }
 
 
+/**
+ * @brief Sets the maximum simultaneous sound count (stub; returns the requested count).
+ * @param in_maxCount The desired maximum sound count.
+ * @return The value of \a in_maxCount unchanged.
+ */
 int32
 BGameSound::SetMaxSoundCount(int32 in_maxCount)
 {
@@ -241,6 +376,11 @@ BGameSound::SetMaxSoundCount(int32 in_maxCount)
 }
 
 
+/**
+ * @brief Sets the initialization error code (for use by subclasses during Init()).
+ * @param in_initError The error code to record.
+ * @return B_OK always.
+ */
 status_t
 BGameSound::SetInitError(status_t in_initError)
 {
@@ -249,6 +389,15 @@ BGameSound::SetInitError(status_t in_initError)
 }
 
 
+/**
+ * @brief Records the sound buffer handle assigned by the device.
+ *
+ * Called by subclasses after successfully creating a buffer via
+ * BGameSoundDevice::CreateBuffer(). Has no effect if a handle is already set.
+ *
+ * @param handle The \c gs_id returned by the device.
+ * @return B_OK always.
+ */
 status_t
 BGameSound::Init(gs_id handle)
 {
@@ -259,360 +408,54 @@ BGameSound::Init(gs_id handle)
 }
 
 
-#if 0
-BGameSound &
-BGameSound::operator=(const BGameSound &other)
-{
-	if (fSound)
-		fDevice->ReleaseBuffer(fSound);
-
-	fSound = other.fSound;
-	fInitError = other.fInitError;
-
-	// TODO: This would need to acquire the sound another time!
-
-	return this;
-}
-#endif
-
-
-/* unimplemented for protection of the user:
- *
- * BGameSound::BGameSound()
- */
-
-
-status_t
-BGameSound::_Reserved_BGameSound_0(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_1(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_2(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_3(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_4(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_5(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_6(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_7(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_8(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_9(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_10(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_11(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_12(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_13(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_14(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_15(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_16(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_17(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_18(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_19(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_20(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_21(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_22(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_23(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_24(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_25(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_26(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_27(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_28(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_29(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_30(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_31(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_32(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_33(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_34(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_35(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_36(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_37(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_38(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_39(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_40(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_41(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_42(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_43(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_44(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_45(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_46(int32 arg, ...)
-{
-	return B_ERROR;
-}
-
-
-status_t
-BGameSound::_Reserved_BGameSound_47(int32 arg, ...)
-{
-	return B_ERROR;
-}
+//	#pragma mark - FBC protection
+
+
+status_t BGameSound::_Reserved_BGameSound_0(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_1(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_2(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_3(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_4(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_5(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_6(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_7(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_8(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_9(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_10(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_11(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_12(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_13(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_14(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_15(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_16(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_17(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_18(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_19(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_20(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_21(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_22(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_23(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_24(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_25(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_26(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_27(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_28(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_29(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_30(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_31(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_32(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_33(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_34(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_35(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_36(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_37(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_38(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_39(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_40(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_41(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_42(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_43(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_44(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_45(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_46(int32 arg, ...) { return B_ERROR; }
+status_t BGameSound::_Reserved_BGameSound_47(int32 arg, ...) { return B_ERROR; }

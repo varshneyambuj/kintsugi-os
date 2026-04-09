@@ -1,10 +1,39 @@
 /*
- * Copyright 2003-2009 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini <stefano.ceccherini@gmail.com>
- *		Carwyn Jones <turok2@currantbun.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini <stefano.ceccherini@gmail.com>
+ *       Carwyn Jones <turok2@currantbun.com>
+ */
+
+/** @file DirectWindow.cpp
+ *  @brief Implements BDirectWindow, a BWindow subclass that grants
+ *         applications direct, low-latency access to the framebuffer.
+ *
+ *  The implementation negotiates sync semaphores with the app_server via
+ *  AS_DIRECT_WINDOW_GET_SYNC_DATA, clones the shared direct_buffer_info
+ *  area, and runs a private daemon thread (_DirectDaemon) that waits on
+ *  fDisableSem and dispatches DirectConnected() notifications.
  */
 
 
@@ -32,16 +61,29 @@
 // doesn't access critical shared data.
 #define DW_NEEDS_LOCKING 0
 
+/** @brief Bitmask flags tracking which sub-resources have been successfully
+ *         initialised by _InitData().
+ *
+ *  Used so that _DisposeData() can tear down only the resources that were
+ *  actually created, even when initialisation failed partway through.
+ */
 enum dw_status_bits {
-	DW_STATUS_AREA_CLONED	 = 0x1,
-	DW_STATUS_THREAD_STARTED = 0x2,
-	DW_STATUS_SEM_CREATED	 = 0x4
+	DW_STATUS_AREA_CLONED	 = 0x1,  ///< fClonedDirectArea has been cloned successfully.
+	DW_STATUS_THREAD_STARTED = 0x2,  ///< The direct daemon thread has been started.
+	DW_STATUS_SEM_CREATED	 = 0x4   ///< fDirectSem has been created (DW_NEEDS_LOCKING only).
 };
 
 
 #if DEBUG
 
 
+/** @brief Prints the human-readable name of a direct_buffer_state value to
+ *         the configured OUTPUT macro.
+ *
+ *  Only compiled when the DEBUG macro is non-zero.
+ *
+ *  @param state The direct_buffer_state value to decode and print.
+ */
 static void
 print_direct_buffer_state(const direct_buffer_state &state)
 {
@@ -67,6 +109,13 @@ print_direct_buffer_state(const direct_buffer_state &state)
 }
 
 
+/** @brief Prints the human-readable name of a direct_driver_state value.
+ *
+ *  Only compiled when the DEBUG macro is non-zero.  Returns immediately
+ *  if @p state is zero (no driver event to report).
+ *
+ *  @param state The direct_driver_state value to decode and print.
+ */
 static void
 print_direct_driver_state(const direct_driver_state &state)
 {
@@ -86,6 +135,12 @@ print_direct_driver_state(const direct_driver_state &state)
 #if DEBUG > 1
 
 
+/** @brief Prints the human-readable name of a buffer_layout value.
+ *
+ *  Only compiled when DEBUG > 1.
+ *
+ *  @param layout The buffer_layout value to decode and print.
+ */
 static void
 print_direct_buffer_layout(const buffer_layout &layout)
 {
@@ -99,6 +154,12 @@ print_direct_buffer_layout(const buffer_layout &layout)
 }
 
 
+/** @brief Prints the human-readable name of a buffer_orientation value.
+ *
+ *  Only compiled when DEBUG > 1.
+ *
+ *  @param orientation The buffer_orientation value to decode and print.
+ */
 static void
 print_direct_buffer_orientation(const buffer_orientation &orientation)
 {
@@ -122,6 +183,16 @@ print_direct_buffer_orientation(const buffer_orientation &orientation)
 #endif	// DEBUG > 2
 
 
+/** @brief Dumps a full direct_buffer_info structure to the debug output.
+ *
+ *  Calls print_direct_buffer_state() and print_direct_driver_state() at
+ *  all debug levels, and additionally dumps the pixel format, layout,
+ *  orientation, and clipping rectangles at higher debug levels.
+ *
+ *  Only compiled when the DEBUG macro is non-zero.
+ *
+ *  @param info The direct_buffer_info to print.
+ */
 static void
 print_direct_buffer_info(const direct_buffer_info &info)
 {
@@ -165,6 +236,17 @@ print_direct_buffer_info(const direct_buffer_info &info)
 //	#pragma mark -
 
 
+/** @brief Constructs a BDirectWindow using a window_type shorthand.
+ *
+ *  Delegates window creation to BWindow and then calls _InitData() to
+ *  negotiate sync data with the app_server and start the daemon thread.
+ *
+ *  @param frame      Initial frame rectangle for the window.
+ *  @param title      Window title string.
+ *  @param type       Shorthand window type (e.g. B_TITLED_WINDOW).
+ *  @param flags      Window behaviour flags.
+ *  @param workspace  Bitmask of workspaces in which the window appears.
+ */
 BDirectWindow::BDirectWindow(BRect frame, const char* title, window_type type,
 		uint32 flags, uint32 workspace)
 	:
@@ -174,6 +256,19 @@ BDirectWindow::BDirectWindow(BRect frame, const char* title, window_type type,
 }
 
 
+/** @brief Constructs a BDirectWindow using explicit window_look and
+ *         window_feel values.
+ *
+ *  Delegates window creation to BWindow and then calls _InitData() to
+ *  negotiate sync data with the app_server and start the daemon thread.
+ *
+ *  @param frame      Initial frame rectangle for the window.
+ *  @param title      Window title string.
+ *  @param look       Decorative appearance of the window.
+ *  @param feel       Behavioural feel of the window.
+ *  @param flags      Window behaviour flags.
+ *  @param workspace  Bitmask of workspaces in which the window appears.
+ */
 BDirectWindow::BDirectWindow(BRect frame, const char* title, window_look look,
 		window_feel feel, uint32 flags, uint32 workspace)
 	:
@@ -183,6 +278,13 @@ BDirectWindow::BDirectWindow(BRect frame, const char* title, window_look look,
 }
 
 
+/** @brief Destroys the BDirectWindow and releases all direct-access
+ *         resources.
+ *
+ *  Calls _DisposeData() which waits for any active DirectConnected()
+ *  session to terminate, signals the daemon thread to exit, and frees
+ *  the cloned shared-memory area.
+ */
 BDirectWindow::~BDirectWindow()
 {
 	_DisposeData();
@@ -192,6 +294,11 @@ BDirectWindow::~BDirectWindow()
 //	#pragma mark - BWindow API implementation
 
 
+/** @brief Factory method for BArchivable — not supported by BDirectWindow.
+ *
+ *  @param data  Archive message (unused).
+ *  @return Always returns NULL.
+ */
 BArchivable*
 BDirectWindow::Instantiate(BMessage* data)
 {
@@ -199,6 +306,14 @@ BDirectWindow::Instantiate(BMessage* data)
 }
 
 
+/** @brief Archives the window into a BMessage.
+ *
+ *  Delegates entirely to BWindow::Archive().
+ *
+ *  @param data  Destination archive message.
+ *  @param deep  If true, child views are also archived.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BDirectWindow::Archive(BMessage* data, bool deep) const
 {
@@ -206,6 +321,10 @@ BDirectWindow::Archive(BMessage* data, bool deep) const
 }
 
 
+/** @brief Quits the window.
+ *
+ *  Delegates to BWindow::Quit().
+ */
 void
 BDirectWindow::Quit()
 {
@@ -213,6 +332,13 @@ BDirectWindow::Quit()
 }
 
 
+/** @brief Dispatches an incoming BMessage to the appropriate handler.
+ *
+ *  Delegates to BWindow::DispatchMessage().
+ *
+ *  @param message  The message to dispatch.
+ *  @param handler  The handler that should receive the message.
+ */
 void
 BDirectWindow::DispatchMessage(BMessage* message, BHandler* handler)
 {
@@ -220,6 +346,12 @@ BDirectWindow::DispatchMessage(BMessage* message, BHandler* handler)
 }
 
 
+/** @brief Handles messages not dealt with by the standard dispatch path.
+ *
+ *  Delegates to BWindow::MessageReceived().
+ *
+ *  @param message  The unhandled message.
+ */
 void
 BDirectWindow::MessageReceived(BMessage* message)
 {
@@ -227,6 +359,12 @@ BDirectWindow::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Called when the window's origin changes.
+ *
+ *  Delegates to BWindow::FrameMoved().
+ *
+ *  @param newPosition  The window's new top-left screen coordinate.
+ */
 void
 BDirectWindow::FrameMoved(BPoint newPosition)
 {
@@ -234,6 +372,13 @@ BDirectWindow::FrameMoved(BPoint newPosition)
 }
 
 
+/** @brief Called when the set of active workspaces changes.
+ *
+ *  Delegates to BWindow::WorkspacesChanged().
+ *
+ *  @param oldWorkspaces  Bitmask of previously active workspaces.
+ *  @param newWorkspaces  Bitmask of newly active workspaces.
+ */
 void
 BDirectWindow::WorkspacesChanged(uint32 oldWorkspaces, uint32 newWorkspaces)
 {
@@ -241,6 +386,13 @@ BDirectWindow::WorkspacesChanged(uint32 oldWorkspaces, uint32 newWorkspaces)
 }
 
 
+/** @brief Called when the current workspace is activated or deactivated.
+ *
+ *  Delegates to BWindow::WorkspaceActivated().
+ *
+ *  @param index  Zero-based index of the workspace that changed.
+ *  @param state  true if the workspace became active, false otherwise.
+ */
 void
 BDirectWindow::WorkspaceActivated(int32 index, bool state)
 {
@@ -248,6 +400,13 @@ BDirectWindow::WorkspaceActivated(int32 index, bool state)
 }
 
 
+/** @brief Called when the window is resized.
+ *
+ *  Delegates to BWindow::FrameResized().
+ *
+ *  @param newWidth   New width of the window content area.
+ *  @param newHeight  New height of the window content area.
+ */
 void
 BDirectWindow::FrameResized(float newWidth, float newHeight)
 {
@@ -255,6 +414,12 @@ BDirectWindow::FrameResized(float newWidth, float newHeight)
 }
 
 
+/** @brief Minimises or restores the window.
+ *
+ *  Delegates to BWindow::Minimize().
+ *
+ *  @param minimize  true to minimise, false to restore.
+ */
 void
 BDirectWindow::Minimize(bool minimize)
 {
@@ -262,6 +427,14 @@ BDirectWindow::Minimize(bool minimize)
 }
 
 
+/** @brief Zooms the window to its ideal size or back to the user size.
+ *
+ *  Delegates to BWindow::Zoom().
+ *
+ *  @param recPosition  Recommended position after zooming.
+ *  @param recWidth     Recommended width after zooming.
+ *  @param recHeight    Recommended height after zooming.
+ */
 void
 BDirectWindow::Zoom(BPoint recPosition, float recWidth, float recHeight)
 {
@@ -269,6 +442,13 @@ BDirectWindow::Zoom(BPoint recPosition, float recWidth, float recHeight)
 }
 
 
+/** @brief Called when the display resolution or colour depth changes.
+ *
+ *  Delegates to BWindow::ScreenChanged().
+ *
+ *  @param screenFrame  New frame of the screen.
+ *  @param depth        New colour space of the screen.
+ */
 void
 BDirectWindow::ScreenChanged(BRect screenFrame, color_space depth)
 {
@@ -276,6 +456,10 @@ BDirectWindow::ScreenChanged(BRect screenFrame, color_space depth)
 }
 
 
+/** @brief Called just before a menu attached to this window is shown.
+ *
+ *  Delegates to BWindow::MenusBeginning().
+ */
 void
 BDirectWindow::MenusBeginning()
 {
@@ -283,6 +467,10 @@ BDirectWindow::MenusBeginning()
 }
 
 
+/** @brief Called just after the last menu attached to this window closes.
+ *
+ *  Delegates to BWindow::MenusEnded().
+ */
 void
 BDirectWindow::MenusEnded()
 {
@@ -290,6 +478,12 @@ BDirectWindow::MenusEnded()
 }
 
 
+/** @brief Called when the window gains or loses keyboard focus.
+ *
+ *  Delegates to BWindow::WindowActivated().
+ *
+ *  @param state  true if the window became active, false if it lost focus.
+ */
 void
 BDirectWindow::WindowActivated(bool state)
 {
@@ -297,6 +491,10 @@ BDirectWindow::WindowActivated(bool state)
 }
 
 
+/** @brief Makes the window visible on screen.
+ *
+ *  Delegates to BWindow::Show().
+ */
 void
 BDirectWindow::Show()
 {
@@ -304,6 +502,10 @@ BDirectWindow::Show()
 }
 
 
+/** @brief Hides the window from screen.
+ *
+ *  Delegates to BWindow::Hide().
+ */
 void
 BDirectWindow::Hide()
 {
@@ -311,6 +513,17 @@ BDirectWindow::Hide()
 }
 
 
+/** @brief Resolves a scripting specifier to the appropriate BHandler.
+ *
+ *  Delegates to BWindow::ResolveSpecifier().
+ *
+ *  @param message    The scripting message.
+ *  @param index      Index of the specifier within the message.
+ *  @param specifier  The specifier sub-message.
+ *  @param what       The specifier type constant.
+ *  @param property   Name of the property being scripted.
+ *  @return The BHandler that should handle the scripting request.
+ */
 BHandler*
 BDirectWindow::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 what, const char* property)
@@ -320,6 +533,13 @@ BDirectWindow::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/** @brief Fills @p data with the scripting suites supported by this window.
+ *
+ *  Delegates to BWindow::GetSupportedSuites().
+ *
+ *  @param data  Message into which suite information is written.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BDirectWindow::GetSupportedSuites(BMessage* data)
 {
@@ -327,6 +547,14 @@ BDirectWindow::GetSupportedSuites(BMessage* data)
 }
 
 
+/** @brief Executes a private perform_code action.
+ *
+ *  Delegates to BWindow::Perform().
+ *
+ *  @param d    Perform code identifying the requested action.
+ *  @param arg  Opaque argument whose meaning depends on @p d.
+ *  @return Result of the underlying BWindow::Perform() call.
+ */
 status_t
 BDirectWindow::Perform(perform_code d, void* arg)
 {
@@ -334,6 +562,10 @@ BDirectWindow::Perform(perform_code d, void* arg)
 }
 
 
+/** @brief Runs the window's main message loop.
+ *
+ *  Delegates to BWindow::task_looper().
+ */
 void
 BDirectWindow::task_looper()
 {
@@ -341,6 +573,14 @@ BDirectWindow::task_looper()
 }
 
 
+/** @brief Converts a raw message buffer into a BMessage.
+ *
+ *  Delegates to BWindow::ConvertToMessage().
+ *
+ *  @param raw   Pointer to the raw message buffer.
+ *  @param code  Protocol opcode identifying the message type.
+ *  @return Newly allocated BMessage, or NULL on failure.
+ */
 BMessage*
 BDirectWindow::ConvertToMessage(void* raw, int32 code)
 {
@@ -351,6 +591,15 @@ BDirectWindow::ConvertToMessage(void* raw, int32 code)
 //	#pragma mark - BDirectWindow specific API
 
 
+/** @brief Called by the daemon thread each time the app_server signals a
+ *         direct-buffer connection event.
+ *
+ *  Subclasses override this method to react to framebuffer start, modify,
+ *  and stop notifications.  The default implementation is a no-op.
+ *
+ *  @param info  Pointer to the shared direct_buffer_info describing the
+ *               current framebuffer state and clipping region.
+ */
 void
 BDirectWindow::DirectConnected(direct_buffer_info* info)
 {
@@ -358,6 +607,25 @@ BDirectWindow::DirectConnected(direct_buffer_info* info)
 }
 
 
+/** @brief Copies the current window clipping region into @p region.
+ *
+ *  Must only be called from within DirectConnected().  Uses BRegion's
+ *  private _SetSize() / fData API to bulk-copy clip_list rectangles from
+ *  the shared direct_buffer_info without individually calling Include().
+ *  If @p origin is non-NULL, the resulting region is offset by the
+ *  negated origin coordinates (integer-truncated from float).
+ *
+ *  @param region  Output BRegion to populate.  Must not be NULL.
+ *  @param origin  Optional offset applied to the clip region; pass NULL
+ *                 to leave the region in screen coordinates.
+ *  @return B_OK on success.
+ *  @return B_BAD_VALUE if @p region is NULL.
+ *  @return B_ERROR if the window is already locked by the calling thread,
+ *          if _LockDirect() fails, or if the call is made outside of a
+ *          DirectConnected() context.
+ *  @return B_NO_MEMORY if the BRegion cannot be resized to hold all
+ *          clipping rectangles.
+ */
 status_t
 BDirectWindow::GetClippingRegion(BRegion* region, BPoint* origin) const
 {
@@ -410,6 +678,15 @@ BDirectWindow::GetClippingRegion(BRegion* region, BPoint* origin) const
 }
 
 
+/** @brief Requests that the window enter or leave fullscreen mode.
+ *
+ *  Sends AS_DIRECT_WINDOW_SET_FULLSCREEN to the app_server and updates
+ *  fIsFullScreen only when the server confirms success.  Returns B_OK
+ *  immediately if the window is already in the requested state.
+ *
+ *  @param enable  true to enable fullscreen mode, false to disable it.
+ *  @return B_OK on success, or an error code from the app_server.
+ */
 status_t
 BDirectWindow::SetFullScreen(bool enable)
 {
@@ -431,6 +708,10 @@ BDirectWindow::SetFullScreen(bool enable)
 }
 
 
+/** @brief Returns whether this window is currently in fullscreen mode.
+ *
+ *  @return true if the window occupies the entire screen, false otherwise.
+ */
 bool
 BDirectWindow::IsFullScreen() const
 {
@@ -438,6 +719,15 @@ BDirectWindow::IsFullScreen() const
 }
 
 
+/** @brief Queries whether the display hardware supports windowed direct
+ *         access for the given screen.
+ *
+ *  Retrieves the current display_mode for @p id and tests for the
+ *  B_PARALLEL_ACCESS flag.  Returns false if GetMode() fails.
+ *
+ *  @param id  Identifier of the screen to query.
+ *  @return true if B_PARALLEL_ACCESS is set in the display mode flags.
+ */
 /*static*/ bool
 BDirectWindow::SupportsWindowMode(screen_id id)
 {
@@ -453,6 +743,13 @@ BDirectWindow::SupportsWindowMode(screen_id id)
 //	#pragma mark - Private methods
 
 
+/** @brief Static thread entry point for the direct daemon.
+ *
+ *  Casts @p arg to BDirectWindow* and tail-calls _DirectDaemon().
+ *
+ *  @param arg  Pointer to the owning BDirectWindow instance.
+ *  @return Exit status of _DirectDaemon().
+ */
 /*static*/ int32
 BDirectWindow::_daemon_thread(void* arg)
 {
@@ -460,6 +757,22 @@ BDirectWindow::_daemon_thread(void* arg)
 }
 
 
+/** @brief Main loop of the direct-buffer daemon thread.
+ *
+ *  Blocks on fDisableSem, which the app_server releases each time the
+ *  window's direct-buffer connection state changes (move, resize, clip
+ *  region update, etc.).  On each wakeup the daemon:
+ *   -# Acquires the direct lock via _LockDirect().
+ *   -# Re-maps the bits area from the ServerMemoryAllocator if fBufferDesc->bits
+ *      is NULL (area was swapped out or re-created by the server).
+ *   -# Sets fInDirectConnected and calls DirectConnected(fBufferDesc).
+ *   -# Releases the direct lock via _UnlockDirect().
+ *   -# Releases fDisableSemAck so the app_server can proceed.
+ *
+ *  The loop exits when fDaemonKiller is set to true by _DisposeData().
+ *
+ *  @return 0 on clean exit, -1 if a semaphore operation fails.
+ */
 int32
 BDirectWindow::_DirectDaemon()
 {
@@ -532,6 +845,16 @@ BDirectWindow::_DirectDaemon()
 }
 
 
+/** @brief Acquires the direct lock, serialising access to direct-buffer
+ *         state shared between the daemon thread and public API callers.
+ *
+ *  When DW_NEEDS_LOCKING is non-zero this performs an atomic increment
+ *  on fDirectLock and, if the lock was contended, blocks on fDirectSem.
+ *  When DW_NEEDS_LOCKING is zero (the current build) this is a no-op
+ *  that always returns true.
+ *
+ *  @return true if the lock was acquired successfully, false on error.
+ */
 bool
 BDirectWindow::_LockDirect() const
 {
@@ -561,6 +884,12 @@ BDirectWindow::_LockDirect() const
 }
 
 
+/** @brief Releases the direct lock acquired by _LockDirect().
+ *
+ *  When DW_NEEDS_LOCKING is non-zero this performs an atomic decrement
+ *  and releases fDirectSem if other threads are waiting.  When
+ *  DW_NEEDS_LOCKING is zero this is a no-op.
+ */
 void
 BDirectWindow::_UnlockDirect() const
 {
@@ -575,6 +904,19 @@ BDirectWindow::_UnlockDirect() const
 }
 
 
+/** @brief Initialises all direct-window infrastructure.
+ *
+ *  Performs the following sequence:
+ *   -# Sends AS_DIRECT_WINDOW_GET_SYNC_DATA to the app_server and reads
+ *      back the direct_window_sync_data structure containing the shared
+ *      area ID and the two synchronisation semaphores.
+ *   -# Clones the shared area as fClonedDirectArea so that fBufferDesc
+ *      points into the read/write mapping.
+ *   -# Spawns the daemon thread via spawn_thread() and resumes it.
+ *
+ *  The DW_STATUS_* bits in fInitStatus record which steps succeeded so
+ *  that _DisposeData() can perform partial cleanup on failure.
+ */
 void
 BDirectWindow::_InitData()
 {
@@ -630,6 +972,16 @@ BDirectWindow::_InitData()
 }
 
 
+/** @brief Tears down all direct-window infrastructure allocated by
+ *         _InitData().
+ *
+ *  Waits in a 50 ms polling loop until the direct connection terminates
+ *  (fConnectionEnable becomes false), ensuring the daemon has delivered
+ *  the final B_DIRECT_STOP notification before resources are freed.
+ *  Then signals the daemon thread to exit by setting fDaemonKiller and
+ *  deleting fDisableSem, waits for the thread, and finally deletes the
+ *  cloned area.
+ */
 void
 BDirectWindow::_DisposeData()
 {
@@ -660,7 +1012,11 @@ BDirectWindow::_DisposeData()
 }
 
 
+/** @brief Reserved virtual for future binary-compatible extensions. */
 void BDirectWindow::_ReservedDirectWindow1() {}
+/** @brief Reserved virtual for future binary-compatible extensions. */
 void BDirectWindow::_ReservedDirectWindow2() {}
+/** @brief Reserved virtual for future binary-compatible extensions. */
 void BDirectWindow::_ReservedDirectWindow3() {}
+/** @brief Reserved virtual for future binary-compatible extensions. */
 void BDirectWindow::_ReservedDirectWindow4() {}

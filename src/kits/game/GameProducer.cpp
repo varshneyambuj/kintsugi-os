@@ -1,9 +1,40 @@
 /*
- * Copyright 2002-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christopher ML Zumwalt May (zummy@users.sf.net)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christopher ML Zumwalt May (zummy@users.sf.net)
+ */
+
+/**
+ * @file GameProducer.cpp
+ * @brief BMediaNode/BBufferProducer/BMediaEventLooper that mixes GameKit sounds
+ *        and delivers them to the system audio mixer.
+ *
+ * GameProducer acts as a Media Kit producer node for a single GameSoundBuffer.
+ * It negotiates a raw-audio connection with the system mixer, manages a
+ * BBufferGroup, schedules buffer-production events through the BMediaEventLooper
+ * event queue, and calls back into the associated GameSoundBuffer::Play() to
+ * fill each outgoing BBuffer with mixed, pan/gain-adjusted audio.
  */
 
 
@@ -29,6 +60,13 @@
 #include "GSUtility.h"
 
 
+/**
+ * @brief Internal linked-list node used to track sounds scheduled for playback.
+ *
+ * Each _gs_play record associates a gs_id with a boolean flag pointer
+ * that signals whether the sound is still active. The \a next and
+ * \a previous pointers form a doubly-linked list.
+ */
 struct _gs_play  {
 	gs_id		sound;
 	bool*		hook;
@@ -38,6 +76,20 @@ struct _gs_play  {
 };
 
 
+/**
+ * @brief Constructs a GameProducer for the given GameSoundBuffer and audio format.
+ *
+ * Initialises the BMediaNode, BBufferProducer, and BMediaEventLooper base
+ * classes. Sets up the preferred media format from the gs_audio_format
+ * supplied, leaves the buffer size as a wildcard so the downstream consumer
+ * can negotiate it, and stores a reference to the owning GameSoundBuffer.
+ * The output destination is set to null until Connect() is called.
+ *
+ * @param object Pointer to the GameSoundBuffer that will supply audio data
+ *               via its Play() method.
+ * @param format Audio format (sample type, channel count, frame rate,
+ *               byte order) advertised by this producer.
+ */
 GameProducer::GameProducer(GameSoundBuffer* object,
 	const gs_audio_format* format)
 	:
@@ -73,6 +125,9 @@ GameProducer::GameProducer(GameSoundBuffer* object,
 }
 
 
+/**
+ * @brief Destroys the GameProducer and stops the BMediaEventLooper thread.
+ */
 GameProducer::~GameProducer()
 {
 	// Stop the BMediaEventLooper thread
@@ -81,6 +136,15 @@ GameProducer::~GameProducer()
 
 
 // BMediaNode methods
+
+/**
+ * @brief Returns the BMediaAddOn that instantiated this node, or NULL.
+ *
+ * GameProducer is not hosted by an add-on, so this always returns NULL.
+ *
+ * @param internal_id Unused add-on internal identifier output parameter.
+ * @return Always NULL.
+ */
 BMediaAddOn*
 GameProducer::AddOn(int32* internal_id) const
 {
@@ -89,6 +153,18 @@ GameProducer::AddOn(int32* internal_id) const
 
 
 // BBufferProducer methods
+
+/**
+ * @brief Enumerates the producer's outputs one at a time.
+ *
+ * This node has exactly one output. The cookie is used as an iteration
+ * index; when it is non-zero the enumeration is complete.
+ *
+ * @param cookie  Iteration cookie; must point to 0 on the first call.
+ * @param _output Filled with the single media_output descriptor on success.
+ * @return B_OK on the first call; B_BAD_INDEX when the cookie is non-zero
+ *         (enumeration exhausted).
+ */
 status_t
 GameProducer::GetNextOutput(int32* cookie, media_output* _output)
 {
@@ -102,6 +178,14 @@ GameProducer::GetNextOutput(int32* cookie, media_output* _output)
 }
 
 
+/**
+ * @brief Releases resources associated with an output enumeration cookie.
+ *
+ * Because the cookie is only an integer counter no cleanup is needed.
+ *
+ * @param cookie The cookie value returned by GetNextOutput().
+ * @return Always B_OK.
+ */
 status_t
 GameProducer::DisposeOutputCookie(int32 cookie)
 {
@@ -110,6 +194,17 @@ GameProducer::DisposeOutputCookie(int32 cookie)
 }
 
 
+/**
+ * @brief Enables or disables delivery of buffers on the specified output.
+ *
+ * When the output matches fOutput.source the fOutputEnabled flag is updated.
+ * Buffers are still produced when disabled, but are recycled instead of being
+ * sent downstream.
+ *
+ * @param what        The media_source identifying the output to control.
+ * @param enabled     \c true to enable buffer delivery; \c false to suppress it.
+ * @param _deprecated_ Ignored (deprecated parameter from the API).
+ */
 void
 GameProducer::EnableOutput(const media_source& what, bool enabled,
 	int32* _deprecated_)
@@ -125,6 +220,18 @@ GameProducer::EnableOutput(const media_source& what, bool enabled,
 }
 
 
+/**
+ * @brief Returns the preferred media format when a consumer requests a suggestion.
+ *
+ * Returns fPreferredFormat for any wildcard or raw-audio type request.
+ * Non-audio type requests are rejected.
+ *
+ * @param type    The requested media type (B_MEDIA_UNKNOWN_TYPE is accepted).
+ * @param format  Output parameter filled with the preferred raw-audio format.
+ * @return B_OK if the type is acceptable; B_MEDIA_BAD_FORMAT if \a type is
+ *         not B_MEDIA_UNKNOWN_TYPE or B_MEDIA_RAW_AUDIO; B_BAD_VALUE if
+ *         \a format is NULL.
+ */
 status_t
 GameProducer::FormatSuggestionRequested(media_type type, int32 /*quality*/,
 	media_format* format)
@@ -145,6 +252,18 @@ GameProducer::FormatSuggestionRequested(media_type type, int32 /*quality*/,
 }
 
 
+/**
+ * @brief Evaluates a format proposed by a consumer during connection negotiation.
+ *
+ * Verifies that \a output matches the single output source. If so, the
+ * preferred format is written back and B_OK is returned. Non-audio types
+ * are rejected.
+ *
+ * @param output The media_source of the output being negotiated.
+ * @param format In/out parameter; replaced with fPreferredFormat on success.
+ * @return B_OK if the proposal is acceptable; B_MEDIA_BAD_SOURCE if
+ *         \a output does not match; B_MEDIA_BAD_FORMAT for non-audio types.
+ */
 status_t
 GameProducer::FormatProposal(const media_source& output, media_format* format)
 {
@@ -166,6 +285,23 @@ GameProducer::FormatProposal(const media_source& output, media_format* format)
 }
 
 
+/**
+ * @brief Finalises format negotiation just before the connection is established.
+ *
+ * Called after the consumer has processed the format proposal. Verifies that
+ * the source matches and that the node is not already connected. Any wildcard
+ * buffer size is resolved to 4096 bytes. On success the connection is reserved
+ * by updating fOutput and the source/name output parameters are set.
+ *
+ * @param what     The media_source identifying our output.
+ * @param where    The media_destination of the consuming node.
+ * @param format   In/out format that may contain wildcards to be resolved.
+ * @param _source  Output parameter set to the confirmed media_source.
+ * @param out_name Output buffer (B_MEDIA_NAME_LENGTH bytes) for the output name.
+ * @return B_OK on success; B_MEDIA_BAD_SOURCE if \a what does not match;
+ *         B_MEDIA_ALREADY_CONNECTED if already connected;
+ *         B_MEDIA_BAD_FORMAT if the format type or sample format is wrong.
+ */
 status_t
 GameProducer::PrepareToConnect(const media_source& what,
 	const media_destination& where, media_format* format,
@@ -207,6 +343,20 @@ GameProducer::PrepareToConnect(const media_source& what,
 }
 
 
+/**
+ * @brief Completes connection setup after the Media Roster confirms the link.
+ *
+ * Records the negotiated destination and format. Measures the internal
+ * buffer-fill latency with a dry run and sets the total event latency
+ * (downstream + internal). Creates a BBufferGroup sized for the confirmed
+ * buffer size if one was not already supplied via SetBufferGroup().
+ *
+ * @param error       Non-zero if an earlier step failed; connection is aborted.
+ * @param source      The confirmed media_source for our output.
+ * @param destination The confirmed media_destination of the consumer.
+ * @param format      The negotiated media_format agreed upon by both parties.
+ * @param ioName      In/out buffer for the connection name; updated with our name.
+ */
 void
 GameProducer::Connect(status_t error, const media_source& source,
 	const media_destination& destination, const media_format& format,
@@ -272,6 +422,16 @@ GameProducer::Connect(status_t error, const media_source& source,
 }
 
 
+/**
+ * @brief Tears down the connection to the consumer and releases the buffer group.
+ *
+ * Resets the output destination to null and restores the preferred format.
+ * The BBufferGroup is deleted (which waits for all outstanding buffers to be
+ * recycled) and the pointer is set to NULL.
+ *
+ * @param what  The media_source of the connection being torn down.
+ * @param where The media_destination of the connection being torn down.
+ */
 void
 GameProducer::Disconnect(const media_source& what,
 	const media_destination& where)
@@ -286,6 +446,18 @@ GameProducer::Disconnect(const media_source& what,
 }
 
 
+/**
+ * @brief Rejects all format change requests from the consumer.
+ *
+ * GameProducer does not support dynamic format changes; the format is fixed
+ * at connection time.
+ *
+ * @param source       Source side of the connection requesting the change.
+ * @param destination  Destination side of the connection.
+ * @param io_format    The proposed new format (ignored).
+ * @param _deprecated_ Ignored deprecated parameter.
+ * @return Always B_ERROR.
+ */
 status_t
 GameProducer::FormatChangeRequested(const media_source& source,
 	const media_destination& destination, media_format* io_format,
@@ -296,6 +468,20 @@ GameProducer::FormatChangeRequested(const media_source& source,
 }
 
 
+/**
+ * @brief Switches the buffer group used by the producer.
+ *
+ * Deletes the current BBufferGroup (waiting for outstanding buffers to
+ * recycle) and adopts \a newGroup. If \a newGroup is NULL a new group is
+ * created from the negotiated buffer size and downstream latency. The buffer
+ * size is updated from the first buffer of the new group when a non-NULL
+ * group is supplied.
+ *
+ * @param forSource The media_source the new group applies to.
+ * @param newGroup  The replacement BBufferGroup, or NULL to auto-create one.
+ * @return B_OK on success; B_MEDIA_BAD_SOURCE if \a forSource does not match;
+ *         B_BAD_VALUE if the first buffer cannot be retrieved from \a newGroup.
+ */
 status_t
 GameProducer::SetBufferGroup(const media_source& forSource,
 	BBufferGroup* newGroup)
@@ -336,6 +522,15 @@ GameProducer::SetBufferGroup(const media_source& forSource,
 }
 
 
+/**
+ * @brief Reports the total latency of this node (internal plus downstream).
+ *
+ * The total latency is the event latency (downstream + internal) plus
+ * the current scheduling latency of the BMediaEventLooper thread.
+ *
+ * @param _latency Output parameter set to the total latency in microseconds.
+ * @return Always B_OK.
+ */
 status_t
 GameProducer::GetLatency(bigtime_t* _latency)
 {
@@ -345,6 +540,19 @@ GameProducer::GetLatency(bigtime_t* _latency)
 }
 
 
+/**
+ * @brief Responds to a late-notice from the Media Roster.
+ *
+ * The action taken depends on the current run mode:
+ *   - B_RECORDING: no action (hardware capture cannot adjust timing).
+ *   - B_INCREASE_LATENCY: increase the internal latency estimate and
+ *     update the event latency accordingly.
+ *   - Other modes: skip one buffer's worth of frames to catch up.
+ *
+ * @param what                The media_source that is running late.
+ * @param howMuch             How late the node is, in microseconds.
+ * @param performanceDuration Performance time of the late buffer.
+ */
 void
 GameProducer::LateNoticeReceived(const media_source& what, bigtime_t howMuch,
 	bigtime_t performanceDuration)
@@ -377,6 +585,17 @@ GameProducer::LateNoticeReceived(const media_source& what, bigtime_t howMuch,
 }
 
 
+/**
+ * @brief Notifies the producer that downstream latency has changed.
+ *
+ * Updates fLatency and recalculates the total event latency when the
+ * changed connection matches our output.
+ *
+ * @param source      The source side of the connection whose latency changed.
+ * @param destination The destination side of the connection.
+ * @param new_latency The new downstream latency in microseconds.
+ * @param flags       Flags associated with the latency change (currently unused).
+ */
 void
 GameProducer::LatencyChanged(const media_source& source,
 	const media_destination& destination, bigtime_t new_latency, uint32 flags)
@@ -392,6 +611,15 @@ GameProducer::LatencyChanged(const media_source& source,
 }
 
 
+/**
+ * @brief Rejects requests to change the play rate.
+ *
+ * Play rate control is not supported by GameProducer.
+ *
+ * @param numerator   Numerator of the requested rate fraction.
+ * @param denominator Denominator of the requested rate fraction.
+ * @return Always B_ERROR.
+ */
 status_t
 GameProducer::SetPlayRate(int32 numerator, int32 denominator)
 {
@@ -400,6 +628,16 @@ GameProducer::SetPlayRate(int32 numerator, int32 denominator)
 }
 
 
+/**
+ * @brief Handles private messages sent to this node's control port.
+ *
+ * GameProducer does not define any private messages; all messages are rejected.
+ *
+ * @param message The message type code.
+ * @param data    Pointer to the message data.
+ * @param size    Size of \a data in bytes.
+ * @return Always B_ERROR.
+ */
 status_t
 GameProducer::HandleMessage(int32 message, const void* data, size_t size)
 {
@@ -408,6 +646,16 @@ GameProducer::HandleMessage(int32 message, const void* data, size_t size)
 }
 
 
+/**
+ * @brief Ignores requests for additional buffers in offline mode.
+ *
+ * Offline mode is not supported; this method is a no-op.
+ *
+ * @param source      The output source requesting an additional buffer.
+ * @param prev_buffer ID of the previous buffer in the sequence.
+ * @param prev_time   Performance time of the previous buffer.
+ * @param prev_tag    Optional seek tag from the previous buffer.
+ */
 void
 GameProducer::AdditionalBufferRequested(const media_source& source,
 	media_buffer_id prev_buffer, bigtime_t prev_time,
@@ -419,6 +667,14 @@ GameProducer::AdditionalBufferRequested(const media_source& source,
 
 
 // BMediaEventLooper methods
+
+/**
+ * @brief Completes node initialisation after registration with the Media Roster.
+ *
+ * Assigns the control port and node identity to fOutput, names the output
+ * "GameProducer Output", sets the thread priority to B_REAL_TIME_PRIORITY,
+ * and starts the BMediaEventLooper's event-processing thread.
+ */
 void
 GameProducer::NodeRegistered()
 {
@@ -434,6 +690,14 @@ GameProducer::NodeRegistered()
 }
 
 
+/**
+ * @brief Intercepts run-mode changes to report unsupported offline mode.
+ *
+ * B_OFFLINE mode is not supported. ReportError() is called to notify the
+ * Media Roster, though the run mode change itself cannot be prevented.
+ *
+ * @param mode The requested run mode.
+ */
 void
 GameProducer::SetRunMode(run_mode mode)
 {
@@ -445,6 +709,21 @@ GameProducer::SetRunMode(run_mode mode)
 }
 
 
+/**
+ * @brief Processes timed events dispatched by the BMediaEventLooper.
+ *
+ * Handles three event types:
+ *   - B_START: initialises frame bookkeeping and enqueues the first
+ *     B_HANDLE_BUFFER event.
+ *   - B_STOP: flushes all pending B_HANDLE_BUFFER events from the queue.
+ *   - B_HANDLE_BUFFER: requests a filled BBuffer from FillNextBuffer(),
+ *     sends it downstream (or recycles it if output is disabled), and
+ *     schedules the next buffer event based on the cumulative frame count.
+ *
+ * @param event         The timed event to process.
+ * @param lateness      How late this event is relative to its scheduled time.
+ * @param realTimeEvent Whether this event is a real-time event.
+ */
 void
 GameProducer::HandleEvent(const media_timed_event* event, bigtime_t lateness,
 	bool realTimeEvent)
@@ -518,6 +797,20 @@ GameProducer::HandleEvent(const media_timed_event* event, bigtime_t lateness,
 }
 
 
+/**
+ * @brief Obtains a BBuffer from the group and fills it with mixed audio data.
+ *
+ * Requests a buffer from fBufferGroup with a timeout of BufferDuration().
+ * If the request fails, NULL is returned (the current buffer-production
+ * cycle is skipped). The buffer is zeroed, then GameSoundBuffer::Play() is
+ * called to fill it with gain/pan-adjusted audio. The buffer header is
+ * stamped with the appropriate performance time: the raw event_time in
+ * B_RECORDING mode, or a recalculated performance time in live modes.
+ *
+ * @param event_time The scheduled performance time for this buffer.
+ * @return Pointer to a filled BBuffer ready to send downstream, or NULL if
+ *         a buffer could not be obtained from the group.
+ */
 BBuffer*
 GameProducer::FillNextBuffer(bigtime_t event_time)
 {
