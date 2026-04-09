@@ -1,7 +1,39 @@
 /*
- * Copyright 2002-2008, Marcus Overhagen, Stefano Ceccherini, Fredrik Modéen.
- * All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2008, Marcus Overhagen, Stefano Ceccherini, Fredrik Modéen.
+ *   All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Joystick.cpp
+ * @brief Joystick device interface for the Device Kit
+ *
+ * Implements the BJoystick class, which provides access to joystick and
+ * gamepad devices. Supports both legacy standard mode (two axes, two buttons)
+ * and enhanced mode (arbitrary axes, hats, and buttons via variable-size
+ * reads). Device enumeration is performed via _BJoystickTweaker.
+ *
+ * @see JoystickTweaker.cpp, SerialPort.cpp
  */
 
 
@@ -43,6 +75,14 @@ LOG(const char *fmt, ...)
 #define CALLED() LOG("%s\n", __PRETTY_FUNCTION__)
 
 
+/**
+ * @brief Constructs a BJoystick object and scans for available devices.
+ *
+ * Initializes legacy member variables (timestamp, horizontal, vertical,
+ * button1, button2) to safe defaults and allocates internal structures for
+ * joystick info and per-stick data. Calls RescanDevices() to populate the
+ * device list.
+ */
 BJoystick::BJoystick()
 	:
 	// legacy members for standard mode
@@ -72,6 +112,12 @@ BJoystick::BJoystick()
 }
 
 
+/**
+ * @brief Destroys the BJoystick object, closing the device and freeing memory.
+ *
+ * Closes the file descriptor if open, and releases all allocated per-stick
+ * variable_joystick structures and device name strings.
+ */
 BJoystick::~BJoystick()
 {
 	if (fFD >= 0)
@@ -102,6 +148,13 @@ BJoystick::~BJoystick()
 }
 
 
+/**
+ * @brief Opens a joystick port in enhanced mode.
+ * @param portName The name of the port (e.g. "joystick/isa_joy/1" or an
+ *     absolute path).
+ * @return A positive file descriptor on success, or a negative error code.
+ * @see Open(const char*, bool)
+ */
 status_t
 BJoystick::Open(const char *portName)
 {
@@ -110,6 +163,18 @@ BJoystick::Open(const char *portName)
 }
 
 
+/**
+ * @brief Opens a joystick port, optionally selecting enhanced mode.
+ *
+ * Resolves the port name to an absolute path under DEVICE_BASE_PATH if it
+ * is not already absolute. Reads the joystick description file for the port
+ * via _BJoystickTweaker, then allocates one variable_joystick per stick
+ * reported by the driver.
+ *
+ * @param portName The name of the port.
+ * @param enhanced If \c true, requests enhanced (variable-size read) mode.
+ * @return A positive file descriptor on success, or a negative error code.
+ */
 status_t
 BJoystick::Open(const char *portName, bool enhanced)
 {
@@ -208,6 +273,7 @@ BJoystick::Open(const char *portName, bool enhanced)
 }
 
 
+/** @brief Closes the joystick port and resets the file descriptor. */
 void
 BJoystick::Close(void)
 {
@@ -219,6 +285,16 @@ BJoystick::Close(void)
 }
 
 
+/**
+ * @brief Reads the current state of all sticks from the joystick driver.
+ *
+ * Populates per-stick variable_joystick buffers via read_pos(). Also updates
+ * the legacy timestamp, horizontal, vertical, button1, and button2 members
+ * from the first stick's data.
+ *
+ * @return B_OK on success, or an error code if the device is not open or
+ *     a read fails.
+ */
 status_t
 BJoystick::Update()
 {
@@ -269,6 +345,11 @@ BJoystick::Update()
 }
 
 
+/**
+ * @brief Sets the maximum input latency for the joystick driver.
+ * @param maxLatency The desired maximum latency in microseconds.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BJoystick::SetMaxLatency(bigtime_t maxLatency)
 {
@@ -285,6 +366,10 @@ BJoystick::SetMaxLatency(bigtime_t maxLatency)
 }
 
 
+/**
+ * @brief Returns the number of joystick devices currently known to the system.
+ * @return The count of entries in the device list.
+ */
 int32
 BJoystick::CountDevices()
 {
@@ -300,6 +385,15 @@ BJoystick::CountDevices()
 }
 
 
+/**
+ * @brief Retrieves the name of the device at the given index.
+ * @param index Zero-based index into the device list.
+ * @param name Buffer to receive the device name string.
+ * @param bufSize Size of \a name in bytes.
+ * @return B_OK on success, B_BAD_INDEX if \a index is out of range,
+ *     B_NAME_TOO_LONG if the name does not fit, or B_BAD_VALUE / B_NO_INIT
+ *     on other errors.
+ */
 status_t
 BJoystick::GetDeviceName(int32 index, char *name, size_t bufSize)
 {
@@ -323,6 +417,14 @@ BJoystick::GetDeviceName(int32 index, char *name, size_t bufSize)
 }
 
 
+/**
+ * @brief Rescans the system for available joystick devices.
+ *
+ * Clears and rebuilds the internal device list by scanning all joystick
+ * paths including disabled devices.
+ *
+ * @return B_OK on success, or B_NO_INIT if internal state is not valid.
+ */
 status_t
 BJoystick::RescanDevices()
 {
@@ -336,6 +438,11 @@ BJoystick::RescanDevices()
 }
 
 
+/**
+ * @brief Switches the joystick to enhanced (extended) mode.
+ * @param ref Optional entry_ref for the joystick description; may be NULL.
+ * @return \c true if enhanced mode is now active.
+ */
 bool
 BJoystick::EnterEnhancedMode(const entry_ref *ref)
 {
@@ -345,6 +452,10 @@ BJoystick::EnterEnhancedMode(const entry_ref *ref)
 }
 
 
+/**
+ * @brief Returns the number of sticks reported by the open device.
+ * @return The stick count, or 0 if no device is open.
+ */
 int32
 BJoystick::CountSticks()
 {
@@ -356,6 +467,10 @@ BJoystick::CountSticks()
 }
 
 
+/**
+ * @brief Returns the number of axes per stick reported by the open device.
+ * @return The axis count, or 0 if no device is open.
+ */
 int32
 BJoystick::CountAxes()
 {
@@ -367,6 +482,14 @@ BJoystick::CountAxes()
 }
 
 
+/**
+ * @brief Reads the current axis values for the specified stick.
+ * @param outValues Array of int16 to receive the axis values; must have at
+ *     least CountAxes() elements.
+ * @param forStick Zero-based index of the stick to read.
+ * @return B_OK on success, B_BAD_INDEX if \a forStick is out of range, or
+ *     B_NO_INIT if the device is not open.
+ */
 status_t
 BJoystick::GetAxisValues(int16 *outValues, int32 forStick)
 {
@@ -390,6 +513,13 @@ BJoystick::GetAxisValues(int16 *outValues, int32 forStick)
 }
 
 
+/**
+ * @brief Retrieves the human-readable name of the axis at the given index.
+ * @param index Zero-based axis index.
+ * @param outName BString to receive the name.
+ * @return B_OK on success, B_BAD_INDEX if \a index is out of range, or
+ *     B_BAD_VALUE if \a outName is NULL.
+ */
 status_t
 BJoystick::GetAxisNameAt(int32 index, BString *outName)
 {
@@ -408,6 +538,10 @@ BJoystick::GetAxisNameAt(int32 index, BString *outName)
 }
 
 
+/**
+ * @brief Returns the number of hats per stick reported by the open device.
+ * @return The hat count, or 0 if no device is open.
+ */
 int32
 BJoystick::CountHats()
 {
@@ -419,6 +553,14 @@ BJoystick::CountHats()
 }
 
 
+/**
+ * @brief Reads the current hat positions for the specified stick.
+ * @param outHats Array of uint8 to receive hat values; must have at least
+ *     CountHats() elements.
+ * @param forStick Zero-based index of the stick to read.
+ * @return B_OK on success, B_BAD_INDEX if \a forStick is out of range, or
+ *     B_NO_INIT if the device is not open.
+ */
 status_t
 BJoystick::GetHatValues(uint8 *outHats, int32 forStick)
 {
@@ -442,6 +584,13 @@ BJoystick::GetHatValues(uint8 *outHats, int32 forStick)
 }
 
 
+/**
+ * @brief Retrieves the human-readable name of the hat at the given index.
+ * @param index Zero-based hat index.
+ * @param outName BString to receive the name.
+ * @return B_OK on success, B_BAD_INDEX if \a index is out of range, or
+ *     B_BAD_VALUE if \a outName is NULL.
+ */
 status_t
 BJoystick::GetHatNameAt(int32 index, BString *outName)
 {
@@ -460,6 +609,10 @@ BJoystick::GetHatNameAt(int32 index, BString *outName)
 }
 
 
+/**
+ * @brief Returns the number of buttons per stick reported by the open device.
+ * @return The button count, or 0 if no device is open.
+ */
 int32
 BJoystick::CountButtons()
 {
@@ -471,6 +624,15 @@ BJoystick::CountButtons()
 }
 
 
+/**
+ * @brief Returns the raw button bitmask for the specified stick.
+ *
+ * Each bit corresponds to one button; a set bit means the button is pressed.
+ *
+ * @param forStick Zero-based stick index.
+ * @return The button bitmask, or 0 if the stick index is invalid or no
+ *     device is open.
+ */
 uint32
 BJoystick::ButtonValues(int32 forStick)
 {
@@ -492,6 +654,14 @@ BJoystick::ButtonValues(int32 forStick)
 }
 
 
+/**
+ * @brief Reads the current pressed/released state of all buttons.
+ * @param outButtons Array of bool to receive button states; must have at
+ *     least CountButtons() elements. \c true means pressed.
+ * @param forStick Zero-based index of the stick to read.
+ * @return B_OK on success, B_BAD_INDEX if \a forStick is invalid, or
+ *     B_NO_INIT if the device is not open.
+ */
 status_t
 BJoystick::GetButtonValues(bool *outButtons, int32 forStick)
 {
@@ -519,6 +689,13 @@ BJoystick::GetButtonValues(bool *outButtons, int32 forStick)
 }
 
 
+/**
+ * @brief Retrieves the human-readable name of the button at the given index.
+ * @param index Zero-based button index.
+ * @param outName BString to receive the name.
+ * @return B_OK on success, B_BAD_INDEX if \a index is out of range, or
+ *     B_BAD_VALUE if \a outName is NULL.
+ */
 status_t
 BJoystick::GetButtonNameAt(int32 index, BString *outName)
 {
@@ -537,6 +714,12 @@ BJoystick::GetButtonNameAt(int32 index, BString *outName)
 }
 
 
+/**
+ * @brief Returns the name of the kernel module driving the open joystick.
+ * @param outName BString to receive the module name.
+ * @return B_OK on success, B_BAD_VALUE if \a outName is NULL, or B_NO_INIT
+ *     if no device is open.
+ */
 status_t
 BJoystick::GetControllerModule(BString *outName)
 {
@@ -552,6 +735,12 @@ BJoystick::GetControllerModule(BString *outName)
 }
 
 
+/**
+ * @brief Returns the human-readable name of the open joystick device.
+ * @param outName BString to receive the device name.
+ * @return B_OK on success, B_BAD_VALUE if \a outName is NULL, or B_NO_INIT
+ *     if no device is open.
+ */
 status_t
 BJoystick::GetControllerName(BString *outName)
 {
@@ -567,6 +756,10 @@ BJoystick::GetControllerName(BString *outName)
 }
 
 
+/**
+ * @brief Returns whether calibration is currently enabled for the open device.
+ * @return \c true if calibration is enabled, \c false otherwise.
+ */
 bool
 BJoystick::IsCalibrationEnabled()
 {
@@ -578,6 +771,11 @@ BJoystick::IsCalibrationEnabled()
 }
 
 
+/**
+ * @brief Enables or disables calibration on the open joystick device.
+ * @param calibrates \c true to enable calibration, \c false to disable it.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BJoystick::EnableCalibration(bool calibrates)
 {
@@ -594,6 +792,10 @@ BJoystick::EnableCalibration(bool calibrates)
 }
 
 
+/**
+ * @brief Applies calibration data to an extended joystick reading.
+ * @param reading Pointer to the extended joystick structure to calibrate.
+ */
 void
 BJoystick::Calibrate(struct _extended_joystick *reading)
 {
@@ -601,6 +803,10 @@ BJoystick::Calibrate(struct _extended_joystick *reading)
 }
 
 
+/**
+ * @brief Scans the joystick device directory and populates the device list.
+ * @param useDisabled If \c true, includes disabled devices in the scan.
+ */
 void
 BJoystick::ScanDevices(bool useDisabled)
 {

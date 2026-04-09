@@ -1,10 +1,42 @@
 /*
- * Copyright 2007-2008, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2008, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
  */
+
+
+/**
+ * @file USBConfiguration.cpp
+ * @brief USB configuration descriptor wrapper for the Device Kit
+ *
+ * Implements BUSBConfiguration, which wraps a USB configuration descriptor
+ * and owns the set of BUSBInterface objects that belong to it. Instances
+ * are created by BUSBDevice and should not be constructed directly.
+ *
+ * @see USBDevice.cpp, USBInterface.cpp
+ */
+
 
 #include <USBKit.h>
 #include <usb_raw.h>
@@ -13,6 +45,17 @@
 #include <new>
 
 
+/**
+ * @brief Constructs a BUSBConfiguration and retrieves its descriptor.
+ *
+ * Issues B_USB_RAW_COMMAND_GET_CONFIGURATION_DESCRIPTOR to populate
+ * \c fDescriptor, then allocates one BUSBInterface per interface reported
+ * by the descriptor.
+ *
+ * @param device The owning BUSBDevice.
+ * @param index Zero-based index of this configuration within the device.
+ * @param rawFD Open file descriptor to the usb_raw device node.
+ */
 BUSBConfiguration::BUSBConfiguration(BUSBDevice *device, uint32 index, int rawFD)
 	:	fDevice(device),
 		fIndex(index),
@@ -39,6 +82,9 @@ BUSBConfiguration::BUSBConfiguration(BUSBDevice *device, uint32 index, int rawFD
 }
 
 
+/**
+ * @brief Destroys the BUSBConfiguration, releasing all owned interfaces.
+ */
 BUSBConfiguration::~BUSBConfiguration()
 {
 	delete[] fConfigurationString;
@@ -50,6 +96,10 @@ BUSBConfiguration::~BUSBConfiguration()
 }
 
 
+/**
+ * @brief Returns the zero-based index of this configuration within the device.
+ * @return The configuration index.
+ */
 uint32
 BUSBConfiguration::Index() const
 {
@@ -57,6 +107,10 @@ BUSBConfiguration::Index() const
 }
 
 
+/**
+ * @brief Returns a pointer to the owning BUSBDevice.
+ * @return The parent device.
+ */
 const BUSBDevice *
 BUSBConfiguration::Device() const
 {
@@ -64,6 +118,13 @@ BUSBConfiguration::Device() const
 }
 
 
+/**
+ * @brief Returns the human-readable string for this configuration.
+ *
+ * Decodes the string descriptor on first access and caches the result.
+ *
+ * @return A null-terminated UTF-8 string, or an empty string if unavailable.
+ */
 const char *
 BUSBConfiguration::ConfigurationString() const
 {
@@ -82,6 +143,10 @@ BUSBConfiguration::ConfigurationString() const
 }
 
 
+/**
+ * @brief Returns a pointer to the raw USB configuration descriptor.
+ * @return Pointer to the internal usb_configuration_descriptor.
+ */
 const usb_configuration_descriptor *
 BUSBConfiguration::Descriptor() const
 {
@@ -89,6 +154,10 @@ BUSBConfiguration::Descriptor() const
 }
 
 
+/**
+ * @brief Returns the number of interfaces in this configuration.
+ * @return The interface count as reported by the descriptor.
+ */
 uint32
 BUSBConfiguration::CountInterfaces() const
 {
@@ -96,6 +165,11 @@ BUSBConfiguration::CountInterfaces() const
 }
 
 
+/**
+ * @brief Returns the interface at the specified index.
+ * @param index Zero-based interface index.
+ * @return Pointer to the BUSBInterface, or NULL if \a index is out of range.
+ */
 const BUSBInterface *
 BUSBConfiguration::InterfaceAt(uint32 index) const
 {

@@ -1,10 +1,43 @@
 /*
- * Copyright 2007-2008, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Lotz <mmlr@mlotz.ch>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2008, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Lotz <mmlr@mlotz.ch>
  */
+
+
+/**
+ * @file USBDevice.cpp
+ * @brief USB device wrapper for the Device Kit
+ *
+ * Implements BUSBDevice, which provides access to a USB device via the
+ * usb_raw kernel driver. Handles device descriptor retrieval, configuration
+ * management, string descriptor decoding (UCS-2 to UTF-8), and control
+ * transfers.
+ *
+ * @see USBConfiguration.cpp, USBRoster.cpp
+ */
+
 
 #include <ByteOrder.h>
 #include <USBKit.h>
@@ -16,6 +49,11 @@
 #include <new>
 
 
+/**
+ * @brief Constructs a BUSBDevice and optionally opens the device at \a path.
+ * @param path Path to the usb_raw device node, or NULL to create an
+ *     uninitialized object.
+ */
 BUSBDevice::BUSBDevice(const char *path)
 	:	fPath(NULL),
 		fRawFD(-1),
@@ -32,12 +70,19 @@ BUSBDevice::BUSBDevice(const char *path)
 }
 
 
+/**
+ * @brief Destroys the BUSBDevice, closing the device and freeing all memory.
+ */
 BUSBDevice::~BUSBDevice()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Returns the initialization status of the device.
+ * @return B_OK if the device is open and initialized, or B_ERROR otherwise.
+ */
 status_t
 BUSBDevice::InitCheck()
 {
@@ -45,6 +90,16 @@ BUSBDevice::InitCheck()
 }
 
 
+/**
+ * @brief Opens the device at \a path and retrieves its descriptor.
+ *
+ * Verifies the usb_raw protocol version, fetches the device descriptor, and
+ * allocates one BUSBConfiguration per configuration listed in the descriptor.
+ *
+ * @param path Absolute path to the usb_raw device node.
+ * @return B_OK on success, B_BAD_VALUE if \a path is NULL, or B_ERROR on
+ *     driver communication failure.
+ */
 status_t
 BUSBDevice::SetTo(const char *path)
 {
@@ -86,6 +141,12 @@ BUSBDevice::SetTo(const char *path)
 }
 
 
+/**
+ * @brief Closes the device and releases all associated resources.
+ *
+ * Resets all internal state, including the file descriptor, path, cached
+ * string descriptors, configuration objects, and the device descriptor.
+ */
 void
 BUSBDevice::Unset()
 {
@@ -113,6 +174,14 @@ BUSBDevice::Unset()
 }
 
 
+/**
+ * @brief Returns the bus location string derived from the device path.
+ *
+ * Strips the leading "/dev/bus/usb" prefix (12 characters) from the path.
+ *
+ * @return Pointer into the path string at the location segment, or NULL if
+ *     the path is too short or not set.
+ */
 const char *
 BUSBDevice::Location() const
 {
@@ -123,6 +192,10 @@ BUSBDevice::Location() const
 }
 
 
+/**
+ * @brief Returns whether this device is a USB hub.
+ * @return \c true if the device class is 0x09 (Hub), \c false otherwise.
+ */
 bool
 BUSBDevice::IsHub() const
 {
@@ -130,6 +203,10 @@ BUSBDevice::IsHub() const
 }
 
 
+/**
+ * @brief Returns the USB specification version supported by the device.
+ * @return BCD-encoded USB version (e.g. 0x0200 for USB 2.0).
+ */
 uint16
 BUSBDevice::USBVersion() const
 {
@@ -137,6 +214,10 @@ BUSBDevice::USBVersion() const
 }
 
 
+/**
+ * @brief Returns the device class code.
+ * @return The USB device class byte.
+ */
 uint8
 BUSBDevice::Class() const
 {
@@ -144,6 +225,10 @@ BUSBDevice::Class() const
 }
 
 
+/**
+ * @brief Returns the device subclass code.
+ * @return The USB device subclass byte.
+ */
 uint8
 BUSBDevice::Subclass() const
 {
@@ -151,6 +236,10 @@ BUSBDevice::Subclass() const
 }
 
 
+/**
+ * @brief Returns the device protocol code.
+ * @return The USB device protocol byte.
+ */
 uint8
 BUSBDevice::Protocol() const
 {
@@ -158,6 +247,10 @@ BUSBDevice::Protocol() const
 }
 
 
+/**
+ * @brief Returns the maximum packet size for endpoint 0.
+ * @return Maximum packet size in bytes.
+ */
 uint8
 BUSBDevice::MaxEndpoint0PacketSize() const
 {
@@ -165,6 +258,10 @@ BUSBDevice::MaxEndpoint0PacketSize() const
 }
 
 
+/**
+ * @brief Returns the USB vendor ID of the device.
+ * @return 16-bit vendor ID.
+ */
 uint16
 BUSBDevice::VendorID() const
 {
@@ -172,6 +269,10 @@ BUSBDevice::VendorID() const
 }
 
 
+/**
+ * @brief Returns the USB product ID of the device.
+ * @return 16-bit product ID.
+ */
 uint16
 BUSBDevice::ProductID() const
 {
@@ -179,6 +280,10 @@ BUSBDevice::ProductID() const
 }
 
 
+/**
+ * @brief Returns the device release number in BCD.
+ * @return BCD-encoded device version.
+ */
 uint16
 BUSBDevice::Version() const
 {
@@ -186,6 +291,13 @@ BUSBDevice::Version() const
 }
 
 
+/**
+ * @brief Returns the manufacturer string for the device.
+ *
+ * Decodes the string descriptor on first access and caches the result.
+ *
+ * @return A null-terminated UTF-8 string, or an empty string if unavailable.
+ */
 const char *
 BUSBDevice::ManufacturerString() const
 {
@@ -203,6 +315,13 @@ BUSBDevice::ManufacturerString() const
 }
 
 
+/**
+ * @brief Returns the product string for the device.
+ *
+ * Decodes the string descriptor on first access and caches the result.
+ *
+ * @return A null-terminated UTF-8 string, or an empty string if unavailable.
+ */
 const char *
 BUSBDevice::ProductString() const
 {
@@ -220,6 +339,13 @@ BUSBDevice::ProductString() const
 }
 
 
+/**
+ * @brief Returns the serial number string for the device.
+ *
+ * Decodes the string descriptor on first access and caches the result.
+ *
+ * @return A null-terminated UTF-8 string, or an empty string if unavailable.
+ */
 const char *
 BUSBDevice::SerialNumberString() const
 {
@@ -237,6 +363,10 @@ BUSBDevice::SerialNumberString() const
 }
 
 
+/**
+ * @brief Returns a pointer to the raw USB device descriptor.
+ * @return Pointer to the internal usb_device_descriptor.
+ */
 const usb_device_descriptor *
 BUSBDevice::Descriptor() const
 {
@@ -244,6 +374,13 @@ BUSBDevice::Descriptor() const
 }
 
 
+/**
+ * @brief Retrieves a USB string descriptor by index.
+ * @param index String descriptor index from the device.
+ * @param descriptor Buffer to receive the raw string descriptor.
+ * @param length Size of \a descriptor in bytes.
+ * @return The number of bytes received, or 0 on failure.
+ */
 size_t
 BUSBDevice::GetStringDescriptor(uint32 index,
 	usb_string_descriptor *descriptor, size_t length) const
@@ -264,6 +401,16 @@ BUSBDevice::GetStringDescriptor(uint32 index,
 }
 
 
+/**
+ * @brief Decodes a USB string descriptor (UCS-2 LE) to a UTF-8 C string.
+ *
+ * Retrieves the raw string descriptor, byte-swaps the UCS-2 characters from
+ * little-endian to big-endian (as required by convert_to_utf8()), then
+ * converts to UTF-8. The caller owns the returned buffer.
+ *
+ * @param index String descriptor index.
+ * @return A newly allocated null-terminated UTF-8 string, or NULL on failure.
+ */
 char *
 BUSBDevice::DecodeStringDescriptor(uint32 index) const
 {
@@ -309,6 +456,15 @@ BUSBDevice::DecodeStringDescriptor(uint32 index) const
 }
 
 
+/**
+ * @brief Retrieves an arbitrary USB descriptor by type, index, and language.
+ * @param type Descriptor type constant.
+ * @param index Descriptor index.
+ * @param languageID Language ID for string descriptors (0 for others).
+ * @param data Buffer to receive the descriptor data.
+ * @param length Size of \a data in bytes.
+ * @return The number of bytes received, or 0 on failure.
+ */
 size_t
 BUSBDevice::GetDescriptor(uint8 type, uint8 index, uint16 languageID,
 	void *data, size_t length) const
@@ -331,6 +487,10 @@ BUSBDevice::GetDescriptor(uint8 type, uint8 index, uint16 languageID,
 }
 
 
+/**
+ * @brief Returns the number of configurations available on the device.
+ * @return The configuration count from the device descriptor.
+ */
 uint32
 BUSBDevice::CountConfigurations() const
 {
@@ -338,6 +498,11 @@ BUSBDevice::CountConfigurations() const
 }
 
 
+/**
+ * @brief Returns the configuration at the specified index.
+ * @param index Zero-based configuration index.
+ * @return Pointer to the BUSBConfiguration, or NULL if out of range.
+ */
 const BUSBConfiguration *
 BUSBDevice::ConfigurationAt(uint32 index) const
 {
@@ -348,6 +513,10 @@ BUSBDevice::ConfigurationAt(uint32 index) const
 }
 
 
+/**
+ * @brief Returns the currently active configuration.
+ * @return Pointer to the active BUSBConfiguration, or NULL if not set.
+ */
 const BUSBConfiguration *
 BUSBDevice::ActiveConfiguration() const
 {
@@ -358,6 +527,12 @@ BUSBDevice::ActiveConfiguration() const
 }
 
 
+/**
+ * @brief Sets the active USB configuration on the device.
+ * @param configuration Pointer to the desired BUSBConfiguration.
+ * @return B_OK on success, B_BAD_VALUE if \a configuration is invalid, or
+ *     B_ERROR if the ioctl fails.
+ */
 status_t
 BUSBDevice::SetConfiguration(const BUSBConfiguration *configuration)
 {
@@ -376,6 +551,16 @@ BUSBDevice::SetConfiguration(const BUSBConfiguration *configuration)
 }
 
 
+/**
+ * @brief Performs a control transfer on the default pipe (endpoint 0).
+ * @param requestType bmRequestType field (direction, type, recipient).
+ * @param request bRequest field.
+ * @param value wValue field.
+ * @param index wIndex field.
+ * @param length wLength field; number of bytes to transfer in the data stage.
+ * @param data Buffer for the data stage; may be NULL if \a length is 0.
+ * @return The number of bytes transferred on success, or a negative error code.
+ */
 ssize_t
 BUSBDevice::ControlTransfer(uint8 requestType, uint8 request, uint16 value,
 	uint16 index, uint16 length, void *data) const
@@ -399,7 +584,9 @@ BUSBDevice::ControlTransfer(uint8 requestType, uint8 request, uint16 value,
 }
 
 
-// definition of reserved virtual functions
+//	#pragma mark - FBC protection
+
+
 void BUSBDevice::_ReservedUSBDevice1() {};
 void BUSBDevice::_ReservedUSBDevice2() {};
 void BUSBDevice::_ReservedUSBDevice3() {};

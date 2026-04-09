@@ -1,11 +1,43 @@
 /*
- * Copyright 2008, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Fredrik Modeen
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Fredrik Modeen
  */
+
+
+/**
+ * @file JoystickTweaker.cpp
+ * @brief Internal joystick configuration and device scanning helper
+ *
+ * Implements _BJoystickTweaker, a private class used by BJoystick to scan
+ * the joystick device directory (including disabled devices) and to parse
+ * joystick description (.joystick) files into joystick_info structures.
+ *
+ * @see Joystick.cpp
+ */
+
+
 #include "JoystickTweaker.h"
 
 #include <new>
@@ -46,6 +78,7 @@ FILE *_BJoystickTweaker::sLogFile = NULL;
 #define CALLED() LOG("%s\n", __PRETTY_FUNCTION__)
 
 
+/** @brief Constructs a _BJoystickTweaker with no associated BJoystick. */
 _BJoystickTweaker::_BJoystickTweaker()
 {
 #if DEBUG
@@ -55,6 +88,10 @@ _BJoystickTweaker::_BJoystickTweaker()
 }
 
 
+/**
+ * @brief Constructs a _BJoystickTweaker associated with the given BJoystick.
+ * @param stick Reference to the BJoystick whose device list will be managed.
+ */
 _BJoystickTweaker::_BJoystickTweaker(BJoystick &stick)
 {
 #if DEBUG
@@ -66,11 +103,17 @@ _BJoystickTweaker::_BJoystickTweaker(BJoystick &stick)
 }
 
 
+/** @brief Destroys the _BJoystickTweaker object. */
 _BJoystickTweaker::~_BJoystickTweaker()
 {
 }
 
 
+/**
+ * @brief Saves the current joystick configuration to the given entry.
+ * @param ref Entry reference identifying where to save the config.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 _BJoystickTweaker::save_config(const entry_ref *ref)
 {
@@ -79,6 +122,18 @@ _BJoystickTweaker::save_config(const entry_ref *ref)
 }
 
 
+/**
+ * @brief Recursively scans a directory for joystick device entries.
+ *
+ * Walks the directory tree rooted at \a rootEntry (or \a rootPath if
+ * \a rootEntry is NULL), stripping the root prefix from each discovered
+ * device path and appending the relative name to \a list.
+ *
+ * @param rootPath Absolute path of the scan root.
+ * @param list BList of BString* to receive the discovered device names.
+ * @param rootEntry Optional BEntry for the current directory level.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 _BJoystickTweaker::_ScanIncludingDisabled(const char *rootPath, BList *list,
 	BEntry *rootEntry)
@@ -124,6 +179,12 @@ _BJoystickTweaker::_ScanIncludingDisabled(const char *rootPath, BList *list,
 }
 
 
+/**
+ * @brief Scans DEVICE_BASE_PATH for all joystick devices, including disabled ones.
+ *
+ * Clears the associated BJoystick's device list and repopulates it with all
+ * entries found under the joystick base path.
+ */
 void
 _BJoystickTweaker::scan_including_disabled()
 {
@@ -133,6 +194,10 @@ _BJoystickTweaker::scan_including_disabled()
 }
 
 
+/**
+ * @brief Empties a BList of BString pointers, deleting each element.
+ * @param list The list to clear.
+ */
 void
 _BJoystickTweaker::_EmpyList(BList *list)
 {
@@ -143,6 +208,10 @@ _BJoystickTweaker::_EmpyList(BList *list)
 }
 
 
+/**
+ * @brief Returns basic joystick info (stub).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 _BJoystickTweaker::get_info()
 {
@@ -151,6 +220,16 @@ _BJoystickTweaker::get_info()
 }
 
 
+/**
+ * @brief Parses a joystick description file and fills a joystick_info struct.
+ *
+ * Opens the config file at JOYSTICK_CONFIG_BASE_PATH/<ref>, reads it line
+ * by line, and delegates each line to _BuildFromJoystickDesc().
+ *
+ * @param info Pointer to the joystick_info structure to populate.
+ * @param ref Name of the joystick description file (relative to config base).
+ * @return B_OK on success, or B_ERROR if the file cannot be opened.
+ */
 status_t
 _BJoystickTweaker::GetInfo(_joystick_info *info, const char *ref)
 {
@@ -176,6 +255,16 @@ _BJoystickTweaker::GetInfo(_joystick_info *info, const char *ref)
 }
 
 
+/**
+ * @brief Parses a single line from a joystick description file.
+ *
+ * Recognises key=value pairs for module name, gadget name, num_axes,
+ * num_hats, num_buttons, and num_sticks, and writes the parsed values into
+ * the supplied _joystick_info.
+ *
+ * @param string One line of text from the description file.
+ * @param info Pointer to the structure to update.
+ */
 void
 _BJoystickTweaker::_BuildFromJoystickDesc(char *string, _joystick_info *info)
 {
@@ -208,6 +297,11 @@ _BJoystickTweaker::_BuildFromJoystickDesc(char *string, _joystick_info *info)
 }
 
 
+/**
+ * @brief Sends an ioctl operation to the joystick device (stub).
+ * @param op One of the B_JOYSTICK_* ioctl operation codes.
+ * @return B_ERROR (not yet implemented).
+ */
 status_t
 _BJoystickTweaker::SendIOCT(uint32 op)
 {
