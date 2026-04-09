@@ -1,6 +1,29 @@
 /*
- * Copyright 2009-2010, Stephan Aßmus <superstippi@gmx.de>.
- * All rights reserved. Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Stephan Aßmus <superstippi@gmx.de>.
+ *   All rights reserved. Distributed under the terms of the MIT license.
+ */
+
+/** @file MediaWriter.cpp
+ *  @brief Internal media writer that multiplexes encoded streams into a container file.
  */
 
 
@@ -19,8 +42,15 @@
 
 
 
+/** @brief Internal ChunkWriter that routes WriteChunk() calls to the parent MediaWriter
+ *         for a specific stream index.
+ */
 class MediaExtractorChunkWriter : public ChunkWriter {
 public:
+	/** @brief Constructs the chunk writer for the given stream index.
+	 *  @param writer      Pointer to the owning MediaWriter.
+	 *  @param streamIndex Zero-based stream index.
+	 */
 	MediaExtractorChunkWriter(MediaWriter* writer, int32 streamIndex)
 		:
 		fWriter(writer),
@@ -28,6 +58,12 @@ public:
 	{
 	}
 
+	/** @brief Writes an encoded chunk to the underlying writer plugin.
+	 *  @param chunkBuffer Pointer to the encoded data.
+	 *  @param chunkSize   Size of the encoded data in bytes.
+	 *  @param encodeInfo  Pointer to media_encode_info for the chunk.
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual status_t WriteChunk(const void* chunkBuffer, size_t chunkSize,
 		media_encode_info* encodeInfo)
 	{
@@ -44,6 +80,10 @@ private:
 // #pragma mark -
 
 
+/** @brief Constructs a MediaWriter and creates the writer plugin for the given format.
+ *  @param target     Pointer to the BDataIO output target.
+ *  @param fileFormat The desired container file format.
+ */
 MediaWriter::MediaWriter(BDataIO* target, const media_file_format& fileFormat)
 	:
 	fTarget(target),
@@ -57,6 +97,7 @@ MediaWriter::MediaWriter(BDataIO* target, const media_file_format& fileFormat)
 }
 
 
+/** @brief Destructor; frees all stream cookies and destroys the writer plugin. */
 MediaWriter::~MediaWriter()
 {
 	CALLED();
@@ -75,6 +116,9 @@ MediaWriter::~MediaWriter()
 }
 
 
+/** @brief Initialises the writer plugin with the file format information.
+ *  @return B_OK on success, B_NO_INIT if no writer plugin was created.
+ */
 status_t
 MediaWriter::InitCheck()
 {
@@ -84,6 +128,9 @@ MediaWriter::InitCheck()
 }
 
 
+/** @brief Returns the BDataIO output target used by this writer.
+ *  @return Pointer to the BDataIO target.
+ */
 BDataIO*
 MediaWriter::Target() const
 {
@@ -91,6 +138,9 @@ MediaWriter::Target() const
 }
 
 
+/** @brief Fills in a media_file_format struct with the current file format info.
+ *  @param _fileFormat Pointer to a media_file_format struct to fill; ignored if NULL.
+ */
 void
 MediaWriter::GetFileFormatInfo(media_file_format* _fileFormat) const
 {
@@ -101,6 +151,13 @@ MediaWriter::GetFileFormatInfo(media_file_format* _fileFormat) const
 }
 
 
+/** @brief Creates an encoder for the given codec and allocates a new stream cookie.
+ *  @param _encoder  Output pointer to the created Encoder.
+ *  @param codecInfo Pointer to the desired codec info.
+ *  @param format    Pointer to the stream's media_format.
+ *  @param flags     Optional encoder creation flags.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 MediaWriter::CreateEncoder(Encoder** _encoder,
 	const media_codec_info* codecInfo, media_format* format, uint32 flags)
@@ -152,6 +209,10 @@ MediaWriter::CreateEncoder(Encoder** _encoder,
 }
 
 
+/** @brief Sets the global copyright string for the output file.
+ *  @param copyright Null-terminated copyright string.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 MediaWriter::SetCopyright(const char* copyright)
 {
@@ -162,6 +223,11 @@ MediaWriter::SetCopyright(const char* copyright)
 }
 
 
+/** @brief Sets the copyright string for a specific stream.
+ *  @param streamIndex Zero-based stream index.
+ *  @param copyright   Null-terminated copyright string.
+ *  @return B_OK on success, B_NO_INIT if no writer is active, B_BAD_INDEX if out of range.
+ */
 status_t
 MediaWriter::SetCopyright(int32 streamIndex, const char* copyright)
 {
@@ -176,6 +242,9 @@ MediaWriter::SetCopyright(int32 streamIndex, const char* copyright)
 }
 
 
+/** @brief Commits the file header after all streams have been added.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 MediaWriter::CommitHeader()
 {
@@ -186,6 +255,9 @@ MediaWriter::CommitHeader()
 }
 
 
+/** @brief Flushes any buffered encoded data to the target.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 MediaWriter::Flush()
 {
@@ -196,6 +268,9 @@ MediaWriter::Flush()
 }
 
 
+/** @brief Closes the output file and finalises the container format.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 MediaWriter::Close()
 {
@@ -206,6 +281,14 @@ MediaWriter::Close()
 }
 
 
+/** @brief Adds track-level info to the specified stream.
+ *  @param streamIndex Zero-based stream index.
+ *  @param code        Code identifying the info type.
+ *  @param data        Pointer to the info data.
+ *  @param size        Size of the info data in bytes.
+ *  @param flags       Optional flags.
+ *  @return B_OK on success, B_NO_INIT if no writer is active, B_BAD_INDEX if out of range.
+ */
 status_t
 MediaWriter::AddTrackInfo(int32 streamIndex, uint32 code,
 	const void* data, size_t size, uint32 flags)
@@ -221,6 +304,13 @@ MediaWriter::AddTrackInfo(int32 streamIndex, uint32 code,
 }
 
 
+/** @brief Writes an encoded chunk to the specified stream in the container.
+ *  @param streamIndex Zero-based stream index.
+ *  @param chunkBuffer Pointer to the encoded data.
+ *  @param chunkSize   Size of the encoded data in bytes.
+ *  @param encodeInfo  Pointer to media_encode_info for the chunk.
+ *  @return B_OK on success, B_NO_INIT if no writer is active, B_BAD_INDEX if out of range.
+ */
 status_t
 MediaWriter::WriteChunk(int32 streamIndex, const void* chunkBuffer,
 	size_t chunkSize, media_encode_info* encodeInfo)

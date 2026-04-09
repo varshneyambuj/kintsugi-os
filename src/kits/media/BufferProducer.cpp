@@ -1,8 +1,30 @@
 /*
- * Copyright 2010-2012, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2002-2003, Marcus Overhagen, <Marcus@Overhagen.de>.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2012, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2002-2003, Marcus Overhagen, <Marcus@Overhagen.de>.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file BufferProducer.cpp
+ *  @brief Implements BBufferProducer, the media node mixin for producing data buffers. */
 
 
 #include <Buffer.h>
@@ -18,6 +40,7 @@
 // #pragma mark - protected BBufferProducer
 
 
+/** @brief Destructor for BBufferProducer. */
 BBufferProducer::~BBufferProducer()
 {
 	CALLED();
@@ -27,6 +50,13 @@ BBufferProducer::~BBufferProducer()
 // #pragma mark - public BBufferProducer
 
 
+/** @brief Converts clip data in B_CLIP_SHORT_RUNS format into a BRegion.
+ *
+ *  @param format The clip format; must be B_CLIP_SHORT_RUNS.
+ *  @param size   Size of the \a data buffer in bytes.
+ *  @param data   Pointer to the clip run data.
+ *  @param region Destination BRegion that receives the decoded clip.
+ *  @return B_OK on success, or B_MEDIA_BAD_CLIP_FORMAT if \a format is unrecognised. */
 /*static*/ status_t
 BBufferProducer::ClipDataToRegion(int32 format, int32 size, const void* data,
 	BRegion* region)
@@ -41,6 +71,8 @@ BBufferProducer::ClipDataToRegion(int32 format, int32 size, const void* data,
 }
 
 
+/** @brief Returns the media type this producer generates.
+ *  @return The media_type value set at construction time. */
 media_type
 BBufferProducer::ProducerType()
 {
@@ -52,6 +84,11 @@ BBufferProducer::ProducerType()
 // #pragma mark - protected BBufferProducer
 
 
+/** @brief Constructs a BBufferProducer with the given media type.
+ *
+ *  Registers the node as a B_BUFFER_PRODUCER kind.
+ *
+ *  @param producer_type The type of media data this producer will generate. */
 BBufferProducer::BBufferProducer(media_type producer_type)
 	:
 	BMediaNode("called by BBufferProducer"),
@@ -66,6 +103,16 @@ BBufferProducer::BBufferProducer(media_type producer_type)
 }
 
 
+/** @brief Hook called when a consumer asks the producer to change video clipping.
+ *
+ *  The default implementation does nothing; derived classes may override.
+ *
+ *  @param source     The media source whose clipping is to change.
+ *  @param numShorts  Number of int16 values in \a clipData.
+ *  @param clipData   Clip run data in B_CLIP_SHORT_RUNS format.
+ *  @param display    Video display information associated with the clip.
+ *  @param            Reserved; ignored.
+ *  @return B_ERROR (default); override to return B_OK on success. */
 status_t
 BBufferProducer::VideoClippingChanged(const media_source& source,
 	int16 numShorts, int16* clipData, const media_video_display_info& display,
@@ -77,6 +124,14 @@ BBufferProducer::VideoClippingChanged(const media_source& source,
 }
 
 
+/** @brief Returns the maximum downstream latency across all connected outputs.
+ *
+ *  Iterates all current outputs and queries their destinations for latency.
+ *  For loopback connections the local BBufferConsumer interface is used to
+ *  avoid a port write deadlock.
+ *
+ *  @param _latency Out-parameter that receives the maximum latency in microseconds.
+ *  @return B_OK on success. */
 status_t
 BBufferProducer::GetLatency(bigtime_t* _latency)
 {
@@ -119,6 +174,13 @@ BBufferProducer::GetLatency(bigtime_t* _latency)
 }
 
 
+/** @brief Sets the playback rate of this producer as a rational number.
+ *
+ *  The default implementation does nothing; derived classes may override.
+ *
+ *  @param numer Numerator of the desired play rate.
+ *  @param denom Denominator of the desired play rate.
+ *  @return B_ERROR (default); override to return B_OK on success. */
 status_t
 BBufferProducer::SetPlayRate(int32 numer, int32 denom)
 {
@@ -128,6 +190,15 @@ BBufferProducer::SetPlayRate(int32 numer, int32 denom)
 }
 
 
+/** @brief Handles messages directed at this buffer producer.
+ *
+ *  Dispatches incoming port messages to the appropriate virtual hook functions
+ *  such as FormatSuggestionRequested(), Connect(), SetBufferGroup(), etc.
+ *
+ *  @param message Opaque message code (e.g. PRODUCER_CONNECT).
+ *  @param data    Pointer to the message payload.
+ *  @param size    Size of the message payload in bytes.
+ *  @return B_OK if the message was handled, or B_ERROR if unrecognised. */
 status_t
 BBufferProducer::HandleMessage(int32 message, const void* data, size_t size)
 {
@@ -403,6 +474,14 @@ BBufferProducer::HandleMessage(int32 message, const void* data, size_t size)
 }
 
 
+/** @brief Hook called when a consumer requests an additional buffer beyond normal scheduling.
+ *
+ *  The default implementation does nothing; derived classes may override.
+ *
+ *  @param source        The media source for which the buffer is requested.
+ *  @param previousBuffer The ID of the most recently received buffer.
+ *  @param previousTime  The performance time of the previous buffer.
+ *  @param previousTag   Optional seek tag associated with the previous buffer, or NULL. */
 void
 BBufferProducer::AdditionalBufferRequested(const media_source& source,
 	media_buffer_id previousBuffer, bigtime_t previousTime,
@@ -413,6 +492,14 @@ BBufferProducer::AdditionalBufferRequested(const media_source& source,
 }
 
 
+/** @brief Hook called when the downstream latency for a connection has changed.
+ *
+ *  The default implementation does nothing; derived classes may override.
+ *
+ *  @param source      The output source of the connection.
+ *  @param destination The input destination of the connection.
+ *  @param newLatency  The new latency value in microseconds.
+ *  @param flags       Latency-change flags. */
 void
 BBufferProducer::LatencyChanged(const media_source& source,
 	const media_destination& destination, bigtime_t newLatency, uint32 flags)
@@ -422,6 +509,15 @@ BBufferProducer::LatencyChanged(const media_source& source,
 }
 
 
+/** @brief Sends a filled BBuffer to a connected consumer.
+ *
+ *  Stamps the buffer header with timing and routing information before
+ *  writing it to the destination port.
+ *
+ *  @param buffer      The buffer to send; must not be NULL.
+ *  @param source      The output source sending the buffer.
+ *  @param destination The consumer destination that should receive it.
+ *  @return B_OK on success, or a port/media error code. */
 status_t
 BBufferProducer::SendBuffer(BBuffer* buffer, const media_source& source,
 	const media_destination& destination)
@@ -452,6 +548,12 @@ BBufferProducer::SendBuffer(BBuffer* buffer, const media_source& source,
 }
 
 
+/** @brief Sends a data-status notification to a connected consumer.
+ *
+ *  @param status      Status code to report (e.g. B_DATA_AVAILABLE).
+ *  @param destination The consumer destination to notify.
+ *  @param atTime      Performance time at which the status change takes effect.
+ *  @return B_OK on success, or B_MEDIA_BAD_DESTINATION if the destination is invalid. */
 status_t
 BBufferProducer::SendDataStatus(int32 status,
 	const media_destination& destination, bigtime_t atTime)
@@ -470,6 +572,11 @@ BBufferProducer::SendDataStatus(int32 status,
 }
 
 
+/** @brief Proposes a format change to a connected consumer and waits for acceptance.
+ *
+ *  @param format      In/out: the proposed format; updated with the accepted format on return.
+ *  @param destination The consumer to query.
+ *  @return B_OK if the format was accepted, or an error code. */
 status_t
 BBufferProducer::ProposeFormatChange(media_format* format,
 	const media_destination& destination)
@@ -493,6 +600,14 @@ BBufferProducer::ProposeFormatChange(media_format* format,
 }
 
 
+/** @brief Notifies a consumer that the format on a connection has changed.
+ *
+ *  This is a synchronous call; it waits for the consumer to acknowledge the change.
+ *
+ *  @param source      The producer source of the connection.
+ *  @param destination The consumer destination of the connection.
+ *  @param format      Pointer to the new media format.
+ *  @return B_OK if the consumer accepted the new format, or an error code. */
 status_t
 BBufferProducer::ChangeFormat(const media_source& source,
 	const media_destination& destination, media_format* format)
@@ -516,6 +631,12 @@ BBufferProducer::ChangeFormat(const media_source& source,
 }
 
 
+/** @brief Queries the latency introduced by a consumer destination.
+ *
+ *  @param destination  The consumer destination to query.
+ *  @param _latency     Out-parameter receiving the latency in microseconds.
+ *  @param _timesource  Out-parameter receiving the time source node ID used by the consumer.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferProducer::FindLatencyFor(const media_destination& destination,
 	bigtime_t* _latency, media_node_id* _timesource)
@@ -540,6 +661,15 @@ BBufferProducer::FindLatencyFor(const media_destination& destination,
 }
 
 
+/** @brief Finds the nearest seek tag at or near a target performance time.
+ *
+ *  @param destination   The consumer destination to query.
+ *  @param targetTime    The desired seek target in performance time.
+ *  @param _tag          Out-parameter receiving the seek tag.
+ *  @param _tagged_time  Out-parameter receiving the actual tagged time.
+ *  @param _flags        Out-parameter receiving seek flags.
+ *  @param flags         Input seek flags passed to the consumer.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferProducer::FindSeekTag(const media_destination& destination,
 	bigtime_t targetTime, media_seek_tag* _tag, bigtime_t* _tagged_time,
@@ -568,6 +698,10 @@ BBufferProducer::FindSeekTag(const media_destination& destination,
 }
 
 
+/** @brief Sets the initial latency that this producer introduces before any connection.
+ *
+ *  @param initialLatency Latency in microseconds contributed by this node itself.
+ *  @param flags          Flags qualifying the latency (e.g. B_LATE_WAKEUP). */
 void
 BBufferProducer::SetInitialLatency(bigtime_t initialLatency, uint32 flags)
 {
@@ -586,25 +720,46 @@ BBufferProducer::BBufferProducer(const BBufferProducer &clone)
 BBufferProducer & BBufferProducer::operator=(const BBufferProducer &clone)
 */
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_0(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_1(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_2(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_3(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_4(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_5(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_6(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_7(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_8(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_9(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_10(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_11(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_12(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_13(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_14(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferProducer::_Reserved_BufferProducer_15(void*) { return B_ERROR; }
 
 
 //! Deprecated.
+/** @brief Deprecated overload; sends a buffer without an explicit source, inferring it from GetNextOutput().
+ *
+ *  @param buffer      The buffer to send.
+ *  @param destination The consumer destination to deliver the buffer to.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferProducer::SendBuffer(BBuffer* buffer,
 	const media_destination& destination)
@@ -622,6 +777,12 @@ BBufferProducer::SendBuffer(BBuffer* buffer,
 }
 
 
+/** @brief Converts a BRegion clip into a short-run encoded clip array (unimplemented).
+ *
+ *  @param data   Pointer to the short-run encoded clip data.
+ *  @param count  Number of int16 shorts in the clip data.
+ *  @param output Destination BRegion.
+ *  @return B_ERROR (not yet implemented). */
 status_t
 BBufferProducer::clip_shorts_to_region(const int16* data, int count,
 	BRegion* output)
@@ -631,6 +792,13 @@ BBufferProducer::clip_shorts_to_region(const int16* data, int count,
 }
 
 
+/** @brief Converts a BRegion clip into a short-run encoded clip array (unimplemented).
+ *
+ *  @param input    Source BRegion to encode.
+ *  @param data     Output buffer for int16 short-run clip data.
+ *  @param maxCount Maximum number of int16 values that fit in \a data.
+ *  @param _count   Out-parameter receiving the actual number of shorts written.
+ *  @return B_ERROR (not yet implemented). */
 status_t
 BBufferProducer::clip_region_to_shorts(const BRegion* input, int16* data,
 	int maxCount, int* _count)

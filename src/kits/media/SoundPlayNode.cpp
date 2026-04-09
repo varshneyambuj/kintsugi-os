@@ -1,10 +1,35 @@
 /*
- * Copyright 2002-2010, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marcus Overhagen
- *		Jérôme Duval
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2010, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marcus Overhagen
+ *       Jérôme Duval
+ */
+
+
+/** @file SoundPlayNode.cpp
+ *  @brief Implements SoundPlayNode, the internal BBufferProducer used by
+ *         BSoundPlayer to feed audio buffers into the Media Kit graph.
  */
 
 
@@ -29,6 +54,12 @@
 namespace BPrivate {
 
 
+/**
+ * @brief Construct the SoundPlayNode and initialise output format to wildcard.
+ *
+ * @param name    Human-readable name for this media node.
+ * @param player  The owning BSoundPlayer that provides buffer data.
+ */
 SoundPlayNode::SoundPlayNode(const char* name, BSoundPlayer* player)
 	:
 	BMediaNode(name),
@@ -47,6 +78,9 @@ SoundPlayNode::SoundPlayNode(const char* name, BSoundPlayer* player)
 }
 
 
+/**
+ * @brief Destructor. Stops the event looper before destroying the node.
+ */
 SoundPlayNode::~SoundPlayNode()
 {
 	CALLED();
@@ -54,6 +88,11 @@ SoundPlayNode::~SoundPlayNode()
 }
 
 
+/**
+ * @brief Return whether the node is currently in the B_STARTED run state.
+ *
+ * @return true if playing, false otherwise.
+ */
 bool
 SoundPlayNode::IsPlaying()
 {
@@ -61,6 +100,11 @@ SoundPlayNode::IsPlaying()
 }
 
 
+/**
+ * @brief Return the elapsed media time based on the number of frames sent.
+ *
+ * @return Microseconds of media time elapsed since playback started.
+ */
 bigtime_t
 SoundPlayNode::CurrentTime()
 {
@@ -70,6 +114,11 @@ SoundPlayNode::CurrentTime()
 }
 
 
+/**
+ * @brief Return the negotiated multi-channel audio format.
+ *
+ * @return The current output format.
+ */
 media_multi_audio_format
 SoundPlayNode::Format() const
 {
@@ -80,6 +129,12 @@ SoundPlayNode::Format() const
 // #pragma mark - implementation of BMediaNode
 
 
+/**
+ * @brief Return the add-on that instantiated this node (always NULL for inline nodes).
+ *
+ * @param _internalID  Receives the internal add-on ID (unused).
+ * @return Always NULL.
+ */
 BMediaAddOn*
 SoundPlayNode::AddOn(int32* _internalID) const
 {
@@ -89,6 +144,9 @@ SoundPlayNode::AddOn(int32* _internalID) const
 }
 
 
+/**
+ * @brief Called when the node is prerolled; delegates to BMediaNode::Preroll().
+ */
 void
 SoundPlayNode::Preroll()
 {
@@ -98,6 +156,14 @@ SoundPlayNode::Preroll()
 }
 
 
+/**
+ * @brief Handle an incoming message (not used by this node).
+ *
+ * @param message  Message code.
+ * @param data     Message data.
+ * @param size     Size of @p data.
+ * @return B_ERROR always.
+ */
 status_t
 SoundPlayNode::HandleMessage(int32 message, const void* data, size_t size)
 {
@@ -106,6 +172,11 @@ SoundPlayNode::HandleMessage(int32 message, const void* data, size_t size)
 }
 
 
+/**
+ * @brief Called by the Media Kit after the node has been registered.
+ *
+ * Initialises the output descriptor and starts the event looper thread.
+ */
 void
 SoundPlayNode::NodeRegistered()
 {
@@ -130,6 +201,12 @@ SoundPlayNode::NodeRegistered()
 }
 
 
+/**
+ * @brief Called when a previously issued request has completed.
+ *
+ * @param info  Information about the completed request.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::RequestCompleted(const media_request_info& info)
 {
@@ -138,6 +215,11 @@ SoundPlayNode::RequestCompleted(const media_request_info& info)
 }
 
 
+/**
+ * @brief Propagate the time source change to the base class.
+ *
+ * @param timeSource  The new time source.
+ */
 void
 SoundPlayNode::SetTimeSource(BTimeSource* timeSource)
 {
@@ -146,6 +228,11 @@ SoundPlayNode::SetTimeSource(BTimeSource* timeSource)
 }
 
 
+/**
+ * @brief Propagate the run mode change to the base class.
+ *
+ * @param mode  The new run mode.
+ */
 void
 SoundPlayNode::SetRunMode(run_mode mode)
 {
@@ -157,6 +244,13 @@ SoundPlayNode::SetRunMode(run_mode mode)
 // #pragma mark - implementation for BBufferProducer
 
 
+/**
+ * @brief Report the node's preferred output format in response to a format query.
+ *
+ * @param type     The requested media type; B_MEDIA_UNKNOWN_TYPE is acceptable.
+ * @param format   Receives the preferred format (raw audio wildcard).
+ * @return B_OK, or B_MEDIA_BAD_FORMAT if a non-audio type is requested.
+ */
 status_t
 SoundPlayNode::FormatSuggestionRequested(media_type type, int32 /*quality*/,
 	media_format* format)
@@ -179,6 +273,14 @@ SoundPlayNode::FormatSuggestionRequested(media_type type, int32 /*quality*/,
 }
 
 
+/**
+ * @brief First stage of format negotiation: propose a format for a given output.
+ *
+ * @param output  The source being queried.
+ * @param format  In/out: the proposed format; wildcards are accepted.
+ * @return B_OK, B_MEDIA_BAD_SOURCE if @p output does not match,
+ *         or B_MEDIA_BAD_FORMAT for non-audio types.
+ */
 status_t
 SoundPlayNode::FormatProposal(const media_source& output, media_format* format)
 {
@@ -213,6 +315,14 @@ SoundPlayNode::FormatProposal(const media_source& output, media_format* format)
 }
 
 
+/**
+ * @brief Reject any format change request; this node supports only one format.
+ *
+ * @param source       The output source.
+ * @param destination  The input destination.
+ * @param _format      The proposed new format.
+ * @return B_ERROR always (format changes not supported).
+ */
 status_t
 SoundPlayNode::FormatChangeRequested(const media_source& source,
 	const media_destination& destination, media_format* _format,
@@ -225,6 +335,13 @@ SoundPlayNode::FormatChangeRequested(const media_source& source,
 }
 
 
+/**
+ * @brief Enumerate the node's outputs; this node has exactly one.
+ *
+ * @param cookie   Iterator cookie; set to 0 before the first call.
+ * @param _output  Receives the output descriptor on the first call.
+ * @return B_OK on the first call, B_BAD_INDEX when exhausted.
+ */
 status_t
 SoundPlayNode::GetNextOutput(int32* cookie, media_output* _output)
 {
@@ -240,6 +357,12 @@ SoundPlayNode::GetNextOutput(int32* cookie, media_output* _output)
 }
 
 
+/**
+ * @brief Release the output iteration cookie (no-op for this node).
+ *
+ * @param cookie  The cookie returned from GetNextOutput().
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::DisposeOutputCookie(int32 cookie)
 {
@@ -249,6 +372,16 @@ SoundPlayNode::DisposeOutputCookie(int32 cookie)
 }
 
 
+/**
+ * @brief Replace the buffer group used for audio output.
+ *
+ * Deletes the existing buffer group and adopts @p newGroup. If @p newGroup is
+ * NULL, a new group is created via AllocateBuffers().
+ *
+ * @param forSource  The source that the buffer group is being changed for.
+ * @param newGroup   New buffer group to use, or NULL to auto-allocate.
+ * @return B_OK on success, B_MEDIA_BAD_SOURCE if @p forSource does not match.
+ */
 status_t
 SoundPlayNode::SetBufferGroup(const media_source& forSource,
 	BBufferGroup* newGroup)
@@ -286,6 +419,12 @@ SoundPlayNode::SetBufferGroup(const media_source& forSource,
 }
 
 
+/**
+ * @brief Report the total latency (event latency + scheduling latency).
+ *
+ * @param _latency  Receives the total latency in microseconds.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::GetLatency(bigtime_t* _latency)
 {
@@ -297,6 +436,20 @@ SoundPlayNode::GetLatency(bigtime_t* _latency)
 }
 
 
+/**
+ * @brief Second stage of format negotiation: fully specialise the format.
+ *
+ * Fills any wildcard fields with concrete values (defaulting to 44100 Hz,
+ * 2 channels, float samples), then reserves the connection.
+ *
+ * @param what     The output source being connected.
+ * @param where    The input destination being connected.
+ * @param format   In/out: the format to specialise.
+ * @param _source  Receives the confirmed source.
+ * @param _name    Receives the node name.
+ * @return B_OK on success, B_MEDIA_BAD_SOURCE, B_MEDIA_ALREADY_CONNECTED,
+ *         or B_MEDIA_BAD_FORMAT on failure.
+ */
 status_t
 SoundPlayNode::PrepareToConnect(const media_source& what,
 	const media_destination& where, media_format* format,
@@ -386,6 +539,17 @@ SoundPlayNode::PrepareToConnect(const media_source& what,
 }
 
 
+/**
+ * @brief Confirm the connection after negotiation, measure downstream latency,
+ *        and allocate the buffer group.
+ *
+ * @param error        Non-zero if the connection failed; the reservation is
+ *                     released in that case.
+ * @param source       The confirmed source.
+ * @param destination  The confirmed destination.
+ * @param format       The agreed-upon format.
+ * @param name         Receives the node name.
+ */
 void
 SoundPlayNode::Connect(status_t error, const media_source& source,
 	const media_destination& destination, const media_format& format,
@@ -446,6 +610,13 @@ SoundPlayNode::Connect(status_t error, const media_source& source,
 }
 
 
+/**
+ * @brief Handle disconnection by resetting the output to the null destination
+ *        and releasing the buffer group.
+ *
+ * @param what   The source being disconnected.
+ * @param where  The destination being disconnected.
+ */
 void
 SoundPlayNode::Disconnect(const media_source& what,
 	const media_destination& where)
@@ -474,6 +645,16 @@ SoundPlayNode::Disconnect(const media_source& what,
 }
 
 
+/**
+ * @brief React to late-buffer notification by increasing internal latency.
+ *
+ * If not in B_DROP_DATA mode, the internal latency is increased to compensate.
+ * In B_DROP_DATA mode, a buffer is skipped to catch up.
+ *
+ * @param what             The source that was late.
+ * @param howMuch          How late the buffer was, in microseconds.
+ * @param performanceTime  The performance time at which the lateness occurred.
+ */
 void
 SoundPlayNode::LateNoticeReceived(const media_source& what, bigtime_t howMuch,
 	bigtime_t performanceTime)
@@ -520,6 +701,12 @@ SoundPlayNode::LateNoticeReceived(const media_source& what, bigtime_t howMuch,
 }
 
 
+/**
+ * @brief Enable or disable the single output of this node.
+ *
+ * @param what     The source to enable or disable.
+ * @param enabled  true to enable output, false to disable.
+ */
 void
 SoundPlayNode::EnableOutput(const media_source& what, bool enabled,
 	int32* /* deprecated */)
@@ -542,6 +729,14 @@ SoundPlayNode::EnableOutput(const media_source& what, bool enabled,
 }
 
 
+/**
+ * @brief Called to request an additional buffer for offline rendering (not supported).
+ *
+ * @param source        The source requesting an additional buffer.
+ * @param previousBuffer  The previous buffer ID.
+ * @param previousTime    The previous buffer's timestamp.
+ * @param previousTag     Seek tag associated with the previous buffer.
+ */
 void
 SoundPlayNode::AdditionalBufferRequested(const media_source& source,
 	media_buffer_id previousBuffer, bigtime_t previousTime,
@@ -553,6 +748,14 @@ SoundPlayNode::AdditionalBufferRequested(const media_source& source,
 }
 
 
+/**
+ * @brief React to a downstream latency change by updating the event latency.
+ *
+ * @param source       The output source whose latency changed.
+ * @param destination  The downstream destination that reported the change.
+ * @param newLatency   The new downstream latency in microseconds.
+ * @param flags        Latency change flags (unused).
+ */
 void
 SoundPlayNode::LatencyChanged(const media_source& source,
 	const media_destination& destination, bigtime_t newLatency, uint32 flags)
@@ -578,6 +781,13 @@ SoundPlayNode::LatencyChanged(const media_source& source,
 // #pragma mark - implementation for BMediaEventLooper
 
 
+/**
+ * @brief Dispatch timed events to the appropriate handler methods.
+ *
+ * @param event          The timed event to handle.
+ * @param lateness       How late the event is being processed.
+ * @param realTimeEvent  true if this is a real-time event.
+ */
 void
 SoundPlayNode::HandleEvent(const media_timed_event* event, bigtime_t lateness,
 	bool realTimeEvent)
@@ -621,6 +831,18 @@ SoundPlayNode::HandleEvent(const media_timed_event* event, bigtime_t lateness,
 
 // how should we handle late buffers?  drop them?
 // notify the producer?
+/**
+ * @brief Fill and send one audio buffer downstream, then schedule the next one.
+ *
+ * Obtains a buffer from the group, calls BSoundPlayer::PlayBuffer() to fill it,
+ * sends it downstream, updates the frame counter, and queues the next
+ * SEND_NEW_BUFFER_EVENT.
+ *
+ * @param event          The timed event that triggered buffer production.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::SendNewBuffer(const media_timed_event* event,
 	bigtime_t lateness, bool realTimeEvent)
@@ -700,6 +922,14 @@ SoundPlayNode::SendNewBuffer(const media_timed_event* event,
 }
 
 
+/**
+ * @brief Handle a B_DATA_STATUS event (currently a no-op).
+ *
+ * @param event          The data-status event.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::HandleDataStatus(const media_timed_event* event,
 	bigtime_t lateness, bool realTimeEvent)
@@ -721,6 +951,15 @@ SoundPlayNode::HandleDataStatus(const media_timed_event* event,
 }
 
 
+/**
+ * @brief Handle a B_START event by initialising the frame counter and scheduling
+ *        the first buffer send event.
+ *
+ * @param event          The start event.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::HandleStart(const media_timed_event* event, bigtime_t lateness,
 	bool realTimeEvent)
@@ -747,6 +986,14 @@ SoundPlayNode::HandleStart(const media_timed_event* event, bigtime_t lateness,
 }
 
 
+/**
+ * @brief Handle a B_SEEK event (currently a no-op).
+ *
+ * @param event          The seek event.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::HandleSeek(const media_timed_event* event, bigtime_t lateness,
 	bool realTimeEvent)
@@ -758,6 +1005,14 @@ SoundPlayNode::HandleSeek(const media_timed_event* event, bigtime_t lateness,
 }
 
 
+/**
+ * @brief Handle a B_WARP event (currently a no-op).
+ *
+ * @param event          The warp event.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::HandleWarp(const media_timed_event* event, bigtime_t lateness,
 	bool realTimeEvent)
@@ -767,6 +1022,14 @@ SoundPlayNode::HandleWarp(const media_timed_event* event, bigtime_t lateness,
 }
 
 
+/**
+ * @brief Handle a B_STOP event by flushing all pending SEND_NEW_BUFFER_EVENTs.
+ *
+ * @param event          The stop event.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::HandleStop(const media_timed_event* event, bigtime_t lateness,
 	bool realTimeEvent)
@@ -780,6 +1043,14 @@ SoundPlayNode::HandleStop(const media_timed_event* event, bigtime_t lateness,
 }
 
 
+/**
+ * @brief Handle a B_PARAMETER event (currently a no-op).
+ *
+ * @param event          The parameter event.
+ * @param lateness       How late the event was dispatched.
+ * @param realTimeEvent  true if this is a real-time event.
+ * @return B_OK always.
+ */
 status_t
 SoundPlayNode::HandleParameter(const media_timed_event* event,
 	bigtime_t lateness, bool realTimeEvent)
@@ -789,6 +1060,13 @@ SoundPlayNode::HandleParameter(const media_timed_event* event,
 }
 
 
+/**
+ * @brief Create a BBufferGroup large enough to span the downstream latency.
+ *
+ * Allocates at least three buffers, each of size fOutput.format.u.raw_audio.buffer_size.
+ *
+ * @return B_OK on success, or the BBufferGroup::InitCheck() error code.
+ */
 status_t
 SoundPlayNode::AllocateBuffers()
 {
@@ -818,6 +1096,16 @@ SoundPlayNode::AllocateBuffers()
 }
 
 
+/**
+ * @brief Request a buffer from the group and fill it with audio data.
+ *
+ * Calls BSoundPlayer::PlayBuffer() if data is available, otherwise zeroes
+ * the buffer. Also fills in the media_header fields.
+ *
+ * @param eventTime  The performance time at which this buffer should arrive.
+ * @return Pointer to the filled BBuffer, or NULL if a buffer could not be
+ *         obtained from the group.
+ */
 BBuffer*
 SoundPlayNode::FillNextBuffer(bigtime_t eventTime)
 {

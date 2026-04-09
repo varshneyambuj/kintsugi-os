@@ -1,10 +1,34 @@
 /*
- * Copyright 2002-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marcus Overhagen
- *		Jérôme Duval
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marcus Overhagen
+ *       Jérôme Duval
+ */
+
+/** @file SoundPlayer.cpp
+ *  @brief Implements BSoundPlayer, a high-level interface for playing audio
+ *         through the Media Kit using an internal BBufferProducer node.
  */
 
 
@@ -36,6 +60,17 @@ enum {
 static BSoundPlayer::play_id sCurrentPlayID = 1;
 
 
+/**
+ * @brief Construct a BSoundPlayer using the default audio format and mixer.
+ *
+ * @param name                   Name for the internal player node.
+ * @param playerFunction         Callback invoked each time a buffer needs to
+ *                               be filled; may be NULL to use the default
+ *                               BSound-based implementation.
+ * @param eventNotifierFunction  Callback invoked on player events (start,
+ *                               stop, sound done); may be NULL.
+ * @param cookie                 Arbitrary pointer passed back in callbacks.
+ */
 BSoundPlayer::BSoundPlayer(const char* name, BufferPlayerFunc playerFunction,
 	EventNotifierFunc eventNotifierFunction, void* cookie)
 {
@@ -50,6 +85,15 @@ BSoundPlayer::BSoundPlayer(const char* name, BufferPlayerFunc playerFunction,
 }
 
 
+/**
+ * @brief Construct a BSoundPlayer with a specific raw audio format.
+ *
+ * @param _format                Desired raw audio format for the output.
+ * @param name                   Name for the internal player node.
+ * @param playerFunction         Buffer-fill callback; may be NULL.
+ * @param eventNotifierFunction  Event notification callback; may be NULL.
+ * @param cookie                 Arbitrary pointer passed back in callbacks.
+ */
 BSoundPlayer::BSoundPlayer(const media_raw_audio_format* _format,
 	const char* name, BufferPlayerFunc playerFunction,
 	EventNotifierFunc eventNotifierFunction, void* cookie)
@@ -73,6 +117,18 @@ BSoundPlayer::BSoundPlayer(const media_raw_audio_format* _format,
 }
 
 
+/**
+ * @brief Construct a BSoundPlayer connected to a specific media node and input.
+ *
+ * @param toNode                 Destination media node (must be a buffer consumer).
+ * @param format                 Multi-channel audio format to negotiate.
+ * @param name                   Name for the internal player node.
+ * @param input                  Specific media input on @p toNode; may be NULL
+ *                               to select a free input automatically.
+ * @param playerFunction         Buffer-fill callback; may be NULL.
+ * @param eventNotifierFunction  Event notification callback; may be NULL.
+ * @param cookie                 Arbitrary pointer passed back in callbacks.
+ */
 BSoundPlayer::BSoundPlayer(const media_node& toNode,
 	const media_multi_audio_format* format, const char* name,
 	const media_input* input, BufferPlayerFunc playerFunction,
@@ -97,6 +153,9 @@ BSoundPlayer::BSoundPlayer(const media_node& toNode,
 }
 
 
+/**
+ * @brief Destructor. Stops playback, disconnects nodes, and releases resources.
+ */
 BSoundPlayer::~BSoundPlayer()
 {
 	CALLED();
@@ -160,6 +219,11 @@ cleanup:
 }
 
 
+/**
+ * @brief Return the initialisation status of this BSoundPlayer.
+ *
+ * @return B_OK if the player is ready, or an error code.
+ */
 status_t
 BSoundPlayer::InitCheck()
 {
@@ -168,6 +232,12 @@ BSoundPlayer::InitCheck()
 }
 
 
+/**
+ * @brief Return the negotiated raw audio format.
+ *
+ * @return The media_raw_audio_format agreed upon during connection, or
+ *         media_raw_audio_format::wildcard if not connected.
+ */
 media_raw_audio_format
 BSoundPlayer::Format() const
 {
@@ -180,6 +250,14 @@ BSoundPlayer::Format() const
 }
 
 
+/**
+ * @brief Start audio playback.
+ *
+ * Starts the time source if necessary, then starts the internal player node
+ * with enough lead time to fill the pipeline.
+ *
+ * @return B_OK on success, B_NO_INIT if not connected, or a Media Kit error.
+ */
 status_t
 BSoundPlayer::Start()
 {
@@ -224,6 +302,13 @@ BSoundPlayer::Start()
 }
 
 
+/**
+ * @brief Stop audio playback.
+ *
+ * @param block  If true, wait until the node has fully stopped and all
+ *               in-flight buffers have been played.
+ * @param flush  Reserved; currently ignored.
+ */
 void
 BSoundPlayer::Stop(bool block, bool flush)
 {
@@ -268,6 +353,11 @@ BSoundPlayer::Stop(bool block, bool flush)
 }
 
 
+/**
+ * @brief Query the total end-to-end latency of the audio pipeline.
+ *
+ * @return Latency in microseconds, or 0 if not connected or on error.
+ */
 bigtime_t
 BSoundPlayer::Latency()
 {
@@ -296,6 +386,13 @@ BSoundPlayer::Latency()
 }
 
 
+/**
+ * @brief Mark whether there is audio data available for playback.
+ *
+ * When set to false the internal buffer callback will fill buffers with silence.
+ *
+ * @param hasData  true if data is available, false to indicate silence.
+ */
 void
 BSoundPlayer::SetHasData(bool hasData)
 {
@@ -307,6 +404,11 @@ BSoundPlayer::SetHasData(bool hasData)
 }
 
 
+/**
+ * @brief Return whether audio data is currently available.
+ *
+ * @return true if audio data is available, false if silence should be output.
+ */
 bool
 BSoundPlayer::HasData()
 {
@@ -315,6 +417,11 @@ BSoundPlayer::HasData()
 }
 
 
+/**
+ * @brief Return the current buffer-fill callback function.
+ *
+ * @return The BufferPlayerFunc callback, or NULL if none is set.
+ */
 BSoundPlayer::BufferPlayerFunc
 BSoundPlayer::BufferPlayer() const
 {
@@ -323,6 +430,11 @@ BSoundPlayer::BufferPlayer() const
 }
 
 
+/**
+ * @brief Replace the buffer-fill callback function.
+ *
+ * @param playerFunction  New callback to use; may be NULL to disable custom filling.
+ */
 void
 BSoundPlayer::SetBufferPlayer(BufferPlayerFunc playerFunction)
 {
@@ -333,6 +445,11 @@ BSoundPlayer::SetBufferPlayer(BufferPlayerFunc playerFunction)
 }
 
 
+/**
+ * @brief Return the current event-notification callback function.
+ *
+ * @return The EventNotifierFunc callback, or NULL if none is set.
+ */
 BSoundPlayer::EventNotifierFunc
 BSoundPlayer::EventNotifier() const
 {
@@ -341,6 +458,11 @@ BSoundPlayer::EventNotifier() const
 }
 
 
+/**
+ * @brief Replace the event-notification callback function.
+ *
+ * @param eventNotifierFunction  New callback to use; may be NULL.
+ */
 void
 BSoundPlayer::SetNotifier(EventNotifierFunc eventNotifierFunction)
 {
@@ -351,6 +473,11 @@ BSoundPlayer::SetNotifier(EventNotifierFunc eventNotifierFunction)
 }
 
 
+/**
+ * @brief Return the cookie value passed to callbacks.
+ *
+ * @return The cookie pointer.
+ */
 void*
 BSoundPlayer::Cookie() const
 {
@@ -359,6 +486,11 @@ BSoundPlayer::Cookie() const
 }
 
 
+/**
+ * @brief Set the cookie value passed to callbacks.
+ *
+ * @param cookie  New cookie pointer.
+ */
 void
 BSoundPlayer::SetCookie(void *cookie)
 {
@@ -369,6 +501,13 @@ BSoundPlayer::SetCookie(void *cookie)
 }
 
 
+/**
+ * @brief Atomically set the buffer-player, notifier, and cookie.
+ *
+ * @param playerFunction         New buffer-fill callback.
+ * @param eventNotifierFunction  New event-notification callback.
+ * @param cookie                 New cookie pointer.
+ */
 void
 BSoundPlayer::SetCallbacks(BufferPlayerFunc playerFunction,
 	EventNotifierFunc eventNotifierFunction, void* cookie)
@@ -387,6 +526,11 @@ BSoundPlayer::SetCallbacks(BufferPlayerFunc playerFunction,
 	has elapsed since playing was started, whichs seems to match
 	"CurrentTime() returns the current media time"
 */
+/**
+ * @brief Return the current media time elapsed since playback started.
+ *
+ * @return Microseconds elapsed since Start() was called, or 0 if not connected.
+ */
 bigtime_t
 BSoundPlayer::CurrentTime()
 {
@@ -401,6 +545,11 @@ BSoundPlayer::CurrentTime()
 	being used by the BSoundPlayer. Will return B_ERROR if the
 	BSoundPlayer object hasn't been properly initialized.
 */
+/**
+ * @brief Return the current performance time of the internal player node.
+ *
+ * @return Performance time in microseconds, or B_ERROR if not connected.
+ */
 bigtime_t
 BSoundPlayer::PerformanceTime()
 {
@@ -411,6 +560,11 @@ BSoundPlayer::PerformanceTime()
 }
 
 
+/**
+ * @brief Preroll the internal player node so it is ready to start immediately.
+ *
+ * @return B_OK on success, B_NO_INIT if not connected, or a Media Kit error.
+ */
 status_t
 BSoundPlayer::Preroll()
 {
@@ -436,6 +590,13 @@ BSoundPlayer::Preroll()
 }
 
 
+/**
+ * @brief Begin playing a BSound at a specified time (volume defaults to 1.0).
+ *
+ * @param sound   The BSound object to play.
+ * @param atTime  Performance time at which playback should begin.
+ * @return A play_id handle identifying this playback, or a negative error code.
+ */
 BSoundPlayer::play_id
 BSoundPlayer::StartPlaying(BSound* sound, bigtime_t atTime)
 {
@@ -443,6 +604,14 @@ BSoundPlayer::StartPlaying(BSound* sound, bigtime_t atTime)
 }
 
 
+/**
+ * @brief Begin playing a BSound at a specified time and volume.
+ *
+ * @param sound       The BSound object to play.
+ * @param atTime      Performance time at which playback should begin.
+ * @param withVolume  Playback volume as a linear factor (1.0 = full volume).
+ * @return A play_id handle identifying this playback, or a negative error code.
+ */
 BSoundPlayer::play_id
 BSoundPlayer::StartPlaying(BSound* sound, bigtime_t atTime, float withVolume)
 {
@@ -475,6 +644,13 @@ BSoundPlayer::StartPlaying(BSound* sound, bigtime_t atTime, float withVolume)
 }
 
 
+/**
+ * @brief Adjust the playback volume of a currently playing sound.
+ *
+ * @param id        play_id returned by StartPlaying().
+ * @param newVolume New linear volume factor.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if @p id is not active.
+ */
 status_t
 BSoundPlayer::SetSoundVolume(play_id id, float newVolume)
 {
@@ -498,6 +674,12 @@ BSoundPlayer::SetSoundVolume(play_id id, float newVolume)
 }
 
 
+/**
+ * @brief Check whether a given sound handle is still actively playing.
+ *
+ * @param id  play_id returned by StartPlaying().
+ * @return true if still playing, false otherwise.
+ */
 bool
 BSoundPlayer::IsPlaying(play_id id)
 {
@@ -520,6 +702,14 @@ BSoundPlayer::IsPlaying(play_id id)
 }
 
 
+/**
+ * @brief Immediately stop a currently playing sound.
+ *
+ * Notifies waiters and fires the B_SOUND_DONE event.
+ *
+ * @param id  play_id returned by StartPlaying().
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if @p id is not active.
+ */
 status_t
 BSoundPlayer::StopPlaying(play_id id)
 {
@@ -554,6 +744,12 @@ BSoundPlayer::StopPlaying(play_id id)
 }
 
 
+/**
+ * @brief Block until the specified sound has finished playing.
+ *
+ * @param id  play_id returned by StartPlaying().
+ * @return B_OK when the sound finishes, B_ENTRY_NOT_FOUND if @p id is not active.
+ */
 status_t
 BSoundPlayer::WaitForSound(play_id id)
 {
@@ -580,6 +776,11 @@ BSoundPlayer::WaitForSound(play_id id)
 }
 
 
+/**
+ * @brief Return the current master output volume as a linear factor.
+ *
+ * @return Linear volume (e.g. 1.0 = 0 dB, 0.5 ≈ -6 dB).
+ */
 float
 BSoundPlayer::Volume()
 {
@@ -588,6 +789,11 @@ BSoundPlayer::Volume()
 }
 
 
+/**
+ * @brief Set the master output volume using a linear factor.
+ *
+ * @param newVolume  Linear volume factor to set.
+ */
 void
 BSoundPlayer::SetVolume(float newVolume)
 {
@@ -596,6 +802,13 @@ BSoundPlayer::SetVolume(float newVolume)
 }
 
 
+/**
+ * @brief Return the current master output volume in decibels.
+ *
+ * @param forcePoll  If true, always query the hardware; if false, use a cached
+ *                   value that is at most 500 ms old.
+ * @return Volume in dB, or -94.0 (silence) if no volume slider is available.
+ */
 float
 BSoundPlayer::VolumeDB(bool forcePoll)
 {
@@ -617,6 +830,13 @@ BSoundPlayer::VolumeDB(bool forcePoll)
 }
 
 
+/**
+ * @brief Set the master output volume in decibels.
+ *
+ * Clamps the value to the supported range of the hardware volume slider.
+ *
+ * @param volumeDB  Target volume in decibels.
+ */
 void
 BSoundPlayer::SetVolumeDB(float volumeDB)
 {
@@ -642,6 +862,15 @@ BSoundPlayer::SetVolumeDB(float volumeDB)
 }
 
 
+/**
+ * @brief Retrieve information about the volume control parameter.
+ *
+ * @param _node        If non-NULL, receives the media node controlling volume.
+ * @param _parameterID If non-NULL, receives the parameter ID of the volume slider.
+ * @param _minDB       If non-NULL, receives the minimum volume in dB.
+ * @param _maxDB       If non-NULL, receives the maximum volume in dB.
+ * @return B_OK on success, B_NO_INIT if no volume slider was found.
+ */
 status_t
 BSoundPlayer::GetVolumeInfo(media_node* _node, int32* _parameterID,
 	float* _minDB, float* _maxDB)
@@ -666,6 +895,11 @@ BSoundPlayer::GetVolumeInfo(media_node* _node, int32* _parameterID,
 // #pragma mark - protected BSoundPlayer
 
 
+/**
+ * @brief Set the initialisation error code (for use by subclasses).
+ *
+ * @param error  Error code to store as the initialisation status.
+ */
 void
 BSoundPlayer::SetInitError(status_t error)
 {
@@ -677,6 +911,17 @@ BSoundPlayer::SetInitError(status_t error)
 // #pragma mark - private BSoundPlayer
 
 
+/**
+ * @brief Default internal buffer-fill callback used when no custom callback is set.
+ *
+ * Reads audio data from the head of the fPlayingSounds list and copies it into
+ * the buffer. Calls StopPlaying() when a sound runs out of data.
+ *
+ * @param cookie  Pointer to the owning BSoundPlayer.
+ * @param buffer  Destination audio buffer to fill.
+ * @param size    Size of @p buffer in bytes.
+ * @param format  Raw audio format of @p buffer.
+ */
 void
 BSoundPlayer::_SoundPlayBufferFunc(void *cookie, void *buffer, size_t size,
 	const media_raw_audio_format &format)
@@ -713,16 +958,38 @@ BSoundPlayer::_SoundPlayBufferFunc(void *cookie, void *buffer, size_t size,
 }
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_0(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_1(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_2(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_3(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_4(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_5(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_6(void*, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BSoundPlayer::_Reserved_SoundPlayer_7(void*, ...) { return B_ERROR; }
 
 
+/**
+ * @brief Shared initialisation routine called by all constructors.
+ *
+ * Creates the internal SoundPlayNode, registers it, negotiates the connection
+ * with the target mixer node, and locates the volume slider.
+ *
+ * @param node                   Optional target node; NULL uses the system mixer.
+ * @param format                 Desired audio format (wildcards allowed).
+ * @param name                   Node name.
+ * @param input                  Optional specific input to connect to.
+ * @param playerFunction         Buffer-fill callback.
+ * @param eventNotifierFunction  Event notification callback.
+ * @param cookie                 Cookie for callbacks.
+ */
 void
 BSoundPlayer::_Init(const media_node* node,
 	const media_multi_audio_format* format, const char* name,
@@ -872,6 +1139,12 @@ BSoundPlayer::_Init(const media_node* node,
 }
 
 
+/**
+ * @brief Fire the B_SOUND_DONE event for a completed or stopped sound.
+ *
+ * @param id         The play_id of the sound that finished.
+ * @param gotToPlay  true if the sound was stopped manually, false if it ran out.
+ */
 void
 BSoundPlayer::_NotifySoundDone(play_id id, bool gotToPlay)
 {
@@ -880,6 +1153,12 @@ BSoundPlayer::_NotifySoundDone(play_id id, bool gotToPlay)
 }
 
 
+/**
+ * @brief Locate the gain parameter in the mixer's parameter web and cache it.
+ *
+ * Searches the fMediaInput node's parameter web for a B_GAIN continuous
+ * parameter that corresponds to our destination and stores it in fVolumeSlider.
+ */
 void
 BSoundPlayer::_GetVolumeSlider()
 {
@@ -919,6 +1198,11 @@ BSoundPlayer::_GetVolumeSlider()
 }
 
 
+/**
+ * @brief Deliver a sound_player_notification event to the registered notifier.
+ *
+ * @param what  The notification type (e.g. B_STARTED, B_STOPPED, B_SOUND_DONE).
+ */
 void
 BSoundPlayer::Notify(sound_player_notification what, ...)
 {
@@ -931,6 +1215,13 @@ BSoundPlayer::Notify(sound_player_notification what, ...)
 }
 
 
+/**
+ * @brief Invoke the registered buffer-fill callback under the player lock.
+ *
+ * @param buffer  Audio buffer to fill.
+ * @param size    Size of @p buffer in bytes.
+ * @param format  Raw audio format of @p buffer.
+ */
 void
 BSoundPlayer::PlayBuffer(void* buffer, size_t size,
 	const media_raw_audio_format& format)
@@ -946,15 +1237,24 @@ BSoundPlayer::PlayBuffer(void* buffer, size_t size,
 // #pragma mark - public sound_error
 
 
+/**
+ * @brief Construct a sound_error with the given description string.
+ *
+ * @param string  Human-readable description of the error.
+ */
 sound_error::sound_error(const char* string)
 {
 	m_str_const = string;
 }
 
 
+/**
+ * @brief Return the human-readable error description.
+ *
+ * @return Pointer to the error string supplied at construction.
+ */
 const char*
 sound_error::what() const throw()
 {
 	return m_str_const;
 }
-

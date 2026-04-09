@@ -1,31 +1,52 @@
 /*
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
+
+/** @file DormantNodeManager.cpp
+ *  @brief Implements DormantNodeManager, which loads and unloads dormant media node add-ons on demand. */
 
 
 /*!	This is a management class for dormant media nodes.
@@ -70,6 +91,7 @@ DormantNodeManager* gDormantNodeManager;
 	// initialized by BMediaRoster.
 
 
+/** @brief Constructs the DormantNodeManager with an empty add-on map and a named lock. */
 DormantNodeManager::DormantNodeManager()
 	:
 	fLock("dormant node manager locker")
@@ -77,6 +99,7 @@ DormantNodeManager::DormantNodeManager()
 }
 
 
+/** @brief Destructor. Force-unloads all currently loaded add-on images, logging any leaks. */
 DormantNodeManager::~DormantNodeManager()
 {
 	// force unloading all currently loaded images
@@ -92,6 +115,13 @@ DormantNodeManager::~DormantNodeManager()
 }
 
 
+/** @brief Returns a BMediaAddOn for the given add-on @p id, loading it from disk if necessary.
+ *
+ *  The add-on's use-count is incremented by one.  The caller must balance each
+ *  successful GetAddOn() call with a corresponding PutAddOn() or PutAddOnDelayed().
+ *
+ *  @param id  The media_addon_id to look up.
+ *  @return Pointer to the BMediaAddOn, or NULL if the add-on could not be found or loaded. */
 BMediaAddOn*
 DormantNodeManager::GetAddOn(media_addon_id id)
 {
@@ -151,6 +181,11 @@ DormantNodeManager::GetAddOn(media_addon_id id)
 }
 
 
+/** @brief Decrements the use-count for the add-on with the given @p id.
+ *
+ *  When the use-count reaches zero the add-on is unloaded from memory.
+ *
+ *  @param id  The media_addon_id whose reference count should be decremented. */
 void
 DormantNodeManager::PutAddOn(media_addon_id id)
 {
@@ -180,6 +215,13 @@ DormantNodeManager::PutAddOn(media_addon_id id)
 }
 
 
+/** @brief Schedules a delayed release of the add-on with the given @p id.
+ *
+ *  Must be called from a node destructor of the loaded add-on to ensure the
+ *  add-on image remains in memory long enough for the destructor to complete.
+ *  Currently unimplemented.
+ *
+ *  @param id  The media_addon_id to release after a delay. */
 void
 DormantNodeManager::PutAddOnDelayed(media_addon_id id)
 {
@@ -191,6 +233,12 @@ DormantNodeManager::PutAddOnDelayed(media_addon_id id)
 }
 
 
+/** @brief Registers an add-on file with the media server (for use by media_addon_server only).
+ *
+ *  Sends a SERVER_REGISTER_ADD_ON request and returns the assigned media_addon_id.
+ *
+ *  @param path  Filesystem path of the add-on to register.
+ *  @return The assigned media_addon_id on success, or 0 on failure. */
 //!	For use by media_addon_server only
 media_addon_id
 DormantNodeManager::RegisterAddOn(const char* path)
@@ -224,6 +272,11 @@ DormantNodeManager::RegisterAddOn(const char* path)
 }
 
 
+/** @brief Unregisters the add-on with @p id from the media server (for use by media_addon_server only).
+ *
+ *  Sends a SERVER_UNREGISTER_ADD_ON message via the media server port.
+ *
+ *  @param id  The media_addon_id to unregister; must be greater than zero. */
 //!	For use by media_addon_server only
 void
 DormantNodeManager::UnregisterAddOn(media_addon_id id)
@@ -241,6 +294,11 @@ DormantNodeManager::UnregisterAddOn(media_addon_id id)
 }
 
 
+/** @brief Resolves the filesystem path for the add-on identified by @p id by querying the media server.
+ *
+ *  @param path  Output BPath set to the add-on's location on success.
+ *  @param id    The media_addon_id to look up.
+ *  @return B_OK on success, or an error code if the server query fails. */
 status_t
 DormantNodeManager::FindAddOnPath(BPath* path, media_addon_id id)
 {
@@ -258,6 +316,10 @@ DormantNodeManager::FindAddOnPath(BPath* path, media_addon_id id)
 }
 
 
+/** @brief Looks up @p id in the in-memory add-on map and increments its use-count if found.
+ *
+ *  @param id  The media_addon_id to look up.
+ *  @return Pointer to the BMediaAddOn if already loaded, or NULL. */
 BMediaAddOn*
 DormantNodeManager::_LookupAddOn(media_addon_id id)
 {
@@ -276,6 +338,15 @@ DormantNodeManager::_LookupAddOn(media_addon_id id)
 }
 
 
+/** @brief Loads the add-on image at @p path, resolves make_media_addon(), and instantiates the add-on.
+ *
+ *  Also initialises the private fAddon and fImage fields of the returned BMediaAddOn.
+ *
+ *  @param path       Filesystem path of the add-on image.
+ *  @param id         The media_addon_id to assign to the new add-on.
+ *  @param _newAddOn  Output pointer set to the instantiated BMediaAddOn.
+ *  @param _newImage  Output pointer set to the loaded image_id.
+ *  @return B_OK on success, or an error code. */
 status_t
 DormantNodeManager::_LoadAddOn(const char* path, media_addon_id id,
 	BMediaAddOn** _newAddOn, image_id* _newImage)
@@ -320,6 +391,10 @@ DormantNodeManager::_LoadAddOn(const char* path, media_addon_id id,
 }
 
 
+/** @brief Deletes the BMediaAddOn object and unloads the associated image.
+ *
+ *  @param addOn  The add-on instance to delete; must not be NULL.
+ *  @param image  The image_id returned when the add-on was loaded. */
 void
 DormantNodeManager::_UnloadAddOn(BMediaAddOn* addOn, image_id image)
 {

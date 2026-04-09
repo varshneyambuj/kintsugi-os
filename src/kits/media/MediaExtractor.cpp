@@ -1,9 +1,32 @@
 /*
- * Copyright 2004-2007, Marcus Overhagen. All rights reserved.
- * Copyright 2008, Maurice Kalinowski. All rights reserved.
- * Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2007, Marcus Overhagen. All rights reserved.
+ *   Copyright 2008, Maurice Kalinowski. All rights reserved.
+ *   Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
+ *
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file MediaExtractor.cpp
+ *  @brief Internal media extractor that demuxes streams and manages per-stream chunk caches.
  */
 
 
@@ -26,8 +49,13 @@
 #define DISABLE_CHUNK_CACHE 0
 
 
+/** @brief ChunkProvider adapter that feeds chunks from a MediaExtractor stream. */
 class MediaExtractorChunkProvider : public ChunkProvider {
 public:
+	/** @brief Constructs the provider for the given extractor and stream index.
+	 *  @param extractor Pointer to the owning MediaExtractor.
+	 *  @param stream    Zero-based stream index.
+	 */
 	MediaExtractorChunkProvider(MediaExtractor* extractor, int32 stream)
 		:
 		fExtractor(extractor),
@@ -35,6 +63,12 @@ public:
 	{
 	}
 
+	/** @brief Retrieves the next encoded chunk from the stream.
+	 *  @param _chunkBuffer Output pointer to the chunk data.
+	 *  @param _chunkSize   Output size of the chunk in bytes.
+	 *  @param mediaHeader  Output media_header for the chunk.
+	 *  @return B_OK on success, or an error code.
+	 */
 	virtual status_t GetNextChunk(const void** _chunkBuffer, size_t* _chunkSize,
 		media_header *mediaHeader)
 	{
@@ -51,6 +85,10 @@ private:
 // #pragma mark -
 
 
+/** @brief Constructs a MediaExtractor and begins asynchronous chunk caching.
+ *  @param source Pointer to the BDataIO data source.
+ *  @param flags  Reader flags controlling behaviour.
+ */
 MediaExtractor::MediaExtractor(BDataIO* source, int32 flags)
 	:
 	fExtractorThread(-1),
@@ -62,6 +100,11 @@ MediaExtractor::MediaExtractor(BDataIO* source, int32 flags)
 }
 
 
+/** @brief Initialises the reader plugin, allocates stream info structures,
+ *         and starts the background extractor thread.
+ *  @param source Pointer to the BDataIO data source.
+ *  @param flags  Reader flags controlling behaviour.
+ */
 void
 MediaExtractor::_Init(BDataIO* source, int32 flags)
 {
@@ -146,6 +189,9 @@ MediaExtractor::_Init(BDataIO* source, int32 flags)
 }
 
 
+/** @brief Destructor; stops background processing, frees cookies and chunk caches,
+ *         and destroys the reader plugin.
+ */
 MediaExtractor::~MediaExtractor()
 {
 	CALLED();
@@ -169,6 +215,9 @@ MediaExtractor::~MediaExtractor()
 }
 
 
+/** @brief Returns the initialisation status of the extractor.
+ *  @return B_OK if initialised successfully, or an error code.
+ */
 status_t
 MediaExtractor::InitCheck()
 {
@@ -177,6 +226,9 @@ MediaExtractor::InitCheck()
 }
 
 
+/** @brief Fills in the media_file_format struct with the detected file format.
+ *  @param fileFormat Pointer to a media_file_format struct to fill in.
+ */
 void
 MediaExtractor::GetFileFormatInfo(media_file_format* fileFormat) const
 {
@@ -185,6 +237,10 @@ MediaExtractor::GetFileFormatInfo(media_file_format* fileFormat) const
 }
 
 
+/** @brief Retrieves global metadata from the source file into a BMessage.
+ *  @param _data Pointer to a BMessage to fill with metadata.
+ *  @return B_OK on success, or an error code from the reader plugin.
+ */
 status_t
 MediaExtractor::GetMetaData(BMessage* _data) const
 {
@@ -193,6 +249,9 @@ MediaExtractor::GetMetaData(BMessage* _data) const
 }
 
 
+/** @brief Returns the number of streams found in the source.
+ *  @return The stream count.
+ */
 int32
 MediaExtractor::StreamCount()
 {
@@ -201,6 +260,9 @@ MediaExtractor::StreamCount()
 }
 
 
+/** @brief Returns the copyright string from the source file.
+ *  @return A pointer to the copyright string, or NULL if none.
+ */
 const char*
 MediaExtractor::Copyright()
 {
@@ -208,6 +270,10 @@ MediaExtractor::Copyright()
 }
 
 
+/** @brief Returns a pointer to the encoded media_format for the given stream.
+ *  @param stream Zero-based stream index.
+ *  @return Pointer to the stream's encoded media_format.
+ */
 const media_format*
 MediaExtractor::EncodedFormat(int32 stream)
 {
@@ -215,6 +281,10 @@ MediaExtractor::EncodedFormat(int32 stream)
 }
 
 
+/** @brief Returns the total frame count for the given stream.
+ *  @param stream Zero-based stream index.
+ *  @return Frame count, or 0 if the stream is in an error state.
+ */
 int64
 MediaExtractor::CountFrames(int32 stream) const
 {
@@ -235,6 +305,10 @@ MediaExtractor::CountFrames(int32 stream) const
 }
 
 
+/** @brief Returns the total duration of the given stream in microseconds.
+ *  @param stream Zero-based stream index.
+ *  @return Duration in microseconds, or 0 if the stream is in an error state.
+ */
 bigtime_t
 MediaExtractor::Duration(int32 stream) const
 {
@@ -256,6 +330,14 @@ MediaExtractor::Duration(int32 stream) const
 }
 
 
+/** @brief Seeks the given stream to the position specified by flags.
+ *         Clears the chunk cache after a successful seek.
+ *  @param stream  Zero-based stream index.
+ *  @param seekTo  Seek mode flags (B_MEDIA_SEEK_TO_TIME, etc.).
+ *  @param _frame  In/out frame position.
+ *  @param _time   In/out time position in microseconds.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 MediaExtractor::Seek(int32 stream, uint32 seekTo, int64* _frame,
 	bigtime_t* _time)
@@ -283,6 +365,13 @@ MediaExtractor::Seek(int32 stream, uint32 seekTo, int64* _frame,
 }
 
 
+/** @brief Finds the nearest key frame to the requested position without seeking.
+ *  @param stream  Zero-based stream index.
+ *  @param seekTo  Seek mode flags.
+ *  @param _frame  In/out frame position.
+ *  @param _time   In/out time position in microseconds.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 MediaExtractor::FindKeyFrame(int32 stream, uint32 seekTo, int64* _frame,
 	bigtime_t* _time) const
@@ -297,6 +386,13 @@ MediaExtractor::FindKeyFrame(int32 stream, uint32 seekTo, int64* _frame,
 }
 
 
+/** @brief Retrieves the next encoded chunk from the stream, using the chunk cache.
+ *  @param stream        Zero-based stream index.
+ *  @param _chunkBuffer  Output pointer to the chunk data.
+ *  @param _chunkSize    Output size of the chunk in bytes.
+ *  @param mediaHeader   Output media_header for the chunk.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 MediaExtractor::GetNextChunk(int32 stream, const void** _chunkBuffer,
 	size_t* _chunkSize, media_header* mediaHeader)
@@ -331,6 +427,12 @@ MediaExtractor::GetNextChunk(int32 stream, const void** _chunkBuffer,
 }
 
 
+/** @brief Creates and initialises a Decoder for the given stream.
+ *  @param stream     Zero-based stream index.
+ *  @param _decoder   Output pointer to the created Decoder.
+ *  @param codecInfo  Output pointer to receive codec information.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 MediaExtractor::CreateDecoder(int32 stream, Decoder** _decoder,
 	media_codec_info* codecInfo)
@@ -395,6 +497,11 @@ MediaExtractor::CreateDecoder(int32 stream, Decoder** _decoder,
 }
 
 
+/** @brief Retrieves per-stream metadata into a BMessage.
+ *  @param stream Zero-based stream index.
+ *  @param _data  Pointer to a BMessage to fill with stream metadata.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 MediaExtractor::GetStreamMetaData(int32 stream, BMessage* _data) const
 {
@@ -407,6 +514,7 @@ MediaExtractor::GetStreamMetaData(int32 stream, BMessage* _data) const
 }
 
 
+/** @brief Stops the background extractor thread and releases its semaphore. */
 void
 MediaExtractor::StopProcessing()
 {
@@ -423,6 +531,9 @@ MediaExtractor::StopProcessing()
 }
 
 
+/** @brief Returns the last cached chunk of the given stream to the cache for reuse.
+ *  @param info Reference to the stream_info whose last chunk is to be recycled.
+ */
 void
 MediaExtractor::_RecycleLastChunk(stream_info& info)
 {
@@ -433,6 +544,10 @@ MediaExtractor::_RecycleLastChunk(stream_info& info)
 }
 
 
+/** @brief Static thread entry point; calls _ExtractorThread() on the extractor instance.
+ *  @param extractor Pointer to the MediaExtractor instance (cast from void*).
+ *  @return B_OK.
+ */
 status_t
 MediaExtractor::_ExtractorEntry(void* extractor)
 {
@@ -441,6 +556,11 @@ MediaExtractor::_ExtractorEntry(void* extractor)
 }
 
 
+/** @brief Calculates an appropriate chunk cache size for the given stream.
+ *         Uses a heuristic based on video frame dimensions when available.
+ *  @param stream Zero-based stream index.
+ *  @return Recommended cache size in bytes (page-aligned).
+ */
 size_t
 MediaExtractor::_CalculateChunkBuffer(int32 stream)
 {
@@ -464,6 +584,9 @@ MediaExtractor::_CalculateChunkBuffer(int32 stream)
 }
 
 
+/** @brief Background thread body; continuously fills stream chunk caches
+ *         until all streams are saturated, then waits for the semaphore signal.
+ */
 void
 MediaExtractor::_ExtractorThread()
 {

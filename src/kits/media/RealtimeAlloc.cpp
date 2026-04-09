@@ -1,6 +1,31 @@
 /*
- * Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file RealtimeAlloc.cpp
+ *  @brief Implements a simple real-time safe memory allocator that operates
+ *         directly on a locked area, suitable for use in audio processing
+ *         threads where standard malloc() latency is unacceptable.
  */
 
 
@@ -30,6 +55,13 @@
 #endif
 
 
+/**
+ * @brief Internal free-list chunk node used by the real-time allocator.
+ *
+ * Each chunk carries its own size and a pointer to the next free chunk.
+ * Allocated memory is returned starting at the fNext field, so the size
+ * field remains accessible for deallocation.
+ */
 class FreeChunk {
 public:
 			void				SetTo(size_t size, FreeChunk* next);
@@ -57,6 +89,9 @@ private:
 };
 
 
+/**
+ * @brief Real-time memory pool backed by a single OS area.
+ */
 struct rtm_pool : DoublyLinkedListLinkImpl<rtm_pool> {
 	area_id		area;
 	void*		heap_base;
@@ -65,7 +100,9 @@ struct rtm_pool : DoublyLinkedListLinkImpl<rtm_pool> {
 	FreeChunk	free_anchor;
 	mutex		lock;
 
+	/** @brief Return true if @p buffer falls within this pool's area. */
 	bool Contains(void* buffer) const;
+	/** @brief Release a previously allocated buffer back to the pool. */
 	void Free(void* buffer);
 };
 
@@ -79,6 +116,12 @@ static mutex sPoolsLock = MUTEX_INITIALIZER("rtm pools");
 static PoolList sPools;
 
 
+/**
+ * @brief Initialise this chunk with a given total size and next pointer.
+ *
+ * @param size  Total size of this chunk including the header.
+ * @param next  Pointer to the next free chunk.
+ */
 void
 FreeChunk::SetTo(size_t size, FreeChunk* next)
 {
@@ -90,6 +133,11 @@ FreeChunk::SetTo(size_t size, FreeChunk* next)
 /*!	Returns the amount of bytes that can be allocated
 	in this chunk.
 */
+/**
+ * @brief Return the number of bytes available for allocation from this chunk.
+ *
+ * @return Usable allocation size (total size minus the header).
+ */
 uint32
 FreeChunk::Size() const
 {
@@ -100,6 +148,12 @@ FreeChunk::Size() const
 /*!	Splits the upper half at the requested location
 	and returns it.
 */
+/**
+ * @brief Split this chunk at @p splitSize bytes and return the upper half.
+ *
+ * @param splitSize  Bytes to keep in this chunk (aligned up to kAlignment).
+ * @return Pointer to the newly created upper FreeChunk.
+ */
 FreeChunk*
 FreeChunk::Split(uint32 splitSize)
 {
@@ -119,6 +173,12 @@ FreeChunk::Split(uint32 splitSize)
 /*!	Checks if the specified chunk touches this chunk, so
 	that they could be joined.
 */
+/**
+ * @brief Return true if @p chunk is physically adjacent to this chunk.
+ *
+ * @param chunk  Candidate adjacent chunk.
+ * @return true if the two chunks can be merged.
+ */
 bool
 FreeChunk::IsTouching(FreeChunk* chunk)
 {
@@ -135,6 +195,14 @@ FreeChunk::IsTouching(FreeChunk* chunk)
 	doesn't work correctly. Use FreeChunk::IsTouching()
 	to check if this method can be applied.
 */
+/**
+ * @brief Merge @p chunk with this chunk and return the combined chunk pointer.
+ *
+ * The two chunks must be adjacent (verified with IsTouching() first).
+ *
+ * @param chunk  The adjacent chunk to join with this one.
+ * @return Pointer to the merged chunk (whichever has the lower address).
+ */
 FreeChunk*
 FreeChunk::Join(FreeChunk* chunk)
 {
@@ -152,6 +220,12 @@ FreeChunk::Join(FreeChunk* chunk)
 }
 
 
+/**
+ * @brief Remove this chunk from the pool's free list.
+ *
+ * @param pool      The pool whose free list is being modified.
+ * @param previous  Optional previous chunk; if NULL, the list is searched.
+ */
 void
 FreeChunk::Remove(rtm_pool* pool, FreeChunk* previous)
 {
@@ -173,6 +247,11 @@ FreeChunk::Remove(rtm_pool* pool, FreeChunk* previous)
 }
 
 
+/**
+ * @brief Insert this chunk into the pool's free list in size order.
+ *
+ * @param pool  The pool to enqueue into.
+ */
 void
 FreeChunk::Enqueue(rtm_pool* pool)
 {
@@ -188,6 +267,11 @@ FreeChunk::Enqueue(rtm_pool* pool)
 }
 
 
+/**
+ * @brief Return the address of the allocated region (just past the size field).
+ *
+ * @return Pointer to the first usable byte of the allocation.
+ */
 void*
 FreeChunk::AllocatedAddress() const
 {
@@ -195,6 +279,12 @@ FreeChunk::AllocatedAddress() const
 }
 
 
+/**
+ * @brief Recover a FreeChunk pointer from a previously allocated address.
+ *
+ * @param allocated  The pointer previously returned to the caller.
+ * @return Pointer to the FreeChunk header for @p allocated.
+ */
 FreeChunk*
 FreeChunk::SetToAllocated(void* allocated)
 {
@@ -205,6 +295,12 @@ FreeChunk::SetToAllocated(void* allocated)
 // #pragma mark - rtm_pool
 
 
+/**
+ * @brief Return true if @p buffer is within this pool's address range.
+ *
+ * @param buffer  The pointer to test.
+ * @return true if @p buffer belongs to this pool.
+ */
 bool
 rtm_pool::Contains(void* buffer) const
 {
@@ -213,6 +309,11 @@ rtm_pool::Contains(void* buffer) const
 }
 
 
+/**
+ * @brief Return @p allocated to the pool's free list, merging adjacent chunks.
+ *
+ * @param allocated  Pointer to the previously allocated region.
+ */
 void
 rtm_pool::Free(void* allocated)
 {
@@ -255,6 +356,12 @@ rtm_pool::Free(void* allocated)
 // #pragma mark -
 
 
+/**
+ * @brief Find the rtm_pool that owns the given buffer.
+ *
+ * @param buffer  Buffer to look up.
+ * @return Pointer to the owning rtm_pool, or NULL if found in no pool.
+ */
 static rtm_pool*
 pool_for(void* buffer)
 {
@@ -273,6 +380,14 @@ pool_for(void* buffer)
 // #pragma mark - public API
 
 
+/**
+ * @brief Create a new real-time memory pool backed by an OS area.
+ *
+ * @param _pool      Receives the newly created rtm_pool pointer.
+ * @param totalSize  Minimum usable size in bytes; rounded up to page boundaries.
+ * @param name       Optional name for the area and mutex.
+ * @return B_OK on success, B_NO_MEMORY if malloc fails, or an area error code.
+ */
 status_t
 rtm_create_pool(rtm_pool** _pool, size_t totalSize, const char* name)
 {
@@ -316,6 +431,12 @@ rtm_create_pool(rtm_pool** _pool, size_t totalSize, const char* name)
 }
 
 
+/**
+ * @brief Destroy a real-time memory pool and release its area.
+ *
+ * @param pool  The pool to destroy; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if @p pool is NULL.
+ */
 status_t
 rtm_delete_pool(rtm_pool* pool)
 {
@@ -337,6 +458,15 @@ rtm_delete_pool(rtm_pool* pool)
 }
 
 
+/**
+ * @brief Allocate @p size bytes from @p pool.
+ *
+ * If @p pool is NULL, falls back to system malloc().
+ *
+ * @param pool  Target real-time pool, or NULL for system malloc.
+ * @param size  Number of bytes to allocate.
+ * @return Pointer to the allocated region, or NULL on failure.
+ */
 void*
 rtm_alloc(rtm_pool* pool, size_t size)
 {
@@ -393,6 +523,15 @@ rtm_alloc(rtm_pool* pool, size_t size)
 }
 
 
+/**
+ * @brief Free a pointer previously obtained from rtm_alloc().
+ *
+ * If the pointer does not belong to any known real-time pool, falls back
+ * to system free().
+ *
+ * @param allocated  Pointer to free; NULL is a no-op.
+ * @return B_OK always.
+ */
 status_t
 rtm_free(void* allocated)
 {
@@ -414,6 +553,17 @@ rtm_free(void* allocated)
 }
 
 
+/**
+ * @brief Resize a previously allocated real-time buffer.
+ *
+ * Falls back to system realloc() if the buffer does not belong to a real-time
+ * pool. Sets *_buffer to NULL if @p newSize is 0.
+ *
+ * @param _buffer   In: old buffer pointer; out: new buffer pointer.
+ * @param newSize   New requested size in bytes.
+ * @return B_OK on success, B_BAD_VALUE if @p _buffer is NULL,
+ *         B_NO_MEMORY if allocation fails.
+ */
 status_t
 rtm_realloc(void** _buffer, size_t newSize)
 {
@@ -474,6 +624,12 @@ rtm_realloc(void** _buffer, size_t newSize)
 }
 
 
+/**
+ * @brief Return the usable size of a real-time allocation.
+ *
+ * @param buffer  Previously allocated buffer.
+ * @return Usable size in bytes, or 0 if @p buffer is NULL.
+ */
 status_t
 rtm_size_for(void* buffer)
 {
@@ -487,6 +643,12 @@ rtm_size_for(void* buffer)
 }
 
 
+/**
+ * @brief Return the physical size of a real-time allocation (same as rtm_size_for).
+ *
+ * @param buffer  Previously allocated buffer.
+ * @return Chunk size in bytes, or 0 if @p buffer is NULL.
+ */
 status_t
 rtm_phys_size_for(void* buffer)
 {
@@ -498,6 +660,14 @@ rtm_phys_size_for(void* buffer)
 }
 
 
+/**
+ * @brief Return the number of bytes still available in a pool.
+ *
+ * If @p pool is NULL, returns a nominal 1 MB (uses system allocator).
+ *
+ * @param pool  The pool to query, or NULL for the system allocator.
+ * @return Available bytes.
+ */
 size_t
 rtm_available(rtm_pool* pool)
 {
@@ -510,6 +680,11 @@ rtm_available(rtm_pool* pool)
 }
 
 
+/**
+ * @brief Return the default real-time pool (always NULL, meaning system malloc).
+ *
+ * @return Always NULL.
+ */
 rtm_pool*
 rtm_default_pool()
 {

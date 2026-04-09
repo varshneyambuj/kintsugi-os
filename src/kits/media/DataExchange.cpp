@@ -1,7 +1,30 @@
 /*
- * Copyright 2002-2007, Marcus Overhagen. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2007, Marcus Overhagen. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file DataExchange.cpp
+ *  @brief Low-level port- and BMessage-based communication with the media server
+ *         and add-on server. */
 
 
 #include <DataExchange.h>
@@ -33,6 +56,7 @@ static void find_media_server_port();
 static void find_media_addon_server_port();
 
 
+/** @brief Locates the well-known media_server port and caches it. */
 static void
 find_media_server_port()
 {
@@ -44,6 +68,7 @@ find_media_server_port()
 }
 
 
+/** @brief Locates the well-known media_addon_server port and caches it. */
 static void
 find_media_addon_server_port()
 {
@@ -58,6 +83,7 @@ find_media_addon_server_port()
 // #pragma mark -
 
 
+/** @brief Initialises the messengers and port IDs used to talk to the media server. */
 void
 InitServerDataExchange()
 {
@@ -67,6 +93,9 @@ InitServerDataExchange()
 }
 
 
+/** @brief Stores the BMessenger used for BMessage-based communication with the local
+ *         BMediaRoster instance.
+ *  @param rosterMessenger  Messenger targeting the local BMediaRoster looper. */
 void
 InitRosterDataExchange(const BMessenger& rosterMessenger)
 {
@@ -74,7 +103,9 @@ InitRosterDataExchange(const BMessenger& rosterMessenger)
 }
 
 
-//! BMessage based data exchange with the local BMediaRoster
+/** @brief BMessage-based data exchange with the local BMediaRoster.
+ *  @param msg  The message to send (modified in place if the roster handles it).
+ *  @return B_OK on success, or a messenger error on failure. */
 status_t
 SendToRoster(BMessage* msg)
 {
@@ -88,7 +119,9 @@ SendToRoster(BMessage* msg)
 }
 
 
-//! BMessage based data exchange with the media_server
+/** @brief BMessage-based fire-and-forget delivery to the media_server.
+ *  @param msg  The message to send.
+ *  @return B_OK on success, or a messenger error on failure. */
 status_t
 SendToServer(BMessage* msg)
 {
@@ -102,6 +135,10 @@ SendToServer(BMessage* msg)
 }
 
 
+/** @brief Synchronous BMessage-based query to the media_server.
+ *  @param request  The outgoing request message.
+ *  @param reply    Receives the server's reply.
+ *  @return B_OK on success, or a messenger error on failure. */
 status_t
 QueryServer(BMessage& request, BMessage& reply)
 {
@@ -116,13 +153,24 @@ QueryServer(BMessage& request, BMessage& reply)
 }
 
 
-//! Raw data based data exchange with the media_server
+/** @brief Raw-data fire-and-forget delivery to the media_server port.
+ *  @param msgCode  The port message code identifying the command.
+ *  @param msg      Pointer to the command_data payload.
+ *  @param size     Size in bytes of the payload.
+ *  @return B_OK on success, or a port error on failure. */
 status_t
 SendToServer(int32 msgCode, command_data* msg, size_t size)
 {
 	return SendToPort(sMediaServerPort, msgCode, msg, size);
 }
 
+/** @brief Synchronous raw-data query to the media_server port.
+ *  @param msgCode      The port message code identifying the request.
+ *  @param request      Pointer to the request_data payload.
+ *  @param requestSize  Size of the request payload in bytes.
+ *  @param reply        Pointer to the reply buffer.
+ *  @param replySize    Size of the reply buffer in bytes.
+ *  @return B_OK on success, or a port error on failure. */
 status_t
 QueryServer(int32 msgCode, request_data* request, size_t requestSize,
 	reply_data* reply, size_t replySize)
@@ -132,7 +180,11 @@ QueryServer(int32 msgCode, request_data* request, size_t requestSize,
 }
 
 
-//! Raw data based data exchange with the media_addon_server
+/** @brief Raw-data fire-and-forget delivery to the media_addon_server port.
+ *  @param msgCode  The port message code identifying the command.
+ *  @param msg      Pointer to the command_data payload.
+ *  @param size     Size in bytes of the payload.
+ *  @return B_OK on success, or a port error on failure. */
 status_t
 SendToAddOnServer(int32 msgCode, command_data* msg, size_t size)
 {
@@ -140,6 +192,13 @@ SendToAddOnServer(int32 msgCode, command_data* msg, size_t size)
 }
 
 
+/** @brief Synchronous raw-data query to the media_addon_server port.
+ *  @param msgCode      The port message code identifying the request.
+ *  @param request      Pointer to the request_data payload.
+ *  @param requestSize  Size of the request payload in bytes.
+ *  @param reply        Pointer to the reply buffer.
+ *  @param replySize    Size of the reply buffer in bytes.
+ *  @return B_OK on success, or a port error on failure. */
 status_t
 QueryAddOnServer(int32 msgCode, request_data* request, size_t requestSize,
 	reply_data* reply, size_t replySize)
@@ -149,7 +208,13 @@ QueryAddOnServer(int32 msgCode, request_data* request, size_t requestSize,
 }
 
 
-//! Raw data based data exchange with the media_server
+/** @brief Writes a raw command to the given port, with automatic port rediscovery
+ *         on B_BAD_PORT_ID.
+ *  @param sendPort  The destination port_id.
+ *  @param msgCode   The message code.
+ *  @param msg       Pointer to the command_data payload.
+ *  @param size      Size in bytes of the payload.
+ *  @return B_OK on success, or a port error on failure. */
 status_t
 SendToPort(port_id sendPort, int32 msgCode, command_data* msg, size_t size)
 {
@@ -181,6 +246,15 @@ SendToPort(port_id sendPort, int32 msgCode, command_data* msg, size_t size)
 }
 
 
+/** @brief Sends a request to the given port and waits for the reply on
+ *         request->reply_port, with automatic port rediscovery on B_BAD_PORT_ID.
+ *  @param requestPort  Destination port for the request.
+ *  @param msgCode      The message code identifying the operation.
+ *  @param request      Pointer to the request_data (must contain a valid reply_port).
+ *  @param requestSize  Size of the request payload in bytes.
+ *  @param reply        Buffer that receives the server reply.
+ *  @param replySize    Size of the reply buffer in bytes.
+ *  @return B_OK on success, or a port/result error on failure. */
 status_t
 QueryPort(port_id requestPort, int32 msgCode, request_data* request,
 	size_t requestSize, reply_data* reply, size_t replySize)

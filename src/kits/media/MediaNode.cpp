@@ -1,32 +1,54 @@
 /*
- * Copyright (c) 2015, Dario Casalinuovo
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
+ *   Copyright (c) 2015, Dario Casalinuovo
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
+
+/** @file MediaNode.cpp
+ *  @brief Implements BMediaNode and the associated media_node, media_input,
+ *         media_output, and live_node_info plain-data types. */
 
 
 #include <BufferConsumer.h>
@@ -67,6 +89,7 @@ int32 BMediaNode::_m_changeTag = 0;
 
 const media_node media_node::null;
 
+/** @brief Default constructor; initialises all fields to invalid sentinel values. */
 media_node::media_node()
 	:
 	node(-1),
@@ -76,36 +99,42 @@ media_node::media_node()
 }
 
 
+/** @brief Destructor. */
 media_node::~media_node()
 {
 }
 
 // media_input
 
+/** @brief Default constructor; clears the human-readable name. */
 media_input::media_input()
 {
 	name[0] = '\0';
 }
 
 
+/** @brief Destructor. */
 media_input::~media_input()
 {
 }
 
 // media_output
 
+/** @brief Default constructor; clears the human-readable name. */
 media_output::media_output()
 {
 	name[0] = '\0';
 }
 
 
+/** @brief Destructor. */
 media_output::~media_output()
 {
 }
 
 // live_node_info
 
+/** @brief Default constructor; initialises hint_point to the origin and clears name. */
 live_node_info::live_node_info()
 	:
 	hint_point(0.0f, 0.0f)
@@ -114,12 +143,15 @@ live_node_info::live_node_info()
 }
 
 
+/** @brief Destructor. */
 live_node_info::~live_node_info()
 {
 }
 
 // BMediaNode
 
+/** @brief Destructor; releases the time source reference and deletes the control port
+ *         (unless this is a shadow time-source object). */
 BMediaNode::~BMediaNode()
 {
 	CALLED();
@@ -147,6 +179,9 @@ BMediaNode::~BMediaNode()
 }
 
 
+/** @brief Increments the reference count and registers the node with the media server
+ *         when the count transitions from 0 to 1.
+ *  @return \c this. */
 BMediaNode*
 BMediaNode::Acquire()
 {
@@ -161,6 +196,9 @@ BMediaNode::Acquire()
 }
 
 
+/** @brief Decrements the reference count; when the count reaches 0 the node is
+ *         unregistered and DeleteHook() is called to destroy it.
+ *  @return \c this if the node is still alive, or \c NULL if it was deleted. */
 BMediaNode*
 BMediaNode::Release()
 {
@@ -191,6 +229,8 @@ BMediaNode::Release()
 }
 
 
+/** @brief Returns the human-readable name assigned to this node.
+ *  @return A NUL-terminated string with the node name. */
 const char*
 BMediaNode::Name() const
 {
@@ -199,6 +239,8 @@ BMediaNode::Name() const
 }
 
 
+/** @brief Returns the unique media_node_id assigned by the media server.
+ *  @return The node ID. */
 media_node_id
 BMediaNode::ID() const
 {
@@ -207,6 +249,8 @@ BMediaNode::ID() const
 }
 
 
+/** @brief Returns the public node-kind bitmask (user-visible kinds only).
+ *  @return The kind bitmask with internal flags masked out. */
 uint64
 BMediaNode::Kinds() const
 {
@@ -215,6 +259,8 @@ BMediaNode::Kinds() const
 }
 
 
+/** @brief Constructs and returns a media_node descriptor for this node.
+ *  @return A media_node with id, port, and kind fields populated. */
 media_node
 BMediaNode::Node() const
 {
@@ -229,6 +275,8 @@ BMediaNode::Node() const
 }
 
 
+/** @brief Returns the current run mode for this node.
+ *  @return The run_mode enum value. */
 BMediaNode::run_mode
 BMediaNode::RunMode() const
 {
@@ -237,6 +285,12 @@ BMediaNode::RunMode() const
 }
 
 
+/** @brief Returns the BTimeSource currently governing this node's timeline.
+ *
+ *  If no time-source object has been created yet, one is created on demand
+ *  via MakeTimeSourceObject().
+ *
+ *  @return Pointer to the BTimeSource, or \c NULL on failure. */
 BTimeSource*
 BMediaNode::TimeSource() const
 {
@@ -272,6 +326,8 @@ BMediaNode::TimeSource() const
 }
 
 
+/** @brief Returns the port_id of the node's control port.
+ *  @return The control port ID. */
 port_id
 BMediaNode::ControlPort() const
 {
@@ -280,6 +336,10 @@ BMediaNode::ControlPort() const
 }
 
 
+/** @brief Reports a node error to all registered notification listeners.
+ *  @param what  The node_error code describing the failure.
+ *  @param info  Optional BMessage with additional error context.
+ *  @return B_OK on success, B_BAD_VALUE if \a what is not a recognised error code. */
 status_t
 BMediaNode::ReportError(node_error what, const BMessage* info)
 {
@@ -307,6 +367,10 @@ BMediaNode::ReportError(node_error what, const BMessage* info)
 }
 
 
+/** @brief Called by derived classes after they finish handling a stop request;
+ *         broadcasts a B_MEDIA_NODE_STOPPED notification.
+ *  @param whenPerformance  Performance time at which the node stopped.
+ *  @return B_OK always. */
 status_t
 BMediaNode::NodeStopped(bigtime_t whenPerformance)
 {
@@ -330,6 +394,11 @@ BMediaNode::NodeStopped(bigtime_t whenPerformance)
  * call that requested the timer to return to the caller with an appropriate
  * value.
  */
+/** @brief Writes the timer result to the port identified by \a cookie, causing
+ *         BMediaRoster::SyncToNode() to return.
+ *  @param notifyPoint  Performance time at which the timer fired.
+ *  @param cookie       port_id (as int32) to write the result to.
+ *  @param error        Status code to deliver to the waiting SyncToNode() call. */
 void
 BMediaNode::TimerExpired(bigtime_t notifyPoint, int32 cookie, status_t error)
 {
@@ -341,6 +410,8 @@ BMediaNode::TimerExpired(bigtime_t notifyPoint, int32 cookie, status_t error)
 }
 
 
+/** @brief Public constructor; creates the node with the given name.
+ *  @param name  Human-readable node name (copied internally). */
 BMediaNode::BMediaNode(const char* name)
 {
 	TRACE("BMediaNode::BMediaNode: name '%s'\n", name);
@@ -348,6 +419,14 @@ BMediaNode::BMediaNode(const char* name)
 }
 
 
+/** @brief Reads and dispatches the next message from the control port, blocking
+ *         until \a waitUntil or a message arrives.
+ *  @param waitUntil  Absolute real time after which the function returns even if
+ *                    no message arrives.
+ *  @param flags      Reserved; pass 0.
+ *  @param _reserved_ Reserved; pass \c NULL.
+ *  @return B_OK if a message was handled, B_TIMED_OUT on timeout, or another
+ *          error code on failure. */
 status_t
 BMediaNode::WaitForMessage(bigtime_t waitUntil, uint32 flags,
 	void* _reserved_)
@@ -474,6 +553,12 @@ BMediaNode::WaitForMessage(bigtime_t waitUntil, uint32 flags,
 }
 
 
+/** @brief Hook called when a start request is delivered to the node.
+ *
+ *  The base implementation does nothing; override in derived classes.
+ *  BMediaEventLooper handles this automatically.
+ *
+ *  @param performance_time  Performance time at which playback should begin. */
 void
 BMediaNode::Start(bigtime_t performance_time)
 {
@@ -488,6 +573,14 @@ BMediaNode::Start(bigtime_t performance_time)
 }
 
 
+/** @brief Hook called when a stop request is delivered to the node.
+ *
+ *  The base implementation does nothing; override in derived classes.
+ *  BMediaEventLooper handles this automatically.
+ *
+ *  @param performance_time  Performance time at which the node should stop.
+ *  @param immediate         If \c true, stop immediately regardless of the
+ *                           performance time. */
 void
 BMediaNode::Stop(bigtime_t performance_time, bool immediate)
 {
@@ -502,6 +595,13 @@ BMediaNode::Stop(bigtime_t performance_time, bool immediate)
 }
 
 
+/** @brief Hook called when a seek request is delivered to the node.
+ *
+ *  The base implementation does nothing; override in derived classes.
+ *  BMediaEventLooper handles this automatically.
+ *
+ *  @param media_time        Target position in media time.
+ *  @param performance_time  Performance time at which the seek should begin. */
 void
 BMediaNode::Seek(bigtime_t media_time, bigtime_t performance_time)
 {
@@ -517,6 +617,11 @@ BMediaNode::Seek(bigtime_t media_time, bigtime_t performance_time)
 }
 
 
+/** @brief Hook called when the run mode is changed; updates fRunMode.
+ *
+ *  May be overridden by derived classes to react to run-mode changes.
+ *
+ *  @param mode  The new run mode. */
 void
 BMediaNode::SetRunMode(run_mode mode)
 {
@@ -532,6 +637,12 @@ BMediaNode::SetRunMode(run_mode mode)
 }
 
 
+/** @brief Hook called when the time source delivers a time-warp event.
+ *
+ *  May be overridden by derived classes.
+ *
+ *  @param at_real_time         Real time at which the warp takes effect.
+ *  @param to_performance_time  New performance time corresponding to that real time. */
 void
 BMediaNode::TimeWarp(bigtime_t at_real_time, bigtime_t to_performance_time)
 {
@@ -540,6 +651,9 @@ BMediaNode::TimeWarp(bigtime_t at_real_time, bigtime_t to_performance_time)
 }
 
 
+/** @brief Hook called to preroll the node before playback begins.
+ *
+ *  May be overridden by derived classes. */
 void
 BMediaNode::Preroll()
 {
@@ -548,6 +662,12 @@ BMediaNode::Preroll()
 }
 
 
+/** @brief Hook notifying the node that its time source has changed.
+ *
+ *  The base implementation logs a debugger error if called directly —
+ *  use BMediaRoster::SetTimeSourceFor() instead.
+ *
+ *  @param time_source  The new BTimeSource. */
 void
 BMediaNode::SetTimeSource(BTimeSource* time_source)
 {
@@ -564,6 +684,17 @@ BMediaNode::SetTimeSource(BTimeSource* time_source)
 }
 
 
+/** @brief Handles a raw port message directed at this node.
+ *
+ *  Dispatches NODE_START, NODE_STOP, NODE_SEEK, NODE_SET_RUN_MODE,
+ *  NODE_TIME_WARP, NODE_PREROLL, NODE_ROLL, NODE_SYNC_TO,
+ *  NODE_SET_TIMESOURCE, NODE_GET_TIMESOURCE, NODE_GET_ATTRIBUTES_FOR,
+ *  NODE_REQUEST_COMPLETED, and NODE_FINAL_RELEASE messages.
+ *
+ *  @param message  The port message code.
+ *  @param data     Pointer to the raw message payload.
+ *  @param size     Size of the payload in bytes.
+ *  @return B_OK if handled, B_ERROR if the message was not recognised. */
 status_t
 BMediaNode::HandleMessage(int32 message, const void* data, size_t size)
 {
@@ -786,6 +917,14 @@ BMediaNode::HandleMessage(int32 message, const void* data, size_t size)
 }
 
 
+/** @brief Handles messages that were not claimed by any HandleMessage() override.
+ *
+ *  Sends a B_ERROR reply to any request that arrived on the control port
+ *  but was not understood.
+ *
+ *  @param code    The unrecognised message code.
+ *  @param buffer  Pointer to the raw message payload.
+ *  @param size    Size of the payload in bytes. */
 void
 BMediaNode::HandleBadMessage(int32 code, const void* buffer, size_t size)
 {
@@ -806,6 +945,8 @@ BMediaNode::HandleBadMessage(int32 code, const void* buffer, size_t size)
 }
 
 
+/** @brief Adds additional kind flags to this node's kind bitmask.
+ *  @param kind  One or more NODE_KIND_* flags to OR into fKinds. */
 void
 BMediaNode::AddNodeKind(uint64 kind)
 {
@@ -815,6 +956,9 @@ BMediaNode::AddNodeKind(uint64 kind)
 }
 
 
+/** @brief Allocates memory for a BMediaNode using the global operator new.
+ *  @param size  Number of bytes to allocate.
+ *  @return Pointer to the allocated memory. */
 void*
 BMediaNode::operator new(size_t size)
 {
@@ -823,6 +967,9 @@ BMediaNode::operator new(size_t size)
 }
 
 
+/** @brief Non-throwing allocation operator for BMediaNode.
+ *  @param size  Number of bytes to allocate.
+ *  @return Pointer to allocated memory, or \c NULL on failure. */
 void*
 BMediaNode::operator new(size_t size, const nothrow_t&) throw()
 {
@@ -831,6 +978,8 @@ BMediaNode::operator new(size_t size, const nothrow_t&) throw()
 }
 
 
+/** @brief Deallocates memory previously allocated with operator new.
+ *  @param ptr  Pointer to the memory to free. */
 void
 BMediaNode::operator delete(void* ptr)
 {
@@ -839,6 +988,8 @@ BMediaNode::operator delete(void* ptr)
 }
 
 
+/** @brief Non-throwing deallocation operator for BMediaNode.
+ *  @param ptr  Pointer to the memory to free. */
 void
 BMediaNode::operator delete(void* ptr, const nothrow_t&) throw()
 {
@@ -847,6 +998,14 @@ BMediaNode::operator delete(void* ptr, const nothrow_t&) throw()
 }
 
 
+/** @brief Hook called when a previously issued asynchronous request completes.
+ *
+ *  Override in derived classes to react to format-change completions and similar.
+ *  info.change_tag can be matched against tags returned by
+ *  BBufferConsumer::RequestFormatChange() etc.
+ *
+ *  @param info  Describes the completed request.
+ *  @return B_OK always in the base implementation. */
 status_t
 BMediaNode::RequestCompleted(const media_request_info& info)
 {
@@ -864,6 +1023,13 @@ BMediaNode::RequestCompleted(const media_request_info& info)
 }
 
 
+/** @brief Default delete hook that unregisters the node and then deletes it.
+ *
+ *  Shadow time-source nodes are not unregistered because the real node
+ *  behind them still exists.
+ *
+ *  @param node  The BMediaNode to delete (same as \c this).
+ *  @return B_OK on success. */
 status_t
 BMediaNode::DeleteHook(BMediaNode* node)
 {
@@ -877,6 +1043,8 @@ BMediaNode::DeleteHook(BMediaNode* node)
 }
 
 
+/** @brief Hook called by the media server after the node has been successfully
+ *         registered.  May be overridden by derived classes. */
 void
 BMediaNode::NodeRegistered()
 {
@@ -887,6 +1055,11 @@ BMediaNode::NodeRegistered()
 }
 
 
+/** @brief Fills \a outAttributes with node-specific attributes; override in
+ *         derived classes to expose custom attributes.
+ *  @param outAttributes  Buffer to receive the attributes.
+ *  @param inMaxCount     Maximum number of attributes the buffer can hold.
+ *  @return B_ERROR in the base implementation (not overridden). */
 status_t
 BMediaNode::GetNodeAttributes(media_node_attribute* outAttributes,
 	size_t inMaxCount)
@@ -898,6 +1071,13 @@ BMediaNode::GetNodeAttributes(media_node_attribute* outAttributes,
 }
 
 
+/** @brief Schedules a timer so that SyncToNode() can return at the correct time.
+ *
+ *  Override in derived classes to support BMediaRoster::SyncToNode().
+ *
+ *  @param at_performance_time  Performance time at which to fire the timer.
+ *  @param cookie               Port ID to write the result to when the timer fires.
+ *  @return B_ERROR in the base implementation. */
 status_t
 BMediaNode::AddTimer(bigtime_t at_performance_time, int32 cookie)
 {
@@ -906,21 +1086,37 @@ BMediaNode::AddTimer(bigtime_t at_performance_time, int32 cookie)
 }
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_0(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_1(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_2(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_3(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_4(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_5(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_6(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_7(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_8(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_9(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_10(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_11(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_12(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_13(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_14(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaNode::_Reserved_MediaNode_15(void*) { return B_ERROR; }
 
 /*
@@ -930,6 +1126,11 @@ BMediaNode::BMediaNode(const BMediaNode &clone)
 BMediaNode &BMediaNode::operator=(const BMediaNode &clone)
 */
 
+/** @brief Initialises all internal fields; creates the control port and sets
+ *         the default time source to the system time source.
+ *  @param name   Human-readable name for the node.
+ *  @param id     Initial node ID (NODE_JUST_CREATED_ID until registration).
+ *  @param kinds  Initial kind bitmask. */
 void
 BMediaNode::_InitObject(const char* name, media_node_id id, uint64 kinds)
 {
@@ -962,6 +1163,11 @@ BMediaNode::_InitObject(const char* name, media_node_id id, uint64 kinds)
 }
 
 
+/** @brief Protected constructor used by the media kit internals to create a node
+ *         with a pre-assigned ID and kinds bitmask.
+ *  @param name   Human-readable name.
+ *  @param id     Pre-assigned media_node_id.
+ *  @param kinds  Initial kind bitmask. */
 BMediaNode::BMediaNode(const char* name, media_node_id id, uint32 kinds)
 {
 	TRACE("BMediaNode::BMediaNode: name '%s', nodeid %" B_PRId32 ", kinds %#"
@@ -970,6 +1176,9 @@ BMediaNode::BMediaNode(const char* name, media_node_id id, uint32 kinds)
 }
 
 
+/** @brief Atomically increments and returns a new change tag for format-change
+ *         request correlation (R4.5+ API).
+ *  @return The new change tag value. */
 int32
 BMediaNode::NewChangeTag()
 {
@@ -988,6 +1197,8 @@ BMediaNode::NewChangeTag()
 
 // BeOS R4 deprecated API
 
+/** @brief Deprecated BeOS R4 API; retained for binary compatibility only.
+ *  @return 0 always. */
 int32
 BMediaNode::IncrementChangeTag()
 {
@@ -1001,6 +1212,8 @@ BMediaNode::IncrementChangeTag()
 }
 
 
+/** @brief Deprecated BeOS R4 API; retained for binary compatibility only.
+ *  @return 0 always. */
 int32
 BMediaNode::ChangeTag()
 {
@@ -1013,6 +1226,8 @@ BMediaNode::ChangeTag()
 }
 
 
+/** @brief Deprecated BeOS R4 API; retained for binary compatibility only.
+ *  @return 0 always. */
 int32
 BMediaNode::MintChangeTag()
 {
@@ -1026,6 +1241,9 @@ BMediaNode::MintChangeTag()
 }
 
 
+/** @brief Deprecated BeOS R4 API; retained for binary compatibility only.
+ *  @param previously_reserved  The reserved change tag to apply (ignored).
+ *  @return B_OK always. */
 status_t
 BMediaNode::ApplyChangeTag(int32 previously_reserved)
 {

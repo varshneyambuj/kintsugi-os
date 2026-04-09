@@ -1,31 +1,53 @@
 /*
- * Copyright (c) 2002, 2003, 2008 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
+ *   Copyright (c) 2002, 2003, 2008 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
+
+/** @file MediaAddOn.cpp
+ *  @brief Implements dormant_node_info, dormant_flavor_info, and BMediaAddOn,
+ *         providing the infrastructure for loadable media node add-ons. */
 
 
 #include <MediaAddOn.h>
@@ -43,6 +65,9 @@
 #define FLATTEN_TYPECODE	'DFIT'
 
 
+/** @brief Duplicates a C string using operator new[], returning NULL if @p str is NULL.
+ *  @param str  The string to duplicate, or NULL.
+ *  @return Heap-allocated copy of @p str, or NULL. */
 static char *
 _newstrdup(const char *str)
 {
@@ -59,6 +84,7 @@ _newstrdup(const char *str)
 // #pragma mark - dormant_node_info
 
 
+/** @brief Default constructor. Sets addon and flavor_id to -1 and clears the name. */
 dormant_node_info::dormant_node_info()
 	:
 	addon(-1),
@@ -68,6 +94,7 @@ dormant_node_info::dormant_node_info()
 }
 
 
+/** @brief Destructor. */
 dormant_node_info::~dormant_node_info()
 {
 }
@@ -85,6 +112,7 @@ flavor_info &flavor_info::operator=(const flavor_info &other)
 // #pragma mark - dormant_flavor_info
 
 
+/** @brief Default constructor. Initialises all fields to zero/NULL. */
 dormant_flavor_info::dormant_flavor_info()
 {
 	name = NULL;
@@ -102,6 +130,7 @@ dormant_flavor_info::dormant_flavor_info()
 }
 
 
+/** @brief Destructor. Frees all heap-allocated string and format array members. */
 dormant_flavor_info::~dormant_flavor_info()
 {
 	delete[] name;
@@ -111,6 +140,8 @@ dormant_flavor_info::~dormant_flavor_info()
 }
 
 
+/** @brief Copy constructor. Performs a deep copy of @p clone.
+ *  @param clone  The dormant_flavor_info instance to copy. */
 dormant_flavor_info::dormant_flavor_info(const dormant_flavor_info &clone)
 {
 	name = NULL;
@@ -122,6 +153,9 @@ dormant_flavor_info::dormant_flavor_info(const dormant_flavor_info &clone)
 }
 
 
+/** @brief Copy-assignment operator. Copies all fields including the dormant_node_info.
+ *  @param clone  The dormant_flavor_info to assign from.
+ *  @return Reference to this object. */
 dormant_flavor_info &
 dormant_flavor_info::operator=(const dormant_flavor_info &clone)
 {
@@ -133,6 +167,13 @@ dormant_flavor_info::operator=(const dormant_flavor_info &clone)
 }
 
 
+/** @brief Assignment operator from a flavor_info base-class instance.
+ *
+ *  Performs deep copies of the name, info, in_formats, and out_formats arrays.
+ *  The node_info field is reset to default values.
+ *
+ *  @param clone  The flavor_info to assign from.
+ *  @return Reference to this object. */
 dormant_flavor_info &
 dormant_flavor_info::operator=(const flavor_info &clone)
 {
@@ -203,6 +244,8 @@ dormant_flavor_info::operator=(const flavor_info &clone)
 }
 
 
+/** @brief Replaces the human-readable name string.
+ *  @param newName  New name string to copy; may be NULL. */
 void
 dormant_flavor_info::set_name(const char *newName)
 {
@@ -211,6 +254,8 @@ dormant_flavor_info::set_name(const char *newName)
 }
 
 
+/** @brief Replaces the human-readable info/description string.
+ *  @param newInfo  New info string to copy; may be NULL. */
 void
 dormant_flavor_info::set_info(const char *newInfo)
 {
@@ -219,6 +264,8 @@ dormant_flavor_info::set_info(const char *newInfo)
 }
 
 
+/** @brief Appends a media_format to the list of accepted input formats.
+ *  @param in_format  The input media format to add. */
 void
 dormant_flavor_info::add_in_format(const media_format &in_format)
 {
@@ -234,6 +281,8 @@ dormant_flavor_info::add_in_format(const media_format &in_format)
 }
 
 
+/** @brief Appends a media_format to the list of produced output formats.
+ *  @param out_format  The output media format to add. */
 void
 dormant_flavor_info::add_out_format(const media_format &out_format)
 {
@@ -249,6 +298,8 @@ dormant_flavor_info::add_out_format(const media_format &out_format)
 }
 
 
+/** @brief Indicates whether the flattened representation has a fixed size.
+ *  @return false always, because the size depends on variable-length strings and format arrays. */
 bool
 dormant_flavor_info::IsFixedSize() const
 {
@@ -256,6 +307,8 @@ dormant_flavor_info::IsFixedSize() const
 }
 
 
+/** @brief Returns the type code used to identify flattened dormant_flavor_info data.
+ *  @return The type code FLATTEN_TYPECODE ('DFIT'). */
 type_code
 dormant_flavor_info::TypeCode() const
 {
@@ -263,6 +316,8 @@ dormant_flavor_info::TypeCode() const
 }
 
 
+/** @brief Computes the number of bytes required to flatten this object.
+ *  @return Total size in bytes needed for the flattened representation. */
 ssize_t
 dormant_flavor_info::FlattenedSize() const
 {
@@ -295,6 +350,11 @@ dormant_flavor_info::FlattenedSize() const
 }
 
 
+/** @brief Serialises this object into @p buffer.
+ *
+ *  @param buffer  Destination buffer of at least FlattenedSize() bytes.
+ *  @param size    Capacity of @p buffer in bytes.
+ *  @return B_OK on success, or B_ERROR if @p size is too small or a format count is invalid. */
 status_t
 dormant_flavor_info::Flatten(void *buffer, ssize_t size) const
 {
@@ -373,6 +433,16 @@ dormant_flavor_info::Flatten(void *buffer, ssize_t size) const
 }
 
 
+/** @brief Deserialises this object from @p buffer.
+ *
+ *  Validates the magic value and size field before parsing.  All previously
+ *  held heap memory is freed prior to reconstruction.
+ *
+ *  @param c       Type code; must equal FLATTEN_TYPECODE.
+ *  @param buffer  Source buffer containing flattened data.
+ *  @param size    Size of @p buffer in bytes; must be at least 8.
+ *  @return B_OK on success, B_ERROR if the magic or type code is wrong,
+ *          B_NO_MEMORY if allocation fails. */
 status_t
 dormant_flavor_info::Unflatten(type_code c, const void *buffer, ssize_t size)
 {
@@ -480,6 +550,8 @@ dormant_flavor_info::Unflatten(type_code c, const void *buffer, ssize_t size)
 // #pragma mark - BMediaAddOn
 
 
+/** @brief Constructs a BMediaAddOn with the given image identifier.
+ *  @param image  The image_id of the add-on image that contains this add-on. */
 BMediaAddOn::BMediaAddOn(image_id image)
 	:
 	fImage(image),
@@ -489,12 +561,20 @@ BMediaAddOn::BMediaAddOn(image_id image)
 }
 
 
+/** @brief Destructor. */
 BMediaAddOn::~BMediaAddOn()
 {
 	CALLED();
 }
 
 
+/** @brief Returns the initialisation status of the add-on (optional override).
+ *
+ *  Derived classes should override this to return a meaningful error if
+ *  construction failed.
+ *
+ *  @param _failureText  Output pointer set to a human-readable failure description.
+ *  @return B_OK always (base implementation). */
 status_t
 BMediaAddOn::InitCheck(const char **_failureText)
 {
@@ -505,6 +585,8 @@ BMediaAddOn::InitCheck(const char **_failureText)
 }
 
 
+/** @brief Returns the number of media node flavors exported by this add-on (optional override).
+ *  @return 0 always (base implementation; subclasses must override). */
 int32
 BMediaAddOn::CountFlavors()
 {
@@ -514,6 +596,10 @@ BMediaAddOn::CountFlavors()
 }
 
 
+/** @brief Returns the flavor_info for the flavor at index @p n (optional override).
+ *  @param n      Zero-based index of the flavor to retrieve.
+ *  @param _info  Output pointer set to the flavor_info structure.
+ *  @return B_ERROR always (base implementation; subclasses must override). */
 status_t
 BMediaAddOn::GetFlavorAt(int32 n, const flavor_info **_info)
 {
@@ -523,6 +609,12 @@ BMediaAddOn::GetFlavorAt(int32 n, const flavor_info **_info)
 }
 
 
+/** @brief Instantiates a media node for the given flavor (optional override).
+ *
+ *  @param info    The flavor_info describing which node type to create.
+ *  @param config  Optional BMessage containing saved configuration.
+ *  @param _error  Output pointer set to an error code if instantiation fails.
+ *  @return NULL always (base implementation; subclasses must override). */
 BMediaNode*
 BMediaAddOn::InstantiateNodeFor(const flavor_info *info, BMessage *config,
 	status_t *_error)
@@ -533,6 +625,10 @@ BMediaAddOn::InstantiateNodeFor(const flavor_info *info, BMessage *config,
 }
 
 
+/** @brief Retrieves the current configuration of @p node into @p toMessage (optional override).
+ *  @param node       The media node to query.
+ *  @param toMessage  Output BMessage to receive the configuration data.
+ *  @return B_ERROR always (base implementation; subclasses must override). */
 status_t
 BMediaAddOn::GetConfigurationFor(BMediaNode *node, BMessage *toMessage)
 {
@@ -542,6 +638,8 @@ BMediaAddOn::GetConfigurationFor(BMediaNode *node, BMessage *toMessage)
 }
 
 
+/** @brief Indicates whether this add-on wants to be started automatically at boot (optional override).
+ *  @return false always (base implementation; subclasses may override). */
 bool
 BMediaAddOn::WantsAutoStart()
 {
@@ -551,6 +649,15 @@ BMediaAddOn::WantsAutoStart()
 }
 
 
+/** @brief Instantiates the next auto-start node (optional override).
+ *
+ *  Called repeatedly by the media_addon_server while WantsAutoStart() returns true.
+ *
+ *  @param count        The zero-based call count (first call passes 0).
+ *  @param _node        Output pointer set to the newly created BMediaNode.
+ *  @param _internalID  Output pointer set to the internal flavor ID used.
+ *  @param _hasMore     Output pointer set to true if more nodes remain to be started.
+ *  @return B_ERROR always (base implementation; subclasses must override). */
 status_t
 BMediaAddOn::AutoStart(int count, BMediaNode **_node, int32 *_internalID,
 	bool *_hasMore)
@@ -561,6 +668,12 @@ BMediaAddOn::AutoStart(int count, BMediaNode **_node, int32 *_internalID,
 }
 
 
+/** @brief Sniffs @p file to determine whether this add-on handles it (BFileInterface override point).
+ *  @param file        Entry reference of the file to probe.
+ *  @param mimeType    Output pointer set to the detected MIME type.
+ *  @param _quality    Output pointer set to the confidence level (0.0–1.0).
+ *  @param _internalID Output pointer set to the matching flavor's internal ID.
+ *  @return B_ERROR always (base implementation; subclasses derived from BFileInterface must override). */
 status_t
 BMediaAddOn::SniffRef(const entry_ref &file, BMimeType *mimeType,
 	float *_quality, int32 *_internalID)
@@ -571,6 +684,11 @@ BMediaAddOn::SniffRef(const entry_ref &file, BMimeType *mimeType,
 }
 
 
+/** @brief Sniffs @p type to determine whether this add-on handles it (BFileInterface override point).
+ *  @param type        The MIME type to probe.
+ *  @param _quality    Output pointer set to the confidence level (0.0–1.0).
+ *  @param _internalID Output pointer set to the matching flavor's internal ID.
+ *  @return B_ERROR always (base implementation; subclasses derived from BFileInterface must override). */
 status_t
 BMediaAddOn::SniffType(const BMimeType &type, float *_quality,
 	int32 *_internalID)
@@ -581,6 +699,16 @@ BMediaAddOn::SniffType(const BMimeType &type, float *_quality,
 }
 
 
+/** @brief Returns the list of file formats this add-on can read and write (BFileInterface override point).
+ *  @param flavorID         The internal ID of the flavor to query.
+ *  @param writableFormats  Output array for writable format descriptors.
+ *  @param maxWriteItems    Capacity of @p writableFormats.
+ *  @param _writeItems      Output count of writable formats written.
+ *  @param readableFormats  Output array for readable format descriptors.
+ *  @param maxReadItems     Capacity of @p readableFormats.
+ *  @param _readItems       Output count of readable formats written.
+ *  @param _reserved        Reserved; must be NULL.
+ *  @return B_ERROR always (base implementation; subclasses derived from BFileInterface must override). */
 status_t
 BMediaAddOn::GetFileFormatList(int32 flavorID,
 	media_file_format *writableFormats, int32 maxWriteItems, int32 *_writeItems,
@@ -593,6 +721,13 @@ BMediaAddOn::GetFileFormatList(int32 flavorID,
 }
 
 
+/** @brief Sniffs @p type filtered by the required node @p kinds (BFileInterface override point).
+ *  @param type        The MIME type to probe.
+ *  @param kinds       Bitmask of required node kinds (e.g. B_BUFFER_PRODUCER).
+ *  @param _quality    Output pointer set to the confidence level (0.0–1.0).
+ *  @param _internalID Output pointer set to the matching flavor's internal ID.
+ *  @param _reserved   Reserved; must be NULL.
+ *  @return B_ERROR always (base implementation; subclasses derived from BFileInterface must override). */
 status_t
 BMediaAddOn::SniffTypeKind(const BMimeType &type, uint64 kinds, float *_quality,
 	int32 *_internalID, void *_reserved)
@@ -603,6 +738,8 @@ BMediaAddOn::SniffTypeKind(const BMimeType &type, uint64 kinds, float *_quality,
 }
 
 
+/** @brief Returns the image_id of the add-on image that contains this BMediaAddOn.
+ *  @return The image_id passed to the constructor. */
 image_id
 BMediaAddOn::ImageID()
 {
@@ -610,6 +747,8 @@ BMediaAddOn::ImageID()
 }
 
 
+/** @brief Returns the media_addon_id assigned to this add-on by the media server.
+ *  @return The media_addon_id, or 0 if not yet registered. */
 media_addon_id
 BMediaAddOn::AddonID()
 {
@@ -620,6 +759,13 @@ BMediaAddOn::AddonID()
 // #pragma mark - protected BMediaAddOn
 
 
+/** @brief Notifies the media_addon_server that the set of available flavors has changed.
+ *
+ *  Triggers a rescan of this add-on's flavors.  Only valid after the add-on has
+ *  been registered (fAddon != 0).
+ *
+ *  @return B_OK on success, B_ERROR if the add-on is not yet registered, or
+ *          a propagated error from SendToAddOnServer(). */
 status_t
 BMediaAddOn::NotifyFlavorChange()
 {
@@ -653,10 +799,15 @@ extern "C" {
 	status_t _Reserved_MediaAddOn_1__11BMediaAddOnPv(void *, void *) { return B_ERROR; }
 };
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaAddOn::_Reserved_MediaAddOn_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaAddOn::_Reserved_MediaAddOn_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaAddOn::_Reserved_MediaAddOn_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaAddOn::_Reserved_MediaAddOn_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaAddOn::_Reserved_MediaAddOn_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaAddOn::_Reserved_MediaAddOn_7(void *) { return B_ERROR; }
-

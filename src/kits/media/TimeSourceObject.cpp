@@ -1,7 +1,29 @@
 /*
- * Copyright 2002 Marcus Overhagen. All Rights Reserved.
- * This file may be used under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002 Marcus Overhagen. All Rights Reserved.
+ *   This file may be used under the terms of the MIT License.
  */
+
+/** @file TimeSourceObject.cpp
+ *  @brief Shadow proxy object returned by BMediaRoster::MakeTimeSourceFor(). */
 
 
 /*!	The object returned by BMediaRoster's
@@ -23,6 +45,12 @@
 #include "TimeSourceObjectManager.h"
 
 
+/** @brief Constructs a shadow proxy for the given time source node.
+ *
+ *  Reuses the control port of the real time source so that all messages are
+ *  forwarded directly to it.  Sets fIsRealtime for the system clock node.
+ *
+ *  @param node  The media_node describing the real time source. */
 TimeSourceObject::TimeSourceObject(const media_node& node)
 	:
 	BMediaNode("some timesource object", node.node, node.kind),
@@ -64,6 +92,11 @@ TimeSourceObject::TimeSourceObject(const media_node& node)
 }
 
 
+/** @brief No-op implementation of the TimeSourceOp hook; shadow objects do not
+ *         handle time source operations directly.
+ *  @param op         The time source operation descriptor.
+ *  @param _reserved  Reserved; must be \c NULL.
+ *  @return B_OK always. */
 status_t
 TimeSourceObject::TimeSourceOp(const time_source_op_info& op, void* _reserved)
 {
@@ -72,6 +105,9 @@ TimeSourceObject::TimeSourceOp(const time_source_op_info& op, void* _reserved)
 }
 
 
+/** @brief Returns \c NULL because shadow TimeSourceObjects are not add-on nodes.
+ *  @param _id  If non-NULL, set to 0.
+ *  @return \c NULL always. */
 BMediaAddOn*
 TimeSourceObject::AddOn(int32* _id) const
 {
@@ -82,6 +118,10 @@ TimeSourceObject::AddOn(int32* _id) const
 }
 
 
+/** @brief Notifies the TimeSourceObjectManager that this proxy is being deleted,
+ *         then delegates to BTimeSource::DeleteHook().
+ *  @param node  The BMediaNode being deleted (same as \c this).
+ *  @return B_OK on success, or an error code from BTimeSource::DeleteHook(). */
 status_t
 TimeSourceObject::DeleteHook(BMediaNode* node)
 {
@@ -95,4 +135,3 @@ TimeSourceObject::DeleteHook(BMediaNode* node)
 	PRINT(1, "TimeSourceObject::DeleteHook leave\n");
 	return status;
 }
-

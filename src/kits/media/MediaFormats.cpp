@@ -1,11 +1,34 @@
 /*
- * Copyright 2004-2009, The Haiku Project. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler
- *		Marcus Overhagen
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2009, The Haiku Project. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Axel Dörfler
+ *       Marcus Overhagen
  */
+
+/** @file MediaFormats.cpp
+ *  @brief Implements BMediaFormats, meta_format helpers, and encoder/file-format
+ *         iteration functions. */
 
 
 #include "AddOnManager.h"
@@ -29,6 +52,14 @@ static BObjectList<meta_format> sFormats;
 static bigtime_t sLastFormatsUpdate;
 
 
+/** @brief Iterates through available encoders that match the given input format,
+ *         optionally restricted to a specific file format family.
+ *  @param cookie        Iterator cookie; start at 0 and increment between calls.
+ *  @param fileFormat    Optional file format constraint (may be \c NULL).
+ *  @param inputFormat   The source media format to match against.
+ *  @param _outputFormat Receives the encoder's output format on success.
+ *  @param _codecInfo    Receives the matching codec information.
+ *  @return B_OK while encoders remain, B_BAD_INDEX when exhausted, or an error. */
 status_t
 get_next_encoder(int32* cookie, const media_file_format* fileFormat,
 	const media_format* inputFormat, media_format* _outputFormat,
@@ -76,6 +107,16 @@ get_next_encoder(int32* cookie, const media_file_format* fileFormat,
 }
 
 
+/** @brief Iterates through available encoders that match both input and output
+ *         formats, optionally restricted to a file format family.
+ *  @param cookie                 Iterator cookie; start at 0.
+ *  @param fileFormat             Optional file format constraint (may be \c NULL).
+ *  @param inputFormat            Required input format to match.
+ *  @param outputFormat           Required output format to match.
+ *  @param _codecInfo             Receives the matching codec information.
+ *  @param _acceptedInputFormat   Receives the accepted input format on success.
+ *  @param _acceptedOutputFormat  Receives the accepted output format on success.
+ *  @return B_OK while encoders remain, B_BAD_INDEX when exhausted, or an error. */
 status_t
 get_next_encoder(int32* cookie, const media_file_format* fileFormat,
 	const media_format* inputFormat, const media_format* outputFormat,
@@ -135,6 +176,10 @@ get_next_encoder(int32* cookie, const media_file_format* fileFormat,
 }
 
 
+/** @brief Simplified encoder iterator that returns only codec information.
+ *  @param cookie      Iterator cookie; start at 0.
+ *  @param _codecInfo  Receives the codec information for the current encoder.
+ *  @return B_OK while encoders remain, or B_BAD_INDEX when exhausted. */
 status_t
 get_next_encoder(int32* cookie, media_codec_info* _codecInfo)
 {
@@ -156,6 +201,11 @@ get_next_encoder(int32* cookie, media_codec_info* _codecInfo)
 }
 
 
+/** @brief Returns whether the given file format accepts the given media format.
+ *  @param _fileFormat  The file format to test.
+ *  @param format       The media format to test against.
+ *  @param flags        Reserved; pass 0.
+ *  @return \c true if compatible (currently unimplemented, always returns false). */
 bool
 does_file_accept_format(const media_file_format* _fileFormat,
 	media_format* format, uint32 flags)
@@ -168,17 +218,21 @@ does_file_accept_format(const media_file_format* _fileFormat,
 //	#pragma mark -
 
 
+/** @brief Default constructor; zero-fills the description union. */
 _media_format_description::_media_format_description()
 {
 	memset(this, 0, sizeof(*this));
 }
 
 
+/** @brief Destructor. */
 _media_format_description::~_media_format_description()
 {
 }
 
 
+/** @brief Copy constructor; makes a binary copy of the description.
+ *  @param other  The source description to copy. */
 _media_format_description::_media_format_description(
 	const _media_format_description& other)
 {
@@ -186,6 +240,9 @@ _media_format_description::_media_format_description(
 }
 
 
+/** @brief Assignment operator; makes a binary copy of the description.
+ *  @param other  The source description to copy.
+ *  @return Reference to \c *this. */
 _media_format_description&
 _media_format_description::operator=(const _media_format_description& other)
 {
@@ -194,6 +251,11 @@ _media_format_description::operator=(const _media_format_description& other)
 }
 
 
+/** @brief Equality operator for media_format_description; compares family and
+ *         family-specific codec/vendor fields.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if both descriptions identify the same codec. */
 bool
 operator==(const media_format_description& a,
 	const media_format_description& b)
@@ -229,6 +291,11 @@ operator==(const media_format_description& a,
 }
 
 
+/** @brief Less-than operator for media_format_description; enables use in sorted
+ *         containers.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if \a a sorts before \a b. */
 bool
 operator<(const media_format_description& a, const media_format_description& b)
 {
@@ -265,6 +332,10 @@ operator<(const media_format_description& a, const media_format_description& b)
 }
 
 
+/** @brief Equality operator for GUID values (byte-wise comparison).
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if the GUIDs are identical. */
 bool
 operator==(const GUID& a, const GUID& b)
 {
@@ -272,6 +343,10 @@ operator==(const GUID& a, const GUID& b)
 }
 
 
+/** @brief Less-than operator for GUID values (lexicographic byte comparison).
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if \a a is less than \a b. */
 bool
 operator<(const GUID& a, const GUID& b)
 {
@@ -284,6 +359,7 @@ operator<(const GUID& a, const GUID& b)
 //	Some (meta) formats supply functions
 
 
+/** @brief Default constructor; zero-initialises the meta_format. */
 meta_format::meta_format()
 	:
 	id(0)
@@ -292,6 +368,10 @@ meta_format::meta_format()
 
 
 
+/** @brief Constructs a meta_format from a description, a format, and a codec ID.
+ *  @param description  The format description identifying this codec.
+ *  @param format       The associated media_format.
+ *  @param id           The codec ID assigned by FormatManager. */
 meta_format::meta_format(const media_format_description& description,
 	const media_format& format, int32 id)
 	:
@@ -302,6 +382,8 @@ meta_format::meta_format(const media_format_description& description,
 }
 
 
+/** @brief Constructs a meta_format from a description alone (no format or ID).
+ *  @param description  The format description. */
 meta_format::meta_format(const media_format_description& description)
 	:
 	description(description),
@@ -310,6 +392,8 @@ meta_format::meta_format(const media_format_description& description)
 }
 
 
+/** @brief Copy constructor.
+ *  @param other  The meta_format to copy. */
 meta_format::meta_format(const meta_format& other)
 	:
 	description(other.description),
@@ -318,6 +402,11 @@ meta_format::meta_format(const meta_format& other)
 }
 
 
+/** @brief Returns whether this meta_format's format matches \a otherFormat for
+ *         the given family.
+ *  @param otherFormat  The media_format to compare against.
+ *  @param family       The format family that must also match the description.
+ *  @return \c true if both the family and the format match. */
 bool
 meta_format::Matches(const media_format& otherFormat,
 	media_format_family family)
@@ -329,6 +418,11 @@ meta_format::Matches(const media_format& otherFormat,
 }
 
 
+/** @brief Comparison function by description alone, for use with BObjectList
+ *         binary search.
+ *  @param a  First meta_format.
+ *  @param b  Second meta_format.
+ *  @return Negative, 0, or positive depending on sort order. */
 int
 meta_format::CompareDescriptions(const meta_format* a, const meta_format* b)
 {
@@ -342,6 +436,10 @@ meta_format::CompareDescriptions(const meta_format* a, const meta_format* b)
 }
 
 
+/** @brief Full comparison function (description then ID) for BObjectList sorting.
+ *  @param a  First meta_format.
+ *  @param b  Second meta_format.
+ *  @return Negative, 0, or positive depending on sort order. */
 int
 meta_format::Compare(const meta_format* a, const meta_format* b)
 {
@@ -353,11 +451,15 @@ meta_format::Compare(const meta_format* a, const meta_format* b)
 }
 
 
-/** We share one global list for all BMediaFormats in the team - since the
- *	format data can change at any time, we have to update the list to ensure
- *	that we are working on the latest data set. The list is always sorted by
- *	description. The formats lock has to be held when you call this function.
- */
+/** @brief Updates the team-global format list from FormatManager if it has changed
+ *         since the last call.
+ *
+ *  We share one global list for all BMediaFormats in the team - since the format
+ *  data can change at any time, we have to update the list to ensure that we are
+ *  working on the latest data set.  The list is always sorted by description.
+ *  The formats lock has to be held when you call this function.
+ *
+ *  @return B_OK if the list is current, or an error code on failure. */
 static status_t
 update_media_formats()
 {
@@ -420,6 +522,7 @@ update_media_formats()
 //	#pragma mark -
 
 
+/** @brief Constructs a BMediaFormats iterator; the iterator index starts at 0. */
 BMediaFormats::BMediaFormats()
 	:
 	fIteratorIndex(0)
@@ -427,11 +530,14 @@ BMediaFormats::BMediaFormats()
 }
 
 
+/** @brief Destructor. */
 BMediaFormats::~BMediaFormats()
 {
 }
 
 
+/** @brief Returns the initialisation status of the internal lock.
+ *  @return B_OK if the lock is usable. */
 status_t
 BMediaFormats::InitCheck()
 {
@@ -439,6 +545,11 @@ BMediaFormats::InitCheck()
 }
 
 
+/** @brief Finds the format description for a given media_format and family.
+ *  @param format        The media_format to look up.
+ *  @param family        The format family to match.
+ *  @param _description  Receives the matching description on success.
+ *  @return B_OK on success, B_MEDIA_BAD_FORMAT if no match is found. */
 status_t
 BMediaFormats::GetCodeFor(const media_format& format,
 	media_format_family family,
@@ -465,6 +576,10 @@ BMediaFormats::GetCodeFor(const media_format& format,
 }
 
 
+/** @brief Finds the media_format associated with a given format description.
+ *  @param description  The format description to look up.
+ *  @param _format      Receives the associated media_format on success.
+ *  @return B_OK on success, B_MEDIA_BAD_FORMAT if not found. */
 status_t
 BMediaFormats::GetFormatFor(const media_format_description& description,
 	media_format* _format)
@@ -499,6 +614,12 @@ BMediaFormats::GetFormatFor(const media_format_description& description,
 }
 
 
+/** @brief Looks up a BeOS-native format by its numeric format ID and optional
+ *         media type.
+ *  @param format   The BeOS format ID (e.g. from media_raw_audio_format).
+ *  @param _format  Receives the associated media_format.
+ *  @param type     If not B_MEDIA_UNKNOWN_TYPE, must match the found format's type.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaFormats::GetBeOSFormatFor(uint32 format,
 	media_format* _format, media_type type)
@@ -520,6 +641,11 @@ BMediaFormats::GetBeOSFormatFor(uint32 format,
 }
 
 
+/** @brief Looks up an AVI format by codec ID and optional media type.
+ *  @param codec    The AVI four-character codec code.
+ *  @param _format  Receives the associated media_format.
+ *  @param type     If not B_MEDIA_UNKNOWN_TYPE, must match the found format's type.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaFormats::GetAVIFormatFor(uint32 codec,
 	media_format* _format, media_type type)
@@ -542,6 +668,13 @@ BMediaFormats::GetAVIFormatFor(uint32 codec,
 }
 
 
+/** @brief Looks up a QuickTime format by vendor and codec IDs, with optional type
+ *         validation.
+ *  @param vendor   The QuickTime vendor identifier.
+ *  @param codec    The QuickTime codec identifier.
+ *  @param _format  Receives the associated media_format.
+ *  @param type     If not B_MEDIA_UNKNOWN_TYPE, must match the found format's type.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaFormats::GetQuicktimeFormatFor(uint32 vendor, uint32 codec,
 	media_format* _format, media_type type)
@@ -564,6 +697,11 @@ BMediaFormats::GetQuicktimeFormatFor(uint32 vendor, uint32 codec,
 }
 
 
+/** @brief Resets the iterator to the beginning of the format list.
+ *
+ *  The sLock must be held by the caller (via Lock()) before calling this.
+ *
+ *  @return B_OK on success, B_NOT_ALLOWED if the lock is not held. */
 status_t
 BMediaFormats::RewindFormats()
 {
@@ -577,6 +715,14 @@ BMediaFormats::RewindFormats()
 }
 
 
+/** @brief Returns the next registered format and its description.
+ *
+ *  The sLock must be held by the caller (via Lock()) before calling this.
+ *  The first call triggers a format-list refresh if needed.
+ *
+ *  @param _format       Receives the media_format for the current entry.
+ *  @param _description  Receives the description for the current entry.
+ *  @return B_OK while formats remain, B_BAD_INDEX when the list is exhausted. */
 status_t
 BMediaFormats::GetNextFormat(media_format* _format,
 	media_format_description* _description)
@@ -602,6 +748,8 @@ BMediaFormats::GetNextFormat(media_format* _format,
 }
 
 
+/** @brief Acquires the team-global formats lock; must be called before iterating.
+ *  @return \c true if the lock was acquired. */
 bool
 BMediaFormats::Lock()
 {
@@ -609,6 +757,7 @@ BMediaFormats::Lock()
 }
 
 
+/** @brief Releases the team-global formats lock. */
 void
 BMediaFormats::Unlock()
 {
@@ -616,6 +765,14 @@ BMediaFormats::Unlock()
 }
 
 
+/** @brief Registers an array of format descriptions with an associated format,
+ *         assigning codec IDs via FormatManager.
+ *  @param descriptions      Array of descriptions to register.
+ *  @param descriptionCount  Number of entries in \a descriptions.
+ *  @param format            The media_format to associate (modified in place).
+ *  @param flags             Registration flags.
+ *  @param _reserved         Reserved; pass \c NULL.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaFormats::MakeFormatFor(const media_format_description* descriptions,
 	int32 descriptionCount, media_format* format, uint32 flags,
@@ -631,6 +788,11 @@ BMediaFormats::MakeFormatFor(const media_format_description* descriptions,
 // #pragma mark - deprecated API
 
 
+/** @brief Deprecated single-description variant of MakeFormatFor().
+ *  @param description  The format description to register.
+ *  @param inFormat     The input format.
+ *  @param _outFormat   Receives a copy of \a inFormat with codec ID filled in.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaFormats::MakeFormatFor(const media_format_description& description,
 	const media_format& inFormat, media_format* _outFormat)
@@ -638,4 +800,3 @@ BMediaFormats::MakeFormatFor(const media_format_description& description,
 	*_outFormat = inFormat;
 	return MakeFormatFor(&description, 1, _outFormat);
 }
-

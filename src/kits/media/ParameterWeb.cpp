@@ -1,10 +1,38 @@
 /*
- * Copyright 2002-2012, Haiku. All Rights Reserved.
- * This file may be used under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Author: Zousar Shaker
- *         Axel Dörfler, axeld@pinc-software.de
- *         Marcus Overhagen
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2012, Haiku. All Rights Reserved.
+ *   This file may be used under the terms of the MIT License.
+ *
+ *   Author: Zousar Shaker
+ *           Axel Dörfler, axeld@pinc-software.de
+ *           Marcus Overhagen
+ */
+
+/** @file ParameterWeb.cpp
+ *  @brief Implements the following classes:
+ *         BParameterWeb, BParameterGroup, BParameter, BNullParameter,
+ *         BContinuousParameter, BDiscreteParameter, BTextParameter.
+ *
+ *  These classes model a directed graph of media node parameters that can be
+ *  flattened/unflattened for IPC and rendered into UI controls by a BMediaTheme.
  */
 
 
@@ -168,6 +196,13 @@ static const ssize_t kAdditionalDiscreteParameterSize = sizeof(ssize_t);
 // helper functions
 
 
+/**
+ * @brief Read a value of type @p Type from @p _buffer and advance the pointer.
+ *
+ * @tparam Type  The POD type to read.
+ * @param _buffer  In/out pointer to the read position.
+ * @return The value read from the buffer.
+ */
 template<class Type> Type
 read_from_buffer(const void **_buffer)
 {
@@ -181,6 +216,16 @@ read_from_buffer(const void **_buffer)
 }
 
 
+/**
+ * @brief Read a length-prefixed string from @p _buffer into a malloc'd copy.
+ *
+ * The first byte is the string length (0-255), followed by that many characters.
+ *
+ * @param _buffer  In/out pointer to the read position.
+ * @param _string  In/out: existing string is freed, receives the new string.
+ * @param size     Remaining bytes in the buffer (must be >= 1).
+ * @return B_OK on success, B_BAD_VALUE if @p size is too small, B_NO_MEMORY on failure.
+ */
 static status_t
 read_string_from_buffer(const void **_buffer, char **_string, ssize_t size)
 {
@@ -221,6 +266,13 @@ reserve_in_buffer(void **_buffer)
 }
 #endif
 
+/**
+ * @brief Write a value of type @p Type into @p _buffer and advance the pointer.
+ *
+ * @tparam Type  The POD type to write.
+ * @param _buffer  In/out pointer to the write position.
+ * @param value    The value to write.
+ */
 template<class Type> void
 write_to_buffer(void **_buffer, Type value)
 {
@@ -233,6 +285,12 @@ write_to_buffer(void **_buffer, Type value)
 }
 
 
+/**
+ * @brief Write a length-prefixed string (up to 255 chars) into @p _buffer.
+ *
+ * @param _buffer  In/out pointer to the write position.
+ * @param string   The string to write; NULL is treated as empty.
+ */
 void
 write_string_to_buffer(void **_buffer, const char *string)
 {
@@ -251,6 +309,12 @@ write_string_to_buffer(void **_buffer, const char *string)
 }
 
 
+/**
+ * @brief Advance a const buffer pointer by @p bytes without reading any data.
+ *
+ * @param _buffer  In/out pointer to advance.
+ * @param bytes    Number of bytes to skip.
+ */
 static void
 skip_in_buffer(const void **_buffer, uint32 bytes)
 {
@@ -262,6 +326,12 @@ skip_in_buffer(const void **_buffer, uint32 bytes)
 }
 
 
+/**
+ * @brief Advance a mutable buffer pointer by @p bytes without writing any data.
+ *
+ * @param _buffer  In/out pointer to advance.
+ * @param bytes    Number of bytes to skip.
+ */
 static void inline
 skip_in_buffer(void **_buffer, uint32 bytes)
 {
@@ -274,6 +344,14 @@ skip_in_buffer(void **_buffer, uint32 bytes)
 }
 
 
+/**
+ * @brief Conditionally byte-swap a 32-bit value.
+ *
+ * @tparam Type  A 4-byte POD type.
+ * @param value   The value to conditionally swap.
+ * @param doSwap  If true, byte-swap; otherwise return unchanged.
+ * @return The (possibly swapped) value.
+ */
 template<class Type> Type
 swap32(Type value, bool doSwap)
 {
@@ -286,6 +364,14 @@ swap32(Type value, bool doSwap)
 }
 
 
+/**
+ * @brief Conditionally byte-swap a 64-bit value.
+ *
+ * @tparam Type  An 8-byte POD type.
+ * @param value   The value to conditionally swap.
+ * @param doSwap  If true, byte-swap; otherwise return unchanged.
+ * @return The (possibly swapped) value.
+ */
 template<class Type> Type
 swap64(Type value, bool doSwap)
 {
@@ -298,6 +384,14 @@ swap64(Type value, bool doSwap)
 }
 
 
+/**
+ * @brief Read and conditionally swap a 32-bit value from a buffer.
+ *
+ * @tparam Type  A 4-byte POD type.
+ * @param _buffer  In/out read position.
+ * @param doSwap   If true, byte-swap after reading.
+ * @return The (possibly swapped) value.
+ */
 template<class Type> Type
 read_from_buffer_swap32(const void **_buffer, bool doSwap)
 {
@@ -305,6 +399,16 @@ read_from_buffer_swap32(const void **_buffer, bool doSwap)
 }
 
 
+/**
+ * @brief Read and conditionally swap a pointer-sized value from a buffer.
+ *
+ * Selects 32- or 64-bit swap depending on the target ABI.
+ *
+ * @tparam Type  A pointer-sized POD type.
+ * @param _buffer  In/out read position.
+ * @param doSwap   If true, byte-swap after reading.
+ * @return The (possibly swapped) value.
+ */
 template<class Type> Type
 read_pointer_from_buffer_swap(const void **_buffer, bool doSwap)
 {
@@ -318,6 +422,14 @@ read_pointer_from_buffer_swap(const void **_buffer, bool doSwap)
 }
 
 
+/**
+ * @brief Return the number of bytes remaining in a buffer from a given position.
+ *
+ * @param size         Total buffer size.
+ * @param bufferStart  Start of the buffer.
+ * @param buffer       Current read position.
+ * @return Bytes remaining.
+ */
 static inline ssize_t
 size_left(ssize_t size, const void *bufferStart, const void *buffer)
 {
@@ -328,6 +440,9 @@ size_left(ssize_t size, const void *bufferStart, const void *buffer)
 //	#pragma mark - BParameterWeb
 
 
+/**
+ * @brief Construct an empty BParameterWeb not yet associated with any node.
+ */
 BParameterWeb::BParameterWeb()
 	:
 	fNode(media_node::null)
@@ -341,6 +456,9 @@ BParameterWeb::BParameterWeb()
 }
 
 
+/**
+ * @brief Destructor. Deletes all owned BParameterGroup objects.
+ */
 BParameterWeb::~BParameterWeb()
 {
 	CALLED();
@@ -355,6 +473,11 @@ BParameterWeb::~BParameterWeb()
 }
 
 
+/**
+ * @brief Return the media node this web is associated with.
+ *
+ * @return The associated media_node, or media_node::null if unset.
+ */
 media_node
 BParameterWeb::Node()
 {
@@ -362,6 +485,12 @@ BParameterWeb::Node()
 }
 
 
+/**
+ * @brief Create and add a new top-level parameter group.
+ *
+ * @param name  Name for the new group.
+ * @return Pointer to the new BParameterGroup, or NULL on allocation failure.
+ */
 BParameterGroup*
 BParameterWeb::MakeGroup(const char* name)
 {
@@ -380,6 +509,11 @@ BParameterWeb::MakeGroup(const char* name)
 }
 
 
+/**
+ * @brief Return the number of top-level parameter groups in this web.
+ *
+ * @return Group count.
+ */
 int32
 BParameterWeb::CountGroups()
 {
@@ -387,6 +521,12 @@ BParameterWeb::CountGroups()
 }
 
 
+/**
+ * @brief Return the top-level group at the given index.
+ *
+ * @param index  Zero-based group index.
+ * @return Pointer to the BParameterGroup, or NULL if out of range.
+ */
 BParameterGroup*
 BParameterWeb::GroupAt(int32 index)
 {
@@ -394,6 +534,11 @@ BParameterWeb::GroupAt(int32 index)
 }
 
 
+/**
+ * @brief Return the total number of parameters across all groups and sub-groups.
+ *
+ * @return Total parameter count (breadth-first traversal).
+ */
 int32
 BParameterWeb::CountParameters()
 {
@@ -419,6 +564,12 @@ BParameterWeb::CountParameters()
 }
 
 
+/**
+ * @brief Return the parameter at the given global index (breadth-first order).
+ *
+ * @param index  Zero-based parameter index across all groups.
+ * @return Pointer to the BParameter, or NULL if out of range.
+ */
 BParameter*
 BParameterWeb::ParameterAt(int32 index)
 {
@@ -451,6 +602,11 @@ BParameterWeb::ParameterAt(int32 index)
 }
 
 
+/**
+ * @brief Return false; the flattened size of a BParameterWeb is variable.
+ *
+ * @return Always false.
+ */
 bool
 BParameterWeb::IsFixedSize() const
 {
@@ -458,6 +614,11 @@ BParameterWeb::IsFixedSize() const
 }
 
 
+/**
+ * @brief Return the type code used when flattening this object.
+ *
+ * @return B_MEDIA_PARAMETER_WEB_TYPE.
+ */
 type_code
 BParameterWeb::TypeCode() const
 {
@@ -465,6 +626,11 @@ BParameterWeb::TypeCode() const
 }
 
 
+/**
+ * @brief Return the number of bytes needed to flatten this web.
+ *
+ * @return Total flattened size in bytes.
+ */
 ssize_t
 BParameterWeb::FlattenedSize() const
 {
@@ -500,6 +666,13 @@ BParameterWeb::FlattenedSize() const
 }
 
 
+/**
+ * @brief Serialise this BParameterWeb into @p buffer.
+ *
+ * @param buffer  Destination buffer (must be at least FlattenedSize() bytes).
+ * @param size    Capacity of @p buffer in bytes.
+ * @return B_OK on success, B_NO_INIT if @p buffer is NULL, B_NO_MEMORY if too small.
+ */
 status_t
 BParameterWeb::Flatten(void* buffer, ssize_t size) const
 {
@@ -552,6 +725,12 @@ BParameterWeb::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Return true if @p code matches this object's type code.
+ *
+ * @param code  Type code to test.
+ * @return true if @p code == B_MEDIA_PARAMETER_WEB_TYPE.
+ */
 bool
 BParameterWeb::AllowsTypeCode(type_code code) const
 {
@@ -559,6 +738,17 @@ BParameterWeb::AllowsTypeCode(type_code code) const
 }
 
 
+/**
+ * @brief Restore this BParameterWeb from a flat buffer.
+ *
+ * Clears all existing groups, reads the node and group list, and fixes
+ * up cross-group parameter input/output references.
+ *
+ * @param code    Must be B_MEDIA_PARAMETER_WEB_TYPE.
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer in bytes.
+ * @return B_OK on success, or an error code on malformed data.
+ */
 status_t
 BParameterWeb::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -662,6 +852,12 @@ BParameterWeb::Unflatten(type_code code, const void* buffer, ssize_t size)
 }
 
 
+/**
+ * @brief Register a pointer remapping pair used during Unflatten().
+ *
+ * @param oldItem  Old pointer value (from the flat buffer).
+ * @param newItem  New pointer value (newly allocated object).
+ */
 void
 BParameterWeb::AddRefFix(void* oldItem, void* newItem)
 {
@@ -673,6 +869,12 @@ BParameterWeb::AddRefFix(void* oldItem, void* newItem)
 //	#pragma mark - BParameterGroup
 
 
+/**
+ * @brief Construct a BParameterGroup belonging to @p web with the given name.
+ *
+ * @param web   Owning BParameterWeb.
+ * @param name  Group name (truncated to 255 characters).
+ */
 BParameterGroup::BParameterGroup(BParameterWeb* web, const char* name)
 	:
 	fWeb(web),
@@ -688,6 +890,9 @@ BParameterGroup::BParameterGroup(BParameterWeb* web, const char* name)
 }
 
 
+/**
+ * @brief Destructor. Deletes all owned parameters and sub-groups.
+ */
 BParameterGroup::~BParameterGroup()
 {
 	CALLED();
@@ -706,6 +911,11 @@ BParameterGroup::~BParameterGroup()
 }
 
 
+/**
+ * @brief Return the owning BParameterWeb.
+ *
+ * @return Pointer to the parent web.
+ */
 BParameterWeb*
 BParameterGroup::Web() const
 {
@@ -713,6 +923,11 @@ BParameterGroup::Web() const
 }
 
 
+/**
+ * @brief Return the name of this group.
+ *
+ * @return Pointer to the group name string.
+ */
 const char*
 BParameterGroup::Name() const
 {
@@ -720,6 +935,11 @@ BParameterGroup::Name() const
 }
 
 
+/**
+ * @brief Set the group flags (e.g. B_HIDDEN_PARAMETER).
+ *
+ * @param flags  New flags bitmask.
+ */
 void
 BParameterGroup::SetFlags(uint32 flags)
 {
@@ -727,6 +947,11 @@ BParameterGroup::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Return the current group flags.
+ *
+ * @return Flags bitmask.
+ */
 uint32
 BParameterGroup::Flags() const
 {
@@ -734,6 +959,15 @@ BParameterGroup::Flags() const
 }
 
 
+/**
+ * @brief Create a BNullParameter and add it to this group.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type (e.g. B_MEDIA_RAW_AUDIO).
+ * @param name       Parameter name.
+ * @param kind       Parameter kind string (e.g. B_WEB_PHYSICAL_INPUT).
+ * @return Pointer to the new BNullParameter, or NULL on allocation failure.
+ */
 BNullParameter*
 BParameterGroup::MakeNullParameter(int32 id, media_type mediaType,
 	const char* name, const char* kind)
@@ -752,6 +986,19 @@ BParameterGroup::MakeNullParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Create a BContinuousParameter and add it to this group.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param name       Parameter name.
+ * @param kind       Parameter kind string (e.g. B_GAIN).
+ * @param unit       Unit string (e.g. "dB").
+ * @param minimum    Minimum value.
+ * @param maximum    Maximum value.
+ * @param stepping   Value step size.
+ * @return Pointer to the new BContinuousParameter, or NULL on failure.
+ */
 BContinuousParameter*
 BParameterGroup::MakeContinuousParameter(int32 id, media_type mediaType,
 	const char* name, const char* kind, const char* unit,
@@ -772,6 +1019,15 @@ BParameterGroup::MakeContinuousParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Create a BDiscreteParameter and add it to this group.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param name       Parameter name.
+ * @param kind       Parameter kind string (e.g. B_MUTE).
+ * @return Pointer to the new BDiscreteParameter, or NULL on failure.
+ */
 BDiscreteParameter*
 BParameterGroup::MakeDiscreteParameter(int32 id, media_type mediaType,
 	const char* name, const char* kind)
@@ -790,6 +1046,16 @@ BParameterGroup::MakeDiscreteParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Create a BTextParameter and add it to this group.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param name       Parameter name.
+ * @param kind       Parameter kind string.
+ * @param maxBytes   Maximum text length in bytes.
+ * @return Pointer to the new BTextParameter, or NULL on failure.
+ */
 BTextParameter*
 BParameterGroup::MakeTextParameter(int32 id, media_type mediaType,
 	const char* name, const char* kind, size_t maxBytes)
@@ -808,6 +1074,12 @@ BParameterGroup::MakeTextParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Create a child BParameterGroup and add it to this group.
+ *
+ * @param name  Name for the sub-group.
+ * @return Pointer to the new BParameterGroup, or NULL on failure.
+ */
 BParameterGroup*
 BParameterGroup::MakeGroup(const char* name)
 {
@@ -821,6 +1093,11 @@ BParameterGroup::MakeGroup(const char* name)
 }
 
 
+/**
+ * @brief Return the number of parameters directly owned by this group.
+ *
+ * @return Parameter count (not including sub-groups).
+ */
 int32
 BParameterGroup::CountParameters()
 {
@@ -828,6 +1105,12 @@ BParameterGroup::CountParameters()
 }
 
 
+/**
+ * @brief Return the parameter at the given index within this group.
+ *
+ * @param index  Zero-based index.
+ * @return Pointer to the BParameter, or NULL if out of range.
+ */
 BParameter*
 BParameterGroup::ParameterAt(int32 index)
 {
@@ -835,6 +1118,11 @@ BParameterGroup::ParameterAt(int32 index)
 }
 
 
+/**
+ * @brief Return the number of child groups.
+ *
+ * @return Sub-group count.
+ */
 int32
 BParameterGroup::CountGroups()
 {
@@ -842,6 +1130,12 @@ BParameterGroup::CountGroups()
 }
 
 
+/**
+ * @brief Return the child group at the given index.
+ *
+ * @param index  Zero-based index.
+ * @return Pointer to the BParameterGroup, or NULL if out of range.
+ */
 BParameterGroup*
 BParameterGroup::GroupAt(int32 index)
 {
@@ -849,6 +1143,11 @@ BParameterGroup::GroupAt(int32 index)
 }
 
 
+/**
+ * @brief Return false; group flattened size is variable.
+ *
+ * @return Always false.
+ */
 bool
 BParameterGroup::IsFixedSize() const
 {
@@ -856,6 +1155,11 @@ BParameterGroup::IsFixedSize() const
 }
 
 
+/**
+ * @brief Return the type code used when flattening this group.
+ *
+ * @return B_MEDIA_PARAMETER_GROUP_TYPE.
+ */
 type_code
 BParameterGroup::TypeCode() const
 {
@@ -863,6 +1167,11 @@ BParameterGroup::TypeCode() const
 }
 
 
+/**
+ * @brief Return the number of bytes needed to flatten this group.
+ *
+ * @return Total flattened size including all parameters and sub-groups.
+ */
 ssize_t
 BParameterGroup::FlattenedSize() const
 {
@@ -925,6 +1234,13 @@ BParameterGroup::FlattenedSize() const
 }
 
 
+/**
+ * @brief Serialise this group (parameters and sub-groups) into @p buffer.
+ *
+ * @param buffer  Destination buffer (must be >= FlattenedSize()).
+ * @param size    Capacity in bytes.
+ * @return B_OK on success, B_NO_INIT or B_NO_MEMORY on error.
+ */
 status_t
 BParameterGroup::Flatten(void* buffer, ssize_t size) const
 {
@@ -1009,6 +1325,12 @@ BParameterGroup::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Return true if @p code matches this group's type code.
+ *
+ * @param code  Type code to test.
+ * @return true if code == B_MEDIA_PARAMETER_GROUP_TYPE.
+ */
 bool
 BParameterGroup::AllowsTypeCode(type_code code) const
 {
@@ -1016,6 +1338,14 @@ BParameterGroup::AllowsTypeCode(type_code code) const
 }
 
 
+/**
+ * @brief Restore this group from a flat buffer, creating parameters and sub-groups.
+ *
+ * @param code    Must match TypeCode().
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer in bytes.
+ * @return B_OK on success, or an error code on malformed data.
+ */
 status_t
 BParameterGroup::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -1178,6 +1508,16 @@ BParameterGroup::Unflatten(type_code code, const void* buffer, ssize_t size)
 	Unlike the BParameterGroup::MakeXXXParameter() type of methods, this
 	method does not add the parameter to this group automatically.
 */
+/**
+ * @brief Create an uninitialised parameter of the given type without adding it.
+ *
+ * Used internally during Unflatten() to allocate the correct subclass before
+ * calling its own Unflatten().
+ *
+ * @param type  One of BParameter::B_NULL_PARAMETER, B_DISCRETE_PARAMETER,
+ *              B_CONTINUOUS_PARAMETER, or B_TEXT_PARAMETER.
+ * @return A new BParameter subclass, or NULL for unknown types.
+ */
 BParameter*
 BParameterGroup::MakeControl(int32 type)
 {
@@ -1209,6 +1549,12 @@ BParameterGroup::MakeControl(int32 type)
 //	#pragma mark - BParameter
 
 
+/**
+ * @brief Return the media parameter type of this parameter.
+ *
+ * @return One of B_NULL_PARAMETER, B_CONTINUOUS_PARAMETER, B_DISCRETE_PARAMETER,
+ *         or B_TEXT_PARAMETER.
+ */
 BParameter::media_parameter_type
 BParameter::Type() const
 {
@@ -1216,6 +1562,11 @@ BParameter::Type() const
 }
 
 
+/**
+ * @brief Return the owning BParameterWeb.
+ *
+ * @return Pointer to the parent web, or NULL.
+ */
 BParameterWeb*
 BParameter::Web() const
 {
@@ -1223,6 +1574,11 @@ BParameter::Web() const
 }
 
 
+/**
+ * @brief Return the owning BParameterGroup.
+ *
+ * @return Pointer to the parent group, or NULL.
+ */
 BParameterGroup*
 BParameter::Group() const
 {
@@ -1230,6 +1586,11 @@ BParameter::Group() const
 }
 
 
+/**
+ * @brief Return the human-readable name of this parameter.
+ *
+ * @return Pointer to the name string.
+ */
 const char*
 BParameter::Name() const
 {
@@ -1237,6 +1598,11 @@ BParameter::Name() const
 }
 
 
+/**
+ * @brief Return the kind string of this parameter (e.g. B_GAIN).
+ *
+ * @return Pointer to the kind string.
+ */
 const char*
 BParameter::Kind() const
 {
@@ -1244,6 +1610,11 @@ BParameter::Kind() const
 }
 
 
+/**
+ * @brief Return the unit string of this parameter (e.g. "dB").
+ *
+ * @return Pointer to the unit string, or NULL.
+ */
 const char*
 BParameter::Unit() const
 {
@@ -1251,6 +1622,11 @@ BParameter::Unit() const
 }
 
 
+/**
+ * @brief Return the unique ID of this parameter within its web.
+ *
+ * @return Parameter ID.
+ */
 int32
 BParameter::ID() const
 {
@@ -1258,6 +1634,11 @@ BParameter::ID() const
 }
 
 
+/**
+ * @brief Set the parameter display flags (e.g. B_HIDDEN_PARAMETER).
+ *
+ * @param flags  New flags bitmask.
+ */
 void
 BParameter::SetFlags(uint32 flags)
 {
@@ -1265,6 +1646,11 @@ BParameter::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Return the current display flags.
+ *
+ * @return Flags bitmask.
+ */
 uint32
 BParameter::Flags() const
 {
@@ -1272,6 +1658,17 @@ BParameter::Flags() const
 }
 
 
+/**
+ * @brief Retrieve the current value of this parameter from the node.
+ *
+ * Sends a CONTROLLABLE_GET_PARAMETER_DATA IPC request to the node.
+ * Uses an area for transfers larger than MAX_PARAMETER_DATA bytes.
+ *
+ * @param buffer  Destination buffer for the parameter value.
+ * @param _size   In: buffer capacity; out: actual bytes written.
+ * @param _when   If non-NULL, receives the timestamp of the last value change.
+ * @return B_OK on success, or an IPC/Media Kit error code.
+ */
 status_t
 BParameter::GetValue(void* buffer, size_t* _size, bigtime_t* _when)
 {
@@ -1345,6 +1742,17 @@ BParameter::GetValue(void* buffer, size_t* _size, bigtime_t* _when)
 }
 
 
+/**
+ * @brief Send a new value for this parameter to the node.
+ *
+ * Sends a CONTROLLABLE_SET_PARAMETER_DATA IPC request to the node.
+ * Uses an area for transfers larger than MAX_PARAMETER_DATA bytes.
+ *
+ * @param buffer  Source buffer containing the new value.
+ * @param size    Size of @p buffer in bytes.
+ * @param when    Performance time at which the value should take effect.
+ * @return B_OK on success, or an IPC/Media Kit error code.
+ */
 status_t
 BParameter::SetValue(const void* buffer, size_t size, bigtime_t when)
 {
@@ -1405,6 +1813,11 @@ BParameter::SetValue(const void* buffer, size_t size, bigtime_t when)
 }
 
 
+/**
+ * @brief Return the number of audio/video channels this parameter controls.
+ *
+ * @return Channel count.
+ */
 int32
 BParameter::CountChannels()
 {
@@ -1412,6 +1825,11 @@ BParameter::CountChannels()
 }
 
 
+/**
+ * @brief Set the number of channels this parameter controls.
+ *
+ * @param count  New channel count.
+ */
 void
 BParameter::SetChannelCount(int32 count)
 {
@@ -1419,6 +1837,11 @@ BParameter::SetChannelCount(int32 count)
 }
 
 
+/**
+ * @brief Return the media type associated with this parameter.
+ *
+ * @return The media_type value.
+ */
 media_type
 BParameter::MediaType()
 {
@@ -1426,6 +1849,11 @@ BParameter::MediaType()
 }
 
 
+/**
+ * @brief Set the media type associated with this parameter.
+ *
+ * @param type  New media type.
+ */
 void
 BParameter::SetMediaType(media_type type)
 {
@@ -1433,6 +1861,11 @@ BParameter::SetMediaType(media_type type)
 }
 
 
+/**
+ * @brief Return the number of input parameters feeding this parameter.
+ *
+ * @return Input count.
+ */
 int32
 BParameter::CountInputs()
 {
@@ -1440,6 +1873,12 @@ BParameter::CountInputs()
 }
 
 
+/**
+ * @brief Return the input parameter at the given index.
+ *
+ * @param index  Zero-based index.
+ * @return Pointer to the input BParameter, or NULL.
+ */
 BParameter*
 BParameter::InputAt(int32 index)
 {
@@ -1447,6 +1886,13 @@ BParameter::InputAt(int32 index)
 }
 
 
+/**
+ * @brief Add @p input as an input to this parameter (and this as an output of @p input).
+ *
+ * Silently ignores NULL inputs and duplicates.
+ *
+ * @param input  The parameter to add as an input.
+ */
 void
 BParameter::AddInput(BParameter* input)
 {
@@ -1467,6 +1913,11 @@ BParameter::AddInput(BParameter* input)
 }
 
 
+/**
+ * @brief Return the number of output parameters driven by this parameter.
+ *
+ * @return Output count.
+ */
 int32
 BParameter::CountOutputs()
 {
@@ -1474,6 +1925,12 @@ BParameter::CountOutputs()
 }
 
 
+/**
+ * @brief Return the output parameter at the given index.
+ *
+ * @param index  Zero-based index.
+ * @return Pointer to the output BParameter, or NULL.
+ */
 BParameter*
 BParameter::OutputAt(int32 index)
 {
@@ -1481,6 +1938,13 @@ BParameter::OutputAt(int32 index)
 }
 
 
+/**
+ * @brief Add @p output as an output of this parameter (and this as an input of @p output).
+ *
+ * Silently ignores NULL outputs and duplicates.
+ *
+ * @param output  The parameter to add as an output.
+ */
 void
 BParameter::AddOutput(BParameter* output)
 {
@@ -1501,6 +1965,11 @@ BParameter::AddOutput(BParameter* output)
 }
 
 
+/**
+ * @brief Return false; parameter flattened size is variable.
+ *
+ * @return Always false.
+ */
 bool
 BParameter::IsFixedSize() const
 {
@@ -1508,6 +1977,11 @@ BParameter::IsFixedSize() const
 }
 
 
+/**
+ * @brief Return the type code used when flattening this parameter.
+ *
+ * @return B_MEDIA_PARAMETER_TYPE.
+ */
 type_code
 BParameter::TypeCode() const
 {
@@ -1515,6 +1989,11 @@ BParameter::TypeCode() const
 }
 
 
+/**
+ * @brief Return the number of bytes needed to flatten this parameter.
+ *
+ * @return Total flattened size including name, kind, unit, and pointer lists.
+ */
 ssize_t
 BParameter::FlattenedSize() const
 {
@@ -1554,6 +2033,13 @@ BParameter::FlattenedSize() const
 }
 
 
+/**
+ * @brief Serialise this parameter's base fields into @p buffer.
+ *
+ * @param buffer  Destination buffer (must be >= FlattenedSize()).
+ * @param size    Capacity in bytes.
+ * @return B_OK on success, B_NO_INIT or B_NO_MEMORY on error.
+ */
 status_t
 BParameter::Flatten(void* buffer, ssize_t size) const
 {
@@ -1606,6 +2092,12 @@ BParameter::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Return true if @p code matches this parameter's type code.
+ *
+ * @param code  Type code to test.
+ * @return true if code == B_MEDIA_PARAMETER_TYPE.
+ */
 bool
 BParameter::AllowsTypeCode(type_code code) const
 {
@@ -1613,6 +2105,17 @@ BParameter::AllowsTypeCode(type_code code) const
 }
 
 
+/**
+ * @brief Restore this parameter's base fields from a flat buffer.
+ *
+ * Input and output pointer lists are stored as raw pointer values and must be
+ * fixed up later via FixRefs().
+ *
+ * @param code    Must match TypeCode().
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer in bytes.
+ * @return B_OK on success, or an error code on malformed data.
+ */
 status_t
 BParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -1718,6 +2221,17 @@ BParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 }
 
 
+/**
+ * @brief Protected constructor for BParameter subclasses.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param type       Parameter type (null, continuous, discrete, or text).
+ * @param web        Owning parameter web (may be NULL during Unflatten).
+ * @param name       Parameter name (truncated to 255 chars).
+ * @param kind       Kind string (truncated to 255 chars).
+ * @param unit       Unit string (truncated to 255 chars).
+ */
 BParameter::BParameter(int32 id, media_type mediaType,
 		media_parameter_type type, BParameterWeb* web, const char* name,
 		const char* kind, const char* unit)
@@ -1743,6 +2257,9 @@ BParameter::BParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Destructor. Frees name, kind, unit strings and input/output lists.
+ */
 BParameter::~BParameter()
 {
 	CALLED();
@@ -1765,6 +2282,17 @@ BParameter::~BParameter()
 	and output lists.
 	This is called by BParameterWeb::Unflatten().
 */
+/**
+ * @brief Remap serialised pointer values in input/output lists to real objects.
+ *
+ * After Unflatten(), the input and output lists contain raw pointer values from
+ * the flat buffer. This method replaces each such value with the corresponding
+ * live object found in @p updated by matching against @p old.
+ * Entries that cannot be mapped are removed.
+ *
+ * @param old      List of original (serialised) pointer values.
+ * @param updated  List of corresponding live object pointers.
+ */
 void
 BParameter::FixRefs(BList& old, BList& updated)
 {
@@ -1819,6 +2347,11 @@ BParameter::FixRefs(BList& old, BList& updated)
 //	#pragma mark - public BContinuousParameter
 
 
+/**
+ * @brief Return the value type used for this parameter (always B_FLOAT_TYPE).
+ *
+ * @return B_FLOAT_TYPE.
+ */
 type_code
 BContinuousParameter::ValueType()
 {
@@ -1826,6 +2359,11 @@ BContinuousParameter::ValueType()
 }
 
 
+/**
+ * @brief Return the minimum allowed value.
+ *
+ * @return Minimum value as a float.
+ */
 float
 BContinuousParameter::MinValue()
 {
@@ -1833,6 +2371,11 @@ BContinuousParameter::MinValue()
 }
 
 
+/**
+ * @brief Return the maximum allowed value.
+ *
+ * @return Maximum value as a float.
+ */
 float
 BContinuousParameter::MaxValue()
 {
@@ -1840,6 +2383,11 @@ BContinuousParameter::MaxValue()
 }
 
 
+/**
+ * @brief Return the value stepping increment.
+ *
+ * @return Step size as a float.
+ */
 float
 BContinuousParameter::ValueStep()
 {
@@ -1847,6 +2395,13 @@ BContinuousParameter::ValueStep()
 }
 
 
+/**
+ * @brief Set the response curve type, factor, and offset for this parameter.
+ *
+ * @param resp    Response type (B_LINEAR, B_POLYNOMIAL, etc.).
+ * @param factor  Scaling factor for the response curve.
+ * @param offset  Offset applied to the response curve.
+ */
 void
 BContinuousParameter::SetResponse(int resp, float factor, float offset)
 {
@@ -1856,6 +2411,13 @@ BContinuousParameter::SetResponse(int resp, float factor, float offset)
 }
 
 
+/**
+ * @brief Retrieve the response curve type, factor, and offset.
+ *
+ * @param _resp    If non-NULL, receives the response type.
+ * @param _factor  If non-NULL, receives the factor.
+ * @param _offset  If non-NULL, receives the offset.
+ */
 void
 BContinuousParameter::GetResponse(int* _resp, float* _factor, float* _offset)
 {
@@ -1868,6 +2430,11 @@ BContinuousParameter::GetResponse(int* _resp, float* _factor, float* _offset)
 }
 
 
+/**
+ * @brief Return the flattened size of this parameter including continuous fields.
+ *
+ * @return BParameter::FlattenedSize() plus 6 floats/enums.
+ */
 ssize_t
 BContinuousParameter::FlattenedSize() const
 {
@@ -1878,6 +2445,13 @@ BContinuousParameter::FlattenedSize() const
 }
 
 
+/**
+ * @brief Serialise this BContinuousParameter (base + min/max/step/response/factor/offset).
+ *
+ * @param buffer  Destination buffer.
+ * @param size    Capacity in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BContinuousParameter::Flatten(void* buffer, ssize_t size) const
 {
@@ -1915,6 +2489,14 @@ BContinuousParameter::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Restore a BContinuousParameter from a flat buffer.
+ *
+ * @param code    Must match TypeCode().
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BContinuousParameter::Unflatten(type_code code, const void* buffer,
 	ssize_t size)
@@ -1967,6 +2549,19 @@ BContinuousParameter::Unflatten(type_code code, const void* buffer,
 }
 
 
+/**
+ * @brief Construct a BContinuousParameter with the given range and step.
+ *
+ * @param id        Parameter ID.
+ * @param mediaType Media type.
+ * @param web       Owning web.
+ * @param name      Name string.
+ * @param kind      Kind string.
+ * @param unit      Unit string.
+ * @param minimum   Minimum value.
+ * @param maximum   Maximum value.
+ * @param stepping  Value step size.
+ */
 BContinuousParameter::BContinuousParameter(int32 id, media_type mediaType,
 		BParameterWeb* web, const char* name, const char* kind,
 		const char* unit, float minimum, float maximum, float stepping)
@@ -1982,6 +2577,9 @@ BContinuousParameter::BContinuousParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BContinuousParameter::~BContinuousParameter()
 {
 	CALLED();
@@ -1991,6 +2589,11 @@ BContinuousParameter::~BContinuousParameter()
 //	#pragma mark - public BDiscreteParameter
 
 
+/**
+ * @brief Return the value type used for this parameter (always B_INT32_TYPE).
+ *
+ * @return B_INT32_TYPE.
+ */
 type_code
 BDiscreteParameter::ValueType()
 {
@@ -1998,6 +2601,11 @@ BDiscreteParameter::ValueType()
 }
 
 
+/**
+ * @brief Return the number of named value/label pairs.
+ *
+ * @return Item count.
+ */
 int32
 BDiscreteParameter::CountItems()
 {
@@ -2005,6 +2613,12 @@ BDiscreteParameter::CountItems()
 }
 
 
+/**
+ * @brief Return the label string for the item at @p index.
+ *
+ * @param index  Zero-based item index.
+ * @return Pointer to the label string.
+ */
 const char*
 BDiscreteParameter::ItemNameAt(int32 index)
 {
@@ -2012,6 +2626,12 @@ BDiscreteParameter::ItemNameAt(int32 index)
 }
 
 
+/**
+ * @brief Return the integer value associated with the item at @p index.
+ *
+ * @param index  Zero-based item index.
+ * @return Integer value, or 0 if the index is out of range.
+ */
 int32
 BDiscreteParameter::ItemValueAt(int32 index)
 {
@@ -2023,6 +2643,13 @@ BDiscreteParameter::ItemValueAt(int32 index)
 }
 
 
+/**
+ * @brief Add a value/label pair to this parameter.
+ *
+ * @param value  Integer value for this item.
+ * @param name   Display label for this item (truncated to 255 chars).
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BDiscreteParameter::AddItem(int32 value, const char* name)
 {
@@ -2052,6 +2679,11 @@ err:
 }
 
 
+/**
+ * @brief Populate the item list from the names of connected input parameters.
+ *
+ * @return B_OK always.
+ */
 status_t
 BDiscreteParameter::MakeItemsFromInputs()
 {
@@ -2067,6 +2699,11 @@ BDiscreteParameter::MakeItemsFromInputs()
 }
 
 
+/**
+ * @brief Populate the item list from the names of connected output parameters.
+ *
+ * @return B_OK always.
+ */
 status_t
 BDiscreteParameter::MakeItemsFromOutputs()
 {
@@ -2082,6 +2719,9 @@ BDiscreteParameter::MakeItemsFromOutputs()
 }
 
 
+/**
+ * @brief Remove all value/label pairs from this parameter.
+ */
 void
 BDiscreteParameter::MakeEmpty()
 {
@@ -2099,6 +2739,11 @@ BDiscreteParameter::MakeEmpty()
 }
 
 
+/**
+ * @brief Return the flattened size of this parameter including the item list.
+ *
+ * @return BParameter::FlattenedSize() plus item count overhead and item data.
+ */
 ssize_t
 BDiscreteParameter::FlattenedSize() const
 {
@@ -2122,6 +2767,13 @@ BDiscreteParameter::FlattenedSize() const
 }
 
 
+/**
+ * @brief Serialise this BDiscreteParameter (base + item list).
+ *
+ * @param buffer  Destination buffer.
+ * @param size    Capacity in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BDiscreteParameter::Flatten(void* buffer, ssize_t size) const
 {
@@ -2163,6 +2815,14 @@ BDiscreteParameter::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Restore a BDiscreteParameter from a flat buffer.
+ *
+ * @param code    Must match TypeCode().
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BDiscreteParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -2228,6 +2888,15 @@ BDiscreteParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 }
 
 
+/**
+ * @brief Construct a BDiscreteParameter with empty item lists.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param web        Owning web.
+ * @param name       Name string.
+ * @param kind       Kind string.
+ */
 BDiscreteParameter::BDiscreteParameter(int32 id, media_type mediaType,
 	BParameterWeb* web, const char* name, const char* kind)
 	:	BParameter(id, mediaType, B_DISCRETE_PARAMETER, web, name, kind, NULL)
@@ -2239,6 +2908,9 @@ BDiscreteParameter::BDiscreteParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Destructor. Clears and deletes item lists.
+ */
 BDiscreteParameter::~BDiscreteParameter()
 {
 	CALLED();
@@ -2253,6 +2925,11 @@ BDiscreteParameter::~BDiscreteParameter()
 //	#pragma mark - public BTextParameter
 
 
+/**
+ * @brief Return the maximum text value size in bytes.
+ *
+ * @return Maximum bytes allowed for the text value.
+ */
 size_t
 BTextParameter::MaxBytes() const
 {
@@ -2260,6 +2937,11 @@ BTextParameter::MaxBytes() const
 }
 
 
+/**
+ * @brief Return the value type for this parameter (B_FLOAT_TYPE, historical).
+ *
+ * @return B_FLOAT_TYPE.
+ */
 type_code
 BTextParameter::ValueType()
 {
@@ -2267,6 +2949,11 @@ BTextParameter::ValueType()
 }
 
 
+/**
+ * @brief Return the flattened size including the MaxBytes field.
+ *
+ * @return BParameter::FlattenedSize() + sizeof(fMaxBytes).
+ */
 ssize_t
 BTextParameter::FlattenedSize() const
 {
@@ -2274,6 +2961,13 @@ BTextParameter::FlattenedSize() const
 }
 
 
+/**
+ * @brief Serialise this BTextParameter (base + MaxBytes).
+ *
+ * @param buffer  Destination buffer.
+ * @param size    Capacity in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextParameter::Flatten(void* buffer, ssize_t size) const
 {
@@ -2304,6 +2998,14 @@ BTextParameter::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Restore a BTextParameter from a flat buffer.
+ *
+ * @param code    Must match TypeCode().
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer in bytes.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 BTextParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -2345,6 +3047,16 @@ BTextParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 }
 
 
+/**
+ * @brief Construct a BTextParameter with the given maximum text size.
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param web        Owning web.
+ * @param name       Name string.
+ * @param kind       Kind string.
+ * @param maxBytes   Maximum number of bytes for the text value.
+ */
 BTextParameter::BTextParameter(int32 id, media_type mediaType,
 		BParameterWeb* web, const char* name, const char* kind,
 		size_t maxBytes)
@@ -2354,6 +3066,9 @@ BTextParameter::BTextParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BTextParameter::~BTextParameter()
 {
 }
@@ -2362,6 +3077,11 @@ BTextParameter::~BTextParameter()
 //	#pragma mark - public BNullParameter
 
 
+/**
+ * @brief Return 0; null parameters carry no value.
+ *
+ * @return 0.
+ */
 type_code
 BNullParameter::ValueType()
 {
@@ -2370,6 +3090,11 @@ BNullParameter::ValueType()
 }
 
 
+/**
+ * @brief Return the same flattened size as the base BParameter.
+ *
+ * @return BParameter::FlattenedSize().
+ */
 ssize_t
 BNullParameter::FlattenedSize() const
 {
@@ -2377,6 +3102,13 @@ BNullParameter::FlattenedSize() const
 }
 
 
+/**
+ * @brief Delegate flattening to BParameter::Flatten().
+ *
+ * @param buffer  Destination buffer.
+ * @param size    Capacity in bytes.
+ * @return B_OK on success.
+ */
 status_t
 BNullParameter::Flatten(void* buffer, ssize_t size) const
 {
@@ -2384,6 +3116,14 @@ BNullParameter::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Delegate unflattening to BParameter::Unflatten().
+ *
+ * @param code    Type code.
+ * @param buffer  Source buffer.
+ * @param size    Size of @p buffer.
+ * @return B_OK on success.
+ */
 status_t
 BNullParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -2391,6 +3131,15 @@ BNullParameter::Unflatten(type_code code, const void* buffer, ssize_t size)
 }
 
 
+/**
+ * @brief Construct a BNullParameter (a label/separator with no value).
+ *
+ * @param id         Parameter ID.
+ * @param mediaType  Media type.
+ * @param web        Owning web.
+ * @param name       Name string.
+ * @param kind       Kind string.
+ */
 BNullParameter::BNullParameter(int32 id, media_type mediaType,
 		BParameterWeb* web, const char* name, const char* kind)
 	: BParameter(id, mediaType, B_NULL_PARAMETER, web, name, kind, NULL)
@@ -2398,6 +3147,9 @@ BNullParameter::BNullParameter(int32 id, media_type mediaType,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNullParameter::~BNullParameter()
 {
 }
@@ -2406,65 +3158,121 @@ BNullParameter::~BNullParameter()
 //	#pragma mark - reserved functions
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterWeb::_Reserved_ControlWeb_7(void *) { return B_ERROR; }
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameterGroup::_Reserved_ControlGroup_7(void *) { return B_ERROR; }
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BParameter::_Reserved_Control_7(void *) { return B_ERROR; }
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BContinuousParameter::_Reserved_ContinuousParameter_7(void *) { return B_ERROR; }
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BDiscreteParameter::_Reserved_DiscreteParameter_7(void *) { return B_ERROR; }
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BNullParameter::_Reserved_NullParameter_7(void *) { return B_ERROR; }
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTextParameter::_Reserved_TextParameter_7(void *) { return B_ERROR; }

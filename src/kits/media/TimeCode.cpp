@@ -1,12 +1,48 @@
-/***********************************************************************
- * AUTHOR: David McPaul
- *   FILE: TimeCode.cpp
- *  DESCR: Handles all TimeCode functions.
- ***********************************************************************/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   AUTHOR: David McPaul
+ *     FILE: TimeCode.cpp
+ *    DESCR: Handles all TimeCode functions.
+ */
+
+/** @file TimeCode.cpp
+ *  @brief Implements timecode conversion utilities and the BTimeCode class
+ *         for representing SMPTE-style timecodes across multiple frame rates.
+ */
+
 #include <TimeCode.h>
 #include "MediaDebug.h"
 #include <string.h>
 
+/**
+ * @brief Convert microseconds to a timecode expressed as hours/minutes/seconds/frames.
+ *
+ * @param micros    Input time in microseconds.
+ * @param hours     Receives the hours component.
+ * @param minutes   Receives the minutes component.
+ * @param seconds   Receives the seconds component.
+ * @param frames    Receives the frames component.
+ * @param code      Optional timecode descriptor; NULL defaults to NTSC 29.97.
+ * @return B_OK on success.
+ */
 status_t us_to_timecode(bigtime_t micros, int * hours, int * minutes, int * seconds, int * frames, const timecode_info * code)
 {
 	int32 l_frames;
@@ -35,6 +71,17 @@ status_t us_to_timecode(bigtime_t micros, int * hours, int * minutes, int * seco
 	return frames_to_timecode(l_frames, hours, minutes, seconds, frames, code);
 }
 
+/**
+ * @brief Convert a timecode (hours/minutes/seconds/frames) to microseconds.
+ *
+ * @param hours    Hours component.
+ * @param minutes  Minutes component.
+ * @param seconds  Seconds component.
+ * @param frames   Frames component.
+ * @param micros   Receives the equivalent time in microseconds.
+ * @param code     Optional timecode descriptor; NULL defaults to NTSC 29.97.
+ * @return B_OK on success, B_ERROR if the intermediate frame conversion fails.
+ */
 status_t timecode_to_us(int hours, int minutes, int seconds, int frames, bigtime_t * micros, const timecode_info * code)
 {
 	int32 l_frames;
@@ -67,6 +114,19 @@ status_t timecode_to_us(int hours, int minutes, int seconds, int frames, bigtime
 	return B_ERROR;
 }
 
+/**
+ * @brief Convert a linear frame count to a timecode (hours/minutes/seconds/frames).
+ *
+ * Handles drop-frame adjustments as specified by the timecode_info descriptor.
+ *
+ * @param l_frames  Linear frame count to convert.
+ * @param hours     Receives the hours component.
+ * @param minutes   Receives the minutes component.
+ * @param seconds   Receives the seconds component.
+ * @param frames    Receives the frames component.
+ * @param code      Optional timecode descriptor; NULL defaults to NTSC drop-frame.
+ * @return B_OK always.
+ */
 status_t frames_to_timecode(int32 l_frames, int * hours, int * minutes, int * seconds, int * frames, const timecode_info * code)
 {
 	int fps_div;
@@ -139,6 +199,19 @@ status_t frames_to_timecode(int32 l_frames, int * hours, int * minutes, int * se
 	return B_OK;
 }
 
+/**
+ * @brief Convert a timecode (hours/minutes/seconds/frames) to a linear frame count.
+ *
+ * Applies drop-frame correction as specified by the timecode_info descriptor.
+ *
+ * @param hours     Hours component.
+ * @param minutes   Minutes component.
+ * @param seconds   Seconds component.
+ * @param frames    Frames component.
+ * @param l_frames  Receives the linear frame count.
+ * @param code      Optional timecode descriptor; NULL defaults to NTSC drop-frame.
+ * @return B_OK always.
+ */
 status_t timecode_to_frames(int hours, int minutes, int seconds, int frames, int32 * l_frames, const timecode_info * code)
 {
 	int fps_div;
@@ -176,6 +249,16 @@ status_t timecode_to_frames(int hours, int minutes, int seconds, int frames, int
 	return B_OK;
 }
 
+/**
+ * @brief Populate a timecode_info structure for the specified timecode type.
+ *
+ * Sets the name, fps_div, drop_frames, every_nth, and except_nth fields
+ * appropriate for the given type.
+ *
+ * @param type          The timecode type (e.g. B_TIMECODE_30_DROP_2 for NTSC).
+ * @param out_timecode  Receives the filled-in timecode_info structure.
+ * @return B_OK always.
+ */
 status_t get_timecode_description(timecode_type type, timecode_info * out_timecode)
 {
 	CALLED();
@@ -236,6 +319,11 @@ status_t get_timecode_description(timecode_type type, timecode_info * out_timeco
 	return B_OK;
 }
 
+/**
+ * @brief Return the number of supported timecode types.
+ *
+ * @return The count of timecode types (currently 8).
+ */
 status_t count_timecodes()
 {
 	CALLED();
@@ -247,12 +335,21 @@ status_t count_timecodes()
  *************************************************************/
 
 
+/**
+ * @brief Default constructor. Does not initialise timecode data.
+ */
 BTimeCode::BTimeCode()
 {
 	CALLED();
 }
 
 
+/**
+ * @brief Construct a BTimeCode from a microsecond value and a timecode type.
+ *
+ * @param us    Time in microseconds.
+ * @param type  Timecode type (e.g. B_TIMECODE_30_DROP_2 for NTSC).
+ */
 BTimeCode::BTimeCode(bigtime_t us,
 					 timecode_type type)
 {
@@ -263,6 +360,11 @@ BTimeCode::BTimeCode(bigtime_t us,
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param clone  The BTimeCode object to copy.
+ */
 BTimeCode::BTimeCode(const BTimeCode &clone)
 {
 	CALLED();
@@ -272,6 +374,15 @@ BTimeCode::BTimeCode(const BTimeCode &clone)
 }
 
 
+/**
+ * @brief Construct a BTimeCode from explicit H:M:S:F components.
+ *
+ * @param hours    Hours component.
+ * @param minutes  Minutes component.
+ * @param seconds  Seconds component.
+ * @param frames   Frames component.
+ * @param type     Timecode type.
+ */
 BTimeCode::BTimeCode(int hours,
 					 int minutes,
 					 int seconds,
@@ -285,12 +396,23 @@ BTimeCode::BTimeCode(int hours,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BTimeCode::~BTimeCode()
 {
 	CALLED();
 }
 
 
+/**
+ * @brief Set all timecode components at once.
+ *
+ * @param hours    New hours value.
+ * @param minutes  New minutes value.
+ * @param seconds  New seconds value.
+ * @param frames   New frames value.
+ */
 void
 BTimeCode::SetData(int hours,
 				   int minutes,
@@ -305,6 +427,12 @@ BTimeCode::SetData(int hours,
 }
 
 
+/**
+ * @brief Change the timecode type and update the internal descriptor.
+ *
+ * @param type  New timecode type.
+ * @return B_OK on success, or an error from get_timecode_description().
+ */
 status_t
 BTimeCode::SetType(timecode_type type)
 {
@@ -314,6 +442,11 @@ BTimeCode::SetType(timecode_type type)
 }
 
 
+/**
+ * @brief Set the timecode value from a microsecond timestamp.
+ *
+ * @param us  Time in microseconds.
+ */
 void
 BTimeCode::SetMicroseconds(bigtime_t us)
 {
@@ -323,6 +456,11 @@ BTimeCode::SetMicroseconds(bigtime_t us)
 }
 
 
+/**
+ * @brief Set the timecode value from a linear frame count.
+ *
+ * @param linear_frames  Linear frame count.
+ */
 void
 BTimeCode::SetLinearFrames(int32 linear_frames)
 {
@@ -332,6 +470,12 @@ BTimeCode::SetLinearFrames(int32 linear_frames)
 }
 
 
+/**
+ * @brief Assignment operator.
+ *
+ * @param clone  The BTimeCode to copy from.
+ * @return Reference to this object.
+ */
 BTimeCode &
 BTimeCode::operator=(const BTimeCode &clone)
 {
@@ -346,6 +490,12 @@ BTimeCode::operator=(const BTimeCode &clone)
 }
 
 
+/**
+ * @brief Equality comparison by linear frame count.
+ *
+ * @param other  The BTimeCode to compare to.
+ * @return true if both timecodes represent the same linear frame.
+ */
 bool
 BTimeCode::operator==(const BTimeCode &other) const
 {
@@ -355,6 +505,12 @@ BTimeCode::operator==(const BTimeCode &other) const
 }
 
 
+/**
+ * @brief Less-than comparison by linear frame count.
+ *
+ * @param other  The BTimeCode to compare to.
+ * @return true if this timecode is earlier than @p other.
+ */
 bool
 BTimeCode::operator<(const BTimeCode &other) const
 {
@@ -364,6 +520,12 @@ BTimeCode::operator<(const BTimeCode &other) const
 }
 
 
+/**
+ * @brief In-place addition of another timecode's linear frame count.
+ *
+ * @param other  Timecode whose frame count is added to this one.
+ * @return Reference to this object.
+ */
 BTimeCode &
 BTimeCode::operator+=(const BTimeCode &other)
 {
@@ -375,6 +537,12 @@ BTimeCode::operator+=(const BTimeCode &other)
 }
 
 
+/**
+ * @brief In-place subtraction of another timecode's linear frame count.
+ *
+ * @param other  Timecode whose frame count is subtracted from this one.
+ * @return Reference to this object.
+ */
 BTimeCode &
 BTimeCode::operator-=(const BTimeCode &other)
 {
@@ -386,6 +554,12 @@ BTimeCode::operator-=(const BTimeCode &other)
 }
 
 
+/**
+ * @brief Addition operator returning a new BTimeCode.
+ *
+ * @param other  Timecode to add.
+ * @return New BTimeCode representing the sum.
+ */
 BTimeCode
 BTimeCode::operator+(const BTimeCode &other) const
 {
@@ -396,6 +570,12 @@ BTimeCode::operator+(const BTimeCode &other) const
 }
 
 
+/**
+ * @brief Subtraction operator returning a new BTimeCode.
+ *
+ * @param other  Timecode to subtract.
+ * @return New BTimeCode representing the difference.
+ */
 BTimeCode
 BTimeCode::operator-(const BTimeCode &other) const
 {
@@ -406,6 +586,11 @@ BTimeCode::operator-(const BTimeCode &other) const
 }
 
 
+/**
+ * @brief Return the hours component.
+ *
+ * @return Hours.
+ */
 int
 BTimeCode::Hours() const
 {
@@ -415,6 +600,11 @@ BTimeCode::Hours() const
 }
 
 
+/**
+ * @brief Return the minutes component.
+ *
+ * @return Minutes.
+ */
 int
 BTimeCode::Minutes() const
 {
@@ -424,6 +614,11 @@ BTimeCode::Minutes() const
 }
 
 
+/**
+ * @brief Return the seconds component.
+ *
+ * @return Seconds.
+ */
 int
 BTimeCode::Seconds() const
 {
@@ -433,6 +628,11 @@ BTimeCode::Seconds() const
 }
 
 
+/**
+ * @brief Return the frames component.
+ *
+ * @return Frames.
+ */
 int
 BTimeCode::Frames() const
 {
@@ -442,6 +642,11 @@ BTimeCode::Frames() const
 }
 
 
+/**
+ * @brief Return the timecode type.
+ *
+ * @return The timecode_type value stored in the internal descriptor.
+ */
 timecode_type
 BTimeCode::Type() const
 {
@@ -451,6 +656,15 @@ BTimeCode::Type() const
 }
 
 
+/**
+ * @brief Retrieve all timecode components and the type in one call.
+ *
+ * @param out_hours    Receives the hours component.
+ * @param out_minutes  Receives the minutes component.
+ * @param out_seconds  Receives the seconds component.
+ * @param out_frames   Receives the frames component.
+ * @param out_type     Receives the timecode type.
+ */
 void
 BTimeCode::GetData(int *out_hours,
 				   int *out_minutes,
@@ -467,6 +681,11 @@ BTimeCode::GetData(int *out_hours,
 }
 
 
+/**
+ * @brief Convert this timecode to microseconds.
+ *
+ * @return Equivalent time in microseconds, or 0 on error.
+ */
 bigtime_t
 BTimeCode::Microseconds() const
 {
@@ -482,6 +701,11 @@ BTimeCode::Microseconds() const
 }
 
 
+/**
+ * @brief Convert this timecode to a linear frame count.
+ *
+ * @return Linear frame count, or 0 on error.
+ */
 int32
 BTimeCode::LinearFrames() const
 {
@@ -497,6 +721,11 @@ BTimeCode::LinearFrames() const
 }
 
 
+/**
+ * @brief Format this timecode into a string using the type's format template.
+ *
+ * @param str  Destination buffer (must be large enough for the formatted result).
+ */
 void
 BTimeCode::GetString(char *str) const
 {

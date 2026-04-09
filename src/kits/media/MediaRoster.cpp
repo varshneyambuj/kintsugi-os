@@ -1,38 +1,58 @@
 /*
- * Copyright 2015 Dario Casalinuovo
- * Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2008 Maurice Kalinowski, haiku@kaldience.com
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * All rights reserved. Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015 Dario Casalinuovo
+ *   Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2008 Maurice Kalinowski, haiku@kaldience.com
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ *
+ *   Copyright (c) 2002-2006 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
 
-/*
- * Copyright (c) 2002-2006 Marcus Overhagen <Marcus@Overhagen.de>
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+/** @file MediaRoster.cpp
+ *  @brief Implements BMediaRoster and BMediaRosterEx: the central broker for
+ *         node lifecycle, connections, time sources, and media-server IPC. */
 
 
 /* to comply with the license above, do not remove the following line */
@@ -169,6 +189,9 @@ static MediaRosterUndertaker sMediaRosterUndertaker;
 using namespace BPrivate::media;
 
 
+/** @brief Constructs BMediaRosterEx, creates helper managers, registers with the
+ *         media server, and starts watching for server launch/quit events.
+ *  @param _error  Receives B_OK on success or an error code on failure. */
 BMediaRosterEx::BMediaRosterEx(status_t* _error)
 	:
 	BMediaRoster(),
@@ -190,6 +213,7 @@ BMediaRosterEx::BMediaRosterEx(status_t* _error)
 }
 
 
+/** @brief Cleans up notification registrations and delegates to BMediaRoster::Quit(). */
 void
 BMediaRosterEx::Quit()
 {
@@ -203,6 +227,9 @@ BMediaRosterEx::Quit()
 }
 
 
+/** @brief Registers this application team with the media server and initialises
+ *         the data-exchange layer.
+ *  @return B_OK on success, B_MEDIA_SYSTEM_FAILURE if the server query fails. */
 status_t
 BMediaRosterEx::BuildConnections()
 {
@@ -221,6 +248,8 @@ BMediaRosterEx::BuildConnections()
 }
 
 
+/** @brief Destructor; deletes manager objects and unregisters the application
+ *         team with the media server. */
 BMediaRosterEx::~BMediaRosterEx()
 {
 	CALLED();
@@ -239,6 +268,8 @@ BMediaRosterEx::~BMediaRosterEx()
 }
 
 
+/** @brief Adds \a node to the team-local list of registered nodes.
+ *  @param node  The BMediaNode to track. */
 void
 BMediaRosterEx::RegisterLocalNode(BMediaNode* node)
 {
@@ -246,6 +277,8 @@ BMediaRosterEx::RegisterLocalNode(BMediaNode* node)
 }
 
 
+/** @brief Removes \a node from the team-local list of registered nodes.
+ *  @param node  The BMediaNode to stop tracking. */
 void
 BMediaRosterEx::UnregisterLocalNode(BMediaNode* node)
 {
@@ -255,6 +288,10 @@ BMediaRosterEx::UnregisterLocalNode(BMediaNode* node)
 }
 
 
+/** @brief Enables or disables launch/shutdown notifications and optional
+ *         auto-exit behaviour after the media server comes up.
+ *  @param enable    Pass \c true to enable notifications.
+ *  @param autoExit  Pass \c true to auto-exit after the server starts. */
 void
 BMediaRosterEx::EnableLaunchNotification(bool enable, bool autoExit)
 {
@@ -266,6 +303,9 @@ BMediaRosterEx::EnableLaunchNotification(bool enable, bool autoExit)
 }
 
 
+/** @brief Saves the persistent configuration for add-on-instantiated nodes.
+ *  @param node  The node whose configuration should be saved.
+ *  @return B_OK on success, B_ERROR if the node has no add-on. */
 status_t
 BMediaRosterEx::SaveNodeConfiguration(BMediaNode* node)
 {
@@ -290,6 +330,11 @@ BMediaRosterEx::SaveNodeConfiguration(BMediaNode* node)
 }
 
 
+/** @brief Loads the persistent configuration for an add-on flavor into \a _msg.
+ *  @param addonID   The add-on whose configuration to load.
+ *  @param flavorID  The specific flavor within the add-on.
+ *  @param _msg      Receives the configuration (currently always empty).
+ *  @return B_OK always. */
 status_t
 BMediaRosterEx::LoadNodeConfiguration(media_addon_id addonID, int32 flavorID,
 	BMessage *_msg)
@@ -303,6 +348,11 @@ BMediaRosterEx::LoadNodeConfiguration(media_addon_id addonID, int32 flavorID,
 }
 
 
+/** @brief Tells the media server that one more instance of the given add-on flavor
+ *         has been created.
+ *  @param addonID   The add-on whose instance count should increase.
+ *  @param flavorID  The flavor within the add-on.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::IncrementAddonFlavorInstancesCount(media_addon_id addonID,
 	int32 flavorID)
@@ -319,6 +369,11 @@ BMediaRosterEx::IncrementAddonFlavorInstancesCount(media_addon_id addonID,
 }
 
 
+/** @brief Tells the media server that one instance of the given add-on flavor
+ *         has been released.
+ *  @param addonID   The add-on whose instance count should decrease.
+ *  @param flavorID  The flavor within the add-on.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::DecrementAddonFlavorInstancesCount(media_addon_id addonID,
 	int32 flavorID)
@@ -335,6 +390,9 @@ BMediaRosterEx::DecrementAddonFlavorInstancesCount(media_addon_id addonID,
 }
 
 
+/** @brief Force-releases all server-side references for the given node.
+ *  @param node  The media_node to release completely.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::ReleaseNodeAll(const media_node& node)
 {
@@ -376,6 +434,10 @@ BMediaRosterEx::ReleaseNodeAll(const media_node& node)
 }
 
 
+/** @brief Associates a node with a specific creator team in the media server.
+ *  @param node     The node ID to update.
+ *  @param creator  The team ID of the creator application.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::SetNodeCreator(media_node_id node, team_id creator)
 {
@@ -389,6 +451,12 @@ BMediaRosterEx::SetNodeCreator(media_node_id node, team_id creator)
 }
 
 
+/** @brief Retrieves the default node for a given functional role.
+ *  @param type            The role (e.g. VIDEO_INPUT, AUDIO_OUTPUT).
+ *  @param out_node        Receives the media_node for that role.
+ *  @param out_input_id    Optionally receives the default input ID.
+ *  @param out_input_name  Optionally receives the default input name.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::GetNode(node_type type, media_node* out_node,
 	int32* out_input_id, BString* out_input_name)
@@ -416,6 +484,12 @@ BMediaRosterEx::GetNode(node_type type, media_node* out_node,
 }
 
 
+/** @brief Sets the default node for a given functional role.
+ *  @param type   The role to update.
+ *  @param node   If non-NULL, the live node to assign.
+ *  @param info   If non-NULL, the dormant node info to assign.
+ *  @param input  If non-NULL, the specific input to assign.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::SetNode(node_type type, const media_node* node,
 	const dormant_node_info* info, const media_input* input)
@@ -439,6 +513,10 @@ BMediaRosterEx::SetNode(node_type type, const media_node* node,
 }
 
 
+/** @brief Iterates all outputs of a producer node into \a list.
+ *  @param node  The producer node to query.
+ *  @param list  Receives the full list of media_output values.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::GetAllOutputs(const media_node& node, List<media_output>* list)
 {
@@ -486,6 +564,10 @@ BMediaRosterEx::GetAllOutputs(const media_node& node, List<media_output>* list)
 }
 
 
+/** @brief Iterates all outputs of a local BBufferProducer into \a list.
+ *  @param node  Pointer to the local producer.
+ *  @param list  Receives the full list of media_output values.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::GetAllOutputs(BBufferProducer* node, List<media_output>* list)
 {
@@ -516,6 +598,10 @@ BMediaRosterEx::GetAllOutputs(BBufferProducer* node, List<media_output>* list)
 }
 
 
+/** @brief Iterates all inputs of a consumer node into \a list.
+ *  @param node  The consumer node to query.
+ *  @param list  Receives the full list of media_input values.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::GetAllInputs(const media_node& node, List<media_input>* list)
 {
@@ -563,6 +649,10 @@ BMediaRosterEx::GetAllInputs(const media_node& node, List<media_input>* list)
 }
 
 
+/** @brief Iterates all inputs of a local BBufferConsumer into \a list.
+ *  @param node  Pointer to the local consumer.
+ *  @param list  Receives the full list of media_input values.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::GetAllInputs(BBufferConsumer* node, List<media_input>* list)
 {
@@ -593,6 +683,10 @@ BMediaRosterEx::GetAllInputs(BBufferConsumer* node, List<media_input>* list)
 }
 
 
+/** @brief Publishes the current outputs of a node to the media server.
+ *  @param node  The node whose outputs to publish.
+ *  @param list  The list of media_output values to register.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::PublishOutputs(const media_node& node, List<media_output>* list)
 {
@@ -643,6 +737,10 @@ BMediaRosterEx::PublishOutputs(const media_node& node, List<media_output>* list)
 }
 
 
+/** @brief Publishes the current inputs of a node to the media server.
+ *  @param node  The node whose inputs to publish.
+ *  @param list  The list of media_input values to register.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRosterEx::PublishInputs(const media_node& node, List<media_input>* list)
 {
@@ -693,6 +791,10 @@ BMediaRosterEx::PublishInputs(const media_node& node, List<media_input>* list)
 }
 
 
+/** @brief Returns a BTimeSource proxy for the given time source node ID, creating
+ *         it via the TimeSourceObjectManager cache if necessary.
+ *  @param timeSourceID  ID of the time source node.
+ *  @return Pointer to the BTimeSource proxy, or \c NULL on failure. */
 BTimeSource*
 BMediaRosterEx::MakeTimeSourceObject(media_node_id timeSourceID)
 {
@@ -720,6 +822,9 @@ BMediaRosterEx::MakeTimeSourceObject(media_node_id timeSourceID)
 //	#pragma mark - public BMediaRoster
 
 
+/** @brief Returns the default video input node.
+ *  @param _node  Receives the media_node for the default video input.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetVideoInput(media_node* _node)
 {
@@ -728,6 +833,9 @@ BMediaRoster::GetVideoInput(media_node* _node)
 }
 
 
+/** @brief Returns the default audio input node.
+ *  @param _node  Receives the media_node for the default audio input.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetAudioInput(media_node* _node)
 {
@@ -736,6 +844,9 @@ BMediaRoster::GetAudioInput(media_node* _node)
 }
 
 
+/** @brief Returns the default video output node.
+ *  @param _node  Receives the media_node for the default video output.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetVideoOutput(media_node* _node)
 {
@@ -744,6 +855,9 @@ BMediaRoster::GetVideoOutput(media_node* _node)
 }
 
 
+/** @brief Returns the default audio mixer node.
+ *  @param _node  Receives the media_node for the default audio mixer.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetAudioMixer(media_node* _node)
 {
@@ -752,6 +866,9 @@ BMediaRoster::GetAudioMixer(media_node* _node)
 }
 
 
+/** @brief Returns the default audio output node.
+ *  @param _node  Receives the media_node for the default audio output.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetAudioOutput(media_node* _node)
 {
@@ -760,6 +877,11 @@ BMediaRoster::GetAudioOutput(media_node* _node)
 }
 
 
+/** @brief Returns the default audio output node together with its preferred input.
+ *  @param _node       Receives the media_node for the default audio output.
+ *  @param _inputID    Optionally receives the preferred input ID.
+ *  @param _inputName  Optionally receives the preferred input name.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetAudioOutput(media_node* _node, int32* _inputID,
 	BString* _inputName)
@@ -770,6 +892,9 @@ BMediaRoster::GetAudioOutput(media_node* _node, int32* _inputID,
 }
 
 
+/** @brief Returns the preferred time source node (reference counting disabled).
+ *  @param _node  Receives the media_node for the preferred time source.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetTimeSource(media_node* _node)
 {
@@ -792,6 +917,9 @@ BMediaRoster::GetTimeSource(media_node* _node)
 }
 
 
+/** @brief Sets the default video input to the given live node.
+ *  @param producer  The live node to use as default video input.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetVideoInput(const media_node& producer)
 {
@@ -800,6 +928,9 @@ BMediaRoster::SetVideoInput(const media_node& producer)
 }
 
 
+/** @brief Sets the default video input to the given dormant node.
+ *  @param producer  The dormant node info for the desired video input.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetVideoInput(const dormant_node_info& producer)
 {
@@ -808,6 +939,9 @@ BMediaRoster::SetVideoInput(const dormant_node_info& producer)
 }
 
 
+/** @brief Sets the default audio input to the given live node.
+ *  @param producer  The live node to use as default audio input.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetAudioInput(const media_node& producer)
 {
@@ -816,6 +950,9 @@ BMediaRoster::SetAudioInput(const media_node& producer)
 }
 
 
+/** @brief Sets the default audio input to the given dormant node.
+ *  @param producer  The dormant node info for the desired audio input.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetAudioInput(const dormant_node_info& producer)
 {
@@ -824,6 +961,9 @@ BMediaRoster::SetAudioInput(const dormant_node_info& producer)
 }
 
 
+/** @brief Sets the default video output to the given live node.
+ *  @param consumer  The live node to use as default video output.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetVideoOutput(const media_node& consumer)
 {
@@ -832,6 +972,9 @@ BMediaRoster::SetVideoOutput(const media_node& consumer)
 }
 
 
+/** @brief Sets the default video output to the given dormant node.
+ *  @param consumer  The dormant node info for the desired video output.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetVideoOutput(const dormant_node_info& consumer)
 {
@@ -840,6 +983,9 @@ BMediaRoster::SetVideoOutput(const dormant_node_info& consumer)
 }
 
 
+/** @brief Sets the default audio output to the given live node.
+ *  @param consumer  The live node to use as default audio output.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetAudioOutput(const media_node& consumer)
 {
@@ -848,6 +994,9 @@ BMediaRoster::SetAudioOutput(const media_node& consumer)
 }
 
 
+/** @brief Sets the default audio output via a specific media_input endpoint.
+ *  @param input  The media_input describing the desired audio output endpoint.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetAudioOutput(const media_input& input)
 {
@@ -856,6 +1005,9 @@ BMediaRoster::SetAudioOutput(const media_input& input)
 }
 
 
+/** @brief Sets the default audio output to the given dormant node.
+ *  @param consumer  The dormant node info for the desired audio output.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetAudioOutput(const dormant_node_info& consumer)
 {
@@ -864,6 +1016,10 @@ BMediaRoster::SetAudioOutput(const dormant_node_info& consumer)
 }
 
 
+/** @brief Retrieves a reference-counted clone of the node identified by \a node.
+ *  @param node   The media_node_id to look up.
+ *  @param clone  Receives the cloned media_node descriptor.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE for an invalid ID, or an error code. */
 status_t
 BMediaRoster::GetNodeFor(media_node_id node, media_node* clone)
 {
@@ -890,6 +1046,10 @@ BMediaRoster::GetNodeFor(media_node_id node, media_node* clone)
 }
 
 
+/** @brief Returns a descriptor for the system time source (reference counting
+ *         disabled).
+ *  @param clone  Receives the media_node for the system time source.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetSystemTimeSource(media_node* clone)
 {
@@ -914,6 +1074,10 @@ BMediaRoster::GetSystemTimeSource(media_node* clone)
 }
 
 
+/** @brief Decrements the server-side reference count for \a node, potentially
+ *         destroying it when the count reaches zero.
+ *  @param node  The media_node to release.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE if \a node is invalid. */
 status_t
 BMediaRoster::ReleaseNode(const media_node& node)
 {
@@ -951,6 +1115,10 @@ BMediaRoster::ReleaseNode(const media_node& node)
 }
 
 
+/** @brief Returns a BTimeSource proxy object for the time source currently
+ *         governing \a forNode.
+ *  @param forNode  The node whose time source is desired.
+ *  @return Pointer to the BTimeSource proxy, or \c NULL on failure. */
 BTimeSource*
 BMediaRoster::MakeTimeSourceFor(const media_node& forNode)
 {
@@ -999,6 +1167,13 @@ BMediaRoster::MakeTimeSourceFor(const media_node& forNode)
 }
 
 
+/** @brief Connects a media_source to a media_destination, negotiating the format.
+ *  @param from     The producer output endpoint.
+ *  @param to       The consumer input endpoint.
+ *  @param _format  In/out: proposed format; updated with the negotiated format.
+ *  @param _output  Receives the output descriptor for the new connection.
+ *  @param _input   Receives the input descriptor for the new connection.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::Connect(const media_source& from, const media_destination& to,
 	media_format* _format, media_output* _output, media_input* _input)
@@ -1007,6 +1182,17 @@ BMediaRoster::Connect(const media_source& from, const media_destination& to,
 }
 
 
+/** @brief Extended Connect() with flags.  Runs the full four-way format
+ *         negotiation handshake (FormatProposal → AcceptFormat →
+ *         PrepareToConnect → Connected → Connect).
+ *  @param from         The producer output endpoint.
+ *  @param to           The consumer input endpoint.
+ *  @param io_format    In/out: the proposed format, updated with the agreed format.
+ *  @param out_output   Receives the output descriptor for the connection.
+ *  @param out_input    Receives the input descriptor for the connection.
+ *  @param in_flags     Connection flags (e.g. B_CONNECT_MUTED).
+ *  @param _reserved    Reserved; pass \c NULL.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::Connect(const media_source& from, const media_destination& to,
 	media_format* io_format, media_output* out_output, media_input* out_input,
@@ -1203,6 +1389,12 @@ BMediaRoster::Connect(const media_source& from, const media_destination& to,
 };
 
 
+/** @brief Disconnects an existing connection between a producer and a consumer.
+ *  @param source_nodeid       media_node_id of the producer.
+ *  @param source              The producer output endpoint.
+ *  @param destination_nodeid  media_node_id of the consumer.
+ *  @param destination         The consumer input endpoint.
+ *  @return B_OK if both disconnect calls succeeded, B_ERROR if either failed. */
 status_t
 BMediaRoster::Disconnect(media_node_id source_nodeid,
 	const media_source& source, media_node_id destination_nodeid,
@@ -1283,6 +1475,10 @@ BMediaRoster::Disconnect(media_node_id source_nodeid,
 }
 
 
+/** @brief Convenience overload of Disconnect() using output/input descriptors.
+ *  @param output  The output endpoint to disconnect.
+ *  @param input   The input endpoint to disconnect.
+ *  @return B_OK if both disconnect calls succeeded, or an error code. */
 status_t
 BMediaRoster::Disconnect(const media_output& output, const media_input& input)
 {
@@ -1336,6 +1532,10 @@ BMediaRoster::Disconnect(const media_output& output, const media_input& input)
 }
 
 
+/** @brief Sends a start command to the given node.
+ *  @param node                The node to start.
+ *  @param atPerformanceTime   Performance time at which playback should begin.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::StartNode(const media_node& node, bigtime_t atPerformanceTime)
 {
@@ -1353,6 +1553,11 @@ BMediaRoster::StartNode(const media_node& node, bigtime_t atPerformanceTime)
 }
 
 
+/** @brief Sends a stop command to the given node.
+ *  @param node                The node to stop.
+ *  @param atPerformanceTime   Performance time at which the node should stop.
+ *  @param immediate           If \c true, stop immediately.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::StopNode(const media_node& node, bigtime_t atPerformanceTime,
 	bool immediate)
@@ -1372,6 +1577,11 @@ BMediaRoster::StopNode(const media_node& node, bigtime_t atPerformanceTime,
 }
 
 
+/** @brief Sends a seek command to the given node.
+ *  @param node                The node to seek.
+ *  @param toMediaTime         Target position in media time.
+ *  @param atPerformanceTime   Performance time at which to begin seeking.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::SeekNode(const media_node& node, bigtime_t toMediaTime,
 	bigtime_t atPerformanceTime)
@@ -1391,6 +1601,10 @@ BMediaRoster::SeekNode(const media_node& node, bigtime_t toMediaTime,
 }
 
 
+/** @brief Sends a start operation to a time-source node.
+ *  @param node        The time-source node to start.
+ *  @param atRealTime  Real time at which the time source should begin running.
+ *  @return B_OK on success, or B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::StartTimeSource(const media_node& node, bigtime_t atRealTime)
 {
@@ -1427,6 +1641,11 @@ BMediaRoster::StartTimeSource(const media_node& node, bigtime_t atRealTime)
 }
 
 
+/** @brief Sends a stop operation to a time-source node.
+ *  @param node        The time-source node to stop.
+ *  @param atRealTime  Real time at which the time source should stop.
+ *  @param immediate   If \c true, send B_TIMESOURCE_STOP_IMMEDIATELY.
+ *  @return B_OK on success, or B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::StopTimeSource(const media_node& node, bigtime_t atRealTime,
 	bool immediate)
@@ -1465,6 +1684,11 @@ BMediaRoster::StopTimeSource(const media_node& node, bigtime_t atRealTime,
 }
 
 
+/** @brief Sends a seek operation to a time-source node.
+ *  @param node                The time-source node to seek.
+ *  @param toPerformanceTime   Target performance time.
+ *  @param atRealTime          Real time at which the seek takes effect.
+ *  @return B_OK on success, or B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::SeekTimeSource(const media_node& node,
 	bigtime_t toPerformanceTime, bigtime_t atRealTime)
@@ -1505,6 +1729,11 @@ BMediaRoster::SeekTimeSource(const media_node& node,
 }
 
 
+/** @brief Blocks the caller until the node reaches the given performance time.
+ *  @param node     The node to synchronise with.
+ *  @param atTime   The performance time to wait for.
+ *  @param timeout  Maximum time to wait in microseconds.
+ *  @return B_OK when the node reaches \a atTime, or an error code on failure. */
 status_t
 BMediaRoster::SyncToNode(const media_node& node, bigtime_t atTime,
 	bigtime_t timeout)
@@ -1538,6 +1767,10 @@ BMediaRoster::SyncToNode(const media_node& node, bigtime_t atTime,
 }
 
 
+/** @brief Sets the run mode for the given node.
+ *  @param node  The node whose run mode to change.
+ *  @param mode  The new run mode.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::SetRunModeNode(const media_node& node, BMediaNode::run_mode mode)
 {
@@ -1553,6 +1786,9 @@ BMediaRoster::SetRunModeNode(const media_node& node, BMediaNode::run_mode mode)
 }
 
 
+/** @brief Sends a preroll command to the given node.
+ *  @param node  The node to preroll.
+ *  @return B_OK on success, B_MEDIA_BAD_NODE if the node is invalid. */
 status_t
 BMediaRoster::PrerollNode(const media_node& node)
 {
@@ -1637,6 +1873,10 @@ BMediaRoster::SetProducerRate(const media_node& producer, int32 numer,
 	of accepting more connections. The node may create an additional
 	output or input as the currently available is taken into usage.
 */
+/** @brief Retrieves human-readable info about a currently running node.
+ *  @param node           The node to query.
+ *  @param out_live_info  Receives the live_node_info for the node.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetLiveNodeInfo(const media_node& node,
 	live_node_info* out_live_info)
@@ -1663,6 +1903,14 @@ BMediaRoster::GetLiveNodeInfo(const media_node& node,
 }
 
 
+/** @brief Returns live_node_info for all running nodes, optionally filtered.
+ *  @param liveNodes    Buffer to receive the live_node_info entries.
+ *  @param _totalCount  In: max entries; out: actual count returned.
+ *  @param hasInput     If non-NULL, filter to nodes with a matching input.
+ *  @param hasOutput    If non-NULL, filter to nodes with a matching output.
+ *  @param name         If non-NULL, filter to nodes whose name contains this string.
+ *  @param nodeKinds    Bitmask of required node kinds; 0 means no filtering.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetLiveNodes(live_node_info* liveNodes, int32* _totalCount,
 	const media_format* hasInput, const media_format* hasOutput,
@@ -2005,6 +2253,9 @@ BMediaRoster::GetAllOutputsFor(const media_node& node,
 }
 
 
+/** @brief Registers \a where to receive all media notifications.
+ *  @param where  The messenger to deliver notifications to.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StartWatching(const BMessenger& where)
 {
@@ -2018,6 +2269,10 @@ BMediaRoster::StartWatching(const BMessenger& where)
 }
 
 
+/** @brief Registers \a where to receive a specific notification type.
+ *  @param where             The messenger to deliver notifications to.
+ *  @param notificationType  The notification type to watch (e.g. B_MEDIA_NODE_CREATED).
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StartWatching(const BMessenger & where, int32 notificationType)
 {
@@ -2040,6 +2295,11 @@ BMediaRoster::StartWatching(const BMessenger & where, int32 notificationType)
 }
 
 
+/** @brief Registers \a where to receive a specific notification type for \a node.
+ *  @param where             The messenger to deliver notifications to.
+ *  @param node              The specific node to watch.
+ *  @param notificationType  The notification type to watch.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StartWatching(const BMessenger& where, const media_node& node,
 	int32 notificationType)
@@ -2063,6 +2323,9 @@ BMediaRoster::StartWatching(const BMessenger& where, const media_node& node,
 }
 
 
+/** @brief Cancels all notification registrations for \a where.
+ *  @param where  The messenger whose registrations should be cancelled.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StopWatching(const BMessenger& where)
 {
@@ -2073,6 +2336,10 @@ BMediaRoster::StopWatching(const BMessenger& where)
 }
 
 
+/** @brief Cancels a specific notification registration for \a where.
+ *  @param where             The messenger to deregister.
+ *  @param notificationType  The notification type to cancel.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StopWatching(const BMessenger& where, int32 notificationType)
 {
@@ -2088,6 +2355,11 @@ BMediaRoster::StopWatching(const BMessenger& where, int32 notificationType)
 }
 
 
+/** @brief Cancels a node-specific notification registration for \a where.
+ *  @param where             The messenger to deregister.
+ *  @param node              The node that was being watched.
+ *  @param notificationType  The notification type to cancel.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StopWatching(const BMessenger& where, const media_node& node,
 	int32 notificationType)
@@ -2108,6 +2380,10 @@ BMediaRoster::StopWatching(const BMessenger& where, const media_node& node,
 }
 
 
+/** @brief Registers a local BMediaNode with the media server, assigns it a node
+ *         ID, calls NodeRegistered(), and publishes its inputs/outputs.
+ *  @param node  The BMediaNode to register.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::RegisterNode(BMediaNode* node)
 {
@@ -2228,6 +2504,9 @@ BMediaRosterEx::RegisterNode(BMediaNode* node, media_addon_id addOnID,
 }
 
 
+/** @brief Unregisters a local BMediaNode from the media server.
+ *  @param node  The BMediaNode to unregister.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::UnregisterNode(BMediaNode* node)
 {
@@ -2309,7 +2588,10 @@ BMediaRoster::UnregisterNode(BMediaNode* node)
 }
 
 
-//!	Thread safe for multiple calls to Roster()
+/** @brief Returns the singleton BMediaRoster for the current team, creating it
+ *         on the first call.  Thread safe for multiple concurrent callers.
+ *  @param out_error  If non-NULL, receives B_OK or an initialisation error code.
+ *  @return Pointer to the BMediaRoster singleton, or \c NULL on failure. */
 /*static*/ BMediaRoster*
 BMediaRoster::Roster(status_t* out_error)
 {
@@ -2346,6 +2628,8 @@ BMediaRoster::Roster(status_t* out_error)
 }
 
 
+/** @brief Returns the current BMediaRoster singleton without creating one.
+ *  @return Pointer to the existing BMediaRoster, or \c NULL if none exists. */
 /*static*/ BMediaRoster*
 BMediaRoster::CurrentRoster()
 {
@@ -2353,6 +2637,10 @@ BMediaRoster::CurrentRoster()
 }
 
 
+/** @brief Assigns a new time source to the given node.
+ *  @param node         The media_node_id of the node to update.
+ *  @param time_source  The media_node_id of the time source to assign.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::SetTimeSourceFor(media_node_id node, media_node_id time_source)
 {
@@ -2410,6 +2698,10 @@ BMediaRoster::SetTimeSourceFor(media_node_id node, media_node_id time_source)
 }
 
 
+/** @brief Retrieves the parameter web for the given controllable node.
+ *  @param node  The node to query.
+ *  @param _web  Receives a pointer to the BParameterWeb (caller must delete).
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetParameterWebFor(const media_node& node, BParameterWeb** _web)
 {
@@ -2488,6 +2780,10 @@ BMediaRoster::GetParameterWebFor(const media_node& node, BParameterWeb** _web)
 }
 
 
+/** @brief Asks the given node to open its control panel.
+ *  @param node        The node whose control panel to open.
+ *  @param _messenger  Optionally receives a messenger to the panel application.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::StartControlPanel(const media_node& node, BMessenger* _messenger)
 {
@@ -2511,6 +2807,16 @@ BMediaRoster::StartControlPanel(const media_node& node, BMessenger* _messenger)
 }
 
 
+/** @brief Returns dormant_node_info for all installed add-on nodes, filtered
+ *         by optional format, name, and kind constraints.
+ *  @param _info        Buffer to receive the dormant_node_info entries.
+ *  @param _count       In: max entries; out: actual count returned.
+ *  @param hasInput     If non-NULL, filter to nodes accepting this format.
+ *  @param hasOutput    If non-NULL, filter to nodes producing this format.
+ *  @param name         If non-NULL, filter to nodes whose name contains this.
+ *  @param requireKinds Required node kind bits (0 = no filter).
+ *  @param denyKinds    Node kind bits that must NOT be set (0 = no exclusion).
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetDormantNodes(dormant_node_info* _info, int32* _count,
 	const media_format* hasInput, const media_format* hasOutput,
@@ -2702,6 +3008,11 @@ BMediaRosterEx::InstantiateDormantNode(media_addon_id addonID, int32 flavorID,
 }
 
 
+/** @brief Instantiates a dormant add-on node and registers it with the media server.
+ *  @param info    Describes the add-on and flavor to instantiate.
+ *  @param _node   Receives the media_node descriptor of the new instance.
+ *  @param flags   Instantiation flags (currently unused; pass 0).
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::InstantiateDormantNode(const dormant_node_info& info,
 	media_node* _node, uint32 flags)
@@ -2890,6 +3201,10 @@ BMediaRoster::GetDormantFlavorInfoFor(const dormant_node_info& dormant,
 
 // Reports in outLatency the maximum latency found downstream from
 // the specified BBufferProducer, producer, given the current connections.
+/** @brief Retrieves the total downstream latency for the given producer node.
+ *  @param producer  The producer node to query.
+ *  @param _latency  Receives the latency in microseconds.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BMediaRoster::GetLatencyFor(const media_node& producer, bigtime_t* _latency)
 {
@@ -3376,6 +3691,8 @@ BMediaRoster::GetInstancesFor(media_addon_id addon, int32 flavor,
 }
 
 
+/** @brief Returns whether both the media_server and media_addon_server are running.
+ *  @return \c true if both servers are running. */
 bool
 BMediaRoster::IsRunning()
 {
@@ -3384,6 +3701,12 @@ BMediaRoster::IsRunning()
 }
 
 
+/** @brief Calculates a suggested audio buffer size for the given hardware parameters.
+ *  @param channelCount  Number of audio channels.
+ *  @param sampleFormat  The sample format bitmask.
+ *  @param frameRate     Frames per second.
+ *  @param busKind       The bus type (affects the suggested buffer duration).
+ *  @return Suggested buffer size in bytes. */
 ssize_t
 BMediaRoster::AudioBufferSizeFor(int32 channelCount, uint32 sampleFormat,
 	float frameRate, bus_type busKind)
@@ -3410,6 +3733,15 @@ BMediaRoster::AudioBufferSizeFor(int32 channelCount, uint32 sampleFormat,
 	Returns < 0 for "not present", positive size for output data size.
 	0 means that the capability is present, but no data about it.
 */
+/** @brief Queries the Media Kit for a specific capability flag.
+ *
+ *  Returns < 0 for "not present", a positive size for output data, or 0 for
+ *  a capability that exists but has no associated data.
+ *
+ *  @param cap      The media_flags capability to query.
+ *  @param buffer   Buffer to receive capability data.
+ *  @param maxSize  Size of \a buffer.
+ *  @return 0 or positive on success, negative if the capability is absent. */
 /*static*/ ssize_t
 BMediaRoster::MediaFlags(media_flags cap, void* buffer, size_t maxSize)
 {
@@ -3421,6 +3753,9 @@ BMediaRoster::MediaFlags(media_flags cap, void* buffer, size_t maxSize)
 //	#pragma mark - BLooper overrides
 
 
+/** @brief Handles messages delivered to the BMediaRoster looper, including
+ *         notification registration/cancellation and NODE_FINAL_RELEASE.
+ *  @param message  The incoming BMessage. */
 void
 BMediaRoster::MessageReceived(BMessage* message)
 {
@@ -3580,6 +3915,8 @@ BMediaRoster::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Always returns \c true, allowing the looper to quit.
+ *  @return \c true. */
 bool
 BMediaRoster::QuitRequested()
 {
@@ -3588,6 +3925,13 @@ BMediaRoster::QuitRequested()
 }
 
 
+/** @brief Delegates specifier resolution to BLooper.
+ *  @param msg        The scripting message.
+ *  @param index      The specifier index.
+ *  @param specifier  The specifier message.
+ *  @param form       The specifier form.
+ *  @param property   The property name.
+ *  @return The handler for the specifier. */
 BHandler*
 BMediaRoster::ResolveSpecifier(BMessage* msg, int32 index, BMessage* specifier,
 	int32 form, const char* property)
@@ -3596,6 +3940,9 @@ BMediaRoster::ResolveSpecifier(BMessage* msg, int32 index, BMessage* specifier,
 }
 
 
+/** @brief Delegates suite discovery to BLooper.
+ *  @param data  The message to fill with supported suite names.
+ *  @return B_OK on success. */
 status_t
 BMediaRoster::GetSupportedSuites(BMessage* data)
 {
@@ -3603,6 +3950,7 @@ BMediaRoster::GetSupportedSuites(BMessage* data)
 }
 
 
+/** @brief Destructor; clears the global singleton pointer. */
 BMediaRoster::~BMediaRoster()
 {
 	CALLED();
@@ -3615,16 +3963,26 @@ BMediaRoster::~BMediaRoster()
 //	#pragma mark - private BMediaRoster
 
 // FBC reserved virtuals
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_0(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_1(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_2(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_3(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_4(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_5(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_6(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaRoster::_Reserved_MediaRoster_7(void*) { return B_ERROR; }
 
 
+/** @brief Private constructor; creates the BLooper and starts it running.
+ *         Use BMediaRoster::Roster() to obtain the singleton instance. */
 BMediaRoster::BMediaRoster()
 	:
 	BLooper("_BMediaRoster_", B_URGENT_DISPLAY_PRIORITY,

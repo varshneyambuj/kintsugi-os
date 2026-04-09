@@ -1,8 +1,31 @@
-/* 
- * Copyright 2004-2010, Marcus Overhagen. All rights reserved.
- * Copyright 2016, Dario Casalinuovo. All rights reserved.
- * Distributed under the terms of the MIT License.
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2010, Marcus Overhagen. All rights reserved.
+ *   Copyright 2016, Dario Casalinuovo. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file PluginManager.cpp
+ *  @brief Implements PluginManager, which loads, caches, and instantiates all media plug-in types
+ *         (readers, decoders, writers, encoders, and streamers). */
 
 
 #include <AdapterIO.h>
@@ -27,8 +50,16 @@ PluginManager gPluginManager;
 #define MAX_STREAMERS 40
 
 
+/** @brief Adapter that wraps a non-seekable BDataIO into a pseudo-seekable BAdapterIO.
+ *
+ *  When a BDataIO cannot be cast to a BPositionIO the PluginManager wraps it in this
+ *  adapter so that plug-ins can still perform backward seeks against a buffered copy
+ *  of the stream data that has already been read.
+ */
 class DataIOAdapter : public BAdapterIO {
 public:
+	/** @brief Constructs the adapter around an existing BDataIO.
+	 *  @param dataIO  The underlying non-seekable data source. */
 	DataIOAdapter(BDataIO* dataIO)
 		:
 		BAdapterIO(B_MEDIA_SEEK_BACKWARD | B_MEDIA_MUTABLE_SIZE,
@@ -38,10 +69,16 @@ public:
 		fDataInputAdapter = BuildInputAdapter();
 	}
 
+	/** @brief Destructor. */
 	virtual	~DataIOAdapter()
 	{
 	}
 
+	/** @brief Reads up to @p size bytes from @p position in the adapted stream.
+	 *  @param position  Byte offset from the start of the stream.
+	 *  @param buffer    Destination buffer to receive the data.
+	 *  @param size      Number of bytes requested.
+	 *  @return Number of bytes actually read, or a negative error code. */
 	virtual	ssize_t	ReadAt(off_t position, void* buffer,
 		size_t size)
 	{
@@ -61,6 +98,11 @@ public:
 		return B_NOT_SUPPORTED;
 	}
 
+	/** @brief Writes up to @p size bytes at @p position in the adapted stream.
+	 *  @param position  Byte offset from the start of the stream.
+	 *  @param buffer    Source buffer containing data to write.
+	 *  @param size      Number of bytes to write.
+	 *  @return Number of bytes actually written, or a negative error code. */
 	virtual	ssize_t	WriteAt(off_t position, const void* buffer,
 		size_t size)
 	{
@@ -79,8 +121,16 @@ private:
 };
 
 
+/** @brief Internal wrapper that presents any BDataIO as a full BMediaIO.
+ *
+ *  If the source already implements BMediaIO it is used directly.  If it
+ *  implements BPositionIO the seekable flags are inferred.  Otherwise a
+ *  DataIOAdapter is constructed to provide pseudo-seek capability.
+ */
 class BMediaIOWrapper : public BMediaIO {
 public:
+	/** @brief Constructs the wrapper around an arbitrary BDataIO source.
+	 *  @param source  The data source to wrap; ownership is NOT transferred. */
 	BMediaIOWrapper(BDataIO* source)
 		:
 		fData(NULL),
@@ -112,12 +162,15 @@ public:
 			fFlags = B_MEDIA_SEEKABLE;
 	}
 
+	/** @brief Destructor. Releases the DataIOAdapter if one was allocated. */
 	virtual	~BMediaIOWrapper()
 	{
 		if (fDataIOAdapter != NULL)
 			delete fDataIOAdapter;
 	}
 
+	/** @brief Returns the initialisation status of the wrapper.
+	 *  @return B_OK on success, or an error code. */
 	status_t InitCheck() const
 	{
 		return fErr;
@@ -125,6 +178,8 @@ public:
 
 	// BMediaIO interface
 
+	/** @brief Returns the media I/O capability flags for the wrapped source.
+	 *  @param flags  Output pointer set to the combined capability flags. */
 	virtual void GetFlags(int32* flags) const
 	{
 		*flags = fFlags;
@@ -132,6 +187,11 @@ public:
 
 	// BPositionIO interface
 
+	/** @brief Reads up to @p size bytes from @p position.
+	 *  @param position  Byte offset from the start of the stream.
+	 *  @param buffer    Destination buffer.
+	 *  @param size      Number of bytes requested.
+	 *  @return Number of bytes read, or a negative error code. */
 	virtual	ssize_t ReadAt(off_t position, void* buffer,
 		size_t size)
 	{
@@ -140,6 +200,11 @@ public:
 		return fPosition->ReadAt(position, buffer, size);
 	}
 
+	/** @brief Writes up to @p size bytes at @p position.
+	 *  @param position  Byte offset from the start of the stream.
+	 *  @param buffer    Source buffer.
+	 *  @param size      Number of bytes to write.
+	 *  @return Number of bytes written, or a negative error code. */
 	virtual	ssize_t WriteAt(off_t position, const void* buffer,
 		size_t size)
 	{
@@ -148,6 +213,10 @@ public:
 		return fPosition->WriteAt(position, buffer, size);
 	}
 
+	/** @brief Seeks to @p position using @p seekMode.
+	 *  @param position  Target offset, interpreted according to @p seekMode.
+	 *  @param seekMode  One of SEEK_SET, SEEK_CUR, or SEEK_END.
+	 *  @return The resulting absolute position, or a negative error code. */
 	virtual	off_t Seek(off_t position, uint32 seekMode)
 	{
 		CALLED();
@@ -156,6 +225,8 @@ public:
 
 	}
 
+	/** @brief Returns the current stream position.
+	 *  @return Current byte offset from the start of the stream. */
 	virtual off_t Position() const
 	{
 		CALLED();
@@ -163,6 +234,9 @@ public:
 		return fPosition->Position();
 	}
 
+	/** @brief Sets the logical size of the stream.
+	 *  @param size  New size in bytes.
+	 *  @return B_OK on success, or an error code. */
 	virtual	status_t SetSize(off_t size)
 	{
 		CALLED();
@@ -170,6 +244,9 @@ public:
 		return fPosition->SetSize(size);
 	}
 
+	/** @brief Retrieves the logical size of the stream.
+	 *  @param size  Output pointer set to the stream size in bytes.
+	 *  @return B_OK on success, or an error code. */
 	virtual	status_t GetSize(off_t* size) const
 	{
 		CALLED();
@@ -179,11 +256,15 @@ public:
 
 protected:
 
+	/** @brief Returns whether the wrapped source implements BMediaIO.
+	 *  @return true if the source is a BMediaIO instance. */
 	bool IsMedia() const
 	{
 		return fMedia != NULL;
 	}
 
+	/** @brief Returns whether the wrapped source implements BPositionIO.
+	 *  @return true if the source is a BPositionIO instance. */
 	bool IsPosition() const
 	{
 		return fPosition != NULL;
@@ -204,6 +285,17 @@ private:
 // #pragma mark - Readers/Decoders
 
 
+/** @brief Creates and sniffs a Reader plug-in suitable for the given data source.
+ *
+ *  Iterates over all registered reader plug-ins and calls each one's Sniff()
+ *  method until a match is found.  The caller is responsible for destroying
+ *  the returned reader with DestroyReader().
+ *
+ *  @param reader       Output pointer set to the newly created Reader on success.
+ *  @param streamCount  Output pointer set to the number of streams found by Sniff().
+ *  @param mff          Output structure filled with the detected media file format.
+ *  @param source       The data source to probe; ownership is NOT transferred.
+ *  @return B_OK on success, B_MEDIA_NO_HANDLER if no reader matched, or another error code. */
 status_t
 PluginManager::CreateReader(Reader** reader, int32* streamCount,
 	media_file_format* mff, BDataIO* source)
@@ -276,6 +368,8 @@ PluginManager::CreateReader(Reader** reader, int32* streamCount,
 }
 
 
+/** @brief Destroys a Reader previously created by CreateReader() and releases its plug-in.
+ *  @param reader  The reader to destroy; may be NULL. */
 void
 PluginManager::DestroyReader(Reader* reader)
 {
@@ -292,6 +386,15 @@ PluginManager::DestroyReader(Reader* reader)
 }
 
 
+/** @brief Creates a Decoder plug-in for the given media format.
+ *
+ *  Queries the AddOnManager for a decoder that handles @p format, loads the
+ *  corresponding plug-in, and instantiates a new Decoder.  The caller is
+ *  responsible for destroying the returned decoder with DestroyDecoder().
+ *
+ *  @param _decoder  Output pointer set to the newly created Decoder on success.
+ *  @param format    The encoded media format that needs to be decoded.
+ *  @return B_OK on success, or an error code. */
 status_t
 PluginManager::CreateDecoder(Decoder** _decoder, const media_format& format)
 {
@@ -312,14 +415,14 @@ PluginManager::CreateDecoder(Decoder** _decoder, const media_format& format)
 		printf("PluginManager::CreateDecoder: GetPlugin failed\n");
 		return B_ERROR;
 	}
-	
+
 	DecoderPlugin* decoderPlugin = dynamic_cast<DecoderPlugin*>(plugin);
 	if (decoderPlugin == NULL) {
 		printf("PluginManager::CreateDecoder: dynamic_cast failed\n");
 		PutPlugin(plugin);
 		return B_ERROR;
 	}
-	
+
 	// TODO: In theory, one DecoderPlugin could support multiple Decoders,
 	// but this is not yet handled (passing "0" as index/ID).
 	*_decoder = decoderPlugin->NewDecoder(0);
@@ -337,6 +440,15 @@ PluginManager::CreateDecoder(Decoder** _decoder, const media_format& format)
 }
 
 
+/** @brief Creates a Decoder plug-in for the given codec info structure.
+ *
+ *  Looks up the encoder add-on whose internal ID matches @p mci.id, loads it,
+ *  and instantiates a new Decoder.  The caller is responsible for destroying
+ *  the returned decoder with DestroyDecoder().
+ *
+ *  @param decoder  Output pointer set to the newly created Decoder on success.
+ *  @param mci      Codec info identifying the desired decoder.
+ *  @return B_OK on success, or an error code. */
 status_t
 PluginManager::CreateDecoder(Decoder** decoder, const media_codec_info& mci)
 {
@@ -377,6 +489,10 @@ PluginManager::CreateDecoder(Decoder** decoder, const media_codec_info& mci)
 }
 
 
+/** @brief Retrieves codec information from an already-instantiated Decoder.
+ *  @param decoder  The decoder to query; must not be NULL.
+ *  @param _info    Output structure filled with codec information.
+ *  @return B_OK on success, B_BAD_VALUE if @p decoder is NULL. */
 status_t
 PluginManager::GetDecoderInfo(Decoder* decoder, media_codec_info* _info) const
 {
@@ -385,12 +501,14 @@ PluginManager::GetDecoderInfo(Decoder* decoder, media_codec_info* _info) const
 
 	decoder->GetCodecInfo(_info);
 	// TODO:
-	// out_info->id = 
-	// out_info->sub_id = 
+	// out_info->id =
+	// out_info->sub_id =
 	return B_OK;
 }
 
 
+/** @brief Destroys a Decoder previously created by CreateDecoder() and releases its plug-in.
+ *  @param decoder  The decoder to destroy; may be NULL. */
 void
 PluginManager::DestroyDecoder(Decoder* decoder)
 {
@@ -410,6 +528,16 @@ PluginManager::DestroyDecoder(Decoder* decoder)
 // #pragma mark - Writers/Encoders
 
 
+/** @brief Creates a Writer plug-in for the given media file format.
+ *
+ *  Queries the AddOnManager for the writer add-on that handles @p mff, loads
+ *  the corresponding plug-in, and instantiates a new Writer bound to @p target.
+ *  The caller is responsible for destroying the returned writer with DestroyWriter().
+ *
+ *  @param writer  Output pointer set to the newly created Writer on success.
+ *  @param mff     The desired output file format.
+ *  @param target  The data sink to write to; ownership is NOT transferred.
+ *  @return B_OK on success, or an error code. */
 status_t
 PluginManager::CreateWriter(Writer** writer, const media_file_format& mff,
 	BDataIO* target)
@@ -454,6 +582,8 @@ PluginManager::CreateWriter(Writer** writer, const media_file_format& mff,
 }
 
 
+/** @brief Destroys a Writer previously created by CreateWriter() and releases its plug-in.
+ *  @param writer  The writer to destroy; may be NULL. */
 void
 PluginManager::DestroyWriter(Writer* writer)
 {
@@ -470,6 +600,16 @@ PluginManager::DestroyWriter(Writer* writer)
 }
 
 
+/** @brief Creates an Encoder plug-in matching the given codec info.
+ *
+ *  Queries the AddOnManager for an encoder whose internal ID matches
+ *  @p codecInfo->id, loads the plug-in, and instantiates a new Encoder.
+ *  The caller is responsible for destroying the encoder with DestroyEncoder().
+ *
+ *  @param _encoder   Output pointer set to the newly created Encoder on success.
+ *  @param codecInfo  Codec info identifying the desired encoder.
+ *  @param flags      Flags passed to the factory (currently unused).
+ *  @return B_OK on success, or an error code. */
 status_t
 PluginManager::CreateEncoder(Encoder** _encoder,
 	const media_codec_info* codecInfo, uint32 flags)
@@ -491,7 +631,7 @@ PluginManager::CreateEncoder(Encoder** _encoder,
 		printf("PluginManager::CreateEncoder: GetPlugin failed\n");
 		return B_ERROR;
 	}
-	
+
 	EncoderPlugin* encoderPlugin = dynamic_cast<EncoderPlugin*>(plugin);
 	if (encoderPlugin == NULL) {
 		printf("PluginManager::CreateEncoder: dynamic_cast failed\n");
@@ -514,6 +654,15 @@ PluginManager::CreateEncoder(Encoder** _encoder,
 }
 
 
+/** @brief Creates an Encoder plug-in suitable for encoding to the given media format.
+ *
+ *  Queries the AddOnManager for an encoder that can produce output in @p format,
+ *  loads the plug-in, and instantiates a new Encoder.
+ *  The caller is responsible for destroying the encoder with DestroyEncoder().
+ *
+ *  @param encoder  Output pointer set to the newly created Encoder on success.
+ *  @param format   The desired output media format.
+ *  @return B_OK on success, or an error code. */
 status_t
 PluginManager::CreateEncoder(Encoder** encoder, const media_format& format)
 {
@@ -559,6 +708,8 @@ PluginManager::CreateEncoder(Encoder** encoder, const media_format& format)
 }
 
 
+/** @brief Destroys an Encoder previously created by CreateEncoder() and releases its plug-in.
+ *  @param encoder  The encoder to destroy; may be NULL. */
 void
 PluginManager::DestroyEncoder(Encoder* encoder)
 {
@@ -575,6 +726,17 @@ PluginManager::DestroyEncoder(Encoder* encoder)
 }
 
 
+/** @brief Creates a Streamer plug-in able to handle the given URL.
+ *
+ *  Iterates over all registered streamer plug-ins and calls each one's Sniff()
+ *  method until one accepts the URL.  On success, @p source is set to the
+ *  BDataIO that the streamer exposes.  The caller is responsible for destroying
+ *  the returned streamer with DestroyStreamer().
+ *
+ *  @param streamer  Output pointer set to the newly created Streamer on success.
+ *  @param url       The URL to open.
+ *  @param source    Output pointer set to the data source provided by the streamer.
+ *  @return B_OK on success, B_MEDIA_NO_HANDLER if no streamer matched, or another error code. */
 status_t
 PluginManager::CreateStreamer(Streamer** streamer, BUrl url, BDataIO** source)
 {
@@ -635,6 +797,12 @@ PluginManager::CreateStreamer(Streamer** streamer, BUrl url, BDataIO** source)
 }
 
 
+/** @brief Destroys a Streamer previously created by CreateStreamer() and releases its plug-in.
+ *
+ *  Reference-counted: the underlying plug-in image is unloaded only when the last
+ *  reference is dropped.
+ *
+ *  @param streamer  The streamer to destroy; may be NULL. */
 void
 PluginManager::DestroyStreamer(Streamer* streamer)
 {
@@ -663,6 +831,7 @@ PluginManager::DestroyStreamer(Streamer* streamer)
 // #pragma mark -
 
 
+/** @brief Constructs the PluginManager with an empty plug-in list and a named lock. */
 PluginManager::PluginManager()
 	:
 	fPluginList(),
@@ -672,6 +841,7 @@ PluginManager::PluginManager()
 }
 
 
+/** @brief Destructor. Force-unloads all still-loaded plug-ins and logs any use-count leaks. */
 PluginManager::~PluginManager()
 {
 	CALLED();
@@ -685,17 +855,25 @@ PluginManager::~PluginManager()
 	}
 }
 
-	
+
+/** @brief Returns a cached or freshly loaded MediaPlugin for the given add-on reference.
+ *
+ *  If the plug-in is already loaded its use-count is incremented and the cached
+ *  instance is returned.  Otherwise the add-on image is loaded from disk and the
+ *  plug-in is instantiated via instantiate_plugin().
+ *
+ *  @param ref  Entry reference identifying the plug-in add-on file.
+ *  @return Pointer to the MediaPlugin, or NULL on failure. */
 MediaPlugin*
 PluginManager::GetPlugin(const entry_ref& ref)
 {
 	TRACE("PluginManager::GetPlugin(%s)\n", ref.name);
 	fLocker.Lock();
-	
+
 	MediaPlugin* plugin;
 	plugin_info* pinfo;
 	plugin_info info;
-	
+
 	for (fPluginList.Rewind(); fPluginList.GetNext(&pinfo); ) {
 		if (0 == strcmp(ref.name, pinfo->name)) {
 			plugin = pinfo->plugin;
@@ -715,25 +893,27 @@ PluginManager::GetPlugin(const entry_ref& ref)
 	strcpy(info.name, ref.name);
 	info.usecount = 1;
 	fPluginList.Insert(info);
-	
+
 	TRACE("PluginManager: PlugIn %s loaded\n", ref.name);
 
 	plugin = info.plugin;
 	TRACE("  loaded plugin: %p\n", plugin);
-	
+
 	fLocker.Unlock();
 	return plugin;
 }
 
 
+/** @brief Decrements the use-count of @p plugin and unloads it when the count reaches zero.
+ *  @param plugin  The plug-in to release; must have been obtained via GetPlugin(). */
 void
 PluginManager::PutPlugin(MediaPlugin* plugin)
 {
 	TRACE("PluginManager::PutPlugin()\n");
 	fLocker.Lock();
-	
+
 	plugin_info* pinfo;
-	
+
 	for (fPluginList.Rewind(); fPluginList.GetNext(&pinfo); ) {
 		if (plugin == pinfo->plugin) {
 			pinfo->usecount--;
@@ -748,13 +928,22 @@ PluginManager::PutPlugin(MediaPlugin* plugin)
 			return;
 		}
 	}
-	
+
 	printf("PluginManager: Error, can't put PlugIn %p\n", plugin);
-	
+
 	fLocker.Unlock();
 }
 
 
+/** @brief Loads a plug-in add-on from disk and instantiates its MediaPlugin object.
+ *
+ *  Opens the add-on image, resolves the instantiate_plugin() symbol, calls it, and
+ *  returns the resulting MediaPlugin together with the loaded image ID.
+ *
+ *  @param ref     Entry reference identifying the add-on file.
+ *  @param plugin  Output pointer set to the instantiated MediaPlugin.
+ *  @param image   Output pointer set to the loaded image_id.
+ *  @return B_OK on success, or B_ERROR if loading or instantiation fails. */
 status_t
 PluginManager::_LoadPlugin(const entry_ref& ref, MediaPlugin** plugin,
 	image_id* image)
@@ -769,9 +958,9 @@ PluginManager::_LoadPlugin(const entry_ref& ref, MediaPlugin** plugin,
 		printf("PluginManager: Error, load_add_on(): %s\n", strerror(id));
 		return B_ERROR;
 	}
-		
+
 	MediaPlugin* (*instantiate_plugin_func)();
-	
+
 	if (get_image_symbol(id, "instantiate_plugin", B_SYMBOL_TYPE_TEXT,
 			(void**)&instantiate_plugin_func) < B_OK) {
 		printf("PluginManager: Error, _LoadPlugin can't find "
@@ -779,9 +968,9 @@ PluginManager::_LoadPlugin(const entry_ref& ref, MediaPlugin** plugin,
 		unload_add_on(id);
 		return B_ERROR;
 	}
-	
+
 	MediaPlugin *pl;
-	
+
 	pl = (*instantiate_plugin_func)();
 	if (pl == NULL) {
 		printf("PluginManager: Error, _LoadPlugin instantiate_plugin in %s "
@@ -789,7 +978,7 @@ PluginManager::_LoadPlugin(const entry_ref& ref, MediaPlugin** plugin,
 		unload_add_on(id);
 		return B_ERROR;
 	}
-	
+
 	*plugin = pl;
 	*image = id;
 	return B_OK;

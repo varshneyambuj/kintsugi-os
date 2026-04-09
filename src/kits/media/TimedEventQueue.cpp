@@ -1,7 +1,30 @@
 /*
- * Copyright 2024, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2024, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file TimedEventQueue.cpp
+ *  @brief Implements the time-ordered media event queue used by BMediaEventLooper. */
+
 
 #include <TimedEventQueue.h>
 
@@ -16,6 +39,7 @@
 //	#pragma mark - media_timed_event
 
 
+/** @brief Default constructor; zero-initialises all fields of the event. */
 media_timed_event::media_timed_event()
 {
 	CALLED();
@@ -23,6 +47,10 @@ media_timed_event::media_timed_event()
 }
 
 
+/** @brief Constructs a timed event with a time and type, zeroing all other fields.
+ *
+ *  @param inTime The performance time at which the event should fire.
+ *  @param inType The event type (one of the BTimedEventQueue constants). */
 media_timed_event::media_timed_event(bigtime_t inTime, int32 inType)
 {
 	CALLED();
@@ -33,6 +61,12 @@ media_timed_event::media_timed_event(bigtime_t inTime, int32 inType)
 }
 
 
+/** @brief Constructs a timed event with time, type, a pointer, and a cleanup policy.
+ *
+ *  @param inTime    The performance time at which the event should fire.
+ *  @param inType    The event type.
+ *  @param inPointer User-defined pointer (e.g. a BBuffer*).
+ *  @param inCleanup Cleanup policy (e.g. BTimedEventQueue::B_RECYCLE_BUFFER). */
 media_timed_event::media_timed_event(bigtime_t inTime, int32 inType,
 	void* inPointer, uint32 inCleanup)
 {
@@ -46,6 +80,16 @@ media_timed_event::media_timed_event(bigtime_t inTime, int32 inType,
 }
 
 
+/** @brief Constructs a fully specified timed event.
+ *
+ *  @param inTime     The performance time at which the event should fire.
+ *  @param inType     The event type.
+ *  @param inPointer  User-defined pointer.
+ *  @param inCleanup  Cleanup policy.
+ *  @param inData     32-bit user data field.
+ *  @param inBigdata  64-bit user data field.
+ *  @param inUserData Pointer to arbitrary user data bytes.
+ *  @param dataSize   Number of bytes to copy from \a inUserData (clamped to user_data capacity). */
 media_timed_event::media_timed_event(bigtime_t inTime, int32 inType,
 	void* inPointer, uint32 inCleanup,
 	int32 inData, int64 inBigdata,
@@ -65,6 +109,8 @@ media_timed_event::media_timed_event(bigtime_t inTime, int32 inType,
 }
 
 
+/** @brief Copy constructor; performs a bitwise copy of all fields.
+ *  @param clone The event to copy. */
 media_timed_event::media_timed_event(const media_timed_event& clone)
 {
 	CALLED();
@@ -72,6 +118,8 @@ media_timed_event::media_timed_event(const media_timed_event& clone)
 }
 
 
+/** @brief Assignment operator; performs a bitwise copy of all fields.
+ *  @param clone The event to copy. */
 void
 media_timed_event::operator=(const media_timed_event& clone)
 {
@@ -80,6 +128,7 @@ media_timed_event::operator=(const media_timed_event& clone)
 }
 
 
+/** @brief Destructor for media_timed_event. */
 media_timed_event::~media_timed_event()
 {
 	CALLED();
@@ -89,6 +138,10 @@ media_timed_event::~media_timed_event()
 //	#pragma mark - media_timed_event global operators
 
 
+/** @brief Returns true if two timed events are bitwise equal.
+ *  @param a Left-hand event.
+ *  @param b Right-hand event.
+ *  @return true if all fields match. */
 bool
 operator==(const media_timed_event& a, const media_timed_event& b)
 {
@@ -97,6 +150,10 @@ operator==(const media_timed_event& a, const media_timed_event& b)
 }
 
 
+/** @brief Returns true if two timed events differ in any field.
+ *  @param a Left-hand event.
+ *  @param b Right-hand event.
+ *  @return true if any field differs. */
 bool
 operator!=(const media_timed_event& a, const media_timed_event& b)
 {
@@ -105,6 +162,10 @@ operator!=(const media_timed_event& a, const media_timed_event& b)
 }
 
 
+/** @brief Returns true if event \a a fires before event \a b.
+ *  @param a Left-hand event.
+ *  @param b Right-hand event.
+ *  @return true if a.event_time < b.event_time. */
 bool
 operator<(const media_timed_event& a, const media_timed_event& b)
 {
@@ -113,6 +174,10 @@ operator<(const media_timed_event& a, const media_timed_event& b)
 }
 
 
+/** @brief Returns true if event \a a fires after event \a b.
+ *  @param a Left-hand event.
+ *  @param b Right-hand event.
+ *  @return true if a.event_time > b.event_time. */
 bool
 operator>(const media_timed_event& a, const media_timed_event& b)
 {
@@ -202,6 +267,7 @@ private:
 using BPrivate::TimedEventQueueData;
 
 
+/** @brief Default constructor; allocates the internal data structure. */
 BTimedEventQueue::BTimedEventQueue()
 	: fData(new TimedEventQueueData)
 {
@@ -209,6 +275,7 @@ BTimedEventQueue::BTimedEventQueue()
 }
 
 
+/** @brief Destructor; flushes all events with cleanup, then deletes the internal data. */
 BTimedEventQueue::~BTimedEventQueue()
 {
 	CALLED();
@@ -218,6 +285,10 @@ BTimedEventQueue::~BTimedEventQueue()
 }
 
 
+/** @brief Inserts a timed event into the queue in chronological order.
+ *
+ *  @param event The event to add; its type must be >= B_START.
+ *  @return B_OK on success, B_BAD_VALUE if the type is too small, or B_NO_MEMORY. */
 status_t
 BTimedEventQueue::AddEvent(const media_timed_event& event)
 {
@@ -237,6 +308,10 @@ BTimedEventQueue::AddEvent(const media_timed_event& event)
 }
 
 
+/** @brief Removes the first event that bitwise-matches \a event from the queue without cleanup.
+ *
+ *  @param event Pointer to the event to search for and remove.
+ *  @return B_OK on success, or B_ERROR if the event was not found. */
 status_t
 BTimedEventQueue::RemoveEvent(const media_timed_event* event)
 {
@@ -261,6 +336,13 @@ BTimedEventQueue::RemoveEvent(const media_timed_event* event)
 }
 
 
+/** @brief Removes the earliest event from the queue.
+ *
+ *  If \a _event is non-NULL, the event is returned without cleanup; otherwise
+ *  the event is cleaned up and freed.
+ *
+ *  @param _event Out-parameter that receives the removed event, or NULL to discard with cleanup.
+ *  @return B_OK on success, or B_ERROR if the queue is empty. */
 status_t
 BTimedEventQueue::RemoveFirstEvent(media_timed_event* _event)
 {
@@ -286,6 +368,10 @@ BTimedEventQueue::RemoveFirstEvent(media_timed_event* _event)
 }
 
 
+/** @brief Inserts a queue_entry into the event list maintaining chronological order.
+ *
+ *  @param newEntry The pre-filled queue_entry to insert.
+ *  @return B_OK on success, or B_ERROR if the queue is in an invalid state. */
 status_t
 TimedEventQueueData::AddEntry(queue_entry* newEntry)
 {
@@ -318,6 +404,9 @@ TimedEventQueueData::AddEntry(queue_entry* newEntry)
 }
 
 
+/** @brief Removes a queue_entry from the event list and decrements the event count.
+ *
+ *  @param entry The entry to remove; must be present in the list. */
 void
 TimedEventQueueData::RemoveEntry(queue_entry* entry)
 {
@@ -328,6 +417,12 @@ TimedEventQueueData::RemoveEntry(queue_entry* entry)
 }
 
 
+/** @brief Performs the cleanup action for an event and frees the entry.
+ *
+ *  Handles B_DELETE (treated as B_USER_CLEANUP), B_NO_CLEANUP (no-op),
+ *  B_RECYCLE_BUFFER, B_EXPIRE_TIMER, and B_USER_CLEANUP (calls the hook).
+ *
+ *  @param entry The entry to clean up and free. */
 void
 TimedEventQueueData::CleanupAndFree(queue_entry* entry)
 {
@@ -357,6 +452,10 @@ TimedEventQueueData::CleanupAndFree(queue_entry* entry)
 }
 
 
+/** @brief Registers a hook function called when events with user-defined cleanup are flushed.
+ *
+ *  @param hook    The cleanup_hook function pointer, or NULL to clear.
+ *  @param context Opaque context pointer forwarded to \a hook on each invocation. */
 void
 BTimedEventQueue::SetCleanupHook(cleanup_hook hook, void* context)
 {
@@ -368,6 +467,8 @@ BTimedEventQueue::SetCleanupHook(cleanup_hook hook, void* context)
 }
 
 
+/** @brief Returns true if the queue contains at least one event.
+ *  @return true if EventCount() > 0. */
 bool
 BTimedEventQueue::HasEvents() const
 {
@@ -378,6 +479,8 @@ BTimedEventQueue::HasEvents() const
 }
 
 
+/** @brief Returns the number of events currently in the queue.
+ *  @return The event count. */
 int32
 BTimedEventQueue::EventCount() const
 {
@@ -388,6 +491,8 @@ BTimedEventQueue::EventCount() const
 }
 
 
+/** @brief Returns a pointer to the earliest event without removing it.
+ *  @return Pointer to the first media_timed_event, or NULL if the queue is empty. */
 const media_timed_event*
 BTimedEventQueue::FirstEvent() const
 {
@@ -401,6 +506,8 @@ BTimedEventQueue::FirstEvent() const
 }
 
 
+/** @brief Returns the performance time of the earliest event.
+ *  @return The event_time of the first event, or B_INFINITE_TIMEOUT if the queue is empty. */
 bigtime_t
 BTimedEventQueue::FirstEventTime() const
 {
@@ -414,6 +521,8 @@ BTimedEventQueue::FirstEventTime() const
 }
 
 
+/** @brief Returns a pointer to the latest event without removing it.
+ *  @return Pointer to the last media_timed_event, or NULL if the queue is empty. */
 const media_timed_event*
 BTimedEventQueue::LastEvent() const
 {
@@ -427,6 +536,8 @@ BTimedEventQueue::LastEvent() const
 }
 
 
+/** @brief Returns the performance time of the latest event.
+ *  @return The event_time of the last event, or B_INFINITE_TIMEOUT if the queue is empty. */
 bigtime_t
 BTimedEventQueue::LastEventTime() const
 {
@@ -440,6 +551,13 @@ BTimedEventQueue::LastEventTime() const
 }
 
 
+/** @brief Finds the first event matching the given time, direction, and type criteria.
+ *
+ *  @param eventTime  Reference time for the search.
+ *  @param direction  One of B_BEFORE_TIME, B_AT_TIME, B_AFTER_TIME, or B_ALWAYS.
+ *  @param inclusive  Whether the event at exactly \a eventTime qualifies.
+ *  @param eventType  Required event type, or B_ANY_EVENT to match all types.
+ *  @return Pointer to the matching event, or NULL if none found. */
 const media_timed_event*
 BTimedEventQueue::FindFirstMatch(bigtime_t eventTime,
 	time_direction direction, bool inclusive, int32 eventType)
@@ -462,6 +580,18 @@ BTimedEventQueue::FindFirstMatch(bigtime_t eventTime,
 }
 
 
+/** @brief Iterates over matching events and calls \a hook on each one.
+ *
+ *  The hook may return B_REMOVE_EVENT (removes and cleans up), B_RESORT_QUEUE
+ *  (re-sorts after all iterations), B_DONE (stop), or B_NO_ACTION (continue).
+ *
+ *  @param hook       Callback invoked for each matching event.
+ *  @param context    Opaque context forwarded to \a hook.
+ *  @param eventTime  Reference time for matching.
+ *  @param direction  Matching direction relative to \a eventTime.
+ *  @param inclusive  Whether events at exactly \a eventTime qualify.
+ *  @param eventType  Required event type, or B_ANY_EVENT.
+ *  @return B_OK always. */
 status_t
 BTimedEventQueue::DoForEach(for_each_hook hook, void* context,
 	bigtime_t eventTime, time_direction direction,
@@ -513,6 +643,13 @@ BTimedEventQueue::DoForEach(for_each_hook hook, void* context,
 }
 
 
+/** @brief Removes and cleans up all events matching the given time, direction, and type criteria.
+ *
+ *  @param eventTime  Reference time for matching.
+ *  @param direction  Matching direction relative to \a eventTime.
+ *  @param inclusive  Whether events at exactly \a eventTime qualify.
+ *  @param eventType  Required event type, or B_ANY_EVENT.
+ *  @return B_OK always. */
 status_t
 BTimedEventQueue::FlushEvents(bigtime_t eventTime, time_direction direction,
 	bool inclusive, int32 eventType)
@@ -536,6 +673,14 @@ BTimedEventQueue::FlushEvents(bigtime_t eventTime, time_direction direction,
 }
 
 
+/** @brief Internal helper: tests whether a single event satisfies the match criteria.
+ *
+ *  @param event      The event to test.
+ *  @param eventTime  Reference time.
+ *  @param direction  One of B_BEFORE_TIME, B_AT_TIME, B_AFTER_TIME, or B_ALWAYS.
+ *  @param inclusive  Whether events at exactly \a eventTime qualify.
+ *  @param eventType  Required event type, or B_ANY_EVENT.
+ *  @return 1 if the event matches, B_NO_ACTION to skip it, or B_DONE to stop iteration. */
 int
 BTimedEventQueue::_Match(const media_timed_event& event,
 	bigtime_t eventTime, time_direction direction,
@@ -570,6 +715,9 @@ BTimedEventQueue::_Match(const media_timed_event& event,
 //	#pragma mark - C++ binary compatibility
 
 
+/** @brief Custom operator new for binary-compatible heap allocation.
+ *  @param size Number of bytes to allocate.
+ *  @return Pointer to allocated memory. */
 void*
 BTimedEventQueue::operator new(size_t size)
 {
@@ -578,6 +726,9 @@ BTimedEventQueue::operator new(size_t size)
 }
 
 
+/** @brief Custom operator delete for binary-compatible deallocation.
+ *  @param ptr Pointer to the memory to free.
+ *  @param s   Size (unused). */
 void
 BTimedEventQueue::operator delete(void* ptr, size_t s)
 {
@@ -586,27 +737,51 @@ BTimedEventQueue::operator delete(void* ptr, size_t s)
 }
 
 
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue0() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue1() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue2() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue3() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue4() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue5() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue6() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue7() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue8() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue9() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue10() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue11() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue12() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue13() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue14() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue15() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue16() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue17() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue18() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue19() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue20() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue21() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue22() {}
+/** @brief Reserved for future binary compatibility. */
 void BTimedEventQueue::_ReservedTimedEventQueue23() {}

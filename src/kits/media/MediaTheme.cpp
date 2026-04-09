@@ -1,10 +1,34 @@
 /*
- * Copyright 2001-2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marcus Overhagen
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marcus Overhagen
+ *       Axel Dörfler, axeld@pinc-software.de
+ */
+
+/** @file MediaTheme.cpp
+ *  @brief Implements BMediaTheme, the abstract base class for themes that
+ *         generate UI controls for BParameterWeb parameter graphs.
  */
 
 
@@ -22,6 +46,9 @@ static mutex sLock = MUTEX_INITIALIZER("media theme lock");
 BMediaTheme* BMediaTheme::sDefaultTheme;
 
 
+/**
+ * @brief Destructor. Frees the name and info strings.
+ */
 BMediaTheme::~BMediaTheme()
 {
 	CALLED();
@@ -31,6 +58,11 @@ BMediaTheme::~BMediaTheme()
 }
 
 
+/**
+ * @brief Return the name of this theme.
+ *
+ * @return Pointer to the theme name string.
+ */
 const char *
 BMediaTheme::Name()
 {
@@ -38,6 +70,11 @@ BMediaTheme::Name()
 }
 
 
+/**
+ * @brief Return the informational description of this theme.
+ *
+ * @return Pointer to the theme info string.
+ */
 const char *
 BMediaTheme::Info()
 {
@@ -45,6 +82,11 @@ BMediaTheme::Info()
 }
 
 
+/**
+ * @brief Return the unique identifier of this theme.
+ *
+ * @return Theme ID.
+ */
 int32
 BMediaTheme::ID()
 {
@@ -52,6 +94,12 @@ BMediaTheme::ID()
 }
 
 
+/**
+ * @brief Retrieve the add-on entry ref for themes that live in add-ons.
+ *
+ * @param ref  If non-NULL and this theme is an add-on, receives the entry ref.
+ * @return true if this theme is an add-on and @p ref was filled in, false otherwise.
+ */
 bool
 BMediaTheme::GetRef(entry_ref* ref)
 {
@@ -63,6 +111,17 @@ BMediaTheme::GetRef(entry_ref* ref)
 }
 
 
+/**
+ * @brief Create a BView that represents the entire parameter web.
+ *
+ * Uses the preferred theme (or @p usingTheme if supplied) to build the view.
+ * Returns a placeholder string view if no theme is available.
+ *
+ * @param web          The parameter web to render.
+ * @param hintRect     Optional hint for the initial view position and size.
+ * @param usingTheme   Theme to use; NULL selects the preferred theme.
+ * @return A newly allocated BView, or NULL on failure.
+ */
 BView *
 BMediaTheme::ViewFor(BParameterWeb* web, const BRect* hintRect,
 	BMediaTheme* usingTheme)
@@ -84,6 +143,15 @@ BMediaTheme::ViewFor(BParameterWeb* web, const BRect* hintRect,
 }
 
 
+/**
+ * @brief Set or reset the application-wide preferred media theme.
+ *
+ * If @p defaultTheme is NULL the preferred theme is reset to the built-in
+ * DefaultMediaTheme. Ownership of @p defaultTheme is transferred.
+ *
+ * @param defaultTheme  New preferred theme, or NULL to reset to the default.
+ * @return B_OK always.
+ */
 status_t
 BMediaTheme::SetPreferredTheme(BMediaTheme* defaultTheme)
 {
@@ -114,6 +182,13 @@ BMediaTheme::SetPreferredTheme(BMediaTheme* defaultTheme)
 }
 
 
+/**
+ * @brief Return the current application-wide preferred media theme.
+ *
+ * Lazily creates a DefaultMediaTheme if none has been installed yet.
+ *
+ * @return Pointer to the preferred BMediaTheme (never NULL).
+ */
 BMediaTheme *
 BMediaTheme::PreferredTheme()
 {
@@ -132,6 +207,12 @@ BMediaTheme::PreferredTheme()
 }
 
 
+/**
+ * @brief Return a background bitmap for the given background kind (not implemented).
+ *
+ * @param bg  Background kind identifier.
+ * @return Always NULL.
+ */
 BBitmap *
 BMediaTheme::BackgroundBitmapFor(bg_kind bg)
 {
@@ -140,6 +221,12 @@ BMediaTheme::BackgroundBitmapFor(bg_kind bg)
 }
 
 
+/**
+ * @brief Return a background colour for the given background kind (not implemented).
+ *
+ * @param bg  Background kind identifier.
+ * @return The system panel background colour.
+ */
 rgb_color
 BMediaTheme::BackgroundColorFor(bg_kind bg)
 {
@@ -148,6 +235,12 @@ BMediaTheme::BackgroundColorFor(bg_kind bg)
 }
 
 
+/**
+ * @brief Return a foreground colour for the given foreground kind (not implemented).
+ *
+ * @param fg  Foreground kind identifier.
+ * @return White {255,255,255}.
+ */
 rgb_color
 BMediaTheme::ForegroundColorFor(fg_kind fg)
 {
@@ -158,6 +251,14 @@ BMediaTheme::ForegroundColorFor(fg_kind fg)
 }
 
 
+/**
+ * @brief Protected constructor for concrete theme subclasses.
+ *
+ * @param name  Human-readable theme name (copied).
+ * @param info  Theme description string (copied).
+ * @param ref   Optional entry ref for add-on themes; NULL for built-in themes.
+ * @param id    Unique theme identifier.
+ */
 //! protected BMediaTheme
 BMediaTheme::BMediaTheme(const char* name, const char* info,
 	const entry_ref* ref, int32 id)
@@ -177,6 +278,13 @@ BMediaTheme::BMediaTheme(const char* name, const char* info,
 }
 
 
+/**
+ * @brief Create a default fallback control view for a parameter using the
+ *        built-in DefaultMediaTheme.
+ *
+ * @param parameter  The parameter for which to create a view; may be NULL.
+ * @return A BControl, or NULL if @p parameter is NULL.
+ */
 BControl *
 BMediaTheme::MakeFallbackViewFor(BParameter *parameter)
 {
@@ -194,12 +302,19 @@ BMediaTheme::BMediaTheme(const BMediaTheme &clone)
 BMediaTheme & BMediaTheme::operator=(const BMediaTheme &clone)
 */
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTheme::_Reserved_ControlTheme_7(void *) { return B_ERROR; }
-

@@ -1,10 +1,33 @@
 /*
- * Copyright 2002-2009, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marcus Overhagen
- *		Jérôme Duval
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2009, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marcus Overhagen
+ *       Jérôme Duval
+ */
+
+/** @file MediaFiles.cpp
+ *  @brief Implementation of BMediaFiles for querying and managing system media file associations.
  */
 
 
@@ -18,6 +41,7 @@
 const char BMediaFiles::B_SOUNDS[] = "Sounds";
 
 
+/** @brief Default constructor; initialises the type and item iteration indices. */
 BMediaFiles::BMediaFiles()
 	:
 	fTypeIndex(-1),
@@ -27,6 +51,7 @@ BMediaFiles::BMediaFiles()
 }
 
 
+/** @brief Destructor; frees cached type and item lists. */
 BMediaFiles::~BMediaFiles()
 {
 	_ClearTypes();
@@ -34,6 +59,9 @@ BMediaFiles::~BMediaFiles()
 }
 
 
+/** @brief Queries the media server for all registered media file types and rewinds iteration.
+ *  @return B_OK on success, or an error code from the server query.
+ */
 status_t
 BMediaFiles::RewindTypes()
 {
@@ -64,6 +92,11 @@ BMediaFiles::RewindTypes()
 }
 
 
+/** @brief Returns the next media file type string from the cached list.
+ *         Must call RewindTypes() before the first call.
+ *  @param _type Pointer to a BString to receive the type name.
+ *  @return B_OK on success, B_BAD_INDEX when the list is exhausted.
+ */
 status_t
 BMediaFiles::GetNextType(BString* _type)
 {
@@ -81,6 +114,10 @@ BMediaFiles::GetNextType(BString* _type)
 }
 
 
+/** @brief Queries the media server for all items registered under the given type and rewinds iteration.
+ *  @param type The type string to enumerate items for.
+ *  @return B_OK on success, or an error code from the server query.
+ */
 status_t
 BMediaFiles::RewindRefs(const char* type)
 {
@@ -118,6 +155,12 @@ BMediaFiles::RewindRefs(const char* type)
 }
 
 
+/** @brief Returns the next item name and its associated entry_ref under the current type.
+ *         Must call RewindRefs() before the first call.
+ *  @param _type Output BString to receive the item name.
+ *  @param _ref  Output entry_ref to receive the file reference.
+ *  @return B_OK on success, B_BAD_INDEX when the list is exhausted.
+ */
 status_t
 BMediaFiles::GetNextRef(BString* _type, entry_ref* _ref)
 {
@@ -136,6 +179,12 @@ BMediaFiles::GetNextRef(BString* _type, entry_ref* _ref)
 }
 
 
+/** @brief Retrieves the entry_ref for the named item within the given type.
+ *  @param type The type string.
+ *  @param item The item name.
+ *  @param _ref Output pointer to receive the entry_ref.
+ *  @return B_OK on success, B_BAD_VALUE if any argument is NULL, or an error code.
+ */
 status_t
 BMediaFiles::GetRefFor(const char* type, const char* item, entry_ref* _ref)
 {
@@ -161,6 +210,12 @@ BMediaFiles::GetRefFor(const char* type, const char* item, entry_ref* _ref)
 }
 
 
+/** @brief Retrieves the playback audio gain for the named item within the given type.
+ *  @param type  The type string.
+ *  @param item  The item name.
+ *  @param _gain Output pointer to receive the gain value.
+ *  @return B_OK on success, B_BAD_VALUE if any argument is NULL, or an error code.
+ */
 status_t
 BMediaFiles::GetAudioGainFor(const char* type, const char* item, float* _gain)
 {
@@ -186,6 +241,12 @@ BMediaFiles::GetAudioGainFor(const char* type, const char* item, float* _gain)
 }
 
 
+/** @brief Associates an entry_ref with the named item under the given type.
+ *  @param type The type string.
+ *  @param item The item name.
+ *  @param ref  The entry_ref to associate.
+ *  @return B_OK on success, or an error code from the server.
+ */
 status_t
 BMediaFiles::SetRefFor(const char* type, const char* item,
 	const entry_ref& ref)
@@ -209,6 +270,12 @@ BMediaFiles::SetRefFor(const char* type, const char* item,
 }
 
 
+/** @brief Sets the playback audio gain for the named item under the given type.
+ *  @param type The type string.
+ *  @param item The item name.
+ *  @param gain The new gain value.
+ *  @return B_OK on success, or an error code from the server.
+ */
 status_t
 BMediaFiles::SetAudioGainFor(const char* type, const char* item, float gain)
 {
@@ -231,6 +298,12 @@ BMediaFiles::SetAudioGainFor(const char* type, const char* item, float gain)
 }
 
 
+/** @brief Removes (invalidates) the file reference for the named item.
+ *  @param type The type string.
+ *  @param item The item name.
+ *  @param ref  The entry_ref to invalidate (used for identification).
+ *  @return B_OK on success, or an error code from the server.
+ */
 status_t
 BMediaFiles::RemoveRefFor(const char* type, const char* item,
 	const entry_ref &ref)
@@ -253,6 +326,11 @@ BMediaFiles::RemoveRefFor(const char* type, const char* item,
 }
 
 
+/** @brief Removes the named item entirely from the given type.
+ *  @param type The type string.
+ *  @param item The item name to remove.
+ *  @return B_OK on success, or an error code from the server.
+ */
 status_t
 BMediaFiles::RemoveItem(const char* type, const char* item)
 {
@@ -277,6 +355,7 @@ BMediaFiles::RemoveItem(const char* type, const char* item)
 // #pragma mark - private
 
 
+/** @brief Frees all cached type strings and empties the types list. */
 void
 BMediaFiles::_ClearTypes()
 {
@@ -287,6 +366,7 @@ BMediaFiles::_ClearTypes()
 }
 
 
+/** @brief Frees all cached item strings and empties the items list. */
 void
 BMediaFiles::_ClearItems()
 {
@@ -300,6 +380,7 @@ BMediaFiles::_ClearItems()
 // #pragma mark - FBC padding
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t
 BMediaFiles::_Reserved_MediaFiles_0(void*,...)
 {
@@ -308,11 +389,18 @@ BMediaFiles::_Reserved_MediaFiles_0(void*,...)
 }
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_1(void*,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_2(void*,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_3(void*,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_4(void*,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_5(void*,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_6(void*,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaFiles::_Reserved_MediaFiles_7(void*,...) { return B_ERROR; }
 

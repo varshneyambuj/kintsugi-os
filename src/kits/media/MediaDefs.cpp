@@ -1,11 +1,35 @@
 /*
- * Copyright 2015, Dario Casalinuovo
- * Copyright 2004, 2006, Jérôme Duval.
- * Copyright 2003-2004, Andrew Bachmann.
- * Copyright 2002-2004, 2006 Marcus Overhagen.
- * Copyright 2002, Eric Jaessler.
- * All rights reserved. Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Dario Casalinuovo
+ *   Copyright 2004, 2006, Jérôme Duval.
+ *   Copyright 2003-2004, Andrew Bachmann.
+ *   Copyright 2002-2004, 2006 Marcus Overhagen.
+ *   Copyright 2002, Eric Jaessler.
+ *   All rights reserved. Distributed under the terms of the MIT license.
  */
+
+/** @file MediaDefs.cpp
+ *  @brief Definitions and implementations for core media-kit types, format
+ *         comparison/specialisation helpers, server lifecycle functions, and
+ *         miscellaneous media utilities. */
 
 
 #include <MediaDefs.h>
@@ -44,6 +68,9 @@
 // #pragma mark - media_destination
 
 
+/** @brief Constructs a media_destination with explicit port and ID values.
+ *  @param port  The port_id of the consumer.
+ *  @param id    The connection ID within that port. */
 media_destination::media_destination(port_id port, int32 id)
 	:
 	port(port),
@@ -52,6 +79,8 @@ media_destination::media_destination(port_id port, int32 id)
 }
 
 
+/** @brief Copy constructor.
+ *  @param clone  The source media_destination to copy. */
 media_destination::media_destination(const media_destination& clone)
 	:
 	port(clone.port),
@@ -60,6 +89,9 @@ media_destination::media_destination(const media_destination& clone)
 }
 
 
+/** @brief Assignment operator.
+ *  @param clone  The source media_destination to copy.
+ *  @return Reference to \c *this. */
 media_destination&
 media_destination::operator=(const media_destination& clone)
 {
@@ -69,6 +101,7 @@ media_destination::operator=(const media_destination& clone)
 }
 
 
+/** @brief Default constructor; initialises port and ID to -1 (invalid). */
 media_destination::media_destination()
 	:
 	port(-1),
@@ -77,6 +110,7 @@ media_destination::media_destination()
 }
 
 
+/** @brief Destructor. */
 media_destination::~media_destination()
 {
 }
@@ -88,6 +122,9 @@ media_destination media_destination::null(-1, -1);
 // #pragma mark - media_source
 
 
+/** @brief Constructs a media_source with explicit port and ID values.
+ *  @param port  The port_id of the producer.
+ *  @param id    The output ID within that port. */
 media_source::media_source(port_id port,
 						   int32 id)
 	:
@@ -97,6 +134,8 @@ media_source::media_source(port_id port,
 }
 
 
+/** @brief Copy constructor.
+ *  @param clone  The source media_source to copy. */
 media_source::media_source(const media_source& clone)
 	:
 	port(clone.port),
@@ -105,6 +144,9 @@ media_source::media_source(const media_source& clone)
 }
 
 
+/** @brief Assignment operator.
+ *  @param clone  The source media_source to copy.
+ *  @return Reference to \c *this. */
 media_source&
 media_source::operator=(const media_source& clone)
 {
@@ -114,6 +156,7 @@ media_source::operator=(const media_source& clone)
 }
 
 
+/** @brief Default constructor; initialises port and ID to -1 (invalid). */
 media_source::media_source()
 	:
 	port(-1),
@@ -122,6 +165,7 @@ media_source::media_source()
 }
 
 
+/** @brief Destructor. */
 media_source::~media_source()
 {
 }
@@ -133,6 +177,10 @@ media_source media_source::null(-1, -1);
 // #pragma mark -
 
 
+/** @brief Equality operator for media_destination.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if port and id are equal. */
 bool
 operator==(const media_destination& a, const media_destination& b)
 {
@@ -140,6 +188,10 @@ operator==(const media_destination& a, const media_destination& b)
 }
 
 
+/** @brief Inequality operator for media_destination.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if port or id differ. */
 bool
 operator!=(const media_destination& a, const media_destination& b)
 {
@@ -147,6 +199,10 @@ operator!=(const media_destination& a, const media_destination& b)
 }
 
 
+/** @brief Less-than operator for media_destination (not yet implemented).
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c false always (unimplemented). */
 bool
 operator<(const media_destination& a, const media_destination& b)
 {
@@ -155,6 +211,10 @@ operator<(const media_destination& a, const media_destination& b)
 }
 
 
+/** @brief Equality operator for media_source.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if port and id are equal. */
 bool
 operator==(const media_source& a, const media_source& b)
 {
@@ -162,6 +222,10 @@ operator==(const media_source& a, const media_source& b)
 }
 
 
+/** @brief Inequality operator for media_source.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if port or id differ. */
 bool
 operator!=(const media_source& a, const media_source& b)
 {
@@ -169,6 +233,10 @@ operator!=(const media_source& a, const media_source& b)
 }
 
 
+/** @brief Less-than operator for media_source (not yet implemented).
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c false always (unimplemented). */
 bool
 operator<(const media_source& a, const media_source& b)
 {
@@ -177,6 +245,10 @@ operator<(const media_source& a, const media_source& b)
 }
 
 
+/** @brief Equality operator for media_node.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if node, port, and kind are all equal. */
 bool
 operator==(const media_node& a, const media_node& b)
 {
@@ -184,6 +256,10 @@ operator==(const media_node& a, const media_node& b)
 }
 
 
+/** @brief Inequality operator for media_node.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if any of node, port, or kind differ. */
 bool
 operator!=(const media_node& a, const media_node& b)
 {
@@ -191,6 +267,10 @@ operator!=(const media_node& a, const media_node& b)
 }
 
 
+/** @brief Less-than operator for media_node (not yet implemented).
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c false always (unimplemented). */
 bool
 operator<(const media_node& a, const media_node& b)
 {
@@ -228,6 +308,11 @@ const media_multistream_format media_multistream_format::wildcard = {};
 // #pragma mark - media_format::Matches() support
 
 
+/** @brief Returns whether two raw audio formats are mutually compatible
+ *         (treating 0 as a wildcard in either operand).
+ *  @param a  First format.
+ *  @param b  Second format.
+ *  @return \c true if all non-zero fields agree. */
 static bool
 raw_audio_format_matches(const media_raw_audio_format& a,
 	const media_raw_audio_format& b)
@@ -252,6 +337,10 @@ raw_audio_format_matches(const media_raw_audio_format& a,
 }
 
 
+/** @brief Returns whether two multi-channel audio info structs are compatible.
+ *  @param a  First info.
+ *  @param b  Second info.
+ *  @return \c true if all non-zero fields agree. */
 static bool
 multi_audio_info_matches(const media_multi_audio_info& a,
 	const media_multi_audio_info& b)
@@ -270,6 +359,10 @@ multi_audio_info_matches(const media_multi_audio_info& a,
 }
 
 
+/** @brief Returns whether two multi-channel audio formats are compatible.
+ *  @param a  First format.
+ *  @param b  Second format.
+ *  @return \c true if raw audio and multi-channel info both match. */
 static bool
 multi_audio_format_matches(const media_multi_audio_format& a,
 	const media_multi_audio_format& b)
@@ -278,6 +371,10 @@ multi_audio_format_matches(const media_multi_audio_format& a,
 }
 
 
+/** @brief Returns whether two raw video formats are compatible.
+ *  @param a  First format.
+ *  @param b  Second format.
+ *  @return \c true if all non-zero fields agree. */
 static bool
 raw_video_format_matches(const media_raw_video_format& a,
 	const media_raw_video_format& b)
@@ -343,6 +440,10 @@ raw_video_format_matches(const media_raw_video_format& a,
 }
 
 
+/** @brief Returns whether two multistream formats are compatible.
+ *  @param a  First format.
+ *  @param b  Second format.
+ *  @return \c true if all non-zero fields (including sub-type fields) agree. */
 static bool
 multistream_format_matches(const media_multistream_format& a,
 	const media_multistream_format& b)
@@ -454,6 +555,10 @@ multistream_format_matches(const media_multistream_format& a,
 }
 
 
+/** @brief Returns whether two encoded audio formats are compatible.
+ *  @param a  First format.
+ *  @param b  Second format.
+ *  @return \c true if encoding, bit rate, frame size, and output formats all agree. */
 static bool
 encoded_audio_format_matches(const media_encoded_audio_format& a,
 	const media_encoded_audio_format& b)
@@ -480,6 +585,10 @@ encoded_audio_format_matches(const media_encoded_audio_format& a,
 }
 
 
+/** @brief Returns whether two encoded video formats are compatible.
+ *  @param a  First format.
+ *  @param b  Second format.
+ *  @return \c true if encoding, bit rates, frame size, histories, and output agree. */
 static bool
 encoded_video_format_matches(const media_encoded_video_format& a,
 	const media_encoded_video_format& b)
@@ -524,6 +633,9 @@ encoded_video_format_matches(const media_encoded_video_format& a,
 // #pragma mark - media_format::SpecializeTo() support
 
 
+/** @brief Fills wildcard (zero) fields in \a format from \a other for raw audio.
+ *  @param format  The format to specialise (modified in place).
+ *  @param other   The reference format supplying non-zero values. */
 static void
 raw_audio_format_specialize(media_raw_audio_format* format,
 	const media_raw_audio_format* other)
@@ -543,6 +655,10 @@ raw_audio_format_specialize(media_raw_audio_format* format,
 }
 
 
+/** @brief Fills wildcard fields in \a format from \a other for multi-channel audio
+ *         info.
+ *  @param format  The info struct to specialise (modified in place).
+ *  @param other   The reference info struct. */
 static void
 multi_audio_info_specialize(media_multi_audio_info* format,
 	const media_multi_audio_info* other)
@@ -556,6 +672,9 @@ multi_audio_info_specialize(media_multi_audio_info* format,
 }
 
 
+/** @brief Fills wildcard fields in \a format from \a other for multi-channel audio.
+ *  @param format  The format to specialise (modified in place).
+ *  @param other   The reference format. */
 static void
 multi_audio_format_specialize(media_multi_audio_format* format,
 	const media_multi_audio_format* other)
@@ -565,6 +684,9 @@ multi_audio_format_specialize(media_multi_audio_format* format,
 }
 
 
+/** @brief Fills wildcard fields in \a format from \a other for raw video.
+ *  @param format  The format to specialise (modified in place).
+ *  @param other   The reference format. */
 static void
 raw_video_format_specialize(media_raw_video_format* format,
 	const media_raw_video_format* other)
@@ -600,6 +722,10 @@ raw_video_format_specialize(media_raw_video_format* format,
 }
 
 
+/** @brief Fills wildcard fields in \a format from \a other for multistream formats,
+ *         including sub-type-specific fields.
+ *  @param format  The format to specialise (modified in place).
+ *  @param other   The reference format. */
 static void
 multistream_format_specialize(media_multistream_format* format,
 	const media_multistream_format* other)
@@ -666,6 +792,9 @@ multistream_format_specialize(media_multistream_format* format,
 }
 
 
+/** @brief Fills wildcard fields in \a format from \a other for encoded audio.
+ *  @param format  The format to specialise (modified in place).
+ *  @param other   The reference format. */
 static void
 encoded_audio_format_specialize(media_encoded_audio_format* format,
 	const media_encoded_audio_format* other)
@@ -681,6 +810,9 @@ encoded_audio_format_specialize(media_encoded_audio_format* format,
 }
 
 
+/** @brief Fills wildcard fields in \a format from \a other for encoded video.
+ *  @param format  The format to specialise (modified in place).
+ *  @param other   The reference format. */
 static void
 encoded_video_format_specialize(media_encoded_video_format* format,
 	const media_encoded_video_format* other)
@@ -704,6 +836,10 @@ encoded_video_format_specialize(media_encoded_video_format* format,
 // #pragma mark - media_format
 
 
+/** @brief Returns whether this format is compatible with \a other, treating 0
+ *         as a wildcard in either operand.
+ *  @param other  The format to compare against.
+ *  @return \c true if the formats are mutually compatible. */
 bool
 media_format::Matches(const media_format* other) const
 {
@@ -742,6 +878,11 @@ media_format::Matches(const media_format* other) const
 }
 
 
+/** @brief Fills wildcard (zero) fields in this format from \a otherFormat.
+ *
+ *  At least one of the two formats must have a non-zero type.
+ *
+ *  @param otherFormat  The reference format supplying non-zero values. */
 void
 media_format::SpecializeTo(const media_format* otherFormat)
 {
@@ -789,6 +930,15 @@ media_format::SpecializeTo(const media_format* otherFormat)
 }
 
 
+/** @brief Attaches opaque meta-data to this format.
+ *
+ *  Small blocks (< META_DATA_AREA_MIN_SIZE) are heap-allocated; larger blocks
+ *  use a cloneable shared-memory area.
+ *
+ *  @param data  Pointer to the meta-data to copy.
+ *  @param size  Size of the meta-data in bytes (must be <= META_DATA_MAX_SIZE).
+ *  @return B_OK on success, B_BAD_VALUE for invalid parameters, B_NO_MEMORY on
+ *          allocation failure. */
 status_t
 media_format::SetMetaData(const void* data, size_t size)
 {
@@ -827,6 +977,9 @@ media_format::SetMetaData(const void* data, size_t size)
 }
 
 
+/** @brief Returns a pointer to the opaque meta-data attached to this format, or
+ *         \c NULL if none has been set.
+ *  @return Pointer to the meta-data buffer. */
 const void*
 media_format::MetaData() const
 {
@@ -834,6 +987,8 @@ media_format::MetaData() const
 }
 
 
+/** @brief Returns the size in bytes of the attached meta-data.
+ *  @return Meta-data size, or 0 if none is attached. */
 int32
 media_format::MetaDataSize() const
 {
@@ -841,6 +996,12 @@ media_format::MetaDataSize() const
 }
 
 
+/** @brief Initialises this format from a flat binary buffer (no meta-data).
+ *
+ *  @warning This makes a raw binary copy and intentionally discards any
+ *           meta-data pointers/areas in the buffer.
+ *
+ *  @param flatBuffer  Pointer to a flat representation of a media_format. */
 void
 media_format::Unflatten(const char *flatBuffer)
 {
@@ -851,6 +1012,7 @@ media_format::Unflatten(const char *flatBuffer)
 }
 
 
+/** @brief Resets all fields to zero and marks meta-data as absent. */
 void
 media_format::Clear()
 {
@@ -860,12 +1022,15 @@ media_format::Clear()
 }
 
 
+/** @brief Default constructor; clears all fields via Clear(). */
 media_format::media_format()
 {
 	this->Clear();
 }
 
 
+/** @brief Copy constructor; performs a deep copy including meta-data.
+ *  @param other  The source format to copy. */
 media_format::media_format(const media_format& other)
 {
 	this->Clear();
@@ -873,6 +1038,7 @@ media_format::media_format(const media_format& other)
 }
 
 
+/** @brief Destructor; releases any attached meta-data area or heap block. */
 media_format::~media_format()
 {
 	if (meta_data_area > 0)
@@ -882,6 +1048,10 @@ media_format::~media_format()
 }
 
 
+/** @brief Assignment operator; performs a deep copy of the format including
+ *         meta-data (clones the area or duplicates the heap block).
+ *  @param clone  The source format to copy.
+ *  @return Reference to \c *this. */
 // final
 media_format&
 media_format::operator=(const media_format& clone)
@@ -923,6 +1093,10 @@ media_format::operator=(const media_format& clone)
 // #pragma mark -
 
 
+/** @brief Equality operator for media_raw_audio_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_raw_audio_format& a, const media_raw_audio_format& b)
 {
@@ -934,6 +1108,10 @@ operator==(const media_raw_audio_format& a, const media_raw_audio_format& b)
 }
 
 
+/** @brief Equality operator for media_multi_audio_info.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_multi_audio_info& a, const media_multi_audio_info& b)
 {
@@ -943,6 +1121,10 @@ operator==(const media_multi_audio_info& a, const media_multi_audio_info& b)
 }
 
 
+/** @brief Equality operator for media_multi_audio_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_multi_audio_format& a,
 	const media_multi_audio_format& b)
@@ -952,6 +1134,10 @@ operator==(const media_multi_audio_format& a,
 }
 
 
+/** @brief Equality operator for media_encoded_audio_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_encoded_audio_format& a,
 	const media_encoded_audio_format& b)
@@ -964,6 +1150,10 @@ operator==(const media_encoded_audio_format& a,
 }
 
 
+/** @brief Equality operator for media_video_display_info.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_video_display_info& a,
 	const media_video_display_info& b)
@@ -978,6 +1168,10 @@ operator==(const media_video_display_info& a,
 }
 
 
+/** @brief Equality operator for media_raw_video_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_raw_video_format& a, const media_raw_video_format& b)
 {
@@ -992,6 +1186,10 @@ operator==(const media_raw_video_format& a, const media_raw_video_format& b)
 }
 
 
+/** @brief Equality operator for media_encoded_video_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_encoded_video_format& a,
 	const media_encoded_video_format& b)
@@ -1006,6 +1204,10 @@ operator==(const media_encoded_video_format& a,
 }
 
 
+/** @brief Equality operator for media_multistream_format::vid_info.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_multistream_format::vid_info& a,
 	const media_multistream_format::vid_info& b)
@@ -1021,6 +1223,10 @@ operator==(const media_multistream_format::vid_info& a,
 }
 
 
+/** @brief Equality operator for media_multistream_format::avi_info.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields are equal. */
 bool
 operator==(const media_multistream_format::avi_info& a,
 	const media_multistream_format::avi_info& b)
@@ -1037,6 +1243,10 @@ operator==(const media_multistream_format::avi_info& a,
 }
 
 
+/** @brief Equality operator for media_multistream_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if all fields including the sub-type union are equal. */
 bool
 operator==(const media_multistream_format& a,
 	const media_multistream_format& b)
@@ -1063,6 +1273,10 @@ operator==(const media_multistream_format& a,
 }
 
 
+/** @brief Equality operator for media_format.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if type, user_data_type, flags, and union content are equal. */
 bool
 operator==(const media_format& a, const media_format& b)
 {
@@ -1102,6 +1316,10 @@ operator==(const media_format& a, const media_format& b)
 /*! return \c true if a and b are compatible (accounting for wildcards)
 	a is the format you want to feed to something accepting b
 */
+/** @brief Returns whether format \a a can be fed to a consumer that accepts \a b.
+ *  @param a  The format to offer.
+ *  @param b  The format the consumer accepts.
+ *  @return \c true if \a a matches \a b (wildcard-aware). */
 bool
 format_is_compatible(const media_format& a, const media_format& b)
 {
@@ -1109,6 +1327,11 @@ format_is_compatible(const media_format& a, const media_format& b)
 }
 
 
+/** @brief Fills \a buf with a human-readable string representation of \a f.
+ *  @param f     The media_format to describe.
+ *  @param buf   Output buffer.
+ *  @param size  Size of \a buf in bytes.
+ *  @return \c true if the format was recognised and the string was written. */
 bool
 string_for_format(const media_format& f, char* buf, size_t size)
 {
@@ -1207,6 +1430,10 @@ string_for_format(const media_format& f, char* buf, size_t size)
 // #pragma mark -
 
 
+/** @brief Equality operator for media_file_format_id.
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if node, device, and internal_id are all equal. */
 bool
 operator==(const media_file_format_id& a, const media_file_format_id& b)
 {
@@ -1215,6 +1442,10 @@ operator==(const media_file_format_id& a, const media_file_format_id& b)
 }
 
 
+/** @brief Less-than operator for media_file_format_id (compares internal_id only).
+ *  @param a  Left-hand side.
+ *  @param b  Right-hand side.
+ *  @return \c true if a.internal_id < b.internal_id. */
 bool
 operator<(const media_file_format_id& a, const media_file_format_id& b)
 {
@@ -1225,7 +1456,10 @@ operator<(const media_file_format_id& a, const media_file_format_id& b)
 // #pragma mark -
 
 
-//! Use this function to iterate through available file format writers.
+/** @brief Iterates through available file-format writers.
+ *  @param cookie  Iterator cookie; start at 0 and increment between calls.
+ *  @param mff     Receives the next media_file_format on success.
+ *  @return B_OK while formats remain, B_BAD_INDEX when exhausted. */
 status_t
 get_next_file_format(int32* cookie, media_file_format* mff)
 {
@@ -1261,6 +1495,9 @@ const type_code B_CODEC_TYPE_INFO = 0x040807b2;
 #define MEDIA_SERVICE_NOTIFICATION_ID "MediaServiceNotificationID"
 
 
+/** @brief Sends a progress notification to the system notification center.
+ *  @param progress  Fraction complete (0.0–1.0).
+ *  @param message   Human-readable status string. */
 void
 notify_system(float progress, const char* message)
 {
@@ -1282,6 +1519,11 @@ notify_system(float progress, const char* message)
 }
 
 
+/** @brief Translates a shutdown stage number to a localised string and either
+ *         calls \a progress or sends a system notification.
+ *  @param stage    Shutdown stage (10, 20, 40, 50, 70, or 100).
+ *  @param progress Optional callback; if \c NULL, notify_system() is used.
+ *  @param cookie   Opaque value passed through to \a progress. */
 void
 progress_shutdown(int stage,
 	bool (*progress)(int stage, const char* message, void* cookie),
@@ -1320,6 +1562,12 @@ progress_shutdown(int stage,
 }
 
 
+/** @brief Requests the media_server and media_addon_server to quit, killing them
+ *         if they do not respond within the timeout.
+ *  @param timeout   Maximum wait time per server (currently unused internally).
+ *  @param progress  Optional callback receiving stage and message strings.
+ *  @param cookie    Opaque value passed to \a progress.
+ *  @return B_OK on success, or an error code if the roster is unavailable. */
 status_t
 shutdown_media_server(bigtime_t timeout,
 	bool (*progress)(int stage, const char* message, void* cookie),
@@ -1397,6 +1645,11 @@ shutdown_media_server(bigtime_t timeout,
 }
 
 
+/** @brief Translates a startup stage number to a localised string and either
+ *         calls \a progress or sends a system notification.
+ *  @param stage    Startup stage (10, 20, 50, 90, or 100).
+ *  @param progress Optional callback; if \c NULL, notify_system() is used.
+ *  @param cookie   Opaque value passed to \a progress. */
 void
 progress_startup(int stage,
 	bool (*progress)(int stage, const char* message, void* cookie),
@@ -1432,6 +1685,14 @@ progress_startup(int stage,
 }
 
 
+/** @brief Launches the media_server (and media_addon_server), killing any stale
+ *         instances first if necessary.
+ *  @param timeout   Unused; reserved for future use.
+ *  @param progress  Optional callback receiving stage and message strings.
+ *  @param cookie    Opaque value passed to \a progress.
+ *  @param flags     Reserved; pass 0.
+ *  @return B_ALREADY_RUNNING if already running, B_OK on success, or an error
+ *          code on failure. */
 status_t
 launch_media_server(bigtime_t timeout,
 	bool (*progress)(int stage, const char* message, void* cookie),
@@ -1480,6 +1741,8 @@ launch_media_server(bigtime_t timeout,
 // #pragma mark - media_encode_info
 
 
+/** @brief Default constructor; zeroes all fields and sets time-to-encode to the
+ *         maximum representable value. */
 media_encode_info::media_encode_info()
 {
 	flags = 0;
@@ -1493,6 +1756,8 @@ media_encode_info::media_encode_info()
 }
 
 
+/** @brief Default constructor; zeroes all fields and sets time-to-decode to the
+ *         maximum representable value. */
 media_decode_info::media_decode_info()
 {
 	time_to_decode = INT64_MAX;

@@ -1,30 +1,52 @@
 /*
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
+
+/** @file BufferConsumer.cpp
+ *  @brief Implements BBufferConsumer, the media node mixin for receiving data buffers. */
 
 
 #include "BufferCache.h"
@@ -45,6 +67,7 @@
 
 
 
+/** @brief Destructor; releases the buffer cache and any pending delete buffer group. */
 BBufferConsumer::~BBufferConsumer()
 {
 	CALLED();
@@ -56,6 +79,8 @@ BBufferConsumer::~BBufferConsumer()
 // #pragma mark - public BBufferConsumer
 
 
+/** @brief Returns the media type this consumer accepts.
+ *  @return The media_type value set at construction time. */
 media_type
 BBufferConsumer::ConsumerType()
 {
@@ -64,6 +89,13 @@ BBufferConsumer::ConsumerType()
 }
 
 
+/** @brief Converts a BRegion clip into B_CLIP_SHORT_RUNS encoded data.
+ *
+ *  @param region  Source BRegion to encode.
+ *  @param _format Out-parameter set to B_CLIP_SHORT_RUNS on return.
+ *  @param _size   In: capacity of \a data in bytes; out: bytes actually written.
+ *  @param data    Buffer to receive the encoded short-run data.
+ *  @return B_OK on success, or an error code. */
 /*static*/ status_t
 BBufferConsumer::RegionToClipData(const BRegion* region, int32* _format,
 	int32 *_size, void* data)
@@ -84,6 +116,11 @@ BBufferConsumer::RegionToClipData(const BRegion* region, int32* _format,
 // #pragma mark - protected BBufferConsumer
 
 
+/** @brief Constructs a BBufferConsumer of the given media type.
+ *
+ *  Creates the internal buffer cache and registers this node as a B_BUFFER_CONSUMER kind.
+ *
+ *  @param consumerType The media type this consumer will accept. */
 BBufferConsumer::BBufferConsumer(media_type consumerType)
 	:
 	BMediaNode("called by BBufferConsumer"),
@@ -97,6 +134,13 @@ BBufferConsumer::BBufferConsumer(media_type consumerType)
 }
 
 
+/** @brief Notifies a producer that it has delivered a buffer late.
+ *
+ *  Sends a PRODUCER_LATE_NOTICE_RECEIVED message to the producer's port.
+ *
+ *  @param whatSource     The media source that produced the late buffer.
+ *  @param howMuch        How late the buffer was (in microseconds).
+ *  @param performanceTime The performance time at which the buffer was expected. */
 /*static*/ void
 BBufferConsumer::NotifyLateProducer(const media_source& whatSource,
 	bigtime_t howMuch, bigtime_t performanceTime)
@@ -115,6 +159,17 @@ BBufferConsumer::NotifyLateProducer(const media_source& whatSource,
 }
 
 
+/** @brief Requests a change to the video clipping of an output.
+ *
+ *  @param output      The producer source to clip.
+ *  @param destination The consumer destination associated with the output.
+ *  @param shorts      Clip data in B_CLIP_SHORT_RUNS format.
+ *  @param shortCount  Number of int16 values in \a shorts.
+ *  @param display     Video display geometry used for clipping.
+ *  @param userData    User-defined data returned in the completion notification.
+ *  @param _changeTag  Out-parameter receiving the change tag, or NULL.
+ *  @param _reserved_  Reserved; must be NULL.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::SetVideoClippingFor(const media_source& output,
 	const media_destination& destination, const int16* shorts, int32 shortCount,
@@ -158,6 +213,15 @@ BBufferConsumer::SetVideoClippingFor(const media_source& output,
 }
 
 
+/** @brief Enables or disables a producer's output.
+ *
+ *  @param source      The output source to enable or disable.
+ *  @param destination The consumer destination of the connection.
+ *  @param enabled     true to enable the output, false to disable it.
+ *  @param user_data   User-defined data returned in the completion notification.
+ *  @param change_tag  Out-parameter receiving the change tag, or NULL.
+ *  @param _reserved_  Reserved; must be NULL.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::SetOutputEnabled(const media_source &source,
 								  const media_destination &destination,
@@ -186,6 +250,15 @@ BBufferConsumer::SetOutputEnabled(const media_source &source,
 }
 
 
+/** @brief Asks a producer to change its output format.
+ *
+ *  @param source      The output source to change.
+ *  @param destination The consumer destination of the connection.
+ *  @param to_format   The desired new format.
+ *  @param user_data   User-defined data returned in the completion notification.
+ *  @param change_tag  Out-parameter receiving the change tag, or NULL.
+ *  @param _reserved_  Reserved; must be NULL.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::RequestFormatChange(const media_source &source,
 									 const media_destination &destination,
@@ -214,6 +287,12 @@ BBufferConsumer::RequestFormatChange(const media_source &source,
 }
 
 
+/** @brief Requests an additional buffer from a producer, identified by the previous buffer.
+ *
+ *  @param source       The producer source to query.
+ *  @param prev_buffer  The most recently received BBuffer.
+ *  @param _reserved    Reserved; must be NULL.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::RequestAdditionalBuffer(const media_source &source,
 										 BBuffer *prev_buffer,
@@ -235,6 +314,12 @@ BBufferConsumer::RequestAdditionalBuffer(const media_source &source,
 }
 
 
+/** @brief Requests an additional buffer from a producer, identified by start time.
+ *
+ *  @param source     The producer source to query.
+ *  @param startTime  The performance time of the desired buffer.
+ *  @param _reserved  Reserved; must be NULL.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::RequestAdditionalBuffer(const media_source& source,
 	bigtime_t startTime, void *_reserved)
@@ -255,6 +340,20 @@ BBufferConsumer::RequestAdditionalBuffer(const media_source& source,
 }
 
 
+/** @brief Sets the buffer group that a producer should use for a given connection.
+ *
+ *  Sends the complete list of buffer IDs from \a group to the producer.
+ *  If \a will_reclaim is false, the consumer takes ownership of \a group and
+ *  will delete it when the connection is torn down.
+ *
+ *  @param source       The producer output source.
+ *  @param destination  The consumer input destination.
+ *  @param group        The BBufferGroup to assign, or NULL to clear.
+ *  @param user_data    User-defined data returned in the completion notification.
+ *  @param change_tag   Out-parameter receiving the change tag, or NULL.
+ *  @param will_reclaim If true, the caller retains ownership of \a group.
+ *  @param _reserved_   Reserved; must be NULL.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::SetOutputBuffersFor(const media_source &source,
 	const media_destination &destination, BBufferGroup *group, void *user_data,
@@ -311,6 +410,13 @@ BBufferConsumer::SetOutputBuffersFor(const media_source &source,
 }
 
 
+/** @brief Informs a producer that this consumer's latency has changed.
+ *
+ *  @param source      The output source of the connection.
+ *  @param destination The input destination of the connection.
+ *  @param newLatency  The new latency in microseconds.
+ *  @param flags       Latency-change flags.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferConsumer::SendLatencyChange(const media_source& source,
 	const media_destination& destination, bigtime_t newLatency, uint32 flags)
@@ -337,6 +443,15 @@ BBufferConsumer::SendLatencyChange(const media_source& source,
 }
 
 
+/** @brief Handles messages directed at this buffer consumer.
+ *
+ *  Dispatches incoming port messages to the appropriate virtual hook functions
+ *  such as AcceptFormat(), BufferReceived(), Connected(), Disconnected(), etc.
+ *
+ *  @param message Opaque message code (e.g. CONSUMER_BUFFER_RECEIVED).
+ *  @param data    Pointer to the message payload.
+ *  @param size    Size of the message payload in bytes.
+ *  @return B_OK if the message was handled, or B_ERROR if unrecognised. */
 status_t
 BBufferConsumer::HandleMessage(int32 message, const void* data, size_t size)
 {
@@ -469,6 +584,15 @@ BBufferConsumer::HandleMessage(int32 message, const void* data, size_t size)
 	return B_ERROR;
 }
 
+/** @brief Hook for seeking to a tagged position; may be implemented by derived classes.
+ *
+ *  @param destination    The consumer destination being seeked.
+ *  @param in_target_time The desired seek target in performance time.
+ *  @param in_flags       Seek flags.
+ *  @param out_seek_tag   Out-parameter receiving the seek tag closest to \a in_target_time.
+ *  @param out_tagged_time Out-parameter receiving the actual tagged time.
+ *  @param out_flags      Out-parameter receiving seek result flags.
+ *  @return B_ERROR by default; override to provide seek-tag support. */
 status_t
 BBufferConsumer::SeekTagRequested(const media_destination &destination,
 								  bigtime_t in_target_time,
@@ -496,6 +620,14 @@ BBufferConsumer & BBufferConsumer::operator=(const BBufferConsumer &clone)
 
 /*!	Deprecated function for BeOS R4.
 */
+/** @brief Deprecated BeOS R4 overload of SetVideoClippingFor() without a destination.
+ *
+ *  @param output      The producer source to clip.
+ *  @param shorts      Clip data in B_CLIP_SHORT_RUNS format.
+ *  @param short_count Number of int16 values in \a shorts.
+ *  @param display     Video display geometry used for clipping.
+ *  @param change_tag  Out-parameter receiving the change tag, or NULL.
+ *  @return B_OK on success, or an error code. */
 /* static */ status_t
 BBufferConsumer::SetVideoClippingFor(const media_source &output,
 									 const int16 *shorts,
@@ -533,6 +665,13 @@ BBufferConsumer::SetVideoClippingFor(const media_source &output,
 
 /*!	Deprecated function for BeOS R4.
 */
+/** @brief Deprecated BeOS R4 static overload of RequestFormatChange() without user data.
+ *
+ *  @param source      The output source to change.
+ *  @param destination The consumer destination of the connection.
+ *  @param format      Pointer to the desired new format.
+ *  @param _changeTag  Out-parameter receiving the change tag, or NULL.
+ *  @return B_OK on success, or an error code. */
 /*static*/ status_t
 BBufferConsumer::RequestFormatChange(const media_source& source,
 	const media_destination& destination, media_format* format,
@@ -561,6 +700,12 @@ BBufferConsumer::RequestFormatChange(const media_source& source,
 
 /*!	Deprecated function for BeOS R4.
 */
+/** @brief Deprecated BeOS R4 static overload of SetOutputEnabled() without a destination.
+ *
+ *  @param source     The output source to enable or disable.
+ *  @param enabled    true to enable, false to disable.
+ *  @param _changeTag Out-parameter receiving the change tag, or NULL.
+ *  @return B_OK on success, or an error code. */
 /*static*/ status_t
 BBufferConsumer::SetOutputEnabled(const media_source& source, bool enabled,
 	int32* _changeTag)
@@ -584,20 +729,35 @@ BBufferConsumer::SetOutputEnabled(const media_source& source, bool enabled,
 }
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_0(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_1(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_2(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_3(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_4(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_5(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_6(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_7(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_8(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_9(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_10(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_11(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_12(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_13(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_14(void*) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BBufferConsumer::_Reserved_BufferConsumer_15(void*) { return B_ERROR; }
-

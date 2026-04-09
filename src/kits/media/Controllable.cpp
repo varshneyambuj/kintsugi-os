@@ -1,35 +1,56 @@
 /*
- * Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice,
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
 
-/*
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
+/** @file Controllable.cpp
+ *  @brief Implements BControllable, the mix-in class that gives media nodes
+ *         a parameter web and IPC handlers for get/set parameter operations.
  */
 
 #include <Controllable.h>
@@ -48,11 +69,18 @@
 
 namespace BPrivate { namespace media {
 
-/*!	A helper class for the communication with the media server that
-	takes care of large buffers that need an area.
-*/
+/**
+ * @brief Helper class that transparently handles both small inline and large
+ *        area-based parameter data transfers from the media server.
+ */
 class ReceiveTransfer {
 public:
+	/**
+	 * @brief Construct a ReceiveTransfer, cloning an area for large transfers.
+	 *
+	 * @param request      The area_request_data describing the transfer.
+	 * @param smallBuffer  Fallback inline buffer for small transfers.
+	 */
 	ReceiveTransfer(const area_request_data& request, const void* smallBuffer)
 	{
 		if (request.area == -1 && smallBuffer != NULL) {
@@ -73,17 +101,28 @@ public:
 		}
 	}
 
+	/** @brief Destructor. Deletes the cloned area if one was created. */
 	~ReceiveTransfer()
 	{
 		if (fArea >= B_OK)
 			delete_area(fArea);
 	}
 
+	/**
+	 * @brief Return B_OK if the transfer buffer is valid, or an error code.
+	 *
+	 * @return B_OK or a negative error code from clone_area().
+	 */
 	status_t InitCheck() const
 	{
 		return fData != NULL ? B_OK : fArea;
 	}
 
+	/**
+	 * @brief Return a pointer to the transfer buffer.
+	 *
+	 * @return Pointer to the usable data region.
+	 */
 	void* Data() const
 	{
 		return fData;
@@ -103,6 +142,9 @@ using BPrivate::media::ReceiveTransfer;
 //	#pragma mark - protected
 
 
+/**
+ * @brief Destructor. Destroys the locking semaphore and the parameter web.
+ */
 BControllable::~BControllable()
 {
 	CALLED();
@@ -116,6 +158,11 @@ BControllable::~BControllable()
 //	#pragma mark - public
 
 
+/**
+ * @brief Return the current parameter web associated with this node.
+ *
+ * @return Pointer to the BParameterWeb, or NULL if none has been set.
+ */
 BParameterWeb*
 BControllable::Web()
 {
@@ -124,6 +171,11 @@ BControllable::Web()
 }
 
 
+/**
+ * @brief Acquire the parameter web lock (benaphore-style).
+ *
+ * @return true if the lock was acquired, false if the semaphore is invalid.
+ */
 bool
 BControllable::LockParameterWeb()
 {
@@ -144,6 +196,9 @@ BControllable::LockParameterWeb()
 }
 
 
+/**
+ * @brief Release the parameter web lock (benaphore-style).
+ */
 void
 BControllable::UnlockParameterWeb()
 {
@@ -159,6 +214,10 @@ BControllable::UnlockParameterWeb()
 //	#pragma mark - protected
 
 
+/**
+ * @brief Protected constructor. Registers the B_CONTROLLABLE node kind and
+ *        initialises the locking semaphore.
+ */
 BControllable::BControllable()
 	: BMediaNode("this one is never called"),
 	fWeb(NULL),
@@ -171,6 +230,15 @@ BControllable::BControllable()
 }
 
 
+/**
+ * @brief Install a new parameter web and notify interested parties.
+ *
+ * The old web is deleted after the new one has been installed. A
+ * B_MEDIA_WEB_CHANGED notification is sent if the web actually changed.
+ *
+ * @param web  New BParameterWeb to install; ownership is transferred.
+ * @return B_OK always.
+ */
 status_t
 BControllable::SetParameterWeb(BParameterWeb* web)
 {
@@ -194,6 +262,17 @@ BControllable::SetParameterWeb(BParameterWeb* web)
 }
 
 
+/**
+ * @brief Dispatch incoming IPC messages related to parameter get/set operations.
+ *
+ * Handles CONTROLLABLE_GET_PARAMETER_DATA, CONTROLLABLE_SET_PARAMETER_DATA,
+ * CONTROLLABLE_GET_PARAMETER_WEB, and CONTROLLABLE_START_CONTROL_PANEL.
+ *
+ * @param message  The IPC message code.
+ * @param data     Pointer to the message data.
+ * @param size     Size of the message data in bytes.
+ * @return B_OK if the message was handled, B_ERROR for unknown messages.
+ */
 status_t
 BControllable::HandleMessage(int32 message, const void* data, size_t size)
 {
@@ -325,6 +404,12 @@ BControllable::HandleMessage(int32 message, const void* data, size_t size)
 }
 
 
+/**
+ * @brief Broadcast a notification that a parameter value has changed.
+ *
+ * @param id  The parameter ID that changed.
+ * @return B_OK on success, or a notification error code.
+ */
 status_t
 BControllable::BroadcastChangedParameter(int32 id)
 {
@@ -333,6 +418,15 @@ BControllable::BroadcastChangedParameter(int32 id)
 }
 
 
+/**
+ * @brief Broadcast the new value of a parameter to all interested listeners.
+ *
+ * @param when       Performance time at which the value was set.
+ * @param id         The parameter ID whose value changed.
+ * @param newValue   Pointer to the new parameter value data.
+ * @param valueSize  Size of the value data in bytes.
+ * @return B_OK on success, or a notification error code.
+ */
 status_t
 BControllable::BroadcastNewParameterValue(bigtime_t when, int32 id,
 	void* newValue, size_t valueSize)
@@ -343,6 +437,16 @@ BControllable::BroadcastNewParameterValue(bigtime_t when, int32 id,
 }
 
 
+/**
+ * @brief Launch the add-on's control panel application for this node.
+ *
+ * Looks up the add-on image, obtains its path, and launches it with a
+ * "node=<id>" argument so the panel can locate the correct node.
+ *
+ * @param _messenger  If non-NULL, receives a BMessenger targeting the launched
+ *                    panel application.
+ * @return B_OK on success, or B_ERROR / B_BAD_VALUE on failure.
+ */
 status_t
 BControllable::StartControlPanel(BMessenger* _messenger)
 {
@@ -387,6 +491,13 @@ BControllable::StartControlPanel(BMessenger* _messenger)
 }
 
 
+/**
+ * @brief Apply a flat parameter data blob to this node (not yet implemented).
+ *
+ * @param value  Pointer to the flattened parameter data.
+ * @param size   Size of the data in bytes.
+ * @return B_ERROR always (unimplemented).
+ */
 status_t
 BControllable::ApplyParameterData(const void* value, size_t size)
 {
@@ -396,6 +507,16 @@ BControllable::ApplyParameterData(const void* value, size_t size)
 }
 
 
+/**
+ * @brief Serialise a set of control IDs into a flat parameter data blob
+ *        (not yet implemented).
+ *
+ * @param controls  Array of parameter IDs to serialise.
+ * @param count     Number of elements in @p controls.
+ * @param buffer    Destination buffer.
+ * @param ioSize    In: capacity of @p buffer; out: bytes written.
+ * @return B_ERROR always (unimplemented).
+ */
 status_t
 BControllable::MakeParameterData(const int32* controls, int32 count,
 	void* buffer, size_t* ioSize)
@@ -409,19 +530,35 @@ BControllable::MakeParameterData(const int32* controls, int32 count,
 //	#pragma mark - private
 
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_7(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_8(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_9(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_10(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_11(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_12(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_13(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_14(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BControllable::_Reserved_Controllable_15(void *) { return B_ERROR; }

@@ -1,11 +1,33 @@
 /*
- * Copyright 2002-2024, Haiku. All rights reserved.
- * This file may be used under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *    Dario Casalinuovo
- *    Marcus Overhagen
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2024, Haiku. All rights reserved.
+ *   This file may be used under the terms of the MIT License.
+ *
+ *   Authors:
+ *      Dario Casalinuovo
+ *      Marcus Overhagen
  */
+
+/** @file TimeSource.cpp
+ *  @brief Implements BTimeSource: the base class for all media clock providers. */
 
 
 #include <TimeSource.h>
@@ -51,6 +73,7 @@ struct TimeSourceTransmit
 #define MAX_SLAVE_NODES 300
 
 
+/** @brief Maintains the set of slave nodes that are driven by a BTimeSource. */
 class SlaveNodes : public BLocker
 {
 public:
@@ -68,6 +91,7 @@ private:
 };
 
 
+/** @brief Constructs the slave-node list locker. */
 SlaveNodes::SlaveNodes()
 	:
 	BLocker("BTimeSource slavenodes")
@@ -75,12 +99,15 @@ SlaveNodes::SlaveNodes()
 }
 
 
+/** @brief Destroys the slave-node list. */
 SlaveNodes::~SlaveNodes()
 {
 	fSlaveList.MakeEmpty();
 }
 
 
+/** @brief Returns the number of slave nodes currently registered.
+ *  @return The slave count. */
 int32
 SlaveNodes::CountSlaves() const
 {
@@ -88,6 +115,10 @@ SlaveNodes::CountSlaves() const
 }
 
 
+/** @brief Advances the internal iterator to the next slave and stores a pointer to
+ *         its port_id.
+ *  @param id  Receives a pointer to the next slave's port_id.
+ *  @return \c true if a next slave exists, \c false if the list is exhausted. */
 bool
 SlaveNodes::GetNextSlave(port_id** id)
 {
@@ -95,6 +126,7 @@ SlaveNodes::GetNextSlave(port_id** id)
 }
 
 
+/** @brief Resets the internal iterator to the beginning of the slave list. */
 void
 SlaveNodes::Rewind()
 {
@@ -102,6 +134,9 @@ SlaveNodes::Rewind()
 }
 
 
+/** @brief Inserts a slave node into the list.
+ *  @param node  The media_node to add as a slave.
+ *  @return \c true on success, \c false on failure. */
 bool
 SlaveNodes::InsertSlave(const media_node& node)
 {
@@ -109,6 +144,9 @@ SlaveNodes::InsertSlave(const media_node& node)
 }
 
 
+/** @brief Removes a slave node from the list.
+ *  @param node  The media_node to remove.
+ *  @return \c true on success, \c false if the node was not found. */
 bool
 SlaveNodes::RemoveSlave(const media_node& node)
 {
@@ -123,6 +161,7 @@ SlaveNodes::RemoveSlave(const media_node& node)
  * protected BTimeSource
  *************************************************************/
 
+/** @brief Destructor; deletes the shared-memory area and the slave-node list. */
 BTimeSource::~BTimeSource()
 {
 	CALLED();
@@ -135,6 +174,12 @@ BTimeSource::~BTimeSource()
  * public BTimeSource
  *************************************************************/
 
+/** @brief Sleeps until the given performance time (adjusted for latency), optionally
+ *         retrying on signal interrupts.
+ *  @param performance_time  Target performance time to snooze until.
+ *  @param with_latency      Latency adjustment subtracted from the real wake-up time.
+ *  @param retry_signals     If \c true, automatically retries on B_INTERRUPTED.
+ *  @return B_OK on success, or a snooze error code on failure. */
 status_t
 BTimeSource::SnoozeUntil(bigtime_t performance_time,
 	bigtime_t with_latency, bool retry_signals)
@@ -150,6 +195,8 @@ BTimeSource::SnoozeUntil(bigtime_t performance_time,
 }
 
 
+/** @brief Returns the current performance time as seen by this time source.
+ *  @return The current performance time in microseconds. */
 bigtime_t
 BTimeSource::Now()
 {
@@ -158,6 +205,9 @@ BTimeSource::Now()
 }
 
 
+/** @brief Converts a real time value to the corresponding performance time.
+ *  @param real_time  System real time in microseconds.
+ *  @return The performance time corresponding to \a real_time. */
 bigtime_t
 BTimeSource::PerformanceTimeFor(bigtime_t real_time)
 {
@@ -182,6 +232,11 @@ BTimeSource::PerformanceTimeFor(bigtime_t real_time)
 }
 
 
+/** @brief Converts a performance time to the real time at which it should be
+ *         processed, accounting for latency.
+ *  @param performance_time  Target performance time in microseconds.
+ *  @param with_latency      Latency (in microseconds) to subtract from the result.
+ *  @return The real time corresponding to \a performance_time minus \a with_latency. */
 bigtime_t
 BTimeSource::RealTimeFor(bigtime_t performance_time,
 	bigtime_t with_latency)
@@ -212,6 +267,8 @@ BTimeSource::RealTimeFor(bigtime_t performance_time,
 }
 
 
+/** @brief Returns whether the time source is currently running.
+ *  @return \c true if the time source is running, \c false otherwise. */
 bool
 BTimeSource::IsRunning()
 {
@@ -231,6 +288,11 @@ BTimeSource::IsRunning()
 }
 
 
+/** @brief Retrieves the most recently published performance/real-time/drift triplet.
+ *  @param performance_time  Receives the last published performance time.
+ *  @param real_time         Receives the last published real time.
+ *  @param drift             Receives the last published drift factor.
+ *  @return B_OK on success. */
 status_t
 BTimeSource::GetTime(bigtime_t* performance_time,
 	bigtime_t* real_time, float* drift)
@@ -259,6 +321,8 @@ BTimeSource::GetTime(bigtime_t* performance_time,
 }
 
 
+/** @brief Returns the current system real time in microseconds.
+ *  @return The value of system_time(). */
 bigtime_t
 BTimeSource::RealTime()
 {
@@ -267,6 +331,10 @@ BTimeSource::RealTime()
 }
 
 
+/** @brief Returns the latency from when a start request is issued to when the
+ *         time source actually begins running.
+ *  @param out_latency  Receives the start latency in microseconds.
+ *  @return B_OK always (base implementation returns 0 latency). */
 status_t
 BTimeSource::GetStartLatency(bigtime_t* out_latency)
 {
@@ -280,6 +348,8 @@ BTimeSource::GetStartLatency(bigtime_t* out_latency)
  *************************************************************/
 
 
+/** @brief Constructor for real time-source subclasses; registers the node as a
+ *         B_TIME_SOURCE.  The shared-memory area is created later in FinishCreate(). */
 BTimeSource::BTimeSource()
 	:
 	BMediaNode("This one is never called"),
@@ -297,6 +367,11 @@ BTimeSource::BTimeSource()
 }
 
 
+/** @brief Dispatches incoming time-source port messages to the appropriate handler.
+ *  @param message  The port message code.
+ *  @param rawdata  Pointer to the raw message payload.
+ *  @param size     Size of the payload in bytes.
+ *  @return B_OK if the message was handled, B_ERROR otherwise. */
 status_t
 BTimeSource::HandleMessage(int32 message, const void* rawdata,
 	size_t size)
@@ -363,6 +438,11 @@ BTimeSource::HandleMessage(int32 message, const void* rawdata,
 }
 
 
+/** @brief Publishes a new performance/real-time/drift triplet to the shared-memory
+ *         buffer so that slave nodes can read it without IPC overhead.
+ *  @param performance_time  Current performance time in microseconds.
+ *  @param real_time         Corresponding real (system) time in microseconds.
+ *  @param drift             The current drift factor (must be > 0). */
 void
 BTimeSource::PublishTime(bigtime_t performance_time,
 	bigtime_t real_time, float drift)
@@ -389,6 +469,10 @@ BTimeSource::PublishTime(bigtime_t performance_time,
 }
 
 
+/** @brief Sends a NODE_TIME_WARP command to all currently slaved nodes.
+ *  @param at_real_time          The real time at which the warp takes effect.
+ *  @param new_performance_time  The new performance time that corresponds to
+ *                               \a at_real_time. */
 void
 BTimeSource::BroadcastTimeWarp(bigtime_t at_real_time,
 	bigtime_t new_performance_time)
@@ -416,6 +500,8 @@ BTimeSource::BroadcastTimeWarp(bigtime_t at_real_time,
 }
 
 
+/** @brief Sends a NODE_SET_RUN_MODE command to all currently slaved nodes.
+ *  @param mode  The new run mode to propagate. */
 void
 BTimeSource::SendRunMode(run_mode mode)
 {
@@ -437,6 +523,9 @@ BTimeSource::SendRunMode(run_mode mode)
 }
 
 
+/** @brief Overrides BMediaNode::SetRunMode() to also propagate the new mode to all
+ *         slave nodes via SendRunMode().
+ *  @param mode  The new run mode. */
 void
 BTimeSource::SetRunMode(run_mode mode)
 {
@@ -454,13 +543,22 @@ BTimeSource::BTimeSource(const BTimeSource &clone)
 BTimeSource &BTimeSource::operator=(const BTimeSource &clone)
 */
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTimeSource::_Reserved_TimeSource_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTimeSource::_Reserved_TimeSource_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTimeSource::_Reserved_TimeSource_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTimeSource::_Reserved_TimeSource_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTimeSource::_Reserved_TimeSource_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BTimeSource::_Reserved_TimeSource_5(void *) { return B_ERROR; }
 
+/** @brief Constructor used by TimeSourceObject shadow proxies; clones the shared-memory
+ *         area created by the real time source.
+ *  @param id  The media_node_id of the real time source being proxied. */
 /* explicit */
 BTimeSource::BTimeSource(media_node_id id)
 	:
@@ -502,6 +600,8 @@ BTimeSource::BTimeSource(media_node_id id)
 }
 
 
+/** @brief Creates the shared-memory area used to publish time data to slave nodes.
+ *         Must be called after the node has been registered and has a valid ID(). */
 void
 BTimeSource::FinishCreate()
 {
@@ -531,6 +631,13 @@ BTimeSource::FinishCreate()
 }
 
 
+/** @brief Removes a node from the set of slaves driven by this time source.
+ *
+ *  For shadow time sources the removal is forwarded via the control port;
+ *  for real time sources it is performed directly.
+ *
+ *  @param node  The BMediaNode to remove from the slave list.
+ *  @return B_OK always. */
 status_t
 BTimeSource::RemoveMe(BMediaNode* node)
 {
@@ -547,6 +654,13 @@ BTimeSource::RemoveMe(BMediaNode* node)
 }
 
 
+/** @brief Adds a node to the set of slaves driven by this time source.
+ *
+ *  For shadow time sources the addition is forwarded via the control port;
+ *  for real time sources it is performed directly.
+ *
+ *  @param node  The BMediaNode to add to the slave list.
+ *  @return B_OK always. */
 status_t
 BTimeSource::AddMe(BMediaNode* node)
 {
@@ -562,6 +676,9 @@ BTimeSource::AddMe(BMediaNode* node)
 }
 
 
+/** @brief Directly inserts a node into the slave list and starts the time source
+ *         when the first slave is added.
+ *  @param node  The media_node to add as a slave. */
 void
 BTimeSource::DirectAddMe(const media_node& node)
 {
@@ -596,6 +713,9 @@ BTimeSource::DirectAddMe(const media_node& node)
  }
 
 
+/** @brief Directly removes a node from the slave list and stops the time source
+ *         when the last slave is removed.
+ *  @param node  The media_node to remove. */
 void
 BTimeSource::DirectRemoveMe(const media_node& node)
 {
@@ -626,6 +746,8 @@ BTimeSource::DirectRemoveMe(const media_node& node)
 }
 
 
+/** @brief Marks the time source as started in the shared-memory buffer.
+ *  @param at  The real time at which the start takes effect (currently unused). */
 void
 BTimeSource::DirectStart(bigtime_t at)
 {
@@ -637,6 +759,9 @@ BTimeSource::DirectStart(bigtime_t at)
 }
 
 
+/** @brief Marks the time source as stopped in the shared-memory buffer.
+ *  @param at        The real time at which the stop takes effect (currently unused).
+ *  @param immediate If \c true, stop immediately; otherwise schedule the stop. */
 void
 BTimeSource::DirectStop(bigtime_t at, bool immediate)
 {
@@ -648,6 +773,9 @@ BTimeSource::DirectStop(bigtime_t at, bool immediate)
 }
 
 
+/** @brief Handles a direct seek request (not yet implemented).
+ *  @param to  Target performance time.
+ *  @param at  Real time at which the seek should occur. */
 void
 BTimeSource::DirectSeek(bigtime_t to, bigtime_t at)
 {
@@ -655,6 +783,8 @@ BTimeSource::DirectSeek(bigtime_t to, bigtime_t at)
 }
 
 
+/** @brief Handles a direct run-mode change (not yet implemented).
+ *  @param mode  The new run mode. */
 void
 BTimeSource::DirectSetRunMode(run_mode mode)
 {

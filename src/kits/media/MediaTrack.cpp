@@ -1,12 +1,35 @@
 /*
- * Copyright 2002-2007, Marcus Overhagen <marcus@overhagen.de>
- * Copyright 2009-2010, Stephan Aßmus <superstippi@gmx.de>
- * Copyright 2013, Haiku, Inc. All Rights Reserved.
- * All rights reserved. Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Marcus Overhagen, marcus@overhagen.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2007, Marcus Overhagen <marcus@overhagen.de>
+ *   Copyright 2009-2010, Stephan Aßmus <superstippi@gmx.de>
+ *   Copyright 2013, Haiku, Inc. All Rights Reserved.
+ *   All rights reserved. Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Marcus Overhagen, marcus@overhagen.de
+ */
+
+/** @file MediaTrack.cpp
+ *  @brief Implementation of BMediaTrack for reading and writing individual media streams.
  */
 
 
@@ -58,6 +81,7 @@ enum {
 	// TODO: move this (after name change?) to MediaDefs.h
 
 
+/** @brief Internal ChunkProvider that bridges between a raw decoder and its upstream decoder. */
 class RawDecoderChunkProvider : public ChunkProvider {
 public:
 							RawDecoderChunkProvider(Decoder* decoder,
@@ -80,6 +104,7 @@ private:
  * protected BMediaTrack
  *************************************************************/
 
+/** @brief Destructor; destroys raw decoder, primary decoder, and encoder plugin instances. */
 BMediaTrack::~BMediaTrack()
 {
 	CALLED();
@@ -93,6 +118,9 @@ BMediaTrack::~BMediaTrack()
  * public BMediaTrack
  *************************************************************/
 
+/** @brief Returns the initialisation status of the track.
+ *  @return B_OK if ready, or an error code.
+ */
 status_t
 BMediaTrack::InitCheck() const
 {
@@ -102,6 +130,10 @@ BMediaTrack::InitCheck() const
 }
 
 
+/** @brief Retrieves codec information for the active decoder.
+ *  @param _codecInfo Pointer to a media_codec_info struct to fill in.
+ *  @return B_OK on success, B_NO_INIT if no decoder is active.
+ */
 status_t
 BMediaTrack::GetCodecInfo(media_codec_info* _codecInfo) const
 {
@@ -118,6 +150,10 @@ BMediaTrack::GetCodecInfo(media_codec_info* _codecInfo) const
 }
 
 
+/** @brief Retrieves the encoded (compressed) format of the track.
+ *  @param _format Pointer to a media_format struct to fill in.
+ *  @return B_OK on success, B_BAD_VALUE if @p _format is NULL, B_NO_INIT if not ready.
+ */
 status_t
 BMediaTrack::EncodedFormat(media_format* _format) const
 {
@@ -141,6 +177,11 @@ BMediaTrack::EncodedFormat(media_format* _format) const
 }
 
 
+/** @brief BeOS R5 compatibility shim for DecodedFormat without flags.
+ *  @param self    Pointer to the BMediaTrack instance.
+ *  @param _format In/out pointer to the desired decoded format.
+ *  @return Result of DecodedFormat(_format, 0).
+ */
 // for BeOS R5 compatibility
 extern "C" status_t DecodedFormat__11BMediaTrackP12media_format(
 	BMediaTrack* self, media_format* _format);
@@ -152,6 +193,13 @@ status_t DecodedFormat__11BMediaTrackP12media_format(BMediaTrack* self,
 }
 
 
+/** @brief Negotiates the decoded output format with the decoder, applying any
+ *         application-specific workarounds.  Optionally sets up a format translation
+ *         pipeline if the decoder cannot produce the exact requested format.
+ *  @param _format In/out pointer to the desired decoded format; updated on return.
+ *  @param flags   Flags (e.g. B_MEDIA_DISABLE_FORMAT_TRANSLATION).
+ *  @return B_OK on success, B_BAD_VALUE if @p _format is NULL, B_NO_INIT if not ready.
+ */
 status_t
 BMediaTrack::DecodedFormat(media_format* _format, uint32 flags)
 {
@@ -288,6 +336,10 @@ BMediaTrack::DecodedFormat(media_format* _format, uint32 flags)
 }
 
 
+/** @brief Retrieves per-stream metadata from the extractor into a BMessage.
+ *  @param _data Pointer to a BMessage to fill with stream metadata.
+ *  @return B_OK on success, B_NO_INIT if no extractor, B_BAD_VALUE if @p _data is NULL.
+ */
 status_t
 BMediaTrack::GetMetaData(BMessage* _data) const
 {
@@ -305,6 +357,9 @@ BMediaTrack::GetMetaData(BMessage* _data) const
 }
 
 
+/** @brief Returns the total number of frames in the track.
+ *  @return Frame count, or 0 if no extractor is set.
+ */
 int64
 BMediaTrack::CountFrames() const
 {
@@ -316,6 +371,9 @@ BMediaTrack::CountFrames() const
 }
 
 
+/** @brief Returns the total duration of the track in microseconds.
+ *  @return Duration in microseconds, or 0 if no extractor is set.
+ */
 bigtime_t
 BMediaTrack::Duration() const
 {
@@ -327,6 +385,9 @@ BMediaTrack::Duration() const
 }
 
 
+/** @brief Returns the current playback position in frames.
+ *  @return Current frame index.
+ */
 int64
 BMediaTrack::CurrentFrame() const
 {
@@ -334,14 +395,18 @@ BMediaTrack::CurrentFrame() const
 }
 
 
+/** @brief Returns the current playback position in microseconds.
+ *  @return Current time in microseconds.
+ */
 bigtime_t
 BMediaTrack::CurrentTime() const
 {
 	return fCurrentTime;
 }
 
-// BMediaTrack::ReadFrames(char*, long long*, media_header*)
-// Compatibility for R5 and below. Required by Corum III and Civ:CTP.
+/** @brief BMediaTrack::ReadFrames(char*, long long*, media_header*)
+ *         Compatibility for R5 and below. Required by Corum III and Civ:CTP.
+ */
 #if __GNUC__ < 3
 
 extern "C" status_t
@@ -353,6 +418,12 @@ ReadFrames__11BMediaTrackPcPxP12media_header(BMediaTrack* self,
 
 #endif	// __GNUC__ < 3
 
+/** @brief Reads decoded frames into @p buffer without decode parameters.
+ *  @param buffer      Pointer to the output buffer.
+ *  @param _frameCount Output number of frames decoded.
+ *  @param header      Optional output media_header; may be NULL.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BMediaTrack::ReadFrames(void* buffer, int64* _frameCount, media_header* header)
 {
@@ -360,6 +431,14 @@ BMediaTrack::ReadFrames(void* buffer, int64* _frameCount, media_header* header)
 }
 
 
+/** @brief Reads decoded frames into @p buffer using optional decode parameters.
+ *         Advances fCurrentFrame and fCurrentTime on success.
+ *  @param buffer      Pointer to the output buffer.
+ *  @param _frameCount Output number of frames decoded.
+ *  @param _header     Optional output media_header; may be NULL.
+ *  @param info        Optional media_decode_info; may be NULL.
+ *  @return B_OK on success, B_NO_INIT if no decoder, B_BAD_VALUE if buffer or count is NULL.
+ */
 status_t
 BMediaTrack::ReadFrames(void* buffer, int64* _frameCount,
 	media_header* _header, media_decode_info* info)
@@ -397,7 +476,6 @@ BMediaTrack::ReadFrames(void* buffer, int64* _frameCount,
 			int64(fCurrentTime * _FrameRate() / 1000000.0 + 0.5),
 			fCurrentTime / 1000000.0, (float)fCurrentFrame / _FrameRate());
 		fflush(stdout);
-	}
 #endif
 	} else {
 		ERROR("BMediaTrack::ReadFrames: decoder returned error %#" B_PRIx32
@@ -415,6 +493,12 @@ BMediaTrack::ReadFrames(void* buffer, int64* _frameCount,
 }
 
 
+/** @brief Replaces frames in the track at the current position (not yet implemented).
+ *  @param inBuffer    Pointer to the replacement frame data.
+ *  @param _frameCount In/out pointer to the frame count.
+ *  @param header      Pointer to the media_header for the replacement data.
+ *  @return B_NOT_SUPPORTED.
+ */
 status_t
 BMediaTrack::ReplaceFrames(const void* inBuffer, int64* _frameCount,
 	const media_header* header)
@@ -429,6 +513,12 @@ BMediaTrack::ReplaceFrames(const void* inBuffer, int64* _frameCount,
 }
 
 
+/** @brief Seeks to the position closest to @p _time according to the given direction flags.
+ *         Updates fCurrentFrame and fCurrentTime on success.
+ *  @param _time  In/out pointer to the desired seek time in microseconds.
+ *  @param flags  Seek direction flags (B_MEDIA_SEEK_DIRECTION_MASK bits).
+ *  @return B_OK on success, B_NO_INIT if not ready, B_BAD_VALUE if @p _time is NULL.
+ */
 status_t
 BMediaTrack::SeekToTime(bigtime_t* _time, int32 flags)
 {
@@ -478,6 +568,12 @@ BMediaTrack::SeekToTime(bigtime_t* _time, int32 flags)
 }
 
 
+/** @brief Seeks to the position closest to @p _frame according to the given direction flags.
+ *         Updates fCurrentFrame and fCurrentTime on success.
+ *  @param _frame In/out pointer to the desired frame position.
+ *  @param flags  Seek direction flags (B_MEDIA_SEEK_DIRECTION_MASK bits).
+ *  @return B_OK on success, B_NO_INIT if not ready, B_BAD_VALUE if @p _frame is NULL.
+ */
 status_t
 BMediaTrack::SeekToFrame(int64* _frame, int32 flags)
 {
@@ -527,6 +623,11 @@ BMediaTrack::SeekToFrame(int64* _frame, int32 flags)
 }
 
 
+/** @brief Finds the nearest key frame time to @p _time without seeking the stream.
+ *  @param _time  In/out pointer to the desired time in microseconds.
+ *  @param flags  Seek direction flags.
+ *  @return B_OK on success, B_NO_INIT if not ready, B_BAD_VALUE if @p _time is NULL.
+ */
 status_t
 BMediaTrack::FindKeyFrameForTime(bigtime_t* _time, int32 flags) const
 {
@@ -553,6 +654,11 @@ BMediaTrack::FindKeyFrameForTime(bigtime_t* _time, int32 flags) const
 }
 
 
+/** @brief Finds the nearest key frame position to @p _frame without seeking the stream.
+ *  @param _frame In/out pointer to the desired frame position.
+ *  @param flags  Seek direction flags.
+ *  @return B_OK on success, B_NO_INIT if not ready, B_BAD_VALUE if @p _frame is NULL.
+ */
 status_t
 BMediaTrack::FindKeyFrameForFrame(int64* _frame, int32 flags) const
 {
@@ -579,6 +685,13 @@ BMediaTrack::FindKeyFrameForFrame(int64* _frame, int32 flags) const
 }
 
 
+/** @brief Reads the next raw encoded chunk from the extractor without decoding it.
+ *         Updates fCurrentTime and fCurrentFrame on success.
+ *  @param _buffer Pointer to receive a pointer to the chunk data.
+ *  @param _size   Pointer to receive the chunk size in bytes.
+ *  @param _header Optional output media_header; may be NULL.
+ *  @return B_OK on success, B_NO_INIT if not ready, B_BAD_VALUE if required args are NULL.
+ */
 status_t
 BMediaTrack::ReadChunk(char** _buffer, int32* _size, media_header* _header)
 {
@@ -620,6 +733,10 @@ BMediaTrack::ReadChunk(char** _buffer, int32* _size, media_header* _header)
 }
 
 
+/** @brief Sets the copyright string for this track in the output file.
+ *  @param copyright Null-terminated copyright string.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 BMediaTrack::AddCopyright(const char* copyright)
 {
@@ -630,6 +747,13 @@ BMediaTrack::AddCopyright(const char* copyright)
 }
 
 
+/** @brief Adds track-level info to the output stream.
+ *  @param code  Code identifying the info type.
+ *  @param data  Pointer to the info data.
+ *  @param size  Size of the info data in bytes.
+ *  @param flags Optional flags.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 BMediaTrack::AddTrackInfo(uint32 code, const void* data, size_t size,
 	uint32 flags)
@@ -641,6 +765,12 @@ BMediaTrack::AddTrackInfo(uint32 code, const void* data, size_t size,
 }
 
 
+/** @brief Encodes and writes @p frameCount frames from @p data using the given flags.
+ *  @param data       Pointer to the raw frame data.
+ *  @param frameCount Number of frames to encode.
+ *  @param flags      Encode flags (stored in media_encode_info::flags).
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BMediaTrack::WriteFrames(const void* data, int32 frameCount, int32 flags)
 {
@@ -651,6 +781,12 @@ BMediaTrack::WriteFrames(const void* data, int32 frameCount, int32 flags)
 }
 
 
+/** @brief Encodes and writes @p frameCount frames from @p data using encode parameters.
+ *  @param data       Pointer to the raw frame data.
+ *  @param frameCount Number of frames to encode.
+ *  @param info       Pointer to media_encode_info for encoding parameters.
+ *  @return B_OK on success, B_NO_INIT if no encoder is active.
+ */
 status_t
 BMediaTrack::WriteFrames(const void* data, int64 frameCount,
 	media_encode_info* info)
@@ -662,6 +798,12 @@ BMediaTrack::WriteFrames(const void* data, int64 frameCount,
 }
 
 
+/** @brief Writes a pre-encoded chunk to the output stream using the given flags.
+ *  @param data  Pointer to the encoded chunk data.
+ *  @param size  Size of the encoded chunk in bytes.
+ *  @param flags Chunk flags (stored in media_encode_info::flags).
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BMediaTrack::WriteChunk(const void* data, size_t size, uint32 flags)
 {
@@ -672,6 +814,12 @@ BMediaTrack::WriteChunk(const void* data, size_t size, uint32 flags)
 }
 
 
+/** @brief Writes a pre-encoded chunk to the output stream.
+ *  @param data  Pointer to the encoded chunk data.
+ *  @param size  Size of the encoded chunk in bytes.
+ *  @param info  Pointer to media_encode_info for the chunk.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 BMediaTrack::WriteChunk(const void* data, size_t size, media_encode_info* info)
 {
@@ -682,6 +830,9 @@ BMediaTrack::WriteChunk(const void* data, size_t size, media_encode_info* info)
 }
 
 
+/** @brief Flushes any buffered encoded data to the output file.
+ *  @return B_OK on success, B_NO_INIT if no writer is active.
+ */
 status_t
 BMediaTrack::Flush()
 {
@@ -692,6 +843,9 @@ BMediaTrack::Flush()
 }
 
 
+/** @brief Deprecated BeOS R5 API; returns the parameter web via GetParameterWeb().
+ *  @return Pointer to the BParameterWeb, or NULL if not available.
+ */
 // deprecated BeOS R5 API
 BParameterWeb*
 BMediaTrack::Web()
@@ -704,6 +858,11 @@ BMediaTrack::Web()
 }
 
 
+/** @brief Retrieves the encoder's parameter web for UI control.
+ *  @param outWeb Output pointer to receive the BParameterWeb.
+ *  @return B_OK on success, B_BAD_VALUE if @p outWeb is NULL,
+ *          B_NO_INIT if no encoder, B_NOT_SUPPORTED if the encoder has no web.
+ */
 status_t
 BMediaTrack::GetParameterWeb(BParameterWeb** outWeb)
 {
@@ -724,6 +883,12 @@ BMediaTrack::GetParameterWeb(BParameterWeb** outWeb)
 }
 
 
+/** @brief Retrieves an encoder parameter value by ID.
+ *  @param id    Parameter identifier.
+ *  @param value Output buffer for the parameter value.
+ *  @param size  In/out size of the value buffer.
+ *  @return B_OK on success, B_BAD_VALUE if args are NULL, B_NO_INIT if no encoder.
+ */
 status_t
 BMediaTrack::GetParameterValue(int32 id, void* value, size_t* size)
 {
@@ -737,6 +902,13 @@ BMediaTrack::GetParameterValue(int32 id, void* value, size_t* size)
 }
 
 
+/** @brief Sets an encoder parameter value by ID.
+ *  @param id    Parameter identifier.
+ *  @param value Pointer to the new parameter value.
+ *  @param size  Size of the value data in bytes.
+ *  @return B_OK on success, B_BAD_VALUE if value is NULL or size is 0,
+ *          B_NO_INIT if no encoder.
+ */
 status_t
 BMediaTrack::SetParameterValue(int32 id, const void* value, size_t size)
 {
@@ -750,6 +922,9 @@ BMediaTrack::SetParameterValue(int32 id, const void* value, size_t size)
 }
 
 
+/** @brief Returns a BView for visually controlling encoder parameters.
+ *  @return Pointer to the parameter view, or NULL if no encoder is active.
+ */
 BView*
 BMediaTrack::GetParameterView()
 {
@@ -760,6 +935,10 @@ BMediaTrack::GetParameterView()
 }
 
 
+/** @brief Retrieves the current encoding quality setting.
+ *  @param quality Output pointer to receive the quality value (0.0–1.0).
+ *  @return B_OK on success, B_BAD_VALUE if @p quality is NULL.
+ */
 status_t
 BMediaTrack::GetQuality(float* quality)
 {
@@ -777,6 +956,10 @@ BMediaTrack::GetQuality(float* quality)
 }
 
 
+/** @brief Sets the encoding quality, clamped to [0.0, 1.0].
+ *  @param quality The desired quality level.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BMediaTrack::SetQuality(float quality)
 {
@@ -797,6 +980,11 @@ BMediaTrack::SetQuality(float quality)
 }
 
 
+/** @brief Retrieves the current encode parameters from the active encoder.
+ *  @param parameters Pointer to an encode_parameters struct to fill in.
+ *  @return B_OK on success, B_BAD_VALUE if @p parameters is NULL,
+ *          B_NO_INIT if no encoder.
+ */
 status_t
 BMediaTrack::GetEncodeParameters(encode_parameters* parameters) const
 {
@@ -810,6 +998,11 @@ BMediaTrack::GetEncodeParameters(encode_parameters* parameters) const
 }
 
 
+/** @brief Sets the encode parameters on the active encoder.
+ *  @param parameters Pointer to the new encode_parameters.
+ *  @return B_OK on success, B_BAD_VALUE if @p parameters is NULL,
+ *          B_NO_INIT if no encoder.
+ */
 status_t
 BMediaTrack::SetEncodeParameters(encode_parameters* parameters)
 {
@@ -823,6 +1016,11 @@ BMediaTrack::SetEncodeParameters(encode_parameters* parameters)
 }
 
 
+/** @brief General-purpose perform hook (currently a no-op).
+ *  @param selector Operation selector code.
+ *  @param data     Pointer to operation-specific data.
+ *  @return B_OK.
+ */
 status_t
 BMediaTrack::Perform(int32 selector, void* data)
 {
@@ -832,6 +1030,10 @@ BMediaTrack::Perform(int32 selector, void* data)
 // #pragma mark - private
 
 
+/** @brief Private constructor for a reading track; sets up the decoder for the given stream.
+ *  @param extractor Pointer to the owning MediaExtractor.
+ *  @param stream    Zero-based stream index.
+ */
 BMediaTrack::BMediaTrack(BPrivate::media::MediaExtractor* extractor,
 	int32 stream)
 {
@@ -864,6 +1066,12 @@ BMediaTrack::BMediaTrack(BPrivate::media::MediaExtractor* extractor,
 }
 
 
+/** @brief Private constructor for a writing track; sets up the encoder for the given stream.
+ *  @param writer      Pointer to the owning MediaWriter.
+ *  @param streamIndex Zero-based stream index.
+ *  @param format      Pointer to the stream's media_format.
+ *  @param codecInfo   Pointer to the desired codec info, or NULL for a raw track.
+ */
 BMediaTrack::BMediaTrack(BPrivate::media::MediaWriter* writer,
 	int32 streamIndex, media_format* format,
 	const media_codec_info* codecInfo)
@@ -905,6 +1113,12 @@ BMediaTrack::BMediaTrack(BPrivate::media::MediaWriter* writer,
 }
 
 
+/** @brief Does nothing; exists for Zeta compatibility only.
+ *  @param selector Operation selector.
+ *  @param io_data  Pointer to input/output data.
+ *  @param size     Data size in bytes.
+ *  @return B_ERROR always.
+ */
 // Does nothing, returns B_ERROR, for Zeta compatiblity only
 status_t
 BMediaTrack::ControlCodec(int32 selector, void* io_data, size_t size)
@@ -913,6 +1127,9 @@ BMediaTrack::ControlCodec(int32 selector, void* io_data, size_t size)
 }
 
 
+/** @brief Detects the running application and activates compatibility workarounds
+ *         for known buggy applications (SoundPlay, MediaPlayer).
+ */
 void
 BMediaTrack::SetupWorkaround()
 {
@@ -940,6 +1157,13 @@ BMediaTrack::SetupWorkaround()
 }
 
 
+/** @brief Sets up a raw decoder pipeline to translate between two raw audio formats.
+ *         Creates a RawDecoderChunkProvider to feed the upstream decoded output
+ *         as input chunks to the raw format converter decoder.
+ *  @param from The source raw audio format.
+ *  @param to   In/out pointer to the target raw audio format; updated on success.
+ *  @return true if the translation pipeline was set up successfully, false otherwise.
+ */
 bool
 BMediaTrack::SetupFormatTranslation(const media_format &from, media_format* to)
 {
@@ -1006,6 +1230,10 @@ error:
 }
 
 
+/** @brief Returns the frame rate for the current decoded format.
+ *         Handles raw audio, encoded audio, raw video, and encoded video.
+ *  @return Frame rate in frames per second, or 1.0 for unknown format types.
+ */
 double
 BMediaTrack::_FrameRate() const
 {
@@ -1030,56 +1258,109 @@ BMediaTrack::BMediaTrack(const BMediaTrack &)
 BMediaTrack &BMediaTrack::operator=(const BMediaTrack &)
 #endif
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_0(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_1(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_2(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_3(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_4(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_5(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_6(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_7(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_8(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_9(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_10(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_11(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_12(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_13(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_14(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_15(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_16(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_17(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_18(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_19(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_20(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_21(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_22(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_23(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_24(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_25(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_26(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_27(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_28(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_29(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_30(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_31(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_32(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_33(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_34(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_35(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_36(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_37(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_38(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_39(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_40(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_41(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_42(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_43(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_44(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_45(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_46(int32 arg, ...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaTrack::_Reserved_BMediaTrack_47(int32 arg, ...) { return B_ERROR; }
 
 
+/** @brief Constructs the provider with the given decoder and buffer parameters.
+ *  @param decoder     Pointer to the upstream Decoder to pull raw frames from.
+ *  @param buffer_size Size of the intermediate decode buffer in bytes.
+ *  @param frame_size  Size of a single audio frame in bytes.
+ */
 RawDecoderChunkProvider::RawDecoderChunkProvider(Decoder* decoder,
 	int buffer_size, int frame_size)
 {
@@ -1092,12 +1373,20 @@ RawDecoderChunkProvider::RawDecoderChunkProvider(Decoder* decoder,
 }
 
 
+/** @brief Destructor; frees the intermediate decode buffer. */
 RawDecoderChunkProvider::~RawDecoderChunkProvider()
 {
 	free(fBuffer);
 }
 
 
+/** @brief Decodes one buffer's worth of frames from the upstream decoder and
+ *         presents it as a chunk for the raw format converter.
+ *  @param chunkBuffer Output pointer to the decoded data.
+ *  @param chunkSize   Output size of the decoded data in bytes.
+ *  @param header      Output media_header from the upstream decode.
+ *  @return B_OK on success, or an error code from the upstream decoder.
+ */
 status_t
 RawDecoderChunkProvider::GetNextChunk(const void** chunkBuffer,
 	size_t* chunkSize, media_header* header)

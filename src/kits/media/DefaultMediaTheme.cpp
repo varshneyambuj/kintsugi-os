@@ -1,7 +1,32 @@
 /*
- * Copyright 2003-2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2019, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2019, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file DefaultMediaTheme.cpp
+ *  @brief Implements DefaultMediaTheme, the built-in BMediaTheme that
+ *         generates standard Haiku UI controls (sliders, check boxes, pop-up
+ *         menus, text fields) for BParameterWeb parameter graphs.
  */
 
 
@@ -36,130 +61,244 @@ namespace BPrivate {
 
 namespace DefaultMediaControls {
 
+/**
+ * @brief A thin horizontal or vertical separator line drawn between controls.
+ */
 class SeparatorView : public BView {
 	public:
+		/** @brief Construct a separator with the given orientation. @param orientation B_HORIZONTAL or B_VERTICAL. */
 		SeparatorView(orientation orientation);
+		/** @brief Destructor. */
 		virtual ~SeparatorView();
 
+		/** @brief Draw the two-pixel raised/lowered line. @param updateRect The dirty rectangle. */
 		virtual void Draw(BRect updateRect);
 
 	private:
 		bool	fVertical;
 };
 
+/**
+ * @brief A centred title label rendered in a slightly tinted colour.
+ */
 class TitleView : public BView {
 	public:
+		/** @brief Construct a title view displaying @p title. @param title The text to display. */
 		TitleView(const char *title);
+		/** @brief Destructor. */
 		virtual ~TitleView();
 
+		/** @brief Draw the centred title string. @param updateRect The dirty rectangle. */
 		virtual void Draw(BRect updateRect);
+		/** @brief Return the preferred dimensions for this view. @param width Receives preferred width. @param height Receives preferred height. */
 		virtual void GetPreferredSize(float *width, float *height);
 
 	private:
 		BString fTitle;
 };
 
+/**
+ * @brief BCheckBox subclass that watches a BDiscreteParameter for value changes.
+ */
 class CheckBox : public BCheckBox {
 	public:
+		/** @brief Construct a CheckBox bound to @p parameter. @param name View name. @param label Display label. @param parameter The discrete parameter to reflect. */
 		CheckBox(const char* name, const char* label,
 			BDiscreteParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~CheckBox();
 
+		/** @brief Start watching the parameter for changes. */
 		virtual void AttachedToWindow();
+		/** @brief Stop watching the parameter for changes. */
 		virtual void DetachedFromWindow();
 	private:
 		BDiscreteParameter &fParameter;
 };
 
+/**
+ * @brief BOptionPopUp subclass that watches a BDiscreteParameter for value changes.
+ */
 class OptionPopUp : public BOptionPopUp {
 	public:
+		/** @brief Construct an OptionPopUp bound to @p parameter. @param name View name. @param label Display label. @param parameter The discrete parameter to reflect. */
 		OptionPopUp(const char* name, const char* label,
 			BDiscreteParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~OptionPopUp();
 
+		/** @brief Start watching the parameter for changes. */
 		virtual void AttachedToWindow();
+		/** @brief Stop watching the parameter for changes. */
 		virtual void DetachedFromWindow();
 	private:
 		BDiscreteParameter &fParameter;
 };
 
+/**
+ * @brief BSlider subclass that watches a BContinuousParameter for value changes.
+ */
 class Slider : public BSlider {
 	public:
+		/** @brief Construct a Slider bound to @p parameter. @param name View name. @param label Display label. @param minValue Minimum slider value (x1000). @param maxValue Maximum slider value (x1000). @param parameter The continuous parameter to reflect. */
 		Slider(const char* name, const char*label, int32 minValue,
 			int32 maxValue, BContinuousParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~Slider();
 
+		/** @brief Start watching the parameter for changes. */
 		virtual void AttachedToWindow();
+		/** @brief Stop watching the parameter for changes. */
 		virtual void DetachedFromWindow();
 	private:
 		BContinuousParameter &fParameter;
 };
 
+/**
+ * @brief BChannelSlider subclass that watches a multi-channel BContinuousParameter.
+ */
 class ChannelSlider : public BChannelSlider {
 	public:
+		/** @brief Construct a ChannelSlider bound to @p parameter. @param name View name. @param label Display label. @param orientation Slider orientation. @param channels Number of channels. @param parameter The continuous parameter to reflect. */
 		ChannelSlider(const char* name, const char* label,
 			orientation orientation, int32 channels,
 			BContinuousParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~ChannelSlider();
 
+		/** @brief Start watching the parameter for changes. */
 		virtual void AttachedToWindow();
+		/** @brief Stop watching the parameter for changes. */
 		virtual void DetachedFromWindow();
+		/** @brief Update the tooltip with the formatted current value. @param currentValue Current slider value (x1000). */
 		virtual void UpdateToolTip(int32 currentValue);
 	private:
 		BContinuousParameter &fParameter;
 };
 
+/**
+ * @brief BTextControl subclass that watches a BTextParameter for value changes.
+ */
 class TextControl : public BTextControl {
 	public:
+		/** @brief Construct a TextControl bound to @p parameter. @param name View name. @param label Display label. @param parameter The text parameter to reflect. */
 		TextControl(const char* name, const char* label,
 			BTextParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~TextControl();
 
+		/** @brief Start watching the parameter for changes. */
 		virtual void AttachedToWindow();
+		/** @brief Stop watching the parameter for changes. */
 		virtual void DetachedFromWindow();
 	private:
 		BTextParameter &fParameter;
 };
 
+/**
+ * @brief Abstract base message filter that connects a BControl to a BParameter.
+ */
 class MessageFilter : public BMessageFilter {
 	public:
+		/**
+		 * @brief Factory method: create the correct filter type for @p parameter.
+		 *
+		 * @param view       The BControl to attach the filter to.
+		 * @param parameter  The parameter to bind to.
+		 * @return A newly allocated MessageFilter, or NULL for null parameters.
+		 */
 		static MessageFilter *FilterFor(BView *view, BParameter &parameter);
 
 	protected:
+		/** @brief Construct the base filter accepting any message delivery/source. */
 		MessageFilter();
 };
 
+/**
+ * @brief Message filter for BContinuousParameter controls (sliders).
+ */
 class ContinuousMessageFilter : public MessageFilter {
 	public:
+		/**
+		 * @brief Construct the filter, set the initial control value, and
+		 *        configure modification messages.
+		 *
+		 * @param control    The slider control to bind.
+		 * @param parameter  The continuous parameter to bind to.
+		 */
 		ContinuousMessageFilter(BControl *control,
 			BContinuousParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~ContinuousMessageFilter();
 
+		/**
+		 * @brief Forward control changes to the parameter and parameter changes to the control.
+		 *
+		 * @param message  Incoming message.
+		 * @param target   Message target handler.
+		 * @return B_DISPATCH_MESSAGE or B_SKIP_MESSAGE.
+		 */
 		virtual filter_result Filter(BMessage *message, BHandler **target);
 
 	private:
+		/** @brief Refresh the control to reflect the parameter's current value. */
 		void _UpdateControl();
 
 		BControl				*fControl;
 		BContinuousParameter	&fParameter;
 };
 
+/**
+ * @brief Message filter for BDiscreteParameter controls (check boxes, pop-ups).
+ */
 class DiscreteMessageFilter : public MessageFilter {
 	public:
+		/**
+		 * @brief Construct the filter and set the initial control value.
+		 *
+		 * @param control    The check box or pop-up control to bind.
+		 * @param parameter  The discrete parameter to bind to.
+		 */
 		DiscreteMessageFilter(BControl *control, BDiscreteParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~DiscreteMessageFilter();
 
+		/**
+		 * @brief Forward control changes to the parameter and parameter changes to the control.
+		 *
+		 * @param message  Incoming message.
+		 * @param target   Message target handler.
+		 * @return B_DISPATCH_MESSAGE or B_SKIP_MESSAGE.
+		 */
 		virtual filter_result Filter(BMessage *message, BHandler **target);
 
 	private:
 		BDiscreteParameter	&fParameter;
 };
 
+/**
+ * @brief Message filter for BTextParameter controls (text fields).
+ */
 class TextMessageFilter : public MessageFilter {
 	public:
+		/**
+		 * @brief Construct the filter and populate the text control with the
+		 *        current parameter value.
+		 *
+		 * @param control    The text control to bind.
+		 * @param parameter  The text parameter to bind to.
+		 */
 		TextMessageFilter(BControl *control, BTextParameter &parameter);
+		/** @brief Destructor. */
 		virtual ~TextMessageFilter();
 
+		/**
+		 * @brief Forward control changes to the parameter and parameter changes to the control.
+		 *
+		 * @param message  Incoming message.
+		 * @param target   Message target handler.
+		 * @return B_DISPATCH_MESSAGE or B_SKIP_MESSAGE.
+		 */
 		virtual filter_result Filter(BMessage *message, BHandler **target);
 
 	private:
@@ -176,6 +315,15 @@ using namespace DefaultMediaControls;
 const uint32 kMsgParameterChanged = '_mPC';
 
 
+/**
+ * @brief Return true if @p parameter should not be shown in the UI.
+ *
+ * Hides B_NULL_PARAMETER/B_WEB_PHYSICAL_INPUT parameters whose only
+ * output feeds a B_INPUT_MUX, matching the R5 media theme behaviour.
+ *
+ * @param parameter  The parameter to test.
+ * @return true if the parameter should be hidden, false otherwise.
+ */
 static bool
 parameter_should_be_hidden(BParameter &parameter)
 {
@@ -195,6 +343,12 @@ parameter_should_be_hidden(BParameter &parameter)
 }
 
 
+/**
+ * @brief Start watching for B_MEDIA_NEW_PARAMETER_VALUE messages for @p parameter.
+ *
+ * @param control    The BControl that should receive update messages.
+ * @param parameter  The parameter to watch.
+ */
 static void
 start_watching_for_parameter_changes(BControl* control, BParameter &parameter)
 {
@@ -211,6 +365,12 @@ start_watching_for_parameter_changes(BControl* control, BParameter &parameter)
 }
 
 
+/**
+ * @brief Stop watching for B_MEDIA_NEW_PARAMETER_VALUE messages for @p parameter.
+ *
+ * @param control    The BControl that was previously registered to watch.
+ * @param parameter  The parameter to stop watching.
+ */
 static void
 stop_watching_for_parameter_changes(BControl* control, BParameter &parameter)
 {
@@ -226,6 +386,11 @@ stop_watching_for_parameter_changes(BControl* control, BParameter &parameter)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a SeparatorView with the given orientation.
+ *
+ * @param orientation  B_VERTICAL or B_HORIZONTAL.
+ */
 SeparatorView::SeparatorView(orientation orientation)
 	: BView("-", B_WILL_DRAW),
 	fVertical(orientation == B_VERTICAL)
@@ -240,11 +405,19 @@ SeparatorView::SeparatorView(orientation orientation)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 SeparatorView::~SeparatorView()
 {
 }
 
 
+/**
+ * @brief Draw the two-pixel separator line.
+ *
+ * @param updateRect  The dirty region to repaint.
+ */
 void
 SeparatorView::Draw(BRect updateRect)
 {
@@ -268,6 +441,11 @@ SeparatorView::Draw(BRect updateRect)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a TitleView that displays @p title centred.
+ *
+ * @param title  Text to display as the group title.
+ */
 TitleView::TitleView(const char *title)
 	: BView(title, B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE),
 	fTitle(title)
@@ -276,11 +454,19 @@ TitleView::TitleView(const char *title)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 TitleView::~TitleView()
 {
 }
 
 
+/**
+ * @brief Draw the centred title string.
+ *
+ * @param updateRect  The dirty region to repaint.
+ */
 void
 TitleView::Draw(BRect updateRect)
 {
@@ -293,6 +479,12 @@ TitleView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Return the preferred width and height for the title view.
+ *
+ * @param _width   Receives the preferred width.
+ * @param _height  Receives the preferred height.
+ */
 void
 TitleView::GetPreferredSize(float *_width, float *_height)
 {
@@ -311,6 +503,13 @@ TitleView::GetPreferredSize(float *_width, float *_height)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a CheckBox and bind it to @p parameter.
+ *
+ * @param name       View name.
+ * @param label      Display label.
+ * @param parameter  Discrete parameter to control.
+ */
 CheckBox::CheckBox(const char* name, const char* label,
 	BDiscreteParameter &parameter)
 	: BCheckBox(name, label, NULL),
@@ -319,11 +518,17 @@ CheckBox::CheckBox(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 CheckBox::~CheckBox()
 {
 }
 
 
+/**
+ * @brief Called when attached to a window; begins watching for parameter changes.
+ */
 void
 CheckBox::AttachedToWindow()
 {
@@ -334,6 +539,9 @@ CheckBox::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when detached from a window; stops watching for parameter changes.
+ */
 void
 CheckBox::DetachedFromWindow()
 {
@@ -341,6 +549,13 @@ CheckBox::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Construct an OptionPopUp and bind it to @p parameter.
+ *
+ * @param name       View name.
+ * @param label      Display label.
+ * @param parameter  Discrete parameter to control.
+ */
 OptionPopUp::OptionPopUp(const char* name, const char* label,
 	BDiscreteParameter &parameter)
 	: BOptionPopUp(name, label, NULL),
@@ -349,11 +564,17 @@ OptionPopUp::OptionPopUp(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 OptionPopUp::~OptionPopUp()
 {
 }
 
 
+/**
+ * @brief Called when attached to a window; begins watching for parameter changes.
+ */
 void
 OptionPopUp::AttachedToWindow()
 {
@@ -364,6 +585,9 @@ OptionPopUp::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when detached from a window; stops watching for parameter changes.
+ */
 void
 OptionPopUp::DetachedFromWindow()
 {
@@ -371,6 +595,15 @@ OptionPopUp::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Construct a Slider and bind it to @p parameter.
+ *
+ * @param name       View name.
+ * @param label      Display label.
+ * @param minValue   Minimum integer value (parameter value * 1000).
+ * @param maxValue   Maximum integer value (parameter value * 1000).
+ * @param parameter  Continuous parameter to control.
+ */
 Slider::Slider(const char* name, const char* label, int32 minValue,
 	int32 maxValue, BContinuousParameter &parameter)
 	: BSlider(name, label, NULL, minValue, maxValue, B_HORIZONTAL),
@@ -379,11 +612,17 @@ Slider::Slider(const char* name, const char* label, int32 minValue,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 Slider::~Slider()
 {
 }
 
 
+/**
+ * @brief Called when attached to a window; begins watching for parameter changes.
+ */
 void
 Slider::AttachedToWindow()
 {
@@ -394,6 +633,9 @@ Slider::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when detached from a window; stops watching for parameter changes.
+ */
 void
 Slider::DetachedFromWindow()
 {
@@ -401,6 +643,15 @@ Slider::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Construct a ChannelSlider and bind it to @p parameter.
+ *
+ * @param name       View name.
+ * @param label      Display label.
+ * @param orientation  B_VERTICAL or B_HORIZONTAL.
+ * @param channels   Number of independent channels.
+ * @param parameter  Continuous parameter to control.
+ */
 ChannelSlider::ChannelSlider(const char* name, const char* label,
 	orientation orientation, int32 channels, BContinuousParameter &parameter)
 	: BChannelSlider(name, label, NULL, orientation, channels),
@@ -409,11 +660,17 @@ ChannelSlider::ChannelSlider(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 ChannelSlider::~ChannelSlider()
 {
 }
 
 
+/**
+ * @brief Called when attached to a window; begins watching for parameter changes.
+ */
 void
 ChannelSlider::AttachedToWindow()
 {
@@ -424,6 +681,9 @@ ChannelSlider::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when detached from a window; stops watching for parameter changes.
+ */
 void
 ChannelSlider::DetachedFromWindow()
 {
@@ -433,6 +693,11 @@ ChannelSlider::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Update the tooltip with a formatted version of the current value.
+ *
+ * @param currentValue  Current slider value (stored as integer * 1000).
+ */
 void
 ChannelSlider::UpdateToolTip(int32 currentValue)
 {
@@ -442,6 +707,13 @@ ChannelSlider::UpdateToolTip(int32 currentValue)
 }
 
 
+/**
+ * @brief Construct a TextControl and bind it to @p parameter.
+ *
+ * @param name       View name.
+ * @param label      Display label.
+ * @param parameter  Text parameter to control.
+ */
 TextControl::TextControl(const char* name, const char* label,
 	BTextParameter &parameter)
 	: BTextControl(name, label, "", NULL),
@@ -450,11 +722,17 @@ TextControl::TextControl(const char* name, const char* label,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 TextControl::~TextControl()
 {
 }
 
 
+/**
+ * @brief Called when attached to a window; begins watching for parameter changes.
+ */
 void
 TextControl::AttachedToWindow()
 {
@@ -465,6 +743,9 @@ TextControl::AttachedToWindow()
 }
 
 
+/**
+ * @brief Called when detached from a window; stops watching for parameter changes.
+ */
 void
 TextControl::DetachedFromWindow()
 {
@@ -475,12 +756,23 @@ TextControl::DetachedFromWindow()
 //	#pragma mark -
 
 
+/**
+ * @brief Base constructor: accept messages from any delivery/source.
+ */
 MessageFilter::MessageFilter()
 	: BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE)
 {
 }
 
 
+/**
+ * @brief Create the correct filter subclass for @p parameter.
+ *
+ * @param view       The BControl to attach the filter to.
+ * @param parameter  Parameter whose type determines the filter class.
+ * @return A new ContinuousMessageFilter, DiscreteMessageFilter, or
+ *         TextMessageFilter, or NULL for null parameters or non-control views.
+ */
 MessageFilter *
 MessageFilter::FilterFor(BView *view, BParameter &parameter)
 {
@@ -511,6 +803,15 @@ MessageFilter::FilterFor(BView *view, BParameter &parameter)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the filter for @p control and @p parameter and set initial value.
+ *
+ * Installs a kMsgParameterChanged message on the control and calls _UpdateControl()
+ * to sync the UI to the current parameter value.
+ *
+ * @param control    The slider control to bind.
+ * @param parameter  The continuous parameter to reflect.
+ */
 ContinuousMessageFilter::ContinuousMessageFilter(BControl *control,
 		BContinuousParameter &parameter)
 	: MessageFilter(),
@@ -532,11 +833,22 @@ ContinuousMessageFilter::ContinuousMessageFilter(BControl *control,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 ContinuousMessageFilter::~ContinuousMessageFilter()
 {
 }
 
 
+/**
+ * @brief Dispatch kMsgParameterChanged (control -> parameter) and
+ *        B_MEDIA_NEW_PARAMETER_VALUE (parameter -> control) messages.
+ *
+ * @param message  Incoming message.
+ * @param target   Message target handler.
+ * @return B_DISPATCH_MESSAGE to pass on, B_SKIP_MESSAGE to consume.
+ */
 filter_result
 ContinuousMessageFilter::Filter(BMessage *message, BHandler **target)
 {
@@ -588,6 +900,9 @@ ContinuousMessageFilter::Filter(BMessage *message, BHandler **target)
 }
 
 
+/**
+ * @brief Refresh the slider(s) to match the parameter's current value.
+ */
 void
 ContinuousMessageFilter::_UpdateControl()
 {
@@ -617,6 +932,12 @@ ContinuousMessageFilter::_UpdateControl()
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the filter for @p control and @p parameter and set initial value.
+ *
+ * @param control    The check box or pop-up to bind.
+ * @param parameter  The discrete parameter to reflect.
+ */
 DiscreteMessageFilter::DiscreteMessageFilter(BControl *control,
 		BDiscreteParameter &parameter)
 	: MessageFilter(),
@@ -644,11 +965,22 @@ DiscreteMessageFilter::DiscreteMessageFilter(BControl *control,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 DiscreteMessageFilter::~DiscreteMessageFilter()
 {
 }
 
 
+/**
+ * @brief Dispatch kMsgParameterChanged (control -> parameter) and
+ *        B_MEDIA_NEW_PARAMETER_VALUE (parameter -> control) messages.
+ *
+ * @param message  Incoming message.
+ * @param target   Message target handler.
+ * @return B_DISPATCH_MESSAGE to pass on, B_SKIP_MESSAGE to consume.
+ */
 filter_result
 DiscreteMessageFilter::Filter(BMessage *message, BHandler **target)
 {
@@ -714,6 +1046,12 @@ DiscreteMessageFilter::Filter(BMessage *message, BHandler **target)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the filter for @p control and @p parameter and set initial text.
+ *
+ * @param control    The text control to bind.
+ * @param parameter  The text parameter to reflect.
+ */
 TextMessageFilter::TextMessageFilter(BControl *control,
 		BTextParameter &parameter)
 	: MessageFilter(),
@@ -742,11 +1080,22 @@ TextMessageFilter::TextMessageFilter(BControl *control,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 TextMessageFilter::~TextMessageFilter()
 {
 }
 
 
+/**
+ * @brief Dispatch kMsgParameterChanged (control -> parameter) and
+ *        B_MEDIA_NEW_PARAMETER_VALUE (parameter -> control) messages.
+ *
+ * @param message  Incoming message.
+ * @param target   Message target handler.
+ * @return B_DISPATCH_MESSAGE to pass on, B_SKIP_MESSAGE to consume.
+ */
 filter_result
 TextMessageFilter::Filter(BMessage *message, BHandler **target)
 {
@@ -808,6 +1157,9 @@ TextMessageFilter::Filter(BMessage *message, BHandler **target)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the DefaultMediaTheme with the hard-coded Haiku theme name.
+ */
 DefaultMediaTheme::DefaultMediaTheme()
 	: BMediaTheme("Haiku theme", "Haiku built-in theme version 0.1")
 {
@@ -815,6 +1167,12 @@ DefaultMediaTheme::DefaultMediaTheme()
 }
 
 
+/**
+ * @brief Create a BControl for @p parameter using MakeViewFor().
+ *
+ * @param parameter  The parameter to create a control for.
+ * @return A BControl appropriate for the parameter type, or NULL.
+ */
 BControl *
 DefaultMediaTheme::MakeControlFor(BParameter *parameter)
 {
@@ -824,6 +1182,16 @@ DefaultMediaTheme::MakeControlFor(BParameter *parameter)
 }
 
 
+/**
+ * @brief Create a scrollable view hierarchy for the entire parameter web.
+ *
+ * If the web has more than one group a BTabView is used; otherwise a
+ * plain BScrollView is returned. Each group is rendered by MakeViewFor(group).
+ *
+ * @param web       The parameter web to render.
+ * @param hintRect  Optional hint for initial position and size.
+ * @return A BView containing all rendered groups, or NULL if @p web is NULL.
+ */
 BView *
 DefaultMediaTheme::MakeViewFor(BParameterWeb *web, const BRect *hintRect)
 {
@@ -880,6 +1248,15 @@ DefaultMediaTheme::MakeViewFor(BParameterWeb *web, const BRect *hintRect)
 }
 
 
+/**
+ * @brief Create a horizontal BGroupView containing all parameters and sub-groups.
+ *
+ * Hidden groups (B_HIDDEN_PARAMETER flag) return NULL. Parameters are stacked
+ * vertically on the left; sub-groups are separated by SeparatorViews.
+ *
+ * @param group  The parameter group to render.
+ * @return A BGroupView, or NULL if the group should be hidden or is empty.
+ */
 BView *
 DefaultMediaTheme::MakeViewFor(BParameterGroup& group)
 {
@@ -939,6 +1316,16 @@ DefaultMediaTheme::MakeViewFor(BParameterGroup& group)
 /*!	This creates a view that handles all incoming messages itself - that's
 	what is meant with self-hosting.
 */
+/**
+ * @brief Create a self-hosting view for @p parameter (view handles its own messages).
+ *
+ * Calls MakeViewFor() to get a BControl, then installs the appropriate
+ * MessageFilter. For null parameters a TitleView or BStringView is returned.
+ *
+ * @param parameter  The parameter to create a view for.
+ * @return A BView with an installed message filter, or a label view for null
+ *         parameters, or NULL if the parameter should be hidden.
+ */
 BView *
 DefaultMediaTheme::MakeSelfHostingViewFor(BParameter& parameter)
 {
@@ -976,6 +1363,19 @@ DefaultMediaTheme::MakeSelfHostingViewFor(BParameter& parameter)
 }
 
 
+/**
+ * @brief Create a BControl appropriate for @p parameter's type and kind.
+ *
+ * - B_NULL_PARAMETER: returns NULL (handled by MakeSelfHostingViewFor).
+ * - B_DISCRETE_PARAMETER with 0 items or B_ENABLE/B_MUTE kind: CheckBox.
+ * - B_DISCRETE_PARAMETER otherwise: OptionPopUp with all items added.
+ * - B_CONTINUOUS_PARAMETER with B_GAIN/B_MASTER_GAIN kind: ChannelSlider.
+ * - B_CONTINUOUS_PARAMETER otherwise: Slider.
+ * - B_TEXT_PARAMETER: TextControl.
+ *
+ * @param parameter  The parameter to create a control for.
+ * @return A BControl subclass, or NULL for null parameters or unknown types.
+ */
 BControl *
 DefaultMediaTheme::MakeViewFor(BParameter *parameter)
 {
@@ -1059,4 +1459,3 @@ DefaultMediaTheme::MakeViewFor(BParameter *parameter)
 	}
 	return NULL;
 }
-

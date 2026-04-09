@@ -1,35 +1,55 @@
 /*
- * Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
 
-/*
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
- *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
+/** @file Buffer.cpp
+ *  @brief Implements BBuffer and BSmallBuffer, the fundamental media data containers. */
 
 
 #include <Buffer.h>
@@ -49,6 +69,7 @@ using namespace BPrivate::media;
 //	#pragma mark - buffer_clone_info
 
 
+/** @brief Default constructor; zeroes all fields of the clone info structure. */
 buffer_clone_info::buffer_clone_info()
 {
 	CALLED();
@@ -60,6 +81,7 @@ buffer_clone_info::buffer_clone_info()
 }
 
 
+/** @brief Destructor for buffer_clone_info. */
 buffer_clone_info::~buffer_clone_info()
 {
 	CALLED();
@@ -69,6 +91,8 @@ buffer_clone_info::~buffer_clone_info()
 //	#pragma mark - public BBuffer
 
 
+/** @brief Returns a pointer to the raw data memory region of the buffer.
+ *  @return Pointer to the buffer's data area, or NULL if not initialised. */
 void*
 BBuffer::Data()
 {
@@ -77,6 +101,8 @@ BBuffer::Data()
 }
 
 
+/** @brief Returns the total capacity of the buffer in bytes.
+ *  @return Number of bytes available in the buffer. */
 size_t
 BBuffer::SizeAvailable()
 {
@@ -85,6 +111,8 @@ BBuffer::SizeAvailable()
 }
 
 
+/** @brief Returns the number of bytes currently in use within the buffer.
+ *  @return Number of bytes marked as used in the media header. */
 size_t
 BBuffer::SizeUsed()
 {
@@ -93,6 +121,8 @@ BBuffer::SizeUsed()
 }
 
 
+/** @brief Sets the number of bytes of valid data in the buffer.
+ *  @param size_used Number of bytes used; clamped to SizeAvailable(). */
 void
 BBuffer::SetSizeUsed(size_t size_used)
 {
@@ -101,6 +131,8 @@ BBuffer::SetSizeUsed(size_t size_used)
 }
 
 
+/** @brief Returns the buffer flags bitmask.
+ *  @return Current flags value for this buffer. */
 uint32
 BBuffer::Flags()
 {
@@ -109,6 +141,10 @@ BBuffer::Flags()
 }
 
 
+/** @brief Returns the buffer to its owning BBufferGroup so it can be reused.
+ *
+ *  If the buffer is marked for deletion it is deleted; otherwise it is
+ *  recycled through the SharedBufferList. */
 void
 BBuffer::Recycle()
 {
@@ -123,6 +159,8 @@ BBuffer::Recycle()
 }
 
 
+/** @brief Returns a buffer_clone_info structure describing this buffer.
+ *  @return Filled buffer_clone_info that can be used to clone the buffer. */
 buffer_clone_info
 BBuffer::CloneInfo() const
 {
@@ -139,6 +177,8 @@ BBuffer::CloneInfo() const
 }
 
 
+/** @brief Returns the system-wide unique identifier for this buffer.
+ *  @return The media_buffer_id assigned by the media server. */
 media_buffer_id
 BBuffer::ID()
 {
@@ -147,6 +187,8 @@ BBuffer::ID()
 }
 
 
+/** @brief Returns the media type carried by this buffer.
+ *  @return The media_type field from the buffer's media header. */
 media_type
 BBuffer::Type()
 {
@@ -155,6 +197,8 @@ BBuffer::Type()
 }
 
 
+/** @brief Returns a pointer to the buffer's media header.
+ *  @return Pointer to the internal media_header structure. */
 media_header*
 BBuffer::Header()
 {
@@ -163,6 +207,8 @@ BBuffer::Header()
 }
 
 
+/** @brief Returns a pointer to the raw-audio sub-header within the media header.
+ *  @return Pointer to the media_audio_header union member. */
 media_audio_header*
 BBuffer::AudioHeader()
 {
@@ -171,6 +217,8 @@ BBuffer::AudioHeader()
 }
 
 
+/** @brief Returns a pointer to the raw-video sub-header within the media header.
+ *  @return Pointer to the media_video_header union member. */
 media_video_header*
 BBuffer::VideoHeader()
 {
@@ -179,6 +227,8 @@ BBuffer::VideoHeader()
 }
 
 
+/** @brief Alias for SizeAvailable(); returns the total capacity of the buffer.
+ *  @return Number of bytes available in the buffer. */
 size_t
 BBuffer::Size()
 {
@@ -190,6 +240,13 @@ BBuffer::Size()
 // #pragma mark - private BBuffer
 
 
+/** @brief Constructs a BBuffer by registering with the media server and cloning the shared area.
+ *
+ *  Sends a SERVER_REGISTER_BUFFER request to the media server, which either
+ *  returns an existing cached area or creates a new one.  The area is then
+ *  cloned into this address space.
+ *
+ *  @param info Clone information describing the desired buffer (area, offset, size, flags). */
 BBuffer::BBuffer(const buffer_clone_info& info)
 	:
 	fBufferList(NULL),
@@ -264,6 +321,7 @@ BBuffer::BBuffer(const buffer_clone_info& info)
 }
 
 
+/** @brief Destructor; unregisters the buffer with the media server and releases the cloned area. */
 BBuffer::~BBuffer()
 {
 	CALLED();
@@ -286,6 +344,8 @@ BBuffer::~BBuffer()
 }
 
 
+/** @brief Copies the supplied media header into this buffer, preserving the buffer ID.
+ *  @param header Pointer to the media_header to copy; its buffer field must match this buffer's ID. */
 void
 BBuffer::SetHeader(const media_header* header)
 {
@@ -303,6 +363,7 @@ BBuffer::SetHeader(const media_header* header)
 static const buffer_clone_info sSmallBufferInfo;
 
 
+/** @brief Default constructor for BSmallBuffer; currently unimplemented and calls debugger. */
 BSmallBuffer::BSmallBuffer()
 	:
 	BBuffer(sSmallBufferInfo)
@@ -312,6 +373,8 @@ BSmallBuffer::BSmallBuffer()
 }
 
 
+/** @brief Returns the maximum data size permitted for a BSmallBuffer.
+ *  @return The small-buffer size limit in bytes (64). */
 size_t
 BSmallBuffer::SmallBufferSizeLimit()
 {

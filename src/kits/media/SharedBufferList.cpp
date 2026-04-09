@@ -1,8 +1,30 @@
 /*
- * Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2002, Marcus Overhagen. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2002, Marcus Overhagen. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file SharedBufferList.cpp
+ *  @brief Shared cross-team list of BBuffer/BBufferGroup state used by the media server. */
 
 
 /*!	Used for BBufferGroup and BBuffer management across teams.
@@ -34,6 +56,13 @@ static BLocker sLocker("shared buffer list");
 namespace BPrivate {
 
 
+/** @brief Creates a new SharedBufferList in a cloneable shared area.
+ *
+ *  Called by the media server at start-up.  The returned area is cloned by
+ *  each client process that calls Get().
+ *
+ *  @param _list Out-parameter set to a pointer to the newly created list.
+ *  @return The area_id of the shared area on success, or a negative error code. */
 /*static*/ area_id
 SharedBufferList::Create(SharedBufferList** _list)
 {
@@ -59,6 +88,12 @@ SharedBufferList::Create(SharedBufferList** _list)
 }
 
 
+/** @brief Clones the media server's shared buffer list into this address space.
+ *
+ *  Thread-safe; uses a reference count so the area is only cloned once per
+ *  process.  Callers must eventually call Put() to release their reference.
+ *
+ *  @return Pointer to the SharedBufferList, or NULL on failure. */
 /*static*/ SharedBufferList*
 SharedBufferList::Get()
 {
@@ -90,6 +125,9 @@ SharedBufferList::Get()
 }
 
 
+/** @brief Unmaps the locally cloned shared buffer list area.
+ *
+ *  Called internally when the reference count drops to zero. */
 /*static*/ void
 SharedBufferList::Invalidate()
 {
@@ -98,6 +136,9 @@ SharedBufferList::Invalidate()
 }
 
 
+/** @brief Releases one reference to the shared buffer list.
+ *
+ *  When the reference count reaches zero Invalidate() is called to unmap the area. */
 void
 SharedBufferList::Put()
 {
@@ -109,9 +150,9 @@ SharedBufferList::Put()
 }
 
 
-/*!	Deletes all BBuffers of the group specified by \a groupReclaimSem, then
-	unmaps the list from memory.
-*/
+/** @brief Deletes all BBuffers belonging to the group identified by \a groupReclaimSem, then releases the reference.
+ *
+ *  @param groupReclaimSem The reclaim semaphore that uniquely identifies the buffer group. */
 void
 SharedBufferList::DeleteGroupAndPut(sem_id groupReclaimSem)
 {
@@ -138,6 +179,12 @@ SharedBufferList::DeleteGroupAndPut(sem_id groupReclaimSem)
 }
 
 
+/** @brief Acquires the shared list's internal spin-semaphore lock.
+ *
+ *  Uses an atomic counter to avoid unnecessary semaphore operations when
+ *  the lock is uncontested.
+ *
+ *  @return B_OK on success, or a semaphore error code. */
 status_t
 SharedBufferList::Lock()
 {
@@ -153,6 +200,8 @@ SharedBufferList::Lock()
 }
 
 
+/** @brief Releases the shared list's internal spin-semaphore lock.
+ *  @return B_OK on success, or a semaphore error code. */
 status_t
 SharedBufferList::Unlock()
 {
@@ -163,6 +212,15 @@ SharedBufferList::Unlock()
 }
 
 
+/** @brief Creates a new BBuffer from \a info and adds it to the group.
+ *
+ *  If \a info.buffer refers to an existing buffer ID it must not already belong
+ *  to the same group (checked via CheckID()).
+ *
+ *  @param groupReclaimSem Reclaim semaphore identifying the target group.
+ *  @param info            Clone information for the new buffer.
+ *  @param _buffer         Optional out-parameter receiving the created BBuffer pointer.
+ *  @return B_OK on success, or an error code. */
 status_t
 SharedBufferList::AddBuffer(sem_id groupReclaimSem,
 	const buffer_clone_info& info, BBuffer** _buffer)
@@ -203,6 +261,14 @@ SharedBufferList::AddBuffer(sem_id groupReclaimSem,
 }
 
 
+/** @brief Adds an already-constructed BBuffer to the group, releasing the reclaim semaphore once.
+ *
+ *  The list must be locked by the caller before this overload is invoked.
+ *
+ *  @param groupReclaimSem Reclaim semaphore identifying the target group.
+ *  @param buffer          The BBuffer to add; must not be NULL.
+ *  @return B_OK on success, B_BAD_VALUE if \a buffer is NULL, or B_MEDIA_TOO_MANY_BUFFERS
+ *          if the global buffer limit is reached. */
 status_t
 SharedBufferList::AddBuffer(sem_id groupReclaimSem, BBuffer* buffer)
 {
@@ -225,6 +291,12 @@ SharedBufferList::AddBuffer(sem_id groupReclaimSem, BBuffer* buffer)
 }
 
 
+/** @brief Checks that a buffer ID does not already exist within a given group.
+ *
+ *  @param groupSem The reclaim semaphore of the group to search.
+ *  @param id       The buffer ID to check; 0 is always considered valid.
+ *  @return B_OK if the ID is not a duplicate in the group, B_BAD_VALUE for a negative ID,
+ *          or B_ERROR if the ID is already present in the group. */
 status_t
 SharedBufferList::CheckID(sem_id groupSem, media_buffer_id id) const
 {
@@ -245,6 +317,20 @@ SharedBufferList::CheckID(sem_id groupSem, media_buffer_id id) const
 }
 
 
+/** @brief Requests a free buffer from the group, blocking until one is available or the timeout expires.
+ *
+ *  Searches for a buffer matching the size, ID, or pointer criteria.  When
+ *  a buffer shared with other groups is found it is also marked as requested
+ *  in those other groups.
+ *
+ *  @param groupReclaimSem  Reclaim semaphore identifying the source group.
+ *  @param buffersInGroup   Total number of buffers in the group (loop bound).
+ *  @param size             Required minimum size; 0 if not used as a criterion.
+ *  @param wantID           Specific buffer ID to look for; 0 if not used.
+ *  @param _buffer          In/out: on entry, a specific BBuffer pointer to match (or NULL);
+ *                          on success, receives the found BBuffer pointer.
+ *  @param timeout          Absolute or relative timeout in microseconds.
+ *  @return B_OK on success, or an error code (e.g. B_TIMED_OUT). */
 status_t
 SharedBufferList::RequestBuffer(sem_id groupReclaimSem, int32 buffersInGroup,
 	size_t size, media_buffer_id wantID, BBuffer** _buffer, bigtime_t timeout)
@@ -338,6 +424,10 @@ SharedBufferList::RequestBuffer(sem_id groupReclaimSem, int32 buffersInGroup,
 }
 
 
+/** @brief Marks a buffer as reclaimed and releases the reclaim semaphore in every group that owns it.
+ *
+ *  @param buffer The BBuffer to recycle; identified by its media_buffer_id.
+ *  @return B_OK on success, or an error code if the buffer was not found or was already reclaimed. */
 status_t
 SharedBufferList::RecycleBuffer(BBuffer* buffer)
 {
@@ -378,6 +468,13 @@ SharedBufferList::RecycleBuffer(BBuffer* buffer)
 }
 
 
+/** @brief Removes a buffer from the shared list without recycling it.
+ *
+ *  Used when a buffer is being deleted while it is still logically owned by a group.
+ *  The buffer must already be in the reclaimed state.
+ *
+ *  @param buffer The BBuffer to remove; identified by its media_buffer_id.
+ *  @return B_OK on success, or an error code. */
 status_t
 SharedBufferList::RemoveBuffer(BBuffer* buffer)
 {
@@ -420,9 +517,12 @@ SharedBufferList::RemoveBuffer(BBuffer* buffer)
 
 
 
-/*!	Returns exactly \a bufferCount buffers from the group specified via its
-	\a groupReclaimSem if successful.
-*/
+/** @brief Returns exactly \a bufferCount buffers from the group identified by \a groupReclaimSem.
+ *
+ *  @param groupReclaimSem The reclaim semaphore identifying the group.
+ *  @param bufferCount     Number of buffer pointers to retrieve.
+ *  @param buffers         Caller-supplied array of at least \a bufferCount BBuffer* elements.
+ *  @return B_OK if exactly \a bufferCount buffers were found, or B_ERROR otherwise. */
 status_t
 SharedBufferList::GetBufferList(sem_id groupReclaimSem, int32 bufferCount,
 	BBuffer** buffers)
@@ -448,6 +548,11 @@ SharedBufferList::GetBufferList(sem_id groupReclaimSem, int32 bufferCount,
 }
 
 
+/** @brief Initialises the SharedBufferList in-place after the shared area is created.
+ *
+ *  Creates the internal semaphore and zeroes all buffer info entries.
+ *
+ *  @return B_OK on success, or a negative semaphore creation error code. */
 status_t
 SharedBufferList::_Init()
 {
@@ -468,8 +573,13 @@ SharedBufferList::_Init()
 }
 
 
-/*!	Used by RequestBuffer, call this one with the list locked!
-*/
+/** @brief Marks a buffer as requested in all groups other than the one currently requesting it.
+ *
+ *  Must be called with the list locked.  Acquires the reclaim semaphore of
+ *  each other group that contains the buffer to prevent a double-request.
+ *
+ *  @param groupReclaimSem The group that is currently performing the request.
+ *  @param id              The media_buffer_id shared across groups. */
 void
 SharedBufferList::_RequestBufferInOtherGroups(sem_id groupReclaimSem,
 	media_buffer_id id)

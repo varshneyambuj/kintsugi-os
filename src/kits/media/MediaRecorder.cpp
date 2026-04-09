@@ -1,9 +1,32 @@
 /*
- * Copyright 2015, Hamish Morrison <hamishm53@gmail.com>
- * Copyright 2014-2016, Dario Casalinuovo
- * Copyright 1999, Be Incorporated
- * All Rights Reserved.
- * This file may be used under the terms of the Be Sample Code License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Hamish Morrison <hamishm53@gmail.com>
+ *   Copyright 2014-2016, Dario Casalinuovo
+ *   Copyright 1999, Be Incorporated
+ *   All Rights Reserved.
+ *   This file may be used under the terms of the Be Sample Code License.
+ */
+
+/** @file MediaRecorder.cpp
+ *  @brief Implementation of BMediaRecorder for capturing live media from nodes.
  */
 
 
@@ -17,6 +40,10 @@
 #include "MediaRecorderNode.h"
 
 
+/** @brief Constructs a BMediaRecorder and registers its internal node with the media roster.
+ *  @param name The name of the recorder (used for the internal BMediaNode).
+ *  @param type The media type to accept (e.g. B_MEDIA_RAW_AUDIO).
+ */
 BMediaRecorder::BMediaRecorder(const char* name, media_type type)
 	:
 	fInitErr(B_OK),
@@ -42,6 +69,7 @@ BMediaRecorder::BMediaRecorder(const char* name, media_type type)
 }
 
 
+/** @brief Destructor; stops recording, disconnects, and releases the internal node. */
 BMediaRecorder::~BMediaRecorder()
 {
 	CALLED();
@@ -54,6 +82,9 @@ BMediaRecorder::~BMediaRecorder()
 }
 
 
+/** @brief Returns the initialisation status of the recorder.
+ *  @return B_OK if ready, or an error code.
+ */
 status_t
 BMediaRecorder::InitCheck() const
 {
@@ -63,6 +94,9 @@ BMediaRecorder::InitCheck() const
 }
 
 
+/** @brief Sets the media format the internal node will accept from producers.
+ *  @param format The media_format to accept.
+ */
 void
 BMediaRecorder::SetAcceptedFormat(const media_format& format)
 {
@@ -72,6 +106,9 @@ BMediaRecorder::SetAcceptedFormat(const media_format& format)
 }
 
 
+/** @brief Returns the currently accepted media format.
+ *  @return Const reference to the accepted media_format.
+ */
 const media_format&
 BMediaRecorder::AcceptedFormat() const
 {
@@ -81,6 +118,12 @@ BMediaRecorder::AcceptedFormat() const
 }
 
 
+/** @brief Installs the callback hooks for recording and notification events.
+ *  @param recordFunc Callback invoked for each received buffer.
+ *  @param notifyFunc Callback invoked for lifecycle notifications (start/stop/seek).
+ *  @param cookie     User-supplied cookie passed to both callbacks.
+ *  @return B_OK on success.
+ */
 status_t
 BMediaRecorder::SetHooks(ProcessFunc recordFunc, NotifyFunc notifyFunc,
 	void* cookie)
@@ -95,6 +138,11 @@ BMediaRecorder::SetHooks(ProcessFunc recordFunc, NotifyFunc notifyFunc,
 }
 
 
+/** @brief Called by the internal node when a buffer is received; invokes the record hook.
+ *  @param buffer Pointer to the raw buffer data.
+ *  @param size   Size of the buffer in bytes.
+ *  @param header The media_header associated with the buffer.
+ */
 void
 BMediaRecorder::BufferReceived(void* buffer, size_t size,
 	const media_header& header)
@@ -108,6 +156,12 @@ BMediaRecorder::BufferReceived(void* buffer, size_t size,
 }
 
 
+/** @brief Connects to a suitable default producer for the given format type.
+ *         Selects the audio mixer for raw audio, or the video input for video.
+ *  @param format The desired input media_format.
+ *  @return B_OK on success, B_MEDIA_ALREADY_CONNECTED if already connected,
+ *          B_MEDIA_BAD_FORMAT for unsupported types, or an error code.
+ */
 status_t
 BMediaRecorder::Connect(const media_format& format)
 {
@@ -152,6 +206,12 @@ BMediaRecorder::Connect(const media_format& format)
 }
 
 
+/** @brief Connects to a producer identified by a dormant node info.
+ *  @param dormantNode Info identifying the dormant node to instantiate.
+ *  @param format      The desired input media_format.
+ *  @return B_OK on success, B_MEDIA_ALREADY_CONNECTED if already connected,
+ *          or an error code.
+ */
 status_t
 BMediaRecorder::Connect(const dormant_node_info& dormantNode,
 	const media_format& format)
@@ -184,6 +244,13 @@ BMediaRecorder::Connect(const dormant_node_info& dormantNode,
 }
 
 
+/** @brief Connects to a specific media node and optional output.
+ *  @param node   The producer media_node to connect from.
+ *  @param output Pointer to a specific media_output, or NULL to find a free one.
+ *  @param format Pointer to the desired media_format, or NULL to use the output's format.
+ *  @return B_OK on success, B_MEDIA_ALREADY_CONNECTED if already connected,
+ *          or an error code.
+ */
 status_t
 BMediaRecorder::Connect(const media_node& node,
 	const media_output* output, const media_format* format)
@@ -203,6 +270,11 @@ BMediaRecorder::Connect(const media_node& node,
 }
 
 
+/** @brief Disconnects from the producer node.
+ *         Stops recording first if currently running.
+ *  @return B_OK on success, B_MEDIA_NOT_CONNECTED if not connected,
+ *          or an error code.
+ */
 status_t
 BMediaRecorder::Disconnect()
 {
@@ -245,6 +317,11 @@ BMediaRecorder::Disconnect()
 }
 
 
+/** @brief Starts the producer node and unmutes the data flow.
+ *  @param force If true, start even if already running.
+ *  @return B_OK on success, B_MEDIA_NOT_CONNECTED if not connected,
+ *          EALREADY if already running (and @p force is false), or an error code.
+ */
 status_t
 BMediaRecorder::Start(bool force)
 {
@@ -283,6 +360,11 @@ BMediaRecorder::Start(bool force)
 }
 
 
+/** @brief Stops the data flow by muting the node and stopping it.
+ *  @param force If true, stop even if not currently running.
+ *  @return B_OK on success, EALREADY if not running (and @p force is false),
+ *          or an error code.
+ */
 status_t
 BMediaRecorder::Stop(bool force)
 {
@@ -306,6 +388,9 @@ BMediaRecorder::Stop(bool force)
 }
 
 
+/** @brief Returns whether the recorder is currently running.
+ *  @return true if running, false otherwise.
+ */
 bool
 BMediaRecorder::IsRunning() const
 {
@@ -315,6 +400,9 @@ BMediaRecorder::IsRunning() const
 }
 
 
+/** @brief Returns whether the recorder is currently connected to a producer.
+ *  @return true if connected, false otherwise.
+ */
 bool
 BMediaRecorder::IsConnected() const
 {
@@ -324,6 +412,9 @@ BMediaRecorder::IsConnected() const
 }
 
 
+/** @brief Returns the media_source of the connected producer output.
+ *  @return Const reference to the producer's media_source.
+ */
 const media_source&
 BMediaRecorder::MediaSource() const
 {
@@ -333,6 +424,9 @@ BMediaRecorder::MediaSource() const
 }
 
 
+/** @brief Returns the media_input of the internal recorder node.
+ *  @return The current media_input.
+ */
 const media_input
 BMediaRecorder::MediaInput() const
 {
@@ -344,6 +438,9 @@ BMediaRecorder::MediaInput() const
 }
 
 
+/** @brief Returns the currently accepted media format.
+ *  @return Const reference to the accepted media_format.
+ */
 const media_format&
 BMediaRecorder::Format() const
 {
@@ -353,6 +450,11 @@ BMediaRecorder::Format() const
 }
 
 
+/** @brief Stores the producer's output source and configures time-source synchronisation.
+ *         Called internally once the media connection is established.
+ *  @param outputSource The media_source of the connected producer output.
+ *  @return B_OK on success, or an error code from the roster.
+ */
 status_t
 BMediaRecorder::SetUpConnection(media_source outputSource)
 {
@@ -371,6 +473,13 @@ BMediaRecorder::SetUpConnection(media_source outputSource)
 }
 
 
+/** @brief Internal helper that performs the actual media graph connection.
+ *  @param node   The producer media_node.
+ *  @param output Pointer to a specific output, or NULL to search for a free one.
+ *  @param format The desired media_format.
+ *  @return B_OK on success, B_MEDIA_BAD_SOURCE if no compatible output is found,
+ *          or an error code.
+ */
 status_t
 BMediaRecorder::_Connect(const media_node& node,
 	const media_output* output, const media_format& format)
@@ -427,12 +536,20 @@ BMediaRecorder::_Connect(const media_node& node,
 }
 
 
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder0() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder1() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder2() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder3() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder4() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder5() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder6() { }
+/** @brief Reserved for future binary compatibility. */
 void BMediaRecorder::_ReservedMediaRecorder7() { }
 

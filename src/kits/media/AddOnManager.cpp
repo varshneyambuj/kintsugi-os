@@ -1,12 +1,35 @@
 /*
- * Copyright 2004-2010, Haiku. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marcus Overhagen
- *		Axel Dörfler
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2010, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Marcus Overhagen
+ *       Axel Dörfler
+ *       Stephan Aßmus <superstippi@gmx.de>
  */
+
+/** @file AddOnManager.cpp
+ *  @brief Implements AddOnManager, which discovers, registers, and indexes all media plug-in add-ons
+ *         (readers, writers, decoders, encoders, and streamers) found in the system plug-in directories. */
 
 
 #include "AddOnManager.h"
@@ -38,20 +61,29 @@ namespace media {
 /*!	The ImageLoader class is a convenience class to temporarily load
 	an image file, and unload it on deconstruction automatically.
 */
+/** @brief RAII wrapper that loads an add-on image on construction and unloads it on destruction. */
 class ImageLoader {
 public:
+	/** @brief Loads the add-on image at @p path.
+	 *  @param path  Filesystem path of the add-on to load. */
 	ImageLoader(BPath& path)
 	{
 		fImage = load_add_on(path.Path());
 	}
 
+	/** @brief Destructor. Unloads the image if it was loaded successfully. */
 	~ImageLoader()
 	{
 		if (fImage >= B_OK)
 			unload_add_on(fImage);
 	}
 
+	/** @brief Returns B_OK if the image was loaded, or an error code otherwise.
+	 *  @return B_OK on success, or a negative error code. */
 	status_t InitCheck() const { return fImage >= 0 ? B_OK : fImage; }
+
+	/** @brief Returns the loaded image identifier.
+	 *  @return The image_id of the loaded add-on. */
 	image_id Image() const { return fImage; }
 
 private:
@@ -62,6 +94,7 @@ private:
 //	#pragma mark -
 
 
+/** @brief Constructs the AddOnManager with an empty registry and zeroed ID counters. */
 AddOnManager::AddOnManager()
 	:
 	fLock("add-on manager"),
@@ -71,6 +104,7 @@ AddOnManager::AddOnManager()
 }
 
 
+/** @brief Destructor. */
 AddOnManager::~AddOnManager()
 {
 }
@@ -79,6 +113,8 @@ AddOnManager::~AddOnManager()
 AddOnManager AddOnManager::sInstance;
 
 
+/** @brief Returns the process-wide singleton AddOnManager instance.
+ *  @return Pointer to the global AddOnManager. */
 /* static */ AddOnManager*
 AddOnManager::GetInstance()
 {
@@ -86,6 +122,16 @@ AddOnManager::GetInstance()
 }
 
 
+/** @brief Finds the add-on file reference for a decoder that supports @p format.
+ *
+ *  Scans the registered decoder list directory by directory (respecting the
+ *  user-overrides-system shadowing order) and returns the first decoder whose
+ *  supported formats match @p format.
+ *
+ *  @param _decoderRef  Output entry_ref set to the matching decoder add-on.
+ *  @param format       The encoded media format that must be decodable.
+ *  @return B_OK on success, B_MEDIA_BAD_FORMAT if the format is invalid,
+ *          or B_ENTRY_NOT_FOUND if no decoder matched. */
 status_t
 AddOnManager::GetDecoderForFormat(entry_ref* _decoderRef,
 	const media_format& format)
@@ -130,6 +176,12 @@ AddOnManager::GetDecoderForFormat(entry_ref* _decoderRef,
 }
 
 
+/** @brief Finds the add-on file reference for an encoder that produces @p outputFormat.
+ *
+ *  @param _encoderRef    Output entry_ref set to the matching encoder add-on.
+ *  @param outputFormat   The desired encoded output format.
+ *  @return B_OK on success, B_MEDIA_BAD_FORMAT if the format is invalid,
+ *          or B_ENTRY_NOT_FOUND if no encoder matched. */
 status_t
 AddOnManager::GetEncoderForFormat(entry_ref* _encoderRef,
 	const media_format& outputFormat)
@@ -170,6 +222,14 @@ AddOnManager::GetEncoderForFormat(entry_ref* _encoderRef,
 }
 
 
+/** @brief Fills @p outRefs with entry references for all registered reader add-ons.
+ *
+ *  Results are returned in directory priority order (user before system).
+ *
+ *  @param outRefs   Output array of entry_ref to receive the reader references.
+ *  @param outCount  Output pointer set to the number of refs written.
+ *  @param maxCount  Maximum number of entries that @p outRefs can hold.
+ *  @return B_OK on success, or B_ENTRY_NOT_FOUND if the plug-in directories could not be located. */
 status_t
 AddOnManager::GetReaders(entry_ref* outRefs, int32* outCount,
 	int32 maxCount)
@@ -203,6 +263,12 @@ AddOnManager::GetReaders(entry_ref* outRefs, int32* outCount,
 }
 
 
+/** @brief Fills @p outRefs with entry references for all registered streamer add-ons.
+ *
+ *  @param outRefs   Output array of entry_ref to receive the streamer references.
+ *  @param outCount  Output pointer set to the number of refs written.
+ *  @param maxCount  Maximum number of entries that @p outRefs can hold.
+ *  @return B_OK always. */
 status_t
 AddOnManager::GetStreamers(entry_ref* outRefs, int32* outCount,
 	int32 maxCount)
@@ -226,6 +292,11 @@ AddOnManager::GetStreamers(entry_ref* outRefs, int32* outCount,
 }
 
 
+/** @brief Retrieves the entry reference for the encoder with the given internal @p id.
+ *
+ *  @param _encoderRef  Output entry_ref set to the matching encoder add-on.
+ *  @param id           The internal encoder codec ID to look up.
+ *  @return B_OK on success, or B_ENTRY_NOT_FOUND if no match exists. */
 status_t
 AddOnManager::GetEncoder(entry_ref* _encoderRef, int32 id)
 {
@@ -245,6 +316,11 @@ AddOnManager::GetEncoder(entry_ref* _encoderRef, int32 id)
 }
 
 
+/** @brief Retrieves the entry reference for the writer add-on with the given internal ID.
+ *
+ *  @param _ref        Output entry_ref set to the matching writer add-on.
+ *  @param internalID  The internal writer format family ID to look up.
+ *  @return B_OK on success, or B_ERROR if no match exists. */
 status_t
 AddOnManager::GetWriter(entry_ref* _ref, uint32 internalID)
 {
@@ -263,6 +339,11 @@ AddOnManager::GetWriter(entry_ref* _ref, uint32 internalID)
 }
 
 
+/** @brief Returns the media_file_format registered at position @p cookie.
+ *
+ *  @param _fileFormat  Output structure filled with the file format at the given index.
+ *  @param cookie       Zero-based index into the registered writer file-format list.
+ *  @return B_OK on success, or B_BAD_INDEX if @p cookie is out of range. */
 status_t
 AddOnManager::GetFileFormat(media_file_format* _fileFormat, int32 cookie)
 {
@@ -279,6 +360,14 @@ AddOnManager::GetFileFormat(media_file_format* _fileFormat, int32 cookie)
 }
 
 
+/** @brief Returns the encoder codec info at position @p cookie.
+ *
+ *  @param _codecInfo      Output structure filled with codec info.
+ *  @param _formatFamily   Output set to the format family of the encoder.
+ *  @param _inputFormat    Output set to the encoder's accepted input format.
+ *  @param _outputFormat   Output set to the encoder's produced output format.
+ *  @param cookie          Zero-based index into the registered encoder list.
+ *  @return B_OK on success, or B_BAD_INDEX if @p cookie is out of range. */
 status_t
 AddOnManager::GetCodecInfo(media_codec_info* _codecInfo,
 	media_format_family* _formatFamily,
@@ -303,6 +392,10 @@ AddOnManager::GetCodecInfo(media_codec_info* _codecInfo,
 // #pragma mark -
 
 
+/** @brief Scans all media plug-in directories and registers any discovered add-ons.
+ *
+ *  This is a lazy-initialisation method: if any of the internal lists are already
+ *  populated the scan is skipped.  Must be called with @c fLock held. */
 void
 AddOnManager::RegisterAddOns()
 {
@@ -335,6 +428,12 @@ AddOnManager::RegisterAddOns()
 }
 
 
+/** @brief Loads the add-on at @p ref, probes its plug-in type, and inserts it into
+ *         the appropriate internal registration list(s).
+ *
+ *  @param ref  Entry reference of the add-on file to register.
+ *  @return B_OK on success, B_BAD_TYPE if instantiate_plugin cannot be found,
+ *          B_ERROR if instantiation returns NULL, or another error code. */
 status_t
 AddOnManager::_RegisterAddOn(const entry_ref& ref)
 {
@@ -387,6 +486,13 @@ AddOnManager::_RegisterAddOn(const entry_ref& ref)
 }
 
 
+/** @brief Removes all registrations associated with the add-on at @p ref.
+ *
+ *  Cleans up entries from all internal lists (reader, decoder, writer, encoder)
+ *  and removes any associated format registrations from FormatManager.
+ *
+ *  @param ref  Entry reference of the add-on to unregister.
+ *  @return B_OK always. */
 status_t
 AddOnManager::_UnregisterAddOn(const entry_ref& ref)
 {
@@ -443,6 +549,10 @@ AddOnManager::_UnregisterAddOn(const entry_ref& ref)
 }
 
 
+/** @brief Adds a reader add-on to the internal reader registry if not already present.
+ *
+ *  @param reader  The ReaderPlugin to register (used only for type identification).
+ *  @param ref     Entry reference of the add-on file. */
 void
 AddOnManager::_RegisterReader(ReaderPlugin* reader, const entry_ref& ref)
 {
@@ -463,6 +573,13 @@ AddOnManager::_RegisterReader(ReaderPlugin* reader, const entry_ref& ref)
 }
 
 
+/** @brief Adds a decoder add-on to the internal decoder registry if not already present.
+ *
+ *  Queries the plug-in for its list of supported formats and stores them alongside
+ *  the entry reference so that format-matching lookups can be performed later.
+ *
+ *  @param plugin  The DecoderPlugin to query for supported formats.
+ *  @param ref     Entry reference of the add-on file. */
 void
 AddOnManager::_RegisterDecoder(DecoderPlugin* plugin, const entry_ref& ref)
 {
@@ -493,6 +610,13 @@ AddOnManager::_RegisterDecoder(DecoderPlugin* plugin, const entry_ref& ref)
 }
 
 
+/** @brief Adds a writer add-on to the internal writer registry if not already present.
+ *
+ *  Queries the plug-in for its list of supported file formats, assigns each an
+ *  internal ID, and inserts them into the writer file-format list.
+ *
+ *  @param writer  The WriterPlugin to query for supported file formats.
+ *  @param ref     Entry reference of the add-on file. */
 void
 AddOnManager::_RegisterWriter(WriterPlugin* writer, const entry_ref& ref)
 {
@@ -533,6 +657,13 @@ AddOnManager::_RegisterWriter(WriterPlugin* writer, const entry_ref& ref)
 }
 
 
+/** @brief Adds an encoder add-on to the internal encoder registry if not already present.
+ *
+ *  Iterates over all codec entries exported by the plug-in via RegisterNextEncoder()
+ *  and inserts one encoder_info record per codec into the encoder list.
+ *
+ *  @param plugin  The EncoderPlugin to enumerate codecs from.
+ *  @param ref     Entry reference of the add-on file. */
 void
 AddOnManager::_RegisterEncoder(EncoderPlugin* plugin, const entry_ref& ref)
 {
@@ -576,6 +707,10 @@ AddOnManager::_RegisterEncoder(EncoderPlugin* plugin, const entry_ref& ref)
 }
 
 
+/** @brief Adds a streamer add-on to the internal streamer registry if not already present.
+ *
+ *  @param streamer  The StreamerPlugin to register (used only for type identification).
+ *  @param ref       Entry reference of the add-on file. */
 void
 AddOnManager::_RegisterStreamer(StreamerPlugin* streamer, const entry_ref& ref)
 {
@@ -595,6 +730,15 @@ AddOnManager::_RegisterStreamer(StreamerPlugin* streamer, const entry_ref& ref)
 }
 
 
+/** @brief Searches the decoder list for a decoder in @p path that supports @p format.
+ *
+ *  Only decoders whose add-on file lives directly inside @p path are considered,
+ *  which enforces the user-overrides-system directory priority.
+ *
+ *  @param format       The encoded media format to match against.
+ *  @param path         The plug-in directory to restrict the search to.
+ *  @param _decoderRef  Output entry_ref set to the matching decoder on success.
+ *  @return true if a matching decoder was found, false otherwise. */
 bool
 AddOnManager::_FindDecoder(const media_format& format, const BPath& path,
 	entry_ref* _decoderRef)
@@ -625,6 +769,14 @@ AddOnManager::_FindDecoder(const media_format& format, const BPath& path,
 }
 
 
+/** @brief Searches the encoder list for an encoder in @p path that produces @p format.
+ *
+ *  Only encoders whose add-on file lives directly inside @p path are considered.
+ *
+ *  @param format       The desired encoded output format to match against.
+ *  @param path         The plug-in directory to restrict the search to.
+ *  @param _encoderRef  Output entry_ref set to the matching encoder on success.
+ *  @return true if a matching encoder was found, false otherwise. */
 bool
 AddOnManager::_FindEncoder(const media_format& format, const BPath& path,
 	entry_ref* _encoderRef)
@@ -652,6 +804,14 @@ AddOnManager::_FindEncoder(const media_format& format, const BPath& path,
 }
 
 
+/** @brief Appends reader entry refs from @p path into the output array.
+ *
+ *  Only readers whose add-on file lives directly inside @p path are appended.
+ *
+ *  @param path      The plug-in directory to read from.
+ *  @param outRefs   Output array to append entry refs into.
+ *  @param outCount  In/out: current count; incremented for each reader appended.
+ *  @param maxCount  Maximum number of entries that @p outRefs can hold. */
 void
 AddOnManager::_GetReaders(const BPath& path, entry_ref* outRefs,
 	int32* outCount, int32 maxCount)

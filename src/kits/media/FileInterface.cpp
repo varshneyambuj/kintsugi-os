@@ -1,13 +1,33 @@
-/***********************************************************************
- * AUTHOR: Marcus Overhagen
- *   FILE: FileInterface.cpp
- *  DESCR:
- ***********************************************************************/
 /*
- * Copyright 2008 Maurice Kalinowski, haiku@kaldience.com
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * All rights reserved. Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   AUTHOR: Marcus Overhagen
+ *     FILE: FileInterface.cpp
+ *
+ *   Copyright 2008 Maurice Kalinowski, haiku@kaldience.com
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+/** @file FileInterface.cpp
+ *  @brief Implements BFileInterface, the mix-in that allows a media node to
+ *         read from or write to files via the Media Kit IPC protocol.
  */
 
 #include "MediaDebug.h"
@@ -21,6 +41,9 @@
  * protected BFileInterface
  *************************************************************/
 
+/**
+ * @brief Destructor.
+ */
 BFileInterface::~BFileInterface()
 {
 }
@@ -35,6 +58,9 @@ BFileInterface::~BFileInterface()
  * protected BFileInterface
  *************************************************************/
 
+/**
+ * @brief Protected constructor. Registers the B_FILE_INTERFACE node kind.
+ */
 BFileInterface::BFileInterface()
 	: BMediaNode("called by FileInterface")
 {
@@ -44,6 +70,17 @@ BFileInterface::BFileInterface()
 }
 
 
+/**
+ * @brief Dispatch incoming IPC messages for file-interface operations.
+ *
+ * Handles FILEINTERFACE_SET_REF, FILEINTERFACE_GET_REF,
+ * FILEINTERFACE_SNIFF_REF, and FILEINTERFACE_GET_FORMATS.
+ *
+ * @param message  The IPC message code.
+ * @param data     Pointer to the message data.
+ * @param size     Size of the message data in bytes.
+ * @return B_OK if the message was handled, B_ERROR for unknown messages.
+ */
 status_t
 BFileInterface::HandleMessage(int32 message,
 							  const void *data,
@@ -142,20 +179,35 @@ BFileInterface::BFileInterface(const BFileInterface &clone)
 FileInterface & BFileInterface::operator=(const BFileInterface &clone)
 */
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_0(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_1(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_2(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_3(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_4(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_5(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_6(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_7(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_8(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_9(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_10(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_11(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_12(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_13(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_14(void *) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BFileInterface::_Reserved_FileInterface_15(void *) { return B_ERROR; }
-

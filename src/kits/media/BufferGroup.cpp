@@ -1,31 +1,52 @@
 /*
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
+
+/** @file BufferGroup.cpp
+ *  @brief Implements BBufferGroup, a collection of shared media buffers. */
 
 
 #include <BufferGroup.h>
@@ -37,6 +58,16 @@
 #include "SharedBufferList.h"
 
 
+/** @brief Constructs a BBufferGroup containing \a count pre-allocated buffers.
+ *
+ *  All buffers are packed into a single area with the given memory placement
+ *  and locking policy.  Each BBuffer clones that area independently so the
+ *  group area can be deleted immediately after construction.
+ *
+ *  @param size      Size in bytes of each individual buffer.
+ *  @param count     Number of buffers to create.
+ *  @param placement Memory placement flag (B_ANY_ADDRESS or B_ANY_KERNEL_ADDRESS).
+ *  @param lock      Area locking policy passed to create_area(). */
 BBufferGroup::BBufferGroup(size_t size, int32 count, uint32 placement,
 	uint32 lock)
 {
@@ -92,6 +123,9 @@ BBufferGroup::BBufferGroup(size_t size, int32 count, uint32 placement,
 }
 
 
+/** @brief Constructs an empty BBufferGroup with no pre-allocated buffers.
+ *
+ *  Buffers can be added later via AddBuffer(). */
 BBufferGroup::BBufferGroup()
 {
 	CALLED();
@@ -103,6 +137,13 @@ BBufferGroup::BBufferGroup()
 }
 
 
+/** @brief Constructs a BBufferGroup from an array of existing media_buffer_id values.
+ *
+ *  Each ID is wrapped in a buffer_clone_info and passed to AddBuffer(), which
+ *  contacts the media server to resolve the underlying shared area.
+ *
+ *  @param count   Number of buffer IDs in the \a buffers array.
+ *  @param buffers Array of media_buffer_id values identifying existing buffers. */
 BBufferGroup::BBufferGroup(int32 count, const media_buffer_id* buffers)
 {
 	CALLED();
@@ -125,6 +166,7 @@ BBufferGroup::BBufferGroup(int32 count, const media_buffer_id* buffers)
 }
 
 
+/** @brief Destructor; deletes all BBuffers belonging to this group and releases the reclaim semaphore. */
 BBufferGroup::~BBufferGroup()
 {
 	CALLED();
@@ -135,6 +177,8 @@ BBufferGroup::~BBufferGroup()
 }
 
 
+/** @brief Returns the initialisation status of the group.
+ *  @return B_OK on success, or an error code set during construction. */
 status_t
 BBufferGroup::InitCheck()
 {
@@ -143,6 +187,11 @@ BBufferGroup::InitCheck()
 }
 
 
+/** @brief Adds a new BBuffer to the group described by \a info.
+ *
+ *  @param info    Clone information for the new buffer.
+ *  @param _buffer Optional out-parameter that receives a pointer to the created BBuffer.
+ *  @return B_OK on success, B_NO_INIT if the group is not initialised, or another error code. */
 status_t
 BBufferGroup::AddBuffer(const buffer_clone_info& info, BBuffer** _buffer)
 {
@@ -160,6 +209,13 @@ BBufferGroup::AddBuffer(const buffer_clone_info& info, BBuffer** _buffer)
 }
 
 
+/** @brief Requests a free buffer of at least \a size bytes from the group.
+ *
+ *  Blocks until a suitable buffer is available or the timeout expires.
+ *
+ *  @param size    Minimum required buffer size in bytes.
+ *  @param timeout Maximum time to wait in microseconds (B_INFINITE_TIMEOUT to wait forever).
+ *  @return Pointer to the acquired BBuffer, or NULL on failure. */
 BBuffer*
 BBufferGroup::RequestBuffer(size_t size, bigtime_t timeout)
 {
@@ -178,6 +234,13 @@ BBufferGroup::RequestBuffer(size_t size, bigtime_t timeout)
 }
 
 
+/** @brief Requests a specific BBuffer from the group.
+ *
+ *  Blocks until the buffer is available or the timeout expires.
+ *
+ *  @param buffer  The specific buffer to request.
+ *  @param timeout Maximum time to wait in microseconds (B_INFINITE_TIMEOUT to wait forever).
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferGroup::RequestBuffer(BBuffer* buffer, bigtime_t timeout)
 {
@@ -195,6 +258,8 @@ BBufferGroup::RequestBuffer(BBuffer* buffer, bigtime_t timeout)
 }
 
 
+/** @brief Returns the error code from the most recent RequestBuffer() call.
+ *  @return B_OK if the last request succeeded, or an error code. */
 status_t
 BBufferGroup::RequestError()
 {
@@ -206,6 +271,9 @@ BBufferGroup::RequestError()
 }
 
 
+/** @brief Returns the current number of buffers in this group.
+ *  @param _count Out-parameter that receives the buffer count.
+ *  @return B_OK on success, or B_NO_INIT if the group is not initialised. */
 status_t
 BBufferGroup::CountBuffers(int32* _count)
 {
@@ -218,6 +286,11 @@ BBufferGroup::CountBuffers(int32* _count)
 }
 
 
+/** @brief Fills \a _buffers with pointers to up to \a bufferCount buffers in the group.
+ *
+ *  @param bufferCount Number of pointers to retrieve; must be between 1 and CountBuffers().
+ *  @param _buffers    Caller-supplied array of at least \a bufferCount BBuffer* elements.
+ *  @return B_OK on success, B_BAD_VALUE for an out-of-range count, or B_NO_INIT. */
 status_t
 BBufferGroup::GetBufferList(int32 bufferCount, BBuffer** _buffers)
 {
@@ -232,6 +305,8 @@ BBufferGroup::GetBufferList(int32 bufferCount, BBuffer** _buffers)
 }
 
 
+/** @brief Blocks until at least one buffer belonging to this group has been recycled.
+ *  @return B_OK when a buffer becomes available, or an error code. */
 status_t
 BBufferGroup::WaitForBuffers()
 {
@@ -264,6 +339,8 @@ BBufferGroup::WaitForBuffers()
 }
 
 
+/** @brief Blocks until all buffers in the group have been reclaimed.
+ *  @return B_OK when all buffers are available, or an error code. */
 status_t
 BBufferGroup::ReclaimAllBuffers()
 {
@@ -302,6 +379,14 @@ BBufferGroup::ReclaimAllBuffers()
 //	#pragma mark - deprecated BeOS R4 API
 
 
+/** @brief Deprecated BeOS R4 API: adds all buffer IDs to a BMessage.
+ *
+ *  Internally uses GetBufferList() to enumerate buffers; \a needLock is ignored.
+ *
+ *  @param message  Destination BMessage to which buffer IDs are appended.
+ *  @param name     Field name used when adding the IDs.
+ *  @param needLock Ignored; locking is handled internally.
+ *  @return B_OK on success, or an error code. */
 status_t
 BBufferGroup::AddBuffersTo(BMessage* message, const char* name, bool needLock)
 {
@@ -341,6 +426,8 @@ BBufferGroup::AddBuffersTo(BMessage* message, const char* name, bool needLock)
 //BBufferGroup & BBufferGroup::operator=(const BBufferGroup &)
 
 
+/** @brief Shared initialisation helper: creates the reclaim semaphore and acquires the SharedBufferList.
+ *  @return B_OK on success, or an error code if the semaphore or buffer list could not be created. */
 status_t
 BBufferGroup::_Init()
 {

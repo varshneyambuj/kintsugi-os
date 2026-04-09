@@ -1,36 +1,53 @@
 /*
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
 
-
-/*!	This is a interface class for media kit notifications.
-	It is private to the media kit which uses it to pass notifications up to
-	the media_server which will broadcast them.
-*/
+/** @file Notifications.cpp
+ *  @brief Internal media-kit notification interface that forwards events to the
+ *         media_server for broadcast to interested observers. */
 
 // TODO: The BeBook, MediaDefs.h and the BeOS R5 do list
 // different strings for the message data fields of
@@ -53,6 +70,11 @@ namespace media {
 namespace notifications {
 
 
+/** @brief Registers a messenger to receive media notifications for the given node.
+ *  @param notifyHandler  Messenger that will receive notification messages.
+ *  @param node           The media_node to watch, or a null node for global events.
+ *  @param notification   The notification type to watch (e.g. B_MEDIA_NODE_CREATED).
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 Register(const BMessenger& notifyHandler, const media_node& node,
 	int32 notification)
@@ -77,6 +99,11 @@ Register(const BMessenger& notifyHandler, const media_node& node,
 }
 
 
+/** @brief Cancels a previously registered notification for the given node.
+ *  @param notifyHandler  The messenger that was registered.
+ *  @param node           The media_node that was being watched.
+ *  @param notification   The notification type to cancel.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 Unregister(const BMessenger& notifyHandler, const media_node& node,
 	int32 notification)
@@ -101,11 +128,14 @@ Unregister(const BMessenger& notifyHandler, const media_node& node,
 }
 
 
-/*!	Transmits the error code specified by \a what to anyone who's receiving
-	notifications from this node. If \a info isn't \c NULL, it's used as a
-	model message for the error notification message.
-	The message field "be:node_id" will contain the node ID.
-*/
+/** @brief Transmits the error code specified by \a what to anyone who's receiving
+ *         notifications from this node. If \a info isn't \c NULL, it's used as a
+ *         model message for the error notification message.
+ *         The message field "be:node_id" will contain the node ID.
+ *  @param node  The node reporting the error.
+ *  @param what  The node_error code describing the failure.
+ *  @param info  Optional BMessage whose fields are merged into the notification.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 ReportError(const media_node& node, BMediaNode::node_error what,
 	const BMessage* info)
@@ -124,6 +154,9 @@ ReportError(const media_node& node, BMediaNode::node_error what,
 }
 
 
+/** @brief Broadcasts a B_MEDIA_NODE_CREATED notification for the given node IDs.
+ *  @param ids    Array of newly created media_node_id values.
+ *  @param count  Number of entries in \a ids. */
 void
 NodesCreated(const media_node_id* ids, int32 count)
 {
@@ -138,6 +171,9 @@ NodesCreated(const media_node_id* ids, int32 count)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_NODE_DELETED notification for the given node IDs.
+ *  @param ids    Array of deleted media_node_id values.
+ *  @param count  Number of entries in \a ids. */
 void
 NodesDeleted(const media_node_id* ids, int32 count)
 {
@@ -152,6 +188,10 @@ NodesDeleted(const media_node_id* ids, int32 count)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_CONNECTION_MADE notification.
+ *  @param input   The consumer endpoint of the new connection.
+ *  @param output  The producer endpoint of the new connection.
+ *  @param format  The negotiated media format for the connection. */
 void
 ConnectionMade(const media_input& input, const media_output& output,
 	const media_format& format)
@@ -167,6 +207,9 @@ ConnectionMade(const media_input& input, const media_output& output,
 }
 
 
+/** @brief Broadcasts a B_MEDIA_CONNECTION_BROKEN notification.
+ *  @param source       The producer endpoint of the broken connection.
+ *  @param destination  The consumer endpoint of the broken connection. */
 void
 ConnectionBroken(const media_source& source,
 	const media_destination& destination)
@@ -181,6 +224,9 @@ ConnectionBroken(const media_source& source,
 }
 
 
+/** @brief Broadcasts a B_MEDIA_BUFFER_CREATED notification for newly allocated areas.
+ *  @param areas  Array of area_info structures describing the new buffer areas.
+ *  @param count  Number of entries in \a areas. */
 void
 BuffersCreated(area_info* areas, int32 count)
 {
@@ -195,6 +241,9 @@ BuffersCreated(area_info* areas, int32 count)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_BUFFER_DELETED notification for released buffers.
+ *  @param ids    Array of media_buffer_id values that have been deleted.
+ *  @param count  Number of entries in \a ids. */
 void
 BuffersDeleted(const media_buffer_id* ids, int32 count)
 {
@@ -209,6 +258,10 @@ BuffersDeleted(const media_buffer_id* ids, int32 count)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_FORMAT_CHANGED notification.
+ *  @param source       The producer endpoint whose format changed.
+ *  @param destination  The consumer endpoint affected by the format change.
+ *  @param format       The new negotiated media format. */
 void
 FormatChanged(const media_source& source, const media_destination& destination,
 	const media_format& format)
@@ -224,6 +277,10 @@ FormatChanged(const media_source& source, const media_destination& destination,
 }
 
 
+/** @brief Broadcasts a B_MEDIA_PARAMETER_CHANGED notification.
+ *  @param node         The node whose parameter changed.
+ *  @param parameterID  ID of the parameter that changed.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 ParameterChanged(const media_node& node, int32 parameterID)
 {
@@ -237,6 +294,8 @@ ParameterChanged(const media_node& node, int32 parameterID)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_WEB_CHANGED notification for the given node.
+ *  @param node  The node whose parameter web has changed. */
 void
 WebChanged(const media_node& node)
 {
@@ -249,6 +308,13 @@ WebChanged(const media_node& node)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_NEW_PARAMETER_VALUE notification.
+ *  @param node        The node that produced the new value.
+ *  @param parameterID ID of the changed parameter.
+ *  @param when        Performance time at which the new value takes effect.
+ *  @param param       Pointer to the raw parameter value data.
+ *  @param paramsize   Size in bytes of the parameter value data.
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 NewParameterValue(const media_node& node, int32 parameterID, bigtime_t when,
 	const void* param, size_t paramsize)
@@ -265,6 +331,10 @@ NewParameterValue(const media_node& node, int32 parameterID, bigtime_t when,
 }
 
 
+/** @brief Broadcasts a B_MEDIA_FLAVORS_CHANGED notification.
+ *  @param addOnID    ID of the add-on whose flavor count changed.
+ *  @param newCount   Number of newly available flavors.
+ *  @param goneCount  Number of flavors that are no longer available. */
 void
 FlavorsChanged(media_addon_id addOnID, int32 newCount, int32 goneCount)
 {
@@ -279,6 +349,9 @@ FlavorsChanged(media_addon_id addOnID, int32 newCount, int32 goneCount)
 }
 
 
+/** @brief Broadcasts a B_MEDIA_NODE_STOPPED notification.
+ *  @param node  The node that has stopped.
+ *  @param when  Real time at which the node stopped. */
 void
 NodeStopped(const media_node& node, bigtime_t when)
 {
@@ -296,6 +369,10 @@ NodeStopped(const media_node& node, bigtime_t when)
 // TODO: missing: B_MEDIA_DEFAULT_CHANGED: "default", "node"
 
 
+/** @brief Returns whether the given notification type is valid for the watching context.
+ *  @param node_specific  Pass \c true when watching a specific node.
+ *  @param notification   The notification type to validate.
+ *  @return \c true if the notification type is valid for the context, \c false otherwise. */
 bool
 IsValidNotificationRequest(bool node_specific, int32 notification)
 {

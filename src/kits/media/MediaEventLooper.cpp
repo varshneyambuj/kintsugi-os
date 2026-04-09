@@ -1,32 +1,54 @@
 /*
- * Copyright (c) 2015 Dario Casalinuovo <b.vitruvio@gmail.com>
- * Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files or portions
- * thereof (the "Software"), to deal in the Software without restriction,
- * including without limitation the rights to use, copy, modify, merge,
- * publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject
- * to the following conditions:
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- *  * Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- *  * Redistributions in binary form must reproduce the above copyright notice
- *    in the  binary, as well as this list of conditions and the following
- *    disclaimer in the documentation and/or other materials provided with
- *    the distribution.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
+ *   Copyright (c) 2015 Dario Casalinuovo <b.vitruvio@gmail.com>
+ *   Copyright (c) 2002, 2003 Marcus Overhagen <Marcus@Overhagen.de>
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining
+ *   a copy of this software and associated documentation files or portions
+ *   thereof (the "Software"), to deal in the Software without restriction,
+ *   including without limitation the rights to use, copy, modify, merge,
+ *   publish, distribute, sublicense, and/or sell copies of the Software,
+ *   and to permit persons to whom the Software is furnished to do so, subject
+ *   to the following conditions:
+ *
+ *    * Redistributions of source code must retain the above copyright notice,
+ *      this list of conditions and the following disclaimer.
+ *
+ *    * Redistributions in binary form must reproduce the above copyright notice
+ *      in the  binary, as well as this list of conditions and the following
+ *      disclaimer in the documentation and/or other materials provided with
+ *      the distribution.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ *   THE SOFTWARE.
  */
+
+/** @file MediaEventLooper.cpp
+ *  @brief Implements BMediaEventLooper, the event-driven control-thread mixin for media nodes. */
+
 
 #include <MediaEventLooper.h>
 #include <TimeSource.h>
@@ -39,6 +61,10 @@
  * protected BMediaEventLooper
  *************************************************************/
 
+/** @brief Destructor; calls Quit() if the control thread was not already stopped.
+ *
+ *  Subclasses MUST call BMediaEventLooper::Quit() in their own destructor before
+ *  this base destructor runs. */
 /* virtual */
 BMediaEventLooper::~BMediaEventLooper()
 {
@@ -51,6 +77,11 @@ BMediaEventLooper::~BMediaEventLooper()
 	}
 }
 
+/** @brief Constructs a BMediaEventLooper with the given API version.
+ *
+ *  Initialises both event queues and registers cleanup hooks.
+ *
+ *  @param apiVersion The API version to advertise; defaults to B_BEOS_VERSION. */
 /* explicit */
 BMediaEventLooper::BMediaEventLooper(uint32 apiVersion) :
 	BMediaNode("called by BMediaEventLooper"),
@@ -69,6 +100,10 @@ BMediaEventLooper::BMediaEventLooper(uint32 apiVersion) :
 	fRealTimeQueue.SetCleanupHook(BMediaEventLooper::_CleanUpEntry, this);
 }
 
+/** @brief Called by the media server after the node is registered; starts the control loop.
+ *
+ *  Calls Run() to spawn the control thread.  BeOS R5 called Run() here;
+ *  some nodes require it even though the BeBook says the subclass should do it. */
 /* virtual */ void
 BMediaEventLooper::NodeRegistered()
 {
@@ -81,6 +116,9 @@ BMediaEventLooper::NodeRegistered()
 }
 
 
+/** @brief Hook called when the node is started; enqueues a B_START event.
+ *
+ *  @param performance_time The performance time at which the node should start. */
 /* virtual */ void
 BMediaEventLooper::Start(bigtime_t performance_time)
 {
@@ -93,6 +131,13 @@ BMediaEventLooper::Start(bigtime_t performance_time)
 }
 
 
+/** @brief Hook called when the node is stopped; enqueues a B_STOP event.
+ *
+ *  If \a immediate is true the stop time is forced to 0 so the event is
+ *  processed before any pending buffer events.
+ *
+ *  @param performance_time The scheduled performance time for the stop.
+ *  @param immediate        If true, stop immediately regardless of \a performance_time. */
 /* virtual */ void
 BMediaEventLooper::Stop(bigtime_t performance_time,
 						bool immediate)
@@ -116,6 +161,10 @@ BMediaEventLooper::Stop(bigtime_t performance_time,
 }
 
 
+/** @brief Hook called when the node should seek; enqueues a B_SEEK event.
+ *
+ *  @param media_time        The target media (stream) time to seek to.
+ *  @param performance_time  The performance time at which the seek should begin. */
 /* virtual */ void
 BMediaEventLooper::Seek(bigtime_t media_time,
 						bigtime_t performance_time)
@@ -130,6 +179,12 @@ BMediaEventLooper::Seek(bigtime_t media_time,
 }
 
 
+/** @brief Hook called on a time-warp; enqueues a B_WARP event in the real-time queue.
+ *
+ *  Also forwards the call to BMediaNode::TimeWarp() as required by the BeBook.
+ *
+ *  @param at_real_time         Real time at which the warp takes effect.
+ *  @param to_performance_time  New performance time corresponding to \a at_real_time. */
 /* virtual */ void
 BMediaEventLooper::TimeWarp(bigtime_t at_real_time,
 							bigtime_t to_performance_time)
@@ -153,6 +208,11 @@ BMediaEventLooper::TimeWarp(bigtime_t at_real_time,
 }
 
 
+/** @brief Adds a B_TIMER event that fires at the given performance time.
+ *
+ *  @param at_performance_time The performance time at which TimerExpired() should be called.
+ *  @param cookie              An arbitrary value forwarded to TimerExpired().
+ *  @return B_OK on success, or an error code from BTimedEventQueue::AddEvent(). */
 /* virtual */ status_t
 BMediaEventLooper::AddTimer(bigtime_t at_performance_time,
 							int32 cookie)
@@ -167,6 +227,12 @@ BMediaEventLooper::AddTimer(bigtime_t at_performance_time,
 }
 
 
+/** @brief Sets the run mode and adjusts the control thread priority accordingly.
+ *
+ *  Switching to B_OFFLINE mode clamps the priority to B_NORMAL_PRIORITY;
+ *  leaving it restores the configured priority.
+ *
+ *  @param mode The new run mode (one of the BMediaNode::run_mode values). */
 /* virtual */ void
 BMediaEventLooper::SetRunMode(run_mode mode)
 {
@@ -190,6 +256,12 @@ BMediaEventLooper::SetRunMode(run_mode mode)
 }
 
 
+/** @brief Hook for cleaning up after custom user-defined events; default does nothing.
+ *
+ *  Subclasses may override this to perform any resource release needed for
+ *  custom event types when they are flushed from the queue.
+ *
+ *  @param event The custom event being removed. */
 /* virtual */ void
 BMediaEventLooper::CleanUpEvent(const media_timed_event *event)
 {
@@ -200,6 +272,8 @@ BMediaEventLooper::CleanUpEvent(const media_timed_event *event)
 }
 
 
+/** @brief Returns the current offline time used when the node runs in B_OFFLINE mode.
+ *  @return The value set by the most recent SetOfflineTime() call. */
 /* virtual */ bigtime_t
 BMediaEventLooper::OfflineTime()
 {
@@ -208,6 +282,11 @@ BMediaEventLooper::OfflineTime()
 }
 
 
+/** @brief The main control-thread loop; processes events from both event queues.
+ *
+ *  Calls WaitForMessage() with a deadline computed from the next earliest event
+ *  time (adjusted for event and scheduling latency).  When the wait times out
+ *  the earliest due event is dispatched via DispatchEvent(). */
 /* virtual */ void
 BMediaEventLooper::ControlLoop()
 {
@@ -281,6 +360,8 @@ BMediaEventLooper::ControlLoop()
 }
 
 
+/** @brief Returns the thread ID of the control thread.
+ *  @return The thread_id, or -1 if the thread has not been started. */
 thread_id
 BMediaEventLooper::ControlThread()
 {
@@ -293,6 +374,8 @@ BMediaEventLooper::ControlThread()
  *************************************************************/
 
 
+/** @brief Returns a pointer to the performance-time event queue.
+ *  @return Pointer to the internal fEventQueue. */
 BTimedEventQueue *
 BMediaEventLooper::EventQueue()
 {
@@ -301,6 +384,8 @@ BMediaEventLooper::EventQueue()
 }
 
 
+/** @brief Returns a pointer to the real-time event queue used for time warps.
+ *  @return Pointer to the internal fRealTimeQueue. */
 BTimedEventQueue *
 BMediaEventLooper::RealTimeQueue()
 {
@@ -309,6 +394,8 @@ BMediaEventLooper::RealTimeQueue()
 }
 
 
+/** @brief Returns the current effective thread priority.
+ *  @return The thread priority currently applied to the control thread. */
 int32
 BMediaEventLooper::Priority() const
 {
@@ -317,6 +404,8 @@ BMediaEventLooper::Priority() const
 }
 
 
+/** @brief Returns the current run state of the node.
+ *  @return One of B_UNREGISTERED, B_STOPPED, B_STARTED, B_QUITTING, or B_TERMINATED. */
 int32
 BMediaEventLooper::RunState() const
 {
@@ -325,6 +414,8 @@ BMediaEventLooper::RunState() const
 }
 
 
+/** @brief Returns the event latency added to performance-time deadlines.
+ *  @return Event latency in microseconds. */
 bigtime_t
 BMediaEventLooper::EventLatency() const
 {
@@ -333,6 +424,8 @@ BMediaEventLooper::EventLatency() const
 }
 
 
+/** @brief Returns the buffer duration used for scheduling calculations.
+ *  @return Buffer duration in microseconds. */
 bigtime_t
 BMediaEventLooper::BufferDuration() const
 {
@@ -341,6 +434,8 @@ BMediaEventLooper::BufferDuration() const
 }
 
 
+/** @brief Returns the estimated scheduling latency for the control thread.
+ *  @return Scheduling latency in microseconds as estimated by estimate_max_scheduling_latency(). */
 bigtime_t
 BMediaEventLooper::SchedulingLatency() const
 {
@@ -349,6 +444,13 @@ BMediaEventLooper::SchedulingLatency() const
 }
 
 
+/** @brief Sets the desired thread priority, clamped to [5, 120].
+ *
+ *  If the control thread is already running its priority is adjusted immediately.
+ *  In B_OFFLINE run mode the effective priority is further clamped to B_NORMAL_PRIORITY.
+ *
+ *  @param priority The desired scheduling priority.
+ *  @return B_OK always. */
 status_t
 BMediaEventLooper::SetPriority(int32 priority)
 {
@@ -375,6 +477,9 @@ BMediaEventLooper::SetPriority(int32 priority)
 }
 
 
+/** @brief Sets the run state, ignoring changes after B_QUITTING (unless moving to B_TERMINATED).
+ *
+ *  @param state The new run state. */
 void
 BMediaEventLooper::SetRunState(run_state state)
 {
@@ -389,6 +494,12 @@ BMediaEventLooper::SetRunState(run_state state)
 }
 
 
+/** @brief Sets the additional latency added when computing event wake-up times.
+ *
+ *  Values below zero are clamped to zero.  The control port is poked to wake
+ *  the control thread and recalculate its wait time.
+ *
+ *  @param latency The new event latency in microseconds. */
 void
 BMediaEventLooper::SetEventLatency(bigtime_t latency)
 {
@@ -402,6 +513,11 @@ BMediaEventLooper::SetEventLatency(bigtime_t latency)
 }
 
 
+/** @brief Sets the buffer duration used by subclasses for scheduling decisions.
+ *
+ *  Values below zero are clamped to zero.
+ *
+ *  @param duration The buffer duration in microseconds. */
 void
 BMediaEventLooper::SetBufferDuration(bigtime_t duration)
 {
@@ -414,6 +530,8 @@ BMediaEventLooper::SetBufferDuration(bigtime_t duration)
 }
 
 
+/** @brief Sets the current offline time used when running in B_OFFLINE mode.
+ *  @param offTime The new offline time in microseconds. */
 void
 BMediaEventLooper::SetOfflineTime(bigtime_t offTime)
 {
@@ -422,6 +540,10 @@ BMediaEventLooper::SetOfflineTime(bigtime_t offTime)
 }
 
 
+/** @brief Spawns the control thread and starts processing events.
+ *
+ *  A no-op if the control thread is already running.  Transitions the run
+ *  state from B_UNREGISTERED to B_STOPPED before the thread starts. */
 void
 BMediaEventLooper::Run()
 {
@@ -443,6 +565,9 @@ BMediaEventLooper::Run()
 }
 
 
+/** @brief Signals the control thread to stop and waits for it to terminate.
+ *
+ *  Closes the control port to unblock WaitForMessage(), then joins the thread. */
 void
 BMediaEventLooper::Quit()
 {
@@ -462,6 +587,15 @@ BMediaEventLooper::Quit()
 }
 
 
+/** @brief Dispatches a single event to HandleEvent() and updates the run state.
+ *
+ *  After HandleEvent() returns, B_START and B_STOP events transition the run
+ *  state, B_TIMER events invoke TimerExpired(), and user-cleanup events are
+ *  forwarded to _DispatchCleanUp().
+ *
+ *  @param event          The event to dispatch.
+ *  @param lateness       How late (in microseconds) the event is being handled.
+ *  @param realTimeEvent  true if the event came from the real-time queue. */
 void
 BMediaEventLooper::DispatchEvent(const media_timed_event *event,
 								 bigtime_t lateness,
@@ -504,6 +638,10 @@ BMediaEventLooper::DispatchEvent(const media_timed_event *event,
  *************************************************************/
 
 
+/** @brief Static thread entry point; transitions state and runs ControlLoop().
+ *
+ *  @param arg Pointer to the BMediaEventLooper instance.
+ *  @return 0 when the loop exits. */
 /* static */ int32
 BMediaEventLooper::_ControlThreadStart(void *arg)
 {
@@ -515,6 +653,10 @@ BMediaEventLooper::_ControlThreadStart(void *arg)
 }
 
 
+/** @brief Static cleanup hook registered with the event queues; forwards to _DispatchCleanUp().
+ *
+ *  @param event   The event being flushed.
+ *  @param context Pointer to the BMediaEventLooper instance. */
 /* static */ void
 BMediaEventLooper::_CleanUpEntry(const media_timed_event *event,
 								 void *context)
@@ -524,6 +666,9 @@ BMediaEventLooper::_CleanUpEntry(const media_timed_event *event,
 }
 
 
+/** @brief Calls CleanUpEvent() for events with a user-defined cleanup code.
+ *
+ *  @param event The event to clean up. */
 void
 BMediaEventLooper::_DispatchCleanUp(const media_timed_event *event)
 {
@@ -545,6 +690,10 @@ BMediaEventLooper &BMediaEventLooper::operator=(const BMediaEventLooper &)
  *************************************************************/
 
 
+/** @brief Called by the media server before deleting the node; calls Quit().
+ *
+ *  @param node The node about to be deleted (forwarded to BMediaNode::DeleteHook()).
+ *  @return The return value of BMediaNode::DeleteHook(). */
 status_t
 BMediaEventLooper::DeleteHook(BMediaNode *node)
 {
@@ -559,28 +708,51 @@ BMediaEventLooper::DeleteHook(BMediaNode *node)
  * private BMediaEventLooper
  *************************************************************/
 
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_0(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_1(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_2(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_3(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_4(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_5(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_6(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_7(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_8(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_9(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_10(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_11(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_12(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_13(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_14(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_15(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_16(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_17(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_18(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_19(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_20(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_21(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_22(int32 arg,...) { return B_ERROR; }
+/** @brief Reserved for future binary compatibility. @return B_ERROR. */
 status_t BMediaEventLooper::_Reserved_BMediaEventLooper_23(int32 arg,...) { return B_ERROR; }
-

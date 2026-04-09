@@ -1,11 +1,34 @@
 /*
- * Copyright 2004-2009, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler
- *		Marcus Overhagen
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2009, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Axel Dörfler
+ *       Marcus Overhagen
  */
+
+/** @file FormatManager.cpp
+ *  @brief Singleton registry that maps media format descriptions to media_format
+ *         structures and assigns codec IDs. */
 
 
 #include "FormatManager.h"
@@ -120,6 +143,8 @@ string_for_description(const media_format_description& desc, char* string,
 // #pragma mark -
 
 
+/** @brief Constructs the FormatManager, initialising the internal lock and codec
+ *         ID counter. */
 FormatManager::FormatManager()
 	:
 	fLock("format manager"),
@@ -133,6 +158,8 @@ pthread_once_t FormatManager::sInitOnce = PTHREAD_ONCE_INIT;
 FormatManager* FormatManager::sInstance = NULL;
 
 
+/** @brief Creates the singleton FormatManager instance (called once via
+ *         pthread_once). */
 /* static */ void
 FormatManager::CreateInstance()
 {
@@ -140,6 +167,9 @@ FormatManager::CreateInstance()
 }
 
 
+/** @brief Returns the singleton FormatManager instance, creating it on the first
+ *         call.
+ *  @return Pointer to the global FormatManager. */
 /* static */ FormatManager*
 FormatManager::GetInstance()
 {
@@ -151,16 +181,22 @@ FormatManager::GetInstance()
 
 
 
+/** @brief Destructor. */
 FormatManager::~FormatManager()
 {
 }
 
 
-/*! This method is called when BMediaFormats asks for any updates
- 	made to our format list.
-	If there were any changes since the last time, the whole
-	list will be sent back.
-*/
+/** @brief Fills \a reply with the current list of registered meta_format entries
+ *         if the list has changed since \a lastUpdate.
+ *
+ *  This method is called when BMediaFormats asks for any updates made to our
+ *  format list.  If there were any changes since the last time, the whole list
+ *  will be sent back.
+ *
+ *  @param lastUpdate  Timestamp of the caller's last successful update.
+ *  @param reply       BMessage that receives "need_update", "timestamp", and
+ *                     "formats" fields. */
 void
 FormatManager::GetFormats(bigtime_t lastUpdate, BMessage& reply)
 {
@@ -186,6 +222,16 @@ FormatManager::GetFormats(bigtime_t lastUpdate, BMessage& reply)
 }
 
 
+/** @brief Registers one or more format descriptions and associates them with the
+ *         given media_format, assigning a new codec ID as needed.
+ *  @param descriptions     Array of media_format_description values to register.
+ *  @param descriptionCount Number of entries in \a descriptions.
+ *  @param format           The media_format to associate with the descriptions
+ *                          (modified in place to set the codec ID).
+ *  @param flags            Registration flags (B_SET_DEFAULT, B_EXCLUSIVE,
+ *                          B_NO_MERGE — currently not fully supported).
+ *  @param _reserved        Reserved; pass \c NULL.
+ *  @return B_OK on success, B_NO_MEMORY on allocation failure. */
 status_t
 FormatManager::MakeFormatFor(const media_format_description* descriptions,
 	int32 descriptionCount, media_format& format, uint32 flags, void* _reserved)
@@ -255,6 +301,8 @@ FormatManager::MakeFormatFor(const media_format_description* descriptions,
 }
 
 
+/** @brief Removes all registrations for the given format from the list.
+ *  @param format  The media_format whose entries should be removed. */
 void
 FormatManager::RemoveFormat(const media_format& format)
 {
