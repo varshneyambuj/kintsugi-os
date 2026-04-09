@@ -1,8 +1,31 @@
 /*
- * Copyright 2010-2011, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2015-2017, Adrien Destugues, pulkomandy@pulkomandy.tk.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2015-2017, Adrien Destugues, pulkomandy@pulkomandy.tk.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file NetworkAddressResolver.cpp
+ *  @brief Wrapper around getaddrinfo() with an LRU result cache. Produces
+ *         BNetworkAddress objects from hostnames and service names. */
 
 
 #include <NetworkAddressResolver.h>
@@ -14,6 +37,12 @@
 #include <NetworkAddress.h>
 
 
+/** @brief Splits a "host:port" string into separate host and port components.
+ *         IPv6 literals must be enclosed in brackets (e.g. "[::1]:80") to
+ *         avoid being misinterpreted.
+ *  @param host In/out: input "host[:port]" string; on return contains only the host.
+ *  @param port On output: the extracted port substring (may remain empty).
+ *  @return true if a port was extracted, false otherwise. */
 static bool
 strip_port(BString& host, BString& port)
 {
@@ -39,6 +68,7 @@ strip_port(BString& host, BString& port)
 // #pragma mark -
 
 
+/** @brief Default constructor. Builds an empty resolver in B_NO_INIT state. */
 BNetworkAddressResolver::BNetworkAddressResolver()
 	:
 	BReferenceable(),
@@ -48,6 +78,7 @@ BNetworkAddressResolver::BNetworkAddressResolver()
 }
 
 
+/** @brief Constructs and immediately resolves @a address on @a port. */
 BNetworkAddressResolver::BNetworkAddressResolver(const char* address,
 	uint16 port, uint32 flags)
 	:
@@ -58,6 +89,7 @@ BNetworkAddressResolver::BNetworkAddressResolver(const char* address,
 	SetTo(address, port, flags);
 }
 
+/** @brief Constructs and immediately resolves @a address for @a service. */
 BNetworkAddressResolver::BNetworkAddressResolver(const char* address,
 	const char* service, uint32 flags)
 	:
@@ -69,6 +101,7 @@ BNetworkAddressResolver::BNetworkAddressResolver(const char* address,
 }
 
 
+/** @brief Constructs and resolves @a address on @a port restricted to @a family. */
 BNetworkAddressResolver::BNetworkAddressResolver(int family,
 	const char* address, uint16 port, uint32 flags)
 	:
@@ -80,6 +113,7 @@ BNetworkAddressResolver::BNetworkAddressResolver(int family,
 }
 
 
+/** @brief Constructs and resolves @a address for @a service restricted to @a family. */
 BNetworkAddressResolver::BNetworkAddressResolver(int family,
 	const char* address, const char* service, uint32 flags)
 	:
@@ -91,12 +125,14 @@ BNetworkAddressResolver::BNetworkAddressResolver(int family,
 }
 
 
+/** @brief Destructor. Frees any cached getaddrinfo result. */
 BNetworkAddressResolver::~BNetworkAddressResolver()
 {
 	Unset();
 }
 
 
+/** @brief Returns the status of the last resolution attempt. */
 status_t
 BNetworkAddressResolver::InitCheck() const
 {
@@ -104,6 +140,7 @@ BNetworkAddressResolver::InitCheck() const
 }
 
 
+/** @brief Clears any cached resolution results and resets state. */
 void
 BNetworkAddressResolver::Unset()
 {
@@ -115,6 +152,7 @@ BNetworkAddressResolver::Unset()
 }
 
 
+/** @brief Resolves @a address on @a port with AF_UNSPEC. */
 status_t
 BNetworkAddressResolver::SetTo(const char* address, uint16 port, uint32 flags)
 {
@@ -122,6 +160,7 @@ BNetworkAddressResolver::SetTo(const char* address, uint16 port, uint32 flags)
 }
 
 
+/** @brief Resolves @a address for @a service with AF_UNSPEC. */
 status_t
 BNetworkAddressResolver::SetTo(const char* address, const char* service,
 	uint32 flags)
@@ -130,6 +169,7 @@ BNetworkAddressResolver::SetTo(const char* address, const char* service,
 }
 
 
+/** @brief Resolves @a address on @a port for the given family. */
 status_t
 BNetworkAddressResolver::SetTo(int family, const char* address, uint16 port,
 	uint32 flags)
@@ -141,6 +181,16 @@ BNetworkAddressResolver::SetTo(int family, const char* address, uint16 port,
 }
 
 
+/** @brief Core resolution primitive: calls getaddrinfo() and caches the result.
+ *         Splits an embedded "host:port" out of @a host and respects
+ *         B_NO_ADDRESS_RESOLUTION, B_UNCONFIGURED_ADDRESS_FAMILIES, and
+ *         AI_PASSIVE semantics via the @a flags parameter.
+ *  @param family  Preferred address family or AF_UNSPEC.
+ *  @param host    Hostname, IP literal, or NULL for passive binding.
+ *  @param service Named service or numeric port string; may be NULL.
+ *  @param flags   B_NO_ADDRESS_RESOLUTION / B_UNCONFIGURED_ADDRESS_FAMILIES.
+ *  @return B_OK on success, or a status_t mapped from the getaddrinfo
+ *          error code. */
 status_t
 BNetworkAddressResolver::SetTo(int family, const char* host,
 	const char* service, uint32 flags)
@@ -212,6 +262,10 @@ BNetworkAddressResolver::SetTo(int family, const char* host,
 }
 
 
+/** @brief Iterates over the resolved addrinfo list without family filtering.
+ *  @param cookie  In/out cursor; caller should start at 0.
+ *  @param address On success, set to the next resolved address.
+ *  @return B_OK on success, or B_BAD_VALUE when the iterator is exhausted. */
 status_t
 BNetworkAddressResolver::GetNextAddress(uint32* cookie,
 	BNetworkAddress& address) const
@@ -239,6 +293,12 @@ BNetworkAddressResolver::GetNextAddress(uint32* cookie,
 }
 
 
+/** @brief Iterates over the resolved addrinfo list, skipping entries whose
+ *         family does not match @a family.
+ *  @param family  Address family to include (AF_INET, AF_INET6, ...).
+ *  @param cookie  In/out cursor; caller should start at 0.
+ *  @param address On success, set to the next matching address.
+ *  @return B_OK on success, or B_BAD_VALUE when the iterator is exhausted. */
 status_t
 BNetworkAddressResolver::GetNextAddress(int family, uint32* cookie,
 	BNetworkAddress& address) const
@@ -268,6 +328,7 @@ BNetworkAddressResolver::GetNextAddress(int family, uint32* cookie,
 }
 
 
+/** @brief Cached resolver factory. AF_UNSPEC host/service variant. */
 /*static*/ BReference<const BNetworkAddressResolver>
 BNetworkAddressResolver::Resolve(const char* address, const char* service,
 	uint32 flags)
@@ -276,6 +337,7 @@ BNetworkAddressResolver::Resolve(const char* address, const char* service,
 }
 
 
+/** @brief Cached resolver factory. AF_UNSPEC host/port variant. */
 /*static*/ BReference<const BNetworkAddressResolver>
 BNetworkAddressResolver::Resolve(const char* address, uint16 port, uint32 flags)
 {
@@ -283,6 +345,7 @@ BNetworkAddressResolver::Resolve(const char* address, uint16 port, uint32 flags)
 }
 
 
+/** @brief Cached resolver factory. Family-specific host/port variant. */
 /*static*/ BReference<const BNetworkAddressResolver>
 BNetworkAddressResolver::Resolve(int family, const char* address,
 	uint16 port, uint32 flags)
@@ -294,6 +357,11 @@ BNetworkAddressResolver::Resolve(int family, const char* address,
 }
 
 
+/** @brief Core cached resolver factory. Looks up an MRU cache keyed on
+ *         (family, host, service, flags); on a miss, resolves synchronously
+ *         and inserts the result, evicting the oldest entry if the cache
+ *         is full (currently ~256 entries).
+ *  @return A reference-counted resolver that can be shared across callers. */
 /*static*/ BReference<const BNetworkAddressResolver>
 BNetworkAddressResolver::Resolve(int family, const char* address,
 	const char* service, uint32 flags)

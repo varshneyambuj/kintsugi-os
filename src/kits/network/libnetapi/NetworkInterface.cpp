@@ -1,7 +1,31 @@
 /*
- * Copyright 2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file NetworkInterface.cpp
+ *  @brief BNetworkInterface / BNetworkInterfaceAddress implementation,
+ *         wrapping the SIOCGIF* / SIOCSIF* ioctls used to query and
+ *         configure network interfaces. */
 
 #include <NetworkInterface.h>
 
@@ -15,6 +39,9 @@
 #include <NetworkRoute.h>
 
 
+/** @brief Deduces the protocol family implied by an interface address
+ *         record. Prefers the address field, then the netmask, then the
+ *         destination, falling back to AF_INET. */
 static int
 family_from_interface_address(const BNetworkInterfaceAddress& address)
 {
@@ -29,6 +56,11 @@ family_from_interface_address(const BNetworkInterfaceAddress& address)
 }
 
 
+/** @brief Executes an ifaliasreq ioctl (SIOCAIFADDR/SIOCDIFADDR/SIOCGIFALIAS).
+ *  @param name     Interface name to target.
+ *  @param option   Ioctl number to perform.
+ *  @param address  In/out interface address record.
+ *  @param readBack If true, copy the result back into @a address. */
 static status_t
 do_ifaliasreq(const char* name, int32 option, BNetworkInterfaceAddress& address,
 	bool readBack = false)
@@ -67,6 +99,7 @@ do_ifaliasreq(const char* name, int32 option, BNetworkInterfaceAddress& address,
 }
 
 
+/** @brief Const overload of do_ifaliasreq() used by write-only ioctls. */
 static status_t
 do_ifaliasreq(const char* name, int32 option,
 	const BNetworkInterfaceAddress& address)
@@ -76,6 +109,8 @@ do_ifaliasreq(const char* name, int32 option,
 }
 
 
+/** @brief Generic ioctl helper that opens a socket of the given @a family
+ *         and performs the request on @a name. */
 template<typename T> status_t
 do_request(int family, T& request, const char* name, int option)
 {
@@ -95,6 +130,7 @@ do_request(int family, T& request, const char* name, int option)
 // #pragma mark -
 
 
+/** @brief Default constructor. Represents an empty, unbound alias record. */
 BNetworkInterfaceAddress::BNetworkInterfaceAddress()
 	:
 	fIndex(-1),
@@ -103,11 +139,13 @@ BNetworkInterfaceAddress::BNetworkInterfaceAddress()
 }
 
 
+/** @brief Destructor. */
 BNetworkInterfaceAddress::~BNetworkInterfaceAddress()
 {
 }
 
 
+/** @brief Populates this record from the @a index'th alias on @a interface. */
 status_t
 BNetworkInterfaceAddress::SetTo(const BNetworkInterface& interface, int32 index)
 {
@@ -116,6 +154,7 @@ BNetworkInterfaceAddress::SetTo(const BNetworkInterface& interface, int32 index)
 }
 
 
+/** @brief Sets the primary address field. */
 void
 BNetworkInterfaceAddress::SetAddress(const BNetworkAddress& address)
 {
@@ -123,6 +162,7 @@ BNetworkInterfaceAddress::SetAddress(const BNetworkAddress& address)
 }
 
 
+/** @brief Sets the netmask associated with the address. */
 void
 BNetworkInterfaceAddress::SetMask(const BNetworkAddress& mask)
 {
@@ -130,6 +170,7 @@ BNetworkInterfaceAddress::SetMask(const BNetworkAddress& mask)
 }
 
 
+/** @brief Sets the broadcast address for the alias. */
 void
 BNetworkInterfaceAddress::SetBroadcast(const BNetworkAddress& broadcast)
 {
@@ -137,6 +178,8 @@ BNetworkInterfaceAddress::SetBroadcast(const BNetworkAddress& broadcast)
 }
 
 
+/** @brief Sets the point-to-point destination address. Shares storage with
+ *         the broadcast field because BSD interfaces use one or the other. */
 void
 BNetworkInterfaceAddress::SetDestination(const BNetworkAddress& destination)
 {
@@ -144,6 +187,7 @@ BNetworkInterfaceAddress::SetDestination(const BNetworkAddress& destination)
 }
 
 
+/** @brief Sets the per-alias flag bitmask (IFAF_AUTOCONFIGURED, etc). */
 void
 BNetworkInterfaceAddress::SetFlags(uint32 flags)
 {
@@ -154,29 +198,34 @@ BNetworkInterfaceAddress::SetFlags(uint32 flags)
 // #pragma mark -
 
 
+/** @brief Default constructor. Builds an unbound interface handle. */
 BNetworkInterface::BNetworkInterface()
 {
 	Unset();
 }
 
 
+/** @brief Constructs a handle bound to the interface named @a name. */
 BNetworkInterface::BNetworkInterface(const char* name)
 {
 	SetTo(name);
 }
 
 
+/** @brief Constructs a handle bound to the interface with @a index. */
 BNetworkInterface::BNetworkInterface(uint32 index)
 {
 	SetTo(index);
 }
 
 
+/** @brief Destructor. */
 BNetworkInterface::~BNetworkInterface()
 {
 }
 
 
+/** @brief Clears the bound interface name. */
 void
 BNetworkInterface::Unset()
 {
@@ -184,6 +233,7 @@ BNetworkInterface::Unset()
 }
 
 
+/** @brief Binds this handle to @a name. */
 void
 BNetworkInterface::SetTo(const char* name)
 {
@@ -191,6 +241,8 @@ BNetworkInterface::SetTo(const char* name)
 }
 
 
+/** @brief Binds this handle to the interface whose index is @a index.
+ *         Resolves the index to a name via SIOCGIFNAME. */
 status_t
 BNetworkInterface::SetTo(uint32 index)
 {
@@ -206,6 +258,7 @@ BNetworkInterface::SetTo(uint32 index)
 }
 
 
+/** @brief Reports whether the bound interface still exists in the kernel. */
 bool
 BNetworkInterface::Exists() const
 {
@@ -214,6 +267,7 @@ BNetworkInterface::Exists() const
 }
 
 
+/** @brief Returns the bound interface name. */
 const char*
 BNetworkInterface::Name() const
 {
@@ -221,6 +275,7 @@ BNetworkInterface::Name() const
 }
 
 
+/** @brief Returns the kernel index assigned to the bound interface. */
 uint32
 BNetworkInterface::Index() const
 {
@@ -232,6 +287,7 @@ BNetworkInterface::Index() const
 }
 
 
+/** @brief Returns the interface flags (IFF_UP, IFF_BROADCAST, ...). */
 uint32
 BNetworkInterface::Flags() const
 {
@@ -243,6 +299,7 @@ BNetworkInterface::Flags() const
 }
 
 
+/** @brief Returns the interface MTU in bytes. */
 uint32
 BNetworkInterface::MTU() const
 {
@@ -254,6 +311,7 @@ BNetworkInterface::MTU() const
 }
 
 
+/** @brief Returns the IFM_* media type/subtype of the interface. */
 int32
 BNetworkInterface::Media() const
 {
@@ -287,6 +345,7 @@ BNetworkInterface::Type() const
 }
 
 
+/** @brief Retrieves interface packet/byte/error counters via SIOCGIFSTATS. */
 status_t
 BNetworkInterface::GetStats(ifreq_stats& stats)
 {
@@ -300,6 +359,7 @@ BNetworkInterface::GetStats(ifreq_stats& stats)
 }
 
 
+/** @brief Reports whether the interface is physically up (IFF_LINK is set). */
 bool
 BNetworkInterface::HasLink() const
 {
@@ -307,6 +367,7 @@ BNetworkInterface::HasLink() const
 }
 
 
+/** @brief Replaces the interface flag bitmask. */
 status_t
 BNetworkInterface::SetFlags(uint32 flags)
 {
@@ -316,6 +377,7 @@ BNetworkInterface::SetFlags(uint32 flags)
 }
 
 
+/** @brief Sets the interface MTU in bytes. */
 status_t
 BNetworkInterface::SetMTU(uint32 mtu)
 {
@@ -325,6 +387,7 @@ BNetworkInterface::SetMTU(uint32 mtu)
 }
 
 
+/** @brief Forces the interface into a specific media mode. */
 status_t
 BNetworkInterface::SetMedia(int32 media)
 {
@@ -334,6 +397,7 @@ BNetworkInterface::SetMedia(int32 media)
 }
 
 
+/** @brief Sets the interface routing metric. */
 status_t
 BNetworkInterface::SetMetric(uint32 metric)
 {
@@ -343,6 +407,7 @@ BNetworkInterface::SetMetric(uint32 metric)
 }
 
 
+/** @brief Returns the number of configured address aliases on the interface. */
 int32
 BNetworkInterface::CountAddresses() const
 {
@@ -354,6 +419,9 @@ BNetworkInterface::CountAddresses() const
 }
 
 
+/** @brief Fetches the @a index'th address alias of the interface.
+ *  @param index   Zero-based alias index.
+ *  @param address On success, populated with the alias details. */
 status_t
 BNetworkInterface::GetAddressAt(int32 index, BNetworkInterfaceAddress& address)
 {
@@ -361,6 +429,8 @@ BNetworkInterface::GetAddressAt(int32 index, BNetworkInterfaceAddress& address)
 }
 
 
+/** @brief Locates the alias index whose primary address equals @a address.
+ *  @return The alias index on success, or -1 if no match was found. */
 int32
 BNetworkInterface::FindAddress(const BNetworkAddress& address)
 {
@@ -384,6 +454,8 @@ BNetworkInterface::FindAddress(const BNetworkAddress& address)
 }
 
 
+/** @brief Locates the first alias with the given address family.
+ *  @return The alias index on success, or -1 if no match was found. */
 int32
 BNetworkInterface::FindFirstAddress(int family)
 {
@@ -407,6 +479,7 @@ BNetworkInterface::FindFirstAddress(int family)
 }
 
 
+/** @brief Adds a new alias described by a full BNetworkInterfaceAddress record. */
 status_t
 BNetworkInterface::AddAddress(const BNetworkInterfaceAddress& address)
 {
@@ -414,6 +487,7 @@ BNetworkInterface::AddAddress(const BNetworkInterfaceAddress& address)
 }
 
 
+/** @brief Convenience overload that adds an alias with only a primary address. */
 status_t
 BNetworkInterface::AddAddress(const BNetworkAddress& local)
 {
@@ -424,6 +498,7 @@ BNetworkInterface::AddAddress(const BNetworkAddress& local)
 }
 
 
+/** @brief Replaces an existing alias with the fields from @a address. */
 status_t
 BNetworkInterface::SetAddress(const BNetworkInterfaceAddress& address)
 {
@@ -431,6 +506,7 @@ BNetworkInterface::SetAddress(const BNetworkInterfaceAddress& address)
 }
 
 
+/** @brief Removes the alias matching the record in @a address. */
 status_t
 BNetworkInterface::RemoveAddress(const BNetworkInterfaceAddress& address)
 {
@@ -443,6 +519,7 @@ BNetworkInterface::RemoveAddress(const BNetworkInterfaceAddress& address)
 }
 
 
+/** @brief Removes the alias whose primary address equals @a address. */
 status_t
 BNetworkInterface::RemoveAddress(const BNetworkAddress& address)
 {
@@ -453,6 +530,7 @@ BNetworkInterface::RemoveAddress(const BNetworkAddress& address)
 }
 
 
+/** @brief Removes the @a index'th alias, looking it up first. */
 status_t
 BNetworkInterface::RemoveAddressAt(int32 index)
 {
@@ -465,6 +543,7 @@ BNetworkInterface::RemoveAddressAt(int32 index)
 }
 
 
+/** @brief Retrieves the link-level (MAC) address of the interface. */
 status_t
 BNetworkInterface::GetHardwareAddress(BNetworkAddress& address)
 {
@@ -483,6 +562,8 @@ BNetworkInterface::GetHardwareAddress(BNetworkAddress& address)
 }
 
 
+/** @brief Installs a new route attached to this interface.
+ *  @return B_OK on success, B_BAD_VALUE if the route has no address family. */
 status_t
 BNetworkInterface::AddRoute(const BNetworkRoute& route)
 {
@@ -496,6 +577,7 @@ BNetworkInterface::AddRoute(const BNetworkRoute& route)
 }
 
 
+/** @brief Adds a default route through @a gateway on this interface. */
 status_t
 BNetworkInterface::AddDefaultRoute(const BNetworkAddress& gateway)
 {
@@ -509,6 +591,7 @@ BNetworkInterface::AddDefaultRoute(const BNetworkAddress& gateway)
 }
 
 
+/** @brief Removes the route previously installed via AddRoute(). */
 status_t
 BNetworkInterface::RemoveRoute(const BNetworkRoute& route)
 {
@@ -520,6 +603,7 @@ BNetworkInterface::RemoveRoute(const BNetworkRoute& route)
 }
 
 
+/** @brief Removes a route using an explicitly specified address @a family. */
 status_t
 BNetworkInterface::RemoveRoute(int family, const BNetworkRoute& route)
 {
@@ -529,6 +613,7 @@ BNetworkInterface::RemoveRoute(int family, const BNetworkRoute& route)
 }
 
 
+/** @brief Removes the default route associated with this interface. */
 status_t
 BNetworkInterface::RemoveDefaultRoute(int family)
 {
@@ -538,6 +623,7 @@ BNetworkInterface::RemoveDefaultRoute(int family)
 }
 
 
+/** @brief Retrieves all routes attached to this interface for @a family. */
 status_t
 BNetworkInterface::GetRoutes(int family,
 	BObjectList<BNetworkRoute, true>& routes) const
@@ -546,6 +632,7 @@ BNetworkInterface::GetRoutes(int family,
 }
 
 
+/** @brief Retrieves the default route for @a family on this interface. */
 status_t
 BNetworkInterface::GetDefaultRoute(int family, BNetworkRoute& route) const
 {
@@ -553,6 +640,7 @@ BNetworkInterface::GetDefaultRoute(int family, BNetworkRoute& route) const
 }
 
 
+/** @brief Retrieves the gateway address of the default route for @a family. */
 status_t
 BNetworkInterface::GetDefaultGateway(int family, BNetworkAddress& gateway) const
 {
@@ -560,6 +648,8 @@ BNetworkInterface::GetDefaultGateway(int family, BNetworkAddress& gateway) const
 }
 
 
+/** @brief Asks net_server to auto-configure this interface (e.g. DHCP for
+ *         AF_INET or SLAAC for AF_INET6). */
 status_t
 BNetworkInterface::AutoConfigure(int family)
 {

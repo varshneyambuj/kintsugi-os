@@ -1,9 +1,49 @@
 /*
- * Copyright 2005-2014 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini, burton666@libero.it
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini, burton666@libero.it
+ */
+
+
+/**
+ * @file DataIO.cpp
+ * @brief Implementation of the four core data-stream classes.
+ *
+ * This file provides the implementations of:
+ *   - BDataIO  — abstract base for sequential byte-stream I/O, with helpers
+ *                ReadExactly() and WriteExactly() that loop until all bytes
+ *                are transferred or an error occurs.
+ *   - BPositionIO — extends BDataIO with absolute-position ReadAt()/WriteAt()
+ *                   semantics, implementing sequential Read()/Write() on top
+ *                   of them, plus ReadAtExactly(), WriteAtExactly(), GetSize().
+ *   - BMemoryIO — concrete BPositionIO backed by a caller-supplied fixed-size
+ *                 buffer (mutable or read-only).
+ *   - BMallocIO — concrete BPositionIO that owns a heap-allocated, dynamically
+ *                 resizable buffer allocated in multiples of a configurable
+ *                 block size.
+ *
+ * @see BDataIO, BPositionIO, BMemoryIO, BMallocIO
  */
 
 
@@ -23,16 +63,39 @@
 #endif
 
 
+/**
+ * @brief Construct a BDataIO instance.
+ *
+ * The base class has no state to initialise; this constructor exists so that
+ * subclasses can call it through their own constructors.
+ */
 BDataIO::BDataIO()
 {
 }
 
 
+/**
+ * @brief Destroy the BDataIO instance.
+ *
+ * Virtual destructor — ensures that deleting a BDataIO pointer correctly
+ * calls the most-derived destructor.
+ */
 BDataIO::~BDataIO()
 {
 }
 
 
+/**
+ * @brief Read up to \a size bytes from the stream into \a buffer.
+ *
+ * The base-class implementation always returns B_NOT_SUPPORTED. Concrete
+ * subclasses must override this method to provide actual I/O behaviour.
+ *
+ * @param buffer Destination buffer for the bytes read.
+ * @param size   Maximum number of bytes to read.
+ * @return The number of bytes actually read (>= 0), or a negative error code.
+ *         B_NOT_SUPPORTED is returned by this base implementation.
+ */
 ssize_t
 BDataIO::Read(void* buffer, size_t size)
 {
@@ -40,6 +103,17 @@ BDataIO::Read(void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Write up to \a size bytes from \a buffer into the stream.
+ *
+ * The base-class implementation always returns B_NOT_SUPPORTED. Concrete
+ * subclasses must override this method to provide actual I/O behaviour.
+ *
+ * @param buffer Source buffer containing the bytes to write.
+ * @param size   Number of bytes to write.
+ * @return The number of bytes actually written (>= 0), or a negative error code.
+ *         B_NOT_SUPPORTED is returned by this base implementation.
+ */
 ssize_t
 BDataIO::Write(const void* buffer, size_t size)
 {
@@ -47,6 +121,15 @@ BDataIO::Write(const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Flush any buffered data to the underlying storage or device.
+ *
+ * The base-class implementation is a no-op that returns B_OK. Subclasses that
+ * buffer data internally (e.g. BBufferIO) should override this to push
+ * pending bytes downstream.
+ *
+ * @return B_OK on success, or an error code if the flush fails.
+ */
 status_t
 BDataIO::Flush()
 {
@@ -54,6 +137,21 @@ BDataIO::Flush()
 }
 
 
+/**
+ * @brief Read exactly \a size bytes, retrying partial reads until complete.
+ *
+ * Calls Read() in a loop until all \a size bytes have been transferred, an
+ * error is returned, or a zero-byte read is detected (treated as end-of-stream
+ * / B_PARTIAL_READ).
+ *
+ * @param buffer     Destination buffer; must be at least \a size bytes.
+ * @param size       Exact number of bytes to read.
+ * @param _bytesRead Optional output pointer that receives the total number of
+ *                   bytes actually read (may be less than \a size on error).
+ * @return B_OK if exactly \a size bytes were read.
+ *         B_PARTIAL_READ if the stream ended before \a size bytes were read.
+ *         Any negative error code propagated from Read().
+ */
 status_t
 BDataIO::ReadExactly(void* buffer, size_t size, size_t* _bytesRead)
 {
@@ -84,6 +182,22 @@ BDataIO::ReadExactly(void* buffer, size_t size, size_t* _bytesRead)
 }
 
 
+/**
+ * @brief Write exactly \a size bytes, retrying partial writes until complete.
+ *
+ * Calls Write() in a loop until all \a size bytes have been transferred, an
+ * error is returned, or a zero-byte write is detected (treated as
+ * B_PARTIAL_WRITE).
+ *
+ * @param buffer        Source buffer; must contain at least \a size bytes.
+ * @param size          Exact number of bytes to write.
+ * @param _bytesWritten Optional output pointer that receives the total number
+ *                      of bytes actually written (may be less than \a size on
+ *                      error).
+ * @return B_OK if exactly \a size bytes were written.
+ *         B_PARTIAL_WRITE if the stream could not accept further bytes.
+ *         Any negative error code propagated from Write().
+ */
 status_t
 BDataIO::WriteExactly(const void* buffer, size_t size, size_t* _bytesWritten)
 {
@@ -116,12 +230,14 @@ BDataIO::WriteExactly(const void* buffer, size_t size, size_t* _bytesWritten)
 
 // Private or Reserved
 
+/** @brief Copying a BDataIO is not allowed. */
 BDataIO::BDataIO(const BDataIO &)
 {
 	// Copying not allowed
 }
 
 
+/** @brief Copy-assigning a BDataIO is not allowed. */
 BDataIO &
 BDataIO::operator=(const BDataIO &)
 {
@@ -172,16 +288,37 @@ void BDataIO::_ReservedDataIO12(){}
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a BPositionIO instance.
+ *
+ * No state is initialised by the base class itself; subclasses initialise
+ * their own position and buffer fields.
+ */
 BPositionIO::BPositionIO()
 {
 }
 
 
+/**
+ * @brief Destroy the BPositionIO instance.
+ *
+ * Virtual destructor — ensures proper cleanup in derived classes.
+ */
 BPositionIO::~BPositionIO()
 {
 }
 
 
+/**
+ * @brief Read up to \a size bytes sequentially from the current position.
+ *
+ * Delegates to ReadAt() at the current Position(), then advances the position
+ * by the number of bytes actually read.
+ *
+ * @param buffer Destination buffer for the bytes read.
+ * @param size   Maximum number of bytes to read.
+ * @return The number of bytes read (>= 0), or a negative error code.
+ */
 ssize_t
 BPositionIO::Read(void* buffer, size_t size)
 {
@@ -194,6 +331,16 @@ BPositionIO::Read(void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Write up to \a size bytes sequentially at the current position.
+ *
+ * Delegates to WriteAt() at the current Position(), then advances the position
+ * by the number of bytes actually written.
+ *
+ * @param buffer Source buffer containing the bytes to write.
+ * @param size   Number of bytes to write.
+ * @return The number of bytes written (>= 0), or a negative error code.
+ */
 ssize_t
 BPositionIO::Write(const void* buffer, size_t size)
 {
@@ -206,6 +353,19 @@ BPositionIO::Write(const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Read exactly \a size bytes starting at absolute position \a position.
+ *
+ * Calls ReadAt() in a loop, advancing \a position on each partial read, until
+ * all requested bytes have been transferred or an error occurs.
+ *
+ * @param position   Absolute byte offset in the stream from which to start.
+ * @param buffer     Destination buffer; must be at least \a size bytes.
+ * @param size       Exact number of bytes to read.
+ * @param _bytesRead Optional output pointer that receives the total bytes read.
+ * @return B_OK on full read, B_PARTIAL_READ on early end-of-stream, or a
+ *         negative error code from ReadAt().
+ */
 status_t
 BPositionIO::ReadAtExactly(off_t position, void* buffer, size_t size,
 	size_t* _bytesRead)
@@ -238,6 +398,20 @@ BPositionIO::ReadAtExactly(off_t position, void* buffer, size_t size,
 }
 
 
+/**
+ * @brief Write exactly \a size bytes starting at absolute position \a position.
+ *
+ * Calls WriteAt() in a loop, advancing \a position on each partial write,
+ * until all requested bytes have been transferred or an error occurs.
+ *
+ * @param position      Absolute byte offset in the stream at which to start.
+ * @param buffer        Source buffer; must contain at least \a size bytes.
+ * @param size          Exact number of bytes to write.
+ * @param _bytesWritten Optional output pointer that receives the total bytes
+ *                      written.
+ * @return B_OK on full write, B_PARTIAL_WRITE if the stream is full, or a
+ *         negative error code from WriteAt().
+ */
 status_t
 BPositionIO::WriteAtExactly(off_t position, const void* buffer, size_t size,
 	size_t* _bytesWritten)
@@ -270,6 +444,15 @@ BPositionIO::WriteAtExactly(off_t position, const void* buffer, size_t size,
 }
 
 
+/**
+ * @brief Set the logical size of the stream to \a size bytes.
+ *
+ * The base-class implementation always returns B_ERROR. Subclasses that
+ * support resizing (e.g. BMallocIO) must override this.
+ *
+ * @param size The desired new size in bytes.
+ * @return B_OK on success, or B_ERROR if resizing is not supported.
+ */
 status_t
 BPositionIO::SetSize(off_t size)
 {
@@ -277,6 +460,17 @@ BPositionIO::SetSize(off_t size)
 }
 
 
+/**
+ * @brief Return the total size of the stream in bytes.
+ *
+ * Seeks to the end of the stream to determine its size, then restores the
+ * original position. This is a const method but requires non-const Seek()
+ * calls, so it uses const_cast internally.
+ *
+ * @param size Output pointer that receives the stream size.
+ * @return B_OK on success, B_BAD_VALUE if \a size is NULL, or a negative
+ *         error code if Position() or Seek() fails.
+ */
 status_t
 BPositionIO::GetSize(off_t* size) const
 {
@@ -318,6 +512,17 @@ void BPositionIO::_ReservedPositionIO12(){}
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a mutable BMemoryIO over a caller-supplied buffer.
+ *
+ * The object does not take ownership of \a buffer; the caller is responsible
+ * for ensuring the buffer remains valid for the lifetime of this object.
+ * ReadAt(), WriteAt(), and SetSize() are all permitted.
+ *
+ * @param buffer Pointer to the mutable backing buffer.
+ * @param length Size of the buffer in bytes; both fLength and fBufferSize are
+ *               initialised to this value.
+ */
 BMemoryIO::BMemoryIO(void* buffer, size_t length)
 	:
 	fReadOnly(false),
@@ -329,6 +534,15 @@ BMemoryIO::BMemoryIO(void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Construct a read-only BMemoryIO over a caller-supplied const buffer.
+ *
+ * WriteAt() and SetSize() will return B_NOT_ALLOWED on this instance.
+ * The caller retains ownership of the buffer.
+ *
+ * @param buffer Pointer to the read-only backing buffer.
+ * @param length Size of the buffer in bytes.
+ */
 BMemoryIO::BMemoryIO(const void* buffer, size_t length)
 	:
 	fReadOnly(true),
@@ -340,11 +554,28 @@ BMemoryIO::BMemoryIO(const void* buffer, size_t length)
 }
 
 
+/**
+ * @brief Destroy the BMemoryIO instance.
+ *
+ * The backing buffer is owned by the caller and is not freed here.
+ */
 BMemoryIO::~BMemoryIO()
 {
 }
 
 
+/**
+ * @brief Read up to \a size bytes from the buffer at absolute position \a pos.
+ *
+ * Clamps the read to the valid data range [0, fLength). Does not modify the
+ * current stream position.
+ *
+ * @param pos    Absolute byte offset within the buffer to read from.
+ * @param buffer Destination for the bytes read.
+ * @param size   Maximum number of bytes to read.
+ * @return The number of bytes actually read, or B_BAD_VALUE if \a buffer is
+ *         NULL or \a pos is negative.
+ */
 ssize_t
 BMemoryIO::ReadAt(off_t pos, void* buffer, size_t size)
 {
@@ -361,6 +592,19 @@ BMemoryIO::ReadAt(off_t pos, void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Write up to \a size bytes into the buffer at absolute position \a pos.
+ *
+ * Writes are clamped to the allocated buffer size (fBufferSize). If the write
+ * extends beyond the current logical length (fLength), fLength is updated.
+ * Returns B_NOT_ALLOWED if the object was constructed with a const buffer.
+ *
+ * @param pos    Absolute byte offset within the buffer to write at.
+ * @param buffer Source of the bytes to write.
+ * @param size   Number of bytes to write.
+ * @return The number of bytes actually written, B_NOT_ALLOWED for read-only
+ *         instances, or B_BAD_VALUE if \a buffer is NULL or \a pos is negative.
+ */
 ssize_t
 BMemoryIO::WriteAt(off_t pos, const void* buffer, size_t size)
 {
@@ -389,6 +633,17 @@ BMemoryIO::WriteAt(off_t pos, const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Move the stream position to the byte specified by \a position and
+ *        \a seek_mode.
+ *
+ * Supports SEEK_SET, SEEK_CUR, and SEEK_END. No bounds checking is performed
+ * on the resulting position — callers may seek past the end of the buffer.
+ *
+ * @param position  Byte offset, interpreted relative to \a seek_mode.
+ * @param seek_mode One of SEEK_SET, SEEK_CUR, or SEEK_END.
+ * @return The new absolute stream position.
+ */
 off_t
 BMemoryIO::Seek(off_t position, uint32 seek_mode)
 {
@@ -410,6 +665,11 @@ BMemoryIO::Seek(off_t position, uint32 seek_mode)
 }
 
 
+/**
+ * @brief Return the current stream position.
+ *
+ * @return The current byte offset within the buffer.
+ */
 off_t
 BMemoryIO::Position() const
 {
@@ -417,6 +677,17 @@ BMemoryIO::Position() const
 }
 
 
+/**
+ * @brief Set the logical data length of the buffer to \a size bytes.
+ *
+ * Only reduces or expands the logical view of the data within the fixed-size
+ * backing buffer. The requested \a size must not exceed fBufferSize.
+ * Returns B_NOT_ALLOWED for read-only instances.
+ *
+ * @param size The new logical length in bytes.
+ * @return B_OK on success, B_NOT_ALLOWED for read-only instances, or B_ERROR
+ *         if \a size exceeds the buffer capacity.
+ */
 status_t
 BMemoryIO::SetSize(off_t size)
 {
@@ -434,12 +705,14 @@ BMemoryIO::SetSize(off_t size)
 
 // Private or Reserved
 
+/** @brief Copying a BMemoryIO is not allowed. */
 BMemoryIO::BMemoryIO(const BMemoryIO &)
 {
 	//Copying not allowed
 }
 
 
+/** @brief Copy-assigning a BMemoryIO is not allowed. */
 BMemoryIO &
 BMemoryIO::operator=(const BMemoryIO &)
 {
@@ -456,6 +729,12 @@ void BMemoryIO::_ReservedMemoryIO2(){}
 //	#pragma mark -
 
 
+/**
+ * @brief Construct an empty BMallocIO with a default block size of 256 bytes.
+ *
+ * No heap memory is allocated until the first write or an explicit SetSize()
+ * call. The block size controls the granularity of heap allocations.
+ */
 BMallocIO::BMallocIO()
 	:
 	fBlockSize(256),
@@ -467,12 +746,30 @@ BMallocIO::BMallocIO()
 }
 
 
+/**
+ * @brief Destroy the BMallocIO and free the heap buffer.
+ *
+ * The internally managed buffer is freed; any pointers previously returned
+ * by Buffer() become invalid after this call.
+ */
 BMallocIO::~BMallocIO()
 {
 	free(fData);
 }
 
 
+/**
+ * @brief Read up to \a size bytes from the heap buffer at absolute position
+ *        \a pos.
+ *
+ * Does not modify the current stream position.
+ *
+ * @param pos    Absolute byte offset within the buffer to read from.
+ * @param buffer Destination for the bytes read.
+ * @param size   Maximum number of bytes to read.
+ * @return The number of bytes actually read, or B_BAD_VALUE if \a buffer is
+ *         NULL.
+ */
 ssize_t
 BMallocIO::ReadAt(off_t pos, void* buffer, size_t size)
 {
@@ -489,6 +786,20 @@ BMallocIO::ReadAt(off_t pos, void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Write \a size bytes from \a buffer into the heap buffer at absolute
+ *        position \a pos.
+ *
+ * Automatically grows the heap allocation via SetSize() if necessary. Any
+ * newly allocated bytes beyond the previous fLength are zero-initialised by
+ * SetSize(). Updates fLength if the write extends past the current end.
+ *
+ * @param pos    Absolute byte offset within the buffer to write at.
+ * @param buffer Source of the bytes to write.
+ * @param size   Number of bytes to write.
+ * @return \a size on success, B_BAD_VALUE if \a buffer is NULL, or a negative
+ *         error code if the heap allocation fails.
+ */
 ssize_t
 BMallocIO::WriteAt(off_t pos, const void* buffer, size_t size)
 {
@@ -511,6 +822,17 @@ BMallocIO::WriteAt(off_t pos, const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Move the stream position to the byte specified by \a position and
+ *        \a seekMode.
+ *
+ * Supports SEEK_SET, SEEK_CUR, and SEEK_END. No bounds checking is performed
+ * on the resulting position.
+ *
+ * @param position Byte offset, interpreted relative to \a seekMode.
+ * @param seekMode One of SEEK_SET, SEEK_CUR, or SEEK_END.
+ * @return The new absolute stream position.
+ */
 off_t
 BMallocIO::Seek(off_t position, uint32 seekMode)
 {
@@ -531,6 +853,11 @@ BMallocIO::Seek(off_t position, uint32 seekMode)
 }
 
 
+/**
+ * @brief Return the current stream position.
+ *
+ * @return The current byte offset within the heap buffer.
+ */
 off_t
 BMallocIO::Position() const
 {
@@ -538,6 +865,16 @@ BMallocIO::Position() const
 }
 
 
+/**
+ * @brief Resize the heap buffer to exactly \a size logical bytes.
+ *
+ * The physical allocation is rounded up to a multiple of fBlockSize. Newly
+ * allocated bytes are zero-initialised. If \a size is zero the buffer is
+ * freed entirely.
+ *
+ * @param size The desired new logical size in bytes.
+ * @return B_OK on success, or B_NO_MEMORY if the reallocation fails.
+ */
 status_t
 BMallocIO::SetSize(off_t size)
 {
@@ -570,6 +907,14 @@ BMallocIO::SetSize(off_t size)
 }
 
 
+/**
+ * @brief Set the allocation block size used when growing the heap buffer.
+ *
+ * All future heap allocations will be rounded up to a multiple of
+ * \a blockSize. A value of zero is silently promoted to 1.
+ *
+ * @param blockSize The new block size in bytes (must be > 0; 0 is treated as 1).
+ */
 void
 BMallocIO::SetBlockSize(size_t blockSize)
 {
@@ -581,6 +926,15 @@ BMallocIO::SetBlockSize(size_t blockSize)
 }
 
 
+/**
+ * @brief Return a read-only pointer to the internal heap buffer.
+ *
+ * The returned pointer is valid only as long as the BMallocIO object is alive
+ * and no write or resize operation is performed.
+ *
+ * @return A const pointer to the heap buffer, or NULL if no data has been
+ *         written yet.
+ */
 const void*
 BMallocIO::Buffer() const
 {
@@ -588,6 +942,14 @@ BMallocIO::Buffer() const
 }
 
 
+/**
+ * @brief Return the current logical length of the data in the buffer.
+ *
+ * This reflects the highest byte position written, not the physical allocation
+ * size (which is always a multiple of fBlockSize).
+ *
+ * @return The number of valid data bytes in the buffer.
+ */
 size_t
 BMallocIO::BufferLength() const
 {
@@ -597,12 +959,14 @@ BMallocIO::BufferLength() const
 
 // Private or Reserved
 
+/** @brief Copying a BMallocIO is not allowed. */
 BMallocIO::BMallocIO(const BMallocIO &)
 {
 	// copying not allowed...
 }
 
 
+/** @brief Copy-assigning a BMallocIO is not allowed. */
 BMallocIO &
 BMallocIO::operator=(const BMallocIO &)
 {

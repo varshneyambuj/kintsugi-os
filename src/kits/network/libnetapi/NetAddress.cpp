@@ -1,21 +1,36 @@
 /*
- * Copyright 2002-2006,2008, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Scott T. Mansfield, thephantom@mac.com
- *		Oliver Tappe, zooey@hirschkaefer.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2006,2008, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Scott T. Mansfield, thephantom@mac.com
+ *       Oliver Tappe, zooey@hirschkaefer.de
  */
 
-/*!
-	NetAddress.cpp -- Implementation of the BNetAddress class.
-	Remarks:
-	 * In all accessors, non-struct output values are converted from network to
-	   host byte order.
-	 * In all mutators, non-struct input values are converted from host to
-	   network byte order.
-	 * No trouts were harmed during the development of this class.
-*/
+/** @file NetAddress.cpp
+ *  @brief Legacy BNetAddress implementation. Wraps IPv4 address + port with
+ *         hostname resolution and BArchivable support. Non-struct accessors
+ *         return values in host byte order; non-struct mutators expect host
+ *         byte order input. */
 
 #include <r5_compatibility.h>
 
@@ -30,6 +45,9 @@
 #include <string.h>
 
 
+/** @brief Constructs from a hostname (or dotted-quad) and port number.
+ *  @param hostname Hostname to resolve; may be a dotted IPv4 literal or NULL.
+ *  @param port     Port number in host byte order. */
 BNetAddress::BNetAddress(const char* hostname, unsigned short port)
 	:
 	fInit(B_NO_INIT)
@@ -38,6 +56,7 @@ BNetAddress::BNetAddress(const char* hostname, unsigned short port)
 }
 
 
+/** @brief Constructs from an existing BSD sockaddr_in structure. */
 BNetAddress::BNetAddress(const struct sockaddr_in& addr)
 	:
 	fInit(B_NO_INIT)
@@ -46,6 +65,9 @@ BNetAddress::BNetAddress(const struct sockaddr_in& addr)
 }
 
 
+/** @brief Constructs from an in_addr and port.
+ *  @param addr IPv4 address in network byte order.
+ *  @param port Port number in host byte order. */
 BNetAddress::BNetAddress(in_addr addr, int port)
 	:
 	fInit(B_NO_INIT)
@@ -54,6 +76,9 @@ BNetAddress::BNetAddress(in_addr addr, int port)
 }
 
 
+/** @brief Constructs from a raw uint32 address and port.
+ *  @param addr IPv4 address in network byte order.
+ *  @param port Port number in host byte order. */
 BNetAddress::BNetAddress(uint32 addr, int port)
 	:
 	fInit(B_NO_INIT)
@@ -62,6 +87,10 @@ BNetAddress::BNetAddress(uint32 addr, int port)
 }
 
 
+/** @brief Constructs from a hostname looked up via getservbyname().
+ *  @param hostname Hostname (or IPv4 literal) to resolve.
+ *  @param protocol Transport protocol name, e.g. "tcp" or "udp".
+ *  @param service  Service name listed in /etc/services, e.g. "http". */
 BNetAddress::BNetAddress(const char* hostname, const char* protocol,
 	const char* service)
 	:
@@ -71,12 +100,15 @@ BNetAddress::BNetAddress(const char* hostname, const char* protocol,
 }
 
 
+/** @brief Copy constructor. */
 BNetAddress::BNetAddress(const BNetAddress& other)
 {
 	*this = other;
 }
 
 
+/** @brief Constructs from an archived BMessage produced by Archive().
+ *  @param archive Source BMessage. */
 BNetAddress::BNetAddress(BMessage* archive)
 {
 	int16 int16value;
@@ -97,11 +129,13 @@ BNetAddress::BNetAddress(BMessage* archive)
 }
 
 
+/** @brief Destructor. */
 BNetAddress::~BNetAddress()
 {
 }
 
 
+/** @brief Assignment operator. Copies family, port, address, and init state. */
 BNetAddress&
 BNetAddress::operator=(const BNetAddress& other)
 {
@@ -114,37 +148,12 @@ BNetAddress::operator=(const BNetAddress& other)
 }
 
 
-/* GetAddr
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Class accessor.
- *
- * Output parameters:
- *		hostname:		Host name associated with this instance (default: NULL).
- *						In this particular implementation, hostname will be an
- *						ASCII-fied representation of an IP address.
- *
- *		port:			Port number associated with this instance
- *						(default: NULL).  Will be converted to host byte order
- *						here, so it is not necessary to call ntohs() after
- *						calling this method.
- *
- * Returns:
- *	B_OK for success, B_NO_INIT if instance was not properly constructed.
- *
- * Remarks:
- *		Hostname and/or port can be NULL; although having them both NULL would
- *		be a pointless waste of CPU cycles.  ;-)
- *
- *		The hostname output parameter can be a variety of things, but in this
- *		method we convert the IP address to a string.  See the relevant
- *		documentation about inet_ntoa() for details.
- *
- *		Make sure hostname is large enough or you will step on someone
- *		else's toes.  (Can you say "buffer overflow exploit" boys and girls?)
- *		You can generally be safe using the MAXHOSTNAMELEN define, which
- *		defaults to 64 bytes--don't forget to leave room for the NULL!
- */
+/** @brief Retrieves the address as a dotted-quad string and host-order port.
+ *  @param hostname On output, the dotted-quad IPv4 representation. May be
+ *                  NULL. The caller must provide a buffer of at least
+ *                  MAXHOSTNAMELEN + 1 bytes.
+ *  @param port     On output, the port number in host byte order. May be NULL.
+ *  @return B_OK on success, or B_NO_INIT if the instance was not initialised. */
 status_t
 BNetAddress::GetAddr(char* hostname, unsigned short* port) const
 {
@@ -167,23 +176,11 @@ BNetAddress::GetAddr(char* hostname, unsigned short* port) const
 }
 
 
-/* GetAddr
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Class accessor.
- *
- * Output parameter:
- *		sa:					sockaddr_in struct to be filled.
- *
- * Returns:
- *		B_OK for success, B_NO_INIT if instance was not properly constructed.
- *
- * Remarks:
- *		This method fills in the sin_addr, sin_family, and sin_port fields of
- *		the output parameter, all other fields are untouched so we can work
- *		with both POSIX and non-POSIX versions of said struct.  The port and
- *		address values added to the output parameter are in network byte order.
- */
+/** @brief Fills a sockaddr_in struct with the address, family, and port.
+ *  @param sa Destination sockaddr_in. Only the sin_family, sin_addr, and
+ *            sin_port fields are touched; all others are left as the caller
+ *            left them. The address and port are stored in network byte order.
+ *  @return B_OK on success, or B_NO_INIT if the instance was not initialised. */
 status_t BNetAddress::GetAddr(struct sockaddr_in& sa) const
 {
 	if (fInit != B_OK)
@@ -204,22 +201,10 @@ status_t BNetAddress::GetAddr(struct sockaddr_in& sa) const
 }
 
 
-/* GetAddr
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Class accessor.
- *
- * Output parameters:
- *		addr:			in_addr struct to fill.
- *		port:			optional port number to fill.
- *
- * Returns:
- *		B_OK for success, B_NO_INIT if instance was not properly constructed.
- *
- * Remarks:
- *		Output port will be in host byte order, but addr will be in the usual
- *		network byte order (ready to be used by other network functions).
- */
+/** @brief Fills an in_addr struct and optional port with the stored values.
+ *  @param addr On output, the IPv4 address in network byte order.
+ *  @param port On output, the port number in host byte order (may be NULL).
+ *  @return B_OK on success, or B_NO_INIT if the instance was not initialised. */
 status_t BNetAddress::GetAddr(in_addr& addr, unsigned short* port) const
 {
 	if (fInit != B_OK)
@@ -234,41 +219,26 @@ status_t BNetAddress::GetAddr(in_addr& addr, unsigned short* port) const
 }
 
 
-/* InitCheck
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Determine whether or not this instance is properly initialized.
- *
- * Returns:
- *		B_OK if this instance is initialized, B_ERROR if not.
- */
+/** @brief Returns whether the instance has been successfully initialised.
+ *  @return B_OK if initialised, B_ERROR otherwise. */
 status_t BNetAddress::InitCheck() const
 {
 	return fInit == B_OK ? B_OK : B_ERROR;
 }
 
 
+/** @brief Non-const overload of InitCheck() preserved for BeOS/ABI compatibility. */
 status_t BNetAddress::InitCheck()
 {
 	return const_cast<const BNetAddress*>(this)->InitCheck();
 }
 
 
-/* Archive
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Serialize this instance into the passed BMessage parameter.
- *
- * Input parameter:
- *		deep:			[ignored] default==true.
- *
- * Output parameter:
- *		into:			BMessage object to serialize into.
- *
- * Returns:
- *		B_OK/BERROR on success/failure.  Returns B_NO_INIT if instance not
- *		properly initialized.
- */
+/** @brief Serialises the address into a BMessage for persistence or IPC.
+ *  @param into Destination BMessage to receive the address fields.
+ *  @param deep Ignored; present for BArchivable contract compatibility.
+ *  @return B_OK on success, B_ERROR on archive failure, or B_NO_INIT
+ *          if the instance was not initialised. */
 status_t BNetAddress::Archive(BMessage* into, bool deep) const
 {
 	if (fInit != B_OK)
@@ -287,18 +257,10 @@ status_t BNetAddress::Archive(BMessage* into, bool deep) const
 }
 
 
-/* Instantiate
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Un-serialize and instantiate from the passed BMessage parameter.
- *
- * Input parameter:
- *		archive:		Archived BMessage object for (de)serialization.
- *
- * Returns:
- *		NULL if a BNetAddress instance can not be initialized, otherwise
- *		a new BNetAddress object instantiated from the BMessage parameter.
- */
+/** @brief BArchivable factory that reconstructs a BNetAddress from a BMessage.
+ *  @param archive Source BMessage previously produced by Archive().
+ *  @return A newly-allocated BNetAddress owned by the caller, or NULL on
+ *          allocation failure or invalid archive. */
 BArchivable*
 BNetAddress::Instantiate(BMessage* archive)
 {
@@ -318,22 +280,11 @@ BNetAddress::Instantiate(BMessage* archive)
 }
 
 
-/* SetTo
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *	 Set hostname and port network address data.
- *
- * Input parameters:
- *		hostname:		Can be one of three things:
- *						1. An ASCII-string representation of an IP address.
- *						2. A canonical hostname.
- *						3. NULL.  If NULL, then by default the address will be
- *							set to INADDR_ANY (0.0.0.0).
- *		port:			Duh.
- *
- * Returns:
- *		B_OK/B_ERROR for success/failure.
- */
+/** @brief Sets the address from a hostname or dotted-quad and a port.
+ *  @param hostname Dotted-quad IPv4 literal, resolvable hostname, or NULL
+ *                  (interpreted as INADDR_ANY).
+ *  @param port     Port number in host byte order.
+ *  @return B_OK on success, or B_ERROR if the hostname could not be resolved. */
 status_t
 BNetAddress::SetTo(const char* hostname, unsigned short port)
 {
@@ -363,12 +314,9 @@ BNetAddress::SetTo(const char* hostname, unsigned short port)
 }
 
 
-/*!
-	Set from passed in sockaddr_in address.
-
-	\param addr address
-	\return B_OK.
-*/
+/** @brief Sets the address from an existing sockaddr_in structure.
+ *  @param addr Source sockaddr_in (fields remain in network byte order).
+ *  @return B_OK. */
 status_t
 BNetAddress::SetTo(const struct sockaddr_in& addr)
 {
@@ -388,14 +336,10 @@ BNetAddress::SetTo(const struct sockaddr_in& addr)
 }
 
 
-/*!
-	Set from passed in address and port.
-
-	\param addr IP address in network form.
-	\param port Optional port number.
-
-	\return B_OK.
-*/
+/** @brief Sets the address from an in_addr and an optional port.
+ *  @param addr IPv4 address in network byte order.
+ *  @param port Port number in host byte order.
+ *  @return B_OK. */
 status_t
 BNetAddress::SetTo(in_addr addr, int port)
 {
@@ -407,14 +351,10 @@ BNetAddress::SetTo(in_addr addr, int port)
 }
 
 
-/*!
-	Set from passed in address and port.
-
-	\param addr IP address in network form.
-	\param port Optional port number.
-
-	\return B_OK.
-*/
+/** @brief Sets the address from a raw uint32 and an optional port.
+ *  @param addr IPv4 address in network byte order.
+ *  @param port Port number in host byte order.
+ *  @return B_OK. */
 status_t
 BNetAddress::SetTo(uint32 addr, int port)
 {
@@ -426,32 +366,12 @@ BNetAddress::SetTo(uint32 addr, int port)
 }
 
 
-/* SetTo
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *		Set from passed in hostname and protocol/service information.
- *
- * Input parameters:
- *		hostname:		Can be one of three things:
- *						1. An ASCII-string representation of an IP address.
- *						2. A canonical hostname.
- *						3. NULL.  If NULL, then by default the address will be
- *							set to INADDR_ANY (0.0.0.0).
- *		protocol:		Datagram type, typically "TCP" or "UDP"
- *		service:		The name of the service, such as http, ftp, et al. This
- *						must be one of the official service names listed in
- *						/etc/services -- but you already knew that because
- *						you're doing network/sockets programming, RIIIGHT???.
- *
- * Returns:
- *		B_OK/B_ERROR on success/failure.
- *
- * Remarks:
- *		The protocol and service input parameters must be one of the official
- *		types listed in /etc/services.  We use these two parameters to
- *		determine the port number (see getservbyname(3)).  This method will
- *		fail if the aforementioned precondition is not met.
- */
+/** @brief Sets the address from a hostname plus a protocol/service pair.
+ *         The port is derived from getservbyname().
+ *  @param hostname Dotted-quad IPv4 literal, resolvable hostname, or NULL.
+ *  @param protocol Transport protocol name ("tcp", "udp", ...).
+ *  @param service  Named service listed in /etc/services (e.g. "http").
+ *  @return B_OK on success, or B_ERROR if the service could not be resolved. */
 status_t
 BNetAddress::SetTo(const char* hostname, const char* protocol,
 	const char* service)

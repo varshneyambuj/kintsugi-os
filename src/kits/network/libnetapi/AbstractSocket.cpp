@@ -1,8 +1,31 @@
 /*
- * Copyright 2011, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file AbstractSocket.cpp
+ *  @brief Base class for BSD-style socket wrappers, providing common
+ *         bind/connect/listen state tracking and timeout handling. */
 
 
 #include <AbstractSocket.h>
@@ -23,6 +46,8 @@
 #endif
 
 
+/** @brief Constructs an unconnected, unbound abstract socket.
+ *         InitCheck() will return B_NO_INIT until the socket is opened. */
 BAbstractSocket::BAbstractSocket()
 	:
 	fInitStatus(B_NO_INIT),
@@ -34,6 +59,9 @@ BAbstractSocket::BAbstractSocket()
 }
 
 
+/** @brief Copy constructor that duplicates the underlying file descriptor.
+ *  @param other The source socket to copy state from. The new object owns
+ *               an independent dup()'d file descriptor. */
 BAbstractSocket::BAbstractSocket(const BAbstractSocket& other)
 	:
 	fInitStatus(other.fInitStatus),
@@ -48,12 +76,15 @@ BAbstractSocket::BAbstractSocket(const BAbstractSocket& other)
 }
 
 
+/** @brief Destructor. Ensures the socket is disconnected and closed. */
 BAbstractSocket::~BAbstractSocket()
 {
 	Disconnect();
 }
 
 
+/** @brief Returns the initialisation status of the socket.
+ *  @return B_OK if successfully opened/bound/connected, or an error code. */
 status_t
 BAbstractSocket::InitCheck() const
 {
@@ -61,6 +92,8 @@ BAbstractSocket::InitCheck() const
 }
 
 
+/** @brief Reports whether the socket is bound to a local address.
+ *  @return true if Bind() has been successfully called. */
 bool
 BAbstractSocket::IsBound() const
 {
@@ -68,6 +101,8 @@ BAbstractSocket::IsBound() const
 }
 
 
+/** @brief Reports whether the socket is in the listening state.
+ *  @return true if Listen() has been successfully called. */
 bool
 BAbstractSocket::IsListening() const
 {
@@ -75,6 +110,8 @@ BAbstractSocket::IsListening() const
 }
 
 
+/** @brief Reports whether the socket is connected to a remote peer.
+ *  @return true if Connect() has been successfully called. */
 bool
 BAbstractSocket::IsConnected() const
 {
@@ -82,6 +119,10 @@ BAbstractSocket::IsConnected() const
 }
 
 
+/** @brief Places the socket in the listening state for incoming connections.
+ *  @param backlog Maximum length of the pending-connection queue.
+ *  @return B_OK on success, B_NO_INIT if not previously bound, or an errno
+ *          value on failure. */
 status_t
 BAbstractSocket::Listen(int backlog)
 {
@@ -96,6 +137,7 @@ BAbstractSocket::Listen(int backlog)
 }
 
 
+/** @brief Closes the underlying file descriptor and clears connection state. */
 void
 BAbstractSocket::Disconnect()
 {
@@ -111,6 +153,9 @@ BAbstractSocket::Disconnect()
 }
 
 
+/** @brief Sets the send and receive timeout for blocking socket operations.
+ *  @param timeout Timeout in microseconds. Values < 0 are clamped to 0.
+ *  @return B_OK on success, or an errno value from setsockopt(). */
 status_t
 BAbstractSocket::SetTimeout(bigtime_t timeout)
 {
@@ -131,6 +176,8 @@ BAbstractSocket::SetTimeout(bigtime_t timeout)
 }
 
 
+/** @brief Returns the current send timeout in microseconds.
+ *  @return The timeout value, or B_INFINITE_TIMEOUT on error. */
 bigtime_t
 BAbstractSocket::Timeout() const
 {
@@ -143,6 +190,7 @@ BAbstractSocket::Timeout() const
 }
 
 
+/** @brief Returns the local address the socket is bound to. */
 const BNetworkAddress&
 BAbstractSocket::Local() const
 {
@@ -150,6 +198,7 @@ BAbstractSocket::Local() const
 }
 
 
+/** @brief Returns the remote peer address the socket is connected to. */
 const BNetworkAddress&
 BAbstractSocket::Peer() const
 {
@@ -157,6 +206,9 @@ BAbstractSocket::Peer() const
 }
 
 
+/** @brief Returns the maximum number of bytes that a single send/recv call
+ *         can transfer for this socket type.
+ *  @return SSIZE_MAX for the generic base implementation. */
 size_t
 BAbstractSocket::MaxTransmissionSize() const
 {
@@ -164,6 +216,9 @@ BAbstractSocket::MaxTransmissionSize() const
 }
 
 
+/** @brief Blocks until the socket has data available for reading.
+ *  @param timeout Maximum time to wait in microseconds, or B_INFINITE_TIMEOUT.
+ *  @return B_OK if readable, B_TIMED_OUT on timeout, or an errno code. */
 status_t
 BAbstractSocket::WaitForReadable(bigtime_t timeout) const
 {
@@ -171,6 +226,9 @@ BAbstractSocket::WaitForReadable(bigtime_t timeout) const
 }
 
 
+/** @brief Blocks until the socket has buffer space available for writing.
+ *  @param timeout Maximum time to wait in microseconds, or B_INFINITE_TIMEOUT.
+ *  @return B_OK if writable, B_TIMED_OUT on timeout, or an errno code. */
 status_t
 BAbstractSocket::WaitForWritable(bigtime_t timeout) const
 {
@@ -178,6 +236,8 @@ BAbstractSocket::WaitForWritable(bigtime_t timeout) const
 }
 
 
+/** @brief Returns the underlying POSIX socket file descriptor.
+ *  @return The file descriptor, or -1 if the socket is not open. */
 int
 BAbstractSocket::Socket() const
 {
@@ -188,6 +248,11 @@ BAbstractSocket::Socket() const
 //	#pragma mark - protected
 
 
+/** @brief Opens (if necessary) and binds the socket to a local address.
+ *  @param local     The local address to bind to.
+ *  @param reuseAddr If true, sets SO_REUSEADDR before binding.
+ *  @param type      Socket type to pass to socket() if a new fd must be opened.
+ *  @return B_OK on success, or an errno value on failure. */
 status_t
 BAbstractSocket::Bind(const BNetworkAddress& local, bool reuseAddr, int type)
 {
@@ -212,6 +277,11 @@ BAbstractSocket::Bind(const BNetworkAddress& local, bool reuseAddr, int type)
 }
 
 
+/** @brief Opens the socket if needed and connects it to a remote peer.
+ *  @param peer    The remote peer address to connect to.
+ *  @param type    Socket type to pass to socket() if opening a new fd.
+ *  @param timeout Send/receive timeout to configure before connecting.
+ *  @return B_OK on successful connection, or an errno value on failure. */
 status_t
 BAbstractSocket::Connect(const BNetworkAddress& peer, int type,
 	bigtime_t timeout)
@@ -249,6 +319,10 @@ BAbstractSocket::Connect(const BNetworkAddress& peer, int type,
 }
 
 
+/** @brief Accepts the next pending connection on a listening socket.
+ *  @param _acceptedSocket On success, set to the new accepted file descriptor.
+ *  @param _peer           On success, set to the remote peer address.
+ *  @return B_OK on success, or an errno code on failure. */
 status_t
 BAbstractSocket::AcceptNext(int& _acceptedSocket, BNetworkAddress& _peer)
 {
@@ -268,6 +342,10 @@ BAbstractSocket::AcceptNext(int& _acceptedSocket, BNetworkAddress& _peer)
 //	#pragma mark - private
 
 
+/** @brief Lazily opens the underlying socket() if no file descriptor exists.
+ *  @param family Address family (AF_INET, AF_INET6, AF_UNIX, ...).
+ *  @param type   Socket type (SOCK_STREAM, SOCK_DGRAM, ...).
+ *  @return B_OK if the fd is already open or was successfully created. */
 status_t
 BAbstractSocket::_OpenIfNeeded(int family, int type)
 {
@@ -283,6 +361,8 @@ BAbstractSocket::_OpenIfNeeded(int family, int type)
 }
 
 
+/** @brief Refreshes fLocal from getsockname() after bind or connect.
+ *  @return B_OK on success, or an errno value on failure. */
 status_t
 BAbstractSocket::_UpdateLocalAddress()
 {
@@ -294,6 +374,11 @@ BAbstractSocket::_UpdateLocalAddress()
 }
 
 
+/** @brief Waits for a poll event on the socket's file descriptor.
+ *  @param flags   Poll events to wait for (e.g. POLLIN, POLLOUT).
+ *  @param timeout Maximum wait in microseconds, or B_INFINITE_TIMEOUT.
+ *  @return B_OK if the event occurred, B_TIMED_OUT / B_WOULD_BLOCK on no
+ *          event, or an errno value on poll() failure. */
 status_t
 BAbstractSocket::_WaitFor(int flags, bigtime_t timeout) const
 {

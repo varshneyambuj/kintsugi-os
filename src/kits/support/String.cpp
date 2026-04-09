@@ -1,18 +1,63 @@
 /*
- * Copyright 2001-2021 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini, burton666@libero.it
- *		Axel Dörfler, axeld@pinc-software.de
- *		Marc Flerackers, mflerackers@androme.be
- *		Julun, host.haiku@gmx.de
- *		Michael Lotz, mmlr@mlotz.ch
- *		Oliver Tappe, openbeos@hirschkaefer.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2021 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini, burton666@libero.it
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Julun, host.haiku@gmx.de
+ *       Michael Lotz, mmlr@mlotz.ch
+ *       Oliver Tappe, openbeos@hirschkaefer.de
  */
 
 
-/*! String class supporting common string operations. */
+/**
+ * @file String.cpp
+ * @brief Implementation of BString, a reference-counted mutable string class.
+ *
+ * BString provides a comprehensive set of string manipulation operations for
+ * Kintsugi OS applications.  Its buffer is reference-counted so that copies
+ * share storage until a write occurs (copy-on-write).  The private data layout
+ * places a 4-byte reference count and a 4-byte length field immediately before
+ * the character data pointer (fPrivateData), with a single static constant
+ * kPrivateDataOffset recording their combined size.
+ *
+ * Key design points:
+ * - All byte-offset parameters work with raw UTF-8 byte indices.  Methods
+ *   whose names end in "Chars" accept and return Unicode character counts
+ *   (code-point offsets) instead; they internally convert using UTF8CountBytes().
+ * - Assignment, SetTo, and the copy constructor share the buffer when the
+ *   source is shareable (reference count >= 0).  The move constructor and
+ *   move-assignment operator (C++11) steal the buffer without copying.
+ * - LockBuffer() / UnlockBuffer() provide direct writable access to the
+ *   internal buffer while preventing sharing.
+ * - The PosVect inner class is a simple growable int32 array used internally
+ *   by the replace and escape helper methods.
+ *
+ * @note BString uses UTF-8 encoding; multi-byte characters are handled
+ *       correctly by the *Chars() variants, but the plain byte-index methods
+ *       treat the buffer as raw bytes.
+ */
 
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE
@@ -46,7 +91,9 @@ static const uint32 kPrivateDataOffset = BString::Private::kPrivateDataOffset;
 const char* B_EMPTY_STRING = "";
 
 
-// helper function, returns minimum of two given values (but clamps to 0):
+/**
+ * @brief Return the smaller of \a num1 and \a num2, clamped to a minimum of 0.
+ */
 static inline int32
 min_clamp0(int32 num1, int32 num2)
 {
@@ -57,7 +104,11 @@ min_clamp0(int32 num1, int32 num2)
 }
 
 
-//! Returns length of given string (but clamps to given maximum).
+/**
+ * @brief Return strlen(\a string) clamped to at most \a max bytes.
+ *
+ * Returns 0 when \a max <= 0.
+ */
 static inline int32
 strlen_clamp(const char* string, int32 max)
 {
@@ -66,7 +117,7 @@ strlen_clamp(const char* string, int32 max)
 }
 
 
-//! Helper function for strlen() that can handle NULL strings.
+/** @brief Return strlen(\a string), or 0 if \a string is NULL. */
 static inline size_t
 string_length(const char* string)
 {
@@ -74,7 +125,7 @@ string_length(const char* string)
 }
 
 
-//! helper function, massages given pointer into a legal c-string:
+/** @brief Return \a string if it is non-NULL, otherwise return an empty string. */
 static inline const char*
 safestr(const char* string)
 {
@@ -85,6 +136,14 @@ safestr(const char* string)
 //	#pragma mark - PosVect
 
 
+/**
+ * @brief Growable array of int32 byte positions.
+ *
+ * PosVect is an internal helper class used by the replace and character-escape
+ * methods to accumulate the byte offsets at which substitutions must be made
+ * before performing a single pass over the buffer.  It starts with a capacity
+ * of 20 entries and doubles on each reallocation.
+ */
 class BString::PosVect {
 public:
 	PosVect()
@@ -139,6 +198,7 @@ private:
 //	#pragma mark - BString
 
 
+/** @brief Return a writable reference to the buffer's reference count field. */
 inline int32&
 BString::_ReferenceCount()
 {
@@ -146,6 +206,7 @@ BString::_ReferenceCount()
 }
 
 
+/** @brief Return a const reference to the buffer's reference count field. */
 inline const int32&
 BString::_ReferenceCount() const
 {
@@ -153,6 +214,7 @@ BString::_ReferenceCount() const
 }
 
 
+/** @brief Return true when this string's buffer may be shared with other BStrings. */
 inline bool
 BString::_IsShareable() const
 {
@@ -160,6 +222,11 @@ BString::_IsShareable() const
 }
 
 
+/**
+ * @brief Construct an empty BString.
+ *
+ * Allocates a minimal buffer containing only the NUL terminator.
+ */
 BString::BString()
 	:
 	fPrivateData(NULL)
@@ -168,6 +235,11 @@ BString::BString()
 }
 
 
+/**
+ * @brief Construct a BString from a C-string.
+ *
+ * @param string The NUL-terminated source string; may be NULL (treated as "").
+ */
 BString::BString(const char* string)
 	:
 	fPrivateData(NULL)
@@ -176,6 +248,14 @@ BString::BString(const char* string)
 }
 
 
+/**
+ * @brief Copy-construct a BString, sharing the buffer when possible.
+ *
+ * If the source string's buffer is shareable the reference count is
+ * incremented atomically; otherwise a private clone is made.
+ *
+ * @param string The source BString.
+ */
 BString::BString(const BString& string)
 	:
 	fPrivateData(NULL)
@@ -190,6 +270,13 @@ BString::BString(const BString& string)
 }
 
 
+/**
+ * @brief Construct a BString from at most \a maxLength bytes of \a string.
+ *
+ * @param string    Source character data.
+ * @param maxLength Maximum number of bytes to copy; the actual length is
+ *                  min(strlen(string), maxLength).
+ */
 BString::BString(const char* string, int32 maxLength)
 	: fPrivateData(NULL)
 {
@@ -198,6 +285,11 @@ BString::BString(const char* string, int32 maxLength)
 
 
 #if __cplusplus >= 201103L
+/**
+ * @brief Move-construct a BString, stealing \a string's buffer.
+ *
+ * @param string The source BString (left empty after the move).
+ */
 BString::BString(BString&& string) noexcept
 {
 	fPrivateData = string.fPrivateData;
@@ -206,6 +298,9 @@ BString::BString(BString&& string) noexcept
 #endif
 
 
+/**
+ * @brief Destroy the BString, releasing (and potentially freeing) the buffer.
+ */
 BString::~BString()
 {
 	_ReleasePrivateData();
@@ -215,6 +310,10 @@ BString::~BString()
 //	#pragma mark - Access
 
 
+/**
+ * @brief Return the number of UTF-8 characters (code points) in the string.
+ * @return Character count (may be less than Length() for multi-byte strings).
+ */
 int32
 BString::CountChars() const
 {
@@ -222,6 +321,14 @@ BString::CountChars() const
 }
 
 
+/**
+ * @brief Return the number of bytes occupied by \a charCount characters
+ *        starting at the character offset \a fromCharOffset.
+ *
+ * @param fromCharOffset Starting code-point offset.
+ * @param charCount      Number of code points to measure.
+ * @return Byte count for the specified range.
+ */
 int32
 BString::CountBytes(int32 fromCharOffset, int32 charCount) const
 {
@@ -230,6 +337,12 @@ BString::CountBytes(int32 fromCharOffset, int32 charCount) const
 }
 
 
+/**
+ * @brief Compute a djb2 hash of a C-string.
+ *
+ * @param _string The NUL-terminated string to hash; NULL yields 0.
+ * @return 32-bit hash value.
+ */
 /*static*/ uint32
 BString::HashValue(const char* _string)
 {
@@ -248,6 +361,11 @@ BString::HashValue(const char* _string)
 //	#pragma mark - Assignment
 
 
+/**
+ * @brief Assign another BString to this one (shares buffer if possible).
+ * @param string The source BString.
+ * @return Reference to this BString.
+ */
 BString&
 BString::operator=(const BString& string)
 {
@@ -255,6 +373,11 @@ BString::operator=(const BString& string)
 }
 
 
+/**
+ * @brief Assign a C-string to this BString.
+ * @param string NUL-terminated source; may be NULL (treated as "").
+ * @return Reference to this BString.
+ */
 BString&
 BString::operator=(const char* string)
 {
@@ -266,6 +389,11 @@ BString::operator=(const char* string)
 }
 
 
+/**
+ * @brief Assign a single character to this BString.
+ * @param c The character to store.
+ * @return Reference to this BString.
+ */
 BString&
 BString::operator=(char c)
 {
@@ -287,6 +415,15 @@ BString::operator=(BString&& string) noexcept
 #endif
 
 
+/**
+ * @brief Replace the contents of this string with at most \a maxLength bytes
+ *        from \a string.
+ *
+ * @param string    Source character data; may be NULL (treated as "").
+ * @param maxLength Maximum byte count to copy.  Pass a negative value to copy
+ *                  the entire string.
+ * @return Reference to this BString.
+ */
 BString&
 BString::SetTo(const char* string, int32 maxLength)
 {
@@ -302,6 +439,11 @@ BString::SetTo(const char* string, int32 maxLength)
 }
 
 
+/**
+ * @brief Replace the contents of this string with another BString (shares buffer).
+ * @param string The source BString.
+ * @return Reference to this BString.
+ */
 BString&
 BString::SetTo(const BString& string)
 {
@@ -323,6 +465,14 @@ BString::SetTo(const BString& string)
 }
 
 
+/**
+ * @brief Move \a from's contents into this string and clear \a from.
+ *
+ * Equivalent to SetTo(from) followed by from.SetTo("").
+ *
+ * @param from The source BString; cleared after adoption.
+ * @return Reference to this BString.
+ */
 BString&
 BString::Adopt(BString& from)
 {
@@ -359,6 +509,12 @@ BString::Adopt(BString& from, int32 maxLength)
 }
 
 
+/**
+ * @brief Fill this string with \a count repetitions of character \a c.
+ * @param c     The character to fill with.
+ * @param count Number of times to repeat \a c (clamped to 0 if negative).
+ * @return Reference to this BString.
+ */
 BString&
 BString::SetTo(char c, int32 count)
 {
@@ -393,6 +549,13 @@ BString::AdoptChars(BString& string, int32 charCount)
 }
 
 
+/**
+ * @brief Replace the contents of this string with a printf-style formatted result.
+ *
+ * @param format printf-compatible format string.
+ * @param ...    Format arguments.
+ * @return Reference to this BString.
+ */
 BString&
 BString::SetToFormat(const char* format, ...)
 {
@@ -439,6 +602,13 @@ BString::SetToFormatVarArgs(const char* format, va_list args)
 }
 
 
+/**
+ * @brief Parse this string with a scanf-style format.
+ *
+ * @param format scanf-compatible format string.
+ * @param ...    Output arguments.
+ * @return The number of items successfully matched and assigned.
+ */
 int
 BString::ScanWithFormat(const char* format, ...)
 {
@@ -461,6 +631,15 @@ BString::ScanWithFormatVarArgs(const char* format, va_list args)
 //	#pragma mark - Substring copying
 
 
+/**
+ * @brief Copy a byte-range substring into \a into.
+ *
+ * @param into       Destination BString.
+ * @param fromOffset Starting byte offset in this string.
+ * @param length     Number of bytes to copy.
+ * @return Reference to \a into.
+ * @note Has no effect when \a into and \a this are the same object.
+ */
 BString&
 BString::CopyInto(BString& into, int32 fromOffset, int32 length) const
 {
@@ -512,6 +691,15 @@ BString::CopyCharsInto(char* into, int32* intoLength, int32 fromCharOffset,
 }
 
 
+/**
+ * @brief Split this string on \a separator and append the pieces to \a _list.
+ *
+ * @param separator      The delimiter string.
+ * @param noEmptyStrings If true, empty tokens between adjacent separators are
+ *                       discarded.
+ * @param _list          The BStringList that receives the tokens.
+ * @return True on success, false if a memory allocation fails.
+ */
 bool
 BString::Split(const char* separator, bool noEmptyStrings,
 	BStringList& _list) const
@@ -551,6 +739,11 @@ BString::Split(const char* separator, bool noEmptyStrings,
 //	#pragma mark - Appending
 
 
+/**
+ * @brief Append a C-string to this BString.
+ * @param string NUL-terminated string to append; ignored if NULL.
+ * @return Reference to this BString.
+ */
 BString&
 BString::operator+=(const char* string)
 {
@@ -831,6 +1024,15 @@ BString::InsertChars(const BString& string, int32 fromCharOffset,
 //	#pragma mark - Removing
 
 
+/**
+ * @brief Shorten this string to at most \a newLength bytes.
+ *
+ * @param newLength Maximum length in bytes; values below 0 are treated as 0.
+ * @param lazy      If true, the buffer is not immediately reallocated (only
+ *                  the stored length is updated); the buffer will be shrunk
+ *                  the next time a write detaches it.
+ * @return Reference to this BString.
+ */
 BString&
 BString::Truncate(int32 newLength, bool lazy)
 {
@@ -1008,6 +1210,7 @@ BString::MoveCharsInto(char* into, int32* intoLength, int32 fromCharOffset,
 //	#pragma mark - Compare functions
 
 
+/** @brief Return true if this string is lexicographically less than \a string. */
 bool
 BString::operator<(const char* string) const
 {
@@ -1046,6 +1249,12 @@ BString::operator>(const char* string) const
 //	#pragma mark - strcmp()-style compare functions
 
 
+/**
+ * @brief Compare this string to \a string using strcmp().
+ * @param string The string to compare against.
+ * @return Negative, zero, or positive as this string is less than, equal to,
+ *         or greater than \a string.
+ */
 int
 BString::Compare(const BString& string) const
 {
@@ -1126,6 +1335,12 @@ BString::ICompare(const char* string, int32 length) const
 //	#pragma mark - Searching
 
 
+/**
+ * @brief Find the first occurrence of \a string starting from byte 0.
+ *
+ * @param string The substring to search for.
+ * @return Byte offset of the first match, or B_ERROR if not found.
+ */
 int32
 BString::FindFirst(const BString& string) const
 {
@@ -1485,6 +1700,13 @@ BString::IEndsWith(const char* string, int32 length) const
 //	#pragma mark - Replacing
 
 
+/**
+ * @brief Replace the first occurrence of character \a replaceThis with
+ *        \a withThis.
+ * @param replaceThis Character to search for.
+ * @param withThis    Replacement character.
+ * @return Reference to this BString.
+ */
 BString&
 BString::ReplaceFirst(char replaceThis, char withThis)
 {
@@ -1871,7 +2093,13 @@ BString::ReplaceCharsSet(const char* setOfChars, const char* with)
 //	#pragma mark - Unchecked char access
 
 
-#if __GNUC__ == 2
+/**
+ * @brief Return a pointer to the UTF-8 sequence at code-point index \a charIndex.
+ *
+ * @param charIndex Zero-based code-point index.
+ * @param bytes     If non-NULL, receives the byte length of the character.
+ * @return Pointer into the internal buffer (valid until the string is modified).
+ */
 char&
 BString::operator[](int32 index)
 {
@@ -1917,6 +2145,17 @@ BString::CharAt(int32 charIndex, char* buffer, int32* bytes) const
 //	#pragma mark - Fast low-level manipulation
 
 
+/**
+ * @brief Obtain a writable pointer to the internal buffer.
+ *
+ * Ensures the buffer is at least \a maxLength bytes long, detaches from any
+ * shared buffer, and marks the string as unshareable.  Call UnlockBuffer()
+ * when done.
+ *
+ * @param maxLength Minimum desired buffer size in bytes.  Pass -1 to keep the
+ *                  current length.
+ * @return Writable pointer to the buffer, or NULL on allocation failure.
+ */
 char*
 BString::LockBuffer(int32 maxLength)
 {
@@ -1934,6 +2173,13 @@ BString::LockBuffer(int32 maxLength)
 }
 
 
+/**
+ * @brief Release the lock acquired by LockBuffer() and fix up the stored length.
+ *
+ * @param length The new string length in bytes.  Pass -1 (or any value <= 0)
+ *               to infer the length from strlen() of the buffer.
+ * @return Reference to this BString.
+ */
 BString&
 BString::UnlockBuffer(int32 length)
 {
@@ -1965,6 +2211,12 @@ BString::SetByteAt(int32 pos, char to)
 //	#pragma mark - Uppercase <-> Lowercase
 
 
+/**
+ * @brief Convert all ASCII characters in the string to lowercase in-place.
+ * @return Reference to this BString.
+ * @note Only ASCII letters (A–Z) are converted; multi-byte UTF-8 sequences
+ *       are left unchanged.
+ */
 BString&
 BString::ToLower()
 {
@@ -1977,6 +2229,10 @@ BString::ToLower()
 }
 
 
+/**
+ * @brief Convert all ASCII characters in the string to uppercase in-place.
+ * @return Reference to this BString.
+ */
 BString&
 BString::ToUpper()
 {
@@ -2038,6 +2294,17 @@ BString::CapitalizeEachWord()
 //	#pragma mark - Escaping and De-escaping
 
 
+/**
+ * @brief Set this string to an escaped copy of \a original.
+ *
+ * Each character in \a original that appears in \a setOfCharsToEscape is
+ * preceded by \a escapeWith in the result.
+ *
+ * @param original          Source string.
+ * @param setOfCharsToEscape Set of bytes that must be escaped.
+ * @param escapeWith         The escape prefix character.
+ * @return Reference to this BString.
+ */
 BString&
 BString::CharacterEscape(const char* original,
 						 const char* setOfCharsToEscape, char escapeWith)
@@ -2076,6 +2343,15 @@ BString::CharacterDeescape(char escapeChar)
 //	#pragma mark - Trimming
 
 
+/**
+ * @brief Remove leading and trailing ASCII whitespace from this string.
+ *
+ * Uses isspace() to identify whitespace.  The operation is done in-place;
+ * the buffer is not reallocated unless the string needs to be detached from a
+ * shared copy.
+ *
+ * @return Reference to this BString.
+ */
 BString&
 BString::Trim()
 {
@@ -2115,6 +2391,11 @@ BString::Trim()
 //	#pragma mark - Insert
 
 
+/**
+ * @brief Append a C-string using the stream-insertion operator.
+ * @param string NUL-terminated string to append; ignored if NULL.
+ * @return Reference to this BString.
+ */
 BString&
 BString::operator<<(const char* string)
 {
@@ -2812,6 +3093,10 @@ _ZN7BStringixEi(BString* self, int32 index)
 //	#pragma mark - Non-member compare for sorting, etc.
 
 
+/**
+ * @brief Case-sensitive comparison of two BStrings (for sorting).
+ * @return strcmp()-style result.
+ */
 int
 Compare(const BString& string1, const BString& string2)
 {
@@ -2819,6 +3104,10 @@ Compare(const BString& string1, const BString& string2)
 }
 
 
+/**
+ * @brief Case-insensitive comparison of two BStrings (for sorting).
+ * @return strcasecmp()-style result.
+ */
 int
 ICompare(const BString& string1, const BString& string2)
 {
@@ -2826,6 +3115,10 @@ ICompare(const BString& string1, const BString& string2)
 }
 
 
+/**
+ * @brief Case-sensitive comparison of two BString pointers (for sorting).
+ * @return strcmp()-style result.
+ */
 int
 Compare(const BString* string1, const BString* string2)
 {
@@ -2833,6 +3126,10 @@ Compare(const BString* string1, const BString* string2)
 }
 
 
+/**
+ * @brief Case-insensitive comparison of two BString pointers (for sorting).
+ * @return strcasecmp()-style result.
+ */
 int
 ICompare(const BString* string1, const BString* string2)
 {

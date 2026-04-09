@@ -1,7 +1,30 @@
 /*
- * Copyright 2015 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015 Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file ProxySecureSocket.cpp
+ *  @brief TLS socket that tunnels through an HTTP proxy via the CONNECT
+ *         verb before handing the underlying connection to OpenSSL. */
 
 
 #include <ProxySecureSocket.h>
@@ -9,6 +32,7 @@
 #include <stdio.h>
 
 
+/** @brief Constructs an unconnected secure socket routed through @a proxy. */
 BProxySecureSocket::BProxySecureSocket(const BNetworkAddress& proxy)
 	:
 	BSecureSocket(),
@@ -17,6 +41,7 @@ BProxySecureSocket::BProxySecureSocket(const BNetworkAddress& proxy)
 }
 
 
+/** @brief Constructs and immediately connects through @a proxy to @a peer. */
 BProxySecureSocket::BProxySecureSocket(const BNetworkAddress& proxy, const BNetworkAddress& peer,
 	bigtime_t timeout)
 	:
@@ -27,6 +52,7 @@ BProxySecureSocket::BProxySecureSocket(const BNetworkAddress& proxy, const BNetw
 }
 
 
+/** @brief Copy constructor preserving the proxy endpoint address. */
 BProxySecureSocket::BProxySecureSocket(const BProxySecureSocket& other)
 	:
 	BSecureSocket(other),
@@ -35,11 +61,20 @@ BProxySecureSocket::BProxySecureSocket(const BProxySecureSocket& other)
 }
 
 
+/** @brief Destructor. */
 BProxySecureSocket::~BProxySecureSocket()
 {
 }
 
 
+/** @brief Connects to @a peer by first establishing an HTTP CONNECT tunnel
+ *         through fProxyAddress, then upgrading the socket to TLS via
+ *         BSecureSocket::_SetupConnect().
+ *  @param peer    Final destination (the CONNECT verb target).
+ *  @param timeout Timeout for the underlying TCP connection.
+ *  @return B_OK on success, B_BAD_DATA if the proxy reply is malformed,
+ *          B_BAD_VALUE if the proxy returns a non-2xx HTTP status, or
+ *          an error from the TCP/TLS layers. */
 status_t
 BProxySecureSocket::Connect(const BNetworkAddress& peer, bigtime_t timeout)
 {

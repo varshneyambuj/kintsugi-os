@@ -1,7 +1,30 @@
 /*
- * Copyright 2002-2008, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002-2008, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file NetEndpoint.cpp
+ *  @brief Legacy BNetEndpoint implementation providing a BSD-socket style
+ *         bind/connect/listen/accept/send/receive API over IPv4. */
 
 #include <Message.h>
 #include <NetEndpoint.h>
@@ -18,6 +41,8 @@
 #include <unistd.h>
 
 
+/** @brief Constructs an IPv4 endpoint with a default family of AF_INET.
+ *  @param type Socket type such as SOCK_STREAM or SOCK_DGRAM. */
 BNetEndpoint::BNetEndpoint(int type)
 	:
 	fStatus(B_NO_INIT),
@@ -31,6 +56,10 @@ BNetEndpoint::BNetEndpoint(int type)
 }
 
 
+/** @brief Constructs an endpoint with an explicit address family, type, and protocol.
+ *  @param family   Address family (AF_INET, etc).
+ *  @param type     Socket type (SOCK_STREAM, SOCK_DGRAM, ...).
+ *  @param protocol Transport protocol number (0 for the default). */
 BNetEndpoint::BNetEndpoint(int family, int type, int protocol)
 	:
 	fStatus(B_NO_INIT),
@@ -44,6 +73,8 @@ BNetEndpoint::BNetEndpoint(int family, int type, int protocol)
 }
 
 
+/** @brief Unarchiving constructor. Restores local/peer address, protocol,
+ *         and timeout from fields previously written by Archive(). */
 BNetEndpoint::BNetEndpoint(BMessage* archive)
 	:
 	fStatus(B_NO_INIT),
@@ -85,6 +116,8 @@ BNetEndpoint::BNetEndpoint(BMessage* archive)
 }
 
 
+/** @brief Copy constructor. dup()'s the underlying file descriptor so both
+ *         endpoints own an independent reference to the same kernel socket. */
 BNetEndpoint::BNetEndpoint(const BNetEndpoint& endpoint)
 	:
 	fStatus(endpoint.fStatus),
@@ -105,7 +138,9 @@ BNetEndpoint::BNetEndpoint(const BNetEndpoint& endpoint)
 }
 
 
-// Private constructor only used from BNetEndpoint::Accept().
+/** @brief Private accept-helper constructor used internally by Accept().
+ *         Adopts an already-accepted file descriptor along with its local
+ *         and peer addresses, without re-opening a new socket. */
 BNetEndpoint::BNetEndpoint(const BNetEndpoint& endpoint, int socket,
 	const struct sockaddr_in& localAddress,
 	const struct sockaddr_in& peerAddress)
@@ -122,6 +157,8 @@ BNetEndpoint::BNetEndpoint(const BNetEndpoint& endpoint, int socket,
 }
 
 
+/** @brief Assignment operator. Closes any existing socket and duplicates
+ *         the source endpoint's file descriptor and addressing state. */
 BNetEndpoint&
 BNetEndpoint::operator=(const BNetEndpoint& endpoint)
 {
@@ -149,6 +186,7 @@ BNetEndpoint::operator=(const BNetEndpoint& endpoint)
 }
 
 
+/** @brief Destructor. Closes the socket if still open. */
 BNetEndpoint::~BNetEndpoint()
 {
 	if (fSocket >= 0)
@@ -159,6 +197,11 @@ BNetEndpoint::~BNetEndpoint()
 // #pragma mark -
 
 
+/** @brief Serialises the endpoint's addresses, timeout, and protocol type
+ *         into a BMessage.
+ *  @param into Destination BMessage.
+ *  @param deep Forwarded to BArchivable::Archive().
+ *  @return B_OK on success, or an error code on failure. */
 status_t
 BNetEndpoint::Archive(BMessage* into, bool deep) const
 {
@@ -197,6 +240,9 @@ BNetEndpoint::Archive(BMessage* into, bool deep) const
 }
 
 
+/** @brief BArchivable factory that reconstructs a BNetEndpoint from a BMessage.
+ *  @param archive Source BMessage produced by Archive().
+ *  @return A new BNetEndpoint on success (owned by the caller), or NULL. */
 BArchivable*
 BNetEndpoint::Instantiate(BMessage* archive)
 {
@@ -218,6 +264,8 @@ BNetEndpoint::Instantiate(BMessage* archive)
 // #pragma mark -
 
 
+/** @brief Returns the endpoint's initialisation status.
+ *  @return B_OK if a socket has been successfully opened, B_NO_INIT otherwise. */
 status_t
 BNetEndpoint::InitCheck() const
 {
@@ -225,6 +273,7 @@ BNetEndpoint::InitCheck() const
 }
 
 
+/** @brief Returns the underlying socket file descriptor (or -1 if closed). */
 int
 BNetEndpoint::Socket() const
 {
@@ -232,6 +281,7 @@ BNetEndpoint::Socket() const
 }
 
 
+/** @brief Returns the local address the endpoint is bound to. */
 const BNetAddress&
 BNetEndpoint::LocalAddr() const
 {
@@ -239,6 +289,7 @@ BNetEndpoint::LocalAddr() const
 }
 
 
+/** @brief Returns the remote address the endpoint is connected to. */
 const BNetAddress&
 BNetEndpoint::RemoteAddr() const
 {
@@ -246,6 +297,9 @@ BNetEndpoint::RemoteAddr() const
 }
 
 
+/** @brief Replaces the socket type, discarding any existing file descriptor.
+ *  @param protocol SOCK_DGRAM or SOCK_STREAM; stored in fType.
+ *  @return B_OK on success, or an error code if the new socket cannot be opened. */
 status_t
 BNetEndpoint::SetProtocol(int protocol)
 {
@@ -255,6 +309,12 @@ BNetEndpoint::SetProtocol(int protocol)
 }
 
 
+/** @brief Sets a low-level socket option via setsockopt().
+ *  @param option Option name (e.g. SO_BROADCAST).
+ *  @param level  Protocol level (e.g. SOL_SOCKET).
+ *  @param data   Pointer to the option value.
+ *  @param length Length of the option value in bytes.
+ *  @return B_OK on success, or B_ERROR with Error() updated to errno. */
 int
 BNetEndpoint::SetOption(int32 option, int32 level,
 	const void* data, unsigned int length)
@@ -271,6 +331,9 @@ BNetEndpoint::SetOption(int32 option, int32 level,
 }
 
 
+/** @brief Toggles the O_NONBLOCK flag on the underlying file descriptor.
+ *  @param enable true to switch to non-blocking mode, false for blocking.
+ *  @return B_OK on success, or B_ERROR with Error() updated to errno. */
 int
 BNetEndpoint::SetNonBlocking(bool enable)
 {
@@ -297,6 +360,8 @@ BNetEndpoint::SetNonBlocking(bool enable)
 }
 
 
+/** @brief Toggles the SO_REUSEADDR socket option on the endpoint.
+ *  @param enable true to allow reusing a bind address, false to disallow. */
 int
 BNetEndpoint::SetReuseAddr(bool enable)
 {
@@ -308,6 +373,8 @@ BNetEndpoint::SetReuseAddr(bool enable)
 }
 
 
+/** @brief Sets the maximum time to wait for data on Receive() calls.
+ *  @param timeout Timeout in microseconds. Negative means infinite. */
 void
 BNetEndpoint::SetTimeout(bigtime_t timeout)
 {
@@ -315,6 +382,7 @@ BNetEndpoint::SetTimeout(bigtime_t timeout)
 }
 
 
+/** @brief Returns the last stored error code (a status_t or errno value). */
 int
 BNetEndpoint::Error() const
 {
@@ -322,6 +390,7 @@ BNetEndpoint::Error() const
 }
 
 
+/** @brief Returns a human-readable description of the last error. */
 char*
 BNetEndpoint::ErrorStr() const
 {
@@ -332,6 +401,8 @@ BNetEndpoint::ErrorStr() const
 // #pragma mark -
 
 
+/** @brief Closes the underlying socket and resets the init status to
+ *         B_NO_INIT. Safe to call repeatedly. */
 void
 BNetEndpoint::Close()
 {
@@ -343,6 +414,9 @@ BNetEndpoint::Close()
 }
 
 
+/** @brief Binds the socket to a local BNetAddress.
+ *  @param address Local address to bind to.
+ *  @return B_OK on success, or B_ERROR (the errno is stored in fStatus). */
 status_t
 BNetEndpoint::Bind(const BNetAddress& address)
 {
@@ -372,6 +446,8 @@ BNetEndpoint::Bind(const BNetAddress& address)
 }
 
 
+/** @brief Convenience overload that binds to INADDR_ANY on the given port.
+ *  @param port Port number in host byte order. */
 status_t
 BNetEndpoint::Bind(int port)
 {
@@ -380,6 +456,9 @@ BNetEndpoint::Bind(int port)
 }
 
 
+/** @brief Connects the socket to the given remote address.
+ *  @param address Remote peer address.
+ *  @return B_OK on success, or B_ERROR (the errno is stored in fStatus). */
 status_t
 BNetEndpoint::Connect(const BNetAddress& address)
 {
@@ -407,6 +486,9 @@ BNetEndpoint::Connect(const BNetAddress& address)
 }
 
 
+/** @brief Convenience overload that resolves @a hostname and connects.
+ *  @param hostname Hostname or dotted-quad string.
+ *  @param port     Port number in host byte order. */
 status_t
 BNetEndpoint::Connect(const char *hostname, int port)
 {
@@ -415,6 +497,9 @@ BNetEndpoint::Connect(const char *hostname, int port)
 }
 
 
+/** @brief Places the socket in the listening state.
+ *  @param backlog Maximum pending-connection queue depth.
+ *  @return B_OK on success, B_ERROR on failure. */
 status_t
 BNetEndpoint::Listen(int backlog)
 {
@@ -430,6 +515,11 @@ BNetEndpoint::Listen(int backlog)
 }
 
 
+/** @brief Accepts the next pending connection on a listening endpoint.
+ *  @param timeout Maximum time to wait, in milliseconds. Negative means
+ *                 wait indefinitely.
+ *  @return A new BNetEndpoint owned by the caller, or NULL on timeout or
+ *          error. */
 BNetEndpoint*
 BNetEndpoint::Accept(int32 timeout)
 {
@@ -471,6 +561,11 @@ BNetEndpoint::Accept(int32 timeout)
 // #pragma mark -
 
 
+/** @brief Checks whether the socket has incoming data available.
+ *  @param timeout Maximum time to wait in microseconds. Negative values
+ *                 (and values overflowing INT32_MAX seconds) mean wait
+ *                 indefinitely.
+ *  @return true if data is available before the deadline, false otherwise. */
 bool
 BNetEndpoint::IsDataPending(bigtime_t timeout)
 {
@@ -505,6 +600,11 @@ BNetEndpoint::IsDataPending(bigtime_t timeout)
 }
 
 
+/** @brief Reads bytes from a connected socket into a raw buffer.
+ *  @param buffer Destination memory.
+ *  @param length Maximum number of bytes to read.
+ *  @param flags  Additional flags forwarded to recv().
+ *  @return Bytes received, 0 on timeout, or a negative error value. */
 int32
 BNetEndpoint::Receive(void* buffer, size_t length, int flags)
 {
@@ -522,6 +622,10 @@ BNetEndpoint::Receive(void* buffer, size_t length, int flags)
 }
 
 
+/** @brief Reads bytes from a connected socket into a BNetBuffer.
+ *  @param buffer Destination BNetBuffer; received bytes are appended.
+ *  @param length Maximum number of bytes to read.
+ *  @param flags  Additional flags forwarded to recv(). */
 int32
 BNetEndpoint::Receive(BNetBuffer& buffer, size_t length, int flags)
 {
@@ -533,6 +637,12 @@ BNetEndpoint::Receive(BNetBuffer& buffer, size_t length, int flags)
 }
 
 
+/** @brief Reads a datagram into a raw buffer and reports the sender address.
+ *  @param buffer  Destination memory.
+ *  @param length  Maximum number of bytes to read.
+ *  @param address On success, set to the sender address.
+ *  @param flags   Additional flags forwarded to recvfrom().
+ *  @return Bytes received, 0 on timeout, or a negative error value. */
 int32
 BNetEndpoint::ReceiveFrom(void* buffer, size_t length,
 	BNetAddress& address, int flags)
@@ -557,6 +667,7 @@ BNetEndpoint::ReceiveFrom(void* buffer, size_t length,
 }
 
 
+/** @brief Reads a datagram into a BNetBuffer and reports the sender address. */
 int32
 BNetEndpoint::ReceiveFrom(BNetBuffer& buffer, size_t length,
 	BNetAddress& address, int flags)
@@ -569,6 +680,11 @@ BNetEndpoint::ReceiveFrom(BNetBuffer& buffer, size_t length,
 }
 
 
+/** @brief Sends bytes over a connected socket.
+ *  @param buffer Source memory.
+ *  @param length Number of bytes to send.
+ *  @param flags  Additional flags forwarded to send().
+ *  @return Bytes sent, or a negative error value. */
 int32
 BNetEndpoint::Send(const void* buffer, size_t length, int flags)
 {
@@ -583,6 +699,7 @@ BNetEndpoint::Send(const void* buffer, size_t length, int flags)
 }
 
 
+/** @brief Sends the full contents of a BNetBuffer over a connected socket. */
 int32
 BNetEndpoint::Send(BNetBuffer& buffer, int flags)
 {
@@ -590,6 +707,12 @@ BNetEndpoint::Send(BNetBuffer& buffer, int flags)
 }
 
 
+/** @brief Sends a datagram to a specific address.
+ *  @param buffer  Source memory.
+ *  @param length  Number of bytes to send.
+ *  @param address Destination address.
+ *  @param flags   Additional flags forwarded to sendto().
+ *  @return Bytes sent, or a negative error value. */
 int32
 BNetEndpoint::SendTo(const void* buffer, size_t length,
 	const BNetAddress& address, int flags)
@@ -610,6 +733,7 @@ BNetEndpoint::SendTo(const void* buffer, size_t length,
 }
 
 
+/** @brief Sends the full contents of a BNetBuffer to a specific address. */
 int32
 BNetEndpoint::SendTo(BNetBuffer& buffer,
 	const BNetAddress& address, int flags)
@@ -621,6 +745,8 @@ BNetEndpoint::SendTo(BNetBuffer& buffer,
 // #pragma mark -
 
 
+/** @brief Lazily opens the underlying socket() with the stored
+ *         family/type/protocol. Updates fStatus to B_OK or errno. */
 status_t
 BNetEndpoint::_SetupSocket()
 {
@@ -634,18 +760,21 @@ BNetEndpoint::_SetupSocket()
 
 // #pragma mark -
 
+/** @brief Non-const overload of InitCheck() kept for ABI compatibility. */
 status_t BNetEndpoint::InitCheck()
 {
 	return const_cast<const BNetEndpoint*>(this)->InitCheck();
 }
 
 
+/** @brief Non-const overload of LocalAddr() kept for ABI compatibility. */
 const BNetAddress& BNetEndpoint::LocalAddr()
 {
 	return const_cast<const BNetEndpoint*>(this)->LocalAddr();
 }
 
 
+/** @brief Non-const overload of RemoteAddr() kept for ABI compatibility. */
 const BNetAddress& BNetEndpoint::RemoteAddr()
 {
 	return const_cast<const BNetEndpoint*>(this)->RemoteAddr();

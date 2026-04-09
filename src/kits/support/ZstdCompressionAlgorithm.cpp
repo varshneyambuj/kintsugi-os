@@ -1,7 +1,47 @@
 /*
- * Copyright 2017, Jérôme Duval.
- * Copyright 2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017, Jérôme Duval.
+ *   Copyright 2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ZstdCompressionAlgorithm.cpp
+ * @brief Implementation of the Zstandard-based compression and decompression
+ *        algorithm for Kintsugi OS.
+ *
+ * This file provides BZstdCompressionAlgorithm together with its parameter
+ * classes (BZstdCompressionParameters, BZstdDecompressionParameters) and
+ * internal Stream template wrappers.  It wraps the libzstd streaming API
+ * (ZSTD_CStream / ZSTD_DStream) to deliver streaming compression/decompression
+ * as BDataIO objects and single-shot buffer operations via CompressBuffer() /
+ * DecompressBuffer().
+ *
+ * Both compression and decompression require the ZSTD_ENABLED define to be set
+ * at build time; compression additionally requires the build to be a userland
+ * (non-kernel, non-boot) target (B_ZSTD_COMPRESSION_SUPPORT).
+ *
+ * @see BZstdCompressionParameters, BZstdDecompressionParameters,
+ *      BZstdCompressionAlgorithm
  */
 
 
@@ -33,6 +73,7 @@ static const size_t kMaxBufferSize		= 1024 * 1024;
 static const size_t kDefaultBufferSize	= 4 * 1024;
 
 
+/** @brief Clamps \a size to the allowed buffer-size range [kMinBufferSize, kMaxBufferSize]. */
 static size_t
 sanitize_buffer_size(size_t size)
 {
@@ -45,6 +86,15 @@ sanitize_buffer_size(size_t size)
 // #pragma mark - BZstdCompressionParameters
 
 
+/**
+ * @brief Construct compression parameters with the given compression level.
+ *
+ * Initialises the buffer size to the default (4 KiB).
+ *
+ * @param compressionLevel zstd compression level.  Use
+ *        B_ZSTD_COMPRESSION_DEFAULT for the library default, or a value in
+ *        the range supported by the installed libzstd build.
+ */
 BZstdCompressionParameters::BZstdCompressionParameters(
 	int compressionLevel)
 	:
@@ -60,6 +110,10 @@ BZstdCompressionParameters::~BZstdCompressionParameters()
 }
 
 
+/**
+ * @brief Return the configured zstd compression level.
+ * @return The current compression level value.
+ */
 int32
 BZstdCompressionParameters::CompressionLevel() const
 {
@@ -67,6 +121,10 @@ BZstdCompressionParameters::CompressionLevel() const
 }
 
 
+/**
+ * @brief Set the zstd compression level.
+ * @param level New compression level.
+ */
 void
 BZstdCompressionParameters::SetCompressionLevel(int32 level)
 {
@@ -74,6 +132,10 @@ BZstdCompressionParameters::SetCompressionLevel(int32 level)
 }
 
 
+/**
+ * @brief Return the I/O buffer size used during streaming compression.
+ * @return Buffer size in bytes.
+ */
 size_t
 BZstdCompressionParameters::BufferSize() const
 {
@@ -81,6 +143,13 @@ BZstdCompressionParameters::BufferSize() const
 }
 
 
+/**
+ * @brief Set the I/O buffer size used during streaming compression.
+ *
+ * The value is clamped to [kMinBufferSize, kMaxBufferSize].
+ *
+ * @param size Desired buffer size in bytes.
+ */
 void
 BZstdCompressionParameters::SetBufferSize(size_t size)
 {
@@ -91,6 +160,9 @@ BZstdCompressionParameters::SetBufferSize(size_t size)
 // #pragma mark - BZstdDecompressionParameters
 
 
+/**
+ * @brief Construct decompression parameters with the default buffer size.
+ */
 BZstdDecompressionParameters::BZstdDecompressionParameters()
 	:
 	BDecompressionParameters(),
@@ -104,6 +176,10 @@ BZstdDecompressionParameters::~BZstdDecompressionParameters()
 }
 
 
+/**
+ * @brief Return the I/O buffer size used during streaming decompression.
+ * @return Buffer size in bytes.
+ */
 size_t
 BZstdDecompressionParameters::BufferSize() const
 {
@@ -111,6 +187,13 @@ BZstdDecompressionParameters::BufferSize() const
 }
 
 
+/**
+ * @brief Set the I/O buffer size used during streaming decompression.
+ *
+ * The value is clamped to [kMinBufferSize, kMaxBufferSize].
+ *
+ * @param size Desired buffer size in bytes.
+ */
 void
 BZstdDecompressionParameters::SetBufferSize(size_t size)
 {
@@ -195,8 +278,21 @@ struct BZstdCompressionAlgorithm::DecompressionStrategy {
 // #pragma mark - Stream
 
 
+/**
+ * @brief Internal streaming wrapper that couples a ZSTD_CStream or
+ *        ZSTD_DStream to a BAbstractInputStream or BAbstractOutputStream.
+ *
+ * Stream is a template parameterised on BaseClass (input or output adapter),
+ * Strategy (CompressionStrategy or DecompressionStrategy), and StreamType
+ * (ZSTD_CStream or ZSTD_DStream).  It is never instantiated directly by
+ * application code; use the factory methods on BZstdCompressionAlgorithm.
+ */
 template<typename BaseClass, typename Strategy, typename StreamType>
 struct BZstdCompressionAlgorithm::Stream : BaseClass {
+	/**
+	 * @brief Construct a Stream wrapping the given BDataIO.
+	 * @param io The underlying data source (input) or sink (output).
+	 */
 	Stream(BDataIO* io)
 		:
 		BaseClass(io),
@@ -204,6 +300,9 @@ struct BZstdCompressionAlgorithm::Stream : BaseClass {
 	{
 	}
 
+	/**
+	 * @brief Flush pending output (compression only) and free the zstd stream.
+	 */
 	~Stream()
 	{
 		if (fStreamInitialized) {
@@ -213,6 +312,13 @@ struct BZstdCompressionAlgorithm::Stream : BaseClass {
 		}
 	}
 
+	/**
+	 * @brief Initialise the underlying I/O buffer and zstd stream context.
+	 *
+	 * @param parameters Strategy-specific parameters providing the buffer size
+	 *        and, for compression, the compression level.
+	 * @return B_OK on success, or a translated zstd error code.
+	 */
 	status_t Init(const typename Strategy::Parameters* parameters)
 	{
 		status_t error = this->BaseClass::Init(
@@ -303,6 +409,9 @@ private:
 // #pragma mark - BZstdCompressionAlgorithm
 
 
+/**
+ * @brief Construct a BZstdCompressionAlgorithm instance.
+ */
 BZstdCompressionAlgorithm::BZstdCompressionAlgorithm()
 	:
 	BCompressionAlgorithm()
@@ -310,11 +419,26 @@ BZstdCompressionAlgorithm::BZstdCompressionAlgorithm()
 }
 
 
+/**
+ * @brief Destroy the BZstdCompressionAlgorithm instance.
+ */
 BZstdCompressionAlgorithm::~BZstdCompressionAlgorithm()
 {
 }
 
 
+/**
+ * @brief Create a compressing input stream that reads uncompressed data from
+ *        \a input and exposes compressed data.
+ *
+ * Requires both ZSTD_ENABLED and a userland build (B_ZSTD_COMPRESSION_SUPPORT).
+ *
+ * @param input      Source of uncompressed data.
+ * @param parameters Optional BZstdCompressionParameters.  May be NULL.
+ * @param _stream    On success, receives a heap-allocated BDataIO that the
+ *                   caller must delete.
+ * @return B_OK, B_NOT_SUPPORTED, or B_NO_MEMORY.
+ */
 status_t
 BZstdCompressionAlgorithm::CreateCompressingInputStream(BDataIO* input,
 	const BCompressionParameters* parameters, BDataIO*& _stream)
@@ -328,6 +452,17 @@ BZstdCompressionAlgorithm::CreateCompressingInputStream(BDataIO* input,
 }
 
 
+/**
+ * @brief Create a compressing output stream that accepts uncompressed data and
+ *        writes compressed data to \a output.
+ *
+ * Requires both ZSTD_ENABLED and a userland build.
+ *
+ * @param output     Destination for compressed data.
+ * @param parameters Optional BZstdCompressionParameters.  May be NULL.
+ * @param _stream    On success, receives a heap-allocated BDataIO.
+ * @return B_OK, B_NOT_SUPPORTED, or B_NO_MEMORY.
+ */
 status_t
 BZstdCompressionAlgorithm::CreateCompressingOutputStream(BDataIO* output,
 	const BCompressionParameters* parameters, BDataIO*& _stream)
@@ -341,6 +476,17 @@ BZstdCompressionAlgorithm::CreateCompressingOutputStream(BDataIO* output,
 }
 
 
+/**
+ * @brief Create a decompressing input stream that reads compressed data from
+ *        \a input and exposes decompressed data.
+ *
+ * Requires ZSTD_ENABLED.
+ *
+ * @param input      Source of compressed data.
+ * @param parameters Optional BZstdDecompressionParameters.  May be NULL.
+ * @param _stream    On success, receives a heap-allocated BDataIO.
+ * @return B_OK, B_NOT_SUPPORTED, or B_NO_MEMORY.
+ */
 status_t
 BZstdCompressionAlgorithm::CreateDecompressingInputStream(BDataIO* input,
 	const BDecompressionParameters* parameters, BDataIO*& _stream)
@@ -354,6 +500,17 @@ BZstdCompressionAlgorithm::CreateDecompressingInputStream(BDataIO* input,
 }
 
 
+/**
+ * @brief Create a decompressing output stream that accepts compressed data and
+ *        writes decompressed data to \a output.
+ *
+ * Requires ZSTD_ENABLED.
+ *
+ * @param output     Destination for decompressed data.
+ * @param parameters Optional BZstdDecompressionParameters.  May be NULL.
+ * @param _stream    On success, receives a heap-allocated BDataIO.
+ * @return B_OK, B_NOT_SUPPORTED, or B_NO_MEMORY.
+ */
 status_t
 BZstdCompressionAlgorithm::CreateDecompressingOutputStream(BDataIO* output,
 	const BDecompressionParameters* parameters, BDataIO*& _stream)
@@ -367,6 +524,21 @@ BZstdCompressionAlgorithm::CreateDecompressingOutputStream(BDataIO* output,
 }
 
 
+/**
+ * @brief Compress an entire buffer in a single call using ZSTD_compress().
+ *
+ * Requires both ZSTD_ENABLED and a userland build.
+ *
+ * @param input      Source buffer descriptor.
+ * @param output     Destination buffer.  On success, iov_len is updated to the
+ *                   number of compressed bytes written.
+ * @param parameters Optional BZstdCompressionParameters for the level.  May
+ *                   be NULL (uses B_ZSTD_COMPRESSION_DEFAULT).
+ * @param scratch    Unused; reserved for future use.
+ * @return B_OK, B_NOT_SUPPORTED, or a translated zstd error code.
+ * @note The scratch buffer is not yet used; it is reserved for a future
+ *       ZSTD_initStaticCCtx() optimisation path.
+ */
 status_t
 BZstdCompressionAlgorithm::CompressBuffer(const iovec& input, iovec& output,
 	const BCompressionParameters* parameters, iovec* scratch)
@@ -392,6 +564,21 @@ BZstdCompressionAlgorithm::CompressBuffer(const iovec& input, iovec& output,
 }
 
 
+/**
+ * @brief Decompress an entire buffer in a single call using ZSTD_decompressDCtx().
+ *
+ * Requires ZSTD_ENABLED.  When ZSTD_STATIC_LINKING_ONLY is defined and a
+ * \a scratch buffer is provided, a static decompression context is initialised
+ * from it to avoid a heap allocation.
+ *
+ * @param input      Source buffer of compressed data.
+ * @param output     Destination buffer.  On success, iov_len is updated to the
+ *                   number of decompressed bytes written.
+ * @param parameters Ignored.  May be NULL.
+ * @param scratch    Optional buffer used for a static ZSTD_DCtx (when
+ *                   ZSTD_STATIC_LINKING_ONLY is defined).  May be NULL.
+ * @return B_OK, B_NOT_SUPPORTED, or a translated zstd error code.
+ */
 status_t
 BZstdCompressionAlgorithm::DecompressBuffer(const iovec& input, iovec& output,
 	const BDecompressionParameters* parameters, iovec* scratch)

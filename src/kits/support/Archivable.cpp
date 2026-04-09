@@ -1,16 +1,46 @@
 /*
- * Copyright 2001-2012 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Rene Gollent (rene@gollent.com)
- *		Erik Jaesler (erik@cgsoftware.com)
- *		Alex Wilson (yourpalal2@gmail.com)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2012 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Rene Gollent (rene@gollent.com)
+ *       Erik Jaesler (erik@cgsoftware.com)
+ *       Alex Wilson (yourpalal2@gmail.com)
  */
 
-/*!	BArchivable mix-in class defines the archiving protocol.
-	Also some global archiving functions.
-*/
+/**
+ * @file Archivable.cpp
+ * @brief Implementation of BArchivable, BArchiver, BUnarchiver, and the global
+ *        archiving helper functions.
+ *
+ * BArchivable is the mix-in class that defines the archiving protocol for all
+ * kit objects that support flattening to/from a BMessage.  BArchiver and
+ * BUnarchiver provide managed archiving sessions that handle object graphs with
+ * shared or circular references.  The free functions instantiate_object(),
+ * validate_instantiation(), and find_instantiation_func() provide the public
+ * C-linkage entry points used by application code and the roster.
+ *
+ * @see BArchivable, BArchiver, BUnarchiver
+ */
 
 
 #include <ctype.h>
@@ -50,6 +80,17 @@ const int32 FUNC_NAME_LEN = 1024;
 //	of just NS::ClassName)
 
 
+/**
+ * @brief Decode a compiler-mangled type name into a human-readable
+ *        "Namespace::ClassName" string.
+ *
+ * Supports both GCC 2 (Q-encoded) and GCC 4+ (length-prefixed) ABI name
+ * encodings.  Template classes are not yet handled.
+ *
+ * @param name  The raw mangled name as returned by typeid().name().
+ * @param out   Receives the decoded "NS::Class" string on success.
+ * @return B_OK on success, B_BAD_VALUE if the name cannot be decoded.
+ */
 static status_t
 demangle_class_name(const char* name, BString& out)
 {
@@ -111,6 +152,18 @@ demangle_class_name(const char* name, BString& out)
 }
 
 
+/**
+ * @brief Encode a human-readable "NS::ClassName" string into the
+ *        compiler's ABI-mangled form.
+ *
+ * Produces the mangled class name used as an infix inside an Instantiate
+ * symbol.  GCC 2 uses Q-encoding; GCC 4+ uses length-prefixed components
+ * without the 'N'/'E' wrappers (which are added by build_function_name()).
+ * Template classes are not yet handled.
+ *
+ * @param name  The demangled class name (e.g. "BPrivate::MyClass").
+ * @param out   Receives the mangled form.
+ */
 static void
 mangle_class_name(const char* name, BString& out)
 {
@@ -165,6 +218,16 @@ mangle_class_name(const char* name, BString& out)
 }
 
 
+/**
+ * @brief Build the full ABI-mangled symbol name for a class's static
+ *        Instantiate(BMessage*) function.
+ *
+ * Combines the mangled class name with the ABI-appropriate prefix/suffix
+ * so the result can be passed directly to get_image_symbol().
+ *
+ * @param className  The demangled class name.
+ * @param funcName   Receives the complete mangled symbol string.
+ */
 static void
 build_function_name(const BString& className, BString& funcName)
 {
@@ -183,6 +246,16 @@ build_function_name(const BString& className, BString& funcName)
 }
 
 
+/**
+ * @brief Prepend "BPrivate::" to \a name if it begins with an underscore.
+ *
+ * Used for backwards compatibility: classes whose names begin with '_' were
+ * historically in the BPrivate namespace and may be found there on a second
+ * search pass.
+ *
+ * @param name  The class name to examine and possibly modify in place.
+ * @return true if the prefix was added, false otherwise.
+ */
 static bool
 add_private_namespace(BString& name)
 {
@@ -194,6 +267,14 @@ add_private_namespace(BString& name)
 }
 
 
+/**
+ * @brief Look up a symbol by name in a single loaded image.
+ *
+ * @param funcName  The mangled symbol name to search for.
+ * @param id        The image_id of the image to search.
+ * @param err       Receives the status code from get_image_symbol().
+ * @return The function pointer on success, NULL if the symbol is not found.
+ */
 static instantiation_func
 find_function_in_image(BString& funcName, image_id id, status_t& err)
 {
@@ -207,6 +288,19 @@ find_function_in_image(BString& funcName, image_id id, status_t& err)
 }
 
 
+/**
+ * @brief Verify that the MIME application signature of an image matches a
+ *        requested signature string.
+ *
+ * If \a signature is NULL the check is skipped and B_OK is returned
+ * unconditionally, allowing any image to match.
+ *
+ * @param signature  The expected MIME signature, or NULL to skip the check.
+ * @param info       The image_info of the candidate image.
+ * @return B_OK if the signatures match or \a signature is NULL,
+ *         B_MISMATCHED_VALUES if they differ, or another error code if the
+ *         image file cannot be opened or its signature cannot be read.
+ */
 static status_t
 check_signature(const char* signature, image_info& info)
 {
@@ -239,6 +333,27 @@ check_signature(const char* signature, image_info& info)
 
 namespace BPrivate {
 
+/**
+ * @brief Locate the Instantiate(BMessage*) function for \a className in the
+ *        current team's loaded images.
+ *
+ * Iterates over every image loaded into the calling thread's team, builds the
+ * ABI-mangled Instantiate symbol name for \a className, and calls
+ * get_image_symbol() on each image.  If \a className begins with '_', a second
+ * pass with "BPrivate::" prepended is performed for backwards compatibility.
+ * If \a signature is non-NULL the image in which the symbol is found must also
+ * have a matching MIME application signature.
+ *
+ * @param className  The demangled C++ class name (e.g. "MyKit::MyWidget").
+ * @param signature  Optional MIME application signature to restrict the search
+ *                   to a specific add-on/application.  May be NULL.
+ * @param id         If non-NULL, receives the image_id of the image in which
+ *                   the symbol was found.
+ * @return A pointer to the Instantiate function on success, NULL on failure.
+ *         errno is set to B_BAD_VALUE if \a className is NULL or
+ *         get_thread_info() fails.
+ * @see find_instantiation_func() (public overloads), instantiate_object()
+ */
 instantiation_func
 find_instantiation_func(const char* className, const char* signature,
 	image_id* id)
@@ -298,6 +413,12 @@ find_instantiation_func(const char* className, const char* signature,
 //	#pragma mark - BArchivable
 
 
+/**
+ * @brief Default constructor — initialises the archiving token to NULL_TOKEN.
+ *
+ * Use this constructor when creating a BArchivable-derived object that is not
+ * being reconstructed from an archive.
+ */
 BArchivable::BArchivable()
 	:
 	fArchivingToken(NULL_TOKEN)
@@ -305,6 +426,18 @@ BArchivable::BArchivable()
 }
 
 
+/**
+ * @brief Archive-restoring constructor — registers this object with the
+ *        active BUnarchiver session if the archive is managed.
+ *
+ * If \a from is part of a managed archiving session (i.e. created by
+ * BUnarchiver::PrepareArchive()), this constructor calls PrepareArchive() on
+ * the message and registers the new object so the session can track it for
+ * AllUnarchived() notification.
+ *
+ * @param from  The BMessage archive to restore state from.
+ * @see BArchivable::Archive(), BUnarchiver
+ */
 BArchivable::BArchivable(BMessage* from)
 	:
 	fArchivingToken(NULL_TOKEN)
@@ -316,11 +449,30 @@ BArchivable::BArchivable(BMessage* from)
 }
 
 
+/**
+ * @brief Destructor — no-op base implementation.
+ */
 BArchivable::~BArchivable()
 {
 }
 
 
+/**
+ * @brief Flatten this object's class name into \a into so it can be
+ *        reconstructed by instantiate_object().
+ *
+ * Writes the demangled class name to the B_CLASS_FIELD key of \a into and,
+ * if a managed archiving session is active, registers this object with the
+ * session's BArchiver.  Derived classes must call BArchivable::Archive()
+ * before adding their own fields.
+ *
+ * @param into  The destination BMessage.  Must not be NULL.
+ * @param deep  If true, child objects should also be archived (convention for
+ *              derived classes; unused at this level).
+ * @return B_OK on success, B_BAD_VALUE if \a into is NULL, or another error
+ *         code if the class name cannot be demangled.
+ * @see Instantiate(), BArchiver
+ */
 status_t
 BArchivable::Archive(BMessage* into, bool deep) const
 {
@@ -341,6 +493,16 @@ BArchivable::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Factory method — always calls debugger() because BArchivable itself
+ *        cannot be directly instantiated.
+ *
+ * Every concrete subclass must override this method and return a new instance
+ * constructed from \a from.
+ *
+ * @param from  The archive message (unused in this base implementation).
+ * @return NULL (never returns normally; triggers a debugger call).
+ */
 BArchivable*
 BArchivable::Instantiate(BMessage* from)
 {
@@ -349,6 +511,18 @@ BArchivable::Instantiate(BMessage* from)
 }
 
 
+/**
+ * @brief Dispatch hook for binary-compatibility virtual calls.
+ *
+ * Routes PERFORM_CODE_ALL_UNARCHIVED and PERFORM_CODE_ALL_ARCHIVED perform
+ * codes to AllUnarchived() and AllArchived() respectively via the
+ * perform_data_* structs.  Subclasses may extend this to add their own
+ * perform codes.
+ *
+ * @param d    The perform code identifying the virtual to call.
+ * @param arg  A pointer to the appropriate perform_data_* struct.
+ * @return B_OK if the code was handled, B_NAME_NOT_FOUND otherwise.
+ */
 status_t
 BArchivable::Perform(perform_code d, void* arg)
 {
@@ -376,6 +550,18 @@ BArchivable::Perform(perform_code d, void* arg)
 }
 
 
+/**
+ * @brief Called after all objects in a managed unarchiving session have been
+ *        instantiated, allowing cross-object linkage to be completed.
+ *
+ * The default implementation does nothing and returns B_OK.  Override in
+ * derived classes to perform post-instantiation wiring (e.g. re-attach child
+ * views by token).
+ *
+ * @param archive  The original archive message for this object.
+ * @return B_OK on success, or an error code to abort the session.
+ * @see BUnarchiver, Archive()
+ */
 status_t
 BArchivable::AllUnarchived(const BMessage* archive)
 {
@@ -383,6 +569,17 @@ BArchivable::AllUnarchived(const BMessage* archive)
 }
 
 
+/**
+ * @brief Called after all objects in a managed archiving session have been
+ *        archived, allowing cross-object token references to be finalised.
+ *
+ * The default implementation does nothing and returns B_OK.  Override in
+ * derived classes to add references to other archived objects by token.
+ *
+ * @param archive  The archive message for this object.
+ * @return B_OK on success, or an error code to abort the session.
+ * @see BArchiver, Archive()
+ */
 status_t
 BArchivable::AllArchived(BMessage* archive) const
 {
@@ -393,6 +590,16 @@ BArchivable::AllArchived(BMessage* archive) const
 // #pragma mark - BArchiver
 
 
+/**
+ * @brief Construct a BArchiver bound to \a archive.
+ *
+ * If a BArchiveManager session is not already associated with \a archive a new
+ * one is created.  The BArchiver forwards all token-assignment operations to
+ * this manager.
+ *
+ * @param archive  The top-level BMessage that will receive the archived data.
+ * @see BArchiver::Finish(), BArchiveManager
+ */
 BArchiver::BArchiver(BMessage* archive)
 	:
 	fManager(BManagerBase::ArchiveManager(archive)),
@@ -404,6 +611,13 @@ BArchiver::BArchiver(BMessage* archive)
 }
 
 
+/**
+ * @brief Destructor — calls ArchiverLeaving() with B_OK if Finish() was not
+ *        called explicitly.
+ *
+ * This ensures the managed session is properly closed even when the archiver
+ * goes out of scope without an explicit Finish() call.
+ */
 BArchiver::~BArchiver()
 {
 	if (!fFinished)
@@ -411,6 +625,21 @@ BArchiver::~BArchiver()
 }
 
 
+/**
+ * @brief Archive \a archivable and store its token under \a name in the
+ *        managed archive message.
+ *
+ * If \a archivable has not yet been archived, GetTokenForArchivable() is
+ * called to archive it and obtain a token.  The token is then stored as an
+ * int32 field named \a name in the session's top-level archive message.
+ *
+ * @param name        The field name to use in the archive message.
+ * @param archivable  The object to archive.  May be NULL (NULL_TOKEN stored).
+ * @param deep        Passed to BArchivable::Archive(); archive children too.
+ * @return B_OK on success, or an error code from GetTokenForArchivable() or
+ *         BMessage::AddInt32().
+ * @see GetTokenForArchivable(), BUnarchiver::FindObject()
+ */
 status_t
 BArchiver::AddArchivable(const char* name, BArchivable* archivable, bool deep)
 {
@@ -424,6 +653,20 @@ BArchiver::AddArchivable(const char* name, BArchivable* archivable, bool deep)
 }
 
 
+/**
+ * @brief Obtain a numeric token for \a archivable, archiving it first if
+ *        necessary.
+ *
+ * Delegates to BArchiveManager::ArchiveObject().  The returned token can be
+ * stored in the archive message and later used by BUnarchiver::GetObject() to
+ * retrieve the reconstructed object.
+ *
+ * @param archivable  The object to archive.  May be NULL (NULL_TOKEN returned).
+ * @param deep        If true, child objects should be archived recursively.
+ * @param _token      Receives the assigned token on success.
+ * @return B_OK on success, or an error from BArchivable::Archive().
+ * @see AddArchivable(), BUnarchiver::GetObject()
+ */
 status_t
 BArchiver::GetTokenForArchivable(BArchivable* archivable,
 	bool deep, int32& _token)
@@ -432,6 +675,13 @@ BArchiver::GetTokenForArchivable(BArchivable* archivable,
 }
 
 
+/**
+ * @brief Test whether \a archivable has already been archived in this session.
+ *
+ * @param archivable  The object to test.  NULL is considered "already archived".
+ * @return true if \a archivable has a token in the current session, false
+ *         otherwise.
+ */
 bool
 BArchiver::IsArchived(BArchivable* archivable)
 {
@@ -439,6 +689,18 @@ BArchiver::IsArchived(BArchivable* archivable)
 }
 
 
+/**
+ * @brief Signal completion of the archiving session, propagating any error.
+ *
+ * Must be called exactly once per BArchiver; calling it more than once
+ * triggers a debugger call.  After Finish() the BArchiver must not be used
+ * further.
+ *
+ * @param err  An error code to propagate to the session.  Pass B_OK if
+ *             archiving completed successfully.
+ * @return The combined session error, or B_OK if everything succeeded.
+ * @see BArchiver::~BArchiver()
+ */
 status_t
 BArchiver::Finish(status_t err)
 {
@@ -451,6 +713,11 @@ BArchiver::Finish(status_t err)
 }
 
 
+/**
+ * @brief Return the top-level archive BMessage associated with this archiver.
+ *
+ * @return The BMessage passed to the BArchiver constructor.
+ */
 BMessage*
 BArchiver::ArchiveMessage() const
 {
@@ -458,6 +725,14 @@ BArchiver::ArchiveMessage() const
 }
 
 
+/**
+ * @brief Register \a archivable as the root object of this archiving session.
+ *
+ * Must be called from BArchivable::Archive() before adding any fields, so the
+ * manager can assign token 0 to the top-level object.
+ *
+ * @param archivable  The root object being archived.
+ */
 void
 BArchiver::RegisterArchivable(const BArchivable* archivable)
 {
@@ -468,6 +743,16 @@ BArchiver::RegisterArchivable(const BArchivable* archivable)
 // #pragma mark - BUnarchiver
 
 
+/**
+ * @brief Construct a BUnarchiver bound to \a archive.
+ *
+ * Locates the BUnarchiveManager already associated with \a archive via
+ * BManagerBase::UnarchiveManager().  The manager must have been set up by a
+ * prior call to BUnarchiver::PrepareArchive().
+ *
+ * @param archive  The archive message being unarchived.
+ * @see PrepareArchive(), BUnarchiver::Finish()
+ */
 BUnarchiver::BUnarchiver(const BMessage* archive)
 	:
 	fManager(BManagerBase::UnarchiveManager(archive)),
@@ -477,6 +762,10 @@ BUnarchiver::BUnarchiver(const BMessage* archive)
 }
 
 
+/**
+ * @brief Destructor — calls UnarchiverLeaving() with B_OK if Finish() was not
+ *        called explicitly.
+ */
 BUnarchiver::~BUnarchiver()
 {
 	if (!fFinished && fManager)
@@ -484,6 +773,23 @@ BUnarchiver::~BUnarchiver()
 }
 
 
+/**
+ * @brief Retrieve the BArchivable object corresponding to \a token, obeying
+ *        the requested ownership policy.
+ *
+ * This is the base-type specialisation of the GetObject<T> template.  If the
+ * object for \a token has not yet been instantiated it will be instantiated
+ * now (only possible while a session is active, i.e. Finish() has not been
+ * called).
+ *
+ * @param token   The numeric token assigned during archiving.
+ * @param owning  B_ASSUME_OWNERSHIP to take ownership of the object, or
+ *                B_DONT_ASSUME_OWNERSHIP to leave it with the manager.
+ * @param object  Receives the pointer on success.
+ * @return B_OK on success, B_BAD_VALUE if \a token is out of range, or
+ *         B_ERROR if instantiation fails.
+ * @see FindObject(), BArchiver::GetTokenForArchivable()
+ */
 template<>
 status_t
 BUnarchiver::GetObject<BArchivable>(int32 token,
@@ -494,6 +800,20 @@ BUnarchiver::GetObject<BArchivable>(int32 token,
 }
 
 
+/**
+ * @brief Look up a token stored under \a name in the archive and retrieve the
+ *        corresponding BArchivable object.
+ *
+ * This is the base-type specialisation of the FindObject<T> template.
+ * Combines BMessage::FindInt32() with GetObject<BArchivable>().
+ *
+ * @param name        The field name in the archive message.
+ * @param index       The field index (for repeated fields).
+ * @param owning      Ownership policy for the returned object.
+ * @param archivable  Receives the pointer on success, or NULL on failure.
+ * @return B_OK on success, or an error from FindInt32() or GetObject().
+ * @see GetObject()
+ */
 template<>
 status_t
 BUnarchiver::FindObject<BArchivable>(const char* name,
@@ -509,6 +829,14 @@ BUnarchiver::FindObject<BArchivable>(const char* name,
 }
 
 
+/**
+ * @brief Test whether the object identified by \a token has been instantiated.
+ *
+ * @param token  The numeric token to query.
+ * @return true if the token maps to a live object, false if it has not yet
+ *         been instantiated or the token is out of range.
+ * @see IsInstantiated(const char*, int32)
+ */
 bool
 BUnarchiver::IsInstantiated(int32 token)
 {
@@ -517,6 +845,18 @@ BUnarchiver::IsInstantiated(int32 token)
 }
 
 
+/**
+ * @brief Test whether the object stored under a named archive field has been
+ *        instantiated.
+ *
+ * Reads the token from BMessage field \a field at \a index and delegates to
+ * IsInstantiated(int32).
+ *
+ * @param field  The field name in the archive message.
+ * @param index  The field index for repeated fields.
+ * @return true if the corresponding object exists, false otherwise.
+ * @see IsInstantiated(int32)
+ */
 bool
 BUnarchiver::IsInstantiated(const char* field, int32 index)
 {
@@ -528,6 +868,18 @@ BUnarchiver::IsInstantiated(const char* field, int32 index)
 }
 
 
+/**
+ * @brief Signal completion of the unarchiving session, propagating any error.
+ *
+ * Must be called exactly once; calling it more than once triggers a debugger
+ * call.  When the last BUnarchiver in a session calls Finish(), the manager
+ * dispatches AllUnarchived() to every reconstructed object.
+ *
+ * @param err  Pass B_OK if unarchiving completed successfully, or an error
+ *             code to abort the session and trigger cleanup.
+ * @return The combined session error, or B_OK on success.
+ * @see BUnarchiver::~BUnarchiver()
+ */
 status_t
 BUnarchiver::Finish(status_t err)
 {
@@ -542,6 +894,11 @@ BUnarchiver::Finish(status_t err)
 }
 
 
+/**
+ * @brief Return the archive BMessage associated with this unarchiver.
+ *
+ * @return A const pointer to the BMessage passed to the constructor.
+ */
 const BMessage*
 BUnarchiver::ArchiveMessage() const
 {
@@ -549,6 +906,15 @@ BUnarchiver::ArchiveMessage() const
 }
 
 
+/**
+ * @brief Transfer ownership of \a archivable to the calling code.
+ *
+ * After this call the BUnarchiveManager will no longer delete \a archivable
+ * during session cleanup.  The caller is responsible for deleting the object.
+ *
+ * @param archivable  The object whose ownership should be assumed.
+ * @see RelinquishOwnership()
+ */
 void
 BUnarchiver::AssumeOwnership(BArchivable* archivable)
 {
@@ -557,6 +923,15 @@ BUnarchiver::AssumeOwnership(BArchivable* archivable)
 }
 
 
+/**
+ * @brief Return ownership of \a archivable to the BUnarchiveManager.
+ *
+ * After this call the manager will delete \a archivable during session cleanup
+ * if an error occurs.  This is the inverse of AssumeOwnership().
+ *
+ * @param archivable  The object to return to manager ownership.
+ * @see AssumeOwnership()
+ */
 void
 BUnarchiver::RelinquishOwnership(BArchivable* archivable)
 {
@@ -565,6 +940,16 @@ BUnarchiver::RelinquishOwnership(BArchivable* archivable)
 }
 
 
+/**
+ * @brief Test whether \a archive belongs to an active managed archiving
+ *        session.
+ *
+ * Checks for a manager pointer embedded in the message as well as the
+ * kManagedField marker that is added to top-level archives.
+ *
+ * @param archive  The archive message to inspect.  May be NULL.
+ * @return true if \a archive is part of a managed session, false otherwise.
+ */
 bool
 BUnarchiver::IsArchiveManaged(const BMessage* archive)
 {
@@ -584,6 +969,19 @@ BUnarchiver::IsArchiveManaged(const BMessage* archive)
 }
 
 
+/**
+ * @brief Instantiate a BArchivable object from \a from inside a managed
+ *        unarchiving session.
+ *
+ * This is the base-type specialisation of InstantiateObject<T>.  Prepares
+ * \a from for managed unarchiving, calls instantiate_object(), and finalises
+ * the inner session via Finish().
+ *
+ * @param from    The child archive message to instantiate.
+ * @param object  Receives the instantiated object on success.
+ * @return B_OK on success, or an error from instantiate_object() or Finish().
+ * @see PrepareArchive(), BUnarchiver::Finish()
+ */
 template<>
 status_t
 BUnarchiver::InstantiateObject<BArchivable>(BMessage* from,
@@ -595,6 +993,18 @@ BUnarchiver::InstantiateObject<BArchivable>(BMessage* from,
 }
 
 
+/**
+ * @brief Prepare \a archive for managed unarchiving, creating or acquiring
+ *        a BUnarchiveManager as needed.
+ *
+ * If \a archive is already managed this call increments the session reference
+ * count via Acquire().  For brand-new archives a new BUnarchiveManager is
+ * allocated.  This method is idempotent for legacy (non-managed) archives.
+ *
+ * @param archive  Reference to the archive pointer to prepare.
+ * @return The (unmodified) \a archive pointer, for call-chaining convenience.
+ * @see IsArchiveManaged(), BUnarchiveManager::Acquire()
+ */
 BMessage*
 BUnarchiver::PrepareArchive(BMessage* &archive)
 {
@@ -612,6 +1022,15 @@ BUnarchiver::PrepareArchive(BMessage* &archive)
 }
 
 
+/**
+ * @brief Register this object as the root of a managed unarchiving session.
+ *
+ * Must be called from a BArchivable constructor that takes a BMessage* after
+ * PrepareArchive() has been invoked, so the manager can record the object at
+ * token slot 0.
+ *
+ * @param archivable  The newly constructed root object.
+ */
 void
 BUnarchiver::RegisterArchivable(BArchivable* archivable)
 {
@@ -620,6 +1039,13 @@ BUnarchiver::RegisterArchivable(BArchivable* archivable)
 }
 
 
+/**
+ * @brief Trigger a debugger break if the internal manager pointer is NULL.
+ *
+ * Used internally to guard all operations that require an active managed
+ * session.  A NULL manager indicates that this BUnarchiver was constructed
+ * from a legacy or un-prepared archive.
+ */
 void
 BUnarchiver::_CallDebuggerIfManagerNull()
 {
@@ -631,6 +1057,25 @@ BUnarchiver::_CallDebuggerIfManagerNull()
 // #pragma mark -
 
 
+/**
+ * @brief Reconstruct a BArchivable-derived object from a BMessage archive,
+ *        optionally returning the image_id from which the factory was loaded.
+ *
+ * Reads the class name from the B_CLASS_FIELD in \a archive, locates the
+ * static Instantiate(BMessage*) symbol for that class across all images loaded
+ * into the current team, and calls it.  If the symbol is not found in any
+ * currently loaded image and the archive contains a B_ADD_ON_FIELD signature,
+ * the corresponding add-on is loaded via the BRoster and searched as well.
+ *
+ * @param archive  The BMessage containing the archived object.  Must not be
+ *                 NULL.
+ * @param _id      If non-NULL, receives the image_id of the image that
+ *                 provided the Instantiate symbol (or the loaded add-on id).
+ *                 On failure the value at *_id receives the error code.
+ * @return A heap-allocated object on success, or NULL on failure.
+ * @see instantiate_object(BMessage*), validate_instantiation(),
+ *      find_instantiation_func()
+ */
 BArchivable*
 instantiate_object(BMessage* archive, image_id* _id)
 {
@@ -738,6 +1183,16 @@ instantiate_object(BMessage* archive, image_id* _id)
 }
 
 
+/**
+ * @brief Reconstruct a BArchivable-derived object from a BMessage archive.
+ *
+ * Convenience overload that discards the image_id.  Delegates to
+ * instantiate_object(BMessage*, image_id*).
+ *
+ * @param from  The BMessage archive.
+ * @return A heap-allocated object on success, or NULL on failure.
+ * @see instantiate_object(BMessage*, image_id*)
+ */
 BArchivable*
 instantiate_object(BMessage* from)
 {
@@ -748,6 +1203,19 @@ instantiate_object(BMessage* from)
 //	#pragma mark - support_globals
 
 
+/**
+ * @brief Verify that the B_CLASS_FIELD stored in \a from matches \a className.
+ *
+ * Walks all B_CLASS_FIELD entries in \a from looking for an exact match with
+ * \a className.  On mismatch, a second pass is performed with "BPrivate::"
+ * prepended for backwards-compatibility with private classes.
+ *
+ * @param from       The archive message to inspect.  Must not be NULL.
+ * @param className  The expected class name.
+ * @return true if a match is found (errno set to B_OK), false otherwise
+ *         (errno set to B_MISMATCHED_VALUES).
+ * @see instantiate_object()
+ */
 bool
 validate_instantiation(BMessage* from, const char* className)
 {
@@ -779,6 +1247,16 @@ validate_instantiation(BMessage* from, const char* className)
 }
 
 
+/**
+ * @brief Locate the Instantiate function for \a className restricted to images
+ *        with the given MIME \a signature.
+ *
+ * @param className  The demangled class name to search for.
+ * @param signature  The MIME application signature to restrict the search, or
+ *                   NULL to search all loaded images.
+ * @return A pointer to the Instantiate function, or NULL if not found.
+ * @see BPrivate::find_instantiation_func(), instantiate_object()
+ */
 instantiation_func
 find_instantiation_func(const char* className, const char* signature)
 {
@@ -786,6 +1264,15 @@ find_instantiation_func(const char* className, const char* signature)
 }
 
 
+/**
+ * @brief Locate the Instantiate function for \a className in any loaded image.
+ *
+ * Convenience overload with no signature restriction.
+ *
+ * @param className  The demangled class name to search for.
+ * @return A pointer to the Instantiate function, or NULL if not found.
+ * @see find_instantiation_func(const char*, const char*)
+ */
 instantiation_func
 find_instantiation_func(const char* className)
 {
@@ -793,6 +1280,18 @@ find_instantiation_func(const char* className)
 }
 
 
+/**
+ * @brief Extract class name and signature from \a archive and locate its
+ *        Instantiate function.
+ *
+ * Reads B_CLASS_FIELD and B_ADD_ON_FIELD from \a archive, then delegates to
+ * find_instantiation_func(const char*, const char*).
+ *
+ * @param archive  The archive message to extract keys from.  Must not be NULL.
+ * @return A pointer to the Instantiate function, or NULL if the fields are
+ *         missing or the function cannot be found (errno set to B_BAD_VALUE).
+ * @see find_instantiation_func(const char*, const char*)
+ */
 instantiation_func
 find_instantiation_func(BMessage* archive)
 {
@@ -815,7 +1314,16 @@ find_instantiation_func(BMessage* archive)
 
 //	#pragma mark - BArchivable binary compatibility
 
-
+/**
+ * @brief Binary-compatibility thunks for AllUnarchived() and AllArchived().
+ *
+ * These extern "C" functions are GCC-ABI-specific entry points that forward
+ * the PERFORM_CODE_ALL_UNARCHIVED and PERFORM_CODE_ALL_ARCHIVED perform codes
+ * through BArchivable::Perform(), preserving binary compatibility with
+ * objects compiled against older versions of the kit that used reserved
+ * virtual-function slots for these two methods.  They must not be called
+ * directly by application code.
+ */
 #if __GNUC__ == 2
 
 extern "C" status_t

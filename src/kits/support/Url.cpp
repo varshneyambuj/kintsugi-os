@@ -1,10 +1,58 @@
 /*
- * Copyright 2010-2018 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Andrew Lindesay, apl@lindesay.co.nz
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2018 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Andrew Lindesay, apl@lindesay.co.nz
+ */
+
+
+/**
+ * @file Url.cpp
+ * @brief Implementation of BUrl, a RFC 3986-compliant URL parser and builder.
+ *
+ * BUrl parses a URL string into its constituent components — protocol,
+ * user-info (username + password), host, port, path, query (request), and
+ * fragment — and provides individual accessors and mutators for each component.
+ * The full URL string is lazily re-assembled on demand from the stored
+ * components.
+ *
+ * Parsing follows the grammar in RFC 3986, Appendix B.  Relative URL
+ * resolution (RFC 3986, Section 5.2) is implemented in the
+ * BUrl(const BUrl& base, const BString& location) constructor.  Dot-segment
+ * removal (RFC 3986, Section 5.2.4) is handled by SetPath().
+ *
+ * URL percent-encoding and decoding are provided by the static helpers
+ * UrlEncode() and UrlDecode().
+ *
+ * On Haiku targets, BUrl additionally supports IDNA host-name conversion
+ * (IDNAToAscii() / IDNAToUnicode()) via the ICU library, MIME-type-based
+ * preferred application discovery, and launching the URL with that application
+ * via OpenWithPreferredApplication().
+ *
+ * BUrl inherits from BArchivable to support BMessage-based archiving.
+ *
+ * @see BArchivable
  */
 
 
@@ -28,7 +76,7 @@
 #endif
 
 
-static const char* kArchivedUrl = "be:url string";
+static const char* kArchivedUrl = "be:url string"; ///< BMessage field key used for archiving.
 
 /*! These flags can be combined to control the parse process. */
 
@@ -36,6 +84,12 @@ const uint32 PARSE_NO_MASK_BIT				= 0x00000000;
 const uint32 PARSE_RAW_PATH_MASK_BIT		= 0x00000001;
 
 
+/**
+ * @brief Construct a BUrl by parsing a C-string URL.
+ *
+ * @param url    The URL string to parse.
+ * @param encode If true, percent-encode unsafe characters before parsing.
+ */
 BUrl::BUrl(const char* url, bool encode)
 	:
 	fUrlString(),
@@ -53,6 +107,10 @@ BUrl::BUrl(const char* url, bool encode)
 }
 
 
+/**
+ * @brief Construct a BUrl by unarchiving from a BMessage.
+ * @param archive BMessage created by BUrl::Archive(); must not be NULL.
+ */
 BUrl::BUrl(BMessage* archive)
 	:
 	fUrlString(),
@@ -75,6 +133,10 @@ BUrl::BUrl(BMessage* archive)
 }
 
 
+/**
+ * @brief Copy-construct a BUrl.
+ * @param other The BUrl to copy.
+ */
 BUrl::BUrl(const BUrl& other)
 	:
 	BArchivable(),
@@ -111,6 +173,15 @@ BUrl::BUrl(const BUrl& other)
 }
 
 
+/**
+ * @brief Construct a BUrl by resolving a relative reference against a base URL.
+ *
+ * Implements RFC 3986, Section 5.2.  If \a location is itself absolute it is
+ * used as-is; otherwise it is resolved relative to \a base.
+ *
+ * @param base     The absolute base URL.
+ * @param location A relative or absolute URL reference to resolve.
+ */
 BUrl::BUrl(const BUrl& base, const BString& location)
 	:
 	fUrlString(),
@@ -176,6 +247,12 @@ BUrl::BUrl(const BUrl& base, const BString& location)
 }
 
 
+/**
+ * @brief Construct an empty, invalid BUrl.
+ *
+ * All component flags are false and all strings are empty.  IsValid()
+ * returns false until components are set.
+ */
 BUrl::BUrl()
 	:
 	fUrlString(),
@@ -193,6 +270,10 @@ BUrl::BUrl()
 }
 
 
+/**
+ * @brief Construct a \c file:// URL from a filesystem path.
+ * @param path BPath whose string representation becomes the URL path.
+ */
 BUrl::BUrl(const BPath& path)
 	:
 	fUrlString(),
@@ -211,6 +292,7 @@ BUrl::BUrl(const BPath& path)
 }
 
 
+/** @brief Destroy the BUrl. */
 BUrl::~BUrl()
 {
 }
@@ -219,6 +301,14 @@ BUrl::~BUrl()
 // #pragma mark URL fields modifiers
 
 
+/**
+ * @brief Parse \a url and replace all fields with the extracted components.
+ *
+ * @param url    The URL string to parse.
+ * @param encode If true, percent-encode unsafe characters in each component
+ *               before storing them.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetUrlString(const BString& url, bool encode)
 {
@@ -230,6 +320,11 @@ BUrl::SetUrlString(const BString& url, bool encode)
 }
 
 
+/**
+ * @brief Set the protocol (scheme) component.
+ * @param protocol The new protocol string (e.g. "https").
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetProtocol(const BString& protocol)
 {
@@ -240,6 +335,11 @@ BUrl::SetProtocol(const BString& protocol)
 }
 
 
+/**
+ * @brief Set the username component of the user-info.
+ * @param user The username string.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetUserName(const BString& user)
 {
@@ -252,6 +352,11 @@ BUrl::SetUserName(const BString& user)
 }
 
 
+/**
+ * @brief Set the password component of the user-info.
+ * @param password The password string.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetPassword(const BString& password)
 {
@@ -264,6 +369,11 @@ BUrl::SetPassword(const BString& password)
 }
 
 
+/**
+ * @brief Set the host component.
+ * @param host Hostname or IP address string.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetHost(const BString& host)
 {
@@ -275,6 +385,14 @@ BUrl::SetHost(const BString& host)
 }
 
 
+/**
+ * @brief Set the port number component.
+ *
+ * Passing 0 clears the port (HasPort() will return false).
+ *
+ * @param port TCP/UDP port number (1–65535), or 0 to clear.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetPort(int port)
 {
@@ -298,6 +416,15 @@ BUrl::_RemoveLastPathComponent(BString& path)
 }
 
 
+/**
+ * @brief Set the path component, normalising dot segments.
+ *
+ * Implements RFC 3986, Section 5.2.4 "Remove Dot Segments" so that
+ * occurrences of "." and ".." are resolved before the path is stored.
+ *
+ * @param path The raw path string (may contain "." and ".." segments).
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetPath(const BString& path)
 {
@@ -370,6 +497,14 @@ BUrl::SetPath(const BString& path)
 }
 
 
+/**
+ * @brief Set the query (request) component.
+ *
+ * The query string should not include the leading '?' delimiter.
+ *
+ * @param request The query string.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetRequest(const BString& request)
 {
@@ -380,6 +515,15 @@ BUrl::SetRequest(const BString& request)
 }
 
 
+/**
+ * @brief Set the fragment (anchor) component.
+ *
+ * The fragment should not include the leading '#' delimiter.  Once set,
+ * HasFragment() always returns true even for an empty string.
+ *
+ * @param fragment The fragment string.
+ * @return Reference to this BUrl.
+ */
 BUrl&
 BUrl::SetFragment(const BString& fragment)
 {
@@ -393,6 +537,14 @@ BUrl::SetFragment(const BString& fragment)
 // #pragma mark URL fields access
 
 
+/**
+ * @brief Return the complete URL string, re-assembling it from components if needed.
+ *
+ * The string is built lazily and cached; it is invalidated whenever any
+ * component is changed via a setter.
+ *
+ * @return The full URL string (e.g. "https://user:pw@host:8080/path?q#frag").
+ */
 const BString&
 BUrl::UrlString() const
 {
@@ -422,6 +574,7 @@ BUrl::UrlString() const
 }
 
 
+/** @brief Return the protocol (scheme) component. */
 const BString&
 BUrl::Protocol() const
 {
@@ -429,6 +582,7 @@ BUrl::Protocol() const
 }
 
 
+/** @brief Return the username component of the user-info. */
 const BString&
 BUrl::UserName() const
 {
@@ -436,6 +590,7 @@ BUrl::UserName() const
 }
 
 
+/** @brief Return the password component of the user-info. */
 const BString&
 BUrl::Password() const
 {
@@ -443,6 +598,10 @@ BUrl::Password() const
 }
 
 
+/**
+ * @brief Return the user-info string, built lazily as "user" or "user:password".
+ * @return The user-info substring of the authority.
+ */
 const BString&
 BUrl::UserInfo() const
 {
@@ -459,6 +618,7 @@ BUrl::UserInfo() const
 }
 
 
+/** @brief Return the host component (hostname or IP address). */
 const BString&
 BUrl::Host() const
 {
@@ -466,6 +626,7 @@ BUrl::Host() const
 }
 
 
+/** @brief Return the port number (0 if no port was specified). */
 int
 BUrl::Port() const
 {
@@ -473,6 +634,11 @@ BUrl::Port() const
 }
 
 
+/**
+ * @brief Return the authority component, built lazily as
+ *        "[user-info@]host[:port]".
+ * @return The authority substring of the URL.
+ */
 const BString&
 BUrl::Authority() const
 {
@@ -492,6 +658,7 @@ BUrl::Authority() const
 }
 
 
+/** @brief Return the path component (may be empty). */
 const BString&
 BUrl::Path() const
 {
@@ -499,6 +666,7 @@ BUrl::Path() const
 }
 
 
+/** @brief Return the query (request) component (without the leading '?'). */
 const BString&
 BUrl::Request() const
 {
@@ -506,6 +674,7 @@ BUrl::Request() const
 }
 
 
+/** @brief Return the fragment component (without the leading '#'). */
 const BString&
 BUrl::Fragment() const
 {
@@ -516,6 +685,15 @@ BUrl::Fragment() const
 // #pragma mark URL fields tests
 
 
+/**
+ * @brief Return whether the URL is well-formed and usable.
+ *
+ * A URL is considered valid when it has a syntactically correct protocol,
+ * a valid host (for protocols that require one), and — for "file:" URLs —
+ * a non-empty path.
+ *
+ * @return True if the URL passes all validity checks.
+ */
 bool
 BUrl::IsValid() const
 {
@@ -544,6 +722,7 @@ BUrl::IsValid() const
 }
 
 
+/** @brief Return true if the URL has a protocol (scheme) component. */
 bool
 BUrl::HasProtocol() const
 {
@@ -551,6 +730,7 @@ BUrl::HasProtocol() const
 }
 
 
+/** @brief Return true if the URL has an authority component (host or user-info). */
 bool
 BUrl::HasAuthority() const
 {
@@ -558,6 +738,7 @@ BUrl::HasAuthority() const
 }
 
 
+/** @brief Return true if the URL has a username in the user-info. */
 bool
 BUrl::HasUserName() const
 {
@@ -565,6 +746,7 @@ BUrl::HasUserName() const
 }
 
 
+/** @brief Return true if the URL has a password in the user-info. */
 bool
 BUrl::HasPassword() const
 {
@@ -572,6 +754,7 @@ BUrl::HasPassword() const
 }
 
 
+/** @brief Return true if the URL has any user-info (username or password). */
 bool
 BUrl::HasUserInfo() const
 {
@@ -579,6 +762,7 @@ BUrl::HasUserInfo() const
 }
 
 
+/** @brief Return true if the URL has a host component. */
 bool
 BUrl::HasHost() const
 {
@@ -586,6 +770,7 @@ BUrl::HasHost() const
 }
 
 
+/** @brief Return true if the URL has an explicit port component. */
 bool
 BUrl::HasPort() const
 {
@@ -593,6 +778,7 @@ BUrl::HasPort() const
 }
 
 
+/** @brief Return true if the URL has a path component (even an empty one). */
 bool
 BUrl::HasPath() const
 {
@@ -600,6 +786,7 @@ BUrl::HasPath() const
 }
 
 
+/** @brief Return true if the URL has a query (request) component. */
 bool
 BUrl::HasRequest() const
 {
@@ -607,6 +794,7 @@ BUrl::HasRequest() const
 }
 
 
+/** @brief Return true if the URL has a fragment component. */
 bool
 BUrl::HasFragment() const
 {
@@ -741,6 +929,17 @@ BUrl::OpenWithPreferredApplication(bool onProblemAskUser) const
 // #pragma mark Url encoding/decoding of string
 
 
+/**
+ * @brief Percent-encode special characters in \a url.
+ *
+ * Characters that are "unreserved" (RFC 3986, Section 2.3) are left as-is.
+ * In non-strict mode spaces are encoded as '+'.
+ *
+ * @param url       The string to encode.
+ * @param strict    If false, encode spaces as '+' instead of '%20'.
+ * @param directory If true, preserve '/' and '\\' as path separators.
+ * @return The percent-encoded string.
+ */
 /*static*/ BString
 BUrl::UrlEncode(const BString& url, bool strict, bool directory)
 {
@@ -748,6 +947,15 @@ BUrl::UrlEncode(const BString& url, bool strict, bool directory)
 }
 
 
+/**
+ * @brief Decode a percent-encoded URL string.
+ *
+ * In non-strict mode '+' is decoded as a space character.
+ *
+ * @param url    The percent-encoded string to decode.
+ * @param strict If false, treat '+' as a space during decoding.
+ * @return The decoded string.
+ */
 /*static*/ BString
 BUrl::UrlDecode(const BString& url, bool strict)
 {
@@ -758,6 +966,15 @@ BUrl::UrlDecode(const BString& url, bool strict)
 // #pragma mark BArchivable members
 
 
+/**
+ * @brief Archive this BUrl into a BMessage.
+ *
+ * Stores the full URL string under the key "be:url string".
+ *
+ * @param into  Destination BMessage.
+ * @param deep  Passed to BArchivable::Archive() (unused by BUrl itself).
+ * @return B_OK on success or an error code on failure.
+ */
 status_t
 BUrl::Archive(BMessage* into, bool deep) const
 {
@@ -770,6 +987,12 @@ BUrl::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Instantiate a BUrl from a BMessage archive (BArchivable protocol).
+ * @param archive BMessage previously created by BUrl::Archive().
+ * @return A heap-allocated BUrl, or NULL if validation fails or memory is
+ *         exhausted.
+ */
 /*static*/ BArchivable*
 BUrl::Instantiate(BMessage* archive)
 {
@@ -782,6 +1005,14 @@ BUrl::Instantiate(BMessage* archive)
 // #pragma mark URL comparison
 
 
+/**
+ * @brief Return true if both URLs produce identical URL strings.
+ *
+ * Forces re-assembly of the URL string on both objects before comparing.
+ *
+ * @param other The BUrl to compare against.
+ * @return True if the assembled URL strings are equal.
+ */
 bool
 BUrl::operator==(BUrl& other) const
 {
@@ -792,6 +1023,7 @@ BUrl::operator==(BUrl& other) const
 }
 
 
+/** @brief Return true if the URLs are not equal. */
 bool
 BUrl::operator!=(BUrl& other) const
 {

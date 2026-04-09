@@ -1,11 +1,36 @@
 /*
- * Copyright 2009, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *				Scott T. Mansfield, thephantom@mac.com
- *              Bruno Albuquerque, bga@bug-br.org.br
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Scott T. Mansfield, thephantom@mac.com
+ *       Bruno Albuquerque, bga@bug-br.org.br
  */
+
+/** @file NetBuffer.cpp
+ *  @brief Wire-format serialisation buffer providing append/remove primitives
+ *         for typed values. Integer scalars are stored in big-endian (network)
+ *         byte order, strings are stored NUL-terminated, and BMessages are
+ *         flattened in place. */
 
 #include <ByteOrder.h>
 #include <Message.h>
@@ -17,6 +42,8 @@
 #include <new>
 #include <string.h>
 
+/** @brief Constructs a BNetBuffer backed by a DynamicBuffer of the given size.
+ *  @param size Initial capacity, in bytes, of the underlying buffer. */
 BNetBuffer::BNetBuffer(size_t size) :
 	BArchivable(),
 	fInit(B_NO_INIT)
@@ -27,12 +54,14 @@ BNetBuffer::BNetBuffer(size_t size) :
 }
 
 
+/** @brief Destructor. Deletes the owned DynamicBuffer. */
 BNetBuffer::~BNetBuffer()
 {
 	delete fImpl;
 }
 
 
+/** @brief Copy constructor. Creates an independent deep copy of the buffer. */
 BNetBuffer::BNetBuffer(const BNetBuffer& buffer) :
 	BArchivable(),
 	fInit(B_NO_INIT)
@@ -43,6 +72,9 @@ BNetBuffer::BNetBuffer(const BNetBuffer& buffer) :
 }
 
 
+/** @brief Unarchiving constructor. Populates the buffer from a "buffer"
+ *         B_RAW_TYPE field previously written by Archive().
+ *  @param archive Source BMessage. */
 BNetBuffer::BNetBuffer(BMessage* archive) :
 	BArchivable(),
 	fInit(B_NO_INIT)
@@ -63,6 +95,8 @@ BNetBuffer::BNetBuffer(BMessage* archive) :
 	}
 }
 
+/** @brief Assignment operator. Replaces the current contents with a deep
+ *         copy of @a buffer. */
 BNetBuffer&
 BNetBuffer::operator=(const BNetBuffer& buffer)
 {
@@ -77,6 +111,11 @@ BNetBuffer::operator=(const BNetBuffer& buffer)
 }
 
 
+/** @brief Serialises the raw buffer bytes into @a into as a "buffer" field.
+ *  @param into Destination BMessage.
+ *  @param deep Ignored (kept for BArchivable compatibility).
+ *  @return B_OK on success, B_NO_INIT if the buffer was not initialised,
+ *          or an error from BMessage::AddData(). */
 status_t
 BNetBuffer::Archive(BMessage* into, bool deep) const
 {
@@ -90,6 +129,9 @@ BNetBuffer::Archive(BMessage* into, bool deep) const
 }
 
 
+/** @brief BArchivable factory that reconstructs a BNetBuffer from a BMessage.
+ *  @param archive Source BMessage produced by Archive().
+ *  @return New BNetBuffer owned by the caller, or NULL on failure. */
 BArchivable*
 BNetBuffer::Instantiate(BMessage* archive)
 {
@@ -109,6 +151,7 @@ BNetBuffer::Instantiate(BMessage* archive)
 }
 
 
+/** @brief Returns the construction status of the underlying buffer. */
 status_t
 BNetBuffer::InitCheck()
 {
@@ -116,6 +159,7 @@ BNetBuffer::InitCheck()
 }
 
 
+/** @brief Appends an 8-bit signed integer to the buffer. */
 status_t
 BNetBuffer::AppendInt8(int8 data)
 {
@@ -123,6 +167,7 @@ BNetBuffer::AppendInt8(int8 data)
 }
 
 
+/** @brief Appends an 8-bit unsigned integer to the buffer. */
 status_t
 BNetBuffer::AppendUint8(uint8 data)
 {
@@ -130,6 +175,7 @@ BNetBuffer::AppendUint8(uint8 data)
 }
 
 
+/** @brief Appends a 16-bit signed integer in network byte order. */
 status_t
 BNetBuffer::AppendInt16(int16 data)
 {
@@ -138,6 +184,7 @@ BNetBuffer::AppendInt16(int16 data)
 }
 
 
+/** @brief Appends a 16-bit unsigned integer in network byte order. */
 status_t
 BNetBuffer::AppendUint16(uint16 data)
 {
@@ -146,6 +193,7 @@ BNetBuffer::AppendUint16(uint16 data)
 }
 
 
+/** @brief Appends a 32-bit signed integer in network byte order. */
 status_t
 BNetBuffer::AppendInt32(int32 data)
 {
@@ -154,6 +202,7 @@ BNetBuffer::AppendInt32(int32 data)
 }
 
 
+/** @brief Appends a 32-bit unsigned integer in network byte order. */
 status_t
 BNetBuffer::AppendUint32(uint32 data)
 {
@@ -162,6 +211,7 @@ BNetBuffer::AppendUint32(uint32 data)
 }
 
 
+/** @brief Appends a single-precision float (byte order unchanged). */
 status_t
 BNetBuffer::AppendFloat(float data)
 {
@@ -169,6 +219,7 @@ BNetBuffer::AppendFloat(float data)
 }
 
 
+/** @brief Appends a double-precision float (byte order unchanged). */
 status_t
 BNetBuffer::AppendDouble(double data)
 {
@@ -176,6 +227,7 @@ BNetBuffer::AppendDouble(double data)
 }
 
 
+/** @brief Appends a NUL-terminated C string, including its terminator. */
 status_t
 BNetBuffer::AppendString(const char* data)
 {
@@ -183,6 +235,11 @@ BNetBuffer::AppendString(const char* data)
 }
 
 
+/** @brief Appends an arbitrary blob of bytes to the end of the buffer.
+ *  @param data Pointer to the source bytes.
+ *  @param size Number of bytes to append.
+ *  @return B_OK on success, B_NO_INIT if the buffer is not constructed,
+ *          or a buffer error code. */
 status_t
 BNetBuffer::AppendData(const void* data, size_t size)
 {
@@ -198,6 +255,10 @@ BNetBuffer::AppendData(const void* data, size_t size)
 
 #define STACK_BUFFER_SIZE 2048
 
+/** @brief Flattens a BMessage and appends its bytes to the buffer.
+ *         Small messages are flattened on the stack; larger ones on the heap.
+ *  @param data The BMessage to flatten and append.
+ *  @return B_OK on success, or an error code on flatten/append failure. */
 status_t
 BNetBuffer::AppendMessage(const BMessage& data)
 {
@@ -231,6 +292,7 @@ BNetBuffer::AppendMessage(const BMessage& data)
 }
 
 
+/** @brief Appends a 64-bit signed integer in network byte order. */
 status_t
 BNetBuffer::AppendInt64(int64 data)
 {
@@ -239,6 +301,7 @@ BNetBuffer::AppendInt64(int64 data)
 }
 
 
+/** @brief Appends a 64-bit unsigned integer in network byte order. */
 status_t
 BNetBuffer::AppendUint64(uint64 data)
 {
@@ -247,6 +310,7 @@ BNetBuffer::AppendUint64(uint64 data)
 }
 
 
+/** @brief Reads an 8-bit signed integer from the head of the buffer. */
 status_t
 BNetBuffer::RemoveInt8(int8& data)
 {
@@ -254,6 +318,7 @@ BNetBuffer::RemoveInt8(int8& data)
 }
 
 
+/** @brief Reads an 8-bit unsigned integer from the head of the buffer. */
 status_t
 BNetBuffer::RemoveUint8(uint8& data)
 {
@@ -261,6 +326,7 @@ BNetBuffer::RemoveUint8(uint8& data)
 }
 
 
+/** @brief Reads a 16-bit signed integer and converts it to host byte order. */
 status_t
 BNetBuffer::RemoveInt16(int16& data)
 {
@@ -275,6 +341,7 @@ BNetBuffer::RemoveInt16(int16& data)
 }
 
 
+/** @brief Reads a 16-bit unsigned integer and converts it to host byte order. */
 status_t
 BNetBuffer::RemoveUint16(uint16& data)
 {
@@ -289,6 +356,7 @@ BNetBuffer::RemoveUint16(uint16& data)
 }
 
 
+/** @brief Reads a 32-bit signed integer and converts it to host byte order. */
 status_t
 BNetBuffer::RemoveInt32(int32& data)
 {
@@ -303,6 +371,7 @@ BNetBuffer::RemoveInt32(int32& data)
 }
 
 
+/** @brief Reads a 32-bit unsigned integer and converts it to host byte order. */
 status_t
 BNetBuffer::RemoveUint32(uint32& data)
 {
@@ -317,6 +386,7 @@ BNetBuffer::RemoveUint32(uint32& data)
 }
 
 
+/** @brief Reads a single-precision float from the head of the buffer. */
 status_t
 BNetBuffer::RemoveFloat(float& data)
 {
@@ -324,6 +394,7 @@ BNetBuffer::RemoveFloat(float& data)
 }
 
 
+/** @brief Reads a double-precision float from the head of the buffer. */
 status_t
 BNetBuffer::RemoveDouble(double& data)
 {
@@ -331,6 +402,9 @@ BNetBuffer::RemoveDouble(double& data)
 }
 
 
+/** @brief Reads up to @a size bytes as a string payload.
+ *  @param data Destination buffer.
+ *  @param size Number of bytes to read (including any terminator). */
 status_t
 BNetBuffer::RemoveString(char* data, size_t size)
 {
@@ -340,6 +414,11 @@ BNetBuffer::RemoveString(char* data, size_t size)
 }
 
 
+/** @brief Reads a raw byte blob from the head of the buffer.
+ *  @param data Destination buffer.
+ *  @param size Exact number of bytes to read.
+ *  @return B_OK on success, B_BUFFER_OVERFLOW if fewer bytes are available,
+ *          or B_NO_INIT if the buffer is not constructed. */
 status_t
 BNetBuffer::RemoveData(void* data, size_t size)
 {
@@ -353,6 +432,10 @@ BNetBuffer::RemoveData(void* data, size_t size)
 }
 
 
+/** @brief Unflattens a BMessage previously written with AppendMessage().
+ *  @param data On success, receives the unflattened BMessage.
+ *  @return B_OK on success, B_ERROR if the header type is not B_MESSAGE_TYPE,
+ *          or another error code from the underlying read. */
 status_t
 BNetBuffer::RemoveMessage(BMessage& data)
 {
@@ -381,6 +464,7 @@ BNetBuffer::RemoveMessage(BMessage& data)
 }
 
 
+/** @brief Reads a 64-bit signed integer and converts it to host byte order. */
 status_t
 BNetBuffer::RemoveInt64(int64& data)
 {
@@ -395,6 +479,7 @@ BNetBuffer::RemoveInt64(int64& data)
 }
 
 
+/** @brief Reads a 64-bit unsigned integer and converts it to host byte order. */
 status_t
 BNetBuffer::RemoveUint64(uint64& data)
 {
@@ -409,6 +494,7 @@ BNetBuffer::RemoveUint64(uint64& data)
 }
 
 
+/** @brief Returns a raw pointer to the first unread byte, or NULL. */
 unsigned char*
 BNetBuffer::Data() const
 {
@@ -419,6 +505,7 @@ BNetBuffer::Data() const
 }
 
 
+/** @brief Returns the number of bytes currently buffered. */
 size_t
 BNetBuffer::Size() const
 {
@@ -429,6 +516,7 @@ BNetBuffer::Size() const
 }
 
 
+/** @brief Returns the number of bytes of free space after the write cursor. */
 size_t
 BNetBuffer::BytesRemaining() const
 {

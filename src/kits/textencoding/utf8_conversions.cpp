@@ -1,9 +1,45 @@
 /*
- * Copyright 2003-2008, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Andrew Bachmann
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2008, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       Andrew Bachmann
+ */
+
+
+/**
+ * @file utf8_conversions.cpp
+ * @brief iconv-backed UTF-8 conversion routines exposed by the Text Encoding Kit.
+ *
+ * Implements three public functions:
+ *  - convert_encoding()   — general-purpose encoding conversion via iconv
+ *  - convert_to_utf8()    — convert an arbitrary encoding to UTF-8
+ *  - convert_from_utf8()  — convert UTF-8 to an arbitrary encoding
+ *
+ * Invalid or incomplete input sequences are handled with a best-effort
+ * strategy: unrepresentable characters are replaced with a caller-supplied
+ * substitute byte, and incomplete multibyte sequences at the end of input
+ * are silently discarded.
+ *
+ * @see BCharacterSetRoster, BCharacterSet
  */
 
 
@@ -29,6 +65,24 @@ using namespace BPrivate;
 int iconvctl(iconv_t icd, int request, void* argument);
 
 
+/**
+ * @brief Skips the smallest invalid input sequence that iconv cannot convert.
+ *
+ * When iconv returns EILSEQ the caller does not know how many bytes form the
+ * offending sequence.  This helper probes increasing prefix lengths until
+ * iconv either succeeds or returns EILSEQ again, then advances @p inputBuffer
+ * and @p inputLeft past exactly those bytes.
+ *
+ * The iconv internal state is reset before each probe so that subsequent
+ * conversions start clean.
+ *
+ * @param conversion   Pointer to the active iconv descriptor.
+ * @param inputBuffer  In/out: pointer to the current read position in the
+ *                     source buffer; advanced past the skipped bytes on
+ *                     return.
+ * @param inputLeft    In/out: number of bytes remaining; decremented by the
+ *                     number of skipped bytes on return.
+ */
 static void
 discard_invalid_input_character(iconv_t* conversion, char** inputBuffer,
 	size_t* inputLeft)
@@ -74,6 +128,37 @@ discard_invalid_input_character(iconv_t* conversion, char** inputBuffer,
 }
 
 
+/**
+ * @brief Converts a byte buffer from one character encoding to another.
+ *
+ * Uses iconv to transcode @p srcLen bytes from @p src in the @p from encoding
+ * into @p dst in the @p to encoding.  On return, @p srcLen is updated to the
+ * number of source bytes consumed and @p dstLen to the number of output bytes
+ * written.
+ *
+ * Unrepresentable characters (EILSEQ) are replaced with @p substitute,
+ * converted from ISO-8859-1 to the target encoding.  Incomplete trailing
+ * multibyte sequences (EINVAL) are silently dropped.  Conversion stops early
+ * when the output buffer is full (E2BIG) without returning an error.
+ *
+ * @note The @p state parameter is not fully implemented; multi-call stateful
+ *       conversion does not currently work correctly.
+ *
+ * @param from       IANA name of the source encoding (e.g. "ISO-8859-1").
+ * @param to         IANA name of the target encoding (e.g. "UTF-8").
+ * @param src        Source byte buffer.
+ * @param srcLen     In: number of bytes to read from @p src.
+ *                   Out: number of bytes actually consumed.
+ * @param dst        Destination byte buffer.
+ * @param dstLen     In: capacity of @p dst in bytes.
+ *                   Out: number of bytes written to @p dst.
+ * @param state      Opaque state variable for multi-call conversions.
+ *                   Pass NULL or a pointer to a zero-initialised int32 for
+ *                   a fresh conversion.
+ * @param substitute Replacement byte (in ISO-8859-1) used when a source
+ *                   character cannot be represented in the target encoding.
+ * @return \c B_OK on success, or a POSIX errno value on a fatal iconv error.
+ */
 status_t
 convert_encoding(const char* from, const char* to, const char* src,
 	int32* srcLen, char* dst, int32* dstLen, int32* state,
@@ -166,6 +251,24 @@ convert_encoding(const char* from, const char* to, const char* src,
 }
 
 
+/**
+ * @brief Converts a buffer from a legacy encoding into UTF-8.
+ *
+ * Looks up the IANA name for @p srcEncoding via BCharacterSetRoster and
+ * delegates to convert_encoding().
+ *
+ * @param srcEncoding Conversion ID of the source encoding as returned by
+ *                    BCharacterSet::GetConversionID().
+ * @param src         Source byte buffer in the legacy encoding.
+ * @param srcLen      In: bytes to read; out: bytes consumed.
+ * @param dst         Destination buffer to receive UTF-8 output.
+ * @param dstLen      In: capacity of @p dst; out: bytes written.
+ * @param state       Opaque conversion state; pass NULL for a fresh
+ *                    conversion.
+ * @param substitute  Replacement byte used for unconvertible characters.
+ * @return \c B_OK on success; \c B_ERROR if @p srcEncoding is unknown.
+ * @see convert_from_utf8(), convert_encoding()
+ */
 status_t
 convert_to_utf8(uint32 srcEncoding, const char* src, int32* srcLen,
 	char* dst, int32* dstLen, int32* state, char substitute)
@@ -188,6 +291,25 @@ convert_to_utf8(uint32 srcEncoding, const char* src, int32* srcLen,
 }
 
 
+/**
+ * @brief Converts a UTF-8 buffer into a legacy encoding.
+ *
+ * Looks up the IANA name for @p dstEncoding via BCharacterSetRoster and
+ * delegates to convert_encoding().
+ *
+ * @param dstEncoding Conversion ID of the destination encoding as returned
+ *                    by BCharacterSet::GetConversionID().
+ * @param src         Source UTF-8 byte buffer.
+ * @param srcLen      In: bytes to read; out: bytes consumed.
+ * @param dst         Destination buffer to receive output in the legacy
+ *                    encoding.
+ * @param dstLen      In: capacity of @p dst; out: bytes written.
+ * @param state       Opaque conversion state; pass NULL for a fresh
+ *                    conversion.
+ * @param substitute  Replacement byte used for unconvertible characters.
+ * @return \c B_OK on success; \c B_ERROR if @p dstEncoding is unknown.
+ * @see convert_to_utf8(), convert_encoding()
+ */
 status_t
 convert_from_utf8(uint32 dstEncoding, const char* src, int32* srcLen,
 	char* dst, int32* dstLen, int32* state, char substitute)
@@ -208,4 +330,3 @@ convert_from_utf8(uint32 dstEncoding, const char* src, int32* srcLen,
 	return convert_encoding("UTF-8", charset->GetName(), src, srcLen,
 		dst, dstLen, state, substitute);
 }
-

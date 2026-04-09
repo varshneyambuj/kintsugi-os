@@ -1,11 +1,59 @@
 /*
- * Copyright 2007-2010 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus, superstippi@gmx.de
- *		Julun, host.haiku@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2010 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus, superstippi@gmx.de
+ *       Julun, host.haiku@gmx.de
  */
+
+
+/**
+ * @file DateTime.cpp
+ * @brief Implementation of the BTime, BDate, and BDateTime classes
+ *        (BPrivate namespace).
+ *
+ * BTime represents a time-of-day with microsecond resolution.  It stores the
+ * number of microseconds elapsed since midnight and supports arithmetic
+ * (AddHours, AddMinutes, …), comparison operators, and BMessage
+ * archiving.  An uninitialized BTime has fMicroseconds == -1 and
+ * IsValid() returns false.
+ *
+ * BDate represents a calendar date (year, month, day) using a hybrid
+ * Julian/Gregorian calendar.  The Gregorian calendar begins on 15 October
+ * 1582; dates between 5 and 14 October 1582 are invalid.  Dates before
+ * 1 January 4713 BC are also considered invalid.  BDate provides Julian
+ * Day Number conversions, weekday/week-number calculation, and BMessage
+ * archiving.
+ *
+ * BDateTime combines a BDate and a BTime into a single value, provides
+ * round-trip conversion to/from POSIX time_t (seconds since 1 January 1970),
+ * and comparison operators.
+ *
+ * All three classes live in the BPrivate namespace.
+ *
+ * @see BTime, BDate, BDateTime
+ */
+
 
 #include "DateTime.h"
 
@@ -34,11 +82,12 @@ const bigtime_t		kMicrosecondsPerHour		= 3600000000LL;
 const bigtime_t		kMicrosecondsPerDay			= 86400000000LL;
 
 
-/*!
-	Constructs a new BTime object. Asked for its time representation, it will
-	return 0 for Hour(), Minute(), Second() etc. This can represent midnight,
-	but be aware IsValid() will return false.
-*/
+/**
+ * @brief Construct a default BTime object.
+ *
+ * All component accessors (Hour(), Minute(), Second(), etc.) will return 0,
+ * but IsValid() will return false until a valid time is set.
+ */
 BTime::BTime()
 	:
 	fMicroseconds(-1)
@@ -46,9 +95,10 @@ BTime::BTime()
 }
 
 
-/*!
-	Constructs a new BTime object as a copy of \c other.
-*/
+/**
+ * @brief Construct a BTime as a copy of \a other.
+ * @param other The BTime to copy.
+ */
 BTime::BTime(const BTime& other)
 	:
 	fMicroseconds(other.fMicroseconds)
@@ -56,13 +106,17 @@ BTime::BTime(const BTime& other)
 }
 
 
-/*!
-	Constructs a BTime object with \c hour \c minute, \c second, \c microsecond.
-
-	\c hour must be between 0 and 23, \c minute and \c second must be between
-	0 and 59 and \c microsecond should be in the range of 0 and 999999. If the
-	specified time is invalid, the time is not set and IsValid() returns false.
-*/
+/**
+ * @brief Construct a BTime with explicit hour, minute, second, and microsecond.
+ *
+ * @param hour        Must be in [0, 23].
+ * @param minute      Must be in [0, 59].
+ * @param second      Must be in [0, 59].
+ * @param microsecond Must be in [0, 999999].
+ *
+ * If the specified time is invalid the object is left uninitialised and
+ * IsValid() returns false.
+ */
 BTime::BTime(int32 hour, int32 minute, int32 second, int32 microsecond)
 	:
 	fMicroseconds(-1)
@@ -71,9 +125,10 @@ BTime::BTime(int32 hour, int32 minute, int32 second, int32 microsecond)
 }
 
 
-/*!
-	Constructs a new BTime object from the provided BMessage archive.
-*/
+/**
+ * @brief Construct a BTime by unarchiving from a BMessage.
+ * @param archive The BMessage to read from; may be NULL (leaves object invalid).
+ */
 BTime::BTime(const BMessage* archive)
 	:
 	fMicroseconds(-1)
@@ -84,21 +139,18 @@ BTime::BTime(const BMessage* archive)
 }
 
 
-/*!
-	Empty destructor.
-*/
+/** @brief Destroy the BTime object. */
 BTime::~BTime()
 {
 }
 
 
-/*!
-	Archives the BTime object into the provided BMessage object.
-	@returns	\c B_OK if all went well.
-				\c B_BAD_VALUE, if the message is \c NULL.
-				\c other error codes, depending on failure to append
-				fields to the message.
-*/
+/**
+ * @brief Archive the BTime object into a BMessage.
+ * @param into Destination BMessage; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a into is NULL, or another
+ *         error code if adding the field fails.
+ */
 status_t
 BTime::Archive(BMessage* into) const
 {
@@ -108,10 +160,14 @@ BTime::Archive(BMessage* into) const
 }
 
 
-/*!
-	Returns true if the time is valid, otherwise false. A valid time can be
-	BTime(23, 59, 59, 999999) while BTime(24, 00, 01) would be invalid.
-*/
+/**
+ * @brief Return whether this BTime represents a valid time-of-day value.
+ *
+ * A time is valid when fMicroseconds is in [0, kMicrosecondsPerDay).
+ * For example BTime(23, 59, 59, 999999) is valid while BTime(24, 0, 0) is not.
+ *
+ * @return True if the time is valid, false otherwise.
+ */
 bool
 BTime::IsValid() const
 {
@@ -119,9 +175,11 @@ BTime::IsValid() const
 }
 
 
-/*!
-	This is an overloaded member function, provided for convenience.
-*/
+/**
+ * @brief Static convenience overload — return whether \a time is valid.
+ * @param time The BTime to test.
+ * @return True if \a time is valid.
+ */
 /*static*/ bool
 BTime::IsValid(const BTime& time)
 {
@@ -129,9 +187,15 @@ BTime::IsValid(const BTime& time)
 }
 
 
-/*!
-	This is an overloaded member function, provided for convenience.
-*/
+/**
+ * @brief Static convenience overload — return whether the given components
+ *        constitute a valid time.
+ * @param hour        Hour component to test.
+ * @param minute      Minute component to test.
+ * @param second      Second component to test.
+ * @param microsecond Microsecond component to test.
+ * @return True if the resulting BTime would be valid.
+ */
 /*static*/ bool
 BTime::IsValid(int32 hour, int32 minute, int32 second, int32 microsecond)
 {
@@ -139,10 +203,12 @@ BTime::IsValid(int32 hour, int32 minute, int32 second, int32 microsecond)
 }
 
 
-/*!
-	Returns the current time as reported by the system depending on the given
-	time_type \c type.
-*/
+/**
+ * @brief Return the current wall-clock time.
+ * @param type B_LOCAL_TIME to use the local timezone, B_GMT_TIME for UTC.
+ * @return A BTime set to the current time.  Returns an invalid BTime if
+ *         the system clock cannot be read.
+ */
 BTime
 BTime::CurrentTime(time_type type)
 {
@@ -168,9 +234,10 @@ BTime::CurrentTime(time_type type)
 }
 
 
-/*!
-	Returns a copy of the current BTime object.
-*/
+/**
+ * @brief Return a copy of this BTime.
+ * @return A copy of this object.
+ */
 BTime
 BTime::Time() const
 {
@@ -178,10 +245,11 @@ BTime::Time() const
 }
 
 
-/*!
-	This is an overloaded member function, provided for convenience. Set the
-	current BTime object to the passed BTime \c time object.
-*/
+/**
+ * @brief Set this BTime to the value of \a time.
+ * @param time The BTime to copy.
+ * @return True if the resulting time is valid, false otherwise.
+ */
 bool
 BTime::SetTime(const BTime& time)
 {
@@ -190,14 +258,16 @@ BTime::SetTime(const BTime& time)
 }
 
 
-/*!
-	Set the time to \c hour \c minute, \c second and \c microsecond.
-
-	\c hour must be between 0 and 23, \c minute and \c second must be between
-	0 and 59 and \c microsecond should be in the range of 0 and 999999. Returns
-	true if the time is valid; otherwise false. If the specified time is
-	invalid, the time is not set and the function returns false.
-*/
+/**
+ * @brief Set the time from explicit components.
+ *
+ * @param hour        Must be in [0, 23].
+ * @param minute      Must be in [0, 59].
+ * @param second      Must be in [0, 59].
+ * @param microsecond Must be in [0, 999999].
+ * @return True if the time is valid; the object is left unchanged and false
+ *         is returned if the specified time is invalid.
+ */
 bool
 BTime::SetTime(int32 hour, int32 minute, int32 second, int32 microsecond)
 {
@@ -205,10 +275,11 @@ BTime::SetTime(int32 hour, int32 minute, int32 second, int32 microsecond)
 }
 
 
-/*!
-	Adds \c hours to the current time. If the passed value is negative it
-	will become earlier. Note: The time will wrap if it passes midnight.
-*/
+/**
+ * @brief Add \a hours to the current time, wrapping at midnight.
+ * @param hours Number of hours to add; may be negative.
+ * @return Reference to this BTime.
+ */
 BTime&
 BTime::AddHours(int32 hours)
 {
@@ -217,10 +288,11 @@ BTime::AddHours(int32 hours)
 }
 
 
-/*!
-	Adds \c minutes to the current time. If the passed value is negative it
-	will become earlier. Note: The time will wrap if it passes midnight.
-*/
+/**
+ * @brief Add \a minutes to the current time, wrapping at midnight.
+ * @param minutes Number of minutes to add; may be negative.
+ * @return Reference to this BTime.
+ */
 BTime&
 BTime::AddMinutes(int32 minutes)
 {
@@ -229,10 +301,11 @@ BTime::AddMinutes(int32 minutes)
 }
 
 
-/*!
-	Adds \c seconds to the current time. If the passed value is negative
-	it will become earlier. Note: The time will wrap if it passes midnight.
-*/
+/**
+ * @brief Add \a seconds to the current time, wrapping at midnight.
+ * @param seconds Number of seconds to add; may be negative.
+ * @return Reference to this BTime.
+ */
 BTime&
 BTime::AddSeconds(int32 seconds)
 {
@@ -241,10 +314,11 @@ BTime::AddSeconds(int32 seconds)
 }
 
 
-/*!
-	Adds \c milliseconds to the current time. If the passed value is negative
-	it will become earlier. Note: The time will wrap if it passes midnight.
-*/
+/**
+ * @brief Add \a milliseconds to the current time, wrapping at midnight.
+ * @param milliseconds Number of milliseconds to add; may be negative.
+ * @return Reference to this BTime.
+ */
 BTime&
 BTime::AddMilliseconds(int32 milliseconds)
 {
@@ -253,10 +327,11 @@ BTime::AddMilliseconds(int32 milliseconds)
 }
 
 
-/*!
-	Adds \c microseconds to the current time. If the passed value is negative
-	it will become earlier. Note: The time will wrap if it passes midnight.
-*/
+/**
+ * @brief Add \a microseconds to the current time, wrapping at midnight.
+ * @param microseconds Number of microseconds to add; may be negative.
+ * @return Reference to this BTime.
+ */
 BTime&
 BTime::AddMicroseconds(int32 microseconds)
 {
@@ -264,9 +339,10 @@ BTime::AddMicroseconds(int32 microseconds)
 }
 
 
-/*!
-	Returns the hour fragment of the time.
-*/
+/**
+ * @brief Return the hour component of the time (0–23).
+ * @return Hour in [0, 23], or 0 if the time is invalid.
+ */
 int32
 BTime::Hour() const
 {
@@ -274,9 +350,10 @@ BTime::Hour() const
 }
 
 
-/*!
-	Returns the minute fragment of the time.
-*/
+/**
+ * @brief Return the minute component of the time (0–59).
+ * @return Minute in [0, 59], or 0 if the time is invalid.
+ */
 int32
 BTime::Minute() const
 {
@@ -285,9 +362,10 @@ BTime::Minute() const
 }
 
 
-/*!
-	Returns the second fragment of the time.
-*/
+/**
+ * @brief Return the second component of the time (0–59).
+ * @return Second in [0, 59], or 0 if the time is invalid.
+ */
 int32
 BTime::Second() const
 {
@@ -295,9 +373,10 @@ BTime::Second() const
 }
 
 
-/*!
-	Returns the millisecond fragment of the time.
-*/
+/**
+ * @brief Return the millisecond component of the time (0–999).
+ * @return Milliseconds in [0, 999], derived from the microsecond field.
+ */
 int32
 BTime::Millisecond() const
 {
@@ -306,9 +385,10 @@ BTime::Millisecond() const
 }
 
 
-/*!
-	Returns the microsecond fragment of the time.
-*/
+/**
+ * @brief Return the microsecond component of the time (0–999999).
+ * @return Microseconds in [0, 999999].
+ */
 int32
 BTime::Microsecond() const
 {
@@ -323,15 +403,17 @@ BTime::_Microseconds() const
 }
 
 
-/*!
-	Returns the difference between this time and the given BTime \c time based
-	on the passed diff_type \c type. If \c time is earlier the return value will
-	be negativ.
-
-	The return value then can be hours, minutes, seconds, milliseconds or
-	microseconds while its range will always be between -86400000000 and
-	86400000000 depending on diff_type \c type.
-*/
+/**
+ * @brief Compute the signed difference between \a time and this time.
+ *
+ * If \a time is earlier the return value is negative.
+ *
+ * @param time The other BTime to compare against.
+ * @param type The unit for the result: B_HOURS_DIFF, B_MINUTES_DIFF,
+ *             B_SECONDS_DIFF, B_MILLISECONDS_DIFF, or B_MICROSECONDS_DIFF.
+ * @return The difference expressed in the requested unit; range is
+ *         [-86400000000, 86400000000] microseconds scaled to the chosen unit.
+ */
 bigtime_t
 BTime::Difference(const BTime& time, diff_type type) const
 {
@@ -357,9 +439,7 @@ BTime::Difference(const BTime& time, diff_type type) const
 }
 
 
-/*!
-	Returns true if this time is different from \c time, otherwise false.
-*/
+/** @brief Return true if this time differs from \a time. */
 bool
 BTime::operator!=(const BTime& time) const
 {
@@ -367,9 +447,7 @@ BTime::operator!=(const BTime& time) const
 }
 
 
-/*!
-	Returns true if this time is equal to \c time, otherwise false.
-*/
+/** @brief Return true if this time equals \a time. */
 bool
 BTime::operator==(const BTime& time) const
 {
@@ -377,9 +455,7 @@ BTime::operator==(const BTime& time) const
 }
 
 
-/*!
-	Returns true if this time is earlier than \c time, otherwise false.
-*/
+/** @brief Return true if this time is earlier than \a time. */
 bool
 BTime::operator<(const BTime& time) const
 {
@@ -387,9 +463,7 @@ BTime::operator<(const BTime& time) const
 }
 
 
-/*!
-	Returns true if this time is earlier than or equal to \c time, otherwise false.
-*/
+/** @brief Return true if this time is earlier than or equal to \a time. */
 bool
 BTime::operator<=(const BTime& time) const
 {
@@ -397,9 +471,7 @@ BTime::operator<=(const BTime& time) const
 }
 
 
-/*!
-	Returns true if this time is later than \c time, otherwise false.
-*/
+/** @brief Return true if this time is later than \a time. */
 bool
 BTime::operator>(const BTime& time) const
 {
@@ -407,9 +479,7 @@ BTime::operator>(const BTime& time) const
 }
 
 
-/*!
-	Returns true if this time is later than or equal to \c time, otherwise false.
-*/
+/** @brief Return true if this time is later than or equal to \a time. */
 bool
 BTime::operator>=(const BTime& time) const
 {
@@ -450,9 +520,11 @@ BTime::_SetTime(bigtime_t hour, bigtime_t minute, bigtime_t second,
 //	#pragma mark - BDate
 
 
-/*!
-	Constructs a new BDate object. IsValid() will return false.
-*/
+/**
+ * @brief Construct a default (invalid) BDate.
+ *
+ * IsValid() returns false until the date is set to a valid calendar value.
+ */
 BDate::BDate()
 	:
 	fDay(-1),
@@ -462,9 +534,10 @@ BDate::BDate()
 }
 
 
-/*!
-	Constructs a new BDate object as a copy of \c other.
-*/
+/**
+ * @brief Construct a BDate as a copy of \a other.
+ * @param other The BDate to copy.
+ */
 BDate::BDate(const BDate& other)
 	:
 	fDay(other.fDay),
@@ -474,21 +547,29 @@ BDate::BDate(const BDate& other)
 }
 
 
-/*!
-	Constructs a BDate object with \c year \c month and \c day.
-
-	Please note that a date before 1.1.4713 BC, a date with year 0 and a date
-	between 4.10.1582 and 15.10.1582 are considered invalid. If the specified
-	date is invalid, the date is not set and IsValid() returns false. Also note
-	that every passed year will be interpreted as is.
-
-*/
+/**
+ * @brief Construct a BDate with explicit year, month, and day.
+ *
+ * @param year  Calendar year (no year 0; dates before 4713 BC are invalid).
+ * @param month Month in [1, 12].
+ * @param day   Day in [1, days-in-month].
+ *
+ * Dates between 5 October 1582 and 14 October 1582 (the Julian/Gregorian
+ * gap) are considered invalid.  IsValid() returns false if any component is
+ * out of range.
+ */
 BDate::BDate(int32 year, int32 month, int32 day)
 {
 	_SetDate(year, month, day);
 }
 
 
+/**
+ * @brief Construct a BDate from a POSIX time_t value.
+ * @param time Seconds since the POSIX epoch (1 January 1970 00:00:00 UTC).
+ * @param type B_LOCAL_TIME to interpret \a time in the local timezone,
+ *             B_GMT_TIME for UTC.
+ */
 BDate::BDate(time_t time, time_type type)
 {
 	struct tm result;
@@ -506,9 +587,10 @@ BDate::BDate(time_t time, time_type type)
 }
 
 
-/*!
-	Constructs a new BDate object from the provided archive.
-*/
+/**
+ * @brief Construct a BDate by unarchiving from a BMessage.
+ * @param archive BMessage created by BDate::Archive(); may be NULL.
+ */
 BDate::BDate(const BMessage* archive)
 	:
 	fDay(-1),
@@ -523,21 +605,18 @@ BDate::BDate(const BMessage* archive)
 }
 
 
-/*!
-	Empty destructor.
-*/
+/** @brief Destroy the BDate object. */
 BDate::~BDate()
 {
 }
 
 
-/*!
-	Archives the BDate object into the provided BMessage object.
-	@returns	\c B_OK if all went well.
-				\c B_BAD_VALUE, if the message is \c NULL.
-				\c other error codes, depending on failure to append
-				fields to the message.
-*/
+/**
+ * @brief Archive the BDate object into a BMessage.
+ * @param into Destination BMessage; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a into is NULL, or another
+ *         error code if adding a field fails.
+ */
 status_t
 BDate::Archive(BMessage* into) const
 {
@@ -552,12 +631,14 @@ BDate::Archive(BMessage* into) const
 }
 
 
-/*!
-	Returns true if the date is valid, otherwise false.
-
-	Please note that a date before 1.1.4713 BC, a date with year 0 and a date
-	between 4.10.1582 and 15.10.1582 are considered invalid.
-*/
+/**
+ * @brief Return whether this BDate represents a valid calendar date.
+ *
+ * Dates before 1 January 4713 BC, year 0, and the Julian/Gregorian gap
+ * (5–14 October 1582) are all considered invalid.
+ *
+ * @return True if the date is valid.
+ */
 bool
 BDate::IsValid() const
 {
@@ -565,9 +646,11 @@ BDate::IsValid() const
 }
 
 
-/*!
-	This is an overloaded member function, provided for convenience.
-*/
+/**
+ * @brief Static convenience overload — return whether \a date is valid.
+ * @param date The BDate to test.
+ * @return True if \a date is valid.
+ */
 /*static*/ bool
 BDate::IsValid(const BDate& date)
 {
@@ -575,9 +658,14 @@ BDate::IsValid(const BDate& date)
 }
 
 
-/*!
-	This is an overloaded member function, provided for convenience.
-*/
+/**
+ * @brief Static convenience overload — return whether the given components
+ *        form a valid calendar date.
+ * @param year  Calendar year to test.
+ * @param month Month to test (1–12).
+ * @param day   Day to test (1–days-in-month).
+ * @return True if the resulting BDate would be valid.
+ */
 /*static*/ bool
 BDate::IsValid(int32 year, int32 month, int32 day)
 {
@@ -599,10 +687,11 @@ BDate::IsValid(int32 year, int32 month, int32 day)
 }
 
 
-/*!
-	Returns the current date as reported by the system depending on the given
-	time_type \c type.
-*/
+/**
+ * @brief Return the current calendar date.
+ * @param type B_LOCAL_TIME for the local timezone, B_GMT_TIME for UTC.
+ * @return A BDate representing today's date.
+ */
 BDate
 BDate::CurrentDate(time_type type)
 {
@@ -610,9 +699,10 @@ BDate::CurrentDate(time_type type)
 }
 
 
-/*!
-	Returns a copy of the current BTime object.
-*/
+/**
+ * @brief Return a copy of this BDate.
+ * @return A copy of this object.
+ */
 BDate
 BDate::Date() const
 {
@@ -620,9 +710,11 @@ BDate::Date() const
 }
 
 
-/*!
-	This is an overloaded member function, provided for convenience.
-*/
+/**
+ * @brief Set this date to \a date.
+ * @param date The BDate to copy.
+ * @return True if \a date is valid.
+ */
 bool
 BDate::SetDate(const BDate& date)
 {
@@ -630,12 +722,14 @@ BDate::SetDate(const BDate& date)
 }
 
 
-/*!
-	Set the date to \c year \c month and \c day.
-
-	Returns true if the date is valid; otherwise false. If the specified date is
-	invalid, the date is not set and the function returns false.
-*/
+/**
+ * @brief Set the date from explicit components.
+ * @param year  Calendar year.
+ * @param month Month (1–12).
+ * @param day   Day (1–days-in-month).
+ * @return True if the resulting date is valid; the object is left unchanged
+ *         and false is returned if the components are invalid.
+ */
 bool
 BDate::SetDate(int32 year, int32 month, int32 day)
 {
@@ -643,12 +737,16 @@ BDate::SetDate(int32 year, int32 month, int32 day)
 }
 
 
-/*!
-	This function sets the given \c year, \c month and \c day to the
-	representative values of this date. The pointers can be NULL. If the date is
-	invalid, the values will be set to -1 for \c month and \c day, the \c year
-	will be set to 0.
-*/
+/**
+ * @brief Retrieve the year, month, and day components of the date.
+ *
+ * Any of the output pointers may be NULL.  If the date is invalid,
+ * \a month and \a day are set to -1 and \a year is set to 0.
+ *
+ * @param year  Receives the year, or NULL to skip.
+ * @param month Receives the month (1–12), or NULL to skip.
+ * @param day   Receives the day (1–31), or NULL to skip.
+ */
 void
 BDate::GetDate(int32* year, int32* month, int32* day) const
 {
@@ -663,10 +761,14 @@ BDate::GetDate(int32* year, int32* month, int32* day) const
 }
 
 
-/*!
-	Adds \c days to the current date. If the passed value is negative it will
-	become earlier. If the current date is invalid, the \c days are not added.
-*/
+/**
+ * @brief Add \a days to the current date.
+ *
+ * If \a days is negative the date moves earlier.  Has no effect if the
+ * current date is invalid.
+ *
+ * @param days Number of days to add.
+ */
 void
 BDate::AddDays(int32 days)
 {
@@ -675,12 +777,15 @@ BDate::AddDays(int32 days)
 }
 
 
-/*!
-	Adds \c years to the current date. If the passed value is negativ it will
-	become earlier. If the current date is invalid, the \c years are not added.
-	The day/ month combination will be adjusted if it does not exist in the
-	resulting year, so this function will then return the latest valid date.
-*/
+/**
+ * @brief Add \a years to the current date.
+ *
+ * If the resulting day/month combination does not exist in the target year
+ * (e.g. 29 February in a non-leap year), the day is clamped to the last
+ * valid day of that month.  Has no effect if the date is invalid.
+ *
+ * @param years Number of years to add; may be negative.
+ */
 void
 BDate::AddYears(int32 years)
 {
@@ -696,12 +801,14 @@ BDate::AddYears(int32 years)
 }
 
 
-/*!
-	Adds \c months to the current date. If the passed value is negativ it will
-	become earlier. If the current date is invalid, the \c months are not added.
-	The day/ month combination will be adjusted if it does not exist in the
-	resulting year, so this function will then return the latest valid date.
-*/
+/**
+ * @brief Add \a months to the current date.
+ *
+ * The day is clamped to the last valid day of the resulting month if
+ * necessary.  Has no effect if the date is invalid.
+ *
+ * @param months Number of months to add; may be negative.
+ */
 void
 BDate::AddMonths(int32 months)
 {
@@ -730,10 +837,10 @@ BDate::AddMonths(int32 months)
 }
 
 
-/*!
-	Returns the day fragment of the date. The return value will be in the range
-	of 1 to 31, in case the date is invalid it will be -1.
-*/
+/**
+ * @brief Return the day component of the date (1–31).
+ * @return Day in [1, 31], or -1 if the date is invalid.
+ */
 int32
 BDate::Day() const
 {
@@ -741,10 +848,10 @@ BDate::Day() const
 }
 
 
-/*!
-	Returns the year fragment of the date. If the date is invalid, the function
-	returns 0.
-*/
+/**
+ * @brief Return the year component of the date.
+ * @return Calendar year, or 0 if the date is invalid.
+ */
 int32
 BDate::Year() const
 {
@@ -752,10 +859,10 @@ BDate::Year() const
 }
 
 
-/*!
-	Returns the month fragment of the date. The return value will be in the
-	range of 1 to 12, in case the date is invalid it will be -1.
-*/
+/**
+ * @brief Return the month component of the date (1–12).
+ * @return Month in [1, 12], or -1 if the date is invalid.
+ */
 int32
 BDate::Month() const
 {
@@ -763,11 +870,15 @@ BDate::Month() const
 }
 
 
-/*!
-	Returns the difference in days between this date and the given BDate \c date.
-	If \c date is earlier the return value will be negativ. If the calculation
-	is done with an invalid date, the result is undefined.
-*/
+/**
+ * @brief Return the signed difference in days between \a date and this date.
+ *
+ * A positive result means \a date is later than this date.  If either date is
+ * invalid the result is undefined.
+ *
+ * @param date The other date to compare against.
+ * @return Number of days from this date to \a date (positive = later).
+ */
 int32
 BDate::Difference(const BDate& date) const
 {
@@ -796,11 +907,15 @@ BDate::SetYear(int32 year)
 }
 
 
-/*!
-	Returns the week number of the date, if the date is invalid it will return
-	B_ERROR. Please note that this function does only work within the Gregorian
-	calendar, thus a date before 15.10.1582 will return B_ERROR.
-*/
+/**
+ * @brief Return the ISO week number of the year for this date.
+ *
+ * Only works within the Gregorian calendar; dates before 15 October 1582
+ * return B_ERROR.  Uses the algorithm from "Frequently Asked Questions about
+ * Calendars", Version 2.8, Claus Tøndering, 15 December 2005.
+ *
+ * @return ISO week number (1–53), or B_ERROR for invalid or pre-Gregorian dates.
+ */
 int32
 BDate::WeekNumber() const
 {
@@ -856,10 +971,10 @@ BDate::WeekNumber() const
 }
 
 
-/*!
-	Returns the day of the week in the range of 1 to 7, while 1 stands for
-	monday. If the date is invalid, the function will return B_ERROR.
-*/
+/**
+ * @brief Return the day of the week (1 = Monday, 7 = Sunday).
+ * @return Day-of-week in [1, 7], or B_ERROR if the date is invalid.
+ */
 int32
 BDate::DayOfWeek() const
 {
@@ -868,10 +983,11 @@ BDate::DayOfWeek() const
 }
 
 
-/*!
-	Returns the day of the year in the range of 1 to 365 (366 in leap years). If
-	the date is invalid, the function will return B_ERROR.
-*/
+/**
+ * @brief Return the ordinal day of the year (1–366).
+ * @return Day-of-year in [1, 365] (or 366 for leap years), or B_ERROR if
+ *         the date is invalid.
+ */
 int32
 BDate::DayOfYear() const
 {
@@ -882,10 +998,11 @@ BDate::DayOfYear() const
 }
 
 
-/*!
-	Returns true if the year of this object is a leap year, otherwise false. If
-	the \c year passed is before 4713 BC, the result is undefined.
-*/
+/**
+ * @brief Return true if the year of this date is a leap year.
+ * @note Result is undefined for years before 4713 BC.
+ * @return True for a leap year.
+ */
 bool
 BDate::IsLeapYear() const
 {
@@ -893,10 +1010,12 @@ BDate::IsLeapYear() const
 }
 
 
-/*!
-	Returns true if the passed \c year is a leap year, otherwise false. If the
-	\c year passed is before 4713 BC, the result is undefined.
-*/
+/**
+ * @brief Static overload — return whether \a year is a leap year.
+ * @param year Calendar year to test.
+ * @note Result is undefined for years before 4713 BC.
+ * @return True if \a year is a leap year.
+ */
 /*static*/ bool
 BDate::IsLeapYear(int32 year)
 {
@@ -909,10 +1028,10 @@ BDate::IsLeapYear(int32 year)
 }
 
 
-/*!
-	Returns the number of days in the year of the current date. If the date is
-	valid it will return 365 or 366, otherwise B_ERROR;
-*/
+/**
+ * @brief Return the number of days in the year of this date.
+ * @return 365 or 366 for a valid date, or B_ERROR if the date is invalid.
+ */
 int32
 BDate::DaysInYear() const
 {
@@ -923,10 +1042,10 @@ BDate::DaysInYear() const
 }
 
 
-/*!
-	Returns the number of days in the month of the current date. If the date is
-	valid it will return 28 up to 31, otherwise B_ERROR;
-*/
+/**
+ * @brief Return the number of days in the month of this date (28–31).
+ * @return Days in the month for a valid date, or B_ERROR if the date is invalid.
+ */
 int32
 BDate::DaysInMonth() const
 {
@@ -937,9 +1056,10 @@ BDate::DaysInMonth() const
 }
 
 
-/*!
-	Returns the short day name of this object.
-*/
+/**
+ * @brief Return the abbreviated weekday name for this date's day-of-week.
+ * @return Abbreviated day name (e.g. "Mon"), or an empty string if invalid.
+ */
 BString
 BDate::ShortDayName() const
 {
@@ -947,11 +1067,12 @@ BDate::ShortDayName() const
 }
 
 
-/*!
-	Returns the short day name in case of an valid day, otherwise an empty
-	string. The passed \c day must be in the range of 1 to 7 while 1 stands for
-	monday.
-*/
+/**
+ * @brief Return the abbreviated weekday name for \a day.
+ * @param day Day of week in [1, 7] where 1 = Monday, 7 = Sunday.
+ * @return Abbreviated day name (e.g. "Mon"), or an empty string for an
+ *         out-of-range value.
+ */
 /*static*/ BString
 BDate::ShortDayName(int32 day)
 {
@@ -969,9 +1090,10 @@ BDate::ShortDayName(int32 day)
 }
 
 
-/*!
-	Returns the short month name of this object.
-*/
+/**
+ * @brief Return the abbreviated month name for this date's month.
+ * @return Abbreviated month name (e.g. "Jan"), or an empty string if invalid.
+ */
 BString
 BDate::ShortMonthName() const
 {
@@ -979,10 +1101,12 @@ BDate::ShortMonthName() const
 }
 
 
-/*!
-	Returns the short month name in case of an valid month, otherwise an empty
-	string. The passed \c month must be in the range of 1 to 12.
-*/
+/**
+ * @brief Return the abbreviated month name for \a month.
+ * @param month Month number in [1, 12].
+ * @return Abbreviated month name (e.g. "Jan"), or an empty string for an
+ *         out-of-range value.
+ */
 /*static*/ BString
 BDate::ShortMonthName(int32 month)
 {
@@ -1000,9 +1124,10 @@ BDate::ShortMonthName(int32 month)
 }
 
 
-/*!
-	Returns the long day name of this object's week day.
-*/
+/**
+ * @brief Return the full weekday name for this date's day-of-week.
+ * @return Full day name (e.g. "Monday") in the default locale.
+ */
 BString
 BDate::LongDayName() const
 {
@@ -1010,11 +1135,12 @@ BDate::LongDayName() const
 }
 
 
-/*!
-	Returns the long day name in case of an valid day, otherwise an empty
-	string. The passed \c day must be in the range of 1 to 7 while 1 stands for
-	monday.
-*/
+/**
+ * @brief Return the full weekday name for \a day in the default locale.
+ * @param day Day of week in [1, 7] where 1 = Monday, 7 = Sunday.
+ * @return Full day name (e.g. "Monday"), or an empty string for an
+ *         out-of-range value or locale error.
+ */
 /*static*/ BString
 BDate::LongDayName(int32 day)
 {
@@ -1031,9 +1157,10 @@ BDate::LongDayName(int32 day)
 }
 
 
-/*!
-	Returns the long month name of this object's month.
-*/
+/**
+ * @brief Return the full month name for this date's month.
+ * @return Full month name (e.g. "January") in the default locale.
+ */
 BString
 BDate::LongMonthName() const
 {
@@ -1041,10 +1168,12 @@ BDate::LongMonthName() const
 }
 
 
-/*!
-	Returns the long month name in case of an valid month, otherwise an empty
-	string. The passed \c month must be in the range of 1 to 12.
-*/
+/**
+ * @brief Return the full month name for \a month in the default locale.
+ * @param month Month number in [1, 12].
+ * @return Full month name (e.g. "January"), or an empty string for an
+ *         out-of-range value or locale error.
+ */
 /*static*/ BString
 BDate::LongMonthName(int32 month)
 {
@@ -1061,10 +1190,10 @@ BDate::LongMonthName(int32 month)
 }
 
 
-/*!
-	Converts the date to Julian day. If your date is invalid, the function will
-	return B_ERROR.
-*/
+/**
+ * @brief Convert this date to a Julian Day Number.
+ * @return Julian Day Number, or B_ERROR if the date is invalid.
+ */
 int32
 BDate::DateToJulianDay() const
 {
@@ -1072,11 +1201,16 @@ BDate::DateToJulianDay() const
 }
 
 
-/*!
-	Converts the passed \c julianDay to an BDate. If the \c julianDay is negativ,
-	the function will return an invalid date. Because of the switch from Julian
-	calendar to Gregorian calendar the 4.10.1582 is followed by the 15.10.1582.
-*/
+/**
+ * @brief Convert a Julian Day Number to a BDate.
+ *
+ * Because of the Julian-to-Gregorian calendar switch, 4 October 1582 is
+ * immediately followed by 15 October 1582.
+ *
+ * @param julianDay Julian Day Number to convert.
+ * @return The corresponding BDate, or an invalid BDate if \a julianDay is
+ *         negative.
+ */
 /*static*/ BDate
 BDate::JulianDayToDate(int32 julianDay)
 {
@@ -1113,9 +1247,7 @@ BDate::JulianDayToDate(int32 julianDay)
 }
 
 
-/*!
-	Returns true if this date is different from \c date, otherwise false.
-*/
+/** @brief Return true if this date differs from \a date. */
 bool
 BDate::operator!=(const BDate& date) const
 {
@@ -1123,9 +1255,7 @@ BDate::operator!=(const BDate& date) const
 }
 
 
-/*!
-	Returns true if this date is equal to \c date, otherwise false.
-*/
+/** @brief Return true if this date equals \a date. */
 bool
 BDate::operator==(const BDate& date) const
 {
@@ -1133,9 +1263,7 @@ BDate::operator==(const BDate& date) const
 }
 
 
-/*!
-	Returns true if this date is earlier than \c date, otherwise false.
-*/
+/** @brief Return true if this date is earlier than \a date. */
 bool
 BDate::operator<(const BDate& date) const
 {
@@ -1143,10 +1271,7 @@ BDate::operator<(const BDate& date) const
 }
 
 
-/*!
-	Returns true if this date is earlier than or equal to \c date, otherwise
-	false.
-*/
+/** @brief Return true if this date is earlier than or equal to \a date. */
 bool
 BDate::operator<=(const BDate& date) const
 {
@@ -1154,9 +1279,7 @@ BDate::operator<=(const BDate& date) const
 }
 
 
-/*!
-	Returns true if this date is later than \c date, otherwise false.
-*/
+/** @brief Return true if this date is later than \a date. */
 bool
 BDate::operator>(const BDate& date) const
 {
@@ -1164,10 +1287,7 @@ BDate::operator>(const BDate& date) const
 }
 
 
-/*!
-	Returns true if this date is later than or equal to \c date, otherwise
-	false.
-*/
+/** @brief Return true if this date is later than or equal to \a date. */
 bool
 BDate::operator>=(const BDate& date) const
 {
@@ -1241,9 +1361,12 @@ BDate::_DateToJulianDay(int32 _year, int32 month, int32 day)
 //	#pragma mark - BDateTime
 
 
-/*!
-	Constructs a new BDateTime object. IsValid() will return false.
-*/
+/**
+ * @brief Construct a default (invalid) BDateTime.
+ *
+ * IsValid() returns false until both the date and time components are set
+ * to valid values.
+ */
 BDateTime::BDateTime()
 	: fDate(),
 	  fTime()
@@ -1251,10 +1374,14 @@ BDateTime::BDateTime()
 }
 
 
-/*!
-	Constructs a BDateTime object with \c date and \c time. The return value
-	of IsValid() depends on the validity of the passed objects.
-*/
+/**
+ * @brief Construct a BDateTime from a BDate and a BTime.
+ *
+ * IsValid() depends on both \a date and \a time being valid.
+ *
+ * @param date Calendar date component.
+ * @param time Time-of-day component.
+ */
 BDateTime::BDateTime(const BDate& date, const BTime& time)
 	: fDate(date),
 	  fTime(time)
@@ -1262,9 +1389,10 @@ BDateTime::BDateTime(const BDate& date, const BTime& time)
 }
 
 
-/*!
-	Constructs a new BDateTime object. IsValid() will return false.
-*/
+/**
+ * @brief Construct a BDateTime by unarchiving from a BMessage.
+ * @param archive BMessage created by BDateTime::Archive(); may be NULL.
+ */
 BDateTime::BDateTime(const BMessage* archive)
 	: fDate(archive),
 	  fTime(archive)
@@ -1272,21 +1400,21 @@ BDateTime::BDateTime(const BMessage* archive)
 }
 
 
-/*!
-	Empty destructor.
-*/
+/** @brief Destroy the BDateTime object. */
 BDateTime::~BDateTime()
 {
 }
 
 
-/*!
-	Archives the BDateTime object into the provided BMessage object.
-	@returns	\c B_OK if all went well.
-				\c B_BAD_VALUE, if the message is \c NULL.
-				\c other error codes, depending on failure to append
-				fields to the message.
-*/
+/**
+ * @brief Archive the BDateTime object into a BMessage.
+ *
+ * Stores both the date and time components in \a into.
+ *
+ * @param into Destination BMessage; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a into is NULL, or another
+ *         error code if adding a field fails.
+ */
 status_t
 BDateTime::Archive(BMessage* into) const
 {
@@ -1297,9 +1425,10 @@ BDateTime::Archive(BMessage* into) const
 }
 
 
-/*!
-	Returns true if the date time is valid, otherwise false.
-*/
+/**
+ * @brief Return whether both the date and time components are valid.
+ * @return True if both the BDate and BTime components are valid.
+ */
 bool
 BDateTime::IsValid() const
 {
@@ -1307,10 +1436,11 @@ BDateTime::IsValid() const
 }
 
 
-/*!
-	Returns the current date and time as reported by the system depending on the
-	given time_type \c type.
-*/
+/**
+ * @brief Return the current date and time.
+ * @param type B_LOCAL_TIME for the local timezone, B_GMT_TIME for UTC.
+ * @return A BDateTime set to the current date and time.
+ */
 BDateTime
 BDateTime::CurrentDateTime(time_type type)
 {
@@ -1318,9 +1448,11 @@ BDateTime::CurrentDateTime(time_type type)
 }
 
 
-/*!
-	Sets the current date and time of this object to \c date and \c time.
-*/
+/**
+ * @brief Set both the date and time components simultaneously.
+ * @param date New date component.
+ * @param time New time component.
+ */
 void
 BDateTime::SetDateTime(const BDate& date, const BTime& time)
 {
@@ -1329,9 +1461,10 @@ BDateTime::SetDateTime(const BDate& date, const BTime& time)
 }
 
 
-/*!
-	Returns the current date of this object.
-*/
+/**
+ * @brief Return a mutable reference to the date component.
+ * @return Reference to the internal BDate.
+ */
 BDate&
 BDateTime::Date()
 {
@@ -1339,9 +1472,10 @@ BDateTime::Date()
 }
 
 
-/*!
-	Returns the current date of this object.
-*/
+/**
+ * @brief Return a const reference to the date component.
+ * @return Const reference to the internal BDate.
+ */
 const BDate&
 BDateTime::Date() const
 {
@@ -1349,9 +1483,10 @@ BDateTime::Date() const
 }
 
 
-/*!
-	Set the current date of this object to \c date.
-*/
+/**
+ * @brief Set the date component.
+ * @param date New date value.
+ */
 void
 BDateTime::SetDate(const BDate& date)
 {
@@ -1359,9 +1494,10 @@ BDateTime::SetDate(const BDate& date)
 }
 
 
-/*!
-	Returns the current time of this object.
-*/
+/**
+ * @brief Return a mutable reference to the time component.
+ * @return Reference to the internal BTime.
+ */
 BTime&
 BDateTime::Time()
 {
@@ -1369,9 +1505,10 @@ BDateTime::Time()
 }
 
 
-/*!
-	Returns the current time of this object.
-*/
+/**
+ * @brief Return a const reference to the time component.
+ * @return Const reference to the internal BTime.
+ */
 const BTime&
 BDateTime::Time() const
 {
@@ -1379,9 +1516,10 @@ BDateTime::Time() const
 }
 
 
-/*!
-	Sets the current time of this object to \c time.
-*/
+/**
+ * @brief Set the time component.
+ * @param time New time value.
+ */
 void
 BDateTime::SetTime(const BTime& time)
 {
@@ -1389,11 +1527,12 @@ BDateTime::SetTime(const BTime& time)
 }
 
 
-/*!
-	Returns the current date and time converted to seconds since
-	1.1.1970 - 00:00:00. If the current date is before 1.1.1970 the function
-	returns -1;
-*/
+/**
+ * @brief Convert this BDateTime to a POSIX time_t (seconds since the epoch).
+ *
+ * @return Seconds since 1 January 1970 00:00:00 in local time, or -1 if the
+ *         date is before the epoch or the conversion fails.
+ */
 time_t
 BDateTime::Time_t() const
 {
@@ -1419,10 +1558,10 @@ BDateTime::Time_t() const
 }
 
 
-/*!
-	Sets the current date and time converted from seconds since
-	1.1.1970 - 00:00:00.
-*/
+/**
+ * @brief Set this BDateTime from a POSIX time_t value.
+ * @param seconds Seconds since 1 January 1970 00:00:00 (local time).
+ */
 void
 BDateTime::SetTime_t(time_t seconds)
 {
@@ -1442,9 +1581,7 @@ BDateTime::SetTime_t(time_t seconds)
 }
 
 
-/*!
-	Returns true if this datetime is different from \c dateTime, otherwise false.
-*/
+/** @brief Return true if this datetime differs from \a dateTime. */
 bool
 BDateTime::operator!=(const BDateTime& dateTime) const
 {
@@ -1452,9 +1589,7 @@ BDateTime::operator!=(const BDateTime& dateTime) const
 }
 
 
-/*!
-	Returns true if this datetime is equal to \c dateTime, otherwise false.
-*/
+/** @brief Return true if this datetime equals \a dateTime. */
 bool
 BDateTime::operator==(const BDateTime& dateTime) const
 {
@@ -1462,9 +1597,7 @@ BDateTime::operator==(const BDateTime& dateTime) const
 }
 
 
-/*!
-	Returns true if this datetime is earlier than \c dateTime, otherwise false.
-*/
+/** @brief Return true if this datetime is earlier than \a dateTime. */
 bool
 BDateTime::operator<(const BDateTime& dateTime) const
 {
@@ -1476,10 +1609,7 @@ BDateTime::operator<(const BDateTime& dateTime) const
 }
 
 
-/*!
-	Returns true if this datetime is earlier than or equal to \c dateTime,
-	otherwise false.
-*/
+/** @brief Return true if this datetime is earlier than or equal to \a dateTime. */
 bool
 BDateTime::operator<=(const BDateTime& dateTime) const
 {
@@ -1491,9 +1621,7 @@ BDateTime::operator<=(const BDateTime& dateTime) const
 }
 
 
-/*!
-	Returns true if this datetime is later than \c dateTime, otherwise false.
-*/
+/** @brief Return true if this datetime is later than \a dateTime. */
 bool
 BDateTime::operator>(const BDateTime& dateTime) const
 {
@@ -1505,10 +1633,7 @@ BDateTime::operator>(const BDateTime& dateTime) const
 }
 
 
-/*!
-	Returns true if this datetime is later than or equal to \c dateTime,
-	otherwise false.
-*/
+/** @brief Return true if this datetime is later than or equal to \a dateTime. */
 bool
 BDateTime::operator>=(const BDateTime& dateTime) const
 {

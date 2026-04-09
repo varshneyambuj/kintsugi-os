@@ -1,7 +1,30 @@
 /*
- * Copyright 2014 Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014 Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file Certificate.cpp
+ *  @brief Thin BCertificate wrapper around OpenSSL X509 providing
+ *         subject, issuer, validity and signature introspection. */
 
 
 #include <Certificate.h>
@@ -17,6 +40,10 @@
 #include <openssl/x509v3.h>
 
 
+/** @brief Parses an ASN.1 GeneralizedTime / UTCTime into a Unix time_t.
+ *  @param asn1 Pointer to an OpenSSL ASN1 time structure holding a
+ *              "YYMMDDHHMMSSZ" encoded timestamp.
+ *  @return The corresponding time_t value, or B_BAD_DATA on parse failure. */
 static time_t
 parse_ASN1(ASN1_GENERALIZEDTIME *asn1)
 {
@@ -38,6 +65,9 @@ parse_ASN1(ASN1_GENERALIZEDTIME *asn1)
 }
 
 
+/** @brief Decodes an X509_NAME structure into a human-readable BString.
+ *  @param name OpenSSL X509 name pointer (issuer or subject).
+ *  @return A BString containing the oneline textual representation. */
 static BString
 decode_X509_NAME(X509_NAME* name)
 {
@@ -52,24 +82,30 @@ decode_X509_NAME(X509_NAME* name)
 // #pragma mark - BCertificate
 
 
+/** @brief Constructs a certificate from an internal private data holder.
+ *  @param data Ownership-taken pointer to a BCertificate::Private. */
 BCertificate::BCertificate(Private* data)
 {
 	fPrivate = data;
 }
 
 
+/** @brief Copy-constructs a certificate by duplicating the underlying X509. */
 BCertificate::BCertificate(const BCertificate& other)
 {
 	fPrivate = new(std::nothrow) BCertificate::Private(other.fPrivate->fX509);
 }
 
 
+/** @brief Destructor. Frees the wrapped X509 data. */
 BCertificate::~BCertificate()
 {
 	delete fPrivate;
 }
 
 
+/** @brief Returns the X.509 version number of the certificate.
+ *  @return 1, 2, or 3 corresponding to X.509 v1/v2/v3. */
 int
 BCertificate::Version() const
 {
@@ -77,6 +113,7 @@ BCertificate::Version() const
 }
 
 
+/** @brief Returns the notBefore validity date of the certificate as time_t. */
 time_t
 BCertificate::StartDate() const
 {
@@ -84,6 +121,7 @@ BCertificate::StartDate() const
 }
 
 
+/** @brief Returns the notAfter validity date of the certificate as time_t. */
 time_t
 BCertificate::ExpirationDate() const
 {
@@ -91,6 +129,8 @@ BCertificate::ExpirationDate() const
 }
 
 
+/** @brief Reports whether the certificate has the CA basic constraint set.
+ *  @return true if the certificate is usable as a signing authority. */
 bool
 BCertificate::IsValidAuthority() const
 {
@@ -98,6 +138,8 @@ BCertificate::IsValidAuthority() const
 }
 
 
+/** @brief Reports whether issuer and subject match (a self-signed cert).
+ *  @return true if the certificate is self-signed. */
 bool
 BCertificate::IsSelfSigned() const
 {
@@ -105,6 +147,7 @@ BCertificate::IsSelfSigned() const
 }
 
 
+/** @brief Returns a human-readable string form of the issuer distinguished name. */
 BString
 BCertificate::Issuer() const
 {
@@ -113,6 +156,7 @@ BCertificate::Issuer() const
 }
 
 
+/** @brief Returns a human-readable string form of the subject distinguished name. */
 BString
 BCertificate::Subject() const
 {
@@ -121,6 +165,8 @@ BCertificate::Subject() const
 }
 
 
+/** @brief Returns the long name of the signature algorithm used on the certificate.
+ *  @return Algorithm name (e.g. "sha256WithRSAEncryption"), "undefined", or "invalid". */
 BString
 BCertificate::SignatureAlgorithm() const
 {
@@ -138,6 +184,8 @@ BCertificate::SignatureAlgorithm() const
 }
 
 
+/** @brief Returns a full human-readable dump of the certificate fields.
+ *  @return Multi-line BString produced by OpenSSL's X509_print_ex(). */
 BString
 BCertificate::String() const
 {
@@ -153,6 +201,8 @@ BCertificate::String() const
 }
 
 
+/** @brief Equality comparison based on the raw X509 bytes.
+ *  @return true if both certificates are bitwise identical. */
 bool
 BCertificate::operator==(const BCertificate& other) const
 {
@@ -163,12 +213,15 @@ BCertificate::operator==(const BCertificate& other) const
 // #pragma mark - BCertificate::Private
 
 
+/** @brief Wraps an OpenSSL X509 pointer by duplicating it.
+ *  @param data Source X509 pointer; a deep copy is stored. */
 BCertificate::Private::Private(X509* data)
 	: fX509(X509_dup(data))
 {
 }
 
 
+/** @brief Frees the duplicated OpenSSL X509 object. */
 BCertificate::Private::~Private()
 {
 	X509_free(fX509);

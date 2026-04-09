@@ -1,34 +1,49 @@
-/*=--------------------------------------------------------------------------=*
- * NetDebug.cpp -- Implementation of the BNetDebug class.
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Written by S.T. Mansfield (thephantom@mac.com)
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Remarks:
- *   * Although this would more properly be implemented as a namespace...
- *   * Do not burn the candle at both ends as it leads to the life of a
- *     hairdresser.
- *=--------------------------------------------------------------------------=*
- * Copyright (c) 2002, The Haiku project.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- *=--------------------------------------------------------------------------=*
+ *   Copyright (c) 2002, The Haiku project.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a
+ *   copy of this software and associated documentation files (the "Software"),
+ *   to deal in the Software without restriction, including without limitation
+ *   the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ *   and/or sell copies of the Software, and to permit persons to whom the
+ *   Software is furnished to do so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice shall be included in
+ *   all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ *   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ *   DEALINGS IN THE SOFTWARE.
+ *
+ *   Written by S.T. Mansfield (thephantom@mac.com)
  */
+
+/** @file NetDebug.cpp
+ *  @brief Implementation of the BNetDebug helper class, a process-wide
+ *         switch for printing debug messages and hex dumps of network traffic. */
 
 
 #include <ctype.h>
@@ -43,56 +58,26 @@
 static bool g_NetDebugEnabled = false;
 
 
-/* Enable
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *     Enable/disable debug message capability for your app.
- *
- * Input parameter:
- *     Enable       : True/False to enable/disable debug message output.
- *
- * Remarks:
- *     This flag/setting is a per application basis, and not a per-instance
- *     occurrence as one would expect when instantiating an instance of
- *     this class.  This is by design as /everything/ is static.  Caveat
- *     Emptor.  Needs to be dealt with in G.E.
- */
+/** @brief Enables or disables debug output for the entire process.
+ *         The flag is global and static — it affects all users of BNetDebug.
+ *  @param Enable true to enable Print()/Dump() output, false to silence it. */
 void BNetDebug::Enable( bool Enable )
 {
     g_NetDebugEnabled = Enable;
 }
 
 
-/* IsEnabled
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *     Quiz the enable/disable status.
- *
- * Returns:
- *     True/false if enabled/disabled.
- */
+/** @brief Reports whether debug output is currently enabled.
+ *  @return true if Enable(true) is in effect. */
 bool BNetDebug::IsEnabled( void )
 {
     return g_NetDebugEnabled;
 }
 
 
-/* Print
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *     If enabled, spew forth a debug message.
- *
- * Input parameter:
- *     msg          : The message to print.
- *
- * Remarks:
- *     * Basically a no-op if not enabled.
- *     * We're inheriting R5 (and Nettle's) behavior, so...
- *       * The output is always "debug: msg\n"  Yes, kids, you read it right;
- *         you get a newline whether you want it or not!
- *       * If msg is empty, you get "debug: \n"
- *       * Message is always printed on stderr.  Redirect accordingly.
- */
+/** @brief Prints a debug message to stderr, prefixed with "debug: ".
+ *         Output is suppressed unless debugging has been Enable()'d.
+ *  @param msg Message text, or NULL (treated as "(null)"). */
 void BNetDebug::Print( const char* msg )
 {
 	if ( !g_NetDebugEnabled )
@@ -105,38 +90,13 @@ void BNetDebug::Print( const char* msg )
 }
 
 
-/* Dump
- *=--------------------------------------------------------------------------=*
- * Purpose:
- *     If enabled, spew forth a combination hex/ASCII dump of raw data.
- *
- * Input parameters:
- *     data         : Data to dump.
- *     size         : How many bytes of data to dump.
- *     title        : Title to display in message header.
- *
- * Remarks:
- *     * Basically a no-op if not enabled.
- *     * We're inheriting R5 (and Nettle's) behavior, so...
- *       * The output is always "debug: msg\n"  Yes, kids, you read it right;
- *         you get a newline whether you want it or not!
- *       * If msg is empty, you get "debug: \n"
- *       * Behavior is undefined if data or title is NULL.  This is a
- *         possible design flaw in Nettle/R5.
- *       * Do not expect an output like this:
- *          00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF | abcdefghijklmnop
- *          00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF | abcdefghijklmnop
- *          00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF | abcdefghijklmnop
- *          00 11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF | abcdefghijklmnop
- *         because you ain't gettin' it.  You will get a complete hex dump,
- *         /followed/ by an ASCII dump.  More Glass Elevator stuff.
- *     * Nettle dumps to stdOUT, the BeBook says all output goes to stdERR, so
- *       the author chose to...
- *     * always print to stdERR.  Redirect accordingly.
- *     * stderr is flushed after the dump is complete to keep things
- *       reasonably cohesive in appearance.  This might be an expensive
- *       operation so use judiciously.
- */
+/** @brief Prints a combined hex + ASCII dump of a byte region to stderr.
+ *         Each line shows up to 16 bytes in hex followed by their printable
+ *         ASCII representation. Output is suppressed unless debugging has
+ *         been Enable()'d. stderr is flushed when the dump completes.
+ *  @param data  Pointer to the bytes to dump, or NULL.
+ *  @param size  Number of bytes to dump.
+ *  @param title Optional header label, or NULL for "(untitled)". */
 void BNetDebug::Dump(const char* data, size_t size, const char* title)
 {
 

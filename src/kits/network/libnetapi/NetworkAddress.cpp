@@ -1,7 +1,31 @@
 /*
- * Copyright 2010-2015, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2015, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file NetworkAddress.cpp
+ *  @brief Modern BNetworkAddress implementation. Wraps a sockaddr_storage
+ *         and supports IPv4, IPv6, and link-layer families with hostname
+ *         resolution, broadcast/multicast helpers, and comparison operators. */
 
 
 #include <NetworkAddress.h>
@@ -17,10 +41,9 @@
 #include <sys/sockio.h>
 
 
-/* The GCC builtin below only exists in > GCC 3.4
- * Benefits include faster execution time as the builtin
- * uses a bitcounting cpu instruction if it exists
- */
+/** @brief Portable population count used for converting netmasks into
+ *         prefix lengths. Prefers the GCC __builtin_popcount intrinsic
+ *         (which may map to a hardware POPCNT instruction) when available. */
 #if __GNUC__ > 3
 #	define addr_bitcount(bitfield) __builtin_popcount(bitfield)
 #else
@@ -38,6 +61,9 @@ addr_bitcount(uint32 bitfield)
 #endif
 
 
+/** @brief Converts a single hexadecimal character to its numeric value.
+ *  @param hex Character in '0'..'9', 'a'..'f', or 'A'..'F'.
+ *  @return Corresponding nibble value in the range 0..15. */
 static uint8
 from_hex(char hex)
 {
@@ -51,18 +77,21 @@ from_hex(char hex)
 // #pragma mark -
 
 
+/** @brief Default constructor. Produces an unspecified (AF_UNSPEC) address. */
 BNetworkAddress::BNetworkAddress()
 {
 	Unset();
 }
 
 
+/** @brief Resolves @a host and stores the resulting address plus port. */
 BNetworkAddress::BNetworkAddress(const char* host, uint16 port, uint32 flags)
 {
 	fStatus = SetTo(host, port, flags);
 }
 
 
+/** @brief Resolves @a host/@a service via getaddrinfo() and stores the result. */
 BNetworkAddress::BNetworkAddress(const char* host, const char* service,
 	uint32 flags)
 {
@@ -70,6 +99,7 @@ BNetworkAddress::BNetworkAddress(const char* host, const char* service,
 }
 
 
+/** @brief Resolves @a host restricted to the given address @a family. */
 BNetworkAddress::BNetworkAddress(int family, const char* host, uint16 port,
 	uint32 flags)
 {
@@ -77,6 +107,7 @@ BNetworkAddress::BNetworkAddress(int family, const char* host, uint16 port,
 }
 
 
+/** @brief Resolves @a host/@a service restricted to the given address family. */
 BNetworkAddress::BNetworkAddress(int family, const char* host,
 	const char* service, uint32 flags)
 {
@@ -84,48 +115,56 @@ BNetworkAddress::BNetworkAddress(int family, const char* host,
 }
 
 
+/** @brief Constructs from a raw BSD sockaddr structure. */
 BNetworkAddress::BNetworkAddress(const sockaddr& address)
 {
 	SetTo(address);
 }
 
 
+/** @brief Constructs from a sockaddr_storage container. */
 BNetworkAddress::BNetworkAddress(const sockaddr_storage& address)
 {
 	SetTo(address);
 }
 
 
+/** @brief Constructs from an IPv4 sockaddr_in. */
 BNetworkAddress::BNetworkAddress(const sockaddr_in& address)
 {
 	SetTo(address);
 }
 
 
+/** @brief Constructs from an IPv6 sockaddr_in6. */
 BNetworkAddress::BNetworkAddress(const sockaddr_in6& address)
 {
 	SetTo(address);
 }
 
 
+/** @brief Constructs from a link-layer sockaddr_dl. */
 BNetworkAddress::BNetworkAddress(const sockaddr_dl& address)
 {
 	SetTo(address);
 }
 
 
+/** @brief Constructs an IPv4 address from an in_addr_t and port. */
 BNetworkAddress::BNetworkAddress(in_addr_t address, uint16 port)
 {
 	SetTo(address, port);
 }
 
 
+/** @brief Constructs an IPv6 address from an in6_addr and port. */
 BNetworkAddress::BNetworkAddress(const in6_addr& address, uint16 port)
 {
 	SetTo(address, port);
 }
 
 
+/** @brief Copy constructor. */
 BNetworkAddress::BNetworkAddress(const BNetworkAddress& other)
 	:
 	fAddress(other.fAddress),
@@ -135,11 +174,14 @@ BNetworkAddress::BNetworkAddress(const BNetworkAddress& other)
 }
 
 
+/** @brief Destructor. */
 BNetworkAddress::~BNetworkAddress()
 {
 }
 
 
+/** @brief Returns the initialisation status of the address.
+ *  @return B_OK if resolved/constructed successfully, or an error code. */
 status_t
 BNetworkAddress::InitCheck() const
 {
@@ -147,6 +189,7 @@ BNetworkAddress::InitCheck() const
 }
 
 
+/** @brief Clears the address, resetting it to AF_UNSPEC with no hostname. */
 void
 BNetworkAddress::Unset()
 {
@@ -157,6 +200,12 @@ BNetworkAddress::Unset()
 }
 
 
+/** @brief Resolves a hostname (or IP literal) and sets the address.
+ *         Prefers IPv6 results when available and falls back to IPv4.
+ *  @param host  Hostname or IP literal to resolve.
+ *  @param port  Port number in host byte order.
+ *  @param flags getaddrinfo flags (AI_PASSIVE, AI_CANONNAME, ...).
+ *  @return B_OK on success, or an error from the resolver. */
 status_t
 BNetworkAddress::SetTo(const char* host, uint16 port, uint32 flags)
 {
@@ -184,6 +233,12 @@ BNetworkAddress::SetTo(const char* host, uint16 port, uint32 flags)
 }
 
 
+/** @brief Resolves a hostname plus a service name and sets the address.
+ *         Prefers IPv6 results when available and falls back to IPv4.
+ *  @param host    Hostname or IP literal.
+ *  @param service Named service (e.g. "http") or numeric port string.
+ *  @param flags   getaddrinfo flags.
+ *  @return B_OK on success, or an error from the resolver. */
 status_t
 BNetworkAddress::SetTo(const char* host, const char* service, uint32 flags)
 {
@@ -211,6 +266,10 @@ BNetworkAddress::SetTo(const char* host, const char* service, uint32 flags)
 }
 
 
+/** @brief Resolves @a host for the given address @a family.
+ *         AF_LINK is handled specially via _ParseLinkAddress().
+ *  @return B_OK on success, B_BAD_VALUE if inconsistent parameters are
+ *          passed, or a resolver error. */
 status_t
 BNetworkAddress::SetTo(int family, const char* host, uint16 port, uint32 flags)
 {
@@ -239,6 +298,8 @@ BNetworkAddress::SetTo(int family, const char* host, uint16 port, uint32 flags)
 }
 
 
+/** @brief Resolves @a host/@a service for the given address @a family.
+ *         AF_LINK is handled specially via _ParseLinkAddress(). */
 status_t
 BNetworkAddress::SetTo(int family, const char* host, const char* service,
 	uint32 flags)
@@ -268,6 +329,9 @@ BNetworkAddress::SetTo(int family, const char* host, const char* service,
 }
 
 
+/** @brief Sets the address from a raw sockaddr, computing the length from
+ *         the family (IPv4/IPv6/link). Unknown families fall back to
+ *         sa_len. */
 void
 BNetworkAddress::SetTo(const sockaddr& address)
 {
@@ -297,6 +361,7 @@ BNetworkAddress::SetTo(const sockaddr& address)
 }
 
 
+/** @brief Sets the address from a sockaddr using an explicit byte length. */
 void
 BNetworkAddress::SetTo(const sockaddr& address, size_t length)
 {
@@ -311,6 +376,7 @@ BNetworkAddress::SetTo(const sockaddr& address, size_t length)
 }
 
 
+/** @brief Sets the address from a sockaddr_storage container. */
 void
 BNetworkAddress::SetTo(const sockaddr_storage& address)
 {
@@ -318,6 +384,7 @@ BNetworkAddress::SetTo(const sockaddr_storage& address)
 }
 
 
+/** @brief Sets the address from an IPv4 sockaddr_in. */
 void
 BNetworkAddress::SetTo(const sockaddr_in& address)
 {
@@ -325,6 +392,7 @@ BNetworkAddress::SetTo(const sockaddr_in& address)
 }
 
 
+/** @brief Sets the address from an IPv6 sockaddr_in6. */
 void
 BNetworkAddress::SetTo(const sockaddr_in6& address)
 {
@@ -332,6 +400,7 @@ BNetworkAddress::SetTo(const sockaddr_in6& address)
 }
 
 
+/** @brief Sets the address from a link-layer sockaddr_dl. */
 void
 BNetworkAddress::SetTo(const sockaddr_dl& address)
 {
@@ -339,6 +408,7 @@ BNetworkAddress::SetTo(const sockaddr_dl& address)
 }
 
 
+/** @brief Sets an IPv4 address from an in_addr_t and port. */
 void
 BNetworkAddress::SetTo(in_addr_t inetAddress, uint16 port)
 {
@@ -367,6 +437,7 @@ BNetworkAddress::SetTo(const in6_addr& inet6Address, uint16 port)
 }
 
 
+/** @brief Copies another BNetworkAddress into this one. */
 void
 BNetworkAddress::SetTo(const BNetworkAddress& other)
 {
@@ -376,6 +447,8 @@ BNetworkAddress::SetTo(const BNetworkAddress& other)
 }
 
 
+/** @brief Sets the address to the IPv4 broadcast address (255.255.255.255).
+ *  @return B_OK on success, or B_NOT_SUPPORTED for non-IPv4 families. */
 status_t
 BNetworkAddress::SetToBroadcast(int family, uint16 port)
 {
@@ -387,6 +460,8 @@ BNetworkAddress::SetToBroadcast(int family, uint16 port)
 }
 
 
+/** @brief Sets the address to a local interface address. Not yet implemented.
+ *  @return Currently always B_NOT_SUPPORTED. */
 status_t
 BNetworkAddress::SetToLocal(int family, uint16 port)
 {
@@ -395,6 +470,9 @@ BNetworkAddress::SetToLocal(int family, uint16 port)
 }
 
 
+/** @brief Sets the address to the loopback address for the given family
+ *         (127.0.0.1 for IPv4, ::1 for IPv6).
+ *  @return B_OK on success, or B_NOT_SUPPORTED for an unknown family. */
 status_t
 BNetworkAddress::SetToLoopback(int family, uint16 port)
 {
@@ -417,6 +495,11 @@ BNetworkAddress::SetToLoopback(int family, uint16 port)
 }
 
 
+/** @brief Builds a netmask address from a CIDR prefix length.
+ *  @param family       AF_INET or AF_INET6.
+ *  @param prefixLength Number of leading mask bits (<=32 for IPv4, <=128 for IPv6).
+ *  @return B_OK on success, B_BAD_VALUE if the prefix is out of range, or
+ *          B_NOT_SUPPORTED for an unknown family. */
 status_t
 BNetworkAddress::SetToMask(int family, uint32 prefixLength)
 {
@@ -469,6 +552,8 @@ BNetworkAddress::SetToMask(int family, uint32 prefixLength)
 }
 
 
+/** @brief Sets the address to the "any" wildcard address (0.0.0.0 / ::).
+ *  @return B_OK on success, or B_NOT_SUPPORTED for an unknown family. */
 status_t
 BNetworkAddress::SetToWildcard(int family, uint16 port)
 {
@@ -489,6 +574,8 @@ BNetworkAddress::SetToWildcard(int family, uint16 port)
 }
 
 
+/** @brief Replaces the IPv4 address while keeping the port and family.
+ *  @return B_OK on success, or B_BAD_VALUE if the family is not AF_INET. */
 status_t
 BNetworkAddress::SetAddress(in_addr_t inetAddress)
 {
@@ -501,6 +588,8 @@ BNetworkAddress::SetAddress(in_addr_t inetAddress)
 }
 
 
+/** @brief Replaces the IPv6 address while keeping the port and family.
+ *  @return B_OK on success, or B_BAD_VALUE if the family is not AF_INET6. */
 status_t
 BNetworkAddress::SetAddress(const in6_addr& inet6Address)
 {
@@ -514,6 +603,7 @@ BNetworkAddress::SetAddress(const in6_addr& inet6Address)
 }
 
 
+/** @brief Replaces the port number; safe for IPv4 and IPv6 addresses. */
 void
 BNetworkAddress::SetPort(uint16 port)
 {
@@ -532,6 +622,9 @@ BNetworkAddress::SetPort(uint16 port)
 }
 
 
+/** @brief Sets the address to a link-layer (MAC) address.
+ *  @param address Byte array containing the hardware address.
+ *  @param length  Length of the hardware address in bytes. */
 void
 BNetworkAddress::SetToLinkLevel(const uint8* address, size_t length)
 {
@@ -550,6 +643,7 @@ BNetworkAddress::SetToLinkLevel(const uint8* address, size_t length)
 }
 
 
+/** @brief Sets the address to an interface name reference in the link layer. */
 void
 BNetworkAddress::SetToLinkLevel(const char* name)
 {
@@ -573,6 +667,7 @@ BNetworkAddress::SetToLinkLevel(const char* name)
 }
 
 
+/** @brief Sets a link-layer address that only identifies an interface by index. */
 void
 BNetworkAddress::SetToLinkLevel(uint32 index)
 {
@@ -587,6 +682,7 @@ BNetworkAddress::SetToLinkLevel(uint32 index)
 }
 
 
+/** @brief Updates the link-layer interface index. */
 void
 BNetworkAddress::SetLinkLevelIndex(uint32 index)
 {
@@ -595,6 +691,7 @@ BNetworkAddress::SetLinkLevelIndex(uint32 index)
 }
 
 
+/** @brief Updates the link-layer interface hardware type. */
 void
 BNetworkAddress::SetLinkLevelType(uint8 type)
 {
@@ -603,6 +700,7 @@ BNetworkAddress::SetLinkLevelType(uint8 type)
 }
 
 
+/** @brief Updates the link-layer Ethernet frame type (stored in network order). */
 void
 BNetworkAddress::SetLinkLevelFrameType(uint16 frameType)
 {
@@ -611,6 +709,7 @@ BNetworkAddress::SetLinkLevelFrameType(uint16 frameType)
 }
 
 
+/** @brief Returns the stored address family (AF_INET, AF_INET6, AF_LINK, ...). */
 int
 BNetworkAddress::Family() const
 {
@@ -618,6 +717,8 @@ BNetworkAddress::Family() const
 }
 
 
+/** @brief Returns the port number in host byte order for IP-family addresses.
+ *  @return The port, or 0 for non-IP addresses. */
 uint16
 BNetworkAddress::Port() const
 {
@@ -634,6 +735,7 @@ BNetworkAddress::Port() const
 }
 
 
+/** @brief Returns the length in bytes of the underlying sockaddr. */
 size_t
 BNetworkAddress::Length() const
 {
@@ -641,6 +743,7 @@ BNetworkAddress::Length() const
 }
 
 
+/** @brief Const read-only view of the underlying sockaddr. */
 const sockaddr&
 BNetworkAddress::SockAddr() const
 {
@@ -648,6 +751,7 @@ BNetworkAddress::SockAddr() const
 }
 
 
+/** @brief Mutable view of the underlying sockaddr. */
 sockaddr&
 BNetworkAddress::SockAddr()
 {
@@ -655,6 +759,8 @@ BNetworkAddress::SockAddr()
 }
 
 
+/** @brief Reports whether the address carries no usable information
+ *         (family AF_UNSPEC, wildcard address with port 0, etc). */
 bool
 BNetworkAddress::IsEmpty() const
 {
@@ -682,6 +788,7 @@ BNetworkAddress::IsEmpty() const
 }
 
 
+/** @brief Reports whether the address is the "any" wildcard (0.0.0.0 or ::). */
 bool
 BNetworkAddress::IsWildcard() const
 {
@@ -699,6 +806,7 @@ BNetworkAddress::IsWildcard() const
 }
 
 
+/** @brief Reports whether this is an IPv4 broadcast or IPv6 multicast address. */
 bool
 BNetworkAddress::IsBroadcast() const
 {
@@ -716,6 +824,7 @@ BNetworkAddress::IsBroadcast() const
 }
 
 
+/** @brief Reports whether the address is an IPv4 or IPv6 multicast address. */
 bool
 BNetworkAddress::IsMulticast() const
 {
@@ -732,6 +841,7 @@ BNetworkAddress::IsMulticast() const
 }
 
 
+/** @brief Reports whether the address is an IPv6 global-scope multicast address. */
 bool
 BNetworkAddress::IsMulticastGlobal() const
 {
@@ -745,6 +855,7 @@ BNetworkAddress::IsMulticastGlobal() const
 }
 
 
+/** @brief Reports whether the address is an IPv6 node-local multicast address. */
 bool
 BNetworkAddress::IsMulticastNodeLocal() const
 {
@@ -759,6 +870,7 @@ BNetworkAddress::IsMulticastNodeLocal() const
 }
 
 
+/** @brief Reports whether the address is an IPv6 link-local multicast address. */
 bool
 BNetworkAddress::IsMulticastLinkLocal() const
 {
@@ -787,6 +899,7 @@ BNetworkAddress::IsMulticastSiteLocal() const
 }
 
 
+/** @brief Reports whether the address is an IPv6 organisation-local multicast address. */
 bool
 BNetworkAddress::IsMulticastOrgLocal() const
 {
@@ -801,6 +914,8 @@ BNetworkAddress::IsMulticastOrgLocal() const
 }
 
 
+/** @brief Reports whether the address is IPv6 link-local (fe80::/10).
+ *  @note IPv4 link-local detection is not yet implemented. */
 bool
 BNetworkAddress::IsLinkLocal() const
 {
@@ -815,6 +930,7 @@ BNetworkAddress::IsLinkLocal() const
 }
 
 
+/** @brief Reports whether the address is IPv6 site-local. */
 bool
 BNetworkAddress::IsSiteLocal() const
 {
@@ -828,6 +944,8 @@ BNetworkAddress::IsSiteLocal() const
 }
 
 
+/** @brief Reports whether the address matches any address configured on a
+ *         local interface. Walks the system's interface list. */
 bool
 BNetworkAddress::IsLocal() const
 {
@@ -852,6 +970,8 @@ BNetworkAddress::IsLocal() const
 }
 
 
+/** @brief If this address is a netmask, returns the number of leading 1 bits.
+ *  @return Prefix length for IPv4/IPv6 netmasks, or B_NOT_SUPPORTED. */
 ssize_t
 BNetworkAddress::PrefixLength() const
 {
@@ -887,6 +1007,7 @@ BNetworkAddress::PrefixLength() const
 }
 
 
+/** @brief Returns the link-layer interface index stored in the address. */
 uint32
 BNetworkAddress::LinkLevelIndex() const
 {
@@ -894,6 +1015,7 @@ BNetworkAddress::LinkLevelIndex() const
 }
 
 
+/** @brief Returns the embedded interface name from a link-layer address. */
 BString
 BNetworkAddress::LinkLevelInterface() const
 {
@@ -908,6 +1030,7 @@ BNetworkAddress::LinkLevelInterface() const
 }
 
 
+/** @brief Returns the link-layer hardware type byte. */
 uint8
 BNetworkAddress::LinkLevelType() const
 {
@@ -915,6 +1038,7 @@ BNetworkAddress::LinkLevelType() const
 }
 
 
+/** @brief Returns the link-layer Ethernet frame type in host byte order. */
 uint16
 BNetworkAddress::LinkLevelFrameType() const
 {
@@ -922,6 +1046,7 @@ BNetworkAddress::LinkLevelFrameType() const
 }
 
 
+/** @brief Returns a pointer to the raw link-layer (MAC) bytes. */
 uint8*
 BNetworkAddress::LinkLevelAddress() const
 {
@@ -929,6 +1054,7 @@ BNetworkAddress::LinkLevelAddress() const
 }
 
 
+/** @brief Returns the length in bytes of the link-layer address. */
 size_t
 BNetworkAddress::LinkLevelAddressLength() const
 {
@@ -936,6 +1062,11 @@ BNetworkAddress::LinkLevelAddressLength() const
 }
 
 
+/** @brief Uses the kernel routing table to choose a local source address
+ *         appropriate for reaching the given destination. Only effective
+ *         when the current address is a wildcard.
+ *  @param destination Target address to route to.
+ *  @return B_OK on success, B_BAD_VALUE on family mismatch, or errno. */
 status_t
 BNetworkAddress::ResolveForDestination(const BNetworkAddress& destination)
 {
@@ -968,6 +1099,9 @@ BNetworkAddress::ResolveForDestination(const BNetworkAddress& destination)
 }
 
 
+/** @brief Replaces a wildcard address with an explicit address while
+ *         preserving the port. No-op if the address is not a wildcard.
+ *  @return B_OK on success, B_BAD_VALUE if the families differ. */
 status_t
 BNetworkAddress::ResolveTo(const BNetworkAddress& address)
 {
@@ -984,6 +1118,10 @@ BNetworkAddress::ResolveTo(const BNetworkAddress& address)
 }
 
 
+/** @brief Returns a human-readable string form of the address.
+ *  @param includePort If true, append the port number; IPv6 addresses are
+ *                     wrapped in square brackets.
+ *  @return Text representation, or an empty string for unsupported families. */
 BString
 BNetworkAddress::ToString(bool includePort) const
 {
@@ -1045,6 +1183,8 @@ BNetworkAddress::ToString(bool includePort) const
 }
 
 
+/** @brief Returns the hostname cached from SetTo(), if any.
+ *  @note Reverse DNS lookup is not yet implemented. */
 BString
 BNetworkAddress::HostName() const
 {
@@ -1053,6 +1193,8 @@ BNetworkAddress::HostName() const
 }
 
 
+/** @brief Returns the service name (or numeric port) for the stored port.
+ *  @note Service name lookup is not yet implemented — returns the number. */
 BString
 BNetworkAddress::ServiceName() const
 {
@@ -1063,6 +1205,10 @@ BNetworkAddress::ServiceName() const
 }
 
 
+/** @brief Tests structural equality with another address.
+ *  @param other       Address to compare against.
+ *  @param includePort If true, the port numbers must also match.
+ *  @return true if the addresses refer to the same host (and port). */
 bool
 BNetworkAddress::Equals(const BNetworkAddress& other, bool includePort) const
 {
@@ -1103,6 +1249,7 @@ BNetworkAddress::Equals(const BNetworkAddress& other, bool includePort) const
 // #pragma mark - BFlattenable implementation
 
 
+/** @brief BFlattenable contract: addresses have variable size, so returns false. */
 bool
 BNetworkAddress::IsFixedSize() const
 {
@@ -1110,6 +1257,7 @@ BNetworkAddress::IsFixedSize() const
 }
 
 
+/** @brief Returns the BFlattenable type code for network addresses. */
 type_code
 BNetworkAddress::TypeCode() const
 {
@@ -1117,6 +1265,7 @@ BNetworkAddress::TypeCode() const
 }
 
 
+/** @brief Returns the number of bytes needed to flatten this address. */
 ssize_t
 BNetworkAddress::FlattenedSize() const
 {
@@ -1124,6 +1273,10 @@ BNetworkAddress::FlattenedSize() const
 }
 
 
+/** @brief Flattens the address into a caller-provided buffer.
+ *  @param buffer Destination memory.
+ *  @param size   Capacity of @a buffer in bytes.
+ *  @return B_OK on success, or B_BAD_VALUE if @a size is too small. */
 status_t
 BNetworkAddress::Flatten(void* buffer, ssize_t size) const
 {
@@ -1135,6 +1288,12 @@ BNetworkAddress::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/** @brief Restores a flattened address from the given byte buffer.
+ *  @param code   Type code of the flattened data.
+ *  @param buffer Source bytes previously produced by Flatten().
+ *  @param size   Size of @a buffer in bytes.
+ *  @return B_OK on success, B_BAD_VALUE on malformed data, or B_BAD_TYPE
+ *          if the type code is not accepted. */
 status_t
 BNetworkAddress::Unflatten(type_code code, const void* buffer, ssize_t size)
 {
@@ -1157,6 +1316,7 @@ BNetworkAddress::Unflatten(type_code code, const void* buffer, ssize_t size)
 // #pragma mark - operators
 
 
+/** @brief Assignment operator. Performs a deep copy including hostname. */
 BNetworkAddress&
 BNetworkAddress::operator=(const BNetworkAddress& other)
 {
@@ -1168,6 +1328,7 @@ BNetworkAddress::operator=(const BNetworkAddress& other)
 }
 
 
+/** @brief Equality operator; comparison includes the port. */
 bool
 BNetworkAddress::operator==(const BNetworkAddress& other) const
 {
@@ -1175,6 +1336,7 @@ BNetworkAddress::operator==(const BNetworkAddress& other) const
 }
 
 
+/** @brief Inequality operator; comparison includes the port. */
 bool
 BNetworkAddress::operator!=(const BNetworkAddress& other) const
 {
@@ -1182,6 +1344,8 @@ BNetworkAddress::operator!=(const BNetworkAddress& other) const
 }
 
 
+/** @brief Strict-weak ordering for BNetworkAddress, making it usable as a
+ *         key in std::map and similar containers. */
 bool
 BNetworkAddress::operator<(const BNetworkAddress& other) const
 {

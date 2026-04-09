@@ -1,6 +1,40 @@
 /*
- * Copyright 2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Uuid.cpp
+ * @brief Implementation of BUuid, a RFC 4122 universally unique identifier.
+ *
+ * BUuid generates and represents 128-bit UUIDs. Random (version 4) UUIDs are
+ * produced by reading from /dev/urandom or /dev/random when available; a
+ * time- and address-seeded PRNG fallback is used when neither device can be
+ * opened. The variant and version fields are set in accordance with RFC 4122
+ * section 4.4.
+ *
+ * The class lives in the BPrivate namespace and is exported via a using
+ * declaration at file scope.
  */
 
 
@@ -15,10 +49,24 @@
 
 static const char* const kHexChars = "0123456789abcdef";
 
+/// Byte index within fValue at which the version nibble is stored (bits 4-7).
 static const size_t kVersionByteIndex = 6;
+/// Byte index within fValue at which the variant bits are stored (bits 6-7).
 static const size_t kVariantByteIndex = 8;
 
 
+/**
+ * @brief Seed the PRNG used by the random fallback path.
+ *
+ * Combines the current wall-clock time (seconds and nanoseconds) with a
+ * stack address to produce a seed. With address-space layout randomisation
+ * the stack address contributes a few extra bits of entropy.
+ *
+ * This function is called at most once (via a static local inside
+ * _SetToRandomFallback()) so the seed is established lazily on first use.
+ *
+ * @return Always returns \c true (used only as a static initialiser guard).
+ */
 static bool
 init_random_seed()
 {
@@ -39,12 +87,20 @@ init_random_seed()
 
 namespace BPrivate {
 
+/**
+ * @brief Construct a nil UUID (all 128 bits set to zero).
+ */
 BUuid::BUuid()
 {
 	memset(fValue, 0, sizeof(fValue));
 }
 
 
+/**
+ * @brief Copy-construct a BUuid from \a other.
+ *
+ * @param other The UUID whose value is to be copied.
+ */
 BUuid::BUuid(const BUuid& other)
 {
 	memcpy(fValue, other.fValue, sizeof(fValue));
@@ -56,6 +112,11 @@ BUuid::~BUuid()
 }
 
 
+/**
+ * @brief Test whether this UUID is the nil UUID (all bits zero).
+ *
+ * @return \c true if every byte of fValue is 0, \c false otherwise.
+ */
 bool
 BUuid::IsNil() const
 {
@@ -68,6 +129,17 @@ BUuid::IsNil() const
 }
 
 
+/**
+ * @brief Fill this UUID with random bytes and set the version 4 / variant 1
+ *        fields as required by RFC 4122 section 4.4.
+ *
+ * Random bytes are sourced from /dev/urandom (preferred), /dev/random, or the
+ * PRNG fallback (see _SetToDevRandom() and _SetToRandomFallback()). After
+ * filling the raw bytes the variant field (byte 8, bits 6-7) is set to
+ * binary 10 and the version field (byte 6, bits 4-7) is set to 0100 (4).
+ *
+ * @return A reference to this object, allowing chained assignment.
+ */
 BUuid&
 BUuid::SetToRandom()
 {
@@ -85,6 +157,14 @@ BUuid::SetToRandom()
 }
 
 
+/**
+ * @brief Format the UUID as the canonical lowercase hyphenated string.
+ *
+ * Produces a string in the form
+ * "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (8-4-4-4-12 hex digits).
+ *
+ * @return A BString containing the formatted UUID.
+ */
 BString
 BUuid::ToString() const
 {
@@ -99,6 +179,16 @@ BUuid::ToString() const
 }
 
 
+/**
+ * @brief Perform a bytewise comparison with another UUID.
+ *
+ * The comparison is equivalent to memcmp() on the 16-byte raw values,
+ * which yields a lexicographic ordering of the binary representation.
+ *
+ * @param other The UUID to compare against.
+ * @return A negative value if this < other, zero if equal, a positive value
+ *         if this > other.
+ */
 int
 BUuid::Compare(const BUuid& other) const
 {
@@ -106,6 +196,12 @@ BUuid::Compare(const BUuid& other) const
 }
 
 
+/**
+ * @brief Copy-assign \a other to this UUID.
+ *
+ * @param other The UUID whose value is to be copied.
+ * @return A reference to this object.
+ */
 BUuid&
 BUuid::operator=(const BUuid& other)
 {
@@ -115,6 +211,16 @@ BUuid::operator=(const BUuid& other)
 }
 
 
+/**
+ * @brief Attempt to fill the UUID bytes from a kernel random device.
+ *
+ * Tries /dev/urandom first, then /dev/random. Reads exactly sizeof(fValue)
+ * bytes. The version/variant fields are NOT set here; the caller
+ * (SetToRandom()) applies them after this function returns.
+ *
+ * @return \c true if exactly sizeof(fValue) bytes were read successfully,
+ *         \c false if neither device could be opened or the read was short.
+ */
 bool
 BUuid::_SetToDevRandom()
 {
@@ -134,6 +240,17 @@ BUuid::_SetToDevRandom()
 }
 
 
+/**
+ * @brief Fill the UUID bytes using the C standard PRNG as a fallback.
+ *
+ * Calls init_random_seed() exactly once (via a static local) to seed the
+ * PRNG, then calls random() four times to produce 16 bytes. Because
+ * random() returns only 31-bit values the high bit of each 32-bit word
+ * is zero; a few of these bits are redistributed to the bytes whose high
+ * bit would otherwise be overwritten by the version field in SetToRandom().
+ *
+ * This function is intended to be called only when _SetToDevRandom() fails.
+ */
 void
 BUuid::_SetToRandomFallback()
 {

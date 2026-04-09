@@ -1,7 +1,30 @@
 /*
- * Copyright 2010-2015, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2015, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file NetworkDevice.cpp
+ *  @brief BNetworkDevice implementation wrapping IEEE 802.11 ioctls for
+ *         scanning, joining, and introspecting wireless interfaces. */
 
 
 #include <NetworkDevice.h>
@@ -47,6 +70,12 @@ struct ie_data {
 // #pragma mark - private functions (code shared with net_server)
 
 
+/** @brief Issues an SIOCG80211 ioctl to read an 802.11 parameter.
+ *  @param name   Interface name (e.g. "wlan0").
+ *  @param type   ieee80211req i_type to query.
+ *  @param data   Destination buffer.
+ *  @param length In/out: buffer capacity / bytes actually returned.
+ *  @return B_OK on success, or an errno value. */
 static status_t
 get_80211(const char* name, int32 type, void* data, int32& length)
 {
@@ -70,6 +99,7 @@ get_80211(const char* name, int32 type, void* data, int32& length)
 }
 
 
+/** @brief Issues an SIOCS80211 ioctl to set an 802.11 parameter. */
 static status_t
 set_80211(const char* name, int32 type, void* data,
 	int32 length = 0, int32 value = 0)
@@ -93,6 +123,12 @@ set_80211(const char* name, int32 type, void* data,
 }
 
 
+/** @brief Generic ioctl helper used by interface requests.
+ *         Opens an AF_LINK socket, copies @a name into the request, and
+ *         performs the given ioctl operation.
+ *  @tparam T     An ifreq-compatible structure.
+ *  @param  name   Interface name to target.
+ *  @param  option Ioctl number (e.g. SIOCGIFMEDIA). */
 template<typename T> status_t
 do_request(T& request, const char* name, int option)
 {
@@ -109,6 +145,8 @@ do_request(T& request, const char* name, int option)
 }
 
 
+/** @brief Specialisation of do_request() for 802.11 requests, which use
+ *         an AF_INET socket and the ieee80211req name field. */
 template<> status_t
 do_request<ieee80211req>(ieee80211req& request, const char* name, int option)
 {
@@ -125,7 +163,8 @@ do_request<ieee80211req>(ieee80211req& request, const char* name, int option)
 }
 
 
-//! Read a 16 bit little endian value
+/** @brief Reads a 16-bit little-endian value from a byte stream and advances
+ *         the read cursor. */
 static uint16
 read_le16(uint8*& data, int32& length)
 {
@@ -136,7 +175,8 @@ read_le16(uint8*& data, int32& length)
 }
 
 
-//! Read a 32 bit little endian value
+/** @brief Reads a 32-bit little-endian value from a byte stream and advances
+ *         the read cursor. */
 static uint32
 read_le32(uint8*& data, int32& length)
 {
@@ -147,6 +187,8 @@ read_le32(uint8*& data, int32& length)
 }
 
 
+/** @brief Translates an RSN (Robust Security Network) cipher suite selector
+ *         into the corresponding B_NETWORK_CIPHER_* constant. */
 static uint32
 from_rsn_cipher(uint32 cipher)
 {
@@ -171,6 +213,8 @@ from_rsn_cipher(uint32 cipher)
 }
 
 
+/** @brief Translates an RSN authentication/key-management suite selector
+ *         into the corresponding B_KEY_MODE_* constant. */
 static uint32
 from_rsn_key_mode(uint32 mode)
 {
@@ -196,7 +240,8 @@ from_rsn_key_mode(uint32 mode)
 }
 
 
-//! Parse RSN/WPA information elements common data
+/** @brief Parses the cipher/key-management fields common to both RSN (WPA2)
+ *         and WPA (TKIP) information elements and populates @a network. */
 static void
 parse_ie_rsn_wpa(wireless_network& network, uint8*& data, int32& length)
 {
@@ -236,7 +281,8 @@ parse_ie_rsn_wpa(wireless_network& network, uint8*& data, int32& length)
 }
 
 
-//! Parse RSN (Robust Security Network) information element.
+/** @brief Parses a Robust Security Network (RSN/WPA2) information element
+ *         from a beacon/probe-response frame. */
 static void
 parse_ie_rsn(wireless_network& network, ie_data* ie)
 {
@@ -259,7 +305,8 @@ parse_ie_rsn(wireless_network& network, ie_data* ie)
 }
 
 
-//! Parse WPA information element.
+/** @brief Parses a legacy WPA (TKIP) vendor-specific information element.
+ *  @return true if the element looked like a WPA IE, false otherwise. */
 static bool
 parse_ie_wpa(wireless_network& network, ie_data* ie)
 {
@@ -288,7 +335,9 @@ parse_ie_wpa(wireless_network& network, ie_data* ie)
 }
 
 
-//! Parse information elements.
+/** @brief Walks an information-element blob, extracting SSID, RSN, and WPA
+ *         entries into @a network, and deriving the final authentication
+ *         mode from the combination of security fields found. */
 static void
 parse_ie(wireless_network& network, uint8* _ie, int32 ieLength)
 {
@@ -339,6 +388,7 @@ parse_ie(wireless_network& network, uint8* _ie, int32 ieLength)
 }
 
 
+/** @brief Parses the information elements attached to a station info record. */
 static void
 parse_ie(wireless_network& network, struct ieee80211req_sta_info& info)
 {
@@ -346,6 +396,7 @@ parse_ie(wireless_network& network, struct ieee80211req_sta_info& info)
 }
 
 
+/** @brief Parses the information elements attached to a scan result record. */
 static void
 parse_ie(wireless_network& network, struct ieee80211req_scan_result& result)
 {
@@ -354,6 +405,8 @@ parse_ie(wireless_network& network, struct ieee80211req_scan_result& result)
 }
 
 
+/** @brief Extracts just the SSID string from an IE blob.
+ *  @return true if an SSID element was found, false otherwise. */
 static bool
 get_ssid_from_ie(char* name, uint8* _ie, int32 ieLength)
 {
@@ -373,6 +426,7 @@ get_ssid_from_ie(char* name, uint8* _ie, int32 ieLength)
 }
 
 
+/** @brief Convenience overload extracting the SSID from a station info. */
 static bool
 get_ssid_from_ie(char* name, struct ieee80211req_sta_info& info)
 {
@@ -381,6 +435,7 @@ get_ssid_from_ie(char* name, struct ieee80211req_sta_info& info)
 }
 
 
+/** @brief Populates a wireless_network from a kernel station info entry. */
 static void
 fill_wireless_network(wireless_network& network,
 	struct ieee80211req_sta_info& info)
@@ -402,6 +457,7 @@ fill_wireless_network(wireless_network& network,
 }
 
 
+/** @brief Populates a wireless_network from a scan result entry. */
 static void
 fill_wireless_network(wireless_network& network, const char* networkName,
 	struct ieee80211req_scan_result& result)
@@ -423,6 +479,13 @@ fill_wireless_network(wireless_network& network, const char* networkName,
 }
 
 
+/** @brief Retrieves all scan results from @a device and allocates a
+ *         contiguous array of wireless_network structs.
+ *  @param device    Interface name to query.
+ *  @param networks  On success, set to a new[] allocated array owned by the
+ *                   caller. Must be NULL on entry.
+ *  @param count     On success, the number of entries in @a networks.
+ *  @return B_OK on success, or an error code. */
 static status_t
 get_scan_results(const char* device, wireless_network*& networks, uint32& count)
 {
@@ -476,6 +539,9 @@ get_scan_results(const char* device, wireless_network*& networks, uint32& count)
 }
 
 
+/** @brief Retrieves a single scan result matching @a index, BSSID @a address,
+ *         or SSID @a name. At least one selector should be provided.
+ *  @return B_OK on match, or B_ENTRY_NOT_FOUND if no matching AP was seen. */
 static status_t
 get_scan_result(const char* device, wireless_network& network, uint32 index,
 	const BNetworkAddress* address, const char* name)
@@ -527,6 +593,8 @@ get_scan_result(const char* device, wireless_network& network, uint32 index,
 }
 
 
+/** @brief Retrieves information about an already-associated station
+ *         (as opposed to a scan result) from the driver. */
 static status_t
 get_station(const char* device, wireless_network& network, uint32 index,
 	const BNetworkAddress* address, const char* name)
@@ -578,6 +646,8 @@ get_station(const char* device, wireless_network& network, uint32 index,
 }
 
 
+/** @brief Tries get_station() first, then falls back to get_scan_result()
+ *         if the station is not currently associated. */
 static status_t
 get_network(const char* device, wireless_network& network, uint32 index,
 	const BNetworkAddress* address, const char* name)
@@ -596,23 +666,27 @@ get_network(const char* device, wireless_network& network, uint32 index,
 // #pragma mark -
 
 
+/** @brief Default constructor. Builds an unbound device handle. */
 BNetworkDevice::BNetworkDevice()
 {
 	Unset();
 }
 
 
+/** @brief Constructs a device handle bound to the interface named @a name. */
 BNetworkDevice::BNetworkDevice(const char* name)
 {
 	SetTo(name);
 }
 
 
+/** @brief Destructor. */
 BNetworkDevice::~BNetworkDevice()
 {
 }
 
 
+/** @brief Clears the bound interface name. */
 void
 BNetworkDevice::Unset()
 {
@@ -620,6 +694,7 @@ BNetworkDevice::Unset()
 }
 
 
+/** @brief Binds this device handle to a specific interface name. */
 void
 BNetworkDevice::SetTo(const char* name)
 {
@@ -627,6 +702,7 @@ BNetworkDevice::SetTo(const char* name)
 }
 
 
+/** @brief Returns the interface name bound to this device. */
 const char*
 BNetworkDevice::Name() const
 {
@@ -634,6 +710,7 @@ BNetworkDevice::Name() const
 }
 
 
+/** @brief Reports whether the interface exists (SIOCGIFINDEX succeeds). */
 bool
 BNetworkDevice::Exists() const
 {
@@ -642,6 +719,7 @@ BNetworkDevice::Exists() const
 }
 
 
+/** @brief Returns the numeric interface index, or 0 if the interface is gone. */
 uint32
 BNetworkDevice::Index() const
 {
@@ -653,6 +731,7 @@ BNetworkDevice::Index() const
 }
 
 
+/** @brief Returns the interface flag bitmask (IFF_UP, IFF_BROADCAST, ...). */
 uint32
 BNetworkDevice::Flags() const
 {
@@ -664,6 +743,7 @@ BNetworkDevice::Flags() const
 }
 
 
+/** @brief Reports whether the link is physically up (IFF_LINK is set). */
 bool
 BNetworkDevice::HasLink() const
 {
@@ -671,6 +751,7 @@ BNetworkDevice::HasLink() const
 }
 
 
+/** @brief Returns the current IFM_* media type/subtype combination. */
 int32
 BNetworkDevice::Media() const
 {
@@ -682,6 +763,7 @@ BNetworkDevice::Media() const
 }
 
 
+/** @brief Forces the interface to a specific media/link mode via SIOCSIFMEDIA. */
 status_t
 BNetworkDevice::SetMedia(int32 media)
 {
@@ -691,6 +773,7 @@ BNetworkDevice::SetMedia(int32 media)
 }
 
 
+/** @brief Retrieves the device's hardware (MAC) address. */
 status_t
 BNetworkDevice::GetHardwareAddress(BNetworkAddress& address)
 {
@@ -704,6 +787,7 @@ BNetworkDevice::GetHardwareAddress(BNetworkAddress& address)
 }
 
 
+/** @brief Reports whether the underlying media is Ethernet. */
 bool
 BNetworkDevice::IsEthernet()
 {
@@ -711,6 +795,7 @@ BNetworkDevice::IsEthernet()
 }
 
 
+/** @brief Reports whether the underlying media is IEEE 802.11 (Wi-Fi). */
 bool
 BNetworkDevice::IsWireless()
 {
@@ -718,6 +803,8 @@ BNetworkDevice::IsWireless()
 }
 
 
+/** @brief Dispatches a driver-specific ioctl to either the Ethernet or
+ *         802.11 ioctl family based on the interface media type. */
 status_t
 BNetworkDevice::Control(int option, void* request)
 {
@@ -736,6 +823,12 @@ BNetworkDevice::Control(int option, void* request)
 }
 
 
+/** @brief Initiates a Wi-Fi scan on this device.
+ *         Optionally waits for the scan to complete by subscribing to
+ *         B_WATCH_NETWORK_WLAN_CHANGES notifications.
+ *  @param wait        If true, block until the scan completes.
+ *  @param forceRescan If true, flush any cached scan results first.
+ *  @return B_OK on success, or an errno/status code. */
 status_t
 BNetworkDevice::Scan(bool wait, bool forceRescan)
 {
@@ -829,6 +922,10 @@ BNetworkDevice::Scan(bool wait, bool forceRescan)
 }
 
 
+/** @brief Returns the list of Wi-Fi networks currently visible to this device.
+ *  @param networks On success, set to a caller-owned new[] array.
+ *  @param count    On success, the number of entries in @a networks.
+ *  @return B_OK on success, or an error code. */
 status_t
 BNetworkDevice::GetNetworks(wireless_network*& networks, uint32& count)
 {
@@ -836,6 +933,8 @@ BNetworkDevice::GetNetworks(wireless_network*& networks, uint32& count)
 }
 
 
+/** @brief Looks up a specific Wi-Fi network by SSID.
+ *  @return B_OK on success, or B_ENTRY_NOT_FOUND if no such SSID was seen. */
 status_t
 BNetworkDevice::GetNetwork(const char* name, wireless_network& network)
 {
@@ -846,6 +945,7 @@ BNetworkDevice::GetNetwork(const char* name, wireless_network& network)
 }
 
 
+/** @brief Looks up a specific Wi-Fi network by BSSID (link-level address). */
 status_t
 BNetworkDevice::GetNetwork(const BNetworkAddress& address,
 	wireless_network& network)
@@ -857,6 +957,9 @@ BNetworkDevice::GetNetwork(const BNetworkAddress& address,
 }
 
 
+/** @brief Asks net_server to associate this device with @a name.
+ *  @param name     SSID of the target network.
+ *  @param password Passphrase for WPA/WPA2 networks (may be NULL). */
 status_t
 BNetworkDevice::JoinNetwork(const char* name, const char* password)
 {
@@ -885,6 +988,7 @@ BNetworkDevice::JoinNetwork(const char* name, const char* password)
 }
 
 
+/** @brief Convenience overload joining a network described by a wireless_network. */
 status_t
 BNetworkDevice::JoinNetwork(const wireless_network& network,
 	const char* password)
@@ -893,6 +997,7 @@ BNetworkDevice::JoinNetwork(const wireless_network& network,
 }
 
 
+/** @brief Joins the access point identified by its BSSID. */
 status_t
 BNetworkDevice::JoinNetwork(const BNetworkAddress& address,
 	const char* password)
@@ -924,6 +1029,7 @@ BNetworkDevice::JoinNetwork(const BNetworkAddress& address,
 }
 
 
+/** @brief Asks net_server to disassociate this device from SSID @a name. */
 status_t
 BNetworkDevice::LeaveNetwork(const char* name)
 {
@@ -946,6 +1052,7 @@ BNetworkDevice::LeaveNetwork(const char* name)
 }
 
 
+/** @brief Convenience overload leaving a wireless_network by BSSID. */
 status_t
 BNetworkDevice::LeaveNetwork(const wireless_network& network)
 {
@@ -953,6 +1060,7 @@ BNetworkDevice::LeaveNetwork(const wireless_network& network)
 }
 
 
+/** @brief Asks net_server to disassociate this device from the given BSSID. */
 status_t
 BNetworkDevice::LeaveNetwork(const BNetworkAddress& address)
 {
@@ -977,6 +1085,11 @@ BNetworkDevice::LeaveNetwork(const BNetworkAddress& address)
 }
 
 
+/** @brief Iterates over the set of Wi-Fi networks this device is currently
+ *         associated with and returns detailed network info for each.
+ *  @param cookie  In/out iterator cursor; start at 0.
+ *  @param network On success, populated with the current network details.
+ *  @return B_OK on success, B_ENTRY_NOT_FOUND when iteration is done. */
 status_t
 BNetworkDevice::GetNextAssociatedNetwork(uint32& cookie,
 	wireless_network& network)
@@ -990,6 +1103,8 @@ BNetworkDevice::GetNextAssociatedNetwork(uint32& cookie,
 }
 
 
+/** @brief Iterates over associated-network BSSIDs.
+ *  @note Currently only a single associated network is supported. */
 status_t
 BNetworkDevice::GetNextAssociatedNetwork(uint32& cookie,
 	BNetworkAddress& address)
