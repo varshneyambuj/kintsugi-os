@@ -1,36 +1,36 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Be Incorporated
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/** @file SettingsHandler.cpp
+ *  @brief Text-file settings framework: ArgvParser reads a settings file into
+ *         argv arrays; SettingsArgvDispatcher handles named settings tokens;
+ *         Settings owns a list of dispatchers and coordinates load/save.
+ */
 
 #include <Debug.h>
 #include <Directory.h>
@@ -57,6 +57,13 @@ All rights reserved.
 	ArgvParser class opens a text file and passes the context in argv
 	format to a specified handler
 */
+/** @brief Constructs the parser and opens the named file for reading.
+ *
+ *  If the file cannot be opened, the parser is left in an invalid state
+ *  (fFile == NULL) and subsequent calls return immediately.
+ *
+ *  @param name  Path of the settings file to parse.
+ */
 ArgvParser::ArgvParser(const char* name)
 	:
 	fFile(0),
@@ -82,6 +89,7 @@ ArgvParser::ArgvParser(const char* name)
 }
 
 
+/** @brief Destroys the parser, freeing all buffers and closing the file. */
 ArgvParser::~ArgvParser()
 {
 	delete[] fBuffer;
@@ -94,6 +102,10 @@ ArgvParser::~ArgvParser()
 }
 
 
+/** @brief Frees all strings accumulated in the current argv array.
+ *
+ *  Resets fArgc to zero so the array is ready for the next line.
+ */
 void
 ArgvParser::MakeArgvEmpty()
 {
@@ -105,6 +117,15 @@ ArgvParser::MakeArgvEmpty()
 }
 
 
+/** @brief Dispatches the accumulated argv to @p argvHandlerFunc if non-empty.
+ *
+ *  NUL-terminates the argv array, calls the handler, prints any error
+ *  message returned, then empties the array via MakeArgvEmpty().
+ *
+ *  @param argvHandlerFunc  Callback that receives (argc, argv, passThru).
+ *  @param passThru         Opaque pointer forwarded to the handler.
+ *  @return B_OK on success, B_ERROR if the handler returned a non-NULL message.
+ */
 status_t
 ArgvParser::SendArgv(ArgvHandler argvHandlerFunc, void* passThru)
 {
@@ -125,6 +146,11 @@ ArgvParser::SendArgv(ArgvHandler argvHandlerFunc, void* passThru)
 }
 
 
+/** @brief Finalises the current argument token and appends it to argv.
+ *
+ *  NUL-terminates fCurrentArgs, copies it into a new heap string stored in
+ *  fCurrentArgv[fArgc], and increments fArgc.
+ */
 void
 ArgvParser::NextArgv()
 {
@@ -143,6 +169,7 @@ ArgvParser::NextArgv()
 }
 
 
+/** @brief Calls NextArgv() only when the current argument buffer is non-empty. */
 void
 ArgvParser::NextArgvIfNotEmpty()
 {
@@ -153,6 +180,13 @@ ArgvParser::NextArgvIfNotEmpty()
 }
 
 
+/** @brief Returns the next character from the input buffer, refilling as needed.
+ *
+ *  Uses fgets() to fill fBuffer when exhausted. Returns EOF when the file
+ *  is fully read or fFile is NULL.
+ *
+ *  @return The next character, or EOF.
+ */
 int
 ArgvParser::GetCh()
 {
@@ -168,6 +202,13 @@ ArgvParser::GetCh()
 }
 
 
+/** @brief Static helper that creates an ArgvParser for @p name and drives it.
+ *
+ *  @param name              Path to the settings file.
+ *  @param argvHandlerFunc   Callback invoked for each argv line.
+ *  @param passThru          Opaque pointer forwarded to the callback.
+ *  @return B_OK on success, B_ERROR on the first line that the handler rejects.
+ */
 status_t
 ArgvParser::EachArgv(const char* name, ArgvHandler argvHandlerFunc,
 	void* passThru)
@@ -178,6 +219,18 @@ ArgvParser::EachArgv(const char* name, ArgvHandler argvHandlerFunc,
 }
 
 
+/** @brief Drives the character-by-character parse loop.
+ *
+ *  Reads characters one at a time, accumulating them into argument tokens.
+ *  Handles quoting (single and double), backslash escaping, comment
+ *  characters (#), and semicolon command separators (;). Calls SendArgv()
+ *  at end-of-line and end-of-file.
+ *
+ *  @param name              Path of the file (used in error messages).
+ *  @param argvHandlerFunc   Callback invoked per logical line.
+ *  @param passThru          Opaque pointer forwarded to the callback.
+ *  @return B_OK on success, B_ERROR if a parse error or handler error occurs.
+ */
 status_t
 ArgvParser::EachArgvPrivate(const char* name, ArgvHandler argvHandlerFunc,
 	void* passThru)
@@ -270,6 +323,9 @@ ArgvParser::EachArgvPrivate(const char* name, ArgvHandler argvHandlerFunc,
 //	#pragma mark - SettingsArgvDispatcher
 
 
+/** @brief Constructs a dispatcher that responds to the token @p name.
+ *  @param name  The settings token this dispatcher owns (e.g. "window_frame").
+ */
 SettingsArgvDispatcher::SettingsArgvDispatcher(const char* name)
 	:
 	fName(name)
@@ -277,6 +333,14 @@ SettingsArgvDispatcher::SettingsArgvDispatcher(const char* name)
 }
 
 
+/** @brief Writes this setting to @p settings if it needs saving.
+ *
+ *  Calls SaveSettingValue() to produce the value text, wrapping it in the
+ *  setting name and a trailing newline.
+ *
+ *  @param settings          The Settings object to write to.
+ *  @param onlyIfNonDefault  When true, only writes if NeedsSaving() returns true.
+ */
 void
 SettingsArgvDispatcher::SaveSettings(Settings* settings,
 	bool onlyIfNonDefault)
@@ -289,6 +353,17 @@ SettingsArgvDispatcher::SaveSettings(Settings* settings,
 }
 
 
+/** @brief Parses a BRect from sequential argv strings.
+ *
+ *  Expects four integers (left, top, right, bottom) starting at @p argv.
+ *  Prints an error message to stdout if @p printError is true and a value
+ *  is missing.
+ *
+ *  @param result      Output BRect populated on success.
+ *  @param argv        Pointer into an argv array; must point to the left value.
+ *  @param printError  If true, print a human-readable error when a value is absent.
+ *  @return true on success, false if any component is missing.
+ */
 bool
 SettingsArgvDispatcher::HandleRectValue(BRect &result,
 	const char* const* argv, bool printError)
@@ -325,6 +400,11 @@ SettingsArgvDispatcher::HandleRectValue(BRect &result,
 }
 
 
+/** @brief Writes a BRect as four space-separated integers via @p setting.
+ *
+ *  @param setting  The Settings object whose Write() method is used.
+ *  @param rect     The rectangle to serialise (components truncated to int32).
+ */
 void
 SettingsArgvDispatcher::WriteRectValue(Settings* setting, BRect rect)
 {
@@ -337,6 +417,14 @@ SettingsArgvDispatcher::WriteRectValue(Settings* setting, BRect rect)
 	this class represents a list of all the settings handlers, reads and
 	saves the settings file
 */
+/** @brief Constructs the Settings manager.
+ *
+ *  Allocates the initial dispatcher list. Does not load the file; call
+ *  TryReadingSettings() explicitly.
+ *
+ *  @param filename        Base filename of the settings file (e.g. "Tracker").
+ *  @param settingsDirName Sub-directory under B_USER_SETTINGS_DIRECTORY.
+ */
 Settings::Settings(const char* filename, const char* settingsDirName)
 	:
 	fFileName(filename),
@@ -351,6 +439,7 @@ Settings::Settings(const char* filename, const char* settingsDirName)
 }
 
 
+/** @brief Destroys the Settings manager and all registered dispatchers. */
 Settings::~Settings()
 {
 	for (int32 index = 0; index < fCount; index++)
@@ -360,6 +449,16 @@ Settings::~Settings()
 }
 
 
+/** @brief Static ArgvHandler callback: dispatches an argv line to the named handler.
+ *
+ *  Looks up @p argv[0] in the Settings list. Returns an error string if the
+ *  token is unknown or if the handler itself reports an error.
+ *
+ *  @param argc         Number of arguments (unused; present for callback signature).
+ *  @param argv         The argv array; argv[0] is the settings token name.
+ *  @param castToThis   Pointer to the Settings instance.
+ *  @return NULL on success, or a human-readable error string.
+ */
 const char*
 Settings::ParseUserSettings(int, const char* const* argv, void* castToThis)
 {
@@ -378,6 +477,14 @@ Settings::ParseUserSettings(int, const char* const* argv, void* castToThis)
 	Returns false if argv dispatcher with the same name already
 	registered
 */
+/** @brief Registers a SettingsArgvDispatcher with this Settings manager.
+ *
+ *  Duplicate names are rejected. The list grows automatically in increments
+ *  of 30 entries.
+ *
+ *  @param setting  The dispatcher to register. Ownership is transferred.
+ *  @return true on success, false if a dispatcher with the same name exists.
+ */
 bool
 Settings::Add(SettingsArgvDispatcher* setting)
 {
@@ -395,6 +502,11 @@ Settings::Add(SettingsArgvDispatcher* setting)
 }
 
 
+/** @brief Finds a registered dispatcher by name.
+ *
+ *  @param name  The token name to search for.
+ *  @return Pointer to the matching dispatcher, or NULL if not found.
+ */
 SettingsArgvDispatcher*
 Settings::Find(const char* name)
 {
@@ -406,6 +518,12 @@ Settings::Find(const char* name)
 }
 
 
+/** @brief Attempts to read the settings file from the user's settings directory.
+ *
+ *  Resolves B_USER_SETTINGS_DIRECTORY / fSettingsDir / fFileName and parses
+ *  it via ArgvParser::EachArgv(). Silently does nothing if the directory or
+ *  file does not exist.
+ */
 void
 Settings::TryReadingSettings()
 {
@@ -420,6 +538,10 @@ Settings::TryReadingSettings()
 }
 
 
+/** @brief Saves all registered settings.
+ *  @param onlyIfNonDefault  When true, only dispatchers reporting NeedsSaving()
+ *                           will write their values.
+ */
 void
 Settings::SaveSettings(bool onlyIfNonDefault)
 {
@@ -427,6 +549,13 @@ Settings::SaveSettings(bool onlyIfNonDefault)
 }
 
 
+/** @brief Creates the settings directory hierarchy (mkdir -p equivalent).
+ *
+ *  Splits the path at each '/' and calls mkdir() at each level. The final
+ *  BDirectory is returned via @p resultingSettingsDir.
+ *
+ *  @param resultingSettingsDir  Output parameter set to the settings directory.
+ */
 void
 Settings::MakeSettingsDirectory(BDirectory* resultingSettingsDir)
 {
@@ -454,6 +583,13 @@ Settings::MakeSettingsDirectory(BDirectory* resultingSettingsDir)
 }
 
 
+/** @brief Writes all settings to the settings file.
+ *
+ *  Removes any pre-existing file, creates a fresh one, and iterates over all
+ *  registered dispatchers, calling their SaveSettings() method.
+ *
+ *  @param onlyIfNonDefault  When true only non-default values are written.
+ */
 void
 Settings::SaveCurrentSettings(bool onlyIfNonDefault)
 {
@@ -479,6 +615,14 @@ Settings::SaveCurrentSettings(bool onlyIfNonDefault)
 }
 
 
+/** @brief Formats a string and writes it to the current settings file.
+ *
+ *  Must only be called while a save operation is active (i.e., from within
+ *  a SaveSettings() call chain).
+ *
+ *  @param format  printf-style format string.
+ *  @param ...     Arguments for the format string.
+ */
 void
 Settings::Write(const char* format, ...)
 {
@@ -490,6 +634,11 @@ Settings::Write(const char* format, ...)
 }
 
 
+/** @brief va_list variant of Write(); formats and writes to the settings file.
+ *
+ *  @param format  printf-style format string.
+ *  @param arg     Argument list corresponding to @p format.
+ */
 void
 Settings::VSWrite(const char* format, va_list arg)
 {

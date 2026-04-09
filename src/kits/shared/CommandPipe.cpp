@@ -1,10 +1,34 @@
 /*
- * Copyright 2007 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ramshankar, v.ramshankar@gmail.com
- *		Stephan Aßmus <superstippi@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ramshankar, v.ramshankar@gmail.com
+ *       Stephan Aßmus <superstippi@gmx.de>
+ */
+
+/** @file CommandPipe.cpp
+ *  @brief Implementation of BCommandPipe, a utility class for executing
+ *         shell commands and capturing their stdout/stderr output.
  */
 
 //! BCommandPipe class to handle reading shell output
@@ -20,6 +44,9 @@
 #include <String.h>
 
 
+/** @brief Default constructor. Initializes the pipe with no arguments and
+ *         closed stdout/stderr descriptors.
+ */
 BCommandPipe::BCommandPipe()
 	:
 	fStdOutOpen(false),
@@ -28,12 +55,22 @@ BCommandPipe::BCommandPipe()
 }
 
 
+/** @brief Destructor. Flushes all queued arguments and closes any open
+ *         pipe file descriptors.
+ */
 BCommandPipe::~BCommandPipe()
 {
 	FlushArgs();
 }
 
 
+/** @brief Appends a command-line argument to the internal argument list.
+ *
+ *  @param arg  A null-terminated string representing the argument to add.
+ *              Must not be NULL or empty.
+ *  @return B_OK on success, B_BAD_VALUE if @p arg is NULL or empty,
+ *          or B_NO_MEMORY if memory allocation fails.
+ */
 status_t
 BCommandPipe::AddArg(const char* arg)
 {
@@ -53,6 +90,9 @@ BCommandPipe::AddArg(const char* arg)
 }
 
 
+/** @brief Prints all queued arguments to standard output, separated by
+ *         spaces, followed by a newline.
+ */
 void
 BCommandPipe::PrintToStream() const
 {
@@ -63,6 +103,9 @@ BCommandPipe::PrintToStream() const
 }
 
 
+/** @brief Clears all queued arguments and closes any open pipe descriptors.
+ *         Frees all memory associated with stored argument strings.
+ */
 void
 BCommandPipe::FlushArgs()
 {
@@ -75,6 +118,9 @@ BCommandPipe::FlushArgs()
 }
 
 
+/** @brief Closes any open stdout/stderr pipe read-end file descriptors that
+ *         were opened by a previous PipeInto() call.
+ */
 void
 BCommandPipe::Close()
 {
@@ -90,6 +136,15 @@ BCommandPipe::Close()
 }
 
 
+/** @brief Builds a NULL-terminated argv array from the current argument list.
+ *
+ *  The caller is responsible for freeing the returned array with free().
+ *  The strings pointed to by the array elements are owned by this object
+ *  and must not be freed by the caller.
+ *
+ *  @param argc  Output parameter set to the number of arguments.
+ *  @return A heap-allocated, NULL-terminated array of C-string pointers.
+ */
 const char**
 BCommandPipe::Argv(int32& argc) const
 {
@@ -108,6 +163,17 @@ BCommandPipe::Argv(int32& argc) const
 // #pragma mark -
 
 
+/** @brief Launches the command with both stdout and stderr merged into a
+ *         single pipe descriptor pair.
+ *
+ *  Both STDOUT_FILENO and STDERR_FILENO are redirected to the write end of
+ *  the same pipe (@p stdOutAndErr[1]) before spawning the image.
+ *
+ *  @param stdOutAndErr  A two-element array that receives the pipe's read
+ *                       ([0]) and write ([1]) file descriptors.
+ *  @return The thread_id of the spawned application thread, or a negative
+ *          error code on failure.
+ */
 thread_id
 BCommandPipe::PipeAll(int* stdOutAndErr) const
 {
@@ -143,6 +209,14 @@ BCommandPipe::PipeAll(int* stdOutAndErr) const
 }
 
 
+/** @brief Launches the command with stdout and stderr redirected into two
+ *         separate pipe descriptor pairs.
+ *
+ *  @param stdOut  A two-element array receiving the stdout pipe fds.
+ *  @param stdErr  A two-element array receiving the stderr pipe fds.
+ *  @return The thread_id of the spawned application thread, or a negative
+ *          error code on failure.
+ */
 thread_id
 BCommandPipe::Pipe(int* stdOut, int* stdErr) const
 {
@@ -176,6 +250,12 @@ BCommandPipe::Pipe(int* stdOut, int* stdErr) const
 }
 
 
+/** @brief Launches the command redirecting only stdout; stderr is discarded.
+ *
+ *  @param stdOut  A two-element array receiving the stdout pipe fds.
+ *  @return The thread_id of the spawned application thread, or a negative
+ *          error code on failure.
+ */
 thread_id
 BCommandPipe::Pipe(int* stdOut) const
 {
@@ -188,6 +268,19 @@ BCommandPipe::Pipe(int* stdOut) const
 }
 
 
+/** @brief Launches the command and returns FILE* streams for both stdout
+ *         and stderr.
+ *
+ *  Resumes the spawned thread immediately. The caller is responsible for
+ *  closing the returned FILE* handles when done reading.
+ *
+ *  @param _out  Output parameter set to a readable FILE* for the command's
+ *               stdout.
+ *  @param _err  Output parameter set to a readable FILE* for the command's
+ *               stderr.
+ *  @return The thread_id of the spawned application thread, or a negative
+ *          error code on failure.
+ */
 thread_id
 BCommandPipe::PipeInto(FILE** _out, FILE** _err)
 {
@@ -210,6 +303,17 @@ BCommandPipe::PipeInto(FILE** _out, FILE** _err)
 }
 
 
+/** @brief Launches the command and returns a single FILE* stream containing
+ *         both stdout and stderr merged together.
+ *
+ *  Resumes the spawned thread immediately. The caller is responsible for
+ *  closing the returned FILE* handle when done reading.
+ *
+ *  @param _outAndErr  Output parameter set to a readable FILE* carrying
+ *                     both stdout and stderr.
+ *  @return The thread_id of the spawned application thread, or a negative
+ *          error code on failure.
+ */
 thread_id
 BCommandPipe::PipeInto(FILE** _outAndErr)
 {
@@ -230,6 +334,11 @@ BCommandPipe::PipeInto(FILE** _outAndErr)
 // #pragma mark -
 
 
+/** @brief Executes the command synchronously, discarding all output.
+ *
+ *  Behaves similarly to system() but uses explicit pipes and
+ *  wait_for_thread(). Blocks until the command completes.
+ */
 void
 BCommandPipe::Run()
 {
@@ -246,6 +355,11 @@ BCommandPipe::Run()
 }
 
 
+/** @brief Executes the command asynchronously, discarding all output.
+ *
+ *  Behaves similarly to system() but uses explicit pipes without waiting
+ *  for the thread to complete.
+ */
 void
 BCommandPipe::RunAsync()
 {
@@ -261,6 +375,19 @@ BCommandPipe::RunAsync()
 // #pragma mark -
 
 
+/** @brief Reads lines from @p file and dispatches each complete line to
+ *         @p lineReader.
+ *
+ *  Reads until EOF or until lineReader->IsCanceled() returns true.
+ *  Each newline-terminated line (including the newline) is passed to
+ *  lineReader->ReadLine().
+ *
+ *  @param file        A readable FILE* to read from. Must not be NULL.
+ *  @param lineReader  A LineReader callback object. Must not be NULL.
+ *  @return B_OK on success, B_BAD_VALUE if either argument is NULL,
+ *          B_CANCELED if the lineReader requested cancellation, or any
+ *          error code returned by lineReader->ReadLine().
+ */
 status_t
 BCommandPipe::ReadLines(FILE* file, LineReader* lineReader)
 {
@@ -294,6 +421,12 @@ BCommandPipe::ReadLines(FILE* file, LineReader* lineReader)
 }
 
 
+/** @brief Reads all lines from @p file and returns them concatenated as a
+ *         single BString.
+ *
+ *  @param file  A readable FILE* to read from.
+ *  @return A BString containing all output read from @p file.
+ */
 BString
 BCommandPipe::ReadLines(FILE* file)
 {
@@ -338,6 +471,11 @@ BCommandPipe::ReadLines(FILE* file)
 // #pragma mark -
 
 
+/** @brief Stream-insertion operator that appends a C-string argument.
+ *
+ *  @param arg  A null-terminated C-string to append to the argument list.
+ *  @return A reference to this object, enabling chaining.
+ */
 BCommandPipe&
 BCommandPipe::operator<<(const char* arg)
 {
@@ -346,6 +484,11 @@ BCommandPipe::operator<<(const char* arg)
 }
 
 
+/** @brief Stream-insertion operator that appends a BString argument.
+ *
+ *  @param arg  A BString whose content is appended to the argument list.
+ *  @return A reference to this object, enabling chaining.
+ */
 BCommandPipe&
 BCommandPipe::operator<<(const BString& arg)
 {
@@ -354,6 +497,13 @@ BCommandPipe::operator<<(const BString& arg)
 }
 
 
+/** @brief Stream-insertion operator that appends all arguments from another
+ *         BCommandPipe.
+ *
+ *  @param arg  Another BCommandPipe whose argument list is appended to this
+ *              object's argument list.
+ *  @return A reference to this object, enabling chaining.
+ */
 BCommandPipe&
 BCommandPipe::operator<<(const BCommandPipe& arg)
 {
@@ -365,4 +515,3 @@ BCommandPipe::operator<<(const BCommandPipe& arg)
 	free(argv);
 	return *this;
 }
-

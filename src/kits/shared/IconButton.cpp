@@ -1,10 +1,36 @@
 /*
- * Copyright 2006-2011, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Axel Dörfler, axeld@pinc-software.de.
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2011, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Axel Dörfler, axeld@pinc-software.de.
+ */
+
+/** @file IconButton.cpp
+ *  @brief Implements BIconButton, a BControl subclass that renders a bitmap
+ *         icon with hover, pressed, and disabled visual states, and supports
+ *         multiple icon-loading paths (resource ID, file path, BBitmap, MIME
+ *         type, and raw pixel data).
  */
 
 
@@ -42,6 +68,12 @@ enum {
 
 
 
+/** @brief Constructs a BIconButton.
+ *  @param name     Internal view name.
+ *  @param label    Optional text label passed to BControl.
+ *  @param message  The message sent when the button is activated.
+ *  @param target   Initial message target; updated when attached to a window.
+ */
 BIconButton::BIconButton(const char* name, const char* label,
 	BMessage* message, BHandler* target)
 	:
@@ -59,12 +91,16 @@ BIconButton::BIconButton(const char* name, const char* label,
 }
 
 
+/** @brief Destructor — deletes all derived bitmap variants. */
 BIconButton::~BIconButton()
 {
 	_DeleteBitmaps();
 }
 
 
+/** @brief Handles messages not consumed by mouse or focus events.
+ *  @param message  The incoming message.
+ */
 void
 BIconButton::MessageReceived(BMessage* message)
 {
@@ -76,6 +112,10 @@ BIconButton::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Adopts parent colors and sets the message target when attached.
+ *
+ *  Falls back to targeting the window if no explicit target was provided.
+ */
 void
 BIconButton::AttachedToWindow()
 {
@@ -90,6 +130,14 @@ BIconButton::AttachedToWindow()
 }
 
 
+/** @brief Draws the button border, background, and centered icon bitmap.
+ *
+ *  Selects the appropriate bitmap variant (normal, disabled, clicked) based
+ *  on the current state flags.  Draws the border and background only when
+ *  the pointer is inside or the button is being tracked or force-pressed.
+ *
+ *  @param updateRect  The rectangle that needs redrawing.
+ */
 void
 BIconButton::Draw(BRect updateRect)
 {
@@ -129,6 +177,10 @@ BIconButton::Draw(BRect updateRect)
 }
 
 
+/** @brief Returns whether the button border should be drawn.
+ *  @return True when the pointer is inside and the button is enabled,
+ *          when the button is being tracked, or when force-pressed.
+ */
 bool
 BIconButton::ShouldDrawBorder() const
 {
@@ -137,6 +189,12 @@ BIconButton::ShouldDrawBorder() const
 }
 
 
+/** @brief Draws the button frame using be_control_look.
+ *  @param frame            The frame rectangle (may be shrunk by the look).
+ *  @param updateRect       The dirty update rectangle.
+ *  @param backgroundColor  The background color for the frame.
+ *  @param flags            BControlLook flags (e.g. B_DISABLED, B_ACTIVATED).
+ */
 void
 BIconButton::DrawBorder(BRect& frame, const BRect& updateRect,
 	const rgb_color& backgroundColor, uint32 flags)
@@ -146,6 +204,12 @@ BIconButton::DrawBorder(BRect& frame, const BRect& updateRect,
 }
 
 
+/** @brief Draws the button background using be_control_look.
+ *  @param frame            The frame rectangle after border inset.
+ *  @param updateRect       The dirty update rectangle.
+ *  @param backgroundColor  The fill color.
+ *  @param flags            BControlLook flags.
+ */
 void
 BIconButton::DrawBackground(BRect& frame, const BRect& updateRect,
 	const rgb_color& backgroundColor, uint32 flags)
@@ -155,6 +219,9 @@ BIconButton::DrawBackground(BRect& frame, const BRect& updateRect,
 }
 
 
+/** @brief Handles mouse-down by marking the button as pressed and tracking.
+ *  @param where  The position of the click (view coordinates).
+ */
 void
 BIconButton::MouseDown(BPoint where)
 {
@@ -174,6 +241,9 @@ BIconButton::MouseDown(BPoint where)
 }
 
 
+/** @brief Handles mouse-up by invoking the button if the cursor is inside.
+ *  @param where  The position of the release (view coordinates).
+ */
 void
 BIconButton::MouseUp(BPoint where)
 {
@@ -191,6 +261,14 @@ BIconButton::MouseUp(BPoint where)
 }
 
 
+/** @brief Handles mouse movement to update inside/pressed state.
+ *
+ *  Also catches missed mouse-up events by checking the button state.
+ *
+ *  @param where    The current pointer position (view coordinates).
+ *  @param transit  Transit code (B_ENTERED_VIEW, B_INSIDE_VIEW, etc.).
+ *  @param message  Any drag message currently in flight, or NULL.
+ */
 void
 BIconButton::MouseMoved(BPoint where, uint32 transit, const BMessage* message)
 {
@@ -214,6 +292,10 @@ BIconButton::MouseMoved(BPoint where, uint32 transit, const BMessage* message)
 }
 
 
+/** @brief Computes the preferred (and minimum) display size of the button.
+ *  @param width   Output: preferred width in pixels.
+ *  @param height  Output: preferred height in pixels.
+ */
 void
 BIconButton::GetPreferredSize(float* width, float* height)
 {
@@ -247,6 +329,9 @@ BIconButton::GetPreferredSize(float* width, float* height)
 }
 
 
+/** @brief Returns the minimum size of the button.
+ *  @return A BSize equal to GetPreferredSize().
+ */
 BSize
 BIconButton::MinSize()
 {
@@ -256,6 +341,9 @@ BIconButton::MinSize()
 }
 
 
+/** @brief Returns the maximum size of the button, equal to its minimum size.
+ *  @return The result of MinSize().
+ */
 BSize
 BIconButton::MaxSize()
 {
@@ -263,6 +351,14 @@ BIconButton::MaxSize()
 }
 
 
+/** @brief Invokes the button's action, enriching the message with metadata.
+ *
+ *  Adds "be:when", "be:source", and "be:value" fields to a clone of the
+ *  message before invoking.
+ *
+ *  @param message  The message to send, or NULL to use the stored message.
+ *  @return Status code from BInvoker::Invoke().
+ */
 status_t
 BIconButton::Invoke(BMessage* message)
 {
@@ -279,6 +375,9 @@ BIconButton::Invoke(BMessage* message)
 }
 
 
+/** @brief Forces the button into a pressed or unpressed state programmatically.
+ *  @param pressed  True to lock the button in the pressed state.
+ */
 void
 BIconButton::SetPressed(bool pressed)
 {
@@ -286,6 +385,9 @@ BIconButton::SetPressed(bool pressed)
 }
 
 
+/** @brief Returns whether the button is currently force-pressed.
+ *  @return True if STATE_FORCE_PRESSED is set.
+ */
 bool
 BIconButton::IsPressed() const
 {
@@ -293,6 +395,13 @@ BIconButton::IsPressed() const
 }
 
 
+/** @brief Loads a vector icon from the application's resources by ID.
+ *
+ *  Rasterizes the HVIF data into a 32-pixel bitmap and calls SetIcon().
+ *
+ *  @param resourceID  The resource ID of the B_VECTOR_ICON_TYPE resource.
+ *  @return B_OK on success, or an error code (B_ERROR if resource not found).
+ */
 status_t
 BIconButton::SetIcon(int32 resourceID)
 {
@@ -326,6 +435,10 @@ BIconButton::SetIcon(int32 resourceID)
 }
 
 
+/** @brief Loads an icon bitmap from a file path (absolute or relative to the app).
+ *  @param pathToBitmap  Path string to the image file.
+ *  @return B_OK on success, B_BAD_VALUE if the path is NULL, or another error.
+ */
 status_t
 BIconButton::SetIcon(const char* pathToBitmap)
 {
@@ -377,6 +490,15 @@ BIconButton::SetIcon(const char* pathToBitmap)
 }
 
 
+/** @brief Sets the icon from an existing BBitmap, converting color spaces as needed.
+ *
+ *  B_CMAP8 bitmaps are first converted to B_RGBA32 before generating the
+ *  state variants.
+ *
+ *  @param bitmap  Source bitmap (not adopted; a copy is made).
+ *  @param flags   Reserved for future use.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BIconButton::SetIcon(const BBitmap* bitmap, uint32 flags)
 {
@@ -395,6 +517,11 @@ BIconButton::SetIcon(const BBitmap* bitmap, uint32 flags)
 }
 
 
+/** @brief Sets the icon from a MIME type's registered icon.
+ *  @param fileType  The BMimeType whose icon should be used.
+ *  @param small     True to use the small (16 x 16) icon; false for large.
+ *  @return B_OK on success, B_BAD_VALUE if fileType is NULL or invalid.
+ */
 status_t
 BIconButton::SetIcon(const BMimeType* fileType, bool small)
 {
@@ -428,6 +555,18 @@ BIconButton::SetIcon(const BMimeType* fileType, bool small)
 }
 
 
+/** @brief Sets the icon from raw QuickRes-exported pixel data.
+ *
+ *  Handles colorspace conversion for non-32-bit formats and optionally
+ *  converts the image to greyscale.
+ *
+ *  @param bitsFromQuickRes  Pointer to the raw pixel buffer.
+ *  @param width             Width of the bitmap in pixels.
+ *  @param height            Height of the bitmap in pixels.
+ *  @param format            Color space of the raw data.
+ *  @param convertToBW       If true, converts the bitmap to grey scale.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BIconButton::SetIcon(const unsigned char* bitsFromQuickRes,
 	uint32 width, uint32 height, color_space format, bool convertToBW)
@@ -498,6 +637,7 @@ BIconButton::SetIcon(const unsigned char* bitsFromQuickRes,
 }
 
 
+/** @brief Removes the current icon and redraws the button without one. */
 void
 BIconButton::ClearIcon()
 {
@@ -506,6 +646,16 @@ BIconButton::ClearIcon()
 }
 
 
+/** @brief Trims transparent padding from the icon bitmap.
+ *
+ *  Scans the normal bitmap's alpha channel to find the tightest bounding
+ *  rectangle containing all non-transparent pixels, then optionally
+ *  preserves the aspect ratio by using the smallest inset on all sides.
+ *  The trimmed bitmap replaces the current icon via SetIcon().
+ *
+ *  @param keepAspect  If true, the trim amount is equalised on all sides to
+ *                     preserve the original aspect ratio.
+ */
 void
 BIconButton::TrimIcon(bool keepAspect)
 {
@@ -567,6 +717,10 @@ BIconButton::TrimIcon(bool keepAspect)
 }
 
 
+/** @brief Returns whether all four bitmap state variants are valid.
+ *  @return True when normal, disabled, clicked, and disabled-clicked bitmaps
+ *          all exist and pass IsValid().
+ */
 bool
 BIconButton::IsValid() const
 {
@@ -579,6 +733,14 @@ BIconButton::IsValid() const
 }
 
 
+/** @brief Returns a copy of the normal bitmap with grey pixels made transparent.
+ *
+ *  In B_RGB32 mode pixels with the magic grey value (216, 216, 216) have
+ *  their alpha set to 0.  The caller is responsible for deleting the
+ *  returned bitmap.
+ *
+ *  @return A newly allocated BBitmap, or NULL if no valid bitmap exists.
+ */
 BBitmap*
 BIconButton::Bitmap() const
 {
@@ -619,6 +781,9 @@ BIconButton::Bitmap() const
 }
 
 
+/** @brief Sets the control value and mirrors it in the pressed state flag.
+ *  @param value  The new control value (B_CONTROL_ON or B_CONTROL_OFF).
+ */
 void
 BIconButton::SetValue(int32 value)
 {
@@ -627,6 +792,9 @@ BIconButton::SetValue(int32 value)
 }
 
 
+/** @brief Enables or disables the button, clearing inside/tracking state when disabled.
+ *  @param enabled  True to enable; false to disable.
+ */
 void
 BIconButton::SetEnabled(bool enabled)
 {
@@ -641,6 +809,9 @@ BIconButton::SetEnabled(bool enabled)
 // #pragma mark - protected
 
 
+/** @brief Returns whether the pointer is currently inside the button.
+ *  @return True if STATE_INSIDE is set.
+ */
 bool
 BIconButton::IsInside() const
 {
@@ -648,6 +819,9 @@ BIconButton::IsInside() const
 }
 
 
+/** @brief Sets whether the pointer is considered to be inside the button.
+ *  @param inside  True when the pointer is inside the view bounds.
+ */
 void
 BIconButton::SetInside(bool inside)
 {
@@ -658,6 +832,10 @@ BIconButton::SetInside(bool inside)
 // #pragma mark - private
 
 
+/** @brief Converts a bitmap of any color space to B_RGBA32 via a helper view.
+ *  @param bitmap  The source bitmap to convert.
+ *  @return A newly allocated B_RGBA32 BBitmap, or NULL on failure.
+ */
 BBitmap*
 BIconButton::_ConvertToRGB32(const BBitmap* bitmap) const
 {
@@ -682,6 +860,15 @@ BIconButton::_ConvertToRGB32(const BBitmap* bitmap) const
 }
 
 
+/** @brief Generates the four state bitmap variants from a source bitmap.
+ *
+ *  Creates normal, clicked (darkened), disabled (desaturated), and
+ *  disabled-clicked variants.  Supports B_RGB32, B_RGB32_BIG, B_RGBA32,
+ *  and B_RGBA32_BIG color spaces.
+ *
+ *  @param bitmap  The source bitmap from which all variants are derived.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BIconButton::_MakeBitmaps(const BBitmap* bitmap)
 {
@@ -809,6 +996,7 @@ BIconButton::_MakeBitmaps(const BBitmap* bitmap)
 }
 
 
+/** @brief Deletes all four state bitmap variants and sets pointers to NULL. */
 void
 BIconButton::_DeleteBitmaps()
 {
@@ -823,6 +1011,7 @@ BIconButton::_DeleteBitmaps()
 }
 
 
+/** @brief Invalidates the view inside a looper lock, triggering a redraw. */
 void
 BIconButton::_Update()
 {
@@ -833,6 +1022,14 @@ BIconButton::_Update()
 }
 
 
+/** @brief Sets or clears one or more state flags and triggers a redraw if changed.
+ *
+ *  When STATE_PRESSED is toggled the BControl value is updated without
+ *  scheduling an additional redraw.
+ *
+ *  @param flags  The flag bits to modify.
+ *  @param set    True to set the bits; false to clear them.
+ */
 void
 BIconButton::_SetFlags(uint32 flags, bool set)
 {
@@ -849,6 +1046,10 @@ BIconButton::_SetFlags(uint32 flags, bool set)
 }
 
 
+/** @brief Tests whether all specified state flags are currently set.
+ *  @param flags  The flag bits to test.
+ *  @return True if all bits in \a flags are set.
+ */
 bool
 BIconButton::_HasFlags(uint32 flags) const
 {
@@ -857,6 +1058,9 @@ BIconButton::_HasFlags(uint32 flags) const
 
 
 //!	This one calls _Update() if needed; BControl::SetTracking() isn't virtual.
+/** @brief Sets the tracking state and triggers a redraw if it changed.
+ *  @param tracking  True to start tracking; false to stop.
+ */
 void
 BIconButton::_SetTracking(bool tracking)
 {

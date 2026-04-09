@@ -1,10 +1,34 @@
 /*
- * Copyright 2009-2024 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm, darkwyrm@earthlink.net
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2024 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm, darkwyrm@earthlink.net
+ *       John Scipione, jscipione@gmail.com
+ */
+
+/** @file ColorPreview.cpp
+ *  @brief Implements BColorPreview, a BControl subclass that displays a solid
+ *         color swatch and supports drag-and-drop of rgb_color values.
  */
 
 
@@ -31,6 +55,12 @@ static const rgb_color kRed = make_color(255, 0, 0, 255);
 namespace BPrivate {
 
 
+/** @brief Constructs a BColorPreview control initialized to red.
+ *  @param name     The internal name of the view.
+ *  @param label    The optional text label (passed to BControl).
+ *  @param message  The message sent when the color is invoked.
+ *  @param flags    View flags passed to BControl.
+ */
 BColorPreview::BColorPreview(const char* name, const char* label, BMessage* message, uint32 flags)
 	:
 	BControl(name, label, message, flags),
@@ -42,11 +72,19 @@ BColorPreview::BColorPreview(const char* name, const char* label, BMessage* mess
 }
 
 
+/** @brief Destructor. */
 BColorPreview::~BColorPreview()
 {
 }
 
 
+/** @brief Draws the color swatch with a recessed border.
+ *
+ *  Renders a two-ring inset border using panel background tints and fills
+ *  the inner rectangle with the current color.
+ *
+ *  @param updateRect  The dirty rectangle that needs redrawing.
+ */
 void
 BColorPreview::Draw(BRect updateRect)
 {
@@ -83,6 +121,14 @@ BColorPreview::Draw(BRect updateRect)
 }
 
 
+/** @brief Invokes the control, attaching the current color to the message.
+ *
+ *  If no message is supplied a B_PASTE message is created.  The current
+ *  color is added under the key "RGBColor" when not already present.
+ *
+ *  @param message  Optional message to send; may be NULL.
+ *  @return Status code from BControl::Invoke().
+ */
 status_t
 BColorPreview::Invoke(BMessage* message)
 {
@@ -96,6 +142,14 @@ BColorPreview::Invoke(BMessage* message)
 }
 
 
+/** @brief Handles dropped color messages and timer-triggered drag operations.
+ *
+ *  Accepts a dropped message containing an "RGBColor" field and updates the
+ *  displayed color.  Also responds to the internal kMsgMessageRunner message
+ *  that triggers a drag after the mouse has been held down long enough.
+ *
+ *  @param message  The incoming message.
+ */
 void
 BColorPreview::MessageReceived(BMessage* message)
 {
@@ -129,6 +183,9 @@ BColorPreview::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Handles mouse-down by starting the long-press timer.
+ *  @param where  The position of the mouse cursor (view coordinates).
+ */
 void
 BColorPreview::MouseDown(BPoint where)
 {
@@ -138,6 +195,11 @@ BColorPreview::MouseDown(BPoint where)
 }
 
 
+/** @brief Handles mouse movement; initiates a drag if the timer has fired.
+ *  @param where    The current mouse position (view coordinates).
+ *  @param transit  One of the B_ENTERED_VIEW / B_INSIDE_VIEW / etc. constants.
+ *  @param message  Any drag message currently in flight, or NULL.
+ */
 void
 BColorPreview::MouseMoved(BPoint where, uint32 transit, const BMessage* message)
 {
@@ -148,6 +210,9 @@ BColorPreview::MouseMoved(BPoint where, uint32 transit, const BMessage* message)
 }
 
 
+/** @brief Handles mouse-up by cancelling the long-press timer.
+ *  @param where  The position of the mouse cursor when the button was released.
+ */
 void
 BColorPreview::MouseUp(BPoint where)
 {
@@ -158,6 +223,9 @@ BColorPreview::MouseUp(BPoint where)
 }
 
 
+/** @brief Returns the current preview color.
+ *  @return The rgb_color currently shown in the swatch.
+ */
 rgb_color
 BColorPreview::Color() const
 {
@@ -165,6 +233,12 @@ BColorPreview::Color() const
 }
 
 
+/** @brief Sets the preview color and redraws the swatch.
+ *
+ *  The alpha component is forced to 255 (fully opaque).
+ *
+ *  @param color  The new color to display.
+ */
 void
 BColorPreview::SetColor(rgb_color color)
 {
@@ -175,6 +249,14 @@ BColorPreview::SetColor(rgb_color color)
 }
 
 
+/** @brief Initiates a drag operation carrying the current color.
+ *
+ *  Builds a B_PASTE message with "text/plain" (hex string) and "RGBColor"
+ *  fields, attaches a small rendered color-chip bitmap, and starts the drag.
+ *  Calls MouseUp() to clean up the press state after starting the drag.
+ *
+ *  @param where  The view-coordinate point from which the drag originates.
+ */
 void
 BColorPreview::_DragColor(BPoint where)
 {

@@ -1,29 +1,40 @@
-/* === C R E D I T S  &  D I S C L A I M E R S ==============
- * Permission is given by the author to freely redistribute and include
- * this code in any program as long as this credit is given where due.
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * CQuantizer (c)  1996-1997 Jeff Prosise
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * 31/08/2003 Davide Pizzolato - www.xdp.it
- * - fixed minor bug in ProcessImage when bpp<=8
- * - better color reduction to less than 16 colors
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- * COVERED CODE IS PROVIDED UNDER THIS LICENSE ON AN "AS IS" BASIS, WITHOUT
- * WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, WITHOUT
- * LIMITATION, WARRANTIES THAT THE COVERED CODE IS FREE OF DEFECTS,
- * MERCHANTABLE, FIT FOR A PARTICULAR PURPOSE OR NON-INFRINGING. THE ENTIRE
- * RISK AS TO THE QUALITY AND PERFORMANCE OF THE COVERED CODE IS WITH YOU.
- * SHOULD ANY COVERED CODE PROVE DEFECTIVE IN ANY RESPECT, YOU (NOT THE INITIAL
- * DEVELOPER OR ANY OTHER CONTRIBUTOR) ASSUME THE COST OF ANY NECESSARY
- * SERVICING, REPAIR OR CORRECTION. THIS DISCLAIMER OF WARRANTY CONSTITUTES AN
- * ESSENTIAL PART OF THIS LICENSE. NO USE OF ANY COVERED CODE IS AUTHORIZED
- * HEREUNDER EXCEPT UNDER THIS DISCLAIMER.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * Use at your own risk!
- * ==========================================================
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
- * Modified for use with Haiku by David Powell & Stephan Aßmus.
+ *   CQuantizer (c) 1996-1997 Jeff Prosise
+ *   Modifications: Davide Pizzolato (31/08/2003), David Powell, Stephan Aßmus
+ *   Permission is given by the author to freely redistribute and include
+ *   this code in any program as long as this credit is given where due.
+ *
+ *   Authors:
+ *       Jeff Prosise
+ *       Davide Pizzolato
+ *       David Powell
+ *       Stephan Aßmus
  */
+
+/** @file ColorQuantizer.cpp
+ *  @brief Octree-based colour quantizer that reduces an arbitrary RGBA image
+ *         to at most N representative colours using adaptive palette reduction.
+ */
+
 #include "ColorQuantizer.h"
 
 #include <stddef.h>
@@ -31,6 +42,10 @@
 #include <string.h>
 
 
+/** @brief Clamps a float colour component to the range [0, 255] and rounds it.
+ *  @param component  The floating-point component value.
+ *  @return The clamped uint8 value.
+ */
 static inline uint8
 clip(float component)
 {
@@ -40,6 +55,11 @@ clip(float component)
 	return (uint8)(component + 0.5f);
 }
 
+/** @brief Internal octree node used during colour quantisation.
+ *
+ *  Leaf nodes accumulate pixel statistics (sum of RGB/A components and count).
+ *  Non-leaf nodes store pointers to up to eight children (one per bit triplet).
+ */
 struct BColorQuantizer::Node {
 	bool			isLeaf;		// TRUE if node has no children
 	uint32			pixelCount;	// Number of pixels represented by this leaf
@@ -52,6 +72,14 @@ struct BColorQuantizer::Node {
 };
 
 
+/** @brief Constructs the colour quantizer with the given constraints.
+ *
+ *  @p maxColors is clamped to a minimum of 16 to ensure the octree can
+ *  always produce a reasonable palette. @p bitsPerColor is clamped to 8.
+ *
+ *  @param maxColors    Maximum number of colours in the output palette.
+ *  @param bitsPerColor Precision of the octree (1–8 bits per colour channel).
+ */
 BColorQuantizer::BColorQuantizer(uint32 maxColors, uint32 bitsPerColor)
 	: fTree(NULL),
 	  fLeafCount(0),
@@ -71,6 +99,7 @@ BColorQuantizer::BColorQuantizer(uint32 maxColors, uint32 bitsPerColor)
 }
 
 
+/** @brief Destroys the quantizer and frees the entire octree. */
 BColorQuantizer::~BColorQuantizer()
 {
 	if (fTree != NULL)
@@ -78,6 +107,18 @@ BColorQuantizer::~BColorQuantizer()
 }
 
 
+/** @brief Processes rows of BGR pixels and adds them to the octree.
+ *
+ *  Each pixel is inserted into the octree via _AddColor(). When the leaf
+ *  count exceeds fMaxColors the tree is reduced by merging the deepest
+ *  reducible sibling group.
+ *
+ *  @param rowPtrs  Array of @p height pointers, each pointing to a row of
+ *                  @p width * 3 bytes in BGR order.
+ *  @param width    Width of the image in pixels (stride is width * 3 bytes).
+ *  @param height   Height of the image in pixels (number of row pointers).
+ *  @return Always returns true.
+ */
 bool
 BColorQuantizer::ProcessImage(const uint8* const * rowPtrs, int width,
 	int height)
@@ -99,6 +140,9 @@ BColorQuantizer::ProcessImage(const uint8* const * rowPtrs, int width,
 }
 
 
+/** @brief Returns the number of distinct colours currently in the octree.
+ *  @return The current leaf count.
+ */
 uint32
 BColorQuantizer::GetColorCount() const
 {
@@ -106,6 +150,14 @@ BColorQuantizer::GetColorCount() const
 }
 
 
+/** @brief Fills @p table with the quantised palette colours.
+ *
+ *  When fOutputMaxColors < 16 adjacent leaf clusters are merged by a
+ *  weighted average to further reduce the palette size. Otherwise the
+ *  palette is extracted directly from the leaf nodes.
+ *
+ *  @param table  Output array of at least fOutputMaxColors RGBA entries.
+ */
 void
 BColorQuantizer::GetColorTable(RGBA* table) const
 {
@@ -147,6 +199,21 @@ BColorQuantizer::GetColorTable(RGBA* table) const
 // #pragma mark - private
 
 
+/** @brief Inserts an RGBA pixel into the octree, creating nodes as needed.
+ *
+ *  At each level the 3-bit octant index is derived from the MSB of the
+ *  red, green, and blue components. New nodes are created by _CreateNode().
+ *
+ *  @param _node           In/out pointer to the current node pointer.
+ *  @param r               Red component of the pixel.
+ *  @param g               Green component of the pixel.
+ *  @param b               Blue component of the pixel.
+ *  @param a               Alpha component of the pixel.
+ *  @param bitsPerColor    Tree depth limit.
+ *  @param level           Current recursion depth (0 = root).
+ *  @param _leafCount      In/out counter of leaf nodes.
+ *  @param reducibleNodes  Per-level list of reducible (non-leaf) nodes.
+ */
 void
 BColorQuantizer::_AddColor(Node** _node, uint8 r, uint8 g, uint8 b, uint8 a,
 	uint32 bitsPerColor, uint32 level, uint32* _leafCount,
@@ -178,6 +245,17 @@ BColorQuantizer::_AddColor(Node** _node, uint8 r, uint8 g, uint8 b, uint8 a,
 }
 
 
+/** @brief Allocates and initialises a new octree node.
+ *
+ *  Nodes at the maximum depth are leaves; all others are added to the
+ *  reducible-nodes list for their level.
+ *
+ *  @param level           Depth at which the node is created.
+ *  @param bitsPerColor    Maximum tree depth.
+ *  @param _leafCount      In/out leaf counter; incremented for new leaf nodes.
+ *  @param reducibleNodes  Per-level list prepended with this node if non-leaf.
+ *  @return Pointer to the new node, or NULL on allocation failure.
+ */
 BColorQuantizer::Node*
 BColorQuantizer::_CreateNode(uint32 level, uint32 bitsPerColor,
 	uint32* _leafCount, Node** reducibleNodes)
@@ -198,6 +276,17 @@ BColorQuantizer::_CreateNode(uint32 level, uint32 bitsPerColor,
 }
 
 
+/** @brief Merges the shallowest reducible node's children into itself.
+ *
+ *  Finds the deepest level with a reducible node, removes it from the
+ *  list, sums the child statistics into the parent, frees all children,
+ *  and marks the parent as a leaf. The leaf count is reduced by
+ *  (childCount - 1).
+ *
+ *  @param bitsPerColor    Tree depth limit used to start the search.
+ *  @param _leafCount      In/out leaf counter; adjusted after reduction.
+ *  @param reducibleNodes  Per-level reducible-node lists.
+ */
 void
 BColorQuantizer::_ReduceTree(uint32 bitsPerColor, uint32* _leafCount,
 	Node** reducibleNodes)
@@ -242,6 +331,13 @@ BColorQuantizer::_ReduceTree(uint32 bitsPerColor, uint32* _leafCount,
 }
 
 
+/** @brief Recursively frees an entire octree.
+ *
+ *  Traverses the tree depth-first, freeing all nodes and setting @p _node
+ *  to NULL after each free.
+ *
+ *  @param _node  In/out pointer to the root of the sub-tree to delete.
+ */
 void
 BColorQuantizer::_DeleteTree(Node** _node)
 {
@@ -254,6 +350,16 @@ BColorQuantizer::_DeleteTree(Node** _node)
 }
 
 
+/** @brief Walks the octree and fills @p table with the average colour of each leaf.
+ *
+ *  Average colour is computed as sumX / pixelCount for each channel.
+ *  If @p sums is non-NULL the pixel count of each leaf is stored there.
+ *
+ *  @param node    Current node in the depth-first traversal (may be NULL).
+ *  @param table   Output palette array filled left-to-right.
+ *  @param _index  Running index into @p table; incremented for each leaf.
+ *  @param sums    Optional output array of per-leaf pixel counts, or NULL.
+ */
 void
 BColorQuantizer::_GetPaletteColors(Node* node, RGBA* table, uint32* _index,
 	uint32* sums) const
@@ -276,4 +382,3 @@ BColorQuantizer::_GetPaletteColors(Node* node, RGBA* table, uint32* _index,
 		}
 	}
 }
-

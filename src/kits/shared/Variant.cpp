@@ -1,7 +1,36 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold
+ *       Rene Gollent
+ */
+
+/** @file Variant.cpp
+ *  @brief BVariant implementation: a discriminated union capable of holding
+ *         any of the standard BeAPI scalar types, strings, rects, and
+ *         referenceable objects, with conversions between them.
  */
 
 
@@ -14,6 +43,13 @@
 #include <Message.h>
 
 
+/** @brief Internal helper template that converts the stored value to @p NumberType.
+ *
+ *  Returns zero for non-numeric types.
+ *
+ *  @tparam NumberType  The target numeric type (int8, uint64, float, double, …).
+ *  @return The stored value cast to @p NumberType, or 0 for incompatible types.
+ */
 template<typename NumberType>
 inline NumberType
 BVariant::_ToNumber() const
@@ -47,12 +83,23 @@ BVariant::_ToNumber() const
 }
 
 
+/** @brief Destroys the variant, releasing any owned resources. */
 BVariant::~BVariant()
 {
 	Unset();
 }
 
 
+/** @brief Initialises the variant from a raw typed data buffer.
+ *
+ *  Interprets @p data according to @p type. Strings are duplicated unless
+ *  the caller sets B_VARIANT_DONT_COPY_DATA flags via _SetTo().
+ *
+ *  @param data  Pointer to the raw value bytes.
+ *  @param type  BeAPI type code identifying the data format.
+ *  @return B_OK on success, B_BAD_TYPE for unsupported types, B_NO_MEMORY
+ *          if string duplication fails.
+ */
 status_t
 BVariant::SetToTypedData(const void* data, type_code type)
 {
@@ -112,6 +159,11 @@ BVariant::SetToTypedData(const void* data, type_code type)
 }
 
 
+/** @brief Resets the variant to an empty/unset state.
+ *
+ *  Frees any owned string memory and releases any held BReferenceable
+ *  reference before zeroing the type and flags fields.
+ */
 void
 BVariant::Unset()
 {
@@ -133,6 +185,15 @@ BVariant::Unset()
 }
 
 
+/** @brief Compares two BVariant values for equality.
+ *
+ *  Numeric types are compared by value after conversion; strings by strcmp;
+ *  pointers by address; rects component-wise. An unset variant (fType == 0)
+ *  is equal only to another unset variant.
+ *
+ *  @param other  The variant to compare against.
+ *  @return true if the values are considered equal.
+ */
 bool
 BVariant::operator==(const BVariant& other) const
 {
@@ -186,6 +247,13 @@ BVariant::operator==(const BVariant& other) const
 }
 
 
+/** @brief Returns the size in bytes of the stored value.
+ *
+ *  For strings this is strlen + 1. For referenceable types it is the size of
+ *  the pointer. For all others SizeOfType() is used.
+ *
+ *  @return The byte size of the stored data.
+ */
 size_t
 BVariant::Size() const
 {
@@ -197,6 +265,12 @@ BVariant::Size() const
 }
 
 
+/** @brief Returns a pointer to the raw bytes of the stored value.
+ *
+ *  For strings this is the character buffer. For all others it is fBytes.
+ *
+ *  @return Pointer to the internal byte representation.
+ */
 const uint8*
 BVariant::Bytes() const
 {
@@ -206,6 +280,12 @@ BVariant::Bytes() const
 }
 
 
+/** @brief Converts the stored value to bool.
+ *
+ *  Numbers are non-zero; pointers are non-NULL; strings are non-NULL.
+ *
+ *  @return The boolean interpretation of the stored value.
+ */
 bool
 BVariant::ToBool() const
 {
@@ -244,6 +324,9 @@ BVariant::ToBool() const
 }
 
 
+/** @brief Converts the stored numeric value to int8.
+ *  @return The value as int8, or 0 for non-numeric types.
+ */
 int8
 BVariant::ToInt8() const
 {
@@ -251,6 +334,9 @@ BVariant::ToInt8() const
 }
 
 
+/** @brief Converts the stored numeric value to uint8.
+ *  @return The value as uint8, or 0 for non-numeric types.
+ */
 uint8
 BVariant::ToUInt8() const
 {
@@ -258,6 +344,9 @@ BVariant::ToUInt8() const
 }
 
 
+/** @brief Converts the stored numeric value to int16.
+ *  @return The value as int16, or 0 for non-numeric types.
+ */
 int16
 BVariant::ToInt16() const
 {
@@ -265,6 +354,9 @@ BVariant::ToInt16() const
 }
 
 
+/** @brief Converts the stored numeric value to uint16.
+ *  @return The value as uint16, or 0 for non-numeric types.
+ */
 uint16
 BVariant::ToUInt16() const
 {
@@ -272,6 +364,9 @@ BVariant::ToUInt16() const
 }
 
 
+/** @brief Converts the stored numeric value to int32.
+ *  @return The value as int32, or 0 for non-numeric types.
+ */
 int32
 BVariant::ToInt32() const
 {
@@ -279,6 +374,9 @@ BVariant::ToInt32() const
 }
 
 
+/** @brief Converts the stored numeric value to uint32.
+ *  @return The value as uint32, or 0 for non-numeric types.
+ */
 uint32
 BVariant::ToUInt32() const
 {
@@ -286,6 +384,9 @@ BVariant::ToUInt32() const
 }
 
 
+/** @brief Converts the stored numeric value to int64.
+ *  @return The value as int64, or 0 for non-numeric types.
+ */
 int64
 BVariant::ToInt64() const
 {
@@ -293,6 +394,9 @@ BVariant::ToInt64() const
 }
 
 
+/** @brief Converts the stored numeric value to uint64.
+ *  @return The value as uint64, or 0 for non-numeric types.
+ */
 uint64
 BVariant::ToUInt64() const
 {
@@ -300,6 +404,9 @@ BVariant::ToUInt64() const
 }
 
 
+/** @brief Converts the stored numeric value to float.
+ *  @return The value as float, or 0 for non-numeric types.
+ */
 float
 BVariant::ToFloat() const
 {
@@ -307,6 +414,9 @@ BVariant::ToFloat() const
 }
 
 
+/** @brief Converts the stored numeric value to double.
+ *  @return The value as double, or 0 for non-numeric types.
+ */
 double
 BVariant::ToDouble() const
 {
@@ -314,6 +424,12 @@ BVariant::ToDouble() const
 }
 
 
+/** @brief Returns the stored value as a BRect.
+ *
+ *  Only meaningful when fType == B_RECT_TYPE.
+ *
+ *  @return A BRect constructed from the stored left/top/right/bottom fields.
+ */
 BRect
 BVariant::ToRect() const
 {
@@ -321,6 +437,9 @@ BVariant::ToRect() const
 }
 
 
+/** @brief Returns the stored pointer value, or NULL for non-pointer types.
+ *  @return The void* value if fType == B_POINTER_TYPE, otherwise NULL.
+ */
 void*
 BVariant::ToPointer() const
 {
@@ -328,6 +447,9 @@ BVariant::ToPointer() const
 }
 
 
+/** @brief Returns the stored C-string, or NULL for non-string types.
+ *  @return Pointer to the internal character buffer, or NULL.
+ */
 const char*
 BVariant::ToString() const
 {
@@ -335,6 +457,13 @@ BVariant::ToString() const
 }
 
 
+/** @brief Copies another BVariant's value into this object.
+ *
+ *  For owned strings a strdup() copy is made. For referenceable types the
+ *  reference count is incremented. For all other types a raw memcpy is used.
+ *
+ *  @param other  The source BVariant.
+ */
 void
 BVariant::_SetTo(const BVariant& other)
 {
@@ -357,6 +486,12 @@ BVariant::_SetTo(const BVariant& other)
 }
 
 
+/** @brief Returns the stored BReferenceable pointer, or NULL.
+ *
+ *  Only meaningful when the B_VARIANT_REFERENCEABLE_DATA flag is set.
+ *
+ *  @return Pointer to the referenced object, or NULL.
+ */
 BReferenceable*
 BVariant::ToReferenceable() const
 {
@@ -365,6 +500,10 @@ BVariant::ToReferenceable() const
 }
 
 
+/** @brief Byte-swaps the stored numeric value to the opposite endianness.
+ *
+ *  Does nothing for non-numeric types or pointer types.
+ */
 void
 BVariant::SwapEndianess()
 {
@@ -375,6 +514,12 @@ BVariant::SwapEndianess()
 }
 
 
+/** @brief Adds the stored value as a field to @p message under @p fieldName.
+ *
+ *  @param message    The BMessage to add the field to.
+ *  @param fieldName  The name of the new field.
+ *  @return B_OK on success, B_UNSUPPORTED for unsupported types, or another error.
+ */
 status_t
 BVariant::AddToMessage(BMessage& message, const char* fieldName) const
 {
@@ -414,6 +559,16 @@ BVariant::AddToMessage(BMessage& message, const char* fieldName) const
 }
 
 
+/** @brief Initialises this variant from a named field in @p message.
+ *
+ *  Retrieves the type and data of @p fieldName from @p message and delegates
+ *  to SetToTypedData().
+ *
+ *  @param message    The source BMessage.
+ *  @param fieldName  The field name to read.
+ *  @return B_OK on success, or an error code if the field is not found or
+ *          the type is unsupported.
+ */
 status_t
 BVariant::SetFromMessage(const BMessage& message, const char* fieldName)
 {
@@ -436,6 +591,12 @@ BVariant::SetFromMessage(const BMessage& message, const char* fieldName)
 }
 
 
+/** @brief Returns the byte size of a given BeAPI type code.
+ *
+ *  @param type  A BeAPI type code (B_INT32_TYPE, B_FLOAT_TYPE, …).
+ *  @return The number of bytes needed to store a value of that type, or 0
+ *          for unknown types.
+ */
 /*static*/ size_t
 BVariant::SizeOfType(type_code type)
 {
@@ -472,6 +633,14 @@ BVariant::SizeOfType(type_code type)
 }
 
 
+/** @brief Returns whether the given type code represents a numeric type.
+ *
+ *  Numeric types include all integer and floating-point types. Bool and
+ *  pointer are NOT considered numeric.
+ *
+ *  @param type  A BeAPI type code.
+ *  @return true if @p type is a numeric type, false otherwise.
+ */
 /*static*/ bool
 BVariant::TypeIsNumber(type_code type)
 {
@@ -493,6 +662,12 @@ BVariant::TypeIsNumber(type_code type)
 }
 
 
+/** @brief Returns whether the given type code is an integer type.
+ *
+ *  @param type      A BeAPI type code.
+ *  @param _isSigned Optional output; set to true for signed types, false for unsigned.
+ *  @return true if @p type is an integer type, false otherwise.
+ */
 /*static*/ bool
 BVariant::TypeIsInteger(type_code type, bool* _isSigned)
 {
@@ -517,6 +692,11 @@ BVariant::TypeIsInteger(type_code type, bool* _isSigned)
 }
 
 
+/** @brief Returns whether the given type code is a floating-point type.
+ *
+ *  @param type  A BeAPI type code.
+ *  @return true for B_FLOAT_TYPE and B_DOUBLE_TYPE, false for all others.
+ */
 /*static*/ bool
 BVariant::TypeIsFloat(type_code type)
 {
@@ -530,6 +710,9 @@ BVariant::TypeIsFloat(type_code type)
 }
 
 
+/** @brief Stores a bool value.
+ *  @param value  The boolean value to store.
+ */
 void
 BVariant::_SetTo(bool value)
 {
@@ -539,6 +722,9 @@ BVariant::_SetTo(bool value)
 }
 
 
+/** @brief Stores an int8 value.
+ *  @param value  The int8 value to store.
+ */
 void
 BVariant::_SetTo(int8 value)
 {
@@ -548,6 +734,9 @@ BVariant::_SetTo(int8 value)
 }
 
 
+/** @brief Stores a uint8 value.
+ *  @param value  The uint8 value to store.
+ */
 void
 BVariant::_SetTo(uint8 value)
 {
@@ -557,6 +746,9 @@ BVariant::_SetTo(uint8 value)
 }
 
 
+/** @brief Stores an int16 value.
+ *  @param value  The int16 value to store.
+ */
 void
 BVariant::_SetTo(int16 value)
 {
@@ -566,6 +758,9 @@ BVariant::_SetTo(int16 value)
 }
 
 
+/** @brief Stores a uint16 value.
+ *  @param value  The uint16 value to store.
+ */
 void
 BVariant::_SetTo(uint16 value)
 {
@@ -575,6 +770,9 @@ BVariant::_SetTo(uint16 value)
 }
 
 
+/** @brief Stores an int32 value.
+ *  @param value  The int32 value to store.
+ */
 void
 BVariant::_SetTo(int32 value)
 {
@@ -584,6 +782,9 @@ BVariant::_SetTo(int32 value)
 }
 
 
+/** @brief Stores a uint32 value.
+ *  @param value  The uint32 value to store.
+ */
 void
 BVariant::_SetTo(uint32 value)
 {
@@ -593,6 +794,9 @@ BVariant::_SetTo(uint32 value)
 }
 
 
+/** @brief Stores an int64 value.
+ *  @param value  The int64 value to store.
+ */
 void
 BVariant::_SetTo(int64 value)
 {
@@ -602,6 +806,9 @@ BVariant::_SetTo(int64 value)
 }
 
 
+/** @brief Stores a uint64 value.
+ *  @param value  The uint64 value to store.
+ */
 void
 BVariant::_SetTo(uint64 value)
 {
@@ -611,6 +818,9 @@ BVariant::_SetTo(uint64 value)
 }
 
 
+/** @brief Stores a float value.
+ *  @param value  The float value to store.
+ */
 void
 BVariant::_SetTo(float value)
 {
@@ -620,6 +830,9 @@ BVariant::_SetTo(float value)
 }
 
 
+/** @brief Stores a double value.
+ *  @param value  The double value to store.
+ */
 void
 BVariant::_SetTo(double value)
 {
@@ -629,6 +842,12 @@ BVariant::_SetTo(double value)
 }
 
 
+/** @brief Stores a BRect as four float components.
+ *  @param left    Left edge.
+ *  @param top     Top edge.
+ *  @param right   Right edge.
+ *  @param bottom  Bottom edge.
+ */
 void
 BVariant::_SetTo(float left, float top, float right, float bottom)
 {
@@ -641,6 +860,9 @@ BVariant::_SetTo(float left, float top, float right, float bottom)
 }
 
 
+/** @brief Stores a pointer value.
+ *  @param value  The pointer to store.
+ */
 void
 BVariant::_SetTo(const void* value)
 {
@@ -650,6 +872,17 @@ BVariant::_SetTo(const void* value)
 }
 
 
+/** @brief Stores a string value, optionally duplicating it.
+ *
+ *  If B_VARIANT_DONT_COPY_DATA is not set in @p flags a strdup() copy is
+ *  made and B_VARIANT_OWNS_DATA is recorded in fFlags. If the string is NULL
+ *  fString is set to NULL with no copy.
+ *
+ *  @param value  NUL-terminated string to store (may be NULL).
+ *  @param flags  B_VARIANT_DONT_COPY_DATA suppresses duplication;
+ *                B_VARIANT_OWNS_DATA is propagated when not copying.
+ *  @return true on success, false if strdup() returns NULL.
+ */
 bool
 BVariant::_SetTo(const char* value, uint32 flags)
 {
@@ -673,6 +906,11 @@ BVariant::_SetTo(const char* value, uint32 flags)
 }
 
 
+/** @brief Stores a BReferenceable pointer and acquires a reference.
+ *
+ *  @param value  The referenceable object to store (may be NULL).
+ *  @param type   The type code to associate (application-defined).
+ */
 void
 BVariant::_SetTo(BReferenceable* value, type_code type)
 {

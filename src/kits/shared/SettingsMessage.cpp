@@ -1,8 +1,37 @@
 /*
- * Copyright 2008-2010, Stephan Aßmus <superstippi@gmx.de>.
- * Copyright 1998, Eric Shepherd.
- * All rights reserved. Distributed under the terms of the Be Sample Code
- * license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Stephan Aßmus <superstippi@gmx.de>.
+ *   Copyright 1998, Eric Shepherd.
+ *   All rights reserved. Distributed under the terms of the Be Sample Code
+ *   license.
+ *
+ *   Authors:
+ *       Stephan Aßmus
+ *       Eric Shepherd
+ */
+
+/** @file SettingsMessage.cpp
+ *  @brief Persistent BMessage subclass that automatically loads and saves its
+ *         contents as a flattened message file, and notifies registered
+ *         BMessenger listeners when individual values change.
  */
 
 //! Be Newsletter Volume II, Issue 35; September 2, 1998 (Eric Shepherd)
@@ -18,6 +47,14 @@
 #include <String.h>
 
 
+/** @brief Constructs the settings message and attempts to load from disk.
+ *
+ *  The file path is formed as @p directory / @p filename. If the file does
+ *  not exist or cannot be unflattened, fStatus reflects the error.
+ *
+ *  @param directory  A directory_which constant (e.g. B_USER_SETTINGS_DIRECTORY).
+ *  @param filename   Name of the settings file within @p directory.
+ */
 SettingsMessage::SettingsMessage(directory_which directory,
 		const char* filename)
 	:
@@ -34,6 +71,7 @@ SettingsMessage::SettingsMessage(directory_which directory,
 }
 
 
+/** @brief Destroys the settings message, saving it and freeing all listeners. */
 SettingsMessage::~SettingsMessage()
 {
 	Save();
@@ -43,6 +81,9 @@ SettingsMessage::~SettingsMessage()
 }
 
 
+/** @brief Returns the initialisation status from construction.
+ *  @return B_OK if the file was found and loaded, or an error code.
+ */
 status_t
 SettingsMessage::InitCheck() const
 {
@@ -50,6 +91,13 @@ SettingsMessage::InitCheck() const
 }
 
 
+/** @brief Loads (unflattens) the settings from disk.
+ *
+ *  The message lock is held during the operation.
+ *
+ *  @return B_OK on success, or an error code if the file cannot be opened or
+ *          unflattened.
+ */
 status_t
 SettingsMessage::Load()
 {
@@ -65,6 +113,14 @@ SettingsMessage::Load()
 }
 
 
+/** @brief Saves (flattens) the settings to disk.
+ *
+ *  Creates or overwrites the settings file. The message lock is held during
+ *  the operation.
+ *
+ *  @return B_OK on success, or an error code if the file cannot be opened or
+ *          flattened.
+ */
 status_t
 SettingsMessage::Save() const
 {
@@ -80,6 +136,13 @@ SettingsMessage::Save() const
 }
 
 
+/** @brief Registers a BMessenger to receive SETTINGS_VALUE_CHANGED notifications.
+ *
+ *  The messenger is copied; the caller retains ownership of the original.
+ *
+ *  @param listener  The BMessenger to add.
+ *  @return true on success, false if memory allocation fails.
+ */
 bool
 SettingsMessage::AddListener(const BMessenger& listener)
 {
@@ -93,6 +156,13 @@ SettingsMessage::AddListener(const BMessenger& listener)
 }
 
 
+/** @brief Unregisters a previously added BMessenger listener.
+ *
+ *  Searches the listener list for an entry equal to @p listener and removes
+ *  it. Does nothing if the messenger is not found.
+ *
+ *  @param listener  The BMessenger to remove.
+ */
 void
 SettingsMessage::RemoveListener(const BMessenger& listener)
 {
@@ -113,6 +183,11 @@ SettingsMessage::RemoveListener(const BMessenger& listener)
 // #pragma mark -
 
 
+/** @brief Sets a boolean setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, bool value)
 {
@@ -125,6 +200,11 @@ SettingsMessage::SetValue(const char* name, bool value)
 }
 
 
+/** @brief Sets an int8 setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, int8 value)
 {
@@ -137,6 +217,11 @@ SettingsMessage::SetValue(const char* name, int8 value)
 }
 
 
+/** @brief Sets an int16 setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, int16 value)
 {
@@ -149,6 +234,11 @@ SettingsMessage::SetValue(const char* name, int16 value)
 }
 
 
+/** @brief Sets a uint16 setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, uint16 value)
 {
@@ -161,6 +251,11 @@ SettingsMessage::SetValue(const char* name, uint16 value)
 }
 
 
+/** @brief Sets an int32 setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, int32 value)
 {
@@ -173,6 +268,15 @@ SettingsMessage::SetValue(const char* name, int32 value)
 }
 
 
+/** @brief Sets a uint32 setting value, notifying listeners on success.
+ *
+ *  Also handles backwards compatibility: if the existing field has B_INT32_TYPE
+ *  (written by older code) it is replaced with the proper uint32 type.
+ *
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, uint32 value)
 {
@@ -190,6 +294,11 @@ SettingsMessage::SetValue(const char* name, uint32 value)
 }
 
 
+/** @brief Sets an int64 setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, int64 value)
 {
@@ -202,6 +311,11 @@ SettingsMessage::SetValue(const char* name, int64 value)
 }
 
 
+/** @brief Sets a uint64 setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, uint64 value)
 {
@@ -214,6 +328,11 @@ SettingsMessage::SetValue(const char* name, uint64 value)
 }
 
 
+/** @brief Sets a float setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, float value)
 {
@@ -226,6 +345,11 @@ SettingsMessage::SetValue(const char* name, float value)
 }
 
 
+/** @brief Sets a double setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, double value)
 {
@@ -238,6 +362,11 @@ SettingsMessage::SetValue(const char* name, double value)
 }
 
 
+/** @brief Sets a C-string setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New NUL-terminated string value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const char* value)
 {
@@ -250,6 +379,11 @@ SettingsMessage::SetValue(const char* name, const char* value)
 }
 
 
+/** @brief Sets a BString setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New string value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const BString& value)
 {
@@ -262,6 +396,11 @@ SettingsMessage::SetValue(const char* name, const BString& value)
 }
 
 
+/** @brief Sets a BPoint setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New point value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const BPoint& value)
 {
@@ -274,6 +413,11 @@ SettingsMessage::SetValue(const char* name, const BPoint& value)
 }
 
 
+/** @brief Sets a BRect setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New rect value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const BRect& value)
 {
@@ -286,6 +430,11 @@ SettingsMessage::SetValue(const char* name, const BRect& value)
 }
 
 
+/** @brief Sets an entry_ref setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New entry_ref value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const entry_ref& value)
 {
@@ -298,6 +447,11 @@ SettingsMessage::SetValue(const char* name, const entry_ref& value)
 }
 
 
+/** @brief Sets a BMessage setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  New BMessage value.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const BMessage& value)
 {
@@ -310,6 +464,11 @@ SettingsMessage::SetValue(const char* name, const BMessage& value)
 }
 
 
+/** @brief Sets a BFlattenable setting value, notifying listeners on success.
+ *  @param name   Field name.
+ *  @param value  Pointer to a BFlattenable object.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const BFlattenable* value)
 {
@@ -322,6 +481,13 @@ SettingsMessage::SetValue(const char* name, const BFlattenable* value)
 }
 
 
+/** @brief Sets a raw typed data setting value, notifying listeners on success.
+ *  @param name      Field name.
+ *  @param type      Type code for the data.
+ *  @param data      Pointer to the raw bytes.
+ *  @param numBytes  Size of the data in bytes.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, type_code type, const void* data,
 	ssize_t numBytes)
@@ -335,6 +501,15 @@ SettingsMessage::SetValue(const char* name, type_code type, const void* data,
 }
 
 
+/** @brief Sets a BFont setting value, notifying listeners on success.
+ *
+ *  Stores the font as a sub-BMessage containing "family", "style", and "size"
+ *  fields so it can be reloaded portably.
+ *
+ *  @param name   Field name.
+ *  @param value  The BFont to store.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 SettingsMessage::SetValue(const char* name, const BFont& value)
 {
@@ -362,6 +537,11 @@ SettingsMessage::SetValue(const char* name, const BFont& value)
 // #pragma mark -
 
 
+/** @brief Returns a boolean setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 bool
 SettingsMessage::GetValue(const char* name, bool defaultValue) const
 {
@@ -372,6 +552,11 @@ SettingsMessage::GetValue(const char* name, bool defaultValue) const
 }
 
 
+/** @brief Returns an int8 setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 int8
 SettingsMessage::GetValue(const char* name, int8 defaultValue) const
 {
@@ -382,6 +567,11 @@ SettingsMessage::GetValue(const char* name, int8 defaultValue) const
 }
 
 
+/** @brief Returns an int16 setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 int16
 SettingsMessage::GetValue(const char* name, int16 defaultValue) const
 {
@@ -392,6 +582,11 @@ SettingsMessage::GetValue(const char* name, int16 defaultValue) const
 }
 
 
+/** @brief Returns a uint16 setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 uint16
 SettingsMessage::GetValue(const char* name, uint16 defaultValue) const
 {
@@ -402,6 +597,11 @@ SettingsMessage::GetValue(const char* name, uint16 defaultValue) const
 }
 
 
+/** @brief Returns an int32 setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 int32
 SettingsMessage::GetValue(const char* name, int32 defaultValue) const
 {
@@ -412,6 +612,15 @@ SettingsMessage::GetValue(const char* name, int32 defaultValue) const
 }
 
 
+/** @brief Returns a uint32 setting value, or @p defaultValue if not found.
+ *
+ *  Also accepts a non-negative int32 field for backwards compatibility with
+ *  older settings files.
+ *
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 uint32
 SettingsMessage::GetValue(const char* name, uint32 defaultValue) const
 {
@@ -426,6 +635,11 @@ SettingsMessage::GetValue(const char* name, uint32 defaultValue) const
 }
 
 
+/** @brief Returns an int64 setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 int64
 SettingsMessage::GetValue(const char* name, int64 defaultValue) const
 {
@@ -436,6 +650,11 @@ SettingsMessage::GetValue(const char* name, int64 defaultValue) const
 }
 
 
+/** @brief Returns a uint64 setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 uint64
 SettingsMessage::GetValue(const char* name, uint64 defaultValue) const
 {
@@ -446,6 +665,11 @@ SettingsMessage::GetValue(const char* name, uint64 defaultValue) const
 }
 
 
+/** @brief Returns a float setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 float
 SettingsMessage::GetValue(const char* name, float defaultValue) const
 {
@@ -456,6 +680,11 @@ SettingsMessage::GetValue(const char* name, float defaultValue) const
 }
 
 
+/** @brief Returns a double setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 double
 SettingsMessage::GetValue(const char* name, double defaultValue) const
 {
@@ -466,6 +695,11 @@ SettingsMessage::GetValue(const char* name, double defaultValue) const
 }
 
 
+/** @brief Returns a BString setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 BString
 SettingsMessage::GetValue(const char* name, const BString& defaultValue) const
 {
@@ -476,6 +710,12 @@ SettingsMessage::GetValue(const char* name, const BString& defaultValue) const
 }
 
 
+/** @brief Returns a C-string setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return Pointer to the stored string (valid for the lifetime of this object),
+ *          or @p defaultValue.
+ */
 const char*
 SettingsMessage::GetValue(const char* name, const char* defaultValue) const
 {
@@ -486,6 +726,11 @@ SettingsMessage::GetValue(const char* name, const char* defaultValue) const
 }
 
 
+/** @brief Returns a BPoint setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 BPoint
 SettingsMessage::GetValue(const char *name, BPoint defaultValue) const
 {
@@ -496,6 +741,11 @@ SettingsMessage::GetValue(const char *name, BPoint defaultValue) const
 }
 
 
+/** @brief Returns a BRect setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 BRect
 SettingsMessage::GetValue(const char* name, BRect defaultValue) const
 {
@@ -506,6 +756,11 @@ SettingsMessage::GetValue(const char* name, BRect defaultValue) const
 }
 
 
+/** @brief Returns an entry_ref setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 entry_ref
 SettingsMessage::GetValue(const char* name, const entry_ref& defaultValue) const
 {
@@ -516,6 +771,11 @@ SettingsMessage::GetValue(const char* name, const entry_ref& defaultValue) const
 }
 
 
+/** @brief Returns a BMessage setting value, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return The stored value or @p defaultValue.
+ */
 BMessage
 SettingsMessage::GetValue(const char* name, const BMessage& defaultValue) const
 {
@@ -526,6 +786,15 @@ SettingsMessage::GetValue(const char* name, const BMessage& defaultValue) const
 }
 
 
+/** @brief Returns a BFont setting value, or @p defaultValue if not found.
+ *
+ *  Reconstructs the BFont from the "family", "style", and "size" sub-fields
+ *  stored by SetValue(const char*, const BFont&).
+ *
+ *  @param name          Field name.
+ *  @param defaultValue  Value to return when the field is absent or invalid.
+ *  @return The reconstructed BFont or @p defaultValue.
+ */
 BFont
 SettingsMessage::GetValue(const char* name, const BFont& defaultValue) const
 {
@@ -552,6 +821,13 @@ SettingsMessage::GetValue(const char* name, const BFont& defaultValue) const
 }
 
 
+/** @brief Returns a raw typed data pointer, or @p defaultValue if not found.
+ *  @param name          Field name.
+ *  @param type          Expected type code of the field.
+ *  @param numBytes      Expected size of the data in bytes.
+ *  @param defaultValue  Value to return when the field is absent.
+ *  @return Pointer to the raw data or @p defaultValue.
+ */
 void*
 SettingsMessage::GetValue(const char* name, type_code type, ssize_t numBytes,
 		const void** defaultValue) const
@@ -565,6 +841,13 @@ SettingsMessage::GetValue(const char* name, type_code type, ssize_t numBytes,
 
 // #pragma mark - private
 
+/** @brief Sends a SETTINGS_VALUE_CHANGED notification to all registered listeners.
+ *
+ *  Includes the field name and its current value (first entry) in the
+ *  notification message.
+ *
+ *  @param name  The name of the field whose value changed.
+ */
 void
 SettingsMessage::_NotifyValueChanged(const char* name) const
 {

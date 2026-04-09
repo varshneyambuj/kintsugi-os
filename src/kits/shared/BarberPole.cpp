@@ -1,6 +1,34 @@
 /*
- * Copyright 2017 Julian Harnath <julian.harnath@rwth-aachen.de>
- * All rights reserved. Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017 Julian Harnath <julian.harnath@rwth-aachen.de>
+ *   All rights reserved. Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Julian Harnath <julian.harnath@rwth-aachen.de>
+ */
+
+/** @file BarberPole.cpp
+ *  @brief Implements the BarberPole animated progress indicator view and the
+ *         MachineRoom singleton that drives all barber-pole instances in the
+ *         team via a dedicated spin-loop thread.
  */
 
 
@@ -31,6 +59,11 @@ private:
 	};
 
 private:
+	/** @brief Constructs the MachineRoom singleton.
+	 *
+	 *  Creates the spin-loop semaphore and spawns the background thread
+	 *  that periodically refreshes all attached barber poles.
+	 */
 	MachineRoom()
 		:
 		fMessengers(20)
@@ -42,34 +75,53 @@ private:
 	}
 
 public:
+	/** @brief Registers a BarberPole with the MachineRoom so it is spun.
+	 *  @param pole  The BarberPole instance to attach.
+	 */
 	static void AttachBarberPole(BarberPole* pole)
 	{
 		_InitializeIfNeeded();
 		sInstance->_Attach(pole);
 	}
 
+	/** @brief Unregisters a BarberPole from the MachineRoom.
+	 *  @param pole  The BarberPole instance to detach.
+	 */
 	static void DetachBarberPole(BarberPole* pole)
 	{
 		sInstance->_Detach(pole);
 	}
 
 private:
+	/** @brief Creates the singleton MachineRoom instance. */
 	static void _Initialize()
 	{
 		sInstance = new MachineRoom();
 	}
 
+	/** @brief Thread entry point that starts the spin loop.
+	 *  @param instance  Pointer to the MachineRoom object.
+	 *  @return Always returns B_OK.
+	 */
 	static status_t _StartSpinLoop(void* instance)
 	{
 		static_cast<MachineRoom*>(instance)->_SpinLoop();
 		return B_OK;
 	}
 
+	/** @brief Initializes the MachineRoom singleton exactly once. */
 	static void _InitializeIfNeeded()
 	{
 		pthread_once(&sOnceControl, &MachineRoom::_Initialize);
 	}
 
+	/** @brief Adds a BarberPole messenger to the tracked list.
+	 *
+	 *  If the list was previously empty the spin-loop semaphore is
+	 *  released so the thread wakes up.
+	 *
+	 *  @param pole  The BarberPole to start tracking.
+	 */
 	void _Attach(BarberPole* pole)
 	{
 		AutoLocker<BLocker> locker(fLock);
@@ -83,6 +135,13 @@ private:
 			release_sem(fSpinLoopLock);
 	}
 
+	/** @brief Removes a BarberPole messenger from the tracked list.
+	 *
+	 *  If the list becomes empty after removal the spin-loop semaphore is
+	 *  acquired so the thread blocks until a new pole is attached.
+	 *
+	 *  @param pole  The BarberPole to stop tracking.
+	 */
 	void _Detach(BarberPole* pole)
 	{
 		AutoLocker<BLocker> locker(fLock);
@@ -99,6 +158,12 @@ private:
 			acquire_sem(fSpinLoopLock);
 	}
 
+	/** @brief Main loop executed by the background thread.
+	 *
+	 *  Sends a refresh message to every registered BarberPole at
+	 *  kSpinInterval microsecond intervals.  Blocks on the semaphore
+	 *  whenever there are no poles to spin.
+	 */
 	void _SpinLoop()
 	{
 		for (;;) {
@@ -137,6 +202,9 @@ pthread_once_t MachineRoom::sOnceControl = PTHREAD_ONCE_INIT;
 // #pragma mark - BarberPole
 
 
+/** @brief Constructs a BarberPole with a default two-color scheme.
+ *  @param name  The view name passed to BView.
+ */
 BarberPole::BarberPole(const char* name)
 	:
 	BView(name, B_WILL_DRAW | B_FRAME_EVENTS | B_FULL_UPDATE_ON_RESIZE),
@@ -158,6 +226,7 @@ BarberPole::BarberPole(const char* name)
 }
 
 
+/** @brief Destructor — stops spinning and frees color storage. */
 BarberPole::~BarberPole()
 {
 	Stop();
@@ -165,6 +234,9 @@ BarberPole::~BarberPole()
 }
 
 
+/** @brief Handles incoming messages, dispatching the refresh tick internally.
+ *  @param message  The message to process.
+ */
 void
 BarberPole::MessageReceived(BMessage* message)
 {
@@ -180,6 +252,9 @@ BarberPole::MessageReceived(BMessage* message)
 }
 
 
+/** @brief Draws the barber pole, either spinning or in its idle state.
+ *  @param updateRect  The rectangle that needs to be redrawn.
+ */
 void
 BarberPole::Draw(BRect updateRect)
 {
@@ -190,6 +265,9 @@ BarberPole::Draw(BRect updateRect)
 }
 
 
+/** @brief Renders the animated spinning stripe pattern.
+ *  @param updateRect  The dirty rectangle passed from Draw().
+ */
 void
 BarberPole::_DrawSpin(BRect updateRect)
 {
@@ -232,6 +310,9 @@ BarberPole::_DrawSpin(BRect updateRect)
     from the 'drivesetup' application.
 */
 
+/** @brief Renders the static hatched pattern shown when the pole is stopped.
+ *  @param updateRect  The dirty rectangle passed from Draw().
+ */
 void
 BarberPole::_DrawNonSpin(BRect updateRect)
 {
@@ -247,6 +328,10 @@ BarberPole::_DrawNonSpin(BRect updateRect)
 }
 
 
+/** @brief Recomputes stripe geometry when the view is resized.
+ *  @param width   New view width in pixels.
+ *  @param height  New view height in pixels.
+ */
 void
 BarberPole::FrameResized(float width, float height)
 {
@@ -284,6 +369,9 @@ BarberPole::FrameResized(float width, float height)
 }
 
 
+/** @brief Returns the minimum size of the barber pole view.
+ *  @return A BSize with at least 50 px width and 5 px height.
+ */
 BSize
 BarberPole::MinSize()
 {
@@ -299,6 +387,11 @@ BarberPole::MinSize()
 }
 
 
+/** @brief Starts the spinning animation.
+ *
+ *  Attaches this pole to the MachineRoom so the background thread begins
+ *  sending refresh ticks.  Does nothing if already spinning.
+ */
 void
 BarberPole::Start()
 {
@@ -309,6 +402,10 @@ BarberPole::Start()
 }
 
 
+/** @brief Stops the spinning animation and redraws the idle state.
+ *
+ *  Detaches this pole from the MachineRoom.  Does nothing if not spinning.
+ */
 void
 BarberPole::Stop()
 {
@@ -320,6 +417,11 @@ BarberPole::Stop()
 }
 
 
+/** @brief Sets the animation speed of the barber pole.
+ *  @param speed  Fractional speed in the range [-1.0, 1.0].  Positive values
+ *                scroll left-to-right; negative values scroll right-to-left.
+ *                Values outside the range are clamped.
+ */
 void
 BarberPole::SetSpinSpeed(float speed)
 {
@@ -331,6 +433,10 @@ BarberPole::SetSpinSpeed(float speed)
 }
 
 
+/** @brief Replaces the stripe color palette.
+ *  @param colors     Array of rgb_color values to cycle through.
+ *  @param numColors  Number of entries in the \a colors array.
+ */
 void
 BarberPole::SetColors(const rgb_color* colors, uint32 numColors)
 {
@@ -344,6 +450,7 @@ BarberPole::SetColors(const rgb_color* colors, uint32 numColors)
 }
 
 
+/** @brief Advances the scroll offset by one tick and invalidates the view. */
 void
 BarberPole::_Spin()
 {

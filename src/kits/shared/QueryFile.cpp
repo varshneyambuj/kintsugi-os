@@ -1,8 +1,40 @@
 /*
- * Copyright 2010, Axel Dörfler, axeld@pinc-software.de.
- * This file may be used under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Axel Dörfler, axeld@pinc-software.de.
+ *   This file may be used under the terms of the MIT License.
  */
 
+/** @file QueryFile.cpp
+ *  @brief Implementation of BQueryFile, a BEntryList adapter that executes
+ *         a saved Tracker query across one or more filesystem volumes.
+ *
+ *  BQueryFile reads a query definition from a Tracker query file (or from
+ *  a live BQuery object) and iterates over matching filesystem entries.
+ *  It supports multi-volume queries by sequentially executing the same
+ *  predicate on each target volume and stitching results together through
+ *  the standard BEntryList interface.
+ *
+ *  @note Write support is not yet implemented. Live query support is also
+ *        not yet available.
+ */
 
 #include <QueryFile.h>
 
@@ -19,39 +51,71 @@
 // TODO: live query support?
 
 
+/** @brief Attribute name used to store the query predicate string in a
+ *         Tracker query file. */
 const char*	kAttrQueryString = "_trk/qrystr";
+
+/** @brief Attribute name used to store the target volume information in a
+ *         Tracker query file. */
 const char* kAttrQueryVolume = "_trk/qryvol1";
 
 
+/** @brief Constructs a BQueryFile from an entry_ref and initializes it
+ *         via SetTo(const entry_ref&).
+ *
+ *  @param ref  Reference to the Tracker query file to open.
+ */
 BQueryFile::BQueryFile(const entry_ref& ref)
 {
 	SetTo(ref);
 }
 
 
+/** @brief Constructs a BQueryFile from a BEntry and initializes it via
+ *         SetTo(const BEntry&).
+ *
+ *  @param entry  The BEntry pointing to the Tracker query file.
+ */
 BQueryFile::BQueryFile(const BEntry& entry)
 {
 	SetTo(entry);
 }
 
 
+/** @brief Constructs a BQueryFile from a filesystem path and initializes it
+ *         via SetTo(const char*).
+ *
+ *  @param path  Absolute or relative path to the Tracker query file.
+ */
 BQueryFile::BQueryFile(const char* path)
 {
 	SetTo(path);
 }
 
 
+/** @brief Constructs a BQueryFile from a live BQuery object and initializes
+ *         it via SetTo(BQuery&).
+ *
+ *  @param query  A configured BQuery whose predicate and target volume are
+ *                adopted.
+ */
 BQueryFile::BQueryFile(BQuery& query)
 {
 	SetTo(query);
 }
 
 
+/** @brief Destructor. */
 BQueryFile::~BQueryFile()
 {
 }
 
 
+/** @brief Returns the initialization status of the object.
+ *
+ *  @return B_OK if the object is fully initialized, or B_NO_INIT if
+ *          SetTo() has not been called successfully.
+ */
 status_t
 BQueryFile::InitCheck() const
 {
@@ -59,6 +123,18 @@ BQueryFile::InitCheck() const
 }
 
 
+/** @brief Loads a query definition from an entry_ref pointing to a Tracker
+ *         query file.
+ *
+ *  Reads the query predicate from the "_trk/qrystr" attribute and the target
+ *  volume list from the "_trk/qryvol1" attribute.  If the volume attribute is
+ *  absent or all stored volumes are unavailable, all persistent, query-capable
+ *  volumes are added instead.
+ *
+ *  @param ref  The entry_ref of the Tracker query file.
+ *  @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *          code from BNode / attribute access on failure.
+ */
 status_t
 BQueryFile::SetTo(const entry_ref& ref)
 {
@@ -118,6 +194,14 @@ BQueryFile::SetTo(const entry_ref& ref)
 }
 
 
+/** @brief Loads a query definition from a BEntry.
+ *
+ *  Resolves the BEntry to an entry_ref and delegates to
+ *  SetTo(const entry_ref&).
+ *
+ *  @param entry  BEntry pointing to the Tracker query file.
+ *  @return B_OK on success or an error code on failure.
+ */
 status_t
 BQueryFile::SetTo(const BEntry& entry)
 {
@@ -130,6 +214,14 @@ BQueryFile::SetTo(const BEntry& entry)
 }
 
 
+/** @brief Loads a query definition from a filesystem path.
+ *
+ *  Resolves the path to an entry_ref and delegates to
+ *  SetTo(const entry_ref&).
+ *
+ *  @param path  Path to the Tracker query file.
+ *  @return B_OK on success or an error code on failure.
+ */
 status_t
 BQueryFile::SetTo(const char* path)
 {
@@ -142,6 +234,13 @@ BQueryFile::SetTo(const char* path)
 }
 
 
+/** @brief Initializes this BQueryFile from a live BQuery object.
+ *
+ *  Adopts the predicate string and the single target volume from @p query.
+ *
+ *  @param query  A configured BQuery to copy predicate and volume from.
+ *  @return B_OK on success or an error code on failure.
+ */
 status_t
 BQueryFile::SetTo(BQuery& query)
 {
@@ -158,6 +257,11 @@ BQueryFile::SetTo(BQuery& query)
 }
 
 
+/** @brief Resets the object to an uninitialized state.
+ *
+ *  Clears the volume list, query object, predicate string, and sets the
+ *  status to B_NO_INIT.
+ */
 void
 BQueryFile::Unset()
 {
@@ -169,6 +273,12 @@ BQueryFile::Unset()
 }
 
 
+/** @brief Sets the query predicate string.
+ *
+ *  @param predicate  A Tracker query predicate string (e.g.
+ *                    "name==\"*.txt\"").
+ *  @return B_OK always.
+ */
 status_t
 BQueryFile::SetPredicate(const char* predicate)
 {
@@ -177,6 +287,11 @@ BQueryFile::SetPredicate(const char* predicate)
 }
 
 
+/** @brief Adds a BVolume to the list of target volumes for this query.
+ *
+ *  @param volume  The volume to add.
+ *  @return B_OK on success or B_NO_MEMORY if the list cannot be extended.
+ */
 status_t
 BQueryFile::AddVolume(const BVolume& volume)
 {
@@ -184,6 +299,11 @@ BQueryFile::AddVolume(const BVolume& volume)
 }
 
 
+/** @brief Adds a volume device identifier to the target volume list.
+ *
+ *  @param device  The dev_t identifier of the volume to add.
+ *  @return B_OK on success or B_NO_MEMORY if the list cannot be extended.
+ */
 status_t
 BQueryFile::AddVolume(dev_t device)
 {
@@ -191,6 +311,11 @@ BQueryFile::AddVolume(dev_t device)
 }
 
 
+/** @brief Returns the query predicate string.
+ *
+ *  @return A C-string containing the current predicate, or an empty string
+ *          if none has been set.
+ */
 const char*
 BQueryFile::Predicate() const
 {
@@ -198,6 +323,10 @@ BQueryFile::Predicate() const
 }
 
 
+/** @brief Returns the number of target volumes registered with this query.
+ *
+ *  @return The count of volumes in the target volume list.
+ */
 int32
 BQueryFile::CountVolumes() const
 {
@@ -205,6 +334,11 @@ BQueryFile::CountVolumes() const
 }
 
 
+/** @brief Returns the dev_t device identifier for the volume at @p index.
+ *
+ *  @param index  Zero-based index into the volume list.
+ *  @return The dev_t value for the volume, or -1 if @p index is out of range.
+ */
 dev_t
 BQueryFile::VolumeAt(int32 index) const
 {
@@ -215,6 +349,13 @@ BQueryFile::VolumeAt(int32 index) const
 }
 
 
+/** @brief Writes the query definition to the file at @p ref.
+ *
+ *  @note This method is not yet implemented.
+ *
+ *  @param ref  Destination entry_ref for the query file.
+ *  @return B_NOT_SUPPORTED always.
+ */
 status_t
 BQueryFile::WriteTo(const entry_ref& ref)
 {
@@ -223,6 +364,13 @@ BQueryFile::WriteTo(const entry_ref& ref)
 }
 
 
+/** @brief Writes the query definition to the file at the given path.
+ *
+ *  @note This method is not yet implemented.
+ *
+ *  @param path  Destination path for the query file.
+ *  @return B_NOT_SUPPORTED always.
+ */
 status_t
 BQueryFile::WriteTo(const char* path)
 {
@@ -238,6 +386,17 @@ BQueryFile::WriteTo(const char* path)
 // #pragma mark - BEntryList implementation
 
 
+/** @brief Retrieves the next matching entry across all target volumes.
+ *
+ *  Iterates volumes in order; when the current volume is exhausted advances
+ *  to the next one and re-fetches the query.  On the first call the first
+ *  volume's query is started automatically.
+ *
+ *  @param entry     Output BEntry set to the next matching entry.
+ *  @param traverse  If true, symbolic links are traversed.
+ *  @return B_OK on success, B_ENTRY_NOT_FOUND when all volumes are exhausted,
+ *          or another error code on failure.
+ */
 status_t
 BQueryFile::GetNextEntry(BEntry* entry, bool traverse)
 {
@@ -265,6 +424,15 @@ BQueryFile::GetNextEntry(BEntry* entry, bool traverse)
 }
 
 
+/** @brief Retrieves the next matching entry reference across all target
+ *         volumes.
+ *
+ *  Same volume-iteration logic as GetNextEntry().
+ *
+ *  @param ref  Output entry_ref set to the next matching entry.
+ *  @return B_OK on success, B_ENTRY_NOT_FOUND when exhausted, or an error
+ *          code on failure.
+ */
 status_t
 BQueryFile::GetNextRef(entry_ref* ref)
 {
@@ -292,6 +460,17 @@ BQueryFile::GetNextRef(entry_ref* ref)
 }
 
 
+/** @brief Retrieves the next batch of matching directory entries across all
+ *         target volumes.
+ *
+ *  Same volume-iteration logic as GetNextEntry().
+ *
+ *  @param buffer  Buffer to receive dirent structures.
+ *  @param length  Size of @p buffer in bytes.
+ *  @param count   Maximum number of dirents to return.
+ *  @return The number of dirents written, B_ENTRY_NOT_FOUND when exhausted,
+ *          or an error code on failure.
+ */
 int32
 BQueryFile::GetNextDirents(struct dirent* buffer, size_t length, int32 count)
 {
@@ -319,6 +498,11 @@ BQueryFile::GetNextDirents(struct dirent* buffer, size_t length, int32 count)
 }
 
 
+/** @brief Rewinds the iteration so the next Get* call starts from the first
+ *         volume again.
+ *
+ *  @return B_OK always.
+ */
 status_t
 BQueryFile::Rewind()
 {
@@ -327,6 +511,12 @@ BQueryFile::Rewind()
 }
 
 
+/** @brief Returns the total number of matching entries.
+ *
+ *  @note Not supported; always returns -1.
+ *
+ *  @return -1.
+ */
 int32
 BQueryFile::CountEntries()
 {
@@ -335,6 +525,10 @@ BQueryFile::CountEntries()
 }
 
 
+/** @brief Returns the MIME type string that identifies Tracker query files.
+ *
+ *  @return B_QUERY_MIMETYPE.
+ */
 /*static*/ const char*
 BQueryFile::MimeType()
 {
@@ -342,6 +536,16 @@ BQueryFile::MimeType()
 }
 
 
+/** @brief Configures the internal BQuery for the volume at @p index and
+ *         fetches results.
+ *
+ *  Clears the previous query, sets the predicate and target volume for
+ *  volume @p index, then calls Fetch().
+ *
+ *  @param index  Zero-based index into the volume list.
+ *  @return B_OK on success, B_ENTRY_NOT_FOUND if @p index >= CountVolumes(),
+ *          or an error code from BQuery::Fetch() on failure.
+ */
 status_t
 BQueryFile::_SetQuery(int32 index)
 {

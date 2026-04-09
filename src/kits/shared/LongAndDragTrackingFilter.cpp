@@ -1,6 +1,34 @@
 /*
- * Copyright 2011, Alexandre Deckner, alex@zappotek.com
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Alexandre Deckner, alex@zappotek.com
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Alexandre Deckner, alex@zappotek.com
+ */
+
+/** @file LongAndDragTrackingFilter.cpp
+ *  @brief Implements LongAndDragTrackingFilter, a BMessageFilter that detects
+ *         long mouse presses and pointer drags, sending distinct notification
+ *         messages for each gesture type.
  */
 
 /*!
@@ -34,6 +62,15 @@
 #include <new>
 
 
+/** @brief Constructs a LongAndDragTrackingFilter.
+ *  @param longMessageWhat      The 'what' field for the long-press message.
+ *  @param dragMessageWhat      The 'what' field for the drag-start message.
+ *  @param radiusThreshold      Pointer must stay within this radius (in pixels)
+ *                              for a long-press to be recognized.
+ *  @param durationThreshold    Microseconds the button must be held for a
+ *                              long-press.  Pass 0 to use the system double-
+ *                              click speed.
+ */
 LongAndDragTrackingFilter::LongAndDragTrackingFilter(uint32 longMessageWhat,
 	uint32 dragMessageWhat, float radiusThreshold,
 	bigtime_t durationThreshold)
@@ -53,12 +90,14 @@ LongAndDragTrackingFilter::LongAndDragTrackingFilter(uint32 longMessageWhat,
 }
 
 
+/** @brief Destructor — cancels any pending long-press timer. */
 LongAndDragTrackingFilter::~LongAndDragTrackingFilter()
 {
 	delete fMessageRunner;
 }
 
 
+/** @brief Cancels the long-press timer without sending a long-press message. */
 void
 LongAndDragTrackingFilter::_StopTracking()
 {
@@ -67,6 +106,18 @@ LongAndDragTrackingFilter::_StopTracking()
 }
 
 
+/** @brief Filters mouse messages to detect long presses and drags.
+ *
+ *  On B_MOUSE_DOWN (single click) a BMessageRunner is armed; if it fires
+ *  before the pointer moves outside the radius threshold, the long-press
+ *  message is dispatched.  On B_MOUSE_MOVED the squared distance is tested
+ *  against the radius threshold; if exceeded, the drag message is sent and
+ *  the timer is cancelled.  On B_MOUSE_UP the timer is always cancelled.
+ *
+ *  @param message  The message to examine.
+ *  @param target   Pointer to the handler that will receive the message.
+ *  @return Always B_DISPATCH_MESSAGE so all handlers can process the event.
+ */
 filter_result
 LongAndDragTrackingFilter::Filter(BMessage* message, BHandler** target)
 {

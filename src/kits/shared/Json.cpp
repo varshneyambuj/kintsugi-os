@@ -1,8 +1,37 @@
 /*
- * Copyright 2017-2023, Andrew Lindesay <apl@lindesay.co.nz>
- * Copyright 2014-2017, Augustin Cavalier (waddlesplash)
- * Copyright 2014, Stephan Aßmus <superstippi@gmx.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017-2023, Andrew Lindesay <apl@lindesay.co.nz>
+ *   Copyright 2014-2017, Augustin Cavalier (waddlesplash)
+ *   Copyright 2014, Stephan Aßmus <superstippi@gmx.de>
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Andrew Lindesay
+ *       Augustin Cavalier (waddlesplash)
+ *       Stephan Aßmus
+ */
+
+/** @file Json.cpp
+ *  @brief Streaming JSON parser that converts JSON text into BMessage objects
+ *         or fires events at a BJsonEventListener as data is read.
  */
 
 
@@ -44,8 +73,16 @@ static const size_t kAssemblyBufferSizeIncrement = 256;
 static const size_t kMaximumUtf8SequenceLength = 7;
 
 
+/** @brief Growable character buffer used during JSON string parsing.
+ *
+ *  Accumulates characters (including multi-byte UTF-8 sequences) as they are
+ *  read from the input stream. The buffer starts small and reallocates as
+ *  needed, but shrinks back to kRetainedAssemblyBufferSize when Reset() is
+ *  called to avoid holding large allocations between strings.
+ */
 class JsonParseAssemblyBuffer {
 public:
+	/** @brief Constructs the buffer and performs the initial allocation. */
 	JsonParseAssemblyBuffer()
 		:
 		fAssemblyBuffer(NULL),
@@ -57,12 +94,17 @@ public:
 			fAssemblyBufferAllocatedSize = kInitialAssemblyBufferSize;
 	}
 
+	/** @brief Frees the underlying heap buffer. */
 	~JsonParseAssemblyBuffer()
 	{
 		if (fAssemblyBuffer != NULL)
 			free(fAssemblyBuffer);
 	}
 
+	/** @brief Returns a pointer to the raw accumulated bytes.
+	 *  @return Pointer to the internal buffer (not NUL-terminated unless
+	 *          AppendCharacter(0) was called explicitly).
+	 */
 	const char* Buffer() const
 	{
 		return fAssemblyBuffer;
@@ -72,6 +114,14 @@ public:
 		been finished with by some section of logic.
 	*/
 
+	/** @brief Resets the used-size counter and optionally shrinks the buffer.
+	 *
+	 *  If the buffer grew beyond kRetainedAssemblyBufferSize it is reallocated
+	 *  down to that size so that large one-off strings do not permanently bloat
+	 *  memory.
+	 *
+	 *  @return B_OK on success, B_NO_MEMORY if the shrink reallocation fails.
+	 */
 	status_t Reset()
 	{
 		fAssemblyBufferUsedSize = 0;
@@ -88,6 +138,10 @@ public:
 		return B_OK;
 	}
 
+	/** @brief Appends a single byte to the buffer, growing it if necessary.
+	 *  @param c  The byte to append.
+	 *  @return B_OK on success, B_NO_MEMORY if growth fails.
+	 */
 	status_t AppendCharacter(char c)
 	{
 		status_t result = _EnsureAssemblyBufferAllocatedSize(fAssemblyBufferUsedSize + 1);
@@ -100,6 +154,11 @@ public:
 		return result;
 	}
 
+	/** @brief Appends a raw byte sequence to the buffer.
+	 *  @param str  Pointer to the bytes to copy.
+	 *  @param len  Number of bytes to copy.
+	 *  @return B_OK on success, B_NO_MEMORY if growth fails.
+	 */
 	status_t AppendCharacters(char* str, size_t len)
 	{
 		status_t result = _EnsureAssemblyBufferAllocatedSize(fAssemblyBufferUsedSize + len);
@@ -112,6 +171,10 @@ public:
 		return result;
 	}
 
+	/** @brief Encodes a Unicode code point as UTF-8 and appends the bytes.
+	 *  @param c  Unicode code point to encode and append.
+	 *  @return B_OK on success, B_NO_MEMORY if growth fails.
+	 */
 	status_t AppendUnicodeCharacter(uint32 c)
 	{
 		status_t result = _EnsureAssemblyBufferAllocatedSize(
@@ -133,6 +196,14 @@ private:
 		least `minimumSize` bytes available.
 	*/
 
+	/** @brief Ensures the buffer has at least @p minimumSize bytes allocated.
+	 *
+	 *  Requests are rounded up to kAssemblyBufferSizeIncrement boundaries while
+	 *  below kRetainedAssemblyBufferSize to reduce the number of small reallocs.
+	 *
+	 *  @param minimumSize  Minimum number of bytes required.
+	 *  @return B_OK on success, B_NO_MEMORY if reallocation fails.
+	 */
 	status_t _EnsureAssemblyBufferAllocatedSize(size_t minimumSize)
 	{
 		if (fAssemblyBufferAllocatedSize < minimumSize) {
@@ -164,14 +235,22 @@ private:
 };
 
 
+/** @brief RAII helper that calls Reset() on a JsonParseAssemblyBuffer when
+ *         it goes out of scope, ensuring the buffer is recycled after each
+ *         string is parsed.
+ */
 class JsonParseAssemblyBufferResetter {
 public:
+	/** @brief Constructs the resetter, taking ownership of the reference.
+	 *  @param assemblyBuffer  The buffer to reset on destruction.
+	 */
 	JsonParseAssemblyBufferResetter(JsonParseAssemblyBuffer* assemblyBuffer)
 		:
 		fAssemblyBuffer(assemblyBuffer)
 	{
 	}
 
+	/** @brief Resets the buffer. */
 	~JsonParseAssemblyBufferResetter()
 	{
 		fAssemblyBuffer->Reset();
@@ -185,8 +264,17 @@ private:
 
 /*! This class carries state around the parsing process. */
 
+/** @brief Holds all mutable state needed by the recursive-descent JSON parser.
+ *
+ *  Wraps the input BDataIO, the event listener, the current line counter, a
+ *  single-character pushback slot, and the shared assembly buffer.
+ */
 class JsonParseContext {
 public:
+	/** @brief Constructs the parse context.
+	 *  @param data      Source of raw JSON bytes.
+	 *  @param listener  Receives parse events (string, number, object start, …).
+	 */
 	JsonParseContext(BDataIO* data, BJsonEventListener* listener)
 		:
 		fListener(listener),
@@ -199,35 +287,44 @@ public:
 	}
 
 
+	/** @brief Destroys the context and frees the assembly buffer. */
 	~JsonParseContext()
 	{
 		delete fAssemblyBuffer;
 	}
 
 
+	/** @brief Returns the associated event listener. */
 	BJsonEventListener* Listener() const
 	{
 		return fListener;
 	}
 
 
+	/** @brief Returns the underlying data source. */
 	BDataIO* Data() const
 	{
 		return fData;
 	}
 
 
+	/** @brief Returns the current 1-based line number. */
 	int LineNumber() const
 	{
 		return fLineNumber;
 	}
 
 
+	/** @brief Increments the line counter (called on newline characters). */
 	void IncrementLineNumber()
 	{
 		fLineNumber++;
 	}
 
+	/** @brief Reads the next byte from input, honouring the pushback slot.
+	 *  @param buffer  Output parameter; receives the next character.
+	 *  @return B_OK, B_PARTIAL_READ (EOF), or an I/O error code.
+	 */
 	status_t NextChar(char* buffer)
 	{
 		if (fHasPushbackChar) {
@@ -239,6 +336,13 @@ public:
 		return Data()->ReadExactly(buffer, 1);
 	}
 
+	/** @brief Pushes a character back so the next NextChar() call returns it.
+	 *
+	 *  Only one character may be pushed back at a time; a second call
+	 *  triggers a debugger panic.
+	 *
+	 *  @param c  The character to push back.
+	 */
 	void PushbackChar(char c)
 	{
 		if (fHasPushbackChar)
@@ -248,6 +352,7 @@ public:
 	}
 
 
+	/** @brief Returns the shared string assembly buffer. */
 	JsonParseAssemblyBuffer* AssemblyBuffer()
 	{
 		return fAssemblyBuffer;
@@ -265,6 +370,11 @@ private:
 };
 
 
+/** @brief Parses a JSON string from a BString and stores the result in @p message.
+ *  @param JSON     The JSON text.
+ *  @param message  Output BMessage populated with the parsed data.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BJson::Parse(const BString& JSON, BMessage& message)
 {
@@ -272,6 +382,12 @@ BJson::Parse(const BString& JSON, BMessage& message)
 }
 
 
+/** @brief Parses JSON from a raw byte buffer of known length.
+ *  @param JSON     Pointer to the JSON bytes.
+ *  @param length   Number of bytes to read.
+ *  @param message  Output BMessage populated with the parsed data.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BJson::Parse(const char* JSON, size_t length, BMessage& message)
 {
@@ -287,6 +403,11 @@ BJson::Parse(const char* JSON, size_t length, BMessage& message)
 }
 
 
+/** @brief Parses a NUL-terminated JSON string and stores the result in @p message.
+ *  @param JSON     NUL-terminated JSON text.
+ *  @param message  Output BMessage populated with the parsed data.
+ *  @return B_OK on success, or an error code on failure.
+ */
 status_t
 BJson::Parse(const char* JSON, BMessage& message)
 {
@@ -304,6 +425,15 @@ BJson::Parse(const char* JSON, BMessage& message)
     Each event is sent to the listener to process as required.
 */
 
+/** @brief Streaming JSON parse: reads from @p data and fires events at @p listener.
+ *
+ *  Reads the JSON payload incrementally; for each value, object boundary, or
+ *  array boundary encountered the corresponding event is forwarded to the
+ *  listener. Complete() is called on the listener when the stream ends.
+ *
+ *  @param data      Source of raw JSON bytes.
+ *  @param listener  Receives parse events as the JSON is processed.
+ */
 void
 BJson::Parse(BDataIO* data, BJsonEventListener* listener)
 {
@@ -316,6 +446,15 @@ BJson::Parse(BDataIO* data, BJsonEventListener* listener)
 // #pragma mark - Specific parse logic.
 
 
+/** @brief Reads the next byte from the parse context, reporting errors to the listener.
+ *
+ *  Wraps JsonParseContext::NextChar() and translates B_PARTIAL_READ (EOF) and
+ *  other I/O errors into listener error events.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @param c                Output parameter; receives the character read.
+ *  @return true if a character was read successfully, false on any error.
+ */
 bool
 BJson::NextChar(JsonParseContext& jsonParseContext, char* c)
 {
@@ -342,6 +481,14 @@ BJson::NextChar(JsonParseContext& jsonParseContext, char* c)
 }
 
 
+/** @brief Reads bytes until a non-whitespace character is found.
+ *
+ *  Newline characters (0x0a and 0x0d) also increment the line counter.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @param c                Output parameter; receives the first non-whitespace byte.
+ *  @return true on success, false if an I/O error or premature EOF is encountered.
+ */
 bool
 BJson::NextNonWhitespaceChar(JsonParseContext& jsonParseContext, char* c)
 {
@@ -365,6 +512,15 @@ BJson::NextNonWhitespaceChar(JsonParseContext& jsonParseContext, char* c)
 }
 
 
+/** @brief Dispatches to the appropriate parser for a single JSON value.
+ *
+ *  Reads the first non-whitespace character and routes to ParseObject(),
+ *  ParseArray(), ParseString(), ParseNumber(), or
+ *  ParseExpectedVerbatimStringAndRaiseEvent() depending on the character.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on parse or I/O error.
+ */
 bool
 BJson::ParseAny(JsonParseContext& jsonParseContext)
 {
@@ -432,6 +588,14 @@ BJson::ParseAny(JsonParseContext& jsonParseContext)
 
 /*! This method captures an object name, a separator ':' and then any value. */
 
+/** @brief Parses a single JSON object name/value pair (e.g. "key" : value).
+ *
+ *  Reads the name string (raising B_JSON_OBJECT_NAME), expects a ':' separator,
+ *  and then delegates to ParseAny() for the value.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on parse or I/O error.
+ */
 bool
 BJson::ParseObjectNameValuePair(JsonParseContext& jsonParseContext)
 {
@@ -491,6 +655,14 @@ BJson::ParseObjectNameValuePair(JsonParseContext& jsonParseContext)
 }
 
 
+/** @brief Parses a complete JSON object ('{' … '}'), firing start/end events.
+ *
+ *  Emits B_JSON_OBJECT_START, then calls ParseObjectNameValuePair() for each
+ *  member, then emits B_JSON_OBJECT_END.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on parse or I/O error.
+ */
 bool
 BJson::ParseObject(JsonParseContext& jsonParseContext)
 {
@@ -551,6 +723,14 @@ BJson::ParseObject(JsonParseContext& jsonParseContext)
 }
 
 
+/** @brief Parses a complete JSON array ('[' … ']'), firing start/end events.
+ *
+ *  Emits B_JSON_ARRAY_START, calls ParseAny() for each element, then emits
+ *  B_JSON_ARRAY_END.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on parse or I/O error.
+ */
 bool
 BJson::ParseArray(JsonParseContext& jsonParseContext)
 {
@@ -610,6 +790,12 @@ BJson::ParseArray(JsonParseContext& jsonParseContext)
 }
 
 
+/** @brief Parses exactly four hex digits following a '\u' escape and appends
+ *         the resulting Unicode code point (as UTF-8) to the assembly buffer.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on malformed input or I/O error.
+ */
 bool
 BJson::ParseEscapeUnicodeSequence(JsonParseContext& jsonParseContext)
 {
@@ -652,6 +838,15 @@ BJson::ParseEscapeUnicodeSequence(JsonParseContext& jsonParseContext)
 }
 
 
+/** @brief Parses the character following a backslash inside a JSON string.
+ *
+ *  Handles the standard JSON escape sequences (\\n, \\r, \\b, \\f, \\\\,
+ *  \\/, \\t, \\", and \\uXXXX) and appends the resulting byte(s) to the
+ *  assembly buffer.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on unrecognised escape or I/O error.
+ */
 bool
 BJson::ParseStringEscapeSequence(JsonParseContext& jsonParseContext)
 {
@@ -709,6 +904,17 @@ BJson::ParseStringEscapeSequence(JsonParseContext& jsonParseContext)
 }
 
 
+/** @brief Reads a JSON quoted string and fires @p eventType with its content.
+ *
+ *  The opening '"' has already been consumed before this is called. Characters
+ *  are accumulated in the assembly buffer until a closing '"' is found. Control
+ *  characters (< 0x20) cause an error.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @param eventType        The event type to raise (B_JSON_STRING or
+ *                          B_JSON_OBJECT_NAME).
+ *  @return true on success, false on parse or I/O error.
+ */
 bool
 BJson::ParseString(JsonParseContext& jsonParseContext,
 	json_event_type eventType)
@@ -760,6 +966,20 @@ BJson::ParseString(JsonParseContext& jsonParseContext,
 }
 
 
+/** @brief Verifies a verbatim literal and, if correct, fires a JSON event.
+ *
+ *  Delegates to ParseExpectedVerbatimString(); if that succeeds the event
+ *  @p jsonEventType is raised on the listener.
+ *
+ *  @param jsonParseContext    Active parse context.
+ *  @param expectedString     The remaining characters expected (after the
+ *                            leading character already consumed).
+ *  @param expectedStringLength  Length of @p expectedString.
+ *  @param leadingChar        The character that was already consumed (used in
+ *                            error messages).
+ *  @param jsonEventType      The event to raise on a successful match.
+ *  @return true on success, false on mismatch or I/O error.
+ */
 bool
 BJson::ParseExpectedVerbatimStringAndRaiseEvent(
 	JsonParseContext& jsonParseContext, const char* expectedString,
@@ -777,6 +997,18 @@ BJson::ParseExpectedVerbatimStringAndRaiseEvent(
 
 /*! This will make sure that the constant string is available at the input. */
 
+/** @brief Reads and verifies a literal string from the input stream.
+ *
+ *  Checks that each character in @p expectedString matches the next byte
+ *  from the stream. Reports an error to the listener on mismatch.
+ *
+ *  @param jsonParseContext     Active parse context.
+ *  @param expectedString      Characters expected at the current stream
+ *                             position.
+ *  @param expectedStringLength  Length of @p expectedString.
+ *  @param leadingChar         Already-consumed leading character (for errors).
+ *  @return true if all characters match, false otherwise.
+ */
 bool
 BJson::ParseExpectedVerbatimString(JsonParseContext& jsonParseContext,
 	const char* expectedString, size_t expectedStringLength, char leadingChar)
@@ -811,6 +1043,14 @@ BJson::ParseExpectedVerbatimString(JsonParseContext& jsonParseContext,
     the string values are short.
 */
 
+/** @brief Validates that @p value is a well-formed JSON number string.
+ *
+ *  Implements the JSON number grammar: an optional leading '-', integer
+ *  digits, an optional fractional part, and an optional exponent.
+ *
+ *  @param value  NUL-terminated string to validate.
+ *  @return true if @p value is a valid JSON number, false otherwise.
+ */
 bool
 BJson::IsValidNumber(const char* value)
 {
@@ -866,6 +1106,15 @@ BJson::IsValidNumber(const char* value)
     number can take the end-of-file to signify the end of the number.
 */
 
+/** @brief Reads a JSON number from the stream and fires a B_JSON_NUMBER event.
+ *
+ *  Accumulates numeric characters into the assembly buffer. EOF is a valid
+ *  terminator for a top-level number value. The accumulated string is
+ *  validated with IsValidNumber() before the event is raised.
+ *
+ *  @param jsonParseContext  Active parse context.
+ *  @return true on success, false on malformed number or I/O error.
+ */
 bool
 BJson::ParseNumber(JsonParseContext& jsonParseContext)
 {

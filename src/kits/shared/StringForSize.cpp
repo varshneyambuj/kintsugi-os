@@ -1,7 +1,33 @@
 /*
- * Copyright 2010-2024 Haiku Inc. All rights reserved.
- * Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2024 Haiku Inc. All rights reserved.
+ *   Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file StringForSize.cpp
+ *  @brief Implements \c BPrivate::string_for_size() and
+ *         \c BPrivate::parse_size(), utilities for formatting byte counts as
+ *         human-readable strings (e.g. "1.50 GiB") and parsing size strings
+ *         with optional SI-like suffixes back into raw byte counts.
  */
 
 #include "StringForSize.h"
@@ -25,6 +51,19 @@ using BPrivate::gSystemCatalog;
 namespace BPrivate {
 
 
+/**
+ * @brief Converts a byte count to a localised human-readable size string.
+ *
+ * Repeatedly divides \a size by 1024 while the value is >= 1000 and a
+ * larger unit is available (up to TiB). The result is formatted with
+ * \c BNumberFormat (0 decimal places for bytes, 2 for larger units) and
+ * embedded in a translated plural-aware format string via \c BStringFormat.
+ *
+ * @param size       The size in bytes.
+ * @param string     Caller-supplied output buffer.
+ * @param stringSize Size of \a string in bytes.
+ * @return \a string, which now holds the formatted result.
+ */
 const char*
 string_for_size(double size, char* string, size_t stringSize)
 {
@@ -58,6 +97,25 @@ string_for_size(double size, char* string, size_t stringSize)
 }
 
 
+/**
+ * @brief Parses a size string with an optional binary unit suffix.
+ *
+ * Reads a leading integer using \c strtoll() and then inspects the
+ * immediately following character for a case-insensitive suffix:
+ * - \c 'k' / \c 'K' — multiply by 1024
+ * - \c 'm' / \c 'M' — multiply by 1024^2
+ * - \c 'g' / \c 'G' — multiply by 1024^3
+ * - \c 't' / \c 'T' — multiply by 1024^4
+ *
+ * The suffixes are applied via fall-through multiplication (T -> G -> M -> K).
+ * Overflow is detected by checking that the scaled value remains larger than
+ * the original.
+ *
+ * @param sizeString A \c NUL-terminated string such as \c "512", \c "4k",
+ *                   or \c "2G".
+ * @return The parsed byte count, or \c -1 if the string is invalid, the
+ *         suffix is unrecognised, or an overflow is detected.
+ */
 int64
 parse_size(const char* sizeString)
 {
@@ -94,4 +152,3 @@ parse_size(const char* sizeString)
 
 
 }	// namespace BPrivate
-

@@ -1,6 +1,33 @@
 /*
- * Copyright 2017, Andrew Lindesay <apl@lindesay.co.nz>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017, Andrew Lindesay <apl@lindesay.co.nz>
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Andrew Lindesay
+ */
+
+/** @file JsonTextWriter.cpp
+ *  @brief Serialises JSON events to a BDataIO stream as compact UTF-8 encoded
+ *         JSON text, using an internal stack to track container nesting.
  */
 
 
@@ -15,6 +42,10 @@
 namespace BPrivate {
 
 
+/** @brief Returns true if the byte is a printable 7-bit ASCII character.
+ *  @param c  Byte to test.
+ *  @return true when 0x20 <= c < 0x7f.
+ */
 static bool
 b_json_is_7bit_clean(uint8 c)
 {
@@ -22,6 +53,10 @@ b_json_is_7bit_clean(uint8 c)
 }
 
 
+/** @brief Returns true if the byte is an illegal JSON character (control or DEL).
+ *  @param c  Byte to test.
+ *  @return true when c < 0x20 or c == 0x7f.
+ */
 static bool
 b_json_is_illegal(uint8 c)
 {
@@ -29,6 +64,14 @@ b_json_is_illegal(uint8 c)
 }
 
 
+/** @brief Returns the two-character JSON escape sequence for special ASCII chars.
+ *
+ *  Covers: '"', '\\', '/', '\\b', '\\f', '\\n', '\\r', '\\t'.
+ *
+ *  @param c  Character to look up.
+ *  @return Pointer to a NUL-terminated two-character escape string, or NULL
+ *          if no simple escape exists for @p c.
+ */
 static const char*
 b_json_simple_esc_sequence(char c)
 {
@@ -55,6 +98,15 @@ b_json_simple_esc_sequence(char c)
 }
 
 
+/** @brief Counts the leading run of bytes that are 7-bit clean and need no escape.
+ *
+ *  Stops at the first byte that either is not 7-bit clean or has a simple
+ *  escape sequence.
+ *
+ *  @param c       Pointer to the start of the byte sequence.
+ *  @param length  Maximum number of bytes to examine.
+ *  @return The length of the leading unescaped run.
+ */
 static size_t
 b_json_len_7bit_clean_non_esc(uint8* c, size_t length) {
 	size_t result = 0;
@@ -75,6 +127,13 @@ b_json_len_7bit_clean_non_esc(uint8* c, size_t length) {
     containers; arrays and objects.
 */
 
+/** @brief Base stacked event listener used by BJsonTextWriter.
+ *
+ *  BJsonTextWriter maintains a stack of these listeners that mirrors the
+ *  nesting of JSON containers (arrays and objects). Each listener handles
+ *  events appropriate to its context and delegates streaming operations back
+ *  to the parent BJsonTextWriter.
+ */
 class BJsonTextWriterStackedEventListener : public BJsonEventListener {
 public:
 								BJsonTextWriterStackedEventListener(
@@ -126,6 +185,7 @@ protected:
 };
 
 
+/** @brief Stacked listener that handles events inside a JSON array context. */
 class BJsonTextWriterArrayStackedEventListener
 	: public BJsonTextWriterStackedEventListener {
 public:
@@ -141,6 +201,7 @@ protected:
 };
 
 
+/** @brief Stacked listener that handles events inside a JSON object context. */
 class BJsonTextWriterObjectStackedEventListener
 	: public BJsonTextWriterStackedEventListener {
 public:
@@ -163,6 +224,10 @@ using BPrivate::BJsonTextWriterObjectStackedEventListener;
 // #pragma mark - BJsonTextWriterStackedEventListener
 
 
+/** @brief Constructs the stacked listener.
+ *  @param writer  The owning BJsonTextWriter.
+ *  @param parent  The parent listener on the stack (NULL for the root).
+ */
 BJsonTextWriterStackedEventListener::BJsonTextWriterStackedEventListener(
 	BJsonTextWriter* writer,
 	BJsonTextWriterStackedEventListener* parent)
@@ -173,11 +238,20 @@ BJsonTextWriterStackedEventListener::BJsonTextWriterStackedEventListener(
 }
 
 
+/** @brief Destroys the stacked listener. */
 BJsonTextWriterStackedEventListener::~BJsonTextWriterStackedEventListener()
 {
 }
 
 
+/** @brief Handles a JSON event by streaming the corresponding text.
+ *
+ *  Calls WillAdd() before writing and DidAdd() after a successful write.
+ *  Object/array start events push a new stacked listener onto the writer.
+ *
+ *  @param event  The JSON event to handle.
+ *  @return true to continue parsing, false on error.
+ */
 bool
 BJsonTextWriterStackedEventListener::Handle(const BJsonEvent& event)
 {
@@ -268,6 +342,11 @@ BJsonTextWriterStackedEventListener::Handle(const BJsonEvent& event)
 }
 
 
+/** @brief Forwards an error to the owning BJsonTextWriter.
+ *  @param status   The error code.
+ *  @param line     Source line of the error.
+ *  @param message  Human-readable description.
+ */
 void
 BJsonTextWriterStackedEventListener::HandleError(status_t status, int32 line,
 	const char* message)
@@ -276,6 +355,10 @@ BJsonTextWriterStackedEventListener::HandleError(status_t status, int32 line,
 }
 
 
+/** @brief Not valid to call on a stacked listener; records an error.
+ *
+ *  Complete() should only be called on the top-level BJsonTextWriter.
+ */
 void
 BJsonTextWriterStackedEventListener::Complete()
 {
@@ -285,6 +368,9 @@ BJsonTextWriterStackedEventListener::Complete()
 }
 
 
+/** @brief Queries the error status from the owning writer.
+ *  @return The writer's current error status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::ErrorStatus()
 {
@@ -292,6 +378,9 @@ BJsonTextWriterStackedEventListener::ErrorStatus()
 }
 
 
+/** @brief Returns the parent listener on the stack.
+ *  @return Pointer to the parent, or NULL for the root listener.
+ */
 BJsonTextWriterStackedEventListener*
 BJsonTextWriterStackedEventListener::Parent()
 {
@@ -299,6 +388,10 @@ BJsonTextWriterStackedEventListener::Parent()
 }
 
 
+/** @brief Forwards StreamNumberNode to the owning writer.
+ *  @param event  The B_JSON_NUMBER event whose Content() is the number text.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamNumberNode(const BJsonEvent& event)
 {
@@ -306,6 +399,10 @@ BJsonTextWriterStackedEventListener::StreamNumberNode(const BJsonEvent& event)
 }
 
 
+/** @brief Forwards StreamStringVerbatim (whole string) to the owning writer.
+ *  @param string  NUL-terminated string to write without encoding.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamStringVerbatim(const char* string)
 {
@@ -313,6 +410,12 @@ BJsonTextWriterStackedEventListener::StreamStringVerbatim(const char* string)
 }
 
 
+/** @brief Forwards StreamStringVerbatim (substring) to the owning writer.
+ *  @param string  Base pointer of the string.
+ *  @param offset  Byte offset from which to start writing.
+ *  @param length  Number of bytes to write.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamStringVerbatim(const char* string,
 	off_t offset, size_t length)
@@ -321,6 +424,10 @@ BJsonTextWriterStackedEventListener::StreamStringVerbatim(const char* string,
 }
 
 
+/** @brief Forwards StreamStringEncoded (whole string) to the owning writer.
+ *  @param string  UTF-8 string to JSON-encode and write.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamStringEncoded(const char* string)
 {
@@ -328,6 +435,12 @@ BJsonTextWriterStackedEventListener::StreamStringEncoded(const char* string)
 }
 
 
+/** @brief Forwards StreamStringEncoded (substring) to the owning writer.
+ *  @param string  Base pointer of the UTF-8 string.
+ *  @param offset  Byte offset from which to start encoding.
+ *  @param length  Number of bytes to encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamStringEncoded(const char* string,
 	off_t offset, size_t length)
@@ -336,6 +449,10 @@ BJsonTextWriterStackedEventListener::StreamStringEncoded(const char* string,
 }
 
 
+/** @brief Forwards StreamQuotedEncodedString (whole string) to the writer.
+ *  @param string  UTF-8 string to quote and JSON-encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamQuotedEncodedString(
 	const char* string)
@@ -344,6 +461,12 @@ BJsonTextWriterStackedEventListener::StreamQuotedEncodedString(
 }
 
 
+/** @brief Forwards StreamQuotedEncodedString (substring) to the writer.
+ *  @param string  Base pointer of the UTF-8 string.
+ *  @param offset  Byte offset from which to start encoding.
+ *  @param length  Number of bytes to encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamQuotedEncodedString(
 	const char* string, off_t offset, size_t length)
@@ -352,6 +475,10 @@ BJsonTextWriterStackedEventListener::StreamQuotedEncodedString(
 }
 
 
+/** @brief Forwards StreamChar to the owning writer.
+ *  @param c  A single character to write (e.g. '{', '}', ',', ':').
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriterStackedEventListener::StreamChar(char c)
 {
@@ -359,6 +486,13 @@ BJsonTextWriterStackedEventListener::StreamChar(char c)
 }
 
 
+/** @brief Called before writing a new value; returns true to continue.
+ *
+ *  The base implementation simply allows the write. Subclasses may insert
+ *  commas or validate state before writing.
+ *
+ *  @return true to allow the write, false to abort.
+ */
 bool
 BJsonTextWriterStackedEventListener::WillAdd()
 {
@@ -366,6 +500,7 @@ BJsonTextWriterStackedEventListener::WillAdd()
 }
 
 
+/** @brief Called after a value has been successfully written; increments the count. */
 void
 BJsonTextWriterStackedEventListener::DidAdd()
 {
@@ -373,6 +508,9 @@ BJsonTextWriterStackedEventListener::DidAdd()
 }
 
 
+/** @brief Replaces the current stacked listener on the writer.
+ *  @param stackedListener  The new listener to install.
+ */
 void
 BJsonTextWriterStackedEventListener::SetStackedListenerOnWriter(
 	BJsonTextWriterStackedEventListener* stackedListener)
@@ -384,6 +522,10 @@ BJsonTextWriterStackedEventListener::SetStackedListenerOnWriter(
 // #pragma mark - BJsonTextWriterArrayStackedEventListener
 
 
+/** @brief Constructs the array stacked listener.
+ *  @param writer  The owning BJsonTextWriter.
+ *  @param parent  The parent listener on the stack.
+ */
 BJsonTextWriterArrayStackedEventListener::BJsonTextWriterArrayStackedEventListener(
 	BJsonTextWriter* writer,
 	BJsonTextWriterStackedEventListener* parent)
@@ -393,12 +535,21 @@ BJsonTextWriterArrayStackedEventListener::BJsonTextWriterArrayStackedEventListen
 }
 
 
+/** @brief Destroys the array stacked listener. */
 BJsonTextWriterArrayStackedEventListener
 	::~BJsonTextWriterArrayStackedEventListener()
 {
 }
 
 
+/** @brief Handles JSON events in an array context.
+ *
+ *  Writes the closing ']' on B_JSON_ARRAY_END and pops the stack; delegates
+ *  all other events to the base class.
+ *
+ *  @param event  The JSON event to process.
+ *  @return true to continue, false on error.
+ */
 bool
 BJsonTextWriterArrayStackedEventListener::Handle(const BJsonEvent& event)
 {
@@ -433,6 +584,10 @@ BJsonTextWriterArrayStackedEventListener::Handle(const BJsonEvent& event)
 }
 
 
+/** @brief Writes a comma separator before all elements after the first.
+ *
+ *  @return true to allow the write, false on I/O error.
+ */
 bool
 BJsonTextWriterArrayStackedEventListener::WillAdd()
 {
@@ -454,6 +609,10 @@ BJsonTextWriterArrayStackedEventListener::WillAdd()
 // #pragma mark - BJsonTextWriterObjectStackedEventListener
 
 
+/** @brief Constructs the object stacked listener.
+ *  @param writer  The owning BJsonTextWriter.
+ *  @param parent  The parent listener on the stack.
+ */
 BJsonTextWriterObjectStackedEventListener::BJsonTextWriterObjectStackedEventListener(
 	BJsonTextWriter* writer,
 	BJsonTextWriterStackedEventListener* parent)
@@ -463,12 +622,22 @@ BJsonTextWriterObjectStackedEventListener::BJsonTextWriterObjectStackedEventList
 }
 
 
+/** @brief Destroys the object stacked listener. */
 BJsonTextWriterObjectStackedEventListener
 	::~BJsonTextWriterObjectStackedEventListener()
 {
 }
 
 
+/** @brief Handles JSON events in an object context.
+ *
+ *  Writes '}' on B_JSON_OBJECT_END (popping the stack), writes the quoted
+ *  name and ':' separator on B_JSON_OBJECT_NAME, and delegates value events
+ *  to the base class.
+ *
+ *  @param event  The JSON event to process.
+ *  @return true to continue, false on error.
+ */
 bool
 BJsonTextWriterObjectStackedEventListener::Handle(const BJsonEvent& event)
 {
@@ -520,6 +689,13 @@ BJsonTextWriterObjectStackedEventListener::Handle(const BJsonEvent& event)
 // #pragma mark - BJsonTextWriter
 
 
+/** @brief Constructs the text writer and installs a root stacked listener.
+ *
+ *  Pre-fills the Unicode assembly buffer with the '\\u' prefix so that
+ *  subsequent unicode character writes are efficient.
+ *
+ *  @param dataIO  Destination stream for the JSON output bytes.
+ */
 BJsonTextWriter::BJsonTextWriter(
 	BDataIO* dataIO)
 	:
@@ -536,6 +712,7 @@ BJsonTextWriter::BJsonTextWriter(
 }
 
 
+/** @brief Destroys the writer and frees all stacked listeners. */
 BJsonTextWriter::~BJsonTextWriter()
 {
 	BJsonTextWriterStackedEventListener* listener = fStackedListener;
@@ -550,6 +727,10 @@ BJsonTextWriter::~BJsonTextWriter()
 }
 
 
+/** @brief Forwards a JSON event to the current top-of-stack listener.
+ *  @param event  The event to handle.
+ *  @return true to continue, false on error.
+ */
 bool
 BJsonTextWriter::Handle(const BJsonEvent& event)
 {
@@ -557,6 +738,11 @@ BJsonTextWriter::Handle(const BJsonEvent& event)
 }
 
 
+/** @brief Called when the JSON stream ends; verifies all containers are closed.
+ *
+ *  If the stacked listener still has a parent at this point, at least one
+ *  array or object was never closed and an error is recorded.
+ */
 void
 BJsonTextWriter::Complete()
 {
@@ -572,6 +758,9 @@ BJsonTextWriter::Complete()
 }
 
 
+/** @brief Replaces the current top-of-stack listener.
+ *  @param stackedListener  The new listener to push onto the stack.
+ */
 void
 BJsonTextWriter::SetStackedListener(
 	BJsonTextWriterStackedEventListener* stackedListener)
@@ -580,6 +769,10 @@ BJsonTextWriter::SetStackedListener(
 }
 
 
+/** @brief Writes the raw number string from a B_JSON_NUMBER event.
+ *  @param event  The number event whose Content() holds the digit string.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamNumberNode(const BJsonEvent& event)
 {
@@ -587,6 +780,10 @@ BJsonTextWriter::StreamNumberNode(const BJsonEvent& event)
 }
 
 
+/** @brief Writes a NUL-terminated string verbatim (no JSON encoding).
+ *  @param string  NUL-terminated string to write.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamStringVerbatim(const char* string)
 {
@@ -594,6 +791,12 @@ BJsonTextWriter::StreamStringVerbatim(const char* string)
 }
 
 
+/** @brief Writes a substring verbatim (no JSON encoding).
+ *  @param string  Base pointer of the string.
+ *  @param offset  Byte offset to start writing from.
+ *  @param length  Number of bytes to write.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamStringVerbatim(const char* string,
 	off_t offset, size_t length)
@@ -602,6 +805,10 @@ BJsonTextWriter::StreamStringVerbatim(const char* string,
 }
 
 
+/** @brief JSON-encodes and writes a NUL-terminated UTF-8 string.
+ *  @param string  UTF-8 string to encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamStringEncoded(const char* string)
 {
@@ -609,6 +816,10 @@ BJsonTextWriter::StreamStringEncoded(const char* string)
 }
 
 
+/** @brief Writes a single Unicode code point as a \\uXXXX JSON escape.
+ *  @param c  Unicode code point to encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamStringUnicodeCharacter(uint32 c)
 {
@@ -621,6 +832,17 @@ BJsonTextWriter::StreamStringUnicodeCharacter(uint32 c)
 
 /*! Note that this method will expect a UTF-8 encoded string. */
 
+/** @brief JSON-encodes and writes a substring of a UTF-8 string.
+ *
+ *  Characters are emitted as simple escapes (\\n, \\t, etc.), verbatim
+ *  ASCII runs, or \\uXXXX sequences for multi-byte UTF-8 code points.
+ *  Illegal characters are skipped with a warning to stderr.
+ *
+ *  @param string  Base pointer of the UTF-8 string.
+ *  @param offset  Byte offset to start encoding from.
+ *  @param length  Number of bytes to encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamStringEncoded(const char* string,
 	off_t offset, size_t length)
@@ -673,6 +895,10 @@ BJsonTextWriter::StreamStringEncoded(const char* string,
 }
 
 
+/** @brief Writes a JSON-quoted, JSON-encoded version of a NUL-terminated string.
+ *  @param string  UTF-8 string to quote and encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamQuotedEncodedString(const char* string)
 {
@@ -680,6 +906,16 @@ BJsonTextWriter::StreamQuotedEncodedString(const char* string)
 }
 
 
+/** @brief Writes a JSON-quoted, JSON-encoded version of a substring.
+ *
+ *  Wraps StreamStringEncoded() with leading and trailing double-quote
+ *  characters.
+ *
+ *  @param string  Base pointer of the UTF-8 string.
+ *  @param offset  Byte offset to start encoding from.
+ *  @param length  Number of bytes to encode.
+ *  @return Write result status.
+ */
 status_t
 BJsonTextWriter::StreamQuotedEncodedString(const char* string,
 	off_t offset, size_t length)
@@ -699,6 +935,10 @@ BJsonTextWriter::StreamQuotedEncodedString(const char* string,
 }
 
 
+/** @brief Writes a single byte to the underlying BDataIO.
+ *  @param c  The byte to write.
+ *  @return Write result status (B_OK or I/O error).
+ */
 status_t
 BJsonTextWriter::StreamChar(char c)
 {

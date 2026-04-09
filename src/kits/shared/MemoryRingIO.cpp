@@ -1,11 +1,38 @@
 /*
- * Copyright 2022 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Leorize, leorize+oss@disroot.org
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2022 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Leorize, leorize+oss@disroot.org
  */
 
+/** @file MemoryRingIO.cpp
+ *  @brief Implementation of BMemoryRingIO, a thread-safe in-memory ring
+ *         (circular) buffer that implements the BDataIO interface.
+ *
+ *  BMemoryRingIO provides blocking read/write semantics backed by a
+ *  power-of-two-sized ring buffer, coordinated via POSIX mutex and
+ *  condition variable primitives.
+ */
 
 #include <MemoryRingIO.h>
 
@@ -17,13 +44,25 @@
 #include <string.h>
 
 
+/** @brief POSIX mutex locking policy for use with AutoLocker.
+ *
+ *  Wraps pthread_mutex_lock / pthread_mutex_unlock so that AutoLocker can
+ *  manage a pthread_mutex_t automatically.
+ */
 class PThreadLocking {
 public:
+	/** @brief Acquires the mutex.
+	 *  @param mutex  The POSIX mutex to lock.
+	 *  @return true if locking succeeded, false otherwise.
+	 */
 	inline bool Lock(pthread_mutex_t* mutex)
 	{
 		return pthread_mutex_lock(mutex) == 0;
 	}
 
+	/** @brief Releases the mutex.
+	 *  @param mutex  The POSIX mutex to unlock.
+	 */
 	inline void Unlock(pthread_mutex_t* mutex)
 	{
 		pthread_mutex_unlock(mutex);
@@ -31,26 +70,54 @@ public:
 };
 
 
+/** @brief Convenience typedef for an AutoLocker over a pthread_mutex_t. */
 typedef AutoLocker<pthread_mutex_t, PThreadLocking> PThreadAutoLocker;
 
 
+/** @brief Condition functor that is satisfied when data is available to read.
+ *
+ *  Used with _WaitForCondition<ReadCondition> to block until at least one
+ *  byte can be consumed from the ring buffer.
+ */
 struct ReadCondition {
+	/** @brief Returns true when the ring buffer has bytes available.
+	 *  @param ring  The ring buffer to query.
+	 *  @return true if BytesAvailable() > 0.
+	 */
 	inline bool operator()(BMemoryRingIO &ring) {
 		return ring.BytesAvailable() != 0;
 	}
 };
 
 
+/** @brief Condition functor that is satisfied when space is available to write.
+ *
+ *  Used with _WaitForCondition<WriteCondition> to block until at least one
+ *  byte of free space exists in the ring buffer.
+ */
 struct WriteCondition {
+	/** @brief Returns true when the ring buffer has space available.
+	 *  @param ring  The ring buffer to query.
+	 *  @return true if SpaceAvailable() > 0.
+	 */
 	inline bool operator()(BMemoryRingIO &ring) {
 		return ring.SpaceAvailable() != 0;
 	}
 };
 
 
+/** @brief Wraps an index into the ring buffer using a power-of-two mask. */
 #define RING_MASK(x) ((x) & (fBufferSize - 1))
 
 
+/** @brief Rounds @p value up to the next power of two.
+ *
+ *  Uses a bit-spreading technique to fill all lower bits then adds one.
+ *  Returns 0 when @p value is 0.
+ *
+ *  @param value  The value to round up.
+ *  @return The smallest power of two >= @p value.
+ */
 static size_t
 next_power_of_two(size_t value)
 {
@@ -69,6 +136,14 @@ next_power_of_two(size_t value)
 }
 
 
+/** @brief Constructs a BMemoryRingIO with an initial buffer capacity.
+ *
+ *  The actual allocation size is rounded up to the next power of two.
+ *  Initializes the POSIX mutex and condition variable used for thread
+ *  synchronization.
+ *
+ *  @param size  Requested initial capacity in bytes.
+ */
 BMemoryRingIO::BMemoryRingIO(size_t size)
 	:
 	fBuffer(NULL),
@@ -89,6 +164,9 @@ BMemoryRingIO::BMemoryRingIO(size_t size)
 }
 
 
+/** @brief Destructor. Releases the ring buffer memory and destroys the
+ *         POSIX synchronization primitives.
+ */
 BMemoryRingIO::~BMemoryRingIO()
 {
 	SetSize(0);
@@ -98,6 +176,11 @@ BMemoryRingIO::~BMemoryRingIO()
 }
 
 
+/** @brief Returns whether the object was successfully initialized.
+ *
+ *  @return B_OK if the buffer is allocated and ready, or B_NO_INIT if
+ *          the buffer size is zero (allocation failed or not yet set).
+ */
 status_t
 BMemoryRingIO::InitCheck() const
 {
@@ -108,6 +191,17 @@ BMemoryRingIO::InitCheck() const
 }
 
 
+/** @brief Reads up to @p size bytes from the ring buffer into @p _buffer.
+ *
+ *  Blocks until data is available unless write has been disabled, in which
+ *  case it returns immediately with however many bytes are available
+ *  (possibly 0).  Signals writers after consuming data.
+ *
+ *  @param _buffer  Destination buffer. Must not be NULL.
+ *  @param size     Maximum number of bytes to read.
+ *  @return The number of bytes actually read (>= 0), or B_BAD_VALUE if
+ *          @p _buffer is NULL.
+ */
 ssize_t
 BMemoryRingIO::Read(void* _buffer, size_t size)
 {
@@ -140,6 +234,17 @@ BMemoryRingIO::Read(void* _buffer, size_t size)
 }
 
 
+/** @brief Writes up to @p size bytes from @p _buffer into the ring buffer.
+ *
+ *  Blocks until space is available unless write has been disabled.
+ *  Signals readers after producing data.
+ *
+ *  @param _buffer  Source buffer. Must not be NULL.
+ *  @param size     Number of bytes to write.
+ *  @return The number of bytes actually written (>= 0), B_BAD_VALUE if
+ *          @p _buffer is NULL, or B_READ_ONLY_DEVICE if writing is
+ *          disabled.
+ */
 ssize_t
 BMemoryRingIO::Write(const void* _buffer, size_t size)
 {
@@ -177,6 +282,18 @@ BMemoryRingIO::Write(const void* _buffer, size_t size)
 }
 
 
+/** @brief Resizes the ring buffer to at least @p _size bytes.
+ *
+ *  The new capacity is rounded up to the next power of two.  Any data
+ *  currently in the buffer is preserved.  The new size must be large
+ *  enough to hold all bytes currently available for reading.
+ *
+ *  @param _size  Requested new capacity in bytes. Pass 0 to free the
+ *                buffer entirely.
+ *  @return B_OK on success, B_BAD_VALUE if @p _size is smaller than the
+ *          number of bytes currently buffered, or B_NO_MEMORY if allocation
+ *          fails.
+ */
 status_t
 BMemoryRingIO::SetSize(size_t _size)
 {
@@ -215,6 +332,11 @@ BMemoryRingIO::SetSize(size_t _size)
 }
 
 
+/** @brief Discards all data currently held in the ring buffer.
+ *
+ *  Resets the read and write positions and the full flag. Does not
+ *  deallocate the backing buffer.
+ */
 void
 BMemoryRingIO::Clear()
 {
@@ -226,6 +348,10 @@ BMemoryRingIO::Clear()
 }
 
 
+/** @brief Returns the number of bytes available for reading.
+ *
+ *  @return Number of bytes that can be read without blocking.
+ */
 size_t
 BMemoryRingIO::BytesAvailable()
 {
@@ -240,6 +366,10 @@ BMemoryRingIO::BytesAvailable()
 }
 
 
+/** @brief Returns the number of bytes of free space available for writing.
+ *
+ *  @return Number of bytes that can be written without blocking.
+ */
 size_t
 BMemoryRingIO::SpaceAvailable()
 {
@@ -249,6 +379,11 @@ BMemoryRingIO::SpaceAvailable()
 }
 
 
+/** @brief Returns the total allocated capacity of the ring buffer.
+ *
+ *  @return The buffer size in bytes (always a power of two, or 0 if
+ *          uninitialized).
+ */
 size_t
 BMemoryRingIO::BufferSize()
 {
@@ -258,6 +393,20 @@ BMemoryRingIO::BufferSize()
 }
 
 
+/** @brief Internal helper that waits for a condition to become true,
+ *         with optional timeout support.
+ *
+ *  Blocks the calling thread on fEvent until the templated Condition
+ *  functor returns true, or until the timeout elapses, or until an error
+ *  occurs.
+ *
+ *  @tparam Condition  A functor type with operator()(BMemoryRingIO&) -> bool.
+ *  @param timeout     How long to wait in microseconds.
+ *                     Pass B_INFINITE_TIMEOUT to wait indefinitely.
+ *  @return B_OK when the condition becomes true, B_TIMED_OUT on timeout,
+ *          B_READ_ONLY_DEVICE if writing was disabled during the wait,
+ *          or a POSIX error code on unexpected failure.
+ */
 template<typename Condition>
 status_t
 BMemoryRingIO::_WaitForCondition(bigtime_t timeout)
@@ -299,6 +448,13 @@ BMemoryRingIO::_WaitForCondition(bigtime_t timeout)
 }
 
 
+/** @brief Blocks until at least one byte is available for reading.
+ *
+ *  @param timeout  Maximum wait time in microseconds.
+ *                  Use B_INFINITE_TIMEOUT (default) to wait indefinitely.
+ *  @return B_OK when data is available, B_TIMED_OUT on timeout, or another
+ *          error code on failure.
+ */
 status_t
 BMemoryRingIO::WaitForRead(bigtime_t timeout)
 {
@@ -306,6 +462,15 @@ BMemoryRingIO::WaitForRead(bigtime_t timeout)
 }
 
 
+/** @brief Blocks until at least one byte of free space is available for
+ *         writing.
+ *
+ *  @param timeout  Maximum wait time in microseconds.
+ *                  Use B_INFINITE_TIMEOUT (default) to wait indefinitely.
+ *  @return B_OK when space is available, B_TIMED_OUT on timeout,
+ *          B_READ_ONLY_DEVICE if writing is disabled, or another error
+ *          code on failure.
+ */
 status_t
 BMemoryRingIO::WaitForWrite(bigtime_t timeout)
 {
@@ -313,6 +478,13 @@ BMemoryRingIO::WaitForWrite(bigtime_t timeout)
 }
 
 
+/** @brief Enables or disables the write side of the ring buffer.
+ *
+ *  When disabled, Write() returns B_READ_ONLY_DEVICE and any threads
+ *  blocked in WaitForWrite() are woken up.
+ *
+ *  @param disabled  Pass true to disable writing; false to re-enable it.
+ */
 void
 BMemoryRingIO::SetWriteDisabled(bool disabled)
 {
@@ -324,6 +496,10 @@ BMemoryRingIO::SetWriteDisabled(bool disabled)
 }
 
 
+/** @brief Returns whether the write side of the ring buffer is disabled.
+ *
+ *  @return true if writing has been disabled via SetWriteDisabled(true).
+ */
 bool
 BMemoryRingIO::WriteDisabled()
 {

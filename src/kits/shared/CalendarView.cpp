@@ -1,9 +1,34 @@
 /*
- * Copyright 2007-2011, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Julun <host.haiku@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2011, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Julun <host.haiku@gmx.de>
+ */
+
+/** @file CalendarView.cpp
+ *  @brief Implements BCalendarView, an interactive monthly calendar widget
+ *         that supports selection, keyboard navigation, invocation messages,
+ *         and optional day-name and week-number headers.
  */
 
 
@@ -19,6 +44,10 @@
 namespace BPrivate {
 
 
+/** @brief Returns the total pixel height of the font used by a view.
+ *  @param view  The view whose font metrics are queried.
+ *  @return Ceiling of ascent + descent + leading, or 0 if view is NULL.
+ */
 static float
 FontHeight(const BView* view)
 {
@@ -36,6 +65,12 @@ FontHeight(const BView* view)
 // #pragma mark -
 
 
+/** @brief Constructs a BCalendarView with an explicit frame rectangle.
+ *  @param frame       Initial position and size.
+ *  @param name        Internal view name.
+ *  @param resizeMask  Resize mask flags.
+ *  @param flags       View flags.
+ */
 BCalendarView::BCalendarView(BRect frame, const char* name, uint32 resizeMask,
 	uint32 flags)
 	:
@@ -55,6 +90,10 @@ BCalendarView::BCalendarView(BRect frame, const char* name, uint32 resizeMask,
 }
 
 
+/** @brief Constructs a BCalendarView for use in a layout (no explicit frame).
+ *  @param name   Internal view name.
+ *  @param flags  View flags.
+ */
 BCalendarView::BCalendarView(const char* name, uint32 flags)
 	:
 	BView(name, flags),
@@ -73,12 +112,16 @@ BCalendarView::BCalendarView(const char* name, uint32 flags)
 }
 
 
+/** @brief Destructor — releases the selection message. */
 BCalendarView::~BCalendarView()
 {
 	SetSelectionMessage(NULL);
 }
 
 
+/** @brief Unarchiving constructor — restores state from a BMessage archive.
+ *  @param archive  The archive message produced by Archive().
+ */
 BCalendarView::BCalendarView(BMessage* archive)
 	:
 	BView(archive),
@@ -120,6 +163,10 @@ BCalendarView::BCalendarView(BMessage* archive)
 }
 
 
+/** @brief Instantiates a BCalendarView from an archive message.
+ *  @param archive  The archive to restore from.
+ *  @return A new BCalendarView, or NULL if the archive is invalid.
+ */
 BArchivable*
 BCalendarView::Instantiate(BMessage* archive)
 {
@@ -130,6 +177,11 @@ BCalendarView::Instantiate(BMessage* archive)
 }
 
 
+/** @brief Archives the view state into a BMessage.
+ *  @param archive  The destination archive message.
+ *  @param deep     If true, child views are also archived.
+ *  @return B_OK on success, or an error code.
+ */
 status_t
 BCalendarView::Archive(BMessage* archive, bool deep) const
 {
@@ -157,6 +209,7 @@ BCalendarView::Archive(BMessage* archive, bool deep) const
 }
 
 
+/** @brief Sets up the view color and default message target when attached. */
 void
 BCalendarView::AttachedToWindow()
 {
@@ -169,6 +222,10 @@ BCalendarView::AttachedToWindow()
 }
 
 
+/** @brief Rebuilds day name strings and invalidates the calendar on resize.
+ *  @param width   New view width.
+ *  @param height  New view height.
+ */
 void
 BCalendarView::FrameResized(float width, float height)
 {
@@ -177,6 +234,14 @@ BCalendarView::FrameResized(float width, float height)
 }
 
 
+/** @brief Draws the calendar, dispatching to optimised partial-update paths.
+ *
+ *  When only the focus rectangle, selection, or current day has changed,
+ *  only the affected cells are redrawn.  Otherwise the full calendar
+ *  (days, day-name header, week-number header, and border) is repainted.
+ *
+ *  @param updateRect  The dirty rectangle that needs redrawing.
+ */
 void
 BCalendarView::Draw(BRect updateRect)
 {
@@ -212,6 +277,15 @@ BCalendarView::Draw(BRect updateRect)
 }
 
 
+/** @brief Draws a single day cell; may be overridden for custom rendering.
+ *  @param owner      The view to draw into.
+ *  @param frame      The cell rectangle.
+ *  @param text       The day number string.
+ *  @param isSelected True if this day is the selected date.
+ *  @param isEnabled  True if this day belongs to the displayed month.
+ *  @param focus      True if this cell has keyboard focus.
+ *  @param highlight  True if this cell represents today.
+ */
 void
 BCalendarView::DrawDay(BView* owner, BRect frame, const char* text,
 	bool isSelected, bool isEnabled, bool focus, bool highlight)
@@ -220,6 +294,11 @@ BCalendarView::DrawDay(BView* owner, BRect frame, const char* text,
 }
 
 
+/** @brief Draws a day-name header cell; may be overridden.
+ *  @param owner  The view to draw into.
+ *  @param frame  The cell rectangle.
+ *  @param text   The abbreviated day name string.
+ */
 void
 BCalendarView::DrawDayName(BView* owner, BRect frame, const char* text)
 {
@@ -229,6 +308,11 @@ BCalendarView::DrawDayName(BView* owner, BRect frame, const char* text)
 }
 
 
+/** @brief Draws a week-number header cell; may be overridden.
+ *  @param owner  The view to draw into.
+ *  @param frame  The cell rectangle.
+ *  @param text   The week number string.
+ */
 void
 BCalendarView::DrawWeekNumber(BView* owner, BRect frame, const char* text)
 {
@@ -238,6 +322,9 @@ BCalendarView::DrawWeekNumber(BView* owner, BRect frame, const char* text)
 }
 
 
+/** @brief Returns the 'what' field of the selection message, or 0 if none.
+ *  @return The selection command constant.
+ */
 uint32
 BCalendarView::SelectionCommand() const
 {
@@ -248,6 +335,9 @@ BCalendarView::SelectionCommand() const
 }
 
 
+/** @brief Returns the selection message.
+ *  @return Pointer to the current selection BMessage, or NULL.
+ */
 BMessage*
 BCalendarView::SelectionMessage() const
 {
@@ -255,6 +345,9 @@ BCalendarView::SelectionMessage() const
 }
 
 
+/** @brief Sets the selection message, replacing any previous one.
+ *  @param message  The new selection message (adopted; may be NULL to clear).
+ */
 void
 BCalendarView::SetSelectionMessage(BMessage* message)
 {
@@ -263,6 +356,9 @@ BCalendarView::SetSelectionMessage(BMessage* message)
 }
 
 
+/** @brief Returns the invocation command constant.
+ *  @return The 'what' field of the invocation message.
+ */
 uint32
 BCalendarView::InvocationCommand() const
 {
@@ -270,6 +366,9 @@ BCalendarView::InvocationCommand() const
 }
 
 
+/** @brief Returns the invocation message.
+ *  @return Pointer to the current invocation BMessage, or NULL.
+ */
 BMessage*
 BCalendarView::InvocationMessage() const
 {
@@ -277,6 +376,9 @@ BCalendarView::InvocationMessage() const
 }
 
 
+/** @brief Sets the invocation message.
+ *  @param message  The new invocation message (adopted).
+ */
 void
 BCalendarView::SetInvocationMessage(BMessage* message)
 {
@@ -284,6 +386,9 @@ BCalendarView::SetInvocationMessage(BMessage* message)
 }
 
 
+/** @brief Updates focus state and redraws the focus rectangle.
+ *  @param state  True to give focus; false to remove it.
+ */
 void
 BCalendarView::MakeFocus(bool state)
 {
@@ -299,6 +404,14 @@ BCalendarView::MakeFocus(bool state)
 }
 
 
+/** @brief Sends the invocation message augmented with the selected date.
+ *
+ *  Adds "year", "month", "day", "source", "when", and "be:sender" fields
+ *  to a clone of the message before sending.  Also notifies watchers.
+ *
+ *  @param message  The message to send, or NULL to use the stored message.
+ *  @return B_OK on success, B_BAD_VALUE if no message and no watchers.
+ */
 status_t
 BCalendarView::Invoke(BMessage* message)
 {
@@ -334,6 +447,9 @@ BCalendarView::Invoke(BMessage* message)
 }
 
 
+/** @brief Handles mouse clicks to move focus and selection to the clicked day.
+ *  @param where  The position of the click (view coordinates).
+ */
 void
 BCalendarView::MouseDown(BPoint where)
 {
@@ -382,6 +498,14 @@ BCalendarView::MouseDown(BPoint where)
 }
 
 
+/** @brief Handles keyboard navigation and date changes.
+ *
+ *  Arrow keys move the focus cell.  Page Up/Down change the month.
+ *  Space/Return confirm the focused day as the selection.
+ *
+ *  @param bytes     Pointer to the key bytes.
+ *  @param numBytes  Number of bytes in \a bytes.
+ */
 void
 BCalendarView::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -473,6 +597,7 @@ BCalendarView::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/** @brief Pulse handler — checks whether the current calendar date has changed. */
 void
 BCalendarView::Pulse()
 {
@@ -480,6 +605,7 @@ BCalendarView::Pulse()
 }
 
 
+/** @brief Resizes the view to its preferred dimensions. */
 void
 BCalendarView::ResizeToPreferred()
 {
@@ -491,6 +617,10 @@ BCalendarView::ResizeToPreferred()
 }
 
 
+/** @brief Returns the preferred size via the internal helper.
+ *  @param width   Output: preferred width.
+ *  @param height  Output: preferred height.
+ */
 void
 BCalendarView::GetPreferredSize(float* width, float* height)
 {
@@ -498,6 +628,9 @@ BCalendarView::GetPreferredSize(float* width, float* height)
 }
 
 
+/** @brief Returns the maximum size (unlimited in both dimensions).
+ *  @return B_SIZE_UNLIMITED for width and height.
+ */
 BSize
 BCalendarView::MaxSize()
 {
@@ -506,6 +639,9 @@ BCalendarView::MaxSize()
 }
 
 
+/** @brief Returns the minimum size, which equals the preferred size.
+ *  @return A BSize computed by _GetPreferredSize().
+ */
 BSize
 BCalendarView::MinSize()
 {
@@ -515,6 +651,9 @@ BCalendarView::MinSize()
 }
 
 
+/** @brief Returns the preferred size.
+ *  @return The result of MinSize().
+ */
 BSize
 BCalendarView::PreferredSize()
 {
@@ -522,6 +661,9 @@ BCalendarView::PreferredSize()
 }
 
 
+/** @brief Returns the currently selected day of month.
+ *  @return Day number (1-based).
+ */
 int32
 BCalendarView::Day() const
 {
@@ -529,6 +671,9 @@ BCalendarView::Day() const
 }
 
 
+/** @brief Returns the currently selected year.
+ *  @return Four-digit year.
+ */
 int32
 BCalendarView::Year() const
 {
@@ -536,6 +681,9 @@ BCalendarView::Year() const
 }
 
 
+/** @brief Returns the currently selected month.
+ *  @return Month number (1 = January).
+ */
 int32
 BCalendarView::Month() const
 {
@@ -543,6 +691,10 @@ BCalendarView::Month() const
 }
 
 
+/** @brief Sets the selected day within the current month and year.
+ *  @param day  The desired day number.
+ *  @return True on success; false if the resulting date would be invalid.
+ */
 bool
 BCalendarView::SetDay(int32 day)
 {
@@ -555,6 +707,10 @@ BCalendarView::SetDay(int32 day)
 }
 
 
+/** @brief Sets the selected month, adjusting the day if the month is shorter.
+ *  @param month  Month number (1-12).
+ *  @return True on success; false if \a month is out of range.
+ */
 bool
 BCalendarView::SetMonth(int32 month)
 {
@@ -576,6 +732,10 @@ BCalendarView::SetMonth(int32 month)
 }
 
 
+/** @brief Sets the selected year, adjusting February 29 on non-leap years.
+ *  @param year  The desired year.
+ *  @return Always true (SetDate handles the adjustment).
+ */
 bool
 BCalendarView::SetYear(int32 year)
 {
@@ -594,6 +754,9 @@ BCalendarView::SetYear(int32 year)
 }
 
 
+/** @brief Returns the currently selected date.
+ *  @return A copy of the current BDate.
+ */
 BDate
 BCalendarView::Date() const
 {
@@ -601,6 +764,14 @@ BCalendarView::Date() const
 }
 
 
+/** @brief Sets the selected date, rebuilding the calendar display as needed.
+ *
+ *  If the new date is in the same month, only the affected cells are
+ *  redrawn.  Otherwise the full day grid is rebuilt and repainted.
+ *
+ *  @param date  The new date to display and select.
+ *  @return True on success; false if \a date is invalid.
+ */
 bool
 BCalendarView::SetDate(const BDate& date)
 {
@@ -644,6 +815,12 @@ BCalendarView::SetDate(const BDate& date)
 }
 
 
+/** @brief Sets the date from individual year, month, and day components.
+ *  @param year   Four-digit year.
+ *  @param month  Month number (1-12).
+ *  @param day    Day of month (1-based).
+ *  @return True on success; false if the resulting date is invalid.
+ */
 bool
 BCalendarView::SetDate(int32 year, int32 month, int32 day)
 {
@@ -651,6 +828,9 @@ BCalendarView::SetDate(int32 year, int32 month, int32 day)
 }
 
 
+/** @brief Returns the first day-of-week used as the left column of the grid.
+ *  @return The current start-of-week BWeekday constant.
+ */
 BWeekday
 BCalendarView::StartOfWeek() const
 {
@@ -658,6 +838,9 @@ BCalendarView::StartOfWeek() const
 }
 
 
+/** @brief Sets the first day of the week and rebuilds the calendar display.
+ *  @param startOfWeek  The desired BWeekday constant.
+ */
 void
 BCalendarView::SetStartOfWeek(BWeekday startOfWeek)
 {
@@ -674,6 +857,9 @@ BCalendarView::SetStartOfWeek(BWeekday startOfWeek)
 }
 
 
+/** @brief Returns whether the row of abbreviated day names is shown.
+ *  @return True if the day-name header row is visible.
+ */
 bool
 BCalendarView::IsDayNameHeaderVisible() const
 {
@@ -681,6 +867,9 @@ BCalendarView::IsDayNameHeaderVisible() const
 }
 
 
+/** @brief Shows or hides the day-name header row.
+ *  @param visible  True to show the header; false to hide it.
+ */
 void
 BCalendarView::SetDayNameHeaderVisible(bool visible)
 {
@@ -692,6 +881,7 @@ BCalendarView::SetDayNameHeaderVisible(bool visible)
 }
 
 
+/** @brief Refreshes the day-name header using the current locale settings. */
 void
 BCalendarView::UpdateDayNameHeader()
 {
@@ -703,6 +893,9 @@ BCalendarView::UpdateDayNameHeader()
 }
 
 
+/** @brief Returns whether the column of ISO week numbers is shown.
+ *  @return True if the week-number header column is visible.
+ */
 bool
 BCalendarView::IsWeekNumberHeaderVisible() const
 {
@@ -710,6 +903,9 @@ BCalendarView::IsWeekNumberHeaderVisible() const
 }
 
 
+/** @brief Shows or hides the week-number header column.
+ *  @param visible  True to show the column; false to hide it.
+ */
 void
 BCalendarView::SetWeekNumberHeaderVisible(bool visible)
 {
@@ -721,6 +917,7 @@ BCalendarView::SetWeekNumberHeaderVisible(bool visible)
 }
 
 
+/** @brief Initialises the date, locale settings, and all cell data arrays. */
 void
 BCalendarView::_InitObject()
 {
@@ -734,6 +931,7 @@ BCalendarView::_InitObject()
 }
 
 
+/** @brief Locates the grid position of the current fDate and updates focus/selection. */
 void
 BCalendarView::_SetToDay()
 {
@@ -760,6 +958,11 @@ BCalendarView::_SetToDay()
 }
 
 
+/** @brief Locates the grid position of today's date and stores it in fNewCurrentDay.
+ *
+ *  If today is not in the currently displayed month, fNewCurrentDay is set
+ *  to (-1, -1) to indicate that no cell should be highlighted.
+ */
 void
 BCalendarView::_SetToCurrentDay()
 {
@@ -787,6 +990,15 @@ BCalendarView::_SetToCurrentDay()
 }
 
 
+/** @brief Resolves the year and month for an arbitrary grid selection.
+ *
+ *  Days before the first of the month belong to the previous month; days
+ *  after the last belong to the next month.
+ *
+ *  @param selection  The grid row/column pair to resolve.
+ *  @param year       Output: year of the resolved date.
+ *  @param month      Output: month of the resolved date.
+ */
 void
 BCalendarView::_GetYearMonthForSelection(const Selection& selection,
 	int32* year, int32* month) const
@@ -809,6 +1021,10 @@ BCalendarView::_GetYearMonthForSelection(const Selection& selection,
 }
 
 
+/** @brief Calculates the preferred display dimensions.
+ *  @param _width   Output: preferred width in pixels.
+ *  @param _height  Output: preferred height in pixels.
+ */
 void
 BCalendarView::_GetPreferredSize(float* _width, float* _height)
 {
@@ -841,6 +1057,7 @@ BCalendarView::_GetPreferredSize(float* _width, float* _height)
 }
 
 
+/** @brief Selects the most compact day-name format that fits the current width. */
 void
 BCalendarView::_SetupDayNames()
 {
@@ -856,6 +1073,9 @@ BCalendarView::_SetupDayNames()
 }
 
 
+/** @brief Fills fDayNames[] with localised day name strings.
+ *  @param style  The BDateFormatStyle to use (long, medium, short, etc.).
+ */
 void
 BCalendarView::_PopulateDayNames(BDateFormatStyle style)
 {
@@ -867,6 +1087,7 @@ BCalendarView::_PopulateDayNames(BDateFormatStyle style)
 }
 
 
+/** @brief Rebuilds the fDayNumbers[][] grid and resets focus/selection to fDate. */
 void
 BCalendarView::_SetupDayNumbers()
 {
@@ -916,6 +1137,7 @@ BCalendarView::_SetupDayNumbers()
 }
 
 
+/** @brief Fills fWeekNumbers[] with ISO week number strings for each grid row. */
 void
 BCalendarView::_SetupWeekNumbers()
 {
@@ -931,6 +1153,17 @@ BCalendarView::_SetupWeekNumbers()
 }
 
 
+/** @brief Draws a single grid cell, respecting selection, enabled, focus, and highlight states.
+ *  @param currRow     Row of the currently selected day.
+ *  @param currColumn  Column of the currently selected day.
+ *  @param row         Row of the cell being drawn.
+ *  @param column      Column of the cell being drawn.
+ *  @param counter     Linear cell index (1-based, row-major).
+ *  @param frame       Bounding rectangle of the cell.
+ *  @param text        The day number string to render.
+ *  @param focus       True if this cell has keyboard focus.
+ *  @param highlight   True if this cell represents today.
+ */
 void
 BCalendarView::_DrawDay(int32 currRow, int32 currColumn, int32 row,
 	int32 column, int32 counter, BRect frame, const char* text,
@@ -959,6 +1192,7 @@ BCalendarView::_DrawDay(int32 currRow, int32 currColumn, int32 row,
 }
 
 
+/** @brief Iterates over the 6x7 grid and draws every day cell. */
 void
 BCalendarView::_DrawDays()
 {
@@ -992,6 +1226,7 @@ BCalendarView::_DrawDays()
 }
 
 
+/** @brief Redraws only the old and new focus cells after a focus change. */
 void
 BCalendarView::_DrawFocusRect()
 {
@@ -1032,6 +1267,7 @@ BCalendarView::_DrawFocusRect()
 }
 
 
+/** @brief Draws the row of abbreviated day-name headers across the top. */
 void
 BCalendarView::_DrawDayHeader()
 {
@@ -1062,6 +1298,7 @@ BCalendarView::_DrawDayHeader()
 }
 
 
+/** @brief Draws the column of ISO week numbers along the left edge. */
 void
 BCalendarView::_DrawWeekHeader()
 {
@@ -1089,6 +1326,15 @@ BCalendarView::_DrawWeekHeader()
 }
 
 
+/** @brief Draws a single calendar cell with background, focus ring, and text.
+ *  @param owner       The view to draw into.
+ *  @param frame       The cell rectangle.
+ *  @param text        The string to render centered in the cell.
+ *  @param isSelected  True if this cell is the selected date.
+ *  @param isEnabled   True if this day is in the current month.
+ *  @param focus       True if this cell has keyboard focus.
+ *  @param isHighlight True if this cell represents today.
+ */
 void
 BCalendarView::_DrawItem(BView* owner, BRect frame, const char* text,
 	bool isSelected, bool isEnabled, bool focus, bool isHighlight)
@@ -1150,6 +1396,7 @@ BCalendarView::_DrawItem(BView* owner, BRect frame, const char* text,
 }
 
 
+/** @brief Redraws only the old and new selection cells after a selection change. */
 void
 BCalendarView::_UpdateSelection()
 {
@@ -1192,6 +1439,7 @@ BCalendarView::_UpdateSelection()
 }
 
 
+/** @brief Redraws only the old and new "today" highlight cells after the date changes. */
 void
 BCalendarView::_UpdateCurrentDay()
 {
@@ -1241,6 +1489,7 @@ BCalendarView::_UpdateCurrentDay()
 }
 
 
+/** @brief Checks whether today's date has changed and triggers a redraw if so. */
 void
 BCalendarView::_UpdateCurrentDate()
 {
@@ -1263,6 +1512,9 @@ BCalendarView::_UpdateCurrentDate()
 }
 
 
+/** @brief Computes the bounding rectangle of the first (top-left) day cell.
+ *  @return The BRect of the first calendar day cell.
+ */
 BRect
 BCalendarView::_FirstCalendarItemFrame() const
 {
@@ -1291,6 +1543,15 @@ BCalendarView::_FirstCalendarItemFrame() const
 }
 
 
+/** @brief Finds the grid cell containing \a where and updates fNewSelectedDay.
+ *
+ *  If the clicked cell is in the current month, fDate is also updated to the
+ *  clicked day.
+ *
+ *  @param where  The point to test (view coordinates).
+ *  @return The bounding rectangle of the matched cell, or the last iterated
+ *          frame if no match was found.
+ */
 BRect
 BCalendarView::_SetNewSelectedDay(const BPoint& where)
 {
@@ -1323,6 +1584,10 @@ BCalendarView::_SetNewSelectedDay(const BPoint& where)
 }
 
 
+/** @brief Returns the bounding rectangle of the cell at \a selection.
+ *  @param selection  The grid row/column pair to look up.
+ *  @return The cell's bounding rectangle, or the last iterated frame if not found.
+ */
 BRect
 BCalendarView::_RectOfDay(const Selection& selection) const
 {

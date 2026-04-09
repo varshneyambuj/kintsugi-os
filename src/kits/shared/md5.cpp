@@ -1,38 +1,50 @@
 /*
- * This is an OpenSSL-compatible implementation of the RSA Data Security, Inc.
- * MD5 Message-Digest Algorithm (RFC 1321).
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Homepage:
- * http://openwall.info/wiki/people/solar/software/public-domain-source-code/md5
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Author:
- * Alexander Peslyak, better known as Solar Designer <solar at openwall.com>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- * This software was written by Alexander Peslyak in 2001.  No copyright is
- * claimed, and the software is hereby placed in the public domain.
- * In case this attempt to disclaim copyright and place the software in the
- * public domain is deemed null and void, then the software is
- * Copyright (c) 2001 Alexander Peslyak and it is hereby released to the
- * general public under the following terms:
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
- * There's ABSOLUTELY NO WARRANTY, express or implied.
+ *   This is an OpenSSL-compatible implementation of the RSA Data Security,
+ *   Inc. MD5 Message-Digest Algorithm (RFC 1321).
  *
- * (This is a heavily cut-down "BSD license".)
+ *   Author: Alexander Peslyak, better known as Solar Designer
+ *           <solar at openwall.com>
+ *   Homepage: http://openwall.info/wiki/people/solar/software/
+ *             public-domain-source-code/md5
  *
- * This differs from Colin Plumb's older public domain implementation in that
- * no exactly 32-bit integer data type is required (any 32-bit or wider
- * unsigned integer data type will do), there's no compile-time endianness
- * configuration, and the function prototypes match OpenSSL's.  No code from
- * Colin Plumb's implementation has been reused; this comment merely compares
- * the properties of the two independent implementations.
+ *   This software was written by Alexander Peslyak in 2001.  No copyright is
+ *   claimed, and the software is hereby placed in the public domain.
+ *   In case this attempt to disclaim copyright and place the software in the
+ *   public domain is deemed null and void, then the software is
+ *   Copyright (c) 2001 Alexander Peslyak and it is hereby released to the
+ *   general public under the following terms:
  *
- * The primary goals of this implementation are portability and ease of use.
- * It is meant to be fast, but not as fast as possible.  Some known
- * optimizations are not included to reduce source code size and avoid
- * compile-time configuration.
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted.
+ *
+ *   There's ABSOLUTELY NO WARRANTY, express or implied.
+ */
+
+/** @file md5.cpp
+ *  @brief OpenSSL-compatible MD5 message-digest implementation.
+ *
+ *  Provides MD5_Init(), MD5_Update(), and MD5_Final() for computing the
+ *  128-bit MD5 digest of arbitrary byte streams. No exactly-32-bit integer
+ *  type is required; any 32-bit-or-wider unsigned type works.
  */
 
 
@@ -91,6 +103,17 @@ namespace BPrivate {
 /*
  * This processes one or more 64-byte data blocks, but does NOT update
  * the bit counters.  There are no alignment requirements.
+ */
+/** @brief Internal helper: processes one or more 64-byte MD5 data blocks.
+ *
+ *  Applies the full four-round MD5 compression function to each 64-byte
+ *  block in @p data. The running state (a, b, c, d) stored in @p ctx is
+ *  updated in place. Bit counters (lo, hi) are NOT updated here.
+ *
+ *  @param ctx   The MD5 context carrying the running state and scratch block.
+ *  @param data  Pointer to the input data; must be at least @p size bytes.
+ *  @param size  Number of bytes to process; must be a multiple of 64.
+ *  @return Pointer to the first byte after the last processed block.
  */
 static const void *body(MD5_CTX *ctx, const void *data, unsigned long size)
 {
@@ -199,6 +222,14 @@ static const void *body(MD5_CTX *ctx, const void *data, unsigned long size)
 	return ptr;
 }
 
+/** @brief Initialises an MD5 context to the standard IV values.
+ *
+ *  Must be called before any MD5_Update() calls. Sets the magic initial
+ *  values (a=0x67452301, b=0xEFCDAB89, c=0x98BADCFE, d=0x10325476)
+ *  and resets the bit-length counters to zero.
+ *
+ *  @param ctx  The MD5 context to initialise.
+ */
 void MD5_Init(MD5_CTX *ctx)
 {
 	ctx->a = 0x67452301;
@@ -210,6 +241,16 @@ void MD5_Init(MD5_CTX *ctx)
 	ctx->hi = 0;
 }
 
+/** @brief Feeds more data into an in-progress MD5 computation.
+ *
+ *  Handles the bit counters and buffers partial 64-byte blocks. Full blocks
+ *  are processed immediately via body(). Remaining bytes are buffered in
+ *  ctx->buffer for the next call or for MD5_Final().
+ *
+ *  @param ctx   The MD5 context to update.
+ *  @param data  Pointer to the input bytes.
+ *  @param size  Number of bytes to process.
+ */
 void MD5_Update(MD5_CTX *ctx, const void *data, unsigned long size)
 {
 	MD5_u32plus saved_lo;
@@ -244,6 +285,16 @@ void MD5_Update(MD5_CTX *ctx, const void *data, unsigned long size)
 	memcpy(ctx->buffer, data, size);
 }
 
+/** @brief Finalises the MD5 computation and writes the 16-byte digest.
+ *
+ *  Appends the mandatory 0x80 padding byte, zero-pads to 56 bytes, appends
+ *  the 64-bit little-endian message bit length, runs the final block through
+ *  body(), and writes the four 32-bit state words as a 16-byte little-endian
+ *  result. The context is zeroed before returning.
+ *
+ *  @param result  Output buffer; must be at least 16 bytes.
+ *  @param ctx     The MD5 context to finalise (zeroed after use).
+ */
 void MD5_Final(unsigned char *result, MD5_CTX *ctx)
 {
 	unsigned long used, free;

@@ -1,6 +1,35 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/** @file RWLockManager.cpp
+ *  @brief Implementation of RWLockManager and RWLockable.
+ *
+ *  RWLockManager is a centralized readers-writer lock coordinator that
+ *  manages a set of RWLockable objects.  It supports recursive write
+ *  locking, non-recursive read locking, try-lock variants, and
+ *  timeout-based variants.  Waiting threads are tracked in per-lockable
+ *  waiter queues and unblocked via kernel thread-unblock syscalls.
  */
 
 #include <RWLockManager.h>
@@ -11,6 +40,11 @@
 #include <user_thread.h>
 
 
+/** @brief Constructs an RWLockable in its unlocked, unowned state.
+ *
+ *  fOwner is initialised to -1 (no owner), fOwnerCount and fReaderCount
+ *  are both zero, and the waiter list is empty.
+ */
 RWLockable::RWLockable()
 	:
 	fOwner(-1),
@@ -20,6 +54,9 @@ RWLockable::RWLockable()
 }
 
 
+/** @brief Constructs an RWLockManager with an internal BLocker named
+ *         "r/w lock manager".
+ */
 RWLockManager::RWLockManager()
 	:
 	fLock("r/w lock manager")
@@ -27,11 +64,21 @@ RWLockManager::RWLockManager()
 }
 
 
+/** @brief Destructor. */
 RWLockManager::~RWLockManager()
 {
 }
 
 
+/** @brief Acquires a read lock on @p lockable, blocking indefinitely.
+ *
+ *  If no waiter is queued the read lock is granted immediately.  Otherwise
+ *  the calling thread is added to the waiter queue and blocks until the
+ *  lock becomes available.
+ *
+ *  @param lockable  The RWLockable to read-lock.
+ *  @return true if the read lock was acquired, false on error.
+ */
 bool
 RWLockManager::ReadLock(RWLockable* lockable)
 {
@@ -46,6 +93,13 @@ RWLockManager::ReadLock(RWLockable* lockable)
 }
 
 
+/** @brief Tries to acquire a read lock on @p lockable without blocking.
+ *
+ *  Succeeds only if there are no waiters currently queued for the lockable.
+ *
+ *  @param lockable  The RWLockable to attempt to read-lock.
+ *  @return true if the lock was acquired immediately, false otherwise.
+ */
 bool
 RWLockManager::TryReadLock(RWLockable* lockable)
 {
@@ -60,6 +114,16 @@ RWLockManager::TryReadLock(RWLockable* lockable)
 }
 
 
+/** @brief Tries to acquire a read lock on @p lockable within @p timeout
+ *         microseconds.
+ *
+ *  If no waiter is queued the lock is granted immediately.  Otherwise the
+ *  calling thread waits up to @p timeout microseconds.
+ *
+ *  @param lockable  The RWLockable to read-lock.
+ *  @param timeout   Maximum wait time in microseconds (relative).
+ *  @return B_OK on success or B_TIMED_OUT if the timeout elapses.
+ */
 status_t
 RWLockManager::ReadLockWithTimeout(RWLockable* lockable, bigtime_t timeout)
 {
@@ -74,6 +138,13 @@ RWLockManager::ReadLockWithTimeout(RWLockable* lockable, bigtime_t timeout)
 }
 
 
+/** @brief Releases a read lock previously acquired on @p lockable.
+ *
+ *  Decrements the reader count; when it reaches zero _Unblock() is called
+ *  to wake up any waiting writer.
+ *
+ *  @param lockable  The RWLockable to read-unlock.
+ */
 void
 RWLockManager::ReadUnlock(RWLockable* lockable)
 {
@@ -89,6 +160,16 @@ RWLockManager::ReadUnlock(RWLockable* lockable)
 }
 
 
+/** @brief Acquires a write lock on @p lockable, blocking indefinitely.
+ *
+ *  Write locking is recursive for the owning thread: if the calling thread
+ *  already holds the write lock the owner count is incremented.  A fresh
+ *  write lock is granted immediately when there are no readers and no
+ *  waiters.
+ *
+ *  @param lockable  The RWLockable to write-lock.
+ *  @return true if the write lock was acquired, false on error.
+ */
 bool
 RWLockManager::WriteLock(RWLockable* lockable)
 {
@@ -111,6 +192,14 @@ RWLockManager::WriteLock(RWLockable* lockable)
 }
 
 
+/** @brief Tries to acquire a write lock on @p lockable without blocking.
+ *
+ *  Succeeds immediately for the existing owner (recursive) or when no
+ *  readers or waiters are present.
+ *
+ *  @param lockable  The RWLockable to attempt to write-lock.
+ *  @return true if the lock was acquired immediately, false otherwise.
+ */
 bool
 RWLockManager::TryWriteLock(RWLockable* lockable)
 {
@@ -133,6 +222,13 @@ RWLockManager::TryWriteLock(RWLockable* lockable)
 }
 
 
+/** @brief Tries to acquire a write lock on @p lockable within @p timeout
+ *         microseconds.
+ *
+ *  @param lockable  The RWLockable to write-lock.
+ *  @param timeout   Maximum wait time in microseconds (relative).
+ *  @return B_OK on success or B_TIMED_OUT if the timeout elapses.
+ */
 status_t
 RWLockManager::WriteLockWithTimeout(RWLockable* lockable, bigtime_t timeout)
 {
@@ -155,6 +251,14 @@ RWLockManager::WriteLockWithTimeout(RWLockable* lockable, bigtime_t timeout)
 }
 
 
+/** @brief Releases one level of the write lock previously acquired on
+ *         @p lockable.
+ *
+ *  Only the owning thread may call this.  When the owner count reaches
+ *  zero the owner is cleared and _Unblock() is called to wake up waiters.
+ *
+ *  @param lockable  The RWLockable to write-unlock.
+ */
 void
 RWLockManager::WriteUnlock(RWLockable* lockable)
 {
@@ -173,6 +277,19 @@ RWLockManager::WriteUnlock(RWLockable* lockable)
 }
 
 
+/** @brief Internal helper that enqueues the calling thread as a waiter and
+ *         blocks it until the lock becomes available or the timeout expires.
+ *
+ *  The manager lock must be held by the caller before entering this method.
+ *  The method temporarily drops the manager lock while the thread sleeps
+ *  and reacquires it upon waking.
+ *
+ *  @param lockable  The lockable being waited upon.
+ *  @param writer    true if waiting for a write lock, false for a read lock.
+ *  @param timeout   Relative timeout in microseconds, or B_INFINITE_TIMEOUT.
+ *  @return B_OK if the lock was granted, B_TIMED_OUT on timeout, or another
+ *          error code on interruption / failure.
+ */
 status_t
 RWLockManager::_Wait(RWLockable* lockable, bool writer, bigtime_t timeout)
 {
@@ -211,6 +328,16 @@ RWLockManager::_Wait(RWLockable* lockable, bool writer, bigtime_t timeout)
 }
 
 
+/** @brief Wakes up the next eligible waiter(s) after a lock release.
+ *
+ *  If the head waiter is a writer and no readers currently hold the lock,
+ *  only that writer is unblocked.  If the head waiter is a reader, up to
+ *  kMaxReaderUnblockCount consecutive reader waiters are batched and
+ *  unblocked with a single kernel call to minimise context switches.
+ *
+ *  @param lockable  The RWLockable whose waiters should be considered for
+ *                   unblocking.
+ */
 void
 RWLockManager::_Unblock(RWLockable* lockable)
 {

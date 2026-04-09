@@ -1,6 +1,34 @@
 /*
- * Copyright 2009, Alexandre Deckner, alex@zappotek.com
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Alexandre Deckner, alex@zappotek.com
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Alexandre Deckner, alex@zappotek.com
+ */
+
+/** @file DragTrackingFilter.cpp
+ *  @brief Implements DragTrackingFilter, a BMessageFilter that detects the
+ *         start of a mouse drag once the pointer moves beyond a threshold
+ *         distance and sends a configurable notification message.
  */
 
 /*!
@@ -24,6 +52,11 @@
 
 static const int kSquaredDragThreshold = 9;
 
+/** @brief Constructs a DragTrackingFilter for the given view.
+ *  @param targetView   The view to watch for drag gestures.
+ *  @param messageWhat  The 'what' field of the message sent when a drag is
+ *                      detected.
+ */
 DragTrackingFilter::DragTrackingFilter(BView* targetView, uint32 messageWhat)
 	: BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE),
 	fTargetView(targetView),
@@ -34,6 +67,19 @@ DragTrackingFilter::DragTrackingFilter(BView* targetView, uint32 messageWhat)
 }
 
 
+/** @brief Intercepts mouse messages and fires a drag notification when the
+ *         pointer moves beyond the squared threshold distance.
+ *
+ *  On B_MOUSE_DOWN the click point and buttons are recorded and pointer
+ *  event tracking is enabled on the target view.  On B_MOUSE_MOVED the
+ *  squared distance from the click point is compared to
+ *  kSquaredDragThreshold; if exceeded a message is sent to the target view
+ *  and tracking stops.
+ *
+ *  @param message  The message to examine.
+ *  @param _target  Unused handler pointer (may be modified by other filters).
+ *  @return Always B_DISPATCH_MESSAGE so that other handlers also receive the event.
+ */
 filter_result
 DragTrackingFilter::Filter(BMessage* message, BHandler** /*_target*/)
 {

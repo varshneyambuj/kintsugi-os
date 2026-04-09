@@ -1,10 +1,34 @@
 /*
- * Copyright 2016-2024 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		DarkWyrm, darkwyrm@earthlink.net
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016-2024 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       DarkWyrm, darkwyrm@earthlink.net
+ *       John Scipione, jscipione@gmail.com
+ */
+
+/** @file ColorListView.cpp
+ *  @brief Implements BColorListView, a BListView subclass that supports
+ *         drag-and-drop of color values from BColorItem entries.
  */
 
 
@@ -33,6 +57,11 @@ namespace BPrivate {
 //	#pragma mark - ColorListView
 
 
+/** @brief Constructs a BColorListView.
+ *  @param name   The internal name of the view.
+ *  @param type   The list selection type (single or multiple).
+ *  @param flags  View flags passed to BListView.
+ */
 BColorListView::BColorListView(const char* name, list_view_type type, uint32 flags)
 	:
 	BListView(name, type, flags)
@@ -40,11 +69,22 @@ BColorListView::BColorListView(const char* name, list_view_type type, uint32 fla
 }
 
 
+/** @brief Destructor. */
 BColorListView::~BColorListView()
 {
 }
 
 
+/** @brief Initiates a drag-and-drop operation for the color at \a index.
+ *
+ *  Constructs a drag message carrying the color in both hex-string and
+ *  raw RGBColor forms, and a small color-chip bitmap for visual feedback.
+ *
+ *  @param where        The point where the drag was initiated (view coordinates).
+ *  @param index        The index of the item being dragged.
+ *  @param wasSelected  True if the item was already selected before the drag.
+ *  @return True if a drag was successfully started, false otherwise.
+ */
 bool
 BColorListView::InitiateDrag(BPoint where, int32 index, bool wasSelected)
 {
@@ -115,6 +155,13 @@ BColorListView::InitiateDrag(BPoint where, int32 index, bool wasSelected)
 }
 
 
+/** @brief Handles mouse-up events.
+ *
+ *  Currently delegates to BView::MouseUp.  A future TODO notes that drops
+ *  from external views should not alter the selection.
+ *
+ *  @param where  The position of the mouse cursor when the button was released.
+ */
 void
 BColorListView::MouseUp(BPoint where)
 {

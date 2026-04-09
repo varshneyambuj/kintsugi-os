@@ -1,14 +1,39 @@
 /*
- * Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		McCall <mccall@@digitalparadise.co.uk>
- *		Mike Berg <mike@berg-net.us>
- *		Julun <host.haiku@gmx.de>
- *		Clemens <mail@Clemens-Zeidler.de>
- *		Adrien Destugues <pulkomandy@pulkomandy.cx>
- *		Hamish Morrison <hamish@lavabit.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2011, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       McCall <mccall@@digitalparadise.co.uk>
+ *       Mike Berg <mike@berg-net.us>
+ *       Julun <host.haiku@gmx.de>
+ *       Clemens <mail@Clemens-Zeidler.de>
+ *       Adrien Destugues <pulkomandy@pulkomandy.cx>
+ *       Hamish Morrison <hamish@lavabit.com>
+ */
+
+/** @file DateTimeEdit.cpp
+ *  @brief Implements the SectionEdit base class and the TimeEdit / DateEdit
+ *         concrete subclasses, which provide locale-aware sectioned editors
+ *         for time and date values with up/down arrow controls.
  */
 
 
@@ -31,6 +56,11 @@ namespace BPrivate {
 const uint32 kArrowAreaWidth = 16;
 
 
+/** @brief Constructs a TimeEdit control.
+ *  @param name      Internal view name.
+ *  @param sections  Number of time sections (typically 3: hour, minute, second).
+ *  @param message   The message sent when the time value changes.
+ */
 TimeEdit::TimeEdit(const char* name, uint32 sections, BMessage* message)
 	:
 	SectionEdit(name, sections, message),
@@ -44,6 +74,7 @@ TimeEdit::TimeEdit(const char* name, uint32 sections, BMessage* message)
 }
 
 
+/** @brief Destructor — frees locale field position and field-type buffers. */
 TimeEdit::~TimeEdit()
 {
 	free(fFieldPositions);
@@ -51,6 +82,16 @@ TimeEdit::~TimeEdit()
 }
 
 
+/** @brief Handles a key-down event for numeric digit input.
+ *
+ *  Accepts digit keys only.  If a digit is pressed within one second of
+ *  the previous key press a two-digit value is assembled and validated
+ *  against the current section's range.  The display and invocation
+ *  message are updated immediately.
+ *
+ *  @param bytes     Pointer to the key bytes.
+ *  @param numBytes  Number of bytes.
+ */
 void
 TimeEdit::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -88,6 +129,7 @@ TimeEdit::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/** @brief Initialises the control by reading the current local time. */
 void
 TimeEdit::InitView()
 {
@@ -98,6 +140,11 @@ TimeEdit::InitView()
 }
 
 
+/** @brief Draws a single time section (hour, minute, or second).
+ *  @param index   Zero-based section index.
+ *  @param bounds  The rectangle allocated to this section.
+ *  @param hasFocus True if this section has keyboard focus.
+ */
 void
 TimeEdit::DrawSection(uint32 index, BRect bounds, bool hasFocus)
 {
@@ -122,6 +169,10 @@ TimeEdit::DrawSection(uint32 index, BRect bounds, bool hasFocus)
 }
 
 
+/** @brief Draws the separator character between two time sections.
+ *  @param index   Zero-based separator index.
+ *  @param bounds  The rectangle allocated to this separator.
+ */
 void
 TimeEdit::DrawSeparator(uint32 index, BRect bounds)
 {
@@ -139,6 +190,9 @@ TimeEdit::DrawSeparator(uint32 index, BRect bounds)
 }
 
 
+/** @brief Returns the width allocated to each separator in pixels.
+ *  @return Fixed separator width of 10 pixels.
+ */
 float
 TimeEdit::SeparatorWidth()
 {
@@ -146,6 +200,9 @@ TimeEdit::SeparatorWidth()
 }
 
 
+/** @brief Returns the minimum width for a single time section.
+ *  @return Width of the string "00" in the plain font.
+ */
 float
 TimeEdit::MinSectionWidth()
 {
@@ -153,6 +210,9 @@ TimeEdit::MinSectionWidth()
 }
 
 
+/** @brief Sets focus to the time section at the given index.
+ *  @param index  Zero-based section index to focus.
+ */
 void
 TimeEdit::SectionFocus(uint32 index)
 {
@@ -163,6 +223,15 @@ TimeEdit::SectionFocus(uint32 index)
 }
 
 
+/** @brief Sets the displayed time to the given hour, minute, and second.
+ *
+ *  If all three components are zero the internal BDateTime is refreshed
+ *  from the current local time before applying the new values.
+ *
+ *  @param hour    Hour value (0-23).
+ *  @param minute  Minute value (0-59).
+ *  @param second  Second value (0-59).
+ */
 void
 TimeEdit::SetTime(int32 hour, int32 minute, int32 second)
 {
@@ -181,6 +250,9 @@ TimeEdit::SetTime(int32 hour, int32 minute, int32 second)
 }
 
 
+/** @brief Returns the current time value.
+ *  @return A BTime representing the hours, minutes, and seconds currently shown.
+ */
 BTime
 TimeEdit::GetTime()
 {
@@ -188,6 +260,7 @@ TimeEdit::GetTime()
 }
 
 
+/** @brief Increments the focused time section by one unit. */
 void
 TimeEdit::DoUpPress()
 {
@@ -205,6 +278,7 @@ TimeEdit::DoUpPress()
 }
 
 
+/** @brief Decrements the focused time section by one unit. */
 void
 TimeEdit::DoDownPress()
 {
@@ -221,6 +295,9 @@ TimeEdit::DoDownPress()
 }
 
 
+/** @brief Populates the outgoing message with the current hour, minute, and second.
+ *  @param message  The message to fill in.
+ */
 void
 TimeEdit::PopulateMessage(BMessage* message)
 {
@@ -234,6 +311,7 @@ TimeEdit::PopulateMessage(BMessage* message)
 }
 
 
+/** @brief Reformats the display string and refreshes field-position metadata. */
 void
 TimeEdit::_UpdateFields()
 {
@@ -254,6 +332,7 @@ TimeEdit::_UpdateFields()
 }
 
 
+/** @brief Clamps fHoldValue to the valid range for the focused field and applies it. */
 void
 TimeEdit::_CheckRange()
 {
@@ -316,6 +395,10 @@ TimeEdit::_CheckRange()
 }
 
 
+/** @brief Returns whether a two-digit value is within the focused field's range.
+ *  @param value  The candidate two-digit integer.
+ *  @return True if \a value is a valid entry for the focused time field.
+ */
 bool
 TimeEdit::_IsValidDoubleDigit(int32 value)
 {
@@ -347,6 +430,10 @@ TimeEdit::_IsValidDoubleDigit(int32 value)
 }
 
 
+/** @brief Returns the current numeric value of a time section.
+ *  @param index  Zero-based section index.
+ *  @return The hour, minute, or second value, or 0 if the index is invalid.
+ */
 int32
 TimeEdit::_SectionValue(int32 index) const
 {
@@ -376,6 +463,9 @@ TimeEdit::_SectionValue(int32 index) const
 }
 
 
+/** @brief Returns the preferred height for the time editor.
+ *  @return Ceiling of 1.4 × (ascent + descent) of the current font.
+ */
 float
 TimeEdit::PreferredHeight()
 {
@@ -388,6 +478,11 @@ TimeEdit::PreferredHeight()
 // #pragma mark -
 
 
+/** @brief Constructs a DateEdit control.
+ *  @param name      Internal view name.
+ *  @param sections  Number of date sections (typically 3: day, month, year).
+ *  @param message   The message sent when the date value changes.
+ */
 DateEdit::DateEdit(const char* name, uint32 sections, BMessage* message)
 	:
 	SectionEdit(name, sections, message),
@@ -400,6 +495,7 @@ DateEdit::DateEdit(const char* name, uint32 sections, BMessage* message)
 }
 
 
+/** @brief Destructor — frees locale field position and field-type buffers. */
 DateEdit::~DateEdit()
 {
 	free(fFieldPositions);
@@ -407,6 +503,14 @@ DateEdit::~DateEdit()
 }
 
 
+/** @brief Handles a key-down event for numeric digit input.
+ *
+ *  Accepts digit keys only.  Two-digit combination entry is supported for
+ *  day and month fields.  Year entry prefixes with the current century.
+ *
+ *  @param bytes     Pointer to the key bytes.
+ *  @param numBytes  Number of bytes.
+ */
 void
 DateEdit::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -453,6 +557,7 @@ DateEdit::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/** @brief Initialises the control by reading the current local date. */
 void
 DateEdit::InitView()
 {
@@ -463,6 +568,11 @@ DateEdit::InitView()
 }
 
 
+/** @brief Draws a single date section (day, month, or year).
+ *  @param index   Zero-based section index.
+ *  @param bounds  The rectangle allocated to this section.
+ *  @param hasFocus True if this section has keyboard focus.
+ */
 void
 DateEdit::DrawSection(uint32 index, BRect bounds, bool hasFocus)
 {
@@ -487,6 +597,10 @@ DateEdit::DrawSection(uint32 index, BRect bounds, bool hasFocus)
 }
 
 
+/** @brief Draws the separator character between two date sections.
+ *  @param index   Zero-based separator index.
+ *  @param bounds  The rectangle allocated to this separator.
+ */
 void
 DateEdit::DrawSeparator(uint32 index, BRect bounds)
 {
@@ -507,6 +621,9 @@ DateEdit::DrawSeparator(uint32 index, BRect bounds)
 }
 
 
+/** @brief Sets focus to the date section at the given index.
+ *  @param index  Zero-based section index to focus.
+ */
 void
 DateEdit::SectionFocus(uint32 index)
 {
@@ -517,6 +634,9 @@ DateEdit::SectionFocus(uint32 index)
 }
 
 
+/** @brief Returns the minimum width for a single date section.
+ *  @return Width of the string "00" in the plain font.
+ */
 float
 DateEdit::MinSectionWidth()
 {
@@ -524,6 +644,9 @@ DateEdit::MinSectionWidth()
 }
 
 
+/** @brief Returns the width allocated to each separator in pixels.
+ *  @return Fixed separator width of 10 pixels.
+ */
 float
 DateEdit::SeparatorWidth()
 {
@@ -531,6 +654,11 @@ DateEdit::SeparatorWidth()
 }
 
 
+/** @brief Sets the displayed date to the given year, month, and day.
+ *  @param year   Four-digit year.
+ *  @param month  Month number (1-12).
+ *  @param day    Day of month (1-based).
+ */
 void
 DateEdit::SetDate(int32 year, int32 month, int32 day)
 {
@@ -545,6 +673,9 @@ DateEdit::SetDate(int32 year, int32 month, int32 day)
 }
 
 
+/** @brief Returns the current date value.
+ *  @return A BDate representing the year, month, and day currently shown.
+ */
 BDate
 DateEdit::GetDate()
 {
@@ -552,6 +683,7 @@ DateEdit::GetDate()
 }
 
 
+/** @brief Increments the focused date section by one unit. */
 void
 DateEdit::DoUpPress()
 {
@@ -569,6 +701,7 @@ DateEdit::DoUpPress()
 }
 
 
+/** @brief Decrements the focused date section by one unit. */
 void
 DateEdit::DoDownPress()
 {
@@ -586,6 +719,9 @@ DateEdit::DoDownPress()
 }
 
 
+/** @brief Populates the outgoing message with the current year, month, and day.
+ *  @param message  The message to fill in.
+ */
 void
 DateEdit::PopulateMessage(BMessage* message)
 {
@@ -599,6 +735,7 @@ DateEdit::PopulateMessage(BMessage* message)
 }
 
 
+/** @brief Reformats the display string and refreshes field-position metadata. */
 void
 DateEdit::_UpdateFields()
 {
@@ -620,6 +757,10 @@ DateEdit::_UpdateFields()
 }
 
 
+/** @brief Clamps fHoldValue to the valid range for the focused field and applies it.
+ *
+ *  For month changes, the day is clamped to the number of days in the new month.
+ */
 void
 DateEdit::_CheckRange()
 {
@@ -670,6 +811,10 @@ DateEdit::_CheckRange()
 }
 
 
+/** @brief Returns whether a two-digit value is within the focused field's range.
+ *  @param value  The candidate two-digit integer.
+ *  @return True if \a value is a valid entry for the focused date field.
+ */
 bool
 DateEdit::_IsValidDoubleDigit(int32 value)
 {
@@ -709,6 +854,10 @@ DateEdit::_IsValidDoubleDigit(int32 value)
 }
 
 
+/** @brief Returns the current numeric value of a date section.
+ *  @param index  Zero-based section index.
+ *  @return The year, month, or day value, or 0 if the index is invalid.
+ */
 int32
 DateEdit::_SectionValue(int32 index) const
 {
@@ -737,6 +886,9 @@ DateEdit::_SectionValue(int32 index) const
 }
 
 
+/** @brief Returns the preferred height for the date editor.
+ *  @return Ceiling of 1.4 × (ascent + descent) of the current font.
+ */
 float
 DateEdit::PreferredHeight()
 {
@@ -749,6 +901,11 @@ DateEdit::PreferredHeight()
 // #pragma mark -
 
 
+/** @brief Constructs a SectionEdit base control.
+ *  @param name      Internal view name.
+ *  @param sections  Number of editable sections.
+ *  @param message   The message sent on value changes.
+ */
 SectionEdit::SectionEdit(const char* name, uint32 sections, BMessage* message)
 	:
 	BControl(name, NULL, message, B_WILL_DRAW | B_NAVIGABLE),
@@ -759,11 +916,13 @@ SectionEdit::SectionEdit(const char* name, uint32 sections, BMessage* message)
 }
 
 
+/** @brief Destructor. */
 SectionEdit::~SectionEdit()
 {
 }
 
 
+/** @brief Sets the document text color when attached to a window. */
 void
 SectionEdit::AttachedToWindow()
 {
@@ -774,6 +933,9 @@ SectionEdit::AttachedToWindow()
 }
 
 
+/** @brief Draws the border and all sections with their separators.
+ *  @param updateRect  The dirty rectangle.
+ */
 void
 SectionEdit::Draw(BRect updateRect)
 {
@@ -788,6 +950,9 @@ SectionEdit::Draw(BRect updateRect)
 }
 
 
+/** @brief Handles mouse clicks to focus the view or activate up/down arrows.
+ *  @param where  The position of the click (view coordinates).
+ */
 void
 SectionEdit::MouseDown(BPoint where)
 {
@@ -811,6 +976,9 @@ SectionEdit::MouseDown(BPoint where)
 }
 
 
+/** @brief Returns the maximum size (unlimited width, fixed preferred height).
+ *  @return A BSize with B_SIZE_UNLIMITED width and PreferredHeight() height.
+ */
 BSize
 SectionEdit::MaxSize()
 {
@@ -819,6 +987,9 @@ SectionEdit::MaxSize()
 }
 
 
+/** @brief Returns the minimum size based on section and separator widths.
+ *  @return A BSize with the minimum viable width and PreferredHeight().
+ */
 BSize
 SectionEdit::MinSize()
 {
@@ -831,6 +1002,9 @@ SectionEdit::MinSize()
 }
 
 
+/** @brief Returns the preferred size, equal to the minimum size.
+ *  @return The result of MinSize().
+ */
 BSize
 SectionEdit::PreferredSize()
 {
@@ -839,6 +1013,10 @@ SectionEdit::PreferredSize()
 }
 
 
+/** @brief Computes the bounding rectangle for a numbered section.
+ *  @param index  Zero-based section index.
+ *  @return The rectangle allocated to that section within the section area.
+ */
 BRect
 SectionEdit::FrameForSection(uint32 index)
 {
@@ -855,6 +1033,10 @@ SectionEdit::FrameForSection(uint32 index)
 }
 
 
+/** @brief Computes the bounding rectangle for a numbered separator.
+ *  @param index  Zero-based separator index.
+ *  @return The rectangle allocated to that separator within the section area.
+ */
 BRect
 SectionEdit::FrameForSeparator(uint32 index)
 {
@@ -871,6 +1053,9 @@ SectionEdit::FrameForSeparator(uint32 index)
 }
 
 
+/** @brief Focuses the control, ensuring a section is focused on first entry.
+ *  @param focused  True to give focus; false to remove it.
+ */
 void
 SectionEdit::MakeFocus(bool focused)
 {
@@ -886,6 +1071,10 @@ SectionEdit::MakeFocus(bool focused)
 }
 
 
+/** @brief Handles arrow-key navigation between sections and up/down value changes.
+ *  @param bytes     Pointer to the key bytes.
+ *  @param numbytes  Number of bytes.
+ */
 void
 SectionEdit::KeyDown(const char* bytes, int32 numbytes)
 {
@@ -925,6 +1114,10 @@ SectionEdit::KeyDown(const char* bytes, int32 numbytes)
 }
 
 
+/** @brief Invokes the control, populating the message via PopulateMessage().
+ *  @param message  The message to send, or NULL to use the stored message.
+ *  @return Status code from BControl::Invoke().
+ */
 status_t
 SectionEdit::Invoke(BMessage* message)
 {
@@ -939,6 +1132,9 @@ SectionEdit::Invoke(BMessage* message)
 }
 
 
+/** @brief Returns the number of editable sections.
+ *  @return Section count as supplied to the constructor.
+ */
 uint32
 SectionEdit::CountSections() const
 {
@@ -946,6 +1142,9 @@ SectionEdit::CountSections() const
 }
 
 
+/** @brief Returns the index of the section that currently has focus.
+ *  @return Zero-based focus index, or -1 if no section is focused.
+ */
 int32
 SectionEdit::FocusIndex() const
 {
@@ -953,6 +1152,9 @@ SectionEdit::FocusIndex() const
 }
 
 
+/** @brief Returns the rectangle of the area available to sections (excluding arrows).
+ *  @return The section area BRect, inset by 2 px on all sides.
+ */
 BRect
 SectionEdit::SectionArea() const
 {
@@ -962,6 +1164,9 @@ SectionEdit::SectionArea() const
 }
 
 
+/** @brief Draws the control border, background, and the up/down arrow indicators.
+ *  @param updateRect  The dirty rectangle.
+ */
 void
 SectionEdit::DrawBorder(const BRect& updateRect)
 {

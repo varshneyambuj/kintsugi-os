@@ -1,22 +1,57 @@
 /*
- * Copyright 2006, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		IngoWeinhold <bonefish@cs.tu-berlin.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ */
+
+/** @file RWLocker.cpp
+ *  @brief Implementation of RWLocker, a readers-writer lock supporting
+ *         recursive locking and priority-ordered queueing via benaphores.
+ *
+ *  RWLocker allows multiple simultaneous readers or a single exclusive
+ *  writer.  Both read and write locks may be acquired recursively by the
+ *  same thread.  A thread holding a read lock may upgrade to a write lock
+ *  under certain conditions.  Internal ordering is maintained by a
+ *  queueing benaphore so that writers are not starved indefinitely.
  */
 
 #include "RWLocker.h"
 
 #include <String.h>
 
+/** @brief Per-thread read-lock tracking record.
+ *
+ *  Stored in the fReadLockInfos list, one entry per reading thread.
+ */
 // info about a read lock owner
 struct RWLocker::ReadLockInfo {
-	thread_id	reader;
-	int32		count;
+	thread_id	reader; ///< The thread that holds this read lock.
+	int32		count;  ///< Recursion depth for this thread's read locks.
 };
 
 
+/** @brief Default constructor. Creates an RWLocker with no name. */
 // constructor
 RWLocker::RWLocker()
 	: fLock(),
@@ -32,6 +67,11 @@ RWLocker::RWLocker()
 	_Init(NULL);
 }
 
+/** @brief Named constructor. Creates an RWLocker whose underlying semaphores
+ *         carry a descriptive name for debugging.
+ *
+ *  @param name  Human-readable name used to label internal semaphores.
+ */
 // constructor
 RWLocker::RWLocker(const char* name)
 	: fLock(name),
@@ -47,6 +87,9 @@ RWLocker::RWLocker(const char* name)
 	_Init(name);
 }
 
+/** @brief Destructor. Deletes internal semaphores and all read-lock info
+ *         records.
+ */
 // destructor
 RWLocker::~RWLocker()
 {
@@ -57,6 +100,13 @@ RWLocker::~RWLocker()
 		delete info;
 }
 
+/** @brief Acquires a read lock, blocking indefinitely if necessary.
+ *
+ *  Multiple threads may hold the read lock simultaneously. A thread that
+ *  already holds a write lock can also acquire a read lock recursively.
+ *
+ *  @return true if the lock was acquired, false on error.
+ */
 // ReadLock
 bool
 RWLocker::ReadLock()
@@ -65,6 +115,12 @@ RWLocker::ReadLock()
 	return (error == B_OK);
 }
 
+/** @brief Tries to acquire a read lock within the specified relative timeout.
+ *
+ *  @param timeout  Maximum wait time in microseconds (relative).
+ *  @return B_OK on success, B_TIMED_OUT if the timeout elapses, or another
+ *          error code on failure.
+ */
 // ReadLockWithTimeout
 status_t
 RWLocker::ReadLockWithTimeout(bigtime_t timeout)
@@ -76,6 +132,12 @@ RWLocker::ReadLockWithTimeout(bigtime_t timeout)
 	return _ReadLock(absoluteTimeout);
 }
 
+/** @brief Releases one level of the calling thread's read lock.
+ *
+ *  If the thread also holds a write lock its write-time reader count is
+ *  decremented instead.  When the last reader releases the lock the mutex
+ *  benaphore is released so waiting writers may proceed.
+ */
 // ReadUnlock
 void
 RWLocker::ReadUnlock()
@@ -106,6 +168,12 @@ RWLocker::ReadUnlock()
 	}	// else: we are probably going to be destroyed
 }
 
+/** @brief Returns whether the calling thread currently holds a read or write
+ *         lock.
+ *
+ *  @return true if the calling thread holds at least a read lock (including
+ *          if it holds a write lock, which implicitly subsumes read access).
+ */
 // IsReadLocked
 //
 // Returns whether or not the calling thread owns a read lock or even a
@@ -122,6 +190,13 @@ RWLocker::IsReadLocked() const
 	return result;
 }
 
+/** @brief Acquires the write lock, blocking indefinitely if necessary.
+ *
+ *  Only one thread may hold the write lock at a time. A thread that already
+ *  holds the write lock can acquire it again recursively.
+ *
+ *  @return true if the lock was acquired, false on error.
+ */
 // WriteLock
 bool
 RWLocker::WriteLock()
@@ -130,6 +205,14 @@ RWLocker::WriteLock()
 	return (error == B_OK);
 }
 
+/** @brief Tries to acquire the write lock within the specified relative
+ *         timeout.
+ *
+ *  @param timeout  Maximum wait time in microseconds (relative).
+ *  @return B_OK on success, B_TIMED_OUT if the timeout elapses,
+ *          B_WOULD_BLOCK if the request cannot be satisfied within the
+ *          timeout due to other lock holders, or another error code.
+ */
 // WriteLockWithTimeout
 status_t
 RWLocker::WriteLockWithTimeout(bigtime_t timeout)
@@ -141,6 +224,13 @@ RWLocker::WriteLockWithTimeout(bigtime_t timeout)
 	return _WriteLock(absoluteTimeout);
 }
 
+/** @brief Releases one level of the calling thread's write lock.
+ *
+ *  When the outermost write lock bracket is reached, the thread's writer
+ *  identity is cleared.  If the thread also holds read locks those are
+ *  reinstated as regular reader entries so subsequent readers can proceed.
+ *  If no read locks remain, the mutex benaphore is released.
+ */
 // WriteUnlock
 void
 RWLocker::WriteUnlock()
@@ -173,6 +263,10 @@ RWLocker::WriteUnlock()
 	}	// else: We're probably going to die.
 }
 
+/** @brief Returns whether the calling thread currently holds the write lock.
+ *
+ *  @return true if the calling thread is the current writer.
+ */
 // IsWriteLocked
 //
 // Returns whether or not the calling thread owns a write lock.
@@ -182,6 +276,13 @@ RWLocker::IsWriteLocked() const
 	return (fWriter == find_thread(NULL));
 }
 
+/** @brief Initializes the internal mutex and queueing benaphores.
+ *
+ *  Creates two semaphores named "<name>_RWLocker_mutex" and
+ *  "<name>_RWLocker_queue".
+ *
+ *  @param name  Base name to use for the semaphores.  May be NULL.
+ */
 // _Init
 void
 RWLocker::_Init(const char* name)
@@ -198,6 +299,18 @@ RWLocker::_Init(const char* name)
 	fQueue.counter = 0;
 }
 
+/** @brief Internal read-lock implementation using an absolute timeout.
+ *
+ *  If the calling thread already owns a read or write lock it is handled
+ *  recursively.  Otherwise the thread acquires the queueing benaphore, then
+ *  the mutex benaphore (for the first reader only), and finally releases
+ *  the queueing benaphore so the next candidate can proceed.
+ *
+ *  @param timeout  Absolute timeout in system_time() units.
+ *                  Pass B_INFINITE_TIMEOUT to wait indefinitely.
+ *  @return B_OK on success, B_TIMED_OUT if the timeout elapses, or another
+ *          error code on failure.
+ */
 // _ReadLock
 //
 // /timeout/ -- absolute timeout
@@ -269,6 +382,19 @@ RWLocker::_ReadLock(bigtime_t timeout)
 	return error;
 }
 
+/** @brief Internal write-lock implementation using an absolute timeout.
+ *
+ *  Handles all cases: the caller already holds a write lock (recursive),
+ *  holds only a read lock (upgrade attempt), or holds neither.  In the
+ *  upgrade and fresh-lock cases the function acquires the queueing
+ *  benaphore followed by the mutex benaphore.
+ *
+ *  @param timeout  Absolute timeout in system_time() units.
+ *                  Pass B_INFINITE_TIMEOUT to wait indefinitely.
+ *  @return B_OK on success, B_TIMED_OUT on timeout, B_WOULD_BLOCK if a
+ *          finite-timeout upgrade is not immediately possible, or another
+ *          error code on failure.
+ */
 // _WriteLock
 //
 // /timeout/ -- absolute timeout
@@ -400,6 +526,11 @@ RWLocker::_WriteLock(bigtime_t timeout)
 	return error;
 }
 
+/** @brief Appends a ReadLockInfo pointer to fReadLockInfos.
+ *
+ *  @param info  The heap-allocated ReadLockInfo to add.
+ *  @return The index at which the info was inserted.
+ */
 // _AddReadLockInfo
 int32
 RWLocker::_AddReadLockInfo(ReadLockInfo* info)
@@ -409,6 +540,13 @@ RWLocker::_AddReadLockInfo(ReadLockInfo* info)
 	return index;
 }
 
+/** @brief Allocates a new ReadLockInfo for @p thread with initial count
+ *         @p count and appends it to the list.
+ *
+ *  @param thread  The thread acquiring the read lock.
+ *  @param count   The initial recursion depth (usually 1).
+ *  @return The index of the newly inserted ReadLockInfo.
+ */
 // _NewReadLockInfo
 //
 // Create a new read lock info for the supplied thread and add it to the
@@ -422,6 +560,10 @@ RWLocker::_NewReadLockInfo(thread_id thread, int32 count)
 	return _AddReadLockInfo(info);
 }
 
+/** @brief Removes and deletes the ReadLockInfo at @p index.
+ *
+ *  @param index  Zero-based index into fReadLockInfos.
+ */
 // _DeleteReadLockInfo
 void
 RWLocker::_DeleteReadLockInfo(int32 index)
@@ -430,6 +572,11 @@ RWLocker::_DeleteReadLockInfo(int32 index)
 		delete info;
 }
 
+/** @brief Returns the ReadLockInfo at @p index without removing it.
+ *
+ *  @param index  Zero-based index into fReadLockInfos.
+ *  @return Pointer to the ReadLockInfo, or NULL if the index is out of range.
+ */
 // _ReadLockInfoAt
 RWLocker::ReadLockInfo*
 RWLocker::_ReadLockInfoAt(int32 index) const
@@ -437,6 +584,11 @@ RWLocker::_ReadLockInfoAt(int32 index) const
 	return (ReadLockInfo*)fReadLockInfos.ItemAt(index);
 }
 
+/** @brief Finds the fReadLockInfos index for the given thread.
+ *
+ *  @param thread  The thread whose read-lock entry is sought.
+ *  @return The zero-based index of the entry, or -1 if not found.
+ */
 // _IndexOf
 int32
 RWLocker::_IndexOf(thread_id thread) const
@@ -449,6 +601,16 @@ RWLocker::_IndexOf(thread_id thread) const
 	return -1;
 }
 
+/** @brief Acquires a benaphore-style semaphore with an absolute timeout.
+ *
+ *  Atomically increments the counter; if the previous value was already
+ *  positive, the semaphore must be acquired to avoid a race.
+ *
+ *  @param benaphore  The Benaphore (counter + semaphore pair) to acquire.
+ *  @param timeout    Absolute timeout for the semaphore acquisition.
+ *  @return B_OK on success, B_TIMED_OUT if the timeout elapses, or a
+ *          system error code.
+ */
 // _AcquireBenaphore
 status_t
 RWLocker::_AcquireBenaphore(Benaphore& benaphore, bigtime_t timeout)
@@ -461,6 +623,13 @@ RWLocker::_AcquireBenaphore(Benaphore& benaphore, bigtime_t timeout)
 	return error;
 }
 
+/** @brief Releases a benaphore-style semaphore.
+ *
+ *  Atomically decrements the counter; if other threads are waiting
+ *  (previous counter > 1) the semaphore is released to wake one of them.
+ *
+ *  @param benaphore  The Benaphore to release.
+ */
 // _ReleaseBenaphore
 void
 RWLocker::_ReleaseBenaphore(Benaphore& benaphore)
@@ -468,4 +637,3 @@ RWLocker::_ReleaseBenaphore(Benaphore& benaphore)
 	if (atomic_add(&benaphore.counter, -1) > 1)
 		release_sem(benaphore.semaphore);
 }
-

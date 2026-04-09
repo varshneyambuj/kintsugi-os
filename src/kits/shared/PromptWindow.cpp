@@ -1,7 +1,33 @@
 /*
- * Copyright 2012-2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012-2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file PromptWindow.cpp
+ *  @brief Implements \c PromptWindow, a lightweight modal-style floating
+ *         window that presents a single-line text entry to the user and
+ *         forwards the accepted text to a \c BMessenger target.
+ */
+
 #include "PromptWindow.h"
 
 #include <Button.h>
@@ -11,9 +37,29 @@
 #include <TextControl.h>
 
 
+/** Internal message code sent when the user accepts the input. */
 static const uint32 kAcceptInput = 'acin';
 
 
+/**
+ * @brief Constructs a \c PromptWindow.
+ *
+ * Builds the window UI using \c BLayoutBuilder::Group: an optional
+ * informational \c BStringView (\a info), a \c BTextControl labelled with
+ * \a label, and Cancel / Accept buttons. If \a info is \c NULL the info
+ * view is hidden. The \c BTextControl minimum width is set to 200 pixels and
+ * it receives the initial keyboard focus. The Accept button is set as the
+ * default button so pressing Enter accepts the input.
+ *
+ * @param title   Window title string.
+ * @param label   Label shown to the left of the text entry field.
+ * @param info    Optional descriptive text shown above the entry field; may
+ *                be \c NULL.
+ * @param target  \c BMessenger to which the accepted message will be sent.
+ * @param message The \c BMessage to send on acceptance; the entered text is
+ *                appended as a \c "text" string field. Ownership is
+ *                transferred to the window.
+ */
 PromptWindow::PromptWindow(const char* title, const char* label,
 	const char* info, BMessenger target, BMessage* message)
 	:
@@ -53,12 +99,26 @@ PromptWindow::PromptWindow(const char* title, const char* label,
 }
 
 
+/**
+ * @brief Destructor. Deletes the owned \c BMessage.
+ */
 PromptWindow::~PromptWindow()
 {
 	delete fMessage;
 }
 
 
+/**
+ * @brief Handles messages sent to the window.
+ *
+ * When a \c kAcceptInput message is received the current text from the
+ * \c BTextControl is appended to \c fMessage under the key \c "text", and
+ * the message is forwarded to \c fTarget via \c BMessenger::SendMessage().
+ * The window then posts \c B_QUIT_REQUESTED to close itself. All other
+ * messages are forwarded to \c BWindow::MessageReceived().
+ *
+ * @param message The incoming \c BMessage.
+ */
 void
 PromptWindow::MessageReceived(BMessage* message)
 {
@@ -79,6 +139,12 @@ PromptWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Replaces the messenger target for accepted-input notifications.
+ *
+ * @param messenger The new \c BMessenger to send the accepted message to.
+ * @return \c B_OK unconditionally.
+ */
 status_t
 PromptWindow::SetTarget(BMessenger messenger)
 {
@@ -87,6 +153,15 @@ PromptWindow::SetTarget(BMessenger messenger)
 }
 
 
+/**
+ * @brief Replaces the message sent when the user accepts the prompt.
+ *
+ * The previously held message is deleted before \a message is stored.
+ * Ownership of \a message is transferred to the window.
+ *
+ * @param message The new \c BMessage to send on acceptance.
+ * @return \c B_OK unconditionally.
+ */
 status_t
 PromptWindow::SetMessage(BMessage* message)
 {

@@ -1,11 +1,36 @@
 /*
- * Copyright 2006-2012 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		John Scipione <jscipione@gmail.com>
- *		Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2012 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       John Scipione <jscipione@gmail.com>
+ *       Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ */
+
+/** @file ExpressionParser.cpp
+ *  @brief Arbitrary-precision mathematical expression parser built on the
+ *         MAPM library.  Supports the four arithmetic operators, exponentiation,
+ *         factorials, bitwise NOT, and a comprehensive set of math functions.
  */
 
 #include <ExpressionParser.h>
@@ -48,7 +73,9 @@ enum {
 };
 
 
+/** @brief Represents a single lexical token produced by the Tokenizer. */
 struct ExpressionParser::Token {
+	/** @brief Constructs a default empty token of type TOKEN_NONE. */
 	Token()
 		: string(""),
 		  type(TOKEN_NONE),
@@ -57,6 +84,9 @@ struct ExpressionParser::Token {
 	{
 	}
 
+	/** @brief Copy-constructs a token.
+	 *  @param other  The token to copy.
+	 */
 	Token(const Token& other)
 		: string(other.string),
 		  type(other.type),
@@ -65,6 +95,12 @@ struct ExpressionParser::Token {
 	{
 	}
 
+	/** @brief Constructs a token from a substring of the source expression.
+	 *  @param string    Pointer to the start of the token text in the source.
+	 *  @param length    Number of characters in the token.
+	 *  @param position  Byte offset of the token within the source string.
+	 *  @param type      Token type constant (TOKEN_CONSTANT, TOKEN_IDENTIFIER, …).
+	 */
 	Token(const char* string, int32 length, int32 position, int32 type)
 		: string(string, length),
 		  type(type),
@@ -73,6 +109,10 @@ struct ExpressionParser::Token {
 	{
 	}
 
+	/** @brief Assignment operator.
+	 *  @param other  The token to assign from.
+	 *  @return Reference to this token.
+	 */
 	Token& operator=(const Token& other)
 	{
 		string = other.string;
@@ -82,16 +122,24 @@ struct ExpressionParser::Token {
 		return *this;
 	}
 
-	BString		string;
-	int32		type;
-	MAPM		value;
+	BString		string;   /**< The raw text of the token. */
+	int32		type;     /**< Token type (TOKEN_CONSTANT, TOKEN_PLUS, …). */
+	MAPM		value;    /**< Pre-parsed numeric value (set for TOKEN_CONSTANT). */
 
-	int32		position;
+	int32		position; /**< Byte offset within the source string. */
 };
 
 
+/** @brief Lexical analyser for mathematical expression strings.
+ *
+ *  Breaks the input expression into a sequence of Token objects. Supports
+ *  decimal numbers with optional exponents, hex literals (0x…), identifiers
+ *  (function names and constants), and single-character operator tokens.
+ *  Configurable decimal and group separators allow locale-specific input.
+ */
 class ExpressionParser::Tokenizer {
  public:
+	/** @brief Constructs a Tokenizer with default ('.') decimal and (',') group separators. */
 	Tokenizer()
 		: fString(""),
 		  fCurrentChar(NULL),
@@ -103,11 +151,17 @@ class ExpressionParser::Tokenizer {
 	{
 	}
 
+	/** @brief Enables or disables hexadecimal literal input (0x prefix).
+	 *  @param enabled  true to allow "0x…" hex literals; false to treat 'x' as multiply.
+	 */
 	void SetSupportHexInput(bool enabled)
 	{
 		fHexSupport = enabled;
 	}
 
+	/** @brief Resets the tokenizer to parse a new expression string.
+	 *  @param string  NUL-terminated expression to tokenize.
+	 */
 	void SetTo(const char* string)
 	{
 		fString = string;
@@ -116,6 +170,13 @@ class ExpressionParser::Tokenizer {
 		fReuseToken = false;
 	}
 
+	/** @brief Returns the next token from the input.
+	 *
+	 *  If RewindToken() was called, the previous token is returned again.
+	 *  Whitespace is skipped. Throws ParseException on unrecognised input.
+	 *
+	 *  @return Const reference to the current token.
+	 */
 	const Token& NextToken()
 	{
 		if (fCurrentToken.type == TOKEN_END_OF_LINE)
@@ -270,21 +331,32 @@ class ExpressionParser::Tokenizer {
 		return fCurrentToken;
 	}
 
+	/** @brief Causes the next NextToken() call to return the current token again. */
 	void RewindToken()
 	{
 		fReuseToken = true;
 	}
 
+	/** @brief Returns the current decimal separator string.
+	 *  @return The decimal separator (e.g. "." or ",").
+	 */
 	BString DecimalSeparator()
 	{
 		return fDecimalSeparator;
 	}
 
+	/** @brief Returns the current group (thousands) separator string.
+	 *  @return The group separator (e.g. "," or ".").
+	 */
 	BString GroupSeparator()
 	{
 		return fGroupSeparator;
 	}
 
+	/** @brief Sets the decimal and group separator strings.
+	 *  @param decimal  The new decimal separator.
+	 *  @param group    The new group (thousands) separator.
+	 */
 	void SetSeparators(BString decimal, BString group)
 	{
 		fDecimalSeparator = decimal;
@@ -292,11 +364,22 @@ class ExpressionParser::Tokenizer {
 	}
 
  private:
+	/** @brief Returns true if @p c is a valid hexadecimal digit.
+	 *  @param c  Character to test.
+	 *  @return true for 0–9, a–f, A–F.
+	 */
 	static bool _IsHexDigit(char c)
 	{
 		return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 	}
 
+	/** @brief Parses a "0x…" hexadecimal constant and stores it as TOKEN_CONSTANT.
+	 *
+	 *  Converts the hex string to a uint64 and then to MAPM via arithmetic
+	 *  decomposition (MAPM has no direct 64-bit integer constructor).
+	 *
+	 *  @return Reference to the populated fCurrentToken.
+	 */
 	Token& _ParseHexNumber()
 	{
 		const char* begin = fCurrentChar;
@@ -329,6 +412,9 @@ class ExpressionParser::Tokenizer {
 		return fCurrentToken;
 	}
 
+	/** @brief Returns the current byte offset within fString.
+	 *  @return Byte offset of fCurrentChar from the start of fString.
+	 */
 	int32 _CurrentPos() const
 	{
 		return fCurrentChar - fString.String();
@@ -344,6 +430,7 @@ class ExpressionParser::Tokenizer {
 };
 
 
+/** @brief Constructs an ExpressionParser in radian mode. */
 ExpressionParser::ExpressionParser()
 	:	fTokenizer(new Tokenizer()),
 		fDegreeMode(false)
@@ -351,12 +438,16 @@ ExpressionParser::ExpressionParser()
 }
 
 
+/** @brief Destroys the parser and its internal tokenizer. */
 ExpressionParser::~ExpressionParser()
 {
 	delete fTokenizer;
 }
 
 
+/** @brief Returns whether the parser is currently in degree mode.
+ *  @return true if trig functions interpret angles as degrees.
+ */
 bool
 ExpressionParser::DegreeMode()
 {
@@ -364,6 +455,9 @@ ExpressionParser::DegreeMode()
 }
 
 
+/** @brief Sets whether trig functions interpret angles as degrees or radians.
+ *  @param degrees  true for degree mode, false for radian mode.
+ */
 void
 ExpressionParser::SetDegreeMode(bool degrees)
 {
@@ -371,6 +465,9 @@ ExpressionParser::SetDegreeMode(bool degrees)
 }
 
 
+/** @brief Enables or disables hexadecimal literal input (0x… notation).
+ *  @param enabled  true to allow hex literals.
+ */
 void
 ExpressionParser::SetSupportHexInput(bool enabled)
 {
@@ -378,6 +475,15 @@ ExpressionParser::SetSupportHexInput(bool enabled)
 }
 
 
+/** @brief Evaluates @p expressionString and returns the result as a BString.
+ *
+ *  Trailing zeros after the decimal point are stripped. The decimal separator
+ *  used in the output matches the one configured via SetSeparators().
+ *
+ *  @param expressionString  NUL-terminated infix expression.
+ *  @return The formatted result string.
+ *  @throws ParseException on syntax errors or domain violations.
+ */
 BString
 ExpressionParser::Evaluate(const char* expressionString)
 {
@@ -414,6 +520,14 @@ ExpressionParser::Evaluate(const char* expressionString)
 }
 
 
+/** @brief Evaluates @p expressionString and returns the integer result.
+ *
+ *  The result is truncated to int64.
+ *
+ *  @param expressionString  NUL-terminated infix expression.
+ *  @return The integer part of the evaluated expression.
+ *  @throws ParseException on syntax errors or domain violations.
+ */
 int64
 ExpressionParser::EvaluateToInt64(const char* expressionString)
 {
@@ -431,6 +545,12 @@ ExpressionParser::EvaluateToInt64(const char* expressionString)
 }
 
 
+/** @brief Evaluates @p expressionString and returns the result as a double.
+ *
+ *  @param expressionString  NUL-terminated infix expression.
+ *  @return The double-precision result.
+ *  @throws ParseException on syntax errors or domain violations.
+ */
 double
 ExpressionParser::EvaluateToDouble(const char* expressionString)
 {
@@ -448,6 +568,13 @@ ExpressionParser::EvaluateToDouble(const char* expressionString)
 }
 
 
+/** @brief Entry point for the recursive-descent parser; currently delegates to _ParseSum.
+ *
+ *  Binary bitwise operations (& and |) are stubbed out and left as future work
+ *  because MAPM has no direct large-integer bitwise support.
+ *
+ *  @return The parsed MAPM value.
+ */
 MAPM
 ExpressionParser::_ParseBinary()
 {
@@ -475,6 +602,12 @@ ExpressionParser::_ParseBinary()
 }
 
 
+/** @brief Parses additive expressions (+ and -).
+ *
+ *  Handles left-to-right chaining of TOKEN_PLUS and TOKEN_MINUS operators.
+ *
+ *  @return The computed sum/difference.
+ */
 MAPM
 ExpressionParser::_ParseSum()
 {
@@ -499,6 +632,12 @@ ExpressionParser::_ParseSum()
 }
 
 
+/** @brief Parses multiplicative expressions (*, /, %).
+ *
+ *  Throws ParseException on division or modulo by zero.
+ *
+ *  @return The computed product/quotient/remainder.
+ */
 MAPM
 ExpressionParser::_ParseProduct()
 {
@@ -534,6 +673,12 @@ ExpressionParser::_ParseProduct()
 }
 
 
+/** @brief Parses exponentiation expressions (^).
+ *
+ *  Right-associative: a^b^c is evaluated as a^(b^c).
+ *
+ *  @return The computed power.
+ */
 MAPM
 ExpressionParser::_ParsePower()
 {
@@ -550,6 +695,11 @@ ExpressionParser::_ParsePower()
 }
 
 
+/** @brief Parses unary +, -, and dispatches identifiers to _ParseFunction().
+ *
+ *  @return The unary-modified value.
+ *  @throws ParseException on unexpected end of expression.
+ */
 MAPM
 ExpressionParser::_ParseUnary()
 {
@@ -578,6 +728,7 @@ ExpressionParser::_ParseUnary()
 }
 
 
+/** @brief Represents a built-in mathematical function (unused table; retained for reference). */
 struct Function {
 	const char*	name;
 	int			argumentCount;
@@ -586,6 +737,15 @@ struct Function {
 };
 
 
+/** @brief Reads exactly @p argumentCount arguments between '(' and ')'.
+ *
+ *  Arguments are separated by the binary parse level; each is stored in
+ *  values[0..argumentCount-1].
+ *
+ *  @param values         Output array of at least @p argumentCount MAPM values.
+ *  @param argumentCount  Number of comma-delimited arguments expected.
+ *  @throws ParseException if brackets are missing.
+ */
 void
 ExpressionParser::_InitArguments(MAPM values[], int32 argumentCount)
 {
@@ -598,6 +758,16 @@ ExpressionParser::_InitArguments(MAPM values[], int32 argumentCount)
 }
 
 
+/** @brief Evaluates a named constant or function call given its identifier token.
+ *
+ *  Handles the constants "e" and "pi" (and the Unicode π character), and
+ *  all built-in single- or two-argument math functions (abs, sin, cos, …).
+ *  Applies degree-mode conversion where applicable.
+ *
+ *  @param token  The TOKEN_IDENTIFIER token naming the function or constant.
+ *  @return The evaluated MAPM result.
+ *  @throws ParseException for unknown identifiers or out-of-domain arguments.
+ */
 MAPM
 ExpressionParser::_ParseFunction(const Token& token)
 {
@@ -720,6 +890,14 @@ ExpressionParser::_ParseFunction(const Token& token)
 }
 
 
+/** @brief Parses an atom: a constant or a parenthesised sub-expression.
+ *
+ *  If the next token is TOKEN_CONSTANT its value is returned directly;
+ *  otherwise the token is rewound and a '(' … ')' group is expected.
+ *
+ *  @return The parsed atom value.
+ *  @throws ParseException on unexpected end of expression or missing bracket.
+ */
 MAPM
 ExpressionParser::_ParseAtom()
 {
@@ -742,6 +920,14 @@ ExpressionParser::_ParseAtom()
 }
 
 
+/** @brief Checks for an optional trailing '!' and applies the factorial if present.
+ *
+ *  For values >= 1000 Stirling's approximation (9-term expansion) is used
+ *  because MAPM's exact factorial is too slow.
+ *
+ *  @param value  The value to optionally factorialise.
+ *  @return @p value! if '!' follows, otherwise @p value unchanged.
+ */
 MAPM
 ExpressionParser::_ParseFactorial(MAPM value)
 {
@@ -789,6 +975,14 @@ ExpressionParser::_ParseFactorial(MAPM value)
 }
 
 
+/** @brief Consumes the next token and verifies it has the expected type.
+ *
+ *  Throws a ParseException with a human-readable "Expected X got Y" message
+ *  if the token type does not match.
+ *
+ *  @param type  The expected token type constant.
+ *  @throws ParseException if the next token is not of the expected type.
+ */
 void
 ExpressionParser::_EatToken(int32 type)
 {
@@ -833,6 +1027,14 @@ ExpressionParser::_EatToken(int32 type)
 }
 
 
+/** @brief Sets locale-specific decimal and group (thousands) separators.
+ *
+ *  The two separators must be different strings; otherwise B_ERROR is returned.
+ *
+ *  @param decimal  The decimal point string (e.g. "." or ",").
+ *  @param group    The thousands-grouping separator (e.g. "," or ".").
+ *  @return B_OK on success, B_ERROR if @p decimal == @p group.
+ */
 status_t
 ExpressionParser::SetSeparators(BString decimal, BString group)
 {

@@ -1,13 +1,43 @@
 /*
- * Copyright 2004-2012, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jérôme Duval
- *		Axel Dörfler, axeld@pinc-software.de.
- *		John Scipione, jscipione@gmail.com.
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2012, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jérôme Duval
+ *       Axel Dörfler, axeld@pinc-software.de.
+ *       John Scipione, jscipione@gmail.com.
  */
 
+/** @file Keymap.cpp
+ *  @brief Implementation of BKeymap, a class for loading, querying, and
+ *         translating keyboard keymaps.
+ *
+ *  BKeymap reads the binary keymap format (big-endian key_map struct followed
+ *  by a character table) from files or the running system, and exposes
+ *  methods to:
+ *    - look up which character(s) a key+modifiers combination produces,
+ *    - identify modifier keys and dead keys,
+ *    - translate characters between modifier states.
+ */
 
 #include <Keymap.h>
 
@@ -29,21 +59,35 @@
 #endif
 
 
+/** @brief Private enumeration of dead-key slot indices.
+ *
+ *  Each value corresponds to a slot in the key_map dead-key tables.
+ *  These are internal identifiers; the public API uses uint8 values 1-5.
+ */
 // Private only at this point, as we might want to improve the dead key
 // implementation in the future
 enum dead_key_index {
-	kDeadKeyAcute = 1,
-	kDeadKeyGrave,
-	kDeadKeyCircumflex,
-	kDeadKeyDiaeresis,
-	kDeadKeyTilde
+	kDeadKeyAcute = 1,      ///< Acute accent dead key slot.
+	kDeadKeyGrave,          ///< Grave accent dead key slot.
+	kDeadKeyCircumflex,     ///< Circumflex dead key slot.
+	kDeadKeyDiaeresis,      ///< Diaeresis (umlaut) dead key slot.
+	kDeadKeyTilde           ///< Tilde dead key slot.
 };
 
 
+/** @brief Bitmask of all modifier keys considered when resolving key offsets.
+ *
+ *  Only these modifier bits are examined when selecting the correct mapping
+ *  table; other modifier bits (e.g. B_NUM_LOCK) are handled separately.
+ */
 static const uint32 kModifierKeys = B_SHIFT_KEY | B_CAPS_LOCK | B_CONTROL_KEY
 	| B_OPTION_KEY | B_COMMAND_KEY | B_MENU_KEY;
 
 
+/** @brief Default constructor. Creates an uninitialized BKeymap.
+ *
+ *  Call SetTo(), SetToCurrent(), or SetToDefault() before using the object.
+ */
 BKeymap::BKeymap()
 	:
 	fChars(NULL),
@@ -53,6 +97,7 @@ BKeymap::BKeymap()
 }
 
 
+/** @brief Destructor. Releases the character table memory. */
 BKeymap::~BKeymap()
 {
 	delete[] fChars;
@@ -66,6 +111,15 @@ BKeymap::~BKeymap()
 		charset (offsets go into this with size of character followed by
 		  character)
 */
+/** @brief Loads a keymap from the file at the given path.
+ *
+ *  The file must contain a big-endian key_map struct, a uint32 charset size,
+ *  and the raw character table.
+ *
+ *  @param path  Filesystem path to the keymap file.
+ *  @return B_OK on success, or an error code (B_IO_ERROR, B_BAD_DATA, etc.)
+ *          on failure.
+ */
 status_t
 BKeymap::SetTo(const char* path)
 {
@@ -78,6 +132,15 @@ BKeymap::SetTo(const char* path)
 }
 
 
+/** @brief Loads a keymap from an arbitrary BDataIO stream.
+ *
+ *  Reads a big-endian key_map header, validates the version field (must be
+ *  3), then reads the character table.
+ *
+ *  @param stream  The data stream to read from.
+ *  @return B_OK on success, B_IO_ERROR on read failure, or B_BAD_DATA if the
+ *          version or size is invalid.
+ */
 status_t
 BKeymap::SetTo(BDataIO& stream)
 {
@@ -113,6 +176,13 @@ BKeymap::SetTo(BDataIO& stream)
 }
 
 
+/** @brief Loads the keymap currently active in the running system.
+ *
+ *  Queries the input server for the live keymap via _get_key_map().
+ *  Only available on Haiku; exits with an error message on other platforms.
+ *
+ *  @return B_OK on success or B_ERROR if the key map could not be retrieved.
+ */
 status_t
 BKeymap::SetToCurrent()
 {
@@ -138,6 +208,13 @@ BKeymap::SetToCurrent()
 }
 
 
+/** @brief Loads the built-in system default keymap compiled into the binary.
+ *
+ *  Only available on Haiku; exits with an error message on other platforms.
+ *
+ *  @return B_OK on success or B_NO_MEMORY if the character table cannot be
+ *          allocated.
+ */
 status_t
 BKeymap::SetToDefault()
 {
@@ -161,6 +238,10 @@ BKeymap::SetToDefault()
 }
 
 
+/** @brief Resets the BKeymap to an uninitialized state.
+ *
+ *  Frees the character table and zeroes all key map data.
+ */
 void
 BKeymap::Unset()
 {
@@ -175,6 +256,15 @@ BKeymap::Unset()
 /*!	We need to know if a key is a modifier key to choose
 	a valid key when several are pressed together
 */
+/** @brief Returns whether @p keyCode corresponds to a modifier key.
+ *
+ *  Modifier keys (shift, caps lock, control, option, command, menu, num lock,
+ *  scroll lock) are identified by comparing @p keyCode against the key codes
+ *  stored in the loaded keymap.
+ *
+ *  @param keyCode  The hardware key code to test.
+ *  @return true if the key is a modifier key.
+ */
 bool
 BKeymap::IsModifierKey(uint32 keyCode) const
 {
@@ -194,6 +284,12 @@ BKeymap::IsModifierKey(uint32 keyCode) const
 
 
 //! We need to know a modifier for a key
+/** @brief Returns the modifier bitmask associated with the given key code.
+ *
+ *  @param keyCode  The hardware key code of a modifier key.
+ *  @return A B_*_KEY / B_*_LOCK bitmask (e.g. B_SHIFT_KEY | B_LEFT_SHIFT_KEY),
+ *          or 0 if @p keyCode is not a modifier key.
+ */
 uint32
 BKeymap::Modifier(uint32 keyCode) const
 {
@@ -226,6 +322,13 @@ BKeymap::Modifier(uint32 keyCode) const
 }
 
 
+/** @brief Returns the key code associated with a given modifier bitmask.
+ *
+ *  For two-sided modifiers (e.g. B_SHIFT_KEY) the left-side key is returned.
+ *
+ *  @param modifier  A single modifier bitmask value (e.g. B_CAPS_LOCK).
+ *  @return The key code for the modifier, or 0 if not found.
+ */
 uint32
 BKeymap::KeyForModifier(uint32 modifier) const
 {
@@ -260,6 +363,17 @@ BKeymap::KeyForModifier(uint32 modifier) const
 
 /*! Checks whether a key is an active dead key.
 */
+/** @brief Returns the dead-key slot index if @p keyCode is an active dead
+ *         key for the given modifier state, or 0 otherwise.
+ *
+ *  A dead key is "active" if it is enabled in the corresponding modifier
+ *  table bitmask.
+ *
+ *  @param keyCode    The hardware key code to check.
+ *  @param modifiers  The current modifier state bitmask.
+ *  @return A dead_key_index value (1-5) if the key is an active dead key,
+ *          or 0 if it is not.
+ */
 uint8
 BKeymap::ActiveDeadKey(uint32 keyCode, uint32 modifiers) const
 {
@@ -276,6 +390,16 @@ BKeymap::ActiveDeadKey(uint32 keyCode, uint32 modifiers) const
 	If it is, the enabled/disabled state of that dead key will be passed
 	out via isEnabled (isEnabled is not touched for non-dead keys).
 */
+/** @brief Checks whether @p keyCode is a dead key and returns its index.
+ *
+ *  @param keyCode    The hardware key code to test.
+ *  @param modifiers  The current modifier state bitmask.
+ *  @param _isEnabled Optional output: set to true if the dead key is enabled
+ *                    in the current modifier table, false if disabled.
+ *                    Not modified for non-dead keys.
+ *  @return A dead_key_index value (1-5) if this is a dead key slot,
+ *          or 0 if the key is not a dead key.
+ */
 uint8
 BKeymap::DeadKey(uint32 keyCode, uint32 modifiers, bool* _isEnabled) const
 {
@@ -298,6 +422,20 @@ BKeymap::DeadKey(uint32 keyCode, uint32 modifiers, bool* _isEnabled) const
 
 
 //! Tell if a key is a dead second key.
+/** @brief Returns whether @p keyCode is a valid second key for an active dead
+ *         key combination.
+ *
+ *  Searches the dead-key offset table for a matching character, either by
+ *  direct offset equality or by UTF-8 string comparison.
+ *
+ *  @param keyCode       The hardware key code of the candidate second key.
+ *  @param modifiers     The current modifier state bitmask.
+ *  @param activeDeadKey The active dead-key index (1-5) returned by
+ *                       ActiveDeadKey().  Pass 0 if there is no active dead
+ *                       key (the function returns false immediately).
+ *  @return true if pressing @p keyCode would produce a composed character
+ *          with the current active dead key.
+ */
 bool
 BKeymap::IsDeadSecondKey(uint32 keyCode, uint32 modifiers,
 	uint8 activeDeadKey) const
@@ -342,6 +480,19 @@ BKeymap::IsDeadSecondKey(uint32 keyCode, uint32 modifiers,
 
 
 //! Get the char for a key given modifiers and active dead key
+/** @brief Resolves the character(s) produced by a key event.
+ *
+ *  Handles NUMLOCK toggling, dead-key composition, and option-key fall-back.
+ *  The returned string is heap-allocated; the caller must delete[] it.
+ *
+ *  @param keyCode       Hardware key code (must be <= 128).
+ *  @param modifiers     Current modifier state bitmask.
+ *  @param activeDeadKey Active dead-key index (0 if none).
+ *  @param chars         Output: pointer set to a newly allocated, NUL-terminated
+ *                       UTF-8 string, or NULL if the key produces no character.
+ *  @param numBytes      Output: number of UTF-8 bytes in @p *chars (excluding
+ *                       the NUL terminator), or 0 if no character is produced.
+ */
 void
 BKeymap::GetChars(uint32 keyCode, uint32 modifiers, uint8 activeDeadKey,
 	char** chars, int32* numBytes) const
@@ -453,6 +604,20 @@ BKeymap::GetChars(uint32 keyCode, uint32 modifiers, uint8 activeDeadKey,
 /*!	Get a list of characters translated from a given character and
 	set of modifiers to another set of modifiers.
 */
+/** @brief Finds all keys that produce @p in under @p inModifiers and collects
+ *         what those same keys produce under @p outModifiers.
+ *
+ *  Iterates over all 128 key codes, looking for those that produce the string
+ *  @p in with @p inModifiers.  For each match the corresponding character
+ *  under @p outModifiers is appended to @p _outList.
+ *
+ *  @param in           The input UTF-8 character string to match.
+ *  @param inModifiers  The modifier state under which @p in is produced.
+ *  @param outModifiers The modifier state to translate matched keys into.
+ *  @param _outList     Output BStringList populated with translated characters.
+ *  @return B_OK on success, B_BAD_VALUE if @p in is NULL or empty, or
+ *          B_NO_MEMORY on allocation failure.
+ */
 status_t
 BKeymap::GetModifiedCharacters(const char* in, int32 inModifiers,
 	int32 outModifiers, BStringList& _outList)
@@ -478,6 +643,14 @@ BKeymap::GetModifiedCharacters(const char* in, int32 inModifiers,
 }
 
 
+/** @brief Equality comparison operator.
+ *
+ *  Two keymaps are equal if their character table sizes, key_map structures,
+ *  and character table contents all match.
+ *
+ *  @param other  The keymap to compare against.
+ *  @return true if this keymap is identical to @p other.
+ */
 bool
 BKeymap::operator==(const BKeymap& other) const
 {
@@ -487,6 +660,11 @@ BKeymap::operator==(const BKeymap& other) const
 }
 
 
+/** @brief Inequality comparison operator.
+ *
+ *  @param other  The keymap to compare against.
+ *  @return true if this keymap differs from @p other.
+ */
 bool
 BKeymap::operator!=(const BKeymap& other) const
 {
@@ -494,6 +672,11 @@ BKeymap::operator!=(const BKeymap& other) const
 }
 
 
+/** @brief Assignment operator. Deep-copies the keymap from @p other.
+ *
+ *  @param other  The keymap to copy.
+ *  @return A reference to this keymap after copying.
+ */
 BKeymap&
 BKeymap::operator=(const BKeymap& other)
 {
@@ -508,6 +691,20 @@ BKeymap::operator=(const BKeymap& other)
 }
 
 
+/** @brief Returns the character table offset for a key code and modifier state.
+ *
+ *  Selects the appropriate mapping table (normal, shift, caps, control, option,
+ *  etc.) based on the active modifiers and returns the offset into fChars for
+ *  the key's character data.
+ *
+ *  @param keyCode  The hardware key code (must be < 128).
+ *  @param modifiers The current modifier bitmask (only kModifierKeys bits are
+ *                   considered).
+ *  @param _table   Optional output set to the table identifier constant
+ *                  (e.g. B_NORMAL_TABLE, B_SHIFT_TABLE) that was selected.
+ *  @return The offset into fChars for this key, or -1 if @p keyCode >= 128
+ *          or the offset would exceed the table bounds.
+ */
 int32
 BKeymap::Offset(uint32 keyCode, uint32 modifiers, uint32* _table) const
 {
@@ -566,6 +763,16 @@ BKeymap::Offset(uint32 keyCode, uint32 modifiers, uint32* _table) const
 }
 
 
+/** @brief Returns the dead-key slot index for a given character table offset.
+ *
+ *  Reads the UTF-8 character at @p offset from fChars and compares it to the
+ *  first character of each of the five dead-key tables to determine whether
+ *  the offset represents a dead-key character.
+ *
+ *  @param offset  A character table offset (as returned by Offset()).
+ *  @return A dead_key_index value (1-5) if the character at @p offset is one
+ *          of the five dead-key characters, or 0 if it is not.
+ */
 uint8
 BKeymap::DeadKeyIndex(int32 offset) const
 {

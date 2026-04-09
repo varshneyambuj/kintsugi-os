@@ -1,6 +1,33 @@
 /*
- * Copyright 2010 Stephan Aßmus <superstippi@gmx.de>. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010 Stephan Aßmus <superstippi@gmx.de>. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ */
+
+/** @file BitmapButton.cpp
+ *  @brief Implements BBitmapButton, a BButton subclass that renders a bitmap
+ *         image instead of (or in addition to) a text label.
  */
 
 #include "BitmapButton.h"
@@ -15,6 +42,10 @@
 static const float kFrameInset = 2;
 
 
+/** @brief Constructs a BBitmapButton by loading a bitmap from a named resource.
+ *  @param resourceName  Name of the resource to load via BTranslationUtils.
+ *  @param message       The message sent when the button is clicked.
+ */
 BBitmapButton::BBitmapButton(const char* resourceName, BMessage* message)
 	:
 	BButton("", message),
@@ -24,6 +55,13 @@ BBitmapButton::BBitmapButton(const char* resourceName, BMessage* message)
 }
 
 
+/** @brief Constructs a BBitmapButton from raw bitmap data.
+ *  @param bits     Pointer to the raw pixel data.
+ *  @param width    Width of the bitmap in pixels.
+ *  @param height   Height of the bitmap in pixels.
+ *  @param format   Color space of the raw pixel data.
+ *  @param message  The message sent when the button is clicked.
+ */
 BBitmapButton::BBitmapButton(const uint8* bits, uint32 width, uint32 height,
 		color_space format, BMessage* message)
 	:
@@ -35,12 +73,16 @@ BBitmapButton::BBitmapButton(const uint8* bits, uint32 width, uint32 height,
 }
 
 
+/** @brief Destructor — frees the owned bitmap. */
 BBitmapButton::~BBitmapButton()
 {
 	delete fBitmap;
 }
 
 
+/** @brief Returns the minimum size required to display the bitmap with padding.
+ *  @return A BSize with the bitmap dimensions plus kFrameInset on each side.
+ */
 BSize
 BBitmapButton::MinSize()
 {
@@ -55,6 +97,9 @@ BBitmapButton::MinSize()
 }
 
 
+/** @brief Returns the maximum size, which is unlimited in both dimensions.
+ *  @return B_SIZE_UNLIMITED for width and height.
+ */
 BSize
 BBitmapButton::MaxSize()
 {
@@ -62,6 +107,9 @@ BBitmapButton::MaxSize()
 }
 
 
+/** @brief Returns the preferred size, equal to the minimum size.
+ *  @return The result of MinSize().
+ */
 BSize
 BBitmapButton::PreferredSize()
 {
@@ -69,6 +117,15 @@ BBitmapButton::PreferredSize()
 }
 
 
+/** @brief Draws the button background and the centered bitmap.
+ *
+ *  The background rendering depends on fBackgroundMode: a regular button
+ *  background is used normally, or a menu-bar style background when the
+ *  button is used inside a menu bar.  When disabled, the bitmap is drawn
+ *  with reduced opacity.
+ *
+ *  @param updateRect  The rectangle that needs redrawing.
+ */
 void
 BBitmapButton::Draw(BRect updateRect)
 {
@@ -108,6 +165,10 @@ BBitmapButton::Draw(BRect updateRect)
 }
 
 
+/** @brief Sets the background rendering mode and triggers a redraw if changed.
+ *  @param mode  One of the background mode constants (e.g. BUTTON_BACKGROUND
+ *               or MENU_BACKGROUND).
+ */
 void
 BBitmapButton::SetBackgroundMode(uint32 mode)
 {
@@ -116,4 +177,3 @@ BBitmapButton::SetBackgroundMode(uint32 mode)
 		Invalidate();
 	}
 }
-
