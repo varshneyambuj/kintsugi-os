@@ -34,13 +34,28 @@
 #include <package/PackagesDirectoryDefs.h>
 
 
+/** @brief File extension used by all package archive files. */
 const char* const kPackageFileNameExtension = ".hpkg";
+
+/** @brief Name of the administrative directory inside the packages directory. */
 const char* const kAdminDirectoryName = PACKAGES_DIRECTORY_ADMIN_DIRECTORY;
+
+/** @brief Name of the file listing currently activated packages. */
 const char* const kActivationFileName = PACKAGES_DIRECTORY_ACTIVATION_FILE;
+
+/** @brief Temporary activation file name used during atomic updates. */
 const char* const kTemporaryActivationFileName
 	= PACKAGES_DIRECTORY_ACTIVATION_FILE ".tmp";
+
+/** @brief Flag file whose presence requests first-boot package processing. */
 const char* const kFirstBootProcessingNeededFileName
 	= "FirstBootProcessingNeeded";
+
+/** @brief Name of the directory storing extracted writable files from packages. */
 const char* const kWritableFilesDirectoryName = "writable-files";
+
+/** @brief Extended attribute name used to tag files with their originating package. */
 const char* const kPackageFileAttribute = "SYS:PACKAGE";
+
+/** @brief Name of the directory holding symlinks to queued post-install scripts. */
 const char* const kQueuedScriptsDirectoryName = "queued-scripts";

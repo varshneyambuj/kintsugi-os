@@ -33,8 +33,24 @@
 #include <DriverSettingsMessageAdapter.h>
 
 
+/**
+ * @brief Abstract base for converters that parse driver-settings parameters
+ *        with optional argument lists into BMessages.
+ */
 class AbstractArgsConverter : public DriverSettingsConverter {
 public:
+	/**
+	 * @brief Handles empty (no sub-parameters) driver-settings entries.
+	 *
+	 * If the parameter has no sub-parameters and its name differs from
+	 * this converter's Name(), an empty BMessage is added under @a name.
+	 *
+	 * @param parameter The driver_parameter to convert.
+	 * @param name      The key name to store the result under.
+	 * @param type      The expected type (unused).
+	 * @param target    The BMessage to populate.
+	 * @return B_OK on success, or an error code on failure.
+	 */
 	status_t ConvertEmptyFromDriverSettings(
 		const driver_parameter& parameter, const char* name, uint32 type,
 		BMessage& target)
@@ -47,6 +63,17 @@ public:
 	}
 
 protected:
+	/**
+	 * @brief Extracts a condition/event name and its trailing arguments into a sub-message.
+	 *
+	 * Uses the value at @a index as the sub-message key and all subsequent
+	 * values as "args" strings within it.
+	 *
+	 * @param parameter The driver_parameter containing values.
+	 * @param index     Index of the value to use as the sub-message name.
+	 * @param target    The parent BMessage to add the sub-message to.
+	 * @return B_OK on success, or an error code on failure.
+	 */
 	status_t AddSubMessage(const driver_parameter& parameter, int32 index,
 		BMessage& target)
 	{
@@ -65,8 +92,25 @@ protected:
 };
 
 
+/**
+ * @brief Converter that parses "if" / "not" condition blocks from driver-settings
+ *        into nested BMessages.
+ */
 class ConditionConverter : public AbstractArgsConverter {
 public:
+	/**
+	 * @brief Converts a condition driver-settings parameter into BMessage form.
+	 *
+	 * Handles "if" (with optional leading "not" operator) and plain condition
+	 * names, building nested BMessages for compound conditions.
+	 *
+	 * @param parameter The driver_parameter to convert.
+	 * @param name      The key name (unused for "if"/"not" parameters).
+	 * @param index     The value index to process.
+	 * @param type      The expected type (unused).
+	 * @param target    The BMessage to populate.
+	 * @return B_OK on success, or an error code on failure.
+	 */
 	status_t ConvertFromDriverSettings(const driver_parameter& parameter,
 		const char* name, int32 index, uint32 type, BMessage& target)
 	{
@@ -102,6 +146,7 @@ public:
 		return target.AddMessage(parameter.name, &message);
 	}
 
+	/** @brief Returns the keyword this converter handles ("if"). */
 	const char* Name()
 	{
 		return "if";
@@ -109,8 +154,24 @@ public:
 };
 
 
+/**
+ * @brief Converter that parses "on" event blocks from driver-settings into BMessages.
+ */
 class EventConverter : public AbstractArgsConverter {
 public:
+	/**
+	 * @brief Converts an event driver-settings parameter into BMessage form.
+	 *
+	 * Handles "on" keywords by extracting the event name and arguments
+	 * from the parameter values.
+	 *
+	 * @param parameter The driver_parameter to convert.
+	 * @param name      The key name (unused for "on" parameters).
+	 * @param index     The value index to process.
+	 * @param type      The expected type (unused).
+	 * @param target    The BMessage to populate.
+	 * @return B_OK on success, or an error code on failure.
+	 */
 	status_t ConvertFromDriverSettings(const driver_parameter& parameter,
 		const char* name, int32 index, uint32 type, BMessage& target)
 	{
@@ -127,6 +188,7 @@ public:
 		return target.AddMessage(parameter.name, &message);
 	}
 
+	/** @brief Returns the keyword this converter handles ("on"). */
 	const char* Name()
 	{
 		return "on";
@@ -134,8 +196,23 @@ public:
 };
 
 
+/**
+ * @brief Converter that parses "run" targets from driver-settings into BMessages.
+ */
 class RunConverter : public DriverSettingsConverter {
 public:
+	/**
+	 * @brief Converts a run parameter value into a "target" string in the message.
+	 *
+	 * Only handles leaf parameters (no sub-parameters).
+	 *
+	 * @param parameter The driver_parameter to convert.
+	 * @param name      The key name (unused).
+	 * @param index     The value index to use as the target name.
+	 * @param type      The expected type (unused).
+	 * @param target    The BMessage to populate with a "target" string.
+	 * @return B_OK on success, or B_NOT_SUPPORTED if sub-parameters exist.
+	 */
 	status_t ConvertFromDriverSettings(const driver_parameter& parameter,
 		const char* name, int32 index, uint32 type, BMessage& target)
 	{
@@ -145,6 +222,15 @@ public:
 		return B_NOT_SUPPORTED;
 	}
 
+	/**
+	 * @brief Handles empty run parameters by using the parameter name as the target.
+	 *
+	 * @param parameter The driver_parameter to convert.
+	 * @param name      The parameter name to use as the run target.
+	 * @param type      The expected type (unused).
+	 * @param target    The BMessage to populate.
+	 * @return B_OK on success, or an error code on failure.
+	 */
 	status_t ConvertEmptyFromDriverSettings(
 		const driver_parameter& parameter, const char* name, uint32 type,
 		BMessage& target)
@@ -157,6 +243,7 @@ public:
 };
 
 
+/** @brief Template defining the grammar for condition blocks (if/not/and/or). */
 const static settings_template kConditionTemplate[] = {
 	{B_STRING_TYPE, NULL, NULL, true, new ConditionConverter()},
 	{B_MESSAGE_TYPE, "not", kConditionTemplate},
@@ -165,6 +252,7 @@ const static settings_template kConditionTemplate[] = {
 	{0, NULL, NULL}
 };
 
+/** @brief Template defining the grammar for event blocks (on/and/or). */
 const static settings_template kEventTemplate[] = {
 	{B_STRING_TYPE, NULL, NULL, true, new EventConverter()},
 	{B_MESSAGE_TYPE, "and", kEventTemplate},
@@ -172,16 +260,19 @@ const static settings_template kEventTemplate[] = {
 	{0, NULL, NULL}
 };
 
+/** @brief Template for port definitions (name and optional capacity). */
 const static settings_template kPortTemplate[] = {
 	{B_STRING_TYPE, "name", NULL, true},
 	{B_INT32_TYPE, "capacity", NULL},
 };
 
+/** @brief Template for environment variable definitions (from_script or key=value). */
 const static settings_template kEnvTemplate[] = {
 	{B_STRING_TYPE, "from_script", NULL, true},
 	{B_STRING_TYPE, NULL, NULL},
 };
 
+/** @brief Template defining the grammar for job and service definitions. */
 const static settings_template kJobTemplate[] = {
 	{B_STRING_TYPE, "name", NULL, true},
 	{B_BOOL_TYPE, "disabled", NULL},
@@ -197,6 +288,7 @@ const static settings_template kJobTemplate[] = {
 	{0, NULL, NULL}
 };
 
+/** @brief Template defining the grammar for target definitions (containing jobs/services). */
 const static settings_template kTargetTemplate[] = {
 	{B_STRING_TYPE, "name", NULL, true},
 	{B_BOOL_TYPE, "reset", NULL},
@@ -209,11 +301,13 @@ const static settings_template kTargetTemplate[] = {
 	{0, NULL, NULL}
 };
 
+/** @brief Template for conditional run blocks (then/else branches). */
 const static settings_template kRunConditionalTemplate[] = {
 	{B_STRING_TYPE, NULL, NULL, true, new RunConverter()},
 	{0, NULL, NULL}
 };
 
+/** @brief Template defining the grammar for "run" directives with optional conditions. */
 const static settings_template kRunTemplate[] = {
 	{B_STRING_TYPE, NULL, NULL, true, new RunConverter()},
 	{B_MESSAGE_TYPE, "if", kConditionTemplate},
@@ -222,6 +316,7 @@ const static settings_template kRunTemplate[] = {
 	{0, NULL, NULL}
 };
 
+/** @brief Top-level template defining the overall launch daemon settings grammar. */
 const static settings_template kSettingsTemplate[] = {
 	{B_MESSAGE_TYPE, "target", kTargetTemplate},
 	{B_MESSAGE_TYPE, "job", kJobTemplate},
@@ -231,11 +326,22 @@ const static settings_template kSettingsTemplate[] = {
 };
 
 
+/** @brief Constructs the settings parser. */
 SettingsParser::SettingsParser()
 {
 }
 
 
+/**
+ * @brief Parses a launch daemon configuration file into a BMessage.
+ *
+ * Uses DriverSettingsMessageAdapter to convert the driver-settings format
+ * file at @a path into a structured BMessage according to kSettingsTemplate.
+ *
+ * @param path     Absolute filesystem path to the configuration file.
+ * @param settings Output BMessage that will be populated with the parsed settings.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 SettingsParser::ParseFile(const char* path, BMessage& settings)
 {
@@ -247,6 +353,16 @@ SettingsParser::ParseFile(const char* path, BMessage& settings)
 #ifdef TEST_HAIKU
 
 
+/**
+ * @brief Parses a driver-settings string directly into a BMessage.
+ *
+ * Only available in test builds (TEST_HAIKU). Parses @a text as if it
+ * were the contents of a driver-settings file.
+ *
+ * @param text     The settings text to parse.
+ * @param settings Output BMessage that will be populated with the parsed settings.
+ * @return B_OK on success, B_BAD_VALUE if parsing fails, or another error code.
+ */
 status_t
 SettingsParser::Parse(const char* text, BMessage& settings)
 {

@@ -47,42 +47,16 @@
 
 #include "MessageEvent.h"
 
-/*!	\class MessageEvent
-	\brief A special event that sends a message when executed.
-
-	The constructors set the "auto delete" flag to \c true by default. It can
-	be changed by SetAutoDelete(), but note, that the object's creator is
-	responsible for its destruction then.
-*/
-
-/*!	\var BMessage MessageEvent::fMessage
-	\brief Message to be sent.
-*/
-
-/*!	\var BMessenger MessageEvent::fMessenger
-	\brief Message target.
-
-	Valid only, if \a fHandler is \c NULL.
-*/
-
-/*!	\var BHandler *MessageEvent::fHandler
-	\brief Message target.
-
-	May be \c NULL, then \a fMessenger specifies the message target.
-*/
-
-
-// constructor
-/*!	\brief Creates a new MessageEvent with a target BHandler and a message
-		   command.
-
-	\note The supplied BHandler must be valid the whole life time of the
-		  MessageEvent.
-
-	\param time The time at which the message shall be sent.
-	\param handler The BHandler to which the message shall be delivered.
-	\param command The "what" field of the message to be sent.
-*/
+/**
+ * @brief Creates a MessageEvent targeting a BHandler with a message command.
+ *
+ * The auto-delete flag defaults to @c true. The supplied BHandler must
+ * remain valid for the lifetime of this object.
+ *
+ * @param time    The time at which the message shall be sent.
+ * @param handler The BHandler to which the message will be delivered.
+ * @param command The "what" field of the message to be sent.
+ */
 MessageEvent::MessageEvent(bigtime_t time, BHandler* handler, uint32 command)
 	: Event(time, true),
 	  fMessage(command),
@@ -91,19 +65,16 @@ MessageEvent::MessageEvent(bigtime_t time, BHandler* handler, uint32 command)
 {
 }
 
-// constructor
-/*!	\brief Creates a new MessageEvent with a target BHandler and a message.
-
-	The caller retains ownership of the supplied message. It can savely be
-	deleted after the constructor returns.
-
-	\note The supplied BHandler must be valid the whole life time of the
-		  MessageEvent.
-
-	\param time The time at which the message shall be sent.
-	\param handler The BHandler to which the message shall be delivered.
-	\param message The message to be sent.
-*/
+/**
+ * @brief Creates a MessageEvent targeting a BHandler with a full message.
+ *
+ * The message is copied; the caller retains ownership. The supplied
+ * BHandler must remain valid for the lifetime of this object.
+ *
+ * @param time    The time at which the message shall be sent.
+ * @param handler The BHandler to which the message will be delivered.
+ * @param message The message to be sent (copied).
+ */
 MessageEvent::MessageEvent(bigtime_t time, BHandler* handler,
 						   const BMessage *message)
 	: Event(time, true),
@@ -113,14 +84,13 @@ MessageEvent::MessageEvent(bigtime_t time, BHandler* handler,
 {
 }
 
-// constructor
-/*!	\brief Creates a new MessageEvent with a target BMessenger and a message
-		   command.
-	\param time The time at which the message shall be sent.
-	\param messenger The BMessenger specifying the target to which the message
-		   shall be delivered.
-	\param command The "what" field of the message to be sent.
-*/
+/**
+ * @brief Creates a MessageEvent targeting a BMessenger with a message command.
+ *
+ * @param time      The time at which the message shall be sent.
+ * @param messenger The BMessenger identifying the delivery target.
+ * @param command   The "what" field of the message to be sent.
+ */
 MessageEvent::MessageEvent(bigtime_t time, const BMessenger& messenger,
 						   uint32 command)
 	: Event(time, true),
@@ -130,17 +100,15 @@ MessageEvent::MessageEvent(bigtime_t time, const BMessenger& messenger,
 {
 }
 
-// constructor
-/*!	\brief Creates a new MessageEvent with a target BMessenger and a message.
-
-	The caller retains ownership of the supplied message. It can savely be
-	deleted after the constructor returns.
-
-	\param time The time at which the message shall be sent.
-	\param messenger The BMessenger specifying the target to which the message
-		   shall be delivered.
-	\param message The message to be sent.
-*/
+/**
+ * @brief Creates a MessageEvent targeting a BMessenger with a full message.
+ *
+ * The message is copied; the caller retains ownership.
+ *
+ * @param time      The time at which the message shall be sent.
+ * @param messenger The BMessenger identifying the delivery target.
+ * @param message   The message to be sent (copied).
+ */
 MessageEvent::MessageEvent(bigtime_t time, const BMessenger& messenger,
 						   const BMessage *message)
 	: Event(time, true),
@@ -150,21 +118,21 @@ MessageEvent::MessageEvent(bigtime_t time, const BMessenger& messenger,
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associated with the object.
-*/
+/** @brief Frees all resources associated with the MessageEvent. */
 MessageEvent::~MessageEvent()
 {
 }
 
-// Do
-/*!	\brief Hook method invoked when the event is executed.
-
-	Implements Event. Delivers the message to the target.
-	
-	\param queue The event queue executing the event.
-	\return \c true, if the object shall be deleted, \c false otherwise.
-*/
+/**
+ * @brief Delivers the stored message to the target when the event fires.
+ *
+ * If a BHandler was specified, the message is posted to its looper;
+ * otherwise it is sent via the stored BMessenger.
+ *
+ * @param queue The event queue executing the event.
+ * @return @c false, so the event is not auto-deleted by the queue unless
+ *         the auto-delete flag is set.
+ */
 bool
 MessageEvent::Do(EventQueue *queue)
 {

@@ -31,6 +31,7 @@
 #include "InitSharedMemoryDirectoryJob.h"
 
 
+/** @brief Constructs the shared memory directory initialization job. */
 InitSharedMemoryDirectoryJob::InitSharedMemoryDirectoryJob()
 	:
 	AbstractEmptyDirectoryJob("init /var/shared_memory")
@@ -38,6 +39,14 @@ InitSharedMemoryDirectoryJob::InitSharedMemoryDirectoryJob()
 }
 
 
+/**
+ * @brief Creates, empties, and mounts a ramfs volume on /var/shared_memory.
+ *
+ * First ensures the directory exists and is empty via CreateAndEmpty(), then
+ * mounts a ramfs filesystem on it and sets world-readable/writable permissions.
+ *
+ * @return B_OK on success, or an error code if directory creation or mounting fails.
+ */
 status_t
 InitSharedMemoryDirectoryJob::Execute()
 {

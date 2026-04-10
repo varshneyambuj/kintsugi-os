@@ -44,6 +44,11 @@
 #include "PackageFileManager.h"
 
 
+/**
+ * @brief Constructs an uninitialized PackageFile.
+ *
+ * Init() must be called before the object is usable.
+ */
 PackageFile::PackageFile()
 	:
 	fNodeRef(),
@@ -59,11 +64,23 @@ PackageFile::PackageFile()
 }
 
 
+/** @brief Destroys the PackageFile. */
 PackageFile::~PackageFile()
 {
 }
 
 
+/**
+ * @brief Initializes the PackageFile from a directory entry.
+ *
+ * Opens the file, retrieves its node_ref, reads the package info from
+ * the .hpkg archive, and stores the owning PackageFileManager.
+ *
+ * @param entryRef The entry_ref pointing to the .hpkg file on disk.
+ * @param owner    The PackageFileManager that owns this file; used for
+ *                 cleanup when the last reference is released.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 PackageFile::Init(const entry_ref& entryRef, PackageFileManager* owner)
 {
@@ -103,6 +120,14 @@ PackageFile::Init(const entry_ref& entryRef, PackageFileManager* owner)
 }
 
 
+/**
+ * @brief Returns a string combining the package name and version.
+ *
+ * The format is "name-version", suitable for identifying a specific
+ * revision of a package.
+ *
+ * @return A formatted "name-version" string, or an empty string on failure.
+ */
 BString
 PackageFile::RevisionedName() const
 {
@@ -111,6 +136,12 @@ PackageFile::RevisionedName() const
 }
 
 
+/**
+ * @brief Returns the revisioned name, throwing std::bad_alloc on failure.
+ *
+ * @return A "name-version" string.
+ * @throws std::bad_alloc If the string allocation fails.
+ */
 BString
 PackageFile::RevisionedNameThrows() const
 {
@@ -121,6 +152,12 @@ PackageFile::RevisionedNameThrows() const
 }
 
 
+/**
+ * @brief Called when the last reference to this PackageFile is released.
+ *
+ * Removes the file from its owning PackageFileManager's cache and then
+ * deletes itself.
+ */
 void
 PackageFile::LastReferenceReleased()
 {

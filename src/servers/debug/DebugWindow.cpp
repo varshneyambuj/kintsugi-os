@@ -47,6 +47,16 @@
 #define B_TRANSLATION_CONTEXT "DebugServer"
 
 
+/**
+ * @brief Constructs the crash notification window for the given application.
+ *
+ * Builds a modal dialog displaying the crashed application's name along
+ * with radio buttons for the available actions (terminate, debug, save
+ * report, write core file). The window is centered on screen and sized
+ * to fit its contents.
+ *
+ * @param appName Name of the crashed application to display to the user.
+ */
 DebugWindow::DebugWindow(const char* appName)
 	:
 	BWindow(BRect(0, 0, 100, 50), "Crashed program",
@@ -125,12 +135,21 @@ DebugWindow::DebugWindow(const char* appName)
 }
 
 
+/** @brief Destroys the window and deletes its synchronization semaphore. */
 DebugWindow::~DebugWindow()
 {
 	delete_sem(fSemaphore);
 }
 
 
+/**
+ * @brief Handles messages from the radio buttons and the OK button.
+ *
+ * Action messages update the selected debug action and adjust the OK
+ * button label. The quit message releases the semaphore so Go() can return.
+ *
+ * @param message The incoming BMessage to process.
+ */
 void
 DebugWindow::MessageReceived(BMessage* message)
 {
@@ -153,6 +172,14 @@ DebugWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Shows the window and blocks until the user makes a choice.
+ *
+ * Displays the window and waits on the internal semaphore, which is
+ * released when the user clicks the OK button or closes the window.
+ *
+ * @return The selected action code (e.g., kActionKillTeam, kActionDebugTeam).
+ */
 int32
 DebugWindow::Go()
 {
@@ -164,6 +191,11 @@ DebugWindow::Go()
 }
 
 
+/**
+ * @brief Returns the standard icon rectangle based on the control look's 32px composition.
+ *
+ * @return A BRect suitable for a 32-pixel base icon scaled by the control look.
+ */
 BRect
 DebugWindow::IconSize()
 {

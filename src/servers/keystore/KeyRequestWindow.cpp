@@ -50,7 +50,9 @@
 #define B_TRANSLATION_CONTEXT "KeyRequestWindow"
 
 
+/** @brief Message code for the "Cancel" button. */
 static const uint32 kMessageCancel = 'btcl';
+/** @brief Message code for the "Unlock" button. */
 static const uint32 kMessageUnlock = 'btul';
 
 
@@ -169,6 +171,12 @@ private:
 };
 
 
+/**
+ * @brief Constructs the keyring unlock dialog window.
+ *
+ * Creates a semaphore for synchronisation and builds the UI with a
+ * KeyRequestView containing a password field and Cancel/Unlock buttons.
+ */
 KeyRequestWindow::KeyRequestWindow()
 	:
 	BWindow(BRect(50, 50, 100, 100), B_TRANSLATE("Unlock keyring"),
@@ -197,6 +205,9 @@ KeyRequestWindow::KeyRequestWindow()
 }
 
 
+/**
+ * @brief Destroys the window and deletes the synchronisation semaphore.
+ */
 KeyRequestWindow::~KeyRequestWindow()
 {
 	if (fDoneSem >= 0)
@@ -204,6 +215,11 @@ KeyRequestWindow::~KeyRequestWindow()
 }
 
 
+/**
+ * @brief Handles the window close request by treating it as a cancellation.
+ *
+ * @return Always returns @c false; the window is closed by RequestKey().
+ */
 bool
 KeyRequestWindow::QuitRequested()
 {
@@ -213,6 +229,11 @@ KeyRequestWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Handles button clicks by recording the result and signalling completion.
+ *
+ * @param message The button message (Cancel or Unlock).
+ */
 void
 KeyRequestWindow::MessageReceived(BMessage* message)
 {
@@ -228,6 +249,16 @@ KeyRequestWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Shows the dialog and blocks until the user enters a key or cancels.
+ *
+ * Displays the window with the keyring name, waits for user input,
+ * flattens the password into the key message on success, and closes the window.
+ *
+ * @param keyringName The name of the keyring to display.
+ * @param keyMessage  Output: the flattened password key on success.
+ * @return B_OK if the user entered a key, B_CANCELED if dismissed.
+ */
 status_t
 KeyRequestWindow::RequestKey(const BString& keyringName, BMessage& keyMessage)
 {

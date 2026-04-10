@@ -42,6 +42,19 @@
 namespace {
 
 
+/**
+ * @brief Sends an ioctl command to the device backing the given path.
+ *
+ * Resolves the raw device from @a path (falling back to the device_name
+ * if the path lives on a non-devfs filesystem), opens it read-only, and
+ * issues the requested @a opcode via ioctl().
+ *
+ * @param path       Filesystem path or raw device path.
+ * @param opcode     The ioctl opcode to send.
+ * @param buffer     Data buffer passed to ioctl (may be NULL).
+ * @param bufferSize Size of @a buffer in bytes.
+ * @return B_OK on success, or an errno-based error code on failure.
+ */
 status_t
 IssueDeviceCommand(const char* path, int opcode, void* buffer,
 	size_t bufferSize)
@@ -74,6 +87,16 @@ IssueDeviceCommand(const char* path, int opcode, void* buffer,
 namespace Utility {
 
 
+/**
+ * @brief Tests whether the volume identified by @a device is read-only.
+ *
+ * Looks up the volume's partition via the disk device roster and queries
+ * its read-only flag.
+ *
+ * @param device The device ID of the volume to check.
+ * @return @c true if the volume's partition is read-only, @c false otherwise
+ *         or on lookup failure.
+ */
 bool
 IsReadOnlyVolume(dev_t device)
 {
@@ -99,6 +122,12 @@ IsReadOnlyVolume(dev_t device)
 }
 
 
+/**
+ * @brief Tests whether the volume containing @a path is read-only.
+ *
+ * @param path A filesystem path residing on the volume to check.
+ * @return @c true if the volume is read-only, @c false otherwise.
+ */
 bool
 IsReadOnlyVolume(const char* path)
 {
@@ -106,6 +135,15 @@ IsReadOnlyVolume(const char* path)
 }
 
 
+/**
+ * @brief Blocks or unblocks media removal for the device at @a path.
+ *
+ * Issues a SCSI PREVENT/ALLOW MEDIA REMOVAL command to the underlying device.
+ *
+ * @param path  Filesystem path or raw device path.
+ * @param block @c true to prevent removal, @c false to allow it.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BlockMedia(const char* path, bool block)
 {
@@ -114,6 +152,12 @@ BlockMedia(const char* path, bool block)
 }
 
 
+/**
+ * @brief Ejects the removable media at @a path.
+ *
+ * @param path Filesystem path or raw device path of the media to eject.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 EjectMedia(const char* path)
 {
@@ -121,6 +165,15 @@ EjectMedia(const char* path)
 }
 
 
+/**
+ * @brief Expands shell-style home-directory references in a path string.
+ *
+ * Replaces occurrences of "$HOME", "${HOME}", and a leading "~/" with the
+ * hard-coded home directory path "/boot/home".
+ *
+ * @param originalPath The input path potentially containing home-directory tokens.
+ * @return A new BString with all home-directory tokens expanded.
+ */
 BString
 TranslatePath(const char* originalPath)
 {

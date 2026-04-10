@@ -48,42 +48,27 @@
 #include "AppInfoList.h"
 #include "RosterAppInfo.h"
 
-/*!
-	\class AppInfoList
-	\brief A list of RosterAppInfos.
-
-	Features adding/removing of RosterAppInfos and method for finding
-	infos by signature, team ID, entry_ref or token.
-	The method It() returns an iterator, an instance of the basic
-	AppInfoList::Iterator class.
-*/
-
-
-// constructor
-/*!	\brief Creates an empty list.
-*/
+/** @brief Constructs an empty AppInfoList. */
 AppInfoList::AppInfoList()
 		   : fInfos()
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associated with this object.
-
-	The RosterAppInfos the list contains are deleted.
-*/
+/**
+ * @brief Destroys the list and deletes all contained RosterAppInfo objects.
+ */
 AppInfoList::~AppInfoList()
 {
 	// delete all infos
 	MakeEmpty(true);
 }
 
-// AddInfo
-/*!	\brief Adds a RosterAppInfos to the list.
-	\param info The RosterAppInfo to be added
-	\return \c true on success, false if \a info is \c NULL or there's not
-			enough memory for this operation.
-*/
+/**
+ * @brief Adds a RosterAppInfo to the end of the list.
+ *
+ * @param info The RosterAppInfo to add.
+ * @return @c true on success, @c false if @a info is NULL or memory is exhausted.
+ */
 bool
 AppInfoList::AddInfo(RosterAppInfo *info)
 {

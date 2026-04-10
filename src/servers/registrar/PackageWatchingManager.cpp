@@ -40,16 +40,27 @@ using namespace BPackageKit;
 using namespace BPrivate;
 
 
+/** @brief Constructs the PackageWatchingManager with default state. */
 PackageWatchingManager::PackageWatchingManager()
 {
 }
 
 
+/** @brief Destroys the PackageWatchingManager. */
 PackageWatchingManager::~PackageWatchingManager()
 {
 }
 
 
+/**
+ * @brief Handles a start-watching or stop-watching request for package events.
+ *
+ * Dispatches to _AddWatcher() or _RemoveWatcher() depending on the message's
+ * what code, then sends a success or error reply.
+ *
+ * @param request The incoming B_REG_PACKAGE_START_WATCHING or
+ *                B_REG_PACKAGE_STOP_WATCHING request message.
+ */
 void
 PackageWatchingManager::HandleStartStopWatching(BMessage* request)
 {
@@ -67,6 +78,15 @@ PackageWatchingManager::HandleStartStopWatching(BMessage* request)
 }
 
 
+/**
+ * @brief Broadcasts a package event notification to all matching watchers.
+ *
+ * Reads the "event" field from the message, maps it to an event mask, and
+ * uses the watching service to deliver the message to watchers whose masks
+ * include that event.
+ *
+ * @param message The notification message containing an "event" int32 field.
+ */
 void
 PackageWatchingManager::NotifyWatchers(BMessage* message)
 {
@@ -91,6 +111,16 @@ PackageWatchingManager::NotifyWatchers(BMessage* message)
 }
 
 
+/**
+ * @brief Registers a new package event watcher.
+ *
+ * Extracts the "target" messenger and "events" mask from the request and
+ * creates an EventMaskWatcher in the watching service.
+ *
+ * @param request The request message containing "target" and "events" fields.
+ * @return @c B_OK on success, @c B_NO_MEMORY if allocation fails, or another
+ *         error code if required fields are missing.
+ */
 status_t
 PackageWatchingManager::_AddWatcher(const BMessage* request)
 {
@@ -112,6 +142,16 @@ PackageWatchingManager::_AddWatcher(const BMessage* request)
 }
 
 
+/**
+ * @brief Unregisters an existing package event watcher.
+ *
+ * Extracts the "target" messenger from the request and removes the
+ * corresponding watcher from the watching service.
+ *
+ * @param request The request message containing the "target" field.
+ * @return @c B_OK on success, @c B_BAD_VALUE if the target is not found,
+ *         or another error if the field is missing.
+ */
 status_t
 PackageWatchingManager::_RemoveWatcher(const BMessage* request)
 {

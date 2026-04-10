@@ -43,6 +43,14 @@
 #include "DebugSupport.h"
 
 
+/**
+ * @brief Constructs a Package that wraps the given PackageFile.
+ *
+ * Acquires a reference on the supplied PackageFile so that it remains
+ * valid for the lifetime of this Package.
+ *
+ * @param file The PackageFile backing this package; must not be NULL.
+ */
 Package::Package(PackageFile* file)
 	:
 	fFile(file),
@@ -54,12 +62,23 @@ Package::Package(PackageFile* file)
 }
 
 
+/**
+ * @brief Destroys the Package and releases its reference on the backing PackageFile.
+ */
 Package::~Package()
 {
 	fFile->ReleaseReference();
 }
 
 
+/**
+ * @brief Creates a shallow copy of this Package sharing the same PackageFile.
+ *
+ * The clone inherits the active state of the original. Returns NULL
+ * if memory allocation fails.
+ *
+ * @return A new Package instance, or NULL on allocation failure.
+ */
 Package*
 Package::Clone() const
 {

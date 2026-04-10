@@ -61,6 +61,7 @@
 #define B_TRANSLATION_CONTEXT "NotificationWindow"
 
 
+/** @brief Scripting property descriptors for the notification window. */
 property_info main_prop_list[] = {
 	{"message", {B_GET_PROPERTY, 0}, {B_INDEX_SPECIFIER, 0},
 		"get a message"},
@@ -76,8 +77,15 @@ property_info main_prop_list[] = {
 
 
 /**
- * Checks if notification position overlaps with
- * deskbar position
+ * @brief Checks whether the notification position overlaps the Deskbar position.
+ *
+ * Compares the current Deskbar location against the user-configured notification
+ * corner.  If they occupy the same screen edge/corner the notification window
+ * should follow the Deskbar instead to avoid visual overlap.
+ *
+ * @param deskbar      Current Deskbar location constant.
+ * @param notification Notification position flags (combination of B_FOLLOW_*).
+ * @return @c true if the two positions overlap, @c false otherwise.
  */
 static bool
 is_overlapping(deskbar_location deskbar,
@@ -106,6 +114,14 @@ is_overlapping(deskbar_location deskbar,
 }
 
 
+/**
+ * @brief Constructs the floating notification window.
+ *
+ * Creates a borderless, non-interactive floating window on all workspaces,
+ * initialises the notification cache directory, applies a vertical group
+ * layout, loads the user settings (with filesystem monitoring), and enters
+ * the hidden message loop.
+ */
 NotificationWindow::NotificationWindow()
 	:
 	BWindow(BRect(0, 0, -1, -1), B_TRANSLATE_MARK("Notification"),
@@ -132,6 +148,9 @@ NotificationWindow::NotificationWindow()
 }
 
 
+/**
+ * @brief Destroys the notification window and frees all application filter entries.
+ */
 NotificationWindow::~NotificationWindow()
 {
 	appfilter_t::iterator aIt;
@@ -140,6 +159,13 @@ NotificationWindow::~NotificationWindow()
 }
 
 
+/**
+ * @brief Handles the window-close request by tearing down all app-group views.
+ *
+ * Removes and deletes every AppGroupView, then asks the application to quit.
+ *
+ * @return The value returned by BWindow::QuitRequested().
+ */
 bool
 NotificationWindow::QuitRequested()
 {
@@ -154,6 +180,15 @@ NotificationWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Repositions the window when a workspace becomes active.
+ *
+ * Ensures the notification window stays in the correct screen corner when
+ * the user switches workspaces.
+ *
+ * @param workspace The workspace index (unused).
+ * @param active    @c true if the workspace is now active.
+ */
 void
 NotificationWindow::WorkspaceActivated(int32 /*workspace*/, bool active)
 {
@@ -163,6 +198,12 @@ NotificationWindow::WorkspaceActivated(int32 /*workspace*/, bool active)
 }
 
 
+/**
+ * @brief Repositions the window after a frame resize.
+ *
+ * @param width  New width of the window frame.
+ * @param height New height of the window frame.
+ */
 void
 NotificationWindow::FrameResized(float width, float height)
 {
@@ -170,6 +211,12 @@ NotificationWindow::FrameResized(float width, float height)
 }
 
 
+/**
+ * @brief Repositions the window when the screen resolution or color space changes.
+ *
+ * @param frame The new screen frame rectangle.
+ * @param mode  The new color space.
+ */
 void
 NotificationWindow::ScreenChanged(BRect frame, color_space mode)
 {
@@ -177,6 +224,15 @@ NotificationWindow::ScreenChanged(BRect frame, color_space mode)
 }
 
 
+/**
+ * @brief Dispatches messages related to notification display and lifecycle.
+ *
+ * Handles B_NODE_MONITOR (settings file changed), kNotificationMessage
+ * (display a new notification), and kRemoveGroupView (remove an empty
+ * app-group view).  Unrecognised messages are forwarded to the base class.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 NotificationWindow::MessageReceived(BMessage* message)
 {
@@ -278,6 +334,11 @@ NotificationWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Returns the configured notification timeout in microseconds.
+ *
+ * @return The timeout value loaded from settings.
+ */
 int32
 NotificationWindow::Timeout()
 {
@@ -285,6 +346,11 @@ NotificationWindow::Timeout()
 }
 
 
+/**
+ * @brief Returns the configured notification window width in pixels.
+ *
+ * @return The window width loaded from settings.
+ */
 float
 NotificationWindow::Width()
 {
@@ -292,6 +358,11 @@ NotificationWindow::Width()
 }
 
 
+/**
+ * @brief Shows or hides the notification window based on whether any views remain.
+ *
+ * If there are no app-group views the window is hidden; otherwise it is shown.
+ */
 void
 NotificationWindow::_ShowHide()
 {
@@ -305,6 +376,13 @@ NotificationWindow::_ShowHide()
 }
 
 
+/**
+ * @brief Computes and applies the on-screen position of the notification window.
+ *
+ * Takes into account the user-configured corner, the current Deskbar location
+ * (to avoid overlap), decorator border offsets, and the screen frame.  The
+ * window is moved to the resulting position after a layout pass.
+ */
 void
 NotificationWindow::SetPosition()
 {
@@ -386,6 +464,17 @@ NotificationWindow::SetPosition()
 }
 
 
+/**
+ * @brief Loads all notification settings from the user settings file.
+ *
+ * Reads and unflattens the settings BMessage, then delegates to
+ * _LoadGeneralSettings(), _LoadDisplaySettings(), and _LoadAppFilters().
+ * Optionally starts a node monitor on the settings file so that live
+ * changes are detected.
+ *
+ * @param startMonitor If @c true, a B_WATCH_ALL node monitor is installed
+ *                     on the settings file.
+ */
 void
 NotificationWindow::_LoadSettings(bool startMonitor)
 {
@@ -420,6 +509,14 @@ NotificationWindow::_LoadSettings(bool startMonitor)
 }
 
 
+/**
+ * @brief Loads per-application notification filter entries from the settings message.
+ *
+ * Each "app_usage" flat entry is unflattened into an AppUsage object and stored
+ * in the fAppFilters map keyed by application signature.
+ *
+ * @param settings The settings BMessage containing zero or more "app_usage" entries.
+ */
 void
 NotificationWindow::_LoadAppFilters(BMessage& settings)
 {
@@ -439,6 +536,14 @@ NotificationWindow::_LoadAppFilters(BMessage& settings)
 }
 
 
+/**
+ * @brief Loads general daemon settings (auto-start flag, timeout) from the settings message.
+ *
+ * If auto-start is disabled the application is asked to quit.  The timeout
+ * value is converted from seconds to microseconds.
+ *
+ * @param settings The settings BMessage to read from.
+ */
 void
 NotificationWindow::_LoadGeneralSettings(BMessage& settings)
 {
@@ -457,6 +562,15 @@ NotificationWindow::_LoadGeneralSettings(BMessage& settings)
 }
 
 
+/**
+ * @brief Loads display settings (width, position) from the settings message.
+ *
+ * Updates the window width and notification position.  If the width changed,
+ * the layout's explicit size is updated.  All existing app-group views are
+ * invalidated so they redraw with the new settings.
+ *
+ * @param settings The settings BMessage to read from.
+ */
 void
 NotificationWindow::_LoadDisplaySettings(BMessage& settings)
 {

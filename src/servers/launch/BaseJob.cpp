@@ -41,6 +41,11 @@
 #include "Events.h"
 
 
+/**
+ * @brief Constructs a base job with the given name.
+ *
+ * @param name The human-readable name identifying this job.
+ */
 BaseJob::BaseJob(const char* name)
 	:
 	BJob(name),
@@ -50,12 +55,18 @@ BaseJob::BaseJob(const char* name)
 }
 
 
+/** @brief Destroys the base job and frees its owned condition. */
 BaseJob::~BaseJob()
 {
 	delete fCondition;
 }
 
 
+/**
+ * @brief Returns the name of this job as a C string.
+ *
+ * @return The job's title string.
+ */
 const char*
 BaseJob::Name() const
 {
@@ -63,6 +74,11 @@ BaseJob::Name() const
 }
 
 
+/**
+ * @brief Returns the launch condition for this job (const version).
+ *
+ * @return Pointer to the condition, or NULL if none is set.
+ */
 const ::Condition*
 BaseJob::Condition() const
 {
@@ -70,6 +86,11 @@ BaseJob::Condition() const
 }
 
 
+/**
+ * @brief Returns the launch condition for this job (mutable version).
+ *
+ * @return Pointer to the condition, or NULL if none is set.
+ */
 ::Condition*
 BaseJob::Condition()
 {
@@ -77,6 +98,13 @@ BaseJob::Condition()
 }
 
 
+/**
+ * @brief Sets the launch condition for this job.
+ *
+ * The job takes ownership of the condition and will delete it on destruction.
+ *
+ * @param condition The condition to set, or NULL to clear.
+ */
 void
 BaseJob::SetCondition(::Condition* condition)
 {
@@ -84,6 +112,14 @@ BaseJob::SetCondition(::Condition* condition)
 }
 
 
+/**
+ * @brief Tests whether this job's launch condition is met.
+ *
+ * If no condition is set, the check always succeeds.
+ *
+ * @param context The condition evaluation context.
+ * @return @c true if the condition is met or absent, @c false otherwise.
+ */
 bool
 BaseJob::CheckCondition(ConditionContext& context) const
 {
@@ -94,6 +130,11 @@ BaseJob::CheckCondition(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns the launch event for this job (const version).
+ *
+ * @return Pointer to the event, or NULL if none is set.
+ */
 const ::Event*
 BaseJob::Event() const
 {
@@ -101,6 +142,11 @@ BaseJob::Event() const
 }
 
 
+/**
+ * @brief Returns the launch event for this job (mutable version).
+ *
+ * @return Pointer to the event, or NULL if none is set.
+ */
 ::Event*
 BaseJob::Event()
 {
@@ -108,6 +154,14 @@ BaseJob::Event()
 }
 
 
+/**
+ * @brief Sets the launch event for this job.
+ *
+ * If @a event is non-NULL, also sets this job as the event's owner so
+ * the event can trigger the job's launch.
+ *
+ * @param event The event to set, or NULL to clear.
+ */
 void
 BaseJob::SetEvent(::Event* event)
 {
@@ -129,6 +183,11 @@ BaseJob::EventHasTriggered() const
 }
 
 
+/**
+ * @brief Returns the static environment variable list (const version).
+ *
+ * @return Reference to the list of "KEY=VALUE" strings.
+ */
 const BStringList&
 BaseJob::Environment() const
 {
@@ -136,6 +195,11 @@ BaseJob::Environment() const
 }
 
 
+/**
+ * @brief Returns the static environment variable list (mutable version).
+ *
+ * @return Reference to the list of "KEY=VALUE" strings.
+ */
 BStringList&
 BaseJob::Environment()
 {
@@ -143,6 +207,11 @@ BaseJob::Environment()
 }
 
 
+/**
+ * @brief Returns the list of script files that supply environment variables (const version).
+ *
+ * @return Reference to the source-file path list.
+ */
 const BStringList&
 BaseJob::EnvironmentSourceFiles() const
 {
@@ -150,6 +219,11 @@ BaseJob::EnvironmentSourceFiles() const
 }
 
 
+/**
+ * @brief Returns the list of script files that supply environment variables (mutable version).
+ *
+ * @return Reference to the source-file path list.
+ */
 BStringList&
 BaseJob::EnvironmentSourceFiles()
 {
@@ -157,6 +231,15 @@ BaseJob::EnvironmentSourceFiles()
 }
 
 
+/**
+ * @brief Populates the environment and source-file lists from a BMessage.
+ *
+ * Iterates over all string fields in @a message. Fields named "from_script"
+ * are added to the source-file list; all others are converted to
+ * "KEY=VALUE" entries in the environment list.
+ *
+ * @param message The BMessage containing environment definitions.
+ */
 void
 BaseJob::SetEnvironment(const BMessage& message)
 {
@@ -190,6 +273,14 @@ BaseJob::SetEnvironment(const BMessage& message)
 }
 
 
+/**
+ * @brief Evaluates all source-file scripts and appends their exported variables.
+ *
+ * Each script in the source-files list is executed, and its exported
+ * environment variables are appended to @a environment.
+ *
+ * @param environment The string list to receive "KEY=VALUE" entries.
+ */
 void
 BaseJob::GetSourceFilesEnvironment(BStringList& environment)
 {
@@ -216,6 +307,15 @@ BaseJob::ResolveSourceFiles()
 }
 
 
+/**
+ * @brief Executes a single shell script and captures its exported environment variables.
+ *
+ * Spawns a child process that sources @a script and runs "export -p",
+ * then reads and parses the output to extract "KEY=VALUE" pairs.
+ *
+ * @param script      Absolute path to the shell script to source.
+ * @param environment The string list to receive exported "KEY=VALUE" entries.
+ */
 void
 BaseJob::_GetSourceFileEnvironment(const char* script, BStringList& environment)
 {
@@ -292,6 +392,15 @@ BaseJob::_GetSourceFileEnvironment(const char* script, BStringList& environment)
 }
 
 
+/**
+ * @brief Parses a single "export KEY=\"VALUE\"" line and adds the variable to the list.
+ *
+ * Lines that do not begin with "export " or lack an "=\"" separator are
+ * silently ignored.
+ *
+ * @param environment The string list to append the "KEY=VALUE" entry to.
+ * @param line        The raw line from the child process output.
+ */
 void
 BaseJob::_ParseExportVariable(BStringList& environment, const BString& line)
 {

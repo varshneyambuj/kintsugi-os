@@ -59,8 +59,10 @@
 #include "NotificationWindow.h"
 
 
+/** @brief Width in pixels of the coloured stripe drawn along the left edge of each notification. */
 const int kIconStripeWidth			= 32;
 
+/** @brief Scripting property descriptors for individual notification views. */
 property_info message_prop_list[] = {
 	{ "type", {B_GET_PROPERTY, B_SET_PROPERTY, 0},
 		{B_DIRECT_SPECIFIER, 0}, "get the notification type"},
@@ -79,6 +81,17 @@ property_info message_prop_list[] = {
 };
 
 
+/**
+ * @brief Constructs a view that renders a single notification.
+ *
+ * Takes ownership of @a notification.  Sets up the icon bitmap, vertical
+ * group layout, stripe colour based on the notification type, and an optional
+ * progress bar for progress notifications.
+ *
+ * @param notification   The BNotification to display; ownership is transferred.
+ * @param timeout        Auto-dismiss delay in microseconds.
+ * @param disableTimeout If @c true, the notification will not auto-dismiss.
+ */
 NotificationView::NotificationView(BNotification* notification, bigtime_t timeout,
 	bool disableTimeout)
 	:
@@ -137,6 +150,9 @@ NotificationView::NotificationView(BNotification* notification, bigtime_t timeou
 }
 
 
+/**
+ * @brief Destroys the notification view, freeing the runner, bitmap, notification, and lines.
+ */
 NotificationView::~NotificationView()
 {
 	delete fRunner;
@@ -149,6 +165,13 @@ NotificationView::~NotificationView()
 }
 
 
+/**
+ * @brief Performs setup once the view is attached to a window.
+ *
+ * Lays out the text, caches a pointer to the parent AppGroupView, and starts
+ * a BMessageRunner that will send a kRemoveView message after the configured
+ * timeout (unless timeouts are disabled).
+ */
 void
 NotificationView::AttachedToWindow()
 {
@@ -164,6 +187,15 @@ NotificationView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles scripting get/set property requests on this notification view.
+ *
+ * Supports reading and writing the notification's type, group, title, content,
+ * icon, and progress via B_GET_PROPERTY and B_SET_PROPERTY.  Unrecognised
+ * messages are forwarded to the base class.
+ *
+ * @param msg The incoming BMessage.
+ */
 void
 NotificationView::MessageReceived(BMessage* msg)
 {
@@ -264,6 +296,15 @@ NotificationView::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Renders the notification: stripe, icon, text lines, and close button.
+ *
+ * Draws the coloured left stripe, the notification icon (centred vertically),
+ * each pre-laid-out text line, and (if there are sibling views) the group's
+ * close button.  A thin separator line is drawn along the top edge.
+ *
+ * @param updateRect The dirty rectangle that needs to be redrawn.
+ */
 void
 NotificationView::Draw(BRect updateRect)
 {
@@ -324,6 +365,15 @@ NotificationView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handles mouse-down events for click-through and dismissal.
+ *
+ * Ignores clicks in preview mode.  A primary click on the close button marks
+ * it as clicked; a click elsewhere launches the notification's on-click
+ * application or file.  In either case the view is then removed.
+ *
+ * @param point The location of the mouse click in view coordinates.
+ */
 void
 NotificationView::MouseDown(BPoint point)
 {
@@ -406,6 +456,19 @@ NotificationView::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to this view if the property is recognised.
+ *
+ * Matches against message_prop_list; if a match is found, pops the specifier
+ * and returns this view as the handler.  Otherwise delegates to the base class.
+ *
+ * @param msg   The scripting message being resolved.
+ * @param index Current index into the specifier stack.
+ * @param spec  The specifier message.
+ * @param form  The specifier form.
+ * @param prop  The property name being resolved.
+ * @return The BHandler that should process the message.
+ */
 BHandler*
 NotificationView::ResolveSpecifier(BMessage* msg, int32 index, BMessage* spec,
 	int32 form, const char* prop)
@@ -420,6 +483,15 @@ NotificationView::ResolveSpecifier(BMessage* msg, int32 index, BMessage* spec,
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by this notification view.
+ *
+ * Adds the notification-server suite and message_prop_list to @a msg, then
+ * delegates to the base class.
+ *
+ * @param msg The message to populate with suite information.
+ * @return B_OK on success.
+ */
 status_t
 NotificationView::GetSupportedSuites(BMessage* msg)
 {
@@ -430,6 +502,18 @@ NotificationView::GetSupportedSuites(BMessage* msg)
 }
 
 
+/**
+ * @brief Lays out the notification's title and content text into wrapped lines.
+ *
+ * Clears any existing line info, then word-wraps the title (bold) and
+ * content (plain) into LineInfo entries positioned to the right of the icon.
+ * Updates the view height to fit all lines plus the icon, and adjusts the
+ * group layout insets so that the progress bar (if any) appears below the text.
+ *
+ * @param newMaxWidth Maximum width available for text layout.  If negative,
+ *                    the parent's width is used; if still non-positive,
+ *                    kDefaultWidth is used as a fallback.
+ */
 void
 NotificationView::SetText(float newMaxWidth)
 {
@@ -537,6 +621,11 @@ NotificationView::SetText(float newMaxWidth)
 }
 
 
+/**
+ * @brief Enables or disables preview mode, which suppresses mouse interaction.
+ *
+ * @param enabled @c true to enter preview mode, @c false to leave it.
+ */
 void
 NotificationView::SetPreviewModeOn(bool enabled)
 {
@@ -544,6 +633,11 @@ NotificationView::SetPreviewModeOn(bool enabled)
 }
 
 
+/**
+ * @brief Returns the unique message identifier of this notification.
+ *
+ * @return The notification's message ID string.
+ */
 const char*
 NotificationView::MessageID() const
 {
@@ -551,6 +645,12 @@ NotificationView::MessageID() const
 }
 
 
+/**
+ * @brief Returns the progress percentage for progress notifications.
+ *
+ * @return An integer 0..100 for progress notifications, or -1 if this is
+ *         not a progress notification.
+ */
 int
 NotificationView::ProgressPercent()
 {
@@ -560,6 +660,12 @@ NotificationView::ProgressPercent()
 }
 
 
+/**
+ * @brief Recalculates and sets the explicit min/max size of this view.
+ *
+ * Accounts for the text height and, for progress notifications, the
+ * additional space needed by the progress bar and its label.
+ */
 void
 NotificationView::_CalculateSize()
 {

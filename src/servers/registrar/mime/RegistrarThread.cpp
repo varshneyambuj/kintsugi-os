@@ -27,28 +27,21 @@
 
 /** @file RegistrarThread.cpp
  *  @brief Implements the base registrar thread with spawn, run, and exit support. */
-//! Base thread class for threads spawned and managed by the registrar
-
 
 #include "RegistrarThread.h"
 #include <string.h>
 
 
-/*!	\class RegistrarThread
-	\brief Base thread class for threads spawned and managed by the registrar
-*/
-
-// constructor
-/*! \brief Creates a new RegistrarThread object, spawning the object's
-	thread.
-
-	Call Run() to actually get the thread running.
-
-	\param name The desired name of the new thread
-	\param priority The desired priority of the new thread
-	\param managerMessenger A BMessenger to the thread manager to which this
-	                        thread does or will belong.
-*/
+/**
+ * @brief Creates a new RegistrarThread, preparing it for execution.
+ *
+ * The thread is not started until Run() is called. The constructor validates
+ * the name and manager messenger and sets the initialization status accordingly.
+ *
+ * @param name              The desired name of the new thread.
+ * @param priority          The desired scheduling priority of the new thread.
+ * @param managerMessenger  A BMessenger to the thread manager that owns this thread.
+ */
 RegistrarThread::RegistrarThread(const char *name, int32 priority,
 	BMessenger managerMessenger)
 	:
@@ -66,25 +59,27 @@ RegistrarThread::RegistrarThread(const char *name, int32 priority,
 	fStatus = err;
 }
 
-// destructor
-/*! \brief Destroys the RegistrarThread object
-*/
+/** @brief Destroys the RegistrarThread object. */
 RegistrarThread::~RegistrarThread()
 {
 }
 
-// InitCheck()
-/*! \brief Returns the initialization status of the object
-*/
+/**
+ * @brief Returns the initialization status of the object.
+ *
+ * @return @c B_OK if the thread was initialized successfully, or an error code.
+ */
 status_t
 RegistrarThread::InitCheck()
 {
 	return fStatus;
 }
 
-// Run
-/*! \brief Begins executing the thread's ThreadFunction()
-*/
+/**
+ * @brief Spawns and resumes the thread, beginning execution of ThreadFunction().
+ *
+ * @return @c B_OK on success, or an error code if spawning or resuming fails.
+ */
 status_t
 RegistrarThread::Run()
 {
@@ -99,46 +94,60 @@ RegistrarThread::Run()
 	return err;
 }
 
-// Id
-//! Returns the thread id
+/**
+ * @brief Returns the thread ID.
+ *
+ * @return The kernel thread ID, or -1 if the thread has not been spawned.
+ */
 thread_id
 RegistrarThread::Id() const
 {
 	return fId;
 }
 
-// Name
-//! Returns the name of the thread
+/**
+ * @brief Returns the name of the thread.
+ *
+ * @return The null-terminated thread name string.
+ */
 const char*
 RegistrarThread::Name() const
 {
 	return fName;
 }
 
-// AskToExit
-/*! \brief Signals to thread that it needs to quit politely as soon
-	as possible.
-*/
+/**
+ * @brief Signals the thread to exit gracefully as soon as possible.
+ *
+ * Sets the fShouldExit flag, which the thread's main loop should check
+ * periodically.
+ */
 void
 RegistrarThread::AskToExit()
 {
 	fShouldExit = true;
 }
 
-// IsFinished
-/*! \brief Returns \c true if the thread has finished executing
-*/
+/**
+ * @brief Returns whether the thread has finished executing.
+ *
+ * @return @c true if the thread has completed, @c false if it is still running.
+ */
 bool
 RegistrarThread::IsFinished() const
 {
 	return fIsFinished;
 }
 
-// EntryFunction
-/*! \brief This is the function supplied to spawn_thread. It simply calls
-	ThreadFunction() on the \a data parameter, which is assumed to be a pointer
-	to a RegistrarThread object.
-*/
+/**
+ * @brief Static entry point passed to spawn_thread().
+ *
+ * Casts the @a data pointer to a RegistrarThread and invokes its
+ * ThreadFunction().
+ *
+ * @param data Pointer to the RegistrarThread instance.
+ * @return The return value of ThreadFunction().
+ */
 int32
 RegistrarThread::EntryFunction(void *data)
 {

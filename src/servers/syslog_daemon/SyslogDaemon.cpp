@@ -50,9 +50,11 @@
 #define B_TRANSLATION_CONTEXT "SyslogDaemon"
 
 
+/** @brief Port message code used to signal the daemon thread to quit. */
 static const int32 kQuitDaemon = 'quit';
 
 
+/** @brief Constructs the syslog daemon BServer with its handler lock. */
 SyslogDaemon::SyslogDaemon()
 	:
 	BServer(B_SYSTEM_LOGGER_SIGNATURE, false, NULL),
@@ -61,6 +63,13 @@ SyslogDaemon::SyslogDaemon()
 }
 
 
+/**
+ * @brief Called when the application is ready to run.
+ *
+ * Acquires the logger port from the launch roster, registers it with the
+ * kernel, initializes syslog and listener output handlers, and spawns
+ * the daemon message-reading thread. Quits if port or thread creation fails.
+ */
 void
 SyslogDaemon::ReadyToRun()
 {
@@ -79,6 +88,12 @@ SyslogDaemon::ReadyToRun()
 }
 
 
+/**
+ * @brief Displays an informational alert about the syslog daemon.
+ *
+ * Shows the daemon's name, purpose, and the path to the system log file
+ * in a styled BAlert dialog.
+ */
 void
 SyslogDaemon::AboutRequested()
 {
@@ -110,6 +125,14 @@ SyslogDaemon::AboutRequested()
 }
 
 
+/**
+ * @brief Handles quit requests by signaling the daemon thread to stop.
+ *
+ * Writes the kQuitDaemon code to the port and waits for the daemon
+ * thread to finish before allowing the application to quit.
+ *
+ * @return @c true always, allowing the application to terminate.
+ */
 bool
 SyslogDaemon::QuitRequested()
 {
@@ -120,6 +143,13 @@ SyslogDaemon::QuitRequested()
 }
 
 
+/**
+ * @brief Dispatches incoming BMessages to add or remove syslog listeners.
+ *
+ * @param message The message to process; handles SYSLOG_ADD_LISTENER
+ *                and SYSLOG_REMOVE_LISTENER by extracting the target
+ *                messenger and delegating to add_listener / remove_listener.
+ */
 void
 SyslogDaemon::MessageReceived(BMessage* message)
 {
@@ -145,6 +175,11 @@ SyslogDaemon::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Registers a message handler function to be called for every syslog message.
+ *
+ * @param function The handler callback to add to the handler list.
+ */
 void
 SyslogDaemon::AddHandler(handler_func function)
 {
@@ -152,6 +187,14 @@ SyslogDaemon::AddHandler(handler_func function)
 }
 
 
+/**
+ * @brief Main daemon loop that reads syslog messages from the port and dispatches them.
+ *
+ * Continuously reads from fPort, validates each message, null-terminates
+ * the message text, and invokes all registered handler functions under
+ * the handler lock. Exits when the port is deleted or a kQuitDaemon
+ * message is received.
+ */
 void
 SyslogDaemon::_Daemon()
 {
@@ -195,6 +238,12 @@ SyslogDaemon::_Daemon()
 }
 
 
+/**
+ * @brief Static thread entry point for the daemon worker thread.
+ *
+ * @param data Pointer to the SyslogDaemon instance.
+ * @return B_OK always.
+ */
 int32
 SyslogDaemon::_DaemonThread(void* data)
 {
@@ -206,6 +255,13 @@ SyslogDaemon::_DaemonThread(void* data)
 // #pragma mark -
 
 
+/**
+ * @brief Entry point for the syslog daemon process.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return 0 on normal exit.
+ */
 int
 main(int argc, char** argv)
 {

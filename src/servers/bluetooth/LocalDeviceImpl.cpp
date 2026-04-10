@@ -52,7 +52,16 @@
 #endif
 
 
-// Factory methods
+/**
+ * @brief Factory method: create a LocalDeviceImpl backed by an HCIControllerAccessor.
+ *
+ * Allocates a controller-style HCI delegate for the device at \a path and
+ * wraps it in a new LocalDeviceImpl.  Both objects are freed if either
+ * allocation fails.
+ *
+ * @param path Filesystem path to the HCI controller device node.
+ * @return A new LocalDeviceImpl on success, or NULL on allocation failure.
+ */
 LocalDeviceImpl*
 LocalDeviceImpl::CreateControllerAccessor(BPath* path)
 {
@@ -70,6 +79,16 @@ LocalDeviceImpl::CreateControllerAccessor(BPath* path)
 }
 
 
+/**
+ * @brief Factory method: create a LocalDeviceImpl backed by an HCITransportAccessor.
+ *
+ * Allocates a transport-driver-style HCI delegate for the device at \a path
+ * and wraps it in a new LocalDeviceImpl.  Both objects are freed if either
+ * allocation fails.
+ *
+ * @param path Filesystem path to the Bluetooth transport driver node.
+ * @return A new LocalDeviceImpl on success, or NULL on allocation failure.
+ */
 LocalDeviceImpl*
 LocalDeviceImpl::CreateTransportAccessor(BPath* path)
 {
@@ -87,18 +106,31 @@ LocalDeviceImpl::CreateTransportAccessor(BPath* path)
 }
 
 
+/**
+ * @brief Construct a LocalDeviceImpl wrapping the given HCI delegate.
+ *
+ * @param hd The HCIDelegate providing transport access.  Ownership is
+ *           transferred to the base class.
+ */
 LocalDeviceImpl::LocalDeviceImpl(HCIDelegate* hd) : LocalDeviceHandler(hd)
 {
 
 }
 
 
+/** @brief Destroy the local device implementation. */
 LocalDeviceImpl::~LocalDeviceImpl()
 {
 
 }
 
 
+/**
+ * @brief Unregister this device from the Bluetooth server.
+ *
+ * Posts a BT_MSG_REMOVE_DEVICE message to the application so it can
+ * remove and delete this instance from the active device list.
+ */
 void
 LocalDeviceImpl::Unregister()
 {
@@ -117,6 +149,15 @@ LocalDeviceImpl::Unregister()
 #pragma mark - Event handling methods -
 #endif
 
+/**
+ * @brief Skip past an HCI event header and return a typed pointer to the payload.
+ *
+ * @tparam T      The type of the event-specific payload structure.
+ * @tparam Header The type of the event header (e.g. hci_event_header or
+ *                hci_ev_cmd_complete).
+ * @param event   Pointer to the event header.
+ * @return A pointer to the payload immediately following the header.
+ */
 template<typename T, typename Header>
 inline T*
 JumpEventHeader(Header* event)
@@ -125,6 +166,15 @@ JumpEventHeader(Header* event)
 }
 
 
+/**
+ * @brief Process an HCI event that was not matched to any pending petition.
+ *
+ * Handles asynchronous events that can arrive without a prior command,
+ * such as hardware errors, incoming connection requests, completed-packet
+ * notifications, and disconnection events.
+ *
+ * @param event Pointer to the raw HCI event header.
+ */
 void
 LocalDeviceImpl::HandleUnexpectedEvent(struct hci_event_header* event)
 {
@@ -160,6 +210,17 @@ LocalDeviceImpl::HandleUnexpectedEvent(struct hci_event_header* event)
 }
 
 
+/**
+ * @brief Dispatch an HCI event that was matched to a pending petition.
+ *
+ * Routes the event to the appropriate handler based on the event code,
+ * covering inquiry results, connection life-cycle events, authentication,
+ * name requests, link-key exchanges, Secure Simple Pairing events, and
+ * others.
+ *
+ * @param event   Pointer to the raw HCI event header.
+ * @param request The BMessage petition that this event satisfies.
+ */
 void
 LocalDeviceImpl::HandleExpectedRequest(struct hci_event_header* event,
 	BMessage* request)
@@ -313,6 +374,16 @@ LocalDeviceImpl::HandleExpectedRequest(struct hci_event_header* event,
 }
 
 
+/**
+ * @brief Top-level HCI event handler invoked by the port listener callback.
+ *
+ * Classifies the event: CommandComplete and CommandStatus events are
+ * matched by opcode; all other events are matched by event code alone.
+ * If a matching petition is found, the event is delegated to the
+ * appropriate handler; otherwise HandleUnexpectedEvent() is called.
+ *
+ * @param event Pointer to the raw HCI event header.
+ */
 void
 LocalDeviceImpl::HandleEvent(struct hci_event_header* event)
 {
@@ -383,6 +454,19 @@ LocalDeviceImpl::HandleEvent(struct hci_event_header* event)
 #endif
 
 
+/**
+ * @brief Handle an HCI CommandComplete event.
+ *
+ * Extracts the expected opcode from the petition at \a index, then
+ * dispatches to opcode-specific logic that parses the reply payload,
+ * caches relevant properties, builds a reply BMessage, and clears the
+ * petition from the queue.
+ *
+ * @param event   Pointer to the CommandComplete event structure.
+ * @param request The petition that was waiting for this completion.
+ * @param index   Array index within the petition identifying which
+ *                expected opcode matched.
+ */
 void
 LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 	BMessage* request, int32 index)
@@ -764,6 +848,19 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 }
 
 
+/**
+ * @brief Handle an HCI CommandStatus event.
+ *
+ * Extracts the expected opcode from the petition at \a index, sends a
+ * status reply to the waiting client, and clears the matching petition
+ * entry.  Handles inquiry, remote name request, connection creation,
+ * acceptance, rejection, and authentication status codes.
+ *
+ * @param event   Pointer to the CommandStatus event structure.
+ * @param request The petition that was waiting for this status.
+ * @param index   Array index within the petition identifying which
+ *                expected opcode matched.
+ */
 void
 LocalDeviceImpl::CommandStatus(struct hci_ev_cmd_status* event,
 	BMessage* request, int32 index)
@@ -855,6 +952,18 @@ LocalDeviceImpl::CommandStatus(struct hci_ev_cmd_status* event,
 }
 
 
+/**
+ * @brief Process a standard HCI Inquiry Result event.
+ *
+ * Parses the parallel arrays of BD_ADDR, page-repetition mode,
+ * scan-period mode, scan mode, device class, and clock offset from
+ * the event payload and packs them into a BT_MSG_INQUIRY_DEVICE reply
+ * sent back to the petition's originator.
+ *
+ * @param numberOfResponses Pointer to the response count byte in the
+ *                          event payload (followed by the parallel arrays).
+ * @param request           The petition waiting for inquiry results.
+ */
 void
 LocalDeviceImpl::InquiryResult(uint8* numberOfResponses, BMessage* request)
 {
@@ -896,6 +1005,17 @@ LocalDeviceImpl::InquiryResult(uint8* numberOfResponses, BMessage* request)
 }
 
 
+/**
+ * @brief Process an HCI Inquiry Result with RSSI event.
+ *
+ * Similar to InquiryResult(), but includes an RSSI (Received Signal
+ * Strength Indication) value per response.  Packs all fields into a
+ * BT_MSG_INQUIRY_DEVICE reply.
+ *
+ * @param numberOfResponses Pointer to the response count byte in the event
+ *                          payload.
+ * @param request           The petition waiting for inquiry results.
+ */
 void
 LocalDeviceImpl::InquiryResultWithRSSI(uint8* numberOfResponses, BMessage* request)
 {
@@ -937,6 +1057,16 @@ LocalDeviceImpl::InquiryResultWithRSSI(uint8* numberOfResponses, BMessage* reque
 }
 
 
+/**
+ * @brief Process an HCI Extended Inquiry Result event.
+ *
+ * The extended result always contains exactly one response and includes
+ * an Extended Inquiry Response (EIR) data block.  Packs the standard
+ * fields plus parsed EIR data into a BT_MSG_INQUIRY_DEVICE reply.
+ *
+ * @param numberOfResponses Pointer to the response count byte (always 1).
+ * @param request           The petition waiting for inquiry results.
+ */
 void
 LocalDeviceImpl::ExtendedInquiryResult(uint8* numberOfResponses, BMessage* request)
 {
@@ -971,6 +1101,17 @@ LocalDeviceImpl::ExtendedInquiryResult(uint8* numberOfResponses, BMessage* reque
 }
 
 
+/**
+ * @brief Parse an Extended Inquiry Response (EIR) data block.
+ *
+ * Walks the length-type-value records in \a eir, extracting the short
+ * and complete local name fields.  The best available name is stored
+ * in the reply as "friendly_name" with a "friendly_name_is_complete"
+ * boolean.
+ *
+ * @param eir   Pointer to the raw EIR byte array (up to 240 bytes).
+ * @param reply The BMessage to populate with extracted EIR fields.
+ */
 void
 LocalDeviceImpl::ParseEIR(const uint8* eir, BMessage& reply)
 {
@@ -1025,6 +1166,15 @@ LocalDeviceImpl::ParseEIR(const uint8* eir, BMessage& reply)
 }
 
 
+/**
+ * @brief Handle the HCI Inquiry Complete event.
+ *
+ * Sends a BT_MSG_INQUIRY_COMPLETED reply containing the controller status
+ * and clears the petition from the queue.
+ *
+ * @param status  Pointer to the HCI status byte.
+ * @param request The petition that initiated the inquiry.
+ */
 void
 LocalDeviceImpl::InquiryComplete(uint8* status, BMessage* request)
 {
@@ -1041,6 +1191,16 @@ LocalDeviceImpl::InquiryComplete(uint8* status, BMessage* request)
 }
 
 
+/**
+ * @brief Handle the HCI Remote Name Request Complete event.
+ *
+ * If successful, adds the remote device's friendly name to the reply.
+ * Always sends a reply with the status and clears the petition.
+ *
+ * @param remotename Pointer to the event payload containing the remote
+ *                   device address, status, and name string.
+ * @param request    The petition that initiated the name request.
+ */
 void
 LocalDeviceImpl::RemoteNameRequestComplete(
 	struct hci_ev_remote_name_request_complete_reply* remotename,
@@ -1069,6 +1229,16 @@ LocalDeviceImpl::RemoteNameRequestComplete(
 }
 
 
+/**
+ * @brief Handle an incoming HCI Connection Request event.
+ *
+ * Accepts the connection (as slave) by issuing an AcceptConnectionRequest
+ * command and registering the expected follow-up events (status, page-scan
+ * rep mode change, link-key request, role change, connection complete).
+ *
+ * @param event   Pointer to the connection request event payload.
+ * @param request The petition associated with this event, or NULL.
+ */
 void
 LocalDeviceImpl::ConnectionRequest(struct hci_ev_conn_request* event,
 	BMessage* request)
@@ -1113,6 +1283,16 @@ LocalDeviceImpl::ConnectionRequest(struct hci_ev_conn_request* event,
 }
 
 
+/**
+ * @brief Handle an HCI Connection Complete event.
+ *
+ * On success, opens a ConnectionIncoming window for the new peer and
+ * registers petitions for IO capability and link-key events that follow
+ * during pairing.  Sends a reply with the status and connection handle.
+ *
+ * @param event   Pointer to the connection complete event payload.
+ * @param request The petition that was waiting for this event, or NULL.
+ */
 void
 LocalDeviceImpl::ConnectionComplete(struct hci_ev_conn_complete* event,
 	BMessage* request)
@@ -1164,6 +1344,15 @@ LocalDeviceImpl::ConnectionComplete(struct hci_ev_conn_complete* event,
 }
 
 
+/**
+ * @brief Handle an HCI Disconnection Complete event.
+ *
+ * Logs the disconnection reason and, if a petition exists, sends a status
+ * reply and clears the petition.
+ *
+ * @param event   Pointer to the disconnection complete event payload.
+ * @param request The petition associated with this event, or NULL.
+ */
 void
 LocalDeviceImpl::DisconnectionComplete(
 	struct hci_ev_disconnection_complete_reply* event, BMessage* request)
@@ -1186,6 +1375,16 @@ LocalDeviceImpl::DisconnectionComplete(
 }
 
 
+/**
+ * @brief Handle an HCI PIN Code Request event.
+ *
+ * Opens a PincodeWindow dialog so the user can enter the PIN for the
+ * requesting remote device.
+ *
+ * @param event   Pointer to the PIN code request payload containing the
+ *                remote BD_ADDR.
+ * @param request Unused; may be NULL.
+ */
 void
 LocalDeviceImpl::PinCodeRequest(struct hci_ev_pin_code_req* event,
 	BMessage* request)
@@ -1196,6 +1395,14 @@ LocalDeviceImpl::PinCodeRequest(struct hci_ev_pin_code_req* event,
 }
 
 
+/**
+ * @brief Handle an HCI Role Change event.
+ *
+ * Logs the new role for the remote device.
+ *
+ * @param event   Pointer to the role change event payload.
+ * @param request The petition associated with this event.
+ */
 void
 LocalDeviceImpl::RoleChange(hci_ev_role_change* event, BMessage* request)
 {
@@ -1204,6 +1411,14 @@ LocalDeviceImpl::RoleChange(hci_ev_role_change* event, BMessage* request)
 }
 
 
+/**
+ * @brief Handle an HCI Page Scan Repetition Mode Change event.
+ *
+ * Logs the new page-scan repetition mode for the remote device.
+ *
+ * @param event   Pointer to the event payload.
+ * @param request The petition associated with this event.
+ */
 void
 LocalDeviceImpl::PageScanRepetitionModeChange(
 	struct hci_ev_page_scan_rep_mode_change* event, BMessage* request)
@@ -1213,6 +1428,15 @@ LocalDeviceImpl::PageScanRepetitionModeChange(
 }
 
 
+/**
+ * @brief Handle an HCI Link Key Notification event.
+ *
+ * Logs the new link key and its type for the remote device.  If a
+ * petition is present, clears it from the queue.
+ *
+ * @param event   Pointer to the link key notification payload.
+ * @param request The petition associated with this event, or NULL.
+ */
 void
 LocalDeviceImpl::LinkKeyNotify(hci_ev_link_key_notify* event,
 	BMessage* request)
@@ -1225,6 +1449,18 @@ LocalDeviceImpl::LinkKeyNotify(hci_ev_link_key_notify* event,
 }
 
 
+/**
+ * @brief Handle an HCI Link Key Request event.
+ *
+ * Since there is no stored-link-key database yet, this always replies
+ * with a Link Key Negative Reply, which forces the remote device to
+ * initiate pairing.  Registers a petition for the subsequent PIN Code
+ * Request event.
+ *
+ * @param keyRequested Pointer to the link key request payload containing
+ *                     the remote BD_ADDR.
+ * @param request      The petition associated with this event, or NULL.
+ */
 void
 LocalDeviceImpl::LinkKeyRequested(struct hci_ev_link_key_req* keyRequested,
 	BMessage* request)
@@ -1263,6 +1499,15 @@ LocalDeviceImpl::LinkKeyRequested(struct hci_ev_link_key_req* keyRequested,
 }
 
 
+/**
+ * @brief Handle an HCI Return Link Keys event.
+ *
+ * Iterates the returned link keys and logs each address/key pair.
+ * Currently does not persist the keys.
+ *
+ * @param returnedKeys Pointer to the event payload containing the key count
+ *                     and an array of link_key_info structures.
+ */
 void
 LocalDeviceImpl::ReturnLinkKeys(struct hci_ev_return_link_keys* returnedKeys)
 {
@@ -1284,6 +1529,14 @@ LocalDeviceImpl::ReturnLinkKeys(struct hci_ev_return_link_keys* returnedKeys)
 }
 
 
+/**
+ * @brief Handle an HCI Max Slot Change event.
+ *
+ * Logs the new maximum number of slots for the connection handle.
+ *
+ * @param event   Pointer to the event payload.
+ * @param request The petition associated with this event.
+ */
 void
 LocalDeviceImpl::MaxSlotChange(struct hci_ev_max_slot_change* event,
 	BMessage* request)
@@ -1293,6 +1546,13 @@ LocalDeviceImpl::MaxSlotChange(struct hci_ev_max_slot_change* event,
 }
 
 
+/**
+ * @brief Handle an HCI Hardware Error event.
+ *
+ * Logs the hardware error code reported by the controller.
+ *
+ * @param event Pointer to the hardware error event payload.
+ */
 void
 LocalDeviceImpl::HardwareError(struct hci_ev_hardware_error* event)
 {
@@ -1300,6 +1560,14 @@ LocalDeviceImpl::HardwareError(struct hci_ev_hardware_error* event)
 }
 
 
+/**
+ * @brief Handle an HCI Number of Completed Packets event.
+ *
+ * Iterates the per-handle packet-completion counts and logs each entry.
+ * Used by the controller to report freed ACL buffer slots.
+ *
+ * @param event Pointer to the event payload containing handle/count pairs.
+ */
 void
 LocalDeviceImpl::NumberOfCompletedPackets(struct hci_ev_num_comp_pkts* event)
 {
@@ -1318,6 +1586,17 @@ LocalDeviceImpl::NumberOfCompletedPackets(struct hci_ev_num_comp_pkts* event)
 }
 
 
+/**
+ * @brief Handle an HCI IO Capability Request event during Secure Simple Pairing.
+ *
+ * Responds with an IO Capability Request Reply advertising "No Input No
+ * Output" capabilities and no OOB data.  Registers petitions for the
+ * User Confirmation Request, User Passkey Request, and Simple Pairing
+ * Complete events that may follow.
+ *
+ * @param event   Pointer to the IO capability request payload.
+ * @param request The petition associated with this event.
+ */
 void
 LocalDeviceImpl::IOCapabilityRequest(struct hci_ev_io_capability_request* event, BMessage* request)
 {
@@ -1351,6 +1630,15 @@ LocalDeviceImpl::IOCapabilityRequest(struct hci_ev_io_capability_request* event,
 }
 
 
+/**
+ * @brief Handle an HCI IO Capability Response event from the remote device.
+ *
+ * Logs the remote device's IO capability, OOB data presence, and
+ * authentication requirements.
+ *
+ * @param event   Pointer to the IO capability response payload.
+ * @param request The petition associated with this event.
+ */
 void
 LocalDeviceImpl::IOCapabilityResponse(struct hci_ev_io_capability_response* event,
 	BMessage* request)
@@ -1361,6 +1649,17 @@ LocalDeviceImpl::IOCapabilityResponse(struct hci_ev_io_capability_response* even
 }
 
 
+/**
+ * @brief Handle an HCI User Confirmation Request event.
+ *
+ * Automatically accepts the numeric comparison by issuing a User
+ * Confirmation Reply command.  Registers a petition for the
+ * CommandComplete acknowledgement.
+ *
+ * @param event   Pointer to the event payload containing the remote
+ *                BD_ADDR and the passkey to confirm.
+ * @param request The petition associated with this event.
+ */
 void
 LocalDeviceImpl::UserConfirmationRequest(struct hci_ev_user_confirmation_request* event,
 	BMessage* request)
@@ -1387,6 +1686,15 @@ LocalDeviceImpl::UserConfirmationRequest(struct hci_ev_user_confirmation_request
 }
 
 
+/**
+ * @brief Handle an HCI Simple Pairing Complete event.
+ *
+ * Logs success or failure of the pairing process.  If a petition exists,
+ * clears it from the queue.
+ *
+ * @param event   Pointer to the simple pairing complete payload.
+ * @param request The petition associated with this event, or NULL.
+ */
 void
 LocalDeviceImpl::SimplePairingComplete(struct hci_ev_simple_pairing_complete* event,
 	BMessage* request)
@@ -1404,6 +1712,15 @@ LocalDeviceImpl::SimplePairingComplete(struct hci_ev_simple_pairing_complete* ev
 }
 
 
+/**
+ * @brief Handle an HCI Authentication Complete event.
+ *
+ * Logs the authentication result and, if a petition exists, sends a
+ * reply with the status and connection handle, then clears the petition.
+ *
+ * @param eventData Pointer to the authentication complete event payload.
+ * @param request   The petition associated with this event, or NULL.
+ */
 void
 LocalDeviceImpl::AuthComplete(struct hci_ev_auth_complete* eventData, BMessage* request)
 {
@@ -1435,6 +1752,18 @@ LocalDeviceImpl::AuthComplete(struct hci_ev_auth_complete* eventData, BMessage* 
 #pragma mark - Request Methods -
 #endif
 
+/**
+ * @brief Issue a raw HCI command embedded in a BMessage request.
+ *
+ * Extracts the "raw command" data from \a request, optionally enqueues
+ * the petition if it declares expected events, and forwards the command
+ * to the transport accessor.  On transmission failure the petition is
+ * removed from the queue.
+ *
+ * @param request The detached BMessage containing "raw command" data and
+ *                optional "eventExpected" / "opcodeExpected" fields.
+ * @return B_OK if the command was issued, B_ERROR otherwise.
+ */
 status_t
 LocalDeviceImpl::ProcessSimpleRequest(BMessage* request)
 {

@@ -42,6 +42,7 @@
 #include <OS.h>
 
 
+/** @brief Constructs the queue with its internal lock and semaphore. */
 Queue::Queue()
 	:
 	BLocker("queue locker"),
@@ -50,6 +51,7 @@ Queue::Queue()
 }
 
 
+/** @brief Destroys the queue and deletes the semaphore if still valid. */
 Queue::~Queue()
 {
 	if (fSem >= 0)
@@ -57,6 +59,14 @@ Queue::~Queue()
 }
 
 
+/**
+ * @brief Terminates the queue by deleting its semaphore.
+ *
+ * This unblocks any thread waiting in RemoveItem() and prevents further
+ * additions.
+ *
+ * @return B_OK on success, B_ERROR if already terminated.
+ */
 status_t
 Queue::Terminate()
 {
@@ -71,6 +81,12 @@ Queue::Terminate()
 }
 
 
+/**
+ * @brief Adds an item to the queue and signals the consumer.
+ *
+ * @param item The item pointer to enqueue.
+ * @return B_OK on success, B_ERROR if terminated, B_NO_MEMORY on allocation failure.
+ */
 status_t
 Queue::AddItem(void* item)
 {
@@ -87,6 +103,13 @@ Queue::AddItem(void* item)
 }
 
 
+/**
+ * @brief Blocks until an item is available, then removes and returns it.
+ *
+ * Returns NULL when the queue has been terminated and is empty.
+ *
+ * @return The dequeued item pointer, or NULL if the queue is terminated and empty.
+ */
 void*
 Queue::RemoveItem()
 {

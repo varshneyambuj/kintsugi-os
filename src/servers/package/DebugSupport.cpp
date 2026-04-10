@@ -51,17 +51,35 @@
 
 
 // locking support
+
+/** @brief Reference count for init_debugging()/exit_debugging() calls. */
 static int32 init_counter = 0;
+
+/** @brief Semaphore used to serialize debug output across threads. */
 static sem_id dbg_printf_sem = -1;
+
+/** @brief Thread currently holding the debug output lock. */
 static thread_id dbg_printf_thread = -1;
+
+/** @brief Recursive lock nesting depth for the debug output lock. */
 static int dbg_printf_nesting = 0;
 
 
 #if DEBUG_PRINT
+/** @brief File descriptor for the debug output file. */
 static int out = -1;
 #endif
 
 
+/**
+ * @brief Initializes the debug output subsystem.
+ *
+ * On the first call, opens the debug output file (if DEBUG_PRINT is
+ * enabled) and creates the serialization semaphore. Subsequent calls
+ * increment a reference counter. Paired with exit_debugging().
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 init_debugging()
 {
@@ -92,6 +110,14 @@ init_debugging()
 }
 
 
+/**
+ * @brief Tears down the debug output subsystem.
+ *
+ * Decrements the reference counter. When it reaches zero, closes the
+ * debug output file and deletes the semaphore.
+ *
+ * @return B_OK on success, B_NO_INIT if the counter was already zero.
+ */
 status_t
 exit_debugging()
 {
@@ -108,6 +134,14 @@ exit_debugging()
 }
 
 
+/**
+ * @brief Acquires the recursive debug output lock for the calling thread.
+ *
+ * If the calling thread already holds the lock, the nesting count is
+ * incremented. Otherwise the semaphore is acquired.
+ *
+ * @return @c true if the lock was acquired, @c false on failure.
+ */
 static inline bool
 dbg_printf_lock()
 {
@@ -122,6 +156,12 @@ dbg_printf_lock()
 }
 
 
+/**
+ * @brief Releases one level of the recursive debug output lock.
+ *
+ * When the nesting count reaches zero, the semaphore is released so
+ * other threads may print.
+ */
 static inline void
 dbg_printf_unlock()
 {
@@ -136,6 +176,7 @@ dbg_printf_unlock()
 }
 
 
+/** @brief Acquires the debug output lock for a multi-statement debug block. */
 void
 dbg_printf_begin()
 {
@@ -143,6 +184,7 @@ dbg_printf_begin()
 }
 
 
+/** @brief Releases the debug output lock after a multi-statement debug block. */
 void
 dbg_printf_end()
 {
@@ -152,6 +194,14 @@ dbg_printf_end()
 
 #if DEBUG_PRINT
 
+/**
+ * @brief Prints a formatted debug message to the debug output file.
+ *
+ * Acquires the debug lock, formats the message with vsnprintf/vsprintf,
+ * writes it to the output file descriptor, then releases the lock.
+ *
+ * @param format A printf-style format string, followed by variadic arguments.
+ */
 void
 dbg_printf(const char *format,...)
 {

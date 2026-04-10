@@ -27,17 +27,24 @@
 
 #include "MessageHandler.h"
 
-// constructor
+/** @brief Constructs a MessageHandler with default state. */
 MessageHandler::MessageHandler()
 {
 }
 
-// destructor
+/** @brief Destroys the MessageHandler. */
 MessageHandler::~MessageHandler()
 {
 }
 
-// HandleMessage
+/**
+ * @brief Processes an incoming BMessage.
+ *
+ * Default implementation does nothing. Subclasses override this method
+ * to provide specific message handling logic.
+ *
+ * @param message The BMessage to handle.
+ */
 void
 MessageHandler::HandleMessage(BMessage *message)
 {

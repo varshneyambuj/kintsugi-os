@@ -51,9 +51,19 @@
 using namespace BPackageKit;
 
 
+/** @brief Message command code sent when the user clicks "Apply changes". */
 static const uint32 kApplyMessage = 'rtry';
 
 
+/**
+ * @brief Constructs the package-change confirmation dialog.
+ *
+ * Builds the UI layout with a scrollable area for location change groups,
+ * Cancel and Apply buttons, and creates the done-semaphore used to
+ * synchronize the client thread with the window's event loop.
+ *
+ * @throws std::bad_alloc If the semaphore cannot be created.
+ */
 ResultWindow::ResultWindow()
 	:
 	BWindow(BRect(0, 0, 400, 300), B_TRANSLATE_COMMENT("Package changes",
@@ -101,6 +111,9 @@ ResultWindow::ResultWindow()
 }
 
 
+/**
+ * @brief Destroys the ResultWindow and deletes the done-semaphore.
+ */
 ResultWindow::~ResultWindow()
 {
 	if (fDoneSemaphore >= 0)
@@ -108,6 +121,20 @@ ResultWindow::~ResultWindow()
 }
 
 
+/**
+ * @brief Adds a group of package changes for a single installation location.
+ *
+ * Creates a visually grouped section showing which packages will be
+ * installed and uninstalled at the given location, filtering out packages
+ * already handled by the user.
+ *
+ * @param location               Human-readable location name (e.g. "system").
+ * @param packagesToInstall      Packages that will be installed.
+ * @param packagesAlreadyAdded   Packages to exclude from the install list.
+ * @param packagesToUninstall    Packages that will be uninstalled.
+ * @param packagesAlreadyRemoved Packages to exclude from the uninstall list.
+ * @return @c true if any package entries were added, @c false if all were filtered.
+ */
 bool
 ResultWindow::AddLocationChanges(const char* location,
 	const PackageList& packagesToInstall,
@@ -156,6 +183,15 @@ ResultWindow::AddLocationChanges(const char* location,
 }
 
 
+/**
+ * @brief Shows the window and blocks until the user accepts or cancels.
+ *
+ * Centers the window, displays it, then blocks on a semaphore until the
+ * user clicks Apply or Cancel (or closes the window). On acceptance the
+ * window is quit and @c true is returned.
+ *
+ * @return @c true if the user accepted the changes, @c false otherwise.
+ */
 bool
 ResultWindow::Go()
 {
@@ -185,6 +221,14 @@ ResultWindow::Go()
 }
 
 
+/**
+ * @brief Handles the window close request.
+ *
+ * If a client thread is waiting, hides the window and releases the
+ * semaphore (treating close as cancellation) instead of quitting.
+ *
+ * @return @c true if the window may be destroyed, @c false if it was only hidden.
+ */
 bool
 ResultWindow::QuitRequested()
 {
@@ -199,6 +243,11 @@ ResultWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Handles UI messages for Cancel and Apply button clicks.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 ResultWindow::MessageReceived(BMessage* message)
 {
@@ -217,6 +266,18 @@ ResultWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Populates a layout group with install or uninstall package entries.
+ *
+ * Iterates the package list, skipping those in the ignore set, and adds
+ * a BStringView for each remaining package describing the action.
+ *
+ * @param packagesGroup  The layout group to add string views to.
+ * @param packages       The list of packages to display.
+ * @param ignorePackages Set of packages to skip.
+ * @param install        @c true for install entries, @c false for uninstall.
+ * @return @c true if at least one package was added, @c false otherwise.
+ */
 bool
 ResultWindow::_AddPackages(BGroupLayout* packagesGroup,
 	const PackageList& packages, const PackageSet& ignorePackages, bool install)

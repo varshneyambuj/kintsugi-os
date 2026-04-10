@@ -34,6 +34,7 @@
 #include "Job.h"
 
 
+/** @brief Maximum number of log items to retain before discarding the oldest. */
 const size_t kMaxItems = 10000;
 
 
@@ -215,6 +216,7 @@ public:
 // #pragma mark -
 
 
+/** @brief Constructs a log item, recording the current system time. */
 LogItem::LogItem()
 	:
 	fWhen(system_time())
@@ -222,11 +224,17 @@ LogItem::LogItem()
 }
 
 
+/** @brief Destroys the log item. */
 LogItem::~LogItem()
 {
 }
 
 
+/**
+ * @brief Returns the log message as a BString.
+ *
+ * @return The formatted message text.
+ */
 BString
 LogItem::Message() const
 {
@@ -239,6 +247,7 @@ LogItem::Message() const
 // #pragma mark - Log
 
 
+/** @brief Constructs an empty log with a mutex for thread-safe access. */
 Log::Log()
 	:
 	fCount(0)
@@ -247,6 +256,11 @@ Log::Log()
 }
 
 
+/**
+ * @brief Adds a log item, evicting the oldest if the maximum count is reached.
+ *
+ * @param item The log item to add (takes ownership).
+ */
 void
 Log::Add(LogItem* item)
 {
@@ -260,6 +274,11 @@ Log::Add(LogItem* item)
 }
 
 
+/**
+ * @brief Logs that a job was initialized.
+ *
+ * @param job The job that was initialized.
+ */
 void
 Log::JobInitialized(Job* job)
 {
@@ -271,6 +290,12 @@ Log::JobInitialized(Job* job)
 }
 
 
+/**
+ * @brief Logs that a job was ignored due to an error.
+ *
+ * @param job    The job that was ignored.
+ * @param status The error code that caused the job to be ignored.
+ */
 void
 Log::JobIgnored(Job* job, status_t status)
 {
@@ -284,6 +309,11 @@ Log::JobIgnored(Job* job, status_t status)
 }
 
 
+/**
+ * @brief Logs that a job was skipped (e.g. due to an unmet condition).
+ *
+ * @param job The job that was skipped.
+ */
 void
 Log::JobSkipped(Job* job)
 {
@@ -296,6 +326,12 @@ Log::JobSkipped(Job* job)
 }
 
 
+/**
+ * @brief Logs a job launch attempt and its result status.
+ *
+ * @param job    The job that was launched.
+ * @param status The result of the launch (B_OK on success).
+ */
 void
 Log::JobLaunched(Job* job, status_t status)
 {
@@ -309,6 +345,12 @@ Log::JobLaunched(Job* job, status_t status)
 }
 
 
+/**
+ * @brief Logs that a job's process was terminated.
+ *
+ * @param job    The job whose team terminated.
+ * @param status The termination status.
+ */
 void
 Log::JobTerminated(Job* job, status_t status)
 {
@@ -322,6 +364,12 @@ Log::JobTerminated(Job* job, status_t status)
 }
 
 
+/**
+ * @brief Logs that a job's enabled state changed.
+ *
+ * @param job     The job whose state changed.
+ * @param enabled @c true if now enabled, @c false if disabled.
+ */
 void
 Log::JobEnabled(Job* job, bool enabled)
 {
@@ -333,6 +381,12 @@ Log::JobEnabled(Job* job, bool enabled)
 }
 
 
+/**
+ * @brief Logs that a job was stopped.
+ *
+ * @param job   The job that was stopped.
+ * @param force @c true if it was a forced stop.
+ */
 void
 Log::JobStopped(BaseJob* job, bool force)
 {
@@ -344,6 +398,12 @@ Log::JobStopped(BaseJob* job, bool force)
 }
 
 
+/**
+ * @brief Logs that an event was triggered for a job.
+ *
+ * @param job   The job that owns the event.
+ * @param event The event that was triggered.
+ */
 void
 Log::EventTriggered(BaseJob* job, Event* event)
 {
@@ -357,6 +417,11 @@ Log::EventTriggered(BaseJob* job, Event* event)
 }
 
 
+/**
+ * @brief Logs that an external event was triggered.
+ *
+ * @param name The name of the external event.
+ */
 void
 Log::ExternalEventTriggered(const char* name)
 {
@@ -368,6 +433,11 @@ Log::ExternalEventTriggered(const char* name)
 }
 
 
+/**
+ * @brief Logs that an external event was registered.
+ *
+ * @param name The name of the external event.
+ */
 void
 Log::ExternalEventRegistered(const char* name)
 {
@@ -379,6 +449,11 @@ Log::ExternalEventRegistered(const char* name)
 }
 
 
+/**
+ * @brief Logs that an external event was unregistered.
+ *
+ * @param name The name of the external event.
+ */
 void
 Log::ExternalEventUnregistered(const char* name)
 {
@@ -393,6 +468,11 @@ Log::ExternalEventUnregistered(const char* name)
 // #pragma mark - AbstractJobLogItem
 
 
+/**
+ * @brief Constructs an abstract job log item referencing the given job.
+ *
+ * @param job The job this log item is about.
+ */
 AbstractJobLogItem::AbstractJobLogItem(BaseJob* job)
 	:
 	fJob(job)
@@ -400,11 +480,18 @@ AbstractJobLogItem::AbstractJobLogItem(BaseJob* job)
 }
 
 
+/** @brief Destroys the abstract job log item. */
 AbstractJobLogItem::~AbstractJobLogItem()
 {
 }
 
 
+/**
+ * @brief Adds the job name to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 AbstractJobLogItem::GetParameter(BMessage& parameter) const
 {
@@ -412,6 +499,13 @@ AbstractJobLogItem::GetParameter(BMessage& parameter) const
 }
 
 
+/**
+ * @brief Tests whether this log item matches the given job or event filter.
+ *
+ * @param jobName   Job name filter (NULL matches all).
+ * @param eventName Event name filter (unused in this base class).
+ * @return @c true if this item matches the filter criteria.
+ */
 bool
 AbstractJobLogItem::Matches(const char* jobName, const char* eventName)
 {
@@ -428,6 +522,7 @@ AbstractJobLogItem::Matches(const char* jobName, const char* eventName)
 // #pragma mark - JobInitializedLogItem
 
 
+/** @brief Constructs a job-initialized log item. */
 JobInitializedLogItem::JobInitializedLogItem(Job* job)
 	:
 	AbstractJobLogItem(job)
@@ -435,11 +530,13 @@ JobInitializedLogItem::JobInitializedLogItem(Job* job)
 }
 
 
+/** @brief Destroys the job-initialized log item. */
 JobInitializedLogItem::~JobInitializedLogItem()
 {
 }
 
 
+/** @brief Returns kJobInitialized. */
 LogItemType
 JobInitializedLogItem::Type() const
 {
@@ -447,6 +544,12 @@ JobInitializedLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating the job was initialized.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobInitializedLogItem::GetMessage(BString& target) const
 {
@@ -458,6 +561,12 @@ JobInitializedLogItem::GetMessage(BString& target) const
 // #pragma mark - JobIgnoredLogItem
 
 
+/**
+ * @brief Constructs a job-ignored log item with the error that caused it.
+ *
+ * @param job   The ignored job (name is copied).
+ * @param error The error code.
+ */
 JobIgnoredLogItem::JobIgnoredLogItem(Job* job, status_t error)
 	:
 	fJobName(job->Name()),
@@ -466,11 +575,13 @@ JobIgnoredLogItem::JobIgnoredLogItem(Job* job, status_t error)
 }
 
 
+/** @brief Destroys the job-ignored log item. */
 JobIgnoredLogItem::~JobIgnoredLogItem()
 {
 }
 
 
+/** @brief Returns kJobIgnored. */
 LogItemType
 JobIgnoredLogItem::Type() const
 {
@@ -478,6 +589,12 @@ JobIgnoredLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating the job was ignored and why.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobIgnoredLogItem::GetMessage(BString& target) const
 {
@@ -487,6 +604,12 @@ JobIgnoredLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name and error code to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 JobIgnoredLogItem::GetParameter(BMessage& parameter) const
 {
@@ -497,6 +620,13 @@ JobIgnoredLogItem::GetParameter(BMessage& parameter) const
 }
 
 
+/**
+ * @brief Tests whether this log item matches the given filter criteria.
+ *
+ * @param jobName   Job name filter (NULL matches all).
+ * @param eventName Event name filter (unused).
+ * @return @c true if this item matches.
+ */
 bool
 JobIgnoredLogItem::Matches(const char* jobName, const char* eventName)
 {
@@ -513,6 +643,7 @@ JobIgnoredLogItem::Matches(const char* jobName, const char* eventName)
 // #pragma mark - JobSkippedLogItem
 
 
+/** @brief Constructs a job-skipped log item (copies the job name). */
 JobSkippedLogItem::JobSkippedLogItem(Job* job)
 	:
 	fJobName(job->Name())
@@ -520,11 +651,13 @@ JobSkippedLogItem::JobSkippedLogItem(Job* job)
 }
 
 
+/** @brief Destroys the job-skipped log item. */
 JobSkippedLogItem::~JobSkippedLogItem()
 {
 }
 
 
+/** @brief Returns kJobSkipped. */
 LogItemType
 JobSkippedLogItem::Type() const
 {
@@ -532,6 +665,12 @@ JobSkippedLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating the job was skipped.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobSkippedLogItem::GetMessage(BString& target) const
 {
@@ -540,6 +679,12 @@ JobSkippedLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 JobSkippedLogItem::GetParameter(BMessage& parameter) const
 {
@@ -547,6 +692,13 @@ JobSkippedLogItem::GetParameter(BMessage& parameter) const
 }
 
 
+/**
+ * @brief Tests whether this log item matches the given filter criteria.
+ *
+ * @param jobName   Job name filter (NULL matches all).
+ * @param eventName Event name filter (unused).
+ * @return @c true if this item matches.
+ */
 bool
 JobSkippedLogItem::Matches(const char* jobName, const char* eventName)
 {
@@ -563,6 +715,12 @@ JobSkippedLogItem::Matches(const char* jobName, const char* eventName)
 // #pragma mark - JobLaunchedLogItem
 
 
+/**
+ * @brief Constructs a job-launched log item with the launch status.
+ *
+ * @param job    The launched job.
+ * @param status The launch result.
+ */
 JobLaunchedLogItem::JobLaunchedLogItem(Job* job, status_t status)
 	:
 	AbstractJobLogItem(job),
@@ -571,11 +729,13 @@ JobLaunchedLogItem::JobLaunchedLogItem(Job* job, status_t status)
 }
 
 
+/** @brief Destroys the job-launched log item. */
 JobLaunchedLogItem::~JobLaunchedLogItem()
 {
 }
 
 
+/** @brief Returns kJobLaunched. */
 LogItemType
 JobLaunchedLogItem::Type() const
 {
@@ -583,6 +743,12 @@ JobLaunchedLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message with the job name and launch status.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobLaunchedLogItem::GetMessage(BString& target) const
 {
@@ -592,6 +758,12 @@ JobLaunchedLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name and launch status to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 JobLaunchedLogItem::GetParameter(BMessage& parameter) const
 {
@@ -605,6 +777,12 @@ JobLaunchedLogItem::GetParameter(BMessage& parameter) const
 // #pragma mark - JobTerminatedLogItem
 
 
+/**
+ * @brief Constructs a job-terminated log item with the termination status.
+ *
+ * @param job    The terminated job.
+ * @param status The termination status.
+ */
 JobTerminatedLogItem::JobTerminatedLogItem(Job* job, status_t status)
 	:
 	AbstractJobLogItem(job),
@@ -613,11 +791,13 @@ JobTerminatedLogItem::JobTerminatedLogItem(Job* job, status_t status)
 }
 
 
+/** @brief Destroys the job-terminated log item. */
 JobTerminatedLogItem::~JobTerminatedLogItem()
 {
 }
 
 
+/** @brief Returns kJobTerminated. */
 LogItemType
 JobTerminatedLogItem::Type() const
 {
@@ -625,6 +805,12 @@ JobTerminatedLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message with the job name and termination status.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobTerminatedLogItem::GetMessage(BString& target) const
 {
@@ -634,6 +820,12 @@ JobTerminatedLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name and termination status to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 JobTerminatedLogItem::GetParameter(BMessage& parameter) const
 {
@@ -647,6 +839,12 @@ JobTerminatedLogItem::GetParameter(BMessage& parameter) const
 // #pragma mark - JobEnabledLogItem
 
 
+/**
+ * @brief Constructs a job-enabled log item.
+ *
+ * @param job     The job whose enabled state changed.
+ * @param enabled The new enabled state.
+ */
 JobEnabledLogItem::JobEnabledLogItem(Job* job, bool enabled)
 	:
 	AbstractJobLogItem(job),
@@ -655,11 +853,13 @@ JobEnabledLogItem::JobEnabledLogItem(Job* job, bool enabled)
 }
 
 
+/** @brief Destroys the job-enabled log item. */
 JobEnabledLogItem::~JobEnabledLogItem()
 {
 }
 
 
+/** @brief Returns kJobEnabled. */
 LogItemType
 JobEnabledLogItem::Type() const
 {
@@ -667,6 +867,12 @@ JobEnabledLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating the job was enabled or disabled.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobEnabledLogItem::GetMessage(BString& target) const
 {
@@ -676,6 +882,12 @@ JobEnabledLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name and enabled flag to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 JobEnabledLogItem::GetParameter(BMessage& parameter) const
 {
@@ -689,6 +901,12 @@ JobEnabledLogItem::GetParameter(BMessage& parameter) const
 // #pragma mark - JobStoppedLogItem
 
 
+/**
+ * @brief Constructs a job-stopped log item.
+ *
+ * @param job   The stopped job.
+ * @param force Whether the stop was forced.
+ */
 JobStoppedLogItem::JobStoppedLogItem(BaseJob* job, bool force)
 	:
 	AbstractJobLogItem(job),
@@ -697,11 +915,13 @@ JobStoppedLogItem::JobStoppedLogItem(BaseJob* job, bool force)
 }
 
 
+/** @brief Destroys the job-stopped log item. */
 JobStoppedLogItem::~JobStoppedLogItem()
 {
 }
 
 
+/** @brief Returns kJobStopped. */
 LogItemType
 JobStoppedLogItem::Type() const
 {
@@ -709,6 +929,12 @@ JobStoppedLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating the job was stopped (possibly forced).
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 JobStoppedLogItem::GetMessage(BString& target) const
 {
@@ -718,6 +944,12 @@ JobStoppedLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name and force flag to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 JobStoppedLogItem::GetParameter(BMessage& parameter) const
 {
@@ -731,6 +963,12 @@ JobStoppedLogItem::GetParameter(BMessage& parameter) const
 // #pragma mark - EventLogItem
 
 
+/**
+ * @brief Constructs an event log item for a triggered event.
+ *
+ * @param job   The job that owns the event.
+ * @param event The event that was triggered.
+ */
 EventLogItem::EventLogItem(BaseJob* job, Event* event)
 	:
 	AbstractJobLogItem(job),
@@ -739,11 +977,13 @@ EventLogItem::EventLogItem(BaseJob* job, Event* event)
 }
 
 
+/** @brief Destroys the event log item. */
 EventLogItem::~EventLogItem()
 {
 }
 
 
+/** @brief Returns kEvent. */
 LogItemType
 EventLogItem::Type() const
 {
@@ -751,6 +991,12 @@ EventLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message with job name and event description.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 EventLogItem::GetMessage(BString& target) const
 {
@@ -760,6 +1006,12 @@ EventLogItem::GetMessage(BString& target) const
 }
 
 
+/**
+ * @brief Adds the job name and event description to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 EventLogItem::GetParameter(BMessage& parameter) const
 {
@@ -770,6 +1022,13 @@ EventLogItem::GetParameter(BMessage& parameter) const
 }
 
 
+/**
+ * @brief Tests whether this event log item matches the given filter criteria.
+ *
+ * @param jobName   Job name filter (NULL matches all).
+ * @param eventName Event name substring filter (NULL matches all).
+ * @return @c true if this item matches both filters.
+ */
 bool
 EventLogItem::Matches(const char* jobName, const char* eventName)
 {
@@ -783,6 +1042,11 @@ EventLogItem::Matches(const char* jobName, const char* eventName)
 // #pragma mark - ExternalEventLogItem
 
 
+/**
+ * @brief Constructs an abstract external event log item.
+ *
+ * @param name The external event name.
+ */
 AbstractExternalEventLogItem::AbstractExternalEventLogItem(const char* name)
 	:
 	fEventName(name)
@@ -790,11 +1054,18 @@ AbstractExternalEventLogItem::AbstractExternalEventLogItem(const char* name)
 }
 
 
+/** @brief Destroys the abstract external event log item. */
 AbstractExternalEventLogItem::~AbstractExternalEventLogItem()
 {
 }
 
 
+/**
+ * @brief Adds the event name to the parameter message.
+ *
+ * @param parameter The output BMessage.
+ * @return B_OK on success.
+ */
 status_t
 AbstractExternalEventLogItem::GetParameter(BMessage& parameter) const
 {
@@ -802,6 +1073,13 @@ AbstractExternalEventLogItem::GetParameter(BMessage& parameter) const
 }
 
 
+/**
+ * @brief Tests whether this external event log item matches the given filter criteria.
+ *
+ * @param jobName   Job name filter (unused for external events).
+ * @param eventName Event name substring filter (NULL matches all).
+ * @return @c true if this item matches.
+ */
 bool
 AbstractExternalEventLogItem::Matches(const char* jobName,
 	const char* eventName)
@@ -819,6 +1097,7 @@ AbstractExternalEventLogItem::Matches(const char* jobName,
 // #pragma mark - ExternalEventLogItem
 
 
+/** @brief Constructs an external event triggered log item. */
 ExternalEventLogItem::ExternalEventLogItem(const char* name)
 	:
 	AbstractExternalEventLogItem(name)
@@ -826,11 +1105,13 @@ ExternalEventLogItem::ExternalEventLogItem(const char* name)
 }
 
 
+/** @brief Destroys the external event log item. */
 ExternalEventLogItem::~ExternalEventLogItem()
 {
 }
 
 
+/** @brief Returns kExternalEvent. */
 LogItemType
 ExternalEventLogItem::Type() const
 {
@@ -838,6 +1119,12 @@ ExternalEventLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating an external event was triggered.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 ExternalEventLogItem::GetMessage(BString& target) const
 {
@@ -850,6 +1137,7 @@ ExternalEventLogItem::GetMessage(BString& target) const
 // #pragma mark - ExternalEventRegisteredLogItem
 
 
+/** @brief Constructs an external event registered log item. */
 ExternalEventRegisteredLogItem::ExternalEventRegisteredLogItem(const char* name)
 	:
 	AbstractExternalEventLogItem(name)
@@ -857,11 +1145,13 @@ ExternalEventRegisteredLogItem::ExternalEventRegisteredLogItem(const char* name)
 }
 
 
+/** @brief Destroys the external event registered log item. */
 ExternalEventRegisteredLogItem::~ExternalEventRegisteredLogItem()
 {
 }
 
 
+/** @brief Returns kExternalEventRegistered. */
 LogItemType
 ExternalEventRegisteredLogItem::Type() const
 {
@@ -869,6 +1159,12 @@ ExternalEventRegisteredLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating an external event was registered.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 ExternalEventRegisteredLogItem::GetMessage(BString& target) const
 {
@@ -881,6 +1177,7 @@ ExternalEventRegisteredLogItem::GetMessage(BString& target) const
 // #pragma mark - ExternalEventUnregisteredLogItem
 
 
+/** @brief Constructs an external event unregistered log item. */
 ExternalEventUnregisteredLogItem::ExternalEventUnregisteredLogItem(
 	const char* name)
 	:
@@ -889,11 +1186,13 @@ ExternalEventUnregisteredLogItem::ExternalEventUnregisteredLogItem(
 }
 
 
+/** @brief Destroys the external event unregistered log item. */
 ExternalEventUnregisteredLogItem::~ExternalEventUnregisteredLogItem()
 {
 }
 
 
+/** @brief Returns kExternalEventUnregistered. */
 LogItemType
 ExternalEventUnregisteredLogItem::Type() const
 {
@@ -901,6 +1200,12 @@ ExternalEventUnregisteredLogItem::Type() const
 }
 
 
+/**
+ * @brief Formats the log message indicating an external event was unregistered.
+ *
+ * @param target Output string to receive the message.
+ * @return B_OK always.
+ */
 status_t
 ExternalEventUnregisteredLogItem::GetMessage(BString& target) const
 {

@@ -53,6 +53,14 @@ private:
 };
 
 
+/**
+ * @brief Entry point for the power management daemon.
+ *
+ * Creates the PowerManagementDaemon application, runs its message loop,
+ * and cleans up before exiting.
+ *
+ * @return 0 on normal exit.
+ */
 int
 main(void)
 {
@@ -63,6 +71,13 @@ main(void)
 }
 
 
+/**
+ * @brief Constructs the daemon and initializes power monitors.
+ *
+ * Creates PowerButtonMonitor and LidMonitor instances. Only monitors that
+ * have at least one valid file descriptor are kept. Spawns and resumes
+ * the event loop thread that polls these monitors for activity.
+ */
 PowerManagementDaemon::PowerManagementDaemon()
 	:
 	BServer("application/x-vnd.Haiku-powermanagement", false, NULL),
@@ -93,6 +108,12 @@ PowerManagementDaemon::PowerManagementDaemon()
 }
 
 
+/**
+ * @brief Destroys the daemon and waits for the event loop thread to finish.
+ *
+ * Sets the quit flag, deletes all power monitors, and joins the event
+ * loop thread.
+ */
 PowerManagementDaemon::~PowerManagementDaemon()
 {
 	fQuitRequested = true;
@@ -103,6 +124,12 @@ PowerManagementDaemon::~PowerManagementDaemon()
 }
 
 
+/**
+ * @brief Static thread entry point that delegates to _EventLoop().
+ *
+ * @param arg Pointer to the PowerManagementDaemon instance.
+ * @return B_OK always.
+ */
 status_t
 PowerManagementDaemon::_EventLooper(void* arg)
 {
@@ -112,6 +139,14 @@ PowerManagementDaemon::_EventLooper(void* arg)
 }
 
 
+/**
+ * @brief Main event loop that waits for power-related file descriptor events.
+ *
+ * Builds an array of object_wait_info entries from all monitored file
+ * descriptors and enters a loop calling wait_for_objects(). When a
+ * descriptor becomes readable, the corresponding PowerMonitor's
+ * HandleEvent() is invoked. Exits when fQuitRequested is set.
+ */
 void
 PowerManagementDaemon::_EventLoop()
 {

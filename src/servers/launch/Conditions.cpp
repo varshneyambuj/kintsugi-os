@@ -152,6 +152,16 @@ private:
 };
 
 
+/**
+ * @brief Factory function that instantiates the appropriate Condition subclass by name.
+ *
+ * Recognizes "and", "or", "not", "safemode", "read_only", "file_exists",
+ * "network_available", and "setting".
+ *
+ * @param name The condition type name.
+ * @param args The BMessage containing arguments for the condition.
+ * @return A newly allocated Condition, or NULL if @a name is unrecognized.
+ */
 static Condition*
 create_condition(const char* name, const BMessage& args)
 {
@@ -180,16 +190,26 @@ create_condition(const char* name, const BMessage& args)
 // #pragma mark -
 
 
+/** @brief Constructs the base condition. */
 Condition::Condition()
 {
 }
 
 
+/** @brief Destroys the condition. */
 Condition::~Condition()
 {
 }
 
 
+/**
+ * @brief Returns whether this condition's result is invariant for the given context.
+ *
+ * The default implementation returns @c false (non-constant).
+ *
+ * @param context The condition evaluation context.
+ * @return @c false by default.
+ */
 bool
 Condition::IsConstant(ConditionContext& context) const
 {
@@ -200,6 +220,14 @@ Condition::IsConstant(ConditionContext& context) const
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a condition container by parsing nested conditions from a BMessage.
+ *
+ * Iterates over all B_MESSAGE_TYPE fields in @a args, creating child
+ * conditions via create_condition() and adding them to the internal list.
+ *
+ * @param args The BMessage containing nested condition definitions.
+ */
 ConditionContainer::ConditionContainer(const BMessage& args)
 	:
 	fConditions(10)
@@ -218,6 +246,7 @@ ConditionContainer::ConditionContainer(const BMessage& args)
 }
 
 
+/** @brief Constructs an empty condition container. */
 ConditionContainer::ConditionContainer()
 	:
 	fConditions(10)
@@ -225,6 +254,13 @@ ConditionContainer::ConditionContainer()
 }
 
 
+/**
+ * @brief Adds a child condition to this container.
+ *
+ * NULL conditions are silently ignored.
+ *
+ * @param condition The condition to add (takes ownership).
+ */
 void
 ConditionContainer::AddCondition(Condition* condition)
 {
@@ -252,6 +288,11 @@ ConditionContainer::IsConstant(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Appends a bracketed, comma-separated list of child condition strings to @a string.
+ *
+ * @param string The output string to append to.
+ */
 void
 ConditionContainer::AddConditionsToString(BString& string) const
 {
@@ -269,6 +310,11 @@ ConditionContainer::AddConditionsToString(BString& string) const
 // #pragma mark - and
 
 
+/**
+ * @brief Constructs an AND condition from the given arguments message.
+ *
+ * @param args BMessage containing the child condition definitions.
+ */
 AndCondition::AndCondition(const BMessage& args)
 	:
 	ConditionContainer(args)
@@ -276,11 +322,18 @@ AndCondition::AndCondition(const BMessage& args)
 }
 
 
+/** @brief Constructs an empty AND condition. */
 AndCondition::AndCondition()
 {
 }
 
 
+/**
+ * @brief Tests all child conditions with short-circuit AND logic.
+ *
+ * @param context The condition evaluation context.
+ * @return @c true if all children pass, @c false if any fails.
+ */
 bool
 AndCondition::Test(ConditionContext& context) const
 {
@@ -293,6 +346,11 @@ AndCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns a human-readable string representation of this AND condition.
+ *
+ * @return A string of the form "and [child1, child2, ...]".
+ */
 BString
 AndCondition::ToString() const
 {
@@ -305,6 +363,11 @@ AndCondition::ToString() const
 // #pragma mark - or
 
 
+/**
+ * @brief Constructs an OR condition from the given arguments message.
+ *
+ * @param args BMessage containing the child condition definitions.
+ */
 OrCondition::OrCondition(const BMessage& args)
 	:
 	ConditionContainer(args)
@@ -312,6 +375,14 @@ OrCondition::OrCondition(const BMessage& args)
 }
 
 
+/**
+ * @brief Tests child conditions with short-circuit OR logic.
+ *
+ * Returns @c true if any child passes. An empty OR condition returns @c true.
+ *
+ * @param context The condition evaluation context.
+ * @return @c true if any child passes or the container is empty.
+ */
 bool
 OrCondition::Test(ConditionContext& context) const
 {
@@ -346,6 +417,11 @@ OrCondition::IsConstant(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns a human-readable string representation of this OR condition.
+ *
+ * @return A string of the form "or [child1, child2, ...]".
+ */
 BString
 OrCondition::ToString() const
 {
@@ -358,6 +434,11 @@ OrCondition::ToString() const
 // #pragma mark - or
 
 
+/**
+ * @brief Constructs a NOT condition from the given arguments message.
+ *
+ * @param args BMessage containing the child condition definition to negate.
+ */
 NotCondition::NotCondition(const BMessage& args)
 	:
 	ConditionContainer(args)
@@ -365,11 +446,20 @@ NotCondition::NotCondition(const BMessage& args)
 }
 
 
+/** @brief Constructs an empty NOT condition. */
 NotCondition::NotCondition()
 {
 }
 
 
+/**
+ * @brief Tests all child conditions and negates the result.
+ *
+ * Returns @c false if any child passes, @c true otherwise.
+ *
+ * @param context The condition evaluation context.
+ * @return The negation of the children's combined result.
+ */
 bool
 NotCondition::Test(ConditionContext& context) const
 {
@@ -382,6 +472,11 @@ NotCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns a human-readable string representation of this NOT condition.
+ *
+ * @return A string of the form "not [child1, ...]".
+ */
 BString
 NotCondition::ToString() const
 {
@@ -394,6 +489,12 @@ NotCondition::ToString() const
 // #pragma mark - safemode
 
 
+/**
+ * @brief Tests whether the system is booted in safe mode.
+ *
+ * @param context The condition evaluation context.
+ * @return @c true if safe mode is active.
+ */
 bool
 SafeModeCondition::Test(ConditionContext& context) const
 {
@@ -401,6 +502,12 @@ SafeModeCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Safe mode never changes during a boot, so this is constant.
+ *
+ * @param context The condition evaluation context (unused).
+ * @return @c true always.
+ */
 bool
 SafeModeCondition::IsConstant(ConditionContext& context) const
 {
@@ -408,6 +515,11 @@ SafeModeCondition::IsConstant(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns the string "safemode".
+ *
+ * @return A BString containing "safemode".
+ */
 BString
 SafeModeCondition::ToString() const
 {
@@ -418,6 +530,11 @@ SafeModeCondition::ToString() const
 // #pragma mark - read_only
 
 
+/**
+ * @brief Constructs a read-only condition for the volume at the given path.
+ *
+ * @param args BMessage whose "args" string specifies the path to check.
+ */
 ReadOnlyCondition::ReadOnlyCondition(const BMessage& args)
 	:
 	fPath(args.GetString("args")),
@@ -427,6 +544,16 @@ ReadOnlyCondition::ReadOnlyCondition(const BMessage& args)
 }
 
 
+/**
+ * @brief Tests whether the configured volume is read-only, caching the result.
+ *
+ * On first call, checks the boot volume (if path is empty or "/boot") or
+ * the specified volume via Utility::IsReadOnlyVolume(). Subsequent calls
+ * return the cached result.
+ *
+ * @param context The condition evaluation context.
+ * @return @c true if the volume is read-only.
+ */
 bool
 ReadOnlyCondition::Test(ConditionContext& context) const
 {
@@ -444,6 +571,12 @@ ReadOnlyCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief A volume's read-only state does not change, so this is constant.
+ *
+ * @param context The condition evaluation context (unused).
+ * @return @c true always.
+ */
 bool
 ReadOnlyCondition::IsConstant(ConditionContext& context) const
 {
@@ -451,6 +584,11 @@ ReadOnlyCondition::IsConstant(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns a human-readable string for this read-only condition.
+ *
+ * @return A string of the form "readonly <path>".
+ */
 BString
 ReadOnlyCondition::ToString() const
 {
@@ -463,6 +601,14 @@ ReadOnlyCondition::ToString() const
 // #pragma mark - file_exists
 
 
+/**
+ * @brief Constructs a file-exists condition from the given argument paths.
+ *
+ * Extracts all "args" strings from @a args and resolves home-directory
+ * tokens via Utility::TranslatePath().
+ *
+ * @param args BMessage whose "args" strings are the filesystem paths to check.
+ */
 FileExistsCondition::FileExistsCondition(const BMessage& args)
 {
 	for (int32 index = 0;
@@ -472,6 +618,12 @@ FileExistsCondition::FileExistsCondition(const BMessage& args)
 }
 
 
+/**
+ * @brief Tests whether all configured paths exist on the filesystem.
+ *
+ * @param context The condition evaluation context (unused).
+ * @return @c true if every path exists, @c false if any is missing.
+ */
 bool
 FileExistsCondition::Test(ConditionContext& context) const
 {
@@ -485,6 +637,11 @@ FileExistsCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns a human-readable string listing all paths checked by this condition.
+ *
+ * @return A string of the form "file_exists [path1, path2, ...]".
+ */
 BString
 FileExistsCondition::ToString() const
 {
@@ -502,6 +659,12 @@ FileExistsCondition::ToString() const
 // #pragma mark - network_available
 
 
+/**
+ * @brief Tests whether a usable network interface is currently available.
+ *
+ * @param context The condition evaluation context (unused).
+ * @return @c true if the network is available.
+ */
 bool
 NetworkAvailableCondition::Test(ConditionContext& context) const
 {
@@ -509,6 +672,12 @@ NetworkAvailableCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Network availability can change at any time, so this is non-constant.
+ *
+ * @param context The condition evaluation context (unused).
+ * @return @c false always.
+ */
 bool
 NetworkAvailableCondition::IsConstant(ConditionContext& context) const
 {
@@ -516,6 +685,11 @@ NetworkAvailableCondition::IsConstant(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns the string "network_available".
+ *
+ * @return A BString containing "network_available".
+ */
 BString
 NetworkAvailableCondition::ToString() const
 {
@@ -526,6 +700,15 @@ NetworkAvailableCondition::ToString() const
 // #pragma mark - setting
 
 
+/**
+ * @brief Constructs a setting condition that checks a field value in a settings file.
+ *
+ * Extracts the settings file path, field name, and expected value from
+ * the "args" strings in @a args.
+ *
+ * @param args BMessage with "args" strings: path (index 0), field (index 1),
+ *             and optional value (index 2).
+ */
 SettingCondition::SettingCondition(const BMessage& args)
 {
 	fPath.SetTo(Utility::TranslatePath(args.GetString("args", 0, NULL)));
@@ -534,6 +717,16 @@ SettingCondition::SettingCondition(const BMessage& args)
 }
 
 
+/**
+ * @brief Tests whether the configured setting matches the expected value.
+ *
+ * First attempts to open the file as a flattened BMessage and check the
+ * field by type (bool or string). If that fails, falls back to parsing
+ * the file as driver settings and performing a text search.
+ *
+ * @param context The condition evaluation context (unused).
+ * @return @c true if the setting matches the expected value, @c false otherwise.
+ */
 bool
 SettingCondition::Test(ConditionContext& context) const
 {
@@ -589,6 +782,11 @@ SettingCondition::Test(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Returns a human-readable string describing this setting condition.
+ *
+ * @return A string of the form "setting file <path>, field <field>[, value <value>]".
+ */
 BString
 SettingCondition::ToString() const
 {
@@ -604,6 +802,12 @@ SettingCondition::ToString() const
 // #pragma mark -
 
 
+/**
+ * @brief Creates a compound condition from a BMessage by wrapping it in an AND.
+ *
+ * @param message The BMessage containing condition definitions.
+ * @return A newly allocated Condition tree, or NULL on failure.
+ */
 /*static*/ Condition*
 Conditions::FromMessage(const BMessage& message)
 {
@@ -611,6 +815,16 @@ Conditions::FromMessage(const BMessage& message)
 }
 
 
+/**
+ * @brief Wraps an existing condition with a "not safemode" guard.
+ *
+ * If @a condition is already an AndCondition, appends a "not safemode"
+ * child to it. Otherwise, creates a new AndCondition containing both
+ * the original condition and the "not safemode" guard.
+ *
+ * @param condition The existing condition to augment (may be NULL).
+ * @return The augmented condition tree.
+ */
 /*static*/ Condition*
 Conditions::AddNotSafeMode(Condition* condition)
 {

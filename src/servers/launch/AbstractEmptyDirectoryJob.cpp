@@ -34,6 +34,11 @@
 #include <Entry.h>
 
 
+/**
+ * @brief Constructs the abstract empty-directory job with the given name.
+ *
+ * @param name The human-readable job name used for logging and identification.
+ */
 AbstractEmptyDirectoryJob::AbstractEmptyDirectoryJob(const BString& name)
 	:
 	BJob(name)
@@ -41,6 +46,15 @@ AbstractEmptyDirectoryJob::AbstractEmptyDirectoryJob(const BString& name)
 }
 
 
+/**
+ * @brief Ensures a directory exists at @a path and removes all its contents.
+ *
+ * If the directory does not exist, it is created with mode 0777. Then all
+ * entries within it (including subdirectories) are recursively removed.
+ *
+ * @param path Absolute filesystem path of the directory to create and empty.
+ * @return B_OK on success, or an error code if creation or emptying fails.
+ */
 status_t
 AbstractEmptyDirectoryJob::CreateAndEmpty(const char* path) const
 {
@@ -60,6 +74,16 @@ AbstractEmptyDirectoryJob::CreateAndEmpty(const char* path) const
 }
 
 
+/**
+ * @brief Recursively empties a directory, optionally removing it afterwards.
+ *
+ * Iterates over all entries in @a directoryEntry. Subdirectories are emptied
+ * recursively and then removed; plain files are removed immediately.
+ *
+ * @param directoryEntry The BEntry for the directory to empty.
+ * @param remove         If @c true, remove the directory entry itself after emptying.
+ * @return B_OK on success, or the error from BEntry::Remove() on failure.
+ */
 status_t
 AbstractEmptyDirectoryJob::_EmptyDirectory(BEntry& directoryEntry,
 	bool remove) const

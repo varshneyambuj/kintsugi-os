@@ -39,6 +39,11 @@
 #include "Package.h"
 
 
+/**
+ * @brief Constructs a PackageFileManager that uses the given lock for synchronization.
+ *
+ * @param lock External lock shared with the Volume for thread safety.
+ */
 PackageFileManager::PackageFileManager(BLocker& lock)
 	:
 	fLock(lock),
@@ -47,11 +52,17 @@ PackageFileManager::PackageFileManager(BLocker& lock)
 }
 
 
+/** @brief Destroys the PackageFileManager. */
 PackageFileManager::~PackageFileManager()
 {
 }
 
 
+/**
+ * @brief Initializes the internal entry-ref hash table.
+ *
+ * @return B_OK on success, or an error code if hash table initialization fails.
+ */
 status_t
 PackageFileManager::Init()
 {
@@ -59,6 +70,18 @@ PackageFileManager::Init()
 }
 
 
+/**
+ * @brief Retrieves or creates a PackageFile for the given entry_ref.
+ *
+ * If a live PackageFile already exists in the cache for this entry_ref,
+ * its reference count is incremented and it is returned. Otherwise a new
+ * PackageFile is created, initialized from the on-disk file, and inserted
+ * into the cache.
+ *
+ * @param entryRef The entry_ref of the .hpkg file.
+ * @param _file    Output: the PackageFile with an acquired reference.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 PackageFileManager::GetPackageFile(const entry_ref& entryRef,
 	PackageFile*& _file)
@@ -93,6 +116,16 @@ PackageFileManager::GetPackageFile(const entry_ref& entryRef,
 }
 
 
+/**
+ * @brief Creates a new Package object backed by a (possibly cached) PackageFile.
+ *
+ * Calls GetPackageFile() to obtain the underlying PackageFile, then wraps
+ * it in a new Package instance.
+ *
+ * @param entryRef  The entry_ref of the .hpkg file.
+ * @param _package  Output: the newly created Package.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or another error.
+ */
 status_t
 PackageFileManager::CreatePackage(const entry_ref& entryRef, Package*& _package)
 {
@@ -107,6 +140,15 @@ PackageFileManager::CreatePackage(const entry_ref& entryRef, Package*& _package)
 }
 
 
+/**
+ * @brief Updates the cache when a PackageFile moves to a new directory.
+ *
+ * Removes the file from the hash table under its old entry_ref, updates
+ * its directory reference, then re-inserts it.
+ *
+ * @param file         The PackageFile that was moved.
+ * @param newDirectory The node_ref of the file's new parent directory.
+ */
 void
 PackageFileManager::PackageFileMoved(PackageFile* file,
 	const node_ref& newDirectory)
@@ -122,6 +164,14 @@ PackageFileManager::PackageFileMoved(PackageFile* file,
 }
 
 
+/**
+ * @brief Removes a PackageFile from the entry-ref cache.
+ *
+ * Called when the last reference to a PackageFile is released, just
+ * before the object is deleted.
+ *
+ * @param file The PackageFile to remove from the cache.
+ */
 void
 PackageFileManager::RemovePackageFile(PackageFile* file)
 {

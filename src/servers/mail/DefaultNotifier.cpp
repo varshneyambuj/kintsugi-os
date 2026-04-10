@@ -39,6 +39,17 @@
 #define B_TRANSLATION_CONTEXT "Notifier"
 
 
+/**
+ * @brief Constructs a default mail notifier for a given account.
+ *
+ * Sets up a progress notification with the mail daemon icon and an
+ * appropriate title for inbound or outbound operations.
+ *
+ * @param accountName Name of the mail account.
+ * @param inbound     True for incoming mail, false for outgoing.
+ * @param errorWindow Window to display error/status messages.
+ * @param showMode    Bitmask controlling when notifications are shown.
+ */
 DefaultNotifier::DefaultNotifier(const char* accountName, bool inbound,
 	ErrorLogWindow* errorWindow, uint32 showMode)
 	:
@@ -73,11 +84,17 @@ DefaultNotifier::DefaultNotifier(const char* accountName, bool inbound,
 }
 
 
+/** @brief Destroys the default notifier. */
 DefaultNotifier::~DefaultNotifier()
 {
 }
 
 
+/**
+ * @brief Creates a copy of this notifier with the same settings.
+ *
+ * @return A new DefaultNotifier instance.
+ */
 BMailNotifier*
 DefaultNotifier::Clone()
 {
@@ -86,6 +103,11 @@ DefaultNotifier::Clone()
 }
 
 
+/**
+ * @brief Displays an error message in the error log window.
+ *
+ * @param error The error message text.
+ */
 void
 DefaultNotifier::ShowError(const char* error)
 {
@@ -93,6 +115,11 @@ DefaultNotifier::ShowError(const char* error)
 }
 
 
+/**
+ * @brief Displays an informational message in the error log window.
+ *
+ * @param message The message text.
+ */
 void
 DefaultNotifier::ShowMessage(const char* message)
 {
@@ -100,6 +127,11 @@ DefaultNotifier::ShowMessage(const char* message)
 }
 
 
+/**
+ * @brief Sets the total number of messages to process and updates the notification.
+ *
+ * @param items Total message count.
+ */
 void
 DefaultNotifier::SetTotalItems(uint32 items)
 {
@@ -110,6 +142,11 @@ DefaultNotifier::SetTotalItems(uint32 items)
 }
 
 
+/**
+ * @brief Sets the total byte size of all messages and updates the progress bar.
+ *
+ * @param size Total size in bytes.
+ */
 void
 DefaultNotifier::SetTotalItemsSize(uint64 size)
 {
@@ -118,6 +155,17 @@ DefaultNotifier::SetTotalItemsSize(uint64 size)
 }
 
 
+/**
+ * @brief Reports incremental progress in message processing.
+ *
+ * Updates the progress bar and notification content based on the number
+ * of bytes and messages processed so far. Sends the notification if
+ * the show mode allows it.
+ *
+ * @param messages Number of messages just completed.
+ * @param bytes    Number of bytes just transferred.
+ * @param message  Status text to display.
+ */
 void
 DefaultNotifier::ReportProgress(uint32 messages, uint64 bytes,
 	const char* message)
@@ -154,6 +202,11 @@ DefaultNotifier::ReportProgress(uint32 messages, uint64 bytes,
 }
 
 
+/**
+ * @brief Resets progress counters and optionally updates the notification title.
+ *
+ * @param message Optional new title text, or NULL to keep the current title.
+ */
 void
 DefaultNotifier::ResetProgress(const char* message)
 {
@@ -166,6 +219,11 @@ DefaultNotifier::ResetProgress(const char* message)
 }
 
 
+/**
+ * @brief Sends the notification if the current show mode permits it.
+ *
+ * @param timeout Notification auto-dismiss timeout in seconds.
+ */
 void
 DefaultNotifier::_NotifyIfAllowed(int timeout)
 {

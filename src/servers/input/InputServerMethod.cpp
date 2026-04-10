@@ -34,8 +34,13 @@
 #include "InputServerTypes.h"
 #include "remote_icon.h"
 /**
- *  Method: BInputServerMethod::BInputServerMethod()
- *   Descr: 
+ * @brief Constructs an input method add-on with the given name and icon.
+ *
+ * Allocates the internal _BMethodAddOn_ helper that manages the method's
+ * state in the Deskbar replicant.
+ *
+ * @param name Display name of this input method.
+ * @param icon Raw 16x16 CMAP8 icon data, or NULL for a default icon.
  */
 BInputServerMethod::BInputServerMethod(const char *name,
                                        const uchar *icon)
@@ -46,8 +51,7 @@ BInputServerMethod::BInputServerMethod(const char *name,
 
 
 /**
- *  Method: BInputServerMethod::~BInputServerMethod()
- *   Descr: 
+ * @brief Destructor; deletes the internal _BMethodAddOn_ helper.
  */
 BInputServerMethod::~BInputServerMethod()
 {
@@ -57,8 +61,13 @@ BInputServerMethod::~BInputServerMethod()
 
 
 /**
- *  Method: BInputServerMethod::MethodActivated()
- *   Descr: 
+ * @brief Called when this input method is activated or deactivated.
+ *
+ * The default implementation does nothing. Subclasses may override to
+ * perform setup or teardown when the method gains or loses focus.
+ *
+ * @param active @c true if the method is being activated, @c false if deactivated.
+ * @return B_OK.
  */
 status_t
 BInputServerMethod::MethodActivated(bool active)
@@ -68,8 +77,10 @@ BInputServerMethod::MethodActivated(bool active)
 
 
 /**
- *  Method: BInputServerMethod::EnqueueMessage()
- *   Descr: 
+ * @brief Enqueues a message into the input server's method event queue.
+ *
+ * @param message The message to enqueue. Ownership transfers on success.
+ * @return B_OK on success, or an error code on failure.
  */
 status_t
 BInputServerMethod::EnqueueMessage(BMessage *message)
@@ -79,8 +90,10 @@ BInputServerMethod::EnqueueMessage(BMessage *message)
 
 
 /**
- *  Method: BInputServerMethod::SetName()
- *   Descr: 
+ * @brief Changes the display name of this input method in the Deskbar replicant.
+ *
+ * @param name The new display name.
+ * @return B_OK on success, or an error code on failure.
  */
 status_t
 BInputServerMethod::SetName(const char *name)
@@ -90,8 +103,10 @@ BInputServerMethod::SetName(const char *name)
 
 
 /**
- *  Method: BInputServerMethod::SetIcon()
- *   Descr: 
+ * @brief Changes the icon of this input method in the Deskbar replicant.
+ *
+ * @param icon Raw 16x16 CMAP8 icon data, or NULL for a default icon.
+ * @return B_OK on success, or an error code on failure.
  */
 status_t
 BInputServerMethod::SetIcon(const uchar *icon)
@@ -101,8 +116,13 @@ BInputServerMethod::SetIcon(const uchar *icon)
 
 
 /**
- *  Method: BInputServerMethod::SetMenu()
- *   Descr: 
+ * @brief Sets the popup submenu and its target messenger for this input method.
+ *
+ * Updates the Deskbar replicant so the user can access method-specific options.
+ *
+ * @param menu   The popup menu to display, or NULL to remove the current one.
+ * @param target The messenger that should receive messages from menu items.
+ * @return B_OK on success, or an error code on failure.
  */
 status_t
 BInputServerMethod::SetMenu(const BMenu *menu,
@@ -112,49 +132,48 @@ BInputServerMethod::SetMenu(const BMenu *menu,
 }
 
 
-/**
- *  Method: BInputServerMethod::_ReservedInputServerMethod1()
- *   Descr: 
- */
+/** @brief Reserved for future binary compatibility. */
 void
 BInputServerMethod::_ReservedInputServerMethod1()
 {
 }
 
 
-/**
- *  Method: BInputServerMethod::_ReservedInputServerMethod2()
- *   Descr: 
- */
+/** @brief Reserved for future binary compatibility. */
 void
 BInputServerMethod::_ReservedInputServerMethod2()
 {
 }
 
 
-/**
- *  Method: BInputServerMethod::_ReservedInputServerMethod3()
- *   Descr: 
- */
+/** @brief Reserved for future binary compatibility. */
 void
 BInputServerMethod::_ReservedInputServerMethod3()
 {
 }
 
 
-/**
- *  Method: BInputServerMethod::_ReservedInputServerMethod4()
- *   Descr: 
- */
+/** @brief Reserved for future binary compatibility. */
 void
 BInputServerMethod::_ReservedInputServerMethod4()
 {
 }
 
 
+/** @brief Monotonically increasing cookie counter used to assign unique IDs to methods. */
 static int32 sNextMethodCookie = 1;
 
 
+/**
+ * @brief Constructs the internal add-on state for an input method.
+ *
+ * Duplicates the name, copies or zeroes the icon data, and assigns a unique
+ * cookie for identifying this method in the Deskbar replicant.
+ *
+ * @param method Pointer to the owning BInputServerMethod.
+ * @param name   Display name of the method (strdup'd).
+ * @param icon   Raw 16x16 CMAP8 icon data, or NULL for a grey default.
+ */
 _BMethodAddOn_::_BMethodAddOn_(BInputServerMethod *method, const char *name,
 	const uchar *icon)
 	: fMethod(method),
@@ -169,6 +188,9 @@ _BMethodAddOn_::_BMethodAddOn_(BInputServerMethod *method, const char *name,
 }
 
 
+/**
+ * @brief Destructor; frees the name and popup menu.
+ */
 _BMethodAddOn_::~_BMethodAddOn_()
 {
 	free(fName);
@@ -176,6 +198,12 @@ _BMethodAddOn_::~_BMethodAddOn_()
 }
 
 
+/**
+ * @brief Updates this method's display name and notifies the Deskbar replicant.
+ *
+ * @param name The new display name.
+ * @return B_OK on success, or B_ERROR if the replicant messenger is unavailable.
+ */
 status_t
 _BMethodAddOn_::SetName(const char* name)
 {
@@ -195,9 +223,15 @@ _BMethodAddOn_::SetName(const char* name)
 }
 
 
+/**
+ * @brief Updates this method's icon and notifies the Deskbar replicant.
+ *
+ * @param icon Raw 16x16 CMAP8 icon data, or NULL for a grey default.
+ * @return B_OK on success, or B_ERROR if the replicant messenger is unavailable.
+ */
 status_t
 _BMethodAddOn_::SetIcon(const uchar* icon)
-{	
+{
 	CALLED();
 
 	if (icon != NULL)
@@ -215,6 +249,13 @@ _BMethodAddOn_::SetIcon(const uchar* icon)
 }
 
 
+/**
+ * @brief Updates the popup menu and its target, notifying the Deskbar replicant.
+ *
+ * @param menu      The popup menu to archive and send, or NULL.
+ * @param messenger The messenger that should receive menu item messages.
+ * @return B_OK on success, or B_ERROR if the replicant messenger is unavailable.
+ */
 status_t
 _BMethodAddOn_::SetMenu(const BMenu *menu, const BMessenger &messenger)
 {
@@ -236,6 +277,13 @@ _BMethodAddOn_::SetMenu(const BMenu *menu, const BMessenger &messenger)
 }
 
 
+/**
+ * @brief Activates or deactivates this method, updating the Deskbar replicant and
+ *        calling through to the owning BInputServerMethod.
+ *
+ * @param activate @c true to activate, @c false to deactivate.
+ * @return B_OK on success, or B_ERROR if no owning method is set.
+ */
 status_t
 _BMethodAddOn_::MethodActivated(bool activate)
 {
@@ -253,6 +301,14 @@ _BMethodAddOn_::MethodActivated(bool activate)
 }
 
 
+/**
+ * @brief Sends an IS_ADD_METHOD message to the Deskbar replicant to register this method.
+ *
+ * Packs the cookie, name, icon, menu, and target messenger into a BMessage
+ * and sends it to the method replicant.
+ *
+ * @return B_OK on success, or B_ERROR if the replicant messenger is unavailable.
+ */
 status_t
 _BMethodAddOn_::AddMethod()
 {
@@ -273,6 +329,11 @@ _BMethodAddOn_::AddMethod()
 }
 
 
+/**
+ * @brief Constructs the built-in Roman keymap input method.
+ *
+ * Uses the "Roman" display name and the default remote icon bitmap.
+ */
 KeymapMethod::KeymapMethod()
         : BInputServerMethod("Roman", kRemoteBits)
 {
@@ -280,6 +341,7 @@ KeymapMethod::KeymapMethod()
 }
 
 
+/** @brief Destructor. */
 KeymapMethod::~KeymapMethod()
 {
 

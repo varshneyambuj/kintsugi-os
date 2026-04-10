@@ -66,9 +66,13 @@
 #define B_TRANSLATION_CONTEXT "AutoMounter"
 
 
+/** @brief Name of the mount server settings file. */
 static const char* kMountServerSettings = "mount_server";
+
+/** @brief Suffix appended to a device path to form the mount flags settings key. */
 static const char* kMountFlagsKeyExtension = " mount flags";
 
+/** @brief Name of the launch roster event fired after initial volumes are mounted. */
 static const char* kInitialMountEvent = "initial_volumes_mounted";
 
 
@@ -126,6 +130,11 @@ private:
 };
 
 
+/**
+ * @brief Returns whether the system was booted in safe mode.
+ *
+ * @return @c true if the SAFEMODE environment variable is set to "yes".
+ */
 static bool
 BootedInSafeMode()
 {
@@ -150,6 +159,15 @@ private:
 // #pragma mark - MountVisitor
 
 
+/**
+ * @brief Constructs a mount visitor with the specified mount policies.
+ *
+ * @param normalMode    Mount mode for normal (non-removable) volumes.
+ * @param removableMode Mount mode for removable media.
+ * @param initialRescan Whether this is the initial volume scan at startup.
+ * @param previous      Message containing previously mounted volume info.
+ * @param deviceID      If >= 0, restricts mounting to partitions on this device only.
+ */
 MountVisitor::MountVisitor(mount_mode normalMode, mount_mode removableMode,
 		bool initialRescan, BMessage& previous, partition_id deviceID)
 	:
@@ -162,6 +180,12 @@ MountVisitor::MountVisitor(mount_mode normalMode, mount_mode removableMode,
 }
 
 
+/**
+ * @brief Visits a disk device by delegating to the partition visitor at level 0.
+ *
+ * @param device The disk device to visit.
+ * @return @c false to continue visiting.
+ */
 bool
 MountVisitor::Visit(BDiskDevice* device)
 {
@@ -169,6 +193,16 @@ MountVisitor::Visit(BDiskDevice* device)
 }
 
 
+/**
+ * @brief Determines whether a partition should be mounted and mounts it.
+ *
+ * Applies the configured mount mode, checks device ID restrictions,
+ * and consults previous-mount state or content type as needed.
+ *
+ * @param partition The partition to evaluate.
+ * @param level     Nesting level in the partition tree.
+ * @return @c false to continue visiting other partitions.
+ */
 bool
 MountVisitor::Visit(BPartition* partition, int32 level)
 {
@@ -230,6 +264,13 @@ MountVisitor::Visit(BPartition* partition, int32 level)
 }
 
 
+/**
+ * @brief Checks legacy config data to see if a partition was previously mounted.
+ *
+ * @param path      Path to the partition device.
+ * @param partition The partition to check.
+ * @return @c true if the partition's content name matches the stored name.
+ */
 bool
 MountVisitor::_WasPreviouslyMounted(const BPath& path,
 	const BPartition* partition)
@@ -249,6 +290,12 @@ MountVisitor::_WasPreviouslyMounted(const BPath& path,
 // #pragma mark - MountArchivedVisitor
 
 
+/**
+ * @brief Constructs a visitor that scores partitions against archived volume metadata.
+ *
+ * @param devices  The disk device list to search.
+ * @param archived A BMessage containing the archived volume properties.
+ */
 MountArchivedVisitor::MountArchivedVisitor(const BDiskDeviceList& devices,
 		const BMessage& archived)
 	:
@@ -260,6 +307,9 @@ MountArchivedVisitor::MountArchivedVisitor(const BDiskDeviceList& devices,
 }
 
 
+/**
+ * @brief Destructor that mounts the best-scoring partition if it meets minimum criteria.
+ */
 MountArchivedVisitor::~MountArchivedVisitor()
 {
 	// At least these fields, plus one other besides, must match for us to auto-mount.
@@ -276,6 +326,7 @@ MountArchivedVisitor::~MountArchivedVisitor()
 }
 
 
+/** @brief Visits a device by delegating to the partition visitor at level 0. */
 bool
 MountArchivedVisitor::Visit(BDiskDevice* device)
 {
@@ -283,6 +334,13 @@ MountArchivedVisitor::Visit(BDiskDevice* device)
 }
 
 
+/**
+ * @brief Scores an unmounted partition against the archived volume properties.
+ *
+ * @param partition The partition to evaluate.
+ * @param level     Nesting level (unused).
+ * @return @c false to continue visiting.
+ */
 bool
 MountArchivedVisitor::Visit(BPartition* partition, int32 level)
 {
@@ -299,6 +357,12 @@ MountArchivedVisitor::Visit(BPartition* partition, int32 level)
 }
 
 
+/**
+ * @brief Computes a bitmask score for how well a partition matches archived properties.
+ *
+ * @param partition The partition to score.
+ * @return A bitmask of MATCHES_* flags indicating which properties matched.
+ */
 int
 MountArchivedVisitor::_Score(BPartition* partition)
 {
@@ -335,6 +399,11 @@ MountArchivedVisitor::_Score(BPartition* partition)
 // #pragma mark - ArchiveVisitor
 
 
+/**
+ * @brief Constructs an archive visitor that stores partition info in the given message.
+ *
+ * @param message Output message to populate with partition archive data.
+ */
 ArchiveVisitor::ArchiveVisitor(BMessage& message)
 	:
 	fMessage(message)
@@ -342,11 +411,13 @@ ArchiveVisitor::ArchiveVisitor(BMessage& message)
 }
 
 
+/** @brief Destructor (no-op). */
 ArchiveVisitor::~ArchiveVisitor()
 {
 }
 
 
+/** @brief Visits a device by delegating to the partition visitor at level 0. */
 bool
 ArchiveVisitor::Visit(BDiskDevice* device)
 {
@@ -354,6 +425,13 @@ ArchiveVisitor::Visit(BDiskDevice* device)
 }
 
 
+/**
+ * @brief Archives a partition's metadata (block size, capacity, names, mount flags).
+ *
+ * @param partition The partition to archive.
+ * @param level     Nesting level (unused).
+ * @return @c false to continue visiting.
+ */
 bool
 ArchiveVisitor::Visit(BPartition* partition, int32 level)
 {
@@ -388,6 +466,12 @@ ArchiveVisitor::Visit(BPartition* partition, int32 level)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the AutoMounter server and reads initial settings.
+ *
+ * Registers for device notifications and the initial mount event.
+ * In safe mode, all automounting is disabled.
+ */
 AutoMounter::AutoMounter()
 	:
 	BServer(kMountServerSignature, false, NULL),
@@ -411,6 +495,7 @@ AutoMounter::AutoMounter()
 }
 
 
+/** @brief Unregisters events and stops device watching. */
 AutoMounter::~AutoMounter()
 {
 	BLaunchRoster().UnregisterEvent(this, kInitialMountEvent);
@@ -418,6 +503,9 @@ AutoMounter::~AutoMounter()
 }
 
 
+/**
+ * @brief Performs the initial volume scan and notifies the launch roster.
+ */
 void
 AutoMounter::ReadyToRun()
 {
@@ -427,6 +515,11 @@ AutoMounter::ReadyToRun()
 }
 
 
+/**
+ * @brief Dispatches mount/unmount requests, settings changes, and device events.
+ *
+ * @param message The incoming BMessage to process.
+ */
 void
 AutoMounter::MessageReceived(BMessage* message)
 {
@@ -576,6 +669,11 @@ AutoMounter::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Saves settings on quit unless in safe mode.
+ *
+ * @return @c true to allow the application to quit.
+ */
 bool
 AutoMounter::QuitRequested()
 {
@@ -592,6 +690,14 @@ AutoMounter::QuitRequested()
 // #pragma mark - private methods
 
 
+/**
+ * @brief Scans disk devices and mounts partitions according to the given modes.
+ *
+ * @param normal        Mount mode for non-removable volumes.
+ * @param removable     Mount mode for removable media.
+ * @param initialRescan Whether this is the initial startup scan (default false).
+ * @param deviceID      If >= 0, restricts mounting to this device (default -1).
+ */
 void
 AutoMounter::_MountVolumes(mount_mode normal, mount_mode removable,
 	bool initialRescan, partition_id deviceID)
@@ -619,6 +725,13 @@ AutoMounter::_MountVolumes(mount_mode normal, mount_mode removable,
 }
 
 
+/**
+ * @brief Mounts a specific partition identified by ID from a BMessage.
+ *
+ * Shows an error alert if mounting fails and a GUI context is available.
+ *
+ * @param message The message containing an "id" int32 field.
+ */
 void
 AutoMounter::_MountVolume(const BMessage* message)
 {
@@ -649,6 +762,13 @@ AutoMounter::_MountVolume(const BMessage* message)
 }
 
 
+/**
+ * @brief Asks the user whether to force-unmount a volume after a failed unmount.
+ *
+ * @param name  The volume name to display in the alert.
+ * @param error The error code from the failed unmount attempt.
+ * @return @c true if the user chose to force-unmount.
+ */
 bool
 AutoMounter::_SuggestForceUnmount(const char* name, status_t error)
 {
@@ -673,6 +793,12 @@ AutoMounter::_SuggestForceUnmount(const char* name, status_t error)
 }
 
 
+/**
+ * @brief Displays an error alert for a failed unmount operation.
+ *
+ * @param name  The volume name.
+ * @param error The error code from the failed unmount.
+ */
 void
 AutoMounter::_ReportUnmountError(const char* name, status_t error)
 {
@@ -690,6 +816,17 @@ AutoMounter::_ReportUnmountError(const char* name, status_t error)
 }
 
 
+/**
+ * @brief Unmounts and optionally ejects a volume.
+ *
+ * If the initial unmount fails, offers force-unmount. After successful
+ * unmount, ejects the device if no other mounted partitions remain and
+ * removes the mount point directory if it resides on rootfs.
+ *
+ * @param partition  The partition to unmount, or NULL to unmount by path.
+ * @param mountPoint The mount point path.
+ * @param name       Human-readable volume name for error messages.
+ */
 void
 AutoMounter::_UnmountAndEjectVolume(BPartition* partition, BPath& mountPoint,
 	const char* name)
@@ -772,6 +909,11 @@ AutoMounter::_UnmountAndEjectVolume(BPartition* partition, BPath& mountPoint,
 }
 
 
+/**
+ * @brief Unmounts and ejects a volume identified by partition ID or device ID in a message.
+ *
+ * @param message The message containing "id" (partition_id) or "device_id" (dev_t).
+ */
 void
 AutoMounter::_UnmountAndEjectVolume(BMessage* message)
 {
@@ -816,6 +958,14 @@ AutoMounter::_UnmountAndEjectVolume(BMessage* message)
 }
 
 
+/**
+ * @brief Decomposes a mount_mode enum into individual boolean flags.
+ *
+ * @param mode    The mount mode to decompose.
+ * @param all     Output: set if mode is kAllVolumes.
+ * @param bfs     Output: set if mode is kOnlyBFSVolumes.
+ * @param restore Output: set if mode is kRestorePreviousVolumes.
+ */
 void
 AutoMounter::_FromMode(mount_mode mode, bool& all, bool& bfs, bool& restore)
 {
@@ -838,6 +988,14 @@ AutoMounter::_FromMode(mount_mode mode, bool& all, bool& bfs, bool& restore)
 }
 
 
+/**
+ * @brief Converts individual boolean flags into a mount_mode enum value.
+ *
+ * @param all     If true, returns kAllVolumes.
+ * @param bfs     If true, returns kOnlyBFSVolumes.
+ * @param restore If true, returns kRestorePreviousVolumes.
+ * @return The corresponding mount_mode, or kNoVolumes if all flags are false.
+ */
 mount_mode
 AutoMounter::_ToMode(bool all, bool bfs, bool restore)
 {
@@ -852,6 +1010,12 @@ AutoMounter::_ToMode(bool all, bool bfs, bool restore)
 }
 
 
+/**
+ * @brief Reads automounter settings from the user settings file.
+ *
+ * Opens or creates the prefs file, unflattens the stored BMessage, and
+ * updates the mount modes and eject preference from it.
+ */
 void
 AutoMounter::_ReadSettings()
 {
@@ -909,6 +1073,9 @@ AutoMounter::_ReadSettings()
 }
 
 
+/**
+ * @brief Persists the current automounter settings to the user settings file.
+ */
 void
 AutoMounter::_WriteSettings()
 {
@@ -939,6 +1106,11 @@ AutoMounter::_WriteSettings()
 }
 
 
+/**
+ * @brief Updates mount modes and eject preference from a settings BMessage.
+ *
+ * @param message The message containing automounter parameter fields.
+ */
 void
 AutoMounter::_UpdateSettingsFromMessage(BMessage* message)
 {
@@ -970,6 +1142,11 @@ AutoMounter::_UpdateSettingsFromMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Populates a BMessage with the current settings and mounted partition archive.
+ *
+ * @param message The output message to fill with current settings.
+ */
 void
 AutoMounter::_GetSettings(BMessage *message)
 {
@@ -995,6 +1172,16 @@ AutoMounter::_GetSettings(BMessage *message)
 }
 
 
+/**
+ * @brief Determines the mount flags for a partition, possibly asking the user.
+ *
+ * For non-BFS partitions on writable media, shows a dialog suggesting
+ * read-only mounting for data safety.
+ *
+ * @param partition The partition about to be mounted.
+ * @param _flags    Output: the mount flags to use.
+ * @return @c true if mounting should proceed, @c false if the user cancelled.
+ */
 /*static*/ bool
 AutoMounter::_SuggestMountFlags(const BPartition* partition, uint32* _flags)
 {
@@ -1058,6 +1245,13 @@ AutoMounter::_SuggestMountFlags(const BPartition* partition, uint32* _flags)
 // #pragma mark -
 
 
+/**
+ * @brief Entry point for the mount server process.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return 0 on normal exit.
+ */
 int
 main(int argc, char* argv[])
 {

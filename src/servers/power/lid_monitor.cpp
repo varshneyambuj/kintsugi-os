@@ -38,6 +38,12 @@
 #include <RosterPrivate.h>
 
 
+/**
+ * @brief Constructs the lid monitor and opens the ACPI lid device.
+ *
+ * Attempts to open /dev/power/acpi_lid/0 for reading and, if successful,
+ * inserts the file descriptor into the monitored descriptor set.
+ */
 LidMonitor::LidMonitor()
 {
 	int fd = open("/dev/power/acpi_lid/0", O_RDONLY);
@@ -46,6 +52,7 @@ LidMonitor::LidMonitor()
 }
 
 
+/** @brief Destroys the lid monitor and closes all monitored file descriptors. */
 LidMonitor::~LidMonitor()
 {
 	for (std::set<int>::iterator it = fFDs.begin(); it != fFDs.end(); ++it)
@@ -53,6 +60,14 @@ LidMonitor::~LidMonitor()
 }
 
 
+/**
+ * @brief Handles a lid open/close event from the given file descriptor.
+ *
+ * Reads one byte of status from the descriptor. If the status byte
+ * indicates the lid is open (value 1), a diagnostic message is printed.
+ *
+ * @param fd File descriptor that triggered the read-ready event.
+ */
 void
 LidMonitor::HandleEvent(int fd)
 {

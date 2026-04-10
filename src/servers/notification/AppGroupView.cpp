@@ -47,6 +47,16 @@
 #include "NotificationView.h"
 
 
+/**
+ * @brief Constructs a group view that holds notifications for one application group.
+ *
+ * Sets up the header area (collapse arrow, label, close button) and a vertical
+ * group layout with top inset equal to the header height.
+ *
+ * @param messenger BMessenger targeting the NotificationWindow, used to send
+ *                  removal requests.
+ * @param label     Application or group name displayed in the header; may be NULL.
+ */
 AppGroupView::AppGroupView(const BMessenger& messenger, const char* label)
 	:
 	BGroupView("appGroup", B_VERTICAL, 0),
@@ -63,6 +73,14 @@ AppGroupView::AppGroupView(const BMessenger& messenger, const char* label)
 }
 
 
+/**
+ * @brief Draws the group header: background, collapse arrow, close button, and label.
+ *
+ * The header background uses the tinted panel colour.  When collapsed, the
+ * child count is appended to the label.
+ *
+ * @param updateRect The dirty rectangle that needs to be redrawn.
+ */
 void
 AppGroupView::Draw(BRect updateRect)
 {
@@ -122,6 +140,14 @@ AppGroupView::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Draws the X-shaped close/dismiss button in the group header.
+ *
+ * If the button is in a clicked state, a depressed button frame is drawn
+ * behind the X glyph with a slightly darker tint.
+ *
+ * @param updateRect The dirty rectangle used for clipping.
+ */
 void
 AppGroupView::DrawCloseButton(const BRect& updateRect)
 {
@@ -150,6 +176,11 @@ AppGroupView::DrawCloseButton(const BRect& updateRect)
 }
 
 
+/**
+ * @brief Returns the size (width and height) of the close button in pixels.
+ *
+ * @return The close button dimension derived from the default label spacing.
+ */
 float
 AppGroupView::CloseButtonSize() const
 {
@@ -157,6 +188,16 @@ AppGroupView::CloseButtonSize() const
 }
 
 
+/**
+ * @brief Handles mouse clicks on the header's close and collapse buttons.
+ *
+ * A click on the close button removes all child notification views and asks
+ * the parent window to remove this group.  A click on the collapse arrow
+ * toggles the collapsed state, hiding or showing the child views.
+ * Clicks are ignored when preview mode is active.
+ *
+ * @param point The location of the mouse click in view coordinates.
+ */
 void
 AppGroupView::MouseDown(BPoint point)
 {
@@ -200,6 +241,15 @@ AppGroupView::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Handles the kRemoveView message to remove a single notification view.
+ *
+ * Locates the NotificationView pointer in the message, removes it from the
+ * internal list and the view hierarchy, and forwards the message to the parent
+ * window.  If no children remain, requests that this group itself be removed.
+ *
+ * @param msg The incoming BMessage.
+ */
 void
 AppGroupView::MessageReceived(BMessage* msg)
 {
@@ -235,6 +285,16 @@ AppGroupView::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Adds a notification view to this group, replacing an existing one with the same ID.
+ *
+ * If a notification with the same MessageID already exists, it is replaced
+ * in-place (emitting a progress beep if the percentage changed).  Otherwise
+ * the new view is appended.  All siblings are invalidated so close buttons
+ * update, and the group is shown if it was hidden.
+ *
+ * @param view The NotificationView to add; ownership is transferred to the layout.
+ */
 void
 AppGroupView::AddInfo(NotificationView* view)
 {
@@ -280,6 +340,11 @@ AppGroupView::AddInfo(NotificationView* view)
 }
 
 
+/**
+ * @brief Enables or disables preview mode, which suppresses mouse interaction.
+ *
+ * @param enabled @c true to enter preview mode, @c false to leave it.
+ */
 void
 AppGroupView::SetPreviewModeOn(bool enabled)
 {
@@ -287,6 +352,11 @@ AppGroupView::SetPreviewModeOn(bool enabled)
 }
 
 
+/**
+ * @brief Returns the group label string.
+ *
+ * @return A reference to the group name.
+ */
 const BString&
 AppGroupView::Group() const
 {
@@ -294,6 +364,11 @@ AppGroupView::Group() const
 }
 
 
+/**
+ * @brief Changes the group label and invalidates the header for redrawing.
+ *
+ * @param group The new group name.
+ */
 void
 AppGroupView::SetGroup(const char* group)
 {
@@ -302,6 +377,11 @@ AppGroupView::SetGroup(const char* group)
 }
 
 
+/**
+ * @brief Returns whether this group contains any notification views.
+ *
+ * @return @c true if at least one child notification exists, @c false otherwise.
+ */
 bool
 AppGroupView::HasChildren()
 {
@@ -309,6 +389,11 @@ AppGroupView::HasChildren()
 }
 
 
+/**
+ * @brief Returns the number of notification views in this group.
+ *
+ * @return The child count.
+ */
 int32
 AppGroupView::ChildrenCount()
 {

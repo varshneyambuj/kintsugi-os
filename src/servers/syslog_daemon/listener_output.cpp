@@ -31,10 +31,21 @@
 #include <stdio.h>
 
 
+/** @brief Lock protecting concurrent access to the listener list. */
 static BLocker sLocker;
+
+/** @brief List of BMessenger pointers registered as syslog listeners. */
 static BList sListeners;
 
 
+/**
+ * @brief Forwards a syslog message to all registered BMessenger listeners.
+ *
+ * Converts the syslog_message struct into a BMessage and sends it to each
+ * registered listener. Listeners that can no longer be reached are removed.
+ *
+ * @param message The incoming syslog message to broadcast.
+ */
 static void
 listener_output(syslog_message& message)
 {
@@ -65,6 +76,11 @@ listener_output(syslog_message& message)
 }
 
 
+/**
+ * @brief Removes a messenger from the syslog listener list.
+ *
+ * @param messenger Pointer to the BMessenger to remove.
+ */
 void
 remove_listener(BMessenger* messenger)
 {
@@ -76,6 +92,11 @@ remove_listener(BMessenger* messenger)
 }
 
 
+/**
+ * @brief Adds a messenger to the syslog listener list.
+ *
+ * @param messenger Pointer to the BMessenger to register as a listener.
+ */
 void
 add_listener(BMessenger* messenger)
 {
@@ -87,6 +108,11 @@ add_listener(BMessenger* messenger)
 }
 
 
+/**
+ * @brief Registers the listener output handler with the syslog daemon.
+ *
+ * @param daemon The syslog daemon to register the handler with.
+ */
 void
 init_listener_output(SyslogDaemon* daemon)
 {

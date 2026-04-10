@@ -86,11 +86,14 @@ using BSupportKit::BPrivate::JobQueue;
 
 
 #ifndef TEST_MODE
+/** @brief Subdirectory name for system-wide launch configuration files. */
 static const char* kLaunchDirectory = "launch";
+/** @brief Subdirectory name for per-user launch configuration files. */
 static const char* kUserLaunchDirectory = "user_launch";
 #endif
 
 
+/** @brief Flags controlling job launch behavior. */
 enum launch_options {
 	FORCE_NOW		= 0x01,
 	TRIGGER_DEMAND	= 0x02
@@ -272,6 +275,12 @@ private:
 };
 
 
+/**
+ * @brief Extracts the leaf name from a MIME signature (e.g. "application/foo" -> "foo").
+ *
+ * @param signature The full MIME signature string (may be NULL).
+ * @return The portion after the last '/', or @a signature itself if no '/' is found.
+ */
 static const char*
 get_leaf(const char* signature)
 {
@@ -289,6 +298,12 @@ get_leaf(const char* signature)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a user session binding a UID to a user-mode launch daemon messenger.
+ *
+ * @param user   The user ID for this session.
+ * @param daemon The BMessenger targeting the user's launch daemon.
+ */
 Session::Session(uid_t user, const BMessenger& daemon)
 	:
 	fUser(user),
@@ -300,6 +315,14 @@ Session::Session(uid_t user, const BMessenger& daemon)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs an external event source with source, owner, name, and flags.
+ *
+ * @param source    The BMessenger representing the event source application.
+ * @param ownerName The name of the application that owns this event.
+ * @param name      The event name.
+ * @param flags     Event flags (e.g. B_STICKY_EVENT).
+ */
 ExternalEventSource::ExternalEventSource(BMessenger& source,
 	const char* ownerName, const char* name, uint32 flags)
 	:
@@ -313,11 +336,13 @@ ExternalEventSource::ExternalEventSource(BMessenger& source,
 }
 
 
+/** @brief Destroys the external event source. */
 ExternalEventSource::~ExternalEventSource()
 {
 }
 
 
+/** @brief Returns the event name. */
 const char*
 ExternalEventSource::Name() const
 {
@@ -325,6 +350,7 @@ ExternalEventSource::Name() const
 }
 
 
+/** @brief Returns the name of the application that owns this event. */
 const char*
 ExternalEventSource::OwnerName() const
 {
@@ -332,6 +358,9 @@ ExternalEventSource::OwnerName() const
 }
 
 
+/**
+ * @brief Triggers all destination events and marks sticky state if applicable.
+ */
 void
 ExternalEventSource::Trigger()
 {
@@ -343,6 +372,7 @@ ExternalEventSource::Trigger()
 }
 
 
+/** @brief Resets the sticky trigger state and all destination events' sticky state. */
 void
 ExternalEventSource::ResetSticky()
 {
@@ -354,6 +384,15 @@ ExternalEventSource::ResetSticky()
 }
 
 
+/**
+ * @brief Adds a destination event to be triggered when this source fires.
+ *
+ * If this source has already been sticky-triggered, the new destination
+ * event is immediately triggered as well.
+ *
+ * @param event The destination event to add.
+ * @return B_OK on success, or B_NO_MEMORY if the addition fails.
+ */
 status_t
 ExternalEventSource::AddDestination(Event* event)
 {
@@ -367,6 +406,11 @@ ExternalEventSource::AddDestination(Event* event)
 }
 
 
+/**
+ * @brief Removes a destination event from this source.
+ *
+ * @param event The destination event to remove.
+ */
 void
 ExternalEventSource::RemoveDestination(Event* event)
 {
@@ -377,6 +421,15 @@ ExternalEventSource::RemoveDestination(Event* event)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the launch daemon in system or user mode.
+ *
+ * Creates the main worker thread, initializes the init target (in system
+ * mode), and configures the registrar bypass for early boot.
+ *
+ * @param userMode @c true for a per-user daemon, @c false for the system daemon.
+ * @param error    Output parameter that receives the initialization status.
+ */
 LaunchDaemon::LaunchDaemon(bool userMode, status_t& error)
 	:
 	BServer(kLaunchDaemonSignature, NULL,
@@ -403,11 +456,18 @@ LaunchDaemon::LaunchDaemon(bool userMode, status_t& error)
 }
 
 
+/** @brief Destroys the launch daemon. */
 LaunchDaemon::~LaunchDaemon()
 {
 }
 
 
+/**
+ * @brief Looks up a job by name (case-insensitive).
+ *
+ * @param name The job name to search for.
+ * @return The matching Job, or NULL if not found.
+ */
 Job*
 LaunchDaemon::FindJob(const char* name) const
 {
@@ -422,6 +482,12 @@ LaunchDaemon::FindJob(const char* name) const
 }
 
 
+/**
+ * @brief Looks up a target by name (case-insensitive).
+ *
+ * @param name The target name to search for.
+ * @return The matching Target, or NULL if not found.
+ */
 Target*
 LaunchDaemon::FindTarget(const char* name) const
 {
@@ -436,6 +502,12 @@ LaunchDaemon::FindTarget(const char* name) const
 }
 
 
+/**
+ * @brief Looks up a user session by user ID.
+ *
+ * @param user The user ID to search for.
+ * @return The matching Session, or NULL if not found.
+ */
 Session*
 LaunchDaemon::FindSession(uid_t user) const
 {
@@ -447,6 +519,7 @@ LaunchDaemon::FindSession(uid_t user) const
 }
 
 
+/** @brief Returns whether the system is booted in safe mode. */
 bool
 LaunchDaemon::IsSafeMode() const
 {
@@ -454,6 +527,7 @@ LaunchDaemon::IsSafeMode() const
 }
 
 
+/** @brief Returns whether the boot volume is read-only. */
 bool
 LaunchDaemon::BootVolumeIsReadOnly() const
 {
@@ -461,6 +535,18 @@ LaunchDaemon::BootVolumeIsReadOnly() const
 }
 
 
+/**
+ * @brief Registers an external event by matching it to a known event source.
+ *
+ * Searches all registered external event sources for one whose name matches,
+ * resolves the event, and adds it as a destination. Always returns B_OK to
+ * avoid blocking job instantiation for events that may be registered later.
+ *
+ * @param event     The event to register.
+ * @param name      The external event name.
+ * @param arguments Additional arguments (currently unused).
+ * @return B_OK always.
+ */
 status_t
 LaunchDaemon::RegisterExternalEvent(Event* event, const char* name,
 	const BStringList& arguments)
@@ -486,6 +572,12 @@ LaunchDaemon::RegisterExternalEvent(Event* event, const char* name,
 }
 
 
+/**
+ * @brief Unregisters an external event from its matching event source.
+ *
+ * @param event The event to unregister.
+ * @param name  The external event name.
+ */
 void
 LaunchDaemon::UnregisterExternalEvent(Event* event, const char* name)
 {
@@ -502,6 +594,14 @@ LaunchDaemon::UnregisterExternalEvent(Event* event, const char* name)
 }
 
 
+/**
+ * @brief Callback invoked when a job's team has been launched.
+ *
+ * Logs the launch and records the team-to-job mapping for later tracking.
+ *
+ * @param job    The job whose team was launched.
+ * @param status The launch result.
+ */
 void
 LaunchDaemon::TeamLaunched(Job* job, status_t status)
 {
@@ -512,6 +612,13 @@ LaunchDaemon::TeamLaunched(Job* job, status_t status)
 }
 
 
+/**
+ * @brief Called when the BApplication message loop is ready.
+ *
+ * Retrieves kernel options, sets up the environment, reads all launch
+ * configuration files, initializes and launches jobs, begins team-deletion
+ * monitoring, and registers with the roster in user mode.
+ */
 void
 LaunchDaemon::ReadyToRun()
 {
@@ -577,6 +684,15 @@ LaunchDaemon::ReadyToRun()
 }
 
 
+/**
+ * @brief Dispatches all incoming messages for the launch daemon.
+ *
+ * Handles team deletion, app launch notifications, launch data requests,
+ * target/job management commands, session management, event registration,
+ * info queries, log retrieval, and internal event triggers.
+ *
+ * @param message The incoming BMessage.
+ */
 void
 LaunchDaemon::MessageReceived(BMessage* message)
 {
@@ -741,6 +857,14 @@ LaunchDaemon::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_GET_LAUNCH_DATA requests by returning port and team info for a job.
+ *
+ * May trigger a demand-launch if the job has not yet been started. If the
+ * job is not found locally, forwards to the user session daemon.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleGetLaunchData(BMessage* message)
 {
@@ -802,6 +926,14 @@ LaunchDaemon::_HandleGetLaunchData(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_LAUNCH_TARGET requests by launching all jobs in a target.
+ *
+ * If the target does not exist but a base target is specified, clones
+ * the base target's jobs into a new target.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleLaunchTarget(BMessage* message)
 {
@@ -857,6 +989,11 @@ LaunchDaemon::_HandleLaunchTarget(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_STOP_LAUNCH_TARGET requests by stopping all jobs in a target.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleStopLaunchTarget(BMessage* message)
 {
@@ -893,6 +1030,11 @@ LaunchDaemon::_HandleStopLaunchTarget(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_LAUNCH_JOB requests by enabling and force-launching a job.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleLaunchJob(BMessage* message)
 {
@@ -924,6 +1066,11 @@ LaunchDaemon::_HandleLaunchJob(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_ENABLE_LAUNCH_JOB requests by enabling or disabling a job.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleEnableLaunchJob(BMessage* message)
 {
@@ -956,6 +1103,11 @@ LaunchDaemon::_HandleEnableLaunchJob(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_STOP_LAUNCH_JOB requests by stopping a job (optionally forced).
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleStopLaunchJob(BMessage* message)
 {
@@ -988,6 +1140,13 @@ LaunchDaemon::_HandleStopLaunchJob(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_LAUNCH_SESSION requests by spawning a user-mode launch daemon.
+ *
+ * Only the root user (uid 0) is permitted to start sessions.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleLaunchSession(BMessage* message)
 {
@@ -1012,6 +1171,11 @@ LaunchDaemon::_HandleLaunchSession(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_REGISTER_SESSION_DAEMON by recording a user session and forwarding known events.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleRegisterSessionDaemon(BMessage* message)
 {
@@ -1059,6 +1223,11 @@ LaunchDaemon::_HandleRegisterSessionDaemon(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_REGISTER_LAUNCH_EVENT by creating an external event source and resolving listeners.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleRegisterLaunchEvent(BMessage* message)
 {
@@ -1105,6 +1274,11 @@ LaunchDaemon::_HandleRegisterLaunchEvent(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_UNREGISTER_LAUNCH_EVENT by removing the named external event source.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleUnregisterLaunchEvent(BMessage* message)
 {
@@ -1142,6 +1316,11 @@ LaunchDaemon::_HandleUnregisterLaunchEvent(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_NOTIFY_LAUNCH_EVENT by triggering the named external event.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleNotifyLaunchEvent(BMessage* message)
 {
@@ -1166,6 +1345,11 @@ LaunchDaemon::_HandleNotifyLaunchEvent(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_RESET_STICKY_LAUNCH_EVENT by clearing a sticky event's triggered state.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleResetStickyLaunchEvent(BMessage* message)
 {
@@ -1188,6 +1372,13 @@ LaunchDaemon::_HandleResetStickyLaunchEvent(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_GET_LAUNCH_TARGETS by returning the list of all known target names.
+ *
+ * In system mode, also queries the user session daemon for additional targets.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleGetLaunchTargets(BMessage* message)
 {
@@ -1225,6 +1416,11 @@ LaunchDaemon::_HandleGetLaunchTargets(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_GET_LAUNCH_TARGET_INFO by returning detailed info about a target.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleGetLaunchTargetInfo(BMessage* message)
 {
@@ -1254,6 +1450,11 @@ LaunchDaemon::_HandleGetLaunchTargetInfo(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_GET_LAUNCH_JOBS by returning the list of all job names, optionally filtered by target.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleGetLaunchJobs(BMessage* message)
 {
@@ -1301,6 +1502,11 @@ LaunchDaemon::_HandleGetLaunchJobs(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_GET_LAUNCH_JOB_INFO by returning detailed state and configuration for a job.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleGetLaunchJobInfo(BMessage* message)
 {
@@ -1342,6 +1548,14 @@ LaunchDaemon::_HandleGetLaunchJobInfo(BMessage* message)
 }
 
 
+/**
+ * @brief Handles B_GET_LAUNCH_LOG by returning filtered log entries.
+ *
+ * Supports filtering by job name, event name, limit, system-only,
+ * and user-only. Merges results from the user session daemon when applicable.
+ *
+ * @param message The incoming request message.
+ */
 void
 LaunchDaemon::_HandleGetLaunchLog(BMessage* message)
 {
@@ -1426,6 +1640,12 @@ LaunchDaemon::_HandleGetLaunchLog(BMessage* message)
 }
 
 
+/**
+ * @brief Extracts the user ID from a message, sending a B_BAD_VALUE reply if missing.
+ *
+ * @param message The message to extract the "user" field from.
+ * @return The user ID, or a negative value on failure.
+ */
 uid_t
 LaunchDaemon::_GetUserID(BMessage* message)
 {
@@ -1438,6 +1658,11 @@ LaunchDaemon::_GetUserID(BMessage* message)
 }
 
 
+/**
+ * @brief Reads launch configuration files from all directories in @a paths.
+ *
+ * @param paths List of directory paths to scan for configuration files.
+ */
 void
 LaunchDaemon::_ReadPaths(const BStringList& paths)
 {
@@ -1451,6 +1676,12 @@ LaunchDaemon::_ReadPaths(const BStringList& paths)
 }
 
 
+/**
+ * @brief Reads a filesystem entry, dispatching to _ReadDirectory or _ReadFile.
+ *
+ * @param context Optional context string for error reporting.
+ * @param entry   The entry to read.
+ */
 void
 LaunchDaemon::_ReadEntry(const char* context, BEntry& entry)
 {
@@ -1461,6 +1692,12 @@ LaunchDaemon::_ReadEntry(const char* context, BEntry& entry)
 }
 
 
+/**
+ * @brief Recursively reads all entries in a directory.
+ *
+ * @param context        Optional context string for error reporting.
+ * @param directoryEntry The directory entry to iterate.
+ */
 void
 LaunchDaemon::_ReadDirectory(const char* context, BEntry& directoryEntry)
 {
@@ -1473,6 +1710,13 @@ LaunchDaemon::_ReadDirectory(const char* context, BEntry& directoryEntry)
 }
 
 
+/**
+ * @brief Parses a single launch configuration file and adds its jobs, targets, and run targets.
+ *
+ * @param context Optional context string for error reporting.
+ * @param entry   The file entry to parse.
+ * @return B_OK on success, or an error code if parsing fails.
+ */
 status_t
 LaunchDaemon::_ReadFile(const char* context, BEntry& entry)
 {
@@ -1495,6 +1739,12 @@ LaunchDaemon::_ReadFile(const char* context, BEntry& entry)
 }
 
 
+/**
+ * @brief Extracts and adds service and job definitions from a settings message.
+ *
+ * @param target  The target to associate the jobs with (may be NULL).
+ * @param message The settings message containing "service" and "job" entries.
+ */
 void
 LaunchDaemon::_AddJobs(Target* target, BMessage& message)
 {
@@ -1511,6 +1761,14 @@ LaunchDaemon::_AddJobs(Target* target, BMessage& message)
 }
 
 
+/**
+ * @brief Extracts and adds target definitions from a settings message.
+ *
+ * Creates new targets or amends existing ones, setting their conditions,
+ * events, environment, and contained jobs.
+ *
+ * @param message The settings message containing "target" entries.
+ */
 void
 LaunchDaemon::_AddTargets(BMessage& message)
 {
@@ -1553,6 +1811,11 @@ LaunchDaemon::_AddTargets(BMessage& message)
 }
 
 
+/**
+ * @brief Processes "run" directives from a settings message, evaluating conditions and adding targets.
+ *
+ * @param message The settings message containing "run" entries with optional "if/then/else" blocks.
+ */
 void
 LaunchDaemon::_AddRunTargets(BMessage& message)
 {
@@ -1582,6 +1845,12 @@ LaunchDaemon::_AddRunTargets(BMessage& message)
 }
 
 
+/**
+ * @brief Adds target names from a run-target sub-message to the run targets list.
+ *
+ * @param message The run message (or sub-message for "then"/"else").
+ * @param name    Sub-message field name to read (NULL for top-level targets).
+ */
 void
 LaunchDaemon::_AddRunTargets(BMessage& message, const char* name)
 {
@@ -1597,6 +1866,16 @@ LaunchDaemon::_AddRunTargets(BMessage& message, const char* name)
 }
 
 
+/**
+ * @brief Creates or amends a job from a settings message and registers it in the job map.
+ *
+ * Sets the job's service flag, conditions, events, environment, ports,
+ * arguments, requirements, and associates it with the given target.
+ *
+ * @param target  The target this job belongs to (may be NULL).
+ * @param service @c true if this is a persistent service definition.
+ * @param message The BMessage containing the job definition.
+ */
 void
 LaunchDaemon::_AddJob(Target* target, bool service, BMessage& message)
 {
@@ -1867,6 +2146,15 @@ LaunchDaemon::_LaunchJob(Job* job, uint32 options)
 }
 
 
+/**
+ * @brief Stops a running job by disabling it and sending a quit request or SIGTERM.
+ *
+ * First attempts a graceful B_QUIT_REQUESTED message via BMessenger. If
+ * that fails, sends SIGTERM to the job's team.
+ *
+ * @param job   The job to stop.
+ * @param force Whether to force the stop (currently same behavior).
+ */
 void
 LaunchDaemon::_StopJob(Job* job, bool force)
 {
@@ -1894,6 +2182,11 @@ LaunchDaemon::_StopJob(Job* job, bool force)
 }
 
 
+/**
+ * @brief Registers a target in the daemon's target map.
+ *
+ * @param target The target to register.
+ */
 void
 LaunchDaemon::_AddTarget(Target* target)
 {
@@ -1901,6 +2194,14 @@ LaunchDaemon::_AddTarget(Target* target)
 }
 
 
+/**
+ * @brief Parses and sets conditions on a job from a settings message.
+ *
+ * Handles "if" condition blocks and the "no_safemode" flag.
+ *
+ * @param job     The job to configure.
+ * @param message The settings message containing condition definitions.
+ */
 void
 LaunchDaemon::_SetCondition(BaseJob* job, const BMessage& message)
 {
@@ -1923,6 +2224,14 @@ LaunchDaemon::_SetCondition(BaseJob* job, const BMessage& message)
 }
 
 
+/**
+ * @brief Parses and sets events on a job from a settings message.
+ *
+ * Handles "on" event blocks and the "on_demand" flag.
+ *
+ * @param job     The job to configure.
+ * @param message The settings message containing event definitions.
+ */
 void
 LaunchDaemon::_SetEvent(BaseJob* job, const BMessage& message)
 {
@@ -1947,6 +2256,12 @@ LaunchDaemon::_SetEvent(BaseJob* job, const BMessage& message)
 }
 
 
+/**
+ * @brief Parses and sets environment variables on a job from a settings message.
+ *
+ * @param job     The job to configure.
+ * @param message The settings message containing an "env" sub-message.
+ */
 void
 LaunchDaemon::_SetEnvironment(BaseJob* job, const BMessage& message)
 {
@@ -1956,6 +2271,13 @@ LaunchDaemon::_SetEnvironment(BaseJob* job, const BMessage& message)
 }
 
 
+/**
+ * @brief Finds an external event source by name, trying both short and qualified names.
+ *
+ * @param owner The owner application name (may be NULL).
+ * @param name  The event name to look up.
+ * @return The matching ExternalEventSource, or NULL if not found.
+ */
 ExternalEventSource*
 LaunchDaemon::_FindExternalEventSource(const char* owner, const char* name) const
 {
@@ -1983,6 +2305,12 @@ LaunchDaemon::_FindExternalEventSource(const char* owner, const char* name) cons
 }
 
 
+/**
+ * @brief Resolves all jobs' external events that match the given event source name.
+ *
+ * @param eventSource The newly registered event source.
+ * @param name        The event name to match against.
+ */
 void
 LaunchDaemon::_ResolveExternalEvents(ExternalEventSource* eventSource,
 	const BString& name)
@@ -1997,6 +2325,12 @@ LaunchDaemon::_ResolveExternalEvents(ExternalEventSource* eventSource,
 }
 
 
+/**
+ * @brief Populates a BMessage with the base info (name, event, condition) of a job.
+ *
+ * @param job  The job or target to extract info from.
+ * @param info The output BMessage to populate.
+ */
 void
 LaunchDaemon::_GetBaseJobInfo(BaseJob* job, BMessage& info)
 {
@@ -2010,6 +2344,15 @@ LaunchDaemon::_GetBaseJobInfo(BaseJob* job, BMessage& info)
 }
 
 
+/**
+ * @brief Forwards an event-related message to the appropriate user session daemon(s).
+ *
+ * In user mode this is a no-op. In system mode, broadcasts to all sessions
+ * if user is 0, or targets a specific session otherwise.
+ *
+ * @param user    The user ID of the sender.
+ * @param message The message to forward.
+ */
 void
 LaunchDaemon::_ForwardEventMessage(uid_t user, BMessage* message)
 {
@@ -2032,6 +2375,12 @@ LaunchDaemon::_ForwardEventMessage(uid_t user, BMessage* message)
 }
 
 
+/**
+ * @brief Spawns a user-mode launch daemon process for the given login name.
+ *
+ * @param login The username to start the session for.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LaunchDaemon::_StartSession(const char* login)
 {
@@ -2050,6 +2399,9 @@ LaunchDaemon::_StartSession(const char* login)
 }
 
 
+/**
+ * @brief Reads the safe-mode kernel option and stores it in fSafeMode.
+ */
 void
 LaunchDaemon::_RetrieveKernelOptions()
 {
@@ -2067,6 +2419,7 @@ LaunchDaemon::_RetrieveKernelOptions()
 }
 
 
+/** @brief Sets up the SAFEMODE environment variable based on the kernel option. */
 void
 LaunchDaemon::_SetupEnvironment()
 {
@@ -2090,6 +2443,11 @@ LaunchDaemon::_InitSystem()
 }
 
 
+/**
+ * @brief Adds an initialization job as a dependency of the init target and queues it.
+ *
+ * @param job The initialization job to add.
+ */
 void
 LaunchDaemon::_AddInitJob(BJob* job)
 {
@@ -2104,6 +2462,12 @@ LaunchDaemon::_AddInitJob(BJob* job)
 #ifndef TEST_MODE
 
 
+/**
+ * @brief Opens a file descriptor for stdio, redirecting to /dev/dprintf (debug) or /dev/null.
+ *
+ * @param targetFD The file descriptor number to set up (e.g. STDIN_FILENO).
+ * @param openMode The open mode (O_RDONLY or O_WRONLY).
+ */
 static void
 open_stdio(int targetFD, int openMode)
 {
@@ -2122,6 +2486,15 @@ open_stdio(int targetFD, int openMode)
 #endif	// TEST_MODE
 
 
+/**
+ * @brief Entry point for user-mode launch daemon sessions.
+ *
+ * Sets up the user's UID, GID, groups, and home directory, then creates
+ * and runs a user-mode LaunchDaemon instance.
+ *
+ * @param login The username to run the session as.
+ * @return 0 on success, or a negative error code.
+ */
 static int
 user_main(const char* login)
 {
@@ -2165,6 +2538,17 @@ user_main(const char* login)
 }
 
 
+/**
+ * @brief Main entry point for the launch_daemon process.
+ *
+ * If invoked with a login argument by root, delegates to user_main().
+ * Otherwise, ensures no other instance is running, sets up stdio, and
+ * runs the system-mode LaunchDaemon.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return EXIT_SUCCESS on clean exit, EXIT_FAILURE on error.
+ */
 int
 main(int argc, char* argv[])
 {

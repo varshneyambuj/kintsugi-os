@@ -44,9 +44,19 @@
 #include "NetServer.h"
 
 
+/** @brief Message code posted to self to trigger initial configuration. */
 static const uint32 kMsgReadyToRun = 'rdyr';
 
 
+/**
+ * @brief Constructs an auto-configuration looper for the specified network device.
+ *
+ * Posts a kMsgReadyToRun message to itself so that configuration begins
+ * once the looper's message loop starts.
+ *
+ * @param target Messenger to receive configuration commands.
+ * @param device Name of the network device to auto-configure.
+ */
 AutoconfigLooper::AutoconfigLooper(BMessenger target, const char* device)
 	: BLooper(device),
 	fTarget(target),
@@ -60,12 +70,20 @@ AutoconfigLooper::AutoconfigLooper(BMessenger target, const char* device)
 }
 
 
+/**
+ * @brief Destroys the looper, removing any active auto-configuration client.
+ */
 AutoconfigLooper::~AutoconfigLooper()
 {
 	_RemoveClient();
 }
 
 
+/**
+ * @brief Deletes the current auto-configuration client and resets the pointer.
+ *
+ * Does nothing if no client is currently active.
+ */
 void
 AutoconfigLooper::_RemoveClient()
 {
@@ -77,6 +95,13 @@ AutoconfigLooper::_RemoveClient()
 }
 
 
+/**
+ * @brief Starts IPv4 auto-configuration using DHCP.
+ *
+ * Creates a DHCPClient if none exists, sets the IFF_CONFIGURING flag on
+ * the network interface, and starts the DHCP negotiation. Falls back to
+ * _ConfigureIPv4Failed() if DHCP fails to start.
+ */
 void
 AutoconfigLooper::_ConfigureIPv4()
 {
@@ -100,6 +125,13 @@ AutoconfigLooper::_ConfigureIPv4()
 }
 
 
+/**
+ * @brief Handles DHCP failure by assigning a link-local address.
+ *
+ * Removes the DHCP client, then generates a 169.254.0.x link-local
+ * address derived from the interface's MAC address and sends the
+ * resulting configuration to the target messenger.
+ */
 void
 AutoconfigLooper::_ConfigureIPv4Failed()
 {
@@ -149,6 +181,12 @@ AutoconfigLooper::_ConfigureIPv4Failed()
 }
 
 
+/**
+ * @brief Performs initial setup when the looper starts running.
+ *
+ * Begins watching for network link and WLAN changes. If the interface
+ * already has a link, immediately starts IPv4 configuration.
+ */
 void
 AutoconfigLooper::_ReadyToRun()
 {
@@ -167,6 +205,15 @@ AutoconfigLooper::_ReadyToRun()
 }
 
 
+/**
+ * @brief Handles network monitor notifications for link and WLAN changes.
+ *
+ * On link-up, triggers IPv4 reconfiguration. On link-down, removes the
+ * DHCP client. On WLAN scan completion, sends an auto-join request if
+ * no link is currently active.
+ *
+ * @param message The B_NETWORK_MONITOR notification message.
+ */
 void
 AutoconfigLooper::_NetworkMonitorNotification(BMessage* message)
 {
@@ -235,6 +282,14 @@ AutoconfigLooper::_NetworkMonitorNotification(BMessage* message)
 }
 
 
+/**
+ * @brief Dispatches messages to the appropriate handler method.
+ *
+ * Handles ready-to-run, auto-configure-failed, and network monitor
+ * messages; forwards all others to the base BLooper implementation.
+ *
+ * @param message The incoming message.
+ */
 void
 AutoconfigLooper::MessageReceived(BMessage* message)
 {

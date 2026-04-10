@@ -49,6 +49,12 @@
 #include "SystemTimeSource.h"
 
 
+/**
+ * @brief Constructs the system-wide real-time clock time source node.
+ *
+ * Initializes the node with the name "System clock" and sets the
+ * control thread ID to invalid.
+ */
 SystemTimeSource::SystemTimeSource()
  :	BMediaNode("System clock"),
  	BTimeSource(),
@@ -57,6 +63,9 @@ SystemTimeSource::SystemTimeSource()
 	TRACE("SystemTimeSource::SystemTimeSource\n");
 }
 
+/**
+ * @brief Destroys the system time source, closing its control port and waiting for its thread.
+ */
 SystemTimeSource::~SystemTimeSource()
 {
 	TRACE("SystemTimeSource::~SystemTimeSource enter\n");
@@ -69,12 +78,28 @@ SystemTimeSource::~SystemTimeSource()
 	TRACE("SystemTimeSource::~SystemTimeSource exit\n");
 }
 
+/**
+ * @brief Returns the add-on that instantiated this node.
+ *
+ * The system time source is not created by an add-on, so this always
+ * returns NULL.
+ *
+ * @param internal_id Unused output parameter.
+ * @return NULL always.
+ */
 BMediaAddOn*
 SystemTimeSource::AddOn(int32 * internal_id) const
 {
 	return NULL;
 }
 	
+/**
+ * @brief Handles time source operations by publishing the current real time.
+ *
+ * @param op        The time source operation info (unused beyond triggering a publish).
+ * @param _reserved Reserved parameter (unused).
+ * @return B_OK always.
+ */
 status_t
 SystemTimeSource::TimeSourceOp(const time_source_op_info & op, void * _reserved)
 {
@@ -85,6 +110,9 @@ SystemTimeSource::TimeSourceOp(const time_source_op_info & op, void * _reserved)
 }
 
 
+/**
+ * @brief Called when the node is registered; spawns the control thread.
+ */
 /* virtual */ void
 SystemTimeSource::NodeRegistered()
 {
@@ -93,6 +121,12 @@ SystemTimeSource::NodeRegistered()
 	resume_thread(fControlThread);
 }
 
+/**
+ * @brief Static thread entry point that delegates to ControlThread().
+ *
+ * @param arg Pointer to the SystemTimeSource instance.
+ * @return 0 always.
+ */
 int32
 SystemTimeSource::_ControlThreadStart(void *arg)
 {
@@ -100,6 +134,12 @@ SystemTimeSource::_ControlThreadStart(void *arg)
 	return 0;
 }
 
+/**
+ * @brief Control thread loop that processes incoming media node messages.
+ *
+ * Calls WaitForMessage() in an infinite loop until the port is deleted
+ * or an unrecoverable error occurs.
+ */
 void
 SystemTimeSource::ControlThread()
 {

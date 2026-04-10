@@ -26,6 +26,7 @@
 #include "Keyring.h"
 
 
+/** @brief Constructs an unnamed, locked keyring with no unlock key. */
 Keyring::Keyring()
 	:
 	fHasUnlockKey(false),
@@ -35,6 +36,11 @@ Keyring::Keyring()
 }
 
 
+/**
+ * @brief Constructs a named, locked keyring with no unlock key.
+ *
+ * @param name The name of the keyring.
+ */
 Keyring::Keyring(const char* name)
 	:
 	fName(name),
@@ -45,11 +51,21 @@ Keyring::Keyring(const char* name)
 }
 
 
+/** @brief Destroys the keyring. */
 Keyring::~Keyring()
 {
 }
 
 
+/**
+ * @brief Deserialises the keyring state from a BMessage.
+ *
+ * Reads the keyring name, unlock key presence flag, and encrypted data
+ * blob from the message into internal fields.
+ *
+ * @param message The source BMessage containing the serialised keyring.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Keyring::ReadFromMessage(const BMessage& message)
 {
@@ -86,6 +102,15 @@ Keyring::ReadFromMessage(const BMessage& message)
 }
 
 
+/**
+ * @brief Serialises the keyring state into a BMessage for persistent storage.
+ *
+ * Encrypts the data to the flat buffer first, then writes the buffer,
+ * unlock key flag, and name into the message.
+ *
+ * @param message The destination BMessage.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Keyring::WriteToMessage(BMessage& message)
 {
@@ -110,6 +135,17 @@ Keyring::WriteToMessage(BMessage& message)
 }
 
 
+/**
+ * @brief Unlocks the keyring using the provided passphrase key.
+ *
+ * If the keyring has an unlock key, a matching keyMessage must be
+ * provided. Decrypts the flat buffer into the in-memory data and
+ * application maps.
+ *
+ * @param keyMessage The key to decrypt with, or NULL for unprotected keyrings.
+ * @return B_OK on success, B_BAD_VALUE if key presence is mismatched,
+ *         or an error from decryption.
+ */
 status_t
 Keyring::Unlock(const BMessage* keyMessage)
 {
@@ -133,6 +169,12 @@ Keyring::Unlock(const BMessage* keyMessage)
 }
 
 
+/**
+ * @brief Locks the keyring, encrypting data back to the flat buffer.
+ *
+ * Clears the unlock key and in-memory data/application maps. Does
+ * nothing if the keyring is already locked.
+ */
 void
 Keyring::Lock()
 {
@@ -148,6 +190,7 @@ Keyring::Lock()
 }
 
 
+/** @brief Returns whether the keyring is currently unlocked. */
 bool
 Keyring::IsUnlocked() const
 {
@@ -155,6 +198,7 @@ Keyring::IsUnlocked() const
 }
 
 
+/** @brief Returns whether the keyring is protected by an unlock key. */
 bool
 Keyring::HasUnlockKey() const
 {
@@ -162,6 +206,7 @@ Keyring::HasUnlockKey() const
 }
 
 
+/** @brief Returns a const reference to the current unlock key message. */
 const BMessage&
 Keyring::UnlockKey() const
 {
@@ -169,6 +214,14 @@ Keyring::UnlockKey() const
 }
 
 
+/**
+ * @brief Sets the unlock key for this keyring.
+ *
+ * The keyring must be unlocked before calling this method.
+ *
+ * @param keyMessage The new unlock key.
+ * @return B_OK on success, B_NOT_ALLOWED if the keyring is locked.
+ */
 status_t
 Keyring::SetUnlockKey(const BMessage& keyMessage)
 {
@@ -182,6 +235,11 @@ Keyring::SetUnlockKey(const BMessage& keyMessage)
 }
 
 
+/**
+ * @brief Removes the unlock key, making the keyring unprotected.
+ *
+ * @return B_OK on success, B_NOT_ALLOWED if the keyring is locked.
+ */
 status_t
 Keyring::RemoveUnlockKey()
 {
@@ -195,6 +253,14 @@ Keyring::RemoveUnlockKey()
 }
 
 
+/**
+ * @brief Iterates through registered applications that have access to this keyring.
+ *
+ * @param cookie   Iteration index; incremented on each successful call.
+ * @param signature Output: the application's MIME signature.
+ * @param path      Output: the application's executable path.
+ * @return B_OK on success, B_NOT_ALLOWED if locked, B_ENTRY_NOT_FOUND at end.
+ */
 status_t
 Keyring::GetNextApplication(uint32& cookie, BString& signature,
 	BString& path)
@@ -222,6 +288,14 @@ Keyring::GetNextApplication(uint32& cookie, BString& signature,
 }
 
 
+/**
+ * @brief Finds a registered application by its signature and executable path.
+ *
+ * @param signature The application's MIME signature.
+ * @param path      The application's executable path.
+ * @param appMessage Output: the application's access record.
+ * @return B_OK if found, B_NOT_ALLOWED if locked, B_ENTRY_NOT_FOUND if absent.
+ */
 status_t
 Keyring::FindApplication(const char* signature, const char* path,
 	BMessage& appMessage)
@@ -251,6 +325,13 @@ Keyring::FindApplication(const char* signature, const char* path,
 }
 
 
+/**
+ * @brief Registers an application's access record in this keyring.
+ *
+ * @param signature  The application's MIME signature.
+ * @param appMessage The access record to store.
+ * @return B_OK on success, B_NOT_ALLOWED if locked.
+ */
 status_t
 Keyring::AddApplication(const char* signature, const BMessage& appMessage)
 {
@@ -266,6 +347,16 @@ Keyring::AddApplication(const char* signature, const BMessage& appMessage)
 }
 
 
+/**
+ * @brief Removes an application's access from this keyring.
+ *
+ * If @a path is NULL, all entries for the given signature are removed.
+ * Otherwise, only the entry matching both signature and path is removed.
+ *
+ * @param signature The application's MIME signature.
+ * @param path      The executable path, or NULL to remove all entries.
+ * @return B_OK on success, B_NOT_ALLOWED if locked, B_ENTRY_NOT_FOUND if absent.
+ */
 status_t
 Keyring::RemoveApplication(const char* signature, const char* path)
 {
@@ -307,6 +398,18 @@ Keyring::RemoveApplication(const char* signature, const char* path)
 }
 
 
+/**
+ * @brief Searches for a key by primary and secondary identifier.
+ *
+ * If @a secondaryIdentifierOptional is true and no exact secondary match
+ * is found, the first key with a matching primary identifier is returned.
+ *
+ * @param identifier                  The primary key identifier.
+ * @param secondaryIdentifier         The secondary key identifier.
+ * @param secondaryIdentifierOptional If true, allows partial matching.
+ * @param _foundKeyMessage            Output: the matching key message, or NULL to test existence.
+ * @return B_OK if found, B_NOT_ALLOWED if locked, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 Keyring::FindKey(const BString& identifier, const BString& secondaryIdentifier,
 	bool secondaryIdentifierOptional, BMessage* _foundKeyMessage) const
@@ -353,6 +456,18 @@ Keyring::FindKey(const BString& identifier, const BString& secondaryIdentifier,
 }
 
 
+/**
+ * @brief Searches for a key by type, purpose, and positional index.
+ *
+ * Iterates through all stored keys, filtering by type and purpose.
+ * The @a index parameter selects the Nth matching key (zero-based).
+ *
+ * @param type              Key type filter, or B_KEY_TYPE_ANY for all.
+ * @param purpose           Key purpose filter, or B_KEY_PURPOSE_ANY for all.
+ * @param index             Zero-based index among matching keys.
+ * @param _foundKeyMessage  Output: the matching key message.
+ * @return B_OK if found, B_NOT_ALLOWED if locked, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 Keyring::FindKey(BKeyType type, BKeyPurpose purpose, uint32 index,
 	BMessage& _foundKeyMessage) const
@@ -418,6 +533,15 @@ Keyring::FindKey(BKeyType type, BKeyPurpose purpose, uint32 index,
 }
 
 
+/**
+ * @brief Adds a key to the keyring, checking for identifier collisions.
+ *
+ * @param identifier          The primary key identifier.
+ * @param secondaryIdentifier The secondary key identifier.
+ * @param keyMessage          The key data to store.
+ * @return B_OK on success, B_NAME_IN_USE if a key with the same identifiers
+ *         exists, B_NOT_ALLOWED if locked.
+ */
 status_t
 Keyring::AddKey(const BString& identifier, const BString& secondaryIdentifier,
 	const BMessage& keyMessage)
@@ -439,6 +563,13 @@ Keyring::AddKey(const BString& identifier, const BString& secondaryIdentifier,
 }
 
 
+/**
+ * @brief Removes a key that exactly matches the given identifier and data.
+ *
+ * @param identifier The primary key identifier.
+ * @param keyMessage The key data to match (exact comparison).
+ * @return B_OK on success, B_NOT_ALLOWED if locked, B_ENTRY_NOT_FOUND if absent.
+ */
 status_t
 Keyring::RemoveKey(const BString& identifier,
 	const BMessage& keyMessage)
@@ -472,6 +603,13 @@ Keyring::RemoveKey(const BString& identifier,
 }
 
 
+/**
+ * @brief Compares two keyrings by name for sorted insertion.
+ *
+ * @param one First keyring.
+ * @param two Second keyring.
+ * @return Negative, zero, or positive as in strcmp().
+ */
 int
 Keyring::Compare(const Keyring* one, const Keyring* two)
 {
@@ -479,6 +617,13 @@ Keyring::Compare(const Keyring* one, const Keyring* two)
 }
 
 
+/**
+ * @brief Compares a name string against a keyring's name for binary search.
+ *
+ * @param name    The name to search for.
+ * @param keyring The keyring to compare against.
+ * @return Negative, zero, or positive as in strcmp().
+ */
 int
 Keyring::Compare(const BString* name, const Keyring* keyring)
 {
@@ -486,6 +631,15 @@ Keyring::Compare(const BString* name, const Keyring* keyring)
 }
 
 
+/**
+ * @brief Encrypts the in-memory data and applications into the flat buffer.
+ *
+ * Flattens the data and applications messages into a container, then
+ * writes them to fFlatBuffer. Encryption of the buffer is not yet
+ * implemented. Only operates if the keyring has been modified.
+ *
+ * @return B_OK on success, B_NOT_ALLOWED if locked.
+ */
 status_t
 Keyring::_EncryptToFlatBuffer()
 {
@@ -520,6 +674,14 @@ Keyring::_EncryptToFlatBuffer()
 }
 
 
+/**
+ * @brief Decrypts the flat buffer into in-memory data and applications messages.
+ *
+ * Reads the container from fFlatBuffer and extracts the data and
+ * applications sub-messages. Decryption is not yet implemented.
+ *
+ * @return B_OK on success, or an error code if the buffer is corrupt.
+ */
 status_t
 Keyring::_DecryptFromFlatBuffer()
 {

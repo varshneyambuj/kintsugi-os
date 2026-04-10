@@ -30,11 +30,6 @@
 
 /** @file UpdateMimeInfoThread.cpp
  *  @brief Implements the directory-scanning thread for updating MIME type information. */
-/*!
-	\file UpdateMimeInfoThread.h
-	UpdateMimeInfoThread implementation
-*/
-
 
 #include "UpdateMimeInfoThread.h"
 
@@ -44,7 +39,22 @@ namespace Storage {
 namespace Mime {
 
 
-//! Creates a new UpdateMimeInfoThread object
+/**
+ * @brief Constructs a new thread for updating MIME type information.
+ *
+ * Initializes the base MimeUpdateThread and the internal MimeInfoUpdater
+ * that will sniff and update each discovered entry.
+ *
+ * @param name              Thread name.
+ * @param priority          Thread scheduling priority.
+ * @param database          The MIME database to update.
+ * @param databaseLocker    Locker used to serialize database access.
+ * @param managerMessenger  Messenger for communicating with the thread manager.
+ * @param root              Root entry_ref of the directory tree to scan.
+ * @param recursive         Whether to recurse into subdirectories.
+ * @param force             If non-zero, forces updates even for entries that already have types.
+ * @param replyee           Optional message to reply to when the operation completes.
+ */
 UpdateMimeInfoThread::UpdateMimeInfoThread(const char* name, int32 priority,
 	Database* database, MimeEntryProcessor::DatabaseLocker* databaseLocker,
 	BMessenger managerMessenger, const entry_ref* root, bool recursive,
@@ -57,11 +67,17 @@ UpdateMimeInfoThread::UpdateMimeInfoThread(const char* name, int32 priority,
 }
 
 
-/*! \brief Performs an update_mime_info() update on the given entry
-
-	If the entry has no \c BEOS:TYPE attribute, or if \c fForce is true, the
-	entry is sniffed and its \c BEOS:TYPE attribute is set accordingly.
-*/
+/**
+ * @brief Performs a MIME type update on the given entry.
+ *
+ * If the entry has no BEOS:TYPE attribute, or if the force flag is set,
+ * the entry is sniffed and its BEOS:TYPE attribute is set accordingly.
+ *
+ * @param entry       The entry to update.
+ * @param _entryIsDir Output flag set to @c true if the entry is a directory.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a entry is NULL, or another
+ *         error code on failure.
+ */
 status_t
 UpdateMimeInfoThread::DoMimeUpdate(const entry_ref* entry, bool* _entryIsDir)
 {

@@ -28,10 +28,6 @@
 
 /** @file MimeUpdateThread.cpp
  *  @brief Implements the recursive directory walker for MIME database updates. */
-/*!
-	\file MimeUpdateThread.cpp
-	MimeUpdateThread implementation
-*/
 
 #include "MimeUpdateThread.h"
 
@@ -53,23 +49,23 @@ namespace BPrivate {
 namespace Storage {
 namespace Mime {
 
-/*!	\class MimeUpdateThread
-	\brief RegistrarThread class implementing the common functionality of
-	update_mime_info() and create_app_meta_mime()
-*/
-
-
-/*! \brief Creates a new MimeUpdateThread object.
-
-	If \a replyee is non-NULL and construction succeeds, the MimeThreadObject
-	assumes resposibility for its deletion.
-
-	Also, if \c non-NULL, \a replyee is expected to be a
-	\c B_REG_MIME_UPDATE_MIME_INFO or a \c B_REG_MIME_CREATE_APP_META_MIME
-	message with a \c true \c "synchronous" field detached from the registrar's
-	mime manager looper (though this is not verified).
-	The message will be	replied to at the end of the thread's execution.
-*/
+/**
+ * @brief Constructs a MimeUpdateThread for recursive MIME database updates.
+ *
+ * If @a replyee is non-NULL and construction succeeds, this object assumes
+ * ownership and will delete it. The replyee is expected to be a synchronous
+ * B_REG_MIME_UPDATE_MIME_INFO or B_REG_MIME_CREATE_APP_META_MIME message.
+ *
+ * @param name              Thread name.
+ * @param priority          Thread scheduling priority.
+ * @param database          The MIME database to operate on.
+ * @param managerMessenger  Messenger for communicating with the thread manager.
+ * @param root              Root entry_ref of the directory tree to scan.
+ * @param recursive         Whether to recurse into subdirectories.
+ * @param force             If non-zero, forces updates even for existing entries.
+ * @param replyee           Optional message to reply to when the operation
+ *                          completes. Ownership transfers on success.
+ */
 MimeUpdateThread::MimeUpdateThread(const char *name, int32 priority,
 		Database *database, BMessenger managerMessenger, const entry_ref *root,
 		bool recursive, int32 force, BMessage *replyee)
@@ -85,12 +81,9 @@ MimeUpdateThread::MimeUpdateThread(const char *name, int32 priority,
 }
 
 
-/*!	\brief Destroys the MimeUpdateThread object.
-
-	If the object was properly initialized (i.e. InitCheck() returns \c B_OK)
-	and the replyee message passed to the constructor was \c non-NULL, the
-	replyee message is deleted.
-*/
+/**
+ * @brief Destroys the MimeUpdateThread and deletes the replyee if owned.
+ */
 MimeUpdateThread::~MimeUpdateThread()
 {
 	// delete our acquired BMessage
@@ -99,8 +92,11 @@ MimeUpdateThread::~MimeUpdateThread()
 }
 
 
-/*! \brief Returns the initialization status of the object
-*/
+/**
+ * @brief Returns the combined initialization status of this object and its base.
+ *
+ * @return @c B_OK if fully initialized, or an error code.
+ */
 status_t
 MimeUpdateThread::InitCheck()
 {
@@ -111,10 +107,15 @@ MimeUpdateThread::InitCheck()
 }
 
 
-/*! \brief Implements the common functionality of update_mime_info() and
-	create_app_meta_mime(), namely iterating through the filesystem and
-	updating entries.
-*/
+/**
+ * @brief Main thread body: iterates the filesystem tree and updates entries.
+ *
+ * Calls UpdateEntry() starting from fRoot, sends a reply to the replyee
+ * if one was provided, marks the thread as finished, and notifies the
+ * thread manager.
+ *
+ * @return @c B_OK on success, or an error code on failure.
+ */
 status_t
 MimeUpdateThread::ThreadFunction()
 {
@@ -156,19 +157,17 @@ MimeUpdateThread::ThreadFunction()
 }
 
 
-/*! \brief Returns true if the given device supports attributes, false
-	if not (or if an error occurs while determining).
-
-	Device numbers and their corresponding support info are cached in
-	a std::list to save unnecessarily \c statvfs()ing devices that have
-	already been statvfs()ed (which might otherwise happen quite often
-	for a device that did in fact support attributes).
-
-	\return
-	- \c true: The device supports attributes
-	- \c false: The device does not support attributes, or there was an
-	            error while determining
-*/
+/**
+ * @brief Checks whether the given device supports file attributes.
+ *
+ * Results are cached so that repeated queries for the same device avoid
+ * redundant statvfs() calls. Devices that support attributes are cached at
+ * the front of the list for faster lookup.
+ *
+ * @param device The device number to check.
+ * @return @c true if the device supports attributes, @c false otherwise or
+ *         on error.
+ */
 bool
 MimeUpdateThread::DeviceSupportsAttributes(dev_t device)
 {
@@ -201,10 +200,16 @@ MimeUpdateThread::DeviceSupportsAttributes(dev_t device)
 	return result;
 }
 
-// UpdateEntry
-/*! \brief Updates the given entry and then recursively updates all the entry's
-	child entries if the entry is a directory and \c fRecursive is true.
-*/
+/**
+ * @brief Updates the given entry and optionally recurses into child entries.
+ *
+ * Skips entries on devices that do not support attributes. If the entry is
+ * a directory and fRecursive is true, all child entries are updated as well.
+ *
+ * @param ref The entry to update.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a ref is NULL, @c B_CANCELED
+ *         if the thread was asked to exit, or another error code.
+ */
 status_t
 MimeUpdateThread::UpdateEntry(const entry_ref *ref)
 {

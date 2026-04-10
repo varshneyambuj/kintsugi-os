@@ -30,7 +30,15 @@
 #include "AppInfoListMessagingTargetSet.h"
 #include "RosterAppInfo.h"
 
-// constructor
+/**
+ * @brief Constructs a messaging target set that iterates over an AppInfoList.
+ *
+ * Positions the internal iterator at the first non-filtered entry in the list.
+ *
+ * @param list           The application info list to iterate.
+ * @param skipRegistrar  If @c true, the registrar's own team is excluded from
+ *                       the target set.
+ */
 AppInfoListMessagingTargetSet::AppInfoListMessagingTargetSet(
 		AppInfoList &list, bool skipRegistrar)
 	: fList(list),
@@ -40,19 +48,33 @@ AppInfoListMessagingTargetSet::AppInfoListMessagingTargetSet(
 	_SkipFilteredOutInfos();
 }
 
-// destructor
+/** @brief Destroys the messaging target set. */
 AppInfoListMessagingTargetSet::~AppInfoListMessagingTargetSet()
 {
 }
 
-// HasNext
+/**
+ * @brief Returns whether there are more targets remaining in the set.
+ *
+ * @return @c true if the iterator points to a valid entry, @c false if
+ *         all targets have been consumed.
+ */
 bool
 AppInfoListMessagingTargetSet::HasNext() const
 {
 	return fIterator.IsValid();
 }
 
-// Next
+/**
+ * @brief Advances to the next target and returns its port and token.
+ *
+ * On success the current entry's port is written to @a port, the token is
+ * set to B_PREFERRED_TOKEN, and the iterator advances past any filtered entries.
+ *
+ * @param port  Output parameter receiving the target's message port.
+ * @param token Output parameter receiving the messaging token.
+ * @return @c true if a target was returned, @c false if the set is exhausted.
+ */
 bool
 AppInfoListMessagingTargetSet::Next(port_id &port, int32 &token)
 {
@@ -68,14 +90,24 @@ AppInfoListMessagingTargetSet::Next(port_id &port, int32 &token)
 	return true;
 }
 
-// Rewind
+/**
+ * @brief Resets the iterator back to the beginning of the list.
+ */
 void
 AppInfoListMessagingTargetSet::Rewind()
 {
 	fIterator = fList.It();
 }
 
-// Filter
+/**
+ * @brief Determines whether the given app info should be included in the target set.
+ *
+ * When fSkipRegistrar is true, entries belonging to the registrar's own team
+ * are excluded.
+ *
+ * @param info The application info entry to test.
+ * @return @c true if the entry should be included, @c false to skip it.
+ */
 bool
 AppInfoListMessagingTargetSet::Filter(const RosterAppInfo *info)
 {
@@ -85,7 +117,9 @@ AppInfoListMessagingTargetSet::Filter(const RosterAppInfo *info)
 	return (!fSkipRegistrar || info->team != be_app->Team());
 }
 
-// _SkipFilteredOutInfos
+/**
+ * @brief Advances the iterator past any entries rejected by Filter().
+ */
 void
 AppInfoListMessagingTargetSet::_SkipFilteredOutInfos()
 {

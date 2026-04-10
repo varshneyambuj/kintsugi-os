@@ -27,18 +27,37 @@
 
 #include "HCIControllerAccessor.h"
 
+/**
+ * @brief Construct an HCI controller accessor for the given device path.
+ *
+ * Initializes the base HCIDelegate with the supplied path.  No socket or
+ * descriptor is opened at construction time.
+ *
+ * @param path Filesystem path to the HCI controller device node.
+ */
 HCIControllerAccessor::HCIControllerAccessor(BPath* path) : HCIDelegate(path)
 {
 
 }
 
 
+/** @brief Destroy the HCI controller accessor. */
 HCIControllerAccessor::~HCIControllerAccessor()
 {
 
 }
 
 
+/**
+ * @brief Submit a raw HCI command to the controller via the kernel socket.
+ *
+ * Currently a stub that validates the controller ID but does not actually
+ * transmit data.
+ *
+ * @param rc   Pointer to the raw command buffer to send.
+ * @param size Size in bytes of the command buffer.
+ * @return B_OK if the controller ID is valid, B_ERROR otherwise.
+ */
 status_t
 HCIControllerAccessor::IssueCommand(raw_command rc, size_t size)
 {
@@ -50,7 +69,14 @@ HCIControllerAccessor::IssueCommand(raw_command rc, size_t size)
 }
 
 
-status_t 
+/**
+ * @brief Activate the HCI controller.
+ *
+ * Currently a no-op stub that always succeeds.
+ *
+ * @return B_OK unconditionally.
+ */
+status_t
 HCIControllerAccessor::Launch() {
 
 	return B_OK;

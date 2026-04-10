@@ -58,7 +58,10 @@
 #include <util/DoublyLinkedList.h>
 
 
+/** @brief MIME signature of the graphical Debugger application. */
 static const char* kDebuggerSignature = "application/x-vnd.Haiku-Debugger";
+
+/** @brief Message code sent to a running Debugger to attach to a team. */
 static const int32 MSG_DEBUG_THIS_TEAM = 'dbtt';
 
 
@@ -74,9 +77,17 @@ using std::map;
 using std::nothrow;
 
 
+/** @brief MIME signature of the debug server application. */
 static const char *kSignature = "application/x-vnd.Haiku-debug_server";
 
 
+/**
+ * @brief Converts a human-readable action string to its numeric action code.
+ *
+ * @param action   The string to parse ("kill", "debug", "log", "report", "core", "user").
+ * @param _action  Output: the corresponding kAction* constant.
+ * @return B_OK on success, B_BAD_VALUE if the string is not recognized.
+ */
 static status_t
 action_for_string(const char* action, int32& _action)
 {
@@ -98,6 +109,16 @@ action_for_string(const char* action, int32& _action)
 }
 
 
+/**
+ * @brief Tests whether a team executable name matches a wildcard pattern.
+ *
+ * If the pattern does not start with '/', only the leaf component of the
+ * team name is compared.
+ *
+ * @param teamName      Full path of the team's executable.
+ * @param parameterName Wildcard pattern to match against.
+ * @return @c true if the pattern matches, @c false otherwise.
+ */
 static bool
 match_team_name(const char* teamName, const char* parameterName)
 {
@@ -122,6 +143,17 @@ match_team_name(const char* teamName, const char* parameterName)
 }
 
 
+/**
+ * @brief Determines the debug action for a crashed team from user settings.
+ *
+ * Reads the debug_server settings file and checks for a default action
+ * and per-executable overrides.
+ *
+ * @param teamName            Full path of the crashed team's executable.
+ * @param _action             Output: the action code to take.
+ * @param _explicitActionFound Output: @c true if an explicit per-executable match was found.
+ * @return B_OK on success, or an error if settings could not be loaded.
+ */
 static status_t
 action_for_team(const char* teamName, int32& _action,
 	bool& _explicitActionFound)
@@ -167,6 +199,12 @@ action_for_team(const char* teamName, int32& _action,
 }
 
 
+/**
+ * @brief Kills the specified team, printing a diagnostic message first.
+ *
+ * @param team    The team ID to kill.
+ * @param appName Optional human-readable name; if NULL, retrieved from team info.
+ */
 static void
 KillTeam(team_id team, const char *appName = NULL)
 {
@@ -408,6 +446,11 @@ private:
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a handler for the specified crashed team.
+ *
+ * @param team The team ID whose debug events will be handled.
+ */
 TeamDebugHandler::TeamDebugHandler(team_id team)
 	:
 	BLocker("team debug handler"),
@@ -423,6 +466,9 @@ TeamDebugHandler::TeamDebugHandler(team_id team)
 }
 
 
+/**
+ * @brief Destroys the handler, cleaning up semaphore, thread, debug context, and queued messages.
+ */
 TeamDebugHandler::~TeamDebugHandler()
 {
 	// delete the message count semaphore and wait for the thread to die
@@ -446,6 +492,16 @@ TeamDebugHandler::~TeamDebugHandler()
 }
 
 
+/**
+ * @brief Initializes the handler's debug context, semaphore, and handler thread.
+ *
+ * Retrieves team info and executable path, initializes the debug context
+ * for the team's nub port, sets the B_TEAM_DEBUG_PREVENT_EXIT flag, creates
+ * the message count semaphore, and spawns the handler thread.
+ *
+ * @param nubPort The debug nub port for the crashed team.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 TeamDebugHandler::Init(port_id nubPort)
 {
@@ -509,6 +565,7 @@ TeamDebugHandler::Init(port_id nubPort)
 }
 
 
+/** @brief Returns the team ID this handler is responsible for. */
 team_id
 TeamDebugHandler::Team() const
 {
@@ -516,6 +573,12 @@ TeamDebugHandler::Team() const
 }
 
 
+/**
+ * @brief Enqueues a debug message and signals the handler thread.
+ *
+ * @param message The debug message to enqueue; ownership is transferred.
+ * @return B_OK on success.
+ */
 status_t
 TeamDebugHandler::PushMessage(DebugMessage *message)
 {
@@ -528,6 +591,12 @@ TeamDebugHandler::PushMessage(DebugMessage *message)
 }
 
 
+/**
+ * @brief Blocks until a message is available, then dequeues it.
+ *
+ * @param message Output: the dequeued message; caller takes ownership.
+ * @return B_OK on success, or an error if the semaphore was deleted.
+ */
 status_t
 TeamDebugHandler::_PopMessage(DebugMessage *&message)
 {
@@ -550,6 +619,13 @@ TeamDebugHandler::_PopMessage(DebugMessage *&message)
 }
 
 
+/**
+ * @brief Prepares the argument list for launching GDB in a terminal.
+ *
+ * @param arguments      Output: the populated argument list.
+ * @param usingConsoled  If @c true, uses consoled instead of Terminal.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 TeamDebugHandler::_SetupGDBArguments(BStringList &arguments, bool usingConsoled)
 {
@@ -622,6 +698,15 @@ TeamDebugHandler::_SetupGDBArguments(BStringList &arguments, bool usingConsoled)
 }
 
 
+/**
+ * @brief Hands the crashed team over to a debugger process.
+ *
+ * Sends a handover preparation message, constructs the debugger command
+ * line, and launches the debugger (GDB or Debugger application).
+ *
+ * @param saveReport If @c true, launches the debugger in report-saving mode.
+ * @return The thread ID of the launched debugger, or a negative error code.
+ */
 thread_id
 TeamDebugHandler::_EnterDebugger(bool saveReport)
 {
@@ -745,6 +830,7 @@ TeamDebugHandler::_EnterDebugger(bool saveReport)
 }
 
 
+/** @brief Kills this handler's team using the stored team info. */
 void
 TeamDebugHandler::_KillTeam()
 {
@@ -752,6 +838,14 @@ TeamDebugHandler::_KillTeam()
 }
 
 
+/**
+ * @brief Writes a core dump file for the crashed team to the desktop.
+ *
+ * Generates a unique filename of the form "core-<name>-<team>[-N]" and
+ * sends B_DEBUG_MESSAGE_WRITE_CORE_FILE to the debug nub.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 TeamDebugHandler::_WriteCoreFile()
 {
@@ -818,6 +912,16 @@ TeamDebugHandler::_WriteCoreFile()
 }
 
 
+/**
+ * @brief Processes the first debug message for a team and determines the action.
+ *
+ * Extracts a human-readable description, prints a stack trace, consults
+ * user settings and optionally shows a GUI dialog to determine whether
+ * to kill, debug, save a report, or write a core file.
+ *
+ * @param message The debug message to handle.
+ * @return The chosen action code (kActionKillTeam, kActionDebugTeam, etc.).
+ */
 int32
 TeamDebugHandler::_HandleMessage(DebugMessage *message)
 {
@@ -913,6 +1017,17 @@ TeamDebugHandler::_HandleMessage(DebugMessage *message)
 }
 
 
+/**
+ * @brief Resolves a code address to a human-readable symbol name.
+ *
+ * Attempts to find the image, symbol name, and offset for the given
+ * address. Falls back to area-relative addressing if symbol lookup fails.
+ *
+ * @param lookupContext The symbol lookup context, or NULL.
+ * @param address       The code address to resolve.
+ * @param buffer        Output buffer for the formatted symbol string.
+ * @param bufferSize    Size of @a buffer in bytes.
+ */
 void
 TeamDebugHandler::_LookupSymbolAddress(
 	debug_symbol_lookup_context *lookupContext, const void *address,
@@ -967,6 +1082,11 @@ TeamDebugHandler::_LookupSymbolAddress(
 }
 
 
+/**
+ * @brief Prints a symbolic stack trace for the given thread to debug output.
+ *
+ * @param thread The thread whose stack trace should be printed.
+ */
 void
 TeamDebugHandler::_PrintStackTrace(thread_id thread)
 {
@@ -1017,6 +1137,13 @@ TeamDebugHandler::_PrintStackTrace(thread_id thread)
 }
 
 
+/**
+ * @brief Notifies the app_server that a team has crashed.
+ *
+ * This removes any kWindowScreenFeels so the debugger alert is visible.
+ *
+ * @param team The crashed team's ID.
+ */
 void
 TeamDebugHandler::_NotifyAppServer(team_id team)
 {
@@ -1027,6 +1154,13 @@ TeamDebugHandler::_NotifyAppServer(team_id team)
 }
 
 
+/**
+ * @brief Notifies the registrar about the team's debugger alert state.
+ *
+ * @param team         The crashed team's ID.
+ * @param openAlert    Whether the alert is being opened.
+ * @param stopShutdown Whether shutdown should be paused.
+ */
 void
 TeamDebugHandler::_NotifyRegistrar(team_id team, bool openAlert,
 	bool stopShutdown)
@@ -1042,6 +1176,11 @@ TeamDebugHandler::_NotifyRegistrar(team_id team, bool openAlert,
 }
 
 
+/**
+ * @brief Initializes the GUI context for this handler via the DebugServer app.
+ *
+ * @return B_OK if the GUI context was initialized, or an error code.
+ */
 status_t
 TeamDebugHandler::_InitGUI()
 {
@@ -1051,6 +1190,12 @@ TeamDebugHandler::_InitGUI()
 }
 
 
+/**
+ * @brief Static thread entry point for the handler thread.
+ *
+ * @param data Pointer to the TeamDebugHandler instance.
+ * @return The result of _HandlerThread().
+ */
 status_t
 TeamDebugHandler::_HandlerThreadEntry(void *data)
 {
@@ -1058,6 +1203,16 @@ TeamDebugHandler::_HandlerThreadEntry(void *data)
 }
 
 
+/**
+ * @brief Main handler thread loop that processes the initial debug message.
+ *
+ * Pops the first message, determines the action, and either kills the
+ * team, writes a core file, or hands over to the debugger. Waits for
+ * handover confirmation if debugging. Removes itself from the roster
+ * on completion and deletes this handler.
+ *
+ * @return B_OK on success.
+ */
 status_t
 TeamDebugHandler::_HandlerThread()
 {
@@ -1144,6 +1299,12 @@ TeamDebugHandler::_HandlerThread()
 }
 
 
+/**
+ * @brief Checks if this team's executable leaf name matches the given name.
+ *
+ * @param name The executable name to compare against.
+ * @return @c true if the names match.
+ */
 bool
 TeamDebugHandler::_ExecutableNameEquals(const char *name) const
 {
@@ -1151,6 +1312,7 @@ TeamDebugHandler::_ExecutableNameEquals(const char *name) const
 }
 
 
+/** @brief Returns whether this team is the app_server. */
 bool
 TeamDebugHandler::_IsAppServer() const
 {
@@ -1158,6 +1320,7 @@ TeamDebugHandler::_IsAppServer() const
 }
 
 
+/** @brief Returns whether this team is the input_server. */
 bool
 TeamDebugHandler::_IsInputServer() const
 {
@@ -1165,6 +1328,7 @@ TeamDebugHandler::_IsInputServer() const
 }
 
 
+/** @brief Returns whether this team is the registrar. */
 bool
 TeamDebugHandler::_IsRegistrar() const
 {
@@ -1172,6 +1336,7 @@ TeamDebugHandler::_IsRegistrar() const
 }
 
 
+/** @brief Returns whether this team is a critical GUI server (app_server, input_server, or registrar). */
 bool
 TeamDebugHandler::_IsGUIServer() const
 {
@@ -1180,6 +1345,12 @@ TeamDebugHandler::_IsGUIServer() const
 }
 
 
+/**
+ * @brief Returns the last path component (leaf name) of a path string.
+ *
+ * @param path The full path.
+ * @return Pointer to the character after the last '/', or the path itself.
+ */
 const char *
 TeamDebugHandler::_LastPathComponent(const char *path)
 {
@@ -1188,6 +1359,12 @@ TeamDebugHandler::_LastPathComponent(const char *path)
 }
 
 
+/**
+ * @brief Finds a running team by executable leaf name.
+ *
+ * @param name The executable name to search for.
+ * @return The team ID if found, or B_ENTRY_NOT_FOUND.
+ */
 team_id
 TeamDebugHandler::_FindTeam(const char *name)
 {
@@ -1206,6 +1383,11 @@ TeamDebugHandler::_FindTeam(const char *name)
 }
 
 
+/**
+ * @brief Checks whether all critical GUI servers are currently running.
+ *
+ * @return @c true if app_server, input_server, and registrar are all alive.
+ */
 bool
 TeamDebugHandler::_AreGUIServersAlive()
 {
@@ -1217,6 +1399,11 @@ TeamDebugHandler::_AreGUIServersAlive()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the DebugServer application.
+ *
+ * @param error Output: receives B_OK on success or an error code.
+ */
 DebugServer::DebugServer(status_t &error)
 	:
 	BServer(kSignature, false, &error),
@@ -1227,6 +1414,14 @@ DebugServer::DebugServer(status_t &error)
 }
 
 
+/**
+ * @brief Initializes the debug server's listener port and thread.
+ *
+ * Creates the kernel listener port, spawns the listener thread,
+ * installs itself as the default debugger, and resumes listening.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DebugServer::Init()
 {
@@ -1254,6 +1449,11 @@ DebugServer::Init()
 }
 
 
+/**
+ * @brief Always returns false to prevent the debug server from quitting.
+ *
+ * @return @c false always.
+ */
 bool
 DebugServer::QuitRequested()
 {
@@ -1262,6 +1462,12 @@ DebugServer::QuitRequested()
 }
 
 
+/**
+ * @brief Static thread entry point for the kernel listener thread.
+ *
+ * @param data Pointer to the DebugServer instance.
+ * @return The result of _Listener().
+ */
 status_t
 DebugServer::_ListenerEntry(void *data)
 {
@@ -1269,6 +1475,15 @@ DebugServer::_ListenerEntry(void *data)
 }
 
 
+/**
+ * @brief Listener loop that reads debug messages from the kernel port and dispatches them.
+ *
+ * Continuously reads debug_debugger_message_data from the listener port,
+ * wraps each in a DebugMessage, and dispatches it via the
+ * TeamDebugHandlerRoster. Exits on fatal read errors.
+ *
+ * @return B_OK on normal exit.
+ */
 status_t
 DebugServer::_Listener()
 {
@@ -1303,6 +1518,14 @@ TRACE(("debug_server: Got debug message: team: %" B_PRId32 ", code: %" B_PRId32
 // #pragma mark -
 
 
+/**
+ * @brief Entry point for the debug server process.
+ *
+ * Redirects stdout/stderr to /dev/dprintf, creates the handler roster
+ * and DebugServer application, initializes it, and runs the message loop.
+ *
+ * @return 0 on normal exit.
+ */
 int
 main()
 {

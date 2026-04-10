@@ -36,6 +36,11 @@
 #include "InputServer.h"
 
 
+/**
+ * @brief Constructs a DeviceAddOn wrapper around the given server device.
+ *
+ * @param device The BInputServerDevice that this add-on wraps.
+ */
 DeviceAddOn::DeviceAddOn(BInputServerDevice *device)
 	:
 	fDevice(device)
@@ -43,6 +48,9 @@ DeviceAddOn::DeviceAddOn(BInputServerDevice *device)
 }
 
 
+/**
+ * @brief Destructor; stops monitoring all paths still registered with this add-on.
+ */
 DeviceAddOn::~DeviceAddOn()
 {
 	while (const char* path = fMonitoredPaths.PathAt(0)) {
@@ -51,6 +59,12 @@ DeviceAddOn::~DeviceAddOn()
 }
 
 
+/**
+ * @brief Checks whether the given device path is being monitored by this add-on.
+ *
+ * @param path The device path to test.
+ * @return @c true if the path is in the monitored list, @c false otherwise.
+ */
 bool
 DeviceAddOn::HasPath(const char* path) const
 {
@@ -58,6 +72,12 @@ DeviceAddOn::HasPath(const char* path) const
 }
 
 
+/**
+ * @brief Adds a device path to this add-on's monitored path list.
+ *
+ * @param path The device path to add.
+ * @return B_OK on success, or an error code from PathList::AddPath().
+ */
 status_t
 DeviceAddOn::AddPath(const char* path)
 {
@@ -65,6 +85,12 @@ DeviceAddOn::AddPath(const char* path)
 }
 
 
+/**
+ * @brief Removes a device path from this add-on's monitored path list.
+ *
+ * @param path The device path to remove.
+ * @return B_OK on success, or B_ENTRY_NOT_FOUND if the path is not monitored.
+ */
 status_t
 DeviceAddOn::RemovePath(const char* path)
 {
@@ -72,6 +98,11 @@ DeviceAddOn::RemovePath(const char* path)
 }
 
 
+/**
+ * @brief Returns the number of device paths currently monitored by this add-on.
+ *
+ * @return The path count.
+ */
 int32
 DeviceAddOn::CountPaths() const
 {
@@ -82,12 +113,18 @@ DeviceAddOn::CountPaths() const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a BInputServerDevice and creates its internal DeviceAddOn.
+ */
 BInputServerDevice::BInputServerDevice()
 {
 	fOwner = new(std::nothrow) DeviceAddOn(this);
 }
 
 
+/**
+ * @brief Destructor; unregisters all devices and deletes the internal DeviceAddOn.
+ */
 BInputServerDevice::~BInputServerDevice()
 {
 	CALLED();
@@ -97,6 +134,11 @@ BInputServerDevice::~BInputServerDevice()
 }
 
 
+/**
+ * @brief Returns whether the device was initialized successfully.
+ *
+ * @return B_OK if the internal DeviceAddOn was allocated, or B_NO_MEMORY otherwise.
+ */
 status_t
 BInputServerDevice::InitCheck()
 {
@@ -106,6 +148,14 @@ BInputServerDevice::InitCheck()
 }
 
 
+/**
+ * @brief Called when the system is shutting down.
+ *
+ * The default implementation does nothing. Subclasses may override to
+ * perform cleanup.
+ *
+ * @return B_OK.
+ */
 status_t
 BInputServerDevice::SystemShuttingDown()
 {
@@ -113,6 +163,15 @@ BInputServerDevice::SystemShuttingDown()
 }
 
 
+/**
+ * @brief Starts producing events for the named device.
+ *
+ * The default implementation does nothing. Subclasses must override this.
+ *
+ * @param device Name of the device to start.
+ * @param cookie Opaque handle previously associated with this device.
+ * @return B_OK.
+ */
 status_t
 BInputServerDevice::Start(const char* device, void* cookie)
 {
@@ -120,6 +179,15 @@ BInputServerDevice::Start(const char* device, void* cookie)
 }
 
 
+/**
+ * @brief Stops producing events for the named device.
+ *
+ * The default implementation does nothing. Subclasses must override this.
+ *
+ * @param device Name of the device to stop.
+ * @param cookie Opaque handle previously associated with this device.
+ * @return B_OK.
+ */
 status_t
 BInputServerDevice::Stop(const char* device, void* cookie)
 {
@@ -127,6 +195,18 @@ BInputServerDevice::Stop(const char* device, void* cookie)
 }
 
 
+/**
+ * @brief Sends a control message to the named device.
+ *
+ * The default implementation does nothing. Subclasses may override to handle
+ * device-specific control codes.
+ *
+ * @param device  Name of the target device.
+ * @param cookie  Opaque handle previously associated with this device.
+ * @param code    Control code identifying the operation.
+ * @param message Optional message carrying additional parameters.
+ * @return B_OK.
+ */
 status_t
 BInputServerDevice::Control(const char* device, void* cookie,
 	uint32 code, BMessage* message)
@@ -135,6 +215,12 @@ BInputServerDevice::Control(const char* device, void* cookie,
 }
 
 
+/**
+ * @brief Registers an array of input device references with the input server.
+ *
+ * @param devices NULL-terminated array of input_device_ref pointers to register.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BInputServerDevice::RegisterDevices(input_device_ref** devices)
 {
@@ -143,6 +229,13 @@ BInputServerDevice::RegisterDevices(input_device_ref** devices)
 }
 
 
+/**
+ * @brief Unregisters an array of input device references from the input server.
+ *
+ * @param devices NULL-terminated array of input_device_ref pointers to unregister,
+ *                or NULL to unregister all devices owned by this object.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BInputServerDevice::UnregisterDevices(input_device_ref** devices)
 {
@@ -153,6 +246,12 @@ BInputServerDevice::UnregisterDevices(input_device_ref** devices)
 }
 
 
+/**
+ * @brief Enqueues an input event message into the input server's device event queue.
+ *
+ * @param message The event message to enqueue. Ownership transfers on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BInputServerDevice::EnqueueMessage(BMessage* message)
 {
@@ -160,6 +259,15 @@ BInputServerDevice::EnqueueMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Begins monitoring a device path for node changes.
+ *
+ * The add-on manager will watch the given path (under /dev/ if not absolute)
+ * and forward node monitor notifications to this device.
+ *
+ * @param device The device path to monitor.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BInputServerDevice::StartMonitoringDevice(const char* device)
 {
@@ -170,6 +278,12 @@ BInputServerDevice::StartMonitoringDevice(const char* device)
 }
 
 
+/**
+ * @brief Stops monitoring a previously watched device path.
+ *
+ * @param device The device path to stop monitoring.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BInputServerDevice::StopMonitoringDevice(const char* device)
 {
@@ -177,6 +291,16 @@ BInputServerDevice::StopMonitoringDevice(const char* device)
 }
 
 
+/**
+ * @brief Recursively scans a directory for device entries and sends B_INPUT_DEVICE_ADDED
+ *        control messages for each file found.
+ *
+ * Directories are traversed recursively; regular files trigger a
+ * Control() call with B_INPUT_DEVICE_ADDED.
+ *
+ * @param path The directory path to scan.
+ * @return B_OK on success, or an error code if the directory cannot be opened.
+ */
 status_t
 BInputServerDevice::AddDevices(const char* path)
 {
@@ -204,7 +328,11 @@ BInputServerDevice::AddDevices(const char* path)
 }
 
 
+/** @brief Reserved for future binary compatibility. */
 void BInputServerDevice::_ReservedInputServerDevice1() {}
+/** @brief Reserved for future binary compatibility. */
 void BInputServerDevice::_ReservedInputServerDevice2() {}
+/** @brief Reserved for future binary compatibility. */
 void BInputServerDevice::_ReservedInputServerDevice3() {}
+/** @brief Reserved for future binary compatibility. */
 void BInputServerDevice::_ReservedInputServerDevice4() {}

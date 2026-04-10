@@ -39,11 +39,27 @@
 #define B_TRANSLATION_CONTEXT "AppAccessRequestWindow"
 
 
+/** @brief Message code for the "Disallow" button. */
 static const uint32 kMessageDisallow = 'btda';
+/** @brief Message code for the "Allow once" button. */
 static const uint32 kMessageOnce = 'btao';
+/** @brief Message code for the "Allow always" button. */
 static const uint32 kMessageAlways = 'btaa';
 
 
+/**
+ * @brief Constructs the application access request dialog.
+ *
+ * Builds a window explaining which application is requesting access to
+ * which keyring, with Disallow, Allow Once, and Allow Always buttons.
+ *
+ * @param keyringName   Name of the keyring being accessed, or NULL.
+ * @param signature     MIME signature of the requesting application.
+ * @param path          Filesystem path of the requesting application.
+ * @param accessString  Human-readable description of the requested action, or NULL.
+ * @param appIsNew      True if the application has never been granted access.
+ * @param appWasUpdated True if the application binary changed since last access.
+ */
 AppAccessRequestWindow::AppAccessRequestWindow(const char* keyringName,
 	const char* signature, const char* path, const char* accessString,
 	bool appIsNew, bool appWasUpdated)
@@ -137,6 +153,9 @@ AppAccessRequestWindow::AppAccessRequestWindow(const char* keyringName,
 }
 
 
+/**
+ * @brief Destroys the window and deletes the synchronisation semaphore.
+ */
 AppAccessRequestWindow::~AppAccessRequestWindow()
 {
 	if (fDoneSem >= 0)
@@ -144,6 +163,11 @@ AppAccessRequestWindow::~AppAccessRequestWindow()
 }
 
 
+/**
+ * @brief Handles the window close request by treating it as a disallow action.
+ *
+ * @return Always returns @c false; the window is closed by RequestAppAccess().
+ */
 bool
 AppAccessRequestWindow::QuitRequested()
 {
@@ -153,6 +177,11 @@ AppAccessRequestWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Handles button clicks by recording the result and signalling completion.
+ *
+ * @param message The button message (Disallow, Once, or Always).
+ */
 void
 AppAccessRequestWindow::MessageReceived(BMessage* message)
 {
@@ -169,6 +198,15 @@ AppAccessRequestWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Shows the dialog and blocks until the user responds.
+ *
+ * Displays the window, waits for a button click or window close,
+ * translates the result, and closes the window.
+ *
+ * @param allowAlways Output: set to @c true if the user chose "Allow always".
+ * @return B_OK if access was granted, B_NOT_ALLOWED if denied.
+ */
 status_t
 AppAccessRequestWindow::RequestAppAccess(bool& allowAlways)
 {
@@ -202,6 +240,12 @@ AppAccessRequestWindow::RequestAppAccess(bool& allowAlways)
 }
 
 
+/**
+ * @brief Retrieves the application icon at the specified size.
+ *
+ * @param iconSize The desired icon dimension in pixels.
+ * @return A BBitmap containing the application's Tracker icon.
+ */
 BBitmap
 AppAccessRequestWindow::GetIcon(int32 iconSize)
 {

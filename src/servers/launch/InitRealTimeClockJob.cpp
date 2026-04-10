@@ -43,6 +43,7 @@
 using BSupportKit::BJob;
 
 
+/** @brief Constructs the real-time clock initialization job. */
 InitRealTimeClockJob::InitRealTimeClockJob()
 	:
 	BJob("init real time clock")
@@ -50,6 +51,14 @@ InitRealTimeClockJob::InitRealTimeClockJob()
 }
 
 
+/**
+ * @brief Reads RTC and timezone settings from the user settings directory and applies them.
+ *
+ * Locates the user settings directory, then configures whether the RTC stores
+ * GMT or local time and sets the system timezone offset.
+ *
+ * @return B_OK on success, or an error code if the settings directory cannot be found.
+ */
 status_t
 InitRealTimeClockJob::Execute()
 {
@@ -63,6 +72,15 @@ InitRealTimeClockJob::Execute()
 }
 
 
+/**
+ * @brief Reads the RTC_time_settings file and tells the kernel whether the RTC uses GMT.
+ *
+ * Opens the "RTC_time_settings" file under @a path, reads its contents,
+ * and calls _kern_set_real_time_clock_is_gmt() with the result. If the file
+ * contains "local" the RTC is considered to store local time; otherwise GMT.
+ *
+ * @param path Base path to the user settings directory (will be modified).
+ */
 void
 InitRealTimeClockJob::_SetRealTimeClockIsGMT(BPath path) const
 {
@@ -87,6 +105,15 @@ InitRealTimeClockJob::_SetRealTimeClockIsGMT(BPath path) const
 }
 
 
+/**
+ * @brief Reads the Time settings file and configures the kernel timezone offset.
+ *
+ * Opens the "Time settings" file under @a path, unflattens the BMessage
+ * inside, extracts the "timezone" string, and calls _kern_set_timezone()
+ * with the computed GMT offset.
+ *
+ * @param path Base path to the user settings directory (will be modified).
+ */
 void
 InitRealTimeClockJob::_SetTimeZoneOffset(BPath path) const
 {

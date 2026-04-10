@@ -41,6 +41,9 @@
 #include <View.h>
 
 
+/**
+ * @brief Constructs MouseSettings with all values set to compiled-in defaults.
+ */
 MouseSettings::MouseSettings()
 {
 	Defaults();
@@ -51,6 +54,16 @@ MouseSettings::MouseSettings()
 }
 
 
+/**
+ * @brief Constructs MouseSettings by copying from an existing mouse_settings struct.
+ *
+ * Starts with defaults, then overlays the given settings.  Queries the system
+ * for mouse mode, focus-follows-mouse mode, and accept-first-click state.
+ * Validates the mouse type range and ensures a valid button mapping.
+ *
+ * @param originalSettings Pointer to an existing settings struct to copy from,
+ *                         or NULL to keep the defaults.
+ */
 MouseSettings::MouseSettings(const mouse_settings* originalSettings)
 {
 	Defaults();
@@ -73,12 +86,16 @@ MouseSettings::MouseSettings(const mouse_settings* originalSettings)
 }
 
 
+/** @brief Destructor. */
 MouseSettings::~MouseSettings()
 {
 }
 
 
 #ifdef DEBUG
+/**
+ * @brief Prints all current mouse settings to stdout for debugging.
+ */
 void
 MouseSettings::Dump()
 {
@@ -126,9 +143,9 @@ MouseSettings::Dump()
 #endif
 
 
-/**	Resets the settings to the system defaults
+/**
+ * @brief Resets all mouse settings to the compiled-in system defaults.
  */
-
 void
 MouseSettings::Defaults()
 {
@@ -145,6 +162,12 @@ MouseSettings::Defaults()
 }
 
 
+/**
+ * @brief Sets the number of mouse buttons, clamping to valid range.
+ *
+ * @param type The number of buttons (1 to B_MAX_MOUSE_BUTTONS). Out-of-range
+ *             values are silently ignored.
+ */
 void
 MouseSettings::SetMouseType(int32 type)
 {
@@ -155,6 +178,11 @@ MouseSettings::SetMouseType(int32 type)
 }
 
 
+/**
+ * @brief Returns the double-click speed threshold in microseconds.
+ *
+ * @return The click speed.
+ */
 bigtime_t
 MouseSettings::ClickSpeed() const
 {
@@ -162,6 +190,11 @@ MouseSettings::ClickSpeed() const
 }
 
 
+/**
+ * @brief Sets the double-click speed threshold.
+ *
+ * @param clickSpeed The new click speed in microseconds.
+ */
 void
 MouseSettings::SetClickSpeed(bigtime_t clickSpeed)
 {
@@ -169,6 +202,11 @@ MouseSettings::SetClickSpeed(bigtime_t clickSpeed)
 }
 
 
+/**
+ * @brief Sets the mouse pointer speed.
+ *
+ * @param speed The new mouse speed value.
+ */
 void
 MouseSettings::SetMouseSpeed(int32 speed)
 {
@@ -176,6 +214,11 @@ MouseSettings::SetMouseSpeed(int32 speed)
 }
 
 
+/**
+ * @brief Sets the mouse acceleration factor.
+ *
+ * @param factor The new acceleration factor.
+ */
 void
 MouseSettings::SetAccelerationFactor(int32 factor)
 {
@@ -183,6 +226,12 @@ MouseSettings::SetAccelerationFactor(int32 factor)
 }
 
 
+/**
+ * @brief Returns the logical button mapped at the given physical button index.
+ *
+ * @param index Zero-based physical button index.
+ * @return The logical button bitmask, or 0 if @a index is out of range.
+ */
 uint32
 MouseSettings::Mapping(int32 index) const
 {
@@ -193,6 +242,11 @@ MouseSettings::Mapping(int32 index) const
 }
 
 
+/**
+ * @brief Copies the entire mouse button mapping into the caller-supplied struct.
+ *
+ * @param map Output reference that receives the current mouse_map.
+ */
 void
 MouseSettings::Mapping(mouse_map &map) const
 {
@@ -200,6 +254,14 @@ MouseSettings::Mapping(mouse_map &map) const
 }
 
 
+/**
+ * @brief Sets the logical button mapping for a single physical button index.
+ *
+ * Validates the mapping after the change to ensure a primary button exists.
+ *
+ * @param index  Zero-based physical button index.
+ * @param button The logical button bitmask to assign.
+ */
 void
 MouseSettings::SetMapping(int32 index, uint32 button)
 {
@@ -211,6 +273,11 @@ MouseSettings::SetMapping(int32 index, uint32 button)
 }
 
 
+/**
+ * @brief Replaces the entire button mapping with the given mouse_map.
+ *
+ * @param map The new button mapping.
+ */
 void
 MouseSettings::SetMapping(mouse_map &map)
 {
@@ -219,6 +286,12 @@ MouseSettings::SetMapping(mouse_map &map)
 }
 
 
+/**
+ * @brief Validates the button mapping, ensuring at least one button maps to primary.
+ *
+ * Replaces any zero-mapped buttons with their default identity mapping.
+ * If no button maps to the primary (left) button, forces button 0 to primary.
+ */
 void
 MouseSettings::_EnsureValidMapping()
 {
@@ -235,6 +308,11 @@ MouseSettings::_EnsureValidMapping()
 }
 
 
+/**
+ * @brief Sets the mouse focus mode (e.g. click-to-focus, focus-follows-mouse).
+ *
+ * @param mode The new mouse focus mode.
+ */
 void
 MouseSettings::SetMouseMode(mode_mouse mode)
 {
@@ -242,6 +320,11 @@ MouseSettings::SetMouseMode(mode_mouse mode)
 }
 
 
+/**
+ * @brief Sets the focus-follows-mouse sub-mode (normal, warp, instant warp).
+ *
+ * @param mode The new focus-follows-mouse mode.
+ */
 void
 MouseSettings::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 {
@@ -249,6 +332,11 @@ MouseSettings::SetFocusFollowsMouseMode(mode_focus_follows_mouse mode)
 }
 
 
+/**
+ * @brief Enables or disables accept-first-click behavior.
+ *
+ * @param acceptFirstClick @c true to enable, @c false to disable.
+ */
 void
 MouseSettings::SetAcceptFirstClick(bool acceptFirstClick)
 {
@@ -258,6 +346,9 @@ MouseSettings::SetAcceptFirstClick(bool acceptFirstClick)
 
 /* MultiMouseSettings functions */
 
+/**
+ * @brief Constructs the multi-mouse settings manager and loads persisted settings from disk.
+ */
 MultipleMouseSettings::MultipleMouseSettings()
 {
 	RetrieveSettings();
@@ -268,6 +359,9 @@ MultipleMouseSettings::MultipleMouseSettings()
 }
 
 
+/**
+ * @brief Destructor; saves all settings to disk and frees per-mouse objects.
+ */
 MultipleMouseSettings::~MultipleMouseSettings()
 {
 	SaveSettings();
@@ -282,6 +376,12 @@ MultipleMouseSettings::~MultipleMouseSettings()
 }
 
 
+/**
+ * @brief Resolves the filesystem path to the mouse settings file.
+ *
+ * @param path Output BPath that receives the full settings file path.
+ * @return B_OK on success, or an error code if the directory cannot be found.
+ */
 status_t
 MultipleMouseSettings::GetSettingsPath(BPath &path)
 {
@@ -294,6 +394,12 @@ MultipleMouseSettings::GetSettingsPath(BPath &path)
 }
 
 
+/**
+ * @brief Loads per-mouse settings from the flattened BMessage on disk.
+ *
+ * Each entry in the file contains a device name and its corresponding
+ * mouse_settings struct.  A new MouseSettings object is created for each.
+ */
 void
 MultipleMouseSettings::RetrieveSettings()
 {
@@ -325,6 +431,16 @@ MultipleMouseSettings::RetrieveSettings()
 }
 
 
+/**
+ * @brief Archives all per-mouse settings into the given BMessage.
+ *
+ * Each mouse device is serialized as a "mouseDevice" string and a
+ * "mouseSettings" raw data blob.
+ *
+ * @param into The message to archive into.
+ * @param deep Unused; present for API compatibility.
+ * @return B_OK.
+ */
 status_t
 MultipleMouseSettings::Archive(BMessage* into, bool deep) const
 {
@@ -340,6 +456,11 @@ MultipleMouseSettings::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Writes all per-mouse settings to disk as a flattened BMessage.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 MultipleMouseSettings::SaveSettings()
 {
@@ -361,6 +482,9 @@ MultipleMouseSettings::SaveSettings()
 }
 
 
+/**
+ * @brief Resets all per-mouse settings objects to their compiled-in defaults.
+ */
 void
 MultipleMouseSettings::Defaults()
 {
@@ -373,6 +497,9 @@ MultipleMouseSettings::Defaults()
 
 
 #ifdef DEBUG
+/**
+ * @brief Prints all per-mouse settings to stdout for debugging.
+ */
 void
 MultipleMouseSettings::Dump()
 {
@@ -388,6 +515,13 @@ MultipleMouseSettings::Dump()
 #endif
 
 
+/**
+ * @brief Returns the settings object for the named mouse, creating one if it does not exist.
+ *
+ * @param mouse_name The device name of the mouse.
+ * @return Pointer to the (possibly newly created) MouseSettings, or NULL on
+ *         allocation failure.
+ */
 MouseSettings*
 MultipleMouseSettings::AddMouseSettings(BString mouse_name)
 {
@@ -406,6 +540,12 @@ MultipleMouseSettings::AddMouseSettings(BString mouse_name)
 }
 
 
+/**
+ * @brief Looks up the settings object for the named mouse.
+ *
+ * @param mouse_name The device name of the mouse.
+ * @return Pointer to the MouseSettings if found, or NULL otherwise.
+ */
 MouseSettings*
 MultipleMouseSettings::GetMouseSettings(BString mouse_name)
 {

@@ -42,34 +42,27 @@
 
 using namespace BPrivate;
 
-/*!
-	\class RegistrarThreadManager
-	\brief RegistrarThreadManager is the master of all threads spawned by the
-		registrar
-*/
-
-//! Creates a new RegistrarThreadManager object
+/** @brief Constructs a RegistrarThreadManager with no managed threads. */
 RegistrarThreadManager::RegistrarThreadManager()
 	: fThreadCount(0)
 {
 }
 
-// destructor
-/*! \brief Destroys the RegistrarThreadManager object, killing and deleting any
-	still running threads.
-*/
+/**
+ * @brief Destroys the manager, killing and deleting any remaining threads.
+ */
 RegistrarThreadManager::~RegistrarThreadManager()
 {
 	KillThreads();
 }
 
-// MessageReceived
-/*! \brief Handles \c B_REG_MIME_UPDATE_THREAD_FINISHED messages, passing on all
-	others.
-
-	Each \c B_REG_MIME_UPDATE_THREAD_FINISHED message triggers a call to
-	CleanupThreads().
-*/
+/**
+ * @brief Handles B_REG_MIME_UPDATE_THREAD_FINISHED messages to clean up threads.
+ *
+ * All other messages are forwarded to the base BHandler.
+ *
+ * @param message The incoming message.
+ */
 void
 RegistrarThreadManager::MessageReceived(BMessage* message)
 {
@@ -88,24 +81,16 @@ RegistrarThreadManager::MessageReceived(BMessage* message)
 	}
 }
 
-// LaunchThread
-/*! \brief Launches the given thread, passing responsiblity for it onto the
-	RegistrarThreadManager object.
-
-	\param thread Pointer to a newly allocated \c RegistrarThread object.
-
-	If the result of the function is \c B_OK, the \c RegistrarThreadManager
-	object assumes ownership of \a thread; if the result is an error code, it
-	does not.
-
-	\return
-	- \c B_OK: success
-	- \c B_NO_MORE_THREADS: the number of concurrently allowed threads (defined
-							by RegistrarThreadManager::kThreadLimit) has
-							already been reached
-	- \c B_BAD_THREAD_STATE: the thread has already been launched
-	- other error code: failure
-*/
+/**
+ * @brief Launches a thread and takes ownership on success.
+ *
+ * If the thread limit has been reached, @c B_NO_MORE_THREADS is returned
+ * and the caller retains ownership.
+ *
+ * @param thread The RegistrarThread to launch. Ownership transfers on success.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a thread is NULL,
+ *         @c B_NO_MORE_THREADS if the limit is reached, or another error code.
+ */
 status_t
 RegistrarThreadManager::LaunchThread(RegistrarThread *thread)
 {
@@ -138,12 +123,11 @@ RegistrarThreadManager::LaunchThread(RegistrarThread *thread)
 	return err;
 }
 
-// CleanupThreads
-/*! \brief Frees the resources of any threads that are no longer running
-
-	\todo This function should perhaps be triggered periodically by a
-	BMessageRunner once we have our own BMessageRunner implementation.
-*/
+/**
+ * @brief Frees the resources of any threads that have finished executing.
+ *
+ * @return @c B_OK always.
+ */
 status_t
 RegistrarThreadManager::CleanupThreads()
 {
@@ -167,13 +151,14 @@ RegistrarThreadManager::CleanupThreads()
 	return B_OK;
 }
 
-// ShutdownThreads
-/*! \brief Requests that any running threads quit and frees the resources
-	of any threads that are no longer running.
-
-	\todo This function should be called during system shutdown around
-	the same time as global B_QUIT_REQUESTED messages are sent out.
-*/
+/**
+ * @brief Asks all running threads to exit and cleans up finished ones.
+ *
+ * Running threads are politely asked to exit via AskToExit(); already
+ * finished threads are removed and deleted.
+ *
+ * @return @c B_OK always.
+ */
 status_t
 RegistrarThreadManager::ShutdownThreads()
 {
@@ -207,12 +192,11 @@ RegistrarThreadManager::ShutdownThreads()
 	return B_OK;
 }
 
-// KillThreads
-/*! \brief Kills any running threads and frees their resources.
-
-	\todo This function should probably be called during system shutdown
-	just before kernel shutdown begins.
-*/
+/**
+ * @brief Forcibly kills all running threads and frees their resources.
+ *
+ * @return @c B_OK always.
+ */
 status_t
 RegistrarThreadManager::KillThreads()
 {
@@ -242,24 +226,26 @@ RegistrarThreadManager::KillThreads()
 	return B_OK;
 }
 
-// ThreadCount
-/*! \brief Returns the number of threads currently under management
-
-	This is not necessarily a count of how many threads are actually running,
-	as threads may remain in the thread list that are finished and waiting
-	to be cleaned up.
-
-	\return The number of threads currently under management
-*/
+/**
+ * @brief Returns the number of threads currently under management.
+ *
+ * This includes threads that have finished but not yet been cleaned up.
+ *
+ * @return The managed thread count.
+ */
 uint
 RegistrarThreadManager::ThreadCount() const
 {
 	return fThreadCount;
 }
 
-// RemoveThread
-/*! \brief Deletes the given thread and removes it from the thread list.
-*/
+/**
+ * @brief Waits for the thread to exit, deletes it, and removes it from the list.
+ *
+ * @param i Iterator pointing to the thread to remove; updated to the next
+ *          element after removal.
+ * @return A reference to the updated iterator.
+ */
 std::list<RegistrarThread*>::iterator&
 RegistrarThreadManager::RemoveThread(std::list<RegistrarThread*>::iterator &i)
 {

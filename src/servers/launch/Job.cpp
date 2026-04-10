@@ -43,6 +43,11 @@
 #include "Utility.h"
 
 
+/**
+ * @brief Constructs a new job with the given name and default disabled state.
+ *
+ * @param name The unique name identifying this job.
+ */
 Job::Job(const char* name)
 	:
 	BaseJob(name),
@@ -63,6 +68,15 @@ Job::Job(const char* name)
 }
 
 
+/**
+ * @brief Copy-constructs a job, duplicating configuration but resetting runtime state.
+ *
+ * Copies arguments, requirements, ports (without port IDs), conditions,
+ * environment, and source files from @a other. Runtime state such as team ID,
+ * default port, and launch status are reset.
+ *
+ * @param other The job to copy from.
+ */
 Job::Job(const Job& other)
 	:
 	BaseJob(other.Name()),
@@ -104,12 +118,18 @@ Job::Job(const Job& other)
 }
 
 
+/** @brief Destroys the job and deletes all owned ports. */
 Job::~Job()
 {
 	_DeletePorts();
 }
 
 
+/**
+ * @brief Returns the team listener for this job.
+ *
+ * @return The current TeamListener, or NULL if none is set.
+ */
 ::TeamListener*
 Job::TeamListener() const
 {
@@ -117,6 +137,11 @@ Job::TeamListener() const
 }
 
 
+/**
+ * @brief Sets the listener to be notified when this job's team is launched.
+ *
+ * @param listener The TeamListener to set, or NULL to clear.
+ */
 void
 Job::SetTeamListener(::TeamListener* listener)
 {
@@ -124,6 +149,7 @@ Job::SetTeamListener(::TeamListener* listener)
 }
 
 
+/** @brief Returns whether this job is enabled. */
 bool
 Job::IsEnabled() const
 {
@@ -131,6 +157,11 @@ Job::IsEnabled() const
 }
 
 
+/**
+ * @brief Enables or disables this job.
+ *
+ * @param enable @c true to enable, @c false to disable.
+ */
 void
 Job::SetEnabled(bool enable)
 {
@@ -138,6 +169,7 @@ Job::SetEnabled(bool enable)
 }
 
 
+/** @brief Returns whether this job is a persistent service. */
 bool
 Job::IsService() const
 {
@@ -145,6 +177,11 @@ Job::IsService() const
 }
 
 
+/**
+ * @brief Marks this job as a service (auto-restartable) or a one-shot job.
+ *
+ * @param service @c true to mark as a service, @c false for a one-shot job.
+ */
 void
 Job::SetService(bool service)
 {
@@ -152,6 +189,7 @@ Job::SetService(bool service)
 }
 
 
+/** @brief Returns whether a default port should be created when this job launches. */
 bool
 Job::CreateDefaultPort() const
 {
@@ -159,6 +197,11 @@ Job::CreateDefaultPort() const
 }
 
 
+/**
+ * @brief Sets whether a default port should be created for this job.
+ *
+ * @param createPort @c true to create a default port on launch.
+ */
 void
 Job::SetCreateDefaultPort(bool createPort)
 {
@@ -166,6 +209,11 @@ Job::SetCreateDefaultPort(bool createPort)
 }
 
 
+/**
+ * @brief Adds a named port definition to this job's port map.
+ *
+ * @param data A BMessage containing the port configuration, including a "name" string.
+ */
 void
 Job::AddPort(BMessage& data)
 {
@@ -174,6 +222,7 @@ Job::AddPort(BMessage& data)
 }
 
 
+/** @brief Returns the command-line argument list (const version). */
 const BStringList&
 Job::Arguments() const
 {
@@ -181,6 +230,7 @@ Job::Arguments() const
 }
 
 
+/** @brief Returns the command-line argument list (mutable version). */
 BStringList&
 Job::Arguments()
 {
@@ -188,6 +238,11 @@ Job::Arguments()
 }
 
 
+/**
+ * @brief Appends a command-line argument for this job's launch.
+ *
+ * @param argument The argument string to add.
+ */
 void
 Job::AddArgument(const char* argument)
 {
@@ -195,6 +250,7 @@ Job::AddArgument(const char* argument)
 }
 
 
+/** @brief Returns the launch target this job belongs to, or NULL. */
 ::Target*
 Job::Target() const
 {
@@ -202,6 +258,11 @@ Job::Target() const
 }
 
 
+/**
+ * @brief Assigns this job to a launch target.
+ *
+ * @param target The target to associate with, or NULL to clear.
+ */
 void
 Job::SetTarget(::Target* target)
 {
@@ -209,6 +270,7 @@ Job::SetTarget(::Target* target)
 }
 
 
+/** @brief Returns the list of dependency names for this job (const version). */
 const BStringList&
 Job::Requirements() const
 {
@@ -216,6 +278,7 @@ Job::Requirements() const
 }
 
 
+/** @brief Returns the list of dependency names for this job (mutable version). */
 BStringList&
 Job::Requirements()
 {
@@ -223,6 +286,11 @@ Job::Requirements()
 }
 
 
+/**
+ * @brief Adds a named dependency requirement for this job.
+ *
+ * @param requirement The name of the job or target that must be satisfied first.
+ */
 void
 Job::AddRequirement(const char* requirement)
 {
@@ -230,6 +298,7 @@ Job::AddRequirement(const char* requirement)
 }
 
 
+/** @brief Returns the list of jobs pending on this one (const version). */
 const BStringList&
 Job::Pending() const
 {
@@ -237,6 +306,7 @@ Job::Pending() const
 }
 
 
+/** @brief Returns the list of jobs pending on this one (mutable version). */
 BStringList&
 Job::Pending()
 {
@@ -244,6 +314,11 @@ Job::Pending()
 }
 
 
+/**
+ * @brief Adds a pending job name that will be launched after this one completes.
+ *
+ * @param pending The name of the job to launch after this one.
+ */
 void
 Job::AddPending(const char* pending)
 {
@@ -251,6 +326,15 @@ Job::AddPending(const char* pending)
 }
 
 
+/**
+ * @brief Tests whether this job's conditions are met, including target launch state.
+ *
+ * Returns @c false if this job has a target that has not yet launched.
+ * Otherwise delegates to BaseJob::CheckCondition().
+ *
+ * @param context The condition evaluation context.
+ * @return @c true if conditions are met, @c false otherwise.
+ */
 bool
 Job::CheckCondition(ConditionContext& context) const
 {
@@ -261,6 +345,17 @@ Job::CheckCondition(ConditionContext& context) const
 }
 
 
+/**
+ * @brief Initializes the job by resolving its dependency graph.
+ *
+ * Recursively initializes all required dependencies, detecting cyclic
+ * dependencies and registering BJob-level dependencies so the job queue
+ * respects the ordering.
+ *
+ * @param finder       The resolver used to look up jobs and targets by name.
+ * @param dependencies Accumulator set for detecting cyclic dependencies.
+ * @return B_OK on success, or an error code if initialization fails.
+ */
 status_t
 Job::Init(const Finder& finder, std::set<BString>& dependencies)
 {
@@ -314,6 +409,12 @@ Job::Init(const Finder& finder, std::set<BString>& dependencies)
 }
 
 
+/**
+ * @brief Returns the initialization status of this job.
+ *
+ * @return B_OK if Init() succeeded, B_NO_INIT if not yet initialized,
+ *         or another error code.
+ */
 status_t
 Job::InitCheck() const
 {
@@ -321,6 +422,7 @@ Job::InitCheck() const
 }
 
 
+/** @brief Returns the team ID of the launched process, or -1 if not running. */
 team_id
 Job::Team() const
 {
@@ -328,6 +430,7 @@ Job::Team() const
 }
 
 
+/** @brief Returns the port map containing all named ports for this job. */
 const PortMap&
 Job::Ports() const
 {
@@ -335,6 +438,12 @@ Job::Ports() const
 }
 
 
+/**
+ * @brief Looks up a named port ID from this job's port map.
+ *
+ * @param name The name of the port to find.
+ * @return The port ID, or B_NAME_NOT_FOUND if no such port exists.
+ */
 port_id
 Job::Port(const char* name) const
 {
@@ -346,6 +455,7 @@ Job::Port(const char* name) const
 }
 
 
+/** @brief Returns the default (unnamed) port ID, or -1 if none. */
 port_id
 Job::DefaultPort() const
 {
@@ -353,6 +463,11 @@ Job::DefaultPort() const
 }
 
 
+/**
+ * @brief Sets the default port and updates the first unnamed entry in the port map.
+ *
+ * @param port The port ID to set as the default.
+ */
 void
 Job::SetDefaultPort(port_id port)
 {
@@ -370,6 +485,16 @@ Job::SetDefaultPort(port_id port)
 }
 
 
+/**
+ * @brief Launches the job's process, building its environment and argument vector.
+ *
+ * Constructs the process environment by merging the system environ, target
+ * environment, job environment, and source-file environment. If no arguments
+ * are configured, launches by application signature; otherwise resolves the
+ * first argument as an entry_ref and launches directly.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Job::Launch()
 {
@@ -427,6 +552,7 @@ Job::Launch()
 }
 
 
+/** @brief Returns whether this job has been launched (successfully or not). */
 bool
 Job::IsLaunched() const
 {
@@ -434,6 +560,7 @@ Job::IsLaunched() const
 }
 
 
+/** @brief Returns whether this job's process is currently running. */
 bool
 Job::IsRunning() const
 {
@@ -441,6 +568,12 @@ Job::IsRunning() const
 }
 
 
+/**
+ * @brief Resets runtime state after the job's team has been deleted.
+ *
+ * Clears the team ID and default port. For services, resets the job
+ * state to waiting so it can be relaunched.
+ */
 void
 Job::TeamDeleted()
 {
@@ -455,6 +588,14 @@ Job::TeamDeleted()
 }
 
 
+/**
+ * @brief Returns whether this job is eligible to be launched right now.
+ *
+ * A job can be launched if it is enabled, not already launching, and
+ * (for services) not already running.
+ *
+ * @return @c true if the job can be launched.
+ */
 bool
 Job::CanBeLaunched() const
 {
@@ -463,6 +604,7 @@ Job::CanBeLaunched() const
 }
 
 
+/** @brief Returns whether this job is currently in the process of launching. */
 bool
 Job::IsLaunching() const
 {
@@ -470,6 +612,11 @@ Job::IsLaunching() const
 }
 
 
+/**
+ * @brief Sets the launching flag for this job.
+ *
+ * @param launching @c true to mark as launching, @c false to clear.
+ */
 void
 Job::SetLaunching(bool launching)
 {
@@ -477,6 +624,15 @@ Job::SetLaunching(bool launching)
 }
 
 
+/**
+ * @brief Handles a B_GET_LAUNCH_DATA request for this job's port information.
+ *
+ * If the job is already launched, replies immediately with port data.
+ * Otherwise, queues the message for a deferred reply once the job launches.
+ *
+ * @param message The incoming request message (takes ownership on deferral).
+ * @return B_OK on success, B_NOT_ALLOWED if the job is disabled, or B_NO_MEMORY.
+ */
 status_t
 Job::HandleGetLaunchData(BMessage* message)
 {
@@ -491,6 +647,15 @@ Job::HandleGetLaunchData(BMessage* message)
 }
 
 
+/**
+ * @brief Constructs a BMessenger targeting this job's running application.
+ *
+ * Looks up the running app info via BRoster and verifies it is not
+ * pre-registered before constructing the messenger.
+ *
+ * @param messenger Output BMessenger that will target this job's team.
+ * @return B_OK on success, or B_NAME_NOT_FOUND if the job is not accessible.
+ */
 status_t
 Job::GetMessenger(BMessenger& messenger)
 {
@@ -512,6 +677,11 @@ Job::GetMessenger(BMessenger& messenger)
 }
 
 
+/**
+ * @brief Runs this job via the BJob framework and resets non-service jobs for potential relaunch.
+ *
+ * @return The status code from BJob::Run().
+ */
 status_t
 Job::Run()
 {
@@ -525,6 +695,11 @@ Job::Run()
 }
 
 
+/**
+ * @brief Executes the job by launching its process (unless it is an already-running service).
+ *
+ * @return B_OK on success, or an error code from Launch().
+ */
 status_t
 Job::Execute()
 {
@@ -539,6 +714,9 @@ Job::Execute()
 }
 
 
+/**
+ * @brief Deletes all kernel ports owned by this job.
+ */
 void
 Job::_DeletePorts()
 {
@@ -551,6 +729,16 @@ Job::_DeletePorts()
 }
 
 
+/**
+ * @brief Registers a BJob-level dependency based on the dependency's current state.
+ *
+ * If the dependency is still pending, adds it as a direct dependency.
+ * If it has already succeeded, does nothing. If it failed or was aborted,
+ * returns an error.
+ *
+ * @param dependency The dependency job (may be NULL, which is a no-op).
+ * @return B_OK on success, or B_BAD_VALUE if the dependency failed.
+ */
 status_t
 Job::_AddRequirement(BJob* dependency)
 {
@@ -578,6 +766,12 @@ Job::_AddRequirement(BJob* dependency)
 }
 
 
+/**
+ * @brief Appends all strings from a BStringList to a raw C-string array.
+ *
+ * @param array The target vector to append to.
+ * @param list  The source string list.
+ */
 void
 Job::_AddStringList(std::vector<const char*>& array, const BStringList& list)
 {
@@ -588,6 +782,11 @@ Job::_AddStringList(std::vector<const char*>& array, const BStringList& list)
 }
 
 
+/**
+ * @brief Records the final launch status and sends any pending launch data replies.
+ *
+ * @param launchStatus The result of the launch attempt.
+ */
 void
 Job::_SetLaunchStatus(status_t launchStatus)
 {
@@ -599,6 +798,15 @@ Job::_SetLaunchStatus(status_t launchStatus)
 }
 
 
+/**
+ * @brief Sends a launch data reply containing team ID and port information.
+ *
+ * Constructs a reply BMessage with the team ID and all port IDs, sends
+ * it, and deletes the original request message.
+ *
+ * @param message The original request message to reply to (takes ownership).
+ * @return B_OK always.
+ */
 status_t
 Job::_SendLaunchDataReply(BMessage* message)
 {
@@ -624,6 +832,9 @@ Job::_SendLaunchDataReply(BMessage* message)
 }
 
 
+/**
+ * @brief Sends launch data replies to all deferred requestors and clears the pending list.
+ */
 void
 Job::_SendPendingLaunchDataReplies()
 {
@@ -699,6 +910,13 @@ Job::_CreateAndTransferPorts()
 }
 
 
+/**
+ * @brief Creates a kernel port and transfers ownership to this job's team.
+ *
+ * @param name     The human-readable name for the port.
+ * @param capacity The message capacity of the port.
+ * @return The new port ID on success, or a negative error code.
+ */
 port_id
 Job::_CreateAndTransferPort(const char* name, int32 capacity)
 {
@@ -716,6 +934,20 @@ Job::_CreateAndTransferPort(const char* name, int32 capacity)
 }
 
 
+/**
+ * @brief Performs the actual process launch via BRoster::Private::Launch().
+ *
+ * Creates and transfers ports, resumes the main thread on success, or
+ * kills it on port-creation failure. Notifies the team listener and
+ * records the launch status.
+ *
+ * @param signature   Application signature (used if @a ref is NULL).
+ * @param ref         Entry reference to the executable (may be NULL).
+ * @param argCount    Number of command-line arguments.
+ * @param args        Array of argument strings.
+ * @param environment NULL-terminated array of environment strings.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Job::_Launch(const char* signature, entry_ref* ref, int argCount,
 	const char* const* args, const char** environment)

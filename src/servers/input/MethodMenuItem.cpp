@@ -32,6 +32,17 @@
 #include <string.h>
 #include "MethodMenuItem.h"
 
+/**
+ * @brief Constructs a menu item with an icon, label, and attached submenu.
+ *
+ * The icon bitmap is copied from the supplied raw pixel data.
+ *
+ * @param cookie    Unique cookie identifying the associated input method.
+ * @param name      Display label for the menu item.
+ * @param icon      Raw CMAP8 pixel data for the 16x16 icon.
+ * @param subMenu   Submenu to attach to this item (ownership transferred to BMenuItem).
+ * @param messenger Messenger targeting the input method add-on.
+ */
 MethodMenuItem::MethodMenuItem(int32 cookie, const char* name, const uchar* icon, BMenu* subMenu, BMessenger& messenger)
 	: BMenuItem(subMenu),
 	fIcon(BRect(0, 0, MENUITEM_ICON_SIZE - 1, MENUITEM_ICON_SIZE - 1), B_CMAP8),
@@ -43,6 +54,13 @@ MethodMenuItem::MethodMenuItem(int32 cookie, const char* name, const uchar* icon
 }
 
 
+/**
+ * @brief Constructs a simple menu item with an icon and label but no submenu.
+ *
+ * @param cookie Unique cookie identifying the associated input method.
+ * @param name   Display label for the menu item.
+ * @param icon   Raw CMAP8 pixel data for the 16x16 icon.
+ */
 MethodMenuItem::MethodMenuItem(int32 cookie, const char* name, const uchar* icon)
 	: BMenuItem(name, NULL),
 	fIcon(BRect(0, 0, MENUITEM_ICON_SIZE - 1, MENUITEM_ICON_SIZE - 1), B_CMAP8),
@@ -52,17 +70,28 @@ MethodMenuItem::MethodMenuItem(int32 cookie, const char* name, const uchar* icon
 }
 
 
+/** @brief Destructor. */
 MethodMenuItem::~MethodMenuItem()
 {
 }
 
 
+/**
+ * @brief Updates the display label of this menu item.
+ *
+ * @param name The new label string.
+ */
 void
 MethodMenuItem::SetName(const char *name)
 {
 	SetLabel(name);
 }
 
+/**
+ * @brief Replaces the icon bitmap with new pixel data.
+ *
+ * @param icon Raw CMAP8 pixel data for the 16x16 icon.
+ */
 void
 MethodMenuItem::SetIcon(const uchar *icon)
 {
@@ -70,6 +99,15 @@ MethodMenuItem::SetIcon(const uchar *icon)
 }
 
 
+/**
+ * @brief Computes the content size needed to draw the icon and label.
+ *
+ * The width accounts for the icon, a small gap, and the text width.
+ * The height is the larger of the font height or the icon height.
+ *
+ * @param width  Output: the required content width in pixels.
+ * @param height Output: the required content height in pixels.
+ */
 void
 MethodMenuItem::GetContentSize(float *width, float *height)
 {
@@ -84,6 +122,12 @@ MethodMenuItem::GetContentSize(float *width, float *height)
 }
 
 
+/**
+ * @brief Draws the icon bitmap followed by the text label into the parent menu.
+ *
+ * The icon is drawn with B_OP_OVER compositing, then the pen is advanced
+ * past the icon before delegating to BMenuItem::DrawContent() for the label.
+ */
 void
 MethodMenuItem::DrawContent()
 {

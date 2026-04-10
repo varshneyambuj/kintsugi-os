@@ -35,6 +35,14 @@
 using namespace BPackageKit;
 
 
+/**
+ * @brief Constructs an Exception with the given transaction error code.
+ *
+ * All optional fields (system error, package name, paths, strings) are
+ * initialized to empty/default values.
+ *
+ * @param error The transaction-level error that triggered this exception.
+ */
 Exception::Exception(BTransactionError error)
 	:
 	fError(error),
@@ -47,6 +55,12 @@ Exception::Exception(BTransactionError error)
 {
 }
 
+/**
+ * @brief Sets the underlying system error code on this exception.
+ *
+ * @param error The POSIX/BeOS status_t code.
+ * @return Reference to this Exception for method chaining.
+ */
 Exception&
 Exception::SetSystemError(status_t error)
 {
@@ -55,6 +69,12 @@ Exception::SetSystemError(status_t error)
 }
 
 
+/**
+ * @brief Sets the name of the package associated with this error.
+ *
+ * @param packageName Human-readable package file name.
+ * @return Reference to this Exception for method chaining.
+ */
 Exception&
 Exception::SetPackageName(const BString& packageName)
 {
@@ -63,6 +83,12 @@ Exception::SetPackageName(const BString& packageName)
 }
 
 
+/**
+ * @brief Sets the first filesystem path relevant to this error.
+ *
+ * @param path A filesystem path (e.g., source or target).
+ * @return Reference to this Exception for method chaining.
+ */
 Exception&
 Exception::SetPath1(const BString& path)
 {
@@ -71,6 +97,12 @@ Exception::SetPath1(const BString& path)
 }
 
 
+/**
+ * @brief Sets the second filesystem path relevant to this error.
+ *
+ * @param path A filesystem path (e.g., destination or backup).
+ * @return Reference to this Exception for method chaining.
+ */
 Exception&
 Exception::SetPath2(const BString& path)
 {
@@ -79,6 +111,12 @@ Exception::SetPath2(const BString& path)
 }
 
 
+/**
+ * @brief Sets the first auxiliary string for this error.
+ *
+ * @param string An additional descriptive string.
+ * @return Reference to this Exception for method chaining.
+ */
 Exception&
 Exception::SetString1(const BString& string)
 {
@@ -87,6 +125,12 @@ Exception::SetString1(const BString& string)
 }
 
 
+/**
+ * @brief Sets the second auxiliary string for this error.
+ *
+ * @param string An additional descriptive string.
+ * @return Reference to this Exception for method chaining.
+ */
 Exception&
 Exception::SetString2(const BString& string)
 {
@@ -95,6 +139,15 @@ Exception::SetString2(const BString& string)
 }
 
 
+/**
+ * @brief Transfers all stored error details into a BCommitTransactionResult.
+ *
+ * Copies the error code, system error, package name, paths, and auxiliary
+ * strings into the supplied result object so it can be sent back to the
+ * requesting client.
+ *
+ * @param result The result object to populate with this exception's details.
+ */
 void
 Exception::SetOnResult(BCommitTransactionResult& result)
 {

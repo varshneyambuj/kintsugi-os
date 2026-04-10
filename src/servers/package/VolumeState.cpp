@@ -38,6 +38,11 @@
 #include <AutoLocker.h>
 
 
+/**
+ * @brief Constructs an empty VolumeState with uninitialized hash tables.
+ *
+ * Init() must be called before using this object.
+ */
 VolumeState::VolumeState()
 	:
 	fPackagesByFileName(),
@@ -46,6 +51,9 @@ VolumeState::VolumeState()
 }
 
 
+/**
+ * @brief Destroys the VolumeState, clearing hash tables and deleting all owned packages.
+ */
 VolumeState::~VolumeState()
 {
 	fPackagesByFileName.Clear();
@@ -59,6 +67,11 @@ VolumeState::~VolumeState()
 }
 
 
+/**
+ * @brief Initializes the internal hash tables for file-name and node-ref lookups.
+ *
+ * @return @c true if both hash tables initialized successfully, @c false otherwise.
+ */
 bool
 VolumeState::Init()
 {
@@ -67,6 +80,11 @@ VolumeState::Init()
 }
 
 
+/**
+ * @brief Adds a package to both the file-name and node-ref hash tables.
+ *
+ * @param package The package to insert; must not already be present.
+ */
 void
 VolumeState::AddPackage(Package* package)
 {
@@ -75,6 +93,13 @@ VolumeState::AddPackage(Package* package)
 }
 
 
+/**
+ * @brief Removes a package from both the file-name and node-ref hash tables.
+ *
+ * The caller is responsible for deleting the package after removal.
+ *
+ * @param package The package to remove.
+ */
 void
 VolumeState::RemovePackage(Package* package)
 {
@@ -83,6 +108,12 @@ VolumeState::RemovePackage(Package* package)
 }
 
 
+/**
+ * @brief Marks a package as active or inactive.
+ *
+ * @param package The package whose activation state to change.
+ * @param active  @c true to activate, @c false to deactivate.
+ */
 void
 VolumeState::SetPackageActive(Package* package, bool active)
 {
@@ -90,6 +121,15 @@ VolumeState::SetPackageActive(Package* package, bool active)
 }
 
 
+/**
+ * @brief Applies an activation change by marking packages active and deleting deactivated ones.
+ *
+ * Activated packages are marked active. Deactivated packages are removed
+ * from the hash tables and deleted.
+ *
+ * @param activatedPackage   Set of packages to mark as active.
+ * @param deactivatePackages Set of packages to remove and delete.
+ */
 void
 VolumeState::ActivationChanged(const PackageSet& activatedPackage,
 	const PackageSet& deactivatePackages)
@@ -108,6 +148,14 @@ VolumeState::ActivationChanged(const PackageSet& activatedPackage,
 }
 
 
+/**
+ * @brief Creates a deep copy of this VolumeState, cloning every contained package.
+ *
+ * Each Package is cloned individually, so the new VolumeState is
+ * completely independent of the original.
+ *
+ * @return A new VolumeState, or NULL if any allocation fails.
+ */
 VolumeState*
 VolumeState::Clone() const
 {

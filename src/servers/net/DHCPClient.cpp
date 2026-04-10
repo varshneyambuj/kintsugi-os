@@ -194,8 +194,10 @@ struct socket_timeout {
 
 #define ARP_HARDWARE_TYPE_ETHER	1
 
+/** @brief Message code for the DHCP lease-renewal timer. */
 const uint32 kMsgLeaseTime = 'lstm';
 
+/** @brief Default set of DHCP option codes requested from the server. */
 static const uint8 kRequestParameters[] = {
 	OPTION_SUBNET_MASK, OPTION_ROUTER_ADDRESS,
 	OPTION_DOMAIN_NAME_SERVER, OPTION_BROADCAST_ADDRESS,
@@ -203,6 +205,14 @@ static const uint8 kRequestParameters[] = {
 };
 
 
+/**
+ * @brief Constructs a DHCP message of the given type with default options.
+ *
+ * Zeroes the entire structure, sets the options magic cookie, then
+ * writes the message type and max-message-size options.
+ *
+ * @param type The DHCP message type (e.g., DHCP_DISCOVER, DHCP_REQUEST).
+ */
 dhcp_message::dhcp_message(message_type type)
 {
 	// ASSERT(this == offsetof(this, opcode));
@@ -214,6 +224,11 @@ dhcp_message::dhcp_message(message_type type)
 }
 
 
+/**
+ * @brief Checks whether this DHCP message contains a valid options magic cookie.
+ *
+ * @return @c true if options_magic matches the DHCP magic value.
+ */
 bool
 dhcp_message::HasOptions() const
 {
@@ -221,6 +236,19 @@ dhcp_message::HasOptions() const
 }
 
 
+/**
+ * @brief Iterates to the next DHCP option in the message.
+ *
+ * Walks through options in the options field, then optionally the file
+ * and server_name fields if the overload option is set. Skips PAD and
+ * END markers automatically.
+ *
+ * @param cookie Iteration state; must be zero-initialised on first call.
+ * @param option Output: the option code of the next option found.
+ * @param data   Output: pointer to the option's data bytes.
+ * @param size   Output: the length of the option data.
+ * @return @c true if an option was found, @c false when iteration is complete.
+ */
 bool
 dhcp_message::NextOption(dhcp_option_cookie& cookie,
 	message_option& option, const uint8*& data, size_t& size) const
@@ -315,6 +343,12 @@ dhcp_message::NextOption(dhcp_option_cookie& cookie,
 }
 
 
+/**
+ * @brief Searches for a specific option in the DHCP message.
+ *
+ * @param which The option code to search for.
+ * @return Pointer to the option's data, or NULL if not found.
+ */
 const uint8*
 dhcp_message::FindOption(message_option which) const
 {
@@ -332,6 +366,13 @@ dhcp_message::FindOption(message_option which) const
 }
 
 
+/**
+ * @brief Returns a pointer just past the last option in the message.
+ *
+ * Iterates through all options to determine where the option data ends.
+ *
+ * @return Pointer to the byte following the last option.
+ */
 const uint8*
 dhcp_message::LastOption() const
 {
@@ -347,6 +388,11 @@ dhcp_message::LastOption() const
 }
 
 
+/**
+ * @brief Returns the DHCP message type from the options.
+ *
+ * @return The message_type value, or DHCP_NONE if the option is absent.
+ */
 message_type
 dhcp_message::Type() const
 {
@@ -358,6 +404,11 @@ dhcp_message::Type() const
 }
 
 
+/**
+ * @brief Computes the actual size of the DHCP message including its options.
+ *
+ * @return The byte count from the start of the message through the last option.
+ */
 size_t
 dhcp_message::Size() const
 {
@@ -373,6 +424,12 @@ dhcp_message::Size() const
 }
 
 
+/**
+ * @brief Initialises the options area with the message type and max message size.
+ *
+ * @param type The DHCP message type code.
+ * @return Pointer to the next available byte in the options area.
+ */
 uint8*
 dhcp_message::PrepareMessage(uint8 type)
 {
@@ -384,6 +441,13 @@ dhcp_message::PrepareMessage(uint8 type)
 }
 
 
+/**
+ * @brief Writes a zero-length option (e.g., OPTION_END) into the options area.
+ *
+ * @param options Pointer to the current write position in the options area.
+ * @param option  The option code to write.
+ * @return Pointer to the next available byte after the written option.
+ */
 uint8*
 dhcp_message::PutOption(uint8* options, message_option option)
 {
@@ -392,6 +456,14 @@ dhcp_message::PutOption(uint8* options, message_option option)
 }
 
 
+/**
+ * @brief Writes a single-byte option value into the options area.
+ *
+ * @param options Pointer to the current write position.
+ * @param option  The option code.
+ * @param data    The single byte of option data.
+ * @return Pointer to the next available byte.
+ */
 uint8*
 dhcp_message::PutOption(uint8* options, message_option option, uint8 data)
 {
@@ -399,6 +471,14 @@ dhcp_message::PutOption(uint8* options, message_option option, uint8 data)
 }
 
 
+/**
+ * @brief Writes a 16-bit option value into the options area.
+ *
+ * @param options Pointer to the current write position.
+ * @param option  The option code.
+ * @param data    The 16-bit value (caller must handle byte order).
+ * @return Pointer to the next available byte.
+ */
 uint8*
 dhcp_message::PutOption(uint8* options, message_option option, uint16 data)
 {
@@ -406,6 +486,14 @@ dhcp_message::PutOption(uint8* options, message_option option, uint16 data)
 }
 
 
+/**
+ * @brief Writes a 32-bit option value into the options area.
+ *
+ * @param options Pointer to the current write position.
+ * @param option  The option code.
+ * @param data    The 32-bit value (caller must handle byte order).
+ * @return Pointer to the next available byte.
+ */
 uint8*
 dhcp_message::PutOption(uint8* options, message_option option, uint32 data)
 {
@@ -413,6 +501,15 @@ dhcp_message::PutOption(uint8* options, message_option option, uint32 data)
 }
 
 
+/**
+ * @brief Writes a variable-length option into the options area.
+ *
+ * @param options Pointer to the current write position.
+ * @param option  The option code.
+ * @param data    Pointer to the option data bytes.
+ * @param size    Number of data bytes to write.
+ * @return Pointer to the next available byte.
+ */
 uint8*
 dhcp_message::PutOption(uint8* options, message_option option,
 	const uint8* data, uint32 size)
@@ -427,6 +524,12 @@ dhcp_message::PutOption(uint8* options, message_option option,
 }
 
 
+/**
+ * @brief Terminates the options area by writing an OPTION_END marker.
+ *
+ * @param options Pointer to the current write position.
+ * @return Pointer to the byte after the END marker.
+ */
 uint8*
 dhcp_message::FinishOptions(uint8* options)
 {
@@ -434,6 +537,12 @@ dhcp_message::FinishOptions(uint8* options)
 }
 
 
+/**
+ * @brief Converts a DHCP message type enum to its string representation.
+ *
+ * @param type The DHCP message type.
+ * @return A human-readable string (e.g., "DHCP_DISCOVER"), or "<unknown>".
+ */
 /*static*/ const char*
 dhcp_message::TypeToString(message_type type)
 {
@@ -455,6 +564,11 @@ dhcp_message::TypeToString(message_type type)
 }
 
 
+/**
+ * @brief Applies the current timeout value to the socket's receive timeout.
+ *
+ * @param socket The socket file descriptor to configure.
+ */
 void
 socket_timeout::UpdateSocket(int socket) const
 {
@@ -465,6 +579,18 @@ socket_timeout::UpdateSocket(int socket) const
 }
 
 
+/**
+ * @brief Doubles the timeout and applies it to the socket for retransmission.
+ *
+ * Increments the try counter and exponentially backs off the timeout
+ * duration, capped at MAX_TIMEOUT. Returns false if the maximum number
+ * of retries is exceeded or the state deadline has passed.
+ *
+ * @param socket       The socket to update with the new timeout.
+ * @param stateMaxTime Deadline (in microseconds since boot) for the current state.
+ * @param device       Device name for syslog output.
+ * @return @c true if the timeout was shifted successfully, @c false if retries are exhausted.
+ */
 bool
 socket_timeout::Shift(int socket, bigtime_t stateMaxTime, const char* device)
 {
@@ -496,6 +622,16 @@ socket_timeout::Shift(int socket, bigtime_t stateMaxTime, const char* device)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a DHCP client for the specified network device.
+ *
+ * Generates a transaction ID, reads the device's MAC address, and
+ * checks for any previously auto-configured IPv4 address that could
+ * be reused via DHCP INIT-REBOOT.
+ *
+ * @param target Messenger to receive configuration results.
+ * @param device Name of the network device.
+ */
 DHCPClient::DHCPClient(BMessenger target, const char* device)
 	:
 	AutoconfigClient("dhcp", target, device),
@@ -542,6 +678,12 @@ DHCPClient::DHCPClient(BMessenger target, const char* device)
 }
 
 
+/**
+ * @brief Destroys the DHCP client, releasing the lease and cleaning up.
+ *
+ * Stops the negotiation thread if running, deletes the message runner,
+ * then sends a DHCP_RELEASE message to the server to relinquish the lease.
+ */
 DHCPClient::~DHCPClient()
 {
 	thread_id thread = fNegotiateThread;
@@ -574,6 +716,11 @@ DHCPClient::~DHCPClient()
 }
 
 
+/**
+ * @brief Starts the DHCP negotiation by spawning the negotiator thread.
+ *
+ * @return B_OK on success, EINPROGRESS if negotiation is already in progress.
+ */
 status_t
 DHCPClient::Start()
 {
@@ -586,6 +733,15 @@ DHCPClient::Start()
 }
 
 
+/**
+ * @brief Static thread entry point for the DHCP negotiation thread.
+ *
+ * Opens syslog, acquires the looper lock, runs the negotiation state
+ * machine, then releases the lock and closes syslog.
+ *
+ * @param data Pointer to the DHCPClient instance.
+ * @return B_OK always.
+ */
 status_t
 DHCPClient::_NegotiatorThread(void* data)
 {
@@ -603,6 +759,16 @@ DHCPClient::_NegotiatorThread(void* data)
 }
 
 
+/**
+ * @brief Runs the main DHCP negotiation state machine.
+ *
+ * Creates a UDP socket, transitions through DHCP states (INIT, SELECTING,
+ * REQUESTING, BOUND, etc.) until an address is obtained or the process
+ * fails. On success, sends the interface and resolver configuration to
+ * the target and schedules a lease-renewal timer.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DHCPClient::_Negotiate()
 {
@@ -690,6 +856,17 @@ DHCPClient::_Negotiate()
 }
 
 
+/**
+ * @brief Processes a received DHCP message and advances the state machine.
+ *
+ * Handles OFFER messages while in SELECTING state, ACK/NACK messages
+ * during REQUESTING/RENEWING/REBINDING states, and extracts configuration
+ * options from the server response.
+ *
+ * @param state   Current DHCP state; updated in place on transition.
+ * @param message The received DHCP message.
+ * @return B_OK if the message was accepted and state advanced, B_BAD_VALUE otherwise.
+ */
 status_t
 DHCPClient::_GotMessage(dhcp_state& state, dhcp_message* message)
 {
@@ -750,6 +927,17 @@ DHCPClient::_GotMessage(dhcp_state& state, dhcp_message* message)
 }
 
 
+/**
+ * @brief Performs one full state transition: sends a request and waits for a reply.
+ *
+ * Binds to the device if in INIT state, prepares DISCOVER or REQUEST
+ * messages, sends them, and receives responses with exponential backoff
+ * until a valid reply advances the state.
+ *
+ * @param socket The UDP socket used for communication.
+ * @param state  Current DHCP state; updated in place on transition.
+ * @return B_OK on success, B_TIMED_OUT if all retries are exhausted, or errno.
+ */
 status_t
 DHCPClient::_StateTransition(int socket, dhcp_state& state)
 {
@@ -830,6 +1018,11 @@ DHCPClient::_StateTransition(int socket, dhcp_state& state)
 }
 
 
+/**
+ * @brief Schedules a one-shot timer to trigger lease renewal.
+ *
+ * @param leaseTime Absolute time (microseconds since boot) at which to renew.
+ */
 void
 DHCPClient::_RestartLease(bigtime_t leaseTime)
 {
@@ -841,6 +1034,18 @@ DHCPClient::_RestartLease(bigtime_t leaseTime)
 }
 
 
+/**
+ * @brief Extracts DHCP options from a message into address and resolver configs.
+ *
+ * Iterates through all options in the message and populates the address
+ * message with subnet, gateway, and broadcast information, and the
+ * resolver message with nameserver and domain entries. Also updates
+ * lease, renewal, and rebinding times.
+ *
+ * @param message                The DHCP message to parse.
+ * @param address                Output message for interface address settings.
+ * @param resolverConfiguration  Output message for DNS resolver settings.
+ */
 void
 DHCPClient::_ParseOptions(dhcp_message& message, BMessage& address,
 	BMessage& resolverConfiguration)
@@ -942,6 +1147,16 @@ DHCPClient::_ParseOptions(dhcp_message& message, BMessage& address,
 }
 
 
+/**
+ * @brief Fills in the DHCP message fields appropriate for the current state.
+ *
+ * Sets the opcode, hardware type, MAC address, transaction ID, and
+ * elapsed time, then appends state-specific options such as requested
+ * parameters, hostname, server address, and requested IP.
+ *
+ * @param message The DHCP message to prepare.
+ * @param state   The current DHCP negotiation state.
+ */
 void
 DHCPClient::_PrepareMessage(dhcp_message& message, dhcp_state state)
 {
@@ -1010,6 +1225,18 @@ DHCPClient::_PrepareMessage(dhcp_message& message, dhcp_state state)
 }
 
 
+/**
+ * @brief Shifts the timeout for the current DHCP state and may trigger a state change.
+ *
+ * Computes the deadline for the current state based on lease/rebinding
+ * times and delegates to socket_timeout::Shift(). If the state deadline
+ * has passed, transitions to REBINDING or INIT as appropriate.
+ *
+ * @param socket  The UDP socket to update.
+ * @param state   Current DHCP state; may be modified on timeout expiry.
+ * @param timeout The socket_timeout tracking retransmission state.
+ * @return @c true if the timeout was shifted; @c false if the state timed out.
+ */
 bool
 DHCPClient::_TimeoutShift(int socket, dhcp_state& state,
 	socket_timeout& timeout)
@@ -1043,6 +1270,12 @@ DHCPClient::_TimeoutShift(int socket, dhcp_state& state,
 }
 
 
+/**
+ * @brief Converts a 4-byte IPv4 address to a dotted-decimal BString.
+ *
+ * @param data Pointer to 4 bytes of raw IPv4 address data.
+ * @return The address as a dotted-decimal string.
+ */
 /*static*/ BString
 DHCPClient::_AddressToString(const uint8* data)
 {
@@ -1051,6 +1284,12 @@ DHCPClient::_AddressToString(const uint8* data)
 }
 
 
+/**
+ * @brief Converts an in_addr_t IPv4 address to a dotted-decimal BString.
+ *
+ * @param address The IPv4 address in network byte order.
+ * @return The address as a dotted-decimal string.
+ */
 /*static*/ BString
 DHCPClient::_AddressToString(in_addr_t address)
 {
@@ -1059,6 +1298,18 @@ DHCPClient::_AddressToString(in_addr_t address)
 }
 
 
+/**
+ * @brief Sends a DHCP message to the specified network address.
+ *
+ * Logs the message type and any requested IP address, then transmits
+ * the message via sendto() with MSG_BCAST if the destination is a
+ * broadcast address.
+ *
+ * @param socket  The UDP socket to send on.
+ * @param message The DHCP message to transmit.
+ * @param address The destination network address.
+ * @return B_OK on success, or errno on failure.
+ */
 status_t
 DHCPClient::_SendMessage(int socket, dhcp_message& message,
 	const BNetworkAddress& address) const
@@ -1083,6 +1334,14 @@ DHCPClient::_SendMessage(int socket, dhcp_message& message,
 }
 
 
+/**
+ * @brief Determines the current DHCP state based on lease timing.
+ *
+ * Compares the current system time against the lease, rebinding, and
+ * renewal deadlines to return the appropriate state.
+ *
+ * @return The current dhcp_state (INIT, INIT_REBOOT, RENEWING, REBINDING, or BOUND).
+ */
 dhcp_state
 DHCPClient::_CurrentState() const
 {
@@ -1098,6 +1357,11 @@ DHCPClient::_CurrentState() const
 }
 
 
+/**
+ * @brief Handles incoming messages, triggering lease renewal on timer expiry.
+ *
+ * @param message The incoming message; kMsgLeaseTime restarts negotiation.
+ */
 void
 DHCPClient::MessageReceived(BMessage* message)
 {

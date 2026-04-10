@@ -29,16 +29,24 @@
 
 #include "PriorityMessageQueue.h"
 
-// MessageInfo
+/** @brief Internal helper that pairs a BMessage with its dispatch priority. */
 class PriorityMessageQueue::MessageInfo {
 public:
+	/**
+	 * @brief Constructs a MessageInfo binding a message to its priority.
+	 *
+	 * @param message  The BMessage to store.
+	 * @param priority The dispatch priority for this message.
+	 */
 	MessageInfo(BMessage *message, int32 priority)
 		: fMessage(message),
 		  fPriority(priority)
 	{
 	}
 
+	/** @brief Returns the stored BMessage. */
 	BMessage *Message() const	{ return fMessage; }
+	/** @brief Returns the message's priority. */
 	int32 Priority() const		{ return fPriority; }
 
 private:
@@ -47,14 +55,16 @@ private:
 };
 
 
-// constructor
+/** @brief Constructs an empty PriorityMessageQueue with an initial capacity of 20. */
 PriorityMessageQueue::PriorityMessageQueue()
 	: fLock(),
 	  fMessages(20)
 {
 }
 
-// destructor
+/**
+ * @brief Destroys the queue and deletes all remaining BMessage objects.
+ */
 PriorityMessageQueue::~PriorityMessageQueue()
 {
 	// delete the messages
@@ -63,21 +73,35 @@ PriorityMessageQueue::~PriorityMessageQueue()
 	// the infos are deleted automatically
 }
 
-// Lock
+/**
+ * @brief Acquires the queue's internal lock.
+ *
+ * @return @c true if the lock was acquired, @c false on failure.
+ */
 bool
 PriorityMessageQueue::Lock()
 {
 	return fLock.Lock();
 }
 
-// Unlock
+/** @brief Releases the queue's internal lock. */
 void
 PriorityMessageQueue::Unlock()
 {
 	fLock.Unlock();
 }
 
-// PushMessage
+/**
+ * @brief Inserts a message into the queue at the correct priority position.
+ *
+ * Messages with higher priority values are placed before messages with lower
+ * priority values. The queue is locked during the insertion.
+ *
+ * @param message  The BMessage to enqueue; must not be NULL.
+ * @param priority The dispatch priority for this message.
+ * @return @c true on success, @c false on failure (NULL message, lock failure,
+ *         or out of memory).
+ */
 bool
 PriorityMessageQueue::PushMessage(BMessage *message, int32 priority)
 {
@@ -99,7 +123,14 @@ PriorityMessageQueue::PushMessage(BMessage *message, int32 priority)
 	return result;
 }
 
-// PopMessage
+/**
+ * @brief Removes and returns the highest-priority message from the queue.
+ *
+ * The caller takes ownership of the returned BMessage.
+ *
+ * @return The highest-priority BMessage, or NULL if the queue is empty or
+ *         the lock cannot be acquired.
+ */
 BMessage *
 PriorityMessageQueue::PopMessage()
 {
@@ -114,7 +145,11 @@ PriorityMessageQueue::PopMessage()
 	return result;
 }
 
-// CountMessages
+/**
+ * @brief Returns the number of messages currently in the queue.
+ *
+ * @return The message count, or 0 if the lock cannot be acquired.
+ */
 int32
 PriorityMessageQueue::CountMessages() const
 {
@@ -126,14 +161,27 @@ PriorityMessageQueue::CountMessages() const
 	return result;
 }
 
-// IsEmpty
+/**
+ * @brief Returns whether the queue contains no messages.
+ *
+ * @return @c true if the queue is empty, @c false otherwise.
+ */
 bool
 PriorityMessageQueue::IsEmpty() const
 {
 	return (CountMessages() == 0);
 }
 
-// _FindInsertionIndex
+/**
+ * @brief Performs a binary search to find the insertion index for a given priority.
+ *
+ * Messages are stored in descending priority order; this method returns the
+ * index at which a new message with the given priority should be inserted to
+ * maintain that ordering.
+ *
+ * @param priority The priority value to search for.
+ * @return The zero-based insertion index.
+ */
 int32
 PriorityMessageQueue::_FindInsertionIndex(int32 priority)
 {

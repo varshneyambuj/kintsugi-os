@@ -33,10 +33,13 @@
 #include <NodeMonitor.h>
 
 
+/** @brief Global lock protecting the shared VolumeWatcher singleton and listener list. */
 static BLocker sLocker("volume watcher");
+/** @brief Singleton VolumeWatcher instance; created on first Register() call. */
 static VolumeWatcher* sWatcher;
 
 
+/** @brief Destructor for the VolumeListener interface. */
 VolumeListener::~VolumeListener()
 {
 }
@@ -45,6 +48,12 @@ VolumeListener::~VolumeListener()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the volume watcher and begins monitoring mount events.
+ *
+ * Registers itself as a BHandler with the application and starts node
+ * monitoring for B_WATCH_MOUNT events.
+ */
 VolumeWatcher::VolumeWatcher()
 	:
 	BHandler("volume watcher")
@@ -58,6 +67,11 @@ VolumeWatcher::VolumeWatcher()
 }
 
 
+/**
+ * @brief Destroys the volume watcher and stops monitoring mount events.
+ *
+ * Stops node watching and removes itself from the application's handler list.
+ */
 VolumeWatcher::~VolumeWatcher()
 {
 	if (be_app->Lock()) {
@@ -69,6 +83,11 @@ VolumeWatcher::~VolumeWatcher()
 }
 
 
+/**
+ * @brief Adds a listener to be notified of volume mount/unmount events.
+ *
+ * @param listener The VolumeListener to add.
+ */
 void
 VolumeWatcher::AddListener(VolumeListener* listener)
 {
@@ -77,6 +96,11 @@ VolumeWatcher::AddListener(VolumeListener* listener)
 }
 
 
+/**
+ * @brief Removes a previously added volume listener.
+ *
+ * @param listener The VolumeListener to remove.
+ */
 void
 VolumeWatcher::RemoveListener(VolumeListener* listener)
 {
@@ -85,6 +109,11 @@ VolumeWatcher::RemoveListener(VolumeListener* listener)
 }
 
 
+/**
+ * @brief Returns the number of currently registered volume listeners.
+ *
+ * @return The listener count.
+ */
 int32
 VolumeWatcher::CountListeners() const
 {
@@ -93,6 +122,14 @@ VolumeWatcher::CountListeners() const
 }
 
 
+/**
+ * @brief Handles incoming node-monitor messages for mount/unmount events.
+ *
+ * Dispatches B_DEVICE_MOUNTED and B_DEVICE_UNMOUNTED opcodes to all
+ * registered VolumeListener instances.
+ *
+ * @param message The BMessage received from the node monitor.
+ */
 void
 VolumeWatcher::MessageReceived(BMessage* message)
 {
@@ -123,6 +160,11 @@ VolumeWatcher::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Registers a volume listener, creating the singleton watcher if needed.
+ *
+ * @param listener The VolumeListener to register.
+ */
 /*static*/ void
 VolumeWatcher::Register(VolumeListener* listener)
 {
@@ -134,6 +176,11 @@ VolumeWatcher::Register(VolumeListener* listener)
 }
 
 
+/**
+ * @brief Unregisters a volume listener, destroying the singleton when the last listener is removed.
+ *
+ * @param listener The VolumeListener to unregister.
+ */
 /*static*/ void
 VolumeWatcher::Unregister(VolumeListener* listener)
 {

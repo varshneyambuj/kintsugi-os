@@ -40,6 +40,11 @@
 // #pragma mark - JobQueue
 
 
+/**
+ * @brief Constructs a JobQueue in an uninitialized state.
+ *
+ * Init() must be called before queueing or dequeueing jobs.
+ */
 JobQueue::JobQueue()
 	:
 	fMutexInitialized(false),
@@ -50,6 +55,10 @@ JobQueue::JobQueue()
 }
 
 
+/**
+ * @brief Destroys the JobQueue, releasing all remaining jobs and destroying
+ *        synchronization primitives.
+ */
 JobQueue::~JobQueue()
 {
 	if (fMutexInitialized) {
@@ -66,6 +75,11 @@ JobQueue::~JobQueue()
 }
 
 
+/**
+ * @brief Initializes the mutex and condition variable used by the queue.
+ *
+ * @return B_OK on success, or a pthread error code on failure.
+ */
 status_t
 JobQueue::Init()
 {
@@ -83,6 +97,12 @@ JobQueue::Init()
 }
 
 
+/**
+ * @brief Closes the queue and wakes all threads waiting in DequeueJob().
+ *
+ * After closing, QueueJob() will reject new jobs and DequeueJob() will
+ * return NULL once the queue is empty.
+ */
 void
 JobQueue::Close()
 {
@@ -94,6 +114,15 @@ JobQueue::Close()
 }
 
 
+/**
+ * @brief Adds a job to the queue and signals a waiting consumer thread.
+ *
+ * Acquires a reference on the job. If the queue has been closed, the
+ * job is not added and @c false is returned.
+ *
+ * @param job The job to enqueue; must not be NULL.
+ * @return @c true if the job was added, @c false if the queue is closed.
+ */
 bool
 JobQueue::QueueJob(Job* job)
 {
@@ -109,6 +138,14 @@ JobQueue::QueueJob(Job* job)
 }
 
 
+/**
+ * @brief Removes and returns the next job from the queue, blocking if empty.
+ *
+ * Blocks on the condition variable until a job is available or the queue
+ * is closed. The caller receives ownership of the job's reference.
+ *
+ * @return The next Job, or NULL if the queue has been closed.
+ */
 Job*
 JobQueue::DequeueJob()
 {
@@ -127,6 +164,14 @@ JobQueue::DequeueJob()
 }
 
 
+/**
+ * @brief Removes and deletes all jobs matching the supplied filter.
+ *
+ * Iterates the queue under the mutex and deletes every job for which
+ * the filter returns @c true.
+ *
+ * @param filter A Filter whose FilterJob() method selects jobs for deletion.
+ */
 void
 JobQueue::DeleteJobs(Filter* filter)
 {
@@ -144,6 +189,7 @@ JobQueue::DeleteJobs(Filter* filter)
 // #pragma mark - Filter
 
 
+/** @brief Destroys the Filter. */
 JobQueue::Filter::~Filter()
 {
 }

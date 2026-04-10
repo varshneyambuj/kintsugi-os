@@ -160,6 +160,7 @@ private:
 // #pragma mark - FSTransaction
 
 
+/** @brief Constructs an empty FSTransaction with no recorded operations. */
 FSTransaction::FSTransaction()
 {
 }

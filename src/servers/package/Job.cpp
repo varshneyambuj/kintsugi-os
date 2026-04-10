@@ -35,11 +35,13 @@
 #include "Job.h"
 
 
+/** @brief Constructs a default Job with no parameters. */
 Job::Job()
 {
 }
 
 
+/** @brief Destroys the Job. */
 Job::~Job()
 {
 }

@@ -67,13 +67,26 @@
 
 
 
+/**
+ * @brief Internal handler that bridges AddOnMonitorHandler callbacks to AddOnManager.
+ */
 class AddOnManager::MonitorHandler : public AddOnMonitorHandler {
 public:
+	/**
+	 * @brief Constructs the monitor handler with a back-pointer to its owning manager.
+	 *
+	 * @param manager The AddOnManager to notify when add-ons are enabled/disabled.
+	 */
 	MonitorHandler(AddOnManager* manager)
 	{
 		fManager = manager;
 	}
 
+	/**
+	 * @brief Called when an add-on file is detected or enabled; registers it with the manager.
+	 *
+	 * @param entryInfo Filesystem information describing the newly enabled add-on.
+	 */
 	virtual void AddOnEnabled(const add_on_entry_info* entryInfo)
 	{
 		CALLED();
@@ -85,6 +98,11 @@ public:
 		fManager->_RegisterAddOn(entry);
 	}
 
+	/**
+	 * @brief Called when an add-on file is removed or disabled; unregisters it from the manager.
+	 *
+	 * @param entryInfo Filesystem information describing the disabled add-on.
+	 */
 	virtual void AddOnDisabled(const add_on_entry_info* entryInfo)
 	{
 		CALLED();
@@ -104,6 +122,18 @@ private:
 //	#pragma mark -
 
 
+/**
+ * @brief Loads and instantiates an input server add-on from a shared library image.
+ *
+ * Looks up the "instantiate_input_<type>" symbol in the loaded image, calls
+ * it to create a new add-on instance, and runs InitCheck() on the result.
+ *
+ * @tparam T        The add-on base class (e.g. BInputServerDevice).
+ * @param image     The image_id of the loaded shared library.
+ * @param path      The filesystem path of the add-on (used for error messages).
+ * @param type      The add-on type suffix ("device", "filter", or "method").
+ * @return A newly created add-on instance, or NULL on any failure.
+ */
 template<class T> T*
 instantiate_add_on(image_id image, const char* path, const char* type)
 {
@@ -141,6 +171,9 @@ instantiate_add_on(image_id image, const char* path, const char* type)
 //	#pragma mark - AddOnManager
 
 
+/**
+ * @brief Constructs the add-on manager and opens the system log.
+ */
 AddOnManager::AddOnManager()
 	:
 	AddOnMonitor(),
@@ -151,12 +184,24 @@ AddOnManager::AddOnManager()
 }
 
 
+/**
+ * @brief Destructor; frees the monitor handler.
+ */
 AddOnManager::~AddOnManager()
 {
 	delete fHandler;
 }
 
 
+/**
+ * @brief Dispatches incoming messages to the appropriate device/filter/method handler.
+ *
+ * Handles find, watch, notify, start/stop, control, system shutdown, and
+ * method replicant registration messages.  Device path-monitor notifications
+ * are handled separately.
+ *
+ * @param message The received message.
+ */
 void
 AddOnManager::MessageReceived(BMessage* message)
 {
@@ -210,6 +255,9 @@ AddOnManager::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Scans add-on directories and registers all discovered add-ons.
+ */
 void
 AddOnManager::LoadState()
 {
@@ -217,6 +265,9 @@ AddOnManager::LoadState()
 }
 
 
+/**
+ * @brief Unregisters all add-ons, preparing for a clean shutdown.
+ */
 void
 AddOnManager::SaveState()
 {
@@ -225,6 +276,16 @@ AddOnManager::SaveState()
 }
 
 
+/**
+ * @brief Starts monitoring a device path for node changes on behalf of an add-on.
+ *
+ * Prepends "/dev/" if the path is not absolute.  Sets up BPathMonitor watching
+ * the first time a path is registered.
+ *
+ * @param addOn  The device add-on requesting monitoring.
+ * @param device The device path to watch.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 AddOnManager::StartMonitoringDevice(DeviceAddOn* addOn, const char* device)
 {
@@ -252,6 +313,15 @@ AddOnManager::StartMonitoringDevice(DeviceAddOn* addOn, const char* device)
 }
 
 
+/**
+ * @brief Stops monitoring a device path for the given add-on.
+ *
+ * If this was the last add-on watching the path, BPathMonitor is stopped as well.
+ *
+ * @param addOn  The device add-on that no longer needs monitoring.
+ * @param device The device path to stop watching.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 AddOnManager::StopMonitoringDevice(DeviceAddOn* addOn, const char *device)
 {
@@ -276,6 +346,9 @@ AddOnManager::StopMonitoringDevice(DeviceAddOn* addOn, const char *device)
 // #pragma mark -
 
 
+/**
+ * @brief Adds monitor directories for devices, filters, and methods add-ons.
+ */
 void
 AddOnManager::_RegisterAddOns()
 {
@@ -288,6 +361,9 @@ AddOnManager::_RegisterAddOns()
 }
 
 
+/**
+ * @brief Stops all devices and removes all device, filter, and method add-on info entries.
+ */
 void
 AddOnManager::_UnregisterAddOns()
 {
@@ -313,6 +389,12 @@ AddOnManager::_UnregisterAddOns()
 }
 
 
+/**
+ * @brief Returns whether the given path refers to a device add-on.
+ *
+ * @param path The filesystem path to test.
+ * @return @c true if the path contains "input_server/devices".
+ */
 bool
 AddOnManager::_IsDevice(const char* path) const
 {
@@ -320,6 +402,12 @@ AddOnManager::_IsDevice(const char* path) const
 }
 
 
+/**
+ * @brief Returns whether the given path refers to a filter add-on.
+ *
+ * @param path The filesystem path to test.
+ * @return @c true if the path contains "input_server/filters".
+ */
 bool
 AddOnManager::_IsFilter(const char* path) const
 {
@@ -327,6 +415,12 @@ AddOnManager::_IsFilter(const char* path) const
 }
 
 
+/**
+ * @brief Returns whether the given path refers to a method add-on.
+ *
+ * @param path The filesystem path to test.
+ * @return @c true if the path contains "input_server/methods".
+ */
 bool
 AddOnManager::_IsMethod(const char* path) const
 {
@@ -334,6 +428,15 @@ AddOnManager::_IsMethod(const char* path) const
 }
 
 
+/**
+ * @brief Loads a single add-on image and registers it as a device, filter, or method.
+ *
+ * Determines the add-on type from the path, instantiates the appropriate
+ * class, and delegates to the type-specific registration method.
+ *
+ * @param entry The filesystem entry for the add-on shared library.
+ * @return B_OK on success, or an error code on failure (image is unloaded on error).
+ */
 status_t
 AddOnManager::_RegisterAddOn(BEntry& entry)
 {
@@ -382,6 +485,15 @@ AddOnManager::_RegisterAddOn(BEntry& entry)
 }
 
 
+/**
+ * @brief Unregisters and unloads a previously registered add-on.
+ *
+ * Stops the device, removes the filter from the global filter list, or removes
+ * the method from the global method list and updates the Deskbar replicant.
+ *
+ * @param entry The filesystem entry for the add-on to remove.
+ * @return B_OK.
+ */
 status_t
 AddOnManager::_UnregisterAddOn(BEntry& entry)
 {
@@ -448,7 +560,17 @@ AddOnManager::_UnregisterAddOn(BEntry& entry)
 }
 
 
-//!	Takes over ownership of the \a device, regardless of success.
+/**
+ * @brief Registers a device add-on, taking ownership of it regardless of success.
+ *
+ * Checks for duplicate registrations by name.  On success the device_info
+ * is added to fDeviceList.
+ *
+ * @param device      The instantiated device add-on (ownership taken).
+ * @param ref         The entry_ref identifying the add-on file.
+ * @param addOnImage  The loaded add-on image ID.
+ * @return B_OK on success, B_NAME_IN_USE if already registered, or B_NO_MEMORY.
+ */
 status_t
 AddOnManager::_RegisterDevice(BInputServerDevice* device, const entry_ref& ref,
 	image_id addOnImage)
@@ -486,7 +608,17 @@ AddOnManager::_RegisterDevice(BInputServerDevice* device, const entry_ref& ref,
 }
 
 
-//!	Takes over ownership of the \a filter, regardless of success.
+/**
+ * @brief Registers a filter add-on, taking ownership of it regardless of success.
+ *
+ * Checks for duplicates, adds the filter to fFilterList and the global
+ * InputServer::gInputFilterList.
+ *
+ * @param filter      The instantiated filter add-on (ownership taken).
+ * @param ref         The entry_ref identifying the add-on file.
+ * @param addOnImage  The loaded add-on image ID.
+ * @return B_OK on success, B_NAME_IN_USE if already registered, or B_NO_MEMORY.
+ */
 status_t
 AddOnManager::_RegisterFilter(BInputServerFilter* filter, const entry_ref& ref,
 	image_id addOnImage)
@@ -531,7 +663,18 @@ AddOnManager::_RegisterFilter(BInputServerFilter* filter, const entry_ref& ref,
 }
 
 
-//!	Takes over ownership of the \a method, regardless of success.
+/**
+ * @brief Registers a method add-on, taking ownership of it regardless of success.
+ *
+ * Checks for duplicates, adds the method to fMethodList and the global
+ * InputServer::gInputMethodList.  Loads the Deskbar method replicant if
+ * this is the first method being registered.
+ *
+ * @param method      The instantiated method add-on (ownership taken).
+ * @param ref         The entry_ref identifying the add-on file.
+ * @param addOnImage  The loaded add-on image ID.
+ * @return B_OK on success, B_NAME_IN_USE if already registered, or B_NO_MEMORY.
+ */
 status_t
 AddOnManager::_RegisterMethod(BInputServerMethod* method, const entry_ref& ref,
 	image_id addOnImage)
@@ -593,6 +736,9 @@ AddOnManager::_RegisterMethod(BInputServerMethod* method, const entry_ref& ref,
 // #pragma mark -
 
 
+/**
+ * @brief Removes the input method replicant from the Deskbar.
+ */
 void
 AddOnManager::_UnloadReplicant()
 {
@@ -600,6 +746,12 @@ AddOnManager::_UnloadReplicant()
 }
 
 
+/**
+ * @brief Installs the input method replicant in the Deskbar and locates its messenger.
+ *
+ * Adds the replicant via BDeskbar, then queries the Deskbar shelf to find
+ * the replicant's messenger and stores it in the global InputServer.
+ */
 void
 AddOnManager::_LoadReplicant()
 {
@@ -655,6 +807,13 @@ AddOnManager::_LoadReplicant()
 }
 
 
+/**
+ * @brief Retrieves the unique ID of the replicant at the given index in the target shelf.
+ *
+ * @param target Messenger addressing the Deskbar shelf.
+ * @param index  Zero-based index of the replicant.
+ * @return The unique replicant ID on success, or a negative error code.
+ */
 int32
 AddOnManager::_GetReplicantAt(BMessenger target, int32 index) const
 {
@@ -679,6 +838,14 @@ AddOnManager::_GetReplicantAt(BMessenger target, int32 index) const
 }
 
 
+/**
+ * @brief Queries the Deskbar shelf for the name of the replicant with the given UID.
+ *
+ * @param target Messenger addressing the Deskbar shelf.
+ * @param uid    The unique replicant ID to query.
+ * @param reply  Output message containing the "result" string on success.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 AddOnManager::_GetReplicantName(BMessenger target, int32 uid,
 	BMessage* reply) const
@@ -708,6 +875,14 @@ AddOnManager::_GetReplicantName(BMessenger target, int32 uid,
 }
 
 
+/**
+ * @brief Queries the Deskbar shelf for the view messenger of the replicant with the given UID.
+ *
+ * @param target Messenger addressing the Deskbar shelf.
+ * @param uid    The unique replicant ID to query.
+ * @param reply  Output message containing the "result" messenger on success.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 AddOnManager::_GetReplicantView(BMessenger target, int32 uid,
 	BMessage* reply) const
@@ -739,6 +914,15 @@ AddOnManager::_GetReplicantView(BMessenger target, int32 uid,
 }
 
 
+/**
+ * @brief Handles IS_START_DEVICE / IS_STOP_DEVICE messages by starting or stopping devices.
+ *
+ * Exactly one of "device" (by name) or "type" (by type) must be present in the message.
+ *
+ * @param message The request message.
+ * @param reply   The reply message (status will be added by the caller).
+ * @return B_OK on success, or B_ERROR if the request is malformed.
+ */
 status_t
 AddOnManager::_HandleStartStopDevices(BMessage* message, BMessage* reply)
 {
@@ -753,6 +937,16 @@ AddOnManager::_HandleStartStopDevices(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Handles IS_FIND_DEVICES by returning matching device information.
+ *
+ * If a specific "device" name is provided, returns its type; otherwise
+ * returns information about all registered devices.
+ *
+ * @param message The request message.
+ * @param reply   The reply message to populate with device info.
+ * @return B_OK on success, or B_NAME_NOT_FOUND if a named device is not registered.
+ */
 status_t
 AddOnManager::_HandleFindDevices(BMessage* message, BMessage* reply)
 {
@@ -771,6 +965,13 @@ AddOnManager::_HandleFindDevices(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Handles IS_WATCH_DEVICES by adding or removing a device change watcher.
+ *
+ * @param message The request containing "target" (BMessenger) and "start" (bool).
+ * @param reply   The reply message.
+ * @return B_OK on success, or B_ERROR / B_BAD_VALUE on invalid requests.
+ */
 status_t
 AddOnManager::_HandleWatchDevices(BMessage* message, BMessage* reply)
 {
@@ -797,6 +998,16 @@ AddOnManager::_HandleWatchDevices(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Broadcasts a device-change notification to all registered watchers.
+ *
+ * The message must contain "added" or "started" booleans, a "name" string,
+ * and a "type" int32.  Invalid or disconnected watchers are pruned.
+ *
+ * @param message The notification message from the input server.
+ * @param reply   The reply message.
+ * @return B_OK on success, or B_BAD_VALUE if required fields are missing.
+ */
 status_t
 AddOnManager::_HandleNotifyDevice(BMessage* message, BMessage* reply)
 {
@@ -851,6 +1062,14 @@ AddOnManager::_HandleNotifyDevice(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Handles IS_IS_DEVICE_RUNNING by checking whether a named device is active.
+ *
+ * @param message The request containing a "device" string.
+ * @param reply   The reply message.
+ * @return B_OK if the device is running, B_ERROR if stopped, or
+ *         B_NAME_NOT_FOUND if unknown.
+ */
 status_t
 AddOnManager::_HandleIsDeviceRunning(BMessage* message, BMessage* reply)
 {
@@ -864,6 +1083,15 @@ AddOnManager::_HandleIsDeviceRunning(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Handles IS_CONTROL_DEVICES by forwarding a control code to matching devices.
+ *
+ * Exactly one of "device" (by name) or "type" (by type) must be present.
+ *
+ * @param message The request containing "code", and optionally "message".
+ * @param reply   The reply message.
+ * @return B_OK on success, or B_BAD_VALUE if required fields are missing.
+ */
 status_t
 AddOnManager::_HandleControlDevices(BMessage* message, BMessage* reply)
 {
@@ -887,6 +1115,13 @@ AddOnManager::_HandleControlDevices(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Notifies all registered device add-ons that the system is shutting down.
+ *
+ * @param message The shutdown notification message.
+ * @param reply   The reply message.
+ * @return B_OK.
+ */
 status_t
 AddOnManager::_HandleSystemShuttingDown(BMessage* message, BMessage* reply)
 {
@@ -901,6 +1136,16 @@ AddOnManager::_HandleSystemShuttingDown(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Handles IS_METHOD_REGISTER by (re-)loading the method replicant and populating it.
+ *
+ * If no methods are registered, removes the replicant.  Otherwise loads it
+ * and sends IS_ADD_METHOD for the keymap method and every registered input method.
+ *
+ * @param message The registration request message.
+ * @param reply   The reply message.
+ * @return B_OK.
+ */
 status_t
 AddOnManager::_HandleMethodReplicant(BMessage* message, BMessage* reply)
 {
@@ -932,6 +1177,15 @@ AddOnManager::_HandleMethodReplicant(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Processes B_PATH_MONITOR notifications and forwards them to watching device add-ons.
+ *
+ * Handles B_ENTRY_CREATED and B_ENTRY_REMOVED opcodes by forwarding the
+ * notification as a B_NODE_MONITOR control message to each add-on that is
+ * watching the affected path.
+ *
+ * @param message The path monitor notification message.
+ */
 void
 AddOnManager::_HandleDeviceMonitor(BMessage* message)
 {
@@ -974,6 +1228,14 @@ AddOnManager::_HandleDeviceMonitor(BMessage* message)
 }
 
 
+/**
+ * @brief Adds a device path to both the global path list and the add-on's monitored set.
+ *
+ * @param addOn   The device add-on requesting the path.
+ * @param path    The device path to add.
+ * @param newPath Output: set to @c true if this is the first registration of the path globally.
+ * @return B_OK on success, or B_NO_MEMORY on allocation failure.
+ */
 status_t
 AddOnManager::_AddDevicePath(DeviceAddOn* addOn, const char* path,
 	bool& newPath)
@@ -997,6 +1259,17 @@ AddOnManager::_AddDevicePath(DeviceAddOn* addOn, const char* path,
 }
 
 
+/**
+ * @brief Removes a device path from both the global path list and the add-on's monitored set.
+ *
+ * If the add-on has no remaining monitored paths, it is removed from the
+ * active device add-on list.
+ *
+ * @param addOn    The device add-on releasing the path.
+ * @param path     The device path to remove.
+ * @param lastPath Output: set to @c true if no add-on is watching this path anymore.
+ * @return B_OK on success, or B_ENTRY_NOT_FOUND if the path is unknown.
+ */
 status_t
 AddOnManager::_RemoveDevicePath(DeviceAddOn* addOn, const char* path,
 	bool& lastPath)

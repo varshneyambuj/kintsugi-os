@@ -29,6 +29,16 @@
 #include "AutoconfigClient.h"
 
 
+/**
+ * @brief Constructs an auto-configuration client for a given network device.
+ *
+ * Stores the target messenger and device name for use by subclasses
+ * that implement specific auto-configuration protocols.
+ *
+ * @param name   Name for this BHandler.
+ * @param target Messenger to receive configuration results.
+ * @param device Name of the network device to configure.
+ */
 AutoconfigClient::AutoconfigClient(const char* name, BMessenger target,
 		const char* device)
 	: BHandler(name),
@@ -38,11 +48,20 @@ AutoconfigClient::AutoconfigClient(const char* name, BMessenger target,
 }
 
 
+/** @brief Destroys the auto-configuration client. */
 AutoconfigClient::~AutoconfigClient()
 {
 }
 
 
+/**
+ * @brief Starts the auto-configuration process.
+ *
+ * The default implementation returns B_NOT_SUPPORTED; subclasses should
+ * override this to initiate their specific protocol (e.g., DHCP).
+ *
+ * @return B_NOT_SUPPORTED by default; subclasses return B_OK on success.
+ */
 status_t
 AutoconfigClient::Start()
 {

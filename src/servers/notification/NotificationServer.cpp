@@ -53,6 +53,15 @@ const char* kSoundNames[] = {
 };
 
 
+/**
+ * @brief Constructs the notification server application object.
+ *
+ * Initialises the BServer base with the notification-server MIME signature
+ * and reports any launch error through the output parameter.
+ *
+ * @param error Receives B_OK on success, or an error code if the server
+ *              could not be created.
+ */
 NotificationServer::NotificationServer(status_t& error)
 	:
 	BServer(kNotificationServerSignature, true, &error)
@@ -60,11 +69,18 @@ NotificationServer::NotificationServer(status_t& error)
 }
 
 
+/** @brief Destroys the notification server. */
 NotificationServer::~NotificationServer()
 {
 }
 
 
+/**
+ * @brief Creates the on-screen notification window once the message loop is ready.
+ *
+ * Called by the application framework after Run() enters its loop.  Allocates
+ * the NotificationWindow that will display incoming notifications.
+ */
 void
 NotificationServer::ReadyToRun()
 {
@@ -72,6 +88,15 @@ NotificationServer::ReadyToRun()
 }
 
 
+/**
+ * @brief Dispatches incoming messages to the notification window.
+ *
+ * Handles kNotificationMessage by playing the appropriate system beep for the
+ * notification type and forwarding the message to the NotificationWindow.
+ * All other messages are passed to the base class.
+ *
+ * @param message The incoming BMessage to handle.
+ */
 void
 NotificationServer::MessageReceived(BMessage* message)
 {
@@ -101,6 +126,15 @@ NotificationServer::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Reports the scripting suites supported by this server.
+ *
+ * Adds the notification-server suite name and its property list to @a msg,
+ * then delegates to the base class for any additional suites.
+ *
+ * @param msg The message to populate with suite information.
+ * @return B_OK on success, or an error code from the base class.
+ */
 status_t
 NotificationServer::GetSupportedSuites(BMessage* msg)
 {
@@ -113,6 +147,20 @@ NotificationServer::GetSupportedSuites(BMessage* msg)
 }
 
 
+/**
+ * @brief Resolves a scripting specifier to the appropriate handler.
+ *
+ * If the property is "message", the request is forwarded to the notification
+ * window.  Otherwise the base-class resolver is used.
+ *
+ * @param msg   The scripting message being resolved.
+ * @param index Current index into the specifier stack.
+ * @param spec  The specifier message.
+ * @param from  The specifier form (e.g. B_INDEX_SPECIFIER).
+ * @param prop  The property name being resolved.
+ * @return The BHandler that should process the message, or NULL if it was
+ *         forwarded asynchronously.
+ */
 BHandler*
 NotificationServer::ResolveSpecifier(BMessage* msg, int32 index,
 	BMessage* spec, int32 from, const char* prop)

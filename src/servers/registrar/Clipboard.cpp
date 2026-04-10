@@ -27,15 +27,11 @@
 
 #include "Clipboard.h"
 
-/*!
-	\class Clipboard
-	\brief Server-side representation of a clipboard.
-*/
-
-// constructor
-/*!	\brief Creates and initializes a Clipboard.
-	\param name The name of the clipboard.
-*/
+/**
+ * @brief Creates and initializes a server-side Clipboard.
+ *
+ * @param name The name of the clipboard.
+ */
 Clipboard::Clipboard(const char *name)
 	: fName(name),
 	  fData(B_SIMPLE_DATA),
@@ -45,21 +41,20 @@ Clipboard::Clipboard(const char *name)
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associate with this object.
-*/
+/** @brief Frees all resources associated with this Clipboard. */
 Clipboard::~Clipboard()
 {
 }
 
-// SetData
-/*!	\brief Sets the clipboard's data.
-
-	Also notifies all watchers that the clipboard data have changed.
-
-	\param data The new clipboard data.
-	\param dataSource The clipboards new data source.
-*/
+/**
+ * @brief Replaces the clipboard's data and notifies all watchers.
+ *
+ * Copies the supplied message, records the new data source, increments the
+ * modification count, and sends a B_CLIPBOARD_CHANGED notification.
+ *
+ * @param data       The new clipboard data.
+ * @param dataSource The messenger identifying the new data source.
+ */
 void
 Clipboard::SetData(const BMessage *data, BMessenger dataSource)
 {
@@ -69,27 +64,33 @@ Clipboard::SetData(const BMessage *data, BMessenger dataSource)
 	NotifyWatchers();
 }
 
-// Data
-/*!	\brief Returns the clipboard's data.
-	\return The clipboard's data.
-*/
+/**
+ * @brief Returns a pointer to the clipboard's current data message.
+ *
+ * @return The clipboard's data.
+ */
 const BMessage *
 Clipboard::Data() const
 {
 	return &fData;
 }
 
-// DataSource
-/*!	\brief Returns the clipboard's data source.
-	\return The clipboard's data source.
-*/
+/**
+ * @brief Returns the messenger identifying the clipboard's data source.
+ *
+ * @return The data source messenger.
+ */
 BMessenger
 Clipboard::DataSource() const
 {
 	return fDataSource;
 }
 
-// Count
+/**
+ * @brief Returns the number of times the clipboard data has been set.
+ *
+ * @return The clipboard's modification count.
+ */
 int32
 Clipboard::Count() const
 {
@@ -97,34 +98,34 @@ Clipboard::Count() const
 }
 
 
-// AddWatcher
-/*!	\brief Adds a new watcher for this clipboard.
-	\param watcher The messenger referring to the new watcher.
-	\return \c true, if the watcher could be added successfully,
-			\c false otherwise.
-*/
+/**
+ * @brief Registers a new watcher for clipboard change notifications.
+ *
+ * @param watcher The messenger referring to the new watcher.
+ * @return @c true if the watcher was added successfully, @c false otherwise.
+ */
 bool
 Clipboard::AddWatcher(BMessenger watcher)
 {
 	return fWatchingService.AddWatcher(watcher);
 }
 
-// RemoveWatcher
-/*!	\brief Removes a watcher from this clipboard.
-	\param watcher The watcher to be removed.
-	\return \c true, if the supplied watcher was watching the clipboard,
-			\c false otherwise.
-*/
+/**
+ * @brief Removes an existing watcher from this clipboard.
+ *
+ * @param watcher The watcher to be removed.
+ * @return @c true if the watcher was found and removed, @c false if it was
+ *         not watching this clipboard.
+ */
 bool
 Clipboard::RemoveWatcher(BMessenger watcher)
 {
 	return fWatchingService.RemoveWatcher(watcher);
 }
 
-// NotifyWatchers
-/*!	\brief Sends a notification message that the clipboard data have changed
-		   to all associated watchers.
-*/
+/**
+ * @brief Sends a B_CLIPBOARD_CHANGED notification to all registered watchers.
+ */
 void
 Clipboard::NotifyWatchers()
 {

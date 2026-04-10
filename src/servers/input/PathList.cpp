@@ -36,7 +36,10 @@
 #include <string.h>
 
 
+/** @brief Internal path entry with reference counting. */
 struct PathList::path_entry {
+	/** @brief Constructs a path entry by duplicating the given path string.
+	 *  @param _path Filesystem path to store (will be strdup'd). */
 	path_entry(const char* _path)
 		:
 		ref_count(1)
@@ -44,16 +47,20 @@ struct PathList::path_entry {
 		path = strdup(_path);
 	}
 
+	/** @brief Destructor; frees the duplicated path string. */
 	~path_entry()
 	{
 		free((char*)path);
 	}
 
-	const char* path;
-	int32 ref_count;
+	const char* path;   /**< @brief The duplicated filesystem path string. */
+	int32 ref_count;    /**< @brief Number of active references to this path. */
 };
 
 
+/**
+ * @brief Constructs an empty path list with an initial capacity of 10 entries.
+ */
 PathList::PathList()
 	:
 	fPaths(10)
@@ -61,11 +68,21 @@ PathList::PathList()
 }
 
 
+/** @brief Destructor. */
 PathList::~PathList()
 {
 }
 
 
+/**
+ * @brief Checks whether the given path is already in the list.
+ *
+ * Performs a reverse linear search comparing path strings.
+ *
+ * @param path   The path to search for.
+ * @param _index Optional output; set to the index of the found entry.
+ * @return @c true if the path exists in the list, @c false otherwise.
+ */
 bool
 PathList::HasPath(const char* path, int32* _index) const
 {
@@ -81,6 +98,13 @@ PathList::HasPath(const char* path, int32* _index) const
 }
 
 
+/**
+ * @brief Adds a path to the list, or increments its reference count if it already exists.
+ *
+ * @param path The filesystem path to add; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if @a path is NULL, or B_NO_MEMORY on
+ *         allocation failure.
+ */
 status_t
 PathList::AddPath(const char* path)
 {
@@ -103,6 +127,12 @@ PathList::AddPath(const char* path)
 }
 
 
+/**
+ * @brief Decrements the reference count for the given path, removing it when it reaches zero.
+ *
+ * @param path The filesystem path to remove.
+ * @return B_OK on success, or B_ENTRY_NOT_FOUND if the path is not in the list.
+ */
 status_t
 PathList::RemovePath(const char* path)
 {
@@ -117,6 +147,11 @@ PathList::RemovePath(const char* path)
 }
 
 
+/**
+ * @brief Returns the number of unique paths currently in the list.
+ *
+ * @return The path count.
+ */
 int32
 PathList::CountPaths() const
 {
@@ -124,6 +159,12 @@ PathList::CountPaths() const
 }
 
 
+/**
+ * @brief Returns the path string at the given index.
+ *
+ * @param index Zero-based index into the path list.
+ * @return The path string, or NULL if @a index is out of range.
+ */
 const char*
 PathList::PathAt(int32 index) const
 {

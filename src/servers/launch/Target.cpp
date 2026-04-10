@@ -29,6 +29,11 @@
 #include "Target.h"
 
 
+/**
+ * @brief Constructs a launch target with the given name.
+ *
+ * @param name The human-readable name of this target.
+ */
 Target::Target(const char* name)
 	:
 	BaseJob(name),
@@ -37,6 +42,13 @@ Target::Target(const char* name)
 }
 
 
+/**
+ * @brief Stores a named BMessage data block within this target.
+ *
+ * @param name The key under which to store the data.
+ * @param data The BMessage to add to the target's internal data store.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Target::AddData(const char* name, BMessage& data)
 {
@@ -44,6 +56,11 @@ Target::AddData(const char* name, BMessage& data)
 }
 
 
+/**
+ * @brief Sets the launched state of this target.
+ *
+ * @param launched @c true to mark the target as launched, @c false otherwise.
+ */
 void
 Target::SetLaunched(bool launched)
 {
@@ -51,6 +68,14 @@ Target::SetLaunched(bool launched)
 }
 
 
+/**
+ * @brief Executes the target.
+ *
+ * Targets do not perform any work themselves; their purpose is to group
+ * jobs under a named milestone. This always returns B_OK.
+ *
+ * @return B_OK unconditionally.
+ */
 status_t
 Target::Execute()
 {

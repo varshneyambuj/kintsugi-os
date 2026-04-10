@@ -55,6 +55,14 @@
 #endif
 
 
+/**
+ * @brief Constructs a new method replicant view for embedding in the Deskbar tray.
+ *
+ * Initializes the background icon bitmap and popup menu.
+ *
+ * @param signature The application signature of the input server, used to
+ *                  communicate back with it.
+ */
 MethodReplicant::MethodReplicant(const char* signature)
 	:
 	BView(BRect(0, 0, 15, 15), REPLICANT_CTL_NAME, B_FOLLOW_ALL, B_WILL_DRAW),
@@ -74,6 +82,14 @@ MethodReplicant::MethodReplicant(const char* signature)
 }
 
 
+/**
+ * @brief Reconstructs a method replicant from an archived BMessage.
+ *
+ * Extracts the input server signature from the "add_on" field and
+ * re-initializes the background icon bitmap.
+ *
+ * @param message The archive message previously produced by Archive().
+ */
 MethodReplicant::MethodReplicant(BMessage* message)
 	:
 	BView(message),
@@ -95,6 +111,9 @@ MethodReplicant::MethodReplicant(BMessage* message)
 }
 
 
+/**
+ * @brief Destructor; frees the background bitmap and the duplicated signature string.
+ */
 MethodReplicant::~MethodReplicant()
 {
 	delete fSegments;
@@ -102,7 +121,14 @@ MethodReplicant::~MethodReplicant()
 }
 
 
-// archiving overrides
+/**
+ * @brief Instantiates a MethodReplicant from an archived message.
+ *
+ * Validates the archive class name before constructing a new instance.
+ *
+ * @param data The archived BMessage.
+ * @return A new MethodReplicant, or NULL if validation fails or allocation fails.
+ */
 MethodReplicant*
 MethodReplicant::Instantiate(BMessage* data)
 {
@@ -113,6 +139,16 @@ MethodReplicant::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives this replicant into a BMessage for persistence.
+ *
+ * Stores the input server signature as "add_on" so the replicant can
+ * reconnect after being reinstantiated by the Deskbar.
+ *
+ * @param data The message to archive into.
+ * @param deep Whether to perform a deep archive (passed through to BView).
+ * @return B_NO_ERROR on success.
+ */
 status_t
 MethodReplicant::Archive(BMessage* data, bool deep) const
 {
@@ -123,6 +159,12 @@ MethodReplicant::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Registers this replicant with the input server when attached to a window.
+ *
+ * Matches the parent view's background color and sends an IS_METHOD_REGISTER
+ * message to the input server containing this view's messenger address.
+ */
 void
 MethodReplicant::AttachedToWindow()
 {
@@ -140,6 +182,14 @@ MethodReplicant::AttachedToWindow()
 }
 
 
+/**
+ * @brief Dispatches incoming messages to the appropriate handler.
+ *
+ * Handles method add/remove/update messages from the input server,
+ * as well as B_ABOUT_REQUESTED for the About dialog.
+ *
+ * @param message The received message.
+ */
 void
 MethodReplicant::MessageReceived(BMessage* message)
 {
@@ -184,6 +234,11 @@ MethodReplicant::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Draws the current input method icon into the replicant view.
+ *
+ * @param rect The invalidated rectangle to redraw.
+ */
 void
 MethodReplicant::Draw(BRect rect)
 {
@@ -194,6 +249,14 @@ MethodReplicant::Draw(BRect rect)
 }
 
 
+/**
+ * @brief Shows the input method popup menu on mouse click.
+ *
+ * When the user selects a MethodMenuItem, sends an IS_SET_METHOD message
+ * to the input server with the chosen method's cookie.
+ *
+ * @param point The click location in view coordinates.
+ */
 void
 MethodReplicant::MouseDown(BPoint point)
 {
@@ -217,6 +280,11 @@ MethodReplicant::MouseDown(BPoint point)
 }
 
 
+/**
+ * @brief Handles mouse-up events (intentionally empty for FFM compatibility).
+ *
+ * @param point The release location in view coordinates.
+ */
 void
 MethodReplicant::MouseUp(BPoint point)
 {
@@ -224,6 +292,11 @@ MethodReplicant::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Marks the specified method as active and updates the tray icon.
+ *
+ * @param message Message containing an "cookie" int32 identifying the method.
+ */
 void
 MethodReplicant::UpdateMethod(BMessage* message)
 {
@@ -247,6 +320,11 @@ MethodReplicant::UpdateMethod(BMessage* message)
 }
 
 
+/**
+ * @brief Updates the icon of the method identified by the cookie in the message.
+ *
+ * @param message Message containing "cookie" (int32) and "icon" (raw data).
+ */
 void
 MethodReplicant::UpdateMethodIcon(BMessage* message)
 {
@@ -275,6 +353,14 @@ MethodReplicant::UpdateMethodIcon(BMessage* message)
 }
 
 
+/**
+ * @brief Replaces the popup submenu of the method identified by cookie.
+ *
+ * Instantiates a new BMenu from the archived "menu" field in the message,
+ * creates a replacement MethodMenuItem, and swaps it into the popup.
+ *
+ * @param message Message containing "cookie", "menu", and "target" fields.
+ */
 void
 MethodReplicant::UpdateMethodMenu(BMessage* message)
 {
@@ -325,6 +411,11 @@ MethodReplicant::UpdateMethodMenu(BMessage* message)
 }
 
 
+/**
+ * @brief Updates the display name of the method identified by cookie.
+ *
+ * @param message Message containing "cookie" (int32) and "name" (string).
+ */
 void
 MethodReplicant::UpdateMethodName(BMessage* message)
 {
@@ -351,6 +442,12 @@ MethodReplicant::UpdateMethodName(BMessage* message)
 }
 
 
+/**
+ * @brief Searches the popup menu for a MethodMenuItem with the given cookie.
+ *
+ * @param cookie The unique method identifier to search for.
+ * @return Pointer to the matching MethodMenuItem, or NULL if not found.
+ */
 MethodMenuItem*
 MethodReplicant::FindItemByCookie(int32 cookie)
 {
@@ -365,6 +462,15 @@ MethodReplicant::FindItemByCookie(int32 cookie)
 }
 
 
+/**
+ * @brief Adds a new input method to the popup menu.
+ *
+ * Extracts the cookie, name, icon, menu, and target messenger from the
+ * message.  Creates a MethodMenuItem and appends it to the popup.  If this
+ * is the first method, it is automatically marked as active.
+ *
+ * @param message Message containing all fields needed to describe the method.
+ */
 void
 MethodReplicant::AddMethod(BMessage* message)
 {
@@ -426,6 +532,14 @@ MethodReplicant::AddMethod(BMessage* message)
 }
 
 
+/**
+ * @brief Removes an input method from the popup menu.
+ *
+ * Finds and deletes the MethodMenuItem identified by the "cookie" field
+ * in the message.
+ *
+ * @param message Message containing the "cookie" (int32) of the method to remove.
+ */
 void
 MethodReplicant::RemoveMethod(BMessage* message)
 {

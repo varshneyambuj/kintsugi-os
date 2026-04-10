@@ -46,11 +46,15 @@
 using namespace BPrivate;
 
 
+/** @brief Name of the master keyring that stores keys for other keyrings. */
 static const char* kMasterKeyringName = "Master";
+/** @brief Identifier used when storing keyring unlock keys in the master keyring. */
 static const char* kKeyringKeysIdentifier = "Keyrings";
 
+/** @brief Version number of the on-disk key store database format. */
 static const uint32 kKeyStoreFormatVersion = 1;
 
+/** @brief Access flag: permission to retrieve keys from a keyring. */
 static const uint32 kFlagGetKey						= 0x0001;
 static const uint32 kFlagEnumerateKeys				= 0x0002;
 static const uint32 kFlagAddKey						= 0x0004;
@@ -68,6 +72,7 @@ static const uint32 kFlagLockKeyring				= 0x2000;
 static const uint32 kFlagEnumerateApplications		= 0x4000;
 static const uint32 kFlagRemoveApplications			= 0x8000;
 
+/** @brief Default set of access flags granted to newly authorised applications. */
 static const uint32 kDefaultAppFlags = kFlagGetKey | kFlagEnumerateKeys
 	| kFlagAddKey | kFlagRemoveKey | kFlagAddKeyring | kFlagRemoveKeyring
 	| kFlagEnumerateKeyrings | kFlagSetUnlockKey | kFlagRemoveUnlockKey
@@ -76,6 +81,13 @@ static const uint32 kDefaultAppFlags = kFlagGetKey | kFlagEnumerateKeys
 	| kFlagEnumerateApplications | kFlagRemoveApplications;
 
 
+/**
+ * @brief Constructs the key store server application.
+ *
+ * Ensures the settings directory hierarchy exists, opens or creates the
+ * database file, reads existing keyrings, and creates the master keyring
+ * if it does not already exist.
+ */
 KeyStoreServer::KeyStoreServer()
 	:
 	BApplication(kKeyStoreServerSignature),
@@ -111,11 +123,22 @@ KeyStoreServer::KeyStoreServer()
 }
 
 
+/** @brief Destroys the key store server. */
 KeyStoreServer::~KeyStoreServer()
 {
 }
 
 
+/**
+ * @brief Dispatches incoming key store commands to the appropriate handler.
+ *
+ * Resolves the calling application, determines access permissions, looks
+ * up the target keyring, unlocks it if needed, validates access, then
+ * performs the requested operation (get/add/remove keys, manage keyrings,
+ * query lock state, manage applications, etc.).
+ *
+ * @param message The incoming command message.
+ */
 void
 KeyStoreServer::MessageReceived(BMessage* message)
 {
@@ -490,6 +513,14 @@ KeyStoreServer::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Reads and deserialises the key store database from disk.
+ *
+ * Unflattens keyring data from the database file and populates the
+ * sorted keyring list. If reading fails, reinitialises the database.
+ *
+ * @return B_OK on success, or an error code if the file was corrupt.
+ */
 status_t
 KeyStoreServer::_ReadKeyStoreDatabase()
 {
@@ -528,6 +559,14 @@ KeyStoreServer::_ReadKeyStoreDatabase()
 }
 
 
+/**
+ * @brief Serialises all keyrings and writes them to the database file.
+ *
+ * Flattens every keyring into a container message and overwrites the
+ * existing database file contents.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 KeyStoreServer::_WriteKeyStoreDatabase()
 {
@@ -553,6 +592,12 @@ KeyStoreServer::_WriteKeyStoreDatabase()
 }
 
 
+/**
+ * @brief Maps a key store command code to its required access flag.
+ *
+ * @param command The key store command (e.g., KEY_STORE_GET_KEY).
+ * @return The corresponding access flag, or 0 for unknown commands.
+ */
 uint32
 KeyStoreServer::_AccessFlagsFor(uint32 command) const
 {
@@ -595,6 +640,12 @@ KeyStoreServer::_AccessFlagsFor(uint32 command) const
 }
 
 
+/**
+ * @brief Returns a human-readable description of an access flag.
+ *
+ * @param accessFlag The access flag to describe.
+ * @return A descriptive string, or NULL for unknown flags.
+ */
 const char*
 KeyStoreServer::_AccessStringFor(uint32 accessFlag) const
 {
@@ -637,6 +688,16 @@ KeyStoreServer::_AccessStringFor(uint32 accessFlag) const
 }
 
 
+/**
+ * @brief Identifies the application that sent a message.
+ *
+ * Uses the message's return address to look up the calling team's
+ * app_info from the roster.
+ *
+ * @param message        The incoming message.
+ * @param callingAppInfo Output: the resolved app_info.
+ * @return B_OK on success, or an error code if resolution failed.
+ */
 status_t
 KeyStoreServer::_ResolveCallingApp(const BMessage& message,
 	app_info& callingAppInfo) const
@@ -655,6 +716,18 @@ KeyStoreServer::_ResolveCallingApp(const BMessage& message,
 }
 
 
+/**
+ * @brief Validates whether an application has the required access to a keyring.
+ *
+ * Looks up the application's stored access record, verifies the checksum,
+ * and checks the required flags. If access is not yet granted, prompts
+ * the user via a dialog and optionally persists the grant.
+ *
+ * @param keyring     The target keyring.
+ * @param appInfo     Info about the requesting application.
+ * @param accessFlags The required access flags.
+ * @return B_OK if access is granted, B_NOT_ALLOWED if denied.
+ */
 status_t
 KeyStoreServer::_ValidateAppAccess(Keyring& keyring, const app_info& appInfo,
 	uint32 accessFlags)
@@ -708,6 +781,19 @@ KeyStoreServer::_ValidateAppAccess(Keyring& keyring, const app_info& appInfo,
 }
 
 
+/**
+ * @brief Shows a dialog asking the user to grant application access to a keyring.
+ *
+ * @param keyringName   Name of the keyring.
+ * @param signature     The application's MIME signature.
+ * @param path          The application's filesystem path.
+ * @param accessString  Description of the requested operation.
+ * @param appIsNew      True if the app has never been seen before.
+ * @param appWasUpdated True if the app binary has changed.
+ * @param accessFlags   The requested access flags.
+ * @param allowAlways   Output: true if the user chose "Allow always".
+ * @return B_OK if allowed, B_NOT_ALLOWED if denied, B_NO_MEMORY on allocation failure.
+ */
 status_t
 KeyStoreServer::_RequestAppAccess(const BString& keyringName,
 	const char* signature, const char* path, const char* accessString,
@@ -723,6 +809,12 @@ KeyStoreServer::_RequestAppAccess(const BString& keyringName,
 }
 
 
+/**
+ * @brief Finds a keyring by name, returning the master keyring for empty names.
+ *
+ * @param name The keyring name to find, or empty/"Master" for the master keyring.
+ * @return Pointer to the keyring, or NULL if not found.
+ */
 Keyring*
 KeyStoreServer::_FindKeyring(const BString& name)
 {
@@ -733,6 +825,12 @@ KeyStoreServer::_FindKeyring(const BString& name)
 }
 
 
+/**
+ * @brief Creates a new keyring and inserts it into the sorted list.
+ *
+ * @param name The name for the new keyring.
+ * @return B_OK on success, B_NAME_IN_USE if a keyring with that name exists.
+ */
 status_t
 KeyStoreServer::_AddKeyring(const BString& name)
 {
@@ -752,6 +850,12 @@ KeyStoreServer::_AddKeyring(const BString& name)
 }
 
 
+/**
+ * @brief Removes a keyring by name; the master keyring cannot be removed.
+ *
+ * @param name The keyring name.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if absent, B_NOT_ALLOWED for master.
+ */
 status_t
 KeyStoreServer::_RemoveKeyring(const BString& name)
 {
@@ -768,6 +872,16 @@ KeyStoreServer::_RemoveKeyring(const BString& name)
 }
 
 
+/**
+ * @brief Attempts to unlock a keyring, using the master keyring or user input.
+ *
+ * First checks if the keyring has no unlock key (and can be unlocked
+ * directly). Then tries to find the unlock key in the master keyring.
+ * As a last resort, prompts the user for the passphrase.
+ *
+ * @param keyring The keyring to unlock.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 KeyStoreServer::_UnlockKeyring(Keyring& keyring)
 {
@@ -795,6 +909,13 @@ KeyStoreServer::_UnlockKeyring(Keyring& keyring)
 }
 
 
+/**
+ * @brief Shows a dialog requesting the user to enter a keyring passphrase.
+ *
+ * @param keyringName The name of the keyring to display in the dialog.
+ * @param keyMessage  Output: the flattened password key on success.
+ * @return B_OK if a key was provided, B_CANCELED if dismissed, B_NO_MEMORY on failure.
+ */
 status_t
 KeyStoreServer::_RequestKey(const BString& keyringName, BMessage& keyMessage)
 {
@@ -806,6 +927,13 @@ KeyStoreServer::_RequestKey(const BString& keyringName, BMessage& keyMessage)
 }
 
 
+/**
+ * @brief Application entry point for the key store server.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success, 1 on allocation failure.
+ */
 int
 main(int argc, char* argv[])
 {

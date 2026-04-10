@@ -41,10 +41,13 @@
 class Path;
 
 
+/** @brief Global lock protecting the shared FileWatcher singleton and listener list. */
 static BLocker sLocker("file watcher");
+/** @brief Singleton FileWatcher instance; created on first Register() call. */
 static FileWatcher* sWatcher;
 
 
+/** @brief Destructor for the FileListener interface. */
 FileListener::~FileListener()
 {
 }
@@ -53,6 +56,12 @@ FileListener::~FileListener()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the file watcher and begins monitoring mount events.
+ *
+ * Registers itself as a BHandler with the application and starts node
+ * monitoring for B_WATCH_MOUNT events.
+ */
 FileWatcher::FileWatcher()
 	:
 	BHandler("file watcher")
@@ -66,6 +75,11 @@ FileWatcher::FileWatcher()
 }
 
 
+/**
+ * @brief Destroys the file watcher and stops all monitoring.
+ *
+ * Stops node watching and removes itself from the application's handler list.
+ */
 FileWatcher::~FileWatcher()
 {
 	if (be_app->Lock()) {
@@ -77,6 +91,11 @@ FileWatcher::~FileWatcher()
 }
 
 
+/**
+ * @brief Adds a listener to be notified when watched files are created.
+ *
+ * @param listener The FileListener to add.
+ */
 void
 FileWatcher::AddListener(FileListener* listener)
 {
@@ -85,6 +104,11 @@ FileWatcher::AddListener(FileListener* listener)
 }
 
 
+/**
+ * @brief Removes a previously added file listener.
+ *
+ * @param listener The FileListener to remove.
+ */
 void
 FileWatcher::RemoveListener(FileListener* listener)
 {
@@ -93,6 +117,11 @@ FileWatcher::RemoveListener(FileListener* listener)
 }
 
 
+/**
+ * @brief Returns the number of currently registered file listeners.
+ *
+ * @return The listener count.
+ */
 int32
 FileWatcher::CountListeners() const
 {
@@ -101,6 +130,14 @@ FileWatcher::CountListeners() const
 }
 
 
+/**
+ * @brief Handles incoming path-monitor messages for file creation events.
+ *
+ * Dispatches B_ENTRY_CREATED opcodes to all registered FileListener
+ * instances, passing the watched path to FileCreated().
+ *
+ * @param message The BMessage received from the path monitor.
+ */
 void
 FileWatcher::MessageReceived(BMessage* message)
 {
@@ -126,6 +163,16 @@ FileWatcher::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Registers a file listener for creation events at the given path.
+ *
+ * Creates the singleton FileWatcher if needed, starts path monitoring on
+ * @a path for files only, and adds the listener to the notification list.
+ *
+ * @param listener The FileListener to register.
+ * @param path     The filesystem path to monitor for new file entries.
+ * @return B_OK on success, or an error code if path monitoring could not start.
+ */
 /*static*/ status_t
 FileWatcher::Register(FileListener* listener, BPath& path)
 {
@@ -142,6 +189,15 @@ FileWatcher::Register(FileListener* listener, BPath& path)
 }
 
 
+/**
+ * @brief Unregisters a file listener, destroying the singleton when the last listener is removed.
+ *
+ * Stops path monitoring for @a path and removes the listener. If no
+ * listeners remain, the singleton FileWatcher is deleted.
+ *
+ * @param listener The FileListener to unregister.
+ * @param path     The filesystem path to stop monitoring.
+ */
 /*static*/ void
 FileWatcher::Unregister(FileListener* listener, BPath& path)
 {

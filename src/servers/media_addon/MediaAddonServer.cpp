@@ -189,12 +189,24 @@ DumpFlavorInfo(const flavor_info* info)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the add-on monitor handler for the given server.
+ *
+ * @param server The MediaAddonServer that owns this handler.
+ */
 MediaAddonServer::MonitorHandler::MonitorHandler(MediaAddonServer* server)
 {
 	fServer = server;
 }
 
 
+/**
+ * @brief Called when a media add-on file is detected as enabled.
+ *
+ * Resolves the entry to a path and notifies the server to load the add-on.
+ *
+ * @param info The add-on entry information from the monitor.
+ */
 void
 MediaAddonServer::MonitorHandler::AddOnEnabled(const add_on_entry_info* info)
 {
@@ -211,6 +223,11 @@ MediaAddonServer::MonitorHandler::AddOnEnabled(const add_on_entry_info* info)
 }
 
 
+/**
+ * @brief Called when a media add-on file is detected as disabled/removed.
+ *
+ * @param info The add-on entry information from the monitor.
+ */
 void
 MediaAddonServer::MonitorHandler::AddOnDisabled(const add_on_entry_info* info)
 {
@@ -221,6 +238,14 @@ MediaAddonServer::MonitorHandler::AddOnDisabled(const add_on_entry_info* info)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the media add-on server application.
+ *
+ * Initializes the media roster, creates the control port, and spawns the
+ * control thread that listens for commands from the media_server.
+ *
+ * @param signature The application MIME signature.
+ */
 MediaAddonServer::MediaAddonServer(const char* signature)
 	:
 	BApplication(signature),
@@ -239,6 +264,9 @@ MediaAddonServer::MediaAddonServer(const char* signature)
 }
 
 
+/**
+ * @brief Destroys the server, waiting for the control thread and unregistering all add-ons.
+ */
 MediaAddonServer::~MediaAddonServer()
 {
 	CALLED();
@@ -256,6 +284,13 @@ MediaAddonServer::~MediaAddonServer()
 }
 
 
+/**
+ * @brief Called when the application is ready to run.
+ *
+ * Registers the system time source, starts the add-on directory monitor,
+ * instantiates physical inputs/outputs and autostart flavors, then notifies
+ * the media_server to rescan defaults.
+ */
 void
 MediaAddonServer::ReadyToRun()
 {
@@ -333,6 +368,11 @@ MediaAddonServer::ReadyToRun()
 }
 
 
+/**
+ * @brief Handles quit by destroying instantiated flavors and unregistering the time source.
+ *
+ * @return @c true to allow the application to quit.
+ */
 bool
 MediaAddonServer::QuitRequested()
 {
@@ -362,6 +402,11 @@ MediaAddonServer::QuitRequested()
 }
 
 
+/**
+ * @brief Dispatches incoming application messages, including media file playback requests.
+ *
+ * @param message The BMessage to process.
+ */
 void
 MediaAddonServer::MessageReceived(BMessage* message)
 {
@@ -389,6 +434,16 @@ MediaAddonServer::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles control port messages from the media_server.
+ *
+ * Processes dormant node instantiation requests, add-on flavor rescans,
+ * and rescan-finished notifications (which trigger the startup sound).
+ *
+ * @param code The message code read from the control port.
+ * @param data Pointer to the message payload.
+ * @param size Size of the payload in bytes.
+ */
 void
 MediaAddonServer::_HandleMessage(int32 code, const void* data, size_t size)
 {
@@ -443,6 +498,12 @@ MediaAddonServer::_HandleMessage(int32 code, const void* data, size_t size)
 }
 
 
+/**
+ * @brief Control thread that reads messages from the control port.
+ *
+ * @param _server Pointer to the MediaAddonServer instance.
+ * @return B_OK on normal exit.
+ */
 status_t
 MediaAddonServer::_ControlThread(void* _server)
 {
@@ -459,6 +520,15 @@ MediaAddonServer::_ControlThread(void* _server)
 }
 
 
+/**
+ * @brief Scans an add-on for its flavor info and registers each flavor with the server.
+ *
+ * Iterates through all flavors published by the add-on, flattens each
+ * dormant_flavor_info, and sends it to the media_server for registration.
+ * The first iteration also purges stale flavor entries.
+ *
+ * @param addon The media add-on to scan.
+ */
 void
 MediaAddonServer::_ScanAddOnFlavors(BMediaAddOn* addon)
 {
@@ -539,6 +609,15 @@ MediaAddonServer::_ScanAddOnFlavors(BMediaAddOn* addon)
 }
 
 
+/**
+ * @brief Loads a newly discovered media add-on from disk.
+ *
+ * Registers the add-on with the dormant node manager, scans its flavors,
+ * and (after startup) instantiates physical I/O nodes and autostart flavors.
+ *
+ * @param path     File system path to the add-on shared object.
+ * @param fileNode Inode number of the add-on file for tracking.
+ */
 void
 MediaAddonServer::_AddOnAdded(const char* path, ino_t fileNode)
 {
@@ -618,6 +697,14 @@ MediaAddonServer::_AddOnAdded(const char* path, ino_t fileNode)
 }
 
 
+/**
+ * @brief Stops and releases all active node instances for the given add-on.
+ *
+ * Disconnects all inputs and outputs, releases each node, and clears
+ * the active_flavors list.
+ *
+ * @param info The AddOnInfo whose active flavors should be destroyed.
+ */
 void
 MediaAddonServer::_DestroyInstantiatedFlavors(AddOnInfo& info)
 {
@@ -712,6 +799,11 @@ MediaAddonServer::_DestroyInstantiatedFlavors(AddOnInfo& info)
 }
 
 
+/**
+ * @brief Releases the add-on object if it has no active flavor instances.
+ *
+ * @param info The AddOnInfo to check and potentially release.
+ */
 void
 MediaAddonServer::_PutAddonIfPossible(AddOnInfo& info)
 {
@@ -722,6 +814,11 @@ MediaAddonServer::_PutAddonIfPossible(AddOnInfo& info)
 }
 
 
+/**
+ * @brief Instantiates dormant nodes for flavors marked as physical inputs or outputs.
+ *
+ * @param info The AddOnInfo whose physical I/O flavors should be instantiated.
+ */
 void
 MediaAddonServer::_InstantiatePhysicalInputsAndOutputs(AddOnInfo& info)
 {
@@ -760,6 +857,14 @@ MediaAddonServer::_InstantiatePhysicalInputsAndOutputs(AddOnInfo& info)
 }
 
 
+/**
+ * @brief Auto-starts flavors for add-ons that requested auto-start.
+ *
+ * Calls BMediaAddOn::AutoStart() in a loop, registering each returned
+ * node with the media roster.
+ *
+ * @param info The AddOnInfo whose autostart flavors should be instantiated.
+ */
 void
 MediaAddonServer::_InstantiateAutostartFlavors(AddOnInfo& info)
 {
@@ -799,6 +904,14 @@ MediaAddonServer::_InstantiateAutostartFlavors(AddOnInfo& info)
 }
 
 
+/**
+ * @brief Handles removal of a media add-on file.
+ *
+ * Destroys all instantiated flavors, releases the add-on, unregisters it
+ * from the dormant node manager, and notifies about flavor changes.
+ *
+ * @param fileNode The inode of the removed add-on file.
+ */
 void
 MediaAddonServer::_AddOnRemoved(ino_t fileNode)
 {
@@ -845,6 +958,11 @@ MediaAddonServer::_AddOnRemoved(ino_t fileNode)
 //	#pragma mark -
 
 
+/**
+ * @brief Entry point for the media_addon_server process.
+ *
+ * @return 0 on normal exit.
+ */
 int
 main()
 {

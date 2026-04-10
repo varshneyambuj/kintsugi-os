@@ -35,6 +35,9 @@
 #include "SharedBufferList.h"
 
 
+/**
+ * @brief Constructs the buffer manager and creates the shared buffer list area.
+ */
 BufferManager::BufferManager()
 	:
 	fSharedBufferList(NULL),
@@ -47,12 +50,14 @@ BufferManager::BufferManager()
 }
 
 
+/** @brief Destroys the buffer manager and releases the shared buffer list. */
 BufferManager::~BufferManager()
 {
 	fSharedBufferList->Put();
 }
 
 
+/** @brief Returns the area ID of the shared buffer list. */
 area_id
 BufferManager::SharedBufferListArea()
 {
@@ -60,6 +65,17 @@ BufferManager::SharedBufferListArea()
 }
 
 
+/**
+ * @brief Registers an existing buffer for a new team and returns its properties.
+ *
+ * @param team     The team acquiring a reference to the buffer.
+ * @param bufferID The existing buffer ID to register for.
+ * @param _size    Output: size of the buffer.
+ * @param _flags   Output: buffer flags.
+ * @param _offset  Output: offset within the area.
+ * @param _area    Output: area ID of the buffer.
+ * @return B_OK on success, B_ERROR if the buffer ID is not found.
+ */
 status_t
 BufferManager::RegisterBuffer(team_id team, media_buffer_id bufferID,
 	size_t* _size, int32* _flags, size_t* _offset, area_id* _area)
@@ -87,6 +103,19 @@ BufferManager::RegisterBuffer(team_id team, media_buffer_id bufferID,
 }
 
 
+/**
+ * @brief Registers a new buffer from a team's area and assigns a buffer ID.
+ *
+ * Clones the provided area and creates a new buffer_info entry.
+ *
+ * @param team      The team creating the buffer.
+ * @param size      Buffer size in bytes.
+ * @param flags     Buffer flags.
+ * @param offset    Offset within the area.
+ * @param area      The team's area containing the buffer data.
+ * @param _bufferID Output: the newly assigned buffer ID.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BufferManager::RegisterBuffer(team_id team, size_t size, int32 flags,
 	size_t offset, area_id area, media_buffer_id* _bufferID)
@@ -128,6 +157,13 @@ BufferManager::RegisterBuffer(team_id team, size_t size, int32 flags,
 }
 
 
+/**
+ * @brief Removes a team's reference to a buffer, deleting it if no teams remain.
+ *
+ * @param team     The team releasing the buffer.
+ * @param bufferID The buffer ID to release.
+ * @return B_OK on success, B_ERROR if the buffer or team reference is not found.
+ */
 status_t
 BufferManager::UnregisterBuffer(team_id team, media_buffer_id bufferID)
 {
@@ -164,6 +200,11 @@ BufferManager::UnregisterBuffer(team_id team, media_buffer_id bufferID)
 }
 
 
+/**
+ * @brief Removes all buffer references for a team, deleting orphaned buffers.
+ *
+ * @param team The team ID whose buffer references should be cleaned up.
+ */
 void
 BufferManager::CleanupTeam(team_id team)
 {
@@ -187,6 +228,7 @@ BufferManager::CleanupTeam(team_id team)
 }
 
 
+/** @brief Prints a diagnostic dump of all registered buffers and their team assignments. */
 void
 BufferManager::Dump()
 {
@@ -213,6 +255,12 @@ BufferManager::Dump()
 }
 
 
+/**
+ * @brief Clones an area for server-side access, reusing existing clones via ref counting.
+ *
+ * @param area The source area to clone.
+ * @return The cloned area ID, or a negative error code.
+ */
 area_id
 BufferManager::_CloneArea(area_id area)
 {
@@ -254,6 +302,11 @@ BufferManager::_CloneArea(area_id area)
 }
 
 
+/**
+ * @brief Decrements the ref count of a cloned area, deleting it when it reaches zero.
+ *
+ * @param clone The cloned area ID to release.
+ */
 void
 BufferManager::_ReleaseClonedArea(area_id clone)
 {

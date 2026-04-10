@@ -79,6 +79,12 @@ extern "C" _EXPORT BView* instantiate_deskbar_item(float maxWidth,
 	float maxHeight);
 
 
+/**
+ * @brief Finds the image_info for the add-on containing this function.
+ *
+ * @param image Output: the image_info for the current add-on.
+ * @return B_OK on success, B_ERROR if not found.
+ */
 static status_t
 our_image(image_info& image)
 {
@@ -93,6 +99,13 @@ our_image(image_info& image)
 }
 
 
+/**
+ * @brief Factory function called by the Deskbar to create the mail replicant.
+ *
+ * @param maxWidth  Maximum width available in the Deskbar tray.
+ * @param maxHeight Maximum height available in the Deskbar tray.
+ * @return A new DeskbarView sized to fit the tray slot.
+ */
 BView*
 instantiate_deskbar_item(float maxWidth, float maxHeight)
 {
@@ -103,6 +116,11 @@ instantiate_deskbar_item(float maxWidth, float maxHeight)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the deskbar view with the given frame rectangle.
+ *
+ * @param frame The view's frame rectangle.
+ */
 DeskbarView::DeskbarView(BRect frame)
 	:
 	BView(frame, "mail_daemon", B_FOLLOW_NONE, B_WILL_DRAW | B_PULSE_NEEDED),
@@ -113,6 +131,11 @@ DeskbarView::DeskbarView(BRect frame)
 }
 
 
+/**
+ * @brief Constructs the deskbar view from an archived BMessage.
+ *
+ * @param message The archived message.
+ */
 DeskbarView::DeskbarView(BMessage *message)
 	:
 	BView(message),
@@ -123,6 +146,9 @@ DeskbarView::DeskbarView(BMessage *message)
 }
 
 
+/**
+ * @brief Destroys the deskbar view, freeing bitmaps and active queries.
+ */
 DeskbarView::~DeskbarView()
 {
 	for (int i = 0; i < kStatusCount; i++)
@@ -133,6 +159,12 @@ DeskbarView::~DeskbarView()
 }
 
 
+/**
+ * @brief Called when the view is attached to a window; starts mail queries.
+ *
+ * Adopts parent colors and refreshes the new-mail query. If the mail
+ * daemon is not running, removes the deskbar item.
+ */
 void DeskbarView::AttachedToWindow()
 {
 	BView::AttachedToWindow();
@@ -152,6 +184,12 @@ void DeskbarView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Checks whether a given entry resides in the Trash.
+ *
+ * @param ref The entry reference to check.
+ * @return @c true if the entry is in the Trash directory.
+ */
 bool DeskbarView::_EntryInTrash(const entry_ref* ref)
 {
 	BEntry entry(ref);
@@ -166,6 +204,12 @@ bool DeskbarView::_EntryInTrash(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Refreshes the new-mail queries across all mounted volumes.
+ *
+ * Clears existing queries, creates new ones filtering for "New" status,
+ * counts unread messages not in the Trash, and updates the icon status.
+ */
 void DeskbarView::_RefreshMailQuery()
 {
 	for (int32 i = 0; i < fNewMailQueries.CountItems(); i++)
@@ -203,6 +247,12 @@ void DeskbarView::_RefreshMailQuery()
 }
 
 
+/**
+ * @brief Instantiates a DeskbarView from an archived BMessage.
+ *
+ * @param data The archive message.
+ * @return A new DeskbarView, or NULL if instantiation validation fails.
+ */
 DeskbarView* DeskbarView::Instantiate(BMessage *data)
 {
 	if (!validate_instantiation(data, "DeskbarView"))
@@ -212,6 +262,13 @@ DeskbarView* DeskbarView::Instantiate(BMessage *data)
 }
 
 
+/**
+ * @brief Archives the deskbar view into a BMessage.
+ *
+ * @param data The destination message.
+ * @param deep If true, archives child views as well.
+ * @return B_NO_ERROR on success.
+ */
 status_t DeskbarView::Archive(BMessage *data,bool deep) const
 {
 	BView::Archive(data, deep);
@@ -221,6 +278,7 @@ status_t DeskbarView::Archive(BMessage *data,bool deep) const
 }
 
 
+/** @brief Draws the current status icon using alpha blending. */
 void
 DeskbarView::Draw(BRect /*updateRect*/)
 {
@@ -233,6 +291,11 @@ DeskbarView::Draw(BRect /*updateRect*/)
 }
 
 
+/**
+ * @brief Dispatches incoming messages for mail checks, sends, and query updates.
+ *
+ * @param message The incoming message.
+ */
 void
 DeskbarView::MessageReceived(BMessage* message)
 {
@@ -322,6 +385,9 @@ DeskbarView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Loads status icon bitmaps from the add-on's vector icon resources.
+ */
 void
 DeskbarView::_InitBitmaps()
 {
@@ -358,6 +424,7 @@ DeskbarView::_InitBitmaps()
 }
 
 
+/** @brief Periodic pulse handler; reserved for future daemon liveness checks. */
 void
 DeskbarView::Pulse()
 {
@@ -365,6 +432,13 @@ DeskbarView::Pulse()
 }
 
 
+/**
+ * @brief Handles mouse-up events to open the mailbox or trigger a mail check.
+ *
+ * Primary button opens the mailbox in Tracker; tertiary button checks for mail.
+ *
+ * @param pos The mouse position in view coordinates.
+ */
 void
 DeskbarView::MouseUp(BPoint pos)
 {
@@ -385,6 +459,11 @@ DeskbarView::MouseUp(BPoint pos)
 }
 
 
+/**
+ * @brief Handles mouse-down events; shows a popup menu on right-click.
+ *
+ * @param pos The mouse position in view coordinates.
+ */
 void
 DeskbarView::MouseDown(BPoint pos)
 {
@@ -400,6 +479,13 @@ DeskbarView::MouseDown(BPoint pos)
 }
 
 
+/**
+ * @brief Ensures the Menu Links directory exists, creating default links if needed.
+ *
+ * @param directory Output: set to the Menu Links directory on success.
+ * @param path      Path to the Menu Links directory.
+ * @return @c true if the directory exists or was created successfully.
+ */
 bool
 DeskbarView::_CreateMenuLinks(BDirectory& directory, BPath& path)
 {
@@ -443,6 +529,11 @@ DeskbarView::_CreateMenuLinks(BDirectory& directory, BPath& path)
 }
 
 
+/**
+ * @brief Creates a saved query file for new (unread) email messages.
+ *
+ * @param query The BEntry representing the query file to create.
+ */
 void
 DeskbarView::_CreateNewMailQuery(BEntry& query)
 {
@@ -461,6 +552,15 @@ DeskbarView::_CreateNewMailQuery(BEntry& query)
 }
 
 
+/**
+ * @brief Builds the popup context menu for the deskbar replicant.
+ *
+ * Includes options to create a new message, open mail links, check
+ * for mail, send pending messages, open settings, and optionally
+ * shut down the mail daemon.
+ *
+ * @return The newly built popup menu; caller takes ownership.
+ */
 BPopUpMenu*
 DeskbarView::_BuildMenu()
 {
@@ -621,6 +721,12 @@ DeskbarView::_BuildMenu()
 }
 
 
+/**
+ * @brief Retrieves the entry_ref for the "New E-mail" saved query, creating it if needed.
+ *
+ * @param ref Output: the entry_ref for the query file.
+ * @return B_OK on success.
+ */
 status_t
 DeskbarView::_GetNewQueryRef(entry_ref& ref)
 {

@@ -27,6 +27,12 @@
 #include <Application.h>
 
 
+/**
+ * @brief Constructs the PPP server and begins watching for PPP events.
+ *
+ * Registers itself as a handler on the application, starts the PPP
+ * manager listener, and initialises any existing PPP interfaces.
+ */
 PPPServer::PPPServer()
 	: BHandler("PPPServer"),
 	fListener(this)
@@ -39,6 +45,9 @@ PPPServer::PPPServer()
 }
 
 
+/**
+ * @brief Destroys the PPP server, tearing down interfaces and stopping the listener.
+ */
 PPPServer::~PPPServer()
 {
 	UninitInterfaces();
@@ -49,6 +58,11 @@ PPPServer::~PPPServer()
 }
 
 
+/**
+ * @brief Handles incoming messages, dispatching PPP report messages.
+ *
+ * @param message The message to process.
+ */
 void
 PPPServer::MessageReceived(BMessage *message)
 {
@@ -63,6 +77,11 @@ PPPServer::MessageReceived(BMessage *message)
 }
 
 
+/**
+ * @brief Initialises PPP interfaces by creating connection request windows.
+ *
+ * Currently a stub; will create one ConnectionRequestWindow per interface.
+ */
 void
 PPPServer::InitInterfaces()
 {
@@ -70,6 +89,11 @@ PPPServer::InitInterfaces()
 }
 
 
+/**
+ * @brief Tears down all PPP interfaces and their associated windows.
+ *
+ * Currently a stub; will delete all ConnectionRequestWindows.
+ */
 void
 PPPServer::UninitInterfaces()
 {
@@ -77,6 +101,15 @@ PPPServer::UninitInterfaces()
 }
 
 
+/**
+ * @brief Processes a PPP report message and creates a connection window if needed.
+ *
+ * Extracts the interface ID and report type/code from the message. If the
+ * report indicates a new interface was created by the PPP manager, a
+ * connection request window is opened for that interface.
+ *
+ * @param message The PPP report message containing interface ID, type, and code.
+ */
 void
 PPPServer::HandleReportMessage(BMessage *message)
 {
@@ -93,6 +126,15 @@ PPPServer::HandleReportMessage(BMessage *message)
 }
 
 
+/**
+ * @brief Creates a connection request window for the given PPP interface.
+ *
+ * Currently a stub; will create a window and register it as a report
+ * receiver for the specified interface. If a window for the given ID
+ * already exists, it is only registered as a report receiver.
+ *
+ * @param id The PPP interface identifier.
+ */
 void
 PPPServer::CreateConnectionRequestWindow(ppp_interface_id id)
 {

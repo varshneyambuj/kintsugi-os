@@ -47,62 +47,45 @@
 #include "MessageDeliverer.h"
 #include "Watcher.h"
 
-// Watcher
-
-/*!	\class Watcher
-	\brief A Watcher represents a target of a watching service.
-
-	The Watcher base class only has one attribute, a BMessenger which
-	specifies the target to which notification messages shall be sent.
-	SendMessage() actually sends the message to the target. It can be
-	overridden in case of special needs.
-*/
-
-/*!	\var Watcher::fTarget
-	\brief The watcher's message target.
-*/
-
-// constructor
-/*!	\brief Creates a new watcher with a specified target.
-
-	The supplied BMessenger is copied, that is the caller can delete the
-	object when the constructor returns.
-
-	\param target The watcher's message target.
-*/
+/**
+ * @brief Creates a new Watcher with the specified message target.
+ *
+ * The supplied BMessenger is copied; the caller retains ownership of the
+ * original.
+ *
+ * @param target The watcher's message target.
+ */
 Watcher::Watcher(const BMessenger &target)
 	: fTarget(target)
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associated with the object.
-*/
+/** @brief Frees all resources associated with the Watcher. */
 Watcher::~Watcher()
 {
 }
 
-// Target
-/*!	\brief Returns the watcher's message target.
-	\return The watcher's message target.
-*/
+/**
+ * @brief Returns the watcher's message target.
+ *
+ * @return A reference to the BMessenger identifying the watcher's target.
+ */
 const BMessenger&
 Watcher::Target() const
 {
 	return fTarget;
 }
 
-// SendMessage
-/*!	\brief Sends the supplied message to the watcher's message target.
-
-	The method can be overridden by a derived class to e.g. add additional
-	fields to the message. Note, that in this case the message must not be
-	modified directly, but a copy has to be made.
-
-	\param message The message to be sent.
-	\return \c B_OK, if everything went fine, another error code, if an error
-			occured.
-*/
+/**
+ * @brief Sends the supplied message to the watcher's message target.
+ *
+ * Subclasses may override this to augment the message, but must copy the
+ * message rather than modifying it directly since other watchers may also
+ * receive it.
+ *
+ * @param message The message to deliver.
+ * @return @c B_OK on success, or an error code on failure.
+ */
 status_t
 Watcher::SendMessage(BMessage *message)
 {
@@ -110,40 +93,26 @@ Watcher::SendMessage(BMessage *message)
 }
 
 
-// WatcherFilter
-
-/*!	\class WatcherFilter
-	\brief A WatcherFilter represents a predicate on Watchers.
-
-	It's only method Filter() returns whether a given Watcher and a BMessage
-	satisfy the predicate. This class' Filter() implementation always returns
-	\c true. Derived classes override it.
-*/
-
-// constructor
-/*!	\brief Creates a new WatchingFilter.
-*/
+/** @brief Constructs a WatcherFilter with default (pass-all) behavior. */
 WatcherFilter::WatcherFilter()
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associated with the object.
-*/
+/** @brief Frees all resources associated with the WatcherFilter. */
 WatcherFilter::~WatcherFilter()
 {
 }
 
-// Filter
-/*!	\brief Returns whether the watcher-message pair satisfies the predicate
-		   represented by this object.
-
-	Derived classes override this method. This version always returns \c true.
-
-	\param watcher The watcher in question.
-	\param message The message in question.
-	\return \c true.
-*/
+/**
+ * @brief Tests whether the watcher-message pair satisfies this filter's predicate.
+ *
+ * The base implementation always returns @c true. Subclasses override this
+ * to implement specific filtering logic.
+ *
+ * @param watcher The watcher in question.
+ * @param message The message in question.
+ * @return @c true (always, in the base class).
+ */
 bool
 WatcherFilter::Filter(Watcher *watcher, BMessage *message)
 {

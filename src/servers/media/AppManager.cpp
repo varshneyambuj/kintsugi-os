@@ -67,6 +67,7 @@
 #include "NotificationManager.h"
 
 
+/** @brief Constructs the application manager with its named lock. */
 AppManager::AppManager()
 	:
 	BLocker("media app manager")
@@ -74,11 +75,18 @@ AppManager::AppManager()
 }
 
 
+/** @brief Destroys the application manager. */
 AppManager::~AppManager()
 {
 }
 
 
+/**
+ * @brief Checks whether a team is registered with the media server.
+ *
+ * @param team The team ID to look up.
+ * @return @c true if the team is registered.
+ */
 bool
 AppManager::HasTeam(team_id team)
 {
@@ -87,6 +95,13 @@ AppManager::HasTeam(team_id team)
 }
 
 
+/**
+ * @brief Registers a team and its messenger with the media server.
+ *
+ * @param team      The team ID to register.
+ * @param messenger The team's BMessenger for communication.
+ * @return B_OK on success, B_ERROR if already registered, B_NO_MEMORY on allocation failure.
+ */
 status_t
 AppManager::RegisterTeam(team_id team, const BMessenger& messenger)
 {
@@ -109,6 +124,12 @@ AppManager::RegisterTeam(team_id team, const BMessenger& messenger)
 }
 
 
+/**
+ * @brief Unregisters a team and cleans up its media resources.
+ *
+ * @param team The team ID to unregister.
+ * @return B_OK if the team was found and removed, B_ERROR otherwise.
+ */
 status_t
 AppManager::UnregisterTeam(team_id team)
 {
@@ -124,6 +145,11 @@ AppManager::UnregisterTeam(team_id team)
 }
 
 
+/**
+ * @brief Returns the team ID of the media_addon_server.
+ *
+ * @return The team ID, or -1 if the add-on server is not running.
+ */
 team_id
 AppManager::AddOnServerTeam()
 {
@@ -136,6 +162,13 @@ AppManager::AddOnServerTeam()
 }
 
 
+/**
+ * @brief Sends a BMessage to the specified registered team.
+ *
+ * @param team    The target team ID.
+ * @param message The message to send.
+ * @return B_OK on success, B_NAME_NOT_FOUND if the team is not registered.
+ */
 status_t
 AppManager::SendMessage(team_id team, BMessage* message)
 {
@@ -149,6 +182,7 @@ AppManager::SendMessage(team_id team, BMessage* message)
 }
 
 
+/** @brief Prints a diagnostic dump of all registered teams and their messenger status. */
 void
 AppManager::Dump()
 {
@@ -171,6 +205,7 @@ AppManager::Dump()
 }
 
 
+/** @brief Sends MEDIA_SERVER_ALIVE to all registered team messengers. */
 void
 AppManager::NotifyRosters()
 {
@@ -182,6 +217,14 @@ AppManager::NotifyRosters()
 }
 
 
+/**
+ * @brief Cleans up all media resources owned by a departing team.
+ *
+ * Delegates to NodeManager, BufferManager, and NotificationManager
+ * for per-team cleanup.
+ *
+ * @param team The team ID to clean up after.
+ */
 void
 AppManager::_CleanupTeam(team_id team)
 {

@@ -39,9 +39,13 @@
 #include <AppUsage.h>
 #include <NotificationReceived.h>
 
+/** @brief BFlattenable type code identifying serialised AppUsage objects. */
 const type_code kTypeCode = 'ipau';
 
 
+/**
+ * @brief Constructs a default AppUsage with empty name/signature and notifications allowed.
+ */
 AppUsage::AppUsage()
 	:
 	fAppName(""),
@@ -51,15 +55,28 @@ AppUsage::AppUsage()
 }
 
 
+/**
+ * @brief Constructs an AppUsage with the given application name, signature, and permission.
+ *
+ * @param name      Human-readable application name.
+ * @param signature MIME application signature (e.g. "application/x-vnd.MyApp").
+ * @param allow     Whether notifications from this application are allowed.
+ */
 AppUsage::AppUsage(const char* name, const char* signature, bool allow)
 	:
 	fAppName(name),
 	fSignature(signature),
 	fAllow(allow)
-{	
+{
 }
 
 
+/**
+ * @brief Returns whether the given type code matches this flattenable's type.
+ *
+ * @param code The type code to test.
+ * @return @c true if @a code equals the AppUsage type code.
+ */
 bool
 AppUsage::AllowsTypeCode(type_code code) const
 {
@@ -67,6 +84,16 @@ AppUsage::AllowsTypeCode(type_code code) const
 }
 
 
+/**
+ * @brief Serialises this AppUsage into a flat buffer.
+ *
+ * Packs the application name, signature, and allow flag into a BMessage and
+ * flattens it into @a buffer.
+ *
+ * @param buffer   Destination buffer; must be at least FlattenedSize() bytes.
+ * @param numBytes Size of the destination buffer.
+ * @return B_OK on success, or B_ERROR if the buffer is too small.
+ */
 status_t
 AppUsage::Flatten(void* buffer, ssize_t numBytes) const
 {
@@ -82,6 +109,11 @@ AppUsage::Flatten(void* buffer, ssize_t numBytes) const
 }
 
 
+/**
+ * @brief Returns the number of bytes required to flatten this AppUsage.
+ *
+ * @return The flattened size in bytes.
+ */
 ssize_t
 AppUsage::FlattenedSize() const
 {
@@ -94,6 +126,11 @@ AppUsage::FlattenedSize() const
 }
 
 
+/**
+ * @brief Returns whether the flattened representation has a fixed size.
+ *
+ * @return Always @c false because the name and signature strings vary in length.
+ */
 bool
 AppUsage::IsFixedSize() const
 {
@@ -101,6 +138,11 @@ AppUsage::IsFixedSize() const
 }
 
 
+/**
+ * @brief Returns the type code that identifies flattened AppUsage objects.
+ *
+ * @return The AppUsage type code ('ipau').
+ */
 type_code
 AppUsage::TypeCode() const
 {
@@ -108,6 +150,17 @@ AppUsage::TypeCode() const
 }
 
 
+/**
+ * @brief Restores this AppUsage from a flat buffer.
+ *
+ * Unflattens a BMessage from the buffer and reads the name, signature, and
+ * allow flag.
+ *
+ * @param code     The type code of the data; must equal the AppUsage type code.
+ * @param buffer   Source buffer containing the flattened BMessage.
+ * @param numBytes Size of the source data.
+ * @return B_OK on success, or B_ERROR if the type code is wrong or unflattening fails.
+ */
 status_t
 AppUsage::Unflatten(type_code code, const void* buffer,
 	ssize_t numBytes)
@@ -130,6 +183,11 @@ AppUsage::Unflatten(type_code code, const void* buffer,
 }
 
 						
+/**
+ * @brief Returns the human-readable application name.
+ *
+ * @return The application name as a C string.
+ */
 const char*
 AppUsage::AppName()
 {
@@ -137,6 +195,11 @@ AppUsage::AppName()
 }
 
 
+/**
+ * @brief Returns the MIME application signature.
+ *
+ * @return The application signature as a C string.
+ */
 const char*
 AppUsage::Signature()
 {
@@ -144,6 +207,11 @@ AppUsage::Signature()
 }
 
 
+/**
+ * @brief Returns whether notifications from this application are allowed.
+ *
+ * @return @c true if notifications are permitted, @c false otherwise.
+ */
 bool
 AppUsage::Allowed()
 {
@@ -151,6 +219,11 @@ AppUsage::Allowed()
 }
 
 
+/**
+ * @brief Sets whether notifications from this application are allowed.
+ *
+ * @param allow @c true to permit notifications, @c false to suppress them.
+ */
 void
 AppUsage::SetAllowed(bool allow)
 {

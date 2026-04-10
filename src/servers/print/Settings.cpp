@@ -35,7 +35,13 @@
 
 // Implementation of AppSettings
 
-AppSettings::AppSettings(const char* mimetype, const char* printer) 
+/**
+ * @brief Constructs application-to-printer mapping settings.
+ *
+ * @param mimetype The application's MIME type.
+ * @param printer  The assigned printer name, or NULL.
+ */
+AppSettings::AppSettings(const char* mimetype, const char* printer)
 	: fMimeType(mimetype)
 {
 	if (printer != NULL)
@@ -45,6 +51,13 @@ AppSettings::AppSettings(const char* mimetype, const char* printer)
 
 // Implementation of PrinterSettings
 
+/**
+ * @brief Constructs printer-specific page and job settings.
+ *
+ * @param printer      The printer name.
+ * @param pageSettings Optional initial page settings, or NULL.
+ * @param jobSettings  Optional initial job settings, or NULL.
+ */
 PrinterSettings::PrinterSettings(const char* printer,
 		BMessage* pageSettings, BMessage* jobSettings)
 	: fPrinter(printer)
@@ -58,10 +71,13 @@ PrinterSettings::PrinterSettings(const char* printer,
 
 // Implementation of Settings
 
+/** @brief Singleton instance pointer. */
 Settings* Settings::sSingleton = NULL;
 
+/** @brief Default rectangle for the print configuration window. */
 static const BRect kConfigWindowFrame(30, 30, 220, 120);
 
+/** @brief Constructs the Settings singleton with default values. */
 Settings::Settings()
 	: fApps(true)     // owns AppSettings
 	, fPrinters(true) // owns PrinterSettings
@@ -71,6 +87,7 @@ Settings::Settings()
 }
 
 
+/** @brief Destroys the Settings singleton and clears the static pointer. */
 Settings::~Settings()
 {
 	sSingleton = NULL;

@@ -54,6 +54,18 @@
 #include "Debug.h"
 
 
+/**
+ * @brief Port-listener callback that routes an incoming HCI event to its local device.
+ *
+ * Extracts the device ID from the port code, locates the corresponding
+ * LocalDeviceImpl, and delegates to its HandleEvent() method.  Non-event
+ * frame types are silently ignored.
+ *
+ * @param header Pointer to the raw HCI event header.
+ * @param code   Port code encoding the frame type and HCI device ID.
+ * @param size   Total size of the event packet in bytes.
+ * @return B_OK unconditionally (errors are logged, not propagated).
+ */
 status_t
 DispatchEvent(struct hci_event_header* header, int32 code, size_t size)
 {
@@ -78,6 +90,13 @@ DispatchEvent(struct hci_event_header* header, int32 code, size_t size)
 }
 
 
+/**
+ * @brief Construct the Bluetooth server application.
+ *
+ * Allocates the DeviceManager, initialises the local-devices list, and
+ * creates the BluetoothPortListener that will receive HCI events from the
+ * kernel transport layer.
+ */
 BluetoothServer::BluetoothServer()
 	:
 	BApplication(BLUETOOTH_SIGNATURE),
@@ -92,6 +111,15 @@ BluetoothServer::BluetoothServer()
 }
 
 
+/**
+ * @brief Perform an orderly shutdown of the Bluetooth server.
+ *
+ * Deletes all registered LocalDeviceImpl instances, removes the Deskbar
+ * tray icon, waits for the SDP server thread to exit, and destroys the
+ * event listener.
+ *
+ * @return The result of BApplication::QuitRequested().
+ */
 bool BluetoothServer::QuitRequested(void)
 {
 	LocalDeviceImpl* lDeviceImpl = NULL;
@@ -116,6 +144,14 @@ bool BluetoothServer::QuitRequested(void)
 }
 
 
+/**
+ * @brief Handle command-line arguments passed to the server.
+ *
+ * Recognises "--finish" to initiate a graceful shutdown.
+ *
+ * @param argc Number of arguments.
+ * @param argv Argument vector.
+ */
 void BluetoothServer::ArgvReceived(int32 argc, char **argv)
 {
 	if (argc > 1) {
@@ -125,6 +161,13 @@ void BluetoothServer::ArgvReceived(int32 argc, char **argv)
 }
 
 
+/**
+ * @brief Complete server initialisation once the message loop is running.
+ *
+ * Starts monitoring /dev/bluetooth transport directories (h2-h5), launches
+ * the HCI event listener, installs the Deskbar tray icon, and spawns the
+ * SDP server thread.
+ */
 void BluetoothServer::ReadyToRun(void)
 {
 	fDeviceManager->StartMonitoringDevice("bluetooth/h2");
@@ -152,12 +195,29 @@ void BluetoothServer::ReadyToRun(void)
 }
 
 
+/**
+ * @brief Hook called when the application gains or loses focus.
+ *
+ * Currently used only for diagnostic output.
+ *
+ * @param act true if the application was activated, false if deactivated.
+ */
 void BluetoothServer::AppActivated(bool act)
 {
 	printf("Activated %d\n",act);
 }
 
 
+/**
+ * @brief Central message dispatcher for the Bluetooth server.
+ *
+ * Handles device addition/removal, local-device count queries, device
+ * acquisition, simple HCI requests, property queries, and application
+ * launch notifications.  Synchronous replies are sent when the status
+ * is not B_WOULD_BLOCK.
+ *
+ * @param message The incoming BMessage from clients or internal components.
+ */
 void BluetoothServer::MessageReceived(BMessage* message)
 {
 	BMessage reply;
@@ -252,6 +312,13 @@ void BluetoothServer::MessageReceived(BMessage* message)
 #pragma mark -
 #endif
 
+/**
+ * @brief Extract the "hci_id" field from a message and look up the device.
+ *
+ * @param message The BMessage containing an "hci_id" int32 field.
+ * @return The matching LocalDeviceImpl, or NULL if the field is missing or
+ *         no device with that ID exists.
+ */
 LocalDeviceImpl*
 BluetoothServer::LocateDelegateFromMessage(BMessage* message)
 {
@@ -264,6 +331,14 @@ BluetoothServer::LocateDelegateFromMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Find a LocalDeviceImpl by its HCI device ID.
+ *
+ * Performs a linear search through fLocalDevicesList.
+ *
+ * @param hid The kernel-assigned HCI device identifier.
+ * @return The matching LocalDeviceImpl, or NULL if not found.
+ */
 LocalDeviceImpl*
 BluetoothServer::LocateLocalDeviceImpl(hci_id hid)
 {
@@ -284,6 +359,13 @@ BluetoothServer::LocateLocalDeviceImpl(hci_id hid)
 #pragma - Messages reply
 #endif
 
+/**
+ * @brief Reply with the number of registered local Bluetooth devices.
+ *
+ * @param message The incoming request (unused beyond routing).
+ * @param reply   The outgoing reply; a "count" int32 field is added.
+ * @return The result of BMessage::AddInt32().
+ */
 status_t
 BluetoothServer::HandleLocalDevicesCount(BMessage* message, BMessage* reply)
 {
@@ -293,6 +375,18 @@ BluetoothServer::HandleLocalDevicesCount(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Acquire an available local Bluetooth device for a client.
+ *
+ * Attempts to match a device by HCI ID, Bluetooth address, or simply the
+ * next available one.  On success the device is marked as acquired and its
+ * HCI ID is returned in the reply.  Uses a round-robin static index so
+ * successive unqualified requests cycle through the device list.
+ *
+ * @param message The request, optionally containing "hci_id" or "bdaddr".
+ * @param reply   The outgoing reply; "hci_id" is added on success.
+ * @return B_OK on success, B_ERROR if no device could be acquired.
+ */
 status_t
 BluetoothServer::HandleAcquireLocalDevice(BMessage* message, BMessage* reply)
 {
@@ -368,6 +462,21 @@ BluetoothServer::HandleAcquireLocalDevice(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Forward a simple HCI command request to the target local device.
+ *
+ * If the request includes a "property" field and that property is already
+ * cached, the reply is filled immediately.  Otherwise the raw HCI command
+ * embedded in the message is issued through the device delegate, and the
+ * reply will arrive asynchronously via the event handler.
+ *
+ * @param message The request, containing "hci_id", optional "property",
+ *                and "raw command" data.
+ * @param reply   The outgoing reply, populated with cached properties when
+ *                available.
+ * @return B_OK if the property was cached, B_WOULD_BLOCK if the command
+ *         was issued and a reply will come later, or B_ERROR on failure.
+ */
 status_t
 BluetoothServer::HandleSimpleRequest(BMessage* message, BMessage* reply)
 {
@@ -399,6 +508,18 @@ BluetoothServer::HandleSimpleRequest(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Retrieve a cached device property and pack it into the reply.
+ *
+ * Looks up the requested "property" field name in the target device's
+ * cached properties and stores the value in the reply's "result" field.
+ * Supports 1-byte, 2-byte, and boolean property types.
+ *
+ * @param message The request, containing "hci_id" and "property" fields.
+ * @param reply   The outgoing reply; "result" is added if the property
+ *                is available.
+ * @return B_OK in all cases (the client inspects "result" instead).
+ */
 status_t
 BluetoothServer::HandleGetProperty(BMessage* message, BMessage* reply)
 {
@@ -467,6 +588,17 @@ BluetoothServer::HandleGetProperty(BMessage* message, BMessage* reply)
 #pragma mark -
 #endif
 
+/**
+ * @brief Thread function that runs a minimal SDP (Service Discovery Protocol) server.
+ *
+ * Opens an L2CAP socket bound to PSM 1 (SDP), listens for incoming
+ * connections, and reads data from each client until the connection drops.
+ * Runs in a loop until the server sets fIsShuttingDown.
+ *
+ * @param data Pointer to the BluetoothServer instance (cast to void*).
+ * @return B_NO_ERROR on clean shutdown, or an error status if socket
+ *         setup fails.
+ */
 int32
 BluetoothServer::SDPServerThread(void* data)
 {
@@ -549,6 +681,14 @@ BluetoothServer::SDPServerThread(void* data)
 }
 
 
+/**
+ * @brief Show or activate the given window.
+ *
+ * If the window is hidden it is shown; otherwise it is brought to the
+ * front and activated.
+ *
+ * @param pWindow The window to display.
+ */
 void
 BluetoothServer::ShowWindow(BWindow* pWindow)
 {
@@ -561,6 +701,12 @@ BluetoothServer::ShowWindow(BWindow* pWindow)
 }
 
 
+/**
+ * @brief Install the Bluetooth tray icon into the Deskbar.
+ *
+ * Removes any existing instance first, then adds a new replicant
+ * referencing this application's executable.
+ */
 void
 BluetoothServer::_InstallDeskbarIcon()
 {
@@ -579,6 +725,7 @@ BluetoothServer::_InstallDeskbarIcon()
 }
 
 
+/** @brief Remove the Bluetooth tray icon from the Deskbar. */
 void
 BluetoothServer::_RemoveDeskbarIcon()
 {
@@ -593,6 +740,9 @@ BluetoothServer::_RemoveDeskbarIcon()
 #pragma mark -
 #endif
 
+/**
+ * @brief Entry point: create and run the Bluetooth server application.
+ */
 int
 main(int /*argc*/, char** /*argv*/)
 {

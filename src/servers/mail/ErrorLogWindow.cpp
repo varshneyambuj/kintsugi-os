@@ -75,6 +75,13 @@ class ErrorPanel : public BView {
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the error log window with a scrollable error panel.
+ *
+ * @param rect The initial window frame rectangle.
+ * @param name The window title.
+ * @param type The window type.
+ */
 ErrorLogWindow::ErrorLogWindow(BRect rect, const char *name, window_type type)
 	:
 	BWindow(rect, name, type, B_NO_WORKSPACE_ACTIVATION | B_NOT_MINIMIZABLE
@@ -94,6 +101,18 @@ ErrorLogWindow::ErrorLogWindow(BRect rect, const char *name, window_type type)
 }
 
 
+/**
+ * @brief Adds an error or status message to the log window.
+ *
+ * Creates a new Error view with the message text, appends it to the
+ * scrollable panel, updates the scroll bar range, and shows the window
+ * if it was hidden.
+ *
+ * @param type      The alert severity type (info, warning, etc.).
+ * @param message   The message text to display.
+ * @param tag       Optional tag prefix for the message (e.g., account name).
+ * @param timestamp If true, appends a timestamp to the message.
+ */
 void
 ErrorLogWindow::AddError(alert_type type, const char *message, const char *tag, bool timestamp)
 {
@@ -132,6 +151,11 @@ ErrorLogWindow::AddError(alert_type type, const char *message, const char *tag, 
 }
 
 
+/**
+ * @brief Handles system color change notifications to update column colors.
+ *
+ * @param message The incoming message.
+ */
 void
 ErrorLogWindow::MessageReceived(BMessage* message)
 {
@@ -147,6 +171,11 @@ ErrorLogWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Hides the window and removes all error entries instead of closing.
+ *
+ * @return Always returns false to prevent actual window destruction.
+ */
 bool
 ErrorLogWindow::QuitRequested()
 {
@@ -167,6 +196,12 @@ ErrorLogWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Adjusts scroll bar range when the window is resized.
+ *
+ * @param newWidth  The new width of the window frame.
+ * @param newHeight The new height of the window frame.
+ */
 void
 ErrorLogWindow::FrameResized(float newWidth, float newHeight)
 {
@@ -184,6 +219,11 @@ ErrorLogWindow::FrameResized(float newWidth, float newHeight)
 }
 
 
+/**
+ * @brief Sets the alternating column background colors from a base color.
+ *
+ * @param color The base column background color.
+ */
 void
 ErrorLogWindow::SetColumnColors(rgb_color color)
 {
@@ -198,6 +238,20 @@ ErrorLogWindow::SetColumnColors(rgb_color color)
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs an error entry view with formatted message text.
+ *
+ * Creates a BTextView child displaying the message, optionally prefixed
+ * with a bold tag and suffixed with a timestamp.
+ *
+ * @param rect            The initial view rectangle.
+ * @param atype           The alert type (unused visually but stored).
+ * @param tag             Optional bold prefix tag, or NULL.
+ * @param message         The error/status message text.
+ * @param timestamp       If true, appends the current time.
+ * @param backgroundColor The background color for this entry row.
+ * @param foregroundColor The text color.
+ */
 Error::Error(BRect rect, alert_type atype, const char *tag, const char *message,
 	bool timestamp, rgb_color backgroundColor, rgb_color foregroundColor)
 	:
@@ -253,6 +307,12 @@ Error::Error(BRect rect, alert_type atype, const char *tag, const char *message,
 }
 
 
+/**
+ * @brief Calculates the preferred size based on the enclosed text height.
+ *
+ * @param width  Output: the preferred width.
+ * @param height Output: the preferred height.
+ */
 void
 Error::GetPreferredSize(float *width, float *height)
 {
@@ -263,6 +323,11 @@ Error::GetPreferredSize(float *width, float *height)
 }
 
 
+/**
+ * @brief Draws the error entry background.
+ *
+ * @param updateRect The rectangle that needs redrawing.
+ */
 void
 Error::Draw(BRect updateRect)
 {
@@ -270,6 +335,12 @@ Error::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Resizes the enclosed text view to match the new frame dimensions.
+ *
+ * @param w The new width.
+ * @param h The new height.
+ */
 void
 Error::FrameResized(float w, float h)
 {

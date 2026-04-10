@@ -43,6 +43,16 @@
 #include <bluetoothserver_p.h>
 
 
+/**
+ * @brief Handle node-monitor notifications from the /dev filesystem.
+ *
+ * Dispatches B_ENTRY_CREATED and B_ENTRY_MOVED events by either
+ * recursively monitoring a new subdirectory or registering a new device
+ * file with the Bluetooth server.  B_ENTRY_REMOVED events are logged
+ * but not yet fully handled.
+ *
+ * @param msg The incoming BMessage, expected to carry B_NODE_MONITOR data.
+ */
 void
 DeviceManager::MessageReceived(BMessage* msg)
 {
@@ -100,6 +110,15 @@ DeviceManager::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Start monitoring a directory for new Bluetooth device entries.
+ *
+ * Installs a B_WATCH_DIRECTORY node monitor on \a nref and enumerates any
+ * entries already present, calling AddDevice() for each one.
+ *
+ * @param nref The node_ref of the directory to monitor.
+ * @return B_OK on success, or an error from watch_node() / directory init.
+ */
 status_t
 DeviceManager::AddDirectory(node_ref *nref)
 {
@@ -134,6 +153,15 @@ DeviceManager::AddDirectory(node_ref *nref)
 }
 
 
+/**
+ * @brief Stop monitoring a directory and synthesize removal events for its entries.
+ *
+ * Unregisters the node monitor for \a nref, then iterates each remaining
+ * entry and posts a synthetic B_ENTRY_REMOVED message.
+ *
+ * @param nref The node_ref of the directory to stop watching.
+ * @return B_OK on success, or an error from the directory or watch_node().
+ */
 status_t
 DeviceManager::RemoveDirectory(node_ref* nref)
 {
@@ -162,6 +190,15 @@ DeviceManager::RemoveDirectory(node_ref* nref)
 }
 
 
+/**
+ * @brief Notify the Bluetooth server that a new device node appeared.
+ *
+ * Constructs a BT_MSG_ADD_DEVICE message containing the device path and
+ * sends it asynchronously to the application.
+ *
+ * @param ref The entry_ref pointing to the new device file under /dev.
+ * @return B_OK if the message was sent, or an error from SendMessage().
+ */
 status_t
 DeviceManager::AddDevice(entry_ref* ref)
 {
@@ -180,6 +217,7 @@ DeviceManager::AddDevice(entry_ref* ref)
 }
 
 
+/** @brief Construct the device manager and initialize its internal lock. */
 DeviceManager::DeviceManager() :
 	fLock("device manager")
 {
@@ -187,12 +225,19 @@ DeviceManager::DeviceManager() :
 }
 
 
+/** @brief Destroy the device manager. */
 DeviceManager::~DeviceManager()
 {
 
 }
 
 
+/**
+ * @brief Restore saved device-monitoring state and start the looper.
+ *
+ * Acquires the internal lock, calls Run() to start the BLooper message
+ * loop, then unlocks.
+ */
 void
 DeviceManager::LoadState()
 {
@@ -203,6 +248,11 @@ DeviceManager::LoadState()
 }
 
 
+/**
+ * @brief Persist the current device-monitoring state to disk.
+ *
+ * Currently a no-op placeholder.
+ */
 void
 DeviceManager::SaveState()
 {
@@ -210,6 +260,16 @@ DeviceManager::SaveState()
 }
 
 
+/**
+ * @brief Begin watching a /dev subdirectory tree for Bluetooth controllers.
+ *
+ * Constructs the path /dev/\a device, creating the directory if it does not
+ * exist, installs a B_WATCH_DIRECTORY node monitor on it, and recursively
+ * monitors any subdirectories already present.
+ *
+ * @param device Relative path under /dev to monitor (e.g. "bluetooth/h2").
+ * @return B_OK on success, or an error from the filesystem or watch_node().
+ */
 status_t
 DeviceManager::StartMonitoringDevice(const char	*device)
 {
@@ -290,6 +350,15 @@ DeviceManager::StartMonitoringDevice(const char	*device)
 }
 
 
+/**
+ * @brief Stop watching a /dev subdirectory for Bluetooth controllers.
+ *
+ * Resolves /dev/\a device to a node_ref.  The actual unwatching and
+ * cleanup logic is currently commented out.
+ *
+ * @param device Relative path under /dev to stop monitoring.
+ * @return B_OK on success, or an error from path resolution.
+ */
 status_t
 DeviceManager::StopMonitoringDevice(const char *device)
 {

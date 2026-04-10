@@ -36,6 +36,13 @@
 #include <TextView.h>
 
 
+/**
+ * @brief Constructs the floating preedit window for input method composition.
+ *
+ * Creates a small, non-closable, always-on-top window containing a BTextView.
+ * The window is positioned at the lower third of the main screen and shown
+ * immediately.
+ */
 BottomlineWindow::BottomlineWindow()
 	: BWindow(BRect(0, 0, 350, 16), "", 
 		kLeftTitledWindowLook, 
@@ -64,6 +71,7 @@ BottomlineWindow::BottomlineWindow()
 }
 
 
+/** @brief Destructor. */
 BottomlineWindow::~BottomlineWindow()
 {
 
@@ -71,6 +79,13 @@ BottomlineWindow::~BottomlineWindow()
 }
 
 
+/**
+ * @brief Dispatches incoming messages to the appropriate handler.
+ *
+ * Currently delegates all messages to the base BWindow implementation.
+ *
+ * @param msg The received message.
+ */
 void
 BottomlineWindow::MessageReceived(BMessage *msg)
 {
@@ -83,6 +98,11 @@ BottomlineWindow::MessageReceived(BMessage *msg)
 }
 
 
+/**
+ * @brief Allows the window to close when a quit is requested.
+ *
+ * @return Always returns @c true.
+ */
 bool
 BottomlineWindow::QuitRequested()
 {
@@ -90,7 +110,18 @@ BottomlineWindow::QuitRequested()
 }
 
 
-void 
+/**
+ * @brief Processes a confirmed input method event and emits synthetic key-down events.
+ *
+ * Forwards the raw IME event to the internal text view, then checks whether
+ * the composition has been confirmed.  If so, the confirmed UTF-8 string is
+ * split into individual characters and each one is wrapped in a B_KEY_DOWN
+ * message that is appended to @a newEvents.
+ *
+ * @param event     The input method event message (B_INPUT_METHOD_EVENT).
+ * @param newEvents Output list to which synthetic B_KEY_DOWN messages are added.
+ */
+void
 BottomlineWindow::HandleInputMethodEvent(BMessage* event, EventList& newEvents)
 {
 	CALLED();

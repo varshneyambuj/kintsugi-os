@@ -32,6 +32,17 @@
 #include "HCITransportAccessor.h"
 
 
+/**
+ * @brief Construct a transport accessor and open the HCI driver device.
+ *
+ * Opens the transport-driver file at \a path for read/write access and
+ * retrieves the HCI device ID assigned by the kernel via GET_HCI_ID ioctl.
+ * If the device cannot be opened, the identifier is set to B_ERROR so
+ * subsequent operations are rejected.
+ *
+ * @param path Filesystem path to the Bluetooth transport driver node
+ *             (e.g. /dev/bluetooth/h2/0).
+ */
 HCITransportAccessor::HCITransportAccessor(BPath* path) : HCIDelegate(path)
 {
 	status_t status;
@@ -51,6 +62,12 @@ HCITransportAccessor::HCITransportAccessor(BPath* path) : HCIDelegate(path)
 }
 
 
+/**
+ * @brief Destroy the transport accessor and close the driver descriptor.
+ *
+ * Closes the open file descriptor, if valid, and resets the identifier
+ * to B_ERROR so it can no longer be used.
+ */
 HCITransportAccessor::~HCITransportAccessor()
 {
 	if (fDescriptor > 0) {
@@ -61,6 +78,17 @@ HCITransportAccessor::~HCITransportAccessor()
 }
 
 
+/**
+ * @brief Submit a raw HCI command to the controller through the transport driver.
+ *
+ * Validates that both the HCI ID and file descriptor are valid, then
+ * issues the command by calling ISSUE_BT_COMMAND ioctl on the driver.
+ *
+ * @param rc   Pointer to the raw HCI command buffer.
+ * @param size Size in bytes of the command buffer.
+ * @return The ioctl result on success, or B_ERROR if the ID or descriptor is
+ *         invalid.
+ */
 status_t
 HCITransportAccessor::IssueCommand(raw_command rc, size_t size)
 {
@@ -78,6 +106,14 @@ printf("### \n");
 }
 
 
+/**
+ * @brief Bring the Bluetooth transport up.
+ *
+ * Sends the BT_UP ioctl to the transport driver, telling it to power on
+ * the radio and begin accepting HCI traffic.
+ *
+ * @return B_OK on success, or an error code from the ioctl.
+ */
 status_t
 HCITransportAccessor::Launch() {
 

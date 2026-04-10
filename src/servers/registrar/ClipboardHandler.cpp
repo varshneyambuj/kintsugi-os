@@ -43,17 +43,13 @@ using std::string;
 using namespace BPrivate;
 
 
-/*!
-	\class ClipboardHandler
-	\brief Handles all clipboard related requests.
-*/
-
+/** @brief Maps clipboard names to their Clipboard objects. */
 struct ClipboardHandler::ClipboardMap : map<string, Clipboard*> {};
 
 
-// constructor
-/*!	\brief Creates and initializes a ClipboardHandler.
-*/
+/**
+ * @brief Constructs a ClipboardHandler and allocates the clipboard map.
+ */
 ClipboardHandler::ClipboardHandler()
 				: BHandler(),
 				  fClipboards(new ClipboardMap)
@@ -61,9 +57,9 @@ ClipboardHandler::ClipboardHandler()
 }
 
 
-// destructor
-/*!	\brief Frees all resources associate with this object.
-*/
+/**
+ * @brief Destroys the handler and deletes all owned Clipboard objects.
+ */
 ClipboardHandler::~ClipboardHandler()
 {
 	for (ClipboardMap::iterator it = fClipboards->begin();
@@ -73,11 +69,16 @@ ClipboardHandler::~ClipboardHandler()
 }
 
 
-// MessageReceived
-/*!	\brief Overrides the super class version to handle the clipboard specific
-		   messages.
-	\param message The message to be handled
-*/
+/**
+ * @brief Dispatches incoming clipboard-related BMessages.
+ *
+ * Handles B_REG_ADD_CLIPBOARD, B_REG_GET_CLIPBOARD_COUNT,
+ * B_REG_CLIPBOARD_START_WATCHING, B_REG_CLIPBOARD_STOP_WATCHING,
+ * B_REG_DOWNLOAD_CLIPBOARD, and B_REG_UPLOAD_CLIPBOARD requests, sending
+ * a B_REG_RESULT reply for each.
+ *
+ * @param message The message to be handled.
+ */
 void
 ClipboardHandler::MessageReceived(BMessage *message)
 {
@@ -219,12 +220,14 @@ ClipboardHandler::MessageReceived(BMessage *message)
 }
 
 
-/*!	\brief Gets the clipboard with the specified name, or adds it, if not yet
-		   existent.
-
-	\param name The name of the clipboard to be returned.
-	\return The clipboard with the respective name.
-*/
+/**
+ * @brief Returns the clipboard with the specified name, creating it if needed.
+ *
+ * If @a name is NULL, the "system" clipboard is used.
+ *
+ * @param name The name of the clipboard to retrieve or create.
+ * @return The Clipboard instance for the given name.
+ */
 Clipboard*
 ClipboardHandler::_GetClipboard(const char *name)
 {

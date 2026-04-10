@@ -27,6 +27,7 @@
 #define SNOOZE_TIME 150000
 
 
+/** @brief Constructs the LED animation, saving the current keyboard modifier state. */
 LEDAnimation::LEDAnimation()
 	:
 	fThread(-1),
@@ -36,12 +37,19 @@ LEDAnimation::LEDAnimation()
 }
 
 
+/** @brief Destroys the LED animation, stopping it if still running. */
 LEDAnimation::~LEDAnimation()
 {
 	Stop();
 }
 
 
+/**
+ * @brief Starts the LED animation by spawning a background thread.
+ *
+ * Clears all keyboard locks and begins cycling through Num Lock,
+ * Caps Lock, and Scroll Lock LEDs. Does nothing if already running.
+ */
 void
 LEDAnimation::Start()
 {
@@ -57,6 +65,12 @@ LEDAnimation::Start()
 }
 
 
+/**
+ * @brief Stops the LED animation and restores the original keyboard modifier state.
+ *
+ * Waits for the animation thread to exit before returning.
+ * Does nothing if the animation is not running.
+ */
 void
 LEDAnimation::Stop()
 {
@@ -72,6 +86,15 @@ LEDAnimation::Stop()
 }
 
 
+/**
+ * @brief Thread function that cycles keyboard LEDs in sequence.
+ *
+ * Loops through Num Lock, Caps Lock, and Scroll Lock in a wave pattern
+ * until fRunning is set to false.
+ *
+ * @param data Pointer to the LEDAnimation instance.
+ * @return 0 always.
+ */
 int32
 LEDAnimation::AnimationThread(void* data)
 {
@@ -95,6 +118,12 @@ LEDAnimation::AnimationThread(void* data)
 }
 
 
+/**
+ * @brief Sets or clears a single keyboard LED and pauses briefly when turning it on.
+ *
+ * @param mod The modifier flag (e.g., B_NUM_LOCK) representing the LED.
+ * @param on  If true, turns the LED on and pauses; if false, turns it off.
+ */
 void
 LEDAnimation::LED(uint32 mod,bool on)
 {

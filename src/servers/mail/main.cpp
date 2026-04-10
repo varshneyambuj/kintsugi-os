@@ -28,6 +28,17 @@
 #include "MailDaemonApplication.h"
 
 
+/**
+ * @brief Entry point for the mail daemon server.
+ *
+ * Parses command-line flags: -E exits immediately if auto-start is disabled,
+ * -M forces recreation of MIME types. Creates the MailDaemonApplication
+ * and runs its message loop.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on normal exit.
+ */
 int
 main(int argc, const char** argv)
 {

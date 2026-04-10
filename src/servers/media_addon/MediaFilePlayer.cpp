@@ -35,9 +35,20 @@
 #include <stdlib.h>
 
 
+/** @brief Global list of active MediaFilePlayer instances. */
 BObjectList<MediaFilePlayer> list;
 
 
+/**
+ * @brief Predicate function that matches a MediaFilePlayer by its name.
+ *
+ * Used with BObjectList::EachElement to find a player matching the
+ * given media name string.
+ *
+ * @param player     The player to test.
+ * @param media_name The name string to compare against (cast from void*).
+ * @return The player if its name matches, or NULL otherwise.
+ */
 MediaFilePlayer*
 FindMediaFilePlayer(MediaFilePlayer* player, void* media_name)
 {
@@ -47,6 +58,17 @@ FindMediaFilePlayer(MediaFilePlayer* player, void* media_name)
 }
 
 
+/**
+ * @brief Plays a named media file, reusing or creating a MediaFilePlayer.
+ *
+ * Looks up the entry_ref for the given type/name pair. If a player already
+ * exists for the same name and ref, it is restarted. If the ref has
+ * changed, the old player is replaced. A new player is created if none
+ * exists.
+ *
+ * @param media_type The media type category (e.g., "Sounds").
+ * @param media_name The media item name (e.g., "Startup").
+ */
 void
 PlayMediaFile(const char* media_type, const char* media_name)
 {
@@ -80,6 +102,16 @@ PlayMediaFile(const char* media_type, const char* media_name)
 
 
 
+/**
+ * @brief Constructs a player and begins playback of the referenced media file.
+ *
+ * Opens the media file, finds the first audio track, decodes it to raw
+ * audio format, creates a BSoundPlayer, and starts playback.
+ *
+ * @param media_type The media type category.
+ * @param media_name The media item name, also used as the BSoundPlayer name.
+ * @param ref        The entry_ref pointing to the media file to play.
+ */
 MediaFilePlayer::MediaFilePlayer(const char* media_type,
 	const char* media_name, entry_ref* ref)
 	:
@@ -127,6 +159,7 @@ MediaFilePlayer::MediaFilePlayer(const char* media_type,
 }
 
 
+/** @brief Destroys the player and releases the sound player and media file. */
 MediaFilePlayer::~MediaFilePlayer()
 {
 	delete fSoundPlayer;
@@ -134,6 +167,7 @@ MediaFilePlayer::~MediaFilePlayer()
 }
 
 
+/** @brief Returns the initialization status of this player. */
 status_t
 MediaFilePlayer::InitCheck()
 {
@@ -141,6 +175,7 @@ MediaFilePlayer::InitCheck()
 }
 
 
+/** @brief Returns the media item name associated with this player. */
 const char*
 MediaFilePlayer::Name()
 {
@@ -148,6 +183,7 @@ MediaFilePlayer::Name()
 }
 
 
+/** @brief Returns the entry_ref of the media file being played. */
 const entry_ref*
 MediaFilePlayer::Ref()
 {
@@ -155,12 +191,14 @@ MediaFilePlayer::Ref()
 }
 
 
+/** @brief Returns whether this player is currently playing audio data. */
 bool
 MediaFilePlayer::IsPlaying()
 {
 	return (fSoundPlayer != NULL && fSoundPlayer->HasData());
 }
 
+/** @brief Stops playback, seeks to the beginning, and restarts. */
 void
 MediaFilePlayer::Restart()
 {
@@ -172,6 +210,7 @@ MediaFilePlayer::Restart()
 }
 
 
+/** @brief Stops playback. */
 void
 MediaFilePlayer::Stop()
 {
@@ -179,6 +218,17 @@ MediaFilePlayer::Stop()
 }
 
 
+/**
+ * @brief BSoundPlayer callback that fills the audio buffer from the media track.
+ *
+ * Reads decoded frames from the play track into the provided buffer.
+ * Signals no more data when the track is exhausted.
+ *
+ * @param cookie Pointer to the owning MediaFilePlayer instance.
+ * @param buffer The audio buffer to fill.
+ * @param size   Size of the buffer in bytes.
+ * @param format The raw audio format description.
+ */
 void
 MediaFilePlayer::PlayFunction(void* cookie, void* buffer,
 	size_t size, const media_raw_audio_format& format)

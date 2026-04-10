@@ -67,14 +67,20 @@ using std::nothrow;
 
 // Global InputServer member variables.
 
+/** @brief Singleton pointer to the running InputServer instance. */
 InputServer* gInputServer;
 
+/** @brief Global list of registered input filter add-ons. */
 BList InputServer::gInputFilterList;
+/** @brief Locker protecting gInputFilterList. */
 BLocker InputServer::gInputFilterListLocker("is_filter_queue_sem");
 
+/** @brief Global list of registered input method add-ons. */
 BList InputServer::gInputMethodList;
+/** @brief Locker protecting gInputMethodList. */
 BLocker InputServer::gInputMethodListLocker("is_method_queue_sem");
 
+/** @brief The built-in Roman keymap input method, always available. */
 KeymapMethod InputServer::gKeymapMethod;
 
 
@@ -84,6 +90,14 @@ extern "C" _EXPORT BView* instantiate_deskbar_item();
 // #pragma mark - InputDeviceListItem
 
 
+/**
+ * @brief Constructs an InputDeviceListItem wrapping a server device and device reference.
+ *
+ * Duplicates the device name string.
+ *
+ * @param serverDevice The owning BInputServerDevice add-on.
+ * @param device       The input_device_ref describing the device (name is strdup'd).
+ */
 InputDeviceListItem::InputDeviceListItem(BInputServerDevice& serverDevice,
 		const input_device_ref& device)
 	:
@@ -97,12 +111,18 @@ InputDeviceListItem::InputDeviceListItem(BInputServerDevice& serverDevice,
 }
 
 
+/**
+ * @brief Destructor; frees the duplicated device name.
+ */
 InputDeviceListItem::~InputDeviceListItem()
 {
 	free(fDevice.name);
 }
 
 
+/**
+ * @brief Starts event production for this device by calling the server device's Start() method.
+ */
 void
 InputDeviceListItem::Start()
 {
@@ -115,6 +135,9 @@ InputDeviceListItem::Start()
 }
 
 
+/**
+ * @brief Stops event production for this device.
+ */
 void
 InputDeviceListItem::Stop()
 {
@@ -124,6 +147,12 @@ InputDeviceListItem::Stop()
 }
 
 
+/**
+ * @brief Sends a control message to this device.
+ *
+ * @param code    The control code.
+ * @param message Optional message with additional parameters.
+ */
 void
 InputDeviceListItem::Control(uint32 code, BMessage* message)
 {
@@ -131,6 +160,12 @@ InputDeviceListItem::Control(uint32 code, BMessage* message)
 }
 
 
+/**
+ * @brief Tests whether this device has the given name.
+ *
+ * @param name The name to compare against.
+ * @return @c true if the names match, @c false otherwise or if @a name is NULL.
+ */
 bool
 InputDeviceListItem::HasName(const char* name) const
 {
@@ -141,6 +176,12 @@ InputDeviceListItem::HasName(const char* name) const
 }
 
 
+/**
+ * @brief Tests whether this device has the given type.
+ *
+ * @param type The device type to compare against.
+ * @return @c true if the types match.
+ */
 bool
 InputDeviceListItem::HasType(input_device_type type) const
 {
@@ -148,6 +189,15 @@ InputDeviceListItem::HasType(input_device_type type) const
 }
 
 
+/**
+ * @brief Tests whether this device matches the given name or type.
+ *
+ * If @a name is non-NULL, matches by name; otherwise matches by type.
+ *
+ * @param name The device name, or NULL to match by type instead.
+ * @param type The device type to match when @a name is NULL.
+ * @return @c true if the device matches.
+ */
 bool
 InputDeviceListItem::Matches(const char* name, input_device_type type) const
 {
@@ -161,6 +211,13 @@ InputDeviceListItem::Matches(const char* name, input_device_type type) const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the InputServer application.
+ *
+ * Elevates the thread priority, starts the event loop, initializes keyboard
+ * and mouse state, creates and runs the AddOnManager, and begins watching
+ * for application launches.
+ */
 InputServer::InputServer()
 	:
 	BApplication(INPUTSERVER_SIGNATURE),
@@ -208,6 +265,9 @@ InputServer::InputServer()
 }
 
 
+/**
+ * @brief Destructor; shuts down the AddOnManager and releases input resources.
+ */
 InputServer::~InputServer()
 {
 	CALLED();
@@ -218,6 +278,12 @@ InputServer::~InputServer()
 }
 
 
+/**
+ * @brief Handles command-line arguments; "-q" triggers a restart by posting a quit request.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ */
 void
 InputServer::ArgvReceived(int32 argc, char** argv)
 {
@@ -230,6 +296,13 @@ InputServer::ArgvReceived(int32 argc, char** argv)
 }
 
 
+/**
+ * @brief Initializes keyboard and mouse state to their default positions.
+ *
+ * Determines the screen resolution, centers the mouse pointer, clears key
+ * info, loads the user keymap (or system default), and activates the keymap
+ * method.
+ */
 void
 InputServer::_InitKeyboardMouseStates()
 {
@@ -256,6 +329,14 @@ InputServer::_InitKeyboardMouseStates()
 }
 
 
+/**
+ * @brief Loads the user's custom keymap from the settings directory.
+ *
+ * Reads the key_map struct and character table from ~/config/settings/Key_map.
+ * Byte-swaps the key_map fields from big-endian on disk to host byte order.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InputServer::_LoadKeymap()
 {
@@ -296,6 +377,11 @@ InputServer::_LoadKeymap()
 }
 
 
+/**
+ * @brief Loads the compiled-in system default keymap and saves it to disk.
+ *
+ * @return B_OK on success, or B_NO_MEMORY if the character table cannot be allocated.
+ */
 status_t
 InputServer::_LoadSystemKeymap()
 {
@@ -313,6 +399,15 @@ InputServer::_LoadSystemKeymap()
 }
 
 
+/**
+ * @brief Persists the current keymap to the user settings file.
+ *
+ * Writes the key_map struct in big-endian format followed by the character
+ * table.  If @a isDefault is true, also writes the keymap name attribute.
+ *
+ * @param isDefault Whether this is the system default keymap (writes name attribute).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 InputServer::_SaveKeymap(bool isDefault)
 {
@@ -361,6 +456,14 @@ InputServer::_SaveKeymap(bool isDefault)
 }
 
 
+/**
+ * @brief Handles quit requests; prevents actual quitting during system shutdown.
+ *
+ * Posts SYSTEM_SHUTTING_DOWN to notify add-ons.  During a system shutdown the
+ * input server stays alive; otherwise it saves state and tears down the event loop.
+ *
+ * @return @c true to allow quitting, @c false to stay running during shutdown.
+ */
 bool
 InputServer::QuitRequested()
 {
@@ -387,6 +490,9 @@ InputServer::QuitRequested()
 }
 
 
+/**
+ * @brief Called when the application is ready to run; registers with the app_server.
+ */
 void
 InputServer::ReadyToRun()
 {
@@ -400,6 +506,17 @@ InputServer::ReadyToRun()
 }
 
 
+/**
+ * @brief Acquires input resources for the app_server, setting up the shared cursor
+ *        buffer and event port.
+ *
+ * Clones the cursor shared area, creates the event port, and returns connection
+ * details in the reply.
+ *
+ * @param message The acquisition request from the app_server.
+ * @param reply   The reply message populated with port, semaphore, and capability info.
+ * @return B_OK on success, or a negative error code.
+ */
 status_t
 InputServer::_AcquireInput(BMessage& message, BMessage& reply)
 {
@@ -438,6 +555,12 @@ InputServer::_AcquireInput(BMessage& message, BMessage& reply)
 }
 
 
+/**
+ * @brief Releases input resources (cursor buffer, semaphore, area, and port) previously
+ *        acquired by _AcquireInput().
+ *
+ * @param message Unused; present for message-handler signature compatibility.
+ */
 void
 InputServer::_ReleaseInput(BMessage* /*message*/)
 {
@@ -454,6 +577,15 @@ InputServer::_ReleaseInput(BMessage* /*message*/)
 }
 
 
+/**
+ * @brief Central message dispatcher for the input server.
+ *
+ * Routes messages to the appropriate handler based on their 'what' code,
+ * including mouse/keyboard get/set RPCs, keymap operations, app_server
+ * communication, device management forwarding, and settings persistence.
+ *
+ * @param message The received message.
+ */
 void
 InputServer::MessageReceived(BMessage* message)
 {
@@ -623,6 +755,11 @@ InputServer::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles IS_SET_METHOD by activating the input method identified by cookie.
+ *
+ * @param message Message containing a "cookie" int32.
+ */
 void
 InputServer::HandleSetMethod(BMessage* message)
 {
@@ -648,6 +785,16 @@ InputServer::HandleSetMethod(BMessage* message)
 }
 
 
+/**
+ * @brief Gets or sets the keyboard repeat delay.
+ *
+ * If the message contains a "delay" field, sets the new value and notifies
+ * keyboard devices.  Otherwise returns the current delay in the reply.
+ *
+ * @param message The request message.
+ * @param reply   The reply message.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 InputServer::HandleGetSetKeyRepeatDelay(BMessage* message, BMessage* reply)
 {
@@ -666,6 +813,13 @@ InputServer::HandleGetSetKeyRepeatDelay(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Returns the current key_info struct (modifier state and key states).
+ *
+ * @param message The request message.
+ * @param reply   The reply message populated with "key_info" data.
+ * @return B_OK on success.
+ */
 status_t
 InputServer::HandleGetKeyInfo(BMessage* message, BMessage* reply)
 {
@@ -673,6 +827,13 @@ InputServer::HandleGetKeyInfo(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Returns the current modifier key bitmask.
+ *
+ * @param message The request message.
+ * @param reply   The reply message populated with "modifiers" int32.
+ * @return B_OK on success.
+ */
 status_t
 InputServer::HandleGetModifiers(BMessage* message, BMessage* reply)
 {
@@ -680,6 +841,13 @@ InputServer::HandleGetModifiers(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Returns the physical key code assigned to a specific modifier role.
+ *
+ * @param message The request containing "modifier" int32.
+ * @param reply   The reply containing "key" int32.
+ * @return B_OK on success, or B_ERROR if the modifier is unknown.
+ */
 status_t
 InputServer::HandleGetModifierKey(BMessage* message, BMessage* reply)
 {
@@ -717,6 +885,13 @@ InputServer::HandleGetModifierKey(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Assigns a physical key code to a modifier role and saves the keymap.
+ *
+ * @param message The request containing "modifier" and "key" int32 fields.
+ * @param reply   The reply message.
+ * @return B_OK on success, or B_ERROR if fields are missing or the modifier is unknown.
+ */
 status_t
 InputServer::HandleSetModifierKey(BMessage* message, BMessage* reply)
 {
@@ -778,6 +953,13 @@ InputServer::HandleSetModifierKey(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Sets the keyboard lock states (Caps Lock, Num Lock, Scroll Lock).
+ *
+ * @param message The request containing "locks" int32.
+ * @param reply   The reply message.
+ * @return B_OK on success, or B_ERROR if the field is missing.
+ */
 status_t
 InputServer::HandleSetKeyboardLocks(BMessage* message, BMessage* reply)
 {
@@ -797,6 +979,13 @@ InputServer::HandleSetKeyboardLocks(BMessage* message, BMessage* reply)
 // #pragma mark - Mouse settings
 
 
+/**
+ * @brief Posts a mouse control message to the add-on manager for the given device.
+ *
+ * @param code      The control code (e.g. B_MOUSE_TYPE_CHANGED).
+ * @param mouseName The name of the specific mouse, or empty for all pointing devices.
+ * @return B_OK on success.
+ */
 status_t
 InputServer::_PostMouseControlMessage(int32 code, const BString& mouseName)
 {
@@ -811,6 +1000,11 @@ InputServer::_PostMouseControlMessage(int32 code, const BString& mouseName)
 }
 
 
+/**
+ * @brief Tracks a newly started pointing device in the running mouse list.
+ *
+ * @param item The device list item that was just started.
+ */
 void
 InputServer::_DeviceStarted(InputDeviceListItem& item)
 {
@@ -821,6 +1015,11 @@ InputServer::_DeviceStarted(InputDeviceListItem& item)
 }
 
 
+/**
+ * @brief Removes a stopping pointing device from the running mouse list.
+ *
+ * @param item The device list item about to stop.
+ */
 void
 InputServer::_DeviceStopping(InputDeviceListItem& item)
 {
@@ -831,6 +1030,11 @@ InputServer::_DeviceStopping(InputDeviceListItem& item)
 }
 
 
+/**
+ * @brief Returns the MouseSettings for the first running mouse, or defaults if none running.
+ *
+ * @return Pointer to the relevant MouseSettings.
+ */
 MouseSettings*
 InputServer::_RunningMouseSettings()
 {
@@ -842,6 +1046,11 @@ InputServer::_RunningMouseSettings()
 }
 
 
+/**
+ * @brief Collects MouseSettings pointers for all currently running mice into a list.
+ *
+ * @param settings Output list that receives MouseSettings* items.
+ */
 void
 InputServer::_RunningMiceSettings(BList& settings)
 {
@@ -853,6 +1062,14 @@ InputServer::_RunningMiceSettings(BList& settings)
 }
 
 
+/**
+ * @brief Returns the MouseSettings for the named mouse, creating one if needed.
+ *
+ * Returns NULL if @a mouseName is empty (the caller must decide what to use).
+ *
+ * @param mouseName The device name of the mouse.
+ * @return Pointer to the MouseSettings, or NULL if name is empty.
+ */
 MouseSettings*
 InputServer::_GetSettingsForMouse(BString mouseName)
 {
@@ -865,6 +1082,13 @@ InputServer::_GetSettingsForMouse(BString mouseName)
 }
 
 
+/**
+ * @brief Gets or sets the mouse button count for the specified (or all running) mouse devices.
+ *
+ * @param message The request; may contain "mouse_name" and "mouse_type".
+ * @param reply   The reply message.
+ * @return B_OK on success.
+ */
 status_t
 InputServer::HandleGetSetMouseType(BMessage* message, BMessage* reply)
 {
@@ -896,6 +1120,13 @@ InputServer::HandleGetSetMouseType(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Gets or sets the mouse acceleration factor for the specified (or all running) mice.
+ *
+ * @param message The request; may contain "mouse_name" and "speed".
+ * @param reply   The reply message.
+ * @return B_OK on success.
+ */
 status_t
 InputServer::HandleGetSetMouseAcceleration(BMessage* message, BMessage* reply)
 {
@@ -927,6 +1158,13 @@ InputServer::HandleGetSetMouseAcceleration(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Gets or sets the mouse pointer speed for the specified (or all running) mice.
+ *
+ * @param message The request; may contain "mouse_name" and "speed".
+ * @param reply   The reply message.
+ * @return B_OK on success.
+ */
 status_t
 InputServer::HandleGetSetMouseSpeed(BMessage* message, BMessage* reply)
 {

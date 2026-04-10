@@ -29,6 +29,15 @@
 #include "LocalDeviceHandler.h"
 
 
+/**
+ * @brief Construct a local-device handler that wraps the given HCI delegate.
+ *
+ * Takes ownership of \a hd and allocates an empty BMessage to hold the
+ * device's cached properties (version, features, address, etc.).
+ *
+ * @param hd Pointer to the HCIDelegate that provides low-level transport
+ *           access for this controller.  Ownership is transferred.
+ */
 LocalDeviceHandler::LocalDeviceHandler(HCIDelegate* hd)
 {
 	fHCIDelegate = hd;
@@ -36,6 +45,9 @@ LocalDeviceHandler::LocalDeviceHandler(HCIDelegate* hd)
 }
 
 
+/**
+ * @brief Destroy the handler, freeing the HCI delegate and properties message.
+ */
 LocalDeviceHandler::~LocalDeviceHandler()
 {
 	delete fHCIDelegate;
@@ -43,6 +55,7 @@ LocalDeviceHandler::~LocalDeviceHandler()
 }
 
 
+/** @brief Return the HCI device ID assigned by the kernel to this controller. */
 hci_id
 LocalDeviceHandler::GetID()
 {
@@ -50,6 +63,13 @@ LocalDeviceHandler::GetID()
 }
 
 
+/**
+ * @brief Activate the underlying HCI transport.
+ *
+ * Delegates to HCIDelegate::Launch() to bring the radio up.
+ *
+ * @return B_OK on success, or an error from the delegate.
+ */
 status_t
 LocalDeviceHandler::Launch(void)
 {
@@ -57,6 +77,11 @@ LocalDeviceHandler::Launch(void)
 }
 
 
+/**
+ * @brief Check whether this local device is available for acquisition.
+ *
+ * @return Currently always returns true.
+ */
 bool
 LocalDeviceHandler::Available()
 {
@@ -65,6 +90,12 @@ LocalDeviceHandler::Available()
 }
 
 
+/**
+ * @brief Mark this device as acquired by a client.
+ *
+ * Currently a no-op placeholder; future implementations should track
+ * ownership so the device is not handed out to multiple clients.
+ */
 void
 LocalDeviceHandler::Acquire(void)
 {
@@ -72,6 +103,14 @@ LocalDeviceHandler::Acquire(void)
 }
 
 
+/**
+ * @brief Test whether a named property has already been cached.
+ *
+ * Looks for \a property in the internal fProperties BMessage.
+ *
+ * @param property The property name to look up (e.g. "hci_version").
+ * @return true if the property exists, false otherwise.
+ */
 bool
 LocalDeviceHandler::IsPropertyAvailable(const char* property)
 {
@@ -82,6 +121,14 @@ LocalDeviceHandler::IsPropertyAvailable(const char* property)
 }
 
 
+/**
+ * @brief Enqueue an HCI petition (expected-event request) for later matching.
+ *
+ * Thread-safe: acquires fEventsWanted lock before inserting.
+ *
+ * @param msg The BMessage petition describing the event(s) and opcode(s) to
+ *            wait for.  Ownership is transferred to the queue.
+ */
 void
 LocalDeviceHandler::AddWantedEvent(BMessage* msg)
 {
@@ -93,6 +140,13 @@ LocalDeviceHandler::AddWantedEvent(BMessage* msg)
 }
 
 
+/**
+ * @brief Remove an entire petition from the wanted-events queue.
+ *
+ * Thread-safe: acquires fEventsWanted lock before removing.
+ *
+ * @param msg The petition message to remove.
+ */
 void
 LocalDeviceHandler::ClearWantedEvent(BMessage* msg)
 {
@@ -102,6 +156,21 @@ LocalDeviceHandler::ClearWantedEvent(BMessage* msg)
 }
 
 
+/**
+ * @brief Remove a specific event/opcode entry from a petition message.
+ *
+ * Scans the "eventExpected" array inside \a msg for an entry that matches
+ * \a event (and optionally \a opcode).  When found, only that array entry
+ * is removed; the petition itself stays in the queue if it still contains
+ * other expected events.
+ *
+ * Thread-safe: acquires fEventsWanted lock for the duration of the scan.
+ *
+ * @param msg    The petition whose event entries should be pruned.
+ * @param event  The HCI event code to remove.
+ * @param opcode The HCI command opcode that must also match, or 0 to match
+ *               by event code alone.
+ */
 void
 LocalDeviceHandler::ClearWantedEvent(BMessage* msg, uint16 event, uint16 opcode)
 {
@@ -154,6 +223,22 @@ finish:
 }
 
 
+/**
+ * @brief Search the petition queue for one that expects the given event and opcode.
+ *
+ * Iterates all queued petitions and their "eventExpected" / "opcodeExpected"
+ * arrays to find a match.  If \a opcode is 0 (the default), the search
+ * matches on event code alone.
+ *
+ * Thread-safe: acquires and releases fEventsWanted lock internally.
+ *
+ * @param event      The HCI event code to look for.
+ * @param opcode     The HCI command opcode to match, or 0 for event-only
+ *                   matching.
+ * @param indexFound If non-NULL, receives the array index within the matched
+ *                   petition where the event was found.
+ * @return The matching BMessage petition, or NULL if none was found.
+ */
 BMessage*
 LocalDeviceHandler::FindPetition(uint16 event, uint16 opcode, int32* indexFound)
 {

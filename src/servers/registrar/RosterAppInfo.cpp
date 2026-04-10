@@ -24,7 +24,6 @@
 
 /** @file RosterAppInfo.cpp
  *  @brief Extended app_info structure with registration state and token tracking. */
-//!	An extended app_info.
 
 #include "RosterAppInfo.h"
 
@@ -38,7 +37,11 @@
 using std::nothrow;
 
 
-// constructor
+/**
+ * @brief Constructs a RosterAppInfo in the unregistered state.
+ *
+ * All fields are zeroed and the state is set to APP_STATE_UNREGISTERED.
+ */
 RosterAppInfo::RosterAppInfo()
 	: app_info(),
 	state(APP_STATE_UNREGISTERED),
@@ -48,7 +51,19 @@ RosterAppInfo::RosterAppInfo()
 }
 
 
-// Init
+/**
+ * @brief Initializes the app info with the given process and entry details.
+ *
+ * Resolves the entry_ref through a BEntry to follow symlinks, then copies
+ * the provided values into the corresponding fields.
+ *
+ * @param thread    The application's main thread ID.
+ * @param team      The application's team ID.
+ * @param port      The application's message port.
+ * @param flags     Application launch flags.
+ * @param ref       Entry ref pointing to the application executable.
+ * @param signature The application's MIME signature, or NULL.
+ */
 void
 RosterAppInfo::Init(thread_id thread, team_id team, port_id port, uint32 flags,
 	const entry_ref *ref, const char *signature)
@@ -67,7 +82,14 @@ RosterAppInfo::Init(thread_id thread, team_id team, port_id port, uint32 flags,
 }
 
 
-// Clone
+/**
+ * @brief Creates a heap-allocated deep copy of this RosterAppInfo.
+ *
+ * The clone is initialized via Init() and also copies the registration_time.
+ *
+ * @return A new RosterAppInfo that is a copy of this object, or NULL if
+ *         memory allocation fails.
+ */
 RosterAppInfo *
 RosterAppInfo::Clone() const
 {
@@ -81,7 +103,13 @@ RosterAppInfo::Clone() const
 }
 
 
-// IsRunning
+/**
+ * @brief Checks whether the application's team is still alive.
+ *
+ * Queries the kernel for team_info to determine if the process is running.
+ *
+ * @return @c true if the team is still running, @c false otherwise.
+ */
 bool
 RosterAppInfo::IsRunning() const
 {

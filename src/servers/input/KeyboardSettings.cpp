@@ -35,6 +35,13 @@
 #include <Path.h>
 #include "KeyboardSettings.h"
 
+/**
+ * @brief Constructs the keyboard settings by loading persisted values from disk.
+ *
+ * Reads the keyboard repeat rate and delay from the user settings file.
+ * Falls back to compiled-in defaults if the file cannot be found, opened,
+ * or read.
+ */
 KeyboardSettings::KeyboardSettings()
 {
 	BPath path;
@@ -56,11 +63,17 @@ err:
 }
 
 
+/** @brief Destructor. */
 KeyboardSettings::~KeyboardSettings()
-{	
+{
 }
 
 
+/**
+ * @brief Sets the keyboard repeat rate and persists the change to disk.
+ *
+ * @param rate The new repeat rate in characters per second.
+ */
 void
 KeyboardSettings::SetKeyboardRepeatRate(int32 rate)
 {
@@ -69,6 +82,11 @@ KeyboardSettings::SetKeyboardRepeatRate(int32 rate)
 }
 
 
+/**
+ * @brief Sets the keyboard repeat delay and persists the change to disk.
+ *
+ * @param delay The new repeat delay in microseconds before the first repeat.
+ */
 void
 KeyboardSettings::SetKeyboardRepeatDelay(bigtime_t delay)
 {
@@ -77,6 +95,11 @@ KeyboardSettings::SetKeyboardRepeatDelay(bigtime_t delay)
 }
 
 
+/**
+ * @brief Writes the current keyboard settings to the user settings file.
+ *
+ * Silently returns on any filesystem error without propagating the failure.
+ */
 void
 KeyboardSettings::Save()
 {

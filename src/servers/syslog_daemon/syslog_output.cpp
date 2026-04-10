@@ -40,6 +40,7 @@
 #include <driver_settings.h>
 
 
+/** @brief Human-readable names for the standard syslog facility codes. */
 static const char *kFacilities[] = {
 	"KERN", "USER", "MAIL", "DAEMON",
 	"AUTH", "SYSLOGD", "LPR", "NEWS",
@@ -49,14 +50,28 @@ static const char *kFacilities[] = {
 	"LOCAL4", "LOCAL5", "LOCAL6", "LOCAL7",
 	NULL
 };
+/** @brief Total number of recognized syslog facility codes. */
 static const int32 kNumFacilities = 24;
 
+/** @brief File descriptor for the currently open syslog file, or -1 if none. */
 static int sLog = -1;
+
+/** @brief Buffer holding the most recently written message for repeat detection. */
 static char sLastMessage[1024];
+
+/** @brief Thread ID of the last message's originating thread. */
 static thread_id sLastThread;
+
+/** @brief Count of consecutive identical messages suppressed as repeats. */
 static int32 sRepeatCount;
+
+/** @brief Maximum allowed syslog file size before rotation, in bytes (default 512 KB). */
 static size_t sLogMaxSize = 524288;	// 512kB
+
+/** @brief Number of rotated syslog history files to keep. */
 static int32 sMaxHistory = 1;
+
+/** @brief Whether to include human-readable timestamps in log entries. */
 static bool sLogTimeStamps = false;
 
 
@@ -128,6 +143,16 @@ prepare_output()
 }
 
 
+/**
+ * @brief Writes a buffer to the syslog file, flushing any pending repeat count first.
+ *
+ * If repeated messages were suppressed, emits a "Last message repeated N times"
+ * line before writing the new content.
+ *
+ * @param buffer  The log line to write.
+ * @param length  Number of bytes to write from @a buffer.
+ * @return B_OK on success, B_ERROR if the write fails.
+ */
 static status_t
 write_to_log(const char *buffer, int32 length)
 {
@@ -148,6 +173,16 @@ write_to_log(const char *buffer, int32 length)
 }
 
 
+/**
+ * @brief Formats and writes a syslog message to the on-disk log file.
+ *
+ * Constructs a per-line header containing optional timestamp, facility name,
+ * process identifier, and thread ID. Each line of the message body is
+ * prefixed with this header and written to the log. Consecutive identical
+ * messages are suppressed and counted for later batch reporting.
+ *
+ * @param message The syslog message to format and write.
+ */
 static void
 syslog_output(syslog_message &message)
 {
@@ -239,6 +274,14 @@ syslog_output(syslog_message &message)
 }
 
 
+/**
+ * @brief Initializes the file-based syslog output handler.
+ *
+ * Loads kernel driver settings for timestamps, max log size, and history
+ * depth, then registers the syslog_output handler with the daemon.
+ *
+ * @param daemon The syslog daemon to register the handler with.
+ */
 void
 init_syslog_output(SyslogDaemon *daemon)
 {

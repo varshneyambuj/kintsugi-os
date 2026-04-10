@@ -50,10 +50,16 @@
 extern "C" _EXPORT BView *instantiate_deskbar_item(float maxWidth, float maxHeight);
 status_t our_image(image_info& image);
 
+/** @brief Message code sent when the user chooses "Settings..." from the popup menu. */
 const uint32 kMsgOpenBluetoothPreferences = 'obtp';
+
+/** @brief Message code sent when the user chooses "Quit" from the popup menu. */
 const uint32 kMsgQuitBluetoothServer = 'qbts';
 
+/** @brief The replicant's shelf name inside the Deskbar tray. */
 const char* kDeskbarItemName = "BluetoothServerReplicant";
+
+/** @brief Class name used for instantiation validation. */
 const char* kClassName = "DeskbarReplicant";
 
 
@@ -64,6 +70,14 @@ const char* kClassName = "DeskbarReplicant";
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the Deskbar replicant view with an explicit frame.
+ *
+ * Used when the Deskbar instantiates the item via instantiate_deskbar_item().
+ *
+ * @param frame        The bounding rectangle for the replicant view.
+ * @param resizingMode The BView resizing mode flags.
+ */
 DeskbarReplicant::DeskbarReplicant(BRect frame, int32 resizingMode)
 	: BView(frame, kDeskbarItemName, resizingMode,
 		B_WILL_DRAW | B_TRANSPARENT_BACKGROUND | B_FRAME_EVENTS)
@@ -72,6 +86,11 @@ DeskbarReplicant::DeskbarReplicant(BRect frame, int32 resizingMode)
 }
 
 
+/**
+ * @brief Reconstruct the replicant from an archived BMessage.
+ *
+ * @param archive The BMessage produced by Archive().
+ */
 DeskbarReplicant::DeskbarReplicant(BMessage* archive)
 	: BView(archive)
 {
@@ -79,11 +98,20 @@ DeskbarReplicant::DeskbarReplicant(BMessage* archive)
 }
 
 
+/** @brief Destroy the Deskbar replicant. */
 DeskbarReplicant::~DeskbarReplicant()
 {
 }
 
 
+/**
+ * @brief Load the Bluetooth tray icon from the executable's resources.
+ *
+ * Attempts to locate the vector icon resource named "tray_icon" in the
+ * running image, rasterize it at the view's current bounds, and store
+ * the result in fIcon.  If any step fails, fIcon remains NULL and the
+ * Draw() method falls back to a solid colour rectangle.
+ */
 void
 DeskbarReplicant::_Init()
 {
@@ -116,6 +144,14 @@ DeskbarReplicant::_Init()
 }
 
 
+/**
+ * @brief BArchivable hook: instantiate a DeskbarReplicant from an archive.
+ *
+ * Validates the archive class name before constructing the object.
+ *
+ * @param archive The archive message to instantiate from.
+ * @return A new DeskbarReplicant on success, or NULL if validation fails.
+ */
 DeskbarReplicant *
 DeskbarReplicant::Instantiate(BMessage* archive)
 {
@@ -126,6 +162,16 @@ DeskbarReplicant::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Archive the replicant into a BMessage for Deskbar shelf storage.
+ *
+ * Stores the Bluetooth server add-on signature and class name so that the
+ * Deskbar can reconstruct the replicant after a restart.
+ *
+ * @param archive The message to archive into.
+ * @param deep    If true, child views are also archived.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DeskbarReplicant::Archive(BMessage* archive, bool deep) const
 {
@@ -139,6 +185,11 @@ DeskbarReplicant::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Hook called when the replicant is attached to the Deskbar window.
+ *
+ * Adopts the parent's background colour so the icon blends with the tray.
+ */
 void
 DeskbarReplicant::AttachedToWindow()
 {
@@ -152,6 +203,14 @@ DeskbarReplicant::AttachedToWindow()
 }
 
 
+/**
+ * @brief Draw the Bluetooth tray icon, or a coloured fallback rectangle.
+ *
+ * If fIcon was successfully loaded, it is drawn with alpha blending.
+ * Otherwise a solid blue rounded rectangle is rendered as a placeholder.
+ *
+ * @param updateRect The portion of the view that needs redrawing.
+ */
 void
 DeskbarReplicant::Draw(BRect updateRect)
 {
@@ -169,6 +228,15 @@ DeskbarReplicant::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handle messages from the popup menu and other sources.
+ *
+ * Responds to kMsgOpenBluetoothPreferences by launching the Bluetooth
+ * preferences application, and to kMsgQuitBluetoothServer by requesting
+ * a server shutdown.
+ *
+ * @param msg The incoming BMessage.
+ */
 void
 DeskbarReplicant::MessageReceived(BMessage* msg)
 {
@@ -187,6 +255,15 @@ DeskbarReplicant::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Show the context popup menu on a secondary (right) mouse click.
+ *
+ * Builds a BPopUpMenu with "Settings..." and "Quit" items, displays it
+ * at the click location, and dispatches the chosen item as a message back
+ * to this view.
+ *
+ * @param where The point in view coordinates where the click occurred.
+ */
 void
 DeskbarReplicant::MouseDown(BPoint where)
 {
@@ -215,6 +292,13 @@ DeskbarReplicant::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Request the Bluetooth server to shut down.
+ *
+ * If the server is not running, removes the Deskbar replicant directly.
+ * Otherwise sends B_QUIT_REQUESTED to the server; on failure an error
+ * alert is shown.
+ */
 void
 DeskbarReplicant::_QuitBluetoothServer()
 {
@@ -234,6 +318,15 @@ DeskbarReplicant::_QuitBluetoothServer()
 }
 
 
+/**
+ * @brief Display a modal alert dialog with an error message.
+ *
+ * Appends a human-readable representation of \a status to \a msg and
+ * shows it in a BAlert.
+ *
+ * @param msg    A user-facing description of what went wrong.
+ * @param status The status_t error code to include in the alert body.
+ */
 void
 DeskbarReplicant::_ShowErrorAlert(BString msg, status_t status)
 {
@@ -250,6 +343,16 @@ DeskbarReplicant::_ShowErrorAlert(BString msg, status_t status)
 //	#pragma mark -
 
 
+/**
+ * @brief Deskbar shelf entry point: create a DeskbarReplicant that fits the tray.
+ *
+ * Called by the Deskbar when the replicant add-on is loaded.  Returns a
+ * square view sized to \a maxHeight.
+ *
+ * @param maxWidth  Maximum width available in the tray (unused).
+ * @param maxHeight Maximum height available in the tray; used to size the view.
+ * @return A new DeskbarReplicant view.
+ */
 extern "C" _EXPORT BView *
 instantiate_deskbar_item(float maxWidth, float maxHeight)
 {
@@ -261,6 +364,16 @@ instantiate_deskbar_item(float maxWidth, float maxHeight)
 //	#pragma mark -
 
 
+/**
+ * @brief Locate the image_info for the shared object that contains this function.
+ *
+ * Iterates the loaded images of the current team to find the one whose
+ * text segment includes the address of this function, providing access to
+ * the executable's on-disk path and embedded resources.
+ *
+ * @param image Output parameter that receives the matching image_info.
+ * @return B_OK if found, B_ERROR otherwise.
+ */
 status_t
 our_image(image_info& image)
 {

@@ -42,9 +42,16 @@
 #include <RosterPrivate.h>
 
 
+/** @brief Base path in devfs for power button device entries. */
 static const char* kBasePath = "/dev/power/button";
 
 
+/**
+ * @brief Constructs the power button monitor and opens all power button devices.
+ *
+ * Iterates through entries under /dev/power/button/, opens each file whose
+ * name starts with "power", and adds its file descriptor to the monitored set.
+ */
 PowerButtonMonitor::PowerButtonMonitor()
 	:
 	fFDs()
@@ -66,6 +73,7 @@ PowerButtonMonitor::PowerButtonMonitor()
 }
 
 
+/** @brief Destroys the monitor and closes all monitored file descriptors. */
 PowerButtonMonitor::~PowerButtonMonitor()
 {
 	for (std::set<int>::iterator it = fFDs.begin(); it != fFDs.end(); ++it)
@@ -73,6 +81,14 @@ PowerButtonMonitor::~PowerButtonMonitor()
 }
 
 
+/**
+ * @brief Handles a power button press event from the given file descriptor.
+ *
+ * Reads one byte indicating whether the button was pressed. If pressed,
+ * initiates a system shutdown via BRoster::Private.
+ *
+ * @param fd File descriptor that triggered the read-ready event.
+ */
 void
 PowerButtonMonitor::HandleEvent(int fd)
 {

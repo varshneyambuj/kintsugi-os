@@ -61,7 +61,9 @@
 #define B_TRANSLATION_CONTEXT "MailDaemon"
 
 
+/** @brief Message code to trigger the initial delayed auto-check. */
 static const uint32 kMsgStartAutoCheck = 'stAC';
+/** @brief Message code for periodic automatic mail checking. */
 static const uint32 kMsgAutoCheck = 'moto';
 
 static const bigtime_t kStartAutoCheckDelay = 30000000;
@@ -108,6 +110,9 @@ public:
 // #pragma mark -
 
 
+/**
+ * @brief Creates filesystem indices for mail-related attributes on all queryable volumes.
+ */
 static void
 makeIndices()
 {
@@ -140,6 +145,17 @@ makeIndices()
 }
 
 
+/**
+ * @brief Adds a Tracker attribute definition to a MIME type info message.
+ *
+ * @param msg        The BMessage to add the attribute to.
+ * @param name       Internal attribute name.
+ * @param publicName Display name shown in Tracker columns.
+ * @param type       Attribute data type.
+ * @param viewable   Whether the attribute is visible in Tracker.
+ * @param editable   Whether the attribute is editable in Tracker.
+ * @param width      Default column width in pixels.
+ */
 static void
 addAttribute(BMessage& msg, const char* name, const char* publicName,
 	int32 type = B_STRING_TYPE, bool viewable = true, bool editable = false,
@@ -158,6 +174,7 @@ addAttribute(BMessage& msg, const char* name, const char* publicName,
 // #pragma mark -
 
 
+/** @brief Constructs an account_protocols with no loaded protocol images. */
 account_protocols::account_protocols()
 	:
 	inboundImage(-1),
@@ -171,6 +188,12 @@ account_protocols::account_protocols()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the mail daemon application.
+ *
+ * Creates the error log window, installs MIME types, creates filesystem
+ * indices, and registers the "New E-mail" system beep event.
+ */
 MailDaemonApplication::MailDaemonApplication()
 	:
 	BServer(B_MAIL_DAEMON_SIGNATURE, true, NULL),
@@ -186,6 +209,9 @@ MailDaemonApplication::MailDaemonApplication()
 }
 
 
+/**
+ * @brief Destroys the mail daemon, cleaning up accounts, queries, and animations.
+ */
 MailDaemonApplication::~MailDaemonApplication()
 {
 	delete fAutoCheckRunner;
@@ -203,6 +229,13 @@ MailDaemonApplication::~MailDaemonApplication()
 }
 
 
+/**
+ * @brief Called when the application is ready to run.
+ *
+ * Installs the deskbar icon, initialises mail accounts, schedules the
+ * delayed auto-check, sets up new message counting, and creates the
+ * notification and LED animation objects.
+ */
 void
 MailDaemonApplication::ReadyToRun()
 {
@@ -249,6 +282,14 @@ MailDaemonApplication::ReadyToRun()
 }
 
 
+/**
+ * @brief Handles file references by fetching the full message body.
+ *
+ * Reads the account ID from each referenced node's attributes and
+ * delegates to the appropriate inbound protocol to fetch the body.
+ *
+ * @param message BMessage containing "refs" entry_ref fields.
+ */
 void
 MailDaemonApplication::RefsReceived(BMessage* message)
 {
@@ -277,6 +318,15 @@ MailDaemonApplication::RefsReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Dispatches incoming messages for mail operations and settings changes.
+ *
+ * Handles auto-check triggers, manual check/send requests, settings
+ * updates, account reloads, message marking, body fetches, new message
+ * queries, LED blinking, and various UI callbacks.
+ *
+ * @param msg The incoming message.
+ */
 void
 MailDaemonApplication::MessageReceived(BMessage* msg)
 {
@@ -439,6 +489,9 @@ MailDaemonApplication::MessageReceived(BMessage* msg)
 }
 
 
+/**
+ * @brief Periodic pulse that stops the LED animation when user activity is detected.
+ */
 void
 MailDaemonApplication::Pulse()
 {
@@ -448,6 +501,11 @@ MailDaemonApplication::Pulse()
 }
 
 
+/**
+ * @brief Handles the quit request by removing the deskbar icon.
+ *
+ * @return Always returns @c true to allow the application to quit.
+ */
 bool
 MailDaemonApplication::QuitRequested()
 {
@@ -456,6 +514,9 @@ MailDaemonApplication::QuitRequested()
 }
 
 
+/**
+ * @brief Adds the mail daemon replicant to the Deskbar tray if not already present.
+ */
 void
 MailDaemonApplication::InstallDeskbarIcon()
 {
@@ -482,6 +543,9 @@ MailDaemonApplication::InstallDeskbarIcon()
 }
 
 
+/**
+ * @brief Removes the mail daemon replicant from the Deskbar tray if present.
+ */
 void
 MailDaemonApplication::RemoveDeskbarIcon()
 {
@@ -491,6 +555,14 @@ MailDaemonApplication::RemoveDeskbarIcon()
 }
 
 
+/**
+ * @brief Checks for new messages on one or all configured accounts.
+ *
+ * If the message contains an "account" field, only that account is
+ * checked; otherwise all inbound accounts are synchronised.
+ *
+ * @param msg Message optionally containing an "account" int32 field.
+ */
 void
 MailDaemonApplication::GetNewMessages(BMessage* msg)
 {
@@ -514,6 +586,14 @@ MailDaemonApplication::GetNewMessages(BMessage* msg)
 }
 
 
+/**
+ * @brief Sends all pending outbound messages, or a specific message if specified.
+ *
+ * Queries all volumes for messages with B_MAIL_PENDING flags, groups
+ * them by account, and delegates to the appropriate outbound protocol.
+ *
+ * @param msg Message optionally containing "account" and/or "message_path" fields.
+ */
 void
 MailDaemonApplication::SendPendingMessages(BMessage* msg)
 {
@@ -586,6 +666,14 @@ MailDaemonApplication::SendPendingMessages(BMessage* msg)
 }
 
 
+/**
+ * @brief Installs or updates MIME type definitions for email file types.
+ *
+ * Registers "text/x-email" and "text/x-partial-email" with Tracker
+ * column attributes for subject, from, to, status, etc.
+ *
+ * @param remakeMIMETypes If true, forces full reinstallation of the MIME types.
+ */
 void
 MailDaemonApplication::MakeMimeTypes(bool remakeMIMETypes)
 {
@@ -643,6 +731,9 @@ MailDaemonApplication::MakeMimeTypes(bool remakeMIMETypes)
 }
 
 
+/**
+ * @brief Initialises all configured mail accounts from settings.
+ */
 void
 MailDaemonApplication::_InitAccounts()
 {
@@ -652,6 +743,14 @@ MailDaemonApplication::_InitAccounts()
 }
 
 
+/**
+ * @brief Initialises a single mail account, loading inbound and outbound protocol add-ons.
+ *
+ * Creates the protocol objects, attaches notifiers, and starts their
+ * message loops.
+ *
+ * @param settings The account settings to initialise from.
+ */
 void
 MailDaemonApplication::_InitAccount(BMailAccountSettings& settings)
 {
@@ -690,6 +789,11 @@ MailDaemonApplication::_InitAccount(BMailAccountSettings& settings)
 }
 
 
+/**
+ * @brief Reloads changed accounts by removing and re-initialising them.
+ *
+ * @param message BMessage containing "account" int32 fields identifying changed accounts.
+ */
 void
 MailDaemonApplication::_ReloadAccounts(BMessage* message)
 {
@@ -717,6 +821,11 @@ MailDaemonApplication::_ReloadAccounts(BMessage* message)
 }
 
 
+/**
+ * @brief Removes an account by quitting its protocol threads and unloading add-ons.
+ *
+ * @param account The account_protocols structure to tear down.
+ */
 void
 MailDaemonApplication::_RemoveAccount(const account_protocols& account)
 {
@@ -736,6 +845,13 @@ MailDaemonApplication::_RemoveAccount(const account_protocols& account)
 }
 
 
+/**
+ * @brief Loads the inbound mail protocol add-on and instantiates the protocol.
+ *
+ * @param settings The account settings containing the add-on reference.
+ * @param image    Output: the image_id of the loaded add-on.
+ * @return The instantiated protocol, or NULL on failure.
+ */
 BInboundMailProtocol*
 MailDaemonApplication::_CreateInboundProtocol(BMailAccountSettings& settings,
 	image_id& image)
@@ -758,6 +874,13 @@ MailDaemonApplication::_CreateInboundProtocol(BMailAccountSettings& settings,
 }
 
 
+/**
+ * @brief Loads the outbound mail protocol add-on and instantiates the protocol.
+ *
+ * @param settings The account settings containing the add-on reference.
+ * @param image    Output: the image_id of the loaded add-on.
+ * @return The instantiated protocol, or NULL on failure.
+ */
 BOutboundMailProtocol*
 MailDaemonApplication::_CreateOutboundProtocol(BMailAccountSettings& settings,
 	image_id& image)
@@ -780,6 +903,12 @@ MailDaemonApplication::_CreateOutboundProtocol(BMailAccountSettings& settings,
 }
 
 
+/**
+ * @brief Looks up the inbound protocol for a given account ID.
+ *
+ * @param account The account identifier.
+ * @return The inbound protocol, or NULL if the account is not found.
+ */
 BInboundMailProtocol*
 MailDaemonApplication::_InboundProtocol(int32 account)
 {
@@ -790,6 +919,14 @@ MailDaemonApplication::_InboundProtocol(int32 account)
 }
 
 
+/**
+ * @brief Looks up the outbound protocol for a given account ID.
+ *
+ * Falls back to the default outbound account if @a account is negative.
+ *
+ * @param account The account identifier, or -1 for the default.
+ * @return The outbound protocol, or NULL if not found.
+ */
 BOutboundMailProtocol*
 MailDaemonApplication::_OutboundProtocol(int32 account)
 {
@@ -803,6 +940,12 @@ MailDaemonApplication::_OutboundProtocol(int32 account)
 }
 
 
+/**
+ * @brief Counts new (unread) messages across all volumes using live queries.
+ *
+ * Sets up persistent queries that will deliver B_QUERY_UPDATE notifications
+ * to this application as messages arrive or are read.
+ */
 void
 MailDaemonApplication::_InitNewMessagesCount()
 {
@@ -840,6 +983,9 @@ MailDaemonApplication::_InitNewMessagesCount()
 }
 
 
+/**
+ * @brief Updates the notification title with the current new message count.
+ */
 void
 MailDaemonApplication::_UpdateNewMessagesNotification()
 {
@@ -856,6 +1002,12 @@ MailDaemonApplication::_UpdateNewMessagesNotification()
 }
 
 
+/**
+ * @brief Creates or updates the periodic auto-check message runner.
+ *
+ * Reads the auto-check interval from settings. If the interval is positive,
+ * starts or reconfigures the runner; if zero, stops it.
+ */
 void
 MailDaemonApplication::_UpdateAutoCheckRunner()
 {
@@ -880,6 +1032,13 @@ MailDaemonApplication::_UpdateAutoCheckRunner()
 }
 
 
+/**
+ * @brief Adds a pending mail entry to the send queue, accumulating byte totals.
+ *
+ * @param info  The send_mails_info structure to append to.
+ * @param entry The file entry for the pending message.
+ * @param node  The BNode for size retrieval.
+ */
 void
 MailDaemonApplication::_AddMessage(send_mails_info& info, const BEntry& entry,
 	const BNode& node)
@@ -895,6 +1054,15 @@ MailDaemonApplication::_AddMessage(send_mails_info& info, const BEntry& entry,
 
 /*!	Work-around for a broken index that contains out-of-date information.
 */
+/**
+ * @brief Checks whether a mail node has the pending flag set in its attributes.
+ *
+ * Works around a potentially stale filesystem index by reading the
+ * attribute directly.
+ *
+ * @param node The mail file node.
+ * @return @c true if the B_MAIL_PENDING flag is set.
+ */
 /*static*/ bool
 MailDaemonApplication::_IsPending(BNode& node)
 {
@@ -907,6 +1075,12 @@ MailDaemonApplication::_IsPending(BNode& node)
 }
 
 
+/**
+ * @brief Checks whether a given file entry resides in the system Trash.
+ *
+ * @param entry The file entry to check.
+ * @return @c true if the entry is inside the Trash directory.
+ */
 /*static*/ bool
 MailDaemonApplication::_IsEntryInTrash(BEntry& entry)
 {

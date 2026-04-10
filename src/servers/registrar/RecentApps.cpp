@@ -29,8 +29,6 @@
 
 /** @file RecentApps.cpp
  *  @brief Tracks and persists the list of recently launched applications. */
-//!	Recently launched apps list
-
 
 #include "RecentApps.h"
 
@@ -49,53 +47,30 @@
 #include "Debug.h"
 
 
-/*!	\class RecentApps
-	\brief Manages the roster's list of recently launched applications
-
-*/
-
-
-/*!	\var std::list<std::string> RecentApps::fAppList
-	\brief The list of app sigs, most recent first
-
-	The signatures are expected to be stored all lowercase, as MIME
-	signatures are case-independent.
-*/
-
-
-/*!	\brief Creates a new list.
-
-	The list is initially empty.
-*/
+/** @brief Constructs an empty RecentApps list. */
 RecentApps::RecentApps()
 {
 }
 
 
-/*!	\brief Frees all resources associated with the object.
-
-	Currently does nothing.
-*/
+/** @brief Destroys the RecentApps list. */
 RecentApps::~RecentApps()
 {
 }
 
 
-/*! \brief Places the app with the given signature at the front of
-	the recent apps list.
-
-	If the app already exists elsewhere in the list, that item is
-	removed so only one instance exists in the list at any time.
-
-	\param appSig The application's signature
-	\param appFlags The application's flags. If \a appFlags contains
-	                either \c B_ARGV_ONLY or \c B_BACKGROUND_APP, the
-	                application is \b not added to the list (but \c B_OK
-	                is still returned).
-	\return
-	- \c B_OK: success (even if the app was not added due to appFlags)
-	- error code: failure
-*/
+/**
+ * @brief Adds the application with the given signature to the front of the list.
+ *
+ * Any previous entry with the same signature is removed first so only one
+ * instance exists. Background apps, argv-only apps, Tracker, and Deskbar
+ * are silently excluded.
+ *
+ * @param appSig   The application's MIME signature.
+ * @param appFlags The application's launch flags.
+ * @return @c B_OK on success (including when the app is excluded by flags),
+ *         @c B_BAD_VALUE if @a appSig is NULL, or @c B_NO_MEMORY.
+ */
 status_t
 RecentApps::Add(const char *appSig, int32 appFlags)
 {
@@ -135,13 +110,17 @@ RecentApps::Add(const char *appSig, int32 appFlags)
 }
 
 
-/*! \brief Adds the signature of the application referred to by \a ref at
-	the front of the recent apps list.
-
-	The entry is checked for a BEOS:APP_SIG attribute. If that fails, the
-	app's resources are checked. If no signature can be found, the call
-	fails.
-*/
+/**
+ * @brief Adds the application at the given entry_ref to the recent apps list.
+ *
+ * Reads the application's MIME signature from its BEOS:APP_SIG attribute
+ * or resources, then delegates to Add(const char*, int32).
+ *
+ * @param ref      Entry ref pointing to the application.
+ * @param appFlags The application's launch flags.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a ref is NULL, or an error
+ *         code if the signature cannot be determined.
+ */
 status_t
 RecentApps::Add(const entry_ref *ref, int32 appFlags)
 {
@@ -163,18 +142,16 @@ RecentApps::Add(const entry_ref *ref, int32 appFlags)
 }
 
 
-/*! \brief Returns the first \a maxCount recent apps in the \c BMessage
-	pointed to by \a list.
-
-	The message is cleared first, and \c entry_refs for the the apps are
-	stored in the \c "refs" field of the message (\c B_REF_TYPE).
-
-	If there are fewer than \a maxCount items in the list, the entire
-	list is returned.
-
-	Since BRoster::GetRecentApps() returns \c void, the message pointed
-	to by \a list is simply cleared if maxCount is invalid (i.e. <= 0).
-*/
+/**
+ * @brief Retrieves entry_refs for the most recently launched applications.
+ *
+ * The output message is cleared and filled with up to @a maxCount entry_refs
+ * stored in the "refs" field.
+ *
+ * @param maxCount Maximum number of recent apps to return.
+ * @param list     Output message to populate with "refs" entries.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a list is NULL.
+ */
 status_t
 RecentApps::Get(int32 maxCount, BMessage *list)
 {
@@ -204,8 +181,11 @@ RecentApps::Get(int32 maxCount, BMessage *list)
 }
 
 
-/*! \brief Clears the list of recently launched apps
-*/
+/**
+ * @brief Clears the list of recently launched applications.
+ *
+ * @return @c B_OK always.
+ */
 status_t
 RecentApps::Clear()
 {
@@ -214,8 +194,11 @@ RecentApps::Clear()
 }
 
 
-/*! \brief Dumps the the current list of apps to stdout.
-*/
+/**
+ * @brief Prints the current recent apps list to stdout for debugging.
+ *
+ * @return @c B_OK always.
+ */
 status_t
 RecentApps::Print()
 {
@@ -228,10 +211,14 @@ RecentApps::Print()
 }
 
 
-/*! \brief Outputs a textual representation of the current recent
-	apps list to the given file stream.
-
-*/
+/**
+ * @brief Writes the recent apps list to the given file stream.
+ *
+ * Each entry is written as a "RecentApp <signature>" line.
+ *
+ * @param file The output file stream.
+ * @return @c B_OK on success, @c B_BAD_VALUE if @a file is NULL.
+ */
 status_t
 RecentApps::Save(FILE* file)
 {
@@ -248,13 +235,17 @@ RecentApps::Save(FILE* file)
 }
 
 
-/*! \brief Fetches an \c entry_ref for the application with the
-	given signature.
-
-	First the MIME database is checked for a matching application type
-	with a valid app hint attribute. If that fails, a query is established
-	to track down such an application, if there is one available.
-*/
+/**
+ * @brief Resolves an application signature to an entry_ref via the MIME database.
+ *
+ * Looks up the app hint attribute for the given MIME type to obtain a file
+ * system reference to the application.
+ *
+ * @param appSig The application's MIME signature.
+ * @param result Output parameter receiving the resolved entry_ref.
+ * @return @c B_OK on success, @c B_BAD_VALUE if either argument is NULL,
+ *         or an error code if the app hint cannot be found.
+ */
 status_t
 RecentApps::GetRefForApp(const char *appSig, entry_ref *result)
 {

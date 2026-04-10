@@ -87,6 +87,12 @@ struct service {
 //	#pragma mark -
 
 
+/**
+ * @brief Compares two service connections for equality based on their address settings.
+ *
+ * @param other The service_connection to compare against.
+ * @return @c true if the addresses are equal, @c false otherwise.
+ */
 bool
 service_connection::operator==(const struct service_connection& other) const
 {
@@ -97,6 +103,9 @@ service_connection::operator==(const struct service_connection& other) const
 //	#pragma mark -
 
 
+/**
+ * @brief Destroys a service, closing all open sockets in its connection list.
+ */
 service::~service()
 {
 	// close all open sockets
@@ -109,6 +118,12 @@ service::~service()
 }
 
 
+/**
+ * @brief Tests inequality between two service definitions.
+ *
+ * @param other The service to compare against.
+ * @return @c true if the services differ, @c false if they are equal.
+ */
 bool
 service::operator!=(const struct service& other) const
 {
@@ -116,6 +131,14 @@ service::operator!=(const struct service& other) const
 }
 
 
+/**
+ * @brief Tests equality between two service definitions.
+ *
+ * Compares name, arguments, connection addresses, and stand-alone mode.
+ *
+ * @param other The service to compare against.
+ * @return @c true if both services have identical configuration.
+ */
 bool
 service::operator==(const struct service& other) const
 {
@@ -158,6 +181,15 @@ service::operator==(const struct service& other) const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the Services handler and starts the listener thread.
+ *
+ * Creates a pipe for inter-thread communication, initialises the fd_set
+ * used by select(), processes the initial services configuration, and
+ * spawns a listener thread to accept incoming connections.
+ *
+ * @param services BMessage containing the initial set of service definitions.
+ */
 Services::Services(const BMessage& services)
 	:
 	fListener(-1),
@@ -189,6 +221,12 @@ Services::Services(const BMessage& services)
 }
 
 
+/**
+ * @brief Destroys the Services handler, stopping all managed services.
+ *
+ * Waits for the listener thread to exit, closes the communication pipe,
+ * and stops every running service.
+ */
 Services::~Services()
 {
 	wait_for_thread(fListener, NULL);
@@ -204,6 +242,12 @@ Services::~Services()
 }
 
 
+/**
+ * @brief Returns the initialisation status of the Services handler.
+ *
+ * @return B_OK if the listener thread was spawned successfully, or an
+ *         error code otherwise.
+ */
 status_t
 Services::InitCheck() const
 {
@@ -211,6 +255,14 @@ Services::InitCheck() const
 }
 
 
+/**
+ * @brief Handles incoming messages for updating services or querying status.
+ *
+ * Responds to kMsgUpdateServices by refreshing the service list, and to
+ * kMsgIsServiceRunning by replying whether a named service is active.
+ *
+ * @param message The incoming message.
+ */
 void
 Services::MessageReceived(BMessage* message)
 {
@@ -238,6 +290,12 @@ Services::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Writes a single byte to the pipe to interrupt the listener thread.
+ *
+ * @param quit If @c true, sends a quit command ('q'); otherwise sends an
+ *             update command ('u') so the listener re-reads the fd_set.
+ */
 void
 Services::_NotifyListener(bool quit)
 {
@@ -245,6 +303,11 @@ Services::_NotifyListener(bool quit)
 }
 
 
+/**
+ * @brief Updates the tracked minimum and maximum socket values for select().
+ *
+ * @param socket The file descriptor to incorporate into the range.
+ */
 void
 Services::_UpdateMinMaxSocket(int socket)
 {
@@ -255,6 +318,16 @@ Services::_UpdateMinMaxSocket(int socket)
 }
 
 
+/**
+ * @brief Starts a network service by binding sockets or launching a stand-alone process.
+ *
+ * For stand-alone services, launches the process directly. For inetd-style
+ * services, creates and binds sockets for each connection address, adds
+ * them to the fd_set, and notifies the listener thread.
+ *
+ * @param service The service definition to start.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 Services::_StartService(struct service& service)
 {
@@ -317,6 +390,16 @@ Services::_StartService(struct service& service)
 }
 
 
+/**
+ * @brief Stops a running service and frees its resources.
+ *
+ * Removes the service from the name and socket maps, closes its sockets,
+ * sends SIGTERM to any running stand-alone process, and deletes the
+ * service structure.
+ *
+ * @param service Pointer to the service to stop; will be deleted.
+ * @return B_OK.
+ */
 status_t
 Services::_StopService(struct service* service)
 {
@@ -355,6 +438,16 @@ Services::_StopService(struct service* service)
 }
 
 
+/**
+ * @brief Parses a BMessage into a heap-allocated service structure.
+ *
+ * Reads network service settings from the message, including the service
+ * name, launch arguments, and listening addresses.
+ *
+ * @param message The BMessage containing the service configuration.
+ * @param service Output pointer set to the newly created service on success.
+ * @return B_OK on success, B_NAME_NOT_FOUND if disabled, or another error.
+ */
 status_t
 Services::_ToService(const BMessage& message, struct service*& service)
 {
@@ -392,6 +485,15 @@ Services::_ToService(const BMessage& message, struct service*& service)
 }
 
 
+/**
+ * @brief Updates the set of managed services from a configuration message.
+ *
+ * Compares new service definitions against currently running services.
+ * New services are started, changed services are restarted, and services
+ * absent from the update message are stopped.
+ *
+ * @param services BMessage containing the updated service definitions.
+ */
 void
 Services::_Update(const BMessage& services)
 {
@@ -437,6 +539,18 @@ Services::_Update(const BMessage& services)
 }
 
 
+/**
+ * @brief Spawns a child process to handle a service connection.
+ *
+ * Clears FD_CLOEXEC on the socket so the child inherits it, duplicates
+ * the socket to stdin/stdout/stderr, and uses posix_spawn to launch the
+ * service's command with its configured arguments.
+ *
+ * @param service The service whose command should be launched.
+ * @param socket  The connected socket to hand to the child, or -1 for
+ *                stand-alone services.
+ * @return B_OK on success, or an errno value on failure.
+ */
 status_t
 Services::_LaunchService(struct service& service, int socket)
 {
@@ -501,6 +615,15 @@ Services::_LaunchService(struct service& service, int socket)
 }
 
 
+/**
+ * @brief Main loop for the listener thread, accepting connections via select().
+ *
+ * Blocks on select() waiting for activity on any service socket or on
+ * the internal command pipe. Accepts incoming TCP connections and
+ * launches the appropriate service handler for each.
+ *
+ * @return B_OK when the thread exits normally.
+ */
 status_t
 Services::_Listener()
 {
@@ -560,6 +683,12 @@ Services::_Listener()
 }
 
 
+/**
+ * @brief Static thread entry point that delegates to the instance _Listener() method.
+ *
+ * @param _self Pointer to the Services instance (cast to void*).
+ * @return The status from the instance method.
+ */
 /*static*/ status_t
 Services::_Listener(void* _self)
 {

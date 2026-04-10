@@ -34,6 +34,11 @@
 
 #include <String.h>
 
+/**
+ * @brief Constructs the print add-on server application.
+ *
+ * @param signature The application MIME signature.
+ */
 PrintAddOnServerApplication::PrintAddOnServerApplication(const char* signature)
 	:
 	BApplication(signature)
@@ -42,6 +47,11 @@ PrintAddOnServerApplication::PrintAddOnServerApplication(const char* signature)
 }
 
 
+/**
+ * @brief Dispatches incoming messages to the appropriate print operation handler.
+ *
+ * @param message The incoming message.
+ */
 void
 PrintAddOnServerApplication::MessageReceived(BMessage* message)
 {
@@ -72,6 +82,13 @@ PrintAddOnServerApplication::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Handles an add-printer request from a BMessage.
+ *
+ * Extracts the driver and printer name, delegates to AddPrinter(), and sends a reply.
+ *
+ * @param message The request message.
+ */
 void
 PrintAddOnServerApplication::AddPrinter(BMessage* message)
 {
@@ -88,6 +105,13 @@ PrintAddOnServerApplication::AddPrinter(BMessage* message)
 }
 
 
+/**
+ * @brief Adds a printer by loading the driver add-on and calling its AddPrinter function.
+ *
+ * @param driver          The printer driver name.
+ * @param spoolFolderName The spool folder name for the printer.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 PrintAddOnServerApplication::AddPrinter(const char* driver,
 	const char* spoolFolderName)
@@ -97,6 +121,11 @@ PrintAddOnServerApplication::AddPrinter(const char* driver,
 }
 
 
+/**
+ * @brief Handles a page configuration request from a BMessage.
+ *
+ * @param message The request message containing driver, folder, and settings.
+ */
 void
 PrintAddOnServerApplication::ConfigPage(BMessage* message)
 {
@@ -123,6 +152,14 @@ PrintAddOnServerApplication::ConfigPage(BMessage* message)
 }
 
 
+/**
+ * @brief Configures page settings by loading the driver add-on.
+ *
+ * @param driver      The printer driver name.
+ * @param spoolFolder The spool folder directory.
+ * @param settings    In/out page settings message.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 PrintAddOnServerApplication::ConfigPage(const char* driver,
 	BDirectory* spoolFolder, BMessage* settings)
@@ -132,6 +169,11 @@ PrintAddOnServerApplication::ConfigPage(const char* driver,
 }
 
 
+/**
+ * @brief Handles a job configuration request from a BMessage.
+ *
+ * @param message The request message containing driver, folder, and settings.
+ */
 void
 PrintAddOnServerApplication::ConfigJob(BMessage* message)
 {
@@ -158,6 +200,14 @@ PrintAddOnServerApplication::ConfigJob(BMessage* message)
 }
 
 
+/**
+ * @brief Configures job settings by loading the driver add-on.
+ *
+ * @param driver      The printer driver name.
+ * @param spoolFolder The spool folder directory.
+ * @param settings    In/out job settings message.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 PrintAddOnServerApplication::ConfigJob(const char* driver,
 				BDirectory* spoolFolder,
@@ -168,6 +218,11 @@ PrintAddOnServerApplication::ConfigJob(const char* driver,
 }
 
 
+/**
+ * @brief Handles a default-settings request from a BMessage.
+ *
+ * @param message The request message containing driver and folder.
+ */
 void
 PrintAddOnServerApplication::DefaultSettings(BMessage* message)
 {
@@ -193,6 +248,14 @@ PrintAddOnServerApplication::DefaultSettings(BMessage* message)
 }
 
 
+/**
+ * @brief Retrieves default print settings from the driver add-on.
+ *
+ * @param driver      The printer driver name.
+ * @param spoolFolder The spool folder directory.
+ * @param settings    Output: the default settings message.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 PrintAddOnServerApplication::DefaultSettings(const char* driver,
 	BDirectory* spoolFolder, BMessage* settings)
@@ -202,6 +265,11 @@ PrintAddOnServerApplication::DefaultSettings(const char* driver,
 }
 
 
+/**
+ * @brief Handles a take-job request from a BMessage.
+ *
+ * @param message The request message containing driver, folder, and job file path.
+ */
 void
 PrintAddOnServerApplication::TakeJob(BMessage* message)
 {
@@ -222,6 +290,14 @@ PrintAddOnServerApplication::TakeJob(BMessage* message)
 }
 
 
+/**
+ * @brief Sends a spool file to the printer driver add-on for processing.
+ *
+ * @param driver      The printer driver name.
+ * @param spoolFile   Path to the spool file.
+ * @param spoolFolder The spool folder directory.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 PrintAddOnServerApplication::TakeJob(const char* driver, const char* spoolFile,
 				BDirectory* spoolFolder)
@@ -231,6 +307,12 @@ PrintAddOnServerApplication::TakeJob(const char* driver, const char* spoolFile,
 }
 
 
+/**
+ * @brief Sends a status-only reply to the requesting message.
+ *
+ * @param message The original request message.
+ * @param status  The status code to include in the reply.
+ */
 void
 PrintAddOnServerApplication::SendReply(BMessage* message, status_t status)
 {
@@ -240,6 +322,12 @@ PrintAddOnServerApplication::SendReply(BMessage* message, status_t status)
 }
 
 
+/**
+ * @brief Sends a reply message with B_OK status to the requesting message.
+ *
+ * @param message The original request message.
+ * @param reply   The reply message to send.
+ */
 void
 PrintAddOnServerApplication::SendReply(BMessage* message, BMessage* reply)
 {
@@ -248,6 +336,12 @@ PrintAddOnServerApplication::SendReply(BMessage* message, BMessage* reply)
 }
 
 
+/**
+ * @brief Application entry point for the print add-on server.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ */
 int
 main(int argc, char* argv[])
 {

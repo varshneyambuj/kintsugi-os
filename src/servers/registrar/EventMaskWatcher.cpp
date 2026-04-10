@@ -45,39 +45,26 @@
  *  @brief Implements event-mask-filtered watchers for the watching service. */
 #include "EventMaskWatcher.h"
 
-// EventMaskWatcher
-
-/*!	\class EventMaskWatcher
-	\brief EventMaskWatcher is a Watcher extended by an event mask.
-
-	Each set bit in the watcher's event mask specifies an event the watcher
-	wants to get notified about.
-
-	This class is intended to be used together with EventMaskWatcherFilter.
-	Such a filter object is created with a certain event and its
-	EventMaskWatcherFilter::Filter() method only selects those
-	EventMaskWatchers with an event mask that contains the event.
-*/
-
-/*!	\var uint32 EventMaskWatcher::fEventMask
-	\brief The watcher's event mask.
-*/
-
-// constructor
-/*!	\brief Creates a new EventMaskWatcher with a given target and event mask.
-	\param target The watcher's message target.
-	\param eventMask the watcher's event mask.
-*/
+/**
+ * @brief Creates a new EventMaskWatcher with a given target and event mask.
+ *
+ * Each set bit in the event mask specifies an event the watcher wants to
+ * receive notifications about.
+ *
+ * @param target    The watcher's message target.
+ * @param eventMask The watcher's event mask.
+ */
 EventMaskWatcher::EventMaskWatcher(const BMessenger &target, uint32 eventMask)
 	: Watcher(target),
 	  fEventMask(eventMask)
 {
 }
 
-// EventMask
-/*!	\brief Returns the watcher's event mask.
-	\return The watcher's event mask.
-*/
+/**
+ * @brief Returns the watcher's event mask.
+ *
+ * @return The bitmask of events this watcher is interested in.
+ */
 uint32
 EventMaskWatcher::EventMask() const
 {
@@ -85,51 +72,30 @@ EventMaskWatcher::EventMask() const
 }
 
 
-// EventMaskWatcherFilter
-
-/*!	\class EventMaskWatcherFilter
-	\brief EventMaskWatcherFilter filters EventMaskWatchers with respect to
-		   their event mask and a specific event.
-
-	This class is intended to be used together with EventMaskWatcher.
-	A filter object is created with a certain event and its Filter() method
-	only selects those EventMaskWatchers with an event mask that contains
-	the event.
-*/
-
-/*!	\var uint32 EventMaskWatcherFilter::fEvent
-	\brief The filter's event.
-
-	Filter only returns \c true for watchers whose event mask contains the
-	event.
-*/
-
-// constructor
-/*!	\brief Creates a new EventMaskWatcherFilter with a specified event.
-
-	Actually \a event may specify more than one event. Usually each set bit
-	represents an event.
-
-	\param event The event.
-*/
+/**
+ * @brief Creates a new EventMaskWatcherFilter for the specified event(s).
+ *
+ * The @a event parameter may contain multiple events as a bitmask. Only
+ * watchers whose event mask overlaps with this value will pass the filter.
+ *
+ * @param event The event bitmask to filter on.
+ */
 EventMaskWatcherFilter::EventMaskWatcherFilter(uint32 event)
 	: WatcherFilter(),
 	  fEvent(event)
 {
 }
 
-// Filter
-/*!	\brief Returns whether the watcher-message pair satisfies the predicate
-		   represented by this object.
-
-	Returns \c true, if the supplied watcher is an EventMaskWatcher and its
-	event mask contains this filter's event, or more precise the bitwise AND
-	on event mask and event is not 0.
-
-	\param watcher The watcher in question.
-	\param message The message in question.
-	\return \c true, if the watcher's event mask contains the filter's event.
-*/
+/**
+ * @brief Tests whether the watcher's event mask includes this filter's event.
+ *
+ * Returns @c true if the watcher is an EventMaskWatcher and the bitwise AND
+ * of its event mask and this filter's event is non-zero.
+ *
+ * @param watcher The watcher to test.
+ * @param message The notification message (unused by this filter).
+ * @return @c true if the watcher matches, @c false otherwise.
+ */
 bool
 EventMaskWatcherFilter::Filter(Watcher *watcher, BMessage *message)
 {

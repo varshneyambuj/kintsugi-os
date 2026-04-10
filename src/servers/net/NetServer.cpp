@@ -132,6 +132,16 @@ private:
 // #pragma mark - private functions
 
 
+/**
+ * @brief Issues an IEEE 802.11 ioctl to configure a wireless interface.
+ *
+ * @param name   Name of the network interface.
+ * @param type   The ieee80211req type code.
+ * @param data   Pointer to request-specific data.
+ * @param length Length of the data buffer.
+ * @param value  Integer value for the request.
+ * @return B_OK on success, or errno on failure.
+ */
 static status_t
 set_80211(const char* name, int32 type, void* data,
 	int32 length = 0, int32 value = 0)
@@ -158,6 +168,11 @@ set_80211(const char* name, int32 type, void* data,
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs the NetServer application.
+ *
+ * @param error Output status of the BServer construction.
+ */
 NetServer::NetServer(status_t& error)
 	:
 	BServer(kNetServerSignature, false, &error)
@@ -165,12 +180,22 @@ NetServer::NetServer(status_t& error)
 }
 
 
+/**
+ * @brief Destroys the NetServer, stopping the device path monitor.
+ */
 NetServer::~NetServer()
 {
 	BPrivate::BPathMonitor::StopWatching("/dev/net", this);
 }
 
 
+/**
+ * @brief Called when the application is ready to run.
+ *
+ * Starts monitoring network settings, brings up configured interfaces,
+ * starts managed network services, and begins watching /dev/net for
+ * device additions or removals.
+ */
 void
 NetServer::ReadyToRun()
 {
@@ -183,6 +208,15 @@ NetServer::ReadyToRun()
 }
 
 
+/**
+ * @brief Dispatches incoming messages to the appropriate handler.
+ *
+ * Handles device monitor events, settings updates, interface configuration,
+ * resolver configuration, network join/leave requests, persistent network
+ * queries, and service status queries.
+ *
+ * @param message The incoming message.
+ */
 void
 NetServer::MessageReceived(BMessage* message)
 {
@@ -362,6 +396,12 @@ NetServer::_IsValidInterface(BNetworkInterface& interface)
 }
 
 
+/**
+ * @brief Removes all network interfaces that lack a valid address or MAC.
+ *
+ * Iterates through all interfaces on the system roster and removes any
+ * that do not pass the _IsValidInterface() check.
+ */
 void
 NetServer::_RemoveInvalidInterfaces()
 {
@@ -378,6 +418,12 @@ NetServer::_RemoveInvalidInterfaces()
 }
 
 
+/**
+ * @brief Checks whether a network interface whose name starts with the given prefix exists.
+ *
+ * @param name The interface name prefix to search for.
+ * @return @c true if a matching interface is found, @c false otherwise.
+ */
 bool
 NetServer::_TestForInterface(const char* name)
 {
@@ -396,6 +442,12 @@ NetServer::_TestForInterface(const char* name)
 }
 
 
+/**
+ * @brief Removes a network interface from the system roster by name.
+ *
+ * @param name The name of the interface to remove.
+ * @return B_OK on success, or an error code if removal failed.
+ */
 status_t
 NetServer::_RemoveInterface(const char* name)
 {
@@ -411,6 +463,12 @@ NetServer::_RemoveInterface(const char* name)
 }
 
 
+/**
+ * @brief Disables a network interface by clearing its UP and configuration flags.
+ *
+ * @param name The name of the interface to disable.
+ * @return B_OK on success, or an error code if setting flags failed.
+ */
 status_t
 NetServer::_DisableInterface(const char* name)
 {
@@ -432,6 +490,16 @@ NetServer::_DisableInterface(const char* name)
 }
 
 
+/**
+ * @brief Configures a network interface from a BMessage specification.
+ *
+ * Creates the interface if it does not exist, sets addresses, subnet
+ * masks, gateways, flags, MTU, and metric. Joins wireless networks
+ * if specified, and starts auto-configuration if requested.
+ *
+ * @param message BMessage containing device name, addresses, flags, etc.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 NetServer::_ConfigureInterface(BMessage& message)
 {
@@ -595,6 +663,16 @@ NetServer::_ConfigureInterface(BMessage& message)
 }
 
 
+/**
+ * @brief Writes DNS resolver configuration to resolv.conf.
+ *
+ * Preserves any user-specified static DNS entries already present in the
+ * file. Dynamic DHCP-provided nameserver and domain entries are appended
+ * or replace existing dynamic entries.
+ *
+ * @param resolverConfiguration BMessage with "nameserver" and "domain" fields.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 NetServer::_ConfigureResolver(BMessage& resolverConfiguration)
 {
@@ -669,6 +747,12 @@ NetServer::_ConfigureResolver(BMessage& resolverConfiguration)
 }
 
 
+/**
+ * @brief Finds and quits the AutoconfigLooper for the specified device.
+ *
+ * @param device The device name whose looper should be stopped.
+ * @return @c true if a looper was found and quit, @c false otherwise.
+ */
 bool
 NetServer::_QuitLooperForDevice(const char* device)
 {
@@ -685,6 +769,12 @@ NetServer::_QuitLooperForDevice(const char* device)
 }
 
 
+/**
+ * @brief Returns the AutoconfigLooper associated with the given device.
+ *
+ * @param device The device name to look up.
+ * @return Pointer to the AutoconfigLooper, or NULL if none exists.
+ */
 AutoconfigLooper*
 NetServer::_LooperForDevice(const char* device)
 {
@@ -696,6 +786,15 @@ NetServer::_LooperForDevice(const char* device)
 }
 
 
+/**
+ * @brief Brings up a network device with auto-configuration enabled.
+ *
+ * Creates a minimal interface configuration message and delegates to
+ * _ConfigureInterface().
+ *
+ * @param device The device path (e.g., "/dev/net/...").
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 NetServer::_ConfigureDevice(const char* device)
 {
@@ -750,6 +849,17 @@ NetServer::_ConfigureDevices(const char* startPath,
 }
 
 
+/**
+ * @brief Configures all network interfaces defined in the persistent settings.
+ *
+ * Iterates through saved interface settings, skipping disabled interfaces
+ * and missing kernel devices. Successfully configured device names are
+ * added to @a devicesSet.
+ *
+ * @param devicesSet     Output list of device names that were configured.
+ * @param _missingDevice Optional output for the first interface whose device
+ *                       is missing; used to reassign its config to a new device.
+ */
 void
 NetServer::_ConfigureInterfacesFromSettings(BStringList& devicesSet,
 	BMessage* _missingDevice)
@@ -787,6 +897,13 @@ NetServer::_ConfigureInterfacesFromSettings(BStringList& devicesSet,
 }
 
 
+/**
+ * @brief Brings up all network interfaces at startup.
+ *
+ * Verifies the networking stack is available, removes invalid interfaces,
+ * configures interfaces from saved settings, ensures a loopback interface
+ * exists, and auto-configures any remaining unconfigured devices.
+ */
 void
 NetServer::_BringUpInterfaces()
 {
@@ -925,6 +1042,12 @@ NetServer::_ConfigureIPv6LinkLocal(const char* name)
 }
 
 
+/**
+ * @brief Creates and registers the inetd-style Services handler.
+ *
+ * Instantiates a Services handler with the current service settings
+ * and adds it to this application's handler list.
+ */
 void
 NetServer::_StartServices()
 {
@@ -936,6 +1059,15 @@ NetServer::_StartServices()
 }
 
 
+/**
+ * @brief Handles device monitor notifications for /dev/net entries.
+ *
+ * Configures newly created devices or removes interfaces for deleted ones.
+ *
+ * @param message The B_PATH_MONITOR notification message.
+ * @return B_OK on success, B_BAD_VALUE if the message is malformed,
+ *         or B_NAME_NOT_FOUND for non-network device paths.
+ */
 status_t
 NetServer::_HandleDeviceMonitor(BMessage* message)
 {
@@ -960,6 +1092,16 @@ NetServer::_HandleDeviceMonitor(BMessage* message)
 }
 
 
+/**
+ * @brief Attempts to automatically join a saved wireless network.
+ *
+ * Iterates through the persistent network list, checks whether each
+ * network is currently visible to the specified wireless device, and
+ * joins the first one found.
+ *
+ * @param message BMessage containing the "device" name.
+ * @return B_OK on success, B_NO_INIT if no saved network was found.
+ */
 status_t
 NetServer::_AutoJoinNetwork(const BMessage& message)
 {
@@ -1000,6 +1142,19 @@ NetServer::_AutoJoinNetwork(const BMessage& message)
 }
 
 
+/**
+ * @brief Joins a wireless network, delegating to wpa_supplicant if needed.
+ *
+ * Looks up authentication and password settings from the persistent
+ * network list, determines the network's security mode, and either
+ * joins directly (for open networks without a running supplicant) or
+ * sends a join request to the wpa_supplicant.
+ *
+ * @param message BMessage containing the "device" name and optional settings.
+ * @param address Optional MAC address of the network to join.
+ * @param name    Optional SSID of the network to join.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 NetServer::_JoinNetwork(const BMessage& message, const BNetworkAddress* address,
 	const char* name)
@@ -1145,6 +1300,16 @@ NetServer::_JoinNetwork(const BMessage& message, const BNetworkAddress* address,
 }
 
 
+/**
+ * @brief Disconnects from a wireless network.
+ *
+ * Sends a leave request to the wpa_supplicant if it is running. If the
+ * supplicant is not available and the current network is open (i.e., we
+ * joined without the supplicant), issues a direct MLME disassociation.
+ *
+ * @param message BMessage containing the "device" name and optional "reason".
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 NetServer::_LeaveNetwork(const BMessage& message)
 {
@@ -1198,6 +1363,16 @@ NetServer::_LeaveNetwork(const BMessage& message)
 //	#pragma mark -
 
 
+/**
+ * @brief Application entry point for the network server.
+ *
+ * Seeds the random number generator, creates the NetServer application,
+ * and runs its message loop.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success, 1 on initialisation failure.
+ */
 int
 main(int argc, char** argv)
 {

@@ -32,6 +32,7 @@
 #include <Path.h>
 
 
+/** @brief Constructs the temporary directory initialization job. */
 InitTemporaryDirectoryJob::InitTemporaryDirectoryJob()
 	:
 	AbstractEmptyDirectoryJob("init /tmp")
@@ -39,6 +40,14 @@ InitTemporaryDirectoryJob::InitTemporaryDirectoryJob()
 }
 
 
+/**
+ * @brief Creates and empties the system temporary directory.
+ *
+ * Resolves the system temp directory path via find_directory(), ensures it
+ * exists and is empty, then sets world-readable/writable permissions.
+ *
+ * @return B_OK on success, or an error code if the directory cannot be found or emptied.
+ */
 status_t
 InitTemporaryDirectoryJob::Execute()
 {

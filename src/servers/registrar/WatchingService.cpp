@@ -48,48 +48,17 @@
 
 using namespace std;
 
-/*!	\class WatchingService
-	\brief Features everything needed to provide a watching service.
-
-	A watcher is represented by an object of the Watcher or a derived class.
-	It is identified by its target BMessenger. The service can't contain
-	more than one watcher with the same target BMessenger at a time.
-
-	New watchers can be registered with AddWatcher(), registered ones
-	unregistered via RemoveRegister(). NotifyWatchers() sends a specified
-	message to all registered watchers, or, if an optional WatcherFilter is
-	supplied, only to those watchers it selects.
-*/
-
-/*!	\var typedef map<BMessenger,Watcher*> WatchingService::watcher_map
-	\brief Watcher container type.
-
-	Defined for convenience.
-*/
-
-/*!	\var WatchingService::watcher_map WatchingService::fWatchers
-	\brief Container for the watchers registered to the service.
-
-	For each registered watcher \code Watcher *watcher \endcode, the map
-	contains an entry \code (watcher->Target(), watcher) \endcode.
-*/
-
-
-// constructor
-/*!	\brief Creates a new watching service.
-
-	The list of watchers is initially empty.
-*/
+/**
+ * @brief Creates a new watching service with an empty watcher set.
+ */
 WatchingService::WatchingService()
 	: fWatchers()
 {
 }
 
-// destructor
-/*!	\brief Frees all resources associated with the object.
-
-	All registered watchers are deleted.
-*/
+/**
+ * @brief Destroys the watching service and deletes all registered watchers.
+ */
 WatchingService::~WatchingService()
 {
 	// delete the watchers
@@ -100,20 +69,15 @@ WatchingService::~WatchingService()
 	}
 }
 
-// AddWatcher
-/*!	\brief Registers a new watcher to the watching service.
-
-	The ownership of \a watcher is transfered to the watching service, that
-	is the caller must not delete it after the method returns.
-
-	If the service already contains a Watcher with the same target BMessenger
-	(Watcher::Target()), the old watcher is removed and deleted before the
-	new one is added..
-
-	\param watcher The watcher to be registered.
-	\return \c true, if \a watcher is not \c NULL and adding was successfully,
-			\c false otherwise.
-*/
+/**
+ * @brief Registers a watcher, taking ownership.
+ *
+ * If a watcher with the same target already exists, it is removed and deleted
+ * before the new one is added.
+ *
+ * @param watcher The watcher to register. Ownership transfers to the service.
+ * @return @c true on success, @c false if @a watcher is NULL.
+ */
 bool
 WatchingService::AddWatcher(Watcher *watcher)
 {
@@ -125,40 +89,30 @@ WatchingService::AddWatcher(Watcher *watcher)
 	return result;
 }
 
-// AddWatcher
-/*!	\brief Registers a new watcher to the watching service.
-
-	A new \c Watcher is created with \a target as its target and added to
-	the watching service. The caller retains ownership of \a target, but the
-	newly created Watcher is owned by the watching service.
-
-	If the service already contains a Watcher with the same target BMessenger
-	(Watcher::Target()), the old watcher is removed and deleted before the
-	new one is added..
-
-	\param target The target BMessenger a Watcher shall be registered for.
-	\return \c true, if a new Watcher could be created and added successfully,
-			\c false otherwise.
-*/
+/**
+ * @brief Creates and registers a new watcher for the given target.
+ *
+ * Allocates a new Watcher with @a target and adds it to the service. Any
+ * existing watcher with the same target is replaced.
+ *
+ * @param target The BMessenger identifying the watcher's target.
+ * @return @c true on success, @c false on allocation failure.
+ */
 bool
 WatchingService::AddWatcher(const BMessenger &target)
 {
 	return AddWatcher(new(nothrow) Watcher(target));
 }
 
-// RemoveWatcher
-/*!	\brief Unregisters a watcher from the watching service and optionally
-		   deletes it.
-
-	If \a deleteWatcher is \c false, the ownership of \a watcher is transfered
-	to the caller, otherwise it is deleted.
-
-	\param watcher The watcher to be unregistered.
-	\param deleteWatcher If \c true, the watcher is deleted after being
-		   removed.
-	\return \c true, if \a watcher was not \c NULL and registered to the
-			watching service before, \c false otherwise.
-*/
+/**
+ * @brief Unregisters a watcher by pointer and optionally deletes it.
+ *
+ * If @a deleteWatcher is @c false, ownership transfers to the caller.
+ *
+ * @param watcher       The watcher to unregister.
+ * @param deleteWatcher If @c true, the watcher is deleted after removal.
+ * @return @c true if the watcher was found and removed, @c false otherwise.
+ */
 bool
 WatchingService::RemoveWatcher(Watcher *watcher, bool deleteWatcher)
 {
@@ -172,22 +126,16 @@ WatchingService::RemoveWatcher(Watcher *watcher, bool deleteWatcher)
 	return result;
 }
 
-// RemoveWatcher
-/*!	\brief Unregisters a watcher from the watching service and optionally
-		   deletes it.
-
-	The watcher is identified by its target BMessenger.
-
-	If \a deleteWatcher is \c false, the ownership of the concerned watcher is
-	transfered to the caller, otherwise it is deleted.
-
-	\param target The target BMessenger identifying the watcher to be
-		   unregistered.
-	\param deleteWatcher If \c true, the watcher is deleted after being
-		   removed.
-	\return \c true, if a watcher with the specified target was registered to
-			the watching service before, \c false otherwise.
-*/
+/**
+ * @brief Unregisters a watcher identified by its target messenger.
+ *
+ * If @a deleteWatcher is @c false, ownership transfers to the caller.
+ *
+ * @param target        The BMessenger identifying the watcher to remove.
+ * @param deleteWatcher If @c true, the watcher is deleted after removal.
+ * @return @c true if a matching watcher was found and removed, @c false
+ *         otherwise.
+ */
 bool
 WatchingService::RemoveWatcher(const BMessenger &target, bool deleteWatcher)
 {
@@ -201,22 +149,17 @@ WatchingService::RemoveWatcher(const BMessenger &target, bool deleteWatcher)
 	return result;
 }
 
-// NotifyWatchers
-/*!	\brief Sends a notification message to all watcher targets selected by a
-		   supplied filter.
-
-	If no filter is supplied the message is sent to all watchers. Otherwise
-	each watcher (and the notification message) is passed to its
-	WatcherFilter::Filter() method and the message is sent only to those
-	watchers for which \c true is returned.
-
-	If a sending a message to a watcher's target failed, because it became
-	invalid, the watcher is unregistered and deleted.
-
-	\param message The message to be sent to the watcher targets.
-	\param filter The filter selecting the watchers to which the message
-		   is be sent. May be \c NULL.
-*/
+/**
+ * @brief Sends a notification message to all watchers that pass the filter.
+ *
+ * If @a filter is NULL, the message is sent to every registered watcher.
+ * Watchers whose targets have become invalid are automatically removed and
+ * deleted after delivery.
+ *
+ * @param message The message to deliver.
+ * @param filter  Optional filter selecting which watchers receive the message;
+ *                may be NULL.
+ */
 void
 WatchingService::NotifyWatchers(BMessage *message, WatcherFilter *filter)
 {
