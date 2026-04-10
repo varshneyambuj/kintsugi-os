@@ -1,7 +1,30 @@
 /*
- * Copyright 2010, Ingo Weinhold <ingo_weinhold@gmx.de>.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Ingo Weinhold <ingo_weinhold@gmx.de>.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file MemoryManager.h
+ *  @brief Page-level backing store for the slab allocator. */
+
 #ifndef MEMORY_MANAGER_H
 #define MEMORY_MANAGER_H
 
@@ -24,10 +47,10 @@ struct ObjectCache;
 struct VMArea;
 
 
-#define SLAB_CHUNK_SIZE_SMALL	B_PAGE_SIZE
-#define SLAB_CHUNK_SIZE_MEDIUM	(16 * B_PAGE_SIZE)
-#define SLAB_CHUNK_SIZE_LARGE	(128 * B_PAGE_SIZE)
-#define SLAB_AREA_SIZE			(2048 * B_PAGE_SIZE)
+#define SLAB_CHUNK_SIZE_SMALL	B_PAGE_SIZE                /**< One-page chunk size used for small slabs. */
+#define SLAB_CHUNK_SIZE_MEDIUM	(16 * B_PAGE_SIZE)         /**< 16-page chunk size for medium slabs. */
+#define SLAB_CHUNK_SIZE_LARGE	(128 * B_PAGE_SIZE)        /**< 128-page chunk size for large slabs. */
+#define SLAB_AREA_SIZE			(2048 * B_PAGE_SIZE)       /**< Size of one slab area (2048 pages). */
 	// TODO: These sizes have been chosen with 4 KB pages in mind.
 #define SLAB_AREA_STRUCT_OFFSET	B_PAGE_SIZE
 	// The offset from the start of the area to the Area structure. This space
@@ -39,33 +62,53 @@ struct VMArea;
 	(SLAB_CHUNK_SIZE_LARGE / SLAB_CHUNK_SIZE_SMALL)
 
 
+/** @brief Page-allocator that supplies backing memory to the slab allocator.
+ *
+ * MemoryManager carves the kernel address space into fixed-size areas and
+ * subdivides each area into meta-chunks of small / medium / large slab
+ * chunks. ObjectCaches request chunks through Allocate() and the manager
+ * keeps a global hash table mapping every chunk address back to its owning
+ * cache so any free() can find its way home in O(1). */
 class MemoryManager {
 public:
+	/** @brief Early initialisation called from the boot path. */
 	static	void				Init(kernel_args* args);
+	/** @brief Late initialisation called once the area subsystem is ready. */
 	static	void				InitPostArea();
 
+	/** @brief Allocates a slab-sized chunk for @p cache. */
 	static	status_t			Allocate(ObjectCache* cache, uint32 flags,
 									void*& _pages);
+	/** @brief Frees a slab chunk previously returned by Allocate(). */
 	static	void				Free(void* pages, uint32 flags);
 
+	/** @brief Allocates @p size bytes of raw kernel memory through the slab pool. */
 	static	status_t			AllocateRaw(size_t size, uint32 flags,
 									void*& _pages);
+	/** @brief Frees raw memory; returns the owning cache when the chunk belongs to one. */
 	static	ObjectCache*		FreeRawOrReturnCache(void* pages,
 									uint32 flags);
 
+	/** @brief Rounds @p size up to a slab chunk size that the manager can satisfy. */
 	static	size_t				AcceptableChunkSize(size_t size);
+	/** @brief Returns the cache and allocation size for an address held by the manager. */
 	static	ObjectCache*		GetAllocationInfo(void* address,
 									size_t& _size);
+	/** @brief Returns the cache that currently owns @p address. */
 	static	ObjectCache*		CacheForAddress(void* address);
 
+	/** @brief Returns true if a maintenance pass is currently required. */
 	static	bool				MaintenanceNeeded();
+	/** @brief Runs the maintenance pass (area release, defragmentation, …). */
 	static	void				PerformMaintenance();
 
 #if SLAB_MEMORY_MANAGER_ALLOCATION_TRACKING
+	/** @brief Walks every tracked allocation and invokes @p callback. */
 	static	bool				AnalyzeAllocationCallers(
 									AllocationTrackingCallback& callback);
 #endif
 
+	/** @brief Debugger-only CacheForAddress() variant safe to call without locks. */
 	static	ObjectCache*		DebugObjectCacheForAddress(void* address);
 
 private:

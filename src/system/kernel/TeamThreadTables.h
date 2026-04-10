@@ -1,7 +1,30 @@
 /*
- * Copyright 2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file TeamThreadTables.h
+ *  @brief Hash + linked list container template used by the team and thread registries. */
+
 #ifndef KERNEL_TEAM_THREAD_TABLES_H
 #define KERNEL_TEAM_THREAD_TABLES_H
 
@@ -12,12 +35,21 @@
 namespace BKernel {
 
 
+/** @brief Combined hash table and ordered list of teams or threads.
+ *
+ * Used to back the global team and thread registries: the hash table
+ * provides O(1) lookup by id, while the linked list supports stable
+ * iteration that survives concurrent insertions and deletions through
+ * sentinel @c IteratorEntry objects threaded into the list. Each element
+ * is also tagged with a serial number so iterators can identify entries
+ * that were added after iteration began. */
 template<typename Element>
 struct TeamThreadTable {
 public:
 	typedef typename Element::id_type		id_type;
 	typedef typename Element::iterator_type	IteratorEntry;
 
+	/** @brief Forward iterator that walks the table's linked list. */
 	struct Iterator {
 		Iterator()
 			:

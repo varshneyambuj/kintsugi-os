@@ -1,7 +1,36 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file unused_vnodes.h
+ *  @brief Internal helpers tracking unreferenced vnodes for opportunistic eviction.
+ *
+ * Implements a two-tier scheme: vnodes whose ref_count drops to zero first
+ * land in a small per-CPU "hot" array so a fresh access can re-use them
+ * without paying for a list operation; once the hot array fills up its
+ * contents are flushed onto the global LRU "unused" list, where the low
+ * resource manager can recycle them under memory pressure. */
+
 #ifndef UNUSED_VNODES_H
 #define UNUSED_VNODES_H
 
@@ -16,12 +45,11 @@
 #include "Vnode.h"
 
 
+/** @brief Soft cap on the number of unused vnodes the kernel keeps cached.
+ *
+ * If memory is plentiful the cache may grow beyond this; the limit only
+ * triggers eviction when the low resource manager reports pressure. */
 const static uint32 kMaxUnusedVnodes = 8192;
-	// This is the maximum number of unused vnodes that the system
-	// will keep around (weak limit, if there is enough memory left,
-	// they won't get flushed even when hitting that limit).
-	// It may be chosen with respect to the available memory or enhanced
-	// by some timestamp/frequency heurism.
 
 
 /*!	\brief Guards sUnusedVnodeList and sUnusedVnodes.

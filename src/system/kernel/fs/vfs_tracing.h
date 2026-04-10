@@ -1,8 +1,38 @@
 /*
- * Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2010, Michael Lotz, mmlr@mlotz.ch.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2010, Michael Lotz, mmlr@mlotz.ch.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file vfs_tracing.h
+ *  @brief Tracing entry classes for file-descriptor and io_context lifecycle events.
+ *
+ * The classes in the FileDescriptorTracing and IOContextTracing namespaces
+ * are TraceEntry subclasses produced by the kernel tracing macros @c TFD()
+ * and @c TIOC(). They capture allocation, retention, duplication, removal,
+ * and inheritance events for file descriptors and per-team I/O contexts so
+ * that the kernel debugger can replay descriptor history when debugging
+ * lifetime bugs. */
+
 #ifndef VFS_TRACING_H
 #define VFS_TRACING_H
 
@@ -20,6 +50,7 @@
 namespace FileDescriptorTracing {
 
 
+/** @brief Base class capturing the descriptor and reference count for any FD trace entry. */
 class FDTraceEntry
 	: public TRACE_ENTRY_SELECTOR(FILE_DESCRIPTOR_TRACING_STACK_TRACE) {
 public:
@@ -32,8 +63,8 @@ public:
 	}
 
 protected:
-	file_descriptor*		fDescriptor;
-	int32					fReferenceCount;
+	file_descriptor*		fDescriptor;     /**< File descriptor the entry refers to. */
+	int32					fReferenceCount; /**< Reference count snapshot at the moment of capture. */
 };
 
 
@@ -200,6 +231,7 @@ private:
 namespace IOContextTracing {
 
 
+/** @brief Base class capturing the io_context (and optionally a stack trace) for any IO context trace entry. */
 class IOContextTraceEntry : public AbstractTraceEntry {
 public:
 	IOContextTraceEntry(io_context* context)

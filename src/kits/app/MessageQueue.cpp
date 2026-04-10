@@ -13,7 +13,7 @@
  * limitations under the License.
  *
  * Authors:
- *     Ambuj Varshney, varshney@ambuj.se
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
  * This file incorporates work covered by the following copyright and
  * permission notice:
