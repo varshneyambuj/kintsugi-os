@@ -1,10 +1,32 @@
 /*
- * Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Pier Luigi Fiorini, pierluigi.fiorini@gmail.com
  */
+
+/** @file NotificationServer.cpp
+ *  @brief Implementation of the notification daemon and its main() entry point. */
 
 
 #include "NotificationServer.h"
@@ -21,6 +43,7 @@
 #include "NotificationWindow.h"
 
 
+/** @brief System beep event names indexed by notification type. */
 const char* kSoundNames[] = {
 	"Notification information",
 	"Notification important",
@@ -109,6 +132,7 @@ NotificationServer::ResolveSpecifier(BMessage* msg, int32 index,
 // #pragma mark -
 
 
+/** @brief Daemon entry point: registers system beep events and runs the server loop. */
 int
 main(int argc, char* argv[])
 {

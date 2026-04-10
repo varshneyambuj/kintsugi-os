@@ -1,29 +1,46 @@
-//------------------------------------------------------------------------------
-//	Copyright (c) 2001-2002, Haiku
-//
-//	Permission is hereby granted, free of charge, to any person obtaining a
-//	copy of this software and associated documentation files (the "Software"),
-//	to deal in the Software without restriction, including without limitation
-//	the rights to use, copy, modify, merge, publish, distribute, sublicense,
-//	and/or sell copies of the Software, and to permit persons to whom the
-//	Software is furnished to do so, subject to the following conditions:
-//
-//	The above copyright notice and this permission notice shall be included in
-//	all copies or substantial portions of the Software.
-//
-//	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-//	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-//	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-//	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-//	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-//	FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-//	DEALINGS IN THE SOFTWARE.
-//
-//	File Name:		AppInfoList.h
-//	Author:			Ingo Weinhold (bonefish@users.sf.net)
-//	Description:	A helper class for TRoster. A list of RosterAppInfos.
-//------------------------------------------------------------------------------
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+   Copyright (c) 2001-2002, Haiku
+   Permission is hereby granted, free of charge, to any person obtaining a
+   copy of this software and associated documentation files (the "Software"),
+   to deal in the Software without restriction, including without limitation
+   the rights to use, copy, modify, merge, publish, distribute, sublicense,
+   and/or sell copies of the Software, and to permit persons to whom the
+   Software is furnished to do so, subject to the following conditions:
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+   File Name:		AppInfoList.h
+   Author:			Ingo Weinhold (bonefish@users.sf.net)
+   Description:	A helper class for TRoster. A list of RosterAppInfos.
+ */
 
+/** @file AppInfoList.h
+ *  @brief Ordered collection of RosterAppInfo entries supporting lookup by signature, team, ref, and token. */
 #ifndef APP_INFO_LIST_H
 #define APP_INFO_LIST_H
 
@@ -35,6 +52,7 @@ struct entry_ref;
 struct RosterAppInfo;
 
 // AppInfoList
+/** @brief Maintains a searchable and sortable list of registered application info records. */
 class AppInfoList {
 public:
 	class Iterator;
@@ -43,23 +61,34 @@ public:
 	AppInfoList();
 	virtual ~AppInfoList();
 
+	/** @brief Adds a RosterAppInfo entry to the list. */
 	bool AddInfo(RosterAppInfo *info);
+	/** @brief Removes the given RosterAppInfo entry from the list. */
 	bool RemoveInfo(RosterAppInfo *info);
+	/** @brief Removes all entries, optionally deleting them. */
 	void MakeEmpty(bool deleteInfos = false);
 
+	/** @brief Looks up an app info entry by signature, team, or entry_ref. */
 	RosterAppInfo *InfoFor(const char *signature) const;
+	/** @brief Looks up an app info entry by signature, team, or entry_ref. */
 	RosterAppInfo *InfoFor(team_id team) const;
+	/** @brief Looks up an app info entry by signature, team, or entry_ref. */
 	RosterAppInfo *InfoFor(const entry_ref *ref) const;
+	/** @brief Looks up an app info entry by its unique pre-registration token. */
 	RosterAppInfo *InfoForToken(uint32 token) const;
 
 	bool IsEmpty() const		{ return (CountInfos() == 0); };
+	/** @brief Returns the number of entries currently in the list. */
 	int32 CountInfos() const;
 
+	/** @brief Returns an iterator over the list entries. */
 	Iterator It();
 
+	/** @brief Sorts the list using a caller-supplied comparison function. */
 	void Sort(bool (*lessFunc)(const RosterAppInfo *, const RosterAppInfo *));
 
 private:
+	/** @brief Removes the given RosterAppInfo entry from the list. */
 	RosterAppInfo *RemoveInfo(int32 index);
 
 	RosterAppInfo *InfoAt(int32 index) const;
@@ -78,6 +107,7 @@ private:
 };
 
 // AppInfoList::Iterator
+/** @brief Maintains a searchable and sortable list of registered application info records. */
 class AppInfoList::Iterator {
 public:
 	inline Iterator(const Iterator &it)

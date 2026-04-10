@@ -1,7 +1,29 @@
 /*
- * Copyright 2001-2007, Ingo Weinhold, bonefish@users.sf.net.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+   Copyright 2001-2007, Ingo Weinhold, bonefish@users.sf.net.
+   Distributed under the terms of the MIT License.
  */
+
+/** @file TRoster.h
+ *  @brief Core application roster managing registration, activation, watching, and recent lists. */
 #ifndef T_ROSTER_H
 #define T_ROSTER_H
 
@@ -29,23 +51,37 @@ class WatchingService;
 
 typedef map<int32, BMessageQueue*>	IARRequestMap;
 
+/** @brief The central roster that tracks all running applications and their lifecycle events. */
 class TRoster {
 public:
 							TRoster();
 	virtual					~TRoster();
 
+			/** @brief Processes a request to register a new application. */
 			void			HandleAddApplication(BMessage* request);
+			/** @brief Completes a previously pre-registered application's registration. */
 			void			HandleCompleteRegistration(BMessage* request);
+			/** @brief Checks whether a given application is registered. */
 			void			HandleIsAppRegistered(BMessage* request);
+			/** @brief Removes a pre-registered application entry. */
 			void			HandleRemovePreRegApp(BMessage* request);
+			/** @brief Removes a fully registered application entry. */
 			void			HandleRemoveApp(BMessage* request);
+			/** @brief Updates the thread and team of a registered application. */
 			void			HandleSetThreadAndTeam(BMessage* request);
+			/** @brief Updates the signature of a registered application. */
 			void			HandleSetSignature(BMessage* request);
+			/** @brief Retrieves information about a registered application. */
 			void			HandleGetAppInfo(BMessage* request);
+			/** @brief Returns the list of currently registered applications. */
 			void			HandleGetAppList(BMessage* request);
+			/** @brief Updates which application is currently active. */
 			void			HandleUpdateActiveApp(BMessage* request);
+			/** @brief Broadcasts a message to all registered applications. */
 			void			HandleBroadcast(BMessage* request);
+			/** @brief Registers a watcher for roster change events. */
 			void			HandleStartWatching(BMessage* request);
+			/** @brief Unregisters a roster change watcher. */
 			void			HandleStopWatching(BMessage* request);
 			void			HandleGetRecentDocuments(BMessage* request);
 			void			HandleGetRecentFolders(BMessage* request);
@@ -62,14 +98,18 @@ public:
 			void			ClearRecentFolders();
 			void			ClearRecentApps();
 
+			/** @brief Initializes the roster and loads saved settings. */
 			status_t		Init();
 
+			/** @brief Adds an application info entry to the roster. */
 			status_t		AddApp(RosterAppInfo* info);
+			/** @brief Removes an application info entry from the roster. */
 			void			RemoveApp(RosterAppInfo* info);
 			void			UpdateActiveApp(RosterAppInfo* info);
 
 			void			CheckSanity();
 
+			/** @brief Marks the roster as entering the shutdown sequence. */
 			void			SetShuttingDown(bool shuttingDown);
 			status_t		GetShutdownApps(AppInfoList& userApps,
 								AppInfoList& systemApps,

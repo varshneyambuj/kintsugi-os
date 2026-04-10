@@ -1,13 +1,36 @@
 /*
- * Copyright 2004-2013, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval
- *		Marcus Overhagen
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2013, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval
+ *       Marcus Overhagen
+ *       John Scipione, jscipione@gmail.com
  */
+
+/** @file AddOnManager.h
+ *  @brief Loads and tracks input server device, filter, and method add-ons. */
+
 #ifndef ADD_ON_MANAGER_H
 #define ADD_ON_MANAGER_H
 
@@ -28,18 +51,29 @@
 
 using namespace BPrivate;
 
+/** @brief BLooper that watches add-on directories and (un)loads input server plugins.
+ *
+ * Discovers BInputServerDevice, BInputServerFilter, and BInputServerMethod
+ * add-ons under the standard add-on directories, instantiates them, manages
+ * device path monitoring on their behalf, and exposes a BMessage RPC surface
+ * the rest of the input server uses to find and control them. */
 class AddOnManager : public AddOnMonitor {
 public:
 								AddOnManager();
 								~AddOnManager();
 
+	/** @brief Dispatches RPC and add-on monitoring messages. */
 	virtual	void 				MessageReceived(BMessage* message);
 
+	/** @brief Restores the manager's state from the on-disk settings file. */
 			void				LoadState();
+	/** @brief Persists the manager's state to disk. */
 			void				SaveState();
 
+	/** @brief Begins watching @p device on behalf of an input device add-on. */
 			status_t			StartMonitoringDevice(DeviceAddOn* addOn,
 									const char* device);
+	/** @brief Stops watching @p device on behalf of an input device add-on. */
 			status_t			StopMonitoringDevice(DeviceAddOn* addOn,
 									const char* device);
 
@@ -97,6 +131,7 @@ private:
 	class MonitorHandler;
 	friend class MonitorHandler;
 
+	/** @brief Bundle of (entry_ref, image, add_on instance) for one loaded add-on. */
 	template<typename T> struct add_on_info {
 		add_on_info()
 			:
@@ -111,25 +146,25 @@ private:
 				unload_add_on(image);
 		}
 
-		entry_ref				ref;
-		image_id				image;
-		T*						add_on;
+		entry_ref				ref;     /**< File system entry the add-on was loaded from. */
+		image_id				image;   /**< Loaded image id, or -1. */
+		T*						add_on;  /**< The add-on instance (owned). */
 	};
 	typedef struct add_on_info<BInputServerDevice> device_info;
 	typedef struct add_on_info<BInputServerFilter> filter_info;
 	typedef struct add_on_info<BInputServerMethod> method_info;
 
-			BObjectList<device_info> fDeviceList;
-			BObjectList<filter_info> fFilterList;
-			BObjectList<method_info> fMethodList;
+			BObjectList<device_info> fDeviceList;     /**< Loaded BInputServerDevice add-ons. */
+			BObjectList<filter_info> fFilterList;     /**< Loaded BInputServerFilter add-ons. */
+			BObjectList<method_info> fMethodList;     /**< Loaded BInputServerMethod add-ons. */
 
-			BObjectList<DeviceAddOn> fDeviceAddOns;
-			PathList			fDevicePaths;
+			BObjectList<DeviceAddOn> fDeviceAddOns;   /**< DeviceAddOn callbacks for path monitoring. */
+			PathList			fDevicePaths;         /**< Currently monitored device paths. */
 
-			MonitorHandler*		fHandler;
-			std::set<BMessenger> fWatcherMessengerList;
+			MonitorHandler*		fHandler;             /**< Inner BHandler dispatching add-on monitor events. */
+			std::set<BMessenger> fWatcherMessengerList;  /**< Clients subscribed to device-list change broadcasts. */
 
-			bool				fSafeMode;
+			bool				fSafeMode;            /**< True if the kernel reported safe-mode boot. */
 };
 
 #endif	// ADD_ON_MANAGER_H

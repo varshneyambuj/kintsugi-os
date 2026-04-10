@@ -1,7 +1,30 @@
 /*
- * Copyright 2007 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007 Oliver Ruiz Dorantes, oliver.ruiz.dorantes_at_gmail.com
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+/** @file LocalDeviceImpl.h
+ *  @brief Server-side controller object: dispatches HCI events into the daemon's request handlers. */
+
 #ifndef _LOCALDEVICE_IMPL_H_
 #define _LOCALDEVICE_IMPL_H_
 
@@ -15,6 +38,12 @@
 #include "HCIControllerAccessor.h"
 #include "HCITransportAccessor.h"
 
+/** @brief Concrete server-side LocalDeviceHandler with full HCI event dispatch.
+ *
+ * Wraps an HCIDelegate (either controller or transport flavour), parses
+ * incoming HCI event packets, and either matches them against an in-flight
+ * petition (replying to the originating client) or runs the spontaneous-event
+ * handlers below for connection, pairing, and inquiry events. */
 class LocalDeviceImpl : public LocalDeviceHandler {
 
 private:
@@ -23,14 +52,19 @@ private:
 public:
 
 	// Factory methods
+	/** @brief Creates a LocalDeviceImpl backed by an HCIControllerAccessor on @p path. */
 	static LocalDeviceImpl* CreateControllerAccessor(BPath* path);
+	/** @brief Creates a LocalDeviceImpl backed by an HCITransportAccessor on @p path. */
 	static LocalDeviceImpl* CreateTransportAccessor(BPath* path);
 	~LocalDeviceImpl();
+	/** @brief Removes this device from the daemon's local-devices list. */
 	void Unregister();
 
+	/** @brief Entry point: dispatches an incoming HCI event packet. */
 	void HandleEvent(struct hci_event_header* event);
 
 	// Request handling
+	/** @brief Handles a synchronous client request that does not need event tracking. */
 	status_t ProcessSimpleRequest(BMessage* request);
 
 private:

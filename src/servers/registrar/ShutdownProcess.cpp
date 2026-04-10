@@ -1,13 +1,34 @@
 /*
- * Copyright 2005-2008, Ingo Weinhold, bonefish@users.sf.net.
- * Copyright 2006-2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2006-2008, Stephan Aßmus.
- * Copyright 2006, Ryan Leavengood.
- * Copyright 2021, Jacob Secunda.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+   Copyright 2005-2008, Ingo Weinhold, bonefish@users.sf.net.
+   Copyright 2006-2009, Axel Dörfler, axeld@pinc-software.de.
+   Copyright 2006-2008, Stephan Aßmus.
+   Copyright 2006, Ryan Leavengood.
+   Copyright 2021, Jacob Secunda.
+
+   Distributed under the terms of the MIT License.
  */
 
+/** @file ShutdownProcess.cpp
+ *  @brief Implements the system shutdown and reboot sequence, quitting applications in order. */
 #include "ShutdownProcess.h"
 
 #include <new>

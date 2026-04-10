@@ -1,7 +1,32 @@
 /*
- * Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+   /*
+    * Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+    * Distributed under the terms of the MIT License.
+    */
  */
+
+/** @file FSUtils.h
+ *  @brief Utility helpers for filesystem operations including path manipulation and content comparison */
+
 #ifndef FS_UTILS_H
 #define FS_UTILS_H
 
@@ -19,11 +44,13 @@ class BPositionIO;
 class BSymLink;
 
 
+/** @brief Static utility class providing filesystem helpers for the package daemon */
 class FSUtils {
 public:
 	typedef ::BPrivate::BEntryOperationEngineBase::Entry Entry;
 
 public:
+	/** @brief Lightweight path composed of up to three directory components */
 	struct RelativePath {
 		RelativePath(const char* component1 = NULL,
 			const char* component2 = NULL, const char* component3 = NULL)
@@ -99,7 +126,7 @@ public:
 		size_t		fComponentCount;
 	};
 
-	// throwing std::bad_alloc()
+	/** @brief Normalized absolute path that throws std::bad_alloc on allocation failure */
 	class Path {
 	public:
 		Path(const char* path)
@@ -194,27 +221,35 @@ public:
 	};
 
 public:
+	/** @brief Escape shell-special characters in a string; throws std::bad_alloc */
 	static	BString				ShellEscapeString(const BString& string);
 									// throw std::bad_alloc
 
+	/** @brief Open (and optionally create) a sub-directory relative to a base directory */
 	static	status_t			OpenSubDirectory(
 									const BDirectory& baseDirectory,
 									const RelativePath& path, bool create,
 									BDirectory& _directory);
 
+	/** @brief Compare the contents of two files identified by entry */
 	static	status_t			CompareFileContent(const Entry& entry1,
 									const Entry& entry2, bool& _equal);
+	/** @brief Compare the contents of two seekable I/O streams */
 	static	status_t			CompareFileContent(BPositionIO& content1,
 									BPositionIO& content2, bool& _equal);
 
+	/** @brief Compare two symbolic link targets identified by entry */
 	static	status_t			CompareSymLinks(const Entry& entry1,
 									const Entry& entry2, bool& _equal);
+	/** @brief Compare two already-opened symbolic link targets */
 	static	status_t			CompareSymLinks(BSymLink& symLink1,
 									BSymLink& symLink2, bool& _equal);
 
+	/** @brief Extract content from a package file entry into a target directory */
 	static	status_t			ExtractPackageContent(const Entry& packageEntry,
 									const char* contentPath,
 									const Entry& targetDirectoryEntry);
+	/** @brief Extract content from a package given explicit paths */
 	static	status_t			ExtractPackageContent(const char* packagePath,
 									const char* contentPath,
 									const char* targetDirectoryPath);

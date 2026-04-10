@@ -1,7 +1,30 @@
 /*
- * Copyright 2001-2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+/** @file InputServer.h
+ *  @brief Top-level input server: device, filter, and method orchestration. */
+
 #ifndef INPUT_SERVER_APP_H
 #define INPUT_SERVER_APP_H
 
@@ -35,88 +58,120 @@
 #include "PathList.h"
 
 
+/** @brief MIME signature the input server registers under. */
 #define INPUTSERVER_SIGNATURE "application/x-vnd.Be-input_server"
 	// use this when target should replace R5 input_server
 
+/** @brief Owning list of pending input event BMessages. */
 typedef BObjectList<BMessage> EventList;
 
 class BottomlineWindow;
 
+/** @brief One registered (device, server-device) pair tracked by the input server. */
 class InputDeviceListItem {
 	public:
 		InputDeviceListItem(BInputServerDevice& serverDevice,
 			const input_device_ref& device);
 		~InputDeviceListItem();
 
+		/** @brief Asks the underlying server device to start producing events. */
 		void Start();
+		/** @brief Asks the underlying server device to stop producing events. */
 		void Stop();
+		/** @brief Forwards a control message to the underlying server device. */
 		void Control(uint32 code, BMessage* message);
 
+		/** @brief Returns the device's display name. */
 		const char* Name() const { return fDevice.name; }
+		/** @brief Returns the device's input type (keyboard, pointing, …). */
 		input_device_type Type() const { return fDevice.type; }
+		/** @brief Returns true if the device is currently running. */
 		bool Running() const { return fRunning; }
 
+		/** @brief Returns true if the device's name equals @p name. */
 		bool HasName(const char* name) const;
+		/** @brief Returns true if the device's type equals @p type. */
 		bool HasType(input_device_type type) const;
+		/** @brief Returns true if @p name and @p type both match this device. */
 		bool Matches(const char* name, input_device_type type) const;
 
+		/** @brief Returns the BInputServerDevice this entry wraps. */
 		BInputServerDevice* ServerDevice() { return fServerDevice; }
 
 	private:
-		BInputServerDevice* fServerDevice;
-		input_device_ref   	fDevice;
-		bool 				fRunning;
+		BInputServerDevice* fServerDevice;  /**< The wrapped add-on instance (not owned). */
+		input_device_ref   	fDevice;        /**< Device descriptor (name + type). */
+		bool 				fRunning;       /**< Whether Start() has been called. */
 };
 
 namespace BPrivate {
 
+/** @brief Records the device paths an input device add-on is monitoring. */
 class DeviceAddOn {
 public:
 								DeviceAddOn(BInputServerDevice* device);
 								~DeviceAddOn();
 
+	/** @brief Returns true if @p path is currently monitored by this add-on. */
 			bool				HasPath(const char* path) const;
+	/** @brief Adds @p path to the monitored set. */
 			status_t			AddPath(const char* path);
+	/** @brief Removes @p path from the monitored set. */
 			status_t			RemovePath(const char* path);
+	/** @brief Returns the number of paths currently monitored. */
 			int32				CountPaths() const;
 
+	/** @brief Returns the underlying BInputServerDevice (not owned). */
 			BInputServerDevice*	Device() { return fDevice; }
 
 private:
-			BInputServerDevice*	fDevice;
-			PathList			fMonitoredPaths;
+			BInputServerDevice*	fDevice;          /**< The owning input server device add-on. */
+			PathList			fMonitoredPaths;  /**< Paths currently being watched on its behalf. */
 };
 
 }	// namespace BPrivate
 
+/** @brief Internal helper that backs BInputServerMethod's user-visible API. */
 class _BMethodAddOn_ {
 	public:
 		_BMethodAddOn_(BInputServerMethod *method, const char* name,
 			const uchar* icon);
 		~_BMethodAddOn_();
 
+		/** @brief Updates the displayed method name. */
 		status_t SetName(const char* name);
+		/** @brief Updates the displayed method icon. */
 		status_t SetIcon(const uchar* icon);
+		/** @brief Sets the pop-up menu the replicant should show for this method. */
 		status_t SetMenu(const BMenu* menu, const BMessenger& messenger);
+		/** @brief Notifies the method add-on of activation/deactivation. */
 		status_t MethodActivated(bool activate);
+		/** @brief Registers the method with the input server. */
 		status_t AddMethod();
+		/** @brief Returns the cookie used by the deskbar replicant to refer to this method. */
 		int32 Cookie() { return fCookie; }
 
 	private:
-		BInputServerMethod* fMethod;
-		char* fName;
-		uchar fIcon[16*16*1];
-		const BMenu* fMenu;
-		BMessenger fMessenger;
-		int32 fCookie;
+		BInputServerMethod* fMethod;        /**< The user-visible method instance (not owned). */
+		char* fName;                        /**< Cached method name. */
+		uchar fIcon[16*16*1];               /**< Cached 16×16 indexed icon. */
+		const BMenu* fMenu;                 /**< Optional pop-up menu shown for this method. */
+		BMessenger fMessenger;              /**< Messenger that receives menu invocation messages. */
+		int32 fCookie;                      /**< Identifier shared with the deskbar replicant. */
 };
 
+/** @brief Built-in input method that always provides the system keymap. */
 class KeymapMethod : public BInputServerMethod {
 	public:
 		KeymapMethod();
 		~KeymapMethod();
 };
 
+/** @brief Top-level input server BApplication.
+ *
+ * Owns the device list, the active input method, the input filter chain,
+ * the keyboard/mouse settings, and the event loop that pulls events from
+ * devices and ships them to app_server. */
 class InputServer : public BApplication {
 	public:
 		InputServer();

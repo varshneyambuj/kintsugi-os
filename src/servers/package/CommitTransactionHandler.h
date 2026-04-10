@@ -1,10 +1,35 @@
 /*
- * Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+   /*
+    * Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
+    * Distributed under the terms of the MIT License.
+    *
+    * Authors:
+    *		Ingo Weinhold <ingo_weinhold@gmx.de>
+    */
  */
+
+/** @file CommitTransactionHandler.h
+ *  @brief Manages the commit phase of package activation transactions */
+
 #ifndef COMMIT_TRANSACTION_HANDLER_H
 #define COMMIT_TRANSACTION_HANDLER_H
 
@@ -29,34 +54,46 @@ namespace BPackageKit {
 using BPackageKit::BCommitTransactionResult;
 
 
+/** @brief Executes the commit phase of a package activation transaction on a volume */
 class CommitTransactionHandler {
 public:
+	/** @brief Construct a handler for the given volume and result object */
 								CommitTransactionHandler(Volume* volume,
 									PackageFileManager* packageFileManager,
 									BCommitTransactionResult& result);
+	/** @brief Destructor */
 								~CommitTransactionHandler();
 
+	/** @brief Initialize with volume state and the sets of pre-existing package changes */
 			void				Init(VolumeState* volumeState,
 									bool isActiveVolumeState,
 									const PackageSet& packagesAlreadyAdded,
 									const PackageSet& packagesAlreadyRemoved);
 
+	/** @brief Process a commit request from a BMessage */
 			void				HandleRequest(BMessage* request);
+	/** @brief Process a commit request from an activation transaction */
 			void				HandleRequest(
 									const BActivationTransaction& transaction);
+	/** @brief Process a commit using the pre-existing add/remove sets from Init() */
 			void				HandleRequest();
 									// uses packagesAlreadyAdded and
 									// packagesAlreadyRemoved from Init()
 
+	/** @brief Roll back all changes made during this transaction */
 			void				Revert();
 
+	/** @brief Return the name of the old-state snapshot directory */
 			const BString&		OldStateDirectoryName() const
 									{ return fOldStateDirectoryName; }
 
+	/** @brief Return the package currently being processed, if any */
 			Package*			CurrentPackage() const
 									{ return fCurrentPackage; }
 
+	/** @brief Detach and return the owned VolumeState (caller takes ownership) */
 			VolumeState*		DetachVolumeState();
+	/** @brief Return whether the volume state is the currently active one */
 			bool				IsActiveVolumeState() const
 									{ return fVolumeStateIsActive; }
 
@@ -161,27 +198,27 @@ private:
 									const BDirectory* directory);
 
 private:
-			Volume*				fVolume;
-			PackageFileManager*	fPackageFileManager;
-			VolumeState*		fVolumeState;
-			bool				fVolumeStateIsActive;
-			PackageList			fPackagesToActivate;
-			PackageSet			fPackagesToDeactivate;
-			PackageSet			fAddedPackages;
-			PackageSet			fRemovedPackages;
-			PackageSet			fPackagesAlreadyAdded;
-			PackageSet			fPackagesAlreadyRemoved;
-			BDirectory			fOldStateDirectory;
+			Volume*				fVolume;                /**< Volume being committed */
+			PackageFileManager*	fPackageFileManager;    /**< Shared package-file pool */
+			VolumeState*		fVolumeState;           /**< Working copy of the volume state */
+			bool				fVolumeStateIsActive;   /**< Whether fVolumeState is the active state */
+			PackageList			fPackagesToActivate;    /**< Packages to be activated */
+			PackageSet			fPackagesToDeactivate;  /**< Packages to be deactivated */
+			PackageSet			fAddedPackages;         /**< Packages added during this transaction */
+			PackageSet			fRemovedPackages;       /**< Packages removed during this transaction */
+			PackageSet			fPackagesAlreadyAdded;  /**< Pre-existing packages added by user */
+			PackageSet			fPackagesAlreadyRemoved;/**< Pre-existing packages removed by user */
+			BDirectory			fOldStateDirectory;     /**< Directory holding the old state backup */
 			node_ref			fOldStateDirectoryRef;
-			BString				fOldStateDirectoryName;
+			BString				fOldStateDirectoryName; /**< Name of the old-state directory */
 			node_ref			fTransactionDirectoryRef;
-			bool				fFirstBootProcessing;
-			BDirectory			fWritableFilesDirectory;
-			StringSet			fAddedGroups;
-			StringSet			fAddedUsers;
-			FSTransaction		fFSTransaction;
-			BCommitTransactionResult& fResult;
-			Package*			fCurrentPackage;
+			bool				fFirstBootProcessing;   /**< Whether this is a first-boot commit */
+			BDirectory			fWritableFilesDirectory;/**< Target for global writable files */
+			StringSet			fAddedGroups;           /**< Groups created during this transaction */
+			StringSet			fAddedUsers;            /**< Users created during this transaction */
+			FSTransaction		fFSTransaction;         /**< Filesystem rollback tracker */
+			BCommitTransactionResult& fResult;          /**< Output result of the commit */
+			Package*			fCurrentPackage;        /**< Package currently being processed */
 };
 
 
