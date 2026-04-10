@@ -18,11 +18,10 @@
  * This file incorporates work covered by the following copyright and
  * permission notice:
  *
-   /*
-    * Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
-    * Copyright 200?, Axel Dörfler, axeld@pinc-software.de.
-    * Distributed under the terms of the MIT License.
-    */
+ *
+ * Copyright 2003-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+  * Copyright 200?, Axel Dörfler, axeld@pinc-software.de.
+  * Distributed under the terms of the MIT License.
  */
 
 /** @file DebugSupport.h

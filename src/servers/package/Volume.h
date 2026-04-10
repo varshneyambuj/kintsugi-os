@@ -18,14 +18,13 @@
  * This file incorporates work covered by the following copyright and
  * permission notice:
  *
-   /*
-    * Copyright 2013-2021, Haiku, Inc. All Rights Reserved.
-    * Distributed under the terms of the MIT License.
-    *
-    * Authors:
-    *		Ingo Weinhold <ingo_weinhold@gmx.de>
-    *		Andrew Lindesay <apl@lindesay.co.nz>
-    */
+ *
+ * Copyright 2013-2021, Haiku, Inc. All Rights Reserved.
+  * Distributed under the terms of the MIT License.
+  *
+  * Authors:
+  *		Ingo Weinhold <ingo_weinhold@gmx.de>
+  *		Andrew Lindesay <apl@lindesay.co.nz>
  */
 
 /** @file Volume.h

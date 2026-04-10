@@ -2093,13 +2093,7 @@ BString::ReplaceCharsSet(const char* setOfChars, const char* with)
 //	#pragma mark - Unchecked char access
 
 
-/**
- * @brief Return a pointer to the UTF-8 sequence at code-point index \a charIndex.
- *
- * @param charIndex Zero-based code-point index.
- * @param bytes     If non-NULL, receives the byte length of the character.
- * @return Pointer into the internal buffer (valid until the string is modified).
- */
+#if __GNUC__ == 2
 char&
 BString::operator[](int32 index)
 {

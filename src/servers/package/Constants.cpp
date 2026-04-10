@@ -18,10 +18,9 @@
  * This file incorporates work covered by the following copyright and
  * permission notice:
  *
-   /*
-    * Copyright 2014, Ingo Weinhold, ingo_weinhold@gmx.de.
-    * Distributed under the terms of the MIT License.
-    */
+ *
+ * Copyright 2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+  * Distributed under the terms of the MIT License.
  */
 
 /** @file Constants.cpp
