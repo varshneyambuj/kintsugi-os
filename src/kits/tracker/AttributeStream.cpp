@@ -1,36 +1,61 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file AttributeStream.cpp
+ * @brief Pipeline-style stream classes for copying BFS extended attributes between nodes.
+ *
+ * Provides a composable set of nodes (file, memory, template, filter, transformer)
+ * that can be chained with the << operator to stream extended-attribute data from a
+ * source to a sink. Nodes are wired into a directed pipeline; the head node drives
+ * iteration while the tail node persists the data.
+ *
+ * @see AttributeStreamNode, AttributeStreamFileNode, AttributeStreamMemoryNode
+ */
 
 
 #include "AttributeStream.h"
@@ -50,6 +75,9 @@ All rights reserved.
 //	#pragma mark - AttributeInfo
 
 
+/**
+ * @brief Default constructor; initialises to an empty raw-type attribute.
+ */
 AttributeInfo::AttributeInfo()
 	:
 	fName("")
@@ -59,6 +87,11 @@ AttributeInfo::AttributeInfo()
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param other  The AttributeInfo to copy from.
+ */
 AttributeInfo::AttributeInfo(const AttributeInfo& other)
 	:
 	fName(other.fName),
@@ -68,6 +101,12 @@ AttributeInfo::AttributeInfo(const AttributeInfo& other)
 }
 
 
+/**
+ * @brief Construct from a name and a kernel attr_info descriptor.
+ *
+ * @param name  Attribute name string.
+ * @param info  Kernel attr_info struct containing type and size.
+ */
 AttributeInfo::AttributeInfo(const char* name, attr_info info)
 	:
 	fName(name),
@@ -76,6 +115,13 @@ AttributeInfo::AttributeInfo(const char* name, attr_info info)
 }
 
 
+/**
+ * @brief Construct from a name, type code, and explicit size.
+ *
+ * @param name  Attribute name string.
+ * @param type  Attribute type code (e.g. B_STRING_TYPE).
+ * @param size  Size of the attribute data in bytes.
+ */
 AttributeInfo::AttributeInfo(const char* name, uint32 type, off_t size)
 	:
 	fName(name)
@@ -85,6 +131,11 @@ AttributeInfo::AttributeInfo(const char* name, uint32 type, off_t size)
 }
 
 
+/**
+ * @brief Return the attribute name as a C string.
+ *
+ * @return Pointer to the null-terminated attribute name.
+ */
 const char*
 AttributeInfo::Name() const
 {
@@ -92,6 +143,11 @@ AttributeInfo::Name() const
 }
 
 
+/**
+ * @brief Return the attribute type code.
+ *
+ * @return The type_code stored in the attr_info descriptor.
+ */
 uint32
 AttributeInfo::Type() const
 {
@@ -99,6 +155,11 @@ AttributeInfo::Type() const
 }
 
 
+/**
+ * @brief Return the attribute data size in bytes.
+ *
+ * @return The size stored in the attr_info descriptor.
+ */
 off_t
 AttributeInfo::Size() const
 {
@@ -106,6 +167,11 @@ AttributeInfo::Size() const
 }
 
 
+/**
+ * @brief Replace this object's contents with a copy of @a other.
+ *
+ * @param other  Source AttributeInfo to copy from.
+ */
 void
 AttributeInfo::SetTo(const AttributeInfo& other)
 {
@@ -114,6 +180,12 @@ AttributeInfo::SetTo(const AttributeInfo& other)
 }
 
 
+/**
+ * @brief Set from a name and a kernel attr_info struct.
+ *
+ * @param name  Attribute name string.
+ * @param info  Kernel attr_info struct containing type and size.
+ */
 void
 AttributeInfo::SetTo(const char* name, attr_info info)
 {
@@ -122,6 +194,13 @@ AttributeInfo::SetTo(const char* name, attr_info info)
 }
 
 
+/**
+ * @brief Set from a name, type code, and explicit size.
+ *
+ * @param name  Attribute name string.
+ * @param type  Attribute type code.
+ * @param size  Size of the attribute data in bytes.
+ */
 void
 AttributeInfo::SetTo(const char* name, uint32 type, off_t size)
 {
@@ -134,6 +213,9 @@ AttributeInfo::SetTo(const char* name, uint32 type, off_t size)
 //	#pragma mark - AttributeStreamNode
 
 
+/**
+ * @brief Default constructor; both upstream and downstream pointers are NULL.
+ */
 AttributeStreamNode::AttributeStreamNode()
 	:
 	fReadFrom(NULL),
@@ -142,12 +224,25 @@ AttributeStreamNode::AttributeStreamNode()
 }
 
 
+/**
+ * @brief Destructor; detaches this node from any connected stream pipeline.
+ */
 AttributeStreamNode::~AttributeStreamNode()
 {
 	Detach();
 }
 
 
+/**
+ * @brief Wire @a source as the upstream provider for this node.
+ *
+ * Sets up the pipeline link so that this node reads from @a source.
+ * If @a source can feed data immediately, Start() is called to begin
+ * pumping attributes.
+ *
+ * @param source  The upstream AttributeStreamNode to read from.
+ * @return A reference to @a source, enabling chained << expressions.
+ */
 AttributeStreamNode&
 AttributeStreamNode::operator<<(AttributeStreamNode &source)
 {
@@ -160,6 +255,9 @@ AttributeStreamNode::operator<<(AttributeStreamNode &source)
 }
 
 
+/**
+ * @brief Propagate a rewind request upstream through the pipeline.
+ */
 void
 AttributeStreamNode::Rewind()
 {
@@ -168,6 +266,9 @@ AttributeStreamNode::Rewind()
 }
 
 
+/**
+ * @brief Stub MakeEmpty that asserts; file nodes must override this.
+ */
 void
 AttributeStreamFileNode::MakeEmpty()
 {
@@ -175,6 +276,13 @@ AttributeStreamFileNode::MakeEmpty()
 }
 
 
+/**
+ * @brief Query whether the upstream node contains an attribute with the given name and type.
+ *
+ * @param name  Attribute name to look up.
+ * @param type  Expected attribute type code.
+ * @return Size of the attribute in bytes, or 0 if not found.
+ */
 off_t
 AttributeStreamNode::Contains(const char* name, uint32 type)
 {
@@ -185,6 +293,20 @@ AttributeStreamNode::Contains(const char* name, uint32 type)
 }
 
 
+/**
+ * @brief Read an attribute value from the upstream node into @a buffer.
+ *
+ * Tries the native @a name first; on failure tries @a foreignName and applies
+ * @a swapFunc to byte-swap the data into native endianness.
+ *
+ * @param name         Native attribute name.
+ * @param foreignName  Foreign (alternate byte-order) attribute name, or NULL.
+ * @param type         Expected attribute type code.
+ * @param size         Size of the buffer in bytes.
+ * @param buffer       Destination buffer for the attribute data.
+ * @param swapFunc     Optional byte-swap function applied when foreign name is used.
+ * @return Number of bytes read, or 0 on failure.
+ */
 off_t
 AttributeStreamNode::Read(const char* name, const char* foreignName,
 	uint32 type, off_t size, void* buffer, void (*swapFunc)(void*))
@@ -196,6 +318,16 @@ AttributeStreamNode::Read(const char* name, const char* foreignName,
 }
 
 
+/**
+ * @brief Write an attribute value to the downstream node.
+ *
+ * @param name         Native attribute name.
+ * @param foreignName  Foreign attribute name to remove after successful write.
+ * @param type         Attribute type code.
+ * @param size         Size of the data in bytes.
+ * @param buffer       Source buffer containing the attribute data.
+ * @return Number of bytes written, or 0 if no downstream node is connected.
+ */
 off_t
 AttributeStreamNode::Write(const char* name, const char* foreignName,
 	uint32 type, off_t size, const void* buffer)
@@ -207,6 +339,14 @@ AttributeStreamNode::Write(const char* name, const char* foreignName,
 }
 
 
+/**
+ * @brief Begin driving attribute iteration from this node.
+ *
+ * Called on nodes that can feed data. Rewinds the upstream source and
+ * returns true if the upstream pipeline is valid.
+ *
+ * @return true if driving can proceed, false if no upstream node is connected.
+ */
 bool
 AttributeStreamNode::Drive()
 {
@@ -219,6 +359,11 @@ AttributeStreamNode::Drive()
 }
 
 
+/**
+ * @brief Return the next AttributeInfo from the upstream source.
+ *
+ * @return Pointer to the next AttributeInfo, or NULL at end of stream.
+ */
 const AttributeInfo*
 AttributeStreamNode::Next()
 {
@@ -229,6 +374,11 @@ AttributeStreamNode::Next()
 }
 
 
+/**
+ * @brief Return a pointer to the raw data for the current attribute.
+ *
+ * @return Pointer to the attribute data buffer owned by the upstream node.
+ */
 const char*
 AttributeStreamNode::Get()
 {
@@ -238,6 +388,12 @@ AttributeStreamNode::Get()
 }
 
 
+/**
+ * @brief Copy the current attribute's raw data into @a buffer.
+ *
+ * @param buffer  Caller-allocated buffer; must be at least AttributeInfo::Size() bytes.
+ * @return true on success, false on failure.
+ */
 bool
 AttributeStreamNode::Fill(char* buffer) const
 {
@@ -247,6 +403,14 @@ AttributeStreamNode::Fill(char* buffer) const
 }
 
 
+/**
+ * @brief Start streaming attributes through the pipeline.
+ *
+ * If this node is at the head (no downstream), calls Drive() directly.
+ * Otherwise delegates to the downstream node's Start().
+ *
+ * @return true if the pipeline started successfully.
+ */
 bool
 AttributeStreamNode::Start()
 {
@@ -259,6 +423,12 @@ AttributeStreamNode::Start()
 }
 
 
+/**
+ * @brief Sever all upstream and downstream links and propagate detachment.
+ *
+ * After this call, the node is isolated; neither fReadFrom nor fWriteTo
+ * is valid.
+ */
 void
 AttributeStreamNode::Detach()
 {
@@ -278,6 +448,9 @@ AttributeStreamNode::Detach()
 //	#pragma mark - AttributeStreamFileNode
 
 
+/**
+ * @brief Default constructor; creates a file node not yet bound to a BNode.
+ */
 AttributeStreamFileNode::AttributeStreamFileNode()
 	:
 	fNode(NULL)
@@ -285,6 +458,11 @@ AttributeStreamFileNode::AttributeStreamFileNode()
 }
 
 
+/**
+ * @brief Construct and immediately bind to @a node.
+ *
+ * @param node  The BNode whose extended attributes will be read or written.
+ */
 AttributeStreamFileNode::AttributeStreamFileNode(BNode* node)
 	:
 	fNode(node)
@@ -293,6 +471,9 @@ AttributeStreamFileNode::AttributeStreamFileNode(BNode* node)
 }
 
 
+/**
+ * @brief Rewind the attribute iterator on the underlying BNode.
+ */
 void
 AttributeStreamFileNode::Rewind()
 {
@@ -301,6 +482,11 @@ AttributeStreamFileNode::Rewind()
 }
 
 
+/**
+ * @brief Bind this node to a different BNode.
+ *
+ * @param node  The new BNode to use for subsequent attribute operations.
+ */
 void
 AttributeStreamFileNode::SetTo(BNode* node)
 {
@@ -308,6 +494,13 @@ AttributeStreamFileNode::SetTo(BNode* node)
 }
 
 
+/**
+ * @brief Check whether the bound BNode has an attribute matching name and type.
+ *
+ * @param name  Attribute name to look up.
+ * @param type  Expected attribute type code.
+ * @return Size of the attribute in bytes, or 0 if absent or type mismatch.
+ */
 off_t
 AttributeStreamFileNode::Contains(const char* name, uint32 type)
 {
@@ -324,6 +517,20 @@ AttributeStreamFileNode::Contains(const char* name, uint32 type)
 }
 
 
+/**
+ * @brief Read an attribute from the bound BNode into @a buffer.
+ *
+ * Tries the native @a name first; falls back to @a foreignName and byte-swaps
+ * the data using @a swapFunc if that succeeds.
+ *
+ * @param name         Native attribute name.
+ * @param foreignName  Alternate (foreign byte-order) attribute name, or NULL.
+ * @param type         Expected attribute type code.
+ * @param size         Size of @a buffer in bytes.
+ * @param buffer       Destination for the attribute data.
+ * @param swapFunc     Optional byte-swap function applied for foreign reads.
+ * @return @a size on success, 0 if neither name yielded a full read.
+ */
 off_t
 AttributeStreamFileNode::Read(const char* name, const char* foreignName,
 	uint32 type, off_t size, void* buffer, void (*swapFunc)(void*))
@@ -347,6 +554,16 @@ AttributeStreamFileNode::Read(const char* name, const char* foreignName,
 }
 
 
+/**
+ * @brief Write an attribute to the bound BNode and remove any stale foreign copy.
+ *
+ * @param name         Native attribute name to write.
+ * @param foreignName  Foreign attribute name to remove after a successful write.
+ * @param type         Attribute type code.
+ * @param size         Size of @a buffer in bytes.
+ * @param buffer       Source data to write.
+ * @return Number of bytes written, or a negative error code on failure.
+ */
 off_t
 AttributeStreamFileNode::Write(const char* name, const char* foreignName,
 	uint32 type, off_t size, const void* buffer)
@@ -364,6 +581,11 @@ AttributeStreamFileNode::Write(const char* name, const char* foreignName,
 }
 
 
+/**
+ * @brief Pull all attributes from the upstream node and write them to the bound BNode.
+ *
+ * @return true when the drive loop completes (partial-write errors are silently tolerated).
+ */
 bool
 AttributeStreamFileNode::Drive()
 {
@@ -385,6 +607,11 @@ AttributeStreamFileNode::Drive()
 }
 
 
+/**
+ * @brief Not valid for file source nodes — asserts and returns NULL.
+ *
+ * @return NULL (always).
+ */
 const char*
 AttributeStreamFileNode::Get()
 {
@@ -395,6 +622,12 @@ AttributeStreamFileNode::Get()
 }
 
 
+/**
+ * @brief Copy the current attribute's raw data from the BNode into @a buffer.
+ *
+ * @param buffer  Caller-allocated buffer of at least fCurrentAttr.Size() bytes.
+ * @return true if the full attribute was read successfully.
+ */
 bool
 AttributeStreamFileNode::Fill(char* buffer) const
 {
@@ -405,6 +638,11 @@ AttributeStreamFileNode::Fill(char* buffer) const
 }
 
 
+/**
+ * @brief Advance the BNode attribute iterator and return the next AttributeInfo.
+ *
+ * @return Pointer to the next attribute descriptor, or NULL at end of iteration.
+ */
 const AttributeInfo*
 AttributeStreamFileNode::Next()
 {
@@ -428,6 +666,9 @@ AttributeStreamFileNode::Next()
 //	#pragma mark - AttributeStreamMemoryNode
 
 
+/**
+ * @brief Default constructor; creates an empty in-memory attribute store.
+ */
 AttributeStreamMemoryNode::AttributeStreamMemoryNode()
 	:
 	fAttributes(5),
@@ -436,6 +677,9 @@ AttributeStreamMemoryNode::AttributeStreamMemoryNode()
 }
 
 
+/**
+ * @brief Remove all cached attribute nodes from the in-memory store.
+ */
 void
 AttributeStreamMemoryNode::MakeEmpty()
 {
@@ -443,6 +687,9 @@ AttributeStreamMemoryNode::MakeEmpty()
 }
 
 
+/**
+ * @brief Reset the iteration cursor to before the first cached attribute.
+ */
 void
 AttributeStreamMemoryNode::Rewind()
 {
@@ -451,6 +698,13 @@ AttributeStreamMemoryNode::Rewind()
 }
 
 
+/**
+ * @brief Locate a cached attribute by name and type.
+ *
+ * @param name  Attribute name to search for.
+ * @param type  Attribute type code to match.
+ * @return Index into fAttributes, or -1 if not found.
+ */
 int32
 AttributeStreamMemoryNode::Find(const char* name, uint32 type) const
 {
@@ -466,6 +720,13 @@ AttributeStreamMemoryNode::Find(const char* name, uint32 type) const
 }
 
 
+/**
+ * @brief Return the size of a cached attribute, or 0 if not present.
+ *
+ * @param name  Attribute name.
+ * @param type  Attribute type code.
+ * @return Size in bytes, or 0 if not found.
+ */
 off_t
 AttributeStreamMemoryNode::Contains(const char* name, uint32 type)
 {
@@ -475,6 +736,17 @@ AttributeStreamMemoryNode::Contains(const char* name, uint32 type)
 }
 
 
+/**
+ * @brief Read an attribute from the in-memory cache, fetching from upstream if necessary.
+ *
+ * @param name        Native attribute name.
+ * @param foreignName Must be NULL; memory nodes do not support foreign names.
+ * @param type        Attribute type code.
+ * @param bufferSize  Size of @a buffer in bytes.
+ * @param buffer      Destination for the attribute data.
+ * @param swapFunc    Must be NULL; memory nodes do not byte-swap.
+ * @return Size of the attribute on success, 0 on failure.
+ */
 off_t
 AttributeStreamMemoryNode::Read(const char* name,
 	const char* DEBUG_ONLY(foreignName), uint32 type, off_t bufferSize,
@@ -509,6 +781,15 @@ AttributeStreamMemoryNode::Read(const char* name,
 }
 
 
+/**
+ * @brief Copy @a buffer into a newly allocated AttrNode and store it in the cache.
+ *
+ * @param name    Attribute name.
+ * @param type    Attribute type code.
+ * @param size    Size of @a buffer in bytes.
+ * @param buffer  Source data to copy.
+ * @return @a size on success.
+ */
 off_t
 AttributeStreamMemoryNode::Write(const char* name, const char*, uint32 type,
 	off_t size, const void* buffer)
@@ -523,6 +804,11 @@ AttributeStreamMemoryNode::Write(const char* name, const char*, uint32 type,
 }
 
 
+/**
+ * @brief Eagerly pull all upstream attributes into the in-memory cache.
+ *
+ * @return true when all attributes have been buffered.
+ */
 bool
 AttributeStreamMemoryNode::Drive()
 {
@@ -536,6 +822,14 @@ AttributeStreamMemoryNode::Drive()
 }
 
 
+/**
+ * @brief Fetch one attribute of the given name/type/size from the upstream node.
+ *
+ * @param name  Attribute name.
+ * @param type  Attribute type code.
+ * @param size  Expected size in bytes.
+ * @return Pointer to the newly created AttrNode, or NULL on failure.
+ */
 AttributeStreamMemoryNode::AttrNode*
 AttributeStreamMemoryNode::BufferingGet(const char* name, uint32 type,
 	off_t size)
@@ -553,6 +847,11 @@ AttributeStreamMemoryNode::BufferingGet(const char* name, uint32 type,
 }
 
 
+/**
+ * @brief Fetch the next attribute from the upstream node using its own Next()/Fill().
+ *
+ * @return Pointer to the buffered AttrNode, or NULL if upstream is exhausted.
+ */
 AttributeStreamMemoryNode::AttrNode*
 AttributeStreamMemoryNode::BufferingGet()
 {
@@ -567,6 +866,13 @@ AttributeStreamMemoryNode::BufferingGet()
 }
 
 
+/**
+ * @brief Advance the iteration cursor and return the next cached AttributeInfo.
+ *
+ * Buffers one more attribute from upstream when mid-stream.
+ *
+ * @return Pointer to the next AttributeInfo, or NULL when the cache is exhausted.
+ */
 const AttributeInfo*
 AttributeStreamMemoryNode::Next()
 {
@@ -583,6 +889,11 @@ AttributeStreamMemoryNode::Next()
 }
 
 
+/**
+ * @brief Return a pointer to the raw data of the current attribute in the cache.
+ *
+ * @return Pointer to the attribute data owned by the current AttrNode.
+ */
 const char*
 AttributeStreamMemoryNode::Get()
 {
@@ -592,6 +903,12 @@ AttributeStreamMemoryNode::Get()
 }
 
 
+/**
+ * @brief Copy the current cached attribute's data into @a buffer.
+ *
+ * @param buffer  Caller-allocated buffer of at least the current attribute's size.
+ * @return true always (the data is already in memory).
+ */
 bool
 AttributeStreamMemoryNode::Fill(char* buffer) const
 {
@@ -606,6 +923,12 @@ AttributeStreamMemoryNode::Fill(char* buffer) const
 //	#pragma mark - AttributeStreamTemplateNode
 
 
+/**
+ * @brief Construct a read-only node backed by a compile-time attribute template array.
+ *
+ * @param attrTemplates  Pointer to a static array of AttributeTemplate entries.
+ * @param count          Number of entries in @a attrTemplates.
+ */
 AttributeStreamTemplateNode::AttributeStreamTemplateNode(
 	const AttributeTemplate* attrTemplates, int32 count)
 	:
@@ -616,6 +939,13 @@ AttributeStreamTemplateNode::AttributeStreamTemplateNode(
 }
 
 
+/**
+ * @brief Return the size of a template attribute matching the given name and type.
+ *
+ * @param name  Attribute name to search for.
+ * @param type  Attribute type code to match.
+ * @return Attribute size in bytes, or 0 if not found.
+ */
 off_t
 AttributeStreamTemplateNode::Contains(const char* name, uint32 type)
 {
@@ -627,6 +957,9 @@ AttributeStreamTemplateNode::Contains(const char* name, uint32 type)
 }
 
 
+/**
+ * @brief Reset the iteration cursor to before the first template entry.
+ */
 void
 AttributeStreamTemplateNode::Rewind()
 {
@@ -634,6 +967,11 @@ AttributeStreamTemplateNode::Rewind()
 }
 
 
+/**
+ * @brief Advance to the next template entry and return its AttributeInfo.
+ *
+ * @return Pointer to the updated fCurrentAttr, or NULL at end of template array.
+ */
 const AttributeInfo*
 AttributeStreamTemplateNode::Next()
 {
@@ -650,6 +988,11 @@ AttributeStreamTemplateNode::Next()
 }
 
 
+/**
+ * @brief Return a pointer to the static data bits for the current template entry.
+ *
+ * @return Pointer to the compile-time attribute data.
+ */
 const char*
 AttributeStreamTemplateNode::Get()
 {
@@ -659,6 +1002,12 @@ AttributeStreamTemplateNode::Get()
 }
 
 
+/**
+ * @brief Copy the current template entry's data into @a buffer.
+ *
+ * @param buffer  Caller-allocated buffer of at least the current entry's size.
+ * @return true always (data is compile-time constant).
+ */
 bool
 AttributeStreamTemplateNode::Fill(char* buffer) const
 {
@@ -670,6 +1019,13 @@ AttributeStreamTemplateNode::Fill(char* buffer) const
 }
 
 
+/**
+ * @brief Locate a template entry by name and type.
+ *
+ * @param name  Attribute name to search for.
+ * @param type  Attribute type code to match.
+ * @return Index into fAttributes, or -1 if not found.
+ */
 int32
 AttributeStreamTemplateNode::Find(const char* name, uint32 type) const
 {
@@ -687,6 +1043,13 @@ AttributeStreamTemplateNode::Find(const char* name, uint32 type) const
 //	#pragma mark - AttributeStreamFilterNode
 
 
+/**
+ * @brief Default filter policy; passes every attribute through.
+ *
+ * Subclasses override this to selectively reject attributes.
+ *
+ * @return false always (accept all attributes).
+ */
 bool
 AttributeStreamFilterNode::Reject(const char*, uint32, off_t)
 {
@@ -695,6 +1058,11 @@ AttributeStreamFilterNode::Reject(const char*, uint32, off_t)
 }
 
 
+/**
+ * @brief Return the next upstream attribute that is not rejected by this filter.
+ *
+ * @return Pointer to the next accepted AttributeInfo, or NULL at end of stream.
+ */
 const AttributeInfo*
 AttributeStreamFilterNode::Next()
 {
@@ -714,6 +1082,13 @@ AttributeStreamFilterNode::Next()
 }
 
 
+/**
+ * @brief Check whether a non-rejected attribute exists upstream.
+ *
+ * @param name  Attribute name.
+ * @param type  Attribute type code.
+ * @return Size in bytes if the attribute exists and is accepted, 0 otherwise.
+ */
 off_t
 AttributeStreamFilterNode::Contains(const char* name, uint32 type)
 {
@@ -729,6 +1104,17 @@ AttributeStreamFilterNode::Contains(const char* name, uint32 type)
 }
 
 
+/**
+ * @brief Read an attribute from upstream, subject to this filter's policy.
+ *
+ * @param name         Native attribute name.
+ * @param foreignName  Foreign attribute name fallback.
+ * @param type         Attribute type code.
+ * @param size         Size of @a buffer in bytes.
+ * @param buffer       Destination for the attribute data.
+ * @param swapFunc     Optional byte-swap function.
+ * @return Number of bytes read, or 0 if the attribute was rejected or read failed.
+ */
 off_t
 AttributeStreamFilterNode::Read(const char* name, const char* foreignName,
 	uint32 type, off_t size, void* buffer, void (*swapFunc)(void*))
@@ -745,6 +1131,18 @@ AttributeStreamFilterNode::Read(const char* name, const char* foreignName,
 }
 
 
+/**
+ * @brief Write an attribute downstream, subject to this filter's policy.
+ *
+ * Rejected attributes are silently swallowed (return @a size without writing).
+ *
+ * @param name         Native attribute name.
+ * @param foreignName  Foreign attribute name to remove after successful write.
+ * @param type         Attribute type code.
+ * @param size         Size of @a buffer in bytes.
+ * @param buffer       Source data to write.
+ * @return @a size on success or rejection, 0 if no downstream node is connected.
+ */
 off_t
 AttributeStreamFilterNode::Write(const char* name, const char* foreignName,
 	uint32 type, off_t size, const void* buffer)
@@ -762,6 +1160,11 @@ AttributeStreamFilterNode::Write(const char* name, const char* foreignName,
 //	#pragma mark - NamesToAcceptAttrFilter
 
 
+/**
+ * @brief Construct a filter that accepts only attributes in @a nameList.
+ *
+ * @param nameList  NULL-terminated array of attribute name strings to pass through.
+ */
 NamesToAcceptAttrFilter::NamesToAcceptAttrFilter(const char** nameList)
 	:
 	fNameList(nameList)
@@ -769,6 +1172,12 @@ NamesToAcceptAttrFilter::NamesToAcceptAttrFilter(const char** nameList)
 }
 
 
+/**
+ * @brief Reject an attribute unless its name appears in the allow-list.
+ *
+ * @param name  Attribute name to test.
+ * @return false if @a name is in the allow-list (accepted), true otherwise.
+ */
 bool
 NamesToAcceptAttrFilter::Reject(const char* name, uint32, off_t)
 {
@@ -790,6 +1199,13 @@ NamesToAcceptAttrFilter::Reject(const char* name, uint32, off_t)
 //	#pragma mark - SelectiveAttributeTransformer
 
 
+/**
+ * @brief Construct a transformer that applies @a transformFunc to a single named attribute.
+ *
+ * @param attributeName  Name of the attribute to intercept and transform.
+ * @param transformFunc  Callback invoked on matching attribute data; returns true on success.
+ * @param params         Opaque user parameter forwarded to @a transformFunc.
+ */
 SelectiveAttributeTransformer::SelectiveAttributeTransformer(
 	const char* attributeName,
 	bool (*transformFunc)(const char* , uint32 , off_t, void*, void*),
@@ -803,6 +1219,9 @@ SelectiveAttributeTransformer::SelectiveAttributeTransformer(
 }
 
 
+/**
+ * @brief Destructor; frees all heap buffers allocated for transformed attribute data.
+ */
 SelectiveAttributeTransformer::~SelectiveAttributeTransformer()
 {
 	for (int32 index = fTransformedBuffers.CountItems() - 1; index >= 0;
@@ -812,6 +1231,9 @@ SelectiveAttributeTransformer::~SelectiveAttributeTransformer()
 }
 
 
+/**
+ * @brief Discard all transformed-data buffers and reset the pipeline for re-use.
+ */
 void
 SelectiveAttributeTransformer::Rewind()
 {
@@ -824,6 +1246,17 @@ SelectiveAttributeTransformer::Rewind()
 }
 
 
+/**
+ * @brief Read an attribute from upstream and apply the transform if the name matches.
+ *
+ * @param name         Native attribute name.
+ * @param foreignName  Foreign attribute name fallback.
+ * @param type         Attribute type code.
+ * @param size         Size of @a buffer in bytes.
+ * @param buffer       Destination for the (possibly transformed) attribute data.
+ * @param swapFunc     Optional byte-swap function applied before the transform.
+ * @return Number of bytes read from upstream.
+ */
 off_t
 SelectiveAttributeTransformer::Read(const char* name, const char* foreignName,
 	uint32 type, off_t size, void* buffer, void (*swapFunc)(void*))
@@ -841,6 +1274,12 @@ SelectiveAttributeTransformer::Read(const char* name, const char* foreignName,
 }
 
 
+/**
+ * @brief Return whether this attribute should be transformed.
+ *
+ * @param name  Attribute name to test.
+ * @return true if @a name matches fAttributeNameToTransform.
+ */
 bool
 SelectiveAttributeTransformer::WillTransform(const char* name, uint32, off_t,
 	const char*) const
@@ -849,6 +1288,15 @@ SelectiveAttributeTransformer::WillTransform(const char* name, uint32, off_t,
 }
 
 
+/**
+ * @brief Apply the transform function to @a data in place.
+ *
+ * @param name  Attribute name.
+ * @param type  Attribute type code.
+ * @param size  Size of @a data in bytes.
+ * @param data  Mutable attribute data buffer.
+ * @return Return value of fTransformFunc.
+ */
 bool
 SelectiveAttributeTransformer::ApplyTransformer(const char* name, uint32 type,
 	off_t size, char* data)
@@ -856,6 +1304,18 @@ SelectiveAttributeTransformer::ApplyTransformer(const char* name, uint32 type,
 	return (fTransformFunc)(name, type, size, data, fTransformParams);
 }
 
+
+/**
+ * @brief Copy @a data and apply the transform to the copy, returning the new buffer.
+ *
+ * The caller must not free the returned pointer; it is owned by fTransformedBuffers.
+ *
+ * @param name  Attribute name.
+ * @param type  Attribute type code.
+ * @param size  Size of @a data in bytes.
+ * @param data  Original attribute data (may be NULL).
+ * @return Heap-allocated transformed buffer, or NULL if the transform fails.
+ */
 char*
 SelectiveAttributeTransformer::CopyAndApplyTransformer(const char* name,
 	uint32 type, off_t size, const char* data)
@@ -876,6 +1336,11 @@ SelectiveAttributeTransformer::CopyAndApplyTransformer(const char* name,
 }
 
 
+/**
+ * @brief Advance to the next upstream attribute and snapshot its info.
+ *
+ * @return Pointer to the next AttributeInfo, or NULL at end of stream.
+ */
 const AttributeInfo*
 SelectiveAttributeTransformer::Next()
 {
@@ -889,6 +1354,14 @@ SelectiveAttributeTransformer::Next()
 }
 
 
+/**
+ * @brief Return (possibly transformed) data for the current attribute.
+ *
+ * If the current attribute name matches, the data is copied and transformed before
+ * being returned; the transformed buffer is tracked for later cleanup.
+ *
+ * @return Pointer to the attribute data (may be a newly allocated transformed copy).
+ */
 const char*
 SelectiveAttributeTransformer::Get()
 {

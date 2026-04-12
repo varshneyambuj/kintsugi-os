@@ -1,9 +1,41 @@
 /*
- * Copyright 2013, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+
+/**
+ * @file VirtualDirectoryEntryList.cpp
+ * @brief EntryList implementation that iterates a merged virtual directory.
+ *
+ * VirtualDirectoryEntryList resolves a virtual-directory definition file to a
+ * set of real filesystem paths via VirtualDirectoryManager and then presents
+ * them through a BMergedDirectory so that callers can enumerate the union of
+ * those paths using the standard EntryList API.  Sub-directory entries are
+ * transparently redirected to their virtual counterparts.
+ *
+ * @see VirtualDirectoryManager, BMergedDirectory, EntryListBase
  */
 
 
@@ -21,6 +53,15 @@ namespace BPrivate {
 //	#pragma mark - VirtualDirectoryEntryList
 
 
+/**
+ * @brief Construct an entry list for the virtual directory described by \a model.
+ *
+ * Resolves the directory paths from \a model's definition file via the
+ * VirtualDirectoryManager, then initialises the underlying merged directory.
+ * Check InitCheck() after construction.
+ *
+ * @param model  The Model representing the virtual directory node.
+ */
 VirtualDirectoryEntryList::VirtualDirectoryEntryList(Model* model)
 	:
 	EntryListBase(),
@@ -44,6 +85,12 @@ VirtualDirectoryEntryList::VirtualDirectoryEntryList(Model* model)
 }
 
 
+/**
+ * @brief Construct an entry list from an already-resolved set of directory paths.
+ *
+ * @param definitionFileRef  node_ref of the virtual-directory definition file.
+ * @param directoryPaths     List of real filesystem paths to merge.
+ */
 VirtualDirectoryEntryList::VirtualDirectoryEntryList(
 	const node_ref& definitionFileRef, const BStringList& directoryPaths)
 	:
@@ -55,11 +102,19 @@ VirtualDirectoryEntryList::VirtualDirectoryEntryList(
 }
 
 
+/**
+ * @brief Destructor.
+ */
 VirtualDirectoryEntryList::~VirtualDirectoryEntryList()
 {
 }
 
 
+/**
+ * @brief Return the initialisation status of this entry list.
+ *
+ * @return B_OK if the list is ready to iterate, or an error code otherwise.
+ */
 status_t
 VirtualDirectoryEntryList::InitCheck() const
 {
@@ -67,6 +122,13 @@ VirtualDirectoryEntryList::InitCheck() const
 }
 
 
+/**
+ * @brief Retrieve the next entry as a BEntry.
+ *
+ * @param entry     Output BEntry to populate.
+ * @param traverse  If true, symbolic links are followed.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when exhausted, or an error code.
+ */
 status_t
 VirtualDirectoryEntryList::GetNextEntry(BEntry* entry, bool traverse)
 {
@@ -79,6 +141,12 @@ VirtualDirectoryEntryList::GetNextEntry(BEntry* entry, bool traverse)
 }
 
 
+/**
+ * @brief Retrieve the next entry as an entry_ref.
+ *
+ * @param ref  Output entry_ref to populate.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when exhausted, or an error code.
+ */
 status_t
 VirtualDirectoryEntryList::GetNextRef(entry_ref* ref)
 {
@@ -96,6 +164,17 @@ VirtualDirectoryEntryList::GetNextRef(entry_ref* ref)
 }
 
 
+/**
+ * @brief Retrieve up to \a count dirents from the merged directory.
+ *
+ * Sub-directory entries are translated to their virtual-directory equivalents
+ * by the VirtualDirectoryManager before being returned.
+ *
+ * @param buffer  Buffer to receive dirent structures.
+ * @param length  Size in bytes of \a buffer.
+ * @param count   Maximum number of dirents to return (capped at 1 internally).
+ * @return Number of dirents read, 0 at end-of-directory, or a negative error code.
+ */
 int32
 VirtualDirectoryEntryList::GetNextDirents(struct dirent* buffer, size_t length,
 	int32 count)
@@ -123,6 +202,11 @@ VirtualDirectoryEntryList::GetNextDirents(struct dirent* buffer, size_t length,
 }
 
 
+/**
+ * @brief Rewind the iteration to the beginning of the merged directory.
+ *
+ * @return B_OK on success, or an error code otherwise.
+ */
 status_t
 VirtualDirectoryEntryList::Rewind()
 {
@@ -130,6 +214,14 @@ VirtualDirectoryEntryList::Rewind()
 }
 
 
+/**
+ * @brief Return the number of entries in the virtual directory.
+ *
+ * This implementation always returns 0 because counting is not supported
+ * for merged directories.
+ *
+ * @return 0.
+ */
 int32
 VirtualDirectoryEntryList::CountEntries()
 {
@@ -137,6 +229,12 @@ VirtualDirectoryEntryList::CountEntries()
 }
 
 
+/**
+ * @brief Initialise the internal BMergedDirectory from a list of paths.
+ *
+ * @param directoryPaths  Ordered list of filesystem paths to merge.
+ * @return B_OK on success, or an error code if BMergedDirectory::Init() fails.
+ */
 status_t
 VirtualDirectoryEntryList::_InitMergedDirectory(
 	const BStringList& directoryPaths)

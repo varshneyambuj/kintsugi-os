@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file RecentItems.cpp
+ * @brief Lazily-built menus for recently-used files, folders, and applications.
+ *
+ * RecentItemsMenu is a BSlowMenu subclass that calls BRecentItemsList to
+ * retrieve recent entries and adds icon menu items one at a time so the menu
+ * remains interruptible.  Subclasses RecentFilesMenu, RecentFoldersMenu, and
+ * RecentAppsMenu specialise the list type and open message.
+ *
+ * @see BSlowMenu, BRecentItemsList, BNavMenu
+ */
 
 
 #include "RecentItems.h"
@@ -119,6 +123,14 @@ public:
 // #pragma mark - RecentItemsMenu
 
 
+/**
+ * @brief Construct a RecentItemsMenu.
+ *
+ * @param title       The menu title string.
+ * @param openMessage The BMessage prototype sent when an item is activated.
+ * @param itemTarget  The handler that receives the open message.
+ * @param maxItems    Maximum number of recent items to display.
+ */
 RecentItemsMenu::RecentItemsMenu(const char* title, BMessage* openMessage,
 	BHandler* itemTarget, int32 maxItems)
 	:
@@ -133,6 +145,9 @@ RecentItemsMenu::RecentItemsMenu(const char* title, BMessage* openMessage,
 }
 
 
+/**
+ * @brief Destroy the RecentItemsMenu, releasing the iterator and open message.
+ */
 RecentItemsMenu::~RecentItemsMenu()
 {
 	delete fIterator;
@@ -140,6 +155,15 @@ RecentItemsMenu::~RecentItemsMenu()
 }
 
 
+/**
+ * @brief Add the next recent item to the menu.
+ *
+ * Calls fIterator->GetNextMenuItem() and appends the result.  Stops when
+ * fMaxCount items have been added or after fMaxCount + 20 sanity iterations
+ * (to handle stale recent-apps entries).
+ *
+ * @return True if the caller should invoke AddNextItem() again.
+ */
 bool
 RecentItemsMenu::AddNextItem()
 {
@@ -157,6 +181,11 @@ RecentItemsMenu::AddNextItem()
 }
 
 
+/**
+ * @brief Clear old items and rewind the iterator before a fresh build.
+ *
+ * @return True to indicate the build should proceed.
+ */
 bool
 RecentItemsMenu::StartBuildingItemList()
 {
@@ -173,6 +202,9 @@ RecentItemsMenu::StartBuildingItemList()
 }
 
 
+/**
+ * @brief Reset fMenuBuilt so the item list is rebuilt on the next open.
+ */
 void
 RecentItemsMenu::ClearMenuBuildingState()
 {
@@ -185,6 +217,18 @@ RecentItemsMenu::ClearMenuBuildingState()
 // #pragma mark - RecentFilesMenu
 
 
+/**
+ * @brief Construct a RecentFilesMenu filtered by a single MIME type.
+ *
+ * @param title             The menu title.
+ * @param openFileMessage   Message sent when a file item is activated.
+ * @param openFolderMessage Message sent when a folder item is activated.
+ * @param target            Handler that receives the messages.
+ * @param maxItems          Maximum number of items to show.
+ * @param navMenuFolders    If true, folders show a hierarchical nav menu.
+ * @param ofType            Optional MIME type filter string.
+ * @param openedByAppSig    Optional app-signature filter.
+ */
 RecentFilesMenu::RecentFilesMenu(const char* title, BMessage* openFileMessage,
 	BMessage* openFolderMessage, BHandler* target, int32 maxItems,
 	bool navMenuFolders, const char* ofType, const char* openedByAppSig)
@@ -197,6 +241,19 @@ RecentFilesMenu::RecentFilesMenu(const char* title, BMessage* openFileMessage,
 }
 
 
+/**
+ * @brief Construct a RecentFilesMenu filtered by a list of MIME types.
+ *
+ * @param title             The menu title.
+ * @param openFileMessage   Message sent when a file item is activated.
+ * @param openFolderMessage Message sent when a folder item is activated.
+ * @param target            Handler that receives the messages.
+ * @param maxItems          Maximum number of items to show.
+ * @param navMenuFolders    If true, folders show a hierarchical nav menu.
+ * @param ofTypeList        Array of MIME type strings to filter by.
+ * @param ofTypeListCount   Number of entries in @p ofTypeList.
+ * @param openedByAppSig    Optional app-signature filter.
+ */
 RecentFilesMenu::RecentFilesMenu(const char* title, BMessage* openFileMessage,
 	BMessage* openFolderMessage, BHandler* target, int32 maxItems,
 	bool navMenuFolders, const char* ofTypeList[], int32 ofTypeListCount,
@@ -210,6 +267,9 @@ RecentFilesMenu::RecentFilesMenu(const char* title, BMessage* openFileMessage,
 }
 
 
+/**
+ * @brief Destroy the RecentFilesMenu, releasing the folder-open message.
+ */
 RecentFilesMenu::~RecentFilesMenu()
 {
 	delete openFolderMessage;
@@ -219,6 +279,16 @@ RecentFilesMenu::~RecentFilesMenu()
 // #pragma mark - RecentFoldersMenu
 
 
+/**
+ * @brief Construct a RecentFoldersMenu.
+ *
+ * @param title           The menu title.
+ * @param openMessage     Message sent when a folder item is activated.
+ * @param target          Handler that receives the messages.
+ * @param maxItems        Maximum number of items to show.
+ * @param navMenuFolders  If true, items have a hierarchical nav sub-menu.
+ * @param openedByAppSig  Optional app-signature filter.
+ */
 RecentFoldersMenu::RecentFoldersMenu(const char* title, BMessage* openMessage,
 	BHandler* target, int32 maxItems, bool navMenuFolders,
 	const char* openedByAppSig)
@@ -233,6 +303,14 @@ RecentFoldersMenu::RecentFoldersMenu(const char* title, BMessage* openMessage,
 // #pragma mark - RecentAppsMenu
 
 
+/**
+ * @brief Construct a RecentAppsMenu.
+ *
+ * @param title       The menu title.
+ * @param openMessage Message sent when an application item is activated.
+ * @param target      Handler that receives the messages.
+ * @param maxItems    Maximum number of items to show.
+ */
 RecentAppsMenu::RecentAppsMenu(const char* title, BMessage* openMessage,
 	BHandler* target, int32 maxItems)
 	:
@@ -245,6 +323,12 @@ RecentAppsMenu::RecentAppsMenu(const char* title, BMessage* openMessage,
 // #pragma mark - BRecentItemsList
 
 
+/**
+ * @brief Construct a BRecentItemsList with the given item limit.
+ *
+ * @param maxItems       Maximum number of items to enumerate.
+ * @param navMenuFolders If true, folder items carry a nav sub-menu.
+ */
 BRecentItemsList::BRecentItemsList(int32 maxItems, bool navMenuFolders)
 	:
 	fMaxItems(maxItems),
@@ -256,6 +340,9 @@ BRecentItemsList::BRecentItemsList(int32 maxItems, bool navMenuFolders)
 }
 
 
+/**
+ * @brief Reset the iteration index and clear the item cache.
+ */
 void
 BRecentItemsList::Rewind()
 {
@@ -264,6 +351,18 @@ BRecentItemsList::Rewind()
 }
 
 
+/**
+ * @brief Return the next icon menu item from the recent-items list.
+ *
+ * Calls GetNextRef(), builds a Model, and creates a ModelMenuItem (or
+ * BNavMenu item for containers when navMenuFolders is enabled).
+ *
+ * @param fileOpenInvokeMessage       Message sent when a file item is chosen.
+ * @param containerOpenInvokeMessage  Message sent when a folder item is chosen.
+ * @param target                      Handler that receives the messages.
+ * @param currentItemRef              Optional output for the ref of the returned item.
+ * @return A new BMenuItem on success, or NULL when the list is exhausted.
+ */
 BMenuItem*
 BRecentItemsList::GetNextMenuItem(const BMessage* fileOpenInvokeMessage,
 	const BMessage* containerOpenInvokeMessage, BHandler* target,

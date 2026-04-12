@@ -1,10 +1,44 @@
 /*
- * Copyright 2001-2006, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marc Flerackers (mflerackers@androme.be)
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers (mflerackers@androme.be)
+ *       Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ */
+
+
+/**
+ * @file TextGapBuffer.cpp
+ * @brief Gap-buffer implementation for the raw text storage used by BTextView.
+ *
+ * TextGapBuffer stores a mutable UTF-8 string using the gap-buffer technique:
+ * a contiguous allocation is split into a "before" region, a gap, and an
+ * "after" region.  Insertions at the gap position are O(1); all other
+ * operations move the gap first.  A scratch buffer is maintained to assemble
+ * contiguous substrings that straddle the gap, and optionally to replace all
+ * characters with the bullet character in password mode.
+ *
+ * @see BTextView, LineBuffer, StyleBuffer
  */
 
 
@@ -23,9 +57,13 @@
 namespace BPrivate {
 
 
+/** @brief Minimum allocation block size used when enlarging or creating the gap. */
 static const int32 kTextGapBufferBlockSize = 2048;
 
 
+/**
+ * @brief Constructs an empty TextGapBuffer with an initial gap allocation.
+ */
 TextGapBuffer::TextGapBuffer()
 	:
 	fItemCount(0),
@@ -42,6 +80,9 @@ TextGapBuffer::TextGapBuffer()
 }
 
 
+/**
+ * @brief Destroys the TextGapBuffer and frees all allocated memory.
+ */
 TextGapBuffer::~TextGapBuffer()
 {
 	free(fBuffer);
@@ -49,6 +90,16 @@ TextGapBuffer::~TextGapBuffer()
 }
 
 
+/**
+ * @brief Inserts a byte string into the buffer at the given position.
+ *
+ * Moves the gap to @p inAtIndex if necessary, enlarges the gap if needed,
+ * then copies the bytes into the gap and advances past them.
+ *
+ * @param inText      Pointer to the bytes to insert.
+ * @param inNumItems  Number of bytes to insert.
+ * @param inAtIndex   Byte position at which to insert; clamped to [0, fItemCount].
+ */
 void
 TextGapBuffer::InsertText(const char* inText, int32 inNumItems, int32 inAtIndex)
 {
@@ -72,6 +123,18 @@ TextGapBuffer::InsertText(const char* inText, int32 inNumItems, int32 inAtIndex)
 }
 
 
+/**
+ * @brief Inserts bytes read from a BFile into the buffer.
+ *
+ * Reads up to @p inNumItems bytes starting at @p fileOffset from @p file,
+ * clamped to the actual file size.
+ *
+ * @param file        Readable BFile to read from.
+ * @param fileOffset  Byte position within the file to start reading.
+ * @param inNumItems  Number of bytes to insert.
+ * @param inAtIndex   Byte position in the buffer at which to insert.
+ * @return true on success, false if the file is unreadable or empty.
+ */
 bool
 TextGapBuffer::InsertText(BFile* file, int32 fileOffset, int32 inNumItems,
 	int32 inAtIndex)
@@ -111,6 +174,15 @@ TextGapBuffer::InsertText(BFile* file, int32 fileOffset, int32 inNumItems,
 }
 
 
+/**
+ * @brief Removes the bytes in [start, end) from the buffer.
+ *
+ * Moves the gap to @p start, then widens it by the deleted count.  If the
+ * resulting gap exceeds the block size, the gap is shrunk to save memory.
+ *
+ * @param start First byte index of the range to delete.
+ * @param end   One-past-last byte index of the range to delete.
+ */
 void
 TextGapBuffer::RemoveRange(int32 start, int32 end)
 {
@@ -133,6 +205,20 @@ TextGapBuffer::RemoveRange(int32 start, int32 end)
 }
 
 
+/**
+ * @brief Returns a pointer to the substring starting at @p fromOffset.
+ *
+ * If the requested range lies entirely on one side of the gap, returns a
+ * direct pointer into fBuffer.  Otherwise copies the bytes into the scratch
+ * buffer and returns that.  In password mode the returned bytes are replaced
+ * with the UTF-8 bullet character and @p *_numBytes is updated.
+ *
+ * @param fromOffset   First byte of the substring.
+ * @param _numBytes    In: desired byte count. Out: actual byte count (may change
+ *                     in password mode).
+ * @return Pointer to a null-terminated substring; valid until the next
+ *         mutating call.
+ */
 const char*
 TextGapBuffer::GetString(int32 fromOffset, int32* _numBytes)
 {
@@ -189,6 +275,17 @@ TextGapBuffer::GetString(int32 fromOffset, int32* _numBytes)
 }
 
 
+/**
+ * @brief Searches for the first occurrence of @p inChar in a forward range.
+ *
+ * Skips UTF-8 continuation bytes.
+ *
+ * @param inChar     The ASCII byte value to search for.
+ * @param fromIndex  Starting byte index for the search.
+ * @param ioDelta    In: maximum number of bytes to search. Out: byte offset of
+ *                   the match relative to @p fromIndex.
+ * @return true if the character was found, false otherwise.
+ */
 bool
 TextGapBuffer::FindChar(char inChar, int32 fromIndex, int32* ioDelta)
 {
@@ -207,6 +304,14 @@ TextGapBuffer::FindChar(char inChar, int32 fromIndex, int32* ioDelta)
 }
 
 
+/**
+ * @brief Returns a null-terminated pointer to the entire text content.
+ *
+ * In password mode each UTF-8 character is replaced with the bullet character.
+ * The gap is moved to the end before the pointer is constructed.
+ *
+ * @return Pointer to the full text; valid until the next mutating call.
+ */
 const char*
 TextGapBuffer::Text()
 {
@@ -236,6 +341,13 @@ TextGapBuffer::Text()
 }
 
 
+/**
+ * @brief Returns the raw (non-password-masked) null-terminated text pointer.
+ *
+ * Moves the gap to the end so that the pre-gap region is one contiguous span.
+ *
+ * @return Pointer to the raw text; valid until the next mutating call.
+ */
 const char*
 TextGapBuffer::RealText()
 {
@@ -249,6 +361,15 @@ TextGapBuffer::RealText()
 }
 
 
+/**
+ * @brief Copies a substring into a caller-supplied buffer and null-terminates it.
+ *
+ * If the range is clamped or empty, @p buffer[0] is set to '\\0'.
+ *
+ * @param offset  First byte of the range.
+ * @param length  Number of bytes to copy.
+ * @param buffer  Destination buffer; must be at least @p length + 1 bytes.
+ */
 void
 TextGapBuffer::GetString(int32 offset, int32 length, char* buffer)
 {
@@ -290,6 +411,11 @@ TextGapBuffer::GetString(int32 offset, int32 length, char* buffer)
 }
 
 
+/**
+ * @brief Returns whether password masking is active.
+ *
+ * @return true if all characters are displayed as bullet symbols.
+ */
 bool
 TextGapBuffer::PasswordMode() const
 {
@@ -297,6 +423,11 @@ TextGapBuffer::PasswordMode() const
 }
 
 
+/**
+ * @brief Enables or disables password masking.
+ *
+ * @param state true to enable masking, false to show real text.
+ */
 void
 TextGapBuffer::SetPasswordMode(bool state)
 {
@@ -304,6 +435,15 @@ TextGapBuffer::SetPasswordMode(bool state)
 }
 
 
+/**
+ * @brief Moves the gap so that it starts at @p toIndex.
+ *
+ * Copies the bytes between the current gap position and @p toIndex to close
+ * the gap on one side and re-open it on the other.
+ *
+ * @param toIndex Target byte index for the start of the gap; must be in
+ *                [0, fItemCount].
+ */
 void
 TextGapBuffer::_MoveGapTo(int32 toIndex)
 {
@@ -334,6 +474,14 @@ TextGapBuffer::_MoveGapTo(int32 toIndex)
 }
 
 
+/**
+ * @brief Enlarges the gap to at least @p inCount bytes.
+ *
+ * Reallocates fBuffer and moves the after-gap region to maintain buffer
+ * consistency.
+ *
+ * @param inCount New gap size in bytes; must be > fGapCount.
+ */
 void
 TextGapBuffer::_EnlargeGapTo(int32 inCount)
 {
@@ -349,6 +497,14 @@ TextGapBuffer::_EnlargeGapTo(int32 inCount)
 }
 
 
+/**
+ * @brief Shrinks the gap to @p inCount bytes to reclaim memory.
+ *
+ * Moves the after-gap region closer to the end of the "before" region, then
+ * reallocates fBuffer to the smaller size.
+ *
+ * @param inCount New gap size in bytes; must be < fGapCount.
+ */
 void
 TextGapBuffer::_ShrinkGapTo(int32 inCount)
 {

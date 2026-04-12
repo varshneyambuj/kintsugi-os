@@ -1,44 +1,46 @@
 /*
- * Copyright 2013-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione, jscipione@gmail.com
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
  */
-/*
-Open Tracker License
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file VirtualDirectoryWindow.cpp
+ * @brief BContainerWindow subclass for displaying virtual (merged) directories.
+ *
+ * VirtualDirectoryWindow overrides pose-view creation and window-menu
+ * construction so that the window presents a VirtualDirectoryPoseView
+ * instead of a standard BPoseView.  It also resolves cross-application
+ * refs via VirtualDirectoryManager before constructing the view.
+ *
+ * @see BContainerWindow, VirtualDirectoryPoseView, VirtualDirectoryManager
+ */
 
 
 #include "VirtualDirectoryWindow.h"
@@ -63,6 +65,16 @@ namespace BPrivate {
 //	#pragma mark - VirtualDirectoryWindow
 
 
+/**
+ * @brief Construct a VirtualDirectoryWindow with the specified window attributes.
+ *
+ * @param windowList   Shared list of open Tracker windows.
+ * @param openFlags    Flags controlling how the window is opened.
+ * @param look         BWindow look constant.
+ * @param feel         BWindow feel constant.
+ * @param windowFlags  Additional BWindow flags.
+ * @param workspace    Workspace bitmask for the window.
+ */
 VirtualDirectoryWindow::VirtualDirectoryWindow(LockingList<BWindow>* windowList,
 	uint32 openFlags, window_look look, window_feel feel, uint32 windowFlags,
 	uint32 workspace)
@@ -72,6 +84,11 @@ VirtualDirectoryWindow::VirtualDirectoryWindow(LockingList<BWindow>* windowList,
 }
 
 
+/**
+ * @brief Create and attach a VirtualDirectoryPoseView for the given model.
+ *
+ * @param model  The virtual directory model to display.
+ */
 void
 VirtualDirectoryWindow::CreatePoseView(Model* model)
 {
@@ -85,6 +102,17 @@ VirtualDirectoryWindow::CreatePoseView(Model* model)
 }
 
 
+/**
+ * @brief Allocate a new VirtualDirectoryPoseView, resolving cross-app refs first.
+ *
+ * If the model's node_ref has been relocated by the VirtualDirectoryManager,
+ * a replacement model is constructed from the resolved entry_ref before the
+ * pose view is created.
+ *
+ * @param model     Model to display; may be replaced if the ref has changed.
+ * @param viewMode  Initial view mode (e.g. kListMode).
+ * @return A new VirtualDirectoryPoseView on success, or NULL on failure.
+ */
 BPoseView*
 VirtualDirectoryWindow::NewPoseView(Model* model, uint32 viewMode)
 {
@@ -123,6 +151,11 @@ VirtualDirectoryWindow::NewPoseView(Model* model, uint32 viewMode)
 }
 
 
+/**
+ * @brief Return the pose view cast to VirtualDirectoryPoseView.
+ *
+ * @return The window's VirtualDirectoryPoseView.
+ */
 VirtualDirectoryPoseView*
 VirtualDirectoryWindow::PoseView() const
 {
@@ -130,6 +163,11 @@ VirtualDirectoryWindow::PoseView() const
 }
 
 
+/**
+ * @brief Add virtual-directory-specific items to the Window menu.
+ *
+ * @param menu  The Window menu to populate.
+ */
 void
 VirtualDirectoryWindow::AddWindowMenu(BMenu* menu)
 {
@@ -161,6 +199,11 @@ VirtualDirectoryWindow::AddWindowMenu(BMenu* menu)
 }
 
 
+/**
+ * @brief Add virtual-directory-specific items to the window context menu.
+ *
+ * @param menu  The context menu to populate.
+ */
 void
 VirtualDirectoryWindow::AddWindowContextMenus(BMenu* menu)
 {

@@ -1,9 +1,44 @@
 /*
- * Copyright 2003-2006, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini (burton666@libero.it)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2006, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini (burton666@libero.it)
+ */
+
+
+/**
+ * @file InlineInput.cpp
+ * @brief BTextView helper that tracks the state of an active Input Method
+ *        session.
+ *
+ * InlineInput stores the text range inserted by an Input Server method addon,
+ * the current selection within that range, and any clause markers that the
+ * addon has submitted.  BTextView uses this object to render the composing
+ * text with appropriate highlight feedback.
+ *
+ * For background, see the "The Input Server" section of the Be Book.
+ *
+ * @see BTextView
  */
 
 // For a deeper understanding of this class, see the BeBook, sez.
@@ -16,6 +51,7 @@
 
 #include <cstdlib>
 
+/** @brief Internal storage for a single input-method clause range. */
 struct clause
 {
 	int32 start;
@@ -23,9 +59,12 @@ struct clause
 };
 
 
-/*! \brief Constructs a InlineInput object.
-	\param messenger The BMessenger of the input server method addon.
-*/
+/**
+ * @brief Constructs an InlineInput and associates it with the given messenger.
+ *
+ * @param messenger BMessenger of the Input Server method addon that owns this
+ *                  session.
+ */
 BTextView::InlineInput::InlineInput(BMessenger messenger)
 	:
 	fMessenger(messenger),
@@ -40,17 +79,20 @@ BTextView::InlineInput::InlineInput(BMessenger messenger)
 }
 
 
-/*! \brief Destructs the object, free the allocated memory.
-*/
+/**
+ * @brief Destroys the InlineInput and frees any allocated clause memory.
+ */
 BTextView::InlineInput::~InlineInput()
 {
 	ResetClauses();
 }
 
 
-/*! \brief Returns a pointer to the Input Server Method BMessenger
-	which requested the transaction.
-*/
+/**
+ * @brief Returns a pointer to the Input Server Method BMessenger.
+ *
+ * @return Pointer to the BMessenger that owns this inline-input session.
+ */
 const BMessenger *
 BTextView::InlineInput::Method() const
 {
@@ -58,6 +100,11 @@ BTextView::InlineInput::Method() const
 }
 
 
+/**
+ * @brief Returns whether the inline-input session is currently active.
+ *
+ * @return true if the input method is composing text; false otherwise.
+ */
 bool
 BTextView::InlineInput::IsActive() const
 {
@@ -65,6 +112,11 @@ BTextView::InlineInput::IsActive() const
 }
 
 
+/**
+ * @brief Activates or deactivates the inline-input session.
+ *
+ * @param active true to mark the session as active, false to deactivate it.
+ */
 void
 BTextView::InlineInput::SetActive(bool active)
 {
@@ -72,8 +124,11 @@ BTextView::InlineInput::SetActive(bool active)
 }
 
 
-/*! \brief Return the length of the inputted text.
-*/
+/**
+ * @brief Returns the length (in bytes) of the text being composed.
+ *
+ * @return Byte length of the inline-input text.
+ */
 int32
 BTextView::InlineInput::Length() const
 {
@@ -81,10 +136,11 @@ BTextView::InlineInput::Length() const
 }
 
 
-/*! \brief Sets the length of the text inputted with the input method.
-	\param len The length of the text, extracted from the
-	B_INPUT_METHOD_CHANGED BMessage.
-*/
+/**
+ * @brief Sets the byte length of the inline-input text.
+ *
+ * @param len New text length, extracted from a B_INPUT_METHOD_CHANGED message.
+ */
 void
 BTextView::InlineInput::SetLength(int32 len)
 {
@@ -92,8 +148,11 @@ BTextView::InlineInput::SetLength(int32 len)
 }
 
 
-/*! \brief Returns the offset into the BTextView of the text.
-*/
+/**
+ * @brief Returns the byte offset into BTextView where the inline text begins.
+ *
+ * @return Insertion offset.
+ */
 int32
 BTextView::InlineInput::Offset() const
 {
@@ -101,9 +160,11 @@ BTextView::InlineInput::Offset() const
 }
 
 
-/*! \brief Sets the offset into the BTextView of the text.
-	\param offset The offset where the text has been inserted.
-*/
+/**
+ * @brief Sets the byte offset into BTextView where the inline text begins.
+ *
+ * @param offset Offset at which the composed text has been inserted.
+ */
 void
 BTextView::InlineInput::SetOffset(int32 offset)
 {
@@ -111,8 +172,11 @@ BTextView::InlineInput::SetOffset(int32 offset)
 }
 
 
-/*! \brief Returns the length of the selection, if any.
-*/
+/**
+ * @brief Returns the byte length of the current selection within the inline text.
+ *
+ * @return Selection length in bytes.
+ */
 int32
 BTextView::InlineInput::SelectionLength() const
 {
@@ -120,9 +184,11 @@ BTextView::InlineInput::SelectionLength() const
 }
 
 
-/*! \brief Sets the length of the selection.
-	\param length The length of the selection.
-*/
+/**
+ * @brief Sets the byte length of the current selection.
+ *
+ * @param length New selection length in bytes.
+ */
 void
 BTextView::InlineInput::SetSelectionLength(int32 length)
 {
@@ -130,8 +196,11 @@ BTextView::InlineInput::SetSelectionLength(int32 length)
 }
 
 
-/*! \brief Returns the offset into the method string of the selection.
-*/
+/**
+ * @brief Returns the byte offset of the selection within the inline-input string.
+ *
+ * @return Selection start offset (relative to the start of the inline text).
+ */
 int32
 BTextView::InlineInput::SelectionOffset() const
 {
@@ -139,9 +208,11 @@ BTextView::InlineInput::SelectionOffset() const
 }
 
 
-/*! \brief Sets the offset into the method string of the selection.
-	\param offset The offset where the selection starts.
-*/
+/**
+ * @brief Sets the byte offset of the selection within the inline-input string.
+ *
+ * @param offset Offset where the selection starts, relative to the inline text.
+ */
 void
 BTextView::InlineInput::SetSelectionOffset(int32 offset)
 {
@@ -149,10 +220,16 @@ BTextView::InlineInput::SetSelectionOffset(int32 offset)
 }
 
 
-/*! \brief Adds a clause (see "The Input Server" sez. for details).
-	\param start The offset into the string where the clause starts.
-	\param end The offset into the string where the clause finishes.
-*/
+/**
+ * @brief Appends a clause range to the clause list.
+ *
+ * Clauses partition the inline-input text into segments that may be
+ * rendered with different highlight colours (see the Input Server docs).
+ *
+ * @param start Byte offset into the inline-input string where the clause starts.
+ * @param end   Byte offset where the clause ends.
+ * @return true on success, false if memory allocation failed.
+ */
 bool
 BTextView::InlineInput::AddClause(int32 start, int32 end)
 {
@@ -168,12 +245,14 @@ BTextView::InlineInput::AddClause(int32 start, int32 end)
 }
 
 
-/*! \brief Gets the clause at the given index.
-	\param index The index of the clause to get.
-	\param start A pointer to an integer which will contain the clause's start offset.
-	\param end A pointer to an integer which will contain the clause's end offset.
-	\return \c true if the clause exists, \c false if not.
-*/
+/**
+ * @brief Retrieves the clause at a given index.
+ *
+ * @param index Index of the clause (0-based).
+ * @param start Output: byte offset where the clause starts; may be NULL.
+ * @param end   Output: byte offset where the clause ends; may be NULL.
+ * @return true if the index is valid, false if it is out of range.
+ */
 bool
 BTextView::InlineInput::GetClause(int32 index, int32 *start, int32 *end) const
 {
@@ -186,11 +265,16 @@ BTextView::InlineInput::GetClause(int32 index, int32 *start, int32 *end) const
 		if (end)
 			*end = clause->end;
 	}
-	
+
 	return result;
 }
 
 
+/**
+ * @brief Returns the number of clauses currently registered.
+ *
+ * @return Clause count.
+ */
 int32
 BTextView::InlineInput::CountClauses() const
 {
@@ -198,8 +282,9 @@ BTextView::InlineInput::CountClauses() const
 }
 
 
-/*! \brief Deletes any added clause.
-*/
+/**
+ * @brief Removes all clauses and frees the associated memory.
+ */
 void
 BTextView::InlineInput::ResetClauses()
 {

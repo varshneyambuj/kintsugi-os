@@ -1,7 +1,41 @@
 /*
- * Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file Image.cpp
+ * @brief ELF image wrappers for the debug kit symbol-lookup subsystem.
+ *
+ * Implements the Image class hierarchy used by SymbolLookup to walk the symbol
+ * tables of loaded and on-disk ELF images. Concrete subclasses cover user-land
+ * image files (ImageFile), kernel images (KernelImage), and the commpage
+ * shared image (CommPageImage). SymbolTableBasedImage provides the common
+ * linear symbol-table scan shared by all ELF-based subclasses.
+ *
+ * @see SymbolLookup, debug_support.h
+ */
+
 
 #include "Image.h"
 
@@ -24,16 +58,40 @@ using namespace BPrivate::Debug;
 // #pragma mark - Image
 
 
+/**
+ * @brief Default constructor — initialises an empty Image descriptor.
+ */
 Image::Image()
 {
 }
 
 
+/**
+ * @brief Destructor — subclasses are responsible for releasing their resources.
+ */
 Image::~Image()
 {
 }
 
 
+/**
+ * @brief Search the image's symbol table for a symbol matching the given name.
+ *
+ * Iterates over all symbols via NextSymbol() looking for one whose name equals
+ * @a name and whose type matches @a symbolType (or B_SYMBOL_TYPE_ANY). On
+ * success the optional output pointers are populated.
+ *
+ * @param name             Null-terminated symbol name to look up.
+ * @param symbolType       Required symbol type (B_SYMBOL_TYPE_TEXT,
+ *                         B_SYMBOL_TYPE_DATA, or B_SYMBOL_TYPE_ANY).
+ * @param _symbolLocation  Output — receives the runtime address of the symbol,
+ *                         or unchanged if NULL.
+ * @param _symbolSize      Output — receives the size of the symbol in bytes,
+ *                         or unchanged if NULL.
+ * @param _symbolType      Output — receives the resolved symbol type,
+ *                         or unchanged if NULL.
+ * @return B_OK if the symbol is found, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 Image::GetSymbol(const char* name, int32 symbolType, void** _symbolLocation,
 	size_t* _symbolSize, int32* _symbolType) const
@@ -66,6 +124,9 @@ Image::GetSymbol(const char* name, int32 symbolType, void** _symbolLocation,
 // #pragma mark - SymbolTableBasedImage
 
 
+/**
+ * @brief Default constructor — zeroes all ELF symbol-table pointers.
+ */
 SymbolTableBasedImage::SymbolTableBasedImage()
 	:
 	fLoadDelta(0),
@@ -77,11 +138,31 @@ SymbolTableBasedImage::SymbolTableBasedImage()
 }
 
 
+/**
+ * @brief Destructor — subclasses own the table storage and must free it.
+ */
 SymbolTableBasedImage::~SymbolTableBasedImage()
 {
 }
 
 
+/**
+ * @brief Find the symbol that best covers the given runtime address.
+ *
+ * Performs a linear scan of the ELF symbol table. An exact match (address
+ * falls within [symbol_start, symbol_start+size)) terminates the search
+ * immediately; otherwise the closest preceding symbol is returned.
+ *
+ * @param address       Runtime address to resolve.
+ * @param _baseAddress  Output — receives the load address of the found symbol.
+ * @param _symbolName   Output — receives a pointer into the string table for
+ *                      the symbol's name.
+ * @param _symbolNameLen Output — receives the length of the symbol name string.
+ * @param _exactMatch   Output — set to true when the address falls within the
+ *                      symbol's size range.
+ * @return A pointer to the matching elf_sym entry, or NULL if no symbol covers
+ *         the address.
+ */
 const elf_sym*
 SymbolTableBasedImage::LookupSymbol(addr_t address, addr_t* _baseAddress,
 	const char** _symbolName, size_t *_symbolNameLen, bool *_exactMatch) const
@@ -132,6 +213,22 @@ SymbolTableBasedImage::LookupSymbol(addr_t address, addr_t* _baseAddress,
 }
 
 
+/**
+ * @brief Advance the symbol iterator to the next function or data symbol.
+ *
+ * Increments @a iterator and skips entries that are neither STT_FUNC nor
+ * STT_OBJECT, or whose st_value is zero, until a usable symbol is found or
+ * the table is exhausted.
+ *
+ * @param iterator      Iteration state — pass -1 on the first call; updated
+ *                      to the index of the returned symbol on success.
+ * @param _symbolName   Output — pointer into the string table for the symbol name.
+ * @param _symbolNameLen Output — length of the symbol name.
+ * @param _symbolAddress Output — runtime address of the symbol.
+ * @param _symbolSize    Output — size of the symbol in bytes.
+ * @param _symbolType    Output — B_SYMBOL_TYPE_TEXT or B_SYMBOL_TYPE_DATA.
+ * @return B_OK when a symbol is returned, B_ENTRY_NOT_FOUND at end-of-table.
+ */
 status_t
 SymbolTableBasedImage::NextSymbol(int32& iterator, const char** _symbolName,
 	size_t* _symbolNameLen, addr_t* _symbolAddress, size_t* _symbolSize,
@@ -160,6 +257,16 @@ SymbolTableBasedImage::NextSymbol(int32& iterator, const char** _symbolName,
 }
 
 
+/**
+ * @brief Return the safe length of a symbol name stored in the string table.
+ *
+ * Guards against out-of-bounds string pointers by clamping the strnlen search
+ * to the end of the mapped string table buffer.
+ *
+ * @param symbolName  Pointer into the string table.
+ * @return Number of bytes in the name excluding the NUL terminator, or 0 if
+ *         the pointer is NULL or outside the string table range.
+ */
 size_t
 SymbolTableBasedImage::_SymbolNameLen(const char* symbolName) const
 {
@@ -176,6 +283,9 @@ SymbolTableBasedImage::_SymbolNameLen(const char* symbolName) const
 // #pragma mark - ImageFile
 
 
+/**
+ * @brief Constructor — initialises an unmapped ImageFile descriptor.
+ */
 ImageFile::ImageFile()
 	:
 	fFD(-1),
@@ -185,6 +295,9 @@ ImageFile::ImageFile()
 }
 
 
+/**
+ * @brief Destructor — unmaps the file and closes the file descriptor.
+ */
 ImageFile::~ImageFile()
 {
 	if (fMappedFile != MAP_FAILED)
@@ -195,6 +308,17 @@ ImageFile::~ImageFile()
 }
 
 
+/**
+ * @brief Initialise the ImageFile from a running image's image_info record.
+ *
+ * Copies the provided info, loads the ELF file from disk, and computes the
+ * load delta as the difference between the mapped text address and the
+ * recorded runtime text address.
+ *
+ * @param info  The image_info record obtained from get_image_info() or the
+ *              image-created debug event for the target team.
+ * @return B_OK on success, or a file/parse error code on failure.
+ */
 status_t
 ImageFile::Init(const image_info& info)
 {
@@ -218,6 +342,15 @@ ImageFile::Init(const image_info& info)
 }
 
 
+/**
+ * @brief Initialise the ImageFile directly from a file path.
+ *
+ * Loads the ELF file from @a path without any running-image context. The
+ * synthesised image_info is marked with id=-1 and load delta 0.
+ *
+ * @param path  Absolute path to the ELF image file on disk.
+ * @return B_OK on success, or a file/parse error code on failure.
+ */
 status_t
 ImageFile::Init(const char* path)
 {
@@ -253,6 +386,22 @@ ImageFile::Init(const char* path)
 }
 
 
+/**
+ * @brief Open, map, and parse the ELF headers of the image file at @a path.
+ *
+ * Opens the file, memory-maps it read-only, validates the ELF magic and class,
+ * locates the text and data PT_LOAD segments, and then delegates to
+ * _FindTableInSection() to populate the symbol and string table pointers.
+ * Tries SHT_SYMTAB first; falls back to SHT_DYNSYM if unavailable.
+ *
+ * @param path          Path to the ELF file on disk.
+ * @param _textAddress  Output — virtual address of the first read-only segment.
+ * @param _textSize     Output — byte size of the combined text region.
+ * @param _dataAddress  Output — virtual address of the first writable segment.
+ * @param _dataSize     Output — byte size of the combined data region.
+ * @return B_OK on success; B_NOT_AN_EXECUTABLE, B_BAD_DATA, or an errno value
+ *         on failure.
+ */
 status_t
 ImageFile::_LoadFile(const char* path, addr_t* _textAddress, size_t* _textSize,
 	addr_t* _dataAddress, size_t* _dataSize)
@@ -351,6 +500,17 @@ ImageFile::_LoadFile(const char* path, addr_t* _textAddress, size_t* _textSize,
 }
 
 
+/**
+ * @brief Locate the ELF symbol table section of the given type and cache it.
+ *
+ * Iterates the section header table looking for a section whose sh_type equals
+ * @a sectionType. When found, validates its associated SHT_STRTAB section and
+ * sets fSymbolTable, fStringTable, fSymbolCount, and fStringTableSize.
+ *
+ * @param elfHeader    Pointer to the start of the mapped ELF file.
+ * @param sectionType  Section type to search for (SHT_SYMTAB or SHT_DYNSYM).
+ * @return B_OK when the table is found and validated, B_BAD_DATA otherwise.
+ */
 status_t
 ImageFile::_FindTableInSection(elf_ehdr* elfHeader, uint16 sectionType)
 {
@@ -393,11 +553,17 @@ ImageFile::_FindTableInSection(elf_ehdr* elfHeader, uint16 sectionType)
 // #pragma mark - KernelImage
 
 
+/**
+ * @brief Constructor — initialises an empty KernelImage descriptor.
+ */
 KernelImage::KernelImage()
 {
 }
 
 
+/**
+ * @brief Destructor — frees the heap-allocated symbol and string tables.
+ */
 KernelImage::~KernelImage()
 {
 	delete[] fSymbolTable;
@@ -405,6 +571,16 @@ KernelImage::~KernelImage()
 }
 
 
+/**
+ * @brief Initialise the KernelImage from the running kernel image.
+ *
+ * Uses _kern_read_kernel_image_symbols() to allocate and populate the symbol
+ * and string tables directly from kernel memory. Also retrieves the load delta
+ * used to translate symbol values to runtime addresses.
+ *
+ * @param info  The image_info record for the kernel image (B_SYSTEM_TEAM).
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or a syscall error.
+ */
 status_t
 KernelImage::Init(const image_info& info)
 {
@@ -431,11 +607,17 @@ KernelImage::Init(const image_info& info)
 }
 
 
+/**
+ * @brief Constructor — initialises an empty CommPageImage descriptor.
+ */
 CommPageImage::CommPageImage()
 {
 }
 
 
+/**
+ * @brief Destructor — frees the heap-allocated symbol and string tables.
+ */
 CommPageImage::~CommPageImage()
 {
 	delete[] fSymbolTable;
@@ -443,6 +625,17 @@ CommPageImage::~CommPageImage()
 }
 
 
+/**
+ * @brief Initialise the CommPageImage for the commpage shared mapping.
+ *
+ * Locates the "commpage" kernel image by scanning the system team's image
+ * list, loads its symbol and string tables via _kern_read_kernel_image_symbols(),
+ * and sets fLoadDelta to the runtime text address supplied in @a info.
+ *
+ * @param info  The image_info record for the commpage mapping in the target team.
+ * @return B_OK on success; B_ENTRY_NOT_FOUND if no "commpage" image is found;
+ *         B_NO_MEMORY on allocation failure; or a syscall error code.
+ */
 status_t
 CommPageImage::Init(const image_info& info)
 {

@@ -1,9 +1,42 @@
 /*
- * Copyright 2013-2016 Haiku, Inc.
- * Copyright 2011-2015, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Copyright 2010, Clemens Zeidler <haiku@clemens-zeidler.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2016 Haiku, Inc.
+ *   Copyright 2011-2015, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Copyright 2010, Clemens Zeidler <haiku@clemens-zeidler.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file SecureSocket.cpp
+ * @brief Implementation of BSecureSocket, an OpenSSL-backed TLS socket.
+ *
+ * BSecureSocket wraps BSocket with a TLS/SSL layer provided by OpenSSL.
+ * It lazily initialises a shared SSL_CTX with secure defaults (TLS 1.0+,
+ * no compression, CRIME mitigation) and exposes certificate-verification
+ * hooks.  When OpenSSL is not available at build time, all methods return
+ * B_UNSUPPORTED.
+ *
+ * @see BSocket, BCertificate
  */
 
 
@@ -40,8 +73,17 @@
 
 #ifdef TRACE_SESSION_KEY
 
-// print client random id and master key in NSS keylog format
-// as session ID is not enough.
+/**
+ * @brief Print the TLS client-random and master-key pair in NSS keylog format.
+ *
+ * This helper is only compiled when TRACE_SESSION_KEY is defined.  It writes
+ * a "CLIENT_RANDOM <hex> <hex>" line to \a bp so that Wireshark or similar
+ * tools can decrypt the captured session.
+ *
+ * @param bp   OpenSSL BIO to write the keylog line to.
+ * @param ssl  The SSL session whose keys are to be logged.
+ * @return 1 on success, 0 on any error.
+ */
 int SSL_SESSION_print_client_random(BIO *bp, const SSL *ssl)
 {
 	const SSL_SESSION *x = SSL_get_session(ssl);
@@ -116,6 +158,9 @@ public:
 #endif
 
 
+/**
+ * @brief Construct Private and allocate a new BIO backed by a socket.
+ */
 BSecureSocket::Private::Private()
 	:
 	fSSL(NULL),
@@ -124,6 +169,12 @@ BSecureSocket::Private::Private()
 }
 
 
+/**
+ * @brief Destructor — frees the SSL session and underlying BIO.
+ *
+ * If Connect() was never called successfully, only the BIO is freed directly.
+ * Otherwise SSL_free() takes ownership and frees both.
+ */
 BSecureSocket::Private::~Private()
 {
 	// SSL_free also frees the underlying BIO.
@@ -137,6 +188,11 @@ BSecureSocket::Private::~Private()
 }
 
 
+/**
+ * @brief Check whether the Private BIO was allocated successfully.
+ *
+ * @return B_OK if the BIO is valid, B_NO_MEMORY otherwise.
+ */
 status_t
 BSecureSocket::Private::InitCheck()
 {
@@ -146,6 +202,16 @@ BSecureSocket::Private::InitCheck()
 }
 
 
+/**
+ * @brief Translate an OpenSSL error return value into a Haiku status code.
+ *
+ * Inspects the SSL error queue and maps SSL_ERROR_* codes to Haiku
+ * equivalents.  Also drains the OpenSSL error stack and prints any
+ * additional diagnostics to stderr.
+ *
+ * @param returnValue  The value returned by the most recent SSL_read/write/connect.
+ * @return A Haiku status code representing the SSL error condition.
+ */
 status_t
 BSecureSocket::Private::ErrorCode(int returnValue)
 {
@@ -202,6 +268,15 @@ BSecureSocket::Private::ErrorCode(int returnValue)
 }
 
 
+/**
+ * @brief Return the shared SSL_CTX, creating it on first use.
+ *
+ * Uses pthread_once to ensure the context is initialised exactly once per
+ * process.  The context is configured with secure cipher suites, TLS 1.0+,
+ * and certificate verification via the system CA store.
+ *
+ * @return Pointer to the shared SSL_CTX, or NULL if initialisation failed.
+ */
 /* static */ SSL_CTX*
 BSecureSocket::Private::Context()
 {
@@ -214,9 +289,18 @@ BSecureSocket::Private::Context()
 }
 
 
-/*!	This is called each time a certificate verification occurs. It allows us to
-	catch failures and report them.
-*/
+/**
+ * @brief OpenSSL certificate-verification callback invoked for each certificate in the chain.
+ *
+ * If OpenSSL already approved the certificate, this function passes it through.
+ * Otherwise it extracts the failing certificate and the error string and
+ * calls CertificateVerificationFailed() on the owning BSecureSocket to allow
+ * application-level override.
+ *
+ * @param ok   Non-zero if OpenSSL's own verification succeeded.
+ * @param ctx  The X.509 store context carrying the failing certificate.
+ * @return Non-zero to continue the connection, zero to abort it.
+ */
 /* static */ int
 BSecureSocket::Private::VerifyCallback(int ok, X509_STORE_CTX* ctx)
 {
@@ -255,6 +339,16 @@ BSecureSocket::Private::VerifyCallback(int ok, X509_STORE_CTX* ctx)
 
 
 #if TRACE_SSL
+/**
+ * @brief OpenSSL info callback that prints SSL state changes to stderr.
+ *
+ * Enabled only when TRACE_SSL is defined.  Useful for diagnosing handshake
+ * failures during development.
+ *
+ * @param s    The SSL connection.
+ * @param where Bitmask indicating which event triggered the callback.
+ * @param ret  Return value of the operation that triggered the callback.
+ */
 static void apps_ssl_info_callback(const SSL *s, int where, int ret)
 {
 	const char *str;
@@ -292,6 +386,14 @@ static void apps_ssl_info_callback(const SSL *s, int where, int ret)
 #endif
 
 
+/**
+ * @brief One-time initialiser for the shared SSL_CTX.
+ *
+ * Creates an SSLv23 context (TLS 1.0+), disables SSLv2/3 and compression,
+ * sets secure cipher suites, and configures certificate verification against
+ * the system CA store.  Also allocates the per-connection data index used
+ * to store the BSecureSocket pointer inside SSL structs.
+ */
 /* static */ void
 BSecureSocket::Private::_CreateContext()
 {
@@ -361,6 +463,9 @@ BSecureSocket::Private::_CreateContext()
 // # pragma mark - BSecureSocket
 
 
+/**
+ * @brief Default constructor — creates an unconnected secure socket.
+ */
 BSecureSocket::BSecureSocket()
 	:
 	fPrivate(new(std::nothrow) BSecureSocket::Private())
@@ -369,6 +474,12 @@ BSecureSocket::BSecureSocket()
 }
 
 
+/**
+ * @brief Construct and immediately connect to \a peer with a TLS handshake.
+ *
+ * @param peer     Remote network address to connect to.
+ * @param timeout  Connection timeout in microseconds.
+ */
 BSecureSocket::BSecureSocket(const BNetworkAddress& peer, bigtime_t timeout)
 	:
 	fPrivate(new(std::nothrow) BSecureSocket::Private())
@@ -378,6 +489,13 @@ BSecureSocket::BSecureSocket(const BNetworkAddress& peer, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Copy constructor — duplicates the SSL session from \a other.
+ *
+ * @param other  The source BSecureSocket to copy.
+ * @note This constructor is not fully implemented; SSL session copying
+ *       requires additional Private copy-constructor work.
+ */
 BSecureSocket::BSecureSocket(const BSecureSocket& other)
 	:
 	BSocket(other)
@@ -394,12 +512,24 @@ BSecureSocket::BSecureSocket(const BSecureSocket& other)
 }
 
 
+/**
+ * @brief Destructor — frees the Private SSL state.
+ */
 BSecureSocket::~BSecureSocket()
 {
 	delete fPrivate;
 }
 
 
+/**
+ * @brief Accept an incoming TLS connection and perform the server-side handshake.
+ *
+ * Wraps AcceptNext() with SSL setup so the returned socket is already
+ * TLS-connected.
+ *
+ * @param _socket  Output parameter set to the new connected BSecureSocket.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an SSL error code.
+ */
 status_t
 BSecureSocket::Accept(BAbstractSocket*& _socket)
 {
@@ -427,6 +557,16 @@ BSecureSocket::Accept(BAbstractSocket*& _socket)
 }
 
 
+/**
+ * @brief Connect to \a peer and perform the TLS client-side handshake.
+ *
+ * First establishes the underlying TCP connection via BSocket::Connect,
+ * then negotiates TLS using the server's hostname for SNI and verification.
+ *
+ * @param peer     Remote network address including hostname.
+ * @param timeout  Connection timeout in microseconds.
+ * @return B_OK on success, or an error code on TCP or TLS failure.
+ */
 status_t
 BSecureSocket::Connect(const BNetworkAddress& peer, bigtime_t timeout)
 {
@@ -442,6 +582,9 @@ BSecureSocket::Connect(const BNetworkAddress& peer, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Shut down the TLS session and close the underlying socket.
+ */
 void
 BSecureSocket::Disconnect()
 {
@@ -454,6 +597,14 @@ BSecureSocket::Disconnect()
 }
 
 
+/**
+ * @brief Block until data is readable or \a timeout elapses.
+ *
+ * Checks for buffered SSL data first before falling back to the socket layer.
+ *
+ * @param timeout  Maximum wait time in microseconds.
+ * @return B_OK if data is available, or an error code on failure or timeout.
+ */
 status_t
 BSecureSocket::WaitForReadable(bigtime_t timeout) const
 {
@@ -469,6 +620,11 @@ BSecureSocket::WaitForReadable(bigtime_t timeout) const
 }
 
 
+/**
+ * @brief Return the initialisation status of this socket.
+ *
+ * @return B_OK if the socket is ready, B_NO_MEMORY if Private allocation failed.
+ */
 status_t
 BSecureSocket::InitCheck()
 {
@@ -480,6 +636,13 @@ BSecureSocket::InitCheck()
 }
 
 
+/**
+ * @brief Called when certificate verification fails; allows subclasses to override.
+ *
+ * The default implementation rejects the connection unconditionally.
+ *
+ * @return false to abort the connection, true to continue despite the failure.
+ */
 bool
 BSecureSocket::CertificateVerificationFailed(BCertificate&, const char*)
 {
@@ -490,6 +653,15 @@ BSecureSocket::CertificateVerificationFailed(BCertificate&, const char*)
 //	#pragma mark - BDataIO implementation
 
 
+/**
+ * @brief Read up to \a size bytes from the TLS stream into \a buffer.
+ *
+ * Retries on EINTR and handles WANT_READ/WANT_WRITE by returning B_WOULD_BLOCK.
+ *
+ * @param buffer  Destination buffer for received data.
+ * @param size    Maximum number of bytes to read.
+ * @return Number of bytes read on success, or a negative error code.
+ */
 ssize_t
 BSecureSocket::Read(void* buffer, size_t size)
 {
@@ -522,6 +694,15 @@ BSecureSocket::Read(void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Write up to \a size bytes from \a buffer into the TLS stream.
+ *
+ * Retries on EINTR and handles WANT_READ/WANT_WRITE by returning B_WOULD_BLOCK.
+ *
+ * @param buffer  Source buffer containing data to send.
+ * @param size    Number of bytes to write.
+ * @return Number of bytes written on success, or a negative error code.
+ */
 ssize_t
 BSecureSocket::Write(const void* buffer, size_t size)
 {
@@ -554,6 +735,17 @@ BSecureSocket::Write(const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Shared SSL setup code run before both Connect and Accept handshakes.
+ *
+ * Creates a fresh SSL object from the shared context, binds the socket's
+ * file descriptor to the BIO, and optionally configures SNI and hostname
+ * verification via the \a host parameter.
+ *
+ * @param host  Server hostname for SNI and certificate verification, or NULL/empty
+ *              to skip host-based verification.
+ * @return B_OK on success, B_NO_MEMORY if SSL_new fails.
+ */
 status_t
 BSecureSocket::_SetupCommon(const char* host)
 {
@@ -582,6 +774,15 @@ BSecureSocket::_SetupCommon(const char* host)
 }
 
 
+/**
+ * @brief Perform the TLS client-side handshake after TCP connection.
+ *
+ * Calls _SetupCommon() to configure the SSL object, then invokes
+ * SSL_connect() to complete the TLS handshake.
+ *
+ * @param host  Server hostname for SNI and certificate verification.
+ * @return B_OK on success, or an SSL error code on handshake failure.
+ */
 status_t
 BSecureSocket::_SetupConnect(const char* host)
 {
@@ -608,6 +809,14 @@ BSecureSocket::_SetupConnect(const char* host)
 }
 
 
+/**
+ * @brief Perform the TLS server-side handshake after accepting a connection.
+ *
+ * Calls _SetupCommon() with no hostname (server role), then invokes
+ * SSL_accept() to complete the TLS handshake.
+ *
+ * @return B_OK on success, or an SSL error code on handshake failure.
+ */
 status_t
 BSecureSocket::_SetupAccept()
 {
@@ -632,17 +841,31 @@ BSecureSocket::_SetupAccept()
 // #pragma mark - No-SSL stubs
 
 
+/**
+ * @brief Default constructor stub — no-op when OpenSSL is not available.
+ */
 BSecureSocket::BSecureSocket()
 {
 }
 
 
+/**
+ * @brief Constructor stub — sets fInitStatus to B_UNSUPPORTED.
+ *
+ * @param peer     Ignored.
+ * @param timeout  Ignored.
+ */
 BSecureSocket::BSecureSocket(const BNetworkAddress& peer, bigtime_t timeout)
 {
 	fInitStatus = B_UNSUPPORTED;
 }
 
 
+/**
+ * @brief Copy constructor stub when OpenSSL is not available.
+ *
+ * @param other  Source socket; base class is copied.
+ */
 BSecureSocket::BSecureSocket(const BSecureSocket& other)
 	:
 	BSocket(other)
@@ -650,11 +873,19 @@ BSecureSocket::BSecureSocket(const BSecureSocket& other)
 }
 
 
+/**
+ * @brief Destructor stub — no-op when OpenSSL is not available.
+ */
 BSecureSocket::~BSecureSocket()
 {
 }
 
 
+/**
+ * @brief Certificate-failure callback stub — always returns false.
+ *
+ * @return false unconditionally.
+ */
 bool
 BSecureSocket::CertificateVerificationFailed(BCertificate& certificate, const char*)
 {
@@ -663,6 +894,12 @@ BSecureSocket::CertificateVerificationFailed(BCertificate& certificate, const ch
 }
 
 
+/**
+ * @brief Accept stub — always returns B_UNSUPPORTED.
+ *
+ * @param _socket  Ignored.
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::Accept(BAbstractSocket*& _socket)
 {
@@ -670,6 +907,13 @@ BSecureSocket::Accept(BAbstractSocket*& _socket)
 }
 
 
+/**
+ * @brief Connect stub — always returns B_UNSUPPORTED.
+ *
+ * @param peer     Ignored.
+ * @param timeout  Ignored.
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::Connect(const BNetworkAddress& peer, bigtime_t timeout)
 {
@@ -677,12 +921,21 @@ BSecureSocket::Connect(const BNetworkAddress& peer, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Disconnect stub — no-op when OpenSSL is not available.
+ */
 void
 BSecureSocket::Disconnect()
 {
 }
 
 
+/**
+ * @brief WaitForReadable stub — always returns B_UNSUPPORTED.
+ *
+ * @param timeout  Ignored.
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::WaitForReadable(bigtime_t timeout) const
 {
@@ -693,6 +946,13 @@ BSecureSocket::WaitForReadable(bigtime_t timeout) const
 //	#pragma mark - BDataIO implementation
 
 
+/**
+ * @brief Read stub — always returns B_UNSUPPORTED.
+ *
+ * @param buffer  Ignored.
+ * @param size    Ignored.
+ * @return B_UNSUPPORTED.
+ */
 ssize_t
 BSecureSocket::Read(void* buffer, size_t size)
 {
@@ -700,6 +960,13 @@ BSecureSocket::Read(void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Write stub — always returns B_UNSUPPORTED.
+ *
+ * @param buffer  Ignored.
+ * @param size    Ignored.
+ * @return B_UNSUPPORTED.
+ */
 ssize_t
 BSecureSocket::Write(const void* buffer, size_t size)
 {
@@ -707,6 +974,11 @@ BSecureSocket::Write(const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief InitCheck stub — always returns B_UNSUPPORTED.
+ *
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::InitCheck()
 {
@@ -714,6 +986,12 @@ BSecureSocket::InitCheck()
 }
 
 
+/**
+ * @brief _SetupCommon stub — always returns B_UNSUPPORTED.
+ *
+ * @param host  Ignored.
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::_SetupCommon(const char* host)
 {
@@ -721,6 +999,12 @@ BSecureSocket::_SetupCommon(const char* host)
 }
 
 
+/**
+ * @brief _SetupConnect stub — always returns B_UNSUPPORTED.
+ *
+ * @param host  Ignored.
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::_SetupConnect(const char* host)
 {
@@ -728,6 +1012,11 @@ BSecureSocket::_SetupConnect(const char* host)
 }
 
 
+/**
+ * @brief _SetupAccept stub — always returns B_UNSUPPORTED.
+ *
+ * @return B_UNSUPPORTED.
+ */
 status_t
 BSecureSocket::_SetupAccept()
 {

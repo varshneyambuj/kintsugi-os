@@ -1,13 +1,43 @@
 /*
- * Copyright 2004-2012, Haiku, Inc. All rights reserved.
- * Copyright 2001, Dr. Zoidberg Enterprises. All rights reserved.
- * Copyright 2011, Clemens Zeidler. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2012, Haiku, Inc. All rights reserved.
+ *   Copyright 2001, Dr. Zoidberg Enterprises. All rights reserved.
+ *   Copyright 2011, Clemens Zeidler. All rights reserved.
+ *
+ *   Distributed under the terms of the MIT License.
  */
 
 
-//!	C-mail API - compatibility function (stubs) for the old mail kit
+/**
+ * @file c_mail_api.cpp
+ * @brief C-style compatibility stubs for the legacy BeOS mail kit.
+ *
+ * Implements the flat C functions declared in E-mail.h so that applications
+ * written against the original BeOS R5 mail API continue to link without
+ * modification. Most functions delegate directly to BMailDaemon,
+ * BMailSettings, or BMailAccounts; write operations that lack a modern
+ * equivalent return B_NO_REPLY.
+ *
+ * @see BMailDaemon, BMailSettings, BMailAccounts
+ */
 
 
 #include <stdlib.h>
@@ -26,6 +56,16 @@
 #include <MailSettings.h>
 
 
+/**
+ * @brief Triggers a mail check and optionally returns the new message count.
+ *
+ * Asks the mail daemon to check all accounts for new mail. If
+ * \a _incomingCount is non-NULL it is filled with the number of new messages
+ * available after the check completes.
+ *
+ * @param _incomingCount  Output pointer for the new message count, or NULL.
+ * @return B_OK on success, or a daemon error code on failure.
+ */
 _EXPORT status_t
 check_for_mail(int32* _incomingCount)
 {
@@ -40,6 +80,11 @@ check_for_mail(int32* _incomingCount)
 }
 
 
+/**
+ * @brief Sends all messages currently queued in the outbox.
+ *
+ * @return B_OK on success, or a daemon error code on failure.
+ */
 _EXPORT status_t
 send_queued_mail(void)
 {
@@ -47,6 +92,11 @@ send_queued_mail(void)
 }
 
 
+/**
+ * @brief Returns the number of configured POP/inbound accounts.
+ *
+ * @return Number of inbound mail accounts known to the mail settings.
+ */
 _EXPORT int32
 count_pop_accounts(void)
 {
@@ -55,6 +105,14 @@ count_pop_accounts(void)
 }
 
 
+/**
+ * @brief Retrieves the current mail notification settings.
+ *
+ * Always returns alert=true and beep=false as a stub implementation.
+ *
+ * @param notification  Output structure to fill with notification preferences.
+ * @return B_OK always.
+ */
 _EXPORT status_t
 get_mail_notification(mail_notification *notification)
 {
@@ -64,6 +122,11 @@ get_mail_notification(mail_notification *notification)
 }
 
 
+/**
+ * @brief Sets the mail notification preferences (stub — not implemented).
+ *
+ * @return B_NO_REPLY always; write-back is not supported by the new mail kit.
+ */
 _EXPORT status_t
 set_mail_notification(mail_notification *, bool)
 {
@@ -71,6 +134,17 @@ set_mail_notification(mail_notification *, bool)
 }
 
 
+/**
+ * @brief Retrieves the settings for a POP account by index.
+ *
+ * Reads account credentials from the BMailAccountSettings at \a index.
+ * The encrypted password stored in "cpasswd" is decrypted before copying;
+ * the caller does not need to free the returned data.
+ *
+ * @param account  Output structure to receive the account parameters.
+ * @param index    Zero-based index into the list of configured accounts.
+ * @return B_OK on success, B_BAD_INDEX if \a index is out of range.
+ */
 _EXPORT status_t
 get_pop_account(mail_pop_account* account, int32 index)
 {
@@ -96,6 +170,11 @@ get_pop_account(mail_pop_account* account, int32 index)
 }
 
 
+/**
+ * @brief Sets a POP account by index (stub — not implemented).
+ *
+ * @return B_NO_REPLY always; write-back is not supported by the new mail kit.
+ */
 _EXPORT status_t
 set_pop_account(mail_pop_account *, int32, bool)
 {
@@ -103,6 +182,16 @@ set_pop_account(mail_pop_account *, int32, bool)
 }
 
 
+/**
+ * @brief Retrieves the hostname of the default outbound (SMTP) server.
+ *
+ * Looks up the default outbound account from BMailSettings and copies its
+ * server name into \a buffer (caller must provide at least B_MAX_HOST_NAME_LENGTH bytes).
+ *
+ * @param buffer  Output buffer to receive the null-terminated hostname.
+ * @return B_OK on success, B_ERROR if no default account exists,
+ *         B_NAME_NOT_FOUND if the account has no server configured.
+ */
 _EXPORT status_t
 get_smtp_host(char* buffer)
 {
@@ -122,6 +211,11 @@ get_smtp_host(char* buffer)
 }
 
 
+/**
+ * @brief Sets the default SMTP hostname (stub — not implemented).
+ *
+ * @return B_NO_REPLY always; write-back is not supported by the new mail kit.
+ */
 _EXPORT status_t
 set_smtp_host(char * /* host */, bool /* save */)
 {
@@ -129,6 +223,18 @@ set_smtp_host(char * /* host */, bool /* save */)
 }
 
 
+/**
+ * @brief Forwards an on-disk mail message to a new set of recipients.
+ *
+ * Opens the RFC 822 file identified by \a ref, creates a BEmailMessage from
+ * it, replaces the To field with \a recipients, and sends it immediately or
+ * queued depending on \a now.
+ *
+ * @param ref         entry_ref of the mail file to forward.
+ * @param recipients  Comma-separated list of recipient addresses.
+ * @param now         If true, send immediately; otherwise queue for later.
+ * @return B_OK on success, or a file or daemon error code on failure.
+ */
 _EXPORT status_t
 forward_mail(entry_ref *ref, const char *recipients, bool now)
 {

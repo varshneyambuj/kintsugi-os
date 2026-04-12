@@ -1,40 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
-
-//	NodePreloader manages caching up icons from apps and prefs folder for
-//	fast display
-//
+/**
+ * @file NodePreloader.cpp
+ * @brief Background icon pre-loader for the Tracker Applications and Prefs folders.
+ *
+ * NodePreloader is a BHandler that enumerates well-known directories on a
+ * worker thread, loading each entry's icon into IconCache before it is needed
+ * for display.  It also subscribes to node-monitor notifications so the cache
+ * stays up to date when files are added, removed, or modified.
+ *
+ * @see IconCache, TTracker
+ */
 
 #include <Debug.h>
 #include <Directory.h>
@@ -51,6 +51,16 @@ All rights reserved.
 #include "Tracker.h"
 
 
+/**
+ * @brief Create a NodePreloader, add it to @p host, and start the preload thread.
+ *
+ * Allocates the preloader, adds it as a handler to @p host under the looper
+ * lock, then calls Run() to start background preloading.
+ *
+ * @param name  Handler name for the new preloader.
+ * @param host  The BLooper that will own and route messages to this handler.
+ * @return Pointer to the new NodePreloader, or NULL if @p host could not be locked.
+ */
 NodePreloader*
 NodePreloader::InstallNodePreloader(const char* name, BLooper* host)
 {
@@ -70,6 +80,11 @@ NodePreloader::InstallNodePreloader(const char* name, BLooper* host)
 }
 
 
+/**
+ * @brief Construct a NodePreloader handler with the given name.
+ *
+ * @param name  The BHandler name string.
+ */
 NodePreloader::NodePreloader(const char* name)
 	:
 	BHandler(name),
@@ -79,6 +94,9 @@ NodePreloader::NodePreloader(const char* name)
 }
 
 
+/**
+ * @brief Destroy the NodePreloader, blocking until the Preload thread exits.
+ */
 NodePreloader::~NodePreloader()
 {
 	// block deletion while we are locked
@@ -87,6 +105,9 @@ NodePreloader::~NodePreloader()
 }
 
 
+/**
+ * @brief Start the background Preload() worker thread.
+ */
 void
 NodePreloader::Run()
 {
@@ -95,6 +116,12 @@ NodePreloader::Run()
 }
 
 
+/**
+ * @brief Search the preloaded model list for a model matching @p itemNode.
+ *
+ * @param itemNode  The node_ref to search for.
+ * @return Pointer to the matching Model, or NULL if not found.
+ */
 Model*
 NodePreloader::FindModel(node_ref itemNode) const
 {
@@ -108,6 +135,14 @@ NodePreloader::FindModel(node_ref itemNode) const
 }
 
 
+/**
+ * @brief Respond to node-monitor notifications to keep the icon cache current.
+ *
+ * Handles B_ENTRY_REMOVED (evict from cache and model list) and
+ * B_ATTR_CHANGED/B_STAT_CHANGED (refresh icon in cache).
+ *
+ * @param message  The incoming BMessage.
+ */
 void
 NodePreloader::MessageReceived(BMessage* message)
 {
@@ -162,6 +197,14 @@ NodePreloader::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Preload icon data for every entry inside @p dirPath.
+ *
+ * Opens the directory, sets up a node monitor on it, then iterates each
+ * entry to load its icon into IconCache.  Called from the Preload() thread.
+ *
+ * @param dirPath  Absolute path of the directory to preload.
+ */
 void
 NodePreloader::PreloadOne(const char* dirPath)
 {

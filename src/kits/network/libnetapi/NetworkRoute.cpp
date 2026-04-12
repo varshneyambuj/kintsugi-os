@@ -1,7 +1,39 @@
 /*
- * Copyright 2013-2015 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2015 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file NetworkRoute.cpp
+ * @brief Implementation of BNetworkRoute, a kernel routing-table entry wrapper.
+ *
+ * BNetworkRoute wraps a route_entry and manages the heap-allocated sockaddr
+ * objects for destination, mask, gateway, and source addresses.  It also
+ * provides static helpers for querying the kernel routing table via ioctls.
+ *
+ * @see BNetworkInterface, BNetworkAddress
+ */
+
 
 #include <NetworkRoute.h>
 
@@ -13,12 +45,18 @@
 #include <AutoDeleter.h>
 
 
+/**
+ * @brief Construct a default BNetworkRoute with all fields zeroed.
+ */
 BNetworkRoute::BNetworkRoute()
 {
 	memset(&fRouteEntry, 0, sizeof(route_entry));
 }
 
 
+/**
+ * @brief Destructor — frees all dynamically allocated address fields.
+ */
 BNetworkRoute::~BNetworkRoute()
 {
 	UnsetDestination();
@@ -28,6 +66,12 @@ BNetworkRoute::~BNetworkRoute()
 }
 
 
+/**
+ * @brief Copy the route from another BNetworkRoute object.
+ *
+ * @param other  The source route to copy from.
+ * @return B_OK on success, or an error code if address allocation fails.
+ */
 status_t
 BNetworkRoute::SetTo(const BNetworkRoute& other)
 {
@@ -35,6 +79,16 @@ BNetworkRoute::SetTo(const BNetworkRoute& other)
 }
 
 
+/**
+ * @brief Populate this route from a raw route_entry structure.
+ *
+ * Deep-copies each non-NULL address field from \a routeEntry, sets the
+ * flags and MTU, and leaves source unset (the kernel does not provide it
+ * in routing-table dumps).
+ *
+ * @param routeEntry  The route_entry to copy data from.
+ * @return B_OK on success, or an error code if address allocation fails.
+ */
 status_t
 BNetworkRoute::SetTo(const route_entry& routeEntry)
 {
@@ -57,6 +111,14 @@ BNetworkRoute::SetTo(const route_entry& routeEntry)
 }
 
 
+/**
+ * @brief Transfer ownership of all address fields from another route.
+ *
+ * Performs a shallow copy of \a other's internal route_entry and then
+ * zeroes \a other so it no longer owns any addresses.
+ *
+ * @param other  The route to adopt; its fields are cleared on return.
+ */
 void
 BNetworkRoute::Adopt(BNetworkRoute& other)
 {
@@ -65,6 +127,11 @@ BNetworkRoute::Adopt(BNetworkRoute& other)
 }
 
 
+/**
+ * @brief Return a const reference to the underlying route_entry structure.
+ *
+ * @return Const reference to the internal route_entry.
+ */
 const route_entry&
 BNetworkRoute::RouteEntry() const
 {
@@ -72,6 +139,11 @@ BNetworkRoute::RouteEntry() const
 }
 
 
+/**
+ * @brief Return the destination address of the route, or NULL if unset.
+ *
+ * @return Pointer to the destination sockaddr, or NULL.
+ */
 const sockaddr*
 BNetworkRoute::Destination() const
 {
@@ -79,6 +151,12 @@ BNetworkRoute::Destination() const
 }
 
 
+/**
+ * @brief Set the destination address of the route.
+ *
+ * @param destination  The destination address to copy and store.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BNetworkRoute::SetDestination(const sockaddr& destination)
 {
@@ -86,6 +164,9 @@ BNetworkRoute::SetDestination(const sockaddr& destination)
 }
 
 
+/**
+ * @brief Clear the destination address and release its memory.
+ */
 void
 BNetworkRoute::UnsetDestination()
 {
@@ -93,6 +174,11 @@ BNetworkRoute::UnsetDestination()
 }
 
 
+/**
+ * @brief Return the route's subnet mask, or NULL if unset.
+ *
+ * @return Pointer to the mask sockaddr, or NULL.
+ */
 const sockaddr*
 BNetworkRoute::Mask() const
 {
@@ -100,6 +186,12 @@ BNetworkRoute::Mask() const
 }
 
 
+/**
+ * @brief Set the subnet mask of the route.
+ *
+ * @param mask  The mask address to copy and store.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BNetworkRoute::SetMask(const sockaddr& mask)
 {
@@ -107,6 +199,9 @@ BNetworkRoute::SetMask(const sockaddr& mask)
 }
 
 
+/**
+ * @brief Clear the subnet mask and release its memory.
+ */
 void
 BNetworkRoute::UnsetMask()
 {
@@ -114,6 +209,11 @@ BNetworkRoute::UnsetMask()
 }
 
 
+/**
+ * @brief Return the gateway address of the route, or NULL if unset.
+ *
+ * @return Pointer to the gateway sockaddr, or NULL.
+ */
 const sockaddr*
 BNetworkRoute::Gateway() const
 {
@@ -121,6 +221,12 @@ BNetworkRoute::Gateway() const
 }
 
 
+/**
+ * @brief Set the gateway address of the route.
+ *
+ * @param gateway  The gateway address to copy and store.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BNetworkRoute::SetGateway(const sockaddr& gateway)
 {
@@ -128,6 +234,9 @@ BNetworkRoute::SetGateway(const sockaddr& gateway)
 }
 
 
+/**
+ * @brief Clear the gateway address and release its memory.
+ */
 void
 BNetworkRoute::UnsetGateway()
 {
@@ -135,6 +244,11 @@ BNetworkRoute::UnsetGateway()
 }
 
 
+/**
+ * @brief Return the source address of the route, or NULL if unset.
+ *
+ * @return Pointer to the source sockaddr, or NULL.
+ */
 const sockaddr*
 BNetworkRoute::Source() const
 {
@@ -142,6 +256,12 @@ BNetworkRoute::Source() const
 }
 
 
+/**
+ * @brief Set the source address of the route.
+ *
+ * @param source  The source address to copy and store.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BNetworkRoute::SetSource(const sockaddr& source)
 {
@@ -149,6 +269,9 @@ BNetworkRoute::SetSource(const sockaddr& source)
 }
 
 
+/**
+ * @brief Clear the source address and release its memory.
+ */
 void
 BNetworkRoute::UnsetSource()
 {
@@ -156,6 +279,11 @@ BNetworkRoute::UnsetSource()
 }
 
 
+/**
+ * @brief Return the route flags bitmask.
+ *
+ * @return Current flags value (e.g. RTF_DEFAULT, RTF_GATEWAY).
+ */
 uint32
 BNetworkRoute::Flags() const
 {
@@ -163,6 +291,11 @@ BNetworkRoute::Flags() const
 }
 
 
+/**
+ * @brief Set the route flags bitmask.
+ *
+ * @param flags  New flags value to assign.
+ */
 void
 BNetworkRoute::SetFlags(uint32 flags)
 {
@@ -170,6 +303,11 @@ BNetworkRoute::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Return the Maximum Transmission Unit for this route.
+ *
+ * @return Current MTU value in bytes.
+ */
 uint32
 BNetworkRoute::MTU() const
 {
@@ -177,6 +315,11 @@ BNetworkRoute::MTU() const
 }
 
 
+/**
+ * @brief Set the Maximum Transmission Unit for this route.
+ *
+ * @param mtu  New MTU value in bytes.
+ */
 void
 BNetworkRoute::SetMTU(uint32 mtu)
 {
@@ -184,6 +327,15 @@ BNetworkRoute::SetMTU(uint32 mtu)
 }
 
 
+/**
+ * @brief Determine the address family of this route from its address fields.
+ *
+ * Checks destination, mask, gateway, and source in order and returns the
+ * family of the first non-AF_UNSPEC address found.
+ *
+ * @return Address family constant (e.g. AF_INET, AF_INET6), or AF_UNSPEC if
+ *         no address is set.
+ */
 int
 BNetworkRoute::AddressFamily() const
 {
@@ -202,6 +354,17 @@ BNetworkRoute::AddressFamily() const
 }
 
 
+/**
+ * @brief Retrieve the default route for a given address family and interface.
+ *
+ * Calls GetRoutes() with RTF_DEFAULT and adopts the first matching entry
+ * into \a route.
+ *
+ * @param family         Address family (AF_INET or AF_INET6).
+ * @param interfaceName  Optional interface name to filter routes; may be NULL.
+ * @param route          Output route populated with the default route.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no default route exists.
+ */
 status_t
 BNetworkRoute::GetDefaultRoute(int family, const char* interfaceName,
 	BNetworkRoute& route)
@@ -219,6 +382,16 @@ BNetworkRoute::GetDefaultRoute(int family, const char* interfaceName,
 }
 
 
+/**
+ * @brief Retrieve the default gateway address for an address family and interface.
+ *
+ * Finds the default route and copies its gateway address into \a gateway.
+ *
+ * @param family         Address family (AF_INET or AF_INET6).
+ * @param interfaceName  Optional interface name to filter routes; may be NULL.
+ * @param gateway        Output sockaddr populated with the gateway address.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no default route or gateway exists.
+ */
 status_t
 BNetworkRoute::GetDefaultGateway(int family, const char* interfaceName,
 	sockaddr& gateway)
@@ -237,6 +410,15 @@ BNetworkRoute::GetDefaultGateway(int family, const char* interfaceName,
 }
 
 
+/**
+ * @brief Retrieve all routes for the given address family.
+ *
+ * Overload that includes all interfaces and applies no flag filter.
+ *
+ * @param family   Address family to query.
+ * @param routes   Output list populated with newly allocated BNetworkRoute objects.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkRoute::GetRoutes(int family, BObjectList<BNetworkRoute, true>& routes)
 {
@@ -244,6 +426,16 @@ BNetworkRoute::GetRoutes(int family, BObjectList<BNetworkRoute, true>& routes)
 }
 
 
+/**
+ * @brief Retrieve all routes for the given address family and interface.
+ *
+ * Overload that applies no flag filter but limits results to \a interfaceName.
+ *
+ * @param family         Address family to query.
+ * @param interfaceName  Interface name to filter by, or NULL for all.
+ * @param routes         Output list populated with newly allocated BNetworkRoute objects.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkRoute::GetRoutes(int family, const char* interfaceName,
 	BObjectList<BNetworkRoute, true>& routes)
@@ -252,6 +444,21 @@ BNetworkRoute::GetRoutes(int family, const char* interfaceName,
 }
 
 
+/**
+ * @brief Retrieve routes from the kernel routing table with optional filters.
+ *
+ * Issues SIOCGRTSIZE and SIOCGRTTABLE ioctls to fetch the full routing table,
+ * then filters entries by \a interfaceName and \a filterFlags before appending
+ * them to \a routes.
+ *
+ * @param family         Address family of the socket used to query the kernel.
+ * @param interfaceName  If non-NULL, only entries matching this name are included.
+ * @param filterFlags    If non-zero, only entries whose flags contain all of these
+ *                       bits are included.
+ * @param routes         Output list; ownership of each appended BNetworkRoute is
+ *                       transferred to the list.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or errno on ioctl error.
+ */
 status_t
 BNetworkRoute::GetRoutes(int family, const char* interfaceName,
 	uint32 filterFlags, BObjectList<BNetworkRoute, true>& routes)
@@ -325,6 +532,17 @@ BNetworkRoute::GetRoutes(int family, const char* interfaceName,
 }
 
 
+/**
+ * @brief Allocate storage for a sockaddr and copy \a from into it.
+ *
+ * If \a to is NULL, a new sockaddr_storage-sized buffer is allocated.
+ * The address is then memcpy'd from \a from.
+ *
+ * @param from  Source address to copy.
+ * @param to    Reference to pointer that receives the (possibly new) buffer.
+ * @return B_OK on success, B_BAD_VALUE if sa_len exceeds sockaddr_storage,
+ *         or B_NO_MEMORY on allocation failure.
+ */
 status_t
 BNetworkRoute::_AllocateAndSetAddress(const sockaddr& from,
 	sockaddr*& to)
@@ -343,6 +561,11 @@ BNetworkRoute::_AllocateAndSetAddress(const sockaddr& from,
 }
 
 
+/**
+ * @brief Free a heap-allocated sockaddr and set the pointer to NULL.
+ *
+ * @param address  Reference to the pointer to free and nullify.
+ */
 void
 BNetworkRoute::_FreeAndUnsetAddress(sockaddr*& address)
 {

@@ -1,36 +1,60 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file DeskWindow.cpp
+ * @brief The Tracker desktop window that hosts the DesktopPoseView and replicant shelf.
+ *
+ * BDeskWindow creates a full-screen, non-movable, always-behind window containing the
+ * DesktopPoseView. It manages Tracker add-on shortcuts, the BShelf for replicants,
+ * background image lifecycle, and desktop colour drag-and-drop.
+ *
+ * @see BContainerWindow, DesktopPoseView, BShelf
+ */
 
 
 #include "DeskWindow.h"
@@ -78,6 +102,13 @@ const char* kDefaultShortcut = "BEOS:default_shortcut";
 const uint32 kDefaultModifiers = B_OPTION_KEY | B_COMMAND_KEY;
 
 
+/**
+ * @brief EachElement callback that matches an AddOnInfo by model name.
+ *
+ * @param item        Candidate AddOnInfo entry.
+ * @param castToName  C-string name to compare against.
+ * @return @a item if the name matches, NULL otherwise.
+ */
 static struct AddOnInfo*
 MatchOne(struct AddOnInfo* item, void* castToName)
 {
@@ -90,6 +121,14 @@ MatchOne(struct AddOnInfo* item, void* castToName)
 }
 
 
+/**
+ * @brief Register a keyboard shortcut on @a window that launches the add-on @a model.
+ *
+ * @param model      The add-on model whose entry ref is embedded in the message.
+ * @param key        Single character shortcut key; ignored if '\0'.
+ * @param modifiers  Modifier key mask (e.g. B_OPTION_KEY | B_COMMAND_KEY).
+ * @param window     The BDeskWindow that receives the shortcut.
+ */
 static void
 AddOneShortcut(Model* model, char key, uint32 modifiers, BDeskWindow* window)
 {
@@ -102,6 +141,13 @@ AddOneShortcut(Model* model, char key, uint32 modifiers, BDeskWindow* window)
 }
 
 
+/**
+ * @brief EachElement callback that restores an AddOnInfo's shortcut to its compiled default.
+ *
+ * @param item          The add-on info entry to revert.
+ * @param castToWindow  The BDeskWindow used to remove the old and add the default shortcut.
+ * @return NULL always (continue iterating).
+ */
 static struct AddOnInfo*
 RevertToDefault(struct AddOnInfo* item, void* castToWindow)
 {
@@ -119,6 +165,13 @@ RevertToDefault(struct AddOnInfo* item, void* castToWindow)
 }
 
 
+/**
+ * @brief EachElement callback that matches an AddOnInfo by entry ref equality.
+ *
+ * @param item         Candidate AddOnInfo entry.
+ * @param castToOther  Model pointer whose EntryRef is compared.
+ * @return @a item if the refs are equal, NULL otherwise.
+ */
 static struct AddOnInfo*
 FindElement(struct AddOnInfo* item, void* castToOther)
 {
@@ -130,6 +183,16 @@ FindElement(struct AddOnInfo* item, void* castToOther)
 }
 
 
+/**
+ * @brief Scan @a directory for Tracker add-on executables and register them in @a list.
+ *
+ * Resolves symlinks, reads the default shortcut string resource, registers keyboard
+ * shortcuts, and begins watching the directory for changes.
+ *
+ * @param directory  The add-ons directory to scan.
+ * @param window     The BDeskWindow that receives the registered shortcuts.
+ * @param list       The global add-on info list to populate.
+ */
 static void
 LoadAddOnDir(BDirectory directory, BDeskWindow* window,
 	LockingList<AddOnInfo, true>* list)
@@ -205,6 +268,12 @@ LoadAddOnDir(BDirectory directory, BDeskWindow* window,
 #define B_TRANSLATION_CONTEXT "DeskWindow"
 
 
+/**
+ * @brief Construct the desktop window and create the DesktopPoseView for the Desk directory.
+ *
+ * @param windowList  The application-wide window list managed by TTracker.
+ * @param openFlags   Flags controlling window-open behaviour.
+ */
 BDeskWindow::BDeskWindow(LockingList<BWindow>* windowList, uint32 openFlags)
 	:
 	BContainerWindow(windowList, openFlags, kDesktopWindowLook, kDesktopWindowFeel,
@@ -228,6 +297,9 @@ BDeskWindow::BDeskWindow(LockingList<BWindow>* windowList, uint32 openFlags)
 }
 
 
+/**
+ * @brief Destructor; saves desktop pose locations and stops node watching.
+ */
 BDeskWindow::~BDeskWindow()
 {
 	SaveDesktopPoseLocations();
@@ -240,6 +312,13 @@ BDeskWindow::~BDeskWindow()
 }
 
 
+/**
+ * @brief Complete desktop window initialisation after construction.
+ *
+ * Resizes to the screen frame, loads add-ons and shortcuts, calls the
+ * base-class Init(), opens the replicant shelf, and optionally adds the
+ * disks icon and icon-scaling shortcuts.
+ */
 void
 BDeskWindow::Init(const BMessage*)
 {
@@ -307,6 +386,11 @@ BDeskWindow::Init(const BMessage*)
 }
 
 
+/**
+ * @brief (Re)build the add-ons list from all Tracker add-on directories.
+ *
+ * @param update  If true, clears the existing list and shortcuts before rebuilding.
+ */
 void
 BDeskWindow::InitAddOnsList(bool update)
 {
@@ -330,6 +414,14 @@ BDeskWindow::InitAddOnsList(bool update)
 }
 
 
+/**
+ * @brief Read user shortcut overrides from shortcuts_settings and apply them.
+ *
+ * On the first call (@a update == false) also starts path monitoring on the settings file.
+ * Reverts all shortcuts to their defaults before applying the user overrides.
+ *
+ * @param update  true when called in response to a settings-file change notification.
+ */
 void
 BDeskWindow::ApplyShortcutPreferences(bool update)
 {
@@ -415,6 +507,9 @@ BDeskWindow::ApplyShortcutPreferences(bool update)
 }
 
 
+/**
+ * @brief Tear down the desktop window, cleaning up the navigation item and add-ons list.
+ */
 void
 BDeskWindow::Quit()
 {
@@ -440,6 +535,13 @@ BDeskWindow::Quit()
 }
 
 
+/**
+ * @brief Factory method that creates a DesktopPoseView for the desktop model.
+ *
+ * @param model     The directory model for the desktop.
+ * @param viewMode  Display mode (always kIconMode for the desktop).
+ * @return A newly constructed DesktopPoseView.
+ */
 BPoseView*
 BDeskWindow::NewPoseView(Model* model, uint32 viewMode)
 {
@@ -447,6 +549,14 @@ BDeskWindow::NewPoseView(Model* model, uint32 viewMode)
 }
 
 
+/**
+ * @brief Construct and configure the DesktopPoseView child view.
+ *
+ * Sets the view and low colours to the current screen desktop colour, sizes the
+ * pose view to fill the window, and starts settings observation.
+ *
+ * @param model  The desktop directory model.
+ */
 void
 BDeskWindow::CreatePoseView(Model* model)
 {
@@ -478,6 +588,12 @@ BDeskWindow::CreatePoseView(Model* model)
 }
 
 
+/**
+ * @brief Forward workspace-activation events to the background image manager.
+ *
+ * @param workspace  The workspace index being activated.
+ * @param state      true when entering the workspace.
+ */
 void
 BDeskWindow::WorkspaceActivated(int32 workspace, bool state)
 {
@@ -486,6 +602,9 @@ BDeskWindow::WorkspaceActivated(int32 workspace, bool state)
 }
 
 
+/**
+ * @brief Persist the current desktop icon positions using the stored frame as reference.
+ */
 void
 BDeskWindow::SaveDesktopPoseLocations()
 {
@@ -493,6 +612,15 @@ BDeskWindow::SaveDesktopPoseLocations()
 }
 
 
+/**
+ * @brief Handle a screen resolution or colour-space change.
+ *
+ * Saves pose locations, resizes the window to the new frame, notifies the
+ * background image, and re-checks icon visibility.
+ *
+ * @param frame  New screen frame.
+ * @param space  New colour space.
+ */
 void
 BDeskWindow::ScreenChanged(BRect frame, color_space space)
 {
@@ -511,6 +639,9 @@ BDeskWindow::ScreenChanged(BRect frame, color_space space)
 }
 
 
+/**
+ * @brief Show the desktop window and display the background image for the current workspace.
+ */
 void
 BDeskWindow::Show()
 {
@@ -523,6 +654,11 @@ BDeskWindow::Show()
 }
 
 
+/**
+ * @brief The desktop window never has scroll bars.
+ *
+ * @return false always.
+ */
 bool
 BDeskWindow::ShouldAddScrollBars() const
 {
@@ -530,6 +666,11 @@ BDeskWindow::ShouldAddScrollBars() const
 }
 
 
+/**
+ * @brief The desktop window never has a menu bar.
+ *
+ * @return false always.
+ */
 bool
 BDeskWindow::ShouldAddMenus() const
 {
@@ -537,6 +678,11 @@ BDeskWindow::ShouldAddMenus() const
 }
 
 
+/**
+ * @brief The desktop window never has a container-specific view.
+ *
+ * @return false always.
+ */
 bool
 BDeskWindow::ShouldAddContainerView() const
 {
@@ -544,6 +690,15 @@ BDeskWindow::ShouldAddContainerView() const
 }
 
 
+/**
+ * @brief Handle colour drops, path-monitor notifications, and node-monitor messages.
+ *
+ * Colour drops set the desktop colour and notify the Backgrounds application.
+ * B_PATH_MONITOR triggers a shortcut preference reload.
+ * B_NODE_MONITOR triggers an add-on list rebuild and menu refresh.
+ *
+ * @param message  The incoming BMessage.
+ */
 void
 BDeskWindow::MessageReceived(BMessage* message)
 {

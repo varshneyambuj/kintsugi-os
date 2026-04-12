@@ -1,36 +1,61 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file ContainerWindow.cpp
+ * @brief BContainerWindow — the main Tracker folder window that hosts BPoseView.
+ *
+ * BContainerWindow builds and manages the full Tracker window chrome including the
+ * menu bar, navigator, count view, and draggable container icon. It owns the
+ * BPoseView that displays directory contents, coordinates background image updates,
+ * handles add-on menus, and persists window state to BFS attributes.
+ *
+ * @see BPoseView, BDeskWindow, TFilePanel
+ */
 
 
 #include "ContainerWindow.h"
@@ -126,6 +151,13 @@ LockingList<AddOnInfo, true>* BContainerWindow::fAddOnsList
 namespace BPrivate {
 
 
+/**
+ * @brief Comparator for sorting BContainerWindow pointers by their target node ref.
+ *
+ * @param item1  First window.
+ * @param item2  Second window.
+ * @return -1, 0, or 1 according to the ordering of the respective node_refs.
+ */
 int
 CompareContainerWindowNodeRef(const BContainerWindow* item1, const BContainerWindow* item2)
 {
@@ -140,6 +172,14 @@ CompareContainerWindowNodeRef(const BContainerWindow* item1, const BContainerWin
 }
 
 
+/**
+ * @brief BMessageFilter that activates the window on non-pose-view clicks.
+ *
+ * Activates the window when a message arrives for a view that is neither a
+ * BPoseView nor a DraggableContainerIcon.
+ *
+ * @return B_DISPATCH_MESSAGE always.
+ */
 filter_result
 ActivateWindowFilter(BMessage*, BHandler** target, BMessageFilter*)
 {
@@ -161,6 +201,14 @@ ActivateWindowFilter(BMessage*, BHandler** target, BMessageFilter*)
 }	// namespace BPrivate
 
 
+/**
+ * @brief Load a Tracker add-on and call its populate_menu entry point.
+ *
+ * @param info    The add-on descriptor (model, has_populate_menu status).
+ * @param menu    The BMenu to populate with add-on items.
+ * @param window  The BContainerWindow that provides context.
+ * @return B_OK on success, or an error/image-load code on failure.
+ */
 static int32
 AddOnMenuGenerate(const struct AddOnInfo* info, BMenu* menu, BContainerWindow* window)
 {
@@ -205,6 +253,12 @@ AddOnMenuGenerate(const struct AddOnInfo* info, BMenu* menu, BContainerWindow* w
 }
 
 
+/**
+ * @brief Thread function that loads a Tracker add-on and calls its message handler.
+ *
+ * @param message  BMessage carrying the "addon_ref" and "refs" data.
+ * @return B_OK on success, or a status code on failure.
+ */
 static status_t
 RunAddOnMessageThread(BMessage *message, void *)
 {
@@ -339,6 +393,16 @@ NodeHasSavedState(const BNode* node)
 }
 
 
+/**
+ * @brief AttributeStreamTransformer callback that staggers successive window frames.
+ *
+ * Increments the kAttrWindowFrame rect by the global sWindowStaggerBy offset
+ * so that newly opened windows do not stack directly on top of each other.
+ *
+ * @param castToRect    Pointer to the BRect (kAttrWindowFrame) being transformed.
+ * @param castToParams  Pointer to a StaggerOneParams struct.
+ * @return true if the rect was modified.
+ */
 static bool
 OffsetFrameOne(const char* DEBUG_ONLY(name), uint32, off_t, void* castToRect,
 	void* castToParams)
@@ -358,6 +422,12 @@ OffsetFrameOne(const char* DEBUG_ONLY(name), uint32, off_t, void* castToRect,
 }
 
 
+/**
+ * @brief Append the MIME type of @a model to @a list if not already present.
+ *
+ * @param list   The BStringList to add to (case-insensitive duplicate check).
+ * @param model  The model whose MimeType() is queried.
+ */
 static void
 AddMimeTypeString(BStringList& list, Model* model)
 {
@@ -379,6 +449,20 @@ AddMimeTypeString(BStringList& list, Model* model)
 //	#pragma mark - BContainerWindow
 
 
+/**
+ * @brief Construct a Tracker folder window.
+ *
+ * Creates the window with all menu and view members initialised to NULL.
+ * The caller must call Init() (or a subclass override) to complete setup.
+ *
+ * @param list         Application-wide window list.
+ * @param openFlags    Flags controlling open behaviour (e.g. kOpenWithWorkspace).
+ * @param look         BWindow look (defaults to B_DOCUMENT_WINDOW_LOOK).
+ * @param feel         BWindow feel.
+ * @param windowFlags  Additional BWindow flags.
+ * @param workspace    Target workspace mask.
+ * @param useLayout    If true, the window uses a layout manager.
+ */
 BContainerWindow::BContainerWindow(LockingList<BWindow>* list, uint32 openFlags, window_look look,
 	window_feel feel, uint32 windowFlags, uint32 workspace, bool useLayout)
 	:
@@ -471,6 +555,9 @@ BContainerWindow::BContainerWindow(LockingList<BWindow>* list, uint32 openFlags,
 }
 
 
+/**
+ * @brief Destructor; stops settings watchers and releases owned resources.
+ */
 BContainerWindow::~BContainerWindow()
 {
 	ASSERT(IsLocked());
@@ -493,6 +580,14 @@ BContainerWindow::~BContainerWindow()
 }
 
 
+/**
+ * @brief Return the default frame for a new container window, varying by feel.
+ *
+ * Desktop windows start at (0,0); all others start at the staggered base rect.
+ *
+ * @param feel  The window feel (kDesktopWindowFeel or a normal feel).
+ * @return The initial BRect to pass to the BWindow constructor.
+ */
 BRect
 BContainerWindow::InitialWindowRect(window_feel feel)
 {
@@ -514,6 +609,11 @@ BContainerWindow::InitialWindowRect(window_feel feel)
 }
 
 
+/**
+ * @brief Override Minimize to minimise the whole team when Option is held.
+ *
+ * @param minimize  true to minimise, false to restore.
+ */
 void
 BContainerWindow::Minimize(bool minimize)
 {

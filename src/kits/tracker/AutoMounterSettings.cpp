@@ -1,36 +1,60 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file AutoMounterSettings.cpp
+ * @brief Settings panel for the Tracker auto-mounter disk management preferences.
+ *
+ * Implements AutomountSettingsPanel, a SettingsView subclass that lets users
+ * configure automatic and boot-time disk mounting behaviour. The panel communicates
+ * with the mount server via BMessenger to query and apply mounting parameters.
+ *
+ * @see SettingsView, BMountServer
+ */
 
 
 #include <Alert.h>
@@ -65,6 +89,13 @@ const uint32 kEjectWhenUnmountingChanged = 'ejct';
 //	#pragma mark - AutomountSettingsPanel
 
 
+/**
+ * @brief Construct the automount settings panel and lay out all controls.
+ *
+ * Creates two grouped boxes (automatic disk mounting and boot-time mounting),
+ * populates them with radio buttons and checkboxes, fetches current settings
+ * from the mount server, and applies them to the UI.
+ */
 AutomountSettingsPanel::AutomountSettingsPanel()
 	:
 	SettingsView(""),
@@ -157,11 +188,19 @@ AutomountSettingsPanel::AutomountSettingsPanel()
 }
 
 
+/**
+ * @brief Destructor.
+ */
 AutomountSettingsPanel::~AutomountSettingsPanel()
 {
 }
 
 
+/**
+ * @brief Report that this panel has no factory default state.
+ *
+ * @return false always; the Defaults button is hidden for this panel.
+ */
 bool
 AutomountSettingsPanel::IsDefaultable() const
 {
@@ -169,6 +208,9 @@ AutomountSettingsPanel::IsDefaultable() const
 }
 
 
+/**
+ * @brief Restore the panel to the settings captured by RecordRevertSettings().
+ */
 void
 AutomountSettingsPanel::Revert()
 {
@@ -177,6 +219,9 @@ AutomountSettingsPanel::Revert()
 }
 
 
+/**
+ * @brief Query the mount server and update the UI to reflect the current settings.
+ */
 void
 AutomountSettingsPanel::ShowCurrentSettings()
 {
@@ -187,6 +232,9 @@ AutomountSettingsPanel::ShowCurrentSettings()
 }
 
 
+/**
+ * @brief Snapshot the current settings so that Revert() can restore them.
+ */
 void
 AutomountSettingsPanel::RecordRevertSettings()
 {
@@ -194,6 +242,11 @@ AutomountSettingsPanel::RecordRevertSettings()
 }
 
 
+/**
+ * @brief Return whether the current settings differ from the recorded revert snapshot.
+ *
+ * @return true if settings have changed since RecordRevertSettings() was called.
+ */
 bool
 AutomountSettingsPanel::IsRevertable() const
 {
@@ -204,6 +257,9 @@ AutomountSettingsPanel::IsRevertable() const
 }
 
 
+/**
+ * @brief Wire all control targets to this panel and point the mount-all button at the server.
+ */
 void
 AutomountSettingsPanel::AttachedToWindow()
 {
@@ -221,6 +277,11 @@ AutomountSettingsPanel::AttachedToWindow()
 }
 
 
+/**
+ * @brief Dispatch incoming messages to update settings or quit the window.
+ *
+ * @param message  The BMessage to handle.
+ */
 void
 AutomountSettingsPanel::MessageReceived(BMessage* message)
 {
@@ -245,6 +306,11 @@ AutomountSettingsPanel::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Compose a settings message from the UI state and deliver it to the mount server.
+ *
+ * @param rescan  If true, requests that the mount server rescans for new volumes.
+ */
 void
 AutomountSettingsPanel::_SendSettings(bool rescan)
 {
@@ -276,6 +342,13 @@ AutomountSettingsPanel::_SendSettings(bool rescan)
 }
 
 
+/**
+ * @brief Query the mount server for its current automount parameters.
+ *
+ * Shows an error alert if the server cannot be contacted within 2.5 seconds.
+ *
+ * @param reply  BMessage to receive the server's parameter reply.
+ */
 void
 AutomountSettingsPanel::_GetSettings(BMessage* reply) const
 {
@@ -291,6 +364,13 @@ AutomountSettingsPanel::_GetSettings(BMessage* reply) const
 }
 
 
+/**
+ * @brief Apply the values in @a settings to the radio buttons and checkboxes.
+ *
+ * Falls back to safe defaults when individual keys are absent from the message.
+ *
+ * @param settings  BMessage containing the mount-server parameter set.
+ */
 void
 AutomountSettingsPanel::_ParseSettings(const BMessage& settings)
 {

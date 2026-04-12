@@ -1,6 +1,40 @@
 /*
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageResolvableExpression.cpp
+ * @brief Implementation of BPackageResolvableExpression, a versioned dependency constraint.
+ *
+ * A BPackageResolvableExpression expresses a dependency requirement: a named
+ * resolvable together with an optional comparison operator and version. For
+ * example "libfoo >= 1.2" means the package requires a resolvable named
+ * "libfoo" at version 1.2 or newer. The class also provides the Matches()
+ * family of methods to test whether a given BPackageResolvable satisfies the
+ * constraint.
+ *
+ * @see BPackageResolvable, BPackageInfo
  */
 
 
@@ -14,6 +48,7 @@
 namespace BPackageKit {
 
 
+/** @brief Human-readable operator symbols, indexed by BPackageResolvableOperator. */
 const char*
 BPackageResolvableExpression
 ::kOperatorNames[B_PACKAGE_RESOLVABLE_OP_ENUM_COUNT] = {
@@ -26,6 +61,9 @@ BPackageResolvableExpression
 };
 
 
+/**
+ * @brief Default-construct an uninitialised BPackageResolvableExpression.
+ */
 BPackageResolvableExpression::BPackageResolvableExpression()
 	:
 	fOperator(B_PACKAGE_RESOLVABLE_OP_ENUM_COUNT)
@@ -33,6 +71,13 @@ BPackageResolvableExpression::BPackageResolvableExpression()
 }
 
 
+/**
+ * @brief Construct a BPackageResolvableExpression from a low-level data struct.
+ *
+ * The name is converted to lower-case.
+ *
+ * @param data  Raw attribute data containing the name, operator, and version.
+ */
 BPackageResolvableExpression::BPackageResolvableExpression(
 	const BPackageResolvableExpressionData& data)
 	:
@@ -44,6 +89,15 @@ BPackageResolvableExpression::BPackageResolvableExpression(
 }
 
 
+/**
+ * @brief Construct a BPackageResolvableExpression with explicit fields.
+ *
+ * The name is converted to lower-case.
+ *
+ * @param name       The name of the required resolvable.
+ * @param _operator  The comparison operator to apply.
+ * @param version    The version operand for the comparison.
+ */
 BPackageResolvableExpression::BPackageResolvableExpression(const BString& name,
 	BPackageResolvableOperator _operator, const BPackageVersion& version)
 	:
@@ -55,6 +109,13 @@ BPackageResolvableExpression::BPackageResolvableExpression(const BString& name,
 }
 
 
+/**
+ * @brief Construct a BPackageResolvableExpression by parsing a string.
+ *
+ * Delegates to SetTo() to parse the expression.
+ *
+ * @param expressionString  The string to parse (e.g. "libfoo >= 1.2").
+ */
 BPackageResolvableExpression::BPackageResolvableExpression(
 	const BString& expressionString)
 	:
@@ -66,6 +127,13 @@ BPackageResolvableExpression::BPackageResolvableExpression(
 }
 
 
+/**
+ * @brief Validate the expression's internal state.
+ *
+ * Both operator and version must either be set together or both absent.
+ *
+ * @return B_OK if the expression is valid, B_NO_INIT otherwise.
+ */
 status_t
 BPackageResolvableExpression::InitCheck() const
 {
@@ -81,6 +149,11 @@ BPackageResolvableExpression::InitCheck() const
 }
 
 
+/**
+ * @brief Return the resolvable name.
+ *
+ * @return Reference to the lower-case name string.
+ */
 const BString&
 BPackageResolvableExpression::Name() const
 {
@@ -88,6 +161,12 @@ BPackageResolvableExpression::Name() const
 }
 
 
+/**
+ * @brief Return the comparison operator.
+ *
+ * @return The operator enum value; equals B_PACKAGE_RESOLVABLE_OP_ENUM_COUNT
+ *         when no version constraint is set.
+ */
 BPackageResolvableOperator
 BPackageResolvableExpression::Operator() const
 {
@@ -95,6 +174,11 @@ BPackageResolvableExpression::Operator() const
 }
 
 
+/**
+ * @brief Return the version operand of the expression.
+ *
+ * @return Reference to the version object.
+ */
 const BPackageVersion&
 BPackageResolvableExpression::Version() const
 {
@@ -102,6 +186,13 @@ BPackageResolvableExpression::Version() const
 }
 
 
+/**
+ * @brief Serialise the expression to a human-readable string.
+ *
+ * The version and operator are omitted when no version constraint is set.
+ *
+ * @return The formatted expression string.
+ */
 BString
 BPackageResolvableExpression::ToString() const
 {
@@ -114,6 +205,12 @@ BPackageResolvableExpression::ToString() const
 }
 
 
+/**
+ * @brief Parse an expression string and replace the current state.
+ *
+ * @param expressionString  The string to parse.
+ * @return B_OK on success, or an error code if parsing fails.
+ */
 status_t
 BPackageResolvableExpression::SetTo(const BString& expressionString)
 {
@@ -126,6 +223,15 @@ BPackageResolvableExpression::SetTo(const BString& expressionString)
 }
 
 
+/**
+ * @brief Set the fields of this expression directly.
+ *
+ * The name is converted to lower-case.
+ *
+ * @param name       The resolvable name.
+ * @param _operator  The comparison operator.
+ * @param version    The version operand.
+ */
 void
 BPackageResolvableExpression::SetTo(const BString& name,
 	BPackageResolvableOperator _operator, const BPackageVersion& version)
@@ -138,6 +244,9 @@ BPackageResolvableExpression::SetTo(const BString& name,
 }
 
 
+/**
+ * @brief Reset all fields to their default (empty) state.
+ */
 void
 BPackageResolvableExpression::Clear()
 {
@@ -147,6 +256,18 @@ BPackageResolvableExpression::Clear()
 }
 
 
+/**
+ * @brief Test whether a pair of versions satisfies this expression.
+ *
+ * When no version constraint is set, the expression always matches. The
+ * compatible-version check implements the "compatible range" semantics: a
+ * provide of version V that is compatible down to C matches a requirement of
+ * version R when fVersion is within [C, V].
+ *
+ * @param version            The exact version of the candidate resolvable.
+ * @param compatibleVersion  The minimum version still compatible with @a version.
+ * @return True if the candidate satisfies the expression.
+ */
 bool
 BPackageResolvableExpression::Matches(const BPackageVersion& version,
 	const BPackageVersion& compatibleVersion) const
@@ -196,6 +317,14 @@ BPackageResolvableExpression::Matches(const BPackageVersion& version,
 }
 
 
+/**
+ * @brief Test whether a BPackageResolvable satisfies this expression.
+ *
+ * Both the name and the version/compatible-version pair must match.
+ *
+ * @param provides  The resolvable to test.
+ * @return True if the resolvable satisfies this expression.
+ */
 bool
 BPackageResolvableExpression::Matches(const BPackageResolvable& provides) const
 {

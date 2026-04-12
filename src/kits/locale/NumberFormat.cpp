@@ -1,10 +1,43 @@
 /*
- * Copyright 2003, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2010-2011, Oliver Tappe, zooey@hirschkaefer.de.
- * Copyright 2012, John Scipione, jscipione@gmail.com
- * Copyright 2017, Adrien Destugues, pulkomandy@pulkomandy.tk
- * Copyright 2021, Andrew Lindesay, apl@lindesay.co.nz
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2010-2011, Oliver Tappe, zooey@hirschkaefer.de.
+ *   Copyright 2012, John Scipione, jscipione@gmail.com
+ *   Copyright 2017, Adrien Destugues, pulkomandy@pulkomandy.tk
+ *   Copyright 2021, Andrew Lindesay, apl@lindesay.co.nz
+ *   All rights reserved. Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file NumberFormat.cpp
+ * @brief Implementation of BNumberFormat for locale-aware number formatting.
+ *
+ * BNumberFormat wraps ICU NumberFormat via the private BNumberFormatImpl helper
+ * class. Separate ICU formatter instances are maintained for integers, floats,
+ * currency, and percentages, and are lazily created on first use. The class
+ * supports formatting to C strings and BStrings, monetary and percent variants,
+ * decimal precision control, and reverse parsing of locale-formatted numbers.
+ *
+ * @see BFormat, BFormattingConventions
  */
 
 
@@ -25,6 +58,12 @@
 U_NAMESPACE_USE
 
 
+/**
+ * @brief Private implementation class that holds lazily-created ICU formatters.
+ *
+ * Each formatter type (integer, float, currency, percent) is created on first
+ * use and cached for subsequent calls.
+ */
 class BNumberFormatImpl {
 public:
 					BNumberFormatImpl();
@@ -48,6 +87,9 @@ private:
 };
 
 
+/**
+ * @brief Construct a BNumberFormatImpl with all formatters uninitialized.
+ */
 BNumberFormatImpl::BNumberFormatImpl()
 {
 	// They are initialized lazily as needed
@@ -58,6 +100,9 @@ BNumberFormatImpl::BNumberFormatImpl()
 }
 
 
+/**
+ * @brief Destroy the BNumberFormatImpl and free all cached ICU formatters.
+ */
 BNumberFormatImpl::~BNumberFormatImpl()
 {
 	delete fIntegerFormat;
@@ -67,6 +112,12 @@ BNumberFormatImpl::~BNumberFormatImpl()
 }
 
 
+/**
+ * @brief Return (or lazily create) the decimal integer formatter.
+ *
+ * @param convention  Formatting conventions providing the ICU locale.
+ * @return The ICU NumberFormat, or NULL on allocation/ICU failure.
+ */
 NumberFormat*
 BNumberFormatImpl::GetInteger(BFormattingConventions* convention)
 {
@@ -89,6 +140,12 @@ BNumberFormatImpl::GetInteger(BFormattingConventions* convention)
 }
 
 
+/**
+ * @brief Return (or lazily create) the decimal float formatter.
+ *
+ * @param convention  Formatting conventions providing the ICU locale.
+ * @return The ICU NumberFormat, or NULL on allocation/ICU failure.
+ */
 NumberFormat*
 BNumberFormatImpl::GetFloat(BFormattingConventions* convention)
 {
@@ -111,6 +168,12 @@ BNumberFormatImpl::GetFloat(BFormattingConventions* convention)
 }
 
 
+/**
+ * @brief Return (or lazily create) the currency formatter.
+ *
+ * @param convention  Formatting conventions providing the ICU locale.
+ * @return The ICU NumberFormat, or NULL on allocation/ICU failure.
+ */
 NumberFormat*
 BNumberFormatImpl::GetCurrency(BFormattingConventions* convention)
 {
@@ -133,6 +196,12 @@ BNumberFormatImpl::GetCurrency(BFormattingConventions* convention)
 }
 
 
+/**
+ * @brief Return (or lazily create) the percent formatter.
+ *
+ * @param convention  Formatting conventions providing the ICU locale.
+ * @return The ICU NumberFormat, or NULL on allocation/ICU failure.
+ */
 NumberFormat*
 BNumberFormatImpl::GetPercent(BFormattingConventions* convention)
 {
@@ -155,6 +224,15 @@ BNumberFormatImpl::GetPercent(BFormattingConventions* convention)
 }
 
 
+/**
+ * @brief Apply a formatter to a double and write the result into a C buffer.
+ *
+ * @param formatter  ICU NumberFormat to use.
+ * @param string     Destination character buffer.
+ * @param maxSize    Buffer size in bytes.
+ * @param value      The double value to format.
+ * @return Number of bytes written, or a negative error code.
+ */
 ssize_t
 BNumberFormatImpl::ApplyFormatter(NumberFormat* formatter, char* string,
 	size_t maxSize, const double value)
@@ -168,6 +246,14 @@ BNumberFormatImpl::ApplyFormatter(NumberFormat* formatter, char* string,
 }
 
 
+/**
+ * @brief Apply a formatter to a double and return the result in a BString.
+ *
+ * @param formatter  ICU NumberFormat to use.
+ * @param string     Output BString.
+ * @param value      The double value to format.
+ * @return B_OK on success, B_NO_MEMORY if formatter is NULL.
+ */
 status_t
 BNumberFormatImpl::ApplyFormatter(NumberFormat* formatter, BString& string,
 	const double value)
@@ -186,6 +272,9 @@ BNumberFormatImpl::ApplyFormatter(NumberFormat* formatter, BString& string,
 }
 
 
+/**
+ * @brief Construct a BNumberFormat using the system default locale.
+ */
 BNumberFormat::BNumberFormat()
 	: BFormat()
 {
@@ -193,6 +282,11 @@ BNumberFormat::BNumberFormat()
 }
 
 
+/**
+ * @brief Construct a BNumberFormat for the given BLocale.
+ *
+ * @param locale  Locale to use, or NULL for the system default.
+ */
 BNumberFormat::BNumberFormat(const BLocale* locale)
 	: BFormat(locale)
 {
@@ -200,6 +294,11 @@ BNumberFormat::BNumberFormat(const BLocale* locale)
 }
 
 
+/**
+ * @brief Copy-construct a BNumberFormat.
+ *
+ * @param other  Source BNumberFormat to copy.
+ */
 BNumberFormat::BNumberFormat(const BNumberFormat &other)
 	: BFormat(other)
 {
@@ -207,6 +306,9 @@ BNumberFormat::BNumberFormat(const BNumberFormat &other)
 }
 
 
+/**
+ * @brief Destroy the BNumberFormat and free the private implementation.
+ */
 BNumberFormat::~BNumberFormat()
 {
 	delete fPrivateData;
@@ -216,6 +318,14 @@ BNumberFormat::~BNumberFormat()
 // #pragma mark - Formatting
 
 
+/**
+ * @brief Format a double into a C string buffer using decimal notation.
+ *
+ * @param string   Destination character buffer.
+ * @param maxSize  Buffer size in bytes.
+ * @param value    The double to format.
+ * @return Number of bytes written, or a negative error code.
+ */
 ssize_t
 BNumberFormat::Format(char* string, size_t maxSize, const double value)
 {
@@ -228,6 +338,13 @@ BNumberFormat::Format(char* string, size_t maxSize, const double value)
 }
 
 
+/**
+ * @brief Format a double into a BString using decimal notation.
+ *
+ * @param string  Output BString.
+ * @param value   The double to format.
+ * @return B_OK on success, B_NO_MEMORY if the formatter could not be created.
+ */
 status_t
 BNumberFormat::Format(BString& string, const double value)
 {
@@ -247,6 +364,14 @@ BNumberFormat::Format(BString& string, const double value)
 }
 
 
+/**
+ * @brief Format an int32 into a C string buffer.
+ *
+ * @param string   Destination character buffer.
+ * @param maxSize  Buffer size in bytes.
+ * @param value    The int32 to format.
+ * @return Number of bytes written, or a negative error code.
+ */
 ssize_t
 BNumberFormat::Format(char* string, size_t maxSize, const int32 value)
 {
@@ -259,6 +384,13 @@ BNumberFormat::Format(char* string, size_t maxSize, const int32 value)
 }
 
 
+/**
+ * @brief Format an int32 into a BString.
+ *
+ * @param string  Output BString.
+ * @param value   The int32 to format.
+ * @return B_OK on success, B_NO_MEMORY if the formatter could not be created.
+ */
 status_t
 BNumberFormat::Format(BString& string, const int32 value)
 {
@@ -278,6 +410,14 @@ BNumberFormat::Format(BString& string, const int32 value)
 }
 
 
+/**
+ * @brief Set the number of fraction digits for float, currency, and percent formatters.
+ *
+ * Both minimum and maximum fraction digits are set to \a precision.
+ *
+ * @param precision  Number of decimal places.
+ * @return B_OK on success, B_ERROR if any formatter could not be obtained.
+ */
 status_t
 BNumberFormat::SetPrecision(int precision)
 {
@@ -301,6 +441,14 @@ BNumberFormat::SetPrecision(int precision)
 }
 
 
+/**
+ * @brief Format a monetary value into a C string buffer.
+ *
+ * @param string   Destination character buffer.
+ * @param maxSize  Buffer size in bytes.
+ * @param value    Monetary value as a double.
+ * @return Number of bytes written, or a negative error code.
+ */
 ssize_t
 BNumberFormat::FormatMonetary(char* string, size_t maxSize, const double value)
 {
@@ -309,6 +457,13 @@ BNumberFormat::FormatMonetary(char* string, size_t maxSize, const double value)
 }
 
 
+/**
+ * @brief Format a monetary value into a BString.
+ *
+ * @param string  Output BString.
+ * @param value   Monetary value as a double.
+ * @return B_OK on success, B_NO_MEMORY if the formatter could not be created.
+ */
 status_t
 BNumberFormat::FormatMonetary(BString& string, const double value)
 {
@@ -317,6 +472,14 @@ BNumberFormat::FormatMonetary(BString& string, const double value)
 }
 
 
+/**
+ * @brief Format a percentage value into a C string buffer.
+ *
+ * @param string   Destination character buffer.
+ * @param maxSize  Buffer size in bytes.
+ * @param value    Fraction value (e.g. 0.5 for 50%).
+ * @return Number of bytes written, or a negative error code.
+ */
 ssize_t
 BNumberFormat::FormatPercent(char* string, size_t maxSize, const double value)
 {
@@ -325,6 +488,13 @@ BNumberFormat::FormatPercent(char* string, size_t maxSize, const double value)
 }
 
 
+/**
+ * @brief Format a percentage value into a BString.
+ *
+ * @param string  Output BString.
+ * @param value   Fraction value (e.g. 0.5 for 50%).
+ * @return B_OK on success, B_NO_MEMORY if the formatter could not be created.
+ */
 status_t
 BNumberFormat::FormatPercent(BString& string, const double value)
 {
@@ -333,6 +503,14 @@ BNumberFormat::FormatPercent(BString& string, const double value)
 }
 
 
+/**
+ * @brief Parse a locale-formatted number string into a double.
+ *
+ * @param string  Input BString containing a locale-formatted number.
+ * @param value   Output double populated with the parsed value.
+ * @return B_OK on success, B_NO_MEMORY if the formatter is unavailable,
+ *         B_BAD_DATA if the string cannot be parsed.
+ */
 status_t
 BNumberFormat::Parse(const BString& string, double& value)
 {
@@ -356,6 +534,13 @@ BNumberFormat::Parse(const BString& string, double& value)
 }
 
 
+/**
+ * @brief Return the locale-specific decimal or grouping separator symbol.
+ *
+ * @param element  B_DECIMAL_SEPARATOR or B_GROUPING_SEPARATOR.
+ * @return BString containing the separator character, or an empty string on
+ *         failure.
+ */
 BString
 BNumberFormat::GetSeparator(BNumberElement element)
 {

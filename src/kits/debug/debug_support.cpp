@@ -1,8 +1,42 @@
 /*
- * Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2010-2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2010-2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file debug_support.cpp
+ * @brief C-level debug support API for communicating with the kernel nub port.
+ *
+ * Implements the public debug_support API declared in <debug_support.h>.
+ * Functions cover context lifecycle (init/destroy), memory read/write, CPU
+ * state retrieval, stack unwinding, and the full symbol-lookup pipeline
+ * including iterator-based symbol enumeration over both live team images and
+ * standalone ELF files on disk.
+ *
+ * @see BDebugContext, SymbolLookup
+ */
+
 
 #include <new>
 
@@ -19,19 +53,27 @@
 using std::nothrow;
 
 
+/** @brief Opaque handle returned by debug_create_symbol_lookup_context(). */
 struct debug_symbol_lookup_context {
 	SymbolLookup*	lookup;
 };
 
+/** @brief Iterator state returned by debug_create_image_symbol_iterator(). */
 struct debug_symbol_iterator : BPrivate::Debug::SymbolIterator {
 	bool	ownsImage;
 
+	/**
+	 * @brief Default constructor — marks the iterator as not owning its image.
+	 */
 	debug_symbol_iterator()
 		:
 		ownsImage(false)
 	{
 	}
 
+	/**
+	 * @brief Destructor — deletes the image if this iterator owns it.
+	 */
 	~debug_symbol_iterator()
 	{
 		if (ownsImage)
@@ -40,6 +82,18 @@ struct debug_symbol_iterator : BPrivate::Debug::SymbolIterator {
 };
 
 
+/**
+ * @brief Initialise a debug_context for communicating with a team's nub port.
+ *
+ * Stores the team ID and nub port in @a context and creates a private reply
+ * port used to receive responses from the debug nub.
+ *
+ * @param context   Caller-allocated context structure to initialise.
+ * @param team      ID of the team to debug.
+ * @param nubPort   The nub port obtained from install_team_debugger().
+ * @return B_OK on success, B_BAD_VALUE if arguments are invalid, or the
+ *         negative error code from create_port() on failure.
+ */
 // init_debug_context
 status_t
 init_debug_context(debug_context *context, team_id team, port_id nubPort)
@@ -58,6 +112,15 @@ init_debug_context(debug_context *context, team_id team, port_id nubPort)
 	return B_OK;
 }
 
+
+/**
+ * @brief Release all resources held by a debug_context.
+ *
+ * Deletes the reply port and resets all fields to sentinel values so the
+ * context cannot be accidentally reused after destruction.
+ *
+ * @param context  The context to destroy; may be NULL (no-op).
+ */
 // destroy_debug_context
 void
 destroy_debug_context(debug_context *context)
@@ -72,6 +135,21 @@ destroy_debug_context(debug_context *context)
 	}
 }
 
+
+/**
+ * @brief Send a typed message to the debug nub and optionally wait for a reply.
+ *
+ * Writes the message to the nub port (retrying on B_INTERRUPTED). If @a reply
+ * is non-NULL, blocks on the reply port until a response arrives.
+ *
+ * @param context      Initialised debug context.
+ * @param messageCode  The B_DEBUG_MESSAGE_* code identifying the request.
+ * @param message      Pointer to the request structure.
+ * @param messageSize  Byte size of @a message.
+ * @param reply        Buffer to receive the reply, or NULL for fire-and-forget.
+ * @param replySize    Byte capacity of @a reply.
+ * @return B_OK on success, B_BAD_VALUE if context is NULL, or a port error.
+ */
 // send_debug_message
 status_t
 send_debug_message(debug_context *context, int32 messageCode,
@@ -105,6 +183,20 @@ send_debug_message(debug_context *context, int32 messageCode,
 	}
 }
 
+
+/**
+ * @brief Read up to B_MAX_READ_WRITE_MEMORY_SIZE bytes from the target team.
+ *
+ * Sends a B_DEBUG_MESSAGE_READ_MEMORY request and copies the returned data
+ * into @a buffer. If @a size exceeds the maximum, it is silently clamped.
+ *
+ * @param context  Initialised debug context.
+ * @param address  Address in the target team's address space to read from.
+ * @param buffer   Destination buffer in the caller's address space.
+ * @param size     Number of bytes requested.
+ * @return The number of bytes actually read on success, or a negative error
+ *         code on failure.
+ */
 // debug_read_memory_partial
 ssize_t
 debug_read_memory_partial(debug_context *context, const void *address,
@@ -139,6 +231,20 @@ debug_read_memory_partial(debug_context *context, const void *address,
 	return reply.size;
 }
 
+
+/**
+ * @brief Read an arbitrary number of bytes from the target team's address space.
+ *
+ * Issues successive debug_read_memory_partial() calls until all @a size bytes
+ * have been read or an error occurs. Partial reads (e.g. at a segment boundary)
+ * are returned rather than treated as errors when some data was already read.
+ *
+ * @param context  Initialised debug context.
+ * @param _address Starting address in the target team.
+ * @param _buffer  Destination buffer in the caller's address space.
+ * @param size     Total number of bytes to read.
+ * @return Total bytes read on success, or a negative error code on failure.
+ */
 // debug_read_memory
 ssize_t
 debug_read_memory(debug_context *context, const void *_address, void *_buffer,
@@ -173,6 +279,23 @@ debug_read_memory(debug_context *context, const void *_address, void *_buffer,
 	return sumRead;
 }
 
+
+/**
+ * @brief Read a NUL-terminated string from the target team's address space.
+ *
+ * Reads data in chunks until a NUL terminator is found or the buffer is full.
+ * The output buffer is always NUL-terminated on return. If the buffer is too
+ * small to hold the full string, the last character is replaced with '\0' and
+ * the total bytes consumed (including the truncated portion) are returned.
+ *
+ * @param context  Initialised debug context.
+ * @param _address Address of the string in the target team.
+ * @param buffer   Caller-supplied destination buffer.
+ * @param size     Byte capacity of @a buffer (must be > 0).
+ * @return Number of characters stored (excluding NUL) on success, or a
+ *         negative error code if the first read fails.
+ * @note B_BAD_VALUE is returned when any pointer argument is NULL or size == 0.
+ */
 // debug_read_string
 ssize_t
 debug_read_string(debug_context *context, const void *_address, char *buffer,
@@ -217,6 +340,20 @@ debug_read_string(debug_context *context, const void *_address, char *buffer,
 	return sumRead;
 }
 
+
+/**
+ * @brief Write up to B_MAX_READ_WRITE_MEMORY_SIZE bytes into the target team.
+ *
+ * Sends a B_DEBUG_MESSAGE_WRITE_MEMORY request carrying the payload copied
+ * from @a buffer. If @a size exceeds the maximum, it is silently clamped.
+ *
+ * @param context  Initialised debug context.
+ * @param address  Destination address in the target team's address space.
+ * @param buffer   Source buffer in the caller's address space.
+ * @param size     Number of bytes to write.
+ * @return The number of bytes actually written on success, or a negative error
+ *         code on failure.
+ */
 // debug_write_memory_partial
 ssize_t
 debug_write_memory_partial(debug_context *context, const void *address,
@@ -250,6 +387,19 @@ debug_write_memory_partial(debug_context *context, const void *address,
 	return reply.size;
 }
 
+
+/**
+ * @brief Write an arbitrary number of bytes into the target team's address space.
+ *
+ * Issues successive debug_write_memory_partial() calls until all @a size bytes
+ * have been written or an error occurs.
+ *
+ * @param context  Initialised debug context.
+ * @param _address Starting destination address in the target team.
+ * @param _buffer  Source buffer in the caller's address space.
+ * @param size     Total number of bytes to write.
+ * @return Total bytes written on success, or a negative error code on failure.
+ */
 // debug_write_memory
 ssize_t
 debug_write_memory(debug_context *context, const void *_address, void *_buffer,
@@ -283,6 +433,21 @@ debug_write_memory(debug_context *context, const void *_address, void *_buffer,
 	return sumWritten;
 }
 
+
+/**
+ * @brief Retrieve the complete CPU register state of a suspended thread.
+ *
+ * Sends a B_DEBUG_MESSAGE_GET_CPU_STATE request and returns the full register
+ * snapshot. Optionally also returns the debug message code that caused the
+ * thread to stop.
+ *
+ * @param context      Initialised debug context.
+ * @param thread       The thread whose CPU state is requested.
+ * @param messageCode  Output — receives the message code, or unchanged if NULL.
+ * @param cpuState     Output — receives the full CPU register state.
+ * @return B_OK on success, B_BAD_VALUE if required pointers are NULL, or a
+ *         nub communication error.
+ */
 // debug_get_cpu_state
 status_t
 debug_get_cpu_state(debug_context *context, thread_id thread,
@@ -316,6 +481,19 @@ debug_get_cpu_state(debug_context *context, thread_id thread,
 
 // #pragma mark -
 
+/**
+ * @brief Retrieve the instruction pointer and stack frame for a thread.
+ *
+ * Delegates to the architecture-specific arch_debug_get_instruction_pointer()
+ * after validating all pointer arguments.
+ *
+ * @param context           Initialised debug context.
+ * @param thread            Target thread ID.
+ * @param ip                Output — receives the current instruction pointer.
+ * @param stackFrameAddress Output — receives the current stack frame address.
+ * @return B_OK on success, B_BAD_VALUE if any pointer is NULL, or an arch
+ *         error.
+ */
 // debug_get_instruction_pointer
 status_t
 debug_get_instruction_pointer(debug_context *context, thread_id thread,
@@ -328,6 +506,19 @@ debug_get_instruction_pointer(debug_context *context, thread_id thread,
 		stackFrameAddress);
 }
 
+
+/**
+ * @brief Walk one level up the call stack from a given frame address.
+ *
+ * Delegates to the architecture-specific arch_debug_get_stack_frame() after
+ * validating all pointer arguments.
+ *
+ * @param context            Initialised debug context.
+ * @param stackFrameAddress  Address of the current frame in the target team.
+ * @param stackFrameInfo     Output — receives parent frame and return address.
+ * @return B_OK on success, B_BAD_VALUE if any pointer is NULL, or an arch
+ *         error.
+ */
 // debug_get_stack_frame
 status_t
 debug_get_stack_frame(debug_context *context, void *stackFrameAddress,
@@ -343,6 +534,21 @@ debug_get_stack_frame(debug_context *context, void *stackFrameAddress,
 
 // #pragma mark -
 
+/**
+ * @brief Create a symbol lookup context for the given team and optional image.
+ *
+ * Allocates a debug_symbol_lookup_context, constructs a SymbolLookup object,
+ * and calls SymbolLookup::Init(). On success the caller receives a handle
+ * suitable for debug_lookup_symbol_address() and related functions.
+ *
+ * @param context        Initialised debug context for the target team.
+ * @param image          image_id to restrict lookup to one image, or -1 for
+ *                       all images in the team.
+ * @param _lookupContext Output — receives the newly allocated lookup context.
+ * @return B_OK on success, B_BAD_VALUE if required pointers are NULL,
+ *         B_NO_MEMORY on allocation failure, or an initialisation error from
+ *         SymbolLookup::Init().
+ */
 // debug_create_symbol_lookup_context
 status_t
 debug_create_symbol_lookup_context(debug_context *context, image_id image,
@@ -381,6 +587,12 @@ debug_create_symbol_lookup_context(debug_context *context, image_id image,
 	return B_OK;
 }
 
+
+/**
+ * @brief Destroy a symbol lookup context and release all associated resources.
+ *
+ * @param lookupContext  The context to destroy; may be NULL (no-op).
+ */
 // debug_delete_symbol_lookup_context
 void
 debug_delete_symbol_lookup_context(debug_symbol_lookup_context *lookupContext)
@@ -392,6 +604,20 @@ debug_delete_symbol_lookup_context(debug_symbol_lookup_context *lookupContext)
 }
 
 
+/**
+ * @brief Look up a symbol by name and type within a specific image.
+ *
+ * @param lookupContext   A valid lookup context previously created with
+ *                        debug_create_symbol_lookup_context().
+ * @param image           The image_id to search within.
+ * @param name            Null-terminated symbol name.
+ * @param symbolType      Required type (B_SYMBOL_TYPE_TEXT, _DATA, or _ANY).
+ * @param _symbolLocation Output — receives the runtime address of the symbol.
+ * @param _symbolSize     Output — receives the symbol's size in bytes.
+ * @param _symbolType     Output — receives the resolved symbol type.
+ * @return B_OK on success, B_BAD_VALUE if lookupContext is invalid, or
+ *         B_ENTRY_NOT_FOUND if the symbol is not present.
+ */
 // debug_get_symbol
 status_t
 debug_get_symbol(debug_symbol_lookup_context* lookupContext, image_id image,
@@ -407,6 +633,25 @@ debug_get_symbol(debug_symbol_lookup_context* lookupContext, image_id image,
 }
 
 
+/**
+ * @brief Resolve a runtime address to a symbol name and image name.
+ *
+ * Searches all loaded images for the symbol that best covers @a address and
+ * fills in the caller-supplied string buffers. If the address falls outside
+ * any known symbol's range, the image name is still returned with a NULL
+ * symbol name.
+ *
+ * @param lookupContext  A valid lookup context.
+ * @param address        Runtime address to resolve.
+ * @param baseAddress    Output — receives the base address of the found symbol.
+ * @param symbolName     Output buffer for the symbol name.
+ * @param symbolNameSize Byte capacity of @a symbolName.
+ * @param imageName      Output buffer for the image path.
+ * @param imageNameSize  Byte capacity of @a imageName (clamped to B_PATH_NAME_LENGTH).
+ * @param exactMatch     Output — set to true when the address is within the symbol.
+ * @return B_OK on success, B_BAD_VALUE if lookupContext is invalid, or
+ *         B_ENTRY_NOT_FOUND if the address belongs to no known image.
+ */
 // debug_lookup_symbol_address
 status_t
 debug_lookup_symbol_address(debug_symbol_lookup_context *lookupContext,
@@ -455,6 +700,20 @@ debug_lookup_symbol_address(debug_symbol_lookup_context *lookupContext,
 }
 
 
+/**
+ * @brief Create a symbol iterator anchored to a specific image_id.
+ *
+ * Allocates a debug_symbol_iterator and calls SymbolLookup::InitSymbolIterator().
+ * If the initial lookup fails (e.g. after a fork where image IDs may not yet
+ * match), falls back to an address-based search using the image's text base.
+ *
+ * @param lookupContext  A valid lookup context.
+ * @param imageID        The image to iterate over.
+ * @param _iterator      Output — receives the newly allocated iterator.
+ * @return B_OK on success, B_BAD_VALUE if lookupContext is invalid,
+ *         B_NO_MEMORY on allocation failure, or B_ENTRY_NOT_FOUND if the image
+ *         cannot be located.
+ */
 status_t
 debug_create_image_symbol_iterator(debug_symbol_lookup_context* lookupContext,
 	image_id imageID, debug_symbol_iterator** _iterator)
@@ -504,6 +763,17 @@ debug_create_image_symbol_iterator(debug_symbol_lookup_context* lookupContext,
 }
 
 
+/**
+ * @brief Create a symbol iterator for a standalone ELF file on disk.
+ *
+ * Opens the file at @a path, maps it, and parses its ELF symbol table without
+ * requiring an active debug context. Useful for offline symbol resolution.
+ *
+ * @param path       Absolute path to the ELF file on disk.
+ * @param _iterator  Output — receives the newly allocated iterator.
+ * @return B_OK on success, B_BAD_VALUE if @a path is NULL, B_NO_MEMORY on
+ *         allocation failure, or a file/ELF parse error.
+ */
 status_t
 debug_create_file_symbol_iterator(const char* path,
 	debug_symbol_iterator** _iterator)
@@ -539,6 +809,11 @@ debug_create_file_symbol_iterator(const char* path,
 }
 
 
+/**
+ * @brief Destroy a symbol iterator and free its resources.
+ *
+ * @param iterator  The iterator to destroy; may be NULL (no-op).
+ */
 void
 debug_delete_symbol_iterator(debug_symbol_iterator* iterator)
 {
@@ -546,6 +821,22 @@ debug_delete_symbol_iterator(debug_symbol_iterator* iterator)
 }
 
 
+/**
+ * @brief Advance a symbol iterator and return the next symbol's attributes.
+ *
+ * Calls the underlying Image::NextSymbol() on the iterator's associated image
+ * and copies the name (truncated to fit @a nameBufferLength) into the caller's
+ * buffer.
+ *
+ * @param iterator          A valid iterator returned by debug_create_*_symbol_iterator().
+ * @param nameBuffer        Caller-supplied buffer to receive the symbol name.
+ * @param nameBufferLength  Byte capacity of @a nameBuffer.
+ * @param _symbolType       Output — receives B_SYMBOL_TYPE_TEXT or _DATA.
+ * @param _symbolLocation   Output — receives the runtime address of the symbol.
+ * @param _symbolSize       Output — receives the symbol size in bytes.
+ * @return B_OK when a symbol is returned, B_BAD_VALUE if iterator or its image
+ *         is NULL, B_ENTRY_NOT_FOUND at end-of-table.
+ */
 // debug_next_image_symbol
 status_t
 debug_next_image_symbol(debug_symbol_iterator* iterator, char* nameBuffer,
@@ -581,6 +872,13 @@ debug_next_image_symbol(debug_symbol_iterator* iterator, char* nameBuffer,
 }
 
 
+/**
+ * @brief Retrieve the image_info for the image associated with an iterator.
+ *
+ * @param iterator  A valid symbol iterator.
+ * @param info      Output — receives a copy of the image's image_info record.
+ * @return B_OK on success, B_BAD_VALUE if any pointer is NULL.
+ */
 status_t
 debug_get_symbol_iterator_image_info(debug_symbol_iterator* iterator,
 	image_info* info)

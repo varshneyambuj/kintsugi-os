@@ -1,7 +1,41 @@
 /*
- * Copyright 2006, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file SimpleLayouter.cpp
+ * @brief Weight-proportional layout engine for single-element constraints.
+ *
+ * SimpleLayouter handles the common case where each constraint applies to
+ * exactly one element. It distributes available space proportionally to
+ * element weights while respecting per-element min/max bounds, iterating
+ * until all space is allocated. A static DistributeSize() helper is also
+ * used by ComplexLayouter for its initial desired-solution estimate.
+ *
+ * @see Layouter, ComplexLayouter, CollapsingLayouter
+ */
+
 
 #include "SimpleLayouter.h"
 
@@ -18,12 +52,15 @@
 #endif
 
 
-// ElementLayoutInfo
+/** @brief Per-element pixel size and location produced after a layout pass. */
 class SimpleLayouter::ElementLayoutInfo {
 public:
 	int32	size;
 	int32	location;
 
+	/**
+	 * @brief Constructs an ElementLayoutInfo with zero size and location.
+	 */
 	ElementLayoutInfo()
 		: size(0),
 		  location(0)
@@ -31,7 +68,7 @@ public:
 	}
 };
 
-// ElementInfo
+/** @brief Per-element constraint and weight data used during layout. */
 class SimpleLayouter::ElementInfo {
 public:
 	int32	index;
@@ -39,8 +76,11 @@ public:
 	int32	max;
 	int32	preferred;
 	float	weight;
-	int64	tempWeight;
+	int64	tempWeight;   ///< Scaled integer weight computed by _CalculateSumWeight().
 
+	/**
+	 * @brief Default constructor; initialises with unconstrained values.
+	 */
 	ElementInfo()
 		: index(0),
 		  min(0),
@@ -51,6 +91,11 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Constructs an ElementInfo for a specific element index.
+	 *
+	 * @param index Element index within the layouter.
+	 */
 	ElementInfo(int index)
 		: index(index),
 		  min(0),
@@ -61,6 +106,11 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Copies constraint and weight values from another ElementInfo.
+	 *
+	 * @param info Source element info to copy from.
+	 */
 	void Assign(const ElementInfo& info)
 	{
 		min = info.min;
@@ -71,13 +121,22 @@ public:
 	}
 };
 
-// MyLayoutInfo
+/**
+ * @brief Concrete LayoutInfo produced by SimpleLayouter.
+ *
+ * Holds per-element size and location arrays populated after a layout pass.
+ */
 class SimpleLayouter::MyLayoutInfo : public LayoutInfo {
 public:
 	int32				fSize;
 	ElementLayoutInfo*	fElements;
 	int32				fElementCount;
 
+	/**
+	 * @brief Constructs the layout info and allocates the element array.
+	 *
+	 * @param elementCount Number of elements managed by the layouter.
+	 */
 	MyLayoutInfo(int32 elementCount)
 		: fSize(0),
 		  fElementCount(elementCount)
@@ -85,11 +144,20 @@ public:
 		fElements = new ElementLayoutInfo[elementCount];
 	}
 
+	/**
+	 * @brief Destroys the layout info and frees the element array.
+	 */
 	virtual ~MyLayoutInfo()
 	{
 		delete[] fElements;
 	}
 
+	/**
+	 * @brief Returns the pixel offset of an element from the layout origin.
+	 *
+	 * @param element Element index.
+	 * @return Pixel location, or 0 if out of range.
+	 */
 	virtual float ElementLocation(int32 element)
 	{
 		if (element < 0 || element >= fElementCount) {
@@ -100,6 +168,12 @@ public:
 		return fElements[element].location;
 	}
 
+	/**
+	 * @brief Returns the pixel size of an element (excluding spacing).
+	 *
+	 * @param element Element index.
+	 * @return Size in pixels, or -1 if out of range.
+	 */
 	virtual float ElementSize(int32 element)
 	{
 		if (element < 0 || element >= fElementCount) {
@@ -112,7 +186,12 @@ public:
 };
 
 
-// constructor
+/**
+ * @brief Constructs a SimpleLayouter with the given element count and spacing.
+ *
+ * @param elementCount Number of layout elements.
+ * @param spacing      Pixel gap between consecutive elements.
+ */
 SimpleLayouter::SimpleLayouter(int32 elementCount, float spacing)
 	: fElementCount(elementCount),
 	  fSpacing((int32)spacing),
@@ -127,13 +206,27 @@ SimpleLayouter::SimpleLayouter(int32 elementCount, float spacing)
 		fElements[i].index = i;
 }
 
-// destructor
+/**
+ * @brief Destroys the layouter and frees the element info array.
+ */
 SimpleLayouter::~SimpleLayouter()
 {
 	delete[] fElements;
 }
 
-// AddConstraints
+/**
+ * @brief Registers a single-element size constraint.
+ *
+ * Only single-element constraints (length == 1) are accepted; multi-element
+ * constraints should use ComplexLayouter instead. If a constraint already
+ * exists for the element, the stricter of the two bounds is kept.
+ *
+ * @param element    Index of the element to constrain.
+ * @param length     Must be 1; other values are silently ignored.
+ * @param _min       Minimum element size.
+ * @param _max       Maximum element size.
+ * @param _preferred Preferred element size (currently unused).
+ */
 void
 SimpleLayouter::AddConstraints(int32 element, int32 length,
 	float _min, float _max, float _preferred)
@@ -159,7 +252,12 @@ SimpleLayouter::AddConstraints(int32 element, int32 length,
 	fMinMaxValid = false;
 }
 
-// SetWeight
+/**
+ * @brief Sets the proportional weight for an element.
+ *
+ * @param element Index of the element.
+ * @param weight  Relative weight; higher weight receives more space.
+ */
 void
 SimpleLayouter::SetWeight(int32 element, float weight)
 {
@@ -171,7 +269,11 @@ SimpleLayouter::SetWeight(int32 element, float weight)
 	fElements[element].weight = weight;
 }
 
-// MinSize
+/**
+ * @brief Returns the minimum total size satisfying all constraints.
+ *
+ * @return Minimum size in pixels.
+ */
 float
 SimpleLayouter::MinSize()
 {
@@ -179,7 +281,11 @@ SimpleLayouter::MinSize()
 	return fMin - 1;
 }
 
-// MaxSize
+/**
+ * @brief Returns the maximum total size satisfying all constraints.
+ *
+ * @return Maximum size in pixels.
+ */
 float
 SimpleLayouter::MaxSize()
 {
@@ -187,7 +293,11 @@ SimpleLayouter::MaxSize()
 	return fMax - 1;
 }
 
-// PreferredSize
+/**
+ * @brief Returns the preferred total size.
+ *
+ * @return Preferred size in pixels.
+ */
 float
 SimpleLayouter::PreferredSize()
 {
@@ -195,14 +305,26 @@ SimpleLayouter::PreferredSize()
 	return fPreferred - 1;
 }
 
-// CreateLayoutInfo
+/**
+ * @brief Allocates a LayoutInfo for this layouter's element count.
+ *
+ * @return A new MyLayoutInfo.
+ */
 LayoutInfo*
 SimpleLayouter::CreateLayoutInfo()
 {
 	return new MyLayoutInfo(fElementCount);
 }
 
-// Layout
+/**
+ * @brief Distributes @p _size across elements respecting weights and bounds.
+ *
+ * Delegates to either _LayoutMax() (when size >= max) or _LayoutStandard(),
+ * then computes element pixel locations from the assigned sizes.
+ *
+ * @param layoutInfo LayoutInfo created by CreateLayoutInfo().
+ * @param _size      Total available size in pixels.
+ */
 void
 SimpleLayouter::Layout(LayoutInfo* layoutInfo, float _size)
 {
@@ -231,7 +353,11 @@ SimpleLayouter::Layout(LayoutInfo* layoutInfo, float _size)
 	}
 }
 
-// CloneLayouter
+/**
+ * @brief Creates an independent copy of this layouter.
+ *
+ * @return A new SimpleLayouter with identical constraints and weights.
+ */
 Layouter*
 SimpleLayouter::CloneLayouter()
 {
@@ -247,7 +373,18 @@ SimpleLayouter::CloneLayouter()
 	return layouter;
 }
 
-// DistributeSize
+/**
+ * @brief Distributes an integer @p size among @p count elements by weight.
+ *
+ * This static helper is also called by ComplexLayouter to generate an initial
+ * desired solution. The distribution avoids rounding drift by accumulating
+ * fractional remainders.
+ *
+ * @param size    Total integer size to distribute.
+ * @param weights Array of @p count floating-point weights.
+ * @param sizes   Output array of @p count integer sizes.
+ * @param count   Number of elements.
+ */
 void
 SimpleLayouter::DistributeSize(int32 size, float weights[], int32 sizes[],
 	int32 count)
@@ -277,7 +414,16 @@ SimpleLayouter::DistributeSize(int32 size, float weights[], int32 sizes[],
 	}
 }
 
-// _CalculateSumWeight
+/**
+ * @brief Computes scaled integer weights for all elements in @p elementInfos.
+ *
+ * Weights are scaled so their sum is approximately 100,000, providing enough
+ * integer resolution for proportional distribution. Elements with weight 0 are
+ * assigned a temporary weight of 1 so that space is still shared equally.
+ *
+ * @param elementInfos List of ElementInfo pointers (modified: tempWeight set).
+ * @return Sum of all scaled integer weights.
+ */
 long
 SimpleLayouter::_CalculateSumWeight(BList& elementInfos)
 {
@@ -320,7 +466,13 @@ SimpleLayouter::_CalculateSumWeight(BList& elementInfos)
 	return weight;
 }
 
-// _ValidateMinMax
+/**
+ * @brief Recomputes fMin, fMax, and fPreferred by summing per-element bounds.
+ *
+ * Corrects any elements whose preferred or max is below min, then sums all
+ * per-element values (using BLayoutUtils to handle overflow correctly).
+ * Sets fMinMaxValid to true on completion.
+ */
 void
 SimpleLayouter::_ValidateMinMax()
 {
@@ -359,7 +511,12 @@ SimpleLayouter::_ValidateMinMax()
 	}
 }
 
-// _LayoutMax
+/**
+ * @brief Lays out elements when the available size equals or exceeds fMax.
+ *
+ * Assigns each element its maximum size, then distributes any remaining space
+ * equally across elements.
+ */
 void
 SimpleLayouter::_LayoutMax()
 {
@@ -396,7 +553,13 @@ SimpleLayouter::_LayoutMax()
 	}
 }
 
-// _LayoutStandard
+/**
+ * @brief Lays out elements when size is between fMin and fMax.
+ *
+ * Iteratively distributes space proportionally by weight.  Elements that
+ * hit their min or max bound are removed from the active set; remaining space
+ * is redistributed until all space is consumed.
+ */
 void
 SimpleLayouter::_LayoutStandard()
 {

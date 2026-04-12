@@ -1,11 +1,43 @@
 /*
- * Copyright 2010-2014 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Adrien Destugues, pulkomandy@pulkomandy.tk
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Hamish Morrison, hamishm53@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2014 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Adrien Destugues, pulkomandy@pulkomandy.tk
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Hamish Morrison, hamishm53@gmail.com
+ */
+
+
+/**
+ * @file NetworkCookie.cpp
+ * @brief Implementation of BNetworkCookie for RFC 6265 HTTP cookie handling.
+ *
+ * Parses Set-Cookie header values, validates domain and path restrictions,
+ * enforces host-only and secure flags, supports archiving via BMessage, and
+ * provides lazy-cached raw cookie string generation. Cookie expiry is handled
+ * via max-age and expires attributes following the RFC 6265 algorithm.
+ *
+ * @see BNetworkCookieJar, BHttpRequest
  */
 
 
@@ -33,6 +65,17 @@ static const char* kArchivedCookieHttpOnly = "be:cookie.httponly";
 static const char* kArchivedCookieHostOnly = "be:cookie.hostonly";
 
 
+/**
+ * @brief Construct a cookie from explicit name, value, and originating URL.
+ *
+ * Sets the domain from the URL host and derives the default path via
+ * _DefaultPathForUrl(). For file:// URLs with no host, the domain is forced
+ * to "localhost".
+ *
+ * @param name   The cookie name.
+ * @param value  The cookie value.
+ * @param url    The URL from which this cookie is being set.
+ */
 BNetworkCookie::BNetworkCookie(const char* name, const char* value,
 	const BUrl& url)
 {
@@ -51,6 +94,15 @@ BNetworkCookie::BNetworkCookie(const char* name, const char* value,
 }
 
 
+/**
+ * @brief Construct a cookie by parsing a Set-Cookie header string.
+ *
+ * Delegates to ParseCookieString() after resetting all fields. If parsing
+ * fails, fInitStatus reflects the error.
+ *
+ * @param cookieString  The Set-Cookie header value to parse.
+ * @param url           The URL from which the Set-Cookie header was received.
+ */
 BNetworkCookie::BNetworkCookie(const BString& cookieString, const BUrl& url)
 {
 	_Reset();
@@ -58,6 +110,15 @@ BNetworkCookie::BNetworkCookie(const BString& cookieString, const BUrl& url)
 }
 
 
+/**
+ * @brief Construct a cookie by restoring it from a BMessage archive.
+ *
+ * Reads name, value, domain, path, secure, HttpOnly, host-only, and
+ * expiration date from the archive. Both string and legacy int32 expiration
+ * formats are handled.
+ *
+ * @param archive  The BMessage archive previously produced by Archive().
+ */
 BNetworkCookie::BNetworkCookie(BMessage* archive)
 {
 	_Reset();
@@ -86,12 +147,18 @@ BNetworkCookie::BNetworkCookie(BMessage* archive)
 }
 
 
+/**
+ * @brief Default constructor — creates an uninitialised empty cookie.
+ */
 BNetworkCookie::BNetworkCookie()
 {
 	_Reset();
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkCookie::~BNetworkCookie()
 {
 }
@@ -100,6 +167,21 @@ BNetworkCookie::~BNetworkCookie()
 // #pragma mark String to cookie fields
 
 
+/**
+ * @brief Parse a Set-Cookie header value and populate the cookie fields.
+ *
+ * Implements the RFC 6265 set-cookie-string parsing algorithm. Reads the
+ * mandatory name=value pair first, then processes semicolon-separated
+ * attribute-value pairs for Secure, HttpOnly, Max-Age, Expires, Domain, and
+ * Path. Validates that the resulting cookie may legitimately be set from the
+ * originating URL.
+ *
+ * @param string  The Set-Cookie header value string (without the field name).
+ * @param url     The URL from which the header was received.
+ * @return B_OK on success, B_BAD_DATA if the name=value pair is malformed,
+ *         B_BAD_VALUE for invalid attribute values, or B_NOT_ALLOWED if the
+ *         cookie domain does not match the request origin.
+ */
 status_t
 BNetworkCookie::ParseCookieString(const BString& string, const BUrl& url)
 {
@@ -204,6 +286,12 @@ BNetworkCookie::ParseCookieString(const BString& string, const BUrl& url)
 // #pragma mark Cookie fields modification
 
 
+/**
+ * @brief Set the cookie name and invalidate the raw cookie cache.
+ *
+ * @param name  The new cookie name.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetName(const BString& name)
 {
@@ -214,6 +302,12 @@ BNetworkCookie::SetName(const BString& name)
 }
 
 
+/**
+ * @brief Set the cookie value and invalidate the raw cookie cache.
+ *
+ * @param value  The new cookie value.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetValue(const BString& value)
 {
@@ -224,6 +318,15 @@ BNetworkCookie::SetValue(const BString& value)
 }
 
 
+/**
+ * @brief Set the cookie path attribute.
+ *
+ * Validates that the path begins with '/', does not exceed 4096 characters,
+ * and contains no "." or ".." path segments.
+ *
+ * @param to  The path string to set.
+ * @return B_OK on success, or B_BAD_DATA if validation fails.
+ */
 status_t
 BNetworkCookie::SetPath(const BString& to)
 {
@@ -245,6 +348,16 @@ BNetworkCookie::SetPath(const BString& to)
 }
 
 
+/**
+ * @brief Set the cookie domain attribute.
+ *
+ * Strips a leading dot (RFC 2109 compatibility), validates that the domain
+ * contains at least one interior dot (preventing cookies on TLDs), converts
+ * to lowercase, and clears the host-only flag.
+ *
+ * @param domain  The domain string to set.
+ * @return B_OK on success, or B_BAD_DATA if the domain is invalid.
+ */
 status_t
 BNetworkCookie::SetDomain(const BString& domain)
 {
@@ -273,6 +386,15 @@ BNetworkCookie::SetDomain(const BString& domain)
 }
 
 
+/**
+ * @brief Set the cookie expiration to now plus \a maxAge seconds.
+ *
+ * Saturates at INT_MAX to avoid overflow for very large max-age values.
+ * Negative values cause immediate expiry.
+ *
+ * @param maxAge  Number of seconds from now until the cookie expires.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetMaxAge(int32 maxAge)
 {
@@ -290,6 +412,12 @@ BNetworkCookie::SetMaxAge(int32 maxAge)
 }
 
 
+/**
+ * @brief Set the cookie expiration date from a POSIX time_t value.
+ *
+ * @param expireDate  POSIX timestamp of the expiration date.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetExpirationDate(time_t expireDate)
 {
@@ -299,6 +427,14 @@ BNetworkCookie::SetExpirationDate(time_t expireDate)
 }
 
 
+/**
+ * @brief Set the cookie expiration date from a BDateTime value.
+ *
+ * If the date is invalid, the cookie becomes a session cookie (no expiry).
+ *
+ * @param expireDate  The BDateTime expiration value.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetExpirationDate(BDateTime& expireDate)
 {
@@ -317,6 +453,12 @@ BNetworkCookie::SetExpirationDate(BDateTime& expireDate)
 }
 
 
+/**
+ * @brief Set the Secure attribute, restricting the cookie to HTTPS.
+ *
+ * @param secure  true to require HTTPS for this cookie, false otherwise.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetSecure(bool secure)
 {
@@ -326,6 +468,12 @@ BNetworkCookie::SetSecure(bool secure)
 }
 
 
+/**
+ * @brief Set the HttpOnly attribute, hiding the cookie from JavaScript.
+ *
+ * @param httpOnly  true to mark the cookie as HttpOnly, false otherwise.
+ * @return A reference to this cookie for method chaining.
+ */
 BNetworkCookie&
 BNetworkCookie::SetHttpOnly(bool httpOnly)
 {
@@ -338,6 +486,11 @@ BNetworkCookie::SetHttpOnly(bool httpOnly)
 // #pragma mark Cookie fields access
 
 
+/**
+ * @brief Return the cookie name.
+ *
+ * @return A const reference to the name BString.
+ */
 const BString&
 BNetworkCookie::Name() const
 {
@@ -345,6 +498,11 @@ BNetworkCookie::Name() const
 }
 
 
+/**
+ * @brief Return the cookie value.
+ *
+ * @return A const reference to the value BString.
+ */
 const BString&
 BNetworkCookie::Value() const
 {
@@ -352,6 +510,11 @@ BNetworkCookie::Value() const
 }
 
 
+/**
+ * @brief Return the cookie domain.
+ *
+ * @return A const reference to the domain BString.
+ */
 const BString&
 BNetworkCookie::Domain() const
 {
@@ -359,6 +522,11 @@ BNetworkCookie::Domain() const
 }
 
 
+/**
+ * @brief Return the cookie path.
+ *
+ * @return A const reference to the path BString.
+ */
 const BString&
 BNetworkCookie::Path() const
 {
@@ -366,6 +534,11 @@ BNetworkCookie::Path() const
 }
 
 
+/**
+ * @brief Return the cookie expiration date as a POSIX time_t.
+ *
+ * @return The expiration timestamp, or 0 for session cookies.
+ */
 time_t
 BNetworkCookie::ExpirationDate() const
 {
@@ -373,6 +546,14 @@ BNetworkCookie::ExpirationDate() const
 }
 
 
+/**
+ * @brief Return the cookie expiration date as a formatted HTTP date string.
+ *
+ * Lazily generates and caches the string in the B_HTTP_TIME_FORMAT_COOKIE
+ * format on first call.
+ *
+ * @return A const reference to the formatted expiration date BString.
+ */
 const BString&
 BNetworkCookie::ExpirationString() const
 {
@@ -387,6 +568,11 @@ BNetworkCookie::ExpirationString() const
 }
 
 
+/**
+ * @brief Return whether the Secure attribute is set.
+ *
+ * @return true if the cookie must only be sent over HTTPS.
+ */
 bool
 BNetworkCookie::Secure() const
 {
@@ -394,6 +580,11 @@ BNetworkCookie::Secure() const
 }
 
 
+/**
+ * @brief Return whether the HttpOnly attribute is set.
+ *
+ * @return true if the cookie should not be accessible from JavaScript.
+ */
 bool
 BNetworkCookie::HttpOnly() const
 {
@@ -401,6 +592,16 @@ BNetworkCookie::HttpOnly() const
 }
 
 
+/**
+ * @brief Return the raw cookie string, optionally including all attributes.
+ *
+ * The short form ("name=value") is cached in fRawCookie and rebuilt only when
+ * name or value changes. The full form adds Domain, Expires, Path, Secure,
+ * and HttpOnly attributes and is cached in fRawFullCookie.
+ *
+ * @param full  true to include all cookie attributes, false for name=value only.
+ * @return A const reference to the cached raw cookie BString.
+ */
 const BString&
 BNetworkCookie::RawCookie(bool full) const
 {
@@ -438,6 +639,14 @@ BNetworkCookie::RawCookie(bool full) const
 // #pragma mark Cookie test
 
 
+/**
+ * @brief Return whether the cookie has the host-only flag set.
+ *
+ * Host-only cookies are only sent to the exact domain they were set from,
+ * not to subdomains.
+ *
+ * @return true if the cookie is host-only.
+ */
 bool
 BNetworkCookie::IsHostOnly() const
 {
@@ -445,6 +654,11 @@ BNetworkCookie::IsHostOnly() const
 }
 
 
+/**
+ * @brief Return whether the cookie is a session cookie (no expiry date).
+ *
+ * @return true if the cookie should be deleted when the browser session ends.
+ */
 bool
 BNetworkCookie::IsSessionCookie() const
 {
@@ -452,6 +666,14 @@ BNetworkCookie::IsSessionCookie() const
 }
 
 
+/**
+ * @brief Return whether the cookie is fully valid and ready for use.
+ *
+ * A cookie is valid if it was successfully initialised, has a non-empty name,
+ * and has a domain set.
+ *
+ * @return true if the cookie is valid, false otherwise.
+ */
 bool
 BNetworkCookie::IsValid() const
 {
@@ -459,6 +681,15 @@ BNetworkCookie::IsValid() const
 }
 
 
+/**
+ * @brief Test whether this cookie should be sent for the given URL.
+ *
+ * Checks the Secure flag against the URL scheme, and validates both the
+ * domain and path components. For file:// URLs, requires domain "localhost".
+ *
+ * @param url  The URL to test against.
+ * @return true if the cookie is applicable to \a url, false otherwise.
+ */
 bool
 BNetworkCookie::IsValidForUrl(const BUrl& url) const
 {
@@ -472,6 +703,15 @@ BNetworkCookie::IsValidForUrl(const BUrl& url) const
 }
 
 
+/**
+ * @brief Test whether this cookie's domain matches the given domain string.
+ *
+ * Host-only cookies require an exact match. Other cookies allow a subdomain
+ * match where the request domain ends with ".<cookieDomain>".
+ *
+ * @param domain  The request host domain to test.
+ * @return true if the cookie's domain covers \a domain.
+ */
 bool
 BNetworkCookie::IsValidForDomain(const BString& domain) const
 {
@@ -498,6 +738,15 @@ BNetworkCookie::IsValidForDomain(const BString& domain) const
 }
 
 
+/**
+ * @brief Test whether this cookie's path is a prefix of the given path.
+ *
+ * The request path is normalised by stripping the filename component (the
+ * part after the last '/') before comparison.
+ *
+ * @param path  The request path to test.
+ * @return true if the cookie's path is a prefix of the normalised request path.
+ */
 bool
 BNetworkCookie::IsValidForPath(const BString& path) const
 {
@@ -515,6 +764,15 @@ BNetworkCookie::IsValidForPath(const BString& path) const
 }
 
 
+/**
+ * @brief Verify that this cookie may legitimately be set from \a url.
+ *
+ * Checks both domain and path constraints from the originating URL's
+ * perspective (i.e. prevents setting cookies for unrelated domains).
+ *
+ * @param url  The URL from which the Set-Cookie header was received.
+ * @return true if the cookie may be set from this URL, false otherwise.
+ */
 bool
 BNetworkCookie::_CanBeSetFromUrl(const BUrl& url) const
 {
@@ -525,6 +783,15 @@ BNetworkCookie::_CanBeSetFromUrl(const BUrl& url) const
 }
 
 
+/**
+ * @brief Test whether the cookie domain is compatible with the origin domain.
+ *
+ * The origin may set cookies for itself or for a suffix domain that is a
+ * proper superdomain of the origin (subdomain setting is allowed).
+ *
+ * @param domain  The origin host domain.
+ * @return true if setting this cookie from \a domain is permitted.
+ */
 bool
 BNetworkCookie::_CanBeSetFromDomain(const BString& domain) const
 {
@@ -558,6 +825,15 @@ BNetworkCookie::_CanBeSetFromDomain(const BString& domain) const
 }
 
 
+/**
+ * @brief Test whether the cookie path is consistent with the origin path.
+ *
+ * Either the cookie path must be a prefix of the origin path, or the origin
+ * path must be a prefix of the cookie path.
+ *
+ * @param path  The origin request path.
+ * @return true if setting this cookie from \a path is permitted.
+ */
 bool
 BNetworkCookie::_CanBeSetFromPath(const BString& path) const
 {
@@ -576,6 +852,11 @@ BNetworkCookie::_CanBeSetFromPath(const BString& path) const
 // #pragma mark Cookie fields existence tests
 
 
+/**
+ * @brief Return whether the cookie has a non-empty name.
+ *
+ * @return true if Name().Length() > 0.
+ */
 bool
 BNetworkCookie::HasName() const
 {
@@ -583,6 +864,11 @@ BNetworkCookie::HasName() const
 }
 
 
+/**
+ * @brief Return whether the cookie has a non-empty value.
+ *
+ * @return true if Value().Length() > 0.
+ */
 bool
 BNetworkCookie::HasValue() const
 {
@@ -590,6 +876,11 @@ BNetworkCookie::HasValue() const
 }
 
 
+/**
+ * @brief Return whether the cookie has a non-empty domain.
+ *
+ * @return true if Domain().Length() > 0.
+ */
 bool
 BNetworkCookie::HasDomain() const
 {
@@ -597,6 +888,11 @@ BNetworkCookie::HasDomain() const
 }
 
 
+/**
+ * @brief Return whether the cookie has a non-empty path.
+ *
+ * @return true if Path().Length() > 0.
+ */
 bool
 BNetworkCookie::HasPath() const
 {
@@ -604,6 +900,11 @@ BNetworkCookie::HasPath() const
 }
 
 
+/**
+ * @brief Return whether the cookie has an explicit expiration date.
+ *
+ * @return true if the cookie is not a session cookie.
+ */
 bool
 BNetworkCookie::HasExpirationDate() const
 {
@@ -614,6 +915,11 @@ BNetworkCookie::HasExpirationDate() const
 // #pragma mark Cookie delete test
 
 
+/**
+ * @brief Return whether the cookie should be deleted when the session ends.
+ *
+ * @return true for session cookies or cookies that have already expired.
+ */
 bool
 BNetworkCookie::ShouldDeleteAtExit() const
 {
@@ -621,6 +927,11 @@ BNetworkCookie::ShouldDeleteAtExit() const
 }
 
 
+/**
+ * @brief Return whether the cookie's expiration date has passed.
+ *
+ * @return true if the cookie has an expiration date and it is in the past.
+ */
 bool
 BNetworkCookie::ShouldDeleteNow() const
 {
@@ -634,6 +945,16 @@ BNetworkCookie::ShouldDeleteNow() const
 // #pragma mark BArchivable members
 
 
+/**
+ * @brief Archive the cookie into a BMessage.
+ *
+ * Stores mandatory fields (name, value) and all optional fields that are set.
+ * The expiration date is stored as an HTTP date string.
+ *
+ * @param into  The BMessage to archive into.
+ * @param deep  Passed to BArchivable::Archive() (no child objects to archive).
+ * @return B_OK on success, or an error code if any AddString/AddBool fails.
+ */
 status_t
 BNetworkCookie::Archive(BMessage* into, bool deep) const
 {
@@ -693,6 +1014,12 @@ BNetworkCookie::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Instantiate a BNetworkCookie from a BMessage archive.
+ *
+ * @param archive  The archive previously produced by Archive().
+ * @return A new heap-allocated BNetworkCookie, or NULL on allocation failure.
+ */
 /*static*/ BArchivable*
 BNetworkCookie::Instantiate(BMessage* archive)
 {
@@ -707,6 +1034,12 @@ BNetworkCookie::Instantiate(BMessage* archive)
 // #pragma mark Overloaded operators
 
 
+/**
+ * @brief Equality operator — two cookies are equal if name and value match.
+ *
+ * @param other  The cookie to compare against.
+ * @return true if both name and value are equal, false otherwise.
+ */
 bool
 BNetworkCookie::operator==(const BNetworkCookie& other)
 {
@@ -715,6 +1048,12 @@ BNetworkCookie::operator==(const BNetworkCookie& other)
 }
 
 
+/**
+ * @brief Inequality operator — the negation of operator==.
+ *
+ * @param other  The cookie to compare against.
+ * @return true if the cookies differ in name or value, false if they are equal.
+ */
 bool
 BNetworkCookie::operator!=(const BNetworkCookie& other)
 {
@@ -722,6 +1061,12 @@ BNetworkCookie::operator!=(const BNetworkCookie& other)
 }
 
 
+/**
+ * @brief Reset all cookie fields to their default (empty/false) state.
+ *
+ * Called by constructors and ParseCookieString() before (re-)populating
+ * the cookie from external input.
+ */
 void
 BNetworkCookie::_Reset()
 {
@@ -744,6 +1089,13 @@ BNetworkCookie::_Reset()
 }
 
 
+/**
+ * @brief Advance \a index past any leading space or tab characters.
+ *
+ * @param string  The string to scan.
+ * @param index   The starting position.
+ * @return The index of the first non-whitespace character at or after \a index.
+ */
 int32
 skip_whitespace_forward(const BString& string, int32 index)
 {
@@ -754,6 +1106,14 @@ skip_whitespace_forward(const BString& string, int32 index)
 }
 
 
+/**
+ * @brief Move \a index backwards past any trailing space or tab characters.
+ *
+ * @param string  The string to scan.
+ * @param index   The starting position (moves towards index 0).
+ * @return The index of the last non-whitespace character at or before \a index,
+ *         or -1 if the entire prefix is whitespace.
+ */
 int32
 skip_whitespace_backward(const BString& string, int32 index)
 {
@@ -763,6 +1123,19 @@ skip_whitespace_backward(const BString& string, int32 index)
 }
 
 
+/**
+ * @brief Extract the first name=value pair from a cookie string.
+ *
+ * Finds the first '=' and first ';' to delimit the pair, strips surrounding
+ * whitespace from both name and value, and copies them into the output strings.
+ *
+ * @param cookieString  The full Set-Cookie string.
+ * @param name          Output BString for the cookie name.
+ * @param value         Output BString for the cookie value.
+ * @param index         Starting parse position (typically 0).
+ * @return The position of the terminating ';' character, or the string length
+ *         if there is none, or -1 if no '=' was found (parse failure).
+ */
 int32
 BNetworkCookie::_ExtractNameValuePair(const BString& cookieString,
 	BString& name, BString& value, int32 index)
@@ -800,6 +1173,18 @@ BNetworkCookie::_ExtractNameValuePair(const BString& cookieString,
 }
 
 
+/**
+ * @brief Extract one attribute-value pair from the cookie attributes string.
+ *
+ * Finds the next ';' or end-of-string to delimit the attribute, then splits
+ * on the first '=' within that range. Quotes around the value are stripped.
+ *
+ * @param cookieString  The full Set-Cookie string.
+ * @param attribute     Output BString for the attribute name.
+ * @param value         Output BString for the attribute value (may be empty).
+ * @param index         Starting parse position (just past the leading ';').
+ * @return The position of the terminating ';' character or the string length.
+ */
 int32
 BNetworkCookie::_ExtractAttributeValuePair(const BString& cookieString,
 	BString& attribute, BString& value, int32 index)
@@ -848,6 +1233,16 @@ BNetworkCookie::_ExtractAttributeValuePair(const BString& cookieString,
 }
 
 
+/**
+ * @brief Derive the default cookie path from the URL as per RFC 6265.
+ *
+ * The default path is the portion of the URL path up to and including the
+ * last '/' before the filename component, or an empty string if the path
+ * is empty or does not start with '/'.
+ *
+ * @param url  The originating URL.
+ * @return The default path string, or an empty string for the root case.
+ */
 BString
 BNetworkCookie::_DefaultPathForUrl(const BUrl& url)
 {

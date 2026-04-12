@@ -1,6 +1,39 @@
 /*
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file WriterImplBase.cpp
+ * @brief Shared base class for HPKG package and repository writer implementations.
+ *
+ * WriterImplBase manages the output file, the compressed heap writer, the
+ * string cache, and the attribute value/encoding machinery shared by both
+ * PackageWriterImpl and RepositoryWriterImpl. It provides helpers for
+ * registering package metadata as typed attribute trees and for serialising
+ * those trees to the heap using LEB128-encoded tags.
+ *
+ * @see PackageWriterImpl, RepositoryWriterImpl, ReaderImplBase
  */
 
 
@@ -38,6 +71,9 @@ namespace BPrivate {
 // #pragma mark - AttributeValue
 
 
+/**
+ * @brief Constructs an AttributeValue with an invalid type and no encoding.
+ */
 WriterImplBase::AttributeValue::AttributeValue()
 	:
 	type(B_HPKG_ATTRIBUTE_TYPE_INVALID),
@@ -46,11 +82,19 @@ WriterImplBase::AttributeValue::AttributeValue()
 }
 
 
+/**
+ * @brief Destroys the AttributeValue.
+ */
 WriterImplBase::AttributeValue::~AttributeValue()
 {
 }
 
 
+/**
+ * @brief Sets the value to a signed 8-bit integer.
+ *
+ * @param value Signed 8-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(int8 value)
 {
@@ -59,6 +103,11 @@ WriterImplBase::AttributeValue::SetTo(int8 value)
 }
 
 
+/**
+ * @brief Sets the value to an unsigned 8-bit integer.
+ *
+ * @param value Unsigned 8-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(uint8 value)
 {
@@ -67,6 +116,11 @@ WriterImplBase::AttributeValue::SetTo(uint8 value)
 }
 
 
+/**
+ * @brief Sets the value to a signed 16-bit integer.
+ *
+ * @param value Signed 16-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(int16 value)
 {
@@ -75,6 +129,11 @@ WriterImplBase::AttributeValue::SetTo(int16 value)
 }
 
 
+/**
+ * @brief Sets the value to an unsigned 16-bit integer.
+ *
+ * @param value Unsigned 16-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(uint16 value)
 {
@@ -83,6 +142,11 @@ WriterImplBase::AttributeValue::SetTo(uint16 value)
 }
 
 
+/**
+ * @brief Sets the value to a signed 32-bit integer.
+ *
+ * @param value Signed 32-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(int32 value)
 {
@@ -91,6 +155,11 @@ WriterImplBase::AttributeValue::SetTo(int32 value)
 }
 
 
+/**
+ * @brief Sets the value to an unsigned 32-bit integer.
+ *
+ * @param value Unsigned 32-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(uint32 value)
 {
@@ -99,6 +168,11 @@ WriterImplBase::AttributeValue::SetTo(uint32 value)
 }
 
 
+/**
+ * @brief Sets the value to a signed 64-bit integer.
+ *
+ * @param value Signed 64-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(int64 value)
 {
@@ -107,6 +181,11 @@ WriterImplBase::AttributeValue::SetTo(int64 value)
 }
 
 
+/**
+ * @brief Sets the value to an unsigned 64-bit integer.
+ *
+ * @param value Unsigned 64-bit integer payload.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(uint64 value)
 {
@@ -115,6 +194,11 @@ WriterImplBase::AttributeValue::SetTo(uint64 value)
 }
 
 
+/**
+ * @brief Sets the value to a reference-counted cached string.
+ *
+ * @param value Pointer to a CachedString previously obtained from a StringCache.
+ */
 void
 WriterImplBase::AttributeValue::SetTo(CachedString* value)
 {
@@ -123,6 +207,14 @@ WriterImplBase::AttributeValue::SetTo(CachedString* value)
 }
 
 
+/**
+ * @brief Sets the value to a heap-allocated raw data block.
+ *
+ * The block is not copied; @a offset references its location in the heap.
+ *
+ * @param size   Byte size of the raw data.
+ * @param offset Heap offset at which the data begins.
+ */
 void
 WriterImplBase::AttributeValue::SetToData(uint64 size, uint64 offset)
 {
@@ -133,6 +225,14 @@ WriterImplBase::AttributeValue::SetToData(uint64 size, uint64 offset)
 }
 
 
+/**
+ * @brief Sets the value to an inline raw data block (at most a few bytes).
+ *
+ * Copies up to @a size bytes from @a rawData into the internal inline buffer.
+ *
+ * @param size    Byte size of the data; must fit in the inline buffer.
+ * @param rawData Pointer to the data to copy.
+ */
 void
 WriterImplBase::AttributeValue::SetToData(uint64 size, const void* rawData)
 {
@@ -144,6 +244,16 @@ WriterImplBase::AttributeValue::SetToData(uint64 size, const void* rawData)
 }
 
 
+/**
+ * @brief Returns the most compact encoding applicable to the current value.
+ *
+ * For integer types, selects 8-, 16-, 32-, or 64-bit encoding based on the
+ * magnitude. For strings, chooses table vs. inline encoding based on whether
+ * the string has been assigned a table index. For raw data, returns the
+ * encoding stored in the fEncoding field.
+ *
+ * @return One of the B_HPKG_ATTRIBUTE_ENCODING_* constants.
+ */
 uint8
 WriterImplBase::AttributeValue::ApplicableEncoding() const
 {
@@ -166,6 +276,12 @@ WriterImplBase::AttributeValue::ApplicableEncoding() const
 }
 
 
+/**
+ * @brief Selects the smallest integer encoding that can hold @a value.
+ *
+ * @param value Non-negative integer value to encode.
+ * @return One of the B_HPKG_ATTRIBUTE_ENCODING_INT_*_BIT constants.
+ */
 /*static*/ uint8
 WriterImplBase::AttributeValue::_ApplicableIntEncoding(uint64 value)
 {
@@ -183,6 +299,13 @@ WriterImplBase::AttributeValue::_ApplicableIntEncoding(uint64 value)
 // #pragma mark - PackageAttribute
 
 
+/**
+ * @brief Constructs a PackageAttribute node for the attribute tree.
+ *
+ * @param id_       Attribute ID.
+ * @param type_     HPKG type constant for the value.
+ * @param encoding_ Encoding constant chosen for the value.
+ */
 WriterImplBase::PackageAttribute::PackageAttribute(BHPKGAttributeID id_,
 	uint8 type_, uint8 encoding_)
 	:
@@ -193,12 +316,20 @@ WriterImplBase::PackageAttribute::PackageAttribute(BHPKGAttributeID id_,
 }
 
 
+/**
+ * @brief Destroys the PackageAttribute and recursively deletes all children.
+ */
 WriterImplBase::PackageAttribute::~PackageAttribute()
 {
 	_DeleteChildren();
 }
 
 
+/**
+ * @brief Appends @a child to this attribute's child list.
+ *
+ * @param child PackageAttribute node to add as a child.
+ */
 void
 WriterImplBase::PackageAttribute::AddChild(PackageAttribute* child)
 {
@@ -206,6 +337,9 @@ WriterImplBase::PackageAttribute::AddChild(PackageAttribute* child)
 }
 
 
+/**
+ * @brief Removes and deletes all children of this attribute node.
+ */
 void
 WriterImplBase::PackageAttribute::_DeleteChildren()
 {
@@ -217,6 +351,12 @@ WriterImplBase::PackageAttribute::_DeleteChildren()
 // #pragma mark - WriterImplBase
 
 
+/**
+ * @brief Constructs a WriterImplBase with no file open yet.
+ *
+ * @param fileType    Human-readable label used in error messages ("package" etc.).
+ * @param errorOutput Destination for diagnostic messages.
+ */
 WriterImplBase::WriterImplBase(const char* fileType, BErrorOutput* errorOutput)
 	:
 	fHeapWriter(NULL),
@@ -235,6 +375,12 @@ WriterImplBase::WriterImplBase(const char* fileType, BErrorOutput* errorOutput)
 }
 
 
+/**
+ * @brief Destroys the WriterImplBase and cleans up all owned resources.
+ *
+ * If the write was not finished successfully and the file was created from a
+ * path (not a pre-existing stream), the incomplete file is unlinked.
+ */
 WriterImplBase::~WriterImplBase()
 {
 	delete fHeapWriter;
@@ -253,6 +399,19 @@ WriterImplBase::~WriterImplBase()
 }
 
 
+/**
+ * @brief Initialises the writer with an output stream and parameters.
+ *
+ * Opens or adopts @a file, stores the parameters, and initialises the string
+ * cache. If @a file is NULL, opens @a fileName according to the parameters'
+ * flags (creating or truncating as needed).
+ *
+ * @param file       Pre-opened output stream, or NULL to open @a fileName.
+ * @param keepFile   If true and @a file is non-NULL, the writer takes ownership.
+ * @param fileName   Path used when @a file is NULL; stored for error messages.
+ * @param parameters Writer parameters controlling compression and flags.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 WriterImplBase::Init(BPositionIO* file, bool keepFile, const char* fileName,
 	const BPackageWriterParameters& parameters)
@@ -293,6 +452,16 @@ WriterImplBase::Init(BPositionIO* file, bool keepFile, const char* fileName,
 }
 
 
+/**
+ * @brief Creates the compressed heap writer for the configured compression algorithm.
+ *
+ * Instantiates a compression/decompression algorithm pair based on
+ * fParameters.Compression() and creates a PackageFileHeapWriter.
+ *
+ * @param headerSize Byte offset (from the start of the file) at which the heap begins.
+ * @return B_OK on success, or B_BAD_VALUE for an unknown compression type.
+ * @throws std::bad_alloc if algorithm objects cannot be allocated.
+ */
 status_t
 WriterImplBase::InitHeapReader(size_t headerSize)
 {
@@ -364,6 +533,11 @@ WriterImplBase::InitHeapReader(size_t headerSize)
 }
 
 
+/**
+ * @brief Overrides the compression algorithm in the stored parameters.
+ *
+ * @param compression One of the B_HPKG_COMPRESSION_* constants.
+ */
 void
 WriterImplBase::SetCompression(uint32 compression)
 {
@@ -371,6 +545,16 @@ WriterImplBase::SetCompression(uint32 compression)
 }
 
 
+/**
+ * @brief Registers all fields of @a packageInfo as attribute nodes in @a attributeList.
+ *
+ * Translates every BPackageInfo field (name, summary, version, provides, requires,
+ * global writable files, users, groups, scripts, etc.) into typed PackageAttribute
+ * nodes attached to @a attributeList, ready for serialisation.
+ *
+ * @param attributeList Destination list to which attribute nodes are appended.
+ * @param packageInfo   Package metadata to encode.
+ */
 void
 WriterImplBase::RegisterPackageInfo(PackageAttributeList& attributeList,
 	const BPackageInfo& packageInfo)
@@ -571,6 +755,17 @@ WriterImplBase::RegisterPackageInfo(PackageAttributeList& attributeList,
 }
 
 
+/**
+ * @brief Registers a BPackageVersion as a version attribute sub-tree.
+ *
+ * Creates a major-version string attribute (using @a attributeID as the id)
+ * and attaches minor, micro, pre-release, and revision child nodes as present.
+ *
+ * @param attributeList Destination list.
+ * @param version       Version data to encode.
+ * @param attributeID   Attribute ID for the major component (default is the
+ *                      standard package version major ID).
+ */
 void
 WriterImplBase::RegisterPackageVersion(PackageAttributeList& attributeList,
 	const BPackageVersion& version, BHPKGAttributeID attributeID)
@@ -600,6 +795,16 @@ WriterImplBase::RegisterPackageVersion(PackageAttributeList& attributeList,
 }
 
 
+/**
+ * @brief Registers a list of resolvable expressions as attribute nodes.
+ *
+ * For each entry in @a expressionList, creates a string attribute with id @a id
+ * and, if the expression has a version, adds operator and version child nodes.
+ *
+ * @param attributeList  Destination list.
+ * @param expressionList List of BPackageResolvableExpression entries to encode.
+ * @param id             Attribute ID for the resolvable expression (requires, etc.).
+ */
 void
 WriterImplBase::RegisterPackageResolvableExpressionList(
 	PackageAttributeList& attributeList,
@@ -623,6 +828,17 @@ WriterImplBase::RegisterPackageResolvableExpressionList(
 }
 
 
+/**
+ * @brief Creates a string attribute node and appends it to @a list.
+ *
+ * Looks up or inserts @a value into the package string cache, then constructs
+ * a PackageAttribute set to the string table encoding.
+ *
+ * @param id    Attribute ID.
+ * @param value String value; must outlive the attribute or be in the cache.
+ * @param list  List to which the new attribute is appended.
+ * @return Pointer to the newly created attribute.
+ */
 WriterImplBase::PackageAttribute*
 WriterImplBase::AddStringAttribute(BHPKGAttributeID id, const BString& value,
 	DoublyLinkedList<PackageAttribute>& list)
@@ -635,6 +851,17 @@ WriterImplBase::AddStringAttribute(BHPKGAttributeID id, const BString& value,
 }
 
 
+/**
+ * @brief Writes the cached string table to the heap and assigns table indices.
+ *
+ * Sorts strings by descending usage count, assigns ascending indices to those
+ * with usageCount >= @a minUsageCount, and writes each to the heap followed by
+ * a terminating zero byte.
+ *
+ * @param cache          String cache to serialise.
+ * @param minUsageCount  Minimum usage count for a string to be table-encoded.
+ * @return Number of strings written to the table.
+ */
 int32
 WriterImplBase::WriteCachedStrings(const StringCache& cache,
 	uint32 minUsageCount)
@@ -679,6 +906,17 @@ WriterImplBase::WriteCachedStrings(const StringCache& cache,
 }
 
 
+/**
+ * @brief Writes the package attributes section to the heap.
+ *
+ * First writes the string table (using strings with usageCount >= 2), then
+ * serialises the attribute tree. Returns the string count and stores the
+ * uncompressed strings length.
+ *
+ * @param packageAttributes          Root list of package attribute nodes.
+ * @param _stringsLengthUncompressed Output for the uncompressed bytes used by strings.
+ * @return Number of strings written to the string table.
+ */
 int32
 WriterImplBase::WritePackageAttributes(
 	const PackageAttributeList& packageAttributes,
@@ -696,6 +934,17 @@ WriterImplBase::WritePackageAttributes(
 }
 
 
+/**
+ * @brief Serialises a single attribute value to the heap using the given encoding.
+ *
+ * Handles all attribute types: integers (written big-endian at 8/16/32/64 bits),
+ * strings (LEB128 index or inline null-terminated), and raw data (LEB128 size
+ * followed by heap offset or inline bytes).
+ *
+ * @param value    Attribute value to serialise.
+ * @param encoding Encoding constant selecting the wire format.
+ * @throws status_t(B_BAD_VALUE) for an unsupported encoding or type.
+ */
 void
 WriterImplBase::WriteAttributeValue(const AttributeValue& value, uint8 encoding)
 {
@@ -761,6 +1010,11 @@ WriterImplBase::WriteAttributeValue(const AttributeValue& value, uint8 encoding)
 }
 
 
+/**
+ * @brief Encodes @a value as an unsigned LEB128 integer and appends it to the heap.
+ *
+ * @param value 64-bit unsigned value to encode.
+ */
 void
 WriterImplBase::WriteUnsignedLEB128(uint64 value)
 {
@@ -776,6 +1030,17 @@ WriterImplBase::WriteUnsignedLEB128(uint64 value)
 }
 
 
+/**
+ * @brief Writes @a size bytes from @a buffer to the file at @a offset.
+ *
+ * Used to update fixed-size header fields after the heap has been written.
+ * Throws the error code on failure.
+ *
+ * @param buffer Pointer to the data to write.
+ * @param size   Number of bytes to write.
+ * @param offset Absolute byte offset in the output file.
+ * @throws status_t error code if the write fails.
+ */
 void
 WriterImplBase::RawWriteBuffer(const void* buffer, size_t size, off_t offset)
 {
@@ -789,6 +1054,13 @@ WriterImplBase::RawWriteBuffer(const void* buffer, size_t size, off_t offset)
 }
 
 
+/**
+ * @brief Appends each string in @a value as a separate attribute node to @a list.
+ *
+ * @param id    Attribute ID to use for each node.
+ * @param value BStringList whose entries are encoded as string attributes.
+ * @param list  Destination attribute list.
+ */
 void
 WriterImplBase::_AddStringAttributeList(BHPKGAttributeID id,
 	const BStringList& value, DoublyLinkedList<PackageAttribute>& list)
@@ -798,6 +1070,15 @@ WriterImplBase::_AddStringAttributeList(BHPKGAttributeID id,
 }
 
 
+/**
+ * @brief Recursively serialises a package attribute list to the heap.
+ *
+ * For each attribute, encodes the LEB128 tag (id | type | encoding | has-children),
+ * then the value, then recurses into children. Writes a terminal zero LEB128 after
+ * the last sibling.
+ *
+ * @param packageAttributes List of attribute nodes to serialise.
+ */
 void
 WriterImplBase::_WritePackageAttributes(
 	const PackageAttributeList& packageAttributes)

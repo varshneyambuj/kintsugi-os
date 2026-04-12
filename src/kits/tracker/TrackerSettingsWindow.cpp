@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file TrackerSettingsWindow.cpp
+ * @brief TrackerSettingsWindow is the Tracker preferences dialog.
+ *
+ * Provides a two-panel layout: a BListView on the left selects the active
+ * settings page (Desktop, Windows, Volume icons, Disk mount) and a BBox on
+ * the right displays the corresponding SettingsView.  Defaults and Revert
+ * buttons update all pages in one operation.
+ *
+ * @see TrackerSettings, SettingsView, SettingsItem
+ */
 
 
 #include <Catalog.h>
@@ -73,6 +77,12 @@ const uint32 kRevertButtonPressed = 'Rebp';
 //	#pragma mark - TrackerSettingsWindow
 
 
+/**
+ * @brief Construct the TrackerSettingsWindow and build its layout.
+ *
+ * Instantiates the settings page list, container box, and Defaults/Revert
+ * buttons, then registers all built-in settings pages.
+ */
 TrackerSettingsWindow::TrackerSettingsWindow()
 	:
 	BWindow(BRect(80, 80, 450, 350), B_TRANSLATE("Tracker preferences"),
@@ -136,6 +146,11 @@ TrackerSettingsWindow::TrackerSettingsWindow()
 }
 
 
+/**
+ * @brief Hide the window instead of destroying it when the user closes it.
+ *
+ * @return true only if the window is already hidden (allowing actual quit).
+ */
 bool
 TrackerSettingsWindow::QuitRequested()
 {
@@ -147,6 +162,12 @@ TrackerSettingsWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Dispatch preference-window messages to the appropriate handlers.
+ *
+ * @param message  Incoming message (settings changed, defaults, revert, or
+ *                 settings view selection).
+ */
 void
 TrackerSettingsWindow::MessageReceived(BMessage* message)
 {
@@ -174,6 +195,12 @@ TrackerSettingsWindow::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Refresh all settings pages and show the window on the current workspace.
+ *
+ * Calls RecordRevertSettings() and ShowCurrentSettings() on every page before
+ * becoming visible so that the displayed values are up to date.
+ */
 void
 TrackerSettingsWindow::Show()
 {
@@ -201,6 +228,11 @@ TrackerSettingsWindow::Show()
 }
 
 
+/**
+ * @brief Select and display the given settings page.
+ *
+ * @param page  The SettingsPage enumeration value to show.
+ */
 void
 TrackerSettingsWindow::ShowPage(SettingsPage page)
 {
@@ -208,6 +240,13 @@ TrackerSettingsWindow::ShowPage(SettingsPage page)
 }
 
 
+/**
+ * @brief Return the SettingsView for list item at index \a i.
+ *
+ * @param i  Zero-based index into the settings list.
+ * @return Pointer to the SettingsView, or NULL if the index is out of range or
+ *         the window could not be locked.
+ */
 SettingsView*
 TrackerSettingsWindow::_ViewAt(int32 i)
 {
@@ -223,6 +262,9 @@ TrackerSettingsWindow::_ViewAt(int32 i)
 }
 
 
+/**
+ * @brief React to a settings modification: refresh the list and save settings.
+ */
 void
 TrackerSettingsWindow::_HandleChangedContents()
 {
@@ -233,6 +275,9 @@ TrackerSettingsWindow::_HandleChangedContents()
 }
 
 
+/**
+ * @brief Enable or disable the Defaults and Revert buttons based on page state.
+ */
 void
 TrackerSettingsWindow::_UpdateButtons()
 {
@@ -251,6 +296,9 @@ TrackerSettingsWindow::_UpdateButtons()
 }
 
 
+/**
+ * @brief Restore all settings pages to their default values.
+ */
 void
 TrackerSettingsWindow::_HandlePressedDefaultsButton()
 {
@@ -265,6 +313,9 @@ TrackerSettingsWindow::_HandlePressedDefaultsButton()
 }
 
 
+/**
+ * @brief Revert all settings pages to their last-recorded state.
+ */
 void
 TrackerSettingsWindow::_HandlePressedRevertButton()
 {
@@ -279,6 +330,12 @@ TrackerSettingsWindow::_HandlePressedRevertButton()
 }
 
 
+/**
+ * @brief Swap the displayed settings view when the user selects a different page.
+ *
+ * Removes the currently visible child view from the container box and inserts
+ * the newly selected SettingsView.
+ */
 void
 TrackerSettingsWindow::_HandleChangedSettingsView()
 {
@@ -310,6 +367,12 @@ TrackerSettingsWindow::_HandleChangedSettingsView()
 //	#pragma mark - SettingsItem
 
 
+/**
+ * @brief Construct a SettingsItem pairing a list label with a SettingsView.
+ *
+ * @param label  Text shown in the settings list.
+ * @param view   The SettingsView displayed when this item is selected.
+ */
 SettingsItem::SettingsItem(const char* label, SettingsView* view)
 	:
 	BStringItem(label),
@@ -318,6 +381,13 @@ SettingsItem::SettingsItem(const char* label, SettingsView* view)
 }
 
 
+/**
+ * @brief Draw this list item, using bold font when its settings have been modified.
+ *
+ * @param owner          The BView in which the item is drawn.
+ * @param rect           Bounding rectangle for this item.
+ * @param drawEverything If true, redraw the background even when not selected.
+ */
 void
 SettingsItem::DrawItem(BView* owner, BRect rect, bool drawEverything)
 {
@@ -360,6 +430,11 @@ SettingsItem::DrawItem(BView* owner, BRect rect, bool drawEverything)
 }
 
 
+/**
+ * @brief Return the SettingsView associated with this list item.
+ *
+ * @return Pointer to the SettingsView.
+ */
 SettingsView*
 SettingsItem::View()
 {

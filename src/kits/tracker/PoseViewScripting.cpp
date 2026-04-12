@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file PoseViewScripting.cpp
+ * @brief BPoseView scripting interface (suite/vnd.Be-TrackerPoses).
+ *
+ * Implements the BeOS scripting suite for BPoseView, allowing external scripts
+ * to query the path of the current window, count, get, create, and delete
+ * entries/selections, and execute poses.  Entries and selections can be
+ * specified by index, entry_ref, or previous/next specifiers.
+ *
+ * @see BPoseView
+ */
 
 //	PoseView scripting interface
 
@@ -188,6 +192,12 @@ const property_info kPosesPropertyList[] = {
 };
 
 
+/**
+ * @brief Report the supported scripting suite (suite/vnd.Be-TrackerPoses).
+ *
+ * @param data  The BMessage to populate with suite names and property info.
+ * @return B_OK on success.
+ */
 status_t
 BPoseView::GetSupportedSuites(BMessage* data)
 {
@@ -200,6 +210,16 @@ BPoseView::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Attempt to handle a scripting message directed at this view.
+ *
+ * Checks whether the message is a scripting verb targeting the Poses property
+ * suite, then dispatches to the appropriate handler (Execute, Create, Delete,
+ * Count, Get, or Set).
+ *
+ * @param message  The scripting BMessage to handle.
+ * @return True if the message was consumed, false if it should be passed on.
+ */
 bool
 BPoseView::HandleScriptingMessage(BMessage* message)
 {
@@ -265,6 +285,15 @@ BPoseView::HandleScriptingMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Execute (launch) an entry specified by the scripting message.
+ *
+ * @param specifier  The specifier sub-message from the scripting chain.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @param reply      The reply message to fill in.
+ * @return True if the property was handled.
+ */
 bool
 BPoseView::ExecuteProperty(BMessage* specifier, int32 form,
 	const char* property, BMessage* reply)
@@ -315,6 +344,15 @@ BPoseView::ExecuteProperty(BMessage* specifier, int32 form,
 }
 
 
+/**
+ * @brief Add a new entry to the selection via a scripting Create message.
+ *
+ * @param specifier  The specifier sub-message.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @param reply      The reply message to fill in.
+ * @return True if the property was handled.
+ */
 bool
 BPoseView::CreateProperty(BMessage* specifier, BMessage*, int32 form,
 	const char* property, BMessage* reply)
@@ -371,6 +409,15 @@ BPoseView::CreateProperty(BMessage* specifier, BMessage*, int32 form,
 }
 
 
+/**
+ * @brief Remove an entry or deselect a pose via a scripting Delete message.
+ *
+ * @param specifier  The specifier sub-message.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @param reply      The reply message to fill in.
+ * @return True if the property was handled.
+ */
 bool
 BPoseView::DeleteProperty(BMessage* specifier, int32 form,
 	const char* property, BMessage* reply)
@@ -469,6 +516,13 @@ BPoseView::DeleteProperty(BMessage* specifier, int32 form,
 }
 
 
+/**
+ * @brief Return the count of entries or selections via a scripting Count message.
+ *
+ * @param property  The property name string (kPropertyEntry or kPropertySelection).
+ * @param reply     The reply message to fill in with the "result" count.
+ * @return True if the property was handled.
+ */
 bool
 BPoseView::CountProperty(BMessage*, int32, const char* property,
 	BMessage* reply)
@@ -489,6 +543,15 @@ BPoseView::CountProperty(BMessage*, int32, const char* property,
 }
 
 
+/**
+ * @brief Retrieve a property value (path, entry ref, or selection) via scripting.
+ *
+ * @param specifier  The specifier sub-message.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @param reply      The reply message to fill in with the "result" field.
+ * @return True if the property was handled.
+ */
 bool
 BPoseView::GetProperty(BMessage* specifier, int32 form,
 	const char* property, BMessage* reply)
@@ -621,6 +684,15 @@ BPoseView::GetProperty(BMessage* specifier, int32 form,
 }
 
 
+/**
+ * @brief Set a property value (currently only kPropertySelection) via scripting.
+ *
+ * @param message    The full scripting BMessage.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @param reply      The reply message to fill in.
+ * @return True if the property was handled.
+ */
 bool
 BPoseView::SetProperty(BMessage* message, BMessage*, int32 form,
 	const char* property, BMessage* reply)
@@ -689,6 +761,19 @@ BPoseView::SetProperty(BMessage* message, BMessage*, int32 form,
 }
 
 
+/**
+ * @brief Resolve a scripting specifier for the Poses property suite.
+ *
+ * Returns this view if the property is in kPosesPropertyList, otherwise
+ * delegates to the base class.
+ *
+ * @param message    The full scripting message.
+ * @param index      Index of this handler in the specifier chain.
+ * @param specifier  The specifier sub-message.
+ * @param form       The specifier form constant.
+ * @param property   The property name string.
+ * @return Pointer to the BHandler that will handle the message.
+ */
 BHandler*
 BPoseView::ResolveSpecifier(BMessage* message, int32 index,
 	BMessage* specifier, int32 form, const char* property)
@@ -708,6 +793,14 @@ BPoseView::ResolveSpecifier(BMessage* message, int32 index,
 }
 
 
+/**
+ * @brief Find a pose by entry_ref, supporting previous/next specifier forms.
+ *
+ * @param ref             The entry_ref to locate.
+ * @param specifierForm   kPreviousSpecifier, kNextSpecifier, or a direct form.
+ * @param index           Output receiving the pose's list index.
+ * @return Pointer to the BPose, or NULL if not found.
+ */
 BPose*
 BPoseView::FindPose(const entry_ref* ref, int32 specifierForm,
 	int32* index) const

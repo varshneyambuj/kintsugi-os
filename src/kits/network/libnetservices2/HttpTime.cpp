@@ -1,12 +1,45 @@
 /*
- * Copyright 2010-2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Adrien Destugues, pulkomandy@gmail.com
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2022 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Adrien Destugues, pulkomandy@gmail.com
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
  */
+
+
+/**
+ * @file HttpTime.cpp
+ * @brief Implementation of BHttpTime, an HTTP date/time parser and formatter.
+ *
+ * BHttpTime parses and formats the three HTTP timestamp formats defined by
+ * RFC 2616 section 3.3: RFC 1123/822, RFC 850, and asctime.  It also handles
+ * common real-world variants such as missing timezone indicators and four-digit
+ * years in RFC 850 dates.
+ *
+ * @see BDateTime, BHttpFields
+ */
+
 
 #include <HttpTime.h>
 
@@ -52,6 +85,12 @@ static const std::list<std::pair<BHttpTimeFormat, const char*>> kDateFormats = {
 // #pragma mark BHttpTime::InvalidInput
 
 
+/**
+ * @brief Construct an InvalidInput exception for a bad HTTP timestamp string.
+ *
+ * @param origin  Null-terminated origin identifier string.
+ * @param input   The timestamp string that could not be parsed.
+ */
 BHttpTime::InvalidInput::InvalidInput(const char* origin, BString input)
 	:
 	BError(origin),
@@ -60,6 +99,12 @@ BHttpTime::InvalidInput::InvalidInput(const char* origin, BString input)
 }
 
 
+/**
+ * @brief Return a description of why the timestamp is invalid.
+ *
+ * @return "A HTTP timestamp cannot be empty" if input is empty;
+ *         "The HTTP timestamp string does not match the expected format" otherwise.
+ */
 const char*
 BHttpTime::InvalidInput::Message() const noexcept
 {
@@ -70,6 +115,11 @@ BHttpTime::InvalidInput::Message() const noexcept
 }
 
 
+/**
+ * @brief Build a debug message including the offending timestamp string.
+ *
+ * @return BString with the base debug message and the invalid input appended.
+ */
 BString
 BHttpTime::InvalidInput::DebugMessage() const
 {
@@ -83,6 +133,9 @@ BHttpTime::InvalidInput::DebugMessage() const
 // #pragma mark BHttpTime
 
 
+/**
+ * @brief Construct a BHttpTime initialised to the current GMT date/time.
+ */
 BHttpTime::BHttpTime() noexcept
 	:
 	fDate(BDateTime::CurrentDateTime(B_GMT_TIME)),
@@ -91,6 +144,11 @@ BHttpTime::BHttpTime() noexcept
 }
 
 
+/**
+ * @brief Construct a BHttpTime from an existing BDateTime.
+ *
+ * @param date  A valid BDateTime; throws InvalidInput if the date is invalid.
+ */
 BHttpTime::BHttpTime(BDateTime date)
 	:
 	fDate(date),
@@ -101,6 +159,11 @@ BHttpTime::BHttpTime(BDateTime date)
 }
 
 
+/**
+ * @brief Construct a BHttpTime by parsing an HTTP date string.
+ *
+ * @param dateString  HTTP-formatted date string to parse.
+ */
 BHttpTime::BHttpTime(const BString& dateString)
 	:
 	fDate(0),
@@ -113,6 +176,11 @@ BHttpTime::BHttpTime(const BString& dateString)
 // #pragma mark Date modification
 
 
+/**
+ * @brief Replace the stored date/time by parsing a new HTTP date string.
+ *
+ * @param string  HTTP-formatted date string to parse.
+ */
 void
 BHttpTime::SetTo(const BString& string)
 {
@@ -120,6 +188,11 @@ BHttpTime::SetTo(const BString& string)
 }
 
 
+/**
+ * @brief Replace the stored date/time with a BDateTime.
+ *
+ * @param date  A valid BDateTime; throws InvalidInput if invalid.
+ */
 void
 BHttpTime::SetTo(BDateTime date)
 {
@@ -134,6 +207,11 @@ BHttpTime::SetTo(BDateTime date)
 // #pragma mark Date Access
 
 
+/**
+ * @brief Return the stored BDateTime.
+ *
+ * @return The parsed or assigned BDateTime value.
+ */
 BDateTime
 BHttpTime::DateTime() const noexcept
 {
@@ -141,6 +219,11 @@ BHttpTime::DateTime() const noexcept
 }
 
 
+/**
+ * @brief Return the format in which the stored date was originally parsed.
+ *
+ * @return BHttpTimeFormat enum value indicating RFC1123, RFC850, or AscTime.
+ */
 BHttpTimeFormat
 BHttpTime::DateTimeFormat() const noexcept
 {
@@ -148,6 +231,14 @@ BHttpTime::DateTimeFormat() const noexcept
 }
 
 
+/**
+ * @brief Format the stored date/time as an HTTP timestamp string.
+ *
+ * Uses the first matching format string for \a outputFormat found in kDateFormats.
+ *
+ * @param outputFormat  The desired output format (RFC1123, RFC850, or AscTime).
+ * @return BString containing the formatted timestamp, or an empty string on failure.
+ */
 BString
 BHttpTime::ToString(BHttpTimeFormat outputFormat) const
 {
@@ -184,6 +275,14 @@ BHttpTime::ToString(BHttpTimeFormat outputFormat) const
 }
 
 
+/**
+ * @brief Parse an HTTP date string and store the result in fDate and fDateFormat.
+ *
+ * Iterates over all known format strings in kDateFormats until one fully
+ * consumes the input string.
+ *
+ * @param dateString  The HTTP date string to parse.
+ */
 void
 BHttpTime::_Parse(const BString& dateString)
 {
@@ -217,6 +316,12 @@ BHttpTime::_Parse(const BString& dateString)
 // #pragma mark Convenience Functions
 
 
+/**
+ * @brief Parse an HTTP date string and return the corresponding BDateTime.
+ *
+ * @param string  HTTP-formatted date string to parse.
+ * @return BDateTime representing the parsed point in time.
+ */
 BDateTime
 BPrivate::Network::parse_http_time(const BString& string)
 {
@@ -225,6 +330,13 @@ BPrivate::Network::parse_http_time(const BString& string)
 }
 
 
+/**
+ * @brief Format a BDateTime as an HTTP timestamp string.
+ *
+ * @param timestamp     The date/time to format.
+ * @param outputFormat  Desired output format (RFC1123, RFC850, or AscTime).
+ * @return BString containing the formatted timestamp.
+ */
 BString
 BPrivate::Network::format_http_time(BDateTime timestamp, BHttpTimeFormat outputFormat)
 {

@@ -1,10 +1,43 @@
 /*
- * Copyright 2010-2017 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Adrien Destugues, pulkomandy@pulkomandy.tk
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Adrien Destugues, pulkomandy@pulkomandy.tk
+ */
+
+
+/**
+ * @file UrlProtocolDispatchingListener.cpp
+ * @brief Implementation of BUrlProtocolDispatchingListener.
+ *
+ * Implements the synchronous BUrlProtocolListener interface by converting
+ * each callback into a B_URL_PROTOCOL_NOTIFICATION BMessage and posting it
+ * to a target BHandler or BMessenger. Certificate verification callbacks use
+ * a synchronous reply to return the user's decision back to the protocol
+ * thread.
+ *
+ * @see BUrlProtocolAsynchronousListener, BUrlProtocolListener
  */
 
 
@@ -22,6 +55,11 @@ const char* kUrlProtocolMessageType = "be:urlProtocolMessageType";
 const char* kUrlProtocolCaller = "be:urlProtocolCaller";
 
 
+/**
+ * @brief Construct a dispatching listener that targets a BHandler.
+ *
+ * @param handler  The BHandler to which notification messages will be sent.
+ */
 BUrlProtocolDispatchingListener::BUrlProtocolDispatchingListener
 	(BHandler* handler)
 	:
@@ -30,6 +68,11 @@ BUrlProtocolDispatchingListener::BUrlProtocolDispatchingListener
 }
 
 
+/**
+ * @brief Construct a dispatching listener that targets a BMessenger.
+ *
+ * @param messenger  The BMessenger to which notification messages will be sent.
+ */
 BUrlProtocolDispatchingListener::BUrlProtocolDispatchingListener
 	(const BMessenger& messenger)
 	:
@@ -38,11 +81,19 @@ BUrlProtocolDispatchingListener::BUrlProtocolDispatchingListener
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BUrlProtocolDispatchingListener::~BUrlProtocolDispatchingListener()
 {
 }
 
 
+/**
+ * @brief Dispatch a ConnectionOpened notification message.
+ *
+ * @param caller  The BUrlRequest that opened the connection.
+ */
 void
 BUrlProtocolDispatchingListener::ConnectionOpened(BUrlRequest* caller)
 {
@@ -51,6 +102,12 @@ BUrlProtocolDispatchingListener::ConnectionOpened(BUrlRequest* caller)
 }
 
 
+/**
+ * @brief Dispatch a HostnameResolved notification message.
+ *
+ * @param caller  The BUrlRequest that resolved the hostname.
+ * @param ip      The resolved IP address string.
+ */
 void
 BUrlProtocolDispatchingListener::HostnameResolved(BUrlRequest* caller,
 	const char* ip)
@@ -62,6 +119,11 @@ BUrlProtocolDispatchingListener::HostnameResolved(BUrlRequest* caller,
 }
 
 
+/**
+ * @brief Dispatch a ResponseStarted notification message.
+ *
+ * @param caller  The BUrlRequest that started receiving the response.
+ */
 void
 BUrlProtocolDispatchingListener::ResponseStarted(BUrlRequest* caller)
 {
@@ -70,6 +132,11 @@ BUrlProtocolDispatchingListener::ResponseStarted(BUrlRequest* caller)
 }
 
 
+/**
+ * @brief Dispatch a HeadersReceived notification message.
+ *
+ * @param caller  The BUrlRequest that finished receiving headers.
+ */
 void
 BUrlProtocolDispatchingListener::HeadersReceived(BUrlRequest* caller)
 {
@@ -78,6 +145,12 @@ BUrlProtocolDispatchingListener::HeadersReceived(BUrlRequest* caller)
 }
 
 
+/**
+ * @brief Dispatch a BytesWritten notification message.
+ *
+ * @param caller        The BUrlRequest that wrote data to its output.
+ * @param bytesWritten  The number of bytes written.
+ */
 void
 BUrlProtocolDispatchingListener::BytesWritten(BUrlRequest* caller,
 	size_t bytesWritten)
@@ -89,6 +162,13 @@ BUrlProtocolDispatchingListener::BytesWritten(BUrlRequest* caller,
 }
 
 
+/**
+ * @brief Dispatch a DownloadProgress notification message.
+ *
+ * @param caller         The BUrlRequest making download progress.
+ * @param bytesReceived  Total bytes received so far.
+ * @param bytesTotal     Total expected bytes, or 0 if unknown.
+ */
 void
 BUrlProtocolDispatchingListener::DownloadProgress(BUrlRequest* caller,
 	off_t bytesReceived, off_t bytesTotal)
@@ -101,6 +181,13 @@ BUrlProtocolDispatchingListener::DownloadProgress(BUrlRequest* caller,
 }
 
 
+/**
+ * @brief Dispatch an UploadProgress notification message.
+ *
+ * @param caller      The BUrlRequest making upload progress.
+ * @param bytesSent   Total bytes sent so far.
+ * @param bytesTotal  Total expected bytes to send.
+ */
 void
 BUrlProtocolDispatchingListener::UploadProgress(BUrlRequest* caller,
 	off_t bytesSent, off_t bytesTotal)
@@ -113,6 +200,12 @@ BUrlProtocolDispatchingListener::UploadProgress(BUrlRequest* caller,
 }
 
 
+/**
+ * @brief Dispatch a RequestCompleted notification message.
+ *
+ * @param caller   The BUrlRequest that completed.
+ * @param success  true if the request completed without error.
+ */
 void
 BUrlProtocolDispatchingListener::RequestCompleted(BUrlRequest* caller,
 	bool success)
@@ -124,6 +217,13 @@ BUrlProtocolDispatchingListener::RequestCompleted(BUrlRequest* caller,
 }
 
 
+/**
+ * @brief Dispatch a DebugMessage notification message.
+ *
+ * @param caller  The BUrlRequest emitting the debug message.
+ * @param type    The BUrlProtocolDebugMessage category.
+ * @param text    The debug message text.
+ */
 void
 BUrlProtocolDispatchingListener::DebugMessage(BUrlRequest* caller,
 	BUrlProtocolDebugMessage type, const char* text)
@@ -136,6 +236,19 @@ BUrlProtocolDispatchingListener::DebugMessage(BUrlRequest* caller,
 }
 
 
+/**
+ * @brief Send a certificate verification failure message and wait for a reply.
+ *
+ * This is a synchronous call — the protocol thread blocks until the handler
+ * replies. The certificate pointer is embedded in the message so the handler
+ * can display it to the user.
+ *
+ * @param caller       The BUrlRequest encountering the certificate failure.
+ * @param certificate  The BCertificate that failed verification.
+ * @param error        A human-readable description of the failure.
+ * @return The "url:continue" boolean from the handler's reply: true to
+ *         proceed despite the failure, false to abort.
+ */
 bool
 BUrlProtocolDispatchingListener::CertificateVerificationFailed(
 	BUrlRequest* caller, BCertificate& certificate, const char* error)
@@ -155,6 +268,16 @@ BUrlProtocolDispatchingListener::CertificateVerificationFailed(
 }
 
 
+/**
+ * @brief Internal helper that stamps and sends a notification message.
+ *
+ * Adds the caller pointer and notification type to \a message and sends it
+ * via the stored BMessenger. In debug builds, asserts that the send succeeds.
+ *
+ * @param message       The partially-constructed BMessage to send.
+ * @param notification  The B_URL_PROTOCOL_* notification constant.
+ * @param caller        The BUrlRequest to embed as the caller pointer.
+ */
 void
 BUrlProtocolDispatchingListener::_SendMessage(BMessage* message,
 	int8 notification, BUrlRequest* caller)

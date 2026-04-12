@@ -1,12 +1,45 @@
 /*
- * Copyright 2004-2015, Haiku Inc. All rights reserved.
- * Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2015, Haiku Inc. All rights reserved.
+ *   Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ *
+ *   Distributed under the terms of the MIT License.
  */
 
 
-//!	The mail daemon's settings
+/**
+ * @file MailSettings.cpp
+ * @brief Mail daemon and account configuration classes.
+ *
+ * Implements BMailSettings (global daemon settings such as auto-check interval
+ * and status window preferences), BMailAccounts (an enumeration of all
+ * configured accounts sorted by creation time), BMailAddOnSettings (per-filter
+ * persistent settings backed by a BMessage), BMailProtocolSettings (protocol
+ * settings including a list of filter settings), and BMailAccountSettings
+ * (a complete account including inbound/outbound protocol and filter settings,
+ * real name, and return address). Settings are stored as flattened BMessages
+ * under the user settings directory.
+ *
+ * @see BMailDaemon, BMailProtocol, BMailFilter
+ */
 
 
 #include <MailSettings.h>
@@ -33,17 +66,28 @@
 //	#pragma mark - BMailSettings
 
 
+/**
+ * @brief Constructs a BMailSettings and loads the current settings from disk.
+ */
 BMailSettings::BMailSettings()
 {
 	Reload();
 }
 
 
+/**
+ * @brief Destroys the BMailSettings.
+ */
 BMailSettings::~BMailSettings()
 {
 }
 
 
+/**
+ * @brief Returns the initialisation status (always B_OK).
+ *
+ * @return B_OK always.
+ */
 status_t
 BMailSettings::InitCheck() const
 {
@@ -51,6 +95,14 @@ BMailSettings::InitCheck() const
 }
 
 
+/**
+ * @brief Saves the current settings to the user settings directory and notifies the daemon.
+ *
+ * Writes the flattened settings BMessage to Mail/new_mail_daemon, then sends
+ * kMsgSettingsUpdated to the mail daemon so it reloads its configuration.
+ *
+ * @return B_OK on success, or a file-system error code on failure.
+ */
 status_t
 BMailSettings::Save()
 {
@@ -74,6 +126,14 @@ BMailSettings::Save()
 }
 
 
+/**
+ * @brief Reloads settings from the most-specific available settings directory.
+ *
+ * Searches B_USER_SETTINGS_DIRECTORY then B_SYSTEM_SETTINGS_DIRECTORY in
+ * order, reading the first Mail/new_mail_daemon file found.
+ *
+ * @return B_OK on success, or B_ENTRY_NOT_FOUND if no settings file exists.
+ */
 status_t
 BMailSettings::Reload()
 {
@@ -116,6 +176,11 @@ BMailSettings::Reload()
 //	# pragma mark - Global settings
 
 
+/**
+ * @brief Returns which screen corner the status window should follow.
+ *
+ * @return Corner constant stored in the settings BMessage.
+ */
 int32
 BMailSettings::WindowFollowsCorner()
 {
@@ -123,6 +188,11 @@ BMailSettings::WindowFollowsCorner()
 }
 
 
+/**
+ * @brief Sets which screen corner the status window should follow.
+ *
+ * @param whichCorner  One of the B_FOLLOW_* constants.
+ */
 void
 BMailSettings::SetWindowFollowsCorner(int32 whichCorner)
 {
@@ -131,6 +201,11 @@ BMailSettings::SetWindowFollowsCorner(int32 whichCorner)
 }
 
 
+/**
+ * @brief Returns when the status window should be shown.
+ *
+ * @return 0 = never, 1 = always, 2 = during send and receive (default).
+ */
 uint32
 BMailSettings::ShowStatusWindow()
 {
@@ -144,6 +219,11 @@ BMailSettings::ShowStatusWindow()
 }
 
 
+/**
+ * @brief Sets when the status window should be shown.
+ *
+ * @param mode  0 = never, 1 = always, 2 = during send and receive.
+ */
 void
 BMailSettings::SetShowStatusWindow(uint32 mode)
 {
@@ -152,6 +232,11 @@ BMailSettings::SetShowStatusWindow(uint32 mode)
 }
 
 
+/**
+ * @brief Returns true if the mail daemon should start automatically at login.
+ *
+ * @return true if auto-start is enabled.
+ */
 bool
 BMailSettings::DaemonAutoStarts()
 {
@@ -159,6 +244,11 @@ BMailSettings::DaemonAutoStarts()
 }
 
 
+/**
+ * @brief Enables or disables automatic daemon start at login.
+ *
+ * @param startIt  true to enable auto-start.
+ */
 void
 BMailSettings::SetDaemonAutoStarts(bool startIt)
 {
@@ -167,6 +257,11 @@ BMailSettings::SetDaemonAutoStarts(bool startIt)
 }
 
 
+/**
+ * @brief Returns the saved frame rectangle for the mail configuration window.
+ *
+ * @return Saved BRect; zero-sized if not previously stored.
+ */
 BRect
 BMailSettings::ConfigWindowFrame()
 {
@@ -174,6 +269,11 @@ BMailSettings::ConfigWindowFrame()
 }
 
 
+/**
+ * @brief Saves the frame rectangle for the mail configuration window.
+ *
+ * @param frame  BRect to store.
+ */
 void
 BMailSettings::SetConfigWindowFrame(BRect frame)
 {
@@ -182,6 +282,11 @@ BMailSettings::SetConfigWindowFrame(BRect frame)
 }
 
 
+/**
+ * @brief Returns the saved frame rectangle for the mail status window.
+ *
+ * @return Saved BRect, or BRect(100,100,200,120) if not previously stored.
+ */
 BRect
 BMailSettings::StatusWindowFrame()
 {
@@ -193,6 +298,11 @@ BMailSettings::StatusWindowFrame()
 }
 
 
+/**
+ * @brief Saves the frame rectangle for the mail status window.
+ *
+ * @param frame  BRect to store.
+ */
 void
 BMailSettings::SetStatusWindowFrame(BRect frame)
 {
@@ -201,6 +311,11 @@ BMailSettings::SetStatusWindowFrame(BRect frame)
 }
 
 
+/**
+ * @brief Returns the workspace mask for the status window.
+ *
+ * @return Workspace mask; defaults to B_ALL_WORKSPACES if not stored.
+ */
 int32
 BMailSettings::StatusWindowWorkspaces()
 {
@@ -212,6 +327,11 @@ BMailSettings::StatusWindowWorkspaces()
 }
 
 
+/**
+ * @brief Sets the workspace mask for the status window and notifies the daemon.
+ *
+ * @param workspace  Workspace mask to store and send to the running daemon.
+ */
 void
 BMailSettings::SetStatusWindowWorkspaces(int32 workspace)
 {
@@ -224,6 +344,11 @@ BMailSettings::SetStatusWindowWorkspaces(int32 workspace)
 }
 
 
+/**
+ * @brief Returns the window-look constant for the status window.
+ *
+ * @return One of the window look constants stored in the settings.
+ */
 int32
 BMailSettings::StatusWindowLook()
 {
@@ -231,6 +356,11 @@ BMailSettings::StatusWindowLook()
 }
 
 
+/**
+ * @brief Sets the window-look for the status window and notifies the daemon.
+ *
+ * @param look  Window look constant to apply.
+ */
 void
 BMailSettings::SetStatusWindowLook(int32 look)
 {
@@ -243,6 +373,11 @@ BMailSettings::SetStatusWindowLook(int32 look)
 }
 
 
+/**
+ * @brief Returns the auto-check interval in microseconds.
+ *
+ * @return Interval in microseconds; defaults to 5 minutes if not stored.
+ */
 bigtime_t
 BMailSettings::AutoCheckInterval()
 {
@@ -255,6 +390,11 @@ BMailSettings::AutoCheckInterval()
 }
 
 
+/**
+ * @brief Sets the auto-check interval.
+ *
+ * @param interval  Check interval in microseconds.
+ */
 void
 BMailSettings::SetAutoCheckInterval(bigtime_t interval)
 {
@@ -263,6 +403,11 @@ BMailSettings::SetAutoCheckInterval(bigtime_t interval)
 }
 
 
+/**
+ * @brief Returns true if mail should only be checked when a PPP connection is up.
+ *
+ * @return true if PPP-only checking is enabled.
+ */
 bool
 BMailSettings::CheckOnlyIfPPPUp()
 {
@@ -270,6 +415,11 @@ BMailSettings::CheckOnlyIfPPPUp()
 }
 
 
+/**
+ * @brief Enables or disables PPP-gated mail checking.
+ *
+ * @param yes  true to check only when PPP is up.
+ */
 void
 BMailSettings::SetCheckOnlyIfPPPUp(bool yes)
 {
@@ -278,6 +428,11 @@ BMailSettings::SetCheckOnlyIfPPPUp(bool yes)
 }
 
 
+/**
+ * @brief Returns true if mail should only be sent when a PPP connection is up.
+ *
+ * @return true if PPP-gated sending is enabled.
+ */
 bool
 BMailSettings::SendOnlyIfPPPUp()
 {
@@ -285,6 +440,11 @@ BMailSettings::SendOnlyIfPPPUp()
 }
 
 
+/**
+ * @brief Enables or disables PPP-gated mail sending.
+ *
+ * @param yes  true to send only when PPP is up.
+ */
 void
 BMailSettings::SetSendOnlyIfPPPUp(bool yes)
 {
@@ -293,6 +453,11 @@ BMailSettings::SetSendOnlyIfPPPUp(bool yes)
 }
 
 
+/**
+ * @brief Returns the account ID of the default outbound account.
+ *
+ * @return Numeric account ID.
+ */
 int32
 BMailSettings::DefaultOutboundAccount()
 {
@@ -300,6 +465,11 @@ BMailSettings::DefaultOutboundAccount()
 }
 
 
+/**
+ * @brief Sets the default outbound account by ID.
+ *
+ * @param to  Numeric account ID to use as the default outbound account.
+ */
 void
 BMailSettings::SetDefaultOutboundAccount(int32 to)
 {
@@ -311,6 +481,12 @@ BMailSettings::SetDefaultOutboundAccount(int32 to)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a BMailAccounts and loads all account settings sorted by creation time.
+ *
+ * Reads every entry from the Mail/accounts settings directory and inserts
+ * valid accounts into fAccounts in ascending creation-time order.
+ */
 BMailAccounts::BMailAccounts()
 {
 	BPath path;
@@ -356,6 +532,12 @@ BMailAccounts::BMailAccounts()
 }
 
 
+/**
+ * @brief Resolves the path to the Mail/accounts settings directory.
+ *
+ * @param path  Output BPath set to the accounts directory.
+ * @return B_OK on success, or an error from find_directory() or path.Append().
+ */
 status_t
 BMailAccounts::AccountsPath(BPath& path)
 {
@@ -366,6 +548,9 @@ BMailAccounts::AccountsPath(BPath& path)
 }
 
 
+/**
+ * @brief Destroys the BMailAccounts, releasing all loaded account settings.
+ */
 BMailAccounts::~BMailAccounts()
 {
 	for (int i = 0; i < fAccounts.CountItems(); i++)
@@ -373,6 +558,11 @@ BMailAccounts::~BMailAccounts()
 }
 
 
+/**
+ * @brief Returns the total number of loaded accounts.
+ *
+ * @return Account count.
+ */
 int32
 BMailAccounts::CountAccounts()
 {
@@ -380,6 +570,12 @@ BMailAccounts::CountAccounts()
 }
 
 
+/**
+ * @brief Returns the account settings at the given index.
+ *
+ * @param index  Zero-based account index.
+ * @return Pointer to BMailAccountSettings, or NULL if out of range.
+ */
 BMailAccountSettings*
 BMailAccounts::AccountAt(int32 index)
 {
@@ -387,6 +583,12 @@ BMailAccounts::AccountAt(int32 index)
 }
 
 
+/**
+ * @brief Finds an account by its numeric ID.
+ *
+ * @param id  Account ID to search for.
+ * @return Pointer to the matching BMailAccountSettings, or NULL.
+ */
 BMailAccountSettings*
 BMailAccounts::AccountByID(int32 id)
 {
@@ -399,6 +601,12 @@ BMailAccounts::AccountByID(int32 id)
 }
 
 
+/**
+ * @brief Finds an account by its name string.
+ *
+ * @param name  Account name string to search for (case-sensitive).
+ * @return Pointer to the matching BMailAccountSettings, or NULL.
+ */
 BMailAccountSettings*
 BMailAccounts::AccountByName(const char* name)
 {
@@ -414,16 +622,33 @@ BMailAccounts::AccountByName(const char* name)
 // #pragma mark -
 
 
+/**
+ * @brief Default constructor — creates an empty BMailAddOnSettings.
+ */
 BMailAddOnSettings::BMailAddOnSettings()
 {
 }
 
 
+/**
+ * @brief Destroys the BMailAddOnSettings.
+ */
 BMailAddOnSettings::~BMailAddOnSettings()
 {
 }
 
 
+/**
+ * @brief Loads the add-on reference and settings from a BMessage.
+ *
+ * Resolves relative add-on paths against all mail_daemon add-on directories.
+ * Populates this BMessage (which IS the settings) from the "settings"
+ * sub-message in \a message.
+ *
+ * @param message  BMessage containing "add-on path" and optionally "settings".
+ * @return B_OK on success, B_BAD_VALUE if "add-on path" is missing,
+ *         B_ENTRY_NOT_FOUND if the add-on cannot be located.
+ */
 status_t
 BMailAddOnSettings::Load(const BMessage& message)
 {
@@ -468,6 +693,15 @@ BMailAddOnSettings::Load(const BMessage& message)
 }
 
 
+/**
+ * @brief Saves the add-on reference and settings into a BMessage.
+ *
+ * Stores the path relative to the mail_daemon add-ons directory under
+ * "add-on path" and this BMessage's contents under "settings".
+ *
+ * @param message  Output BMessage to receive the serialised settings.
+ * @return B_OK on success, or a BMessage error code on failure.
+ */
 status_t
 BMailAddOnSettings::Save(BMessage& message)
 {
@@ -484,6 +718,11 @@ BMailAddOnSettings::Save(BMessage& message)
 }
 
 
+/**
+ * @brief Sets the entry_ref of the add-on file associated with these settings.
+ *
+ * @param ref  entry_ref of the add-on shared library.
+ */
 void
 BMailAddOnSettings::SetAddOnRef(const entry_ref& ref)
 {
@@ -491,6 +730,11 @@ BMailAddOnSettings::SetAddOnRef(const entry_ref& ref)
 }
 
 
+/**
+ * @brief Returns the entry_ref of the add-on file.
+ *
+ * @return Const reference to the add-on entry_ref.
+ */
 const entry_ref&
 BMailAddOnSettings::AddOnRef() const
 {
@@ -498,6 +742,11 @@ BMailAddOnSettings::AddOnRef() const
 }
 
 
+/**
+ * @brief Returns true if the settings have changed since the last Load() or Save().
+ *
+ * @return true if the ref or any settings field has been modified.
+ */
 bool
 BMailAddOnSettings::HasBeenModified() const
 {
@@ -506,9 +755,15 @@ BMailAddOnSettings::HasBeenModified() const
 }
 
 
-/*!	Cuts off the ".../add-ons/mail_daemon" part of the provided \a path
-	in case it exists. Otherwise, the complete path will be returned.
-*/
+/**
+ * @brief Strips the ".../add-ons/mail_daemon/" prefix from a path if present.
+ *
+ * Returns the substring after the last "mail_daemon/" component so that
+ * add-on paths are stored as relative names, making them relocatable.
+ *
+ * @param path  Full path to potentially relativise.
+ * @return Pointer into \a path.Path() after the prefix, or the full path string.
+ */
 const char*
 BMailAddOnSettings::_RelativizePath(const BPath& path) const
 {
@@ -525,6 +780,9 @@ BMailAddOnSettings::_RelativizePath(const BPath& path) const
 // #pragma mark -
 
 
+/**
+ * @brief Default constructor — creates an empty BMailProtocolSettings.
+ */
 BMailProtocolSettings::BMailProtocolSettings()
 	:
 	fFiltersSettings(5)
@@ -532,11 +790,23 @@ BMailProtocolSettings::BMailProtocolSettings()
 }
 
 
+/**
+ * @brief Destroys the BMailProtocolSettings.
+ */
 BMailProtocolSettings::~BMailProtocolSettings()
 {
 }
 
 
+/**
+ * @brief Loads protocol settings and all embedded filter settings from a BMessage.
+ *
+ * Calls the base class Load(), then iterates over "filters" sub-messages to
+ * populate the filter settings list.
+ *
+ * @param message  BMessage containing the protocol and filter settings.
+ * @return B_OK on success, B_BAD_VALUE if the filters field type is wrong.
+ */
 status_t
 BMailProtocolSettings::Load(const BMessage& message)
 {
@@ -566,6 +836,15 @@ BMailProtocolSettings::Load(const BMessage& message)
 }
 
 
+/**
+ * @brief Saves protocol settings and all filter settings into a BMessage.
+ *
+ * Calls the base class Save(), then appends each filter's settings as
+ * "filters" sub-messages.
+ *
+ * @param message  Output BMessage to receive the serialised settings.
+ * @return B_OK on success, or an error code from the base class or BMessage.
+ */
 status_t
 BMailProtocolSettings::Save(BMessage& message)
 {
@@ -583,6 +862,11 @@ BMailProtocolSettings::Save(BMessage& message)
 }
 
 
+/**
+ * @brief Returns the number of filter settings in this protocol's list.
+ *
+ * @return Filter settings count.
+ */
 int32
 BMailProtocolSettings::CountFilterSettings() const
 {
@@ -590,6 +874,12 @@ BMailProtocolSettings::CountFilterSettings() const
 }
 
 
+/**
+ * @brief Adds a new (empty) filter settings entry, optionally pre-seeded with a ref.
+ *
+ * @param ref  Optional entry_ref of the filter add-on, or NULL.
+ * @return Zero-based index of the newly added entry, or -1 on allocation failure.
+ */
 int32
 BMailProtocolSettings::AddFilterSettings(const entry_ref* ref)
 {
@@ -605,6 +895,11 @@ BMailProtocolSettings::AddFilterSettings(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Removes the filter settings at the given index.
+ *
+ * @param index  Zero-based index to remove.
+ */
 void
 BMailProtocolSettings::RemoveFilterSettings(int32 index)
 {
@@ -612,6 +907,13 @@ BMailProtocolSettings::RemoveFilterSettings(int32 index)
 }
 
 
+/**
+ * @brief Moves a filter settings entry from one position to another.
+ *
+ * @param from  Source index.
+ * @param to    Destination index.
+ * @return true on success, false if either index is out of range.
+ */
 bool
 BMailProtocolSettings::MoveFilterSettings(int32 from, int32 to)
 {
@@ -627,6 +929,12 @@ BMailProtocolSettings::MoveFilterSettings(int32 from, int32 to)
 }
 
 
+/**
+ * @brief Returns the filter settings at the given index.
+ *
+ * @param index  Zero-based index.
+ * @return Pointer to BMailAddOnSettings, or NULL if out of range.
+ */
 BMailAddOnSettings*
 BMailProtocolSettings::FilterSettingsAt(int32 index) const
 {
@@ -634,6 +942,11 @@ BMailProtocolSettings::FilterSettingsAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns true if the protocol or any filter settings have been modified.
+ *
+ * @return true if anything has changed since the last Load() or Save().
+ */
 bool
 BMailProtocolSettings::HasBeenModified() const
 {
@@ -650,6 +963,12 @@ BMailProtocolSettings::HasBeenModified() const
 //	#pragma mark -
 
 
+/**
+ * @brief Constructs a new BMailAccountSettings with a default account ID.
+ *
+ * Initialises inbound and outbound as enabled; the account ID is seeded from
+ * the real-time clock to ensure uniqueness.
+ */
 BMailAccountSettings::BMailAccountSettings()
 	:
 	fStatus(B_OK),
@@ -661,6 +980,11 @@ BMailAccountSettings::BMailAccountSettings()
 }
 
 
+/**
+ * @brief Constructs a BMailAccountSettings by loading from an existing BEntry.
+ *
+ * @param account  BEntry pointing to the account settings file.
+ */
 BMailAccountSettings::BMailAccountSettings(BEntry account)
 	:
 	fAccountFile(account),
@@ -670,12 +994,20 @@ BMailAccountSettings::BMailAccountSettings(BEntry account)
 }
 
 
+/**
+ * @brief Destroys the BMailAccountSettings.
+ */
 BMailAccountSettings::~BMailAccountSettings()
 {
 
 }
 
 
+/**
+ * @brief Sets the numeric account ID.
+ *
+ * @param id  New account ID; marks the settings as modified.
+ */
 void
 BMailAccountSettings::SetAccountID(int32 id)
 {
@@ -684,6 +1016,11 @@ BMailAccountSettings::SetAccountID(int32 id)
 }
 
 
+/**
+ * @brief Returns the numeric account ID.
+ *
+ * @return Account ID integer.
+ */
 int32
 BMailAccountSettings::AccountID() const
 {
@@ -691,6 +1028,11 @@ BMailAccountSettings::AccountID() const
 }
 
 
+/**
+ * @brief Sets the account name (display name).
+ *
+ * @param name  Null-terminated account name string.
+ */
 void
 BMailAccountSettings::SetName(const char* name)
 {
@@ -699,6 +1041,11 @@ BMailAccountSettings::SetName(const char* name)
 }
 
 
+/**
+ * @brief Returns the account name.
+ *
+ * @return Null-terminated account name string.
+ */
 const char*
 BMailAccountSettings::Name() const
 {
@@ -706,6 +1053,11 @@ BMailAccountSettings::Name() const
 }
 
 
+/**
+ * @brief Sets the user's real name for the From header.
+ *
+ * @param realName  Null-terminated real name string.
+ */
 void
 BMailAccountSettings::SetRealName(const char* realName)
 {
@@ -714,6 +1066,11 @@ BMailAccountSettings::SetRealName(const char* realName)
 }
 
 
+/**
+ * @brief Returns the user's real name.
+ *
+ * @return Null-terminated real name string.
+ */
 const char*
 BMailAccountSettings::RealName() const
 {
@@ -721,6 +1078,11 @@ BMailAccountSettings::RealName() const
 }
 
 
+/**
+ * @brief Sets the return (reply-to) e-mail address.
+ *
+ * @param returnAddress  Null-terminated e-mail address string.
+ */
 void
 BMailAccountSettings::SetReturnAddress(const char* returnAddress)
 {
@@ -729,6 +1091,11 @@ BMailAccountSettings::SetReturnAddress(const char* returnAddress)
 }
 
 
+/**
+ * @brief Returns the return (reply-to) e-mail address.
+ *
+ * @return Null-terminated e-mail address string.
+ */
 const char*
 BMailAccountSettings::ReturnAddress() const
 {
@@ -736,6 +1103,12 @@ BMailAccountSettings::ReturnAddress() const
 }
 
 
+/**
+ * @brief Sets the inbound protocol add-on by name, resolving the entry_ref.
+ *
+ * @param name  Add-on filename (e.g. "POP3") under mail_daemon/inbound_protocols.
+ * @return true if the add-on was found and the ref was set successfully.
+ */
 bool
 BMailAccountSettings::SetInboundAddOn(const char* name)
 {
@@ -748,6 +1121,12 @@ BMailAccountSettings::SetInboundAddOn(const char* name)
 }
 
 
+/**
+ * @brief Sets the outbound protocol add-on by name, resolving the entry_ref.
+ *
+ * @param name  Add-on filename (e.g. "SMTP") under mail_daemon/outbound_protocols.
+ * @return true if the add-on was found and the ref was set successfully.
+ */
 bool
 BMailAccountSettings::SetOutboundAddOn(const char* name)
 {
@@ -760,6 +1139,11 @@ BMailAccountSettings::SetOutboundAddOn(const char* name)
 }
 
 
+/**
+ * @brief Returns the entry_ref of the inbound protocol add-on.
+ *
+ * @return Const reference to the inbound add-on entry_ref.
+ */
 const entry_ref&
 BMailAccountSettings::InboundAddOnRef() const
 {
@@ -767,6 +1151,11 @@ BMailAccountSettings::InboundAddOnRef() const
 }
 
 
+/**
+ * @brief Returns the entry_ref of the outbound protocol add-on.
+ *
+ * @return Const reference to the outbound add-on entry_ref.
+ */
 const entry_ref&
 BMailAccountSettings::OutboundAddOnRef() const
 {
@@ -774,6 +1163,11 @@ BMailAccountSettings::OutboundAddOnRef() const
 }
 
 
+/**
+ * @brief Returns the inbound protocol settings (non-const).
+ *
+ * @return Reference to the inbound BMailProtocolSettings.
+ */
 BMailProtocolSettings&
 BMailAccountSettings::InboundSettings()
 {
@@ -781,6 +1175,11 @@ BMailAccountSettings::InboundSettings()
 }
 
 
+/**
+ * @brief Returns the inbound protocol settings (const).
+ *
+ * @return Const reference to the inbound BMailProtocolSettings.
+ */
 const BMailProtocolSettings&
 BMailAccountSettings::InboundSettings() const
 {
@@ -788,6 +1187,11 @@ BMailAccountSettings::InboundSettings() const
 }
 
 
+/**
+ * @brief Returns the outbound protocol settings (non-const).
+ *
+ * @return Reference to the outbound BMailProtocolSettings.
+ */
 BMailProtocolSettings&
 BMailAccountSettings::OutboundSettings()
 {
@@ -795,6 +1199,11 @@ BMailAccountSettings::OutboundSettings()
 }
 
 
+/**
+ * @brief Returns the outbound protocol settings (const).
+ *
+ * @return Const reference to the outbound BMailProtocolSettings.
+ */
 const BMailProtocolSettings&
 BMailAccountSettings::OutboundSettings() const
 {
@@ -802,6 +1211,11 @@ BMailAccountSettings::OutboundSettings() const
 }
 
 
+/**
+ * @brief Returns true if the inbound add-on file exists on disk.
+ *
+ * @return true if the inbound add-on ref points to an existing entry.
+ */
 bool
 BMailAccountSettings::HasInbound()
 {
@@ -809,6 +1223,11 @@ BMailAccountSettings::HasInbound()
 }
 
 
+/**
+ * @brief Returns true if the outbound add-on file exists on disk.
+ *
+ * @return true if the outbound add-on ref points to an existing entry.
+ */
 bool
 BMailAccountSettings::HasOutbound()
 {
@@ -816,6 +1235,11 @@ BMailAccountSettings::HasOutbound()
 }
 
 
+/**
+ * @brief Enables or disables the inbound (receiving) side of this account.
+ *
+ * @param enabled  true to enable inbound mail fetching.
+ */
 void
 BMailAccountSettings::SetInboundEnabled(bool enabled)
 {
@@ -824,6 +1248,11 @@ BMailAccountSettings::SetInboundEnabled(bool enabled)
 }
 
 
+/**
+ * @brief Returns true if inbound mail fetching is enabled for this account.
+ *
+ * @return true if inbound is enabled.
+ */
 bool
 BMailAccountSettings::IsInboundEnabled() const
 {
@@ -831,6 +1260,11 @@ BMailAccountSettings::IsInboundEnabled() const
 }
 
 
+/**
+ * @brief Enables or disables the outbound (sending) side of this account.
+ *
+ * @param enabled  true to enable outbound mail sending.
+ */
 void
 BMailAccountSettings::SetOutboundEnabled(bool enabled)
 {
@@ -839,6 +1273,11 @@ BMailAccountSettings::SetOutboundEnabled(bool enabled)
 }
 
 
+/**
+ * @brief Returns true if outbound mail sending is enabled for this account.
+ *
+ * @return true if outbound is enabled.
+ */
 bool
 BMailAccountSettings::IsOutboundEnabled() const
 {
@@ -846,6 +1285,11 @@ BMailAccountSettings::IsOutboundEnabled() const
 }
 
 
+/**
+ * @brief Reloads all account settings from the account file on disk.
+ *
+ * @return B_OK on success, or a file error code if the file cannot be read.
+ */
 status_t
 BMailAccountSettings::Reload()
 {
@@ -880,6 +1324,14 @@ BMailAccountSettings::Reload()
 }
 
 
+/**
+ * @brief Saves all account settings to the account file on disk.
+ *
+ * Creates the account file if it does not yet exist (via _CreateAccountFilePath()),
+ * then flattens the complete settings BMessage into it.
+ *
+ * @return B_OK on success, or a file error code on failure.
+ */
 status_t
 BMailAccountSettings::Save()
 {
@@ -913,6 +1365,11 @@ BMailAccountSettings::Save()
 }
 
 
+/**
+ * @brief Removes the account settings file from disk.
+ *
+ * @return B_OK on success, or an error code from BEntry::Remove().
+ */
 status_t
 BMailAccountSettings::Delete()
 {
@@ -920,6 +1377,11 @@ BMailAccountSettings::Delete()
 }
 
 
+/**
+ * @brief Returns true if any setting has changed since the last load or save.
+ *
+ * @return true if fModified is set or if either protocol settings report a change.
+ */
 bool
 BMailAccountSettings::HasBeenModified() const
 {
@@ -929,6 +1391,11 @@ BMailAccountSettings::HasBeenModified() const
 }
 
 
+/**
+ * @brief Returns the BEntry for the account settings file.
+ *
+ * @return Const reference to fAccountFile.
+ */
 const BEntry&
 BMailAccountSettings::AccountFile() const
 {
@@ -936,6 +1403,14 @@ BMailAccountSettings::AccountFile() const
 }
 
 
+/**
+ * @brief Creates the account file path if it does not yet exist.
+ *
+ * Generates a unique filename under Mail/accounts based on the account name
+ * or ID, appending a numeric suffix if the preferred name is already taken.
+ *
+ * @return B_OK on success, or an error code if the directory cannot be created.
+ */
 status_t
 BMailAccountSettings::_CreateAccountFilePath()
 {
@@ -972,6 +1447,17 @@ BMailAccountSettings::_CreateAccountFilePath()
 }
 
 
+/**
+ * @brief Searches for an add-on file by name under the given add-ons sub-path.
+ *
+ * Iterates all paths returned by BPathFinder for \a subPath and returns the
+ * entry_ref of the first matching file.
+ *
+ * @param subPath  Sub-path under B_FIND_PATH_ADD_ONS_DIRECTORY (e.g. "mail_daemon/inbound_protocols").
+ * @param name     Add-on filename to search for.
+ * @param ref      Output entry_ref set to the found file.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching file exists.
+ */
 status_t
 BMailAccountSettings::_GetAddOnRef(const char* subPath, const char* name,
 	entry_ref& ref)

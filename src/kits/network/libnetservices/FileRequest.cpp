@@ -1,9 +1,42 @@
 /*
- * Copyright 2013-2014 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- * 		Adrien Destugues, pulkomandy@pulkomandy.tk
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Adrien Destugues, pulkomandy@pulkomandy.tk
+ */
+
+
+/**
+ * @file FileRequest.cpp
+ * @brief Implementation of BFileRequest, the file: URI scheme handler.
+ *
+ * BFileRequest handles file: URIs by reading from the local filesystem.
+ * For regular files it queries the MIME type via BNodeInfo, streams the
+ * file in 4 KiB chunks, and reports progress to the listener.  For
+ * directories it generates EPLF (Easily Parsed List Format) output, which
+ * allows WebKit's FTP directory renderer to display the listing.
+ *
+ * @see BUrlRequest, BUrlProtocolRoster
  */
 
 
@@ -19,6 +52,14 @@
 using namespace BPrivate::Network;
 
 
+/**
+ * @brief Construct a BFileRequest for a file: URI.
+ *
+ * @param url       The file: URI pointing to the local path.
+ * @param output    BDataIO that receives the file bytes or directory listing.
+ * @param listener  Optional BUrlProtocolListener for progress callbacks.
+ * @param context   BUrlContext providing shared session state.
+ */
 BFileRequest::BFileRequest(const BUrl& url, BDataIO* output,
 	BUrlProtocolListener* listener, BUrlContext* context)
 	:
@@ -28,6 +69,9 @@ BFileRequest::BFileRequest(const BUrl& url, BDataIO* output,
 }
 
 
+/**
+ * @brief Destructor — stops the worker thread if still running.
+ */
 BFileRequest::~BFileRequest()
 {
 	status_t status = Stop();
@@ -36,6 +80,11 @@ BFileRequest::~BFileRequest()
 }
 
 
+/**
+ * @brief Return the result object for this request.
+ *
+ * @return Const reference to the BUrlResult populated after execution.
+ */
 const BUrlResult&
 BFileRequest::Result() const
 {
@@ -43,6 +92,17 @@ BFileRequest::Result() const
 }
 
 
+/**
+ * @brief Read the local file or directory and deliver bytes to the output.
+ *
+ * For files: determines the MIME type, opens the file, streams it in 4 KiB
+ * chunks, and sends progress notifications.  For directories: generates an
+ * EPLF listing with file sizes, modification times, permissions, and inode
+ * references.  Symlinks are traversed before deciding on file vs. directory.
+ *
+ * @return B_OK on success, B_IO_ERROR if an incomplete read occurs,
+ *         B_INTERRUPTED if the request is cancelled, or another error code.
+ */
 status_t
 BFileRequest::_ProtocolLoop()
 {

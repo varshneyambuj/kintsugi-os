@@ -1,36 +1,41 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Model.cpp
+ * @brief Model — the core file-system entity abstraction used throughout Tracker.
+ *
+ * Model wraps a node_ref / entry_ref pair and caches derived attributes such as
+ * base type (file, directory, volume, symlink, executable, query), MIME type,
+ * preferred application signature, stat buffer, and icon source.  It provides
+ * lazy node opening, symlink resolution, MIME-type compatibility queries, and
+ * localised display names.
+ *
+ * @see BPose, BPoseView, IconCache
+ */
 
 //	Dedicated to BModel
 
@@ -87,6 +92,9 @@ BObjectList<Model>* readOnlyOpenModelList = NULL;
 //	#pragma mark - Model()
 
 
+/**
+ * @brief Default constructor; the model must be initialised with SetTo() before use.
+ */
 Model::Model()
 	:
 	fPreferredAppName(NULL),
@@ -101,6 +109,11 @@ Model::Model()
 }
 
 
+/**
+ * @brief Copy constructor; does not inherit the open node handle.
+ *
+ * @param other  The Model to copy metadata from.
+ */
 Model::Model(const Model& other)
 	:
 	fEntryRef(other.fEntryRef),
@@ -132,6 +145,15 @@ Model::Model(const Model& other)
 }
 
 
+/**
+ * @brief Construct a Model from explicit directory and node refs plus a name.
+ *
+ * @param dirNode   node_ref of the parent directory.
+ * @param node      node_ref of the entry.
+ * @param name      The entry's file name.
+ * @param open      If true, open the underlying node immediately.
+ * @param writable  If true, open the node for writing.
+ */
 Model::Model(const node_ref* dirNode, const node_ref* node, const char* name,
 	bool open, bool writable)
 	:
@@ -145,6 +167,13 @@ Model::Model(const node_ref* dirNode, const node_ref* node, const char* name,
 }
 
 
+/**
+ * @brief Construct a Model from a BEntry.
+ *
+ * @param entry     The BEntry to model.
+ * @param open      If true, open the underlying node immediately.
+ * @param writable  If true, open the node for writing.
+ */
 Model::Model(const BEntry* entry, bool open, bool writable)
 	:
 	fPreferredAppName(NULL),
@@ -157,6 +186,14 @@ Model::Model(const BEntry* entry, bool open, bool writable)
 }
 
 
+/**
+ * @brief Construct a Model from an entry_ref, optionally traversing symlinks.
+ *
+ * @param ref       The entry_ref to model.
+ * @param traverse  If true, follow symlinks to their target.
+ * @param open      If true, open the underlying node immediately.
+ * @param writable  If true, open the node for writing.
+ */
 Model::Model(const entry_ref* ref, bool traverse, bool open, bool writable)
 	:
 	fPreferredAppName(NULL),
@@ -174,6 +211,10 @@ Model::Model(const entry_ref* ref, bool traverse, bool open, bool writable)
 }
 
 
+/**
+ * @brief Free the union member (preferred app name, volume name, or link target)
+ *        appropriate for the current base type.
+ */
 void
 Model::DeletePreferredAppVolumeNameLinkTo()
 {
@@ -191,6 +232,9 @@ Model::DeletePreferredAppVolumeNameLinkTo()
 }
 
 
+/**
+ * @brief Destroy the Model, releasing the node handle and all cached data.
+ */
 Model::~Model()
 {
 #ifdef CHECK_OPEN_MODEL_LEAKS

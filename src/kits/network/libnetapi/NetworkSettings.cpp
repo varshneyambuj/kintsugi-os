@@ -1,9 +1,43 @@
 /*
- * Copyright 2006-2015, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2015, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ */
+
+
+/**
+ * @file NetworkSettings.cpp
+ * @brief Implementation of BNetworkSettings and related settings classes.
+ *
+ * Provides persistent read/write access to network configuration stored in
+ * the system settings directory.  The main BNetworkSettings class manages
+ * three subsystems (interfaces, wireless networks, and services) via the
+ * DriverSettings file format.  Supporting classes BNetworkInterfaceSettings,
+ * BNetworkInterfaceAddressSettings, BNetworkServiceSettings, and
+ * BNetworkServiceAddressSettings represent individual configuration records.
+ *
+ * @see BNetworkInterface, BNetworkDevice
  */
 
 
@@ -31,8 +65,13 @@
 using namespace BNetworkKit;
 
 
+/** @brief Settings file name for interface configuration. */
 static const char* kInterfaceSettingsName = "interfaces";
+
+/** @brief Settings file name for network service configuration. */
 static const char* kServicesSettingsName = "services";
+
+/** @brief Settings file name for wireless network configuration. */
 static const char* kNetworksSettingsName = "wireless_networks";
 
 
@@ -162,6 +201,12 @@ static const address_family kFamilies[] = {
 };
 
 
+/**
+ * @brief Return the canonical name string for an address family integer.
+ *
+ * @param family  Address family constant (AF_INET, AF_INET6, …).
+ * @return Pointer to the canonical name string, or NULL if not found.
+ */
 static const char*
 get_family_name(int family)
 {
@@ -173,6 +218,14 @@ get_family_name(int family)
 }
 
 
+/**
+ * @brief Resolve an address-family identifier string to its integer constant.
+ *
+ * Checks both canonical names and common aliases defined in kFamilies.
+ *
+ * @param argument  Case-sensitive identifier string (e.g. "inet", "AF_INET").
+ * @return Address family constant, or AF_UNSPEC if no match is found.
+ */
 static int
 get_address_family(const char* argument)
 {
@@ -193,6 +246,17 @@ get_address_family(const char* argument)
 	If \a family is \c AF_UNSPEC, \a family will be overwritten with the family
 	of the successfully parsed address.
 */
+/**
+ * @brief Parse \a argument as a network address for the specified \a family.
+ *
+ * If \a family is AF_UNSPEC, it is updated to match the parsed address family.
+ * A NULL \a argument with a known family sets a wildcard address.
+ *
+ * @param family    In/out family constant; updated when AF_UNSPEC.
+ * @param argument  Address string to parse, or NULL for wildcard.
+ * @param address   Output parameter populated with the parsed address.
+ * @return true if an address was successfully parsed, false otherwise.
+ */
 static bool
 parse_address(int32& family, const char* argument, BNetworkAddress& address)
 {
@@ -228,6 +292,12 @@ parse_address(int32& family, const char* argument, BNetworkAddress& address)
 }
 
 
+/**
+ * @brief Parse a socket-type string into its SOCK_* constant.
+ *
+ * @param string  Type string ("stream" or anything else for SOCK_DGRAM).
+ * @return SOCK_STREAM or SOCK_DGRAM.
+ */
 static int
 parse_type(const char* string)
 {
@@ -238,6 +308,12 @@ parse_type(const char* string)
 }
 
 
+/**
+ * @brief Resolve a protocol name string to its IPPROTO_* constant.
+ *
+ * @param string  Protocol name (e.g. "tcp", "udp").
+ * @return IPPROTO_* constant, or IPPROTO_TCP if the name is not found.
+ */
 static int
 parse_protocol(const char* string)
 {
@@ -249,6 +325,12 @@ parse_protocol(const char* string)
 }
 
 
+/**
+ * @brief Return the default socket type for a given protocol.
+ *
+ * @param protocol  IPPROTO_* constant.
+ * @return SOCK_STREAM for TCP, SOCK_DGRAM for all others.
+ */
 static int
 type_for_protocol(int protocol)
 {
@@ -267,6 +349,11 @@ type_for_protocol(int protocol)
 // #pragma mark -
 
 
+/**
+ * @brief Converter stub — reading address family from driver settings is unsupported.
+ *
+ * @return B_NOT_SUPPORTED always.
+ */
 status_t
 InterfaceAddressFamilyConverter::ConvertFromDriverSettings(
 	const driver_parameter& parameter, const char* name, int32 index,
@@ -276,6 +363,19 @@ InterfaceAddressFamilyConverter::ConvertFromDriverSettings(
 }
 
 
+/**
+ * @brief Serialise an integer address family to its canonical name string.
+ *
+ * Reads the "family" int32 from \a source and writes the matching name
+ * string into \a value for storage in driver settings files.
+ *
+ * @param source  BMessage containing a "family" int32 field.
+ * @param name    Field name (unused).
+ * @param index   Field index (unused).
+ * @param type    Field type (unused).
+ * @param value   Output string populated with the family name.
+ * @return B_OK on success, B_NOT_SUPPORTED if no "family" field exists.
+ */
 status_t
 InterfaceAddressFamilyConverter::ConvertToDriverSettings(const BMessage& source,
 	const char* name, int32 index, uint32 type, BString& value)
@@ -298,17 +398,30 @@ InterfaceAddressFamilyConverter::ConvertToDriverSettings(const BMessage& source,
 // #pragma mark -
 
 
+/**
+ * @brief Construct BNetworkSettings and load all configuration from disk.
+ */
 BNetworkSettings::BNetworkSettings()
 {
 	_Load();
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkSettings::~BNetworkSettings()
 {
 }
 
 
+/**
+ * @brief Iterate over configured network interfaces one at a time.
+ *
+ * @param cookie     In/out iteration cursor; must be initialised to 0.
+ * @param interface  Output BMessage populated with the interface configuration.
+ * @return B_OK on success, or an error code when no more entries exist.
+ */
 status_t
 BNetworkSettings::GetNextInterface(uint32& cookie, BMessage& interface)
 {
@@ -321,6 +434,13 @@ BNetworkSettings::GetNextInterface(uint32& cookie, BMessage& interface)
 }
 
 
+/**
+ * @brief Retrieve the configuration message for a named interface.
+ *
+ * @param name       Null-terminated interface device name to look up.
+ * @param interface  Output BMessage populated on success.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no such interface is configured.
+ */
 status_t
 BNetworkSettings::GetInterface(const char* name, BMessage& interface) const
 {
@@ -329,6 +449,15 @@ BNetworkSettings::GetInterface(const char* name, BMessage& interface) const
 }
 
 
+/**
+ * @brief Add or replace a network interface configuration entry.
+ *
+ * If an entry with the same device name already exists it is removed first.
+ * The updated configuration is persisted to the interfaces settings file.
+ *
+ * @param interface  BMessage describing the interface (must have "device" field).
+ * @return B_OK on success, B_BAD_VALUE if "device" is missing, or a save error.
+ */
 status_t
 BNetworkSettings::AddInterface(const BMessage& interface)
 {
@@ -346,6 +475,12 @@ BNetworkSettings::AddInterface(const BMessage& interface)
 }
 
 
+/**
+ * @brief Remove a network interface configuration entry by name.
+ *
+ * @param name  Device name of the interface to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkSettings::RemoveInterface(const char* name)
 {
@@ -354,6 +489,12 @@ BNetworkSettings::RemoveInterface(const char* name)
 }
 
 
+/**
+ * @brief Return a BNetworkInterfaceSettings object for a named interface.
+ *
+ * @param name  Device name of the interface.
+ * @return BNetworkInterfaceSettings populated from the stored configuration.
+ */
 BNetworkInterfaceSettings
 BNetworkSettings::Interface(const char* name)
 {
@@ -363,6 +504,12 @@ BNetworkSettings::Interface(const char* name)
 }
 
 
+/**
+ * @brief Return a const BNetworkInterfaceSettings for a named interface.
+ *
+ * @param name  Device name of the interface.
+ * @return Const BNetworkInterfaceSettings populated from the stored configuration.
+ */
 const BNetworkInterfaceSettings
 BNetworkSettings::Interface(const char* name) const
 {
@@ -372,6 +519,11 @@ BNetworkSettings::Interface(const char* name) const
 }
 
 
+/**
+ * @brief Return the number of configured wireless networks.
+ *
+ * @return Number of "network" entries in the wireless network settings.
+ */
 int32
 BNetworkSettings::CountNetworks() const
 {
@@ -383,6 +535,13 @@ BNetworkSettings::CountNetworks() const
 }
 
 
+/**
+ * @brief Iterate over configured wireless networks one at a time.
+ *
+ * @param cookie   In/out iteration cursor; must be initialised to 0.
+ * @param network  Output BMessage populated with the network configuration.
+ * @return B_OK on success, or an error code when no more entries exist.
+ */
 status_t
 BNetworkSettings::GetNextNetwork(uint32& cookie, BMessage& network) const
 {
@@ -395,6 +554,13 @@ BNetworkSettings::GetNextNetwork(uint32& cookie, BMessage& network) const
 }
 
 
+/**
+ * @brief Retrieve the configuration message for a named wireless network.
+ *
+ * @param name     SSID of the network to look up.
+ * @param network  Output BMessage populated on success.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no such network is configured.
+ */
 status_t
 BNetworkSettings::GetNetwork(const char* name, BMessage& network) const
 {
@@ -403,6 +569,12 @@ BNetworkSettings::GetNetwork(const char* name, BMessage& network) const
 }
 
 
+/**
+ * @brief Add or replace a wireless network configuration entry.
+ *
+ * @param network  BMessage describing the network (must have "name" field).
+ * @return B_OK on success, B_BAD_VALUE if "name" is missing, or a save error.
+ */
 status_t
 BNetworkSettings::AddNetwork(const BMessage& network)
 {
@@ -420,6 +592,12 @@ BNetworkSettings::AddNetwork(const BMessage& network)
 }
 
 
+/**
+ * @brief Remove a wireless network configuration entry by SSID.
+ *
+ * @param name  SSID of the network to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkSettings::RemoveNetwork(const char* name)
 {
@@ -428,6 +606,11 @@ BNetworkSettings::RemoveNetwork(const char* name)
 }
 
 
+/**
+ * @brief Return a const reference to the complete services configuration message.
+ *
+ * @return Const reference to the internal fServices BMessage.
+ */
 const BMessage&
 BNetworkSettings::Services() const
 {
@@ -435,6 +618,13 @@ BNetworkSettings::Services() const
 }
 
 
+/**
+ * @brief Iterate over configured network services one at a time.
+ *
+ * @param cookie   In/out iteration cursor; must be initialised to 0.
+ * @param service  Output BMessage populated with the service configuration.
+ * @return B_OK on success, or an error code when no more entries exist.
+ */
 status_t
 BNetworkSettings::GetNextService(uint32& cookie, BMessage& service)
 {
@@ -447,6 +637,13 @@ BNetworkSettings::GetNextService(uint32& cookie, BMessage& service)
 }
 
 
+/**
+ * @brief Retrieve the configuration message for a named network service.
+ *
+ * @param name     Service name to look up.
+ * @param service  Output BMessage populated on success.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no such service is configured.
+ */
 status_t
 BNetworkSettings::GetService(const char* name, BMessage& service) const
 {
@@ -455,6 +652,12 @@ BNetworkSettings::GetService(const char* name, BMessage& service) const
 }
 
 
+/**
+ * @brief Add or replace a network service configuration entry.
+ *
+ * @param service  BMessage describing the service (must have "name" field).
+ * @return B_OK on success, B_BAD_VALUE if "name" is missing, or a save error.
+ */
 status_t
 BNetworkSettings::AddService(const BMessage& service)
 {
@@ -472,6 +675,12 @@ BNetworkSettings::AddService(const BMessage& service)
 }
 
 
+/**
+ * @brief Remove a network service configuration entry by name.
+ *
+ * @param name  Service name to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkSettings::RemoveService(const char* name)
 {
@@ -480,6 +689,12 @@ BNetworkSettings::RemoveService(const char* name)
 }
 
 
+/**
+ * @brief Return a BNetworkServiceSettings object for a named service.
+ *
+ * @param name  Service name to look up.
+ * @return BNetworkServiceSettings populated from the stored configuration.
+ */
 BNetworkServiceSettings
 BNetworkSettings::Service(const char* name)
 {
@@ -489,6 +704,12 @@ BNetworkSettings::Service(const char* name)
 }
 
 
+/**
+ * @brief Return a const BNetworkServiceSettings for a named service.
+ *
+ * @param name  Service name to look up.
+ * @return Const BNetworkServiceSettings populated from the stored configuration.
+ */
 const BNetworkServiceSettings
 BNetworkSettings::Service(const char* name) const
 {
@@ -498,6 +719,17 @@ BNetworkSettings::Service(const char* name) const
 }
 
 
+/**
+ * @brief Begin monitoring settings files for changes and delivering notifications.
+ *
+ * Registers \a target to receive a BMessage whenever interfaces, networks,
+ * or services settings files are modified on disk.  Only one listener is
+ * supported at a time; calling this while already watching will stop the
+ * previous watcher first.
+ *
+ * @param target  BMessenger to receive change notifications.
+ * @return B_OK on success, or an error code if path monitoring fails.
+ */
 status_t
 BNetworkSettings::StartMonitoring(const BMessenger& target)
 {
@@ -518,6 +750,12 @@ BNetworkSettings::StartMonitoring(const BMessenger& target)
 }
 
 
+/**
+ * @brief Stop monitoring settings files for a given messenger.
+ *
+ * @param target  The BMessenger to unregister from path monitoring.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkSettings::StopMonitoring(const BMessenger& target)
 {
@@ -527,6 +765,15 @@ BNetworkSettings::StopMonitoring(const BMessenger& target)
 }
 
 
+/**
+ * @brief Process a BPathMonitor change notification and reload the affected file.
+ *
+ * Determines which settings file changed from the "path" field of \a message,
+ * reloads it, and sends an appropriate update notification to the registered listener.
+ *
+ * @param message  The B_PATH_MONITOR notification message to process.
+ * @return B_OK on success, or an error code if the message is malformed.
+ */
 status_t
 BNetworkSettings::Update(BMessage* message)
 {
@@ -571,6 +818,17 @@ BNetworkSettings::Update(BMessage* message)
 // #pragma mark - private
 
 
+/**
+ * @brief Load one or all settings files from the network settings directory.
+ *
+ * When \a name is NULL, all three subsystem files are loaded.  When \a name
+ * is specified, only that file is loaded.  On success \a _type receives the
+ * appropriate kMsg*SettingsUpdated constant.
+ *
+ * @param name   Leaf name of the specific file to load, or NULL for all.
+ * @param _type  Optional output parameter set to the update message type.
+ * @return B_OK on success, or an error code on parse or I/O failure.
+ */
 status_t
 BNetworkSettings::_Load(const char* name, uint32* _type)
 {
@@ -618,6 +876,14 @@ BNetworkSettings::_Load(const char* name, uint32* _type)
 }
 
 
+/**
+ * @brief Save one or all settings subsystems to the network settings directory.
+ *
+ * When \a name is NULL, all three subsystem files are saved.
+ *
+ * @param name  Leaf name of the specific file to save, or NULL for all.
+ * @return B_OK on success, or an error code on serialisation or I/O failure.
+ */
 status_t
 BNetworkSettings::_Save(const char* name)
 {
@@ -658,6 +924,13 @@ BNetworkSettings::_Save(const char* name)
 }
 
 
+/**
+ * @brief Build a child path by appending a leaf name to a parent BPath.
+ *
+ * @param parent  Parent directory path.
+ * @param leaf    Leaf file name to append.
+ * @return BPath combining parent and leaf.
+ */
 BPath
 BNetworkSettings::_Path(BPath& parent, const char* leaf)
 {
@@ -665,6 +938,13 @@ BNetworkSettings::_Path(BPath& parent, const char* leaf)
 }
 
 
+/**
+ * @brief Resolve the network settings directory path, creating it if absent.
+ *
+ * @param name  Optional leaf name to append; NULL for the directory itself.
+ * @param path  Output BPath set to the resolved path.
+ * @return B_OK on success, B_ERROR if the system settings directory is unavailable.
+ */
 status_t
 BNetworkSettings::_GetPath(const char* name, BPath& path)
 {
@@ -680,6 +960,13 @@ BNetworkSettings::_GetPath(const char* name, BPath& path)
 }
 
 
+/**
+ * @brief Start watching a specific settings file for stat changes.
+ *
+ * @param name    Leaf name of the settings file to watch.
+ * @param target  BMessenger to receive B_PATH_MONITOR notifications.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkSettings::_StartWatching(const char* name, const BMessenger& target)
 {
@@ -693,6 +980,15 @@ BNetworkSettings::_StartWatching(const char* name, const BMessenger& target)
 }
 
 
+/**
+ * @brief Convert an in-memory wireless network BMessage to storage format.
+ *
+ * Transforms binary fields (address, authentication_mode, cipher,
+ * group_cipher) into human-readable strings suitable for driver settings files.
+ *
+ * @param message  In/out BMessage representing the network; modified in place.
+ * @return B_OK on success.
+ */
 status_t
 BNetworkSettings::_ConvertNetworkToSettings(BMessage& message)
 {
@@ -788,6 +1084,15 @@ BNetworkSettings::_ConvertNetworkToSettings(BMessage& message)
 }
 
 
+/**
+ * @brief Convert a stored wireless network BMessage from settings to in-memory format.
+ *
+ * Transforms human-readable string fields back into their binary integer/enum
+ * equivalents for use by higher-level APIs.
+ *
+ * @param message  In/out BMessage loaded from disk; modified in place.
+ * @return B_OK on success.
+ */
 status_t
 BNetworkSettings::_ConvertNetworkFromSettings(BMessage& message)
 {
@@ -856,6 +1161,20 @@ BNetworkSettings::_ConvertNetworkFromSettings(BMessage& message)
 }
 
 
+/**
+ * @brief Search a container message for an item matching a name field.
+ *
+ * Iterates over \a itemField messages in \a container looking for one
+ * whose \a nameField string equals \a name.
+ *
+ * @param container  The BMessage holding the item array.
+ * @param itemField  Field name of the array (e.g. "interface", "service").
+ * @param nameField  Field within each item used as the unique identifier.
+ * @param name       Name value to search for.
+ * @param _index     Output parameter set to the matched item's array index.
+ * @param item       Output parameter populated with the matched item message.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no match exists.
+ */
 status_t
 BNetworkSettings::_GetItem(const BMessage& container, const char* itemField,
 	const char* nameField, const char* name, int32& _index,
@@ -877,6 +1196,19 @@ BNetworkSettings::_GetItem(const BMessage& container, const char* itemField,
 }
 
 
+/**
+ * @brief Remove an item from a container message and optionally save the store.
+ *
+ * Finds the item by name and removes it; if \a store is non-NULL, saves
+ * that settings file afterward.
+ *
+ * @param container  The BMessage holding the item array.
+ * @param itemField  Field name of the array.
+ * @param nameField  Field within each item used as the unique identifier.
+ * @param name       Name of the item to remove.
+ * @param store      Leaf name of the file to save after removal, or NULL.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching item exists.
+ */
 status_t
 BNetworkSettings::_RemoveItem(BMessage& container, const char* itemField,
 	const char* nameField, const char* name, const char* store)
@@ -897,6 +1229,9 @@ BNetworkSettings::_RemoveItem(BMessage& container, const char* itemField,
 // #pragma mark - BNetworkInterfaceAddressSettings
 
 
+/**
+ * @brief Construct a default BNetworkInterfaceAddressSettings with AF_UNSPEC family.
+ */
 BNetworkInterfaceAddressSettings::BNetworkInterfaceAddressSettings()
 	:
 	fFamily(AF_UNSPEC),
@@ -905,6 +1240,14 @@ BNetworkInterfaceAddressSettings::BNetworkInterfaceAddressSettings()
 }
 
 
+/**
+ * @brief Construct BNetworkInterfaceAddressSettings from a BMessage.
+ *
+ * Parses the "family", "auto_config", "address", "mask", "peer",
+ * "broadcast", and "gateway" fields from \a data.
+ *
+ * @param data  BMessage holding the serialised address settings.
+ */
 BNetworkInterfaceAddressSettings::BNetworkInterfaceAddressSettings(
 	const BMessage& data)
 {
@@ -935,6 +1278,11 @@ BNetworkInterfaceAddressSettings::BNetworkInterfaceAddressSettings(
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param other  The source object to copy from.
+ */
 BNetworkInterfaceAddressSettings::BNetworkInterfaceAddressSettings(
 	const BNetworkInterfaceAddressSettings& other)
 	:
@@ -949,11 +1297,19 @@ BNetworkInterfaceAddressSettings::BNetworkInterfaceAddressSettings(
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkInterfaceAddressSettings::~BNetworkInterfaceAddressSettings()
 {
 }
 
 
+/**
+ * @brief Return the address family for this address entry.
+ *
+ * @return AF_INET, AF_INET6, or AF_UNSPEC.
+ */
 int
 BNetworkInterfaceAddressSettings::Family() const
 {
@@ -961,6 +1317,11 @@ BNetworkInterfaceAddressSettings::Family() const
 }
 
 
+/**
+ * @brief Set the address family for this address entry.
+ *
+ * @param family  New address family constant.
+ */
 void
 BNetworkInterfaceAddressSettings::SetFamily(int family)
 {
@@ -968,6 +1329,11 @@ BNetworkInterfaceAddressSettings::SetFamily(int family)
 }
 
 
+/**
+ * @brief Return whether this address uses automatic configuration (DHCP/SLAAC).
+ *
+ * @return true if automatically configured.
+ */
 bool
 BNetworkInterfaceAddressSettings::IsAutoConfigure() const
 {
@@ -975,6 +1341,11 @@ BNetworkInterfaceAddressSettings::IsAutoConfigure() const
 }
 
 
+/**
+ * @brief Set whether this address uses automatic configuration.
+ *
+ * @param configure  true to enable auto-configuration.
+ */
 void
 BNetworkInterfaceAddressSettings::SetAutoConfigure(bool configure)
 {
@@ -982,6 +1353,11 @@ BNetworkInterfaceAddressSettings::SetAutoConfigure(bool configure)
 }
 
 
+/**
+ * @brief Return a const reference to the configured IP address.
+ *
+ * @return Const reference to the BNetworkAddress.
+ */
 const BNetworkAddress&
 BNetworkInterfaceAddressSettings::Address() const
 {
@@ -989,6 +1365,11 @@ BNetworkInterfaceAddressSettings::Address() const
 }
 
 
+/**
+ * @brief Return a mutable reference to the configured IP address.
+ *
+ * @return Mutable reference to the BNetworkAddress.
+ */
 BNetworkAddress&
 BNetworkInterfaceAddressSettings::Address()
 {
@@ -996,6 +1377,11 @@ BNetworkInterfaceAddressSettings::Address()
 }
 
 
+/**
+ * @brief Return a const reference to the subnet mask.
+ *
+ * @return Const reference to the mask BNetworkAddress.
+ */
 const BNetworkAddress&
 BNetworkInterfaceAddressSettings::Mask() const
 {
@@ -1003,6 +1389,11 @@ BNetworkInterfaceAddressSettings::Mask() const
 }
 
 
+/**
+ * @brief Return a mutable reference to the subnet mask.
+ *
+ * @return Mutable reference to the mask BNetworkAddress.
+ */
 BNetworkAddress&
 BNetworkInterfaceAddressSettings::Mask()
 {
@@ -1010,6 +1401,11 @@ BNetworkInterfaceAddressSettings::Mask()
 }
 
 
+/**
+ * @brief Return a const reference to the peer address (PPP/point-to-point).
+ *
+ * @return Const reference to the peer BNetworkAddress.
+ */
 const BNetworkAddress&
 BNetworkInterfaceAddressSettings::Peer() const
 {
@@ -1017,6 +1413,11 @@ BNetworkInterfaceAddressSettings::Peer() const
 }
 
 
+/**
+ * @brief Return a mutable reference to the peer address.
+ *
+ * @return Mutable reference to the peer BNetworkAddress.
+ */
 BNetworkAddress&
 BNetworkInterfaceAddressSettings::Peer()
 {
@@ -1024,6 +1425,11 @@ BNetworkInterfaceAddressSettings::Peer()
 }
 
 
+/**
+ * @brief Return a const reference to the broadcast address.
+ *
+ * @return Const reference to the broadcast BNetworkAddress.
+ */
 const BNetworkAddress&
 BNetworkInterfaceAddressSettings::Broadcast() const
 {
@@ -1031,6 +1437,11 @@ BNetworkInterfaceAddressSettings::Broadcast() const
 }
 
 
+/**
+ * @brief Return a mutable reference to the broadcast address.
+ *
+ * @return Mutable reference to the broadcast BNetworkAddress.
+ */
 BNetworkAddress&
 BNetworkInterfaceAddressSettings::Broadcast()
 {
@@ -1038,6 +1449,11 @@ BNetworkInterfaceAddressSettings::Broadcast()
 }
 
 
+/**
+ * @brief Return a const reference to the default gateway address.
+ *
+ * @return Const reference to the gateway BNetworkAddress.
+ */
 const BNetworkAddress&
 BNetworkInterfaceAddressSettings::Gateway() const
 {
@@ -1045,6 +1461,11 @@ BNetworkInterfaceAddressSettings::Gateway() const
 }
 
 
+/**
+ * @brief Return a mutable reference to the default gateway address.
+ *
+ * @return Mutable reference to the gateway BNetworkAddress.
+ */
 BNetworkAddress&
 BNetworkInterfaceAddressSettings::Gateway()
 {
@@ -1052,6 +1473,12 @@ BNetworkInterfaceAddressSettings::Gateway()
 }
 
 
+/**
+ * @brief Serialise this address settings object into a BMessage.
+ *
+ * @param data  Output BMessage populated with all configured address fields.
+ * @return B_OK on success, or an error code if any field cannot be set.
+ */
 status_t
 BNetworkInterfaceAddressSettings::GetMessage(BMessage& data) const
 {
@@ -1077,6 +1504,12 @@ BNetworkInterfaceAddressSettings::GetMessage(BMessage& data) const
 }
 
 
+/**
+ * @brief Assignment operator — copies all address fields from \a other.
+ *
+ * @param other  The source object.
+ * @return Reference to this object.
+ */
 BNetworkInterfaceAddressSettings&
 BNetworkInterfaceAddressSettings::operator=(
 	const BNetworkInterfaceAddressSettings& other)
@@ -1096,6 +1529,9 @@ BNetworkInterfaceAddressSettings::operator=(
 // #pragma mark - BNetworkInterfaceSettings
 
 
+/**
+ * @brief Construct a default BNetworkInterfaceSettings with zeroed numeric fields.
+ */
 BNetworkInterfaceSettings::BNetworkInterfaceSettings()
 	:
 	fFlags(0),
@@ -1105,6 +1541,13 @@ BNetworkInterfaceSettings::BNetworkInterfaceSettings()
 }
 
 
+/**
+ * @brief Construct BNetworkInterfaceSettings from a BMessage.
+ *
+ * Parses device name, flags, MTU, metric, and all "address" sub-messages.
+ *
+ * @param message  BMessage holding the serialised interface settings.
+ */
 BNetworkInterfaceSettings::BNetworkInterfaceSettings(const BMessage& message)
 {
 	fName = message.GetString("device");
@@ -1121,11 +1564,19 @@ BNetworkInterfaceSettings::BNetworkInterfaceSettings(const BMessage& message)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkInterfaceSettings::~BNetworkInterfaceSettings()
 {
 }
 
 
+/**
+ * @brief Return the interface device name.
+ *
+ * @return Null-terminated device name string (e.g. "en0").
+ */
 const char*
 BNetworkInterfaceSettings::Name() const
 {
@@ -1133,6 +1584,11 @@ BNetworkInterfaceSettings::Name() const
 }
 
 
+/**
+ * @brief Set the interface device name.
+ *
+ * @param name  New device name string.
+ */
 void
 BNetworkInterfaceSettings::SetName(const char* name)
 {
@@ -1140,6 +1596,11 @@ BNetworkInterfaceSettings::SetName(const char* name)
 }
 
 
+/**
+ * @brief Return the interface configuration flags.
+ *
+ * @return Bitmask of interface flags.
+ */
 int32
 BNetworkInterfaceSettings::Flags() const
 {
@@ -1147,6 +1608,11 @@ BNetworkInterfaceSettings::Flags() const
 }
 
 
+/**
+ * @brief Set the interface configuration flags.
+ *
+ * @param flags  New flags bitmask.
+ */
 void
 BNetworkInterfaceSettings::SetFlags(int32 flags)
 {
@@ -1154,6 +1620,11 @@ BNetworkInterfaceSettings::SetFlags(int32 flags)
 }
 
 
+/**
+ * @brief Return the configured Maximum Transmission Unit.
+ *
+ * @return MTU in bytes, or 0 if not configured.
+ */
 int32
 BNetworkInterfaceSettings::MTU() const
 {
@@ -1161,6 +1632,11 @@ BNetworkInterfaceSettings::MTU() const
 }
 
 
+/**
+ * @brief Set the Maximum Transmission Unit.
+ *
+ * @param mtu  MTU value in bytes.
+ */
 void
 BNetworkInterfaceSettings::SetMTU(int32 mtu)
 {
@@ -1168,6 +1644,11 @@ BNetworkInterfaceSettings::SetMTU(int32 mtu)
 }
 
 
+/**
+ * @brief Return the routing metric for this interface.
+ *
+ * @return Metric value, or 0 if not configured.
+ */
 int32
 BNetworkInterfaceSettings::Metric() const
 {
@@ -1175,6 +1656,11 @@ BNetworkInterfaceSettings::Metric() const
 }
 
 
+/**
+ * @brief Set the routing metric for this interface.
+ *
+ * @param metric  New metric value.
+ */
 void
 BNetworkInterfaceSettings::SetMetric(int32 metric)
 {
@@ -1182,6 +1668,11 @@ BNetworkInterfaceSettings::SetMetric(int32 metric)
 }
 
 
+/**
+ * @brief Return the number of address entries for this interface.
+ *
+ * @return Count of BNetworkInterfaceAddressSettings entries.
+ */
 int32
 BNetworkInterfaceSettings::CountAddresses() const
 {
@@ -1189,6 +1680,12 @@ BNetworkInterfaceSettings::CountAddresses() const
 }
 
 
+/**
+ * @brief Return a const reference to the address entry at \a index.
+ *
+ * @param index  Zero-based index into the address list.
+ * @return Const reference to the BNetworkInterfaceAddressSettings at \a index.
+ */
 const BNetworkInterfaceAddressSettings&
 BNetworkInterfaceSettings::AddressAt(int32 index) const
 {
@@ -1196,6 +1693,12 @@ BNetworkInterfaceSettings::AddressAt(int32 index) const
 }
 
 
+/**
+ * @brief Return a mutable reference to the address entry at \a index.
+ *
+ * @param index  Zero-based index into the address list.
+ * @return Mutable reference to the BNetworkInterfaceAddressSettings at \a index.
+ */
 BNetworkInterfaceAddressSettings&
 BNetworkInterfaceSettings::AddressAt(int32 index)
 {
@@ -1203,6 +1706,12 @@ BNetworkInterfaceSettings::AddressAt(int32 index)
 }
 
 
+/**
+ * @brief Return the index of the first address entry matching a given family.
+ *
+ * @param family  Address family to search for.
+ * @return Zero-based index of the first match, or -1 if not found.
+ */
 int32
 BNetworkInterfaceSettings::FindFirstAddress(int family) const
 {
@@ -1215,6 +1724,11 @@ BNetworkInterfaceSettings::FindFirstAddress(int family) const
 }
 
 
+/**
+ * @brief Append an address entry to the interface's address list.
+ *
+ * @param address  The BNetworkInterfaceAddressSettings to add.
+ */
 void
 BNetworkInterfaceSettings::AddAddress(
 	const BNetworkInterfaceAddressSettings& address)
@@ -1223,6 +1737,11 @@ BNetworkInterfaceSettings::AddAddress(
 }
 
 
+/**
+ * @brief Remove the address entry at \a index from the list.
+ *
+ * @param index  Zero-based index of the entry to remove.
+ */
 void
 BNetworkInterfaceSettings::RemoveAddress(int32 index)
 {
@@ -1230,13 +1749,16 @@ BNetworkInterfaceSettings::RemoveAddress(int32 index)
 }
 
 
-/*!	This is a convenience method that returns the current state of the
-	interface, not just the one configured.
-
-	This means, even if the settings say: auto configured, this method
-	may still return false, if the configuration has been manually tempered
-	with.
-*/
+/**
+ * @brief Check whether the interface is currently auto-configured for a family.
+ *
+ * Queries the live kernel interface state rather than the stored settings to
+ * determine whether DHCP or SLAAC is active.  Falls back to the persistent
+ * settings if no address has been assigned yet.
+ *
+ * @param family  Address family to check (AF_INET or AF_INET6).
+ * @return true if auto-configuration is currently active or configured.
+ */
 bool
 BNetworkInterfaceSettings::IsAutoConfigure(int family) const
 {
@@ -1271,6 +1793,13 @@ BNetworkInterfaceSettings::IsAutoConfigure(int family) const
 }
 
 
+/**
+ * @brief Serialise this interface settings object into a BMessage.
+ *
+ * @param data  Output BMessage populated with device name, flags, MTU,
+ *              metric, and all address sub-messages.
+ * @return B_OK on success, or an error code if any field cannot be set.
+ */
 status_t
 BNetworkInterfaceSettings::GetMessage(BMessage& data) const
 {
@@ -1297,11 +1826,26 @@ BNetworkInterfaceSettings::GetMessage(BMessage& data) const
 // #pragma mark - BNetworkServiceAddressSettings
 
 
+/**
+ * @brief Construct a default BNetworkServiceAddressSettings.
+ */
 BNetworkServiceAddressSettings::BNetworkServiceAddressSettings()
 {
 }
 
 
+/**
+ * @brief Construct BNetworkServiceAddressSettings from a BMessage and service defaults.
+ *
+ * Parses family, address, protocol, type, and port from \a data, falling
+ * back to the provided service-level defaults when individual fields are absent.
+ *
+ * @param data             BMessage holding the serialised address settings.
+ * @param serviceFamily    Default address family from the parent service.
+ * @param serviceType      Default socket type from the parent service.
+ * @param serviceProtocol  Default protocol from the parent service.
+ * @param servicePort      Default port from the parent service.
+ */
 BNetworkServiceAddressSettings::BNetworkServiceAddressSettings(
 	const BMessage& data, int serviceFamily, int serviceType,
 	int serviceProtocol, int servicePort)
@@ -1341,11 +1885,19 @@ BNetworkServiceAddressSettings::BNetworkServiceAddressSettings(
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkServiceAddressSettings::~BNetworkServiceAddressSettings()
 {
 }
 
 
+/**
+ * @brief Return the address family for this service address.
+ *
+ * @return AF_INET, AF_INET6, or AF_UNSPEC.
+ */
 int
 BNetworkServiceAddressSettings::Family() const
 {
@@ -1353,6 +1905,11 @@ BNetworkServiceAddressSettings::Family() const
 }
 
 
+/**
+ * @brief Set the address family for this service address.
+ *
+ * @param family  New address family constant.
+ */
 void
 BNetworkServiceAddressSettings::SetFamily(int family)
 {
@@ -1360,6 +1917,11 @@ BNetworkServiceAddressSettings::SetFamily(int family)
 }
 
 
+/**
+ * @brief Return the IP protocol number for this service address.
+ *
+ * @return IPPROTO_* constant.
+ */
 int
 BNetworkServiceAddressSettings::Protocol() const
 {
@@ -1367,6 +1929,11 @@ BNetworkServiceAddressSettings::Protocol() const
 }
 
 
+/**
+ * @brief Set the IP protocol number for this service address.
+ *
+ * @param protocol  IPPROTO_* constant to assign.
+ */
 void
 BNetworkServiceAddressSettings::SetProtocol(int protocol)
 {
@@ -1374,6 +1941,11 @@ BNetworkServiceAddressSettings::SetProtocol(int protocol)
 }
 
 
+/**
+ * @brief Return the socket type for this service address.
+ *
+ * @return SOCK_STREAM or SOCK_DGRAM.
+ */
 int
 BNetworkServiceAddressSettings::Type() const
 {
@@ -1381,6 +1953,11 @@ BNetworkServiceAddressSettings::Type() const
 }
 
 
+/**
+ * @brief Set the socket type for this service address.
+ *
+ * @param type  SOCK_STREAM or SOCK_DGRAM.
+ */
 void
 BNetworkServiceAddressSettings::SetType(int type)
 {
@@ -1388,6 +1965,11 @@ BNetworkServiceAddressSettings::SetType(int type)
 }
 
 
+/**
+ * @brief Return a const reference to the bound network address.
+ *
+ * @return Const reference to the BNetworkAddress.
+ */
 const BNetworkAddress&
 BNetworkServiceAddressSettings::Address() const
 {
@@ -1395,6 +1977,11 @@ BNetworkServiceAddressSettings::Address() const
 }
 
 
+/**
+ * @brief Return a mutable reference to the bound network address.
+ *
+ * @return Mutable reference to the BNetworkAddress.
+ */
 BNetworkAddress&
 BNetworkServiceAddressSettings::Address()
 {
@@ -1402,6 +1989,12 @@ BNetworkServiceAddressSettings::Address()
 }
 
 
+/**
+ * @brief Serialise this service address settings object into a BMessage.
+ *
+ * @param data  Output BMessage to populate.
+ * @return B_NOT_SUPPORTED (not yet implemented).
+ */
 status_t
 BNetworkServiceAddressSettings::GetMessage(BMessage& data) const
 {
@@ -1410,6 +2003,12 @@ BNetworkServiceAddressSettings::GetMessage(BMessage& data) const
 }
 
 
+/**
+ * @brief Compare two service address settings for equality.
+ *
+ * @param other  The address settings to compare against.
+ * @return true if family, type, protocol, and address all match.
+ */
 bool
 BNetworkServiceAddressSettings::operator==(
 	const BNetworkServiceAddressSettings& other) const
@@ -1424,6 +2023,9 @@ BNetworkServiceAddressSettings::operator==(
 // #pragma mark - BNetworkServiceSettings
 
 
+/**
+ * @brief Construct a default BNetworkServiceSettings with no name and defaults.
+ */
 BNetworkServiceSettings::BNetworkServiceSettings()
 	:
 	fFamily(AF_UNSPEC),
@@ -1436,6 +2038,14 @@ BNetworkServiceSettings::BNetworkServiceSettings()
 }
 
 
+/**
+ * @brief Construct BNetworkServiceSettings from a BMessage.
+ *
+ * Parses name, family, protocol, type, port, stand_alone, launch arguments,
+ * and per-address configuration from \a message.
+ *
+ * @param message  BMessage holding the serialised service settings.
+ */
 BNetworkServiceSettings::BNetworkServiceSettings(const BMessage& message)
 	:
 	fType(-1),
@@ -1515,11 +2125,20 @@ BNetworkServiceSettings::BNetworkServiceSettings(const BMessage& message)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkServiceSettings::~BNetworkServiceSettings()
 {
 }
 
 
+/**
+ * @brief Check whether this service is fully and validly configured.
+ *
+ * @return B_OK if name, launch arguments, and at least one address are present;
+ *         B_BAD_VALUE otherwise.
+ */
 status_t
 BNetworkServiceSettings::InitCheck() const
 {
@@ -1530,6 +2149,11 @@ BNetworkServiceSettings::InitCheck() const
 }
 
 
+/**
+ * @brief Return the service name.
+ *
+ * @return Null-terminated service name string.
+ */
 const char*
 BNetworkServiceSettings::Name() const
 {
@@ -1537,6 +2161,11 @@ BNetworkServiceSettings::Name() const
 }
 
 
+/**
+ * @brief Set the service name.
+ *
+ * @param name  New service name string.
+ */
 void
 BNetworkServiceSettings::SetName(const char* name)
 {
@@ -1544,6 +2173,11 @@ BNetworkServiceSettings::SetName(const char* name)
 }
 
 
+/**
+ * @brief Return whether this service runs as a stand-alone daemon.
+ *
+ * @return true if the service manages its own socket rather than using inetd.
+ */
 bool
 BNetworkServiceSettings::IsStandAlone() const
 {
@@ -1551,6 +2185,11 @@ BNetworkServiceSettings::IsStandAlone() const
 }
 
 
+/**
+ * @brief Set whether this service runs as a stand-alone daemon.
+ *
+ * @param alone  true for stand-alone, false for inetd-style.
+ */
 void
 BNetworkServiceSettings::SetStandAlone(bool alone)
 {
@@ -1558,6 +2197,11 @@ BNetworkServiceSettings::SetStandAlone(bool alone)
 }
 
 
+/**
+ * @brief Return whether this service is enabled and fully configured.
+ *
+ * @return true if InitCheck() passes and fEnabled is true.
+ */
 bool
 BNetworkServiceSettings::IsEnabled() const
 {
@@ -1565,6 +2209,11 @@ BNetworkServiceSettings::IsEnabled() const
 }
 
 
+/**
+ * @brief Enable or disable this service.
+ *
+ * @param enable  true to enable, false to disable.
+ */
 void
 BNetworkServiceSettings::SetEnabled(bool enable)
 {
@@ -1572,6 +2221,11 @@ BNetworkServiceSettings::SetEnabled(bool enable)
 }
 
 
+/**
+ * @brief Return the default address family for this service.
+ *
+ * @return AF_INET, AF_INET6, or AF_UNSPEC.
+ */
 int
 BNetworkServiceSettings::Family() const
 {
@@ -1579,6 +2233,11 @@ BNetworkServiceSettings::Family() const
 }
 
 
+/**
+ * @brief Set the default address family for this service.
+ *
+ * @param family  New address family constant.
+ */
 void
 BNetworkServiceSettings::SetFamily(int family)
 {
@@ -1586,6 +2245,11 @@ BNetworkServiceSettings::SetFamily(int family)
 }
 
 
+/**
+ * @brief Return the default IP protocol number for this service.
+ *
+ * @return IPPROTO_* constant.
+ */
 int
 BNetworkServiceSettings::Protocol() const
 {
@@ -1593,6 +2257,11 @@ BNetworkServiceSettings::Protocol() const
 }
 
 
+/**
+ * @brief Set the default IP protocol number for this service.
+ *
+ * @param protocol  IPPROTO_* constant to assign.
+ */
 void
 BNetworkServiceSettings::SetProtocol(int protocol)
 {
@@ -1600,6 +2269,11 @@ BNetworkServiceSettings::SetProtocol(int protocol)
 }
 
 
+/**
+ * @brief Return the default socket type for this service.
+ *
+ * @return SOCK_STREAM or SOCK_DGRAM.
+ */
 int
 BNetworkServiceSettings::Type() const
 {
@@ -1607,6 +2281,11 @@ BNetworkServiceSettings::Type() const
 }
 
 
+/**
+ * @brief Set the default socket type for this service.
+ *
+ * @param type  SOCK_STREAM or SOCK_DGRAM.
+ */
 void
 BNetworkServiceSettings::SetType(int type)
 {
@@ -1614,6 +2293,11 @@ BNetworkServiceSettings::SetType(int type)
 }
 
 
+/**
+ * @brief Return the default port number for this service.
+ *
+ * @return Port number, or -1 if not configured.
+ */
 int
 BNetworkServiceSettings::Port() const
 {
@@ -1621,6 +2305,11 @@ BNetworkServiceSettings::Port() const
 }
 
 
+/**
+ * @brief Set the default port number for this service.
+ *
+ * @param port  Port number to assign.
+ */
 void
 BNetworkServiceSettings::SetPort(int port)
 {
@@ -1628,6 +2317,11 @@ BNetworkServiceSettings::SetPort(int port)
 }
 
 
+/**
+ * @brief Return the number of launch arguments for this service.
+ *
+ * @return Number of strings in the launch argument list.
+ */
 int32
 BNetworkServiceSettings::CountArguments() const
 {
@@ -1635,6 +2329,12 @@ BNetworkServiceSettings::CountArguments() const
 }
 
 
+/**
+ * @brief Return the launch argument at \a index.
+ *
+ * @param index  Zero-based argument index.
+ * @return Null-terminated argument string.
+ */
 const char*
 BNetworkServiceSettings::ArgumentAt(int32 index) const
 {
@@ -1642,6 +2342,11 @@ BNetworkServiceSettings::ArgumentAt(int32 index) const
 }
 
 
+/**
+ * @brief Append a launch argument to the service's argument list.
+ *
+ * @param argument  Null-terminated argument string to add.
+ */
 void
 BNetworkServiceSettings::AddArgument(const char* argument)
 {
@@ -1649,6 +2354,11 @@ BNetworkServiceSettings::AddArgument(const char* argument)
 }
 
 
+/**
+ * @brief Remove the launch argument at \a index.
+ *
+ * @param index  Zero-based index of the argument to remove.
+ */
 void
 BNetworkServiceSettings::RemoveArgument(int32 index)
 {
@@ -1656,6 +2366,11 @@ BNetworkServiceSettings::RemoveArgument(int32 index)
 }
 
 
+/**
+ * @brief Return the number of address entries for this service.
+ *
+ * @return Count of BNetworkServiceAddressSettings entries.
+ */
 int32
 BNetworkServiceSettings::CountAddresses() const
 {
@@ -1663,6 +2378,12 @@ BNetworkServiceSettings::CountAddresses() const
 }
 
 
+/**
+ * @brief Return a const reference to the service address entry at \a index.
+ *
+ * @param index  Zero-based index into the address list.
+ * @return Const reference to the BNetworkServiceAddressSettings.
+ */
 const BNetworkServiceAddressSettings&
 BNetworkServiceSettings::AddressAt(int32 index) const
 {
@@ -1670,6 +2391,11 @@ BNetworkServiceSettings::AddressAt(int32 index) const
 }
 
 
+/**
+ * @brief Append an address entry to the service's address list.
+ *
+ * @param address  The BNetworkServiceAddressSettings to add.
+ */
 void
 BNetworkServiceSettings::AddAddress(
 	const BNetworkServiceAddressSettings& address)
@@ -1678,6 +2404,11 @@ BNetworkServiceSettings::AddAddress(
 }
 
 
+/**
+ * @brief Remove the address entry at \a index from the service's list.
+ *
+ * @param index  Zero-based index of the entry to remove.
+ */
 void
 BNetworkServiceSettings::RemoveAddress(int32 index)
 {
@@ -1685,9 +2416,14 @@ BNetworkServiceSettings::RemoveAddress(int32 index)
 }
 
 
-/*!	This is a convenience method that returns the current state of the
-	service, independent of the current settings.
-*/
+/**
+ * @brief Query the net_server to determine whether this service is currently running.
+ *
+ * Sends kMsgIsServiceRunning to the net_server and interprets the "running"
+ * field of the reply.
+ *
+ * @return true if the server reports the service is active.
+ */
 bool
 BNetworkServiceSettings::IsRunning() const
 {
@@ -1704,6 +2440,15 @@ BNetworkServiceSettings::IsRunning() const
 }
 
 
+/**
+ * @brief Serialise this service settings object into a BMessage.
+ *
+ * Writes name, enabled state, stand_alone flag, default family/type/protocol/
+ * port, launch arguments, and all non-default address entries.
+ *
+ * @param data  Output BMessage to populate.
+ * @return B_OK on success, or an error code if any field cannot be set.
+ */
 status_t
 BNetworkServiceSettings::GetMessage(BMessage& data) const
 {

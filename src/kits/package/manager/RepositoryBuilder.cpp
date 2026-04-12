@@ -1,10 +1,43 @@
 /*
- * Copyright 2013-2020, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
- *		Andrew Lindesay <apl@lindesay.co.nz>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2020, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ *       Andrew Lindesay <apl@lindesay.co.nz>
+ */
+
+
+/**
+ * @file RepositoryBuilder.cpp
+ * @brief Implementation of BRepositoryBuilder, the fluent helper for populating solver repositories.
+ *
+ * BRepositoryBuilder wraps a BSolverRepository and provides a chainable API for
+ * adding packages from individual BPackageInfo objects, local .hpkg or .PackageInfo
+ * files, a directory of package files, or all packages at an installation location.
+ * It also handles adding the finished repository to a BSolver. Fatal errors abort
+ * via DIE() rather than returning error codes.
+ *
+ * @see BSolverRepository, BSolver, BPackageManager
  */
 
 
@@ -33,20 +66,43 @@ namespace BPrivate {
 namespace {
 
 
+/**
+ * @brief ParseErrorListener implementation that accumulates parse-error messages.
+ *
+ * Used internally by BRepositoryBuilder::AddPackage(const char*) to collect
+ * parse errors encountered while reading .PackageInfo files.
+ */
 class PackageInfoErrorListener : public BPackageInfo::ParseErrorListener {
 public:
+	/**
+	 * @brief Construct the listener with a context label for error messages.
+	 *
+	 * @param context  Human-readable label prepended to each error message.
+	 */
 	PackageInfoErrorListener(const char* context)
 		:
 		fContext(context)
 	{
 	}
 
+	/**
+	 * @brief Append a formatted parse-error message to the error accumulator.
+	 *
+	 * @param message  The error description from the parser.
+	 * @param line     Line number where the error occurred.
+	 * @param column   Column number where the error occurred.
+	 */
 	virtual void OnError(const BString& message, int line, int column)
 	{
 		fErrors << BString().SetToFormat("%s: parse error in line %d:%d: %s\n",
 			fContext, line, column, message.String());
 	}
 
+	/**
+	 * @brief Return all accumulated error messages.
+	 *
+	 * @return Reference to the error string.
+	 */
 	const BString& Errors() const
 	{
 		return fErrors;
@@ -61,6 +117,13 @@ private:
 } // unnamed namespace
 
 
+/**
+ * @brief Construct a BRepositoryBuilder for an existing BSolverRepository.
+ *
+ * The repository is assumed to be already initialised; no SetTo() is called.
+ *
+ * @param repository  The solver repository to wrap.
+ */
 BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository)
 	:
 	fRepository(repository),
@@ -70,6 +133,15 @@ BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository)
 }
 
 
+/**
+ * @brief Construct a BRepositoryBuilder and initialise the repository by name.
+ *
+ * Calls fRepository.SetTo(name); aborts via DIE() on failure.
+ *
+ * @param repository  The solver repository to initialise and wrap.
+ * @param name        The name to assign to the repository.
+ * @param errorName   Human-readable label for error messages; defaults to @a name.
+ */
 BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository,
 	const BString& name, const BString& errorName)
 	:
@@ -83,6 +155,14 @@ BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository,
 }
 
 
+/**
+ * @brief Construct a BRepositoryBuilder and initialise the repository from a config.
+ *
+ * Calls fRepository.SetTo(config); aborts via DIE() on failure.
+ *
+ * @param repository  The solver repository to initialise and wrap.
+ * @param config      The BRepositoryConfig describing the repository.
+ */
 BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository,
 	const BRepositoryConfig& config)
 	:
@@ -96,6 +176,15 @@ BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository,
 }
 
 
+/**
+ * @brief Construct a BRepositoryBuilder and initialise the repository from a cache.
+ *
+ * Calls fRepository.SetTo(cache); aborts via DIE() on failure.
+ *
+ * @param repository  The solver repository to initialise and wrap.
+ * @param cache       The BRepositoryCache to load packages from.
+ * @param errorName   Human-readable label for error messages; defaults to the cache name.
+ */
 BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository,
 	const BRepositoryCache& cache, const BString& errorName)
 	:
@@ -110,6 +199,12 @@ BRepositoryBuilder::BRepositoryBuilder(BSolverRepository& repository,
 }
 
 
+/**
+ * @brief Attach a package-path map for recording the on-disk location of added packages.
+ *
+ * @param packagePaths  Map to populate; NULL disables path recording.
+ * @return Reference to this builder for chaining.
+ */
 BRepositoryBuilder&
 BRepositoryBuilder::SetPackagePathMap(BPackagePathMap* packagePaths)
 {
@@ -118,6 +213,16 @@ BRepositoryBuilder::SetPackagePathMap(BPackagePathMap* packagePaths)
 }
 
 
+/**
+ * @brief Add a package described by a BPackageInfo to the repository.
+ *
+ * Aborts via DIE() if the addition fails.
+ *
+ * @param info              The package metadata to add.
+ * @param packageErrorName  Optional human-readable label for error messages.
+ * @param _package          Optional output pointer set to the new BSolverPackage.
+ * @return Reference to this builder for chaining.
+ */
 BRepositoryBuilder&
 BRepositoryBuilder::AddPackage(const BPackageInfo& info,
 	const char* packageErrorName, BSolverPackage** _package)
@@ -134,6 +239,16 @@ BRepositoryBuilder::AddPackage(const BPackageInfo& info,
 }
 
 
+/**
+ * @brief Add a package by reading its metadata from an .hpkg or .PackageInfo file.
+ *
+ * Aborts via DIE_DETAILS() if the file does not exist, cannot be stat'd,
+ * is empty, or cannot be parsed.
+ *
+ * @param path      Path to the .hpkg or .PackageInfo file.
+ * @param _package  Optional output pointer set to the new BSolverPackage.
+ * @return Reference to this builder for chaining.
+ */
 BRepositoryBuilder&
 BRepositoryBuilder::AddPackage(const char* path, BSolverPackage** _package)
 {
@@ -191,6 +306,15 @@ BRepositoryBuilder::AddPackage(const char* path, BSolverPackage** _package)
 }
 
 
+/**
+ * @brief Add all packages at the given installation location to the repository.
+ *
+ * Aborts via DIE() if the packages cannot be loaded.
+ *
+ * @param location          The BPackageInstallationLocation to load from.
+ * @param locationErrorName Human-readable label for error messages.
+ * @return Reference to this builder for chaining.
+ */
 BRepositoryBuilder&
 BRepositoryBuilder::AddPackages(BPackageInstallationLocation location,
 	const char* locationErrorName)
@@ -204,6 +328,15 @@ BRepositoryBuilder::AddPackages(BPackageInstallationLocation location,
 }
 
 
+/**
+ * @brief Scan a directory and add every regular file as a package.
+ *
+ * Non-regular-file entries (directories, symlinks, etc.) are silently skipped.
+ * Aborts via DIE() if the directory cannot be opened.
+ *
+ * @param path  Path to the directory to scan.
+ * @return Reference to this builder for chaining.
+ */
 BRepositoryBuilder&
 BRepositoryBuilder::AddPackagesDirectory(const char* path)
 {
@@ -239,6 +372,15 @@ BRepositoryBuilder::AddPackagesDirectory(const char* path)
 }
 
 
+/**
+ * @brief Mark the repository as installed/not-installed and add it to the solver.
+ *
+ * Aborts via DIE() if the solver rejects the repository.
+ *
+ * @param solver       The BSolver instance to add this repository to.
+ * @param isInstalled  True if this repository represents currently-active packages.
+ * @return Reference to this builder for chaining.
+ */
 BRepositoryBuilder&
 BRepositoryBuilder::AddToSolver(BSolver* solver, bool isInstalled)
 {

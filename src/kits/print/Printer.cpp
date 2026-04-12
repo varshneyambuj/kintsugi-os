@@ -1,10 +1,41 @@
 /*
- * Copyright 2008 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Julun, <host.haiku@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors: Julun, <host.haiku@gmx.de>
  */
+
+
+/**
+ * @file Printer.cpp
+ * @brief BPrinter — filesystem-backed printer descriptor for the print kit.
+ *
+ * BPrinter wraps a printer's spool directory entry_ref, providing accessors
+ * for printer attributes (name, driver, transport, state) stored as node
+ * attributes. It also manages a BMessenger-based node watcher so callers can
+ * receive notifications when printer state changes.
+ *
+ * @see BPrinterRoster, BJobSetupPanel
+ */
+
 
 #include <Printer.h>
 
@@ -40,6 +71,12 @@ namespace BPrivate {
 #define PSRV_FIELD_CURRENT_PRINTER				"current_printer"
 
 
+/**
+ * @brief Constructs an empty, invalid BPrinter.
+ *
+ * The printer's entry_ref is zeroed; IsValid() will return false until
+ * SetTo() is called with a valid printer directory.
+ */
 BPrinter::BPrinter()
 	: fListener(NULL)
 {
@@ -47,6 +84,11 @@ BPrinter::BPrinter()
 }
 
 
+/**
+ * @brief Constructs a BPrinter pointing to the printer described by \a entry.
+ *
+ * @param entry  BEntry of the printer's spool directory.
+ */
 BPrinter::BPrinter(const BEntry& entry)
 	: fListener(NULL)
 {
@@ -54,12 +96,24 @@ BPrinter::BPrinter(const BEntry& entry)
 }
 
 
+/**
+ * @brief Copy-constructs a BPrinter, duplicating the watcher if active.
+ *
+ * @param printer  The BPrinter to copy.
+ */
 BPrinter::BPrinter(const BPrinter& printer)
 {
 	*this = printer;
 }
 
 
+/**
+ * @brief Constructs a BPrinter from a node reference.
+ *
+ * Resolves the node_ref to a BDirectory and delegates to SetTo(BDirectory).
+ *
+ * @param nodeRef  The node_ref of the printer's spool directory.
+ */
 BPrinter::BPrinter(const node_ref& nodeRef)
 	: fListener(NULL)
 {
@@ -67,6 +121,11 @@ BPrinter::BPrinter(const node_ref& nodeRef)
 }
 
 
+/**
+ * @brief Constructs a BPrinter from an entry reference.
+ *
+ * @param entryRef  The entry_ref of the printer's spool directory entry.
+ */
 BPrinter::BPrinter(const entry_ref& entryRef)
 	: fListener(NULL)
 	, fPrinterEntryRef(entryRef)
@@ -74,6 +133,11 @@ BPrinter::BPrinter(const entry_ref& entryRef)
 }
 
 
+/**
+ * @brief Constructs a BPrinter from a BDirectory.
+ *
+ * @param directory  The printer's spool directory.
+ */
 BPrinter::BPrinter(const BDirectory& directory)
 	: fListener(NULL)
 {
@@ -81,12 +145,24 @@ BPrinter::BPrinter(const BDirectory& directory)
 }
 
 
+/**
+ * @brief Destroys the BPrinter and stops any active node watcher.
+ */
 BPrinter::~BPrinter()
 {
 	StopWatching();
 }
 
 
+/**
+ * @brief Points this BPrinter at the printer described by \a entry.
+ *
+ * Stops any active watcher, stores the entry ref, and returns the result
+ * of InitCheck().
+ *
+ * @param entry  BEntry of the printer's spool directory.
+ * @return B_OK if the entry is a valid directory, or an error code otherwise.
+ */
 status_t
 BPrinter::SetTo(const BEntry& entry)
 {
@@ -97,6 +173,12 @@ BPrinter::SetTo(const BEntry& entry)
 }
 
 
+/**
+ * @brief Points this BPrinter at the printer identified by \a nodeRef.
+ *
+ * @param nodeRef  The node_ref of the printer's spool directory.
+ * @return B_OK on success, or an error code otherwise.
+ */
 status_t
 BPrinter::SetTo(const node_ref& nodeRef)
 {
@@ -105,6 +187,12 @@ BPrinter::SetTo(const node_ref& nodeRef)
 }
 
 
+/**
+ * @brief Points this BPrinter at the printer identified by \a entryRef.
+ *
+ * @param entryRef  The entry_ref of the printer's spool directory entry.
+ * @return B_OK on success, or an error code otherwise.
+ */
 status_t
 BPrinter::SetTo(const entry_ref& entryRef)
 {
@@ -115,6 +203,12 @@ BPrinter::SetTo(const entry_ref& entryRef)
 }
 
 
+/**
+ * @brief Points this BPrinter at the printer described by \a directory.
+ *
+ * @param directory  The printer's spool directory.
+ * @return B_OK on success, or an error code otherwise.
+ */
 status_t
 BPrinter::SetTo(const BDirectory& directory)
 {
@@ -128,6 +222,9 @@ BPrinter::SetTo(const BDirectory& directory)
 }
 
 
+/**
+ * @brief Resets this BPrinter to an empty, invalid state and stops watching.
+ */
 void
 BPrinter::Unset()
 {
@@ -136,6 +233,14 @@ BPrinter::Unset()
 }
 
 
+/**
+ * @brief Returns true if this object represents a properly configured printer.
+ *
+ * Checks that the entry_ref opens as a BDirectory with the correct printer
+ * MIME type attribute.
+ *
+ * @return true if the printer is valid, false otherwise.
+ */
 bool
 BPrinter::IsValid() const
 {
@@ -154,6 +259,11 @@ BPrinter::IsValid() const
 }
 
 
+/**
+ * @brief Returns the initialisation status of the underlying spool directory.
+ *
+ * @return B_OK if the entry_ref resolves to a readable directory.
+ */
 status_t
 BPrinter::InitCheck() const
 {
@@ -162,6 +272,11 @@ BPrinter::InitCheck() const
 }
 
 
+/**
+ * @brief Returns true if the printer's state attribute indicates it is free.
+ *
+ * @return true if State() == "free".
+ */
 bool
 BPrinter::IsFree() const
 {
@@ -169,6 +284,14 @@ BPrinter::IsFree() const
 }
 
 
+/**
+ * @brief Returns true if this printer is the system default.
+ *
+ * Reads the PSRV_PRINTER_ATTR_DEFAULT_PRINTER bool attribute from the spool
+ * directory.
+ *
+ * @return true if the default-printer attribute is set to true.
+ */
 bool
 BPrinter::IsDefault() const
 {
@@ -183,6 +306,13 @@ BPrinter::IsDefault() const
 }
 
 
+/**
+ * @brief Returns true if the printer can be shared over the network.
+ *
+ * Currently only the "Preview" virtual printer reports as shareable.
+ *
+ * @return true if the printer supports network sharing.
+ */
 bool
 BPrinter::IsShareable() const
 {
@@ -193,6 +323,11 @@ BPrinter::IsShareable() const
 }
 
 
+/**
+ * @brief Returns the human-readable name of this printer.
+ *
+ * @return The value of the PSRV_PRINTER_ATTR_PRINTER_NAME node attribute.
+ */
 BString
 BPrinter::Name() const
 {
@@ -200,6 +335,11 @@ BPrinter::Name() const
 }
 
 
+/**
+ * @brief Returns the current operational state string of this printer.
+ *
+ * @return The value of the PSRV_PRINTER_ATTR_STATE node attribute (e.g. "free").
+ */
 BString
 BPrinter::State() const
 {
@@ -207,6 +347,11 @@ BPrinter::State() const
 }
 
 
+/**
+ * @brief Returns the name of the printer driver add-on for this printer.
+ *
+ * @return The value of the PSRV_PRINTER_ATTR_DRIVER_NAME node attribute.
+ */
 BString
 BPrinter::Driver() const
 {
@@ -214,6 +359,11 @@ BPrinter::Driver() const
 }
 
 
+/**
+ * @brief Returns the comments string associated with this printer.
+ *
+ * @return The value of the PSRV_PRINTER_ATTR_COMMENTS node attribute.
+ */
 BString
 BPrinter::Comments() const
 {
@@ -221,6 +371,11 @@ BPrinter::Comments() const
 }
 
 
+/**
+ * @brief Returns the transport add-on name for this printer.
+ *
+ * @return The value of the PSRV_PRINTER_ATTR_TRANSPORT node attribute.
+ */
 BString
 BPrinter::Transport() const
 {
@@ -228,6 +383,11 @@ BPrinter::Transport() const
 }
 
 
+/**
+ * @brief Returns the transport address string for this printer.
+ *
+ * @return The value of the PSRV_PRINTER_ATTR_TRANSPORT_ADDRESS node attribute.
+ */
 BString
 BPrinter::TransportAddress() const
 {
@@ -235,6 +395,17 @@ BPrinter::TransportAddress() const
 }
 
 
+/**
+ * @brief Loads the driver add-on and retrieves the default print settings.
+ *
+ * Dynamically loads the driver add-on, resolves the "default_settings" symbol,
+ * and calls it with the printer's BNode. The resulting BMessage is copied into
+ * \a settings and the printer name is appended.
+ *
+ * @param settings  Receives the default settings on success.
+ * @return B_OK on success, or an error code if the driver cannot be loaded or
+ *         does not export the required symbol.
+ */
 status_t
 BPrinter::DefaultSettings(BMessage& settings)
 {
@@ -261,6 +432,16 @@ BPrinter::DefaultSettings(BMessage& settings)
 }
 
 
+/**
+ * @brief Starts watching the printer's parent directory for changes.
+ *
+ * Stores a copy of \a listener and registers B_WATCH_DIRECTORY monitoring
+ * on the directory containing the printer's spool folder.
+ *
+ * @param listener  A valid BMessenger to receive node-monitor notifications.
+ * @return B_OK on success, B_BAD_VALUE if the messenger is invalid, or
+ *         B_NO_MEMORY if the messenger copy cannot be allocated.
+ */
 status_t
 BPrinter::StartWatching(const BMessenger& listener)
 {
@@ -281,6 +462,11 @@ BPrinter::StartWatching(const BMessenger& listener)
 }
 
 
+/**
+ * @brief Stops watching the printer's parent directory for changes.
+ *
+ * Cancels the node-monitor registration and frees the listener messenger.
+ */
 void
 BPrinter::StopWatching()
 {
@@ -292,6 +478,15 @@ BPrinter::StopWatching()
 }
 
 
+/**
+ * @brief Copy-assigns another BPrinter to this instance.
+ *
+ * Resets the current state, copies the entry_ref, and restarts the watcher
+ * if the source printer had one active.
+ *
+ * @param printer  The source BPrinter to copy.
+ * @return A reference to this object.
+ */
 BPrinter&
 BPrinter::operator=(const BPrinter& printer)
 {
@@ -305,6 +500,12 @@ BPrinter::operator=(const BPrinter& printer)
 }
 
 
+/**
+ * @brief Returns true if two BPrinter objects refer to the same spool directory.
+ *
+ * @param printer  The BPrinter to compare against.
+ * @return true if both entry_refs are equal.
+ */
 bool
 BPrinter::operator==(const BPrinter& printer) const
 {
@@ -312,6 +513,12 @@ BPrinter::operator==(const BPrinter& printer) const
 }
 
 
+/**
+ * @brief Returns true if two BPrinter objects refer to different spool directories.
+ *
+ * @param printer  The BPrinter to compare against.
+ * @return true if the entry_refs differ.
+ */
 bool
 BPrinter::operator!=(const BPrinter& printer) const
 {
@@ -319,6 +526,14 @@ BPrinter::operator!=(const BPrinter& printer) const
 }
 
 
+/**
+ * @brief Invokes the driver's "add_printer" entry point to configure the printer.
+ *
+ * Loads the driver add-on, resolves the "add_printer" symbol, and calls it
+ * with the printer's name attribute.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPrinter::_Configure() const
 {
@@ -344,6 +559,16 @@ BPrinter::_Configure() const
 }
 
 
+/**
+ * @brief Invokes the driver's "config_job" entry point to configure a print job.
+ *
+ * Loads the driver add-on, resolves "config_job", and calls it with the printer
+ * node and current settings. On success, \a settings is replaced with the new
+ * driver-provided settings and the printer name is appended.
+ *
+ * @param settings  In/out settings message; updated on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPrinter::_ConfigureJob(BMessage& settings)
 {
@@ -370,6 +595,16 @@ BPrinter::_ConfigureJob(BMessage& settings)
 }
 
 
+/**
+ * @brief Invokes the driver's "config_page" entry point to configure page layout.
+ *
+ * Loads the driver add-on, resolves "config_page", and calls it with the printer
+ * node and current settings. On success, \a settings is updated with the new
+ * driver-provided page settings.
+ *
+ * @param settings  In/out settings message; updated on success.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPrinter::_ConfigurePage(BMessage& settings)
 {
@@ -396,6 +631,14 @@ BPrinter::_ConfigurePage(BMessage& settings)
 }
 
 
+/**
+ * @brief Resolves the filesystem path to this printer's driver add-on.
+ *
+ * Reads the driver name attribute and searches the standard add-on directories
+ * (user non-packaged, user, system non-packaged, system) under "Print/".
+ *
+ * @return A BPath to the driver add-on file, or an invalid BPath if not found.
+ */
 BPath
 BPrinter::_DriverPath() const
 {
@@ -425,6 +668,13 @@ BPrinter::_DriverPath() const
 }
 
 
+/**
+ * @brief Loads the printer driver add-on into memory.
+ *
+ * Resolves the driver path via _DriverPath() and calls load_add_on().
+ *
+ * @return A valid image_id on success, or -1 if the driver cannot be found or loaded.
+ */
 image_id
 BPrinter::_LoadDriver() const
 {
@@ -436,6 +686,14 @@ BPrinter::_LoadDriver() const
 }
 
 
+/**
+ * @brief Removes and re-adds the current printer name to a settings message.
+ *
+ * Ensures the PSRV_FIELD_CURRENT_PRINTER field in \a settings reflects the
+ * printer's current name attribute, replacing any stale value.
+ *
+ * @param settings  The BMessage to update in-place.
+ */
 void
 BPrinter::_AddPrinterName(BMessage& settings)
 {
@@ -444,6 +702,16 @@ BPrinter::_AddPrinterName(BMessage& settings)
 }
 
 
+/**
+ * @brief Reads a named string attribute from the printer's spool directory.
+ *
+ * Opens the spool directory and calls ReadAttrString() for the given attribute.
+ * Returns an empty BString if the directory cannot be opened or the attribute
+ * does not exist.
+ *
+ * @param attribute  Name of the node attribute to read.
+ * @return The attribute value, or an empty BString on failure.
+ */
 BString
 BPrinter::_ReadAttribute(const char* attribute) const
 {

@@ -1,6 +1,38 @@
 /*
- * Copyright 2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file NetworkRoster.cpp
+ * @brief Implementation of BNetworkRoster, the global network interface registry.
+ *
+ * BNetworkRoster provides a centralised view of all active network interfaces
+ * and persistent wireless network configurations on the system. It delegates
+ * persistent-network management to the net_server and uses ioctl-based calls
+ * for live interface enumeration.
+ *
+ * @see BNetworkInterface, BNetworkDevice
  */
 
 
@@ -24,9 +56,15 @@
 // information as AF_INET for the interface functions mostly.
 
 
+/** @brief The process-global default BNetworkRoster instance. */
 BNetworkRoster BNetworkRoster::sDefault;
 
 
+/**
+ * @brief Return the process-global BNetworkRoster singleton.
+ *
+ * @return Reference to the single BNetworkRoster instance used by the process.
+ */
 /*static*/ BNetworkRoster&
 BNetworkRoster::Default()
 {
@@ -34,6 +72,14 @@ BNetworkRoster::Default()
 }
 
 
+/**
+ * @brief Return the number of currently active network interfaces.
+ *
+ * Opens a temporary AF_INET datagram socket and issues SIOCGIFCOUNT to
+ * obtain the live interface count from the networking stack.
+ *
+ * @return The number of active interfaces, or 0 on error.
+ */
 size_t
 BNetworkRoster::CountInterfaces() const
 {
@@ -50,6 +96,18 @@ BNetworkRoster::CountInterfaces() const
 }
 
 
+/**
+ * @brief Iterate over active network interfaces one at a time.
+ *
+ * On each call the method fills \a interface with the name of the interface
+ * at position \a *cookie and advances the cookie for the next call.
+ * The caller must initialise \a cookie to zero before the first call.
+ *
+ * @param cookie    In/out iteration cursor; must be initialised to 0.
+ * @param interface Output parameter set to the interface at the current position.
+ * @return B_OK on success, B_BAD_VALUE when the cursor is past the last interface,
+ *         or an errno-mapped error code on ioctl failure.
+ */
 status_t
 BNetworkRoster::GetNextInterface(uint32* cookie,
 	BNetworkInterface& interface) const
@@ -103,6 +161,15 @@ BNetworkRoster::GetNextInterface(uint32* cookie,
 }
 
 
+/**
+ * @brief Create a new network interface with the given name.
+ *
+ * Issues SIOCAIFADDR on a temporary socket to request that the networking
+ * stack register a new interface named \a name.
+ *
+ * @param name  Null-terminated interface name (e.g. "en0").
+ * @return B_OK on success, or an errno-mapped error code on failure.
+ */
 status_t
 BNetworkRoster::AddInterface(const char* name)
 {
@@ -121,6 +188,15 @@ BNetworkRoster::AddInterface(const char* name)
 }
 
 
+/**
+ * @brief Create a new network interface described by a BNetworkInterface object.
+ *
+ * Convenience overload that extracts the interface name and delegates to
+ * AddInterface(const char*).
+ *
+ * @param interface The interface whose name is used for creation.
+ * @return B_OK on success, or an errno-mapped error code on failure.
+ */
 status_t
 BNetworkRoster::AddInterface(const BNetworkInterface& interface)
 {
@@ -128,6 +204,15 @@ BNetworkRoster::AddInterface(const BNetworkInterface& interface)
 }
 
 
+/**
+ * @brief Remove the network interface with the given name.
+ *
+ * Issues SIOCDIFADDR on a temporary socket to request that the networking
+ * stack unregister the interface named \a name.
+ *
+ * @param name  Null-terminated interface name to remove.
+ * @return B_OK on success, or an errno-mapped error code on failure.
+ */
 status_t
 BNetworkRoster::RemoveInterface(const char* name)
 {
@@ -147,6 +232,15 @@ BNetworkRoster::RemoveInterface(const char* name)
 }
 
 
+/**
+ * @brief Remove the network interface described by a BNetworkInterface object.
+ *
+ * Convenience overload that extracts the interface name and delegates to
+ * RemoveInterface(const char*).
+ *
+ * @param interface The interface to remove.
+ * @return B_OK on success, or an errno-mapped error code on failure.
+ */
 status_t
 BNetworkRoster::RemoveInterface(const BNetworkInterface& interface)
 {
@@ -154,6 +248,14 @@ BNetworkRoster::RemoveInterface(const BNetworkInterface& interface)
 }
 
 
+/**
+ * @brief Return the number of persistently stored wireless networks.
+ *
+ * Sends kMsgCountPersistentNetworks to the net_server and extracts the
+ * "count" field from the reply.
+ *
+ * @return The number of stored networks, or 0 if the server cannot be reached.
+ */
 int32
 BNetworkRoster::CountPersistentNetworks() const
 {
@@ -171,6 +273,17 @@ BNetworkRoster::CountPersistentNetworks() const
 }
 
 
+/**
+ * @brief Iterate over persistently stored wireless networks.
+ *
+ * Fetches the wireless_network entry at position \a *cookie from the
+ * net_server and advances the cookie.  Callers must initialise \a cookie
+ * to zero before the first call.
+ *
+ * @param cookie   In/out iteration cursor; must be initialised to 0.
+ * @param network  Output structure populated with the network details.
+ * @return B_OK on success, or an error code if the entry cannot be retrieved.
+ */
 status_t
 BNetworkRoster::GetNextPersistentNetwork(uint32* cookie,
 	wireless_network& network) const
@@ -228,6 +341,15 @@ BNetworkRoster::GetNextPersistentNetwork(uint32* cookie,
 }
 
 
+/**
+ * @brief Persistently store a wireless network configuration.
+ *
+ * Serialises \a network into a BMessage and forwards it to the net_server
+ * via kMsgAddPersistentNetwork.
+ *
+ * @param network  The wireless network descriptor to store.
+ * @return B_OK on success, or an error code if serialisation or IPC fails.
+ */
 status_t
 BNetworkRoster::AddPersistentNetwork(const wireless_network& network)
 {
@@ -266,6 +388,15 @@ BNetworkRoster::AddPersistentNetwork(const wireless_network& network)
 }
 
 
+/**
+ * @brief Remove a persistently stored wireless network by name.
+ *
+ * Sends kMsgRemovePersistentNetwork to the net_server with the network \a name
+ * and returns the status from the reply.
+ *
+ * @param name  Null-terminated SSID of the network to remove.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkRoster::RemovePersistentNetwork(const char* name)
 {
@@ -284,6 +415,16 @@ BNetworkRoster::RemovePersistentNetwork(const char* name)
 }
 
 
+/**
+ * @brief Begin receiving network-event notifications for a messenger.
+ *
+ * Registers \a target to receive messages for events matching \a eventMask
+ * via the net_notifications mechanism.
+ *
+ * @param target     The BMessenger to which notifications will be sent.
+ * @param eventMask  Bitmask of events to subscribe to.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BNetworkRoster::StartWatching(const BMessenger& target, uint32 eventMask)
 {
@@ -291,6 +432,14 @@ BNetworkRoster::StartWatching(const BMessenger& target, uint32 eventMask)
 }
 
 
+/**
+ * @brief Stop receiving network-event notifications for a messenger.
+ *
+ * Unregisters \a target from the net_notifications mechanism so it will
+ * no longer receive network-change events.
+ *
+ * @param target  The BMessenger to unregister.
+ */
 void
 BNetworkRoster::StopWatching(const BMessenger& target)
 {
@@ -301,11 +450,17 @@ BNetworkRoster::StopWatching(const BMessenger& target)
 // #pragma mark - private
 
 
+/**
+ * @brief Default constructor — initialises the singleton instance.
+ */
 BNetworkRoster::BNetworkRoster()
 {
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BNetworkRoster::~BNetworkRoster()
 {
 }

@@ -1,6 +1,41 @@
 /*
- * Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageFileHeapWriter.cpp
+ * @brief Write and rewrite the compressed heap section of an HPKG package file.
+ *
+ * PackageFileHeapWriter extends PackageFileHeapAccessorBase with buffered
+ * sequential writes and an in-place range-removal algorithm.  Incoming data is
+ * accumulated in a pending-data buffer; when a full kChunkSize chunk is ready
+ * it is optionally compressed and flushed to disk.  RemoveDataRanges() can
+ * surgically excise arbitrary byte ranges from the heap while preserving and
+ * recompressing the surrounding data.  Finish() writes the per-chunk size
+ * table required by the HPKG format when compression is active.
+ *
+ * @see PackageFileHeapAccessorBase, PackageFileHeapReader
  */
 
 
@@ -32,6 +67,7 @@ namespace BHPKG {
 namespace BPrivate {
 
 
+/** @brief Metadata for a single compressed chunk tracked by ChunkBuffer. */
 struct PackageFileHeapWriter::Chunk {
 	uint64	offset;
 	uint32	compressedSize;
@@ -40,6 +76,7 @@ struct PackageFileHeapWriter::Chunk {
 };
 
 
+/** @brief Identifies the portion of a chunk that should be preserved during range removal. */
 struct PackageFileHeapWriter::ChunkSegment {
 	ssize_t	chunkIndex;
 	uint32	toKeepOffset;
@@ -47,7 +84,21 @@ struct PackageFileHeapWriter::ChunkSegment {
 };
 
 
+/**
+ * @brief Internal buffer manager that reads and caches compressed chunks during range removal.
+ *
+ * ChunkBuffer builds ordered lists of Chunk and ChunkSegment descriptors from
+ * the data ranges that must be preserved.  It lazily reads each chunk's
+ * compressed bytes from the heap file and recycles I/O buffers to bound peak
+ * memory usage.
+ */
 struct PackageFileHeapWriter::ChunkBuffer {
+	/**
+	 * @brief Construct the chunk buffer for use during range removal.
+	 *
+	 * @param writer     The heap writer that owns the compressed data.
+	 * @param bufferSize Size of each per-chunk I/O buffer in bytes.
+	 */
 	ChunkBuffer(PackageFileHeapWriter* writer, size_t bufferSize)
 		:
 		fWriter(writer),
@@ -62,12 +113,28 @@ struct PackageFileHeapWriter::ChunkBuffer {
 	{
 	}
 
+	/**
+	 * @brief Destroy the chunk buffer and free all I/O buffers.
+	 */
 	~ChunkBuffer()
 	{
 		for (int32 i = 0; void* buffer = fBuffers.ItemAt(i); i++)
 			free(buffer);
 	}
 
+	/**
+	 * @brief Record a segment of a compressed chunk that should be preserved.
+	 *
+	 * If the chunk at \a chunkOffset is already the last entry in the chunk
+	 * list it is reused; otherwise a new Chunk entry is appended.
+	 *
+	 * @param chunkOffset      Compressed offset of the source chunk.
+	 * @param compressedSize   Compressed size of the source chunk.
+	 * @param uncompressedSize Uncompressed size of the source chunk.
+	 * @param toKeepOffset     Byte offset within the uncompressed chunk to keep.
+	 * @param toKeepSize       Number of uncompressed bytes to keep.
+	 * @return true on success, false if memory allocation fails.
+	 */
 	bool PushChunkSegment(uint64 chunkOffset, uint32 compressedSize,
 		uint32 uncompressedSize, uint32 toKeepOffset, uint32 toKeepSize)
 	{
@@ -95,41 +162,59 @@ struct PackageFileHeapWriter::ChunkBuffer {
 		return fSegments.Add(segment);
 	}
 
+	/** @return true if no segment has been pushed yet. */
 	bool IsEmpty() const
 	{
 		return fSegments.IsEmpty();
 	}
 
+	/** @return true if there are unprocessed segments remaining. */
 	bool HasMoreSegments() const
 	{
 		return fCurrentSegmentIndex < fSegments.Count();
 	}
 
+	/** @return A reference to the current (not yet processed) segment. */
 	const ChunkSegment& CurrentSegment() const
 	{
 		return fSegments[fCurrentSegmentIndex];
 	}
 
+	/**
+	 * @brief Return the Chunk descriptor at the given index.
+	 *
+	 * @param index Zero-based chunk index.
+	 * @return A const reference to the Chunk descriptor.
+	 */
 	const Chunk& ChunkAt(ssize_t index) const
 	{
 		return fChunks[index];
 	}
 
+	/** @return true if there are chunks that have not been read from disk yet. */
 	bool HasMoreChunksToRead() const
 	{
 		return fNextReadIndex < fChunks.Count();
 	}
 
+	/** @return true if the current chunk has already been read into a buffer. */
 	bool HasBufferedChunk() const
 	{
 		return fCurrentChunkIndex < fNextReadIndex;
 	}
 
+	/** @return The heap offset of the next chunk to be read from disk. */
 	uint64 NextReadOffset() const
 	{
 		return fChunks[fNextReadIndex].offset;
 	}
 
+	/**
+	 * @brief Read the next unread chunk's compressed bytes from disk.
+	 *
+	 * Obtains an I/O buffer and reads the chunk's compressed data into it.
+	 * Throws status_t on I/O error.
+	 */
 	void ReadNextChunk()
 	{
 		if (!HasMoreChunksToRead())
@@ -144,6 +229,12 @@ struct PackageFileHeapWriter::ChunkBuffer {
 			throw error;
 	}
 
+	/**
+	 * @brief Advance past the current segment and release its chunk buffer if done.
+	 *
+	 * If the following segment refers to a different chunk the current chunk's
+	 * I/O buffer is returned to the pool.
+	 */
 	void CurrentSegmentDone()
 	{
 		// Unless the next segment refers to the same chunk, advance to the next
@@ -156,6 +247,12 @@ struct PackageFileHeapWriter::ChunkBuffer {
 	}
 
 private:
+	/**
+	 * @brief Obtain a free I/O buffer, allocating one if necessary.
+	 *
+	 * @return Pointer to a free buffer of fBufferSize bytes.
+	 * @throws std::bad_alloc if allocation fails.
+	 */
 	void* _GetBuffer()
 	{
 		if (!fUnusedBuffers.IsEmpty())
@@ -170,6 +267,14 @@ private:
 		return buffer;
 	}
 
+	/**
+	 * @brief Return a buffer to the unused pool.
+	 *
+	 * If the buffer cannot be tracked it is freed and removed from the
+	 * master list.
+	 *
+	 * @param buffer Pointer to the buffer to recycle; NULL is silently ignored.
+	 */
 	void _PutBuffer(void* buffer)
 	{
 		if (buffer != NULL && !fUnusedBuffers.AddItem(buffer)) {
@@ -194,6 +299,20 @@ private:
 };
 
 
+/**
+ * @brief Construct the heap writer.
+ *
+ * Acquires a reference to \a compressionAlgorithm so it stays valid while
+ * the writer is alive.
+ *
+ * @param errorOutput            Diagnostic output channel.
+ * @param file                   Positioned I/O object representing the package file.
+ * @param heapOffset             Byte offset of the heap within \a file.
+ * @param compressionAlgorithm   Compression algorithm to use, or NULL to
+ *                               write uncompressed chunks.
+ * @param decompressionAlgorithm Decompression algorithm used when re-reading
+ *                               written chunks, or NULL for uncompressed heaps.
+ */
 PackageFileHeapWriter::PackageFileHeapWriter(BErrorOutput* errorOutput,
 	BPositionIO* file, off_t heapOffset,
 	CompressionAlgorithmOwner* compressionAlgorithm,
@@ -212,6 +331,9 @@ PackageFileHeapWriter::PackageFileHeapWriter(BErrorOutput* errorOutput,
 }
 
 
+/**
+ * @brief Destroy the heap writer and release all resources.
+ */
 PackageFileHeapWriter::~PackageFileHeapWriter()
 {
 	_Uninit();
@@ -221,6 +343,11 @@ PackageFileHeapWriter::~PackageFileHeapWriter()
 }
 
 
+/**
+ * @brief Allocate the pending-data and compressed-data scratch buffers.
+ *
+ * Must be called before AddData().  Throws std::bad_alloc on failure.
+ */
 void
 PackageFileHeapWriter::Init()
 {
@@ -232,6 +359,15 @@ PackageFileHeapWriter::Init()
 }
 
 
+/**
+ * @brief Reinitialise the writer to continue from an existing heap reader's state.
+ *
+ * Copies the heap parameters and chunk offset table from \a heapReader, then
+ * reads the last partial chunk (if any) back into the pending-data buffer so
+ * that subsequent AddData() calls append correctly.
+ *
+ * @param heapReader Fully initialised reader for the heap to continue writing.
+ */
 void
 PackageFileHeapWriter::Reinit(PackageFileHeapReader* heapReader)
 {
@@ -254,6 +390,19 @@ PackageFileHeapWriter::Reinit(PackageFileHeapReader* heapReader)
 }
 
 
+/**
+ * @brief Append data from a BDataReader to the heap.
+ *
+ * Reads \a size bytes from \a dataReader in chunks, accumulating them in the
+ * pending-data buffer and flushing full chunks to disk as they fill up.
+ * Returns the uncompressed heap offset at which the data begins in \a _offset.
+ *
+ * @param dataReader Source of the data to append.
+ * @param size       Number of bytes to append.
+ * @param _offset    Output parameter receiving the start offset of the
+ *                   appended data within the uncompressed heap.
+ * @return B_OK on success, or any error from dataReader or _FlushPendingData().
+ */
 status_t
 PackageFileHeapWriter::AddData(BDataReader& dataReader, off_t size,
 	uint64& _offset)
@@ -291,6 +440,16 @@ PackageFileHeapWriter::AddData(BDataReader& dataReader, off_t size,
 }
 
 
+/**
+ * @brief Append a raw memory buffer to the heap, throwing on error.
+ *
+ * Convenience wrapper around AddData() that throws status_t instead of
+ * returning an error code.
+ *
+ * @param buffer Pointer to the data to append.
+ * @param size   Number of bytes to append.
+ * @throws status_t if AddData() fails.
+ */
 void
 PackageFileHeapWriter::AddDataThrows(const void* buffer, size_t size)
 {
@@ -302,6 +461,18 @@ PackageFileHeapWriter::AddDataThrows(const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Remove the specified byte ranges from the heap in place.
+ *
+ * Flushes pending data, builds a list of chunk segments to retain,
+ * then recompresses and rewrites all affected data starting from the
+ * first touched chunk.  Complete aligned chunks that need no recompression
+ * are copied directly in their compressed form to avoid decompression
+ * overhead.  Throws status_t or std::bad_alloc on failure.
+ *
+ * @param ranges Array of non-overlapping byte ranges to remove, sorted by
+ *               offset in ascending order.
+ */
 void
 PackageFileHeapWriter::RemoveDataRanges(
 	const ::BPrivate::RangeArray<uint64>& ranges)
@@ -435,6 +606,16 @@ PackageFileHeapWriter::RemoveDataRanges(
 }
 
 
+/**
+ * @brief Flush any remaining pending data and write the chunk-size table.
+ *
+ * Flushes the pending-data buffer, then (when compression is active and more
+ * than one chunk was written) serialises the per-chunk size table to the end
+ * of the compressed heap using the pending-data buffer as scratch space.
+ *
+ * @return B_OK on success, or any error from _FlushPendingData() or
+ *         _WriteDataUncompressed().
+ */
 status_t
 PackageFileHeapWriter::Finish()
 {
@@ -477,6 +658,19 @@ PackageFileHeapWriter::Finish()
 }
 
 
+/**
+ * @brief Decompress a single heap chunk for use during range removal.
+ *
+ * If the chunk has not yet been flushed to disk its data is still in the
+ * pending-data buffer; it is copied directly.  Otherwise the chunk is
+ * located via fOffsets and decompressed from the file.
+ *
+ * @param chunkIndex             Zero-based index of the chunk to read.
+ * @param compressedDataBuffer   Scratch buffer for compressed bytes.
+ * @param uncompressedDataBuffer Destination buffer for decompressed data.
+ * @param scratchBuffer          Optional algorithm-specific scratch buffer.
+ * @return B_OK on success, or any error from ReadAndDecompressChunkData().
+ */
 status_t
 PackageFileHeapWriter::ReadAndDecompressChunk(size_t chunkIndex,
 	void* compressedDataBuffer, void* uncompressedDataBuffer,
@@ -501,6 +695,11 @@ PackageFileHeapWriter::ReadAndDecompressChunk(size_t chunkIndex,
 }
 
 
+/**
+ * @brief Free the pending-data and compressed-data buffers.
+ *
+ * Sets both pointers to NULL so that subsequent calls are safe.
+ */
 void
 PackageFileHeapWriter::_Uninit()
 {
@@ -511,6 +710,14 @@ PackageFileHeapWriter::_Uninit()
 }
 
 
+/**
+ * @brief Write the pending-data buffer to disk as a new chunk if non-empty.
+ *
+ * Delegates to _WriteChunk() with compression enabled, then resets
+ * fPendingDataSize to zero on success.
+ *
+ * @return B_OK on success, or any error from _WriteChunk().
+ */
 status_t
 PackageFileHeapWriter::_FlushPendingData()
 {
@@ -525,6 +732,19 @@ PackageFileHeapWriter::_FlushPendingData()
 }
 
 
+/**
+ * @brief Record the current heap position and write one chunk to the file.
+ *
+ * Appends the current fCompressedHeapSize to fOffsets, attempts compression
+ * when \a mayCompress is true and the data is large enough, and falls back to
+ * uncompressed writing if compression fails or produces no saving.
+ *
+ * @param data         Pointer to the chunk data to write.
+ * @param size         Number of bytes in the chunk.
+ * @param mayCompress  Whether compression should be attempted.
+ * @return B_OK on success, B_NO_MEMORY if the offset array allocation fails,
+ *         or any error from _WriteDataCompressed() / _WriteDataUncompressed().
+ */
 status_t
 PackageFileHeapWriter::_WriteChunk(const void* data, size_t size,
 	bool mayCompress)
@@ -557,6 +777,19 @@ PackageFileHeapWriter::_WriteChunk(const void* data, size_t size,
 }
 
 
+/**
+ * @brief Compress \a data and write it to the file if smaller than the original.
+ *
+ * Uses fCompressionAlgorithm to compress the data into fCompressedDataBuffer.
+ * Returns B_BUFFER_OVERFLOW (without printing an error) when the compressed
+ * result is not smaller than the uncompressed input, signalling the caller to
+ * fall back to uncompressed writing.
+ *
+ * @param data Pointer to the uncompressed input data.
+ * @param size Size of the uncompressed input in bytes.
+ * @return B_OK on success, B_BUFFER_OVERFLOW if compression is ineffective,
+ *         or any error from the compression algorithm.
+ */
 status_t
 PackageFileHeapWriter::_WriteDataCompressed(const void* data, size_t size)
 {
@@ -584,6 +817,16 @@ PackageFileHeapWriter::_WriteDataCompressed(const void* data, size_t size)
 }
 
 
+/**
+ * @brief Write raw bytes to the package file at the current heap end.
+ *
+ * Uses BPositionIO::WriteAtExactly() to place \a size bytes at
+ * fHeapOffset + fCompressedHeapSize, then advances fCompressedHeapSize.
+ *
+ * @param data Pointer to the bytes to write.
+ * @param size Number of bytes to write.
+ * @return B_OK on success, or any error from WriteAtExactly().
+ */
 status_t
 PackageFileHeapWriter::_WriteDataUncompressed(const void* data, size_t size)
 {
@@ -600,6 +843,18 @@ PackageFileHeapWriter::_WriteDataUncompressed(const void* data, size_t size)
 }
 
 
+/**
+ * @brief Push all chunk segments covering [startOffset, endOffset) into the buffer.
+ *
+ * Iterates over the chunks that overlap the given uncompressed range and calls
+ * chunkBuffer.PushChunkSegment() for each portion that should be kept.
+ * Throws status_t(B_BAD_VALUE) if \a endOffset exceeds the heap or
+ * std::bad_alloc if PushChunkSegment() runs out of memory.
+ *
+ * @param chunkBuffer Destination ChunkBuffer to receive the segments.
+ * @param startOffset Start of the uncompressed range to push (inclusive).
+ * @param endOffset   End of the uncompressed range to push (exclusive).
+ */
 void
 PackageFileHeapWriter::_PushChunks(ChunkBuffer& chunkBuffer, uint64 startOffset,
 	uint64 endOffset)
@@ -640,6 +895,15 @@ PackageFileHeapWriter::_PushChunks(ChunkBuffer& chunkBuffer, uint64 startOffset,
 }
 
 
+/**
+ * @brief Re-read the last partial chunk from disk into the pending-data buffer.
+ *
+ * When the uncompressed heap size is not a multiple of kChunkSize the last
+ * chunk on disk is partial.  This method decompresses it back into
+ * fPendingDataBuffer, removes it from the offset table, and resets the
+ * compressed heap size so the partial chunk will be rewritten (possibly
+ * differently) by the next Finish() call.  Throws status_t on error.
+ */
 void
 PackageFileHeapWriter::_UnwriteLastPartialChunk()
 {

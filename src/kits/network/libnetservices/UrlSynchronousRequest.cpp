@@ -1,9 +1,41 @@
 /*
- * Copyright 2010 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ */
+
+
+/**
+ * @file UrlSynchronousRequest.cpp
+ * @brief Implementation of BUrlSynchronousRequest, a blocking URL request wrapper.
+ *
+ * Wraps an existing BUrlRequest and acts as its listener, blocking in
+ * WaitUntilCompletion() via a snooze loop until RequestCompleted() is called.
+ * This allows callers to perform URL requests synchronously without managing
+ * a separate thread.
+ *
+ * @see BUrlRequest, BUrlProtocolListener
  */
 
 #include <cstdio>
@@ -16,6 +48,15 @@ using namespace BPrivate::Network;
 #define PRINT(x) printf x;
 
 
+/**
+ * @brief Construct a BUrlSynchronousRequest wrapping \a request.
+ *
+ * Borrows the URL, output, and context from \a request but sets the listener
+ * to NULL initially; Perform() installs this object as the listener before
+ * starting the thread.
+ *
+ * @param request  The BUrlRequest whose Run() will be called by Perform().
+ */
 BUrlSynchronousRequest::BUrlSynchronousRequest(BUrlRequest& request)
 	:
 	BUrlRequest(request.Url(), request.Output(), NULL, request.Context(),
@@ -26,6 +67,15 @@ BUrlSynchronousRequest::BUrlSynchronousRequest(BUrlRequest& request)
 }
 
 
+/**
+ * @brief Install this object as the listener and start the wrapped request.
+ *
+ * Resets fRequestComplete, registers this as the listener on the wrapped
+ * request, and calls Run() to spawn the protocol thread.
+ *
+ * @return B_OK if the thread was successfully started, or the negative
+ *         thread_id error code from BUrlRequest::Run().
+ */
 status_t
 BUrlSynchronousRequest::Perform()
 {
@@ -42,6 +92,15 @@ BUrlSynchronousRequest::Perform()
 }
 
 
+/**
+ * @brief Block until the wrapped request's protocol thread finishes.
+ *
+ * Polls fRequestComplete in a snooze loop with a 10 ms interval. Callers
+ * should call Perform() first and may inspect the wrapped request's result
+ * after this method returns.
+ *
+ * @return B_OK always.
+ */
 status_t
 BUrlSynchronousRequest::WaitUntilCompletion()
 {
@@ -52,6 +111,11 @@ BUrlSynchronousRequest::WaitUntilCompletion()
 }
 
 
+/**
+ * @brief Log that the connection was opened (debug only).
+ *
+ * @param  (unused) The BUrlRequest that opened the connection.
+ */
 void
 BUrlSynchronousRequest::ConnectionOpened(BUrlRequest*)
 {
@@ -59,6 +123,12 @@ BUrlSynchronousRequest::ConnectionOpened(BUrlRequest*)
 }
 
 
+/**
+ * @brief Log the resolved IP address (debug only).
+ *
+ * @param  (unused) The BUrlRequest that resolved the hostname.
+ * @param ip         The resolved IP address string.
+ */
 void
 BUrlSynchronousRequest::HostnameResolved(BUrlRequest*, const char* ip)
 {
@@ -66,6 +136,11 @@ BUrlSynchronousRequest::HostnameResolved(BUrlRequest*, const char* ip)
 }
 
 
+/**
+ * @brief Log that the response started (debug only).
+ *
+ * @param  (unused) The BUrlRequest that started receiving the response.
+ */
 void
 BUrlSynchronousRequest::ResponseStarted(BUrlRequest*)
 {
@@ -73,6 +148,11 @@ BUrlSynchronousRequest::ResponseStarted(BUrlRequest*)
 }
 
 
+/**
+ * @brief Log that headers were received (debug only).
+ *
+ * @param  (unused) The BUrlRequest that received all response headers.
+ */
 void
 BUrlSynchronousRequest::HeadersReceived(BUrlRequest*)
 {
@@ -80,6 +160,12 @@ BUrlSynchronousRequest::HeadersReceived(BUrlRequest*)
 }
 
 
+/**
+ * @brief Log the number of bytes written to output (debug only).
+ *
+ * @param caller        The BUrlRequest that wrote data.
+ * @param bytesWritten  The number of bytes written in this chunk.
+ */
 void
 BUrlSynchronousRequest::BytesWritten(BUrlRequest* caller, size_t bytesWritten)
 {
@@ -88,6 +174,13 @@ BUrlSynchronousRequest::BytesWritten(BUrlRequest* caller, size_t bytesWritten)
 }
 
 
+/**
+ * @brief Log download progress (debug only).
+ *
+ * @param  (unused)      The BUrlRequest making download progress.
+ * @param bytesReceived  Total bytes received so far.
+ * @param bytesTotal     Total expected bytes, or 0 if unknown.
+ */
 void
 BUrlSynchronousRequest::DownloadProgress(BUrlRequest*,
 	off_t bytesReceived, off_t bytesTotal)
@@ -97,6 +190,13 @@ BUrlSynchronousRequest::DownloadProgress(BUrlRequest*,
 }
 
 
+/**
+ * @brief Log upload progress (debug only).
+ *
+ * @param  (unused)  The BUrlRequest making upload progress.
+ * @param bytesSent  Total bytes sent so far.
+ * @param bytesTotal Total expected bytes to send.
+ */
 void
 BUrlSynchronousRequest::UploadProgress(BUrlRequest*, off_t bytesSent,
 	off_t bytesTotal)
@@ -106,6 +206,14 @@ BUrlSynchronousRequest::UploadProgress(BUrlRequest*, off_t bytesSent,
 }
 
 
+/**
+ * @brief Mark the request as complete and log the result (debug only).
+ *
+ * Sets fRequestComplete to true, which unblocks WaitUntilCompletion().
+ *
+ * @param caller   The BUrlRequest that completed.
+ * @param success  true if the request completed without error.
+ */
 void
 BUrlSynchronousRequest::RequestCompleted(BUrlRequest* caller, bool success)
 {

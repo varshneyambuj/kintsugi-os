@@ -1,10 +1,43 @@
 /*
- * Copyright 2011-2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe <zooey@hirschkaefer.de>
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2013, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ */
+
+
+/**
+ * @file ChecksumAccessors.cpp
+ * @brief Concrete implementations of the ChecksumAccessor interface.
+ *
+ * Provides three strategies for obtaining a hex-encoded SHA-256 checksum:
+ * reading a pre-computed value from a dedicated checksum file
+ * (ChecksumFileChecksumAccessor), computing it on-the-fly over an arbitrary
+ * file (GeneralFileChecksumAccessor), or returning a caller-supplied string
+ * directly (StringChecksumAccessor).
+ *
+ * @see ValidateChecksumJob
  */
 
 
@@ -28,6 +61,9 @@ namespace BPrivate {
 // #pragma mark - ChecksumAccessor
 
 
+/**
+ * @brief Virtual destructor for the ChecksumAccessor interface.
+ */
 ChecksumAccessor::~ChecksumAccessor()
 {
 }
@@ -36,6 +72,12 @@ ChecksumAccessor::~ChecksumAccessor()
 // #pragma mark - ChecksumFileChecksumAccessor
 
 
+/**
+ * @brief Construct an accessor that reads a checksum from a dedicated file.
+ *
+ * @param checksumFileEntry  BEntry pointing to the file containing the
+ *                           64-character hex-encoded SHA-256 checksum string.
+ */
 ChecksumFileChecksumAccessor::ChecksumFileChecksumAccessor(
 	const BEntry& checksumFileEntry)
 	:
@@ -44,6 +86,17 @@ ChecksumFileChecksumAccessor::ChecksumFileChecksumAccessor(
 }
 
 
+/**
+ * @brief Read the hex-encoded SHA-256 checksum from the checksum file.
+ *
+ * Opens the checksum file and reads exactly 64 bytes (the expected length
+ * of a hex-encoded SHA-256 digest) into \a checksum.
+ *
+ * @param checksum  Output string that receives the 64-character hex digest.
+ * @return B_OK on success, B_NO_MEMORY if the string buffer could not be
+ *         allocated, B_IO_ERROR if fewer than 64 bytes were available, or
+ *         another error code on file-open failure.
+ */
 status_t
 ChecksumFileChecksumAccessor::GetChecksum(BString& checksum) const
 {
@@ -72,6 +125,13 @@ ChecksumFileChecksumAccessor::GetChecksum(BString& checksum) const
 // #pragma mark - GeneralFileChecksumAccessor
 
 
+/**
+ * @brief Construct an accessor that computes a SHA-256 checksum over a file.
+ *
+ * @param fileEntry        BEntry pointing to the file to be hashed.
+ * @param skipMissingFile  If true, return B_OK with an empty checksum when the
+ *                         file does not exist rather than returning an error.
+ */
 GeneralFileChecksumAccessor::GeneralFileChecksumAccessor(
 	const BEntry& fileEntry, bool skipMissingFile)
 	:
@@ -81,6 +141,16 @@ GeneralFileChecksumAccessor::GeneralFileChecksumAccessor(
 }
 
 
+/**
+ * @brief Compute the SHA-256 checksum of the target file.
+ *
+ * Reads the file in 64 KiB blocks, feeds each block into a SHA256 context,
+ * then encodes the resulting digest as a lowercase hex string into \a checksum.
+ *
+ * @param checksum  Output string that receives the hex-encoded SHA-256 digest.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, B_IO_ERROR on
+ *         partial reads, or another error code on file access failure.
+ */
 status_t
 GeneralFileChecksumAccessor::GetChecksum(BString& checksum) const
 {
@@ -140,6 +210,11 @@ GeneralFileChecksumAccessor::GetChecksum(BString& checksum) const
 // #pragma mark - StringChecksumAccessor
 
 
+/**
+ * @brief Construct an accessor that wraps a caller-supplied checksum string.
+ *
+ * @param checksum  The pre-computed hex-encoded checksum to return verbatim.
+ */
 StringChecksumAccessor::StringChecksumAccessor(const BString& checksum)
 	:
 	fChecksum(checksum)
@@ -147,6 +222,12 @@ StringChecksumAccessor::StringChecksumAccessor(const BString& checksum)
 }
 
 
+/**
+ * @brief Copy the stored checksum string into the output parameter.
+ *
+ * @param _checksum  Output string that receives the stored checksum.
+ * @return Always returns B_OK.
+ */
 status_t
 StringChecksumAccessor::GetChecksum(BString& _checksum) const
 {

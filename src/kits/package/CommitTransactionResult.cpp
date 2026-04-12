@@ -1,9 +1,42 @@
 /*
- * Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ */
+
+
+/**
+ * @file CommitTransactionResult.cpp
+ * @brief Result types returned by the package daemon after a commit transaction.
+ *
+ * BTransactionIssue encodes a single non-fatal warning produced during a
+ * transaction (e.g. a manually modified writable file), while
+ * BCommitTransactionResult aggregates the overall error code, diagnostic path
+ * strings, and the full list of issues.  Both types can be serialised into and
+ * deserialised from BMessage for IPC with the package daemon.
+ *
+ * @see BDaemonClient, BActivationTransaction
  */
 
 
@@ -20,6 +53,9 @@ namespace BPackageKit {
 // #pragma mark - BTransactionIssue
 
 
+/**
+ * @brief Default constructor; creates a transaction issue with placeholder values.
+ */
 BTransactionIssue::BTransactionIssue()
 	:
 	fType(B_WRITABLE_FILE_TYPE_MISMATCH),
@@ -32,6 +68,16 @@ BTransactionIssue::BTransactionIssue()
 }
 
 
+/**
+ * @brief Construct a fully populated transaction issue.
+ *
+ * @param type         Category of the issue (see BType enum).
+ * @param packageName  Name of the package that triggered the issue.
+ * @param path1        Primary path relevant to the issue.
+ * @param path2        Secondary path relevant to the issue, if any.
+ * @param systemError  System error code associated with the issue.
+ * @param exitCode     Script exit code, if the issue arose from a script.
+ */
 BTransactionIssue::BTransactionIssue(BType type, const BString& packageName,
 	const BString& path1, const BString& path2, status_t systemError,
 	int exitCode)
@@ -46,17 +92,30 @@ BTransactionIssue::BTransactionIssue(BType type, const BString& packageName,
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param other  Source issue to copy.
+ */
 BTransactionIssue::BTransactionIssue(const BTransactionIssue& other)
 {
 	*this = other;
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BTransactionIssue::~BTransactionIssue()
 {
 }
 
 
+/**
+ * @brief Return the type category of this issue.
+ *
+ * @return The BType enum value describing the kind of issue.
+ */
 BTransactionIssue::BType
 BTransactionIssue::Type() const
 {
@@ -64,6 +123,11 @@ BTransactionIssue::Type() const
 }
 
 
+/**
+ * @brief Return the name of the package that caused this issue.
+ *
+ * @return Const reference to the package name string.
+ */
 const BString&
 BTransactionIssue::PackageName() const
 {
@@ -71,6 +135,11 @@ BTransactionIssue::PackageName() const
 }
 
 
+/**
+ * @brief Return the primary path associated with this issue.
+ *
+ * @return Const reference to the first path string.
+ */
 const BString&
 BTransactionIssue::Path1() const
 {
@@ -78,6 +147,11 @@ BTransactionIssue::Path1() const
 }
 
 
+/**
+ * @brief Return the secondary path associated with this issue.
+ *
+ * @return Const reference to the second path string.
+ */
 const BString&
 BTransactionIssue::Path2() const
 {
@@ -85,6 +159,11 @@ BTransactionIssue::Path2() const
 }
 
 
+/**
+ * @brief Return the system error code stored in this issue.
+ *
+ * @return The status_t error code.
+ */
 status_t
 BTransactionIssue::SystemError() const
 {
@@ -92,6 +171,11 @@ BTransactionIssue::SystemError() const
 }
 
 
+/**
+ * @brief Return the script exit code stored in this issue.
+ *
+ * @return The integer exit code (meaningful only for script-related issue types).
+ */
 int
 BTransactionIssue::ExitCode() const
 {
@@ -99,6 +183,14 @@ BTransactionIssue::ExitCode() const
 }
 
 
+/**
+ * @brief Format a human-readable description of this issue.
+ *
+ * Selects a message template based on the issue type and substitutes
+ * the stored path, error, and exit-code values.
+ *
+ * @return A BString containing the localised issue description.
+ */
 BString
 BTransactionIssue::ToString() const
 {
@@ -185,6 +277,12 @@ BTransactionIssue::ToString() const
 }
 
 
+/**
+ * @brief Serialise this issue into a BMessage for IPC.
+ *
+ * @param message  Target BMessage to append fields to.
+ * @return B_OK on success, or an error code if any field could not be stored.
+ */
 status_t
 BTransactionIssue::AddToMessage(BMessage& message) const
 {
@@ -203,6 +301,12 @@ BTransactionIssue::AddToMessage(BMessage& message) const
 }
 
 
+/**
+ * @brief Populate this issue from a previously serialised BMessage.
+ *
+ * @param message  Source BMessage containing the serialised issue fields.
+ * @return B_OK on success, or an error code if any required field is absent.
+ */
 status_t
 BTransactionIssue::ExtractFromMessage(const BMessage& message)
 {
@@ -227,6 +331,12 @@ BTransactionIssue::ExtractFromMessage(const BMessage& message)
 }
 
 
+/**
+ * @brief Copy-assignment operator.
+ *
+ * @param other  Source issue to copy from.
+ * @return Reference to this issue.
+ */
 BTransactionIssue&
 BTransactionIssue::operator=(const BTransactionIssue& other)
 {
@@ -244,6 +354,9 @@ BTransactionIssue::operator=(const BTransactionIssue& other)
 // #pragma mark - BCommitTransactionResult
 
 
+/**
+ * @brief Default constructor; initialises to B_TRANSACTION_INTERNAL_ERROR.
+ */
 BCommitTransactionResult::BCommitTransactionResult()
 	:
 	fError(B_TRANSACTION_INTERNAL_ERROR),
@@ -259,6 +372,11 @@ BCommitTransactionResult::BCommitTransactionResult()
 }
 
 
+/**
+ * @brief Construct a result with an explicit transaction error code.
+ *
+ * @param error  The BTransactionError to store.
+ */
 BCommitTransactionResult::BCommitTransactionResult(BTransactionError error)
 	:
 	fError(error),
@@ -274,6 +392,11 @@ BCommitTransactionResult::BCommitTransactionResult(BTransactionError error)
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param other  Source result to copy.
+ */
 BCommitTransactionResult::BCommitTransactionResult(
 	const BCommitTransactionResult& other)
 	:
@@ -291,11 +414,17 @@ BCommitTransactionResult::BCommitTransactionResult(
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BCommitTransactionResult::~BCommitTransactionResult()
 {
 }
 
 
+/**
+ * @brief Reset all fields to their default error state.
+ */
 void
 BCommitTransactionResult::Unset()
 {
@@ -311,6 +440,11 @@ BCommitTransactionResult::Unset()
 }
 
 
+/**
+ * @brief Return the number of non-fatal issues stored in this result.
+ *
+ * @return Count of BTransactionIssue objects.
+ */
 int32
 BCommitTransactionResult::CountIssues() const
 {
@@ -318,6 +452,12 @@ BCommitTransactionResult::CountIssues() const
 }
 
 
+/**
+ * @brief Return the issue at the given index.
+ *
+ * @param index  Zero-based index into the issues list.
+ * @return Const pointer to the BTransactionIssue, or NULL if \a index is out of range.
+ */
 const BTransactionIssue*
 BCommitTransactionResult::IssueAt(int32 index) const
 {
@@ -327,6 +467,12 @@ BCommitTransactionResult::IssueAt(int32 index) const
 }
 
 
+/**
+ * @brief Append a copy of \a issue to the issues list.
+ *
+ * @param issue  The issue to add.
+ * @return true on success, false if memory allocation failed.
+ */
 bool
 BCommitTransactionResult::AddIssue(const BTransactionIssue& issue)
 {
@@ -339,6 +485,11 @@ BCommitTransactionResult::AddIssue(const BTransactionIssue& issue)
 }
 
 
+/**
+ * @brief Return the high-level transaction error code.
+ *
+ * @return B_TRANSACTION_OK if no error occurred, otherwise the BTransactionError value.
+ */
 BTransactionError
 BCommitTransactionResult::Error() const
 {
@@ -346,6 +497,11 @@ BCommitTransactionResult::Error() const
 }
 
 
+/**
+ * @brief Set the high-level transaction error code.
+ *
+ * @param error  New BTransactionError value.
+ */
 void
 BCommitTransactionResult::SetError(BTransactionError error)
 {
@@ -353,6 +509,11 @@ BCommitTransactionResult::SetError(BTransactionError error)
 }
 
 
+/**
+ * @brief Return the underlying system error code.
+ *
+ * @return The status_t system error associated with the transaction failure.
+ */
 status_t
 BCommitTransactionResult::SystemError() const
 {
@@ -360,6 +521,11 @@ BCommitTransactionResult::SystemError() const
 }
 
 
+/**
+ * @brief Set the underlying system error code.
+ *
+ * @param error  The status_t system error to store.
+ */
 void
 BCommitTransactionResult::SetSystemError(status_t error)
 {
@@ -367,6 +533,11 @@ BCommitTransactionResult::SetSystemError(status_t error)
 }
 
 
+/**
+ * @brief Return the name of the package involved in the error, if any.
+ *
+ * @return Const reference to the error package name string.
+ */
 const BString&
 BCommitTransactionResult::ErrorPackage() const
 {
@@ -374,6 +545,11 @@ BCommitTransactionResult::ErrorPackage() const
 }
 
 
+/**
+ * @brief Store the name of the package that caused the transaction error.
+ *
+ * @param packageName  Package name to store.
+ */
 void
 BCommitTransactionResult::SetErrorPackage(const BString& packageName)
 {
@@ -381,6 +557,15 @@ BCommitTransactionResult::SetErrorPackage(const BString& packageName)
 }
 
 
+/**
+ * @brief Build a complete human-readable error message.
+ *
+ * Selects a template keyed to the stored BTransactionError, substitutes
+ * package name, path, and system-error placeholder tokens, and returns the
+ * resulting string.
+ *
+ * @return A BString containing the formatted error description.
+ */
 BString
 BCommitTransactionResult::FullErrorMessage() const
 {
@@ -508,6 +693,11 @@ BCommitTransactionResult::FullErrorMessage() const
 }
 
 
+/**
+ * @brief Return the first diagnostic path stored in this result.
+ *
+ * @return Const reference to the path1 string.
+ */
 const BString&
 BCommitTransactionResult::Path1() const
 {
@@ -515,6 +705,11 @@ BCommitTransactionResult::Path1() const
 }
 
 
+/**
+ * @brief Store the first diagnostic path.
+ *
+ * @param path  Path string to store.
+ */
 void
 BCommitTransactionResult::SetPath1(const BString& path)
 {
@@ -522,6 +717,11 @@ BCommitTransactionResult::SetPath1(const BString& path)
 }
 
 
+/**
+ * @brief Return the second diagnostic path stored in this result.
+ *
+ * @return Const reference to the path2 string.
+ */
 const BString&
 BCommitTransactionResult::Path2() const
 {
@@ -529,6 +729,11 @@ BCommitTransactionResult::Path2() const
 }
 
 
+/**
+ * @brief Store the second diagnostic path.
+ *
+ * @param path  Path string to store.
+ */
 void
 BCommitTransactionResult::SetPath2(const BString& path)
 {
@@ -536,6 +741,11 @@ BCommitTransactionResult::SetPath2(const BString& path)
 }
 
 
+/**
+ * @brief Return the first auxiliary diagnostic string.
+ *
+ * @return Const reference to the string1 field.
+ */
 const BString&
 BCommitTransactionResult::String1() const
 {
@@ -543,6 +753,11 @@ BCommitTransactionResult::String1() const
 }
 
 
+/**
+ * @brief Store the first auxiliary diagnostic string.
+ *
+ * @param string  Value to store.
+ */
 void
 BCommitTransactionResult::SetString1(const BString& string)
 {
@@ -550,6 +765,11 @@ BCommitTransactionResult::SetString1(const BString& string)
 }
 
 
+/**
+ * @brief Return the second auxiliary diagnostic string.
+ *
+ * @return Const reference to the string2 field.
+ */
 const BString&
 BCommitTransactionResult::String2() const
 {
@@ -557,6 +777,11 @@ BCommitTransactionResult::String2() const
 }
 
 
+/**
+ * @brief Store the second auxiliary diagnostic string.
+ *
+ * @param string  Value to store.
+ */
 void
 BCommitTransactionResult::SetString2(const BString& string)
 {
@@ -564,6 +789,11 @@ BCommitTransactionResult::SetString2(const BString& string)
 }
 
 
+/**
+ * @brief Return the path of the old state directory created before the transaction.
+ *
+ * @return Const reference to the old-state directory path string.
+ */
 const BString&
 BCommitTransactionResult::OldStateDirectory() const
 {
@@ -571,6 +801,11 @@ BCommitTransactionResult::OldStateDirectory() const
 }
 
 
+/**
+ * @brief Store the path of the old state directory.
+ *
+ * @param directory  Path of the old-state directory to store.
+ */
 void
 BCommitTransactionResult::SetOldStateDirectory(const BString& directory)
 {
@@ -578,6 +813,12 @@ BCommitTransactionResult::SetOldStateDirectory(const BString& directory)
 }
 
 
+/**
+ * @brief Serialise the full result (including all issues) into a BMessage.
+ *
+ * @param message  Target BMessage to populate.
+ * @return B_OK on success, or an error code if any field could not be stored.
+ */
 status_t
 BCommitTransactionResult::AddToMessage(BMessage& message) const
 {
@@ -609,6 +850,15 @@ BCommitTransactionResult::AddToMessage(BMessage& message) const
 }
 
 
+/**
+ * @brief Populate this result from a serialised BMessage received from the daemon.
+ *
+ * Resets the object via Unset(), then reads all scalar fields and iterates over
+ * the embedded issue messages to reconstruct the issues list.
+ *
+ * @param message  Source BMessage produced by AddToMessage().
+ * @return B_OK on success, or an error code if any required field is absent.
+ */
 status_t
 BCommitTransactionResult::ExtractFromMessage(const BMessage& message)
 {
@@ -648,6 +898,12 @@ BCommitTransactionResult::ExtractFromMessage(const BMessage& message)
 }
 
 
+/**
+ * @brief Copy-assignment operator; performs a deep copy of all fields and issues.
+ *
+ * @param other  Source result to copy from.
+ * @return Reference to this result.
+ */
 BCommitTransactionResult&
 BCommitTransactionResult::operator=(const BCommitTransactionResult& other)
 {

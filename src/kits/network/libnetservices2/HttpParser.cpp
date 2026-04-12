@@ -1,10 +1,44 @@
 /*
- * Copyright 2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2022 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
  */
+
+
+/**
+ * @file HttpParser.cpp
+ * @brief HTTP response parser: status line, header fields, and body variants.
+ *
+ * HttpParser drives incremental parsing of an HTTP/1.1 response from an
+ * HttpBuffer.  It handles the status line, header fields, and three body
+ * transfer modes: fixed-length, variable-length (connection-close), and
+ * chunked.  An optional decompression layer wraps the raw parsers when a
+ * Content-Encoding header is present.
+ *
+ * @see HttpBuffer, BHttpSession
+ */
+
 
 #include "HttpParser.h"
 
@@ -22,12 +56,13 @@ using namespace BPrivate::Network;
 // #pragma mark -- HttpParser
 
 
-/*!
-	\brief Explicitly mark the response as having no content.
-
-	This is done in cases where the request was a HEAD request. Setting it to no content, will
-	instruct the parser to move to completion after all the header fields have been parsed.
-*/
+/**
+ * @brief Mark the response as having no body content.
+ *
+ * Must be called before body parsing begins (i.e. while still in the Fields
+ * parse state).  Used for HEAD responses and similar cases where the server
+ * sends headers only.
+ */
 void
 HttpParser::SetNoContent() noexcept
 {
@@ -37,14 +72,16 @@ HttpParser::SetNoContent() noexcept
 };
 
 
-/*!
-	\brief Parse the status from the \a buffer and store it in \a status.
-
-	\retval true The status was succesfully parsed
-	\retval false There is not enough data in the buffer for a full status.
-
-	\exception BNetworkRequestException The status does not conform to the HTTP spec.
-*/
+/**
+ * @brief Parse the HTTP status line from \a buffer and store it in \a status.
+ *
+ * Reads one CRLF-terminated line, extracts the three-digit status code and
+ * the full status text, then advances the internal state to Fields.
+ *
+ * @param buffer  HttpBuffer containing incoming response data.
+ * @param status  Output structure populated with the parsed status code and text.
+ * @return true if the status line was successfully parsed; false if more data is needed.
+ */
 bool
 HttpParser::ParseStatus(HttpBuffer& buffer, BHttpStatus& status)
 {
@@ -80,21 +117,18 @@ HttpParser::ParseStatus(HttpBuffer& buffer, BHttpStatus& status)
 }
 
 
-/*!
-	\brief Parse the fields from the \a buffer and store it in \a fields.
-
-	The fields are parsed incrementally, meaning that even if the full header is not yet in the
-	\a buffer, it will still parse all complete fields and store them in the \a fields.
-
-	After all fields have been parsed, it will determine the properties of the request body.
-	This means it will determine whether there is any content compression, if there is a body,
-	and if so if it has a fixed size or not.
-
-	\retval true All fields were succesfully parsed
-	\retval false There is not enough data in the buffer to complete parsing of fields.
-
-	\exception BNetworkRequestException The fields not conform to the HTTP spec.
-*/
+/**
+ * @brief Incrementally parse HTTP header fields from \a buffer into \a fields.
+ *
+ * Reads complete CRLF-terminated field lines until the blank line terminating
+ * the header section is encountered.  After all fields are parsed, determines
+ * the body type (NoContent, FixedSize, Chunked, or VariableSize) and
+ * optionally wraps the body parser in a decompression layer.
+ *
+ * @param buffer  HttpBuffer containing incoming response data.
+ * @param fields  Output BHttpFields populated with parsed header fields.
+ * @return true if all header fields were parsed; false if more data is needed.
+ */
 bool
 HttpParser::ParseFields(HttpBuffer& buffer, BHttpFields& fields)
 {
@@ -192,12 +226,17 @@ HttpParser::ParseFields(HttpBuffer& buffer, BHttpFields& fields)
 }
 
 
-/*!
-	\brief Parse the body from the \a buffer and use \a writeToBody function to save.
-
-	The \a readEnd parameter indicates to the parser that the buffer currently contains all the
-	expected data for this request.
-*/
+/**
+ * @brief Parse body bytes from \a buffer using the configured body parser.
+ *
+ * Delegates to the active HttpBodyParser and advances to Done state when
+ * the parser reports completion.
+ *
+ * @param buffer       HttpBuffer containing incoming response data.
+ * @param writeToBody  Function called with each chunk of parsed body bytes.
+ * @param readEnd      true if \a buffer contains the last bytes of this response.
+ * @return Number of bytes consumed from \a buffer during this call.
+ */
 size_t
 HttpParser::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeToBody, bool readEnd)
 {
@@ -213,12 +252,13 @@ HttpParser::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeToBody, bool
 }
 
 
-/*!
-	\brief Return if the body is currently expecting to having content.
-
-	This may change if the header fields have not yet been parsed, as these may contain
-	instructions about the body having no content.
-*/
+/**
+ * @brief Return whether the response is expected to contain body content.
+ *
+ * May change after ParseFields() determines that the body type is NoContent.
+ *
+ * @return true if the response should have a body.
+ */
 bool
 HttpParser::HasContent() const noexcept
 {
@@ -226,9 +266,11 @@ HttpParser::HasContent() const noexcept
 }
 
 
-/*!
-	\brief Return the total size of the body, if known.
-*/
+/**
+ * @brief Return the total body size if known from Content-Length.
+ *
+ * @return Optional off_t byte count, or std::nullopt for chunked/variable bodies.
+ */
 std::optional<off_t>
 HttpParser::BodyBytesTotal() const noexcept
 {
@@ -238,9 +280,11 @@ HttpParser::BodyBytesTotal() const noexcept
 }
 
 
-/*!
-	\brief Return the number of body bytes transferred from the response.
-*/
+/**
+ * @brief Return the number of body bytes transferred so far.
+ *
+ * @return Byte count of body data written to the target function.
+ */
 off_t
 HttpParser::BodyBytesTransferred() const noexcept
 {
@@ -250,9 +294,11 @@ HttpParser::BodyBytesTransferred() const noexcept
 }
 
 
-/*!
-	\brief Check if the body is fully parsed.
-*/
+/**
+ * @brief Return whether the parser has finished processing the response.
+ *
+ * @return true when the internal state machine has reached Done.
+ */
 bool
 HttpParser::Complete() const noexcept
 {
@@ -263,9 +309,11 @@ HttpParser::Complete() const noexcept
 // #pragma mark -- HttpBodyParser
 
 
-/*!
-	\brief Default implementation to return std::nullopt.
-*/
+/**
+ * @brief Default implementation that returns std::nullopt (unknown body size).
+ *
+ * @return std::nullopt.
+ */
 std::optional<off_t>
 HttpBodyParser::TotalBodySize() const noexcept
 {
@@ -273,11 +321,13 @@ HttpBodyParser::TotalBodySize() const noexcept
 }
 
 
-/*!
-	\brief Return the number of body bytes read from the stream so far.
-
-	For chunked transfers, this excludes the chunk headers and other metadata.
-*/
+/**
+ * @brief Return the number of body bytes transferred from the stream so far.
+ *
+ * For chunked transfers this excludes chunk headers and other framing bytes.
+ *
+ * @return Number of body bytes written to the target.
+ */
 off_t
 HttpBodyParser::TransferredBodySize() const noexcept
 {
@@ -286,17 +336,20 @@ HttpBodyParser::TransferredBodySize() const noexcept
 
 
 // #pragma mark -- HttpRawBodyParser
-/*!
-	\brief Construct a HttpRawBodyParser with an unknown content size.
-*/
+
+/**
+ * @brief Construct an HttpRawBodyParser with an unknown total body size.
+ */
 HttpRawBodyParser::HttpRawBodyParser()
 {
 }
 
 
-/*!
-	\brief Construct a HttpRawBodyParser with expected \a bodyBytesTotal size.
-*/
+/**
+ * @brief Construct an HttpRawBodyParser expecting exactly \a bodyBytesTotal bytes.
+ *
+ * @param bodyBytesTotal  Expected total body size in bytes as from Content-Length.
+ */
 HttpRawBodyParser::HttpRawBodyParser(off_t bodyBytesTotal)
 	:
 	fBodyBytesTotal(bodyBytesTotal)
@@ -304,26 +357,19 @@ HttpRawBodyParser::HttpRawBodyParser(off_t bodyBytesTotal)
 }
 
 
-/*!
-	\brief Parse a regular (non-chunked) body from a buffer.
-
-	The buffer is parsed into a target using the \a writeToBody function.
-
-	The \a readEnd argument indicates whether the current \a buffer contains all the expected data.
-	In case the total body size is known, and the remaining bytes in the buffer are smaller than
-	the expected remainder, a ProtocolError will be raised. The data in the buffer will *not* be
-	copied to the target.
-
-	Also, if the body size is known, and the data in the \a buffer is larger than the expected
-	expected length, then it will only read the bytes needed and leave the remainder in the buffer.
-
-	It is required that the \a writeToBody function writes all the bytes it is asked to; this
-	method does not support partial writes and throws an exception when it fails.
-
-	\exception BNetworkRequestError In case the buffer contains too little or invalid data.
-
-	\returns The number of bytes parsed from the \a buffer.
-*/
+/**
+ * @brief Parse a raw (non-chunked) body from \a buffer.
+ *
+ * Copies up to the expected remaining bytes (or all available bytes if the
+ * total is unknown) to \a writeToBody.  If \a readEnd is true and fewer bytes
+ * than expected have arrived, a ProtocolError is raised.  Partial writes by
+ * \a writeToBody are treated as fatal SystemError.
+ *
+ * @param buffer       HttpBuffer containing incoming response data.
+ * @param writeToBody  Function called with each chunk of parsed body bytes.
+ * @param readEnd      true if the buffer contains the last bytes of this response.
+ * @return BodyParseResult with byte counts and completion flag.
+ */
 BodyParseResult
 HttpRawBodyParser::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeToBody, bool readEnd)
 {
@@ -358,9 +404,11 @@ HttpRawBodyParser::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeToBod
 }
 
 
-/*!
-	\brief Override default implementation and return known body size (or std::nullopt)
-*/
+/**
+ * @brief Return the known total body size, or std::nullopt if unknown.
+ *
+ * @return Optional off_t as set by the Content-Length constructor.
+ */
 std::optional<off_t>
 HttpRawBodyParser::TotalBodySize() const noexcept
 {
@@ -369,22 +417,20 @@ HttpRawBodyParser::TotalBodySize() const noexcept
 
 
 // #pragma mark -- HttpChunkedBodyParser
-/*!
-	\brief Parse a chunked body from a buffer.
 
-	The contents of the cunks are copied into a target using the \a writeToBody function.
-
-	The \a readEnd argument indicates whether the current \a buffer contains all the expected data.
-	In case the chunk argument indicates that more data was to come, an exception is thrown.
-
-	It is required that the \a writeToBody function writes all the bytes it is asked to; this
-	method does not support partial writes and throws an exception when it fails.
-
-	\exception BNetworkRequestError In case there is an error parsing the buffer, or there is too
-		little data.
-
-	\returns The number of bytes parsed from the \a buffer.
-*/
+/**
+ * @brief Parse a chunked-transfer-encoded body from \a buffer.
+ *
+ * Processes one or more chunks from the buffer, copying each chunk's data to
+ * \a writeToBody.  Handles the chunk-size header, chunk data, chunk-end CRLF,
+ * and trailers.  Waits for more data if the current chunk header or terminator
+ * is incomplete in the buffer.
+ *
+ * @param buffer       HttpBuffer containing incoming response data.
+ * @param writeToBody  Function called with each chunk of parsed body bytes.
+ * @param readEnd      true if the buffer contains the last bytes of this response.
+ * @return BodyParseResult with byte counts and completion flag.
+ */
 BodyParseResult
 HttpChunkedBodyParser::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeToBody, bool readEnd)
 {
@@ -488,9 +534,16 @@ HttpChunkedBodyParser::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeT
 
 
 // #pragma mark -- HttpBodyDecompression
-/*!
-	\brief Set up a decompression stream that decompresses the data read by \a bodyParser.
-*/
+
+/**
+ * @brief Construct a decompression wrapper around an existing body parser.
+ *
+ * Creates a Zlib decompressing output stream that buffers decompressed bytes,
+ * then wraps \a bodyParser so that all body data flows through decompression
+ * before being forwarded to the write function.
+ *
+ * @param bodyParser  The underlying raw or chunked parser to wrap.
+ */
 HttpBodyDecompression::HttpBodyDecompression(std::unique_ptr<HttpBodyParser> bodyParser)
 {
 	fDecompressorStorage = std::make_unique<BMallocIO>();
@@ -509,24 +562,18 @@ HttpBodyDecompression::HttpBodyDecompression(std::unique_ptr<HttpBodyParser> bod
 }
 
 
-/*!
-	\brief Read a compressed body into a target..
-
-	The stream captures chunked or raw data, and decompresses it. The decompressed data is then
-	copied into a target using the \a writeToBody function.
-
-	The \a readEnd argument indicates whether the current \a buffer contains all the expected data.
-	It is up for the underlying parser to determine if more data was expected, and therefore, if
-	there is an error.
-
-	It is required that the \a writeToBody function writes all the bytes it is asked to; this
-	method does not support partial writes and throws an exception when it fails.
-
-	\exception BNetworkRequestError In case there is an error parsing the buffer, or there is too
-		little data.
-
-	\returns The number of bytes parsed from the \a buffer.
-*/
+/**
+ * @brief Decompress body bytes from \a buffer and forward them via \a writeToBody.
+ *
+ * Feeds the buffer through the underlying parser into the Zlib decompression
+ * stream, then drains decompressed bytes to \a writeToBody.  If \a readEnd is
+ * true the decompression stream is flushed to ensure all bytes are emitted.
+ *
+ * @param buffer       HttpBuffer containing incoming compressed response data.
+ * @param writeToBody  Function called with each chunk of decompressed body bytes.
+ * @param readEnd      true if the buffer contains the last bytes of this response.
+ * @return BodyParseResult with compressed byte count and completion flag.
+ */
 BodyParseResult
 HttpBodyDecompression::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeToBody, bool readEnd)
 {
@@ -566,9 +613,11 @@ HttpBodyDecompression::ParseBody(HttpBuffer& buffer, HttpTransferFunction writeT
 }
 
 
-/*!
-	\brief Return the TotalBodySize() from the underlying chunked or raw parser.
-*/
+/**
+ * @brief Return the total body size from the underlying parser.
+ *
+ * @return Optional off_t from the wrapped parser's TotalBodySize().
+ */
 std::optional<off_t>
 HttpBodyDecompression::TotalBodySize() const noexcept
 {

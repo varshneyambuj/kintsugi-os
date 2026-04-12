@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file QueryContainerWindow.cpp
+ * @brief BQueryContainerWindow — a Tracker container window for live query results.
+ *
+ * Specialises BContainerWindow to host a BQueryPoseView, which shows the
+ * results of a saved query.  Overrides menu building to show a query-specific
+ * Window menu and context menu, and provides SetupDefaultState() to copy
+ * default display state from a per-type query template node.
+ *
+ * @see BContainerWindow, BQueryPoseView
+ */
 
 
 #include <Catalog.h>
@@ -56,6 +60,12 @@ All rights reserved.
 #define B_TRANSLATION_CONTEXT "QueryContainerWindow"
 
 
+/**
+ * @brief Construct a BQueryContainerWindow.
+ *
+ * @param windowList  Global window list managed by TTracker.
+ * @param openFlags   Flags controlling how the window is opened.
+ */
 BQueryContainerWindow::BQueryContainerWindow(LockingList<BWindow>* windowList,
 	uint32 openFlags)
 	:
@@ -64,6 +74,12 @@ BQueryContainerWindow::BQueryContainerWindow(LockingList<BWindow>* windowList,
 }
 
 
+/**
+ * @brief Create and return a BQueryPoseView for the given model.
+ *
+ * @param model  The Model representing the saved query file.
+ * @return A new BQueryPoseView; ownership is transferred to the window.
+ */
 BPoseView*
 BQueryContainerWindow::NewPoseView(Model* model, uint32)
 {
@@ -71,6 +87,11 @@ BQueryContainerWindow::NewPoseView(Model* model, uint32)
 }
 
 
+/**
+ * @brief Return the window's pose view cast to BQueryPoseView*.
+ *
+ * @return Typed pointer to the contained BQueryPoseView.
+ */
 BQueryPoseView*
 BQueryContainerWindow::PoseView() const
 {
@@ -78,6 +99,11 @@ BQueryContainerWindow::PoseView() const
 }
 
 
+/**
+ * @brief Instantiate the query pose view and add it to the window layout.
+ *
+ * @param model  The Model for the query file.
+ */
 void
 BQueryContainerWindow::CreatePoseView(Model* model)
 {
@@ -89,6 +115,14 @@ BQueryContainerWindow::CreatePoseView(Model* model)
 }
 
 
+/**
+ * @brief Populate the Window pull-down menu for a query container.
+ *
+ * Adds Resize to Fit, Select, Select All, Invert Selection, Close, and
+ * Close All items with appropriate targets.
+ *
+ * @param menu  The Window BMenu to populate.
+ */
 void
 BQueryContainerWindow::AddWindowMenu(BMenu* menu)
 {
@@ -120,6 +154,11 @@ BQueryContainerWindow::AddWindowMenu(BMenu* menu)
 }
 
 
+/**
+ * @brief Populate the window-background context menu for a query container.
+ *
+ * @param menu  The context BMenu to populate.
+ */
 void
 BQueryContainerWindow::AddWindowContextMenus(BMenu* menu)
 {
@@ -137,6 +176,13 @@ BQueryContainerWindow::AddWindowContextMenus(BMenu* menu)
 }
 
 
+/**
+ * @brief Initialise the window display state from a per-query-type template node.
+ *
+ * Looks for a template node at kQueryTemplates/<sanitised MIME type> and
+ * copies allowed attributes (frame, view state, columns) from it into the
+ * window's state node.
+ */
 void
 BQueryContainerWindow::SetupDefaultState()
 {

@@ -1,9 +1,43 @@
 /*
- * Copyright 2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ */
+
+
+/**
+ * @file LibsolvSolver.cpp
+ * @brief Concrete BSolver implementation backed by the libsolv dependency-resolution library.
+ *
+ * LibsolvSolver translates between the Kintsugi package-kit API (BSolverRepository,
+ * BSolverPackage, BSolverPackageSpecifierList, etc.) and the libsolv Pool/Solver
+ * data structures. It maintains a mapping between libsolv solvable IDs and
+ * BSolverPackage pointers, reconstructs BSolverProblem / BSolverProblemSolution
+ * objects from the solver's conflict data, and produces BSolverResult objects
+ * describing the ordered install/uninstall transaction.
+ *
+ * @see BSolver, BSolverRepository, BPackageManager
  */
 
 
@@ -38,6 +72,13 @@
 // abort()s. Obviously that isn't good behavior for a library.
 
 
+/**
+ * @brief Add-on entry point: allocate and return a new LibsolvSolver.
+ *
+ * Called by BSolver::Create() after loading this add-on via dlopen().
+ *
+ * @return A new LibsolvSolver on success, or NULL on allocation failure.
+ */
 BSolver*
 BPackageKit::create_solver()
 {
@@ -173,6 +214,11 @@ private:
 // #pragma mark - LibsolvSolver
 
 
+/**
+ * @brief Default-construct a LibsolvSolver with a NULL pool and solver.
+ *
+ * All libsolv resources are allocated lazily by Init() and _InitPool().
+ */
 LibsolvSolver::LibsolvSolver()
 	:
 	fPool(NULL),
@@ -188,12 +234,23 @@ LibsolvSolver::LibsolvSolver()
 }
 
 
+/**
+ * @brief Destroy the solver and release all libsolv resources.
+ */
 LibsolvSolver::~LibsolvSolver()
 {
 	_Cleanup();
 }
 
 
+/**
+ * @brief Initialise the solver, cleaning up any previous state.
+ *
+ * All libsolv objects are allocated lazily on first use; this method only
+ * performs a _Cleanup() to reset existing state.
+ *
+ * @return B_OK always.
+ */
 status_t
 LibsolvSolver::Init()
 {
@@ -204,6 +261,11 @@ LibsolvSolver::Init()
 }
 
 
+/**
+ * @brief Set the libsolv debug verbosity level.
+ *
+ * @param level  Debug level passed to pool_setdebuglevel(); 0 disables output.
+ */
 void
 LibsolvSolver::SetDebugLevel(int32 level)
 {
@@ -214,6 +276,16 @@ LibsolvSolver::SetDebugLevel(int32 level)
 }
 
 
+/**
+ * @brief Register a BSolverRepository with this solver.
+ *
+ * Only one installed repository may be registered; a second call with an
+ * installed repository returns B_BAD_VALUE.
+ *
+ * @param repository  The repository to register; must be initialised.
+ * @return B_OK on success, B_BAD_VALUE if @a repository is NULL, uninitialised,
+ *         or a duplicate installed repository, or B_NO_MEMORY on failure.
+ */
 status_t
 LibsolvSolver::AddRepository(BSolverRepository* repository)
 {
@@ -239,6 +311,17 @@ LibsolvSolver::AddRepository(BSolverRepository* repository)
 }
 
 
+/**
+ * @brief Search all repositories for packages matching a string.
+ *
+ * Searches the fields selected by @a flags (name, summary, description,
+ * provides, requires) using a substring match.
+ *
+ * @param searchString  The substring to search for.
+ * @param flags         Bitmask of B_FIND_IN_NAME, B_FIND_IN_SUMMARY, etc.
+ * @param _packages     Output list populated with matching BSolverPackage pointers.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LibsolvSolver::FindPackages(const char* searchString, uint32 flags,
 	BObjectList<BSolverPackage>& _packages)
@@ -305,6 +388,16 @@ LibsolvSolver::FindPackages(const char* searchString, uint32 flags,
 }
 
 
+/**
+ * @brief Search repositories for packages matching a specifier list.
+ *
+ * @param packages     Specifiers identifying the packages to find.
+ * @param flags        Search flags (B_FIND_INSTALLED_ONLY, etc.).
+ * @param _packages    Output list populated with matching packages.
+ * @param _unmatched   Optional output set to the first unmatched specifier.
+ * @return B_OK on success, B_NAME_NOT_FOUND if a specifier matched nothing,
+ *         or another error code on failure.
+ */
 status_t
 LibsolvSolver::FindPackages(const BSolverPackageSpecifierList& packages,
 	uint32 flags, BObjectList<BSolverPackage>& _packages,
@@ -335,6 +428,13 @@ LibsolvSolver::FindPackages(const BSolverPackageSpecifierList& packages,
 }
 
 
+/**
+ * @brief Solve for the packages that must be installed to satisfy the specifier list.
+ *
+ * @param packages    Specifiers identifying packages to install.
+ * @param _unmatched  Optional output set to the first unmatched specifier.
+ * @return B_OK on success, B_BAD_VALUE if the list is empty, or another error.
+ */
 status_t
 LibsolvSolver::Install(const BSolverPackageSpecifierList& packages,
 	const BSolverPackageSpecifier** _unmatched)
@@ -367,6 +467,14 @@ LibsolvSolver::Install(const BSolverPackageSpecifierList& packages,
 }
 
 
+/**
+ * @brief Solve for the packages that must be removed to uninstall the specifier list.
+ *
+ * @param packages    Specifiers identifying packages to uninstall.
+ * @param _unmatched  Optional output set to the first unmatched specifier.
+ * @return B_OK on success, B_BAD_VALUE if the list is empty or no installed
+ *         repository is registered, or another error.
+ */
 status_t
 LibsolvSolver::Uninstall(const BSolverPackageSpecifierList& packages,
 	const BSolverPackageSpecifier** _unmatched)
@@ -401,6 +509,18 @@ LibsolvSolver::Uninstall(const BSolverPackageSpecifierList& packages,
 }
 
 
+/**
+ * @brief Solve for the updates needed for the given package specifiers.
+ *
+ * When @a packages is empty all installed packages are updated. When
+ * @a installNotYetInstalled is true, packages not yet installed are installed
+ * instead of skipped.
+ *
+ * @param packages               Specifiers for packages to update; may be empty.
+ * @param installNotYetInstalled If true, uninstalled packages are installed.
+ * @param _unmatched             Optional output set to the first unmatched specifier.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LibsolvSolver::Update(const BSolverPackageSpecifierList& packages,
 	bool installNotYetInstalled, const BSolverPackageSpecifier** _unmatched)
@@ -446,6 +566,11 @@ LibsolvSolver::Update(const BSolverPackageSpecifierList& packages,
 }
 
 
+/**
+ * @brief Solve for a full distribution-upgrade of all installed packages.
+ *
+ * @return B_OK on success, or an error code if the solve fails.
+ */
 status_t
 LibsolvSolver::FullSync()
 {
@@ -469,6 +594,13 @@ LibsolvSolver::FullSync()
 }
 
 
+/**
+ * @brief Verify that the installed repository is self-consistent.
+ *
+ * @param flags  Verification flags; B_VERIFY_ALLOW_UNINSTALL permits removing
+ *               packages to resolve conflicts.
+ * @return B_OK on success, B_BAD_VALUE if no installed repository is registered.
+ */
 status_t
 LibsolvSolver::VerifyInstallation(uint32 flags)
 {
@@ -497,6 +629,16 @@ LibsolvSolver::VerifyInstallation(uint32 flags)
 }
 
 
+/**
+ * @brief Select (or clear) a solution for a solver problem.
+ *
+ * The selected solution is applied during the next SolveAgain() call.
+ *
+ * @param _problem   The problem to resolve; must be non-NULL.
+ * @param _solution  The solution to apply, or NULL to clear any previous selection.
+ * @return B_OK on success, B_BAD_VALUE if @a _problem is NULL or the solution
+ *         does not belong to @a _problem.
+ */
 status_t
 LibsolvSolver::SelectProblemSolution(BSolverProblem* _problem,
 	const BSolverProblemSolution* _solution)
@@ -519,6 +661,14 @@ LibsolvSolver::SelectProblemSolution(BSolverProblem* _problem,
 }
 
 
+/**
+ * @brief Re-run the solver after applying selected problem solutions.
+ *
+ * Iterates over all outstanding problems, applies the selected solution for
+ * each via solver_take_solution(), then calls _Solve() again.
+ *
+ * @return B_OK on success, B_BAD_VALUE if the solver or job queue is NULL.
+ */
 status_t
 LibsolvSolver::SolveAgain()
 {
@@ -537,6 +687,11 @@ LibsolvSolver::SolveAgain()
 }
 
 
+/**
+ * @brief Return the number of unresolved problems after the last solve.
+ *
+ * @return Count of BSolverProblem objects in the problem list.
+ */
 int32
 LibsolvSolver::CountProblems() const
 {
@@ -544,6 +699,12 @@ LibsolvSolver::CountProblems() const
 }
 
 
+/**
+ * @brief Return the problem at the given index.
+ *
+ * @param index  Zero-based index of the problem.
+ * @return Pointer to the BSolverProblem, or NULL if out of range.
+ */
 BSolverProblem*
 LibsolvSolver::ProblemAt(int32 index) const
 {
@@ -551,6 +712,16 @@ LibsolvSolver::ProblemAt(int32 index) const
 }
 
 
+/**
+ * @brief Translate the solver transaction into a BSolverResult.
+ *
+ * Enumerates each step of the ordered transaction and appends a
+ * B_TYPE_INSTALL or B_TYPE_UNINSTALL element for each affected package.
+ *
+ * @param _result  The result object to populate; cleared before use.
+ * @return B_OK on success, B_BAD_VALUE if the solver is NULL or has outstanding
+ *         problems, B_ERROR if a solvable cannot be mapped to a package.
+ */
 status_t
 LibsolvSolver::GetResult(BSolverResult& _result)
 {
@@ -598,6 +769,14 @@ LibsolvSolver::GetResult(BSolverResult& _result)
 }
 
 
+/**
+ * @brief (Re-)create the libsolv Pool with the correct architecture policy.
+ *
+ * Detects the system architecture via uname() or compile-time macros and
+ * applies it to the pool via pool_setarchpolicy().
+ *
+ * @return B_OK on success, or errno if uname() fails.
+ */
 status_t
 LibsolvSolver::_InitPool()
 {
@@ -635,6 +814,11 @@ LibsolvSolver::_InitPool()
 }
 
 
+/**
+ * @brief Allocate a fresh SolvQueue for the solver job list.
+ *
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 LibsolvSolver::_InitJobQueue()
 {
@@ -645,6 +829,11 @@ LibsolvSolver::_InitJobQueue()
 }
 
 
+/**
+ * @brief Create the libsolv Solver from the current pool with standard flags.
+ *
+ * Enables SOLVER_FLAG_SPLITPROVIDES and SOLVER_FLAG_BEST_OBEY_POLICY.
+ */
 void
 LibsolvSolver::_InitSolver()
 {
@@ -656,6 +845,9 @@ LibsolvSolver::_InitSolver()
 }
 
 
+/**
+ * @brief Release all libsolv resources and reset solver state.
+ */
 void
 LibsolvSolver::_Cleanup()
 {
@@ -667,6 +859,9 @@ LibsolvSolver::_Cleanup()
 }
 
 
+/**
+ * @brief Free the libsolv Pool and all data structures that reference it.
+ */
 void
 LibsolvSolver::_CleanupPool()
 {
@@ -689,6 +884,9 @@ LibsolvSolver::_CleanupPool()
 }
 
 
+/**
+ * @brief Free the job queue (and implicitly the solver that depends on it).
+ */
 void
 LibsolvSolver::_CleanupJobQueue()
 {
@@ -699,6 +897,9 @@ LibsolvSolver::_CleanupJobQueue()
 }
 
 
+/**
+ * @brief Free the libsolv Solver and clear the problem list.
+ */
 void
 LibsolvSolver::_CleanupSolver()
 {
@@ -711,6 +912,11 @@ LibsolvSolver::_CleanupSolver()
 }
 
 
+/**
+ * @brief Check whether any registered repository has changed since the pool was built.
+ *
+ * @return True if at least one RepositoryInfo reports HasChanged().
+ */
 bool
 LibsolvSolver::_HaveRepositoriesChanged() const
 {
@@ -725,6 +931,15 @@ LibsolvSolver::_HaveRepositoriesChanged() const
 }
 
 
+/**
+ * @brief Rebuild the libsolv pool from registered repositories if necessary.
+ *
+ * Skips rebuilding when the pool already exists and no repository has changed.
+ * Adds each repository's packages as HPKG solvables and sets the installed
+ * repository on the pool.
+ *
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 LibsolvSolver::_AddRepositories()
 {
@@ -779,6 +994,11 @@ LibsolvSolver::_AddRepositories()
 }
 
 
+/**
+ * @brief Return the RepositoryInfo for the registered installed repository.
+ *
+ * @return Pointer to the installed RepositoryInfo, or NULL if none is registered.
+ */
 LibsolvSolver::RepositoryInfo*
 LibsolvSolver::_InstalledRepository() const
 {
@@ -793,6 +1013,12 @@ LibsolvSolver::_InstalledRepository() const
 }
 
 
+/**
+ * @brief Look up the RepositoryInfo for the given BSolverRepository.
+ *
+ * @param repository  The repository to look up.
+ * @return Pointer to the matching RepositoryInfo, or NULL if not found.
+ */
 LibsolvSolver::RepositoryInfo*
 LibsolvSolver::_GetRepositoryInfo(BSolverRepository* repository) const
 {
@@ -807,6 +1033,12 @@ LibsolvSolver::_GetRepositoryInfo(BSolverRepository* repository) const
 }
 
 
+/**
+ * @brief Map a libsolv solvable ID to its BSolverPackage.
+ *
+ * @param solvableId  The libsolv solvable ID to look up.
+ * @return Pointer to the matching BSolverPackage, or NULL if not found.
+ */
 BSolverPackage*
 LibsolvSolver::_GetPackage(Id solvableId) const
 {
@@ -815,6 +1047,12 @@ LibsolvSolver::_GetPackage(Id solvableId) const
 }
 
 
+/**
+ * @brief Map a BSolverPackage to its libsolv solvable ID.
+ *
+ * @param package  The package to look up.
+ * @return The solvable ID, or 0 if not found.
+ */
 Id
 LibsolvSolver::_GetSolvable(BSolverPackage* package) const
 {
@@ -823,6 +1061,18 @@ LibsolvSolver::_GetSolvable(BSolverPackage* package) const
 }
 
 
+/**
+ * @brief Translate a specifier list into libsolv job-queue entries.
+ *
+ * Direct-package specifiers are pushed as SOLVER_SOLVABLE entries; select-string
+ * specifiers are resolved via selection_make() and pushed as selection entries.
+ *
+ * @param packages         The specifier list to process.
+ * @param _unmatched       Optional output set to the first unmatched specifier.
+ * @param additionalFlags  Extra selection flags (e.g. SELECTION_INSTALLED_ONLY).
+ * @return B_OK on success, B_BAD_VALUE for invalid specifiers, B_NAME_NOT_FOUND
+ *         if a select-string matches nothing.
+ */
 status_t
 LibsolvSolver::_AddSpecifiedPackages(
 	const BSolverPackageSpecifierList& packages,
@@ -895,6 +1145,15 @@ LibsolvSolver::_AddSpecifiedPackages(
 }
 
 
+/**
+ * @brief Construct a BSolverProblem from a libsolv problem ID and add it to fProblems.
+ *
+ * Queries the solver rule info, maps IDs to BSolverPackage objects, and
+ * enumerates solutions.
+ *
+ * @param problemId  The libsolv problem ID to analyse.
+ * @return B_OK on success, B_ERROR if a solvable cannot be mapped, or B_NO_MEMORY.
+ */
 status_t
 LibsolvSolver::_AddProblem(Id problemId)
 {
@@ -1026,6 +1285,13 @@ LibsolvSolver::_AddProblem(Id problemId)
 }
 
 
+/**
+ * @brief Build a Solution from a libsolv solution ID and attach it to @a problem.
+ *
+ * @param problem     The BSolverProblem that this solution resolves.
+ * @param solutionId  The libsolv solution ID to enumerate elements for.
+ * @return B_OK on success, or B_NO_MEMORY on allocation failure.
+ */
 status_t
 LibsolvSolver::_AddSolution(Problem* problem, Id solutionId)
 {
@@ -1053,6 +1319,18 @@ LibsolvSolver::_AddSolution(Problem* problem, Id solutionId)
 }
 
 
+/**
+ * @brief Translate a libsolv solution element pair into a BSolverProblemSolutionElement.
+ *
+ * Dispatches on the sourceId sentinel values (SOLVER_SOLUTION_JOB,
+ * SOLVER_SOLUTION_INFARCH, etc.) and the policy illegal-mask to determine the
+ * element type, then delegates to the typed overload.
+ *
+ * @param solution  The solution to append the element to.
+ * @param sourceId  The libsolv source solvable ID or sentinel.
+ * @param targetId  The libsolv target solvable ID.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LibsolvSolver::_AddSolutionElement(Solution* solution, Id sourceId, Id targetId)
 {
@@ -1182,6 +1460,19 @@ LibsolvSolver::_AddSolutionElement(Solution* solution, Id sourceId, Id targetId)
 }
 
 
+/**
+ * @brief Append a typed BSolverProblemSolutionElement to a Solution.
+ *
+ * Maps solvable IDs to BSolverPackage pointers and copies the optional
+ * selection string, then calls solution->AppendElement().
+ *
+ * @param solution          The solution to append the element to.
+ * @param type              The element type.
+ * @param sourceSolvableId  Source solvable ID, or 0 if not applicable.
+ * @param targetSolvableId  Target solvable ID, or 0 if not applicable.
+ * @param selectionString   Optional selection string; may be NULL.
+ * @return B_OK on success, B_ERROR if a solvable cannot be mapped, or B_NO_MEMORY.
+ */
 status_t
 LibsolvSolver::_AddSolutionElement(Solution* solution,
 	BSolverProblemSolutionElement::BType type, Id sourceSolvableId,
@@ -1217,6 +1508,18 @@ LibsolvSolver::_AddSolutionElement(Solution* solution,
 }
 
 
+/**
+ * @brief Translate a libsolv dependency ID back into a BPackageResolvableExpression.
+ *
+ * Simple (non-composite) IDs map directly to a name string. Composite Reldep
+ * IDs are translated to a name + operator + version expression. IDs that
+ * cannot be represented in the Kintsugi expression model return B_NOT_SUPPORTED.
+ *
+ * @param id           The libsolv dependency ID to translate.
+ * @param _expression  Output expression filled on success.
+ * @return B_OK on success, B_NOT_SUPPORTED for unsupported ID shapes, or an
+ *         error from BPackageVersion::SetTo().
+ */
 status_t
 LibsolvSolver::_GetResolvableExpression(Id id,
 	BPackageResolvableExpression& _expression) const
@@ -1282,6 +1585,18 @@ LibsolvSolver::_GetResolvableExpression(Id id,
 }
 
 
+/**
+ * @brief Convert a solvable selection queue into a BSolverPackage list.
+ *
+ * Expands the selection into individual solvables and maps each one to a
+ * BSolverPackage. When B_FIND_INSTALLED_ONLY is set, only packages in the
+ * installed repository are returned.
+ *
+ * @param selection  The SolvQueue containing the selection to expand.
+ * @param flags      Search flags forwarded from the caller.
+ * @param _packages  Output list populated with matching packages.
+ * @return B_OK on success, B_ERROR if a solvable cannot be mapped, or B_NO_MEMORY.
+ */
 status_t
 LibsolvSolver::_GetFoundPackages(SolvQueue& selection, uint32 flags,
 	BObjectList<BSolverPackage>& _packages)
@@ -1311,6 +1626,15 @@ LibsolvSolver::_GetFoundPackages(SolvQueue& selection, uint32 flags,
 }
 
 
+/**
+ * @brief Run the libsolv solver against the current job queue.
+ *
+ * Calls solver_solve(), then converts each problem to a BSolverProblem and
+ * populates fProblems.
+ *
+ * @return B_OK on success (problems, if any, are stored in fProblems), or
+ *         an error code if problem construction fails.
+ */
 status_t
 LibsolvSolver::_Solve()
 {
@@ -1332,6 +1656,14 @@ LibsolvSolver::_Solve()
 }
 
 
+/**
+ * @brief Apply a solver mode flag to every entry in the job queue.
+ *
+ * ORs @a solverMode into the how-word of each job pair (SOLVER_INSTALL,
+ * SOLVER_ERASE, SOLVER_UPDATE, etc.).
+ *
+ * @param solverMode  The libsolv solver mode constant to apply.
+ */
 void
 LibsolvSolver::_SetJobsSolverMode(int solverMode)
 {

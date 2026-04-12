@@ -1,8 +1,42 @@
 /*
- * Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file SymbolLookup.cpp
+ * @brief Remote-memory symbol resolution for the debug kit.
+ *
+ * Implements the RemoteMemoryAccessor helper, which clones areas from a
+ * debugged team's address space into the debugger's address space on demand,
+ * and the SymbolLookup class, which builds a list of Image objects for all
+ * (or one) of the team's loaded images and provides address-to-symbol
+ * resolution.
+ *
+ * @see Image, debug_support.h
+ */
+
 
 #include "SymbolLookup.h"
 
@@ -31,6 +65,15 @@
 using namespace BPrivate::Debug;
 
 
+/**
+ * @brief Translate a remote address into the locally mapped equivalent.
+ *
+ * Converts an address in the remote team's virtual address space to the
+ * corresponding address within the cloned area held by this object.
+ *
+ * @param address  Address in the remote team's address space.
+ * @return The translated address valid in the caller's (debugger) address space.
+ */
 const void *
 Area::TranslateAddress(const void *address)
 {
@@ -49,12 +92,21 @@ Area::TranslateAddress(const void *address)
 // #pragma mark -
 
 
+/**
+ * @brief Construct a RemoteMemoryAccessor for the given debug context.
+ *
+ * @param debugContext  The initialised debug_context for the target team, or
+ *                      NULL for file-only symbol lookup without live memory access.
+ */
 RemoteMemoryAccessor::RemoteMemoryAccessor(debug_context* debugContext)
 	: fDebugContext(debugContext),
 	  fAreas()
 {
 }
 
+/**
+ * @brief Destructor — deletes all cloned Area objects.
+ */
 RemoteMemoryAccessor::~RemoteMemoryAccessor()
 {
 	// delete the areas
@@ -65,6 +117,15 @@ RemoteMemoryAccessor::~RemoteMemoryAccessor()
 }
 
 
+/**
+ * @brief Check whether live remote memory access is possible.
+ *
+ * Returns B_OK only when a valid debug context with an open nub port is
+ * present. File-based symbol lookup via ImageFile still works even when this
+ * returns an error.
+ *
+ * @return B_OK if a nub port is available, B_NO_INIT otherwise.
+ */
 status_t
 RemoteMemoryAccessor::InitCheck() const
 {
@@ -77,6 +138,18 @@ RemoteMemoryAccessor::InitCheck() const
 }
 
 
+/**
+ * @brief Translate a remote address to a local pointer, throwing on failure.
+ *
+ * Ensures the area containing [remoteAddress, remoteAddress+size) is cloned
+ * into the debugger's address space, then returns the translated pointer. If
+ * the address is NULL or the clone fails, throws an Exception.
+ *
+ * @param remoteAddress  Address in the target team's address space.
+ * @param size           Number of bytes that must be accessible.
+ * @return Translated local pointer valid in the debugger's address space.
+ * @note Throws BPrivate::Debug::Exception on error.
+ */
 const void *
 RemoteMemoryAccessor::PrepareAddress(const void *remoteAddress,
 	int32 size)
@@ -93,6 +166,16 @@ RemoteMemoryAccessor::PrepareAddress(const void *remoteAddress,
 }
 
 
+/**
+ * @brief Translate a remote address to a local pointer without throwing.
+ *
+ * Like PrepareAddress(), but returns NULL instead of throwing on failure.
+ * Useful in hot paths where exception overhead is undesirable.
+ *
+ * @param remoteAddress  Address in the target team's address space.
+ * @param size           Number of bytes that must be accessible.
+ * @return Translated local pointer, or NULL on failure.
+ */
 const void *
 RemoteMemoryAccessor::PrepareAddressNoThrow(const void *remoteAddress,
 	int32 size)
@@ -109,6 +192,12 @@ RemoteMemoryAccessor::PrepareAddressNoThrow(const void *remoteAddress,
 }
 
 
+/**
+ * @brief Find the locally mapped Area that covers the given local address.
+ *
+ * @param address  Address in the debugger's local address space (after translation).
+ * @return The matching Area, or NULL if no cloned area contains @a address.
+ */
 Area*
 RemoteMemoryAccessor::AreaForLocalAddress(const void* address) const
 {
@@ -125,6 +214,16 @@ RemoteMemoryAccessor::AreaForLocalAddress(const void* address) const
 }
 
 
+/**
+ * @brief Obtain the Area covering a remote address range, throwing on failure.
+ *
+ * Delegates to _GetAreaNoThrow(); on error throws Exception with the status.
+ *
+ * @param address  Start address in the remote team.
+ * @param size     Number of bytes required.
+ * @return Reference to the covering Area.
+ * @note Throws BPrivate::Debug::Exception on failure.
+ */
 Area &
 RemoteMemoryAccessor::_GetArea(const void *address, int32 size)
 {
@@ -143,6 +242,19 @@ RemoteMemoryAccessor::_GetArea(const void *address, int32 size)
 }
 
 
+/**
+ * @brief Obtain the Area covering a remote address range without throwing.
+ *
+ * Searches the existing cloned area list first. On a miss, sends a
+ * B_DEBUG_MESSAGE_CLONE_AREA request to the nub port, maps the resulting area,
+ * and adds it to the list.
+ *
+ * @param address  Start address in the remote team.
+ * @param size     Number of bytes required.
+ * @param _area    Output — set to the covering Area on success.
+ * @return B_OK on success; B_NO_INIT if no nub port; B_NO_MEMORY on allocation
+ *         failure; or a nub error code.
+ */
 status_t
 RemoteMemoryAccessor::_GetAreaNoThrow(const void *address, int32 size, Area *&_area)
 {
@@ -201,6 +313,12 @@ RemoteMemoryAccessor::_GetAreaNoThrow(const void *address, int32 size, Area *&_a
 // #pragma mark -
 
 
+/**
+ * @brief Image subclass that resolves symbols via cloned remote memory.
+ *
+ * Falls back to reading the in-memory runtime symbol table when a backing ELF
+ * file cannot be loaded or parsed.
+ */
 class SymbolLookup::LoadedImage : public Image {
 public:
 								LoadedImage(SymbolLookup* symbolLookup,
@@ -230,6 +348,13 @@ private:
 // #pragma mark -
 
 
+/**
+ * @brief Construct a SymbolLookup for the team referenced by @a debugContext.
+ *
+ * @param debugContext  An initialised debug_context, or NULL for file-only use.
+ * @param image         The single image_id to restrict lookups to, or -1 to
+ *                      load all images for the team.
+ */
 SymbolLookup::SymbolLookup(debug_context* debugContext, image_id image)
 	:
 	RemoteMemoryAccessor(debugContext),
@@ -240,6 +365,9 @@ SymbolLookup::SymbolLookup(debug_context* debugContext, image_id image)
 }
 
 
+/**
+ * @brief Destructor — deletes all Image objects in the image list.
+ */
 SymbolLookup::~SymbolLookup()
 {
 	while (Image* image = fImages.RemoveHead())
@@ -247,6 +375,15 @@ SymbolLookup::~SymbolLookup()
 }
 
 
+/**
+ * @brief Load image metadata and prepare for symbol resolution.
+ *
+ * Attempts to locate the runtime loader debug area via area enumeration; if
+ * found, the in-memory image list becomes available as a fallback. Then loads
+ * Image objects for either the single fImageID or all images in the team.
+ *
+ * @return B_OK on success, or an error from _LoadImageInfo() on failure.
+ */
 status_t
 SymbolLookup::Init()
 {
@@ -311,6 +448,21 @@ SymbolLookup::Init()
 }
 
 
+/**
+ * @brief Resolve a runtime address to a symbol name and image.
+ *
+ * Finds the image that covers @a address, then performs a symbol lookup within
+ * that image. If no containing symbol is found, the image's own text base and
+ * name are returned as the best available information.
+ *
+ * @param address       Runtime address to resolve.
+ * @param _baseAddress  Output — receives the symbol's load address.
+ * @param _symbolName   Output — receives a pointer to the symbol name, or NULL.
+ * @param _symbolNameLen Output — receives the symbol name length.
+ * @param _imageName    Output — receives the image path string.
+ * @param _exactMatch   Output — true when the address falls within the symbol.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no image covers @a address.
+ */
 status_t
 SymbolLookup::LookupSymbolAddress(addr_t address, addr_t *_baseAddress,
 	const char **_symbolName, size_t *_symbolNameLen, const char **_imageName,
@@ -355,6 +507,13 @@ SymbolLookup::LookupSymbolAddress(addr_t address, addr_t *_baseAddress,
 }
 
 
+/**
+ * @brief Initialise a SymbolIterator for the image identified by @a imageID.
+ *
+ * @param imageID    The image_id to iterate.
+ * @param iterator   Output — receives the initialised iterator state.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the image is not loaded.
+ */
 status_t
 SymbolLookup::InitSymbolIterator(image_id imageID,
 	SymbolIterator& iterator) const
@@ -378,6 +537,15 @@ SymbolLookup::InitSymbolIterator(image_id imageID,
 }
 
 
+/**
+ * @brief Initialise a SymbolIterator by searching for the image at a text address.
+ *
+ * Used as a fallback when image IDs are stale (e.g. after fork()).
+ *
+ * @param address   Runtime address expected to fall within the image's text segment.
+ * @param iterator  Output — receives the initialised iterator state.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no image covers @a address.
+ */
 status_t
 SymbolLookup::InitSymbolIteratorByAddress(addr_t address,
 	SymbolIterator& iterator) const
@@ -399,6 +567,19 @@ SymbolLookup::InitSymbolIteratorByAddress(addr_t address,
 }
 
 
+/**
+ * @brief Advance an iterator and return the next symbol's attributes.
+ *
+ * Delegates to the underlying Image::NextSymbol() call.
+ *
+ * @param iterator       Iterator state; currentIndex is updated in-place.
+ * @param _symbolName    Output — pointer to the symbol name.
+ * @param _symbolNameLen Output — length of the symbol name.
+ * @param _symbolAddress Output — runtime address of the symbol.
+ * @param _symbolSize    Output — size of the symbol in bytes.
+ * @param _symbolType    Output — B_SYMBOL_TYPE_TEXT or B_SYMBOL_TYPE_DATA.
+ * @return B_OK when a symbol is returned, B_ENTRY_NOT_FOUND at end-of-table.
+ */
 status_t
 SymbolLookup::NextSymbol(SymbolIterator& iterator, const char** _symbolName,
 	size_t* _symbolNameLen, addr_t* _symbolAddress, size_t* _symbolSize,
@@ -409,6 +590,17 @@ SymbolLookup::NextSymbol(SymbolIterator& iterator, const char** _symbolName,
 }
 
 
+/**
+ * @brief Look up a symbol by name and type within a specific image.
+ *
+ * @param imageID         The image to search.
+ * @param name            Null-terminated symbol name.
+ * @param symbolType      Required type (B_SYMBOL_TYPE_ANY, _TEXT, or _DATA).
+ * @param _symbolLocation Output — receives the runtime address of the symbol.
+ * @param _symbolSize     Output — receives the symbol size in bytes.
+ * @param _symbolType     Output — receives the resolved symbol type.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if not found.
+ */
 status_t
 SymbolLookup::GetSymbol(image_id imageID, const char* name, int32 symbolType,
 	void** _symbolLocation, size_t* _symbolSize, int32* _symbolType) const
@@ -422,6 +614,16 @@ SymbolLookup::GetSymbol(image_id imageID, const char* name, int32 symbolType,
 }
 
 
+/**
+ * @brief Find the runtime-loader image_t record that contains @a address.
+ *
+ * Walks the runtime loader's loaded_images list (accessed via remote memory)
+ * looking for an image whose text region covers @a address.
+ *
+ * @param address  Runtime address to search for.
+ * @return Pointer to the matching image_t (in translated local memory), or
+ *         NULL if no image covers the address or the debug area is unavailable.
+ */
 const image_t *
 SymbolLookup::_FindLoadedImageAtAddress(addr_t address)
 {
@@ -446,6 +648,13 @@ SymbolLookup::_FindLoadedImageAtAddress(addr_t address)
 }
 
 
+/**
+ * @brief Find the runtime-loader image_t record by image_id.
+ *
+ * @param id  The image_id to search for.
+ * @return Pointer to the matching image_t (in translated local memory), or
+ *         NULL if not found or if the debug area is unavailable.
+ */
 const image_t*
 SymbolLookup::_FindLoadedImageByID(image_id id)
 {
@@ -468,6 +677,12 @@ SymbolLookup::_FindLoadedImageByID(image_id id)
 }
 
 
+/**
+ * @brief Find the Image object whose text segment covers @a address.
+ *
+ * @param address  Runtime address to search for.
+ * @return The matching Image, or NULL if no image covers the address.
+ */
 Image*
 SymbolLookup::_FindImageAtAddress(addr_t address) const
 {
@@ -482,6 +697,12 @@ SymbolLookup::_FindImageAtAddress(addr_t address) const
 }
 
 
+/**
+ * @brief Find the Image object with the given image_id.
+ *
+ * @param id  The image_id to look for.
+ * @return The matching Image, or NULL if not found.
+ */
 Image*
 SymbolLookup::_FindImageByID(image_id id) const
 {
@@ -495,6 +716,15 @@ SymbolLookup::_FindImageByID(image_id id) const
 }
 
 
+/**
+ * @brief Return the safe string length of a symbol name in a cloned area.
+ *
+ * Bounds the strnlen search to the end of the containing area to prevent
+ * overreads when the string table is accessed via remote memory.
+ *
+ * @param address  Pointer into a locally mapped Area (i.e., after translation).
+ * @return Length of the symbol name, or 0 if the pointer is not covered.
+ */
 size_t
 SymbolLookup::_SymbolNameLen(const char* address) const
 {
@@ -507,6 +737,17 @@ SymbolLookup::_SymbolNameLen(const char* address) const
 }
 
 
+/**
+ * @brief Load the Image object(s) needed to resolve symbols in one image.
+ *
+ * Tries to create an ImageFile from the on-disk ELF binary. If that fails,
+ * falls back to a LoadedImage wrapping the in-memory runtime symbol table. For
+ * the kernel team, uses KernelImage; for the commpage, uses CommPageImage.
+ *
+ * @param imageInfo  The image_info record for the image to load.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or a load error
+ *         if even the fallback path fails.
+ */
 status_t
 SymbolLookup::_LoadImageInfo(const image_info& imageInfo)
 {
@@ -562,6 +803,14 @@ SymbolLookup::_LoadImageInfo(const image_info& imageInfo)
 // #pragma mark - LoadedImage
 
 
+/**
+ * @brief Construct a LoadedImage wrapping the in-memory runtime symbol table.
+ *
+ * @param symbolLookup  The owning SymbolLookup (used for remote memory access).
+ * @param info          The image_info record for this image.
+ * @param image         Pointer to the translated image_t structure.
+ * @param symbolCount   Number of symbols in the runtime symbol table.
+ */
 SymbolLookup::LoadedImage::LoadedImage(SymbolLookup* symbolLookup,
 	const image_info& info, const image_t* image, int32 symbolCount)
 	:
@@ -574,11 +823,28 @@ SymbolLookup::LoadedImage::LoadedImage(SymbolLookup* symbolLookup,
 }
 
 
+/**
+ * @brief Destructor — no additional resources to release.
+ */
 SymbolLookup::LoadedImage::~LoadedImage()
 {
 }
 
 
+/**
+ * @brief Find the symbol best covering @a address via the runtime symbol table.
+ *
+ * Scans the image's in-memory symbol table through remote memory access,
+ * preferring exact matches and skipping non-function/non-data symbols.
+ *
+ * @param address       Runtime address to resolve.
+ * @param _baseAddress  Output — receives the symbol's runtime base address.
+ * @param _symbolName   Output — pointer to the symbol name (valid until the
+ *                      backing area is released).
+ * @param _symbolNameLen Output — length of the symbol name.
+ * @param _exactMatch   Output — true when the address falls within the symbol.
+ * @return Pointer to the matching elf_sym, or NULL if not found.
+ */
 const elf_sym*
 SymbolLookup::LoadedImage::LookupSymbol(addr_t address, addr_t* _baseAddress,
 	const char** _symbolName, size_t *_symbolNameLen, bool *_exactMatch) const
@@ -651,6 +917,20 @@ SymbolLookup::LoadedImage::LookupSymbol(addr_t address, addr_t* _baseAddress,
 }
 
 
+/**
+ * @brief Advance the iterator to the next function or data symbol.
+ *
+ * Reads each elf_sym via remote memory and skips non-function/non-object
+ * entries and those with a zero st_value.
+ *
+ * @param iterator       Current iteration index; updated on each call.
+ * @param _symbolName    Output — pointer to the symbol name.
+ * @param _symbolNameLen Output — length of the symbol name.
+ * @param _symbolAddress Output — runtime address of the symbol.
+ * @param _symbolSize    Output — size of the symbol in bytes.
+ * @param _symbolType    Output — B_SYMBOL_TYPE_TEXT or B_SYMBOL_TYPE_DATA.
+ * @return B_OK when a symbol is returned, B_ENTRY_NOT_FOUND at end-of-table.
+ */
 status_t
 SymbolLookup::LoadedImage::NextSymbol(int32& iterator, const char** _symbolName,
 	size_t* _symbolNameLen, addr_t* _symbolAddress, size_t* _symbolSize,

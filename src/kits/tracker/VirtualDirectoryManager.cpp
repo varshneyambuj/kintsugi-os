@@ -1,9 +1,41 @@
 /*
- * Copyright 2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+
+/**
+ * @file VirtualDirectoryManager.cpp
+ * @brief Process-singleton that manages virtual (merged) directory definitions.
+ *
+ * VirtualDirectoryManager maintains a registry of virtual-directory trees,
+ * each described by a small definition file stored under /tmp.  It maps
+ * definition file node_refs to sets of real directory paths so that
+ * VirtualDirectoryEntryList and VirtualDirectoryPoseView can enumerate their
+ * union contents without knowing the underlying paths directly.
+ *
+ * @see VirtualDirectoryEntryList, VirtualDirectoryPoseView
  */
 
 
@@ -304,6 +336,9 @@ private:
 // #pragma mark - VirtualDirectoryManager
 
 
+/**
+ * @brief Construct the VirtualDirectoryManager with an internal lock.
+ */
 VirtualDirectoryManager::VirtualDirectoryManager()
 	:
 	fLock("virtual directory manager")
@@ -311,6 +346,11 @@ VirtualDirectoryManager::VirtualDirectoryManager()
 }
 
 
+/**
+ * @brief Return (and lazily create) the process-wide singleton instance.
+ *
+ * @return The singleton VirtualDirectoryManager, or NULL on allocation failure.
+ */
 /*static*/ VirtualDirectoryManager*
 VirtualDirectoryManager::Instance()
 {
@@ -320,6 +360,19 @@ VirtualDirectoryManager::Instance()
 }
 
 
+/**
+ * @brief Resolve a virtual-directory definition file to its list of real paths.
+ *
+ * Must be called with the manager locked.  If the definition file is not yet
+ * known, _ResolveUnknownDefinitionFile() is called to register it.
+ *
+ * @param definitionFileNodeRef    node_ref of the definition file.
+ * @param definitionFileEntryRef   entry_ref of the definition file.
+ * @param _directoryPaths          Output list of real filesystem paths.
+ * @param _definitionFileNodeRef   Optional output: resolved node_ref.
+ * @param _definitionFileEntryRef  Optional output: resolved entry_ref.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 VirtualDirectoryManager::ResolveDirectoryPaths(
 	const node_ref& definitionFileNodeRef,
@@ -360,6 +413,13 @@ VirtualDirectoryManager::ResolveDirectoryPaths(
 }
 
 
+/**
+ * @brief Return the last-modified time of a virtual-directory definition file.
+ *
+ * @param definitionFileRef  node_ref of the definition file.
+ * @param _time              Output: the recorded change time.
+ * @return true if the file is known and the time was written; false otherwise.
+ */
 bool
 VirtualDirectoryManager::GetDefinitionFileChangeTime(
 	const node_ref& definitionFileRef, bigtime_t& _time) const
@@ -373,6 +433,13 @@ VirtualDirectoryManager::GetDefinitionFileChangeTime(
 }
 
 
+/**
+ * @brief Return the root definition file for the virtual directory tree.
+ *
+ * @param definitionFileRef       node_ref of any definition file in the tree.
+ * @param _rootDefinitionFileRef  Output: node_ref of the root definition file.
+ * @return true if the file is known; false otherwise.
+ */
 bool
 VirtualDirectoryManager::GetRootDefinitionFile(
 	const node_ref& definitionFileRef, node_ref& _rootDefinitionFileRef)
@@ -386,6 +453,15 @@ VirtualDirectoryManager::GetRootDefinitionFile(
 }
 
 
+/**
+ * @brief Look up the definition file for a virtual sub-directory.
+ *
+ * @param baseDefinitionRef  node_ref of the parent virtual directory definition.
+ * @param subDirName         Name of the child directory to resolve.
+ * @param _entryRef          Output: entry_ref of the sub-directory definition file.
+ * @param _nodeRef           Output: node_ref of the sub-directory definition file.
+ * @return true if the sub-directory is known; false otherwise.
+ */
 bool
 VirtualDirectoryManager::GetSubDirectoryDefinitionFile(
 	const node_ref& baseDefinitionRef, const char* subDirName,
@@ -405,6 +481,14 @@ VirtualDirectoryManager::GetSubDirectoryDefinitionFile(
 }
 
 
+/**
+ * @brief Look up the parent virtual directory definition file for a sub-directory.
+ *
+ * @param subDirDefinitionRef  node_ref of the child virtual directory definition.
+ * @param _entryRef            Output: entry_ref of the parent definition file.
+ * @param _nodeRef             Output: node_ref of the parent definition file.
+ * @return true if the parent is known; false otherwise.
+ */
 bool
 VirtualDirectoryManager::GetParentDirectoryDefinitionFile(
 	const node_ref& subDirDefinitionRef, entry_ref& _entryRef,
@@ -424,6 +508,16 @@ VirtualDirectoryManager::GetParentDirectoryDefinitionFile(
 }
 
 
+/**
+ * @brief Translate a raw dirent's device/inode pair to a virtual definition file.
+ *
+ * Modifies \a buffer in-place so that sub-directory entries point to their
+ * virtual definition files rather than the real directories.
+ *
+ * @param definitionFileRef  node_ref of the enclosing virtual directory definition.
+ * @param buffer             The dirent to translate.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 VirtualDirectoryManager::TranslateDirectoryEntry(
 	const node_ref& definitionFileRef, dirent* buffer)

@@ -1,6 +1,39 @@
 /*
- * Copyright 2011, Haiku, Inc. All rights reserved.
- * Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Haiku, Inc. All rights reserved.
+ *   Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ */
+
+
+/**
+ * @file mail_encoding.cpp
+ * @brief MIME transfer encoding and decoding routines for the mail kit.
+ *
+ * Provides encode(), decode(), max_encoded_length(), encoding_for_cte(),
+ * decode_qp(), encode_qp(), uu_decode(), and encode_base64() / decode_base64()
+ * (the latter pair declared in mail_encoding.h). These functions are used
+ * internally by BSimpleMailAttachment and BTextMailComponent to transform
+ * message body bytes between raw binary and the RFC 2045 transfer encodings.
+ *
+ * @see BSimpleMailAttachment, BTextMailComponent, mail_encoding.h
  */
 
 
@@ -13,13 +46,29 @@
 #include <mail_encoding.h>
 
 
+/** @brief Macro for UUencoding: converts an encoded byte back to its 6-bit value. */
 #define	DEC(c) (((c) - ' ') & 077)
 
 
+/** @brief Hex alphabet used when encoding quoted-printable escape sequences. */
 static const char kHexAlphabet[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
 	'8','9','A','B','C','D','E','F'};
 
 
+/**
+ * @brief Encodes \a length bytes from \a in into \a out using the specified encoding.
+ *
+ * Dispatches to encode_base64(), encode_qp(), or a plain memcpy() depending
+ * on \a encoding. UUencode is not supported for encoding and returns -1.
+ *
+ * @param encoding    Transfer encoding to apply.
+ * @param out         Output buffer; must be large enough (see max_encoded_length()).
+ * @param in          Input bytes to encode.
+ * @param length      Number of bytes in \a in.
+ * @param headerMode  If non-zero, encode for use in an RFC 2047 header word
+ *                    (spaces become underscores in QP mode).
+ * @return Number of bytes written to \a out, or -1 for unsupported encodings.
+ */
 ssize_t
 encode(mail_encoding encoding, char *out, const char *in, off_t length,
 	int headerMode)
@@ -43,6 +92,19 @@ encode(mail_encoding encoding, char *out, const char *in, off_t length,
 }
 
 
+/**
+ * @brief Decodes \a length encoded bytes from \a in into \a out.
+ *
+ * Dispatches to decode_base64(), uu_decode(), decode_qp(), or a plain
+ * memcpy() depending on \a encoding.
+ *
+ * @param encoding             Transfer encoding of the input data.
+ * @param out                  Output buffer; must be at least \a length bytes.
+ * @param in                   Encoded input bytes.
+ * @param length               Number of bytes in \a in.
+ * @param underscoreIsSpace    If non-zero, treat '_' as a space (for QP header mode).
+ * @return Number of decoded bytes written to \a out, or -1 on error.
+ */
 ssize_t
 decode(mail_encoding encoding, char *out, const char *in, off_t length,
 	int underscoreIsSpace)
@@ -67,6 +129,16 @@ decode(mail_encoding encoding, char *out, const char *in, off_t length,
 }
 
 
+/**
+ * @brief Returns the maximum number of bytes that encoding \a length bytes may produce.
+ *
+ * Useful for pre-allocating output buffers before calling encode().
+ * UUencode and unknown encodings return -1.
+ *
+ * @param encoding  Transfer encoding to query.
+ * @param length    Number of raw input bytes.
+ * @return Upper bound on encoded output size in bytes, or -1 if unsupported.
+ */
 ssize_t
 max_encoded_length(mail_encoding encoding, off_t length)
 {
@@ -92,6 +164,15 @@ max_encoded_length(mail_encoding encoding, off_t length)
 }
 
 
+/**
+ * @brief Maps a Content-Transfer-Encoding header string to a mail_encoding constant.
+ *
+ * Performs a case-insensitive comparison against the standard CTE names.
+ *
+ * @param cte  Null-terminated CTE string from a MIME header, or NULL.
+ * @return Corresponding mail_encoding value; returns no_encoding for NULL or
+ *         unrecognised values.
+ */
 mail_encoding
 encoding_for_cte(const char *cte)
 {
@@ -113,6 +194,19 @@ encoding_for_cte(const char *cte)
 }
 
 
+/**
+ * @brief Decodes a quoted-printable encoded byte sequence.
+ *
+ * Processes "=XX" escape sequences into their single-byte equivalents and
+ * strips soft line breaks ("=\r\n"). If \a underscoreIsSpace is non-zero,
+ * underscore characters are replaced with spaces (for header word decoding).
+ *
+ * @param out               Output buffer; must be at least \a length bytes.
+ * @param in                QP-encoded input bytes.
+ * @param length            Number of bytes in \a in.
+ * @param underscoreIsSpace If non-zero, decode '_' as 0x20.
+ * @return Number of decoded bytes written to \a out (null-terminated).
+ */
 ssize_t
 decode_qp(char *out, const char *in, off_t length, int underscoreIsSpace)
 {
@@ -153,6 +247,20 @@ decode_qp(char *out, const char *in, off_t length, int underscoreIsSpace)
 }
 
 
+/**
+ * @brief Encodes bytes using quoted-printable, optionally in header mode.
+ *
+ * Characters above 127, '?', '=', '_', and (in header mode) spaces and
+ * control codes are encoded as "=XX". In header mode spaces become '_'.
+ * The "From " sequence at line starts is also encoded to avoid mbox confusion.
+ *
+ * @param out         Output buffer; caller must ensure it is at least
+ *                    3x the size of \a in.
+ * @param in          Input bytes to encode.
+ * @param length      Number of bytes in \a in.
+ * @param headerMode  If non-zero, encode for use in an RFC 2047 header word.
+ * @return Number of bytes written to \a out.
+ */
 ssize_t
 encode_qp(char *out, const char *in, off_t length, int headerMode)
 {
@@ -187,6 +295,18 @@ encode_qp(char *out, const char *in, off_t length, int headerMode)
 }
 
 
+/**
+ * @brief Decodes a UUencoded data block.
+ *
+ * Scans for the "begin" marker and then decodes lines of UUencoded data until
+ * the "end" marker is reached. Each encoded line uses a 6-bit-per-character
+ * packing scheme decoded via the DEC() macro.
+ *
+ * @param out     Output buffer; must be large enough to hold the decoded data.
+ * @param in      UUencoded input bytes (including the "begin"/"end" markers).
+ * @param length  Number of bytes in \a in.
+ * @return Number of decoded bytes written to \a out.
+ */
 ssize_t
 uu_decode(char *out, const char *in, off_t length)
 {
@@ -229,4 +349,3 @@ uu_decode(char *out, const char *in, off_t length)
 
 	return (ssize_t)(outBuffer - (uint8 *)in);
 }
-

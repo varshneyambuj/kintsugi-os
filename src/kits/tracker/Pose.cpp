@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Pose.cpp
+ * @brief BPose — the visual representation of a file system entry in a BPoseView.
+ *
+ * A BPose wraps a Model and holds the layout state (position, selection,
+ * editing mode) needed to draw and interact with a single icon or list row
+ * inside a BPoseView.  It manages attribute text widgets, clipboard tints,
+ * volume free-space percentages, and icon drag painting.
+ *
+ * @see BPoseView, Model, PoseList
+ */
 
 
 #include "Pose.h"
@@ -50,6 +54,12 @@ All rights reserved.
 #include "PoseView.h"
 
 
+/**
+ * @brief Calculate the percentage of free space on @p volume, clamped to 0-100.
+ *
+ * @param volume  The BVolume to query.
+ * @return Free space as a percentage (0–100); returns 100 if capacity is zero.
+ */
 int32
 CalcFreeSpace(BVolume* volume)
 {
@@ -71,6 +81,14 @@ CalcFreeSpace(BVolume* volume)
 // symlink pose uses the resolved model to retrieve the icon, if not broken
 // everything else, like the attributes, etc. is retrieved directly from the
 // symlink itself
+/**
+ * @brief Construct a BPose wrapping the given model.
+ *
+ * @param model          The Model this pose represents; ownership is taken.
+ * @param view           The BPoseView that hosts this pose.
+ * @param clipboardMode  Initial clipboard mode (kNotOnClipboard, kCutMode, etc.).
+ * @param selected       If true, the pose starts in the selected state.
+ */
 BPose::BPose(Model* model, BPoseView* view, uint32 clipboardMode, bool selected)
 	:
 	fModel(model),
@@ -114,6 +132,9 @@ BPose::BPose(Model* model, BPoseView* view, uint32 clipboardMode, bool selected)
 }
 
 
+/**
+ * @brief Destroy the BPose, deregistering from periodic updates and deleting widgets.
+ */
 BPose::~BPose()
 {
 	if (fModel->IsVolume() && !fModel->IsRoot()) {

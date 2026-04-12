@@ -1,9 +1,41 @@
 /*
- * Copyright 2013-2014 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- * 		François Revol, revol@free.fr
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       François Revol, revol@free.fr
+ */
+
+
+/**
+ * @file GopherRequest.cpp
+ * @brief Implementation of BGopherRequest, the Gopher protocol handler.
+ *
+ * Connects to a Gopher server, sends a selector string, and streams the
+ * response back through the BUrlProtocolListener callback chain. Directory
+ * and query item types are transcoded to an HTML representation on the fly;
+ * binary and image items are forwarded verbatim to the output BDataIO.
+ *
+ * @see BNetworkRequest, BUrlProtocolListener
  */
 
 
@@ -181,6 +213,17 @@ static const int32 kGopherBufferSize = 4096;
 static const bool kInlineImages = true;
 
 
+/**
+ * @brief Construct a BGopherRequest for the given URL.
+ *
+ * Parses the item-type character and selector from the URL path and
+ * initialises a BSocket ready for connecting to the remote host on port 70.
+ *
+ * @param url      The gopher:// URL to retrieve.
+ * @param output   BDataIO sink that receives the decoded response body.
+ * @param listener Listener for protocol-lifecycle callbacks, or NULL.
+ * @param context  URL context providing cookie jar and proxy settings, or NULL.
+ */
 BGopherRequest::BGopherRequest(const BUrl& url, BDataIO* output,
 	BUrlProtocolListener* listener, BUrlContext* context)
 	:
@@ -206,6 +249,11 @@ BGopherRequest::BGopherRequest(const BUrl& url, BDataIO* output,
 }
 
 
+/**
+ * @brief Destroy the BGopherRequest and release the underlying socket.
+ *
+ * Calls Stop() to abort any in-progress transfer before deleting the socket.
+ */
 BGopherRequest::~BGopherRequest()
 {
 	Stop();
@@ -214,6 +262,14 @@ BGopherRequest::~BGopherRequest()
 }
 
 
+/**
+ * @brief Disconnect the socket and stop the request thread.
+ *
+ * Disconnects the underlying BSocket (unblocking any pending read or write)
+ * and then delegates to BNetworkRequest::Stop() to join the protocol thread.
+ *
+ * @return B_OK on success, or an error code if the thread could not be stopped.
+ */
 status_t
 BGopherRequest::Stop()
 {
@@ -225,6 +281,12 @@ BGopherRequest::Stop()
 }
 
 
+/**
+ * @brief Return the result object describing the completed transfer.
+ *
+ * @return A const reference to the internal BUrlResult containing content-type
+ *         and length information populated after the response is received.
+ */
 const BUrlResult&
 BGopherRequest::Result() const
 {
@@ -232,6 +294,17 @@ BGopherRequest::Result() const
 }
 
 
+/**
+ * @brief Execute the full Gopher request-response cycle.
+ *
+ * Resolves the host name, connects the socket, sends the selector, then
+ * enters a receive loop that feeds data to _ParseInput() for directory/query
+ * types or writes it directly to the output BDataIO for binary types.
+ * Reports progress and lifecycle events through the registered listener.
+ *
+ * @return B_OK on successful completion, B_INTERRUPTED if Stop() was called,
+ *         or an error code describing the failure.
+ */
 status_t
 BGopherRequest::_ProtocolLoop()
 {
@@ -395,6 +468,13 @@ BGopherRequest::_ProtocolLoop()
 }
 
 
+/**
+ * @brief Write the Gopher selector (and optional query string) to the socket.
+ *
+ * Formats the selector path followed by a tab-separated search query if the
+ * URL contains a request component, then appends the mandatory CRLF line
+ * terminator before sending the whole string in a single write.
+ */
 void
 BGopherRequest::_SendRequest()
 {
@@ -411,6 +491,14 @@ BGopherRequest::_SendRequest()
 }
 
 
+/**
+ * @brief Return whether the current item type requires HTML transcoding.
+ *
+ * Directory and query item types must be parsed and converted to HTML;
+ * all other types are forwarded verbatim to the output stream.
+ *
+ * @return true if _ParseInput() should be called, false otherwise.
+ */
 bool
 BGopherRequest::_NeedsParsing()
 {
@@ -421,6 +509,15 @@ BGopherRequest::_NeedsParsing()
 }
 
 
+/**
+ * @brief Return whether the trailing dot-CRLF sentinel must be stripped.
+ *
+ * Directory, query, and plain-text item types are terminated by a lone dot
+ * on its own line which should not appear in the output.
+ *
+ * @return true if the trailing ".\r\n" sentinel should be removed, false
+ *         otherwise.
+ */
 bool
 BGopherRequest::_NeedsLastDotStrip()
 {
@@ -432,6 +529,18 @@ BGopherRequest::_NeedsLastDotStrip()
 }
 
 
+/**
+ * @brief Parse buffered Gopher directory lines and emit HTML.
+ *
+ * Repeatedly calls _GetLine() to extract complete lines from fInputBuffer,
+ * decodes each tab-separated Gopher item record, and appends the corresponding
+ * HTML element to the output stream.  When @a last is true, the HTML page
+ * footer is emitted and the function returns.
+ *
+ * @param last  true when the socket has been fully drained and no further
+ *              data will arrive, false if more data may follow.
+ * @return B_OK on success, or an error code if writing to fOutput fails.
+ */
 status_t
 BGopherRequest::_ParseInput(bool last)
 {
@@ -737,6 +846,16 @@ BGopherRequest::_ParseInput(bool last)
 }
 
 
+/**
+ * @brief Escape HTML special characters in-place in a BString.
+ *
+ * Replaces '&', '<', and '>' with their HTML entity equivalents so that
+ * untrusted Gopher item names and link targets can be safely embedded in the
+ * generated HTML output without introducing injection vulnerabilities.
+ *
+ * @param str  The string to modify in place.
+ * @return A reference to @a str after all replacements have been applied.
+ */
 BString&
 BGopherRequest::_HTMLEscapeString(BString &str)
 {

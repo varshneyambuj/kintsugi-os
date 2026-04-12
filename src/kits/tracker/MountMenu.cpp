@@ -1,38 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
-
-// MountMenu implements a context menu used for mounting/unmounting volumes
+/**
+ * @file MountMenu.cpp
+ * @brief Dynamic context menu for mounting and unmounting volumes.
+ *
+ * MountMenu is a BMenu subclass that rebuilds its item list each time it is
+ * opened, enumerating disk-device partitions via BDiskDeviceList and (when
+ * SHOW_NETWORK_VOLUMES is defined) shared volumes from BVolumeRoster.  Each
+ * item sends a kMountVolume or kUnmountVolume message.
+ *
+ * @see BDiskDeviceList, BVolumeRoster
+ */
 
 
 #include "MountMenu.h"
@@ -79,6 +81,11 @@ private:
 //	#pragma mark - AddMenuItemVisitor
 
 
+/**
+ * @brief Construct an AddMenuItemVisitor that appends items to @p menu.
+ *
+ * @param menu  The BMenu to which partition items will be added.
+ */
 AddMenuItemVisitor::AddMenuItemVisitor(BMenu* menu)
 	:
 	fMenu(menu)
@@ -86,11 +93,20 @@ AddMenuItemVisitor::AddMenuItemVisitor(BMenu* menu)
 }
 
 
+/**
+ * @brief Destroy the AddMenuItemVisitor.
+ */
 AddMenuItemVisitor::~AddMenuItemVisitor()
 {
 }
 
 
+/**
+ * @brief Visit a BDiskDevice by forwarding to the partition-level Visit().
+ *
+ * @param device  The disk device to visit.
+ * @return False to continue traversal.
+ */
 bool
 AddMenuItemVisitor::Visit(BDiskDevice* device)
 {
@@ -98,6 +114,18 @@ AddMenuItemVisitor::Visit(BDiskDevice* device)
 }
 
 
+/**
+ * @brief Add a menu item for a mountable/unmountable partition.
+ *
+ * Skips partitions that do not contain a file system.  Builds the item label
+ * from the partition's content name, name, or a size/type string.  Attaches
+ * a kMountVolume or kUnmountVolume message and marks currently-mounted
+ * partitions; disables the boot-volume item.
+ *
+ * @param partition  The partition to inspect.
+ * @param level      Nesting depth from BDiskDeviceVisitor (unused).
+ * @return False to continue traversal.
+ */
 bool
 AddMenuItemVisitor::Visit(BPartition* partition, int32 level)
 {
@@ -163,12 +191,26 @@ AddMenuItemVisitor::Visit(BPartition* partition, int32 level)
 //	#pragma mark - MountMenu
 
 
+/**
+ * @brief Construct a MountMenu with the given label.
+ *
+ * @param name  The menu label string.
+ */
 MountMenu::MountMenu(const char* name)
 	: BMenu(name)
 {
 }
 
 
+/**
+ * @brief Rebuild the menu's item list from the current set of disk devices.
+ *
+ * Removes all existing items, then uses AddMenuItemVisitor to enumerate
+ * partitions and (when enabled) shared network volumes.  Always returns
+ * false to signal that the dynamic build is complete.
+ *
+ * @return False — item building is finished in a single call.
+ */
 bool
 MountMenu::AddDynamicItem(add_state)
 {

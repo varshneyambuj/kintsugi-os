@@ -1,10 +1,44 @@
 /*
- * Copyright 2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2022 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
  */
+
+
+/**
+ * @file HttpRequest.cpp
+ * @brief Implementation of BHttpMethod and BHttpRequest.
+ *
+ * BHttpMethod wraps either a standard HTTP verb enum or a custom method string,
+ * validating custom strings against RFC 7230 token rules.  BHttpRequest holds
+ * all parameters required to issue an HTTP/1.1 request — URL, method, headers,
+ * authentication, body, and timing — and can serialise the request header
+ * section into an HttpBuffer for transmission by HttpSerializer.
+ *
+ * @see BHttpSession, HttpSerializer, BHttpFields
+ */
+
 
 #include <HttpRequest.h>
 
@@ -29,6 +63,12 @@ using namespace BPrivate::Network;
 // #pragma mark -- BHttpMethod::InvalidMethod
 
 
+/**
+ * @brief Construct an InvalidMethod exception for a bad custom verb string.
+ *
+ * @param origin  Null-terminated origin identifier string.
+ * @param input   The method string that failed validation.
+ */
 BHttpMethod::InvalidMethod::InvalidMethod(const char* origin, BString input)
 	:
 	BError(origin),
@@ -37,6 +77,12 @@ BHttpMethod::InvalidMethod::InvalidMethod(const char* origin, BString input)
 }
 
 
+/**
+ * @brief Return a human-readable description of the validation failure.
+ *
+ * @return "The HTTP method cannot be empty" if input is empty, or
+ *         "Unsupported characters in the HTTP method" otherwise.
+ */
 const char*
 BHttpMethod::InvalidMethod::Message() const noexcept
 {
@@ -47,6 +93,11 @@ BHttpMethod::InvalidMethod::Message() const noexcept
 }
 
 
+/**
+ * @brief Build a debug message that includes the offending method string.
+ *
+ * @return BString with origin, message, and the invalid input.
+ */
 BString
 BHttpMethod::InvalidMethod::DebugMessage() const
 {
@@ -60,6 +111,11 @@ BHttpMethod::InvalidMethod::DebugMessage() const
 // #pragma mark -- BHttpMethod
 
 
+/**
+ * @brief Construct a BHttpMethod from a standard verb enum value.
+ *
+ * @param verb  One of the predefined BHttpMethod::Verb constants.
+ */
 BHttpMethod::BHttpMethod(Verb verb) noexcept
 	:
 	fMethod(verb)
@@ -67,6 +123,13 @@ BHttpMethod::BHttpMethod(Verb verb) noexcept
 }
 
 
+/**
+ * @brief Construct a BHttpMethod from a custom method string_view.
+ *
+ * Validates that \a verb is a non-empty, RFC 7230-compliant token.
+ *
+ * @param verb  Custom HTTP method string (e.g. "PATCH", "PROPFIND").
+ */
 BHttpMethod::BHttpMethod(const std::string_view& verb)
 	:
 	fMethod(BString(verb.data(), verb.length()))
@@ -77,9 +140,19 @@ BHttpMethod::BHttpMethod(const std::string_view& verb)
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param other  Source BHttpMethod to copy.
+ */
 BHttpMethod::BHttpMethod(const BHttpMethod& other) = default;
 
 
+/**
+ * @brief Move constructor — resets the source to the Get verb.
+ *
+ * @param other  Source BHttpMethod to move.
+ */
 BHttpMethod::BHttpMethod(BHttpMethod&& other) noexcept
 	:
 	fMethod(std::move(other.fMethod))
@@ -88,12 +161,27 @@ BHttpMethod::BHttpMethod(BHttpMethod&& other) noexcept
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BHttpMethod::~BHttpMethod() = default;
 
 
+/**
+ * @brief Copy assignment operator.
+ *
+ * @param other  Source BHttpMethod to copy.
+ * @return Reference to this object.
+ */
 BHttpMethod& BHttpMethod::operator=(const BHttpMethod& other) = default;
 
 
+/**
+ * @brief Move assignment operator — resets the source to the Get verb.
+ *
+ * @param other  Source BHttpMethod to move.
+ * @return Reference to this object.
+ */
 BHttpMethod&
 BHttpMethod::operator=(BHttpMethod&& other) noexcept
 {
@@ -103,6 +191,12 @@ BHttpMethod::operator=(BHttpMethod&& other) noexcept
 }
 
 
+/**
+ * @brief Compare this method to a standard Verb enum value.
+ *
+ * @param other  Verb constant to compare against.
+ * @return true if the methods are equivalent.
+ */
 bool
 BHttpMethod::operator==(const BHttpMethod::Verb& other) const noexcept
 {
@@ -116,6 +210,12 @@ BHttpMethod::operator==(const BHttpMethod::Verb& other) const noexcept
 }
 
 
+/**
+ * @brief Compare this method to a standard Verb enum value for inequality.
+ *
+ * @param other  Verb constant to compare against.
+ * @return true if the methods differ.
+ */
 bool
 BHttpMethod::operator!=(const BHttpMethod::Verb& other) const noexcept
 {
@@ -123,6 +223,14 @@ BHttpMethod::operator!=(const BHttpMethod::Verb& other) const noexcept
 }
 
 
+/**
+ * @brief Return the HTTP method name as a string_view.
+ *
+ * Maps verb enum values to their canonical ASCII names ("GET", "POST", etc.)
+ * or returns the custom string for non-standard methods.
+ *
+ * @return string_view representing the HTTP method token.
+ */
 const std::string_view
 BHttpMethod::Method() const noexcept
 {
@@ -157,8 +265,13 @@ BHttpMethod::Method() const noexcept
 
 
 // #pragma mark -- BHttpRequest::Data
+/** @brief Default URL sentinel used when no URL has been set. */
 static const BUrl kDefaultUrl = BUrl();
+
+/** @brief Default HTTP method (GET). */
 static const BHttpMethod kDefaultMethod = BHttpMethod::Get;
+
+/** @brief Empty optional-fields sentinel. */
 static const BHttpFields kDefaultOptionalFields = BHttpFields();
 
 struct BHttpRequest::Data {
@@ -176,9 +289,15 @@ struct BHttpRequest::Data {
 // #pragma mark -- BHttpRequest helper functions
 
 
-/*!
-	\brief Build basic authentication header
-*/
+/**
+ * @brief Build a Basic HTTP Authorization header value.
+ *
+ * Encodes "username:password" in URL-safe base-64 and prepends "Basic ".
+ *
+ * @param username  The account username.
+ * @param password  The account password.
+ * @return BString formatted as "Basic <base64>".
+ */
 static inline BString
 build_basic_http_header(const BString& username, const BString& password)
 {
@@ -192,6 +311,9 @@ build_basic_http_header(const BString& username, const BString& password)
 // #pragma mark -- BHttpRequest
 
 
+/**
+ * @brief Construct a default BHttpRequest with no URL set.
+ */
 BHttpRequest::BHttpRequest()
 	:
 	fData(std::make_unique<Data>())
@@ -199,6 +321,11 @@ BHttpRequest::BHttpRequest()
 }
 
 
+/**
+ * @brief Construct a BHttpRequest targeting \a url.
+ *
+ * @param url  The request URL; must be valid and use http or https scheme.
+ */
 BHttpRequest::BHttpRequest(const BUrl& url)
 	:
 	fData(std::make_unique<Data>())
@@ -207,15 +334,34 @@ BHttpRequest::BHttpRequest(const BUrl& url)
 }
 
 
+/**
+ * @brief Move constructor.
+ *
+ * @param other  Source BHttpRequest to move.
+ */
 BHttpRequest::BHttpRequest(BHttpRequest&& other) noexcept = default;
 
 
+/**
+ * @brief Destructor.
+ */
 BHttpRequest::~BHttpRequest() = default;
 
 
+/**
+ * @brief Move assignment operator.
+ *
+ * @param other  Source BHttpRequest to move.
+ * @return Reference to this object (unused).
+ */
 BHttpRequest& BHttpRequest::operator=(BHttpRequest&&) noexcept = default;
 
 
+/**
+ * @brief Return whether this request has no valid URL set.
+ *
+ * @return true if fData is null or the URL is invalid.
+ */
 bool
 BHttpRequest::IsEmpty() const noexcept
 {
@@ -223,6 +369,11 @@ BHttpRequest::IsEmpty() const noexcept
 }
 
 
+/**
+ * @brief Return the configured HTTP authentication credentials, if any.
+ *
+ * @return Pointer to the BHttpAuthentication, or nullptr if none is set.
+ */
 const BHttpAuthentication*
 BHttpRequest::Authentication() const noexcept
 {
@@ -232,6 +383,11 @@ BHttpRequest::Authentication() const noexcept
 }
 
 
+/**
+ * @brief Return the optional request-specific HTTP header fields.
+ *
+ * @return Const reference to the BHttpFields set by SetFields().
+ */
 const BHttpFields&
 BHttpRequest::Fields() const noexcept
 {
@@ -241,6 +397,11 @@ BHttpRequest::Fields() const noexcept
 }
 
 
+/**
+ * @brief Return the maximum number of redirections the session should follow.
+ *
+ * @return Maximum redirect count (default 8).
+ */
 uint8
 BHttpRequest::MaxRedirections() const noexcept
 {
@@ -250,6 +411,11 @@ BHttpRequest::MaxRedirections() const noexcept
 }
 
 
+/**
+ * @brief Return the HTTP method for this request.
+ *
+ * @return Const reference to the BHttpMethod (default GET).
+ */
 const BHttpMethod&
 BHttpRequest::Method() const noexcept
 {
@@ -259,6 +425,11 @@ BHttpRequest::Method() const noexcept
 }
 
 
+/**
+ * @brief Return the optional request body descriptor.
+ *
+ * @return Pointer to the Body struct, or nullptr if no body is set.
+ */
 const BHttpRequest::Body*
 BHttpRequest::RequestBody() const noexcept
 {
@@ -268,6 +439,11 @@ BHttpRequest::RequestBody() const noexcept
 }
 
 
+/**
+ * @brief Return whether the request should stop on HTTP error responses (4xx/5xx).
+ *
+ * @return true if the session should treat error responses as failures.
+ */
 bool
 BHttpRequest::StopOnError() const noexcept
 {
@@ -277,6 +453,11 @@ BHttpRequest::StopOnError() const noexcept
 }
 
 
+/**
+ * @brief Return the connection timeout for this request.
+ *
+ * @return Timeout in microseconds, or B_INFINITE_TIMEOUT if not set.
+ */
 bigtime_t
 BHttpRequest::Timeout() const noexcept
 {
@@ -286,6 +467,11 @@ BHttpRequest::Timeout() const noexcept
 }
 
 
+/**
+ * @brief Return the target URL for this request.
+ *
+ * @return Const reference to the BUrl (default-constructed if fData is null).
+ */
 const BUrl&
 BHttpRequest::Url() const noexcept
 {
@@ -295,6 +481,11 @@ BHttpRequest::Url() const noexcept
 }
 
 
+/**
+ * @brief Set HTTP Basic authentication credentials for this request.
+ *
+ * @param authentication  Struct containing username and password.
+ */
 void
 BHttpRequest::SetAuthentication(const BHttpAuthentication& authentication)
 {
@@ -304,11 +495,19 @@ BHttpRequest::SetAuthentication(const BHttpAuthentication& authentication)
 	fData->authentication = authentication;
 }
 
-
+/** @brief Reserved field names that may not be set via SetFields(). */
 static constexpr std::array<std::string_view, 6> fReservedOptionalFieldNames
 	= {"Host"sv, "Accept-Encoding"sv, "Connection"sv, "Content-Type"sv, "Content-Length"sv};
 
 
+/**
+ * @brief Replace the optional request-specific header fields.
+ *
+ * Validates that none of the reserved field names (Host, Accept-Encoding,
+ * Connection, Content-Type, Content-Length) appear in \a fields.
+ *
+ * @param fields  BHttpFields to use as the optional fields.
+ */
 void
 BHttpRequest::SetFields(const BHttpFields& fields)
 {
@@ -328,6 +527,11 @@ BHttpRequest::SetFields(const BHttpFields& fields)
 }
 
 
+/**
+ * @brief Set the maximum number of HTTP redirections to follow.
+ *
+ * @param maxRedirections  Maximum redirect count.
+ */
 void
 BHttpRequest::SetMaxRedirections(uint8 maxRedirections)
 {
@@ -337,6 +541,11 @@ BHttpRequest::SetMaxRedirections(uint8 maxRedirections)
 }
 
 
+/**
+ * @brief Set the HTTP method for this request.
+ *
+ * @param method  The BHttpMethod to use.
+ */
 void
 BHttpRequest::SetMethod(const BHttpMethod& method)
 {
@@ -346,6 +555,14 @@ BHttpRequest::SetMethod(const BHttpMethod& method)
 }
 
 
+/**
+ * @brief Set the request body with a BDataIO input, MIME type, and optional size.
+ *
+ * @param input     Non-null BDataIO providing the body bytes.
+ * @param mimeType  Valid MIME type string for the Content-Type header.
+ * @param size      Optional body size; if absent, chunked transfer is required
+ *                  (which is not yet supported and will throw at serialisation time).
+ */
 void
 BHttpRequest::SetRequestBody(
 	std::unique_ptr<BDataIO> input, BString mimeType, std::optional<off_t> size)
@@ -373,6 +590,11 @@ BHttpRequest::SetRequestBody(
 }
 
 
+/**
+ * @brief Configure whether to treat HTTP error responses as request failures.
+ *
+ * @param stopOnError  true to fail on 4xx/5xx responses.
+ */
 void
 BHttpRequest::SetStopOnError(bool stopOnError)
 {
@@ -382,6 +604,11 @@ BHttpRequest::SetStopOnError(bool stopOnError)
 }
 
 
+/**
+ * @brief Set the connection timeout for this request.
+ *
+ * @param timeout  Timeout in microseconds; pass B_INFINITE_TIMEOUT for no limit.
+ */
 void
 BHttpRequest::SetTimeout(bigtime_t timeout)
 {
@@ -391,6 +618,11 @@ BHttpRequest::SetTimeout(bigtime_t timeout)
 }
 
 
+/**
+ * @brief Set the target URL, validating scheme and URL validity.
+ *
+ * @param url  Target URL; must be valid and use the http or https scheme.
+ */
 void
 BHttpRequest::SetUrl(const BUrl& url)
 {
@@ -410,6 +642,9 @@ BHttpRequest::SetUrl(const BUrl& url)
 }
 
 
+/**
+ * @brief Remove any previously configured HTTP authentication credentials.
+ */
 void
 BHttpRequest::ClearAuthentication() noexcept
 {
@@ -418,6 +653,11 @@ BHttpRequest::ClearAuthentication() noexcept
 }
 
 
+/**
+ * @brief Remove the request body and return ownership of the BDataIO.
+ *
+ * @return The previously set BDataIO, or nullptr if no body was set.
+ */
 std::unique_ptr<BDataIO>
 BHttpRequest::ClearRequestBody() noexcept
 {
@@ -430,6 +670,14 @@ BHttpRequest::ClearRequestBody() noexcept
 }
 
 
+/**
+ * @brief Serialise the HTTP request header section to a BString.
+ *
+ * Convenience wrapper around SerializeHeaderTo() that returns the result
+ * as a BString.
+ *
+ * @return BString containing the full HTTP request header (including CRLF terminator).
+ */
 BString
 BHttpRequest::HeaderToString() const
 {
@@ -440,12 +688,15 @@ BHttpRequest::HeaderToString() const
 }
 
 
-/*!
-	\brief Private method used by BHttpSession::Request to rewind the content in case of redirect
-
-	\retval true Content was rewinded successfully. Also the case if there is no content
-	\retval false Cannot/could not rewind content.
-*/
+/**
+ * @brief Rewind the request body BPositionIO to its original position.
+ *
+ * Called by BHttpSession::Request when following a redirect that requires
+ * retransmission of the body.
+ *
+ * @return true if the body was successfully rewound or there is no body;
+ *         false if the body cannot be repositioned.
+ */
 bool
 BHttpRequest::RewindBody() noexcept
 {
@@ -458,10 +709,15 @@ BHttpRequest::RewindBody() noexcept
 }
 
 
-/*!
-	\brief Private method used by HttpSerializer::SetTo() to serialize the header data into a
-		buffer.
-*/
+/**
+ * @brief Write the HTTP request header section into \a buffer.
+ *
+ * Builds the request line, mandatory headers (Host, Accept-Encoding,
+ * Connection), optional authentication and body headers, and then the
+ * caller-supplied optional fields.  Used internally by HttpSerializer.
+ *
+ * @param buffer  HttpBuffer to receive the serialised header bytes.
+ */
 void
 BHttpRequest::SerializeHeaderTo(HttpBuffer& buffer) const
 {

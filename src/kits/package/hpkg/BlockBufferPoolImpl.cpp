@@ -1,7 +1,40 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file BlockBufferPoolImpl.cpp
+ * @brief Internal implementation of the fixed-size block buffer pool.
+ *
+ * BlockBufferPoolImpl maintains two intrusive lists of PoolBuffer objects:
+ * a cache of buffers that are still associated with an owner, and an idle
+ * list of unowned buffers available for immediate reuse.  Locking is
+ * delegated to the BBufferPoolLockable supplied at construction time,
+ * allowing the same logic to be used with or without mutual exclusion.
+ *
+ * @see BBlockBufferPool, BBlockBufferPoolNoLock, PoolBuffer
  */
 
 
@@ -25,6 +58,16 @@ namespace BPrivate {
 // #pragma mark - BlockBufferPoolImpl
 
 
+/**
+ * @brief Construct the pool implementation.
+ *
+ * @param blockSize       Nominal size of each buffer block.  Requests smaller
+ *                        than or equal to this value are served from the cache.
+ * @param maxCachedBlocks Upper bound on the total number of simultaneously
+ *                        allocated blocks before older ones are evicted.
+ * @param lockable        The locking object used to protect shared state;
+ *                        must remain valid for the lifetime of this object.
+ */
 BlockBufferPoolImpl::BlockBufferPoolImpl(size_t blockSize,
 	uint32 maxCachedBlocks, BBufferPoolLockable* lockable)
 	:
@@ -36,6 +79,12 @@ BlockBufferPoolImpl::BlockBufferPoolImpl(size_t blockSize,
 }
 
 
+/**
+ * @brief Destroy the pool and free all outstanding buffers.
+ *
+ * Iterates and deletes every buffer remaining in both the cached and idle
+ * lists.
+ */
 BlockBufferPoolImpl::~BlockBufferPoolImpl()
 {
 	// delete all cached blocks
@@ -47,6 +96,11 @@ BlockBufferPoolImpl::~BlockBufferPoolImpl()
 }
 
 
+/**
+ * @brief Perform any deferred initialisation of the pool.
+ *
+ * @return B_OK unconditionally; provided for API symmetry with BBlockBufferPool.
+ */
 status_t
 BlockBufferPoolImpl::Init()
 {
@@ -54,6 +108,20 @@ BlockBufferPoolImpl::Init()
 }
 
 
+/**
+ * @brief Obtain a buffer large enough to hold \a size bytes.
+ *
+ * Oversized requests (larger than the nominal block size) are always
+ * individually allocated.  For normal-sized requests the pool tries, in
+ * order: the owner's previously cached buffer, the idle list, a stolen
+ * cached buffer (when at the limit), and finally a fresh allocation.
+ *
+ * @param size       Minimum required capacity in bytes.
+ * @param owner      Optional pointer-to-pointer tracking buffer ownership.
+ * @param _newBuffer Optional output flag; set to true for a freshly allocated
+ *                   buffer, false when a cached buffer is returned.
+ * @return Pointer to the obtained PoolBuffer, or NULL on allocation failure.
+ */
 PoolBuffer*
 BlockBufferPoolImpl::GetBuffer(size_t size, PoolBuffer** owner, bool* _newBuffer)
 {
@@ -107,6 +175,17 @@ BlockBufferPoolImpl::GetBuffer(size_t size, PoolBuffer** owner, bool* _newBuffer
 }
 
 
+/**
+ * @brief Return a buffer to the pool and mark it as cached.
+ *
+ * The buffer is queued in the cached list so that the same owner can
+ * reclaim it cheaply.  If the pool exceeds the maximum block count an
+ * excess buffer is freed immediately.  Buffers whose size does not match
+ * the nominal block size are deleted outright.
+ *
+ * @param owner Pointer-to-pointer identifying the buffer to return;
+ *              must not be NULL.
+ */
 void
 BlockBufferPoolImpl::PutBufferAndCache(PoolBuffer** owner)
 {
@@ -140,6 +219,15 @@ BlockBufferPoolImpl::PutBufferAndCache(PoolBuffer** owner)
 }
 
 
+/**
+ * @brief Return a buffer to the pool without caching it.
+ *
+ * If the buffer is currently in the cached list it is removed first.  A
+ * standard-sized buffer within the block limit is placed on the idle list;
+ * otherwise it is deleted.  The pointer at \a owner is set to NULL.
+ *
+ * @param owner Pointer-to-pointer identifying the buffer to return.
+ */
 void
 BlockBufferPoolImpl::PutBuffer(PoolBuffer** owner)
 {
@@ -165,6 +253,17 @@ BlockBufferPoolImpl::PutBuffer(PoolBuffer** owner)
 }
 
 
+/**
+ * @brief Allocate a new PoolBuffer of at least \a size bytes.
+ *
+ * The buffer is sized to the maximum of \a size and the nominal block size.
+ * The allocated-block count is incremented under the lock before returning.
+ *
+ * @param size       Minimum capacity of the new buffer.
+ * @param owner      Optional pointer-to-pointer to associate with the buffer.
+ * @param _newBuffer Optional output flag; always set to true on success.
+ * @return Pointer to the newly allocated PoolBuffer, or NULL on failure.
+ */
 PoolBuffer*
 BlockBufferPoolImpl::_AllocateBuffer(size_t size, PoolBuffer** owner,
 	bool* _newBuffer)

@@ -1,10 +1,42 @@
 /*
- * Copyright 2008-2009, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Julun, <host.haiku@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2009, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors: Julun, <host.haiku@gmx.de>
  */
+
+
+/**
+ * @file JobSetupPanel.cpp
+ * @brief Print-job configuration dialog for the print kit.
+ *
+ * BJobSetupPanel presents the standard "Print document" dialog allowing the
+ * user to select a printer, set the page range, specify the number of copies,
+ * and toggle options such as collation, reverse printing, color, and duplex.
+ * It delegates to BPrinterRoster for printer enumeration and wraps the result
+ * in a BPrintPanel modal window loop.
+ *
+ * @see BPrintPanel, BPrinterRoster, BPrinter
+ */
+
 
 #include <JobSetupPanel.h>
 
@@ -31,6 +63,14 @@ namespace BPrivate {
 	namespace Print {
 
 
+/**
+ * @brief Constructs a BJobSetupPanel with default option flags.
+ *
+ * Initialises internal state and builds the user interface using the default
+ * B_NO_OPTIONS flag set.
+ *
+ * @param printer  The BPrinter to configure; must not be NULL.
+ */
 BJobSetupPanel::BJobSetupPanel(BPrinter* printer)
 	: BPrintPanel("Print document")
 	, fPrinter(printer)
@@ -43,6 +83,16 @@ BJobSetupPanel::BJobSetupPanel(BPrinter* printer)
 }
 
 
+/**
+ * @brief Constructs a BJobSetupPanel with a custom set of option flags.
+ *
+ * Identical to the single-argument constructor except that \a flags controls
+ * which optional controls (page range, selection, collate, print-to-file) are
+ * initially enabled in the dialog.
+ *
+ * @param printer  The BPrinter to configure; must not be NULL.
+ * @param flags    Bitfield of B_PRINT_* option constants.
+ */
 BJobSetupPanel::BJobSetupPanel(BPrinter* printer, uint32 flags)
 	: BPrintPanel("Print document")
 	, fPrinter(printer)
@@ -55,12 +105,22 @@ BJobSetupPanel::BJobSetupPanel(BPrinter* printer, uint32 flags)
 }
 
 
+/**
+ * @brief Destroys the BJobSetupPanel and releases owned resources.
+ *
+ * Deletes the BPrinterRoster allocated during initialisation.
+ */
 BJobSetupPanel::~BJobSetupPanel()
 {
 	delete fPrinterRoster;
 }
 
 
+/**
+ * @brief Archive-reconstruction constructor (not yet implemented).
+ *
+ * @param data  The BMessage archive to restore from.
+ */
 BJobSetupPanel::BJobSetupPanel(BMessage* data)
 	: BPrintPanel(data)
 {
@@ -68,6 +128,12 @@ BJobSetupPanel::BJobSetupPanel(BMessage* data)
 }
 
 
+/**
+ * @brief Instantiates a BJobSetupPanel from an archive (not yet implemented).
+ *
+ * @param data  The BMessage archive produced by Archive().
+ * @return Always returns NULL until implemented.
+ */
 BArchivable*
 BJobSetupPanel::Instantiate(BMessage* data)
 {
@@ -76,6 +142,13 @@ BJobSetupPanel::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archives this panel into a BMessage (not yet implemented).
+ *
+ * @param data  The BMessage to write the archive into.
+ * @param deep  If true, child views are archived recursively.
+ * @return Always returns B_ERROR until implemented.
+ */
 status_t
 BJobSetupPanel::Archive(BMessage* data, bool deep) const
 {
@@ -84,6 +157,11 @@ BJobSetupPanel::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Handles messages sent to this panel, forwarding to the base class.
+ *
+ * @param message  The incoming BMessage to dispatch.
+ */
 void
 BJobSetupPanel::MessageReceived(BMessage* message)
 {
@@ -92,6 +170,15 @@ BJobSetupPanel::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Runs the panel modally and applies the user's selections.
+ *
+ * Shows the panel via ShowPanel(), applies the chosen settings to the printer
+ * object on B_OK, then closes and destroys the window.
+ *
+ * @return B_OK if the user confirmed, B_CANCEL if they dismissed the dialog,
+ *         or another error code on failure.
+ */
 status_t
 BJobSetupPanel::Go()
 {
@@ -109,6 +196,11 @@ BJobSetupPanel::Go()
 }
 
 
+/**
+ * @brief Returns the printer associated with this panel.
+ *
+ * @return Pointer to the BPrinter passed at construction time.
+ */
 BPrinter*
 BJobSetupPanel::Printer() const
 {
@@ -116,6 +208,13 @@ BJobSetupPanel::Printer() const
 }
 
 
+/**
+ * @brief Replaces the printer associated with this panel.
+ *
+ * @param printer       The new BPrinter to use.
+ * @param keepSettings  If true, the existing print settings are preserved;
+ *                      otherwise defaults are restored (not yet implemented).
+ */
 void
 BJobSetupPanel::SetPrinter(BPrinter* printer, bool keepSettings)
 {
@@ -123,6 +222,11 @@ BJobSetupPanel::SetPrinter(BPrinter* printer, bool keepSettings)
 }
 
 
+/**
+ * @brief Returns the currently selected print range.
+ *
+ * @return One of B_ALL_PAGES, B_SELECTION, or B_PAGE_RANGE.
+ */
 print_range
 BJobSetupPanel::PrintRange() const
 {
@@ -130,6 +234,15 @@ BJobSetupPanel::PrintRange() const
 }
 
 
+/**
+ * @brief Sets the active print-range radio button and enables related controls.
+ *
+ * Updates fPrintRange, adjusts the relevant radio button state, and enables
+ * any additional UI controls implied by the chosen range (e.g. page-number
+ * fields for B_PAGE_RANGE).
+ *
+ * @param range  The print_range constant to activate.
+ */
 void
 BJobSetupPanel::SetPrintRange(print_range range)
 {
@@ -154,6 +267,14 @@ BJobSetupPanel::SetPrintRange(print_range range)
 }
 
 
+/**
+ * @brief Returns the first page number entered by the user.
+ *
+ * Reads the text from the first-page text control and converts it to an
+ * integer. Returns 0 if the field is empty.
+ *
+ * @return The first page number, or 0 if not specified.
+ */
 int32
 BJobSetupPanel::FirstPage() const
 {
@@ -165,6 +286,14 @@ BJobSetupPanel::FirstPage() const
 }
 
 
+/**
+ * @brief Returns the last page number entered by the user.
+ *
+ * Reads the text from the last-page text control and converts it to an
+ * integer. Returns LONG_MAX if the field is empty.
+ *
+ * @return The last page number, or LONG_MAX if not specified.
+ */
 int32
 BJobSetupPanel::LastPage() const
 {
@@ -176,6 +305,15 @@ BJobSetupPanel::LastPage() const
 }
 
 
+/**
+ * @brief Sets the page range and updates the corresponding text fields.
+ *
+ * Activates the B_PAGE_RANGE mode and populates the first- and last-page
+ * text controls with the supplied values.
+ *
+ * @param firstPage  The first page of the range to print.
+ * @param lastPage   The last page of the range to print.
+ */
 void
 BJobSetupPanel::SetPageRange(int32 firstPage, int32 lastPage)
 {
@@ -190,6 +328,11 @@ BJobSetupPanel::SetPageRange(int32 firstPage, int32 lastPage)
 }
 
 
+/**
+ * @brief Returns the current set of job option flags.
+ *
+ * @return The bitfield of B_PRINT_* constants currently active.
+ */
 uint32
 BJobSetupPanel::OptionFlags() const
 {
@@ -197,6 +340,14 @@ BJobSetupPanel::OptionFlags() const
 }
 
 
+/**
+ * @brief Applies a new set of option flags and updates the UI accordingly.
+ *
+ * Enables or disables the print-to-file checkbox, page-range controls,
+ * selection radio button, and collate checkbox based on the flags supplied.
+ *
+ * @param flags  New bitfield of B_PRINT_* option constants to apply.
+ */
 void
 BJobSetupPanel::SetOptionFlags(uint32 flags)
 {
@@ -226,6 +377,13 @@ BJobSetupPanel::SetOptionFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Initialises the printer roster and resolves the default printer if needed.
+ *
+ * Creates a BPrinterRoster, registers this panel as a watcher for printer
+ * changes, and populates fPrinter with the system default if fPrinter is
+ * not already pointing to a valid printer.
+ */
 void
 BJobSetupPanel::_InitObject()
 {
@@ -240,6 +398,13 @@ BJobSetupPanel::_InitObject()
 }
 
 
+/**
+ * @brief Builds and installs the complete dialog user interface.
+ *
+ * Creates the printer selection box, page-range box, copies box, and other
+ * options box, then assembles them into a BGroupView hierarchy that is handed
+ * to BPrintPanel::AddPanel().
+ */
 void
 BJobSetupPanel::_SetupInterface()
 {
@@ -360,6 +525,14 @@ BJobSetupPanel::_SetupInterface()
 }
 
 
+/**
+ * @brief Restricts a BTextView to accept only digit characters.
+ *
+ * Iterates over all non-digit byte values and calls DisallowChar() on
+ * \a textView for each, ensuring the user can only type numeric input.
+ *
+ * @param textView  The BTextView to configure.
+ */
 void
 BJobSetupPanel::_DisallowChar(BTextView* textView)
 {

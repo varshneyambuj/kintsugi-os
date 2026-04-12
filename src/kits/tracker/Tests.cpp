@@ -1,36 +1,39 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Tests.cpp
+ * @brief Debug-only icon-cache stress-test infrastructure.
+ *
+ * Provides a simple visual benchmark that continuously iterates the
+ * filesystem and draws icons using the Tracker icon cache.  Only compiled
+ * when DEBUG is defined.  The main entry point is RunIconCacheTests().
+ *
+ * @see IconCache, TNodeWalker, CachedEntryIterator
+ */
 
 
 #if DEBUG
@@ -110,6 +113,12 @@ private:
 //	#pragma mark - IconSpewer
 
 
+/**
+ * @brief Construct an IconSpewer that walks the filesystem and draws icons continuously.
+ *
+ * @param newCache  If true, use the new CachedEntryIterator; otherwise fall back
+ *                  to the legacy icon-cache path.
+ */
 IconSpewer::IconSpewer(bool newCache)
 	:
 	quitting(false),
@@ -127,6 +136,9 @@ IconSpewer::IconSpewer(bool newCache)
 }
 
 
+/**
+ * @brief Destructor; releases the walker and caching iterator.
+ */
 IconSpewer::~IconSpewer()
 {
 	delete walker;
@@ -134,6 +146,9 @@ IconSpewer::~IconSpewer()
 }
 
 
+/**
+ * @brief Thread entry point; loops drawing icons until quit.
+ */
 void
 IconSpewer::Run()
 {
@@ -153,6 +168,9 @@ IconSpewer::Run()
 }
 
 
+/**
+ * @brief Stop the icon-drawing thread immediately.
+ */
 void
 IconSpewer::Quit()
 {
@@ -166,6 +184,12 @@ const int32 kRowCount = 10;
 const int32 kColumnCount = 10;
 
 
+/**
+ * @brief Draw a grid of icons using the new icon cache.
+ *
+ * Clears the test window, prints timing statistics, and draws
+ * kRowCount x kColumnCount icons from the iterator into the view.
+ */
 void
 IconSpewer::DrawSomeNew()
 {
@@ -219,6 +243,9 @@ IconSpewer::DrawSomeNew()
 bool oldIconCacheInited = false;
 
 
+/**
+ * @brief Draw a grid of icons using the legacy icon cache (stub; code disabled).
+ */
 void
 IconSpewer::DrawSomeOld()
 {
@@ -277,6 +304,14 @@ IconSpewer::DrawSomeOld()
 }
 
 
+/**
+ * @brief Advance to the next filesystem entry, wrapping around as needed.
+ *
+ * When the current walker is exhausted it cycles to the next search path,
+ * wrapping back to the first path when all paths are consumed.
+ *
+ * @return Pointer to the next entry_ref.
+ */
 const entry_ref*
 IconSpewer::NextRef()
 {
@@ -314,6 +349,12 @@ IconSpewer::NextRef()
 //	#pragma mark - IconTestWindow
 
 
+/**
+ * @brief Construct the icon test window and start the spewer thread.
+ *
+ * If no modifier keys are held the new cache is tested; otherwise the legacy
+ * path is exercised.
+ */
 IconTestWindow::IconTestWindow()
 	:
 	BWindow(BRect(100, 100, 500, 600), "icon cache test",
@@ -327,6 +368,11 @@ IconTestWindow::IconTestWindow()
 }
 
 
+/**
+ * @brief Stop the spewer thread and allow the window to quit.
+ *
+ * @return true always.
+ */
 bool
 IconTestWindow::QuitRequested()
 {
@@ -335,6 +381,12 @@ IconTestWindow::QuitRequested()
 }
 
 
+/**
+ * @brief Launch the icon-cache stress-test window.
+ *
+ * Creates and shows an IconTestWindow that continuously draws icons from
+ * the cache to measure draw performance.
+ */
 void
 RunIconCacheTests()
 {

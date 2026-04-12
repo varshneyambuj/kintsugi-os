@@ -1,9 +1,41 @@
 /*
- * Copyright 2010-2023 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2023 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ */
+
+
+/**
+ * @file HttpAuthentication.cpp
+ * @brief Implementation of BHttpAuthentication for HTTP auth schemes.
+ *
+ * Supports Basic, Digest (MD5 and MD5-sess), and Bearer token authentication
+ * as defined by RFC 7617, RFC 7616, and RFC 6750 respectively. Parses the
+ * WWW-Authenticate challenge header and produces the corresponding
+ * Authorization header value for subsequent requests.
+ *
+ * @see BHttpRequest, BUrlContext
  */
 
 
@@ -39,6 +71,9 @@ static const char* kBase64Symbols
 	= "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 
+/**
+ * @brief Default constructor — sets the method to B_HTTP_AUTHENTICATION_NONE.
+ */
 BHttpAuthentication::BHttpAuthentication()
 	:
 	fAuthenticationMethod(B_HTTP_AUTHENTICATION_NONE)
@@ -46,6 +81,15 @@ BHttpAuthentication::BHttpAuthentication()
 }
 
 
+/**
+ * @brief Construct with explicit username and password credentials.
+ *
+ * The authentication method is still B_HTTP_AUTHENTICATION_NONE until
+ * Initialize() is called to parse a WWW-Authenticate challenge.
+ *
+ * @param username  The username to store.
+ * @param password  The password to store.
+ */
 BHttpAuthentication::BHttpAuthentication(const BString& username, const BString& password)
 	:
 	fAuthenticationMethod(B_HTTP_AUTHENTICATION_NONE),
@@ -55,6 +99,11 @@ BHttpAuthentication::BHttpAuthentication(const BString& username, const BString&
 }
 
 
+/**
+ * @brief Copy constructor — deep-copies all authentication state.
+ *
+ * @param other  The source BHttpAuthentication object to copy from.
+ */
 BHttpAuthentication::BHttpAuthentication(const BHttpAuthentication& other)
 	:
 	fAuthenticationMethod(other.fAuthenticationMethod),
@@ -74,6 +123,12 @@ BHttpAuthentication::BHttpAuthentication(const BHttpAuthentication& other)
 }
 
 
+/**
+ * @brief Assignment operator — replaces all fields with those from \a other.
+ *
+ * @param other  The source BHttpAuthentication object to copy from.
+ * @return A reference to this object.
+ */
 BHttpAuthentication& BHttpAuthentication::operator=(
 	const BHttpAuthentication& other)
 {
@@ -97,6 +152,11 @@ BHttpAuthentication& BHttpAuthentication::operator=(
 // #pragma mark Field modification
 
 
+/**
+ * @brief Set the username credential under the internal lock.
+ *
+ * @param username  The new username string to store.
+ */
 void
 BHttpAuthentication::SetUserName(const BString& username)
 {
@@ -106,6 +166,11 @@ BHttpAuthentication::SetUserName(const BString& username)
 }
 
 
+/**
+ * @brief Set the password credential under the internal lock.
+ *
+ * @param password  The new password string to store.
+ */
 void
 BHttpAuthentication::SetPassword(const BString& password)
 {
@@ -115,6 +180,11 @@ BHttpAuthentication::SetPassword(const BString& password)
 }
 
 
+/**
+ * @brief Set the Bearer token under the internal lock.
+ *
+ * @param token  The Bearer token string to store.
+ */
 void
 BHttpAuthentication::SetToken(const BString& token)
 {
@@ -124,6 +194,11 @@ BHttpAuthentication::SetToken(const BString& token)
 }
 
 
+/**
+ * @brief Explicitly override the active authentication method.
+ *
+ * @param method  One of the BHttpAuthenticationMethod constants.
+ */
 void
 BHttpAuthentication::SetMethod(BHttpAuthenticationMethod method)
 {
@@ -133,6 +208,18 @@ BHttpAuthentication::SetMethod(BHttpAuthenticationMethod method)
 }
 
 
+/**
+ * @brief Parse a WWW-Authenticate header value and initialise the object.
+ *
+ * Detects whether the challenge requests Basic, Digest, or Bearer
+ * authentication and extracts the relevant parameters (realm, nonce, opaque,
+ * algorithm, qop) from the comma-separated attribute list.
+ *
+ * @param wwwAuthenticate  The full value of the WWW-Authenticate header.
+ * @return B_OK if a supported and complete challenge was parsed, B_BAD_VALUE
+ *         if the header is empty, or B_ERROR for unsupported or incomplete
+ *         challenges.
+ */
 status_t
 BHttpAuthentication::Initialize(const BString& wwwAuthenticate)
 {
@@ -233,6 +320,11 @@ BHttpAuthentication::Initialize(const BString& wwwAuthenticate)
 // #pragma mark Field access
 
 
+/**
+ * @brief Return the stored username under the internal lock.
+ *
+ * @return A const reference to the username BString.
+ */
 const BString&
 BHttpAuthentication::UserName() const
 {
@@ -241,6 +333,11 @@ BHttpAuthentication::UserName() const
 }
 
 
+/**
+ * @brief Return the stored password under the internal lock.
+ *
+ * @return A const reference to the password BString.
+ */
 const BString&
 BHttpAuthentication::Password() const
 {
@@ -249,6 +346,11 @@ BHttpAuthentication::Password() const
 }
 
 
+/**
+ * @brief Return the active authentication method under the internal lock.
+ *
+ * @return The current BHttpAuthenticationMethod value.
+ */
 BHttpAuthenticationMethod
 BHttpAuthentication::Method() const
 {
@@ -257,6 +359,17 @@ BHttpAuthentication::Method() const
 }
 
 
+/**
+ * @brief Build the Authorization header value for the given request.
+ *
+ * Selects the appropriate encoding scheme (Basic base64, Bearer token, or
+ * Digest response) based on the stored authentication method and returns the
+ * complete header value string ready to be added to an outgoing request.
+ *
+ * @param url     The URL being requested, used for the Digest URI field.
+ * @param method  The HTTP method string (e.g. "GET"), used for Digest A2 hash.
+ * @return The full Authorization header value string.
+ */
 BString
 BHttpAuthentication::Authorization(const BUrl& url, const BString& method) const
 {
@@ -322,6 +435,16 @@ BHttpAuthentication::Authorization(const BUrl& url, const BString& method) const
 // #pragma mark Base64 encoding
 
 
+/**
+ * @brief Encode a string using the URL-safe Base64 alphabet.
+ *
+ * Processes the input three bytes at a time, emitting four Base64 characters
+ * per group and padding the output with '=' characters when the input length
+ * is not a multiple of three.
+ *
+ * @param string  The binary or text string to encode.
+ * @return The Base64-encoded representation of \a string.
+ */
 /*static*/ BString
 BHttpAuthentication::Base64Encode(const BString& string)
 {
@@ -361,6 +484,16 @@ BHttpAuthentication::Base64Encode(const BString& string)
 }
 
 
+/**
+ * @brief Decode a URL-safe Base64-encoded string back to its original bytes.
+ *
+ * Validates that the input length is a multiple of four, then processes each
+ * group of four Base64 characters into three output bytes, stripping any '='
+ * padding characters.
+ *
+ * @param string  The Base64-encoded input string.
+ * @return The decoded binary string, or an empty string on invalid input.
+ */
 /*static*/ BString
 BHttpAuthentication::Base64Decode(const BString& string)
 {
@@ -397,6 +530,18 @@ BHttpAuthentication::Base64Decode(const BString& string)
 }
 
 
+/**
+ * @brief Compute the Digest authentication response string.
+ *
+ * Implements RFC 7616 by computing H(A1), H(A2), and the final KD-based
+ * response hash using MD5 or MD5-sess as indicated by fDigestAlgorithm.
+ * If a quality-of-protection (qop) directive is active, the client nonce
+ * count and client nonce are incorporated.
+ *
+ * @param uri     The request URI path used in the A2 computation.
+ * @param method  The HTTP method string used in the A2 computation.
+ * @return The hex-encoded MD5 response string.
+ */
 BString
 BHttpAuthentication::_DigestResponse(const BString& uri, const BString& method) const
 {
@@ -447,6 +592,12 @@ BHttpAuthentication::_DigestResponse(const BString& uri, const BString& method) 
 }
 
 
+/**
+ * @brief Compute the lowercase hex MD5 hash of a string (the H() function).
+ *
+ * @param value  The input string to hash.
+ * @return The 32-character lowercase hex representation of the MD5 digest.
+ */
 BString
 BHttpAuthentication::_H(const BString& value) const
 {
@@ -479,6 +630,16 @@ BHttpAuthentication::_H(const BString& value) const
 }
 
 
+/**
+ * @brief Compute the Digest KD() keyed-digest function.
+ *
+ * Concatenates \a secret, ':', and \a data, then returns H() of the result.
+ *
+ * @param secret  The H(A1) secret value.
+ * @param data    The colon-separated data string containing nonce, nc, cnonce,
+ *                qop, and H(A2).
+ * @return The hex-encoded MD5 of the concatenated input.
+ */
 BString
 BHttpAuthentication::_KD(const BString& secret, const BString& data) const
 {

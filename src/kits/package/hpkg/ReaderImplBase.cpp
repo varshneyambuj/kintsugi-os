@@ -1,7 +1,43 @@
 /*
- * Copyright 2009-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ReaderImplBase.cpp
+ * @brief Shared base class for HPKG package and repository reader implementations.
+ *
+ * ReaderImplBase implements the attribute-tree parsing engine used by both
+ * PackageReaderImpl and RepositoryReaderImpl. It manages the compressed heap
+ * reader, the per-section string tables, and the handler stack that drives
+ * event dispatch as the attribute tree is walked depth-first.
+ *
+ * The file also contains the full family of AttributeHandler subclasses
+ * (PackageVersionAttributeHandler, PackageResolvableAttributeHandler, etc.)
+ * that translate raw attribute IDs and values into typed BPackageInfo fields.
+ *
+ * @see PackageReaderImpl, RepositoryReaderImpl, WriterImplBase
  */
 
 
@@ -34,6 +70,7 @@ namespace BHPKG {
 namespace BPrivate {
 
 
+/** @brief Per-attribute-ID expected type table, indexed by BHPKGAttributeID. */
 static const uint16 kAttributeTypes[B_HPKG_ATTRIBUTE_ID_ENUM_COUNT] = {
 	#define B_DEFINE_HPKG_ATTRIBUTE(id, type, name, constant)	\
 		B_HPKG_ATTRIBUTE_TYPE_##type,
@@ -44,6 +81,15 @@ static const uint16 kAttributeTypes[B_HPKG_ATTRIBUTE_ID_ENUM_COUNT] = {
 // #pragma mark - AttributeHandlerContext
 
 
+/**
+ * @brief Constructs an AttributeHandlerContext for a high-level content handler.
+ *
+ * @param errorOutput           Destination for diagnostic messages.
+ * @param packageContentHandler High-level callback object to receive parsed data.
+ * @param section               Which HPKG section is being parsed.
+ * @param ignoreUnknownAttributes If true, attributes with unrecognised IDs are
+ *                              silently skipped rather than triggering an error.
+ */
 ReaderImplBase::AttributeHandlerContext::AttributeHandlerContext(
 	BErrorOutput* errorOutput, BPackageContentHandler* packageContentHandler,
 	BHPKGPackageSectionID section, bool ignoreUnknownAttributes)
@@ -57,6 +103,14 @@ ReaderImplBase::AttributeHandlerContext::AttributeHandlerContext(
 }
 
 
+/**
+ * @brief Constructs an AttributeHandlerContext for a low-level content handler.
+ *
+ * @param errorOutput       Destination for diagnostic messages.
+ * @param lowLevelHandler   Low-level callback object to receive raw attribute data.
+ * @param section           Which HPKG section is being parsed.
+ * @param ignoreUnknownAttributes If true, unrecognised attributes are skipped.
+ */
 ReaderImplBase::AttributeHandlerContext::AttributeHandlerContext(
 	BErrorOutput* errorOutput, BLowLevelPackageContentHandler* lowLevelHandler,
 	BHPKGPackageSectionID section, bool ignoreUnknownAttributes)
@@ -70,11 +124,20 @@ ReaderImplBase::AttributeHandlerContext::AttributeHandlerContext(
 }
 
 
+/**
+ * @brief Destroys the AttributeHandlerContext.
+ */
 ReaderImplBase::AttributeHandlerContext::~AttributeHandlerContext()
 {
 }
 
 
+/**
+ * @brief Forwards an error-occurred notification to whichever handler is active.
+ *
+ * Calls HandleErrorOccurred() on either the low-level handler or the high-level
+ * package content handler, depending on which was supplied at construction time.
+ */
 void
 ReaderImplBase::AttributeHandlerContext::ErrorOccurred()
 {
@@ -88,11 +151,19 @@ ReaderImplBase::AttributeHandlerContext::ErrorOccurred()
 // #pragma mark - AttributeHandler
 
 
+/**
+ * @brief Destroys the AttributeHandler.
+ */
 ReaderImplBase::AttributeHandler::~AttributeHandler()
 {
 }
 
 
+/**
+ * @brief Sets the nesting level of this handler in the attribute tree.
+ *
+ * @param level Zero-based depth in the attribute tree.
+ */
 void
 ReaderImplBase::AttributeHandler::SetLevel(int level)
 {
@@ -100,6 +171,18 @@ ReaderImplBase::AttributeHandler::SetLevel(int level)
 }
 
 
+/**
+ * @brief Called when an attribute node is encountered at this handler's level.
+ *
+ * The default implementation ignores the attribute and returns B_OK.
+ *
+ * @param context  Parsing context carrying error output and content handler.
+ * @param id       Attribute ID (one of the BHPKGAttributeID constants).
+ * @param value    Decoded attribute value.
+ * @param _handler Output pointer for an optional child handler; NULL if the
+ *                 attribute has no children.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 ReaderImplBase::AttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -109,6 +192,14 @@ ReaderImplBase::AttributeHandler::HandleAttribute(
 }
 
 
+/**
+ * @brief Called when all children of this handler's attribute node are done.
+ *
+ * The default implementation is a no-op that returns B_OK.
+ *
+ * @param context Parsing context.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 ReaderImplBase::AttributeHandler::NotifyDone(
 	AttributeHandlerContext* context)
@@ -120,6 +211,16 @@ ReaderImplBase::AttributeHandler::NotifyDone(
 // #pragma mark - AttributeHandler allocation
 
 
+/**
+ * @brief Allocates an AttributeHandler from the context's arena allocator.
+ *
+ * All AttributeHandler subclasses should be allocated with placement-new
+ * passing the AttributeHandlerContext so that arena memory is used.
+ *
+ * @param size    Byte size of the subclass to allocate.
+ * @param context Parsing context whose arena provides the memory.
+ * @return Pointer to the allocated (but not yet constructed) memory, or NULL.
+ */
 void*
 ReaderImplBase::AttributeHandler::operator new(size_t size, AttributeHandlerContext* context)
 {
@@ -130,6 +231,15 @@ ReaderImplBase::AttributeHandler::operator new(size_t size, AttributeHandlerCont
 }
 
 
+/**
+ * @brief Operator delete stub that enforces the Delete() contract.
+ *
+ * Attribute handlers must be released via Delete() rather than plain
+ * @c delete so that arena memory is properly reclaimed. This stub fires a
+ * debugger assertion if a handler is deleted directly.
+ *
+ * @param pointer Pointer returned by the placement new above.
+ */
 void
 ReaderImplBase::AttributeHandler::operator delete(void* pointer)
 {
@@ -141,6 +251,15 @@ ReaderImplBase::AttributeHandler::operator delete(void* pointer)
 }
 
 
+/**
+ * @brief Destroys the handler and returns its arena memory to the allocator.
+ *
+ * Sets fDeleting so that the overridden operator delete does not fire the
+ * debugger assertion, then deletes and frees the arena slot.
+ *
+ * @param context Parsing context whose arena originally supplied the memory.
+ * @return B_OK.
+ */
 status_t
 ReaderImplBase::AttributeHandler::Delete(AttributeHandlerContext* context)
 {
@@ -155,6 +274,12 @@ ReaderImplBase::AttributeHandler::Delete(AttributeHandlerContext* context)
 // #pragma mark - PackageInfoAttributeHandlerBase
 
 
+/**
+ * @brief Constructs a PackageInfoAttributeHandlerBase bound to a value buffer.
+ *
+ * @param packageInfoValue Reference to the BPackageInfoAttributeValue that this
+ *                         handler fills in before forwarding to the content handler.
+ */
 ReaderImplBase::PackageInfoAttributeHandlerBase
 	::PackageInfoAttributeHandlerBase(
 		BPackageInfoAttributeValue& packageInfoValue)
@@ -164,6 +289,15 @@ ReaderImplBase::PackageInfoAttributeHandlerBase
 }
 
 
+/**
+ * @brief Forwards the completed package info value to the content handler.
+ *
+ * Called when all child attributes of the current package-info node have been
+ * processed. Clears the value buffer after delivery.
+ *
+ * @param context Parsing context.
+ * @return B_OK on success, or an error code from the content handler.
+ */
 status_t
 ReaderImplBase::PackageInfoAttributeHandlerBase::NotifyDone(
 	AttributeHandlerContext* context)
@@ -180,6 +314,14 @@ ReaderImplBase::PackageInfoAttributeHandlerBase::NotifyDone(
 // #pragma mark - PackageVersionAttributeHandler
 
 
+/**
+ * @brief Constructs a handler for a package version sub-attribute.
+ *
+ * @param packageInfoValue Reference to the enclosing attribute value.
+ * @param versionData      Reference to the BPackageVersionData to populate.
+ * @param notify           If true, NotifyDone() will forward the value to the
+ *                         content handler.
+ */
 ReaderImplBase::PackageVersionAttributeHandler::PackageVersionAttributeHandler(
 	BPackageInfoAttributeValue& packageInfoValue,
 	BPackageVersionData& versionData, bool notify)
@@ -191,6 +333,15 @@ ReaderImplBase::PackageVersionAttributeHandler::PackageVersionAttributeHandler(
 }
 
 
+/**
+ * @brief Handles version component sub-attributes (minor, micro, pre-release, revision).
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Unused child handler output; versions have no further nesting.
+ * @return B_OK on success, or B_BAD_DATA for an unrecognised attribute ID.
+ */
 status_t
 ReaderImplBase::PackageVersionAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -227,6 +378,15 @@ ReaderImplBase::PackageVersionAttributeHandler::HandleAttribute(
 }
 
 
+/**
+ * @brief Notifies the content handler that all version fields have been collected.
+ *
+ * Only fires the notification when @a fNotify is true (i.e., this is the top-level
+ * version handler rather than a provides/compatible sub-handler).
+ *
+ * @param context Parsing context.
+ * @return B_OK on success, or an error code from the base class.
+ */
 status_t
 ReaderImplBase::PackageVersionAttributeHandler::NotifyDone(
 	AttributeHandlerContext* context)
@@ -242,6 +402,11 @@ ReaderImplBase::PackageVersionAttributeHandler::NotifyDone(
 // #pragma mark - PackageResolvableAttributeHandler
 
 
+/**
+ * @brief Constructs a handler for a package provides-resolvable sub-attribute.
+ *
+ * @param packageInfoValue Reference to the enclosing attribute value buffer.
+ */
 ReaderImplBase::PackageResolvableAttributeHandler
 	::PackageResolvableAttributeHandler(
 		BPackageInfoAttributeValue& packageInfoValue)
@@ -251,6 +416,15 @@ ReaderImplBase::PackageResolvableAttributeHandler
 }
 
 
+/**
+ * @brief Handles resolvable version and compatible-version sub-attributes.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Output for a child PackageVersionAttributeHandler if needed.
+ * @return B_OK on success, or B_BAD_DATA for an unrecognised ID.
+ */
 status_t
 ReaderImplBase::PackageResolvableAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -300,6 +474,11 @@ ReaderImplBase::PackageResolvableAttributeHandler::HandleAttribute(
 // #pragma mark - PackageResolvableExpressionAttributeHandler
 
 
+/**
+ * @brief Constructs a handler for a resolvable-expression (requires/conflicts/etc.).
+ *
+ * @param packageInfoValue Reference to the enclosing attribute value buffer.
+ */
 ReaderImplBase::PackageResolvableExpressionAttributeHandler
 	::PackageResolvableExpressionAttributeHandler(
 		BPackageInfoAttributeValue& packageInfoValue)
@@ -309,6 +488,15 @@ ReaderImplBase::PackageResolvableExpressionAttributeHandler
 }
 
 
+/**
+ * @brief Handles operator and version sub-attributes of a resolvable expression.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Output for a child PackageVersionAttributeHandler if needed.
+ * @return B_OK on success, or B_BAD_DATA for an invalid operator or unknown ID.
+ */
 status_t
 ReaderImplBase::PackageResolvableExpressionAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -360,6 +548,11 @@ ReaderImplBase::PackageResolvableExpressionAttributeHandler::HandleAttribute(
 // #pragma mark - GlobalWritableFileInfoAttributeHandler
 
 
+/**
+ * @brief Constructs a handler for a global writable file info sub-attribute.
+ *
+ * @param packageInfoValue Reference to the enclosing attribute value buffer.
+ */
 ReaderImplBase::GlobalWritableFileInfoAttributeHandler
 	::GlobalWritableFileInfoAttributeHandler(
 		BPackageInfoAttributeValue& packageInfoValue)
@@ -369,6 +562,15 @@ ReaderImplBase::GlobalWritableFileInfoAttributeHandler
 }
 
 
+/**
+ * @brief Handles update-type and is-directory sub-attributes of a writable file.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Unused; writable file info has no further nesting.
+ * @return B_OK on success, or B_BAD_DATA for an invalid update type or unknown ID.
+ */
 status_t
 ReaderImplBase::GlobalWritableFileInfoAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -410,6 +612,11 @@ ReaderImplBase::GlobalWritableFileInfoAttributeHandler::HandleAttribute(
 // #pragma mark - UserSettingsFileInfoAttributeHandler
 
 
+/**
+ * @brief Constructs a handler for a user settings file info sub-attribute.
+ *
+ * @param packageInfoValue Reference to the enclosing attribute value buffer.
+ */
 ReaderImplBase::UserSettingsFileInfoAttributeHandler
 	::UserSettingsFileInfoAttributeHandler(
 		BPackageInfoAttributeValue& packageInfoValue)
@@ -419,6 +626,15 @@ ReaderImplBase::UserSettingsFileInfoAttributeHandler
 }
 
 
+/**
+ * @brief Handles template-path and is-directory sub-attributes of a user settings file.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Unused; user settings file info has no further nesting.
+ * @return B_OK on success, or B_BAD_DATA for an unknown attribute ID.
+ */
 status_t
 ReaderImplBase::UserSettingsFileInfoAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -452,6 +668,11 @@ ReaderImplBase::UserSettingsFileInfoAttributeHandler::HandleAttribute(
 // #pragma mark - UserAttributeHandler
 
 
+/**
+ * @brief Constructs a handler for a package user entry sub-attribute.
+ *
+ * @param packageInfoValue Reference to the enclosing attribute value buffer.
+ */
 ReaderImplBase::UserAttributeHandler::UserAttributeHandler(
 		BPackageInfoAttributeValue& packageInfoValue)
 	:
@@ -461,6 +682,16 @@ ReaderImplBase::UserAttributeHandler::UserAttributeHandler(
 }
 
 
+/**
+ * @brief Handles user sub-attributes such as real name, home, shell, and groups.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Unused; user info has no further nesting.
+ * @return B_OK on success, B_NO_MEMORY if a group string cannot be stored,
+ *         or B_BAD_DATA for an unknown attribute ID.
+ */
 status_t
 ReaderImplBase::UserAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -499,6 +730,12 @@ ReaderImplBase::UserAttributeHandler::HandleAttribute(
 }
 
 
+/**
+ * @brief Transfers collected groups into the value buffer and notifies the handler.
+ *
+ * @param context Parsing context.
+ * @return B_OK on success, or an error code from the base class notification.
+ */
 status_t
 ReaderImplBase::UserAttributeHandler::NotifyDone(
 	AttributeHandlerContext* context)
@@ -515,6 +752,19 @@ ReaderImplBase::UserAttributeHandler::NotifyDone(
 // #pragma mark - PackageAttributeHandler
 
 
+/**
+ * @brief Dispatches top-level package attribute IDs to typed value handlers.
+ *
+ * Routes each recognised attribute ID to the appropriate field in the
+ * fPackageInfoValue buffer and optionally creates a child handler for
+ * compound attributes such as versions, resolvables, and file infos.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Output for a child handler when the attribute has children.
+ * @return B_OK on success, or B_BAD_DATA / B_NO_MEMORY on error.
+ */
 status_t
 ReaderImplBase::PackageAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -733,6 +983,13 @@ ReaderImplBase::PackageAttributeHandler::HandleAttribute(
 // #pragma mark - LowLevelAttributeHandler
 
 
+/**
+ * @brief Default-constructs a root LowLevelAttributeHandler.
+ *
+ * Used as the root handler pushed onto the stack before parsing begins.
+ * The sentinel ID B_HPKG_ATTRIBUTE_ID_ENUM_COUNT marks it as the root so
+ * NotifyDone() does not attempt to call HandleAttributeDone for it.
+ */
 ReaderImplBase::LowLevelAttributeHandler::LowLevelAttributeHandler()
 	:
 	fParentToken(NULL),
@@ -742,6 +999,14 @@ ReaderImplBase::LowLevelAttributeHandler::LowLevelAttributeHandler()
 }
 
 
+/**
+ * @brief Constructs a LowLevelAttributeHandler for a specific attribute node.
+ *
+ * @param id          Attribute ID of the node this handler was created for.
+ * @param value       Decoded value of the triggering attribute.
+ * @param parentToken Opaque token of the parent attribute node.
+ * @param token       Opaque token assigned to this attribute node by the handler.
+ */
 ReaderImplBase::LowLevelAttributeHandler::LowLevelAttributeHandler(uint8 id,
 	const BPackageAttributeValue& value, void* parentToken, void* token)
 	:
@@ -753,6 +1018,15 @@ ReaderImplBase::LowLevelAttributeHandler::LowLevelAttributeHandler(uint8 id,
 }
 
 
+/**
+ * @brief Forwards the attribute to the low-level content handler and creates a child.
+ *
+ * @param context  Parsing context.
+ * @param id       Attribute ID.
+ * @param value    Decoded attribute value.
+ * @param _handler Output for a child LowLevelAttributeHandler if children follow.
+ * @return B_OK on success, B_NO_MEMORY if a child handler cannot be allocated.
+ */
 status_t
 ReaderImplBase::LowLevelAttributeHandler::HandleAttribute(
 	AttributeHandlerContext* context, uint8 id, const AttributeValue& value,
@@ -783,6 +1057,12 @@ ReaderImplBase::LowLevelAttributeHandler::HandleAttribute(
 }
 
 
+/**
+ * @brief Calls HandleAttributeDone() on the low-level handler when all children are done.
+ *
+ * @param context Parsing context.
+ * @return B_OK on success, or an error code from the low-level handler.
+ */
 status_t
 ReaderImplBase::LowLevelAttributeHandler::NotifyDone(
 	AttributeHandlerContext* context)
@@ -800,6 +1080,12 @@ ReaderImplBase::LowLevelAttributeHandler::NotifyDone(
 // #pragma mark - ReaderImplBase
 
 
+/**
+ * @brief Constructs a ReaderImplBase with no file open yet.
+ *
+ * @param fileType    Human-readable label used in error messages ("package" etc.).
+ * @param errorOutput Destination for diagnostic messages.
+ */
 ReaderImplBase::ReaderImplBase(const char* fileType, BErrorOutput* errorOutput)
 	:
 	fPackageAttributesSection("package attributes"),
@@ -814,6 +1100,12 @@ ReaderImplBase::ReaderImplBase(const char* fileType, BErrorOutput* errorOutput)
 }
 
 
+/**
+ * @brief Destroys the ReaderImplBase and releases all heap reader resources.
+ *
+ * If fHeapReader and fRawHeapReader are different objects (a caching layer was
+ * created on top of the raw reader), both are deleted independently.
+ */
 ReaderImplBase::~ReaderImplBase()
 {
 	delete fHeapReader;
@@ -825,6 +1117,11 @@ ReaderImplBase::~ReaderImplBase()
 }
 
 
+/**
+ * @brief Returns the total uncompressed size of the heap region.
+ *
+ * @return Uncompressed heap size in bytes.
+ */
 uint64
 ReaderImplBase::UncompressedHeapSize() const
 {
@@ -832,6 +1129,15 @@ ReaderImplBase::UncompressedHeapSize() const
 }
 
 
+/**
+ * @brief Transfers heap reader ownership to the caller, clearing internal pointers.
+ *
+ * Used by recompression logic that needs to take over the heap reader. After
+ * this call both fHeapReader and fRawHeapReader are NULL.
+ *
+ * @param _rawHeapReader Output that receives the raw (non-caching) heap reader.
+ * @return The (possibly caching) heap reader; the caller must delete both objects.
+ */
 BAbstractBufferedDataReader*
 ReaderImplBase::DetachHeapReader(PackageFileHeapReader*& _rawHeapReader)
 {
@@ -844,6 +1150,20 @@ ReaderImplBase::DetachHeapReader(PackageFileHeapReader*& _rawHeapReader)
 }
 
 
+/**
+ * @brief Creates and initialises the heap reader for the given compression parameters.
+ *
+ * Selects and instantiates the appropriate decompression algorithm (none, zlib,
+ * or zstd), creates a PackageFileHeapReader, and optionally wraps it in a caching
+ * layer via CreateCachedHeapReader().
+ *
+ * @param compression       B_HPKG_COMPRESSION_* constant identifying the algorithm.
+ * @param chunkSize         Compressed chunk size used by the heap.
+ * @param offset            Byte offset of the heap region in the file.
+ * @param compressedSize    Compressed size of the heap in bytes.
+ * @param uncompressedSize  Uncompressed size of the heap in bytes.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 ReaderImplBase::InitHeapReader(uint32 compression, uint32 chunkSize,
 	off_t offset, uint64 compressedSize, uint64 uncompressedSize)
@@ -903,6 +1223,17 @@ ReaderImplBase::InitHeapReader(uint32 compression, uint32 chunkSize,
 }
 
 
+/**
+ * @brief Hook for subclasses to wrap the raw heap reader in a caching layer.
+ *
+ * The default implementation returns B_NOT_SUPPORTED, which causes InitHeapReader()
+ * to use the raw reader directly. Subclasses that implement read-ahead or caching
+ * should override this method.
+ *
+ * @param heapReader    The raw PackageFileHeapReader to wrap.
+ * @param _cachedReader Output for the new caching reader.
+ * @return B_NOT_SUPPORTED by default; an error code on failure in overrides.
+ */
 status_t
 ReaderImplBase::CreateCachedHeapReader(PackageFileHeapReader* heapReader,
 	BAbstractBufferedDataReader*& _cachedReader)
@@ -911,6 +1242,20 @@ ReaderImplBase::CreateCachedHeapReader(PackageFileHeapReader* heapReader,
 }
 
 
+/**
+ * @brief Validates and stores section bounds relative to the end of the file.
+ *
+ * Checks that @a length does not exceed @a endOffset, enforces a sanity limit,
+ * and validates the strings subsection description.
+ *
+ * @param section         Section descriptor to populate.
+ * @param endOffset       Byte offset just past the end of this section in the file.
+ * @param length          Total uncompressed byte length of the section.
+ * @param maxSaneLength   Maximum accepted section length (0 = no limit).
+ * @param stringsLength   Byte length of the strings subsection.
+ * @param stringsCount    Number of strings recorded in the header.
+ * @return B_OK on success, B_BAD_DATA if the lengths are inconsistent.
+ */
 status_t
 ReaderImplBase::InitSection(PackageFileSection& section, uint64 endOffset,
 	uint64 length, uint64 maxSaneLength, uint64 stringsLength,
@@ -951,6 +1296,15 @@ ReaderImplBase::InitSection(PackageFileSection& section, uint64 endOffset,
 }
 
 
+/**
+ * @brief Reads the section data from the heap and parses its string table.
+ *
+ * Allocates a buffer for the section, decompresses the data from the heap,
+ * then calls ParseStrings() to fill the per-section string pointer array.
+ *
+ * @param section Section descriptor previously initialised by InitSection().
+ * @return B_OK on success, or an error code if I/O or parsing fails.
+ */
 status_t
 ReaderImplBase::PrepareSection(PackageFileSection& section)
 {
@@ -977,6 +1331,15 @@ ReaderImplBase::PrepareSection(PackageFileSection& section)
 }
 
 
+/**
+ * @brief Parses the string table at the beginning of the current section.
+ *
+ * Iterates the null-terminated strings in the string region of fCurrentSection,
+ * builds the pointer array fCurrentSection->strings, and advances currentOffset
+ * past the strings region.
+ *
+ * @return B_OK on success, or B_BAD_DATA / B_NO_MEMORY if the table is malformed.
+ */
 status_t
 ReaderImplBase::ParseStrings()
 {
@@ -1041,6 +1404,17 @@ ReaderImplBase::ParseStrings()
 }
 
 
+/**
+ * @brief Parses the package attributes section using the supplied handler stack.
+ *
+ * Activates the package attributes section, seeds the handler stack with
+ * @a rootAttributeHandler, and drives the attribute tree parser. Cleans up
+ * the handler stack if an error occurs.
+ *
+ * @param context               Parsing context.
+ * @param rootAttributeHandler  Root handler pushed before parsing begins.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 ReaderImplBase::ParsePackageAttributesSection(
 	AttributeHandlerContext* context, AttributeHandler* rootAttributeHandler)
@@ -1082,6 +1456,17 @@ ReaderImplBase::ParsePackageAttributesSection(
 }
 
 
+/**
+ * @brief Wraps _ParseAttributeTree with optional low-level section start/end calls.
+ *
+ * If a low-level handler is active, calls HandleSectionStart() first; if the
+ * handler declines the section, returns early with @a _sectionHandled set to false.
+ * On completion calls HandleSectionEnd().
+ *
+ * @param context          Parsing context.
+ * @param _sectionHandled  Set to true if the section was parsed, false if skipped.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 ReaderImplBase::ParseAttributeTree(AttributeHandlerContext* context,
 	bool& _sectionHandled)
@@ -1113,6 +1498,13 @@ ReaderImplBase::ParseAttributeTree(AttributeHandlerContext* context,
 }
 
 
+/**
+ * @brief Stores the supplied file pointer and takes optional ownership.
+ *
+ * @param file      BPositionIO stream to use for reading.
+ * @param keepFile  If true, the reader takes ownership and will delete the file.
+ * @return B_OK on success, or B_BAD_VALUE if @a file is NULL.
+ */
 status_t
 ReaderImplBase::_Init(BPositionIO* file, bool keepFile)
 {
@@ -1122,6 +1514,16 @@ ReaderImplBase::_Init(BPositionIO* file, bool keepFile)
 }
 
 
+/**
+ * @brief Iterates the attribute tree using the handler stack until a terminal tag.
+ *
+ * Reads attribute tags and values in a loop; pops the handler stack and calls
+ * NotifyDone() when a zero tag (end-of-children marker) is encountered.
+ * Creates child handlers or IgnoreAttributeHandlers as the tree descends.
+ *
+ * @param context Parsing context.
+ * @return B_OK on success, or an error code from any handler or I/O operation.
+ */
 status_t
 ReaderImplBase::_ParseAttributeTree(AttributeHandlerContext* context)
 {
@@ -1176,6 +1578,18 @@ ReaderImplBase::_ParseAttributeTree(AttributeHandlerContext* context)
 }
 
 
+/**
+ * @brief Reads and decodes a single attribute tag and its associated value.
+ *
+ * Decodes the LEB128 tag to extract type, ID, encoding, and has-children flag,
+ * then calls ReadAttributeValue() to decode the payload.
+ *
+ * @param _id          Output for the attribute ID byte.
+ * @param _value       Output for the decoded attribute value.
+ * @param _hasChildren Output for the has-children flag; may be NULL.
+ * @param _tag         Output for the raw tag value; may be NULL.
+ * @return B_OK on success, or B_BAD_DATA if the tag is malformed.
+ */
 status_t
 ReaderImplBase::_ReadAttribute(uint8& _id, AttributeValue& _value,
 	bool* _hasChildren, uint64* _tag)
@@ -1225,6 +1639,17 @@ ReaderImplBase::_ReadAttribute(uint8& _id, AttributeValue& _value,
 }
 
 
+/**
+ * @brief Decodes the payload of an attribute given its type and encoding.
+ *
+ * Reads the appropriate number of bytes from the current section buffer and
+ * stores the result in @a _value.
+ *
+ * @param type      B_HPKG_ATTRIBUTE_TYPE_* constant.
+ * @param encoding  B_HPKG_ATTRIBUTE_ENCODING_* constant.
+ * @param _value    Output for the decoded value.
+ * @return B_OK on success, or B_BAD_DATA / B_BAD_VALUE on malformed input.
+ */
 status_t
 ReaderImplBase::ReadAttributeValue(uint8 type, uint8 encoding,
 	AttributeValue& _value)
@@ -1326,6 +1751,12 @@ ReaderImplBase::ReadAttributeValue(uint8 type, uint8 encoding,
 }
 
 
+/**
+ * @brief Reads an unsigned LEB128-encoded integer from the current section.
+ *
+ * @param _value Output for the decoded 64-bit unsigned value.
+ * @return B_OK on success, or an I/O error code.
+ */
 status_t
 ReaderImplBase::ReadUnsignedLEB128(uint64& _value)
 {
@@ -1348,6 +1779,16 @@ ReaderImplBase::ReadUnsignedLEB128(uint64& _value)
 }
 
 
+/**
+ * @brief Reads a null-terminated string from the current section buffer.
+ *
+ * Returns a pointer into the section's in-memory buffer (no copy). Advances
+ * the section cursor past the string and its terminating null byte.
+ *
+ * @param _string       Output pointer into the section buffer.
+ * @param _stringLength Optional output for the string length excluding the null.
+ * @return B_OK on success, or B_BAD_DATA if the string extends past section end.
+ */
 status_t
 ReaderImplBase::_ReadString(const char*& _string, size_t* _stringLength)
 {
@@ -1374,6 +1815,13 @@ ReaderImplBase::_ReadString(const char*& _string, size_t* _stringLength)
 }
 
 
+/**
+ * @brief Reads @a size bytes from the current section into @a buffer.
+ *
+ * @param buffer Destination buffer.
+ * @param size   Number of bytes to copy.
+ * @return B_OK on success, or B_BAD_DATA if the read would exceed section end.
+ */
 status_t
 ReaderImplBase::_ReadSectionBuffer(void* buffer, size_t size)
 {
@@ -1392,6 +1840,14 @@ ReaderImplBase::_ReadSectionBuffer(void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Reads @a size bytes from the underlying file at the given absolute offset.
+ *
+ * @param offset Absolute byte offset into the file.
+ * @param buffer Destination buffer.
+ * @param size   Number of bytes to read.
+ * @return B_OK on success, or an I/O error code.
+ */
 status_t
 ReaderImplBase::ReadBuffer(off_t offset, void* buffer, size_t size)
 {
@@ -1406,6 +1862,12 @@ ReaderImplBase::ReadBuffer(off_t offset, void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Reads a complete section from the heap into its preallocated buffer.
+ *
+ * @param section Section whose data pointer and offset describe what to read.
+ * @return B_OK on success, or an error code from the heap reader.
+ */
 status_t
 ReaderImplBase::ReadSection(const PackageFileSection& section)
 {

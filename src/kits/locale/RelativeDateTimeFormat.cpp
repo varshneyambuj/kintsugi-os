@@ -1,9 +1,42 @@
 /*
- * Copyright 2017, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Akshay Agarwal <agarwal.akshay.akshay8@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2017, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Akshay Agarwal <agarwal.akshay.akshay8@gmail.com>
+ */
+
+
+/**
+ * @file RelativeDateTimeFormat.cpp
+ * @brief Implementation of BRelativeDateTimeFormat for "N minutes ago" strings.
+ *
+ * BRelativeDateTimeFormat uses ICU's RelativeDateTimeFormatter and
+ * GregorianCalendar to compute the difference between a reference time and
+ * the current moment, then renders it as a localized relative string such as
+ * "3 hours ago" or "in 2 days". The largest non-zero calendar field (year
+ * through second) is selected as the display unit.
+ *
+ * @see BDurationFormat, BFormat
  */
 
 
@@ -28,6 +61,7 @@
 U_NAMESPACE_USE
 
 
+/** @brief Maps BTimeUnitElement indices to ICU RelativeDateTimeFormatter unit constants. */
 static const URelativeDateTimeUnit kTimeUnitToRelativeDateTime[] = {
 	UDAT_REL_UNIT_YEAR,
 	UDAT_REL_UNIT_MONTH,
@@ -39,6 +73,7 @@ static const URelativeDateTimeUnit kTimeUnitToRelativeDateTime[] = {
 };
 
 
+/** @brief Maps BTimeUnitElement indices to ICU calendar field constants. */
 static const UCalendarDateFields kTimeUnitToICUDateField[] = {
 	UCAL_YEAR,
 	UCAL_MONTH,
@@ -50,6 +85,12 @@ static const UCalendarDateFields kTimeUnitToICUDateField[] = {
 };
 
 
+/**
+ * @brief Construct a BRelativeDateTimeFormat using the default locale.
+ *
+ * Creates the ICU RelativeDateTimeFormatter and a GregorianCalendar for the
+ * language derived from the default locale.
+ */
 BRelativeDateTimeFormat::BRelativeDateTimeFormat()
 	: Inherited()
 {
@@ -73,6 +114,12 @@ BRelativeDateTimeFormat::BRelativeDateTimeFormat()
 }
 
 
+/**
+ * @brief Construct a BRelativeDateTimeFormat with explicit language and conventions.
+ *
+ * @param language     Language for the relative time strings.
+ * @param conventions  Formatting conventions (currently not directly used).
+ */
 BRelativeDateTimeFormat::BRelativeDateTimeFormat(const BLanguage& language,
 	const BFormattingConventions& conventions)
 	: Inherited(language, conventions)
@@ -97,6 +144,11 @@ BRelativeDateTimeFormat::BRelativeDateTimeFormat(const BLanguage& language,
 }
 
 
+/**
+ * @brief Copy-construct a BRelativeDateTimeFormat, cloning internal ICU objects.
+ *
+ * @param other  Source BRelativeDateTimeFormat to copy.
+ */
 BRelativeDateTimeFormat::BRelativeDateTimeFormat(const BRelativeDateTimeFormat& other)
 	: Inherited(other),
 	fFormatter(other.fFormatter != NULL
@@ -110,6 +162,9 @@ BRelativeDateTimeFormat::BRelativeDateTimeFormat(const BRelativeDateTimeFormat& 
 }
 
 
+/**
+ * @brief Destroy the BRelativeDateTimeFormat and free ICU objects.
+ */
 BRelativeDateTimeFormat::~BRelativeDateTimeFormat()
 {
 	delete fFormatter;
@@ -117,6 +172,18 @@ BRelativeDateTimeFormat::~BRelativeDateTimeFormat()
 }
 
 
+/**
+ * @brief Format a time_t value relative to the current time.
+ *
+ * Computes the difference between \a timeValue and the current time using
+ * ICU fieldDifference, then delegates to ICU RelativeDateTimeFormatter to
+ * produce a string like "3 hours ago" or "in 2 days".
+ *
+ * @param string     Output BString that receives the relative time string.
+ * @param timeValue  The reference POSIX timestamp to describe.
+ * @return B_OK on success, B_NO_INIT if the formatter is unset, B_ERROR on
+ *         ICU failure.
+ */
 status_t
 BRelativeDateTimeFormat::Format(BString& string,
 	const time_t timeValue) const

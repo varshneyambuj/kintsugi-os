@@ -1,11 +1,41 @@
 /*
- * Copyright 2011-2012, Haiku Inc. All Rights Reserved.
- * Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2012, Haiku Inc. All Rights Reserved.
+ *   Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
 
 
-//! The standard config view for all protocols.
+/**
+ * @file ProtocolConfigView.cpp
+ * @brief Standard configuration views for inbound and outbound mail protocol add-ons.
+ *
+ * Provides BodyDownloadConfigView (a checkbox + size field for partial-download
+ * limits) and MailProtocolConfigView (the full protocol settings panel with
+ * server hostname, username, password, connection type, authentication method,
+ * leave-on-server, and partial-download controls). Protocol add-ons use these
+ * views in their instantiate_config_panel() entry point.
+ *
+ * @see BMailSettingsView, BMailAddOnSettings, BMailProtocolSettings
+ */
 
 
 #include "ProtocolConfigView.h"
@@ -32,16 +62,28 @@
 #define B_TRANSLATION_CONTEXT "ProtocolConfigView"
 
 
+/** @brief Settings key for the partial-download size limit in bytes. */
 static const char* kPartialDownloadLimit = "partial_download_limit";
 
+/** @brief Message sent when the "Leave on server" checkbox changes state. */
 static const uint32 kMsgLeaveOnServer = 'lmos';
+
+/** @brief Message sent by an authentication menu item that requires no password. */
 static const uint32 kMsgNoPassword = 'none';
+
+/** @brief Message sent by an authentication menu item that requires a password. */
 static const uint32 kMsgNeedPassword = 'some';
 
 
 namespace BPrivate {
 
 
+/**
+ * @brief Constructs the body download configuration sub-view.
+ *
+ * Creates a horizontal layout containing a "Partially download messages
+ * larger than" checkbox and a KB text-entry field.
+ */
 BodyDownloadConfigView::BodyDownloadConfigView()
 	:
 	BView("body_config", 0)
@@ -62,6 +104,14 @@ BodyDownloadConfigView::BodyDownloadConfigView()
 }
 
 
+/**
+ * @brief Populates the partial-download controls from the given protocol settings.
+ *
+ * If the limit is negative (not set), the checkbox is unchecked and the size
+ * field is disabled. Otherwise the current limit is converted to KB and displayed.
+ *
+ * @param settings  Protocol settings to read the partial_download_limit from.
+ */
 void
 BodyDownloadConfigView::SetTo(const BMailProtocolSettings& settings)
 {
@@ -80,6 +130,15 @@ BodyDownloadConfigView::SetTo(const BMailProtocolSettings& settings)
 }
 
 
+/**
+ * @brief Saves the partial-download limit into the add-on settings.
+ *
+ * If the checkbox is checked, stores the KB value multiplied by 1024.
+ * Otherwise removes the key entirely so the default (no limit) applies.
+ *
+ * @param settings  BMailAddOnSettings to update.
+ * @return B_OK always.
+ */
 status_t
 BodyDownloadConfigView::SaveInto(BMailAddOnSettings& settings) const
 {
@@ -93,6 +152,11 @@ BodyDownloadConfigView::SaveInto(BMailAddOnSettings& settings) const
 }
 
 
+/**
+ * @brief Enables or disables the size field when the partial-download checkbox changes.
+ *
+ * @param msg  Incoming BMessage (only 'SIZF' is handled; others are forwarded).
+ */
 void
 BodyDownloadConfigView::MessageReceived(BMessage *msg)
 {
@@ -102,6 +166,9 @@ BodyDownloadConfigView::MessageReceived(BMessage *msg)
 }
 
 
+/**
+ * @brief Sets the checkbox target to this view after attachment to a window.
+ */
 void
 BodyDownloadConfigView::AttachedToWindow()
 {
@@ -113,6 +180,16 @@ BodyDownloadConfigView::AttachedToWindow()
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the full protocol configuration view.
+ *
+ * Builds a BGridLayout containing any combination of hostname, username,
+ * password, connection-type, authentication-method, leave-on-server, and
+ * partial-download controls as selected by \a optionsMask.
+ *
+ * @param optionsMask  Bitmask of B_MAIL_PROTOCOL_HAS_* constants controlling
+ *                     which controls are created.
+ */
 MailProtocolConfigView::MailProtocolConfigView(uint32 optionsMask)
 	:
 	BMailSettingsView("protocol_config_view"),
@@ -174,11 +251,23 @@ MailProtocolConfigView::MailProtocolConfigView(uint32 optionsMask)
 }
 
 
+/**
+ * @brief Destroys the MailProtocolConfigView.
+ */
 MailProtocolConfigView::~MailProtocolConfigView()
 {
 }
 
 
+/**
+ * @brief Populates all controls from the given protocol settings.
+ *
+ * Fills the server, username, password (decrypting the stored cpasswd),
+ * flavor, auth-method, and leave-on-server controls from the BMessage fields
+ * in \a settings.
+ *
+ * @param settings  Protocol settings to read from.
+ */
 void
 MailProtocolConfigView::SetTo(const BMailProtocolSettings& settings)
 {
@@ -231,6 +320,14 @@ MailProtocolConfigView::SetTo(const BMailProtocolSettings& settings)
 }
 
 
+/**
+ * @brief Adds a labeled connection-type menu item.
+ *
+ * Call once per supported connection flavor (e.g. "Plain", "SSL"). The first
+ * added item is automatically selected.
+ *
+ * @param label  Human-readable connection type string.
+ */
 void
 MailProtocolConfigView::AddFlavor(const char* label)
 {
@@ -243,6 +340,13 @@ MailProtocolConfigView::AddFlavor(const char* label)
 }
 
 
+/**
+ * @brief Adds a labeled authentication-method menu item.
+ *
+ * @param label              Human-readable auth method name.
+ * @param needUserPassword   If true, the item enables the username/password
+ *                           fields; if false, it disables them.
+ */
 void
 MailProtocolConfigView::AddAuthMethod(const char* label, bool needUserPassword)
 {
@@ -260,6 +364,11 @@ MailProtocolConfigView::AddAuthMethod(const char* label, bool needUserPassword)
 }
 
 
+/**
+ * @brief Returns the underlying BGridLayout for adding custom controls.
+ *
+ * @return Pointer to the BGridLayout managing this view's children.
+ */
 BGridLayout*
 MailProtocolConfigView::Layout() const
 {
@@ -267,6 +376,16 @@ MailProtocolConfigView::Layout() const
 }
 
 
+/**
+ * @brief Saves all control values into the given add-on settings.
+ *
+ * Splits the hostname:port string, stores username and encrypted password,
+ * records menu selection indices, saves checkbox states, and delegates to
+ * fBodyDownloadConfig if present.
+ *
+ * @param settings  BMailAddOnSettings to receive the updated values.
+ * @return B_OK on success.
+ */
 status_t
 MailProtocolConfigView::SaveInto(BMailAddOnSettings& settings) const
 {
@@ -317,6 +436,9 @@ MailProtocolConfigView::SaveInto(BMailAddOnSettings& settings) const
 }
 
 
+/**
+ * @brief Wires authentication menu items and the leave-on-server checkbox targets.
+ */
 void
 MailProtocolConfigView::AttachedToWindow()
 {
@@ -328,6 +450,16 @@ MailProtocolConfigView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handles authentication and leave-on-server control changes.
+ *
+ * Enables or disables credential fields based on the selected auth method,
+ * and enables the "Remove from server" checkbox when "Leave on server" is
+ * checked.
+ *
+ * @param message  Incoming BMessage with what code kMsgNeedPassword,
+ *                 kMsgNoPassword, or kMsgLeaveOnServer.
+ */
 void
 MailProtocolConfigView::MessageReceived(BMessage* message)
 {
@@ -347,6 +479,14 @@ MailProtocolConfigView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Creates and adds a labeled BTextControl to the grid layout.
+ *
+ * @param layout  Grid layout to append to.
+ * @param name    BView name for the control.
+ * @param label   Human-readable label displayed to the left.
+ * @return Pointer to the created BTextControl.
+ */
 BTextControl*
 MailProtocolConfigView::_AddTextControl(BGridLayout* layout, const char* name,
 	const char* label)
@@ -361,6 +501,14 @@ MailProtocolConfigView::_AddTextControl(BGridLayout* layout, const char* name,
 }
 
 
+/**
+ * @brief Creates and adds a labeled BMenuField (pop-up menu) to the grid layout.
+ *
+ * @param layout  Grid layout to append to.
+ * @param name    BView name for the menu field.
+ * @param label   Human-readable label displayed to the left.
+ * @return Pointer to the created BMenuField.
+ */
 BMenuField*
 MailProtocolConfigView::_AddMenuField(BGridLayout* layout, const char* name,
 	const char* label)
@@ -376,6 +524,13 @@ MailProtocolConfigView::_AddMenuField(BGridLayout* layout, const char* name,
 }
 
 
+/**
+ * @brief Stores the index of the marked menu item into a BMessage field.
+ *
+ * @param message  BMessage to update.
+ * @param name     Field name to store the index under.
+ * @param field    Menu field to query; may be NULL (stores -1).
+ */
 void
 MailProtocolConfigView::_StoreIndexOfMarked(BMessage& message, const char* name,
 	BMenuField* field) const
@@ -390,6 +545,15 @@ MailProtocolConfigView::_StoreIndexOfMarked(BMessage& message, const char* name,
 }
 
 
+/**
+ * @brief Stores a boolean from a BCheckBox into a BMessage field.
+ *
+ * Removes the field if the checkbox is unchecked; sets it to true if checked.
+ *
+ * @param message   BMessage to update.
+ * @param name      Field name to store the value under.
+ * @param checkBox  Source checkbox; may be NULL (treated as unchecked).
+ */
 void
 MailProtocolConfigView::_StoreCheckBox(BMessage& message, const char* name,
 	BCheckBox* checkBox) const
@@ -402,6 +566,11 @@ MailProtocolConfigView::_StoreCheckBox(BMessage& message, const char* name,
 }
 
 
+/**
+ * @brief Enables or disables the username and password controls together.
+ *
+ * @param enabled  true to enable both controls.
+ */
 void
 MailProtocolConfigView::_SetCredentialsEnabled(bool enabled)
 {

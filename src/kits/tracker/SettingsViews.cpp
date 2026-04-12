@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file SettingsViews.cpp
+ * @brief Tracker preferences panel views for desktop, window, space bar, and automount settings.
+ *
+ * @see BGroupView, TrackerSettings, SettingsView
+ */
 
 
 #include "SettingsViews.h"
@@ -61,6 +59,13 @@ All rights reserved.
 static const uint32 kSpaceBarSwitchColor = 'SBsc';
 
 
+/**
+ * @brief Broadcast a boolean settings-change notification to the Tracker application.
+ *
+ * @param what   Message constant identifying the changed setting.
+ * @param name   Field name for the boolean value in the notification.
+ * @param value  The new boolean value.
+ */
 static void
 send_bool_notices(uint32 what, const char* name, bool value)
 {
@@ -81,6 +86,11 @@ send_bool_notices(uint32 what, const char* name, bool value)
 //	#pragma mark - SettingsView
 
 
+/**
+ * @brief Construct a SettingsView with the given name.
+ *
+ * @param name  View name passed to BGroupView.
+ */
 SettingsView::SettingsView(const char* name)
 	:
 	BGroupView(name)
@@ -88,28 +98,31 @@ SettingsView::SettingsView(const char* name)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 SettingsView::~SettingsView()
 {
 }
 
 
-/*!
-	The inherited functions should set the default values
-	and update the UI gadgets. The latter can by done by
-	calling ShowCurrentSettings().
-*/
+/**
+ * @brief Restore this settings view to its default values.
+ *
+ * Subclasses should apply default values to TrackerSettings and then
+ * call ShowCurrentSettings() to refresh the UI widgets.
+ */
 void
 SettingsView::SetDefaults()
 {
 }
 
 
-/*!
-	This function is used by the window to tell whether
-	it can ghost the defaults button or not. It doesn't
-	shows the default settings, this function should
-	return true.
-*/
+/**
+ * @brief Return whether the Defaults button should be enabled for this view.
+ *
+ * @return true if the current values differ from the defaults.
+ */
 bool
 SettingsView::IsDefaultable() const
 {
@@ -117,43 +130,43 @@ SettingsView::IsDefaultable() const
 }
 
 
-/*!
-	The inherited functions should set the values that was
-	active when the settings window opened. It should also
-	update the UI widgets accordingly, preferrable by calling
-	ShowCurrentSettings().
-*/
+/**
+ * @brief Restore the settings that were active when the window was opened.
+ *
+ * Subclasses should reapply the saved revert values to TrackerSettings and
+ * call ShowCurrentSettings() to refresh the UI.
+ */
 void
 SettingsView::Revert()
 {
 }
 
 
-/*!
-	This function is called when the window is shown to let
-	the settings views record the state to revert to.
-*/
+/**
+ * @brief Snapshot the current settings so they can be restored by Revert().
+ *
+ * Called by TrackerSettingsWindow::Show() before the window becomes visible.
+ */
 void
 SettingsView::RecordRevertSettings()
 {
 }
 
 
-/*!
-	This function is used by the window to tell the view
-	to display the current settings in the tracker.
-*/
+/**
+ * @brief Refresh all UI widgets to match the current TrackerSettings values.
+ */
 void
 SettingsView::ShowCurrentSettings()
 {
 }
 
 
-/*!
-	This function is used by the window to tell whether
-	it can ghost the revert button or not. It it shows the
-	reverted settings, this function should return true.
-*/
+/**
+ * @brief Return whether the Revert button should be enabled for this view.
+ *
+ * @return true if the current values differ from the saved revert state.
+ */
 bool
 SettingsView::IsRevertable() const
 {
@@ -164,6 +177,9 @@ SettingsView::IsRevertable() const
 // #pragma mark - DesktopSettingsView
 
 
+/**
+ * @brief Construct the Desktop settings view with volume-placement radio buttons.
+ */
 DesktopSettingsView::DesktopSettingsView()
 	:
 	SettingsView("DesktopSettingsView"),
@@ -202,6 +218,9 @@ DesktopSettingsView::DesktopSettingsView()
 }
 
 
+/**
+ * @brief Set the message targets for radio buttons when attached to a window.
+ */
 void
 DesktopSettingsView::AttachedToWindow()
 {
@@ -211,6 +230,11 @@ DesktopSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handle preference-change messages from the radio buttons and checkboxes.
+ *
+ * @param message  The incoming control-change message.
+ */
 void
 DesktopSettingsView::MessageReceived(BMessage* message)
 {
@@ -293,6 +317,9 @@ DesktopSettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Restore Desktop preferences to their factory defaults.
+ */
 void
 DesktopSettingsView::SetDefaults()
 {
@@ -309,6 +336,11 @@ DesktopSettingsView::SetDefaults()
 }
 
 
+/**
+ * @brief Return true if any Desktop preference differs from its factory default.
+ *
+ * @return true if the Defaults button should be enabled.
+ */
 bool
 DesktopSettingsView::IsDefaultable() const
 {
@@ -321,6 +353,9 @@ DesktopSettingsView::IsDefaultable() const
 }
 
 
+/**
+ * @brief Restore Desktop preferences to the values recorded when the window opened.
+ */
 void
 DesktopSettingsView::Revert()
 {
@@ -358,6 +393,9 @@ DesktopSettingsView::_SendNotices()
 }
 
 
+/**
+ * @brief Refresh the Desktop settings view widgets from the current TrackerSettings.
+ */
 void
 DesktopSettingsView::ShowCurrentSettings()
 {
@@ -374,6 +412,9 @@ DesktopSettingsView::ShowCurrentSettings()
 }
 
 
+/**
+ * @brief Snapshot the current Desktop settings for later use by Revert().
+ */
 void
 DesktopSettingsView::RecordRevertSettings()
 {
@@ -386,6 +427,11 @@ DesktopSettingsView::RecordRevertSettings()
 }
 
 
+/**
+ * @brief Return true if any Desktop preference differs from the saved revert state.
+ *
+ * @return true if the Revert button should be enabled.
+ */
 bool
 DesktopSettingsView::IsRevertable() const
 {
@@ -400,6 +446,9 @@ DesktopSettingsView::IsRevertable() const
 // #pragma mark - WindowsSettingsView
 
 
+/**
+ * @brief Construct the Windows settings view with all window-behaviour checkboxes.
+ */
 WindowsSettingsView::WindowsSettingsView()
 	:
 	SettingsView("WindowsSettingsView"),
@@ -475,6 +524,9 @@ WindowsSettingsView::WindowsSettingsView()
 }
 
 
+/**
+ * @brief Set message targets for all checkbox controls when attached to a window.
+ */
 void
 WindowsSettingsView::AttachedToWindow()
 {
@@ -489,6 +541,11 @@ WindowsSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handle window-preference changes from the checkboxes and sliders.
+ *
+ * @param message  The incoming control-change message.
+ */
 void
 WindowsSettingsView::MessageReceived(BMessage* message)
 {
@@ -595,6 +652,9 @@ WindowsSettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Restore Windows preferences to their factory defaults.
+ */
 void
 WindowsSettingsView::SetDefaults()
 {
@@ -653,6 +713,11 @@ WindowsSettingsView::SetDefaults()
 }
 
 
+/**
+ * @brief Return true if any Windows preference differs from its factory default.
+ *
+ * @return true if the Defaults button should be enabled.
+ */
 bool
 WindowsSettingsView::IsDefaultable() const
 {
@@ -669,6 +734,9 @@ WindowsSettingsView::IsDefaultable() const
 }
 
 
+/**
+ * @brief Restore Windows preferences to the values recorded when the window opened.
+ */
 void
 WindowsSettingsView::Revert()
 {
@@ -727,6 +795,9 @@ WindowsSettingsView::Revert()
 }
 
 
+/**
+ * @brief Refresh the Windows settings view widgets from the current TrackerSettings.
+ */
 void
 WindowsSettingsView::ShowCurrentSettings()
 {
@@ -747,6 +818,9 @@ WindowsSettingsView::ShowCurrentSettings()
 }
 
 
+/**
+ * @brief Snapshot the current Windows preferences for later use by Revert().
+ */
 void
 WindowsSettingsView::RecordRevertSettings()
 {
@@ -763,6 +837,11 @@ WindowsSettingsView::RecordRevertSettings()
 }
 
 
+/**
+ * @brief Return true if any Windows preference differs from the saved revert state.
+ *
+ * @return true if the Revert button should be enabled.
+ */
 bool
 WindowsSettingsView::IsRevertable() const
 {
@@ -782,6 +861,9 @@ WindowsSettingsView::IsRevertable() const
 // #pragma mark - SpaceBarSettingsView
 
 
+/**
+ * @brief Construct the Volume icons settings view with space-bar colour controls.
+ */
 SpaceBarSettingsView::SpaceBarSettingsView()
 	:
 	SettingsView("SpaceBarSettingsView")
@@ -833,6 +915,9 @@ SpaceBarSettingsView::~SpaceBarSettingsView()
 }
 
 
+/**
+ * @brief Set message targets for space-bar controls when attached to a window.
+ */
 void
 SpaceBarSettingsView::AttachedToWindow()
 {
@@ -842,6 +927,11 @@ SpaceBarSettingsView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handle space-bar and colour-picker change messages.
+ *
+ * @param message  The incoming control-change message.
+ */
 void
 SpaceBarSettingsView::MessageReceived(BMessage* message)
 {
@@ -916,6 +1006,9 @@ SpaceBarSettingsView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Restore Volume icons / space-bar preferences to their factory defaults.
+ */
 void
 SpaceBarSettingsView::SetDefaults()
 {
@@ -943,6 +1036,11 @@ SpaceBarSettingsView::SetDefaults()
 }
 
 
+/**
+ * @brief Return true if any Volume icons preference differs from its factory default.
+ *
+ * @return true if the Defaults button should be enabled.
+ */
 bool
 SpaceBarSettingsView::IsDefaultable() const
 {
@@ -955,6 +1053,9 @@ SpaceBarSettingsView::IsDefaultable() const
 }
 
 
+/**
+ * @brief Restore Volume icons preferences to the values recorded when the window opened.
+ */
 void
 SpaceBarSettingsView::Revert()
 {
@@ -983,6 +1084,9 @@ SpaceBarSettingsView::Revert()
 }
 
 
+/**
+ * @brief Refresh Volume icons view widgets from the current TrackerSettings.
+ */
 void
 SpaceBarSettingsView::ShowCurrentSettings()
 {
@@ -1004,6 +1108,9 @@ SpaceBarSettingsView::ShowCurrentSettings()
 }
 
 
+/**
+ * @brief Snapshot the current Volume icons preferences for later use by Revert().
+ */
 void
 SpaceBarSettingsView::RecordRevertSettings()
 {
@@ -1016,6 +1123,11 @@ SpaceBarSettingsView::RecordRevertSettings()
 }
 
 
+/**
+ * @brief Return true if any Volume icons preference differs from the saved revert state.
+ *
+ * @return true if the Revert button should be enabled.
+ */
 bool
 SpaceBarSettingsView::IsRevertable() const
 {

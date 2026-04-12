@@ -1,11 +1,44 @@
 /*
- * Copyright 2021-2022, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Augustin Cavalier <waddlesplash>
- *		John Scipione <jscipione@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2021-2022, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       Augustin Cavalier <waddlesplash>
+ *       John Scipione <jscipione@gmail.com>
  */
+
+
+/**
+ * @file Thumbnails.cpp
+ * @brief Asynchronous image thumbnail generation and caching for Tracker.
+ *
+ * Provides two background worker threads (one for small files, one for large)
+ * that decode image files using the Translation Kit, scale the result to the
+ * requested icon size, inject it into the NodeIconCache, and store a WebP
+ * copy as a node attribute for future fast retrieval.
+ *
+ * @see GetThumbnailFromAttr, ShouldGenerateThumbnail, IconCache
+ */
+
+
 #include "Thumbnails.h"
 
 #include <list>
@@ -58,6 +91,16 @@ static std::list<GenerateThumbnailJob*> sActiveJobs;
 static BLocker sActiveJobsLock;
 
 
+/**
+ * @brief Calculate the thumbnail destination rectangle centred within \a icon.
+ *
+ * Computes a letter-boxed or pillar-boxed bounding rect that preserves
+ * \a aspectRatio while fitting within icon->Bounds().
+ *
+ * @param icon         The destination bitmap whose bounds are used as the container.
+ * @param aspectRatio  Width-to-height ratio of the source image.
+ * @return The centred destination rectangle within icon->Bounds().
+ */
 static BRect
 ThumbBounds(BBitmap* icon, float aspectRatio)
 {
@@ -87,6 +130,18 @@ ThumbBounds(BBitmap* icon, float aspectRatio)
 }
 
 
+/**
+ * @brief Scale \a source into \a dest using bilinear filtering.
+ *
+ * Creates an off-screen BView, fills it with transparency, and draws the
+ * source bitmap scaled and centred within the letter-box / pillar-box region.
+ *
+ * @param source      Source bitmap to scale.
+ * @param dest        Output bitmap (will be initialised by this function).
+ * @param bounds      Desired bounds for the output bitmap.
+ * @param colorSpace  Colour space of the output bitmap.
+ * @return B_OK on success.
+ */
 static status_t
 ScaleBitmap(BBitmap* source, BBitmap& dest, BRect bounds, color_space colorSpace)
 {
@@ -112,6 +167,18 @@ ScaleBitmap(BBitmap* source, BBitmap& dest, BRect bounds, color_space colorSpace
 }
 
 
+/**
+ * @brief Scale \a source into \a dest at the specified \a size.
+ *
+ * Convenience overload that builds a BRect from \a size and delegates to
+ * the bounds-based overload.
+ *
+ * @param source      Source bitmap to scale.
+ * @param dest        Output bitmap (will be initialised by this function).
+ * @param size        Desired output size.
+ * @param colorSpace  Colour space of the output bitmap.
+ * @return B_OK on success.
+ */
 static status_t
 ScaleBitmap(BBitmap* source, BBitmap& dest, BSize size, color_space colorSpace)
 {
@@ -162,6 +229,15 @@ private:
 };
 
 
+/**
+ * @brief Decode the image file, scale it, update the icon cache, and write attributes.
+ *
+ * Uses BTranslatorRoster to decode the file into a BBitmap, scales it to the
+ * requested size, stores the result in the NodeIconCache, and also writes a
+ * WebP-encoded 128x128 version plus metadata attributes to the source file.
+ *
+ * @return B_OK on success, or an error code if translation or caching fails.
+ */
 status_t
 GenerateThumbnailJob::Execute()
 {
@@ -245,6 +321,15 @@ GenerateThumbnailJob::Execute()
 }
 
 
+/**
+ * @brief Background thread function that processes thumbnail jobs from a queue.
+ *
+ * Continuously pops GenerateThumbnailJob instances from the given JobQueue,
+ * runs each job, then deletes it.
+ *
+ * @param castToJobQueue  Pointer to the JobQueue to drain.
+ * @return B_OK when the queue signals termination.
+ */
 static status_t
 thumbnail_worker(void* castToJobQueue)
 {
@@ -265,6 +350,19 @@ thumbnail_worker(void* castToJobQueue)
 }
 
 
+/**
+ * @brief Enqueue a background thumbnail-generation job for \a model.
+ *
+ * Returns B_BUSY immediately if a job for the same node is already queued.
+ * Small files are dispatched to SMALLER_FILES_WORKER and large files to
+ * LARGER_FILES_WORKER; the worker threads are created lazily.
+ *
+ * @param model       The file model to generate a thumbnail for.
+ * @param colorSpace  Colour space to use for the generated bitmap.
+ * @param size        Desired icon size.
+ * @return B_BUSY if a job was enqueued, B_NOT_SUPPORTED if the model is not
+ *         a regular file, or another error code on failure.
+ */
 static status_t
 GenerateThumbnail(Model* model, color_space colorSpace, BSize size)
 {
@@ -327,6 +425,20 @@ GenerateThumbnail(Model* model, color_space colorSpace, BSize size)
 //	#pragma mark - thumbnail fetching
 
 
+/**
+ * @brief Return a thumbnail for \a model, reading from attributes or generating one.
+ *
+ * Checks for a cached WebP thumbnail attribute that was created after the file
+ * was last modified.  If found, scales it to \a size and copies it into \a icon.
+ * If the attribute is stale or missing, enqueues a background generation job.
+ *
+ * @param model  The file model whose thumbnail is requested.
+ * @param icon   Destination bitmap to receive the scaled thumbnail.
+ * @param size   Requested icon size.
+ * @return B_OK if a cached thumbnail was loaded, B_BUSY if generation is in
+ *         progress, B_NOT_SUPPORTED if thumbnails are not applicable, or
+ *         an error code on failure.
+ */
 status_t
 GetThumbnailFromAttr(Model* model, BBitmap* icon, BSize size)
 {
@@ -397,6 +509,12 @@ GetThumbnailFromAttr(Model* model, BBitmap* icon, BSize size)
 }
 
 
+/**
+ * @brief Return whether a thumbnail should be generated for the given MIME type.
+ *
+ * @param type  MIME type string of the file.
+ * @return true if thumbnail generation is enabled and \a type is an image type.
+ */
 bool
 ShouldGenerateThumbnail(const char* type)
 {

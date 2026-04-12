@@ -1,6 +1,38 @@
 /*
- * Copyright 2003-2011, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Language.cpp
+ * @brief Implementation of BLanguage, the BCP-47 language descriptor.
+ *
+ * BLanguage wraps an ICU icu::Locale to expose language, country, script, and
+ * variant subtags, text direction, and localized/native display names. It is
+ * used throughout the Locale Kit wherever a language identity is needed,
+ * including by BFormattingConventions and BCatalog.
+ *
+ * @see BFormattingConventions, BLocale, BCountry
  */
 
 
@@ -29,6 +61,12 @@
 U_NAMESPACE_USE
 
 
+/**
+ * @brief Construct a BLanguage representing the default locale.
+ *
+ * Sets the direction to B_LEFT_TO_RIGHT and calls SetTo(NULL) to initialize
+ * the ICU locale to the system default.
+ */
 BLanguage::BLanguage()
 	:
 	fDirection(B_LEFT_TO_RIGHT),
@@ -38,6 +76,11 @@ BLanguage::BLanguage()
 }
 
 
+/**
+ * @brief Construct a BLanguage from a BCP-47 language tag string.
+ *
+ * @param language  BCP-47 tag such as "en", "de_DE", or "zh_Hans_CN".
+ */
 BLanguage::BLanguage(const char* language)
 	:
 	fDirection(B_LEFT_TO_RIGHT),
@@ -47,6 +90,11 @@ BLanguage::BLanguage(const char* language)
 }
 
 
+/**
+ * @brief Copy-construct a BLanguage by cloning the source's ICU locale.
+ *
+ * @param other  The BLanguage to copy.
+ */
 BLanguage::BLanguage(const BLanguage& other)
 	:
 	fICULocale(NULL)
@@ -55,12 +103,24 @@ BLanguage::BLanguage(const BLanguage& other)
 }
 
 
+/**
+ * @brief Destroy the BLanguage and free the ICU locale object.
+ */
 BLanguage::~BLanguage()
 {
 	delete fICULocale;
 }
 
 
+/**
+ * @brief Set this BLanguage to the given BCP-47 tag.
+ *
+ * Replaces the current ICU locale with a new one constructed from \a language.
+ *
+ * @param language  BCP-47 tag, or NULL for the system default.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, B_BAD_VALUE if the
+ *         tag produces a bogus ICU locale.
+ */
 status_t
 BLanguage::SetTo(const char* language)
 {
@@ -76,6 +136,12 @@ BLanguage::SetTo(const char* language)
 }
 
 
+/**
+ * @brief Get the language's name in its own native script and language.
+ *
+ * @param name  Output BString that receives the title-cased native name.
+ * @return B_OK always.
+ */
 status_t
 BLanguage::GetNativeName(BString& name) const
 {
@@ -91,6 +157,15 @@ BLanguage::GetNativeName(BString& name) const
 }
 
 
+/**
+ * @brief Get the language's name in the specified display language.
+ *
+ * If \a displayLanguage is NULL, the system preferred language is used.
+ *
+ * @param name             Output BString for the localized language name.
+ * @param displayLanguage  Language in which to express the name, or NULL.
+ * @return B_OK on success, or an error code from GetPreferredLanguages().
+ */
 status_t
 BLanguage::GetName(BString& name, const BLanguage* displayLanguage) const
 {
@@ -120,6 +195,12 @@ BLanguage::GetName(BString& name, const BLanguage* displayLanguage) const
 }
 
 
+/**
+ * @brief Retrieve a flag icon bitmap for the country associated with this language.
+ *
+ * @param result  Pre-allocated BBitmap to receive the flag icon.
+ * @return B_OK on success, or an error code from GetFlagIconForCountry().
+ */
 status_t
 BLanguage::GetIcon(BBitmap* result) const
 {
@@ -127,6 +208,16 @@ BLanguage::GetIcon(BBitmap* result) const
 }
 
 
+/**
+ * @brief Look up a locale-kit string constant by numeric identifier (stub).
+ *
+ * Currently returns NULL for all IDs; ICU-based string lookup is not yet
+ * implemented.
+ *
+ * @param id  String constant identifier in the range
+ *            [B_LANGUAGE_STRINGS_BASE, B_LANGUAGE_STRINGS_BASE + B_NUM_LANGUAGE_STRINGS).
+ * @return NULL always (not yet implemented).
+ */
 const char*
 BLanguage::GetString(uint32 id) const
 {
@@ -142,6 +233,11 @@ BLanguage::GetString(uint32 id) const
 }
 
 
+/**
+ * @brief Return the language subtag (e.g. "en", "de").
+ *
+ * @return Pointer to the language code string; valid for this object's lifetime.
+ */
 const char*
 BLanguage::Code() const
 {
@@ -149,6 +245,11 @@ BLanguage::Code() const
 }
 
 
+/**
+ * @brief Return the country/region subtag, or NULL if none is present.
+ *
+ * @return Country code (e.g. "US"), or NULL.
+ */
 const char*
 BLanguage::CountryCode() const
 {
@@ -160,6 +261,11 @@ BLanguage::CountryCode() const
 }
 
 
+/**
+ * @brief Return the script subtag (e.g. "Hans", "Latn"), or NULL if absent.
+ *
+ * @return Script subtag string, or NULL.
+ */
 const char*
 BLanguage::ScriptCode() const
 {
@@ -171,6 +277,11 @@ BLanguage::ScriptCode() const
 }
 
 
+/**
+ * @brief Return the variant subtag, or NULL if none is present.
+ *
+ * @return Variant string, or NULL.
+ */
 const char*
 BLanguage::Variant() const
 {
@@ -182,6 +293,11 @@ BLanguage::Variant() const
 }
 
 
+/**
+ * @brief Return the full ICU locale name including all subtags.
+ *
+ * @return Full locale identifier (e.g. "en_US", "zh_Hans_CN").
+ */
 const char*
 BLanguage::ID() const
 {
@@ -189,6 +305,11 @@ BLanguage::ID() const
 }
 
 
+/**
+ * @brief Indicate whether this language has a country subtag.
+ *
+ * @return true if CountryCode() is non-NULL.
+ */
 bool
 BLanguage::IsCountrySpecific() const
 {
@@ -196,6 +317,11 @@ BLanguage::IsCountrySpecific() const
 }
 
 
+/**
+ * @brief Indicate whether this language has a variant subtag.
+ *
+ * @return true if Variant() is non-NULL.
+ */
 bool
 BLanguage::IsVariant() const
 {
@@ -203,6 +329,11 @@ BLanguage::IsVariant() const
 }
 
 
+/**
+ * @brief Return the text direction for this language.
+ *
+ * @return B_LEFT_TO_RIGHT or B_RIGHT_TO_LEFT.
+ */
 uint8
 BLanguage::Direction() const
 {
@@ -210,6 +341,12 @@ BLanguage::Direction() const
 }
 
 
+/**
+ * @brief Copy-assign from another BLanguage, cloning the ICU locale.
+ *
+ * @param source  The source BLanguage to copy from.
+ * @return Reference to this BLanguage.
+ */
 BLanguage&
 BLanguage::operator=(const BLanguage& source)
 {

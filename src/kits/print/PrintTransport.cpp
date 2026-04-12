@@ -1,32 +1,42 @@
 /*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2004 Haiku.
+ *   Authors: Philippe Houdoin, Michael Pfeiffer
+ *   Licensed under the MIT License.
+ */
 
-PrintTransport
 
-Copyright (c) 2004 Haiku.
+/**
+ * @file PrintTransport.cpp
+ * @brief PrintTransport — loader and wrapper for print transport add-ons.
+ *
+ * PrintTransport locates, loads, and initialises a named transport add-on
+ * from the standard add-on directory hierarchy. It resolves the init_transport
+ * and exit_transport entry points, calls init_transport to obtain a BDataIO
+ * object, and calls exit_transport on destruction. The resulting BDataIO can be
+ * used directly to stream raw print data to the transport back-end.
+ *
+ * @see PrintTransportAddOn, PrinterDriverAddOn
+ */
 
-Authors:
-	Philippe Houdoin
-	Michael Pfeiffer
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-*/
 
 #include "PrintTransport.h"
 
@@ -37,6 +47,12 @@ THE SOFTWARE.
 #include <String.h>
 
 // implementation of class PrintTransport
+
+/**
+ * @brief Constructs an uninitialised PrintTransport.
+ *
+ * All members are set to safe defaults; call Open() to load a transport add-on.
+ */
 PrintTransport::PrintTransport()
 	: fDataIO(NULL)
 	, fAddOnID(-1)
@@ -44,6 +60,12 @@ PrintTransport::PrintTransport()
 {
 }
 
+/**
+ * @brief Destroys the PrintTransport, calling exit_transport and unloading the add-on.
+ *
+ * If exit_transport was resolved, it is called before the add-on image is
+ * unloaded to allow the transport to flush and close its channel cleanly.
+ */
 PrintTransport::~PrintTransport()
 {
 	if (fExitProc) {
@@ -57,6 +79,19 @@ PrintTransport::~PrintTransport()
 	}
 }
 
+/**
+ * @brief Opens a transport add-on for the printer described by \a printerFolder.
+ *
+ * Reads the "transport" node attribute from \a printerFolder to determine the
+ * add-on name, then searches the standard add-on directories under
+ * "Print/transport". Once found, the add-on is loaded and init_transport is
+ * called with the printer folder's path. The resulting BDataIO is stored in
+ * fDataIO for retrieval via GetDataIO().
+ *
+ * @param printerFolder  BNode pointing to the printer's spool directory.
+ * @return B_OK on success, or B_ERROR if the attribute is missing, the add-on
+ *         cannot be loaded, or the init/exit entry points are absent.
+ */
 status_t PrintTransport::Open(BNode* printerFolder)
 {
 	// already opened?
@@ -120,12 +155,28 @@ status_t PrintTransport::Open(BNode* printerFolder)
 	return B_OK;
 }
 
+/**
+ * @brief Returns the BDataIO object obtained from the transport add-on.
+ *
+ * @return Pointer to the active BDataIO, or NULL if Open() has not been called
+ *         or the transport could not be initialised.
+ */
 BDataIO*
 PrintTransport::GetDataIO()
 {
 	return fDataIO;
 }
 
+/**
+ * @brief Returns true if the "Print To File" transport was cancelled by the user.
+ *
+ * The BeOS "Print To File" transport returns a non-NULL BDataIO even when the
+ * user cancels the file-picker. This method detects that edge case by checking
+ * whether fDataIO is a BFile whose InitCheck() fails.
+ *
+ * @return true if no transport is active or if the transport is a BFile that
+ *         failed to initialise (indicating user cancellation).
+ */
 bool PrintTransport::IsPrintToFileCanceled() const
 {
 	// The BeOS "Print To File" transport add-on returns a non-NULL BDataIO *

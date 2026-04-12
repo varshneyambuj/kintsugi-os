@@ -1,10 +1,43 @@
 /*
- * Copyright 2010-2017 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Adrien Destugues, pulkomandy@pulkomandy.tk
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2017 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Adrien Destugues, pulkomandy@pulkomandy.tk
+ */
+
+
+/**
+ * @file UrlProtocolAsynchronousListener.cpp
+ * @brief Implementation of BUrlProtocolAsynchronousListener.
+ *
+ * Registers itself as a BHandler on be_app so that protocol notifications
+ * dispatched as BMessages from the protocol thread are delivered on the
+ * application's message loop. In transparent mode a
+ * BUrlProtocolDispatchingListener is automatically created and exposed as
+ * SynchronousListener() so protocol threads can post to this handler.
+ *
+ * @see BUrlProtocolDispatchingListener, BUrlProtocolListener
  */
 
 
@@ -25,6 +58,16 @@ extern const char* kUrlProtocolMessageType;
 extern const char* kUrlProtocolCaller;
 
 
+/**
+ * @brief Construct a BUrlProtocolAsynchronousListener and register with be_app.
+ *
+ * If \a transparent is true, an internal BUrlProtocolDispatchingListener is
+ * created that posts messages back to this handler; the caller can retrieve
+ * it via SynchronousListener() and pass it to BUrlRequest.
+ *
+ * @param transparent  true to create and expose an internal dispatching
+ *                     listener, false for standalone use.
+ */
 BUrlProtocolAsynchronousListener::BUrlProtocolAsynchronousListener(
 	bool transparent)
 	:
@@ -45,6 +88,9 @@ BUrlProtocolAsynchronousListener::BUrlProtocolAsynchronousListener(
 }
 
 
+/**
+ * @brief Destructor — unregisters from be_app and deletes the internal listener.
+ */
 BUrlProtocolAsynchronousListener::~BUrlProtocolAsynchronousListener()
 {
 	if (be_app->Lock()) {
@@ -58,6 +104,15 @@ BUrlProtocolAsynchronousListener::~BUrlProtocolAsynchronousListener()
 // #pragma mark Synchronous listener access
 
 
+/**
+ * @brief Return the internal dispatching listener, or NULL in non-transparent mode.
+ *
+ * The returned listener bridges from the synchronous BUrlProtocolListener
+ * interface (called on the protocol thread) to this handler's MessageReceived()
+ * (called on the application thread).
+ *
+ * @return A pointer to the internal BUrlProtocolDispatchingListener, or NULL.
+ */
 BUrlProtocolListener*
 BUrlProtocolAsynchronousListener::SynchronousListener()
 {
@@ -65,6 +120,16 @@ BUrlProtocolAsynchronousListener::SynchronousListener()
 }
 
 
+/**
+ * @brief Decode a B_URL_PROTOCOL_NOTIFICATION message and invoke the matching callback.
+ *
+ * Extracts the caller pointer and notification type from the message, then
+ * dispatches to the appropriate BUrlProtocolListener virtual method. Unknown
+ * notifications are logged in debug builds. Non-notification messages are
+ * forwarded to BHandler::MessageReceived().
+ *
+ * @param message  The BMessage received by this handler.
+ */
 void
 BUrlProtocolAsynchronousListener::MessageReceived(BMessage* message)
 {

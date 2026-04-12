@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Settings.cpp
+ * @brief Generic setting handler classes for the Tracker settings subsystem.
+ *
+ * Provides StringValueSetting, EnumeratedStringValueSetting, and
+ * ScalarValueSetting, which are SettingsArgvDispatcher subclasses.  Each
+ * class handles a typed persistent setting: loading from an argv-style token
+ * stream, saving back, and carrying a default value.
+ *
+ * @see TrackerSettings, SettingsArgvDispatcher
+ */
 
 // generic setting handler classes
 
@@ -50,6 +54,14 @@ Settings* settings = NULL;
 //	#pragma mark - StringValueSetting
 
 
+/**
+ * @brief Construct a StringValueSetting with a name, default, and error strings.
+ *
+ * @param name                     Setting token name.
+ * @param defaultValue             The value used when the setting is absent.
+ * @param valueExpectedErrorString Error message when no value token follows the name.
+ * @param wrongValueErrorString    Error message when an unrecognised value is read.
+ */
 StringValueSetting::StringValueSetting(const char* name,
 	const char* defaultValue, const char* valueExpectedErrorString,
 	const char* wrongValueErrorString)
@@ -63,11 +75,19 @@ StringValueSetting::StringValueSetting(const char* name,
 }
 
 
+/**
+ * @brief Destroy the StringValueSetting.
+ */
 StringValueSetting::~StringValueSetting()
 {
 }
 
 
+/**
+ * @brief Update the stored value.
+ *
+ * @param newValue  The new setting value string.
+ */
 void
 StringValueSetting::ValueChanged(const char* newValue)
 {
@@ -75,6 +95,11 @@ StringValueSetting::ValueChanged(const char* newValue)
 }
 
 
+/**
+ * @brief Return the current value string.
+ *
+ * @return Pointer to the current setting value.
+ */
 const char*
 StringValueSetting::Value() const
 {
@@ -82,6 +107,11 @@ StringValueSetting::Value() const
 }
 
 
+/**
+ * @brief Write the current value as a quoted token to the settings stream.
+ *
+ * @param settings  The Settings writer to write to.
+ */
 void
 StringValueSetting::SaveSettingValue(Settings* settings)
 {
@@ -89,6 +119,11 @@ StringValueSetting::SaveSettingValue(Settings* settings)
 }
 
 
+/**
+ * @brief Return true if the current value differs from the default and must be saved.
+ *
+ * @return True when the setting needs to be persisted.
+ */
 bool
 StringValueSetting::NeedsSaving() const
 {
@@ -97,6 +132,12 @@ StringValueSetting::NeedsSaving() const
 }
 
 
+/**
+ * @brief Parse the next token from the settings argv as the new value.
+ *
+ * @param argv  Null-terminated token array; *argv is the setting name token.
+ * @return NULL on success, or the error string if parsing fails.
+ */
 const char*
 StringValueSetting::Handle(const char* const* argv)
 {
@@ -111,6 +152,15 @@ StringValueSetting::Handle(const char* const* argv)
 //	#pragma mark - EnumeratedStringValueSetting
 
 
+/**
+ * @brief Construct an EnumeratedStringValueSetting.
+ *
+ * @param name                     Setting token name.
+ * @param defaultValue             Default value; must be one of @p values.
+ * @param values                   NULL-terminated array of valid value strings.
+ * @param valueExpectedErrorString Error when no value token follows the name.
+ * @param wrongValueErrorString    Error when the token is not in @p values.
+ */
 EnumeratedStringValueSetting::EnumeratedStringValueSetting(const char* name,
 	const char* defaultValue, const char* const* values,
 	const char* valueExpectedErrorString, const char* wrongValueErrorString)
@@ -122,6 +172,11 @@ EnumeratedStringValueSetting::EnumeratedStringValueSetting(const char* name,
 }
 
 
+/**
+ * @brief Update the value, asserting in debug builds that it is in the enumeration.
+ *
+ * @param newValue  The new setting value; must be one of the valid strings.
+ */
 void
 EnumeratedStringValueSetting::ValueChanged(const char* newValue)
 {
@@ -144,6 +199,12 @@ EnumeratedStringValueSetting::ValueChanged(const char* newValue)
 }
 
 
+/**
+ * @brief Parse and validate the next token against the allowed-values list.
+ *
+ * @param argv  Null-terminated token array; *argv is the setting name token.
+ * @return NULL on success, or the appropriate error string.
+ */
 const char*
 EnumeratedStringValueSetting::Handle(const char* const* argv)
 {
@@ -173,6 +234,16 @@ EnumeratedStringValueSetting::Handle(const char* const* argv)
 //	#pragma mark - ScalarValueSetting
 
 
+/**
+ * @brief Construct a ScalarValueSetting with range clamping.
+ *
+ * @param name                     Setting token name.
+ * @param defaultValue             Default integer value.
+ * @param valueExpectedErrorString Error when no value token follows the name.
+ * @param wrongValueErrorString    Error when the value is out of range.
+ * @param min                      Minimum acceptable value (inclusive).
+ * @param max                      Maximum acceptable value (inclusive).
+ */
 ScalarValueSetting::ScalarValueSetting(const char* name, int32 defaultValue,
 	const char* valueExpectedErrorString, const char* wrongValueErrorString,
 	int32 min, int32 max)
@@ -188,6 +259,11 @@ ScalarValueSetting::ScalarValueSetting(const char* name, int32 defaultValue,
 }
 
 
+/**
+ * @brief Update the stored integer value after range checking.
+ *
+ * @param newValue  The new value; must be in [fMin, fMax].
+ */
 void
 ScalarValueSetting::ValueChanged(int32 newValue)
 {
@@ -197,6 +273,11 @@ ScalarValueSetting::ValueChanged(int32 newValue)
 }
 
 
+/**
+ * @brief Return the current integer value.
+ *
+ * @return Current setting value as int32.
+ */
 int32
 ScalarValueSetting::Value() const
 {
@@ -204,6 +285,11 @@ ScalarValueSetting::Value() const
 }
 
 
+/**
+ * @brief Format the current value as a decimal string into @p buffer.
+ *
+ * @param buffer  Output character buffer; must be large enough for an int32 decimal string.
+ */
 void
 ScalarValueSetting::GetValueAsString(char* buffer) const
 {
@@ -211,6 +297,12 @@ ScalarValueSetting::GetValueAsString(char* buffer) const
 }
 
 
+/**
+ * @brief Parse the next token as a decimal or hex integer and store it if in range.
+ *
+ * @param argv  Null-terminated token array; *argv is the setting name token.
+ * @return NULL on success, or the appropriate error string.
+ */
 const char*
 ScalarValueSetting::Handle(const char* const* argv)
 {
@@ -231,6 +323,11 @@ ScalarValueSetting::Handle(const char* const* argv)
 }
 
 
+/**
+ * @brief Write the current value as a decimal string to the settings stream.
+ *
+ * @param settings  The Settings writer to write to.
+ */
 void
 ScalarValueSetting::SaveSettingValue(Settings* settings)
 {
@@ -238,6 +335,11 @@ ScalarValueSetting::SaveSettingValue(Settings* settings)
 }
 
 
+/**
+ * @brief Return true if the current value differs from the default.
+ *
+ * @return True when saving is required.
+ */
 bool
 ScalarValueSetting::NeedsSaving() const
 {

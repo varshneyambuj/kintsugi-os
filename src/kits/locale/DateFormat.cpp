@@ -1,11 +1,46 @@
 /*
- * Copyright 2010-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe <zooey@hirschkaefer.de>
- *		Adrien Desutugues <pulkomandy@pulkomandy.tk>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2014, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ *       Adrien Desutugues <pulkomandy@pulkomandy.tk>
  */
+
+
+/**
+ * @file DateFormat.cpp
+ * @brief Implementation of BDateFormat for locale-aware date formatting.
+ *
+ * BDateFormat wraps ICU DateFormat to produce localized date strings for
+ * four style levels (short, medium, long, full). It supports formatting
+ * from a POSIX time_t, a BDate value object, or a combined time_t with
+ * optional time zone override. Field-position iterators allow callers to
+ * identify individual date components (year, month, day, weekday) within
+ * the resulting string.
+ *
+ * @see BTimeFormat, BDateTimeFormat, BFormattingConventions
+ */
+
 
 #include <unicode/uversion.h>
 #include <DateFormat.h>
@@ -30,6 +65,7 @@
 U_NAMESPACE_USE
 
 
+/** @brief Maps BDateFormatStyle indices to ICU DateFormatSymbols width types. */
 static const DateFormatSymbols::DtWidthType kDateFormatStyleToWidth[] = {
 	DateFormatSymbols::WIDE,
 	DateFormatSymbols::ABBREVIATED,
@@ -38,12 +74,24 @@ static const DateFormatSymbols::DtWidthType kDateFormatStyleToWidth[] = {
 };
 
 
+/**
+ * @brief Construct a BDateFormat using the given BLocale.
+ *
+ * @param locale  Locale whose formatting conventions and language are used,
+ *                or NULL for the system default locale.
+ */
 BDateFormat::BDateFormat(const BLocale* locale)
 	: BFormat(locale)
 {
 }
 
 
+/**
+ * @brief Construct a BDateFormat from explicit language and conventions objects.
+ *
+ * @param language     Language that controls the name strings (month, weekday).
+ * @param conventions  Formatting conventions that supply the date pattern.
+ */
 BDateFormat::BDateFormat(const BLanguage& language,
 	const BFormattingConventions& conventions)
 	: BFormat(language, conventions)
@@ -51,17 +99,32 @@ BDateFormat::BDateFormat(const BLanguage& language,
 }
 
 
+/**
+ * @brief Copy-construct a BDateFormat from another instance.
+ *
+ * @param other  The source BDateFormat to copy.
+ */
 BDateFormat::BDateFormat(const BDateFormat &other)
 	: BFormat(other)
 {
 }
 
 
+/**
+ * @brief Destroy the BDateFormat object.
+ */
 BDateFormat::~BDateFormat()
 {
 }
 
 
+/**
+ * @brief Retrieve the active ICU date pattern string for the given style.
+ *
+ * @param style      Date style level (e.g. B_SHORT_DATE_FORMAT).
+ * @param outFormat  Output BString that receives the ICU pattern.
+ * @return B_OK on success, or an error from BFormattingConventions.
+ */
 status_t
 BDateFormat::GetDateFormat(BDateFormatStyle style,
 	BString& outFormat) const
@@ -70,6 +133,12 @@ BDateFormat::GetDateFormat(BDateFormatStyle style,
 }
 
 
+/**
+ * @brief Override the ICU date pattern used for a particular style level.
+ *
+ * @param style   Date style level to override.
+ * @param format  ICU SimpleDateFormat pattern string to use.
+ */
 void
 BDateFormat::SetDateFormat(BDateFormatStyle style,
 	const BString& format)
@@ -78,6 +147,15 @@ BDateFormat::SetDateFormat(BDateFormatStyle style,
 }
 
 
+/**
+ * @brief Format a time_t value into a C string buffer.
+ *
+ * @param string    Destination character buffer.
+ * @param maxSize   Size of the destination buffer in bytes.
+ * @param time      POSIX timestamp to format.
+ * @param style     Date style level.
+ * @return Number of bytes written on success, or a negative error code.
+ */
 ssize_t
 BDateFormat::Format(char* string, const size_t maxSize, const time_t time,
 	const BDateFormatStyle style) const
@@ -99,6 +177,15 @@ BDateFormat::Format(char* string, const size_t maxSize, const time_t time,
 }
 
 
+/**
+ * @brief Format a time_t value into a BString with optional time zone.
+ *
+ * @param string    Output BString that receives the formatted date.
+ * @param time      POSIX timestamp to format.
+ * @param style     Date style level.
+ * @param timeZone  Time zone for display, or NULL to use the local zone.
+ * @return B_OK on success, B_NO_MEMORY if ICU allocation fails.
+ */
 status_t
 BDateFormat::Format(BString& string, const time_t time,
 	const BDateFormatStyle style, const BTimeZone* timeZone) const
@@ -126,6 +213,20 @@ BDateFormat::Format(BString& string, const time_t time,
 }
 
 
+/**
+ * @brief Format a BDate value object into a BString with optional time zone.
+ *
+ * Constructs an ICU Calendar from the BDate fields (year, month, day) and
+ * formats it. Note that ICU months are zero-based while BDate months are
+ * one-based; this method compensates automatically.
+ *
+ * @param string    Output BString that receives the formatted date.
+ * @param time      BDate value to format.
+ * @param style     Date style level.
+ * @param timeZone  Time zone for display, or NULL for the local zone.
+ * @return B_OK on success, B_BAD_DATA if the BDate is invalid, B_NO_MEMORY
+ *         on allocation failure.
+ */
 status_t
 BDateFormat::Format(BString& string, const BDate& time,
 	const BDateFormatStyle style, const BTimeZone* timeZone) const
@@ -167,6 +268,20 @@ BDateFormat::Format(BString& string, const BDate& time,
 }
 
 
+/**
+ * @brief Format a time_t and return field begin/end positions for each element.
+ *
+ * The caller receives a heap-allocated array of begin/end pairs (two ints per
+ * field) in \a fieldPositions. The caller is responsible for freeing this array
+ * with free().
+ *
+ * @param string          Output BString for the formatted date.
+ * @param fieldPositions  Output pointer that receives the position array.
+ * @param fieldCount      Output count of integers written (2 per field).
+ * @param time            POSIX timestamp to format.
+ * @param style           Date style level.
+ * @return B_OK on success, B_NO_MEMORY or B_BAD_VALUE on failure.
+ */
 status_t
 BDateFormat::Format(BString& string, int*& fieldPositions, int& fieldCount,
 	const time_t time, const BDateFormatStyle style) const
@@ -208,6 +323,18 @@ BDateFormat::Format(BString& string, int*& fieldPositions, int& fieldCount,
 }
 
 
+/**
+ * @brief Enumerate the BDateElement field types present in a formatted date.
+ *
+ * Uses the current time as a sample input to determine which fields (year,
+ * month, day, weekday) appear in the pattern.  The caller must free the
+ * returned array with free().
+ *
+ * @param fields      Output pointer that receives the BDateElement array.
+ * @param fieldCount  Output count of elements in the array.
+ * @param style       Date style level to inspect.
+ * @return B_OK on success, B_NO_MEMORY or B_BAD_VALUE on failure.
+ */
 status_t
 BDateFormat::GetFields(BDateElement*& fields, int& fieldCount,
 	BDateFormatStyle style) const
@@ -261,6 +388,13 @@ BDateFormat::GetFields(BDateElement*& fields, int& fieldCount,
 }
 
 
+/**
+ * @brief Get the first day of the week for the current locale's calendar.
+ *
+ * @param startOfWeek  Output pointer that receives the BWeekday constant.
+ * @return B_OK on success, B_BAD_VALUE if the pointer is NULL, B_ERROR on
+ *         ICU failure.
+ */
 status_t
 BDateFormat::GetStartOfWeek(BWeekday* startOfWeek) const
 {
@@ -308,6 +442,15 @@ BDateFormat::GetStartOfWeek(BWeekday* startOfWeek) const
 }
 
 
+/**
+ * @brief Get the localized month name for a one-based month number.
+ *
+ * @param month    Month number in the range [1, 12].
+ * @param outName  Output BString that receives the month name.
+ * @param style    Date format style that controls the name width.
+ * @return B_OK on success, B_BAD_VALUE for invalid style, B_BAD_DATA for
+ *         out-of-range month, B_ERROR if the formatter could not be created.
+ */
 status_t
 BDateFormat::GetMonthName(int month, BString& outName,
 	const BDateFormatStyle style) const
@@ -342,6 +485,15 @@ BDateFormat::GetMonthName(int month, BString& outName,
 }
 
 
+/**
+ * @brief Get the localized weekday name for a one-based day-of-week number.
+ *
+ * @param day      Day number in the range [1, 7] where 1 = Sunday.
+ * @param outName  Output BString that receives the weekday name.
+ * @param style    Date format style that controls the name width.
+ * @return B_OK on success, B_BAD_VALUE for invalid style, B_BAD_DATA for
+ *         out-of-range day, B_ERROR if the formatter could not be created.
+ */
 status_t
 BDateFormat::GetDayName(int day, BString& outName,
 	const BDateFormatStyle style) const
@@ -376,6 +528,18 @@ BDateFormat::GetDayName(int day, BString& outName,
 }
 
 
+/**
+ * @brief Parse a date string into a BDate using the given style.
+ *
+ * The parsed result is expressed as days offset from 1970-01-01 UTC. Any
+ * time zone specification in the source string is honored; if none is given,
+ * the local zone is assumed.
+ *
+ * @param source  Input date string to parse.
+ * @param style   Date format style that determines the expected pattern.
+ * @param output  Output BDate populated with the parsed date.
+ * @return B_OK on success, B_NO_MEMORY if the formatter cannot be created.
+ */
 status_t
 BDateFormat::Parse(BString source, BDateFormatStyle style, BDate& output)
 {
@@ -399,6 +563,17 @@ BDateFormat::Parse(BString source, BDateFormatStyle style, BDate& output)
 }
 
 
+/**
+ * @brief Create an ICU DateFormat instance configured for the given style.
+ *
+ * Selects the locale from either the preferred language or the formatting
+ * conventions depending on UseStringsFromPreferredLanguage(), then applies
+ * the explicit or cached pattern from the conventions.
+ *
+ * @param style  Date style level.
+ * @return A heap-allocated DateFormat; the caller is responsible for deleting
+ *         it. Returns NULL on allocation failure.
+ */
 DateFormat*
 BDateFormat::_CreateDateFormatter(const BDateFormatStyle style) const
 {
@@ -423,4 +598,3 @@ BDateFormat::_CreateDateFormatter(const BDateFormatStyle style) const
 
 	return dateFormatter;
 }
-

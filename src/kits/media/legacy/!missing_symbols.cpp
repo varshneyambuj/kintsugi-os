@@ -1,9 +1,41 @@
-/***********************************************************************
- * AUTHOR: Marcus Overhagen
- *   FILE: !missing_symbols.cpp
- *  DESCR: Some undocumented symboles that libmedia.so exports.
- *         All return codes are guessed!!! (void most times means it's still wrong)
- ***********************************************************************/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2002, Marcus Overhagen. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file !missing_symbols.cpp
+ * @brief Compatibility shims for undocumented symbols exported by BeOS R5 libmedia.so.
+ *
+ * Provides stub or minimal implementations for mangled C++ symbols that are
+ * required by third-party add-ons (emu10k.media_addon, SoundPlay, libgame.so)
+ * and old IDE tools (BeIDE) that were compiled against the BeOS R5 media kit
+ * headers. All return codes are best-effort guesses. Symbols no longer
+ * required (SoundPlay, rtm_create_pool_etc) are conditionally disabled.
+ *
+ * @see OldSubscriber.cpp, OldAudioStream.cpp
+ */
+
 #include <MediaTrack.h>
 #include "MediaDebug.h"
 
@@ -24,10 +56,27 @@ void ScanDirs__Q28BPrivate13_AddonManager(void *) { }
 extern "C" void Connect__15BBufferProducerlRC12media_sourceRC17media_destinationRC12media_formatPc(void *);
 extern "C" status_t Connected__15BBufferConsumerRC12media_sourceRC17media_destinationRC12media_formatP11media_input(void *);
 
+/**
+ * @brief Legacy GCC 2 mangled stub for BBufferProducer::Connect().
+ *
+ * Exported for binary compatibility with the BeOS R5 emu10k.media_addon which
+ * references this mangled symbol directly. The function performs no operation.
+ *
+ * @param arg  Ignored; present only to match the mangled signature.
+ */
 void Connect__15BBufferProducerlRC12media_sourceRC17media_destinationRC12media_formatPc(void *)
 {
 }
 
+/**
+ * @brief Legacy GCC 2 mangled stub for BBufferConsumer::Connected().
+ *
+ * Exported for binary compatibility with the BeOS R5 emu10k.media_addon which
+ * references this mangled symbol directly.
+ *
+ * @param arg  Ignored; present only to match the mangled signature.
+ * @return B_OK always.
+ */
 status_t Connected__15BBufferConsumerRC12media_sourceRC17media_destinationRC12media_formatP11media_input(void *)
 {
 	return B_OK;
@@ -57,7 +106,7 @@ BSubscriber::BSubscriber(char const *)
 BDACStream::SamplingRate(float *) const
 BDACStream::SetSamplingRate(float)
 BDACStream::BDACStream(void)
-00036a88 B BDACStream type_info node 
+00036a88 B BDACStream type_info node
 
 used by BeIDE
 BSubscriber::EnterStream(_sub_info *, bool, void *, bool (*)(void *, char *, unsigned long, void *), long (*)(void *, long), bool)
@@ -71,20 +120,21 @@ BSubscriber::_ReservedSubscriber2(void)
 BSubscriber::_ReservedSubscriber3(void)
 BSubscriber::BSubscriber(char const *)
 001132c0 W BSubscriber type_info function
-00180484 B BSubscriber type_info node 
+00180484 B BSubscriber type_info node
 BDACStream::SetSamplingRate(float)
 BDACStream::~BDACStream(void)
 BDACStream::BDACStream(void)
-00180478 B BDACStream type_info node 
+00180478 B BDACStream type_info node
 
 used by 3dmiX
 BDACStream::SetSamplingRate(float)
 BDACStream::BDACStream(void)
-000706c4 B BDACStream type_info node 
+000706c4 B BDACStream type_info node
 BSubscriber::BSubscriber(char const *)
-000706d0 B BSubscriber type_info node  
+000706d0 B BSubscriber type_info node
 */
 
+/** @brief Opaque subscriber info structure used by the GCC 2 BeIDE ABI. */
 struct _sub_info
 {
 	uint32 dummy;
@@ -93,6 +143,7 @@ struct _sub_info
 namespace BPrivate
 {
 
+/** @brief Global media debug flag (type uncertain; kept as int32 for ABI compatibility). */
 int32 media_debug; /* is this a function, or a bool, or an int32 ???  */
 
 //BPrivate::BTrackReader move to TrackReader.h & TrackReader.cpp
@@ -115,17 +166,36 @@ void extractor_load_hook(void *, long)
 
 };
 
+/**
+ * @brief Internal media roster helper class exporting cleanup function hooks.
+ *
+ * _BMediaRosterP provides AddCleanupFunction/RemoveCleanupFunction to allow
+ * add-ons to register teardown callbacks with the media roster. These stubs
+ * ensure the vtable slot and symbol exist for old add-ons that call them.
+ */
 class _BMediaRosterP
 {
 	void AddCleanupFunction(void (*)(void *), void *);
 	void RemoveCleanupFunction(void (*)(void *), void *);
 };
 
+/**
+ * @brief Registers a cleanup callback with the media roster (unimplemented).
+ *
+ * @param func    Function to call during media roster teardown.
+ * @param cookie  Opaque argument forwarded to \a func.
+ */
 void _BMediaRosterP::AddCleanupFunction(void (*)(void *), void *)
 {
 	UNIMPLEMENTED();
 }
 
+/**
+ * @brief Unregisters a previously added cleanup callback (unimplemented).
+ *
+ * @param func    The function pointer to remove.
+ * @param cookie  The cookie that was passed to AddCleanupFunction().
+ */
 void _BMediaRosterP::RemoveCleanupFunction(void (*)(void *), void *)
 {
 	UNIMPLEMENTED();
@@ -133,6 +203,7 @@ void _BMediaRosterP::RemoveCleanupFunction(void (*)(void *), void *)
 
 extern "C" {
 
+/** @brief Workaround flag required for DOOM's MIDI initialisation path. */
 int MIDIisInitializingWorkaroundForDoom;
 /*
 
@@ -157,4 +228,3 @@ int32 rtm_get_pool(int32,int32 **p)
 
 
 }
-

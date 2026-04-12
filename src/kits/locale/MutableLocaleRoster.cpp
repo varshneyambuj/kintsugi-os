@@ -1,10 +1,42 @@
 /*
- * Copyright 2003-2012, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Oliver Tappe, zooey@hirschkaefer.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2012, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Oliver Tappe, zooey@hirschkaefer.de
+ */
+
+
+/**
+ * @file MutableLocaleRoster.cpp
+ * @brief Implementation of MutableLocaleRoster, the write-capable singleton.
+ *
+ * MutableLocaleRoster extends BLocaleRoster with methods for changing the
+ * system locale, loading and unloading catalogs, and loading the system-wide
+ * translation catalog for libbe. The singleton is created on first access via
+ * Default() using pthread_once to ensure thread safety.
+ *
+ * @see BLocaleRoster, LocaleRosterData
  */
 
 
@@ -31,14 +63,21 @@ namespace BPrivate {
 namespace {
 
 
+/** @brief The process-wide MutableLocaleRoster singleton instance. */
 static MutableLocaleRoster* sLocaleRoster;
 
+/** @brief pthread_once guard for singleton initialization. */
 static pthread_once_t sLocaleRosterInitOnce = PTHREAD_ONCE_INIT;
 
 
 }	// anonymous namespace
 
 
+/**
+ * @brief Allocate the process-wide MutableLocaleRoster singleton.
+ *
+ * Called exactly once by pthread_once from Default().
+ */
 static void
 InitializeLocaleRoster()
 {
@@ -46,16 +85,29 @@ InitializeLocaleRoster()
 }
 
 
+/**
+ * @brief Construct a MutableLocaleRoster (private; use Default()).
+ */
 MutableLocaleRoster::MutableLocaleRoster()
 {
 }
 
 
+/**
+ * @brief Destroy the MutableLocaleRoster.
+ */
 MutableLocaleRoster::~MutableLocaleRoster()
 {
 }
 
 
+/**
+ * @brief Return the process-wide MutableLocaleRoster singleton.
+ *
+ * Initializes the singleton on first call using pthread_once.
+ *
+ * @return Pointer to the singleton; never NULL after successful init.
+ */
 /*static*/ MutableLocaleRoster*
 MutableLocaleRoster::Default()
 {
@@ -66,6 +118,12 @@ MutableLocaleRoster::Default()
 }
 
 
+/**
+ * @brief Set the default formatting conventions, persisting the change to disk.
+ *
+ * @param newFormattingConventions  New BFormattingConventions to adopt.
+ * @return B_OK on success, or an error code from LocaleRosterData.
+ */
 status_t
 MutableLocaleRoster::SetDefaultFormattingConventions(
 	const BFormattingConventions& newFormattingConventions)
@@ -74,6 +132,12 @@ MutableLocaleRoster::SetDefaultFormattingConventions(
 }
 
 
+/**
+ * @brief Set the default time zone, persisting the change to disk.
+ *
+ * @param newZone  New BTimeZone to adopt.
+ * @return B_OK on success, or an error code from LocaleRosterData.
+ */
 status_t
 MutableLocaleRoster::SetDefaultTimeZone(const BTimeZone& newZone)
 {
@@ -81,6 +145,12 @@ MutableLocaleRoster::SetDefaultTimeZone(const BTimeZone& newZone)
 }
 
 
+/**
+ * @brief Set the preferred language list, persisting the change to disk.
+ *
+ * @param languages  BMessage with ordered "language" string fields.
+ * @return B_OK on success, or an error code from LocaleRosterData.
+ */
 status_t
 MutableLocaleRoster::SetPreferredLanguages(const BMessage* languages)
 {
@@ -88,6 +158,12 @@ MutableLocaleRoster::SetPreferredLanguages(const BMessage* languages)
 }
 
 
+/**
+ * @brief Set whether filesystem entry names should be translated.
+ *
+ * @param preferred  true to enable translation, false to disable.
+ * @return B_OK on success, or an error code from LocaleRosterData.
+ */
 status_t
 MutableLocaleRoster::SetFilesystemTranslationPreferred(bool preferred)
 {
@@ -95,6 +171,17 @@ MutableLocaleRoster::SetFilesystemTranslationPreferred(bool preferred)
 }
 
 
+/**
+ * @brief Load the libbe system catalog into the given BCatalog.
+ *
+ * Scans the running process's image list to find the libbe shared object
+ * (identified by the address of be_app), then calls catalog->SetTo() with
+ * the library's entry_ref.
+ *
+ * @param catalog  Output BCatalog to populate with libbe's translations.
+ * @return B_OK on success, B_BAD_VALUE if catalog is NULL, B_ERROR if the
+ *         library image cannot be found.
+ */
 status_t
 MutableLocaleRoster::LoadSystemCatalog(BCatalog* catalog) const
 {
@@ -135,6 +222,17 @@ MutableLocaleRoster::LoadSystemCatalog(BCatalog* catalog) const
  * Any created catalog will be initialized with the given signature and
  * language-name.
  */
+/**
+ * @brief Create a new empty catalog of the given add-on type.
+ *
+ * Dispatches the creation request to the first add-on whose name matches
+ * \a type and that exposes a create_catalog symbol.
+ *
+ * @param type       Name of the catalog add-on type (e.g. "Default").
+ * @param signature  MIME application signature for the new catalog.
+ * @param language   BCP-47 language tag for the new catalog.
+ * @return Pointer to the new BCatalogData on success, or NULL on failure.
+ */
 BCatalogData*
 MutableLocaleRoster::CreateCatalog(const char* type, const char* signature,
 	const char* language)
@@ -173,6 +271,18 @@ MutableLocaleRoster::CreateCatalog(const char* type, const char* signature,
  * So it is perfectly possible that this method returns a catalog-chain
  * instead of a single catalog.
  * NULL is returned if no matching catalog could be found.
+ */
+/**
+ * @brief Load a catalog for the given entry_ref, language, and fingerprint.
+ *
+ * Tries each catalog add-on in priority order. For each preferred language
+ * (or the given \a language) a chain of parent-language fallback catalogs is
+ * automatically built by truncating the language tag at each underscore.
+ *
+ * @param catalogOwner  entry_ref of the owning application.
+ * @param language      BCP-47 language tag, or NULL for the preferred list.
+ * @param fingerprint   Version fingerprint; 0 accepts any version.
+ * @return Head of the loaded BCatalogData chain, or NULL if not found.
  */
 BCatalogData*
 MutableLocaleRoster::LoadCatalog(const entry_ref& catalogOwner,
@@ -250,6 +360,16 @@ MutableLocaleRoster::LoadCatalog(const entry_ref& catalogOwner,
  * So it is perfectly possible that this method returns a catalog-chain
  * instead of a single catalog.
  * NULL is returned if no matching catalog could be found.
+ */
+/**
+ * @brief Load a catalog from standard directories for the given signature/language.
+ *
+ * Only searches the built-in DefaultCatalog add-on; unlike the entry_ref
+ * overload this does not scan application-local directories.
+ *
+ * @param signature  MIME application signature.
+ * @param language   BCP-47 language tag, or NULL for the preferred list.
+ * @return Head of the loaded BCatalogData chain, or NULL if not found.
  */
 BCatalogData*
 MutableLocaleRoster::LoadCatalog(const char* signature,
@@ -345,6 +465,16 @@ MutableLocaleRoster::LoadCatalog(const char* signature,
 /*
  * unloads the given catalog (or rather: catalog-chain).
  * Every single catalog of the chain will be deleted automatically.
+ */
+/**
+ * @brief Unload and delete the given catalog chain.
+ *
+ * Walks the fNext chain and removes each entry from its owning add-on's
+ * fLoadedCatalogs list before deleting it.
+ *
+ * @param catalog  Head of the BCatalogData chain to unload.
+ * @return B_OK if at least one catalog was found and deleted, B_BAD_VALUE if
+ *         catalog is NULL, B_ERROR if none could be found.
  */
 status_t
 MutableLocaleRoster::UnloadCatalog(BCatalogData* catalog)

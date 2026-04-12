@@ -1,7 +1,41 @@
 /*
- * Copyright 2007, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file ComplexLayouter.cpp
+ * @brief Layout engine that handles multi-element spanning constraints.
+ *
+ * ComplexLayouter extends the simple proportional layout strategy to support
+ * constraints that span more than one element (e.g., a widget that must be
+ * at least 200 px wide across three columns). It propagates min/max cumulative
+ * sum bounds forward and backward, resolves conflicts, and delegates the final
+ * optimisation step to LayoutOptimizer.
+ *
+ * @see SimpleLayouter, LayoutOptimizer, CollapsingLayouter
+ */
+
 
 #include "ComplexLayouter.h"
 
@@ -32,9 +66,20 @@
 using std::nothrow;
 
 
-// MyLayoutInfo
+/**
+ * @brief Concrete LayoutInfo produced by ComplexLayouter.
+ *
+ * Stores per-element pixel locations as cumulative sums so that both
+ * individual element sizes and range sizes can be computed in O(1).
+ */
 class ComplexLayouter::MyLayoutInfo : public LayoutInfo {
 public:
+	/**
+	 * @brief Constructs the layout info buffer.
+	 *
+	 * @param elementCount Number of layout elements.
+	 * @param spacing      Pixel gap inserted between consecutive elements.
+	 */
 	MyLayoutInfo(int32 elementCount, int32 spacing)
 		: fCount(elementCount),
 		  fSpacing(spacing)
@@ -45,11 +90,19 @@ public:
 		fLocations = new(nothrow) int32[elementCount + 1];
 	}
 
+	/**
+	 * @brief Frees the location array.
+	 */
 	~MyLayoutInfo()
 	{
 		delete[] fLocations;
 	}
 
+	/**
+	 * @brief Populates fLocations from an array of per-element pixel sizes.
+	 *
+	 * @param sizes Array of fCount integer sizes (one per element).
+	 */
 	void InitFromSizes(int32* sizes)
 	{
 		fLocations[0] = 0;
@@ -57,6 +110,12 @@ public:
 			fLocations[i + 1] = fLocations[i] + sizes[i] + fSpacing;
 	}
 
+	/**
+	 * @brief Returns the pixel offset of an element from the layout origin.
+	 *
+	 * @param element Element index.
+	 * @return Pixel location, or 0 if out of range.
+	 */
 	virtual float ElementLocation(int32 element)
 	{
 		if (element < 0 || element >= fCount)
@@ -65,6 +124,12 @@ public:
 		return fLocations[element];
 	}
 
+	/**
+	 * @brief Returns the pixel size of an element (excluding spacing).
+	 *
+	 * @param element Element index.
+	 * @return Size in pixels, or -1 if out of range.
+	 */
 	virtual float ElementSize(int32 element)
 	{
 		if (element < 0 || element >= fCount)
@@ -74,6 +139,13 @@ public:
 			- fSpacing;
 	}
 
+	/**
+	 * @brief Returns the combined pixel size of a contiguous element range.
+	 *
+	 * @param position First element in the range.
+	 * @param length   Number of elements in the range.
+	 * @return Combined size in pixels, or -1 if arguments are invalid.
+	 */
 	virtual float ElementRangeSize(int32 position, int32 length)
 	{
 		if (position < 0 || length < 0 || position + length > fCount)
@@ -83,6 +155,9 @@ public:
 			- fSpacing;
 	}
 
+	/**
+	 * @brief Dumps the location table to stdout for debugging.
+	 */
 	void Dump()
 	{
 		printf("ComplexLayouter::MyLayoutInfo(): %" B_PRId32 " elements:\n",
@@ -100,8 +175,21 @@ public:
 };
 
 
-// Constraint
+/**
+ * @brief Represents a single size constraint over a span [start, end].
+ *
+ * Stores both the original maximum and an effectiveMax that may be relaxed
+ * when the constraint conflicts with others.
+ */
 struct ComplexLayouter::Constraint {
+	/**
+	 * @brief Constructs a constraint; clamps max >= min immediately.
+	 *
+	 * @param start First element index (inclusive).
+	 * @param end   Last element index (inclusive).
+	 * @param min   Minimum combined size (integer pixels).
+	 * @param max   Maximum combined size (integer pixels).
+	 */
 	Constraint(int32 start, int32 end, int32 min, int32 max)
 		: start(start),
 		  end(end),
@@ -114,6 +202,12 @@ struct ComplexLayouter::Constraint {
 		effectiveMax = max;
 	}
 
+	/**
+	 * @brief Tightens this constraint with a stricter min and/or max.
+	 *
+	 * @param newMin New minimum; replaces current if larger.
+	 * @param newMax New maximum; replaces current if smaller.
+	 */
 	void Restrict(int32 newMin, int32 newMax)
 	{
 		if (newMin > min)
@@ -125,6 +219,12 @@ struct ComplexLayouter::Constraint {
 		effectiveMax = max;
 	}
 
+	/**
+	 * @brief Checks whether an integer solution satisfies this constraint.
+	 *
+	 * @param sumValues Prefix-sum array of element sizes.
+	 * @return true if the solution is within [min, max].
+	 */
 	bool IsSatisfied(int32* sumValues) const
 	{
 		int32 value = sumValues[end] - sumValues[start - 1];
@@ -140,7 +240,12 @@ struct ComplexLayouter::Constraint {
 };
 
 
-// SumItem
+/**
+ * @brief Cumulative-sum item used during min/max propagation.
+ *
+ * minDirty / maxDirty flags indicate that a value changed and neighbours
+ * must be re-evaluated.
+ */
 struct ComplexLayouter::SumItem {
 	int32	min;
 	int32	max;
@@ -149,7 +254,7 @@ struct ComplexLayouter::SumItem {
 };
 
 
-// SumItemBackup
+/** @brief Saved snapshot of a SumItem used for conflict rollback. */
 struct ComplexLayouter::SumItemBackup {
 	int32	min;
 	int32	max;
@@ -159,7 +264,15 @@ struct ComplexLayouter::SumItemBackup {
 // #pragma mark - ComplexLayouter
 
 
-// constructor
+/**
+ * @brief Constructs a ComplexLayouter.
+ *
+ * Allocates per-element constraint lists, weight array, cumulative-sum tables,
+ * and the LayoutOptimizer.
+ *
+ * @param elementCount Number of layout elements.
+ * @param spacing      Pixel gap between consecutive elements.
+ */
 ComplexLayouter::ComplexLayouter(int32 elementCount, float spacing)
 	: fElementCount(elementCount),
 	  fSpacing((int32)spacing),
@@ -182,7 +295,9 @@ ComplexLayouter::ComplexLayouter(int32 elementCount, float spacing)
 }
 
 
-// destructor
+/**
+ * @brief Destroys the layouter, freeing all constraints and auxiliary arrays.
+ */
 ComplexLayouter::~ComplexLayouter()
 {
 	for (int32 i = 0; i < fElementCount; i++) {
@@ -203,7 +318,11 @@ ComplexLayouter::~ComplexLayouter()
 }
 
 
-// InitCheck
+/**
+ * @brief Checks that all internal allocations succeeded.
+ *
+ * @return B_OK if fully initialised, B_NO_MEMORY if any allocation failed.
+ */
 status_t
 ComplexLayouter::InitCheck() const
 {
@@ -213,7 +332,18 @@ ComplexLayouter::InitCheck() const
 }
 
 
-// AddConstraints
+/**
+ * @brief Registers a size constraint for a span of elements.
+ *
+ * If a constraint already exists for the same span, the two are merged by
+ * taking the stricter of the two bounds.
+ *
+ * @param element    Index of the first element covered.
+ * @param length     Number of elements covered.
+ * @param _min       Minimum combined size.
+ * @param _max       Maximum combined size.
+ * @param _preferred Preferred combined size (currently stored but unused).
+ */
 void
 ComplexLayouter::AddConstraints(int32 element, int32 length,
 	float _min, float _max, float _preferred)
@@ -255,7 +385,12 @@ ComplexLayouter::AddConstraints(int32 element, int32 length,
 }
 
 
-// SetWeight
+/**
+ * @brief Sets the proportional weight of an element.
+ *
+ * @param element Index of the element.
+ * @param weight  Non-negative weight; clamped to 0 if negative.
+ */
 void
 ComplexLayouter::SetWeight(int32 element, float weight)
 {
@@ -266,7 +401,11 @@ ComplexLayouter::SetWeight(int32 element, float weight)
 }
 
 
-// MinSize
+/**
+ * @brief Returns the minimum total size satisfying all constraints.
+ *
+ * @return Minimum size in pixels.
+ */
 float
 ComplexLayouter::MinSize()
 {
@@ -275,7 +414,11 @@ ComplexLayouter::MinSize()
 }
 
 
-// MaxSize
+/**
+ * @brief Returns the maximum total size satisfying all constraints.
+ *
+ * @return Maximum size in pixels.
+ */
 float
 ComplexLayouter::MaxSize()
 {
@@ -284,7 +427,11 @@ ComplexLayouter::MaxSize()
 }
 
 
-// PreferredSize
+/**
+ * @brief Returns the preferred total size (equal to the minimum for this layouter).
+ *
+ * @return Preferred size in pixels.
+ */
 float
 ComplexLayouter::PreferredSize()
 {
@@ -292,7 +439,11 @@ ComplexLayouter::PreferredSize()
 }
 
 
-// CreateLayoutInfo
+/**
+ * @brief Allocates a LayoutInfo suitable for use with this layouter.
+ *
+ * @return A new MyLayoutInfo, or NULL if allocation failed.
+ */
 LayoutInfo*
 ComplexLayouter::CreateLayoutInfo()
 {
@@ -307,7 +458,16 @@ ComplexLayouter::CreateLayoutInfo()
 }
 
 
-// Layout
+/**
+ * @brief Performs the actual layout, distributing @p _size across elements.
+ *
+ * Clamps the requested size to [min, max], propagates the size change through
+ * the cumulative-sum table, and then calls _Layout() to find the optimised
+ * integer solution.
+ *
+ * @param _layoutInfo LayoutInfo produced by CreateLayoutInfo().
+ * @param _size       Total available pixel size.
+ */
 void
 ComplexLayouter::Layout(LayoutInfo* _layoutInfo, float _size)
 {
@@ -357,7 +517,11 @@ ComplexLayouter::Layout(LayoutInfo* _layoutInfo, float _size)
 }
 
 
-// CloneLayouter
+/**
+ * @brief Creates a deep copy of this layouter including all constraints.
+ *
+ * @return A new ComplexLayouter with identical state, or NULL on failure.
+ */
 Layouter*
 ComplexLayouter::CloneLayouter()
 {
@@ -397,7 +561,17 @@ ComplexLayouter::CloneLayouter()
 }
 
 
-// _Layout
+/**
+ * @brief Computes integer element sizes for the requested total @p size.
+ *
+ * First attempts a weight-proportional solution; if that violates any
+ * constraint, invokes LayoutOptimizer to find the closest feasible solution.
+ *
+ * @param size  Total pixel size to distribute (already clamped to [min, max]).
+ * @param sums  Propagated cumulative-sum bounds for this layout call.
+ * @param sizes Output array of per-element integer sizes.
+ * @return true if the computed integer solution satisfies all constraints.
+ */
 bool
 ComplexLayouter::_Layout(int32 size, SumItem* sums, int32* sizes)
 {
@@ -458,7 +632,14 @@ ComplexLayouter::_Layout(int32 size, SumItem* sums, int32* sizes)
 }
 
 
-// _AddOptimizerConstraints
+/**
+ * @brief Registers all current constraints with the LayoutOptimizer.
+ *
+ * Redundant constraints (those that cannot tighten the current min/max
+ * bounds) are skipped to keep the optimiser problem small.
+ *
+ * @return true on success, false if the optimiser rejected a constraint.
+ */
 bool
 ComplexLayouter::_AddOptimizerConstraints()
 {
@@ -516,7 +697,12 @@ ComplexLayouter::_AddOptimizerConstraints()
 }
 
 
-// _SatisfiesConstraints
+/**
+ * @brief Checks whether an integer size assignment satisfies all constraints.
+ *
+ * @param sizes Per-element integer sizes.
+ * @return true if all constraints are satisfied.
+ */
 bool
 ComplexLayouter::_SatisfiesConstraints(int32* sizes) const
 {
@@ -529,7 +715,12 @@ ComplexLayouter::_SatisfiesConstraints(int32* sizes) const
 }
 
 
-// _SatisfiesConstraintsSums
+/**
+ * @brief Checks whether cumulative-sum values satisfy all constraints.
+ *
+ * @param sumValues Prefix-sum array of length fElementCount + 1.
+ * @return true if every constraint's IsSatisfied() check passes.
+ */
 bool
 ComplexLayouter::_SatisfiesConstraintsSums(int32* sumValues) const
 {
@@ -547,7 +738,18 @@ ComplexLayouter::_SatisfiesConstraintsSums(int32* sumValues) const
 }
 
 
-// _ValidateLayout
+/**
+ * @brief Recomputes fMin and fMax by propagating all constraints through
+ *        the cumulative-sum table.
+ *
+ * The algorithm works in three phases:
+ *  1. Forward propagation of min constraints.
+ *  2. Backward propagation of min constraints.
+ *  3. Sequential application of max constraints (with conflict relaxation).
+ *
+ * After this method fMin and fMax reflect the tightest achievable range
+ * given all registered constraints.
+ */
 void
 ComplexLayouter::_ValidateLayout()
 {
@@ -671,7 +873,15 @@ ComplexLayouter::_ValidateLayout()
 }
 
 
-// _ApplyMaxConstraint
+/**
+ * @brief Incorporates a single max constraint into the cumulative-sum table.
+ *
+ * Applies the constraint, propagates resulting bound changes forward and
+ * backward, and relaxes the effectiveMax if a conflict is detected.
+ *
+ * @param currentConstraint The max constraint to apply.
+ * @param index             End element index (equal to constraint->end).
+ */
 void
 ComplexLayouter::_ApplyMaxConstraint(Constraint* currentConstraint, int32 index)
 {
@@ -786,12 +996,17 @@ ComplexLayouter::_ApplyMaxConstraint(Constraint* currentConstraint, int32 index)
 }
 
 
-// _PropagateChanges
-/*!	Propagate changes forward using min and max constraints. Max constraints
-	Beyond \a toIndex or at \a to toIndex after (and including)
-	\a lastMaxConstraint will be ignored. To have all constraints be
-	considered pass \c fElementCount and \c NULL.
-*/
+/**
+ * @brief Propagates dirty min/max changes forward through the sum table.
+ *
+ * Max constraints beyond @p toIndex (or at/after @p lastMaxConstraint) are
+ * not applied, to prevent circular updates during constraint application.
+ *
+ * @param sums                 Cumulative-sum table to update in-place.
+ * @param toIndex              Last element index to propagate forward to.
+ * @param lastMaxConstraint    Max constraint beyond which others are ignored;
+ *                             pass NULL to apply all.
+ */
 void
 ComplexLayouter::_PropagateChanges(SumItem* sums, int32 toIndex,
 	Constraint* lastMaxConstraint)
@@ -842,7 +1057,14 @@ ComplexLayouter::_PropagateChanges(SumItem* sums, int32 toIndex,
 }
 
 
-// _PropagateChangesBack
+/**
+ * @brief Propagates dirty min/max changes backward through the sum table.
+ *
+ * @param sums               Cumulative-sum table to update in-place.
+ * @param changedIndex       Highest index from which to propagate backward.
+ * @param lastMaxConstraint  Max constraint beyond which others are ignored;
+ *                           pass NULL to apply all.
+ */
 void
 ComplexLayouter::_PropagateChangesBack(SumItem* sums, int32 changedIndex,
 	Constraint* lastMaxConstraint)
@@ -893,7 +1115,11 @@ ComplexLayouter::_PropagateChangesBack(SumItem* sums, int32 changedIndex,
 }
 
 
-// _BackupValues
+/**
+ * @brief Saves the current min/max values for elements 0..maxIndex.
+ *
+ * @param maxIndex Highest element index to save (inclusive).
+ */
 void
 ComplexLayouter::_BackupValues(int32 maxIndex)
 {
@@ -905,7 +1131,11 @@ ComplexLayouter::_BackupValues(int32 maxIndex)
 }
 
 
-// _RestoreValues
+/**
+ * @brief Restores previously saved min/max values for elements 0..maxIndex.
+ *
+ * @param maxIndex Highest element index to restore (inclusive).
+ */
 void
 ComplexLayouter::_RestoreValues(int32 maxIndex)
 {
@@ -915,4 +1145,3 @@ ComplexLayouter::_RestoreValues(int32 maxIndex)
 		sum.max = fSumBackups[i + 1].max;
 	}
 }
-

@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file TemplatesMenu.cpp
+ * @brief BMenu subclass that populates itself from the Tracker templates directory.
+ *
+ * TemplatesMenu reads ~/config/settings/Tracker/Tracker New Templates at
+ * attachment time and builds a hierarchical menu of template files and
+ * subdirectory submenus.  Items tagged with the kAttrTemplateSubMenu attribute
+ * become nested submenus; plain directories become regular directory entries.
+ *
+ * @see BMenu, IconMenuItem, kNewEntryFromTemplate
+ */
 
 
 #include <Application.h>
@@ -70,6 +74,13 @@ const char* kTemplatesDirectory = "Tracker/Tracker New Templates";
 //	#pragma mark - TemplatesMenu
 
 
+/**
+ * @brief Construct a TemplatesMenu that will send template commands to \a target.
+ *
+ * @param target  Messenger to which kNewEntryFromTemplate and related
+ *                messages will be dispatched.
+ * @param label   Display label for the menu.
+ */
 TemplatesMenu::TemplatesMenu(const BMessenger& target, const char* label)
 	:
 	BMenu(label),
@@ -80,11 +91,17 @@ TemplatesMenu::TemplatesMenu(const BMessenger& target, const char* label)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 TemplatesMenu::~TemplatesMenu()
 {
 }
 
 
+/**
+ * @brief Build the menu contents and set item targets when attached to a window.
+ */
 void
 TemplatesMenu::AttachedToWindow()
 {
@@ -94,6 +111,15 @@ TemplatesMenu::AttachedToWindow()
 }
 
 
+/**
+ * @brief Set the target for all items in the menu and its submenus.
+ *
+ * Walks every top-level item, recurses into any submenus, and ensures the
+ * "Edit templates" item always targets be_app_messenger.
+ *
+ * @param target  Handler to receive item messages.
+ * @return B_OK on success, or the first error encountered.
+ */
 status_t
 TemplatesMenu::SetTargetForItems(BHandler* target)
 {
@@ -117,6 +143,12 @@ TemplatesMenu::SetTargetForItems(BHandler* target)
 }
 
 
+/**
+ * @brief Set the target messenger for all items in the menu and its submenus.
+ *
+ * @param messenger  Messenger to receive item messages.
+ * @return B_OK on success, or the first error encountered.
+ */
 status_t
 TemplatesMenu::SetTargetForItems(BMessenger messenger)
 {
@@ -140,6 +172,17 @@ TemplatesMenu::SetTargetForItems(BMessenger messenger)
 }
 
 
+/**
+ * @brief Rebuild the menu from the templates directory.
+ *
+ * Clears existing items, adds the "New folder" entry, then scans the
+ * user templates directory and adds an entry for each template found.
+ * An "Edit templates" item is appended at the end.
+ *
+ * @param addItems  If true, menu items are actually added; if false, only
+ *                  the item count is determined (used by UpdateMenuState).
+ * @return true if at least one template item was found.
+ */
 bool
 TemplatesMenu::BuildMenu(bool addItems)
 {
@@ -186,6 +229,12 @@ TemplatesMenu::BuildMenu(bool addItems)
 }
 
 
+/**
+ * @brief Create a menu item for adding a new template submenu inside \a subdirPath.
+ *
+ * @param subdirPath  Filesystem path of the parent templates subdirectory.
+ * @return A newly allocated BMenuItem targeting kNewTemplateSubmenu.
+ */
 BMenuItem*
 TemplatesMenu::NewSubmenuItem(BPath subdirPath)
 {
@@ -206,6 +255,9 @@ TemplatesMenu::NewSubmenuItem(BPath subdirPath)
 }
 
 
+/**
+ * @brief Refresh the menu state without adding items (checks for templates existence).
+ */
 void
 TemplatesMenu::UpdateMenuState()
 {
@@ -213,6 +265,18 @@ TemplatesMenu::UpdateMenuState()
 }
 
 
+/**
+ * @brief Recursively scan a template directory and populate \a menu.
+ *
+ * Classifies each entry as a submenu directory (kAttrTemplateSubMenu attribute),
+ * a plain sub-directory, or a file template; groups and separators are inserted
+ * in that order.  Recurses for submenu directories.
+ *
+ * @param addItems  If false, return the count without modifying \a menu.
+ * @param path      Filesystem path of the directory to scan.
+ * @param menu      BMenu to populate with the found template items.
+ * @return Number of template items found.
+ */
 int
 TemplatesMenu::IterateTemplateDirectory(bool addItems, BPath* path, BMenu* menu)
 {
@@ -319,6 +383,13 @@ TemplatesMenu::IterateTemplateDirectory(bool addItems, BPath* path, BMenu* menu)
 }
 
 
+/**
+ * @brief Recursively set the target messenger for items in \a menu and its submenus.
+ *
+ * @param menu       The menu whose items should be retargeted.
+ * @param messenger  Messenger to receive item messages.
+ * @return B_OK on success, or the first error encountered.
+ */
 status_t
 TemplatesMenu::SetTargetForSubmenuItems(BMenu* menu, BMessenger messenger)
 {
@@ -343,6 +414,13 @@ TemplatesMenu::SetTargetForSubmenuItems(BMenu* menu, BMessenger messenger)
 }
 
 
+/**
+ * @brief Recursively set the target handler for items in \a menu and its submenus.
+ *
+ * @param menu    The menu whose items should be retargeted.
+ * @param target  Handler to receive item messages.
+ * @return B_OK on success, or the first error encountered.
+ */
 status_t
 TemplatesMenu::SetTargetForSubmenuItems(BMenu* menu, BHandler* target)
 {

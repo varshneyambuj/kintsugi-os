@@ -1,10 +1,43 @@
 /*
- * Copyright 2011-2020, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe <zooey@hirschkaefer.de>
- *		Andrew Lindesay <apl@lindesay.co.nz>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2020, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ *       Andrew Lindesay <apl@lindesay.co.nz>
+ */
+
+
+/**
+ * @file RepositoryConfig.cpp
+ * @brief Implementation of BRepositoryConfig, the persistent repository settings object.
+ *
+ * BRepositoryConfig reads and writes the driver-settings-format configuration
+ * file that describes a single package repository: its display name, base URL,
+ * canonical identifier, and download priority. Two storage format versions are
+ * supported; a migration table maps legacy identifier URLs to their canonical
+ * replacements.
+ *
+ * @see BRepositoryCache, BPackageRoster
  */
 
 
@@ -54,6 +87,9 @@ static const char* kLegacyUrlMappings[] = {
 };
 
 
+/**
+ * @brief Default-construct an uninitialised BRepositoryConfig.
+ */
 BRepositoryConfig::BRepositoryConfig()
 	:
 	fInitStatus(B_NO_INIT),
@@ -63,12 +99,24 @@ BRepositoryConfig::BRepositoryConfig()
 }
 
 
+/**
+ * @brief Construct a BRepositoryConfig by loading from a filesystem entry.
+ *
+ * @param entry  The BEntry pointing to the configuration file.
+ */
 BRepositoryConfig::BRepositoryConfig(const BEntry& entry)
 {
 	SetTo(entry);
 }
 
 
+/**
+ * @brief Construct a BRepositoryConfig from explicit field values.
+ *
+ * @param name      Display name of the repository.
+ * @param baseURL   Base URL where packages can be fetched.
+ * @param priority  Download priority; lower values are preferred.
+ */
 BRepositoryConfig::BRepositoryConfig(const BString& name,
 	const BString& baseURL, uint8 priority)
 	:
@@ -81,11 +129,23 @@ BRepositoryConfig::BRepositoryConfig(const BString& name,
 }
 
 
+/**
+ * @brief Destroy the BRepositoryConfig.
+ */
 BRepositoryConfig::~BRepositoryConfig()
 {
 }
 
 
+/**
+ * @brief Write this configuration to a driver-settings file.
+ *
+ * Creates or overwrites the file at @a entry with the version-2 format,
+ * including base URL, identifier, and priority.
+ *
+ * @param entry  The BEntry designating the output file.
+ * @return B_OK on success, or an error code if the file cannot be written.
+ */
 status_t
 BRepositoryConfig::Store(const BEntry& entry) const
 {
@@ -128,6 +188,11 @@ BRepositoryConfig::Store(const BEntry& entry) const
 }
 
 
+/**
+ * @brief Check whether this config has been successfully initialised.
+ *
+ * @return B_OK if valid, B_NO_INIT otherwise.
+ */
 status_t
 BRepositoryConfig::InitCheck() const
 {
@@ -135,6 +200,15 @@ BRepositoryConfig::InitCheck() const
 }
 
 
+/**
+ * @brief Translate a legacy v1 identifier URL to its canonical replacement.
+ *
+ * Scans the kLegacyUrlMappings table and returns the replacement when found;
+ * otherwise returns the original identifier unchanged.
+ *
+ * @param identifier  The identifier URL to look up.
+ * @return The canonical identifier URL.
+ */
 static const char*
 repository_config_swap_legacy_identifier_v1(const char* identifier)
 {
@@ -146,6 +220,16 @@ repository_config_swap_legacy_identifier_v1(const char* identifier)
 }
 
 
+/**
+ * @brief Load the repository configuration from a driver-settings file.
+ *
+ * Supports both version-1 and version-2 storage formats. The fIsUserSpecific
+ * flag is derived from whether the entry lives under the user settings directory.
+ *
+ * @param entry  The BEntry pointing to the configuration file.
+ * @return B_OK on success, B_BAD_DATA if the file format is invalid, or another
+ *         error code on failure.
+ */
 status_t
 BRepositoryConfig::SetTo(const BEntry& entry)
 {
@@ -215,6 +299,11 @@ BRepositoryConfig::SetTo(const BEntry& entry)
 }
 
 
+/**
+ * @brief Return the display name of the repository.
+ *
+ * @return Reference to the name string.
+ */
 const BString&
 BRepositoryConfig::Name() const
 {
@@ -222,6 +311,11 @@ BRepositoryConfig::Name() const
 }
 
 
+/**
+ * @brief Return the base URL of the repository.
+ *
+ * @return Reference to the base URL string.
+ */
 const BString&
 BRepositoryConfig::BaseURL() const
 {
@@ -229,6 +323,11 @@ BRepositoryConfig::BaseURL() const
 }
 
 
+/**
+ * @brief Return the canonical identifier URL of the repository.
+ *
+ * @return Reference to the identifier string.
+ */
 const BString&
 BRepositoryConfig::Identifier() const
 {
@@ -236,6 +335,11 @@ BRepositoryConfig::Identifier() const
 }
 
 
+/**
+ * @brief Return the download priority of the repository.
+ *
+ * @return Priority value; lower means higher preference.
+ */
 uint8
 BRepositoryConfig::Priority() const
 {
@@ -243,6 +347,11 @@ BRepositoryConfig::Priority() const
 }
 
 
+/**
+ * @brief Check whether this configuration belongs to the per-user installation.
+ *
+ * @return True if the config file lives under the user settings directory.
+ */
 bool
 BRepositoryConfig::IsUserSpecific() const
 {
@@ -250,6 +359,11 @@ BRepositoryConfig::IsUserSpecific() const
 }
 
 
+/**
+ * @brief Return the filesystem entry of the configuration file.
+ *
+ * @return Reference to the BEntry for the config file.
+ */
 const BEntry&
 BRepositoryConfig::Entry() const
 {
@@ -257,6 +371,12 @@ BRepositoryConfig::Entry() const
 }
 
 
+/**
+ * @brief Derive and return the URL for fetching package files.
+ *
+ * @return A string of the form "baseURL/packages", or an empty string if
+ *         the base URL has not been set.
+ */
 BString
 BRepositoryConfig::PackagesURL() const
 {
@@ -266,6 +386,11 @@ BRepositoryConfig::PackagesURL() const
 }
 
 
+/**
+ * @brief Set the display name of the repository.
+ *
+ * @param name  The new name.
+ */
 void
 BRepositoryConfig::SetName(const BString& name)
 {
@@ -273,6 +398,11 @@ BRepositoryConfig::SetName(const BString& name)
 }
 
 
+/**
+ * @brief Set the base URL of the repository.
+ *
+ * @param baseURL  The new base URL.
+ */
 void
 BRepositoryConfig::SetBaseURL(const BString& baseURL)
 {
@@ -280,6 +410,11 @@ BRepositoryConfig::SetBaseURL(const BString& baseURL)
 }
 
 
+/**
+ * @brief Set the canonical identifier URL of the repository.
+ *
+ * @param identifier  The new identifier URL.
+ */
 void
 BRepositoryConfig::SetIdentifier(const BString& identifier)
 {
@@ -287,6 +422,11 @@ BRepositoryConfig::SetIdentifier(const BString& identifier)
 }
 
 
+/**
+ * @brief Set the download priority of the repository.
+ *
+ * @param priority  The new priority value.
+ */
 void
 BRepositoryConfig::SetPriority(uint8 priority)
 {
@@ -294,6 +434,11 @@ BRepositoryConfig::SetPriority(uint8 priority)
 }
 
 
+/**
+ * @brief Mark this configuration as user-specific or system-wide.
+ *
+ * @param isUserSpecific  True for user-specific, false for system-wide.
+ */
 void
 BRepositoryConfig::SetIsUserSpecific(bool isUserSpecific)
 {

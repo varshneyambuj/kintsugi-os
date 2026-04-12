@@ -1,6 +1,40 @@
 /*
- * Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageFileHeapAccessorBase.cpp
+ * @brief Shared base class for reading and writing the HPKG compressed heap.
+ *
+ * PackageFileHeapAccessorBase encapsulates the chunk-offset index (OffsetArray),
+ * the decompression algorithm, and the core I/O primitives used by both the
+ * reader and writer.  The heap is split into fixed-size chunks; each chunk
+ * may be independently compressed.  The OffsetArray maps chunk indices to
+ * their byte offsets within the compressed heap, using a compact mixed
+ * 32/64-bit encoding for large heaps.
+ *
+ * @see PackageFileHeapReader, PackageFileHeapWriter
  */
 
 
@@ -41,6 +75,9 @@ static mutex sFallbackBufferLock = MUTEX_INITIALIZER("PackageFileHeapAccessorBas
 // #pragma mark - OffsetArray
 
 
+/**
+ * @brief Construct an empty OffsetArray with no allocated storage.
+ */
 PackageFileHeapAccessorBase::OffsetArray::OffsetArray()
 	:
 	fOffsets(NULL)
@@ -48,12 +85,25 @@ PackageFileHeapAccessorBase::OffsetArray::OffsetArray()
 }
 
 
+/**
+ * @brief Destroy the OffsetArray and release the underlying offset storage.
+ */
 PackageFileHeapAccessorBase::OffsetArray::~OffsetArray()
 {
 	delete[] fOffsets;
 }
 
 
+/**
+ * @brief Initialise offsets for a heap where every chunk has the nominal size.
+ *
+ * When no compression is used all chunk boundaries are at multiples of
+ * kChunkSize, so offsets can be computed arithmetically without storing each
+ * one individually.  For single-chunk heaps no storage is allocated at all.
+ *
+ * @param totalChunkCount Total number of chunks in the uncompressed heap.
+ * @return true on success, false if memory allocation fails.
+ */
 bool
 PackageFileHeapAccessorBase::OffsetArray::InitUncompressedChunksOffsets(
 	size_t totalChunkCount)
@@ -93,6 +143,24 @@ PackageFileHeapAccessorBase::OffsetArray::InitUncompressedChunksOffsets(
 }
 
 
+/**
+ * @brief Accumulate compressed chunk sizes to populate the offset table.
+ *
+ * Reads \a chunkCount entries from \a chunkSizes (each stored as a big-endian
+ * uint16 representing chunkSize - 1) starting at \a baseIndex, computes
+ * the resulting byte offsets, and stores them in the array.  Automatically
+ * upgrades the internal layout from 32-bit to mixed 64-bit when an offset
+ * exceeds 4 GiB.
+ *
+ * @param totalChunkCount Total number of chunks in the heap (used to size
+ *                        the initial allocation if not already done).
+ * @param baseIndex       Index of the first chunk whose offset is already
+ *                        known; sizes begin at the following chunk.
+ * @param chunkSizes      Array of big-endian uint16 values, each encoding
+ *                        (compressedChunkSize - 1).
+ * @param chunkCount      Number of entries to read from \a chunkSizes.
+ * @return true on success, false if memory allocation fails.
+ */
 bool
 PackageFileHeapAccessorBase::OffsetArray::InitChunksOffsets(
 	size_t totalChunkCount, size_t baseIndex, const uint16* chunkSizes,
@@ -143,6 +211,16 @@ PackageFileHeapAccessorBase::OffsetArray::InitChunksOffsets(
 }
 
 
+/**
+ * @brief Copy the offset table from another OffsetArray.
+ *
+ * Allocates a new buffer and copies all entries from \a other.  If \a other
+ * has no allocated storage (single-chunk or empty heap) this is a no-op.
+ *
+ * @param totalChunkCount Total number of chunks described by \a other.
+ * @param other           Source OffsetArray to copy from.
+ * @return true on success, false if memory allocation fails.
+ */
 bool
 PackageFileHeapAccessorBase::OffsetArray::Init(size_t totalChunkCount,
 	const OffsetArray& other)
@@ -163,6 +241,17 @@ PackageFileHeapAccessorBase::OffsetArray::Init(size_t totalChunkCount,
 }
 
 
+/**
+ * @brief Allocate the raw uint32 array for the offset table.
+ *
+ * The first element encodes the layout: 0 means all offsets fit in 32 bits;
+ * a non-zero value is the index of the first chunk that needs a 64-bit offset,
+ * at which point each such entry occupies two consecutive uint32 slots.
+ *
+ * @param totalChunkCount       Total number of chunks in the heap.
+ * @param offset32BitChunkCount Number of chunks whose offsets fit in 32 bits.
+ * @return Pointer to the allocated array, or NULL on failure.
+ */
 /*static*/ uint32*
 PackageFileHeapAccessorBase::OffsetArray::_AllocateOffsetArray(
 	size_t totalChunkCount, size_t offset32BitChunkCount)
@@ -184,6 +273,21 @@ PackageFileHeapAccessorBase::OffsetArray::_AllocateOffsetArray(
 // #pragma mark - PackageFileHeapAccessorBase
 
 
+/**
+ * @brief Construct the heap accessor base.
+ *
+ * Acquires a reference to \a decompressionAlgorithm if it is non-NULL so the
+ * algorithm object outlives this accessor.
+ *
+ * @param errorOutput            Channel for diagnostic messages; must remain
+ *                               valid for the lifetime of this object.
+ * @param file                   Positioned I/O object representing the package
+ *                               file; must remain valid for the lifetime of
+ *                               this object.
+ * @param heapOffset             Byte offset of the heap within \a file.
+ * @param decompressionAlgorithm Decompression algorithm and parameters to use,
+ *                               or NULL for an uncompressed heap.
+ */
 PackageFileHeapAccessorBase::PackageFileHeapAccessorBase(
 	BErrorOutput* errorOutput, BPositionIO* file, off_t heapOffset,
 	DecompressionAlgorithmOwner* decompressionAlgorithm)
@@ -200,6 +304,9 @@ PackageFileHeapAccessorBase::PackageFileHeapAccessorBase(
 }
 
 
+/**
+ * @brief Destroy the accessor and release the decompression algorithm reference.
+ */
 PackageFileHeapAccessorBase::~PackageFileHeapAccessorBase()
 {
 	if (fDecompressionAlgorithm != NULL)
@@ -207,6 +314,20 @@ PackageFileHeapAccessorBase::~PackageFileHeapAccessorBase()
 }
 
 
+/**
+ * @brief Read and decompress a contiguous range from the heap into a BDataIO.
+ *
+ * Iterates over the chunks that overlap the requested range, decompressing
+ * each chunk in turn and writing the relevant portion to \a output.  Both
+ * compressed and uncompressed chunk buffers are allocated on demand.
+ *
+ * @param offset Byte offset within the uncompressed heap to start reading.
+ * @param size   Number of uncompressed bytes to read.
+ * @param output Destination BDataIO that receives the decompressed data.
+ * @return B_OK on success, B_BAD_VALUE for an out-of-range request,
+ *         B_NO_MEMORY if buffer allocation fails, or any error returned by
+ *         ReadAndDecompressChunk() or BDataIO::WriteExactly().
+ */
 status_t
 PackageFileHeapAccessorBase::ReadDataToOutput(off_t offset, size_t size,
 	BDataIO* output)
@@ -300,6 +421,22 @@ PackageFileHeapAccessorBase::ReadDataToOutput(off_t offset, size_t size,
 }
 
 
+/**
+ * @brief Read and optionally decompress a single raw chunk from the file.
+ *
+ * When \a compressedSize equals \a uncompressedSize the data is read directly
+ * into \a uncompressedDataBuffer.  Otherwise the compressed bytes are read
+ * into \a compressedDataBuffer and then decompressed.
+ *
+ * @param offset               Byte offset within the compressed heap of the
+ *                             chunk to read.
+ * @param compressedSize       Number of compressed bytes to read.
+ * @param uncompressedSize     Expected size of the decompressed data.
+ * @param compressedDataBuffer Scratch buffer for the compressed bytes.
+ * @param uncompressedDataBuffer Destination buffer for the decompressed data.
+ * @param scratchBuffer        Optional algorithm-specific scratch space.
+ * @return B_OK on success, or an error code on I/O or decompression failure.
+ */
 status_t
 PackageFileHeapAccessorBase::ReadAndDecompressChunkData(uint64 offset,
 	size_t compressedSize, size_t uncompressedSize,
@@ -321,6 +458,20 @@ PackageFileHeapAccessorBase::ReadAndDecompressChunkData(uint64 offset,
 }
 
 
+/**
+ * @brief Decompress a chunk of data using the configured algorithm.
+ *
+ * Invokes the decompression algorithm and validates that the output size
+ * matches the expected uncompressed size.  Emits an error message through
+ * fErrorOutput on failure.
+ *
+ * @param compressed   iovec describing the compressed input buffer.
+ * @param uncompressed iovec describing the output buffer; iov_len must be
+ *                     set to the expected uncompressed size on entry.
+ * @param scratchBuffer Optional algorithm-specific scratch space; may be NULL.
+ * @return B_OK on success, B_ERROR if the decompressed size mismatches,
+ *         or any error returned by the decompression algorithm.
+ */
 status_t
 PackageFileHeapAccessorBase::DecompressChunkData(const iovec& compressed,
 	iovec& uncompressed, iovec* scratchBuffer)
@@ -344,6 +495,18 @@ PackageFileHeapAccessorBase::DecompressChunkData(const iovec& compressed,
 }
 
 
+/**
+ * @brief Read raw bytes from the package file at a heap-relative offset.
+ *
+ * Translates \a offset by adding fHeapOffset before reading via
+ * BPositionIO::ReadAtExactly().  Emits a diagnostic message through
+ * fErrorOutput on failure.
+ *
+ * @param offset Byte offset within the compressed heap to read from.
+ * @param buffer Destination buffer for the read bytes.
+ * @param size   Number of bytes to read.
+ * @return B_OK on success, or any error returned by ReadAtExactly().
+ */
 status_t
 PackageFileHeapAccessorBase::ReadFileData(uint64 offset, void* buffer,
 	size_t size)

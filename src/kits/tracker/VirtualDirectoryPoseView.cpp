@@ -1,9 +1,40 @@
 /*
- * Copyright 2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold, ingo_weinhold@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       Ingo Weinhold, ingo_weinhold@gmx.de
+ */
+
+
+/**
+ * @file VirtualDirectoryPoseView.cpp
+ * @brief BPoseView subclass for displaying virtual (merged) directories.
+ *
+ * VirtualDirectoryPoseView extends BPoseView to track the definition file
+ * of a virtual directory, react to changes in its path-list via
+ * BPathMonitor, and keep the displayed poses in sync with the underlying
+ * merged directory contents.
+ *
+ * @see VirtualDirectoryManager, VirtualDirectoryEntryList, BPoseView
  */
 
 
@@ -27,6 +58,14 @@ namespace BPrivate {
 //	#pragma mark - VirtualDirectoryPoseView
 
 
+/**
+ * @brief Construct a VirtualDirectoryPoseView for the given virtual-directory model.
+ *
+ * Resolves the directory paths and root definition file from the
+ * VirtualDirectoryManager.
+ *
+ * @param model  The virtual-directory model to display.
+ */
 VirtualDirectoryPoseView::VirtualDirectoryPoseView(Model* model)
 	:
 	BPoseView(model, kListMode),
@@ -48,11 +87,19 @@ VirtualDirectoryPoseView::VirtualDirectoryPoseView(Model* model)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 VirtualDirectoryPoseView::~VirtualDirectoryPoseView()
 {
 }
 
 
+/**
+ * @brief Suppress edit operations that are not meaningful for virtual directories.
+ *
+ * @param message  The incoming message to process.
+ */
 void
 VirtualDirectoryPoseView::MessageReceived(BMessage* message)
 {
@@ -78,6 +125,9 @@ VirtualDirectoryPoseView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Install the pose-view filter when the view is attached to its window.
+ */
 void
 VirtualDirectoryPoseView::AttachedToWindow()
 {
@@ -86,6 +136,11 @@ VirtualDirectoryPoseView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Restore view state from an attribute stream, forcing list mode.
+ *
+ * @param node  The attribute stream node to read state from.
+ */
 void
 VirtualDirectoryPoseView::RestoreState(AttributeStreamNode* node)
 {
@@ -94,6 +149,11 @@ VirtualDirectoryPoseView::RestoreState(AttributeStreamNode* node)
 }
 
 
+/**
+ * @brief Restore view state from a BMessage, forcing list mode.
+ *
+ * @param message  The message containing the saved view state.
+ */
 void
 VirtualDirectoryPoseView::RestoreState(const BMessage& message)
 {
@@ -102,18 +162,34 @@ VirtualDirectoryPoseView::RestoreState(const BMessage& message)
 }
 
 
+/**
+ * @brief No-op: virtual directories do not persist icon positions.
+ *
+ * @param frameIfDesktop  Unused.
+ */
 void
 VirtualDirectoryPoseView::SavePoseLocations(BRect* frameIfDesktop)
 {
 }
 
 
+/**
+ * @brief No-op: virtual directories are locked to list mode.
+ *
+ * @param newMode  Ignored.
+ */
 void
 VirtualDirectoryPoseView::SetViewMode(uint32 newMode)
 {
 }
 
 
+/**
+ * @brief Create and return a VirtualDirectoryEntryList for the given ref.
+ *
+ * @param ref  entry_ref of the virtual directory to iterate.
+ * @return A new VirtualDirectoryEntryList on success, or NULL on failure.
+ */
 EntryListBase*
 VirtualDirectoryPoseView::InitDirentIterator(const entry_ref* ref)
 {
@@ -136,6 +212,12 @@ VirtualDirectoryPoseView::InitDirentIterator(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Install node-monitor watches on the directories and definition files.
+ *
+ * Watches each real directory path via BPathMonitor and the definition
+ * file(s) via TTracker::WatchNode.
+ */
 void
 VirtualDirectoryPoseView::StartWatching()
 {
@@ -157,6 +239,9 @@ VirtualDirectoryPoseView::StartWatching()
 }
 
 
+/**
+ * @brief Remove all node-monitor watches installed by StartWatching().
+ */
 void
 VirtualDirectoryPoseView::StopWatching()
 {
@@ -165,6 +250,12 @@ VirtualDirectoryPoseView::StopWatching()
 }
 
 
+/**
+ * @brief Dispatch a filesystem notification to the appropriate handler.
+ *
+ * @param message  The node-monitor or path-monitor notification.
+ * @return true if the notification was handled; false to delegate upward.
+ */
 bool
 VirtualDirectoryPoseView::FSNotification(const BMessage* message)
 {

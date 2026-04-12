@@ -1,36 +1,60 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software..
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file FSClipboard.cpp
+ * @brief Clipboard integration for Tracker cut/copy/paste of filesystem entries.
+ *
+ * Provides functions to add entry refs to the BClipboard, query the clipboard
+ * state (move vs copy mode), and perform the actual clipboard paste operations.
+ * Uses a dedicated "tracker/clipboard" clipboard object keyed on node refs.
+ *
+ * @see BClipboard, FSUtils
+ */
 
 
 #include "FSClipboard.h"
@@ -62,6 +86,14 @@ FSClipboardCheckIntegrity()
 }
 #endif
 
+/**
+ * @brief Parse a clipboard entry name back into a node_ref.
+ *
+ * Names are encoded as "rDEV_INO" (ref) or "mDEV_INO" (mode).
+ *
+ * @param node  Output node_ref filled with the parsed device and inode.
+ * @param name  The encoded name string beginning with 'r' or 'm'.
+ */
 static void
 MakeNodeFromName(node_ref* node, char* name)
 {
@@ -73,6 +105,12 @@ MakeNodeFromName(node_ref* node, char* name)
 }
 
 
+/**
+ * @brief Format a node_ref into the clipboard ref-name string ("rDEV_INO").
+ *
+ * @param refName  Output buffer (at least 32 bytes).
+ * @param node     The node_ref to encode.
+ */
 static inline void
 MakeRefName(char* refName, const node_ref* node)
 {
@@ -80,6 +118,12 @@ MakeRefName(char* refName, const node_ref* node)
 }
 
 
+/**
+ * @brief Format a node_ref into the clipboard mode-name string ("mDEV_INO").
+ *
+ * @param modeName  Output buffer (at least 32 bytes).
+ * @param node      The node_ref to encode.
+ */
 static inline void
 MakeModeName(char* modeName, const node_ref* node)
 {
@@ -116,6 +160,13 @@ CompareModeAndRefName(const char* modeName, const char* refName)
 #define B_TRANSLATION_CONTEXT "FSClipBoard"
 
 
+/**
+ * @brief Test whether the clipboard currently contains Tracker entry refs.
+ *
+ * Checks for at least one B_REF_TYPE field paired with a matching mode field.
+ *
+ * @return true if the clipboard has Tracker refs; false otherwise.
+ */
 bool
 FSClipboardHasRefs()
 {
@@ -146,6 +197,15 @@ FSClipboardHasRefs()
 }
 
 
+/**
+ * @brief Begin watching the Tracker clipboard for changes.
+ *
+ * If running inside the Tracker process, registers @a target with the
+ * ClipboardRefsWatcher directly; otherwise sends kStartWatchClipboardRefs
+ * to the Tracker application.
+ *
+ * @param target  The BMessenger to notify when clipboard contents change.
+ */
 void
 FSClipboardStartWatch(BMessenger target)
 {
@@ -165,6 +225,11 @@ FSClipboardStartWatch(BMessenger target)
 }
 
 
+/**
+ * @brief Stop watching the Tracker clipboard for changes.
+ *
+ * @param target  The BMessenger that was previously registered.
+ */
 void
 FSClipboardStopWatch(BMessenger target)
 {
@@ -184,6 +249,9 @@ FSClipboardStopWatch(BMessenger target)
 }
 
 
+/**
+ * @brief Clear all clipboard contents and commit the change.
+ */
 void
 FSClipboardClear()
 {
@@ -196,11 +264,18 @@ FSClipboardClear()
 }
 
 
-/** This function adds the given poses list to the clipboard, for both copy
- *	and cut. All poses in the list must have "directory" as parent.
- *	"moveMode" is either kMoveSelection or kCopySelection.
- *	It will check if the entries are already present, so that there can only
- *	be one reference to them in the clipboard.
+/**
+ * @brief Add all poses in @a list to the clipboard as cut or copy entries.
+ *
+ * All poses must reside in @a directory. Volumes, root, Trash, and Desktop
+ * entries are silently skipped. If @a clearClipboard is true, the clipboard is
+ * emptied first; otherwise existing refs are updated in place.
+ *
+ * @param directory      The parent directory containing all poses.
+ * @param list           The list of BPose objects to add.
+ * @param moveMode       kMoveSelection (cut) or kCopySelection (copy).
+ * @param clearClipboard If true, the clipboard is cleared before adding.
+ * @return Number of entry refs successfully added or updated.
  */
 uint32
 FSClipboardAddPoses(const node_ref* directory, PoseList* list,
@@ -312,6 +387,13 @@ FSClipboardAddPoses(const node_ref* directory, PoseList* list,
 }
 
 
+/**
+ * @brief Remove poses in @a list from the clipboard.
+ *
+ * @param directory  The parent directory of the poses (used for the update message).
+ * @param list       The list of BPose objects to remove from the clipboard.
+ * @return Number of entry refs removed.
+ */
 uint32
 FSClipboardRemovePoses(const node_ref* directory, PoseList* list)
 {
@@ -359,8 +441,15 @@ FSClipboardRemovePoses(const node_ref* directory, PoseList* list)
 }
 
 
-/** Pastes entries from the clipboard to the target model's directory.
- *	Updates moveModes and notifies listeners if necessary.
+/**
+ * @brief Paste clipboard entries into the directory represented by @a model.
+ *
+ * Iterates over all B_REF_TYPE entries in the clipboard, dispatches them to
+ * asynchronous copy, move, or create-link operations, and notifies all listeners.
+ *
+ * @param model      The destination directory model.
+ * @param linksMode  If non-zero, create links instead of copies.
+ * @return true if at least one entry was queued for paste; false if the clipboard is empty.
  */
 bool
 FSClipboardPaste(Model* model, uint32 linksMode)

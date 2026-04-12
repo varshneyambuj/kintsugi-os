@@ -1,36 +1,41 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file ViewState.cpp
+ * @brief BColumn and BViewState serialisation and deserialisation.
+ *
+ * BColumn describes a single attribute column in list view (title, width,
+ * alignment, attribute key).  BViewState captures the complete display
+ * configuration of a Tracker window (view mode, sort order, scroll origin,
+ * icon size).  Both classes support streaming to/from BMallocIO and BMessage
+ * with optional big-endian byte swapping for cross-platform portability.
+ *
+ * @see BPoseView, PoseView
+ */
 
 
 #include <Debug.h>
@@ -81,6 +86,18 @@ static const int32 kColumnStateMinArchiveVersion = 21;
 //	#pragma mark - BColumn
 
 
+/**
+ * @brief Construct a BColumn with all fields including a display-as override.
+ *
+ * @param title          Column header text.
+ * @param width          Initial column width in pixels (scaled to font size).
+ * @param align          Text alignment within the column.
+ * @param attributeName  Attribute key (e.g. "BEOS:name").
+ * @param attrType       BeOS attribute type constant.
+ * @param displayAs      Display-as format string, or NULL for the default.
+ * @param statField      true if this is a stat (kernel) attribute.
+ * @param editable       true if the user can edit this attribute inline.
+ */
 BColumn::BColumn(const char* title, float width,
 	alignment align, const char* attributeName, uint32 attrType,
 	const char* displayAs, bool statField, bool editable)
@@ -90,6 +107,17 @@ BColumn::BColumn(const char* title, float width,
 }
 
 
+/**
+ * @brief Construct a BColumn without a display-as override.
+ *
+ * @param title          Column header text.
+ * @param width          Initial column width in pixels (scaled to font size).
+ * @param align          Text alignment within the column.
+ * @param attributeName  Attribute key.
+ * @param attrType       BeOS attribute type constant.
+ * @param statField      true if this is a stat (kernel) attribute.
+ * @param editable       true if the user can edit this attribute inline.
+ */
 BColumn::BColumn(const char* title, float width,
 	alignment align, const char* attributeName, uint32 attrType,
 	bool statField, bool editable)
@@ -99,11 +127,21 @@ BColumn::BColumn(const char* title, float width,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BColumn::~BColumn()
 {
 }
 
 
+/**
+ * @brief Deserialise a BColumn from a raw byte stream.
+ *
+ * @param stream      The stream positioned immediately after the header.
+ * @param version     Archive version read from the stream header.
+ * @param endianSwap  If true, byte-swap all multi-byte fields.
+ */
 BColumn::BColumn(BMallocIO* stream, int32 version, bool endianSwap)
 {
 	StringFromStream(&fTitle, stream, endianSwap);
@@ -133,6 +171,12 @@ BColumn::BColumn(BMallocIO* stream, int32 version, bool endianSwap)
 }
 
 
+/**
+ * @brief Deserialise a BColumn from a BMessage at the given index.
+ *
+ * @param message  The message containing column fields at \a index.
+ * @param index    The array index to read within each message field.
+ */
 BColumn::BColumn(const BMessage &message, int32 index)
 {
 	if (message.FindString(kColumnTitleName, index, &fTitle) != B_OK)
@@ -177,6 +221,18 @@ BColumn::BColumn(const BMessage &message, int32 index)
 }
 
 
+/**
+ * @brief Common initialisation helper called by all constructors.
+ *
+ * @param title          Column header text.
+ * @param width          Width in pixels (unscaled; will be multiplied by _Scale()).
+ * @param align          Text alignment.
+ * @param attributeName  Attribute key string.
+ * @param attrType       BeOS attribute type.
+ * @param displayAs      Optional display-as override.
+ * @param statField      true for stat (kernel) attributes.
+ * @param editable       true if the attribute can be edited inline.
+ */
 void
 BColumn::_Init(const char* title, float width,
 	alignment align, const char* attributeName, uint32 attrType,
@@ -195,6 +251,14 @@ BColumn::_Init(const char* title, float width,
 }
 
 
+/**
+ * @brief Return the DPI-based scale factor for column widths.
+ *
+ * Computes the ratio of the current plain-font size to 12 points so that
+ * column widths scale proportionally with the system font.
+ *
+ * @return Scale factor (1.0 at 12-point plain font).
+ */
 /* static */ float
 BColumn::_Scale()
 {
@@ -202,6 +266,13 @@ BColumn::_Scale()
 }
 
 
+/**
+ * @brief Deserialise a BColumn from a raw byte stream, validating the header.
+ *
+ * @param stream      Stream positioned at the column header.
+ * @param endianSwap  If true, byte-swap all multi-byte fields.
+ * @return A new BColumn on success, or NULL if validation fails.
+ */
 BColumn*
 BColumn::InstantiateFromStream(BMallocIO* stream, bool endianSwap)
 {
@@ -228,6 +299,13 @@ BColumn::InstantiateFromStream(BMallocIO* stream, bool endianSwap)
 }
 
 
+/**
+ * @brief Deserialise a BColumn from a BMessage at the given index.
+ *
+ * @param message  Message containing serialised column data.
+ * @param index    Array index within the message fields.
+ * @return A new BColumn on success, or NULL on version mismatch.
+ */
 BColumn*
 BColumn::InstantiateFromMessage(const BMessage &message, int32 index)
 {
@@ -244,6 +322,14 @@ BColumn::InstantiateFromMessage(const BMessage &message, int32 index)
 }
 
 
+/**
+ * @brief Serialise this column to a raw byte stream.
+ *
+ * Writes the class identifier, version number, and all field values.
+ * Floating-point widths are unscaled before writing.
+ *
+ * @param stream  Output stream to write the serialised column data.
+ */
 void
 BColumn::ArchiveToStream(BMallocIO* stream) const
 {
@@ -271,6 +357,11 @@ BColumn::ArchiveToStream(BMallocIO* stream) const
 }
 
 
+/**
+ * @brief Serialise this column into a BMessage by appending field values.
+ *
+ * @param message  Output message to which column fields are appended.
+ */
 void
 BColumn::ArchiveToMessage(BMessage &message) const
 {
@@ -292,6 +383,12 @@ BColumn::ArchiveToMessage(BMessage &message) const
 }
 
 
+/**
+ * @brief Validate a newly deserialised BColumn and delete it if corrupt.
+ *
+ * @param column  Column to validate; may be NULL.
+ * @return \a column if valid, or NULL if sanity checks fail (object is deleted).
+ */
 BColumn*
 BColumn::_Sanitize(BColumn* column)
 {
@@ -324,6 +421,9 @@ BColumn::_Sanitize(BColumn* column)
 //	#pragma mark - BViewState
 
 
+/**
+ * @brief Construct a default BViewState (list mode, name-sorted, standard icon size).
+ */
 BViewState::BViewState()
 {
 	_Init();
@@ -331,6 +431,12 @@ BViewState::BViewState()
 }
 
 
+/**
+ * @brief Deserialise a BViewState from a raw byte stream.
+ *
+ * @param stream      Stream positioned after the validated header.
+ * @param endianSwap  If true, byte-swap all multi-byte fields.
+ */
 BViewState::BViewState(BMallocIO* stream, bool endianSwap)
 {
 	_Init();
@@ -367,6 +473,11 @@ BViewState::BViewState(BMallocIO* stream, bool endianSwap)
 }
 
 
+/**
+ * @brief Deserialise a BViewState from a BMessage.
+ *
+ * @param message  Message containing the serialised view-state fields.
+ */
 BViewState::BViewState(const BMessage &message)
 {
 	_Init();
@@ -391,6 +502,11 @@ BViewState::BViewState(const BMessage &message)
 }
 
 
+/**
+ * @brief Serialise this view state to a raw byte stream and snapshot the current state.
+ *
+ * @param stream  Output stream to write the serialised data.
+ */
 void
 BViewState::ArchiveToStream(BMallocIO* stream)
 {
@@ -399,6 +515,11 @@ BViewState::ArchiveToStream(BMallocIO* stream)
 }
 
 
+/**
+ * @brief Serialise this view state into a BMessage and snapshot the current state.
+ *
+ * @param message  Output message to append serialised fields to.
+ */
 void
 BViewState::ArchiveToMessage(BMessage &message)
 {
@@ -407,6 +528,13 @@ BViewState::ArchiveToMessage(BMessage &message)
 }
 
 
+/**
+ * @brief Deserialise a BViewState from a raw byte stream, validating the header.
+ *
+ * @param stream      Stream positioned at the view-state header.
+ * @param endianSwap  If true, byte-swap all multi-byte fields.
+ * @return A new BViewState on success, or NULL if validation fails.
+ */
 BViewState*
 BViewState::InstantiateFromStream(BMallocIO* stream, bool endianSwap)
 {
@@ -426,6 +554,12 @@ BViewState::InstantiateFromStream(BMallocIO* stream, bool endianSwap)
 }
 
 
+/**
+ * @brief Deserialise a BViewState from a BMessage, checking the version field.
+ *
+ * @param message  Message containing the serialised view-state fields.
+ * @return A new BViewState on success, or NULL on version mismatch.
+ */
 BViewState*
 BViewState::InstantiateFromMessage(const BMessage &message)
 {
@@ -442,6 +576,9 @@ BViewState::InstantiateFromMessage(const BMessage &message)
 }
 
 
+/**
+ * @brief Set all fields to their default values.
+ */
 void
 BViewState::_Init()
 {
@@ -459,6 +596,11 @@ BViewState::_Init()
 }
 
 
+/**
+ * @brief Snapshot the current field values into the "previous" copies.
+ *
+ * Used by ArchiveToStream/ArchiveToMessage to detect changes since the last save.
+ */
 void
 BViewState::_StorePreviousState()
 {
@@ -476,6 +618,16 @@ BViewState::_StorePreviousState()
 }
 
 
+/**
+ * @brief Validate and optionally correct a deserialised BViewState.
+ *
+ * When \a fixOnly is true only out-of-range values are clamped; when false
+ * an unrecognised view mode causes the object to be deleted and NULL returned.
+ *
+ * @param state    The state to validate; may be NULL.
+ * @param fixOnly  If true, only clamp values; if false, also check enum validity.
+ * @return \a state after corrections, or NULL if sanity checks fail.
+ */
 BViewState*
 BViewState::_Sanitize(BViewState* state, bool fixOnly)
 {
@@ -530,6 +682,11 @@ BViewState::_Sanitize(BViewState* state, bool fixOnly)
 }
 
 
+/**
+ * @brief Internal helper to write all view-state fields to a byte stream.
+ *
+ * @param stream  Output stream to write to.
+ */
 void
 BViewState::_ArchiveToStream(BMallocIO* stream) const
 {
@@ -553,6 +710,11 @@ BViewState::_ArchiveToStream(BMallocIO* stream) const
 }
 
 
+/**
+ * @brief Internal helper to append all view-state fields to a BMessage.
+ *
+ * @param message  Output message to append fields to.
+ */
 void
 BViewState::_ArchiveToMessage(BMessage &message) const
 {

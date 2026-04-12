@@ -1,7 +1,42 @@
 /*
- * Copyright 2007, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file LayoutOptimizer.cpp
+ * @brief Quadratic-program solver used by ComplexLayouter to optimise element
+ *        sizes subject to linear constraints.
+ *
+ * LayoutOptimizer implements an active-set method: it starts from a feasible
+ * solution, iteratively adjusts the active constraint set, and converges to
+ * the solution closest (in a least-squares sense) to the desired proportional
+ * distribution. Linear-algebra helpers (QR decomposition, Gaussian elimination)
+ * are provided as file-scope functions.
+ *
+ * @see ComplexLayouter
+ */
+
 
 #include "LayoutOptimizer.h"
 
@@ -63,7 +98,13 @@ using std::nothrow;
 // #pragma mark - vector and matrix operations
 
 
-// is_zero
+/**
+ * @brief Tests whether all elements of a vector are approximately zero.
+ *
+ * @param x Pointer to the vector.
+ * @param n Number of elements.
+ * @return true if every element satisfies fuzzy_equals(x[i], 0).
+ */
 static inline bool
 is_zero(double* x, int n)
 {
@@ -76,7 +117,13 @@ is_zero(double* x, int n)
 }
 
 
-// add_vectors
+/**
+ * @brief Adds vector @p y into vector @p x in-place (x += y).
+ *
+ * @param x Destination vector (modified).
+ * @param y Source vector (read-only).
+ * @param n Number of elements.
+ */
 static inline void
 add_vectors(double* x, const double* y, int n)
 {
@@ -85,7 +132,14 @@ add_vectors(double* x, const double* y, int n)
 }
 
 
-// add_vectors_scaled
+/**
+ * @brief Adds a scaled vector @p y into @p x in-place (x += scalar * y).
+ *
+ * @param x      Destination vector (modified).
+ * @param y      Source vector (read-only).
+ * @param scalar Scaling factor applied to y.
+ * @param n      Number of elements.
+ */
 static inline void
 add_vectors_scaled(double* x, const double* y, double scalar, int n)
 {
@@ -94,7 +148,12 @@ add_vectors_scaled(double* x, const double* y, double scalar, int n)
 }
 
 
-// negate_vector
+/**
+ * @brief Negates each element of a vector in-place (x = -x).
+ *
+ * @param x Pointer to the vector (modified).
+ * @param n Number of elements.
+ */
 static inline void
 negate_vector(double* x, int n)
 {
@@ -103,7 +162,13 @@ negate_vector(double* x, int n)
 }
 
 
-// allocate_matrix
+/**
+ * @brief Allocates a dense m x n matrix backed by a single contiguous array.
+ *
+ * @param m Number of rows.
+ * @param n Number of columns.
+ * @return Pointer to a double*[m] row array, or NULL on allocation failure.
+ */
 static double**
 allocate_matrix(int m, int n)
 {
@@ -125,7 +190,11 @@ allocate_matrix(int m, int n)
 }
 
 
-// free_matrix
+/**
+ * @brief Frees a matrix allocated by allocate_matrix().
+ *
+ * @param matrix The matrix to free; safe to call with NULL.
+ */
 static void
 free_matrix(double** matrix)
 {
@@ -136,10 +205,15 @@ free_matrix(double** matrix)
 }
 
 
-// multiply_matrix_vector
-/*!	y = Ax
-	A: m x n matrix
-*/
+/**
+ * @brief Computes y = A * x for an m x n matrix A.
+ *
+ * @param A m x n matrix (row-major pointer array).
+ * @param x Input vector of length n.
+ * @param m Number of rows in A.
+ * @param n Number of columns in A.
+ * @param y Output vector of length m.
+ */
 static inline void
 multiply_matrix_vector(const double* const* A, const double* x, int m, int n,
 	double* y)
@@ -153,9 +227,16 @@ multiply_matrix_vector(const double* const* A, const double* x, int m, int n,
 }
 
 
-// multiply_matrices
-/*!	c = a*b
-*/
+/**
+ * @brief Computes c = a * b for matrices of dimensions m x n and n x l.
+ *
+ * @param a m x n input matrix.
+ * @param b n x l input matrix.
+ * @param c m x l output matrix (must be pre-allocated).
+ * @param m Rows of a (and c).
+ * @param n Columns of a / rows of b.
+ * @param l Columns of b (and c).
+ */
 static void
 multiply_matrices(const double* const* a, const double* const* b, double** c,
 	int m, int n, int l)
@@ -166,12 +247,19 @@ multiply_matrices(const double* const* a, const double* const* b, double** c,
 			for (int k = 0; k < n; k++)
 				sum += a[i][k] * b[k][j];
 			c[i][j] = sum;
-		}	
+		}
 	}
 }
 
 
-// transpose_matrix
+/**
+ * @brief Computes Atrans = A^T for an m x n matrix A.
+ *
+ * @param A      m x n input matrix.
+ * @param Atrans n x m output matrix (must be pre-allocated).
+ * @param m      Rows of A.
+ * @param n      Columns of A.
+ */
 static inline void
 transpose_matrix(const double* const* A, double** Atrans, int m, int n)
 {
@@ -182,7 +270,13 @@ transpose_matrix(const double* const* A, double** Atrans, int m, int n)
 }
 
 
-// zero_matrix
+/**
+ * @brief Sets all entries of an m x n matrix to zero.
+ *
+ * @param A m x n matrix to zero.
+ * @param m Number of rows.
+ * @param n Number of columns.
+ */
 static inline void
 zero_matrix(double** A, int m, int n)
 {
@@ -193,7 +287,14 @@ zero_matrix(double** A, int m, int n)
 }
 
 
-// copy_matrix
+/**
+ * @brief Copies an m x n matrix: B = A.
+ *
+ * @param A Source m x n matrix.
+ * @param B Destination m x n matrix (must be pre-allocated).
+ * @param m Number of rows.
+ * @param n Number of columns.
+ */
 static inline void
 copy_matrix(const double* const* A, double** B, int m, int n)
 {
@@ -204,6 +305,17 @@ copy_matrix(const double* const* A, double** B, int m, int n)
 }
 
 
+/**
+ * @brief Multiplies a vector by the tridiagonal optimisation matrix G.
+ *
+ * The matrix G encodes the second-difference operator used as the quadratic
+ * cost metric: minimising x^T G x penalises abrupt size changes between
+ * neighbouring elements.
+ *
+ * @param x Input vector of length n.
+ * @param n Vector length.
+ * @param y Output vector y = G * x.
+ */
 static inline void
 multiply_optimization_matrix_vector(const double* x, int n, double* y)
 {
@@ -228,6 +340,16 @@ multiply_optimization_matrix_vector(const double* x, int n, double* y)
 }
 
 
+/**
+ * @brief Multiplies each column of A by the tridiagonal optimisation matrix G.
+ *
+ * Computes B = G * A column-by-column, reusing the scalar variant.
+ *
+ * @param A Input m x n matrix.
+ * @param m Number of rows.
+ * @param n Number of columns.
+ * @param B Output m x n matrix B = G * A.
+ */
 static inline void
 multiply_optimization_matrix_matrix(const double* const* A, int m, int n,
 	double** B)
@@ -246,6 +368,12 @@ multiply_optimization_matrix_matrix(const double* const* A, int m, int n,
 }
 
 
+/**
+ * @brief Swaps two values of the same type.
+ *
+ * @param a First value (modified).
+ * @param b Second value (modified).
+ */
 template<typename Type>
 static inline void
 swap(Type& a, Type& b)
@@ -259,6 +387,18 @@ swap(Type& a, Type& b)
 // #pragma mark - algorithms
 
 
+/**
+ * @brief Solves the n x n linear system a * x = b using Gaussian elimination
+ *        with partial pivoting.
+ *
+ * On return @p b contains the solution vector x.  The matrix @p a is
+ * modified in-place.
+ *
+ * @param a n x n coefficient matrix (modified).
+ * @param n System dimension.
+ * @param b Right-hand-side vector; replaced by the solution on success.
+ * @return true on success, false if the matrix is (nearly) singular.
+ */
 bool
 solve(double** a, int n, double* b)
 {
@@ -318,6 +458,18 @@ solve(double** a, int n, double* b)
 }
 
 
+/**
+ * @brief Determines which rows of an m x n matrix are linearly independent.
+ *
+ * Performs Gaussian forward elimination on a copy of @p a and marks each
+ * row as independent (true) or dependent (false) in @p independent.
+ *
+ * @param a           m x n matrix (modified in-place by elimination).
+ * @param m           Number of rows.
+ * @param n           Number of columns.
+ * @param independent Output boolean array of length m.
+ * @return Number of linearly independent rows found.
+ */
 int
 compute_dependencies(double** a, int m, int n, bool* independent)
 {
@@ -379,7 +531,19 @@ compute_dependencies(double** a, int m, int n, bool* independent)
 }
 
 
-// remove_linearly_dependent_rows
+/**
+ * @brief Removes linearly dependent rows from matrix A in-place.
+ *
+ * Uses @p temp as scratch space.  On return, the first count rows of A
+ * are the independent ones.
+ *
+ * @param A               m x n matrix to compact (modified in-place).
+ * @param temp            m x n scratch matrix (modified).
+ * @param independentRows Output boolean array of length m; true = kept.
+ * @param m               Original number of rows.
+ * @param n               Number of columns.
+ * @return Number of independent rows remaining in A.
+ */
 static int
 remove_linearly_dependent_rows(double** A, double** temp, bool* independentRows,
 	int m, int n)
@@ -407,8 +571,20 @@ remove_linearly_dependent_rows(double** A, double** temp, bool* independentRows,
 }
 
 
-/*!	QR decomposition using Householder transformations.
-*/
+/**
+ * @brief QR decomposition of an m x n (m >= n) matrix using Householder
+ *        reflections.
+ *
+ * After the call, @p a stores the upper triangular factor R (with diagonal
+ * entries in @p d), and @p q contains the orthogonal factor Q.
+ *
+ * @param a m x n matrix to decompose (modified in-place to hold R).
+ * @param m Number of rows (must be >= n).
+ * @param n Number of columns.
+ * @param d Output array of length n holding the diagonal of R.
+ * @param q m x m output matrix holding Q.
+ * @return true on success, false if any column of a is zero.
+ */
 bool
 qr_decomposition(double** a, int m, int n, double* d, double** q)
 {
@@ -468,7 +644,7 @@ qr_decomposition(double** a, int m, int n, double* d, double** q)
 				for (int i = j; i < m; i++)
 					sum += q[k][i] * a[i][j];
 				sum *= beta2;
-	
+
 				for (int i = j; i < m; i++)
 					q[k][i] += sum * a[i][j];
 			}
@@ -479,7 +655,7 @@ qr_decomposition(double** a, int m, int n, double* d, double** q)
 }
 
 
-// MatrixDeleter
+/** @brief RAII deleter for matrices allocated by allocate_matrix(). */
 struct MatrixDelete {
 	inline void operator()(double** matrix)
 	{
@@ -489,8 +665,22 @@ struct MatrixDelete {
 typedef BPrivate::AutoDeleter<double*, MatrixDelete> MatrixDeleter;
 
 
-// Constraint
+/**
+ * @brief Represents a single linear constraint used by the optimiser.
+ *
+ * Encodes the constraint sum_{i=left+1}^{right} x_i >= value (or = value
+ * for equality constraints) in the active-set QP formulation.
+ */
 struct LayoutOptimizer::Constraint {
+	/**
+	 * @brief Constructs a constraint.
+	 *
+	 * @param left     Left boundary index (-1 means no lower bound column).
+	 * @param right    Right boundary index.
+	 * @param value    Right-hand-side value.
+	 * @param equality true for an equality constraint, false for >=.
+	 * @param index    Position in the constraint list (for bookkeeping).
+	 */
 	Constraint(int32 left, int32 right, double value, bool equality,
 			int32 index)
 		: left(left),
@@ -501,6 +691,12 @@ struct LayoutOptimizer::Constraint {
 	{
 	}
 
+	/**
+	 * @brief Evaluates this constraint's left-hand-side against a solution.
+	 *
+	 * @param values Solution vector.
+	 * @return The value of (values[right] - values[left]) for this constraint.
+	 */
 	double ActualValue(double* values) const
 	{
 		double result = 0;
@@ -511,6 +707,9 @@ struct LayoutOptimizer::Constraint {
 		return result;
 	}
 
+	/**
+	 * @brief Prints this constraint to the trace output.
+	 */
 	void Print() const
 	{
 		TRACE("c[%2ld] - c[%2ld] %2s %4d\n", right, left,
@@ -528,7 +727,13 @@ struct LayoutOptimizer::Constraint {
 // #pragma mark - LayoutOptimizer
 
 
-// constructor
+/**
+ * @brief Constructs a LayoutOptimizer for the given number of variables.
+ *
+ * Allocates all working matrices needed by the QP solver.
+ *
+ * @param variableCount Number of layout size variables (elements).
+ */
 LayoutOptimizer::LayoutOptimizer(int32 variableCount)
 	: fVariableCount(variableCount),
 	  fConstraints(),
@@ -541,7 +746,9 @@ LayoutOptimizer::LayoutOptimizer(int32 variableCount)
 }
 
 
-// destructor
+/**
+ * @brief Destroys the LayoutOptimizer, freeing all matrices and constraints.
+ */
 LayoutOptimizer::~LayoutOptimizer()
 {
 	free_matrix(fTemp1);
@@ -559,7 +766,11 @@ LayoutOptimizer::~LayoutOptimizer()
 }
 
 
-// InitCheck
+/**
+ * @brief Verifies that all internal memory allocations succeeded.
+ *
+ * @return B_OK if fully initialised, B_NO_MEMORY otherwise.
+ */
 status_t
 LayoutOptimizer::InitCheck() const
 {
@@ -569,7 +780,11 @@ LayoutOptimizer::InitCheck() const
 }
 
 
-// Clone
+/**
+ * @brief Creates a deep copy of this LayoutOptimizer including all constraints.
+ *
+ * @return A new LayoutOptimizer with identical constraints, or NULL on failure.
+ */
 LayoutOptimizer*
 LayoutOptimizer::Clone() const
 {
@@ -584,12 +799,20 @@ LayoutOptimizer::Clone() const
 }
 
 
-// AddConstraint
-/*!	Adds a constraint of the form
-	  \sum_{i=left+1}^{right} x_i >=/= value, if left < right
-	  -\sum_{i=right+1}^{left} x_i >=/= value, if left > right
-	If \a equality is \c true, the constraint is an equality constraint.
-*/
+/**
+ * @brief Adds a linear constraint to the optimiser.
+ *
+ * The constraint has the form:
+ *   sum_{i=left+1}^{right} x_i >= value   (inequality), or
+ *   sum_{i=left+1}^{right} x_i  = value   (equality).
+ * When left > right the summation is negated.
+ *
+ * @param left     Left cumulative-sum index.
+ * @param right    Right cumulative-sum index.
+ * @param value    Required minimum (or exact) value.
+ * @param equality true for equality, false for >= inequality.
+ * @return true on success, false if memory allocation failed.
+ */
 bool
 LayoutOptimizer::AddConstraint(int32 left, int32 right, double value,
 	bool equality)
@@ -608,7 +831,12 @@ LayoutOptimizer::AddConstraint(int32 left, int32 right, double value,
 }
 
 
-// AddConstraintsFrom
+/**
+ * @brief Copies all constraints from another LayoutOptimizer into this one.
+ *
+ * @param other Source optimiser; must have the same variable count.
+ * @return true on success, false if variable counts differ or allocation fails.
+ */
 bool
 LayoutOptimizer::AddConstraintsFrom(const LayoutOptimizer* other)
 {
@@ -628,7 +856,9 @@ LayoutOptimizer::AddConstraintsFrom(const LayoutOptimizer* other)
 }
 
 
-// RemoveAllConstraints
+/**
+ * @brief Removes and frees all registered constraints.
+ */
 void
 LayoutOptimizer::RemoveAllConstraints()
 {
@@ -641,14 +871,22 @@ LayoutOptimizer::RemoveAllConstraints()
 }
 
 
-// Solve
-/*!	Solves the quadratic program (QP) given by the constraints added via
-	AddConstraint(), the additional constraint \sum_{i=0}^{n-1} x_i = size,
-	and the optimization criterion to minimize
-	\sum_{i=0}^{n-1} (x_i - desired[i])^2.
-	The \a values array must contain a feasible solution when called and will
-	be overwritten with the optimial solution the method computes.
-*/
+/**
+ * @brief Finds the optimal element sizes satisfying all constraints.
+ *
+ * Solves the QP:
+ *   min  sum_i (x_i - desired[i])^2
+ *   s.t. registered inequality/equality constraints
+ *        sum_i x_i = size
+ *
+ * @p values must contain a feasible starting solution on entry and is
+ * overwritten with the optimal solution on success.
+ *
+ * @param desired  Array of fVariableCount desired (unconstrained) sizes.
+ * @param size     Required total size (sum constraint).
+ * @param values   In: feasible solution. Out: optimal solution.
+ * @return true on success, false if any internal step failed.
+ */
 bool
 LayoutOptimizer::Solve(const double* desired, double size, double* values)
 {
@@ -680,7 +918,16 @@ LayoutOptimizer::Solve(const double* desired, double size, double* values)
 }
 
 
-// _Solve
+/**
+ * @brief Internal active-set QP solver loop.
+ *
+ * Iterates the active-set method until the Lagrange multiplier check confirms
+ * optimality or no more progress can be made.
+ *
+ * @param desired Desired (unconstrained) solution vector.
+ * @param values  In: feasible starting solution. Out: optimal solution.
+ * @return true on success, false if any numerical step failed.
+ */
 bool
 LayoutOptimizer::_Solve(const double* desired, double* values)
 {
@@ -885,6 +1132,18 @@ TRACE_ONLY(
 }
 
 
+/**
+ * @brief Solves the reduced QP sub-problem for the search direction @p p.
+ *
+ * Uses the null-space method: the QR decomposition of the active constraint
+ * matrix gives Y (range space) and Z (null space), and the problem reduces
+ * to a small linear system Z^T G Z p_Z = -Z^T d.
+ *
+ * @param d  Gradient vector g_k = G x_k + d of length fVariableCount.
+ * @param am Number of active constraints (rows of fActiveMatrix).
+ * @param p  Output search direction of length fVariableCount.
+ * @return true on success, false if any numerical step failed.
+ */
 bool
 LayoutOptimizer::_SolveSubProblem(const double* d, int am, double* p)
 {
@@ -947,7 +1206,12 @@ LayoutOptimizer::_SolveSubProblem(const double* d, int am, double* p)
 }
 
 
-// _SetResult
+/**
+ * @brief Converts the internal cumulative-sum solution back to element sizes.
+ *
+ * @param x      Internal solution vector (cumulative sums).
+ * @param values Output per-element size vector.
+ */
 void
 LayoutOptimizer::_SetResult(const double* x, double* values)
 {

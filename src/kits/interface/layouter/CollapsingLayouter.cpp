@@ -1,7 +1,41 @@
 /*
- * Copyright 2011, Haiku, Inc.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Haiku, Inc.
+ *   All rights reserved. Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file CollapsingLayouter.cpp
+ * @brief Layouter that collapses invisible (zero-size) elements out of a
+ *        delegate layouter.
+ *
+ * CollapsingLayouter wraps any other Layouter implementation and compresses
+ * the element array by skipping elements that have no valid constraints.
+ * This allows callers to use stable element indices even when some UI
+ * elements are hidden, while the inner layouter only sees the active subset.
+ *
+ * @see Layouter, ComplexLayouter, SimpleLayouter, OneElementLayouter
+ */
+
 
 #include "CollapsingLayouter.h"
 
@@ -13,8 +47,23 @@
 #include <Size.h>
 
 
+/**
+ * @brief LayoutInfo proxy that maps outer element indices to the inner
+ *        layouter's compressed element positions.
+ *
+ * Stores the mapping built during collapse and delegates all geometric
+ * queries to the underlying LayoutInfo.
+ */
 class CollapsingLayouter::ProxyLayoutInfo : public LayoutInfo {
 public:
+	/**
+	 * @brief Constructs the proxy, allocating the element-position mapping.
+	 *
+	 * @param target       LayoutInfo produced by the inner layouter (takes
+	 *                     ownership).
+	 * @param elementCount Total number of outer elements (including collapsed
+	 *                     ones).
+	 */
 	ProxyLayoutInfo(LayoutInfo* target, int32 elementCount)
 		:
 		fTarget(target),
@@ -23,12 +72,21 @@ public:
 		fElements = new int32[elementCount];
 	}
 
+	/**
+	 * @brief Destroys the proxy and frees the element map and target info.
+	 */
 	~ProxyLayoutInfo()
 	{
 		delete[] fElements;
 		delete fTarget;
 	}
 
+	/**
+	 * @brief Triggers layout on the inner LayoutInfo using the delegate layouter.
+	 *
+	 * @param layouter The inner Layouter to use for layout; may be NULL.
+	 * @param size     The total available size to distribute.
+	 */
 	void
 	LayoutTarget(Layouter* layouter, float size)
 	{
@@ -36,12 +94,24 @@ public:
 			layouter->Layout(fTarget, size);
 	}
 
+	/**
+	 * @brief Records which inner position corresponds to a given outer element.
+	 *
+	 * @param element  Outer element index.
+	 * @param position Inner (compressed) position index, or -1 if collapsed.
+	 */
 	void
 	SetElementPosition(int32 element, int32 position)
 	{
 		fElements[element] = position;
 	}
 
+	/**
+	 * @brief Returns the pixel location of an outer element.
+	 *
+	 * @param element Outer element index.
+	 * @return Pixel offset from the layout origin, or 0 if collapsed/invalid.
+	 */
 	float
 	ElementLocation(int32 element)
 	{
@@ -50,6 +120,12 @@ public:
 		return fTarget->ElementLocation(fElements[element]);
 	}
 
+	/**
+	 * @brief Returns the pixel size of an outer element.
+	 *
+	 * @param element Outer element index.
+	 * @return Size in pixels, or 0 if collapsed/invalid.
+	 */
 	float
 	ElementSize(int32 element)
 	{
@@ -58,6 +134,13 @@ public:
 		return fTarget->ElementSize(fElements[element]);
 	}
 
+	/**
+	 * @brief Returns the combined pixel size of a range of outer elements.
+	 *
+	 * @param element Outer index of the first element in the range.
+	 * @param length  Number of elements in the range.
+	 * @return Combined size in pixels, or 0 if collapsed/invalid.
+	 */
 	float
 	ElementRangeSize(int32 element, int32 length)
 	{
@@ -73,6 +156,7 @@ private:
 };
 
 
+/** @brief Stores min/max/preferred size constraints for a span of elements. */
 struct CollapsingLayouter::Constraint {
 	int32 length;
 	float min;
@@ -81,6 +165,8 @@ struct CollapsingLayouter::Constraint {
 };
 
 
+/** @brief Per-element bookkeeping: weight, collapsed position, validity flag,
+ *         and the list of constraints referencing this element. */
 struct CollapsingLayouter::ElementInfo {
 	float weight;
 	int32 position;
@@ -100,6 +186,11 @@ struct CollapsingLayouter::ElementInfo {
 	{
 	}
 
+	/**
+	 * @brief Deep-copies another ElementInfo into this one.
+	 *
+	 * @param other Source element info to copy from.
+	 */
 	void SetTo(const ElementInfo& other)
 	{
 		weight = other.weight;
@@ -111,6 +202,13 @@ struct CollapsingLayouter::ElementInfo {
 };
 
 
+/**
+ * @brief Constructs a CollapsingLayouter for the given element count.
+ *
+ * @param elementCount Total number of layout elements (including potentially
+ *                     invisible ones).
+ * @param spacing      Pixel gap to place between active elements.
+ */
 CollapsingLayouter::CollapsingLayouter(int32 elementCount, float spacing)
 	:
 	fElementCount(elementCount),
@@ -123,6 +221,9 @@ CollapsingLayouter::CollapsingLayouter(int32 elementCount, float spacing)
 }
 
 
+/**
+ * @brief Destroys the layouter and frees element and delegate resources.
+ */
 CollapsingLayouter::~CollapsingLayouter()
 {
 	delete[] fElements;
@@ -130,6 +231,18 @@ CollapsingLayouter::~CollapsingLayouter()
 }
 
 
+/**
+ * @brief Adds a size constraint spanning one or more consecutive elements.
+ *
+ * Marks each covered element as valid, records the constraint, and
+ * invalidates the delegate layouter if the valid-element count changed.
+ *
+ * @param element   Index of the first element covered by the constraint.
+ * @param length    Number of elements covered (must be >= 1).
+ * @param min       Minimum combined size; use B_SIZE_UNSET to leave open.
+ * @param max       Maximum combined size; use B_SIZE_UNSET to leave open.
+ * @param preferred Preferred combined size.
+ */
 void
 CollapsingLayouter::AddConstraints(int32 element, int32 length, float min,
 	float max, float preferred)
@@ -147,7 +260,7 @@ CollapsingLayouter::AddConstraints(int32 element, int32 length, float min,
 
 	if (length > 1)
 		fHaveMultiElementConstraints = true;
-	
+
 	int32 validElements = fValidElementCount;
 
 	for (int32 i = element; i < element + length; i++) {
@@ -165,10 +278,16 @@ CollapsingLayouter::AddConstraints(int32 element, int32 length, float min,
 
 	if (fLayouter)
 		_AddConstraints(element, constraint);
-	
+
 }
 
 
+/**
+ * @brief Sets the weight of an element for proportional size distribution.
+ *
+ * @param element Index of the element whose weight to set.
+ * @param weight  Non-negative weight value; higher weight gets more space.
+ */
 void
 CollapsingLayouter::SetWeight(int32 element, float weight)
 {
@@ -183,6 +302,11 @@ CollapsingLayouter::SetWeight(int32 element, float weight)
 }
 
 
+/**
+ * @brief Returns the minimum size required to satisfy all constraints.
+ *
+ * @return Minimum size in pixels, or 0 if no valid elements exist.
+ */
 float
 CollapsingLayouter::MinSize()
 {
@@ -191,6 +315,11 @@ CollapsingLayouter::MinSize()
 }
 
 
+/**
+ * @brief Returns the maximum size this layouter can use.
+ *
+ * @return Maximum size in pixels, or B_SIZE_UNLIMITED if no valid elements.
+ */
 float
 CollapsingLayouter::MaxSize()
 {
@@ -199,6 +328,11 @@ CollapsingLayouter::MaxSize()
 }
 
 
+/**
+ * @brief Returns the preferred size for this layouter.
+ *
+ * @return Preferred size in pixels, or 0 if no valid elements exist.
+ */
 float
 CollapsingLayouter::PreferredSize()
 {
@@ -207,6 +341,11 @@ CollapsingLayouter::PreferredSize()
 }
 
 
+/**
+ * @brief Allocates a LayoutInfo that maps outer element indices to positions.
+ *
+ * @return A new ProxyLayoutInfo wrapping the delegate's LayoutInfo.
+ */
 LayoutInfo*
 CollapsingLayouter::CreateLayoutInfo()
 {
@@ -217,6 +356,15 @@ CollapsingLayouter::CreateLayoutInfo()
 }
 
 
+/**
+ * @brief Performs layout, distributing @p size across the active elements.
+ *
+ * Fills the element-position map in the proxy info and then delegates the
+ * actual size distribution to the inner layouter.
+ *
+ * @param layoutInfo LayoutInfo previously created by CreateLayoutInfo().
+ * @param size       Total available size in pixels.
+ */
 void
 CollapsingLayouter::Layout(LayoutInfo* layoutInfo, float size)
 {
@@ -230,6 +378,11 @@ CollapsingLayouter::Layout(LayoutInfo* layoutInfo, float size)
 }
 
 
+/**
+ * @brief Creates an independent deep copy of this layouter.
+ *
+ * @return A new CollapsingLayouter with identical constraints and weights.
+ */
 Layouter*
 CollapsingLayouter::CloneLayouter()
 {
@@ -246,6 +399,12 @@ CollapsingLayouter::CloneLayouter()
 }
 
 
+/**
+ * @brief Ensures the delegate layouter is created, collapsed, and populated.
+ *
+ * Lazily calls _CreateLayouter(), _DoCollapse(), _AddConstraints(), and
+ * _SetWeights() when the delegate is NULL.
+ */
 void
 CollapsingLayouter::_ValidateLayouter()
 {
@@ -259,6 +418,14 @@ CollapsingLayouter::_ValidateLayouter()
 }
 
 
+/**
+ * @brief Selects and instantiates the most appropriate delegate layouter.
+ *
+ * Chooses OneElementLayouter, SimpleLayouter, or ComplexLayouter depending
+ * on the number of valid elements and whether multi-element constraints exist.
+ *
+ * @return The newly created delegate, or NULL if there are no valid elements.
+ */
 Layouter*
 CollapsingLayouter::_CreateLayouter()
 {
@@ -279,6 +446,12 @@ CollapsingLayouter::_CreateLayouter()
 }
 
 
+/**
+ * @brief Computes the compressed inner position for each outer element.
+ *
+ * Invalid (hidden) elements are assigned position -1; valid elements receive
+ * consecutive positions starting from 0.
+ */
 void
 CollapsingLayouter::_DoCollapse()
 {
@@ -296,6 +469,12 @@ CollapsingLayouter::_DoCollapse()
 }
 
 
+/**
+ * @brief Forwards all stored constraints to the delegate layouter.
+ *
+ * Iterates every element's constraint list and passes each to the delegate
+ * using the element's collapsed inner position.
+ */
 void
 CollapsingLayouter::_AddConstraints()
 {
@@ -310,6 +489,12 @@ CollapsingLayouter::_AddConstraints()
 }
 
 
+/**
+ * @brief Forwards a single constraint to the delegate layouter.
+ *
+ * @param position Collapsed inner position of the first element.
+ * @param c        Constraint to forward; its length is used as-is.
+ */
 void
 CollapsingLayouter::_AddConstraints(int32 position, const Constraint* c)
 {
@@ -318,6 +503,12 @@ CollapsingLayouter::_AddConstraints(int32 position, const Constraint* c)
 }
 
 
+/**
+ * @brief Forwards all element weights to the delegate layouter.
+ *
+ * Elements whose position is -1 (collapsed) are skipped silently by the
+ * delegate's SetWeight implementation.
+ */
 void
 CollapsingLayouter::_SetWeights()
 {

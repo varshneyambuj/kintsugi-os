@@ -1,7 +1,40 @@
-/* Container - message part container class
-**
-** Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
-*/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Container - message part container class
+ *   Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
+ */
+
+
+/**
+ * @file MailContainer.cpp
+ * @brief MIME multipart container class for the mail kit.
+ *
+ * BMIMEMultipartMailContainer parses and renders multipart/* MIME structures.
+ * It lazily decodes sub-parts: at parse time only the byte ranges of each
+ * sub-part within the source stream are recorded; sub-parts are decoded into
+ * concrete BMailComponent instances on demand when GetComponent() is called.
+ * Used directly by BEmailMessage and BAttributedMailAttachment.
+ *
+ * @see BMailComponent, BEmailMessage, BAttributedMailAttachment
+ */
 
 
 #include <String.h>
@@ -17,6 +50,13 @@ class _EXPORT BMIMEMultipartMailContainer;
 #include <MailContainer.h>
 #include <MailAttachment.h>
 
+/**
+ * @brief Internal structure recording the byte range of one MIME sub-part.
+ *
+ * Both start and end are absolute offsets into the BPositionIO source stream.
+ * The CRLF that precedes the next boundary delimiter is not included in the
+ * range, which can cause end < start + header_size for malformed messages.
+ */
 typedef struct message_part {
 	message_part(off_t start, off_t end) { this->start = start; this->end = end; }
 
@@ -41,6 +81,17 @@ typedef struct message_part {
 } message_part;
 
 
+/**
+ * @brief Constructs a multipart container with an optional boundary string.
+ *
+ * Sets the MIME-Version and Content-Type headers to "1.0" and
+ * "multipart/mixed" respectively, then installs the boundary via SetBoundary().
+ *
+ * @param boundary                     Boundary string for this container, or NULL.
+ * @param this_is_an_MIME_message_text Warning text written before the first
+ *                                     boundary for non-MIME-aware clients, or NULL.
+ * @param defaultCharSet               Default charset used when creating sub-components.
+ */
 BMIMEMultipartMailContainer::BMIMEMultipartMailContainer(
 	const char *boundary,
 	const char *this_is_an_MIME_message_text,
@@ -68,6 +119,9 @@ BMIMEMultipartMailContainer::BMIMEMultipartMailContainer(
 	}*/
 
 
+/**
+ * @brief Destroys the container, freeing all sub-part records and components.
+ */
 BMIMEMultipartMailContainer::~BMIMEMultipartMailContainer() {
 	for (int32 i = 0; i < _components_in_raw.CountItems(); i++)
 		delete (message_part *)_components_in_raw.ItemAt(i);
@@ -79,6 +133,14 @@ BMIMEMultipartMailContainer::~BMIMEMultipartMailContainer() {
 }
 
 
+/**
+ * @brief Sets the MIME boundary string and updates the Content-Type header.
+ *
+ * Frees any previous boundary, duplicates the new one, and updates the
+ * "boundary" parameter in the Content-Type header accordingly.
+ *
+ * @param boundary  New boundary string, or NULL to remove it.
+ */
 void BMIMEMultipartMailContainer::SetBoundary(const char *boundary) {
 	free ((void *) _boundary);
 	_boundary = NULL;
@@ -97,11 +159,25 @@ void BMIMEMultipartMailContainer::SetBoundary(const char *boundary) {
 }
 
 
+/**
+ * @brief Sets the preamble text shown before the first boundary for legacy clients.
+ *
+ * @param text  Warning string, or NULL to suppress the preamble.
+ */
 void BMIMEMultipartMailContainer::SetThisIsAnMIMEMessageText(const char *text) {
 	_MIME_message_warning = text;
 }
 
 
+/**
+ * @brief Appends a new sub-component to this container.
+ *
+ * Adds \a component to both the code list and a corresponding NULL entry in
+ * the raw list to keep the two lists parallel.
+ *
+ * @param component  Sub-component to add; the container does not take ownership.
+ * @return B_OK on success, B_ERROR if either list add fails.
+ */
 status_t BMIMEMultipartMailContainer::AddComponent(BMailComponent *component) {
 	if (!_components_in_code.AddItem(component))
 		return B_ERROR;
@@ -113,10 +189,23 @@ status_t BMIMEMultipartMailContainer::AddComponent(BMailComponent *component) {
 }
 
 
+/**
+ * @brief Retrieves a sub-component by index, lazily parsing from the source stream.
+ *
+ * If the component has already been parsed and cached in _components_in_code,
+ * it is returned directly. Otherwise the corresponding byte range is read from
+ * the source stream, the component type is determined, and a full parse is
+ * performed before caching the result.
+ *
+ * @param index      Zero-based component index.
+ * @param parse_now  If true, immediately decodes the sub-part body.
+ * @return Pointer to the BMailComponent, or NULL if index is out of range or
+ *         parsing fails.
+ */
 BMailComponent *BMIMEMultipartMailContainer::GetComponent(int32 index, bool parse_now) {
 	if (index >= CountComponents())
 		return NULL;
-	
+
 	if (BMailComponent *component = (BMailComponent *)_components_in_code.ItemAt(index))
 		return component;	//--- Handle easy case
 
@@ -152,6 +241,11 @@ BMailComponent *BMIMEMultipartMailContainer::GetComponent(int32 index, bool pars
 }
 
 
+/**
+ * @brief Returns the number of sub-components in this container.
+ *
+ * @return Count of items in the component lists.
+ */
 int32
 BMIMEMultipartMailContainer::CountComponents() const
 {
@@ -159,6 +253,13 @@ BMIMEMultipartMailContainer::CountComponents() const
 }
 
 
+/**
+ * @brief Removes a specific sub-component by pointer.
+ *
+ * @param component  Pointer to the component to remove.
+ * @return B_OK on success, B_BAD_VALUE if \a component is NULL,
+ *         B_ENTRY_NOT_FOUND if it is not in this container.
+ */
 status_t
 BMIMEMultipartMailContainer::RemoveComponent(BMailComponent *component)
 {
@@ -176,6 +277,12 @@ BMIMEMultipartMailContainer::RemoveComponent(BMailComponent *component)
 }
 
 
+/**
+ * @brief Removes a sub-component by index.
+ *
+ * @param index  Zero-based index of the component to remove.
+ * @return B_OK on success, B_BAD_INDEX if \a index is out of range.
+ */
 status_t
 BMIMEMultipartMailContainer::RemoveComponent(int32 index)
 {
@@ -189,17 +296,41 @@ BMIMEMultipartMailContainer::RemoveComponent(int32 index)
 }
 
 
+/**
+ * @brief Not supported; returns B_BAD_TYPE.
+ *
+ * @return B_BAD_TYPE always — containers have no single decoded data stream.
+ */
 status_t BMIMEMultipartMailContainer::GetDecodedData(BPositionIO *)
 {
 	return B_BAD_TYPE; //------We don't play dat
 }
 
 
+/**
+ * @brief Not supported; returns B_BAD_TYPE.
+ *
+ * @return B_BAD_TYPE always — containers have no single decoded data stream.
+ */
 status_t BMIMEMultipartMailContainer::SetDecodedData(BPositionIO *) {
 	return B_BAD_TYPE; //------We don't play dat
 }
 
 
+/**
+ * @brief Parses a multipart/* RFC 822 stream and records sub-part byte ranges.
+ *
+ * Reads the container headers, extracts the boundary string, then scans the
+ * source stream byte-by-byte for boundary delimiters. For each part found,
+ * a message_part record is appended to _components_in_raw. If \a copy_data
+ * is true, all sub-parts are immediately parsed via GetComponent().
+ *
+ * @param data       Readable source stream positioned at the start of this part.
+ * @param length     Number of bytes available for this container.
+ * @param copy_data  If true, immediately parse all sub-component bodies.
+ * @return B_OK on success, B_BAD_TYPE if the Content-Type is not multipart or
+ *         lacks a boundary, or a negative IO error code.
+ */
 status_t BMIMEMultipartMailContainer::SetToRFC822(BPositionIO *data, size_t length, bool copy_data)
 {
 	typedef enum LookingForEnum {
@@ -393,12 +524,23 @@ status_t BMIMEMultipartMailContainer::SetToRFC822(BPositionIO *data, size_t leng
 	if (copy_data) {
 		for (i = 0; GetComponent(i, true /* parse_now */) != NULL; i++) {}
 	}
-	
+
 	data->Seek (topLevelEnd, SEEK_SET);
 	return B_OK;
 }
 
 
+/**
+ * @brief Renders the container and all sub-components to an RFC 822 output stream.
+ *
+ * Writes the container headers (via the base class), then iterates over all
+ * sub-components, writing the boundary delimiter before each. Sub-components
+ * that have been parsed in code are rendered recursively; those still in raw
+ * form are copied verbatim from the source stream.
+ *
+ * @param render_to  Output stream to write the complete multipart MIME structure to.
+ * @return B_OK on success, or a negative IO error code if writing fails.
+ */
 status_t BMIMEMultipartMailContainer::RenderToRFC822(BPositionIO *render_to) {
 	BMailComponent::RenderToRFC822(render_to);
 
@@ -452,4 +594,3 @@ void BMailContainer::_ReservedContainer1() {}
 void BMailContainer::_ReservedContainer2() {}
 void BMailContainer::_ReservedContainer3() {}
 void BMailContainer::_ReservedContainer4() {}
-

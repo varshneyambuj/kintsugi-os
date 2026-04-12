@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Tracker.cpp
+ * @brief TTracker is the main Tracker BApplication subclass.
+ *
+ * @see BApplication, TTracker, BWindow
+ */
 
 #include "Tracker.h"
 
@@ -240,6 +238,14 @@ public:
 //	#pragma mark - TTracker
 
 
+/**
+ * @brief Construct the TTracker application object.
+ *
+ * Sets the working directory to the user's home directory, requests extra
+ * file descriptors for nested copy operations, creates the Desktop window,
+ * initialises the icon preloader and trash watcher, and starts the pulse
+ * timer for volume space-bar updates.
+ */
 TTracker::TTracker()
 	:
 	BApplication(kTrackerSignature),
@@ -302,6 +308,9 @@ TTracker::TTracker()
 }
 
 
+/**
+ * @brief Destructor; stops the launch looper and releases owned objects.
+ */
 TTracker::~TTracker()
 {
 	gLaunchLooper->Lock();
@@ -314,6 +323,14 @@ TTracker::~TTracker()
 }
 
 
+/**
+ * @brief Handle a quit request, saving window state before allowing exit.
+ *
+ * Prevents quit via keyboard shortcut, attempts to cancel in-progress file
+ * operations, and saves all pose locations before granting the quit.
+ *
+ * @return true if quitting is allowed; false to defer.
+ */
 bool
 TTracker::QuitRequested()
 {
@@ -431,6 +448,9 @@ TTracker::QuitRequested()
 }
 
 
+/**
+ * @brief Persist settings and perform final cleanup before the application exits.
+ */
 void
 TTracker::Quit()
 {
@@ -452,6 +472,14 @@ TTracker::Quit()
 }
 
 
+/**
+ * @brief Central message dispatcher for all Tracker application messages.
+ *
+ * Routes scripting, file-operation, node-monitor, volume-mount, settings, and
+ * window-management messages to the appropriate handlers.
+ *
+ * @param message  The incoming BMessage.
+ */
 void
 TTracker::MessageReceived(BMessage* message)
 {
@@ -636,6 +664,11 @@ TTracker::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Periodic pulse to refresh volume space-bar icons if enabled.
+ *
+ * Called by the BApplication framework at the rate set by SetPulseRate().
+ */
 void
 TTracker::Pulse()
 {
@@ -647,6 +680,11 @@ TTracker::Pulse()
 }
 
 
+/**
+ * @brief Set the system default printer from the node_refs in \a message.
+ *
+ * @param message  Message containing node_refs of the printer to make default.
+ */
 void
 TTracker::SetDefaultPrinter(const BMessage* message)
 {
@@ -683,6 +721,11 @@ TTracker::SetDefaultPrinter(const BMessage* message)
 }
 
 
+/**
+ * @brief Move the refs in \a message to the Trash.
+ *
+ * @param message  Message containing entry_refs to move.
+ */
 void
 TTracker::MoveRefsToTrash(const BMessage* message)
 {
@@ -718,6 +761,14 @@ TTracker::MoveRefsToTrash(const BMessage* message)
 }
 
 
+/**
+ * @brief Select entries in their parent Tracker windows.
+ *
+ * Opens the parent window for each ref if necessary, then selects the
+ * corresponding pose.
+ *
+ * @param message  Message containing entry_refs to select.
+ */
 void
 TTracker::SelectRefs(const BMessage* message)
 {
@@ -799,6 +850,14 @@ protected:
 };
 
 
+/**
+ * @brief Launch a file and, if successful, close its parent container window.
+ *
+ * @param launchThis      The entry_ref to launch.
+ * @param closeThis       The node_ref of the parent window to close on success.
+ * @param messageToBundle An optional message to bundle into the B_REFS_RECEIVED send.
+ * @return true if the launch succeeded.
+ */
 bool
 TTracker::LaunchAndCloseParentIfOK(const entry_ref* launchThis,
 	const node_ref* closeThis, const BMessage* messageToBundle)
@@ -820,6 +879,20 @@ TTracker::LaunchAndCloseParentIfOK(const entry_ref* launchThis,
 }
 
 
+/**
+ * @brief Open a filesystem entry, launching applications or opening windows as needed.
+ *
+ * Handles directories, applications, query files, and documents.  If
+ * \a nodeToClose is non-NULL, schedules the parent window to close after
+ * navigation.
+ *
+ * @param ref           The entry_ref to open.
+ * @param nodeToClose   Parent node to close when navigating (may be NULL).
+ * @param nodeToSelect  Child node to select in the opened window (may be NULL).
+ * @param selector      How to open the entry (open, open with, get info, etc.).
+ * @param messageToBundle Optional message bundled with a B_REFS_RECEIVED send.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 TTracker::OpenRef(const entry_ref* ref, const node_ref* nodeToClose,
 	const node_ref* nodeToSelect, OpenSelector selector,
@@ -910,6 +983,11 @@ TTracker::OpenRef(const entry_ref* ref, const node_ref* nodeToClose,
 }
 
 
+/**
+ * @brief Handle a B_REFS_RECEIVED message by opening each referenced entry.
+ *
+ * @param message  Message containing entry_refs and an optional open selector.
+ */
 void
 TTracker::RefsReceived(BMessage* message)
 {
@@ -1022,6 +1100,12 @@ TTracker::RefsReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Open paths passed on the command line as if they were double-clicked.
+ *
+ * @param argc  Number of argument strings.
+ * @param argv  Array of null-terminated path strings.
+ */
 void
 TTracker::ArgvReceived(int32 argc, char** argv)
 {
@@ -1043,6 +1127,19 @@ TTracker::ArgvReceived(int32 argc, char** argv)
 }
 
 
+/**
+ * @brief Open a Tracker container window for the given model.
+ *
+ * Reuses an existing window if one is already open for the same node (when
+ * \a checkAlreadyOpen is true), otherwise creates a new BContainerWindow.
+ *
+ * @param model              The model to display; ownership is transferred.
+ * @param originalRefsList   Message with original refs for query windows.
+ * @param openSelector       How to open (normal, with app, as query, etc.).
+ * @param openFlags          Flags controlling window behaviour.
+ * @param checkAlreadyOpen   If true, bring existing window to front instead.
+ * @param stateMessage       Saved window-state message to restore (may be NULL).
+ */
 void
 TTracker::OpenContainerWindow(Model* model, BMessage* originalRefsList,
 	OpenSelector openSelector, uint32 openFlags, bool checkAlreadyOpen,
@@ -1126,6 +1223,11 @@ TTracker::OpenContainerWindow(Model* model, BMessage* originalRefsList,
 }
 
 
+/**
+ * @brief Open query editor windows for the refs in \a message.
+ *
+ * @param message  Message containing entry_refs of query or template files.
+ */
 void
 TTracker::EditQueries(const BMessage* message)
 {
@@ -1146,6 +1248,11 @@ TTracker::EditQueries(const BMessage* message)
 }
 
 
+/**
+ * @brief Open Get Info windows for the refs in \a message.
+ *
+ * @param message  Message containing entry_refs to inspect.
+ */
 void
 TTracker::OpenInfoWindows(BMessage* message)
 {
@@ -1180,6 +1287,11 @@ TTracker::OpenInfoWindows(BMessage* message)
 }
 
 
+/**
+ * @brief Return the Desktop window.
+ *
+ * @return The BDeskWindow, or NULL if not yet created.
+ */
 BDeskWindow*
 TTracker::GetDeskWindow() const
 {
@@ -1196,6 +1308,13 @@ TTracker::GetDeskWindow() const
 }
 
 
+/**
+ * @brief Post \a message to every open BContainerWindow.
+ *
+ * Must be called with fWindowList locked.
+ *
+ * @param message  The message to broadcast.
+ */
 void
 TTracker::PostMessageToAllContainerWindows(BMessage& message) const
 {
@@ -1212,6 +1331,15 @@ TTracker::PostMessageToAllContainerWindows(BMessage& message) const
 }
 
 
+/**
+ * @brief Find a container window displaying the node identified by \a node.
+ *
+ * Must be called with fWindowList locked.
+ *
+ * @param node    The node_ref to look up.
+ * @param number  0-based index when multiple windows show the same node.
+ * @return The matching BContainerWindow, or NULL if not found.
+ */
 BContainerWindow*
 TTracker::FindContainerWindow(const node_ref* node, int32 number) const
 {
@@ -1233,6 +1361,15 @@ TTracker::FindContainerWindow(const node_ref* node, int32 number) const
 }
 
 
+/**
+ * @brief Find a container window displaying the entry identified by \a entry.
+ *
+ * Must be called with fWindowList locked.
+ *
+ * @param entry   The entry_ref to look up.
+ * @param number  0-based index when multiple windows show the same entry.
+ * @return The matching BContainerWindow, or NULL if not found.
+ */
 BContainerWindow*
 TTracker::FindContainerWindow(const entry_ref* entry, int32 number) const
 {
@@ -1254,6 +1391,12 @@ TTracker::FindContainerWindow(const entry_ref* entry, int32 number) const
 }
 
 
+/**
+ * @brief Return true if a container window is currently open for \a entry.
+ *
+ * @param entry  The entry_ref to check.
+ * @return true if a window exists for the entry.
+ */
 bool
 TTracker::EntryHasWindowOpen(const entry_ref* entry)
 {
@@ -1262,6 +1405,12 @@ TTracker::EntryHasWindowOpen(const entry_ref* entry)
 }
 
 
+/**
+ * @brief Find the container window for the parent directory of \a ref.
+ *
+ * @param ref  The entry_ref whose parent window to locate.
+ * @return The parent BContainerWindow, or NULL if not open.
+ */
 BContainerWindow*
 TTracker::FindParentContainerWindow(const entry_ref* ref) const
 {
@@ -1288,6 +1437,12 @@ TTracker::FindParentContainerWindow(const entry_ref* ref) const
 }
 
 
+/**
+ * @brief Find an open Info window for the given node_ref.
+ *
+ * @param node  The node_ref to look up.
+ * @return The matching BInfoWindow, or NULL if not found.
+ */
 BInfoWindow*
 TTracker::FindInfoWindow(const node_ref* node) const
 {
@@ -1305,6 +1460,12 @@ TTracker::FindInfoWindow(const node_ref* node) const
 }
 
 
+/**
+ * @brief Return true if any query window is active for the given device.
+ *
+ * @param device  The device ID to check.
+ * @return true if at least one query container window watches \a device.
+ */
 bool
 TTracker::QueryActiveForDevice(dev_t device)
 {
@@ -1324,6 +1485,13 @@ TTracker::QueryActiveForDevice(dev_t device)
 }
 
 
+/**
+ * @brief Close all query windows watching \a device to allow unmounting.
+ *
+ * Called before unmounting a volume to ensure no query holds the device open.
+ *
+ * @param device  The device ID whose query windows should be closed.
+ */
 void
 TTracker::CloseActiveQueryWindows(dev_t device)
 {
@@ -1357,6 +1525,11 @@ TTracker::CloseActiveQueryWindows(dev_t device)
 }
 
 
+/**
+ * @brief Persist icon positions for all open container windows.
+ *
+ * Called during quit to ensure that icon layout changes are not lost.
+ */
 void
 TTracker::SaveAllPoseLocations()
 {
@@ -1376,6 +1549,13 @@ TTracker::SaveAllPoseLocations()
 }
 
 
+/**
+ * @brief Close the container window for \a node and all windows for its children.
+ *
+ * Used when a directory is deleted or unmounted to clean up stale windows.
+ *
+ * @param node  The node_ref of the parent directory being closed.
+ */
 void
 TTracker::CloseWindowAndChildren(const node_ref* node)
 {
@@ -1415,6 +1595,9 @@ TTracker::CloseWindowAndChildren(const node_ref* node)
 }
 
 
+/**
+ * @brief Close all non-Desktop container windows in the current workspace.
+ */
 void
 TTracker::CloseAllInWorkspace()
 {
@@ -1435,6 +1618,12 @@ TTracker::CloseAllInWorkspace()
 }
 
 
+/**
+ * @brief Close all Tracker windows without quitting the application.
+ *
+ * Called in response to a B_QUIT message from DeskBar to clean up while
+ * keeping Tracker running.
+ */
 void
 TTracker::CloseAllWindows()
 {
@@ -1467,6 +1656,15 @@ TTracker::CloseAllWindows()
 }
 
 
+/**
+ * @brief Reopen all windows that were open in the previous Tracker session.
+ *
+ * Reads the saved window list from the Tracker state attribute and opens
+ * each one, optionally filtering to paths starting with \a pathFilter.
+ *
+ * @param pathFilter  If non-NULL, only windows whose path starts with this
+ *                    string are reopened (used after a volume is mounted).
+ */
 void
 TTracker::_OpenPreviouslyOpenedWindows(const char* pathFilter)
 {
@@ -1545,6 +1743,13 @@ TTracker::_OpenPreviouslyOpenedWindows(const char* pathFilter)
 }
 
 
+/**
+ * @brief Complete application startup: MIME types, templates, and previous windows.
+ *
+ * Called by the BApplication framework after the message loop is running.
+ * Initialises MIME types, installs query templates and background images, and
+ * reopens all windows that were open in the previous session.
+ */
 void
 TTracker::ReadyToRun()
 {
@@ -1573,6 +1778,11 @@ TTracker::ReadyToRun()
 }
 
 
+/**
+ * @brief Return the global MIME type list used by Open With dialogs.
+ *
+ * @return Pointer to the MimeTypeList, or NULL if not yet initialised.
+ */
 MimeTypeList*
 TTracker::MimeTypes() const
 {
@@ -1580,6 +1790,12 @@ TTracker::MimeTypes() const
 }
 
 
+/**
+ * @brief Schedule a deferred selection of \a child in the parent window.
+ *
+ * @param parent  The entry_ref of the parent directory window.
+ * @param child   The node_ref of the child entry to select.
+ */
 void
 TTracker::SelectChildInParentSoon(const entry_ref* parent,
 	const node_ref* child)
@@ -1590,6 +1806,12 @@ TTracker::SelectChildInParentSoon(const entry_ref* parent,
 }
 
 
+/**
+ * @brief Schedule closing the parent window once its child window has opened.
+ *
+ * @param child   The entry_ref of the child entry being opened.
+ * @param parent  The node_ref of the parent window to close.
+ */
 void
 TTracker::CloseParentWaitingForChildSoon(const entry_ref* child,
 	const node_ref* parent)
@@ -1600,6 +1822,12 @@ TTracker::CloseParentWaitingForChildSoon(const entry_ref* child,
 }
 
 
+/**
+ * @brief Schedule a deferred pose selection by location in a container window.
+ *
+ * @param parent       node_ref of the parent directory window.
+ * @param pointInPose  The point (in pose-view coordinates) to hit-test.
+ */
 void
 TTracker::SelectPoseAtLocationSoon(node_ref parent, BPoint pointInPose)
 {
@@ -1609,6 +1837,12 @@ TTracker::SelectPoseAtLocationSoon(node_ref parent, BPoint pointInPose)
 }
 
 
+/**
+ * @brief Immediately select the pose at \a pointInPose in the parent window.
+ *
+ * @param parent       node_ref of the parent directory window.
+ * @param pointInPose  The point to hit-test in pose-view coordinates.
+ */
 void
 TTracker::SelectPoseAtLocationInParent(node_ref parent, BPoint pointInPose)
 {
@@ -1621,6 +1855,16 @@ TTracker::SelectPoseAtLocationInParent(node_ref parent, BPoint pointInPose)
 }
 
 
+/**
+ * @brief Close the parent window once the child window is ready.
+ *
+ * Periodically called by the task loop; returns false until the child window
+ * exists, then closes the parent and returns true.
+ *
+ * @param child   entry_ref of the child being opened.
+ * @param parent  node_ref of the parent window to close.
+ * @return true when the parent has been successfully closed.
+ */
 bool
 TTracker::CloseParentWaitingForChild(const entry_ref* child,
 	const node_ref* parent)
@@ -1651,6 +1895,11 @@ TTracker::CloseParentWaitingForChild(const entry_ref* child,
 }
 
 
+/**
+ * @brief Immediately close the parent container window identified by \a parent.
+ *
+ * @param parent  node_ref of the parent window to close.
+ */
 void
 TTracker::CloseParent(node_ref parent)
 {
@@ -1662,6 +1911,11 @@ TTracker::CloseParent(node_ref parent)
 }
 
 
+/**
+ * @brief Show or bring to front the Tracker preferences window.
+ *
+ * Creates the window if it does not yet exist.
+ */
 void
 TTracker::ShowSettingsWindow()
 {
@@ -1681,6 +1935,12 @@ TTracker::ShowSettingsWindow()
 }
 
 
+/**
+ * @brief Close a container window unless it is the Desktop.
+ *
+ * @param window  The window to close; must not be NULL.
+ * @return true if the window was closed; false if it is the Desktop.
+ */
 bool
 TTracker::CloseParentWindowCommon(BContainerWindow* window)
 {

@@ -1,6 +1,38 @@
 /*
- * Copyright 2011-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageInfoContentHandler.cpp
+ * @brief HPKG package-reader callback that populates a BPackageInfo from attributes.
+ *
+ * BPackageInfoContentHandler implements the BHPKG content-handler interface.
+ * It is registered with a BPackageReader and receives package-info attribute
+ * values one by one, forwarding each to the corresponding setter on the target
+ * BPackageInfo object.
+ *
+ * @see BPackageInfo, BHPKG::BPackageReader
  */
 
 
@@ -17,6 +49,13 @@ namespace BPackageKit {
 using namespace BHPKG;
 
 
+/**
+ * @brief Construct the handler targeting the given BPackageInfo.
+ *
+ * @param packageInfo   The BPackageInfo object that receives decoded attributes.
+ * @param errorOutput   Optional error-output sink for diagnostic messages;
+ *                      may be NULL to suppress error output.
+ */
 BPackageInfoContentHandler::BPackageInfoContentHandler(
 	BPackageInfo& packageInfo, BErrorOutput* errorOutput)
 	:
@@ -26,11 +65,20 @@ BPackageInfoContentHandler::BPackageInfoContentHandler(
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BPackageInfoContentHandler::~BPackageInfoContentHandler()
 {
 }
 
 
+/**
+ * @brief Package-entry callback; not used for info extraction.
+ *
+ * @param entry  The package entry encountered (ignored).
+ * @return Always B_OK.
+ */
 status_t
 BPackageInfoContentHandler::HandleEntry(BPackageEntry* entry)
 {
@@ -38,6 +86,13 @@ BPackageInfoContentHandler::HandleEntry(BPackageEntry* entry)
 }
 
 
+/**
+ * @brief Package-entry attribute callback; not used for info extraction.
+ *
+ * @param entry      The package entry (ignored).
+ * @param attribute  The entry attribute (ignored).
+ * @return Always B_OK.
+ */
 status_t
 BPackageInfoContentHandler::HandleEntryAttribute(BPackageEntry* entry,
 	BPackageEntryAttribute* attribute)
@@ -46,6 +101,12 @@ BPackageInfoContentHandler::HandleEntryAttribute(BPackageEntry* entry,
 }
 
 
+/**
+ * @brief Package-entry completion callback; not used for info extraction.
+ *
+ * @param entry  The completed package entry (ignored).
+ * @return Always B_OK.
+ */
 status_t
 BPackageInfoContentHandler::HandleEntryDone(BPackageEntry* entry)
 {
@@ -53,6 +114,17 @@ BPackageInfoContentHandler::HandleEntryDone(BPackageEntry* entry)
 }
 
 
+/**
+ * @brief Receive a single package-info attribute and apply it to the target BPackageInfo.
+ *
+ * Dispatches on the attribute ID and calls the appropriate setter or adder on
+ * fPackageInfo.  Unknown attribute IDs are reported to fErrorOutput (if set)
+ * and B_NOT_SUPPORTED is returned so the reader can skip future attributes.
+ *
+ * @param value  The decoded attribute value from the HPKG reader.
+ * @return B_OK on success, B_NOT_SUPPORTED for unknown attribute IDs, or an
+ *         error code if a setter fails.
+ */
 status_t
 BPackageInfoContentHandler::HandlePackageAttribute(
 	const BPackageInfoAttributeValue& value)
@@ -166,6 +238,12 @@ BPackageInfoContentHandler::HandlePackageAttribute(
 }
 
 
+/**
+ * @brief Called by the HPKG reader when a parse error occurs.
+ *
+ * The default implementation is a no-op; subclasses may override to handle
+ * errors from the HPKG reader.
+ */
 void
 BPackageInfoContentHandler::HandleErrorOccurred()
 {

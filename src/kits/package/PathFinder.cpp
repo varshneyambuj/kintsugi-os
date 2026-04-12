@@ -1,6 +1,39 @@
 /*
- * Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PathFinder.cpp
+ * @brief Package-kit portion of BPathFinder for resolving paths via installed packages.
+ *
+ * This file provides the package-kit-specific implementation of BPathFinder.
+ * It uses the dependency-resolution solver to locate the package that satisfies
+ * a given BResolvableExpression and then constructs a path rooted at that
+ * package's symlink inside the system package-links directory. The remainder
+ * of BPathFinder is implemented in the storage kit.
+ *
+ * @see BPackageManager, BSolver, BResolvableExpression
  */
 
 
@@ -22,6 +55,19 @@ using namespace BPackageKit::BPrivate;
 using namespace BPackageKit::BManager::BPrivate;
 
 
+/**
+ * @brief Locate the newest installed package that satisfies the given expression.
+ *
+ * Initialises a BPackageManager for the home installation location, runs the
+ * solver over all installed repositories, and selects the highest-versioned
+ * package whose info matches @a expression.
+ *
+ * @param expression             The resolvable expression to satisfy.
+ * @param _versionedPackageName  Output string set to "name-version" of the
+ *                               matching package on success.
+ * @return B_OK on success, B_BAD_VALUE if the expression is invalid,
+ *         B_ENTRY_NOT_FOUND if no matching package exists, or B_NO_MEMORY.
+ */
 static status_t
 find_package(const BPackageResolvableExpression& expression,
 	BString& _versionedPackageName)
@@ -63,6 +109,12 @@ find_package(const BPackageResolvableExpression& expression,
 }
 
 
+/**
+ * @brief Construct a BPathFinder rooted at the package satisfying @a expression.
+ *
+ * @param expression  The resolvable expression identifying the required package.
+ * @param dependency  Optional dependency name hint passed to the base class.
+ */
 BPathFinder::BPathFinder(const BResolvableExpression& expression,
 	const char* dependency)
 {
@@ -70,6 +122,17 @@ BPathFinder::BPathFinder(const BResolvableExpression& expression,
 }
 
 
+/**
+ * @brief Reinitialise the path finder for a new resolvable expression.
+ *
+ * Resolves the package that satisfies @a expression and sets the root path to
+ * the corresponding entry inside the system package-links directory.
+ *
+ * @param expression  The resolvable expression to satisfy.
+ * @param dependency  Optional dependency name hint forwarded to the base class.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching package is installed,
+ *         or another error code on failure.
+ */
 status_t
 BPathFinder::SetTo(const BResolvableExpression& expression,
 	const char* dependency)

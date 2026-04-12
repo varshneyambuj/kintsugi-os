@@ -1,7 +1,37 @@
 /*
- * Copyright (C) 2019-2020 Adrien Destugues <pulkomandy@pulkomandy.tk>
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under terms of the MIT license.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (C) 2019-2020 Adrien Destugues <pulkomandy@pulkomandy.tk>
+ *   Distributed under terms of the MIT license.
+ */
+
+
+/**
+ * @file AttributesView.cpp
+ * @brief Extended-attribute viewer panel for the Tracker Info window.
+ *
+ * AttributesView presents a BColumnListView showing all BFS extended attributes
+ * of a given node. Each row displays the attribute name, a human-readable value
+ * (formatted according to type), and a human-readable type name.
+ *
+ * @see BColumnListView, FilePermissionsView
  */
 
 #include "AttributesView.h"
@@ -23,6 +53,16 @@ int kValueColumn = 1;
 int kTypeColumn = 2;
 
 
+/**
+ * @brief Construct the attributes view and populate it from @a model's BFS attributes.
+ *
+ * Creates three columns (Name, Value, Type) and iterates over every extended
+ * attribute on the node, formatting values according to their type code.
+ * Well-known attributes already shown elsewhere in the Info window (BEOS:TYPE)
+ * are skipped.
+ *
+ * @param model  The filesystem model whose node's attributes are displayed.
+ */
 AttributesView::AttributesView(Model* model)
 	:
 	BGroupView(B_VERTICAL, 0),

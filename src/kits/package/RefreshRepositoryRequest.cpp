@@ -1,9 +1,42 @@
 /*
- * Copyright 2011-2015, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe <zooey@hirschkaefer.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2015, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ */
+
+
+/**
+ * @file RefreshRepositoryRequest.cpp
+ * @brief Implementation of BRefreshRepositoryRequest for updating a repository cache.
+ *
+ * BRefreshRepositoryRequest orchestrates the sequence of jobs needed to
+ * refresh a remote package repository: it fetches the remote checksum file,
+ * compares it against the local cache, and — when they differ — downloads the
+ * new cache and atomically installs it. The job graph is built in
+ * CreateInitialJobs() and is driven by the BRequest base class machinery.
+ *
+ * @see BRequest, BRepositoryConfig, ValidateChecksumJob, FetchFileJob
  */
 
 
@@ -34,6 +67,12 @@ namespace BPackageKit {
 using namespace BPrivate;
 
 
+/**
+ * @brief Construct a BRefreshRepositoryRequest for the given repository.
+ *
+ * @param context     The BContext providing shared services (temp files, etc.).
+ * @param repoConfig  The repository configuration describing what to refresh.
+ */
 BRefreshRepositoryRequest::BRefreshRepositoryRequest(const BContext& context,
 	const BRepositoryConfig& repoConfig)
 	:
@@ -43,11 +82,25 @@ BRefreshRepositoryRequest::BRefreshRepositoryRequest(const BContext& context,
 }
 
 
+/**
+ * @brief Destroy the request.
+ */
 BRefreshRepositoryRequest::~BRefreshRepositoryRequest()
 {
 }
 
 
+/**
+ * @brief Build the initial job graph for refreshing the repository cache.
+ *
+ * Queues a FetchFileJob that downloads the remote repo.sha256 checksum, then
+ * chains a ValidateChecksumJob that compares it to the local cache. If the
+ * checksums already match the graph terminates there; otherwise JobSucceeded()
+ * will append further jobs to download the new cache.
+ *
+ * @return B_OK on success, B_NO_INIT if the request is uninitialised,
+ *         B_NO_MEMORY on allocation failure, or another error code on failure.
+ */
 status_t
 BRefreshRepositoryRequest::CreateInitialJobs()
 {
@@ -107,6 +160,15 @@ BRefreshRepositoryRequest::CreateInitialJobs()
 }
 
 
+/**
+ * @brief React to a completed job by triggering a cache download when needed.
+ *
+ * When the validate-checksum job completes and the checksums differ, this
+ * method queues additional jobs via _FetchRepositoryCache() to download
+ * and activate the updated cache.
+ *
+ * @param job  The job that just succeeded.
+ */
 void
 BRefreshRepositoryRequest::JobSucceeded(BSupportKit::BJob* job)
 {
@@ -120,6 +182,16 @@ BRefreshRepositoryRequest::JobSucceeded(BSupportKit::BJob* job)
 }
 
 
+/**
+ * @brief Queue the jobs that download and activate an updated repository cache.
+ *
+ * Creates a FetchFileJob to download the remote "repo" file, a
+ * ValidateChecksumJob to verify its integrity, and an
+ * ActivateRepositoryCacheJob to atomically install it.
+ *
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or another
+ *         error code if a job cannot be queued.
+ */
 status_t
 BRefreshRepositoryRequest::_FetchRepositoryCache()
 {

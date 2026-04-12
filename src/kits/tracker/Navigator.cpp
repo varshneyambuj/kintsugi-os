@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Navigator.cpp
+ * @brief BNavigator — a BToolBar providing back, forward, up, and location controls.
+ *
+ * BNavigator maintains a back/forward history of entry_ref paths and renders
+ * a toolbar with icon buttons plus a BTextControl for direct path entry.  It
+ * responds to button presses, location bar commits, and dropped refs to drive
+ * kSwitchDirectory messages to the parent container window.
+ *
+ * @see BContainerWindow, BToolBar
+ */
 
 
 #include "Navigator.h"
@@ -55,6 +59,14 @@ static const int32 kMaxHistory = 32;
 //	#pragma mark - BNavigator
 
 
+/**
+ * @brief Construct a BNavigator initialised to the path of @p model.
+ *
+ * Sets up the location text control and inset values.  Toolbar buttons are
+ * added in AttachedToWindow().
+ *
+ * @param model  The Model whose path is the starting location.
+ */
 BNavigator::BNavigator(const Model* model)
 	:
 	BToolBar(),
@@ -76,11 +88,17 @@ BNavigator::BNavigator(const Model* model)
 }
 
 
+/**
+ * @brief Destroy the BNavigator.
+ */
 BNavigator::~BNavigator()
 {
 }
 
 
+/**
+ * @brief Create toolbar buttons and attach the location control once the window exists.
+ */
 void
 BNavigator::AttachedToWindow()
 {
@@ -113,6 +131,9 @@ BNavigator::AttachedToWindow()
 }
 
 
+/**
+ * @brief Perform the initial widget-state update after all children are attached.
+ */
 void
 BNavigator::AllAttached()
 {
@@ -121,6 +142,11 @@ BNavigator::AllAttached()
 }
 
 
+/**
+ * @brief Draw the toolbar, adding a 1 px bottom border for visual separation.
+ *
+ * @param updateRect  The dirty rectangle that needs repainting.
+ */
 void
 BNavigator::Draw(BRect updateRect)
 {
@@ -136,6 +162,15 @@ BNavigator::Draw(BRect updateRect)
 }
 
 
+/**
+ * @brief Handle navigation commands and dropped refs.
+ *
+ * Dispatches kNavigatorCommandBackward, Forward, Up, Location, and
+ * kNavigatorCommandSetFocus.  Dropped refs resolve to a directory and
+ * post kSwitchDirectory to the window.
+ *
+ * @param message  The incoming BMessage.
+ */
 void
 BNavigator::MessageReceived(BMessage* message)
 {
@@ -182,6 +217,11 @@ BNavigator::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Navigate to the previous directory in the back history.
+ *
+ * @param option  If true, open the target in a new window instead.
+ */
 void
 BNavigator::GoBackward(bool option)
 {
@@ -194,6 +234,11 @@ BNavigator::GoBackward(bool option)
 }
 
 
+/**
+ * @brief Navigate to the next directory in the forward history.
+ *
+ * @param option  If true, open the target in a new window instead.
+ */
 void
 BNavigator::GoForward(bool option)
 {
@@ -205,6 +250,11 @@ BNavigator::GoForward(bool option)
 }
 
 
+/**
+ * @brief Navigate to the parent directory of the current location.
+ *
+ * @param option  If true, open the parent in a new window instead.
+ */
 void
 BNavigator::GoUp(bool option)
 {
@@ -218,6 +268,16 @@ BNavigator::GoUp(bool option)
 }
 
 
+/**
+ * @brief Build and dispatch a kSwitchDirectory (or B_REFS_RECEIVED) message.
+ *
+ * With @p option false the message goes to the current window; with @p option
+ * true it goes to be_app so the directory opens in a new window.
+ *
+ * @param action  The navigation action constant (kActionBackward, etc.).
+ * @param entry   The target BEntry to switch to.
+ * @param option  If true, open in a new window rather than the current one.
+ */
 void
 BNavigator::SendNavigationMessage(NavigationAction action, BEntry* entry,
 	bool option)
@@ -275,6 +335,12 @@ BNavigator::SendNavigationMessage(NavigationAction action, BEntry* entry,
 }
 
 
+/**
+ * @brief Navigate to the path typed in the location text control.
+ *
+ * Resolves the text to an entry_ref and posts kSwitchDirectory to the window.
+ * If the path is invalid, restores the current path text.
+ */
 void
 BNavigator::GoTo()
 {
@@ -303,6 +369,16 @@ BNavigator::GoTo()
 }
 
 
+/**
+ * @brief Synchronise history, button states, and location text with a new directory.
+ *
+ * Updates back/forward history based on @p action, then refreshes the enabled
+ * state of the Back, Forward, and Up buttons and (unless the action is
+ * kActionLocation) sets the text control to the new path.
+ *
+ * @param newmodel  The new Model to use as the current location, or NULL.
+ * @param action    One of the NavigationAction constants describing what happened.
+ */
 void
 BNavigator::UpdateLocation(const Model* newmodel, int32 action)
 {

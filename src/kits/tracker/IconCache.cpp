@@ -1,36 +1,61 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file IconCache.cpp
+ * @brief Process-wide icon bitmap cache for efficient Tracker icon rendering.
+ *
+ * IconCache maintains a two-level cache keyed first by shared MIME-type icon data
+ * and second by per-node custom icons. The cache decodes vector (HVIF) or bitmap
+ * icons on demand, supports asynchronous background pre-drawing, and provides
+ * hit-testing for drag detection.
+ *
+ * @see BPoseView, BImageResources, ModelMenuItem
+ */
 
 //	Icon cache is used for drawing node icons; it caches icons
 //	and reuses them for successive draws
@@ -106,6 +131,12 @@ All rights reserved.
 BSize IconCache::sMiniIconSize;
 
 
+/**
+ * @brief Convert a BSize (assumed square) to an icon_size enum value.
+ *
+ * @param size  Square BSize; width and height must be equal.
+ * @return The corresponding icon_size (width + 1).
+ */
 static inline icon_size
 icon_size_for(BSize size)
 {
@@ -114,6 +145,9 @@ icon_size_for(BSize size)
 }
 
 
+/**
+ * @brief Default constructor; initialises all icon bitmap pointers to NULL.
+ */
 IconCacheEntry::IconCacheEntry()
 	:
 	fLargeIcon(NULL),
@@ -125,6 +159,9 @@ IconCacheEntry::IconCacheEntry()
 }
 
 
+/**
+ * @brief Destructor; deletes owned icon bitmaps unless this is an alias entry.
+ */
 IconCacheEntry::~IconCacheEntry()
 {
 	if (fAliasTo == NULL) {
@@ -143,6 +180,12 @@ IconCacheEntry::~IconCacheEntry()
 }
 
 
+/**
+ * @brief Make this entry an alias pointing at an existing shared-cache entry.
+ *
+ * @param sharedCache  The shared icon cache that owns the target entry.
+ * @param entry        The shared cache entry to alias.
+ */
 void
 IconCacheEntry::SetAliasFor(const SharedIconCache* sharedCache,
 	const SharedCacheEntry* entry)
@@ -324,6 +367,9 @@ IconCacheEntry::SetIcon(BBitmap* bitmap, IconDrawMode mode, BSize size)
 }
 
 
+/**
+ * @brief Construct the icon cache, initialise the highlight look-up table and icon sizes.
+ */
 IconCache::IconCache()
 	:
 	fInitHighlightTable(true)

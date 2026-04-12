@@ -1,36 +1,61 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file IconMenuItem.cpp
+ * @brief Menu item classes that draw small file-system icons alongside their labels.
+ *
+ * Provides ModelMenuItem (draws the icon of a filesystem Model object),
+ * SpecialModelMenuItem (italic label variant), and IconMenuItem (draws an
+ * arbitrary BBitmap icon). These are used throughout the Tracker menus for
+ * mount menus, the "Copy To" list, new-file templates, and nav-menu items.
+ *
+ * @see BMenuItem, IconCache, Model
+ */
 
 //! Menu items with small icons.
 
@@ -47,6 +72,16 @@ All rights reserved.
 #include "IconCache.h"
 
 
+/**
+ * @brief IconCache draw callback that renders a bitmap at half opacity.
+ *
+ * Used to indicate disabled menu items: draws with B_CONSTANT_ALPHA blending
+ * (B_RGBA32) or B_OP_BLEND (palette) depending on the bitmap colour space.
+ *
+ * @param view    The BView to draw into.
+ * @param where   Top-left position for the bitmap.
+ * @param bitmap  The source bitmap to render.
+ */
 static void
 DimmedIconBlitter(BView* view, BPoint where, BBitmap* bitmap, void*)
 {
@@ -68,6 +103,17 @@ DimmedIconBlitter(BView* view, BPoint where, BBitmap* bitmap, void*)
 //	#pragma mark - ModelMenuItem
 
 
+/**
+ * @brief Construct a ModelMenuItem with an explicit label.
+ *
+ * @param model      The filesystem model whose icon is drawn.
+ * @param title      Label string for the item.
+ * @param message    Invocation message (ownership taken).
+ * @param shortcut   Optional keyboard shortcut character.
+ * @param modifiers  Optional modifier mask for the shortcut.
+ * @param drawText   If false, only the icon is drawn (no label).
+ * @param extraPad   If true, adds extra horizontal padding for use in a BMenuBar.
+ */
 ModelMenuItem::ModelMenuItem(const Model* model, const char* title,
 	BMessage* message, char shortcut, uint32 modifiers,
 	bool drawText, bool extraPad)
@@ -94,6 +140,14 @@ ModelMenuItem::ModelMenuItem(const Model* model, const char* title,
 }
 
 
+/**
+ * @brief Construct a ModelMenuItem that hosts a submenu.
+ *
+ * @param model     The filesystem model whose icon is drawn.
+ * @param menu      The submenu to attach to this item.
+ * @param drawText  If false, only the icon is drawn.
+ * @param extraPad  If true, adds extra horizontal padding for use in a BMenuBar.
+ */
 ModelMenuItem::ModelMenuItem(const Model* model, BMenu* menu, bool drawText,
 	bool extraPad)
 	:
@@ -110,11 +164,20 @@ ModelMenuItem::ModelMenuItem(const Model* model, BMenu* menu, bool drawText,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 ModelMenuItem::~ModelMenuItem()
 {
 }
 
 
+/**
+ * @brief Re-point this item's model to a different filesystem entry.
+ *
+ * @param entry  The new BEntry to set the internal model to.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 ModelMenuItem::SetEntry(const BEntry* entry)
 {
@@ -122,6 +185,9 @@ ModelMenuItem::SetEntry(const BEntry* entry)
 }
 
 
+/**
+ * @brief Draw the item label (if enabled) and the model icon.
+ */
 void
 ModelMenuItem::DrawContent()
 {
@@ -138,6 +204,11 @@ ModelMenuItem::DrawContent()
 }
 
 
+/**
+ * @brief Toggle the highlight state and redraw the icon.
+ *
+ * @param hilited  true to highlight; false to unhighlight.
+ */
 void
 ModelMenuItem::Highlight(bool hilited)
 {
@@ -146,6 +217,9 @@ ModelMenuItem::Highlight(bool hilited)
 }
 
 
+/**
+ * @brief Draw the model icon using the icon cache, using a dim blitter if disabled.
+ */
 void
 ModelMenuItem::DrawIcon()
 {
@@ -177,6 +251,11 @@ ModelMenuItem::DrawIcon()
 }
 
 
+/**
+ * @brief Compute the extra left padding needed to align with a BMenu item when in a BMenuBar.
+ *
+ * @return Left-margin delta in pixels, or 0 if fExtraPad is false.
+ */
 float
 ModelMenuItem::_ExtraLeftPadding()
 {
@@ -192,6 +271,11 @@ ModelMenuItem::_ExtraLeftPadding()
 }
 
 
+/**
+ * @brief Compute the total extra horizontal padding (left + right) for BMenuBar alignment.
+ *
+ * @return Total padding delta in pixels, or 0 if fExtraPad is false.
+ */
 float
 ModelMenuItem::_ExtraPadding()
 {
@@ -207,6 +291,12 @@ ModelMenuItem::_ExtraPadding()
 }
 
 
+/**
+ * @brief Measure the left and right margin differences between BMenu and BMenuBar items.
+ *
+ * @param _leftDelta   Receives the left-margin difference; may be NULL.
+ * @param _rightDelta  Receives the right-margin difference; may be NULL.
+ */
 void
 ModelMenuItem::_GetHorizontalItemMarginDelta(float* _leftDelta, float* _rightDelta)
 {
@@ -227,6 +317,12 @@ ModelMenuItem::_GetHorizontalItemMarginDelta(float* _leftDelta, float* _rightDel
 }
 
 
+/**
+ * @brief Report the content size needed to accommodate both label and icon.
+ *
+ * @param width   Receives the minimum content width.
+ * @param height  Receives the minimum content height (at least icon height).
+ */
 void
 ModelMenuItem::GetContentSize(float* width, float* height)
 {
@@ -241,6 +337,12 @@ ModelMenuItem::GetContentSize(float* width, float* height)
 }
 
 
+/**
+ * @brief Invoke the item, stripping node-close refs unless the Option key is held.
+ *
+ * @param message  Message to invoke; uses the item's own message if NULL.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 ModelMenuItem::Invoke(BMessage* message)
 {
@@ -307,6 +409,14 @@ SpecialModelMenuItem::DrawContent()
 
 	It's currently used in the mount and new file template menus.
 */
+/**
+ * @brief Construct an icon menu item from a pre-decoded BBitmap.
+ *
+ * @param label    Text label.
+ * @param message  Invocation message (ownership taken).
+ * @param icon     Source bitmap; a scaled copy is stored internally.
+ * @param which    Desired icon size.
+ */
 IconMenuItem::IconMenuItem(const char* label, BMessage* message, BBitmap* icon,
 	icon_size which)
 	:
@@ -323,6 +433,14 @@ IconMenuItem::IconMenuItem(const char* label, BMessage* message, BBitmap* icon,
 }
 
 
+/**
+ * @brief Construct an icon menu item loading the icon from a BNodeInfo.
+ *
+ * @param label     Text label.
+ * @param message   Invocation message.
+ * @param nodeInfo  Node info from which the tracker icon is retrieved; may be NULL.
+ * @param which     Desired icon size.
+ */
 IconMenuItem::IconMenuItem(const char* label, BMessage* message,
 	const BNodeInfo* nodeInfo, icon_size which)
 	:
@@ -346,6 +464,16 @@ IconMenuItem::IconMenuItem(const char* label, BMessage* message,
 }
 
 
+/**
+ * @brief Construct an icon menu item loading the icon from a MIME type string.
+ *
+ * Falls back to the supertype's icon if the specific type has none.
+ *
+ * @param label     Text label.
+ * @param message   Invocation message.
+ * @param iconType  MIME type string (e.g. "text/plain").
+ * @param which     Desired icon size.
+ */
 IconMenuItem::IconMenuItem(const char* label, BMessage* message,
 	const char* iconType, icon_size which)
 	:
@@ -373,6 +501,14 @@ IconMenuItem::IconMenuItem(const char* label, BMessage* message,
 }
 
 
+/**
+ * @brief Construct an icon menu item with a submenu, loading the icon from a MIME type.
+ *
+ * @param submenu   The submenu to attach to this item.
+ * @param message   Invocation message.
+ * @param iconType  MIME type string.
+ * @param which     Desired icon size.
+ */
 IconMenuItem::IconMenuItem(BMenu* submenu, BMessage* message,
 	const char* iconType, icon_size which)
 	:
@@ -400,6 +536,11 @@ IconMenuItem::IconMenuItem(BMenu* submenu, BMessage* message,
 }
 
 
+/**
+ * @brief Unarchive constructor used by BArchivable::Instantiate().
+ *
+ * @param data  BMessage archive containing "_which" and optional "_deviceIconBits".
+ */
 IconMenuItem::IconMenuItem(BMessage* data)
 	:
 	PositionPassingMenuItem(data),
@@ -430,6 +571,12 @@ IconMenuItem::IconMenuItem(BMessage* data)
 }
 
 
+/**
+ * @brief Create an IconMenuItem from an archive message (BArchivable factory).
+ *
+ * @param data  The archive BMessage.
+ * @return A new IconMenuItem, or NULL if instantiation fails.
+ */
 BArchivable*
 IconMenuItem::Instantiate(BMessage* data)
 {
@@ -440,6 +587,13 @@ IconMenuItem::Instantiate(BMessage* data)
 }
 
 
+/**
+ * @brief Archive this item into @a data, including icon size and pixel data.
+ *
+ * @param data  Output BMessage to archive into.
+ * @param deep  Whether to recursively archive children (passed to base class).
+ * @return B_OK on success, or an error code.
+ */
 status_t
 IconMenuItem::Archive(BMessage* data, bool deep) const
 {
@@ -457,12 +611,21 @@ IconMenuItem::Archive(BMessage* data, bool deep) const
 }
 
 
+/**
+ * @brief Destructor; deletes the owned icon bitmap.
+ */
 IconMenuItem::~IconMenuItem()
 {
 	delete fDeviceIcon;
 }
 
 
+/**
+ * @brief Report the content size needed to accommodate the icon and label.
+ *
+ * @param width   Receives the content width.
+ * @param height  Receives the content height (at least icon height).
+ */
 void
 IconMenuItem::GetContentSize(float* width, float* height)
 {
@@ -481,6 +644,9 @@ IconMenuItem::GetContentSize(float* width, float* height)
 }
 
 
+/**
+ * @brief Draw the label (offset past the icon) and then the icon bitmap.
+ */
 void
 IconMenuItem::DrawContent()
 {
@@ -515,6 +681,14 @@ IconMenuItem::DrawContent()
 }
 
 
+/**
+ * @brief Mark this item and propagate the icon to the topmost BMenuField parent.
+ *
+ * When an IconMenuItem inside a BMenuField's menu is marked, the top-level
+ * menu item's icon is updated to match so the field shows the selected icon.
+ *
+ * @param mark  true to mark; false to unmark.
+ */
 void
 IconMenuItem::SetMarked(bool mark)
 {
@@ -566,6 +740,14 @@ IconMenuItem::SetMarked(bool mark)
 }
 
 
+/**
+ * @brief Replace the displayed icon with a copy of @a icon.
+ *
+ * Deletes any existing icon and imports @a icon into a new BBitmap scaled to
+ * fWhich. If @a icon is NULL, the icon is cleared.
+ *
+ * @param icon  Source bitmap; ownership is NOT taken.
+ */
 void
 IconMenuItem::SetIcon(BBitmap* icon)
 {

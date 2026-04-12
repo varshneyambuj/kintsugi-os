@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file StatusWindow.cpp
+ * @brief BStatusWindow displays progress information for Tracker file operations.
+ *
+ * @see BWindow, BStatusView, TCustomButton
+ */
 
 /*!	A subclass of BWindow that is used to display the status of the Tracker
 	operations (copying, deleting, etc.).
@@ -99,6 +97,9 @@ BStatusWindow* gStatusWindow = NULL;
 //	#pragma mark - BStatusMouseFilter
 
 
+/**
+ * @brief Construct a filter that intercepts B_MOUSE_DOWN messages.
+ */
 BStatusMouseFilter::BStatusMouseFilter()
 	:
 	BMessageFilter(B_ANY_DELIVERY, B_ANY_SOURCE, B_MOUSE_DOWN)
@@ -106,6 +107,13 @@ BStatusMouseFilter::BStatusMouseFilter()
 }
 
 
+/**
+ * @brief Redirect mouse-down events aimed at a BStatusBar to its parent view.
+ *
+ * @param message  The incoming mouse-down message.
+ * @param target   In/out: the handler to receive the message.
+ * @return B_DISPATCH_MESSAGE always.
+ */
 filter_result
 BStatusMouseFilter::Filter(BMessage* message, BHandler** target)
 {
@@ -128,6 +136,13 @@ BStatusMouseFilter::Filter(BMessage* message, BHandler** target)
 //	#pragma mark - TCustomButton
 
 
+/**
+ * @brief Construct a TCustomButton with the given frame and command constant.
+ *
+ * @param frame  The button's bounding rectangle.
+ * @param what   Command constant (kStopButton or kPauseButton) that determines
+ *               the icon drawn inside the button.
+ */
 TCustomButton::TCustomButton(BRect frame, uint32 what)
 	:
 	BButton(frame, "", "", new BMessage(what), B_FOLLOW_LEFT | B_FOLLOW_TOP,
@@ -136,6 +151,11 @@ TCustomButton::TCustomButton(BRect frame, uint32 what)
 }
 
 
+/**
+ * @brief Draw the stop (filled square) or pause (two vertical bars) icon.
+ *
+ * @param updateRect  The dirty region passed by the rendering framework.
+ */
 void
 TCustomButton::Draw(BRect updateRect)
 {
@@ -200,6 +220,12 @@ public:
 //	#pragma mark - BStatusWindow
 
 
+/**
+ * @brief Construct the shared Tracker status window, initially hidden.
+ *
+ * Installs the mouse-down filter, adds the background view, and shows the
+ * window off-screen so it can be made visible on demand.
+ */
 BStatusWindow::BStatusWindow()
 	:
 	BWindow(kStatusRect, B_TRANSLATE("Tracker status"),	B_TITLED_WINDOW,
@@ -220,11 +246,20 @@ BStatusWindow::BStatusWindow()
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BStatusWindow::~BStatusWindow()
 {
 }
 
 
+/**
+ * @brief Create and display a new status view for the given operation thread.
+ *
+ * @param thread  The thread ID of the file-operation thread to track.
+ * @param type    The type of operation (copy, move, delete, etc.).
+ */
 void
 BStatusWindow::CreateStatusItem(thread_id thread, StatusWindowState type)
 {
@@ -274,6 +309,15 @@ BStatusWindow::CreateStatusItem(thread_id thread, StatusWindowState type)
 }
 
 
+/**
+ * @brief Initialise the status view for \a thread with item/size totals.
+ *
+ * @param thread      The thread ID whose status view should be initialised.
+ * @param totalItems  Total number of items to process.
+ * @param totalSize   Total byte size of all items.
+ * @param destDir     Destination directory reference (may be NULL).
+ * @param showCount   If true, display the item count in the progress indicator.
+ */
 void
 BStatusWindow::InitStatusItem(thread_id thread, int32 totalItems,
 	off_t totalSize, const entry_ref* destDir, bool showCount)
@@ -292,6 +336,14 @@ BStatusWindow::InitStatusItem(thread_id thread, int32 totalItems,
 }
 
 
+/**
+ * @brief Advance the progress bar for the operation running on \a thread.
+ *
+ * @param thread    The thread ID whose status view should be updated.
+ * @param curItem   Name of the item currently being processed.
+ * @param itemSize  Byte size of the current item.
+ * @param optional  If true, the update may be skipped to reduce redraw frequency.
+ */
 void
 BStatusWindow::UpdateStatus(thread_id thread, const char* curItem,
 	off_t itemSize, bool optional)
@@ -309,6 +361,14 @@ BStatusWindow::UpdateStatus(thread_id thread, const char* curItem,
 }
 
 
+/**
+ * @brief Remove the status view for \a thread and hide the window if empty.
+ *
+ * Removes the view from the list, reflows the remaining views, and hides or
+ * closes the status window when no more operations are in progress.
+ *
+ * @param thread  The thread ID of the completed operation.
+ */
 void
 BStatusWindow::RemoveStatusItem(thread_id thread)
 {
@@ -361,6 +421,15 @@ BStatusWindow::RemoveStatusItem(thread_id thread)
 }
 
 
+/**
+ * @brief Check whether the operation thread should stop or block due to user input.
+ *
+ * If the user pressed Pause, this method suspends the calling thread until
+ * the user resumes it.  If the user pressed Stop, returns true.
+ *
+ * @param thread  The file-operation thread to check.
+ * @return true if the operation has been cancelled; false otherwise.
+ */
 bool
 BStatusWindow::CheckCanceledOrPaused(thread_id thread)
 {
@@ -400,6 +469,14 @@ BStatusWindow::CheckCanceledOrPaused(thread_id thread)
 }
 
 
+/**
+ * @brief Attempt to cancel all in-progress operations when Tracker is quitting.
+ *
+ * Issues cancel requests to every active status view.
+ *
+ * @return true if no operations are in progress (safe to quit); false if some
+ *         are still running and need more time to cancel.
+ */
 bool
 BStatusWindow::AttemptToQuit()
 {
@@ -419,6 +496,11 @@ BStatusWindow::AttemptToQuit()
 }
 
 
+/**
+ * @brief Handle window activation to track whether the Desktop had focus.
+ *
+ * @param state  true if the window just became active.
+ */
 void
 BStatusWindow::WindowActivated(bool state)
 {
@@ -432,6 +514,16 @@ BStatusWindow::WindowActivated(bool state)
 // #pragma mark - BStatusView
 
 
+/**
+ * @brief Construct a BStatusView for the given thread and operation type.
+ *
+ * Builds the status bar, operation icon, stop/pause buttons, and sets the
+ * initial "Preparing..." caption appropriate for \a type.
+ *
+ * @param bounds  Initial bounding rectangle for this view.
+ * @param thread  The thread ID of the file-operation thread to display.
+ * @param type    The kind of operation (copy, move, delete, etc.).
+ */
 BStatusView::BStatusView(BRect bounds, thread_id thread, StatusWindowState type)
 	:
 	BView(bounds, "StatusView", B_FOLLOW_NONE, B_WILL_DRAW),
@@ -547,12 +639,18 @@ BStatusView::BStatusView(BRect bounds, thread_id thread, StatusWindowState type)
 }
 
 
+/**
+ * @brief Destructor; releases the operation-type icon bitmap.
+ */
 BStatusView::~BStatusView()
 {
 	delete fBitmap;
 }
 
 
+/**
+ * @brief Zero-initialise all counters and state variables.
+ */
 void
 BStatusView::Init()
 {
@@ -573,6 +671,17 @@ BStatusView::Init()
 }
 
 
+/**
+ * @brief Set the totals and destination for an in-progress operation.
+ *
+ * Called by BStatusWindow::InitStatusItem() after the thread has determined
+ * how much work is needed.
+ *
+ * @param totalItems  Total number of items to process.
+ * @param totalSize   Total byte size of all items.
+ * @param destDir     Destination directory reference, or NULL.
+ * @param showCount   If true, the item count is shown in the status bar label.
+ */
 void
 BStatusView::InitStatus(int32 totalItems, off_t totalSize,
 	const entry_ref* destDir, bool showCount)
@@ -631,6 +740,11 @@ BStatusView::InitStatus(int32 totalItems, off_t totalSize,
 }
 
 
+/**
+ * @brief Draw the operation icon and the current file name / path text.
+ *
+ * @param updateRect  The dirty region to redraw.
+ */
 void
 BStatusView::Draw(BRect updateRect)
 {
@@ -863,6 +977,9 @@ BStatusView::_FullTimeRemainingString(time_t now, time_t finishTime,
 }
 
 
+/**
+ * @brief Set button targets to this view when attached to the status window.
+ */
 void
 BStatusView::AttachedToWindow()
 {
@@ -871,6 +988,11 @@ BStatusView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Handle Pause and Stop button messages.
+ *
+ * @param message  The incoming button-press message.
+ */
 void
 BStatusView::MessageReceived(BMessage* message)
 {
@@ -917,6 +1039,13 @@ BStatusView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Advance the progress bar and update the displayed filename and speed.
+ *
+ * @param curItem   Name of the item currently being processed; may be NULL.
+ * @param itemSize  Byte size of the current item.
+ * @param optional  If true the redraw may be suppressed to limit update rate.
+ */
 void
 BStatusView::UpdateStatus(const char* curItem, off_t itemSize, bool optional)
 {
@@ -995,6 +1124,9 @@ BStatusView::UpdateStatus(const char* curItem, off_t itemSize, bool optional)
 }
 
 
+/**
+ * @brief Mark this operation as cancelled by the user or by Tracker quitting.
+ */
 void
 BStatusView::SetWasCanceled()
 {

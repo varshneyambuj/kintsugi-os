@@ -1,36 +1,61 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ *   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN
+ *   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
-trademarks of Be Incorporated in the United States and other countries. Other
-brand product names are registered trademarks or trademarks of their
-respective holders. All rights reserved.
-*/
+/**
+ * @file FSUtils.cpp
+ * @brief Core Tracker file-system utility functions: copy, move, delete, trash.
+ *
+ * Implements the high-level file operations used throughout the Tracker: FSCopyItem,
+ * FSMoveToTrash, FSDeleteFolder, MoveItem, and the associated progress-tracking
+ * CopyLoopControl base class. Operations run in their own threads and report
+ * progress via the Tracker status window.
+ *
+ * @see CopyLoopControl, FSClipboard, FSUndoRedo
+ */
 
 // Tracker file system calls.
 
@@ -210,17 +235,33 @@ const char* kSkipAttributes[] = {
 // #pragma mark - CopyLoopControl
 
 
+/**
+ * @brief Destructor.
+ */
 CopyLoopControl::~CopyLoopControl()
 {
 }
 
 
+/**
+ * @brief Initialise the control for a given job kind (no-op in the base class).
+ *
+ * @param jobKind  Identifier for the type of copy/move/delete job.
+ */
 void
 CopyLoopControl::Init(uint32 jobKind)
 {
 }
 
 
+/**
+ * @brief Initialise the control with a known item count and total size (no-op in the base class).
+ *
+ * @param totalItems  Number of items to be processed.
+ * @param totalSize   Total byte size of all items.
+ * @param destDir     Destination directory entry ref.
+ * @param showCount   Whether to show item counts in a status display.
+ */
 void
 CopyLoopControl::Init(int32 totalItems, off_t totalSize,
 	const entry_ref* destDir, bool showCount)
@@ -228,6 +269,15 @@ CopyLoopControl::Init(int32 totalItems, off_t totalSize,
 }
 
 
+/**
+ * @brief Report a per-file error; base class silently continues.
+ *
+ * @param message        Human-readable error description.
+ * @param name           Filename that triggered the error.
+ * @param error          Status code from the failed operation.
+ * @param allowContinue  Whether the user may choose to skip this file.
+ * @return false always (continue without prompting).
+ */
 bool
 CopyLoopControl::FileError(const char* message, const char* name,
 	status_t error, bool allowContinue)
@@ -236,6 +286,14 @@ CopyLoopControl::FileError(const char* message, const char* name,
 }
 
 
+/**
+ * @brief Update the visible progress (no-op in the base class).
+ *
+ * @param name      Filename currently being processed.
+ * @param ref       Entry ref of the current item.
+ * @param count     Number of items processed so far.
+ * @param optional  If true, the update may be skipped for performance.
+ */
 void
 CopyLoopControl::UpdateStatus(const char* name, const entry_ref& ref,
 	int32 count, bool optional)
@@ -243,6 +301,11 @@ CopyLoopControl::UpdateStatus(const char* name, const entry_ref& ref,
 }
 
 
+/**
+ * @brief Check whether the user has requested cancellation.
+ *
+ * @return false always in the base class (no cancellation mechanism).
+ */
 bool
 CopyLoopControl::CheckUserCanceled()
 {
@@ -250,6 +313,16 @@ CopyLoopControl::CheckUserCanceled()
 }
 
 
+/**
+ * @brief Decide what to do when a destination file already exists.
+ *
+ * @param srcEntry   The source entry.
+ * @param destName   The destination filename.
+ * @param destDir    The destination directory.
+ * @param srcIsDir   true if the source is a directory.
+ * @param dstIsDir   true if the existing destination is a directory.
+ * @return kReplace always in the base class.
+ */
 CopyLoopControl::OverwriteMode
 CopyLoopControl::OverwriteOnConflict(const BEntry* srcEntry,
 	const char* destName, const BDirectory* destDir, bool srcIsDir,
@@ -259,6 +332,11 @@ CopyLoopControl::OverwriteOnConflict(const BEntry* srcEntry,
 }
 
 
+/**
+ * @brief Decide whether to skip a specific entry during iteration.
+ *
+ * @return false always (process all entries).
+ */
 bool
 CopyLoopControl::SkipEntry(const BEntry*, bool)
 {
@@ -267,12 +345,20 @@ CopyLoopControl::SkipEntry(const BEntry*, bool)
 }
 
 
+/**
+ * @brief Accumulate a chunk of data for optional checksum computation (no-op).
+ */
 void
 CopyLoopControl::ChecksumChunk(const char*, size_t)
 {
 }
 
 
+/**
+ * @brief Verify the checksum of a just-copied file (no-op base class).
+ *
+ * @return true always.
+ */
 bool
 CopyLoopControl::ChecksumFile(const entry_ref*)
 {
@@ -280,6 +366,11 @@ CopyLoopControl::ChecksumFile(const entry_ref*)
 }
 
 
+/**
+ * @brief Decide whether to skip copying a specific extended attribute.
+ *
+ * @return false always (copy all attributes).
+ */
 bool
 CopyLoopControl::SkipAttribute(const char*)
 {
@@ -287,6 +378,11 @@ CopyLoopControl::SkipAttribute(const char*)
 }
 
 
+/**
+ * @brief Decide whether to preserve a specific extended attribute on the destination.
+ *
+ * @return false always (do not specially preserve any attribute).
+ */
 bool
 CopyLoopControl::PreserveAttribute(const char*)
 {

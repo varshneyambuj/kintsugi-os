@@ -1,9 +1,42 @@
 /*
- * Copyright 2011-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe <zooey@hirschkaefer.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2014, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ */
+
+
+/**
+ * @file PackageRoster.cpp
+ * @brief Implementation of BPackageRoster, the central package management facade.
+ *
+ * BPackageRoster gives applications a single entry point for querying installed
+ * packages, locating repository configuration and cache files, enumerating
+ * repository names, and subscribing to package-change notifications. On Haiku
+ * it communicates with the package daemon and the registrar; on non-Haiku
+ * platforms many operations return B_NOT_SUPPORTED.
+ *
+ * @see BRepositoryConfig, BRepositoryCache, BPackageInfoSet
  */
 
 
@@ -42,16 +75,29 @@ namespace BPackageKit {
 using namespace BHPKG;
 
 
+/**
+ * @brief Default-construct a BPackageRoster.
+ */
 BPackageRoster::BPackageRoster()
 {
 }
 
 
+/**
+ * @brief Destroy the BPackageRoster.
+ */
 BPackageRoster::~BPackageRoster()
 {
 }
 
 
+/**
+ * @brief Determine whether a system reboot is required to apply pending package changes.
+ *
+ * Only meaningful on an installed Haiku system; always returns false elsewhere.
+ *
+ * @return True if there are packages waiting to be activated on next boot.
+ */
 bool
 BPackageRoster::IsRebootNeeded()
 {
@@ -77,6 +123,13 @@ BPackageRoster::IsRebootNeeded()
 }
 
 
+/**
+ * @brief Retrieve the path to the system-wide repository configuration directory.
+ *
+ * @param path    Output path object to fill in.
+ * @param create  If true, create the directory if it does not yet exist.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetCommonRepositoryConfigPath(BPath* path, bool create) const
 {
@@ -84,6 +137,13 @@ BPackageRoster::GetCommonRepositoryConfigPath(BPath* path, bool create) const
 }
 
 
+/**
+ * @brief Retrieve the path to the per-user repository configuration directory.
+ *
+ * @param path    Output path object to fill in.
+ * @param create  If true, create the directory if it does not yet exist.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetUserRepositoryConfigPath(BPath* path, bool create) const
 {
@@ -91,6 +151,13 @@ BPackageRoster::GetUserRepositoryConfigPath(BPath* path, bool create) const
 }
 
 
+/**
+ * @brief Retrieve the path to the system-wide repository cache directory.
+ *
+ * @param path    Output path object to fill in.
+ * @param create  If true, create the directory if it does not yet exist.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetCommonRepositoryCachePath(BPath* path, bool create) const
 {
@@ -98,6 +165,13 @@ BPackageRoster::GetCommonRepositoryCachePath(BPath* path, bool create) const
 }
 
 
+/**
+ * @brief Retrieve the path to the per-user repository cache directory.
+ *
+ * @param path    Output path object to fill in.
+ * @param create  If true, create the directory if it does not yet exist.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetUserRepositoryCachePath(BPath* path, bool create) const
 {
@@ -105,6 +179,12 @@ BPackageRoster::GetUserRepositoryCachePath(BPath* path, bool create) const
 }
 
 
+/**
+ * @brief Visit all repository configuration files in the system-wide location.
+ *
+ * @param visitor  Callback object invoked once per config file entry.
+ * @return B_OK on success, or the first error returned by @a visitor.
+ */
 status_t
 BPackageRoster::VisitCommonRepositoryConfigs(BRepositoryConfigVisitor& visitor)
 {
@@ -118,6 +198,12 @@ BPackageRoster::VisitCommonRepositoryConfigs(BRepositoryConfigVisitor& visitor)
 }
 
 
+/**
+ * @brief Visit all repository configuration files in the per-user location.
+ *
+ * @param visitor  Callback object invoked once per config file entry.
+ * @return B_OK on success, or the first error returned by @a visitor.
+ */
 status_t
 BPackageRoster::VisitUserRepositoryConfigs(BRepositoryConfigVisitor& visitor)
 {
@@ -130,6 +216,14 @@ BPackageRoster::VisitUserRepositoryConfigs(BRepositoryConfigVisitor& visitor)
 }
 
 
+/**
+ * @brief Collect the names of all known repositories (user and system).
+ *
+ * Duplicate names are suppressed so each repository appears only once.
+ *
+ * @param names  List to which repository names are appended.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetRepositoryNames(BStringList& names)
 {
@@ -163,6 +257,16 @@ BPackageRoster::GetRepositoryNames(BStringList& names)
 }
 
 
+/**
+ * @brief Load the repository cache for a named repository.
+ *
+ * The user cache path takes precedence over the system cache path.
+ *
+ * @param name             Name of the repository to look up.
+ * @param repositoryCache  Output object filled with the cache data.
+ * @return B_OK on success, B_BAD_VALUE if @a repositoryCache is NULL, or
+ *         an error code if the cache cannot be found or read.
+ */
 status_t
 BPackageRoster::GetRepositoryCache(const BString& name,
 	BRepositoryCache* repositoryCache)
@@ -192,6 +296,16 @@ BPackageRoster::GetRepositoryCache(const BString& name,
 }
 
 
+/**
+ * @brief Load the repository configuration for a named repository.
+ *
+ * The user config path takes precedence over the system config path.
+ *
+ * @param name               Name of the repository to look up.
+ * @param repositoryConfig   Output object filled with the configuration data.
+ * @return B_OK on success, B_BAD_VALUE if @a repositoryConfig is NULL, or
+ *         an error code if the config cannot be found or read.
+ */
 status_t
 BPackageRoster::GetRepositoryConfig(const BString& name,
 	BRepositoryConfig* repositoryConfig)
@@ -221,6 +335,15 @@ BPackageRoster::GetRepositoryConfig(const BString& name,
 }
 
 
+/**
+ * @brief Query the package daemon for information about an installation location.
+ *
+ * Only supported on an installed Haiku system; returns B_NOT_SUPPORTED elsewhere.
+ *
+ * @param location  The installation location to query.
+ * @param _info     Output object filled with location information.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetInstallationLocationInfo(
 	BPackageInstallationLocation location, BInstallationLocationInfo& _info)
@@ -236,6 +359,15 @@ BPackageRoster::GetInstallationLocationInfo(
 }
 
 
+/**
+ * @brief Retrieve the set of currently active packages at an installation location.
+ *
+ * Only supported on an installed Haiku system; returns B_NOT_SUPPORTED elsewhere.
+ *
+ * @param location      The installation location to query.
+ * @param packageInfos  Output set populated with active package info objects.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::GetActivePackages(BPackageInstallationLocation location,
 	BPackageInfoSet& packageInfos)
@@ -256,6 +388,16 @@ BPackageRoster::GetActivePackages(BPackageInstallationLocation location,
 }
 
 
+/**
+ * @brief Check whether a specific package is currently active at a location.
+ *
+ * Only supported on an installed Haiku system; returns B_NOT_SUPPORTED elsewhere.
+ *
+ * @param location  The installation location to search.
+ * @param info      The package to look for (matched by name and version).
+ * @param active    Output boolean set to true if the package is active.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::IsPackageActive(BPackageInstallationLocation location,
 	const BPackageInfo info, bool* active)
@@ -284,6 +426,15 @@ BPackageRoster::IsPackageActive(BPackageInstallationLocation location,
 }
 
 
+/**
+ * @brief Register a messenger to receive package-change notifications.
+ *
+ * Only supported on an installed Haiku system; returns B_NOT_SUPPORTED elsewhere.
+ *
+ * @param target     The messenger that will receive notification messages.
+ * @param eventMask  Bitmask of event types to subscribe to.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::StartWatching(const BMessenger& target, uint32 eventMask)
 {
@@ -319,6 +470,14 @@ BPackageRoster::StartWatching(const BMessenger& target, uint32 eventMask)
 }
 
 
+/**
+ * @brief Unregister a messenger from package-change notifications.
+ *
+ * Only supported on an installed Haiku system; returns B_NOT_SUPPORTED elsewhere.
+ *
+ * @param target  The messenger to unregister.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::StopWatching(const BMessenger& target)
 {
@@ -352,6 +511,14 @@ BPackageRoster::StopWatching(const BMessenger& target)
 }
 
 
+/**
+ * @brief Build the path to the "package-repositories" subdirectory under a known directory.
+ *
+ * @param path      Output path object to fill.
+ * @param create    If true, create the directory when it does not exist.
+ * @param whichDir  The well-known base directory constant (e.g. B_SYSTEM_SETTINGS_DIRECTORY).
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageRoster::_GetRepositoryPath(BPath* path, bool create,
 	directory_which whichDir) const
@@ -377,6 +544,13 @@ BPackageRoster::_GetRepositoryPath(BPath* path, bool create,
 }
 
 
+/**
+ * @brief Iterate over all entries in a repository config directory and invoke the visitor.
+ *
+ * @param path     Path to the directory to scan.
+ * @param visitor  Callback invoked for each BEntry found.
+ * @return B_OK on success, or the first error returned by @a visitor.
+ */
 status_t
 BPackageRoster::_VisitRepositoryConfigs(const BPath& path,
 	BRepositoryConfigVisitor& visitor)

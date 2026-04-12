@@ -1,10 +1,43 @@
 /*
- * Copyright 2010-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe <zooey@hirschkaefer.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2014, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe <zooey@hirschkaefer.de>
  */
+
+
+/**
+ * @file DateTimeFormat.cpp
+ * @brief Implementation of BDateTimeFormat for combined date-and-time formatting.
+ *
+ * BDateTimeFormat combines a date style and a time style into a single
+ * formatted string using ICU DateFormat. It also supports building custom
+ * patterns from a skeleton (a set of date/time element flags) through
+ * ICU's DateTimePatternGenerator.
+ *
+ * @see BDateFormat, BTimeFormat, BFormattingConventions
+ */
+
 
 #include <unicode/uversion.h>
 #include <DateTimeFormat.h>
@@ -25,12 +58,23 @@
 U_NAMESPACE_USE
 
 
+/**
+ * @brief Construct a BDateTimeFormat using the given BLocale.
+ *
+ * @param locale  Locale to use, or NULL for the system default.
+ */
 BDateTimeFormat::BDateTimeFormat(const BLocale* locale)
 	: BFormat(locale)
 {
 }
 
 
+/**
+ * @brief Construct a BDateTimeFormat from explicit language and conventions.
+ *
+ * @param language     Language for name strings.
+ * @param conventions  Formatting conventions for date/time patterns.
+ */
 BDateTimeFormat::BDateTimeFormat(const BLanguage& language,
 	const BFormattingConventions& conventions)
 	: BFormat(language, conventions)
@@ -38,17 +82,36 @@ BDateTimeFormat::BDateTimeFormat(const BLanguage& language,
 }
 
 
+/**
+ * @brief Copy-construct a BDateTimeFormat from another instance.
+ *
+ * @param other  Source BDateTimeFormat.
+ */
 BDateTimeFormat::BDateTimeFormat(const BDateTimeFormat &other)
 	: BFormat(other)
 {
 }
 
 
+/**
+ * @brief Destroy the BDateTimeFormat object.
+ */
 BDateTimeFormat::~BDateTimeFormat()
 {
 }
 
 
+/**
+ * @brief Build and store a combined date-time pattern from a set of element flags.
+ *
+ * Uses ICU's DateTimePatternGenerator to derive the best pattern for the
+ * provided skeleton (a bitmask of B_DATE_ELEMENT_* and B_TIME_ELEMENT_*
+ * flags), then stores it as an explicit override for the given style pair.
+ *
+ * @param dateStyle  Date style slot to store the generated pattern.
+ * @param timeStyle  Time style slot to store the generated pattern.
+ * @param elements   Bitmask of B_DATE_ELEMENT_* / B_TIME_ELEMENT_* flags.
+ */
 void
 BDateTimeFormat::SetDateTimeFormat(BDateFormatStyle dateStyle,
 	BTimeFormatStyle timeStyle, int32 elements) {
@@ -97,6 +160,16 @@ BDateTimeFormat::SetDateTimeFormat(BDateFormatStyle dateStyle,
 // #pragma mark - Formatting
 
 
+/**
+ * @brief Format a time_t as a combined date-time string into a C buffer.
+ *
+ * @param target     Destination character buffer.
+ * @param maxSize    Size of the destination buffer in bytes.
+ * @param time       POSIX timestamp to format.
+ * @param dateStyle  Date style level.
+ * @param timeStyle  Time style level.
+ * @return Number of bytes written on success, or a negative error code.
+ */
 ssize_t
 BDateTimeFormat::Format(char* target, size_t maxSize, time_t time,
 	BDateFormatStyle dateStyle, BTimeFormatStyle timeStyle) const
@@ -120,6 +193,16 @@ BDateTimeFormat::Format(char* target, size_t maxSize, time_t time,
 }
 
 
+/**
+ * @brief Format a time_t as a combined date-time string with optional time zone.
+ *
+ * @param target     Output BString that receives the formatted string.
+ * @param time       POSIX timestamp to format.
+ * @param dateStyle  Date style level.
+ * @param timeStyle  Time style level.
+ * @param timeZone   Time zone for display, or NULL for the local zone.
+ * @return B_OK on success, B_NO_MEMORY if ICU allocation fails.
+ */
 status_t
 BDateTimeFormat::Format(BString& target, const time_t time,
 	BDateFormatStyle dateStyle, BTimeFormatStyle timeStyle,
@@ -150,6 +233,15 @@ BDateTimeFormat::Format(BString& target, const time_t time,
 }
 
 
+/**
+ * @brief Create an ICU DateFormat configured with the given combined pattern.
+ *
+ * Selects the locale from the preferred language or formatting conventions,
+ * creates a date-time instance, then applies the explicit pattern.
+ *
+ * @param format  ICU SimpleDateFormat pattern string.
+ * @return A heap-allocated DateFormat; caller must delete it. NULL on failure.
+ */
 DateFormat*
 BDateTimeFormat::_CreateDateTimeFormatter(const BString& format) const
 {

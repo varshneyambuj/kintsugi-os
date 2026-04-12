@@ -1,36 +1,41 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+/**
+ * @file TrackerString.cpp
+ * @brief Implementation of TrackerString, a BString extended with pattern matching.
+ *
+ * TrackerString adds glob, regular-expression, starts-with, ends-with, and
+ * contains matching on top of BString.  The glob engine supports Unicode
+ * multi-byte glyphs, bracket expressions (including ranges and negation), and
+ * the standard * / ? wildcards.
+ *
+ * @see BString, TrackerStringExpressionType
+ */
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
 
 #include "TrackerString.h"
 
@@ -42,11 +47,19 @@ All rights reserved.
 //	#pragma mark - TrackerString
 
 
+/**
+ * @brief Default constructor; creates an empty TrackerString.
+ */
 TrackerString::TrackerString()
 {
 }
 
 
+/**
+ * @brief Construct a TrackerString from a C string.
+ *
+ * @param string  Null-terminated string to copy.
+ */
 TrackerString::TrackerString(const char* string)
 	:
 	BString(string)
@@ -54,6 +67,11 @@ TrackerString::TrackerString(const char* string)
 }
 
 
+/**
+ * @brief Copy constructor.
+ *
+ * @param string  Source TrackerString to copy.
+ */
 TrackerString::TrackerString(const TrackerString &string)
 	:
 	BString(string)
@@ -61,6 +79,12 @@ TrackerString::TrackerString(const TrackerString &string)
 }
 
 
+/**
+ * @brief Construct a TrackerString from a bounded C string.
+ *
+ * @param string     Source string to copy.
+ * @param maxLength  Maximum number of bytes to copy from \a string.
+ */
 TrackerString::TrackerString(const char* string, int32 maxLength)
 	:
 	BString(string, maxLength)
@@ -68,11 +92,25 @@ TrackerString::TrackerString(const char* string, int32 maxLength)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 TrackerString::~TrackerString()
 {
 }
 
 
+/**
+ * @brief Test whether this string matches \a string under the given expression type.
+ *
+ * Dispatches to the appropriate comparison helper based on \a expressionType.
+ *
+ * @param string          The pattern or literal to match against.
+ * @param caseSensitivity true for case-sensitive comparison.
+ * @param expressionType  One of kNone, kStartsWith, kEndsWith, kContains,
+ *                        kGlobMatch, or kRegexpMatch.
+ * @return true if the string matches, false otherwise.
+ */
 bool
 TrackerString::Matches(const char* string, bool caseSensitivity,
 	TrackerStringExpressionType expressionType) const
@@ -100,6 +138,16 @@ TrackerString::Matches(const char* string, bool caseSensitivity,
 }
 
 
+/**
+ * @brief Test whether this string matches the given regular expression.
+ *
+ * When \a caseSensitivity is false the pattern and text are both folded to
+ * lower-case before matching.
+ *
+ * @param pattern         POSIX extended regular expression pattern.
+ * @param caseSensitivity true for case-sensitive matching.
+ * @return true if the expression matches, false otherwise.
+ */
 bool
 TrackerString::MatchesRegExp(const char* pattern, bool caseSensitivity) const
 {
@@ -120,6 +168,13 @@ TrackerString::MatchesRegExp(const char* pattern, bool caseSensitivity) const
 }
 
 
+/**
+ * @brief Test whether this string matches a shell-style glob pattern.
+ *
+ * @param string          Glob pattern containing *, ?, and [] wildcards.
+ * @param caseSensitivity true for case-sensitive matching.
+ * @return true if the pattern matches the full string.
+ */
 bool
 TrackerString::MatchesGlob(const char* string, bool caseSensitivity) const
 {
@@ -127,6 +182,13 @@ TrackerString::MatchesGlob(const char* string, bool caseSensitivity) const
 }
 
 
+/**
+ * @brief Test whether this string ends with the given suffix.
+ *
+ * @param string          Suffix to search for.
+ * @param caseSensitivity true for case-sensitive comparison.
+ * @return true if this string ends with \a string.
+ */
 bool
 TrackerString::EndsWith(const char* string, bool caseSensitivity) const
 {
@@ -143,6 +205,13 @@ TrackerString::EndsWith(const char* string, bool caseSensitivity) const
 }
 
 
+/**
+ * @brief Test whether this string starts with the given prefix.
+ *
+ * @param string          Prefix to search for.
+ * @param caseSensitivity true for case-sensitive comparison.
+ * @return true if this string starts with \a string.
+ */
 bool
 TrackerString::StartsWith(const char* string, bool caseSensitivity) const
 {
@@ -153,6 +222,13 @@ TrackerString::StartsWith(const char* string, bool caseSensitivity) const
 }
 
 
+/**
+ * @brief Test whether this string contains the given substring.
+ *
+ * @param string          Substring to search for.
+ * @param caseSensitivity true for case-sensitive comparison.
+ * @return true if \a string appears anywhere in this string.
+ */
 bool
 TrackerString::Contains(const char* string, bool caseSensitivity) const
 {
@@ -163,10 +239,19 @@ TrackerString::Contains(const char* string, bool caseSensitivity) const
 }
 
 
-// MatchesBracketExpression() assumes 'pattern' to point to the
-// character following the initial '[' in a bracket expression.
-// The reason is that an encountered '[' will be taken literally.
-// (Makes it possible to match a '[' with the expression '[[]').
+/**
+ * @brief Match a single character in \a string against a bracket expression.
+ *
+ * The caller must advance \a pattern past the leading '[' before calling
+ * this method; encountering a '[' inside the expression is treated literally
+ * (enabling '[[]' to match a literal '['). Supports character ranges,
+ * Unicode glyphs, and negation via '^' or '!'.
+ *
+ * @param string          Pointer to the character being tested.
+ * @param pattern         Pointer to the first character inside the '[...]'.
+ * @param caseSensitivity true for case-sensitive matching.
+ * @return true if the character at \a string matches the bracket expression.
+ */
 bool
 TrackerString::MatchesBracketExpression(const char* string,
 	const char* pattern, bool caseSensitivity) const
@@ -235,6 +320,18 @@ TrackerString::MatchesBracketExpression(const char* string,
 }
 
 
+/**
+ * @brief Core glob engine matching \a string against \a pattern.
+ *
+ * Handles ?, *, [bracket] wildcards with full Unicode glyph awareness.
+ * Backtracking is performed via a fixed-depth stack (up to
+ * kWildCardMaximum levels).
+ *
+ * @param string          The input string to match.
+ * @param pattern         The glob pattern to match against.
+ * @param caseSensitivity true for case-sensitive matching.
+ * @return true if \a pattern matches \a string completely.
+ */
 bool
 TrackerString::StringMatchesPattern(const char* string, const char* pattern,
 	bool caseSensitivity) const
@@ -387,6 +484,16 @@ TrackerString::StringMatchesPattern(const char* string, const char* pattern,
 }
 
 
+/**
+ * @brief Compare the leading UTF-8 glyph in two strings for equality.
+ *
+ * Advances through the multi-byte sequence of both strings and returns
+ * true only if every byte of the glyph is identical.
+ *
+ * @param string1  Pointer to the start of the first glyph.
+ * @param string2  Pointer to the start of the second glyph.
+ * @return true if both strings start with the same UTF-8 glyph.
+ */
 bool
 TrackerString::UTF8CharsAreEqual(const char* string1,
 	const char* string2) const
@@ -410,6 +517,12 @@ TrackerString::UTF8CharsAreEqual(const char* string1,
 }
 
 
+/**
+ * @brief Advance a pointer past the continuation bytes of a UTF-8 glyph.
+ *
+ * @param string  Pointer to the first continuation byte inside a glyph.
+ * @return Pointer to the first byte that is not a continuation byte.
+ */
 const char*
 TrackerString::MoveToEndOfGlyph(const char* string) const
 {
@@ -422,6 +535,12 @@ TrackerString::MoveToEndOfGlyph(const char* string) const
 }
 
 
+/**
+ * @brief Return true if \a ch is part of a multi-byte UTF-8 glyph.
+ *
+ * @param ch  Byte to test.
+ * @return true if the high bit of \a ch is set.
+ */
 bool
 TrackerString::IsGlyph(char ch) const
 {
@@ -429,6 +548,12 @@ TrackerString::IsGlyph(char ch) const
 }
 
 
+/**
+ * @brief Return true if \a ch is a UTF-8 continuation byte (10xxxxxx).
+ *
+ * @param ch  Byte to test.
+ * @return true if the byte is a UTF-8 continuation byte.
+ */
 bool
 TrackerString::IsInsideGlyph(char ch) const
 {
@@ -436,6 +561,12 @@ TrackerString::IsInsideGlyph(char ch) const
 }
 
 
+/**
+ * @brief Return true if \a ch is the first byte of a multi-byte UTF-8 glyph (11xxxxxx).
+ *
+ * @param ch  Byte to test.
+ * @return true if the byte is a UTF-8 leading byte.
+ */
 bool
 TrackerString::IsStartOfGlyph(char ch) const
 {

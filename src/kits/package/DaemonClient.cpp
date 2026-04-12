@@ -1,9 +1,41 @@
 /*
- * Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ */
+
+
+/**
+ * @file DaemonClient.cpp
+ * @brief IPC client for communicating with the package_daemon.
+ *
+ * BDaemonClient provides a synchronous API for querying installation-location
+ * information, committing package activation transactions, and creating
+ * transaction directories.  It lazily initialises a BMessenger to the
+ * package_daemon application on first use.
+ *
+ * @see BActivationTransaction, BCommitTransactionResult, BInstallationLocationInfo
  */
 
 
@@ -25,6 +57,9 @@ namespace BPackageKit {
 namespace BPrivate {
 
 
+/**
+ * @brief Default constructor; leaves the messenger uninitialised until first use.
+ */
 BDaemonClient::BDaemonClient()
 	:
 	fDaemonMessenger()
@@ -32,11 +67,26 @@ BDaemonClient::BDaemonClient()
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BDaemonClient::~BDaemonClient()
 {
 }
 
 
+/**
+ * @brief Query the package daemon for information about an installation location.
+ *
+ * Sends a B_MESSAGE_GET_INSTALLATION_LOCATION_INFO request to the daemon,
+ * including the filesystem root node so that chroot environments are handled
+ * correctly, and populates \a _info with the response.
+ *
+ * @param location  The BPackageInstallationLocation to query.
+ * @param _info     Output object populated with location details on success.
+ * @return B_OK on success, B_BAD_REPLY if the daemon sent an unexpected reply
+ *         type, or an error code on messaging or extraction failure.
+ */
 status_t
 BDaemonClient::GetInstallationLocationInfo(
 	BPackageInstallationLocation location, BInstallationLocationInfo& _info)
@@ -120,6 +170,18 @@ BDaemonClient::GetInstallationLocationInfo(
 }
 
 
+/**
+ * @brief Submit a package activation transaction to the daemon.
+ *
+ * Archives \a transaction into a BMessage, sends it to the package daemon,
+ * and extracts the result from the reply into \a _result.
+ *
+ * @param transaction  The fully initialised BActivationTransaction to commit.
+ * @param _result      Output object that receives the commit result.
+ * @return B_OK if the transaction was accepted and the result extracted,
+ *         B_BAD_VALUE if the transaction fails InitCheck(), or an error code
+ *         on messaging or reply-extraction failure.
+ */
 status_t
 BDaemonClient::CommitTransaction(const BActivationTransaction& transaction,
 	BCommitTransactionResult& _result)
@@ -147,6 +209,20 @@ BDaemonClient::CommitTransaction(const BActivationTransaction& transaction,
 }
 
 
+/**
+ * @brief Create a transaction directory and initialise a transaction object.
+ *
+ * Fetches the current installation-location info, opens the admin directory,
+ * creates a uniquely-named "transaction-N" subdirectory, and calls SetTo() on
+ * \a _transaction so that it is ready for use.  If SetTo() fails the directory
+ * is cleaned up before returning.
+ *
+ * @param location              Target installation location.
+ * @param _transaction          Output transaction initialised with location,
+ *                              change count, and directory name.
+ * @param _transactionDirectory Output BDirectory set to the new directory.
+ * @return B_OK on success, or an error code on any failure.
+ */
 status_t
 BDaemonClient::CreateTransaction(BPackageInstallationLocation location,
 	BActivationTransaction& _transaction, BDirectory& _transactionDirectory)
@@ -201,6 +277,15 @@ BDaemonClient::CreateTransaction(BPackageInstallationLocation location,
 }
 
 
+/**
+ * @brief Lazily initialise the BMessenger to the package daemon.
+ *
+ * Returns immediately if the messenger is already valid; otherwise looks up
+ * the daemon by its well-known application signature.
+ *
+ * @return B_OK if the messenger is valid after this call, or an error code
+ *         if the daemon could not be located.
+ */
 status_t
 BDaemonClient::_InitMessenger()
 {
@@ -214,6 +299,19 @@ BDaemonClient::_InitMessenger()
 }
 
 
+/**
+ * @brief Extract a set of BPackageInfo objects from a named field in \a message.
+ *
+ * Iterates over all embedded BMessages stored under \a field, deserialises
+ * each into a BPackageInfo, and adds it to \a _infos.  A missing field is
+ * treated as an empty set rather than an error.
+ *
+ * @param message  Source BMessage.
+ * @param field    Name of the repeated BMessage field to extract.
+ * @param _infos   Output set populated with the deserialised package infos.
+ * @return B_OK on success, B_BAD_DATA if the field type is wrong, or an error
+ *         code on deserialisation failure.
+ */
 status_t
 BDaemonClient::_ExtractPackageInfoSet(const BMessage& message,
 	const char* field, BPackageInfoSet& _infos)

@@ -1,7 +1,40 @@
 /*
- * Copyright 2015, Dario Casalinuovo. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Dario Casalinuovo. All rights reserved.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file MediaClient.cpp
+ * @brief Implementation of BMediaClient, the high-level media node wrapper.
+ *
+ * BMediaClient simplifies use of the Media Kit by hiding BMediaNode internals
+ * behind a producer/consumer API. It owns a BMediaClientNode that handles
+ * BBufferProducer/BBufferConsumer duties, and exposes connection management,
+ * transport control, and format negotiation hooks for subclasses.
+ *
+ * @see BMediaClientNode, BMediaConnection, BMediaRoster
+ */
+
 
 #include "MediaClient.h"
 
@@ -18,23 +51,48 @@
 namespace BPrivate { namespace media {
 
 
+/**
+ * @brief RAII helper that calls Release() on a BMediaConnection when destroyed.
+ *
+ * Used by the input/output lists to automatically release connection objects
+ * when they are removed from the list.
+ */
 class ConnReleaser {
 public:
+	/**
+	 * @brief Constructs a ConnReleaser holding the given connection.
+	 *
+	 * @param conn  The BMediaConnection to manage.
+	 */
 	ConnReleaser(BMediaConnection* conn)
 		:
 		fConn(conn) {}
 
+	/**
+	 * @brief Releases the managed connection.
+	 */
 	virtual ~ConnReleaser()
 	{
 		fConn->Release();
 	}
 
+	/**
+	 * @brief Equality operator comparing the wrapped connection pointer.
+	 *
+	 * @param c1  The other ConnReleaser to compare against.
+	 * @return true if both wrap the same BMediaConnection pointer.
+	 */
 	bool operator== (const ConnReleaser &c1)
 	{
 		return c1.fConn == this->fConn;
 	}
 
 protected:
+	/**
+	 * @brief Returns the wrapped BMediaConnection pointer.
+	 *
+	 * @return Pointer to the managed connection.
+	 */
 	BMediaConnection* Obj() const
 	{
 		return fConn;
@@ -45,12 +103,25 @@ private:
 };
 
 
+/**
+ * @brief ConnReleaser specialisation for input connections.
+ */
 class InputReleaser : public ConnReleaser {
 public:
+	/**
+	 * @brief Constructs an InputReleaser for the given BMediaInput.
+	 *
+	 * @param input  The BMediaInput to manage.
+	 */
 	InputReleaser(BMediaInput* input)
 		:
 		ConnReleaser(input) {}
 
+	/**
+	 * @brief Returns the wrapped connection cast to BMediaInput.
+	 *
+	 * @return Pointer to the managed BMediaInput, or NULL on bad cast.
+	 */
 	BMediaInput* Obj() const
 	{
 		return dynamic_cast<BMediaInput*>(ConnReleaser::Obj());
@@ -58,12 +129,25 @@ public:
 };
 
 
+/**
+ * @brief ConnReleaser specialisation for output connections.
+ */
 class OutputReleaser : public ConnReleaser {
 public:
+	/**
+	 * @brief Constructs an OutputReleaser for the given BMediaOutput.
+	 *
+	 * @param output  The BMediaOutput to manage.
+	 */
 	OutputReleaser(BMediaOutput* output)
 		:
 		ConnReleaser(output) {}
 
+	/**
+	 * @brief Returns the wrapped connection cast to BMediaOutput.
+	 *
+	 * @return Pointer to the managed BMediaOutput, or NULL on bad cast.
+	 */
 	BMediaOutput* Obj() const
 	{
 		return dynamic_cast<BMediaOutput*>(ConnReleaser::Obj());
@@ -75,6 +159,16 @@ public:
 }
 
 
+/**
+ * @brief Constructs a BMediaClient, registering it with the Media Roster.
+ *
+ * Creates an internal BMediaClientNode and registers it so the client
+ * becomes visible in the media graph.
+ *
+ * @param name   Human-readable name for the node visible in the Media Roster.
+ * @param type   Primary media type (e.g. B_MEDIA_RAW_AUDIO) consumed or produced.
+ * @param kinds  Bitmask of media_client_kinds indicating producer/consumer roles.
+ */
 BMediaClient::BMediaClient(const char* name,
 	media_type type, media_client_kinds kinds)
 	:
@@ -90,6 +184,9 @@ BMediaClient::BMediaClient(const char* name,
 }
 
 
+/**
+ * @brief Destroys the BMediaClient, stopping and disconnecting all connections.
+ */
 BMediaClient::~BMediaClient()
 {
 	CALLED();
@@ -98,6 +195,11 @@ BMediaClient::~BMediaClient()
 }
 
 
+/**
+ * @brief Returns the media_client descriptor for this client.
+ *
+ * @return Reference to the internal media_client structure.
+ */
 const media_client&
 BMediaClient::Client() const
 {
@@ -105,6 +207,11 @@ BMediaClient::Client() const
 }
 
 
+/**
+ * @brief Returns the initialization status of this client.
+ *
+ * @return B_OK if the node was registered successfully, or an error code.
+ */
 status_t
 BMediaClient::InitCheck() const
 {
@@ -114,6 +221,11 @@ BMediaClient::InitCheck() const
 }
 
 
+/**
+ * @brief Returns the roles this client was constructed with.
+ *
+ * @return Bitmask of media_client_kinds (producer, consumer, etc.).
+ */
 media_client_kinds
 BMediaClient::Kinds() const
 {
@@ -123,6 +235,11 @@ BMediaClient::Kinds() const
 }
 
 
+/**
+ * @brief Returns the primary media type of this client.
+ *
+ * @return The media_type set at construction time.
+ */
 media_type
 BMediaClient::MediaType() const
 {
@@ -133,6 +250,12 @@ BMediaClient::MediaType() const
 }
 
 
+/**
+ * @brief Registers an input connection with this client and assigns it an ID.
+ *
+ * @param input  The BMediaInput to register; must not already be registered.
+ * @return B_OK on success.
+ */
 status_t
 BMediaClient::RegisterInput(BMediaInput* input)
 {
@@ -142,6 +265,12 @@ BMediaClient::RegisterInput(BMediaInput* input)
 }
 
 
+/**
+ * @brief Registers an output connection with this client and assigns it an ID.
+ *
+ * @param output  The BMediaOutput to register; must not already be registered.
+ * @return B_OK on success.
+ */
 status_t
 BMediaClient::RegisterOutput(BMediaOutput* output)
 {
@@ -151,6 +280,17 @@ BMediaClient::RegisterOutput(BMediaOutput* output)
 }
 
 
+/**
+ * @brief Binds an input to an output so that received buffers are forwarded.
+ *
+ * Both connections must belong to this client and must not already be bound.
+ *
+ * @param input   The local BMediaInput to bind.
+ * @param output  The local BMediaOutput to forward buffers to.
+ * @return B_OK on success, B_ERROR if either pointer is NULL, if the
+ *         connections do not belong to this client, or if either is
+ *         already bound.
+ */
 status_t
 BMediaClient::Bind(BMediaInput* input, BMediaOutput* output)
 {
@@ -174,6 +314,14 @@ BMediaClient::Bind(BMediaInput* input, BMediaOutput* output)
 }
 
 
+/**
+ * @brief Removes a previously established binding between an input and output.
+ *
+ * @param input   The BMediaInput to unbind.
+ * @param output  The BMediaOutput to unbind.
+ * @return B_OK on success, B_ERROR if either pointer is NULL or if the
+ *         connections do not belong to this client.
+ */
 status_t
 BMediaClient::Unbind(BMediaInput* input, BMediaOutput* output)
 {
@@ -191,6 +339,13 @@ BMediaClient::Unbind(BMediaInput* input, BMediaOutput* output)
 }
 
 
+/**
+ * @brief Connects a local connection to a remote connection object.
+ *
+ * @param ourConnection    The local BMediaConnection (input or output).
+ * @param theirConnection  The remote BMediaConnection to connect to.
+ * @return B_OK on success, or an error code from the Media Roster.
+ */
 status_t
 BMediaClient::Connect(BMediaConnection* ourConnection,
 	BMediaConnection* theirConnection)
@@ -201,6 +356,17 @@ BMediaClient::Connect(BMediaConnection* ourConnection,
 }
 
 
+/**
+ * @brief Connects a local connection to a remote connection descriptor.
+ *
+ * Determines direction from the types of ourConnection and theirConnection,
+ * then delegates to _ConnectInput() or _ConnectOutput().
+ *
+ * @param ourConnection    The local BMediaConnection (input or output).
+ * @param theirConnection  Descriptor of the remote connection endpoint.
+ * @return B_OK on success, B_ERROR if the direction combination is invalid,
+ *         or an error code from the Media Roster.
+ */
 status_t
 BMediaClient::Connect(BMediaConnection* ourConnection,
 	const media_connection& theirConnection)
@@ -219,6 +385,13 @@ BMediaClient::Connect(BMediaConnection* ourConnection,
 }
 
 
+/**
+ * @brief Connects a local connection to a client (unimplemented).
+ *
+ * @param connection  The local BMediaConnection.
+ * @param client      The target media_client descriptor.
+ * @return B_ERROR always (not yet implemented).
+ */
 status_t
 BMediaClient::Connect(BMediaConnection* connection,
 	const media_client& client)
@@ -229,6 +402,11 @@ BMediaClient::Connect(BMediaConnection* connection,
 }
 
 
+/**
+ * @brief Disconnects all registered input and output connections.
+ *
+ * @return B_OK always (individual connection errors are not propagated).
+ */
 status_t
 BMediaClient::Disconnect()
 {
@@ -244,6 +422,11 @@ BMediaClient::Disconnect()
 }
 
 
+/**
+ * @brief Returns the number of registered input connections.
+ *
+ * @return Count of inputs currently owned by this client.
+ */
 int32
 BMediaClient::CountInputs() const
 {
@@ -253,6 +436,11 @@ BMediaClient::CountInputs() const
 }
 
 
+/**
+ * @brief Returns the number of registered output connections.
+ *
+ * @return Count of outputs currently owned by this client.
+ */
 int32
 BMediaClient::CountOutputs() const
 {
@@ -262,6 +450,12 @@ BMediaClient::CountOutputs() const
 }
 
 
+/**
+ * @brief Returns the input connection at a given index.
+ *
+ * @param index  Zero-based index into the input list.
+ * @return Pointer to the BMediaInput, or NULL if out of range.
+ */
 BMediaInput*
 BMediaClient::InputAt(int32 index) const
 {
@@ -271,6 +465,12 @@ BMediaClient::InputAt(int32 index) const
 }
 
 
+/**
+ * @brief Returns the output connection at a given index.
+ *
+ * @param index  Zero-based index into the output list.
+ * @return Pointer to the BMediaOutput, or NULL if out of range.
+ */
 BMediaOutput*
 BMediaClient::OutputAt(int32 index) const
 {
@@ -280,6 +480,12 @@ BMediaClient::OutputAt(int32 index) const
 }
 
 
+/**
+ * @brief Finds an input connection by its media_connection descriptor.
+ *
+ * @param input  Descriptor identifying the input (must satisfy IsInput()).
+ * @return Pointer to the matching BMediaInput, or NULL if not found.
+ */
 BMediaInput*
 BMediaClient::FindInput(const media_connection& input) const
 {
@@ -292,6 +498,12 @@ BMediaClient::FindInput(const media_connection& input) const
 }
 
 
+/**
+ * @brief Finds an output connection by its media_connection descriptor.
+ *
+ * @param output  Descriptor identifying the output (must satisfy IsOutput()).
+ * @return Pointer to the matching BMediaOutput, or NULL if not found.
+ */
 BMediaOutput*
 BMediaClient::FindOutput(const media_connection& output) const
 {
@@ -304,6 +516,11 @@ BMediaClient::FindOutput(const media_connection& output) const
 }
 
 
+/**
+ * @brief Returns whether the node is currently running.
+ *
+ * @return true if Start() has been called and the node is in the started state.
+ */
 bool
 BMediaClient::IsStarted() const
 {
@@ -313,6 +530,12 @@ BMediaClient::IsStarted() const
 }
 
 
+/**
+ * @brief Override hook called after the node is registered with the Media Roster.
+ *
+ * The default implementation does nothing; subclasses may perform
+ * post-registration setup here.
+ */
 void
 BMediaClient::ClientRegistered()
 {
@@ -320,6 +543,14 @@ BMediaClient::ClientRegistered()
 }
 
 
+/**
+ * @brief Starts the media node and all connected remote nodes.
+ *
+ * Iterates over outputs and starts each connected remote node (or time source),
+ * then starts this client's own node via the Media Roster.
+ *
+ * @return B_OK on success, or the last error code from StartNode/StartTimeSource.
+ */
 status_t
 BMediaClient::Start()
 {
@@ -341,6 +572,11 @@ BMediaClient::Start()
 }
 
 
+/**
+ * @brief Stops the media node via the Media Roster.
+ *
+ * @return B_OK on success, or an error code from StopNode.
+ */
 status_t
 BMediaClient::Stop()
 {
@@ -351,6 +587,13 @@ BMediaClient::Stop()
 }
 
 
+/**
+ * @brief Seeks the media node to the given media time.
+ *
+ * @param mediaTime        Target position in media time.
+ * @param performanceTime  Performance timestamp at which to execute the seek.
+ * @return B_OK on success, or an error code from SeekNode.
+ */
 status_t
 BMediaClient::Seek(bigtime_t mediaTime,
 	bigtime_t performanceTime)
@@ -362,6 +605,14 @@ BMediaClient::Seek(bigtime_t mediaTime,
 }
 
 
+/**
+ * @brief Schedules a combined start/stop/seek operation on the node.
+ *
+ * @param start  Performance time at which to start.
+ * @param stop   Performance time at which to stop.
+ * @param seek   Media time to seek to at start.
+ * @return B_OK on success, or an error code from RollNode.
+ */
 status_t
 BMediaClient::Roll(bigtime_t start, bigtime_t stop, bigtime_t seek)
 {
@@ -372,6 +623,11 @@ BMediaClient::Roll(bigtime_t start, bigtime_t stop, bigtime_t seek)
 }
 
 
+/**
+ * @brief Returns the current media time tracked by this client.
+ *
+ * @return The last recorded media time in microseconds.
+ */
 bigtime_t
 BMediaClient::CurrentTime() const
 {
@@ -381,6 +637,15 @@ BMediaClient::CurrentTime() const
 }
 
 
+/**
+ * @brief Returns the media add-on that created this node, if any.
+ *
+ * The default implementation returns NULL; subclasses instantiated by an
+ * add-on should override this.
+ *
+ * @param id  Output pointer for the add-on-assigned node ID.
+ * @return NULL always in the base implementation.
+ */
 BMediaAddOn*
 BMediaClient::AddOn(int32* id) const
 {
@@ -390,6 +655,13 @@ BMediaClient::AddOn(int32* id) const
 }
 
 
+/**
+ * @brief Hook called when the node transitions to the started state.
+ *
+ * Sets fRunning to true. Subclasses should call the base implementation.
+ *
+ * @param performanceTime  Performance timestamp of the start event.
+ */
 void
 BMediaClient::HandleStart(bigtime_t performanceTime)
 {
@@ -397,6 +669,13 @@ BMediaClient::HandleStart(bigtime_t performanceTime)
 }
 
 
+/**
+ * @brief Hook called when the node transitions to the stopped state.
+ *
+ * Sets fRunning to false. Subclasses should call the base implementation.
+ *
+ * @param performanceTime  Performance timestamp of the stop event.
+ */
 void
 BMediaClient::HandleStop(bigtime_t performanceTime)
 {
@@ -404,12 +683,31 @@ BMediaClient::HandleStop(bigtime_t performanceTime)
 }
 
 
+/**
+ * @brief Hook called when a seek event is delivered to the node.
+ *
+ * The default implementation does nothing.
+ *
+ * @param mediaTime        The media time sought to.
+ * @param performanceTime  Performance timestamp of the seek event.
+ */
 void
 BMediaClient::HandleSeek(bigtime_t mediaTime, bigtime_t performanceTime)
 {
 }
 
 
+/**
+ * @brief Override hook for format negotiation during connection setup.
+ *
+ * The default implementation returns B_ERROR, indicating no preference.
+ * Subclasses should fill \a format with an acceptable format.
+ *
+ * @param type     The requested media type.
+ * @param quality  Hint about the desired quality level.
+ * @param format   Output parameter to fill with the suggested format.
+ * @return B_OK if \a format was filled, B_ERROR otherwise.
+ */
 status_t
 BMediaClient::FormatSuggestion(media_type type, int32 quality,
 	media_format* format)
@@ -418,6 +716,11 @@ BMediaClient::FormatSuggestion(media_type type, int32 quality,
 }
 
 
+/**
+ * @brief Initialises the client by registering the node with the Media Roster.
+ *
+ * Sets fInitErr to reflect the outcome of node registration.
+ */
 void
 BMediaClient::_Init()
 {
@@ -429,6 +732,9 @@ BMediaClient::_Init()
 }
 
 
+/**
+ * @brief Tears down the client: stops, disconnects, releases connections and the node.
+ */
 void
 BMediaClient::_Deinit()
 {
@@ -447,6 +753,11 @@ BMediaClient::_Deinit()
 }
 
 
+/**
+ * @brief Adds an input connection to the internal input list.
+ *
+ * @param input  The BMediaInput to add.
+ */
 void
 BMediaClient::_AddInput(BMediaInput* input)
 {
@@ -456,6 +767,11 @@ BMediaClient::_AddInput(BMediaInput* input)
 }
 
 
+/**
+ * @brief Adds an output connection to the internal output list.
+ *
+ * @param output  The BMediaOutput to add.
+ */
 void
 BMediaClient::_AddOutput(BMediaOutput* output)
 {
@@ -465,6 +781,12 @@ BMediaClient::_AddOutput(BMediaOutput* output)
 }
 
 
+/**
+ * @brief Finds an input by matching its media_destination.
+ *
+ * @param dest  The destination descriptor to search for.
+ * @return Pointer to the matching BMediaInput, or NULL if not found.
+ */
 BMediaInput*
 BMediaClient::_FindInput(const media_destination& dest) const
 {
@@ -478,6 +800,12 @@ BMediaClient::_FindInput(const media_destination& dest) const
 }
 
 
+/**
+ * @brief Finds an output by matching its media_source.
+ *
+ * @param source  The source descriptor to search for.
+ * @return Pointer to the matching BMediaOutput, or NULL if not found.
+ */
 BMediaOutput*
 BMediaClient::_FindOutput(const media_source& source) const
 {
@@ -491,6 +819,18 @@ BMediaClient::_FindOutput(const media_source& source) const
 }
 
 
+/**
+ * @brief Asks the Media Roster to connect a local output to a remote input.
+ *
+ * Builds the output/input descriptors and calls BMediaRoster::Connect() in
+ * muted mode so that the connection is set up but data flow does not start
+ * until Start() is called.
+ *
+ * @param output  The local BMediaOutput to connect from.
+ * @param input   Descriptor of the remote media_connection to connect to.
+ * @return B_OK on success, B_MEDIA_BAD_DESTINATION if the destination is
+ *         null, or an error code from the Media Roster.
+ */
 status_t
 BMediaClient::_ConnectInput(BMediaOutput* output,
 	const media_connection& input)
@@ -521,6 +861,17 @@ BMediaClient::_ConnectInput(BMediaOutput* output,
 }
 
 
+/**
+ * @brief Asks the Media Roster to connect a remote output to a local input.
+ *
+ * Builds the input/output descriptors and calls BMediaRoster::Connect() in
+ * muted mode.
+ *
+ * @param input   The local BMediaInput to connect to.
+ * @param output  Descriptor of the remote media_connection to connect from.
+ * @return B_OK on success, B_MEDIA_BAD_SOURCE if the source is null, or an
+ *         error code from the Media Roster.
+ */
 status_t
 BMediaClient::_ConnectOutput(BMediaInput* input,
 	const media_connection& output)
@@ -551,6 +902,16 @@ BMediaClient::_ConnectOutput(BMediaInput* input,
 }
 
 
+/**
+ * @brief Tears down the media graph connection for a given connection object.
+ *
+ * Calls BMediaRoster::Disconnect() with the correct source/destination order
+ * depending on whether the connection is an input or output.
+ *
+ * @param conn  The BMediaConnection to disconnect.
+ * @return B_OK on success, B_ERROR if \a conn does not belong to this client,
+ *         or an error code from the Media Roster.
+ */
 status_t
 BMediaClient::_DisconnectConnection(BMediaConnection* conn)
 {
@@ -574,6 +935,16 @@ BMediaClient::_DisconnectConnection(BMediaConnection* conn)
 }
 
 
+/**
+ * @brief Removes a connection from this client's internal lists.
+ *
+ * Removes the InputReleaser or OutputReleaser wrapper without triggering
+ * Release() on the connection (the wrapper's destructor is suppressed via
+ * the false parameter to RemoveItem).
+ *
+ * @param conn  The BMediaConnection to remove.
+ * @return B_OK on success, B_ERROR if \a conn does not belong to this client.
+ */
 status_t
 BMediaClient::_ReleaseConnection(BMediaConnection* conn)
 {

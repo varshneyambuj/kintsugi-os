@@ -1,36 +1,60 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file FilePanel.cpp
+ * @brief Public BFilePanel implementation backed by the internal TFilePanel window.
+ *
+ * BFilePanel is a thin public-API wrapper around TFilePanel. Every mutating
+ * method acquires the window lock before delegating, ensuring thread safety
+ * when the panel is used from a non-window thread.
+ *
+ * @see TFilePanel, BRefFilter
+ */
 
 // Implementation for the public FilePanel object.
 
@@ -58,6 +82,22 @@ All rights reserved.
 //	#pragma mark - BFilePanel
 
 
+/**
+ * @brief Construct a file panel backed by an internal TFilePanel window.
+ *
+ * Also increases the file-descriptor limit so that multiple open file panels
+ * do not exhaust the process's descriptor table.
+ *
+ * @param mode               B_OPEN_PANEL or B_SAVE_PANEL.
+ * @param target             Messenger that receives file-selected messages.
+ * @param ref                Starting directory; NULL opens the default directory.
+ * @param nodeFlavors        Bitmask of allowed node types (B_FILE_NODE, B_DIRECTORY_NODE, etc.).
+ * @param multipleSelection  If true, the user may select more than one entry.
+ * @param message            Custom message template; NULL uses the default.
+ * @param filter             Optional BRefFilter to restrict visible entries.
+ * @param modal              If true, the panel is application-modal.
+ * @param hideWhenDone       If true, the panel hides after the user confirms.
+ */
 BFilePanel::BFilePanel(file_panel_mode mode, BMessenger* target,
 	const entry_ref* ref, uint32 nodeFlavors, bool multipleSelection,
 	BMessage* message, BRefFilter* filter, bool modal,
@@ -82,6 +122,9 @@ BFilePanel::BFilePanel(file_panel_mode mode, BMessenger* target,
 }
 
 
+/**
+ * @brief Destructor; quits the backing TFilePanel window.
+ */
 BFilePanel::~BFilePanel()
 {
 	if (fWindow->Lock())
@@ -89,6 +132,12 @@ BFilePanel::~BFilePanel()
 }
 
 
+/**
+ * @brief Show the file panel, moving it to the current workspace if necessary.
+ *
+ * If a parent window is found on the calling thread, the panel is positioned
+ * relative to it like an alert dialog.
+ */
 void
 BFilePanel::Show()
 {
@@ -133,6 +182,9 @@ BFilePanel::Show()
 }
 
 
+/**
+ * @brief Hide the file panel without destroying its state.
+ */
 void
 BFilePanel::Hide()
 {
@@ -145,6 +197,11 @@ BFilePanel::Hide()
 }
 
 
+/**
+ * @brief Return whether the file panel window is currently visible.
+ *
+ * @return true if the backing window is not hidden.
+ */
 bool
 BFilePanel::IsShowing() const
 {
@@ -156,6 +213,12 @@ BFilePanel::IsShowing() const
 }
 
 
+/**
+ * @brief Deliver @a message to @a messenger (public convenience wrapper).
+ *
+ * @param messenger  Target messenger.
+ * @param message    Message to deliver.
+ */
 void
 BFilePanel::SendMessage(const BMessenger* messenger, BMessage* message)
 {
@@ -163,6 +226,11 @@ BFilePanel::SendMessage(const BMessenger* messenger, BMessage* message)
 }
 
 
+/**
+ * @brief Return the panel mode (open or save).
+ *
+ * @return B_OPEN_PANEL or B_SAVE_PANEL.
+ */
 file_panel_mode
 BFilePanel::PanelMode() const
 {
@@ -177,6 +245,11 @@ BFilePanel::PanelMode() const
 }
 
 
+/**
+ * @brief Return a copy of the panel's target messenger.
+ *
+ * @return The current BMessenger target.
+ */
 BMessenger
 BFilePanel::Messenger() const
 {
@@ -190,6 +263,11 @@ BFilePanel::Messenger() const
 }
 
 
+/**
+ * @brief Set a new target messenger for file-selection notifications.
+ *
+ * @param target  The new BMessenger.
+ */
 void
 BFilePanel::SetTarget(BMessenger target)
 {
@@ -201,6 +279,11 @@ BFilePanel::SetTarget(BMessenger target)
 }
 
 
+/**
+ * @brief Replace the message template sent when the user confirms a selection.
+ *
+ * @param message  New message template; the panel takes ownership.
+ */
 void
 BFilePanel::SetMessage(BMessage* message)
 {
@@ -212,6 +295,9 @@ BFilePanel::SetMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Force the panel to rescan its current directory.
+ */
 void
 BFilePanel::Refresh()
 {
@@ -223,6 +309,11 @@ BFilePanel::Refresh()
 }
 
 
+/**
+ * @brief Return the currently installed BRefFilter.
+ *
+ * @return Pointer to the active BRefFilter, or NULL if none is set.
+ */
 BRefFilter*
 BFilePanel::RefFilter() const
 {
@@ -234,6 +325,11 @@ BFilePanel::RefFilter() const
 }
 
 
+/**
+ * @brief Replace the entry filter applied to the directory listing.
+ *
+ * @param filter  New BRefFilter; NULL removes any existing filter.
+ */
 void
 BFilePanel::SetRefFilter(BRefFilter* filter)
 {
@@ -245,6 +341,12 @@ BFilePanel::SetRefFilter(BRefFilter* filter)
 }
 
 
+/**
+ * @brief Change the label text on one of the panel's buttons.
+ *
+ * @param button  Which button to relabel (B_DEFAULT_BUTTON or B_CANCEL_BUTTON).
+ * @param text    New label string.
+ */
 void
 BFilePanel::SetButtonLabel(file_panel_button button, const char* text)
 {
@@ -256,6 +358,11 @@ BFilePanel::SetButtonLabel(file_panel_button button, const char* text)
 }
 
 
+/**
+ * @brief Update which node types the panel allows the user to select.
+ *
+ * @param flavors  Bitmask of B_FILE_NODE, B_DIRECTORY_NODE, B_SYMLINK_NODE.
+ */
 void
 BFilePanel::SetNodeFlavors(uint32 flavors)
 {
@@ -267,6 +374,11 @@ BFilePanel::SetNodeFlavors(uint32 flavors)
 }
 
 
+/**
+ * @brief Retrieve the entry_ref of the directory currently displayed.
+ *
+ * @param ref  Output entry_ref filled with the current panel directory.
+ */
 void
 BFilePanel::GetPanelDirectory(entry_ref* ref) const
 {
@@ -278,6 +390,11 @@ BFilePanel::GetPanelDirectory(entry_ref* ref) const
 }
 
 
+/**
+ * @brief Pre-fill the save-panel text field with @a text.
+ *
+ * @param text  The initial filename string shown in the Save panel text field.
+ */
 void
 BFilePanel::SetSaveText(const char* text)
 {
@@ -289,6 +406,11 @@ BFilePanel::SetSaveText(const char* text)
 }
 
 
+/**
+ * @brief Navigate the panel to the directory identified by @a ref.
+ *
+ * @param ref  Entry ref of the directory to display.
+ */
 void
 BFilePanel::SetPanelDirectory(const entry_ref* ref)
 {
@@ -300,6 +422,11 @@ BFilePanel::SetPanelDirectory(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Navigate the panel to the directory at the given filesystem @a path.
+ *
+ * @param path  Absolute filesystem path of the directory to display.
+ */
 void
 BFilePanel::SetPanelDirectory(const char* path)
 {
@@ -316,6 +443,11 @@ BFilePanel::SetPanelDirectory(const char* path)
 }
 
 
+/**
+ * @brief Navigate the panel to the directory referenced by @a entry.
+ *
+ * @param entry  A BEntry pointing to the desired directory.
+ */
 void
 BFilePanel::SetPanelDirectory(const BEntry* entry)
 {
@@ -326,6 +458,11 @@ BFilePanel::SetPanelDirectory(const BEntry* entry)
 }
 
 
+/**
+ * @brief Navigate the panel to @a dir.
+ *
+ * @param dir  The BDirectory to display.
+ */
 void
 BFilePanel::SetPanelDirectory(const BDirectory* dir)
 {
@@ -336,6 +473,11 @@ BFilePanel::SetPanelDirectory(const BDirectory* dir)
 }
 
 
+/**
+ * @brief Return a pointer to the backing TFilePanel window.
+ *
+ * @return The internal BWindow used by this panel.
+ */
 BWindow*
 BFilePanel::Window() const
 {
@@ -343,6 +485,9 @@ BFilePanel::Window() const
 }
 
 
+/**
+ * @brief Reset the selected-entry iterator to the beginning of the selection.
+ */
 void
 BFilePanel::Rewind()
 {
@@ -354,6 +499,12 @@ BFilePanel::Rewind()
 }
 
 
+/**
+ * @brief Retrieve the next selected entry_ref from the current selection.
+ *
+ * @param ref  Output entry_ref filled with the next selected item.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when exhausted, or B_ERROR on failure.
+ */
 status_t
 BFilePanel::GetNextSelectedRef(entry_ref* ref)
 {
@@ -366,6 +517,11 @@ BFilePanel::GetNextSelectedRef(entry_ref* ref)
 }
 
 
+/**
+ * @brief Control whether the panel auto-hides after the user confirms.
+ *
+ * @param on  true to hide on confirm; false to keep the panel open.
+ */
 void
 BFilePanel::SetHideWhenDone(bool on)
 {
@@ -377,6 +533,11 @@ BFilePanel::SetHideWhenDone(bool on)
 }
 
 
+/**
+ * @brief Return whether the panel hides itself after the user confirms.
+ *
+ * @return true if hide-when-done is enabled.
+ */
 bool
 BFilePanel::HidesWhenDone(void) const
 {

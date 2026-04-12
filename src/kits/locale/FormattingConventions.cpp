@@ -1,8 +1,41 @@
 /*
- * Copyright 2003-2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2009-2010, Adrien Destugues, pulkomandy@gmail.com.
- * Copyright 2010-2011, Oliver Tappe <zooey@hirschkaefer.de>.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2009-2010, Adrien Destugues, pulkomandy@gmail.com.
+ *   Copyright 2010-2011, Oliver Tappe <zooey@hirschkaefer.de>.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file FormattingConventions.cpp
+ * @brief Implementation of BFormattingConventions for locale-specific formats.
+ *
+ * BFormattingConventions encapsulates the regional formatting rules associated
+ * with a locale: date, time, and date-time patterns for multiple style levels,
+ * numeric and monetary format strings, the 12/24-hour clock preference, and
+ * the measurement system. Patterns are lazily fetched from ICU and cached;
+ * explicit overrides take precedence over the cached ICU values.
+ *
+ * @see BLocale, BDateFormat, BTimeFormat
  */
 
 
@@ -39,6 +72,15 @@ U_NAMESPACE_USE
 // #pragma mark - helpers
 
 
+/**
+ * @brief Determine whether a date/time format string uses an AM/PM marker.
+ *
+ * Scans the format for an unquoted 'a' character which represents the
+ * AM/PM field in ICU SimpleDateFormat patterns.
+ *
+ * @param format  ICU SimpleDateFormat pattern string to inspect.
+ * @return true if an unquoted 'a' is present, false otherwise.
+ */
 static bool
 FormatUsesAmPm(const BString& format)
 {
@@ -62,6 +104,14 @@ FormatUsesAmPm(const BString& format)
 }
 
 
+/**
+ * @brief Rewrite a 24-hour format pattern to use a 12-hour clock.
+ *
+ * Replaces 'H' with 'h' and 'K' with 'k', then appends " a" for the
+ * AM/PM marker.
+ *
+ * @param format  ICU pattern string modified in-place.
+ */
 static void
 CoerceFormatTo12HourClock(BString& format)
 {
@@ -93,6 +143,14 @@ CoerceFormatTo12HourClock(BString& format)
 }
 
 
+/**
+ * @brief Rewrite a 12-hour format pattern to use a 24-hour clock.
+ *
+ * Replaces 'h' with 'H' and 'k' with 'K', and removes the AM/PM field
+ * (including any leading whitespace).
+ *
+ * @param format  ICU pattern string modified in-place.
+ */
 static void
 CoerceFormatTo24HourClock(BString& format)
 {
@@ -150,6 +208,14 @@ CoerceFormatTo24HourClock(BString& format)
 }
 
 
+/**
+ * @brief Replace a full timezone specifier 'z' with the abbreviated form 'V'.
+ *
+ * Only the first unquoted 'z' that is not followed by another 'z' is
+ * replaced, preserving multi-letter timezone tokens.
+ *
+ * @param format  ICU pattern string modified in-place.
+ */
 static void
 CoerceFormatToAbbreviatedTimezone(BString& format)
 {
@@ -180,6 +246,7 @@ CoerceFormatToAbbreviatedTimezone(BString& format)
 // #pragma mark - BFormattingConventions
 
 
+/** @brief Internal enum tracking the cached or explicit 12/24-hour state. */
 enum ClockHoursState {
 	CLOCK_HOURS_UNSET = 0,
 	CLOCK_HOURS_24,
@@ -187,6 +254,11 @@ enum ClockHoursState {
 };
 
 
+/**
+ * @brief Construct BFormattingConventions from an ICU locale identifier string.
+ *
+ * @param id  ICU locale name (e.g. "en_US", "de_DE").
+ */
 BFormattingConventions::BFormattingConventions(const char* id)
 	:
 	fCachedUse24HourClock(CLOCK_HOURS_UNSET),
@@ -197,6 +269,11 @@ BFormattingConventions::BFormattingConventions(const char* id)
 }
 
 
+/**
+ * @brief Copy-construct BFormattingConventions, deeply copying all cached formats.
+ *
+ * @param other  Source BFormattingConventions to copy.
+ */
 BFormattingConventions::BFormattingConventions(
 	const BFormattingConventions& other)
 	:
@@ -225,6 +302,14 @@ BFormattingConventions::BFormattingConventions(
 }
 
 
+/**
+ * @brief Reconstruct BFormattingConventions from a BMessage archive.
+ *
+ * Reads the locale identifier, all explicit date and time format overrides,
+ * the 24-hour clock preference, and the language-string preference.
+ *
+ * @param archive  BMessage produced by a previous Archive() call.
+ */
 BFormattingConventions::BFormattingConventions(const BMessage* archive)
 	:
 	fCachedUse24HourClock(CLOCK_HOURS_UNSET),
@@ -262,6 +347,12 @@ BFormattingConventions::BFormattingConventions(const BMessage* archive)
 }
 
 
+/**
+ * @brief Copy-assign, replacing all fields with those from \a other.
+ *
+ * @param other  Source BFormattingConventions.
+ * @return Reference to this object.
+ */
 BFormattingConventions&
 BFormattingConventions::operator=(const BFormattingConventions& other)
 {
@@ -297,12 +388,21 @@ BFormattingConventions::operator=(const BFormattingConventions& other)
 }
 
 
+/**
+ * @brief Destroy the BFormattingConventions and free the ICU locale.
+ */
 BFormattingConventions::~BFormattingConventions()
 {
 	delete fICULocale;
 }
 
 
+/**
+ * @brief Compare two BFormattingConventions for equality.
+ *
+ * @param other  The other object to compare against.
+ * @return true if all explicit formats, flags, and locale are identical.
+ */
 bool
 BFormattingConventions::operator==(const BFormattingConventions& other) const
 {
@@ -327,6 +427,12 @@ BFormattingConventions::operator==(const BFormattingConventions& other) const
 }
 
 
+/**
+ * @brief Compare two BFormattingConventions for inequality.
+ *
+ * @param other  The other object to compare against.
+ * @return true if any field differs.
+ */
 bool
 BFormattingConventions::operator!=(const BFormattingConventions& other) const
 {
@@ -334,6 +440,11 @@ BFormattingConventions::operator!=(const BFormattingConventions& other) const
 }
 
 
+/**
+ * @brief Return the ICU locale identifier string (e.g. "en_US").
+ *
+ * @return The locale name as a C string; valid for the lifetime of this object.
+ */
 const char*
 BFormattingConventions::ID() const
 {
@@ -341,6 +452,11 @@ BFormattingConventions::ID() const
 }
 
 
+/**
+ * @brief Return the language portion of the locale ID (e.g. "en").
+ *
+ * @return Language subtag string; valid for the lifetime of this object.
+ */
 const char*
 BFormattingConventions::LanguageCode() const
 {
@@ -348,6 +464,11 @@ BFormattingConventions::LanguageCode() const
 }
 
 
+/**
+ * @brief Return the country/region portion of the locale ID, or NULL if absent.
+ *
+ * @return Country subtag (e.g. "US"), or NULL if none is set.
+ */
 const char*
 BFormattingConventions::CountryCode() const
 {
@@ -359,6 +480,11 @@ BFormattingConventions::CountryCode() const
 }
 
 
+/**
+ * @brief Indicate whether these conventions are country-specific.
+ *
+ * @return true if a country code is present in the locale ID.
+ */
 bool
 BFormattingConventions::AreCountrySpecific() const
 {
@@ -366,6 +492,12 @@ BFormattingConventions::AreCountrySpecific() const
 }
 
 
+/**
+ * @brief Get the locale's native display name, title-cased.
+ *
+ * @param name  Output BString that receives the native name.
+ * @return B_OK always.
+ */
 status_t
 BFormattingConventions::GetNativeName(BString& name) const
 {
@@ -381,6 +513,15 @@ BFormattingConventions::GetNativeName(BString& name) const
 }
 
 
+/**
+ * @brief Get the locale's display name in the given language.
+ *
+ * If \a displayLanguage is NULL the system default language is used.
+ *
+ * @param name             Output BString for the localized name.
+ * @param displayLanguage  Language to use, or NULL for the default.
+ * @return B_OK always.
+ */
 status_t
 BFormattingConventions::GetName(BString& name,
 	const BLanguage* displayLanguage) const
@@ -404,6 +545,11 @@ BFormattingConventions::GetName(BString& name,
 }
 
 
+/**
+ * @brief Return the measurement system (metric or US) for this locale.
+ *
+ * @return B_US for US customary units, B_METRIC for SI/metric.
+ */
 BMeasurementKind
 BFormattingConventions::MeasurementKind() const
 {
@@ -418,6 +564,17 @@ BFormattingConventions::MeasurementKind() const
 }
 
 
+/**
+ * @brief Retrieve the date format pattern for the given style level.
+ *
+ * Returns the explicit override if one was set, otherwise returns the cached
+ * ICU pattern (fetching and caching it from ICU on first access).
+ *
+ * @param style      Date style level.
+ * @param outFormat  Output BString that receives the ICU pattern string.
+ * @return B_OK on success, B_BAD_VALUE for an out-of-range style, B_NO_MEMORY
+ *         if the ICU formatter could not be allocated.
+ */
 status_t
 BFormattingConventions::GetDateFormat(BDateFormatStyle style,
 	BString& outFormat) const
@@ -451,6 +608,17 @@ BFormattingConventions::GetDateFormat(BDateFormatStyle style,
 }
 
 
+/**
+ * @brief Retrieve the time format pattern for the given style level.
+ *
+ * Applies the configured 12/24-hour clock coercion and abbreviated timezone
+ * substitution after fetching the ICU pattern.
+ *
+ * @param style      Time style level.
+ * @param outFormat  Output BString that receives the ICU pattern string.
+ * @return B_OK on success, B_BAD_VALUE for an out-of-range style, B_NO_MEMORY
+ *         if the ICU formatter could not be allocated.
+ */
 status_t
 BFormattingConventions::GetTimeFormat(BTimeFormatStyle style,
 	BString& outFormat) const
@@ -491,6 +659,15 @@ BFormattingConventions::GetTimeFormat(BTimeFormatStyle style,
 }
 
 
+/**
+ * @brief Retrieve the combined date-time format pattern for the given styles.
+ *
+ * @param dateStyle  Date style level.
+ * @param timeStyle  Time style level.
+ * @param outFormat  Output BString that receives the ICU pattern string.
+ * @return B_OK on success, B_BAD_VALUE for out-of-range style, B_NO_MEMORY
+ *         if the ICU formatter could not be allocated.
+ */
 status_t
 BFormattingConventions::GetDateTimeFormat(BDateFormatStyle dateStyle,
 	BTimeFormatStyle timeStyle, BString& outFormat) const
@@ -535,6 +712,12 @@ BFormattingConventions::GetDateTimeFormat(BDateFormatStyle dateStyle,
 }
 
 
+/**
+ * @brief Retrieve the numeric format pattern (not yet implemented).
+ *
+ * @param outFormat  Output BString (not populated).
+ * @return B_UNSUPPORTED always.
+ */
 status_t
 BFormattingConventions::GetNumericFormat(BString& outFormat) const
 {
@@ -543,6 +726,12 @@ BFormattingConventions::GetNumericFormat(BString& outFormat) const
 }
 
 
+/**
+ * @brief Retrieve the monetary format pattern (not yet implemented).
+ *
+ * @param outFormat  Output BString (not populated).
+ * @return B_UNSUPPORTED always.
+ */
 status_t
 BFormattingConventions::GetMonetaryFormat(BString& outFormat) const
 {
@@ -551,6 +740,12 @@ BFormattingConventions::GetMonetaryFormat(BString& outFormat) const
 }
 
 
+/**
+ * @brief Store an explicit date pattern override for the given style.
+ *
+ * @param style   Date style level to override.
+ * @param format  ICU SimpleDateFormat pattern string.
+ */
 void
 BFormattingConventions::SetExplicitDateFormat(BDateFormatStyle style,
 	const BString& format)
@@ -559,6 +754,12 @@ BFormattingConventions::SetExplicitDateFormat(BDateFormatStyle style,
 }
 
 
+/**
+ * @brief Store an explicit time pattern override for the given style.
+ *
+ * @param style   Time style level to override.
+ * @param format  ICU SimpleDateFormat pattern string.
+ */
 void
 BFormattingConventions::SetExplicitTimeFormat(BTimeFormatStyle style,
 	const BString& format)
@@ -567,6 +768,13 @@ BFormattingConventions::SetExplicitTimeFormat(BTimeFormatStyle style,
 }
 
 
+/**
+ * @brief Store an explicit combined date-time pattern override for the given styles.
+ *
+ * @param dateStyle  Date style level.
+ * @param timeStyle  Time style level.
+ * @param format     ICU SimpleDateFormat pattern string.
+ */
 void
 BFormattingConventions::SetExplicitDateTimeFormat(BDateFormatStyle dateStyle,
 	BTimeFormatStyle timeStyle, const BString& format)
@@ -575,6 +783,11 @@ BFormattingConventions::SetExplicitDateTimeFormat(BDateFormatStyle dateStyle,
 }
 
 
+/**
+ * @brief Store an explicit numeric format pattern override.
+ *
+ * @param format  ICU DecimalFormat pattern string.
+ */
 void
 BFormattingConventions::SetExplicitNumericFormat(const BString& format)
 {
@@ -582,6 +795,11 @@ BFormattingConventions::SetExplicitNumericFormat(const BString& format)
 }
 
 
+/**
+ * @brief Store an explicit monetary format pattern override.
+ *
+ * @param format  ICU DecimalFormat pattern string for monetary values.
+ */
 void
 BFormattingConventions::SetExplicitMonetaryFormat(const BString& format)
 {
@@ -589,6 +807,14 @@ BFormattingConventions::SetExplicitMonetaryFormat(const BString& format)
 }
 
 
+/**
+ * @brief Return whether name strings should come from the preferred language.
+ *
+ * When true, month and weekday names are taken from the user's preferred
+ * language even if the formatting conventions belong to a different locale.
+ *
+ * @return true if strings come from the preferred language, false otherwise.
+ */
 bool
 BFormattingConventions::UseStringsFromPreferredLanguage() const
 {
@@ -596,6 +822,11 @@ BFormattingConventions::UseStringsFromPreferredLanguage() const
 }
 
 
+/**
+ * @brief Set whether name strings should come from the preferred language.
+ *
+ * @param value  true to use preferred-language strings, false for locale strings.
+ */
 void
 BFormattingConventions::SetUseStringsFromPreferredLanguage(bool value)
 {
@@ -603,6 +834,14 @@ BFormattingConventions::SetUseStringsFromPreferredLanguage(bool value)
 }
 
 
+/**
+ * @brief Return whether the locale uses a 24-hour clock.
+ *
+ * Checks the explicit override first; if unset, inspects the medium time
+ * format for an AM/PM marker to determine the locale default.
+ *
+ * @return true if a 24-hour clock is active, false for a 12-hour clock.
+ */
 bool
 BFormattingConventions::Use24HourClock() const
 {
@@ -621,6 +860,11 @@ BFormattingConventions::Use24HourClock() const
 }
 
 
+/**
+ * @brief Explicitly set the 24-hour clock preference, invalidating cached formats.
+ *
+ * @param value  true for a 24-hour clock, false for 12-hour.
+ */
 void
 BFormattingConventions::SetExplicitUse24HourClock(bool value)
 {
@@ -635,6 +879,11 @@ BFormattingConventions::SetExplicitUse24HourClock(bool value)
 }
 
 
+/**
+ * @brief Clear the explicit 24-hour clock preference and invalidate caches.
+ *
+ * After this call the locale's native clock convention is used again.
+ */
 void
 BFormattingConventions::UnsetExplicitUse24HourClock()
 {
@@ -645,6 +894,13 @@ BFormattingConventions::UnsetExplicitUse24HourClock()
 }
 
 
+/**
+ * @brief Flatten the explicit overrides and locale ID into a BMessage.
+ *
+ * @param archive  Output BMessage to receive the archived fields.
+ * @param deep     Unused; present for BArchivable compatibility.
+ * @return B_OK on success, or an error code if any AddXxx call fails.
+ */
 status_t
 BFormattingConventions::Archive(BMessage* archive, bool deep) const
 {
@@ -665,6 +921,14 @@ BFormattingConventions::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Apply the active clock preference to a time/date-time pattern.
+ *
+ * If an explicit or cached 12/24-hour preference has been set and the pattern
+ * uses the wrong clock, the appropriate coercion helper is called.
+ *
+ * @param outFormat  ICU pattern string modified in-place.
+ */
 void
 BFormattingConventions::CoerceFormatForClock(BString& outFormat) const
 {
@@ -682,4 +946,3 @@ BFormattingConventions::CoerceFormatForClock(BString& outFormat) const
 		}
 	}
 }
-

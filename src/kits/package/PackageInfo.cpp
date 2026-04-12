@@ -1,7 +1,40 @@
 /*
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
+ *   Copyright 2013, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageInfo.cpp
+ * @brief Complete package metadata container for the Kintsugi package system.
+ *
+ * BPackageInfo holds all metadata fields defined in a .PackageInfo file or an
+ * HPKG package: name, version, architecture, dependencies, writable-file
+ * declarations, users/groups, and more.  It can be populated from a config
+ * string, a config BFile, an HPKG package file (current and v1 formats), or a
+ * BMessage archive, and serialised back to each of those forms.
+ *
+ * @see BPackageInfoContentHandler, BDaemonClient
  */
 
 
@@ -167,6 +200,9 @@ private:
 // #pragma mark - BPackageInfo
 
 
+/**
+ * @brief Default constructor; creates an empty, uninitialised package-info object.
+ */
 BPackageInfo::BPackageInfo()
 	:
 	BArchivable(),
@@ -192,6 +228,16 @@ BPackageInfo::BPackageInfo()
 }
 
 
+/**
+ * @brief Reconstruct a BPackageInfo from a BMessage archive.
+ *
+ * Extracts all metadata fields from \a archive.  If any mandatory field is
+ * missing or invalid, the error is reported through \a _error.
+ *
+ * @param archive  BMessage produced by Archive().
+ * @param _error   Optional out-pointer receiving B_OK on success or an error
+ *                 code on deserialisation failure.
+ */
 BPackageInfo::BPackageInfo(BMessage* archive, status_t* _error)
 	:
 	BArchivable(archive),
@@ -269,11 +315,23 @@ BPackageInfo::BPackageInfo(BMessage* archive, status_t* _error)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BPackageInfo::~BPackageInfo()
 {
 }
 
 
+/**
+ * @brief Read and parse package info from a .PackageInfo BEntry.
+ *
+ * Opens the file at \a packageInfoEntry and delegates to ReadFromConfigFile(BFile&).
+ *
+ * @param packageInfoEntry  BEntry pointing to the .PackageInfo text file.
+ * @param listener          Optional error listener for parse diagnostics.
+ * @return B_OK on success, or an error code if the entry or file is invalid.
+ */
 status_t
 BPackageInfo::ReadFromConfigFile(const BEntry& packageInfoEntry,
 	ParseErrorListener* listener)
@@ -290,6 +348,16 @@ BPackageInfo::ReadFromConfigFile(const BEntry& packageInfoEntry,
 }
 
 
+/**
+ * @brief Read and parse package info from an open .PackageInfo BFile.
+ *
+ * Reads the entire file into a BString and delegates to ReadFromConfigString().
+ *
+ * @param packageInfoFile  Open, readable BFile containing .PackageInfo text.
+ * @param listener         Optional error listener for parse diagnostics.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, B_IO_ERROR on
+ *         short read, or another error code on file access failure.
+ */
 status_t
 BPackageInfo::ReadFromConfigFile(BFile& packageInfoFile,
 	ParseErrorListener* listener)
@@ -316,6 +384,16 @@ BPackageInfo::ReadFromConfigFile(BFile& packageInfoFile,
 }
 
 
+/**
+ * @brief Parse package info from a .PackageInfo format string.
+ *
+ * Resets the object via Clear() then passes the string through the internal
+ * Parser, populating all fields it recognises.
+ *
+ * @param packageInfoString  String containing .PackageInfo-format text.
+ * @param listener           Optional error listener for parse diagnostics.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 status_t
 BPackageInfo::ReadFromConfigString(const BString& packageInfoString,
 	ParseErrorListener* listener)
@@ -327,6 +405,12 @@ BPackageInfo::ReadFromConfigString(const BString& packageInfoString,
 }
 
 
+/**
+ * @brief Read package info from an HPKG package file by path.
+ *
+ * @param path  Filesystem path to the .hpkg file.
+ * @return B_OK on success, or an error code if the file could not be read.
+ */
 status_t
 BPackageInfo::ReadFromPackageFile(const char* path)
 {
@@ -334,6 +418,12 @@ BPackageInfo::ReadFromPackageFile(const char* path)
 }
 
 
+/**
+ * @brief Read package info from an HPKG package file by open file descriptor.
+ *
+ * @param fd  Open file descriptor of the .hpkg file.
+ * @return B_OK on success, or an error code if the file could not be read.
+ */
 status_t
 BPackageInfo::ReadFromPackageFile(int fd)
 {
@@ -341,6 +431,16 @@ BPackageInfo::ReadFromPackageFile(int fd)
 }
 
 
+/**
+ * @brief Check that all mandatory fields are set and internally consistent.
+ *
+ * Verifies that name, summary, description, vendor, packager, architecture,
+ * version, copyrights, licenses, and provides are all present and valid.
+ * Also validates each global writable file, user settings file, and user entry.
+ *
+ * @return B_OK if valid, B_NO_INIT if mandatory fields are missing, or
+ *         B_BAD_VALUE if a user/group constraint is violated.
+ */
 status_t
 BPackageInfo::InitCheck() const
 {
@@ -401,6 +501,11 @@ BPackageInfo::InitCheck() const
 }
 
 
+/**
+ * @brief Return the package name.
+ *
+ * @return Const reference to the name string (always lower-case).
+ */
 const BString&
 BPackageInfo::Name() const
 {
@@ -408,6 +513,11 @@ BPackageInfo::Name() const
 }
 
 
+/**
+ * @brief Return the one-line package summary.
+ *
+ * @return Const reference to the summary string.
+ */
 const BString&
 BPackageInfo::Summary() const
 {
@@ -415,6 +525,11 @@ BPackageInfo::Summary() const
 }
 
 
+/**
+ * @brief Return the long package description.
+ *
+ * @return Const reference to the description string.
+ */
 const BString&
 BPackageInfo::Description() const
 {
@@ -422,6 +537,11 @@ BPackageInfo::Description() const
 }
 
 
+/**
+ * @brief Return the vendor name.
+ *
+ * @return Const reference to the vendor string.
+ */
 const BString&
 BPackageInfo::Vendor() const
 {
@@ -429,6 +549,11 @@ BPackageInfo::Vendor() const
 }
 
 
+/**
+ * @brief Return the packager identity string.
+ *
+ * @return Const reference to the packager string.
+ */
 const BString&
 BPackageInfo::Packager() const
 {
@@ -436,6 +561,11 @@ BPackageInfo::Packager() const
 }
 
 
+/**
+ * @brief Return the base-package name, if any.
+ *
+ * @return Const reference to the base package string.
+ */
 const BString&
 BPackageInfo::BasePackage() const
 {
@@ -443,6 +573,11 @@ BPackageInfo::BasePackage() const
 }
 
 
+/**
+ * @brief Return the hex-encoded SHA-256 checksum of the package file.
+ *
+ * @return Const reference to the checksum string.
+ */
 const BString&
 BPackageInfo::Checksum() const
 {
@@ -450,6 +585,11 @@ BPackageInfo::Checksum() const
 }
 
 
+/**
+ * @brief Return the install path override, if set.
+ *
+ * @return Const reference to the install-path string.
+ */
 const BString&
 BPackageInfo::InstallPath() const
 {
@@ -457,6 +597,11 @@ BPackageInfo::InstallPath() const
 }
 
 
+/**
+ * @brief Return the file name, or the canonical file name if none was set.
+ *
+ * @return A BString with the package file name.
+ */
 BString
 BPackageInfo::FileName() const
 {
@@ -464,6 +609,11 @@ BPackageInfo::FileName() const
 }
 
 
+/**
+ * @brief Return the package flags bitmask.
+ *
+ * @return The uint32 package flags value.
+ */
 uint32
 BPackageInfo::Flags() const
 {
@@ -471,6 +621,11 @@ BPackageInfo::Flags() const
 }
 
 
+/**
+ * @brief Return the target architecture.
+ *
+ * @return The BPackageArchitecture enum value.
+ */
 BPackageArchitecture
 BPackageInfo::Architecture() const
 {
@@ -478,6 +633,12 @@ BPackageInfo::Architecture() const
 }
 
 
+/**
+ * @brief Return the architecture name string for the stored architecture.
+ *
+ * @return A C-string from kArchitectureNames, or NULL if the architecture
+ *         value is out of range.
+ */
 const char*
 BPackageInfo::ArchitectureName() const
 {
@@ -489,6 +650,11 @@ BPackageInfo::ArchitectureName() const
 }
 
 
+/**
+ * @brief Return the package version.
+ *
+ * @return Const reference to the BPackageVersion.
+ */
 const BPackageVersion&
 BPackageInfo::Version() const
 {
@@ -496,6 +662,11 @@ BPackageInfo::Version() const
 }
 
 
+/**
+ * @brief Return the list of copyright strings.
+ *
+ * @return Const reference to the copyright BStringList.
+ */
 const BStringList&
 BPackageInfo::CopyrightList() const
 {
@@ -503,6 +674,11 @@ BPackageInfo::CopyrightList() const
 }
 
 
+/**
+ * @brief Return the list of license identifiers.
+ *
+ * @return Const reference to the license BStringList.
+ */
 const BStringList&
 BPackageInfo::LicenseList() const
 {
@@ -510,6 +686,11 @@ BPackageInfo::LicenseList() const
 }
 
 
+/**
+ * @brief Return the list of homepage/info URLs.
+ *
+ * @return Const reference to the URL BStringList.
+ */
 const BStringList&
 BPackageInfo::URLList() const
 {
@@ -517,6 +698,11 @@ BPackageInfo::URLList() const
 }
 
 
+/**
+ * @brief Return the list of source-code URLs.
+ *
+ * @return Const reference to the source-URL BStringList.
+ */
 const BStringList&
 BPackageInfo::SourceURLList() const
 {
@@ -524,6 +710,11 @@ BPackageInfo::SourceURLList() const
 }
 
 
+/**
+ * @brief Return the list of globally writable file/directory declarations.
+ *
+ * @return Const reference to the BGlobalWritableFileInfo object list.
+ */
 const BObjectList<BGlobalWritableFileInfo, true>&
 BPackageInfo::GlobalWritableFileInfos() const
 {
@@ -531,6 +722,11 @@ BPackageInfo::GlobalWritableFileInfos() const
 }
 
 
+/**
+ * @brief Return the list of user settings file/directory declarations.
+ *
+ * @return Const reference to the BUserSettingsFileInfo object list.
+ */
 const BObjectList<BUserSettingsFileInfo, true>&
 BPackageInfo::UserSettingsFileInfos() const
 {
@@ -538,6 +734,11 @@ BPackageInfo::UserSettingsFileInfos() const
 }
 
 
+/**
+ * @brief Return the list of system-user declarations.
+ *
+ * @return Const reference to the BUser object list.
+ */
 const BObjectList<BUser, true>&
 BPackageInfo::Users() const
 {
@@ -545,6 +746,11 @@ BPackageInfo::Users() const
 }
 
 
+/**
+ * @brief Return the list of system-group names.
+ *
+ * @return Const reference to the groups BStringList.
+ */
 const BStringList&
 BPackageInfo::Groups() const
 {
@@ -552,6 +758,11 @@ BPackageInfo::Groups() const
 }
 
 
+/**
+ * @brief Return the list of post-install script paths.
+ *
+ * @return Const reference to the post-install-scripts BStringList.
+ */
 const BStringList&
 BPackageInfo::PostInstallScripts() const
 {
@@ -559,6 +770,11 @@ BPackageInfo::PostInstallScripts() const
 }
 
 
+/**
+ * @brief Return the list of pre-uninstall script paths.
+ *
+ * @return Const reference to the pre-uninstall-scripts BStringList.
+ */
 const BStringList&
 BPackageInfo::PreUninstallScripts() const
 {
@@ -566,6 +782,11 @@ BPackageInfo::PreUninstallScripts() const
 }
 
 
+/**
+ * @brief Return the list of resolvables this package provides.
+ *
+ * @return Const reference to the BPackageResolvable object list.
+ */
 const BObjectList<BPackageResolvable, true>&
 BPackageInfo::ProvidesList() const
 {
@@ -573,6 +794,11 @@ BPackageInfo::ProvidesList() const
 }
 
 
+/**
+ * @brief Return the list of resolvable expressions this package requires.
+ *
+ * @return Const reference to the BPackageResolvableExpression object list.
+ */
 const BObjectList<BPackageResolvableExpression, true>&
 BPackageInfo::RequiresList() const
 {
@@ -580,6 +806,11 @@ BPackageInfo::RequiresList() const
 }
 
 
+/**
+ * @brief Return the list of resolvable expressions this package supplements.
+ *
+ * @return Const reference to the supplements BPackageResolvableExpression list.
+ */
 const BObjectList<BPackageResolvableExpression, true>&
 BPackageInfo::SupplementsList() const
 {
@@ -587,6 +818,11 @@ BPackageInfo::SupplementsList() const
 }
 
 
+/**
+ * @brief Return the list of resolvable expressions this package conflicts with.
+ *
+ * @return Const reference to the conflicts BPackageResolvableExpression list.
+ */
 const BObjectList<BPackageResolvableExpression, true>&
 BPackageInfo::ConflictsList() const
 {
@@ -594,6 +830,11 @@ BPackageInfo::ConflictsList() const
 }
 
 
+/**
+ * @brief Return the list of resolvable expressions this package freshens.
+ *
+ * @return Const reference to the freshens BPackageResolvableExpression list.
+ */
 const BObjectList<BPackageResolvableExpression, true>&
 BPackageInfo::FreshensList() const
 {
@@ -601,6 +842,11 @@ BPackageInfo::FreshensList() const
 }
 
 
+/**
+ * @brief Return the list of package names this package replaces.
+ *
+ * @return Const reference to the replaces BStringList.
+ */
 const BStringList&
 BPackageInfo::ReplacesList() const
 {
@@ -608,6 +854,14 @@ BPackageInfo::ReplacesList() const
 }
 
 
+/**
+ * @brief Build the canonical HPKG file name for this package.
+ *
+ * The canonical name has the form "name-version-architecture.hpkg".
+ * Returns an empty BString if InitCheck() fails.
+ *
+ * @return A BString containing the canonical file name.
+ */
 BString
 BPackageInfo::CanonicalFileName() const
 {
@@ -619,6 +873,15 @@ BPackageInfo::CanonicalFileName() const
 }
 
 
+/**
+ * @brief Check whether this package satisfies the given resolvable expression.
+ *
+ * First checks for an explicit "pkg:name" match, then searches the provides
+ * list for a match against \a expression.
+ *
+ * @param expression  The BPackageResolvableExpression to test against.
+ * @return true if this package satisfies the expression, false otherwise.
+ */
 bool
 BPackageInfo::Matches(const BPackageResolvableExpression& expression) const
 {
@@ -640,6 +903,11 @@ BPackageInfo::Matches(const BPackageResolvableExpression& expression) const
 }
 
 
+/**
+ * @brief Set the package name, converting it to lower-case.
+ *
+ * @param name  New package name.
+ */
 void
 BPackageInfo::SetName(const BString& name)
 {
@@ -648,6 +916,11 @@ BPackageInfo::SetName(const BString& name)
 }
 
 
+/**
+ * @brief Set the one-line package summary.
+ *
+ * @param summary  New summary string.
+ */
 void
 BPackageInfo::SetSummary(const BString& summary)
 {
@@ -655,6 +928,11 @@ BPackageInfo::SetSummary(const BString& summary)
 }
 
 
+/**
+ * @brief Set the long package description.
+ *
+ * @param description  New description string.
+ */
 void
 BPackageInfo::SetDescription(const BString& description)
 {
@@ -662,6 +940,11 @@ BPackageInfo::SetDescription(const BString& description)
 }
 
 
+/**
+ * @brief Set the vendor name.
+ *
+ * @param vendor  New vendor string.
+ */
 void
 BPackageInfo::SetVendor(const BString& vendor)
 {
@@ -669,6 +952,11 @@ BPackageInfo::SetVendor(const BString& vendor)
 }
 
 
+/**
+ * @brief Set the packager identity string.
+ *
+ * @param packager  New packager string.
+ */
 void
 BPackageInfo::SetPackager(const BString& packager)
 {
@@ -676,6 +964,11 @@ BPackageInfo::SetPackager(const BString& packager)
 }
 
 
+/**
+ * @brief Set the base-package name.
+ *
+ * @param basePackage  New base package name.
+ */
 void
 BPackageInfo::SetBasePackage(const BString& basePackage)
 {
@@ -683,6 +976,11 @@ BPackageInfo::SetBasePackage(const BString& basePackage)
 }
 
 
+/**
+ * @brief Set the hex-encoded SHA-256 checksum.
+ *
+ * @param checksum  New checksum string.
+ */
 void
 BPackageInfo::SetChecksum(const BString& checksum)
 {
@@ -690,6 +988,11 @@ BPackageInfo::SetChecksum(const BString& checksum)
 }
 
 
+/**
+ * @brief Set the install-path override.
+ *
+ * @param installPath  New install path string.
+ */
 void
 BPackageInfo::SetInstallPath(const BString& installPath)
 {
@@ -697,6 +1000,11 @@ BPackageInfo::SetInstallPath(const BString& installPath)
 }
 
 
+/**
+ * @brief Set the package file name override.
+ *
+ * @param fileName  New file name string.
+ */
 void
 BPackageInfo::SetFileName(const BString& fileName)
 {
@@ -704,6 +1012,11 @@ BPackageInfo::SetFileName(const BString& fileName)
 }
 
 
+/**
+ * @brief Set the package version.
+ *
+ * @param version  New BPackageVersion.
+ */
 void
 BPackageInfo::SetVersion(const BPackageVersion& version)
 {
@@ -711,6 +1024,11 @@ BPackageInfo::SetVersion(const BPackageVersion& version)
 }
 
 
+/**
+ * @brief Set the package flags bitmask.
+ *
+ * @param flags  New flags value.
+ */
 void
 BPackageInfo::SetFlags(uint32 flags)
 {
@@ -718,6 +1036,11 @@ BPackageInfo::SetFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Set the target architecture.
+ *
+ * @param architecture  New BPackageArchitecture value.
+ */
 void
 BPackageInfo::SetArchitecture(BPackageArchitecture architecture)
 {
@@ -725,6 +1048,9 @@ BPackageInfo::SetArchitecture(BPackageArchitecture architecture)
 }
 
 
+/**
+ * @brief Remove all entries from the copyright list.
+ */
 void
 BPackageInfo::ClearCopyrightList()
 {
@@ -732,6 +1058,12 @@ BPackageInfo::ClearCopyrightList()
 }
 
 
+/**
+ * @brief Append a copyright string to the copyright list.
+ *
+ * @param copyright  Copyright string to add.
+ * @return B_OK on success, B_ERROR on allocation failure.
+ */
 status_t
 BPackageInfo::AddCopyright(const BString& copyright)
 {
@@ -739,6 +1071,9 @@ BPackageInfo::AddCopyright(const BString& copyright)
 }
 
 
+/**
+ * @brief Remove all entries from the license list.
+ */
 void
 BPackageInfo::ClearLicenseList()
 {
@@ -746,6 +1081,12 @@ BPackageInfo::ClearLicenseList()
 }
 
 
+/**
+ * @brief Append a license identifier to the license list.
+ *
+ * @param license  License identifier to add.
+ * @return B_OK on success, B_ERROR on allocation failure.
+ */
 status_t
 BPackageInfo::AddLicense(const BString& license)
 {
@@ -753,6 +1094,9 @@ BPackageInfo::AddLicense(const BString& license)
 }
 
 
+/**
+ * @brief Remove all entries from the URL list.
+ */
 void
 BPackageInfo::ClearURLList()
 {
@@ -760,6 +1104,12 @@ BPackageInfo::ClearURLList()
 }
 
 
+/**
+ * @brief Append a homepage/info URL to the URL list.
+ *
+ * @param url  URL to add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddURL(const BString& url)
 {
@@ -767,6 +1117,9 @@ BPackageInfo::AddURL(const BString& url)
 }
 
 
+/**
+ * @brief Remove all entries from the source-URL list.
+ */
 void
 BPackageInfo::ClearSourceURLList()
 {
@@ -774,6 +1127,12 @@ BPackageInfo::ClearSourceURLList()
 }
 
 
+/**
+ * @brief Append a source-code URL to the source-URL list.
+ *
+ * @param url  Source URL to add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddSourceURL(const BString& url)
 {
@@ -781,6 +1140,9 @@ BPackageInfo::AddSourceURL(const BString& url)
 }
 
 
+/**
+ * @brief Remove all globally writable file info entries.
+ */
 void
 BPackageInfo::ClearGlobalWritableFileInfos()
 {
@@ -788,6 +1150,12 @@ BPackageInfo::ClearGlobalWritableFileInfos()
 }
 
 
+/**
+ * @brief Append a globally writable file/directory declaration.
+ *
+ * @param info  The BGlobalWritableFileInfo to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddGlobalWritableFileInfo(const BGlobalWritableFileInfo& info)
 {
@@ -802,6 +1170,9 @@ BPackageInfo::AddGlobalWritableFileInfo(const BGlobalWritableFileInfo& info)
 }
 
 
+/**
+ * @brief Remove all user settings file info entries.
+ */
 void
 BPackageInfo::ClearUserSettingsFileInfos()
 {
@@ -809,6 +1180,12 @@ BPackageInfo::ClearUserSettingsFileInfos()
 }
 
 
+/**
+ * @brief Append a user settings file/directory declaration.
+ *
+ * @param info  The BUserSettingsFileInfo to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddUserSettingsFileInfo(const BUserSettingsFileInfo& info)
 {
@@ -823,6 +1200,9 @@ BPackageInfo::AddUserSettingsFileInfo(const BUserSettingsFileInfo& info)
 }
 
 
+/**
+ * @brief Remove all user declarations.
+ */
 void
 BPackageInfo::ClearUsers()
 {
@@ -830,6 +1210,12 @@ BPackageInfo::ClearUsers()
 }
 
 
+/**
+ * @brief Append a system-user declaration.
+ *
+ * @param user  The BUser to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddUser(const BUser& user)
 {
@@ -843,6 +1229,9 @@ BPackageInfo::AddUser(const BUser& user)
 }
 
 
+/**
+ * @brief Remove all group declarations.
+ */
 void
 BPackageInfo::ClearGroups()
 {
@@ -850,6 +1239,12 @@ BPackageInfo::ClearGroups()
 }
 
 
+/**
+ * @brief Append a system-group name.
+ *
+ * @param group  Group name to add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddGroup(const BString& group)
 {
@@ -857,6 +1252,9 @@ BPackageInfo::AddGroup(const BString& group)
 }
 
 
+/**
+ * @brief Remove all post-install script entries.
+ */
 void
 BPackageInfo::ClearPostInstallScripts()
 {
@@ -864,6 +1262,9 @@ BPackageInfo::ClearPostInstallScripts()
 }
 
 
+/**
+ * @brief Remove all pre-uninstall script entries.
+ */
 void
 BPackageInfo::ClearPreUninstallScripts()
 {
@@ -871,6 +1272,12 @@ BPackageInfo::ClearPreUninstallScripts()
 }
 
 
+/**
+ * @brief Append a post-install script path.
+ *
+ * @param path  Path of the post-install script relative to the package root.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddPostInstallScript(const BString& path)
 {
@@ -878,6 +1285,12 @@ BPackageInfo::AddPostInstallScript(const BString& path)
 }
 
 
+/**
+ * @brief Append a pre-uninstall script path.
+ *
+ * @param path  Path of the pre-uninstall script relative to the package root.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::AddPreUninstallScript(const BString& path)
 {
@@ -885,6 +1298,9 @@ BPackageInfo::AddPreUninstallScript(const BString& path)
 }
 
 
+/**
+ * @brief Remove all resolvable entries from the provides list.
+ */
 void
 BPackageInfo::ClearProvidesList()
 {
@@ -892,6 +1308,13 @@ BPackageInfo::ClearProvidesList()
 }
 
 
+/**
+ * @brief Append a resolvable to the provides list.
+ *
+ * @param provides  The BPackageResolvable to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or B_ERROR on
+ *         list-insertion failure.
+ */
 status_t
 BPackageInfo::AddProvides(const BPackageResolvable& provides)
 {
@@ -904,6 +1327,9 @@ BPackageInfo::AddProvides(const BPackageResolvable& provides)
 }
 
 
+/**
+ * @brief Remove all entries from the requires list.
+ */
 void
 BPackageInfo::ClearRequiresList()
 {
@@ -911,6 +1337,12 @@ BPackageInfo::ClearRequiresList()
 }
 
 
+/**
+ * @brief Append a resolvable expression to the requires list.
+ *
+ * @param packageRequires  The BPackageResolvableExpression to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or B_ERROR.
+ */
 status_t
 BPackageInfo::AddRequires(const BPackageResolvableExpression& packageRequires)
 {
@@ -923,6 +1355,9 @@ BPackageInfo::AddRequires(const BPackageResolvableExpression& packageRequires)
 }
 
 
+/**
+ * @brief Remove all entries from the supplements list.
+ */
 void
 BPackageInfo::ClearSupplementsList()
 {
@@ -930,6 +1365,12 @@ BPackageInfo::ClearSupplementsList()
 }
 
 
+/**
+ * @brief Append a resolvable expression to the supplements list.
+ *
+ * @param supplements  The BPackageResolvableExpression to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or B_ERROR.
+ */
 status_t
 BPackageInfo::AddSupplements(const BPackageResolvableExpression& supplements)
 {
@@ -942,6 +1383,9 @@ BPackageInfo::AddSupplements(const BPackageResolvableExpression& supplements)
 }
 
 
+/**
+ * @brief Remove all entries from the conflicts list.
+ */
 void
 BPackageInfo::ClearConflictsList()
 {
@@ -949,6 +1393,12 @@ BPackageInfo::ClearConflictsList()
 }
 
 
+/**
+ * @brief Append a resolvable expression to the conflicts list.
+ *
+ * @param conflicts  The BPackageResolvableExpression to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or B_ERROR.
+ */
 status_t
 BPackageInfo::AddConflicts(const BPackageResolvableExpression& conflicts)
 {
@@ -961,6 +1411,9 @@ BPackageInfo::AddConflicts(const BPackageResolvableExpression& conflicts)
 }
 
 
+/**
+ * @brief Remove all entries from the freshens list.
+ */
 void
 BPackageInfo::ClearFreshensList()
 {
@@ -968,6 +1421,12 @@ BPackageInfo::ClearFreshensList()
 }
 
 
+/**
+ * @brief Append a resolvable expression to the freshens list.
+ *
+ * @param freshens  The BPackageResolvableExpression to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or B_ERROR.
+ */
 status_t
 BPackageInfo::AddFreshens(const BPackageResolvableExpression& freshens)
 {
@@ -980,6 +1439,9 @@ BPackageInfo::AddFreshens(const BPackageResolvableExpression& freshens)
 }
 
 
+/**
+ * @brief Remove all entries from the replaces list.
+ */
 void
 BPackageInfo::ClearReplacesList()
 {
@@ -987,6 +1449,12 @@ BPackageInfo::ClearReplacesList()
 }
 
 
+/**
+ * @brief Append a package name to the replaces list (stored lower-case).
+ *
+ * @param replaces  Package name to add.
+ * @return B_OK on success, B_ERROR on allocation failure.
+ */
 status_t
 BPackageInfo::AddReplaces(const BString& replaces)
 {
@@ -994,6 +1462,9 @@ BPackageInfo::AddReplaces(const BString& replaces)
 }
 
 
+/**
+ * @brief Reset all fields to their empty/default state.
+ */
 void
 BPackageInfo::Clear()
 {
@@ -1028,6 +1499,13 @@ BPackageInfo::Clear()
 }
 
 
+/**
+ * @brief Serialise all package metadata into a BMessage for IPC or persistence.
+ *
+ * @param archive  Target BMessage to populate.
+ * @param deep     Passed through to BArchivable::Archive().
+ * @return B_OK on success, or an error code if any field could not be stored.
+ */
 status_t
 BPackageInfo::Archive(BMessage* archive, bool deep) const
 {
@@ -1080,6 +1558,12 @@ BPackageInfo::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief BArchivable instantiation hook.
+ *
+ * @param archive  Source BMessage.
+ * @return A new BPackageInfo, or NULL if validation fails.
+ */
 /*static*/ BArchivable*
 BPackageInfo::Instantiate(BMessage* archive)
 {
@@ -1089,6 +1573,15 @@ BPackageInfo::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Serialise the package info to a .PackageInfo format string.
+ *
+ * Uses the internal StringBuilder to produce the canonical text representation
+ * that can be stored in a .PackageInfo file or embedded in an HPKG archive.
+ *
+ * @param _string  Output BString that receives the formatted text.
+ * @return B_OK on success, or an error code from the StringBuilder.
+ */
 status_t
 BPackageInfo::GetConfigString(BString& _string) const
 {
@@ -1125,6 +1618,11 @@ BPackageInfo::GetConfigString(BString& _string) const
 }
 
 
+/**
+ * @brief Return the package info as a .PackageInfo format string.
+ *
+ * @return A BString containing the formatted package info, or empty on error.
+ */
 BString
 BPackageInfo::ToString() const
 {
@@ -1134,6 +1632,15 @@ BPackageInfo::ToString() const
 }
 
 
+/**
+ * @brief Look up a BPackageArchitecture by its name string.
+ *
+ * Performs a case-insensitive search through kArchitectureNames.
+ *
+ * @param name           Architecture name to look up.
+ * @param _architecture  Output parameter set to the matching enum value.
+ * @return B_OK on success, B_NAME_NOT_FOUND if the name is not recognised.
+ */
 /*static*/ status_t
 BPackageInfo::GetArchitectureByName(const BString& name,
 	BPackageArchitecture& _architecture)
@@ -1148,6 +1655,15 @@ BPackageInfo::GetArchitectureByName(const BString& name,
 }
 
 
+/**
+ * @brief Parse a version string into a BPackageVersion.
+ *
+ * @param string              Version string in major.minor.micro~revision format.
+ * @param revisionIsOptional  If true, a missing revision field is allowed.
+ * @param _version            Output BPackageVersion populated on success.
+ * @param listener            Optional error listener for parse diagnostics.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 /*static*/ status_t
 BPackageInfo::ParseVersionString(const BString& string, bool revisionIsOptional,
 	BPackageVersion& _version, ParseErrorListener* listener)
@@ -1156,6 +1672,14 @@ BPackageInfo::ParseVersionString(const BString& string, bool revisionIsOptional,
 }
 
 
+/**
+ * @brief Parse a resolvable string into a BPackageResolvable.
+ *
+ * @param string       Resolvable string (e.g. "libfoo >= 1.0").
+ * @param _expression  Output BPackageResolvable populated on success.
+ * @param listener     Optional error listener for parse diagnostics.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 /*static*/ status_t
 BPackageInfo::ParseResolvableString(const BString& string,
 	BPackageResolvable& _expression, ParseErrorListener* listener)
@@ -1164,6 +1688,14 @@ BPackageInfo::ParseResolvableString(const BString& string,
 }
 
 
+/**
+ * @brief Parse a resolvable-expression string into a BPackageResolvableExpression.
+ *
+ * @param string       Expression string (e.g. "libfoo >= 1.0").
+ * @param _expression  Output BPackageResolvableExpression populated on success.
+ * @param listener     Optional error listener for parse diagnostics.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 /*static*/ status_t
 BPackageInfo::ParseResolvableExpressionString(const BString& string,
 	BPackageResolvableExpression& _expression, ParseErrorListener* listener)
@@ -1172,6 +1704,15 @@ BPackageInfo::ParseResolvableExpressionString(const BString& string,
 }
 
 
+/**
+ * @brief Internal helper that opens and parses an HPKG file using a PackageFileLocation.
+ *
+ * Tries the current HPKG format first; falls back to v1 format if the reader
+ * returns B_MISMATCHED_VALUES (format-version mismatch).
+ *
+ * @param fileLocation  A PackageFileLocation wrapping either a path or a fd.
+ * @return B_OK on success, or an error code from the package reader.
+ */
 status_t
 BPackageInfo::_ReadFromPackageFile(const PackageFileLocation& fileLocation)
 {
@@ -1205,6 +1746,18 @@ BPackageInfo::_ReadFromPackageFile(const PackageFileLocation& fileLocation)
 }
 
 
+/**
+ * @brief Encode a BPackageVersion into a BMessage under prefixed field names.
+ *
+ * Stores major, minor, micro, pre-release, and revision as separate fields
+ * named "\<field\>:major", "\<field\>:minor", etc.
+ *
+ * @param archive  Target BMessage.
+ * @param field    Base field name prefix.
+ * @param version  Version to encode.
+ * @return B_OK on success, B_BAD_VALUE if the composed field name would overflow,
+ *         or an error code from BMessage::AddString/AddUInt32.
+ */
 /*static*/ status_t
 BPackageInfo::_AddVersion(BMessage* archive, const char* field,
 	const BPackageVersion& version)
@@ -1255,6 +1808,15 @@ BPackageInfo::_AddVersion(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Encode a list of BPackageResolvable objects into a BMessage.
+ *
+ * @param archive     Target BMessage.
+ * @param field       Base field name prefix for the resolvable arrays.
+ * @param resolvables Source list of resolvables.
+ * @return B_OK on success, B_BAD_VALUE on field-name overflow, or an error
+ *         code from BMessage add methods.
+ */
 /*static*/ status_t
 BPackageInfo::_AddResolvables(BMessage* archive, const char* field,
 	const ResolvableList& resolvables)
@@ -1288,6 +1850,14 @@ BPackageInfo::_AddResolvables(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Encode a list of BPackageResolvableExpression objects into a BMessage.
+ *
+ * @param archive     Target BMessage.
+ * @param field       Base field name prefix.
+ * @param expressions Source list of resolvable expressions.
+ * @return B_OK on success, B_BAD_VALUE on overflow, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_AddResolvableExpressions(BMessage* archive, const char* field,
 	const ResolvableExpressionList& expressions)
@@ -1320,6 +1890,14 @@ BPackageInfo::_AddResolvableExpressions(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Encode a list of BGlobalWritableFileInfo objects into a BMessage.
+ *
+ * @param archive  Target BMessage.
+ * @param field    Base field name prefix.
+ * @param infos    Source list of globally writable file infos.
+ * @return B_OK on success, B_BAD_VALUE on overflow, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_AddGlobalWritableFileInfos(BMessage* archive, const char* field,
 	const GlobalWritableFileInfoList& infos)
@@ -1352,6 +1930,14 @@ BPackageInfo::_AddGlobalWritableFileInfos(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Encode a list of BUserSettingsFileInfo objects into a BMessage.
+ *
+ * @param archive  Target BMessage.
+ * @param field    Base field name prefix.
+ * @param infos    Source list of user settings file infos.
+ * @return B_OK on success, B_BAD_VALUE on overflow, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_AddUserSettingsFileInfos(BMessage* archive, const char* field,
 	const UserSettingsFileInfoList& infos)
@@ -1384,6 +1970,15 @@ BPackageInfo::_AddUserSettingsFileInfos(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Encode a list of BUser objects into a BMessage.
+ *
+ * @param archive  Target BMessage.
+ * @param field    Base field name prefix.
+ * @param users    Source list of BUser objects.
+ * @return B_OK on success, B_BAD_VALUE on overflow, B_NO_MEMORY on group-join
+ *         failure, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_AddUsers(BMessage* archive, const char* field,
 	const UserList& users)
@@ -1422,6 +2017,15 @@ BPackageInfo::_AddUsers(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Decode a BPackageVersion from prefixed fields in a BMessage.
+ *
+ * @param archive   Source BMessage.
+ * @param field     Base field name prefix (e.g. "version").
+ * @param index     Array index for repeated fields.
+ * @param _version  Output version populated on success.
+ * @return B_OK on success, B_BAD_VALUE on overflow, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractVersion(BMessage* archive, const char* field, int32 index,
 	BPackageVersion& _version)
@@ -1478,6 +2082,14 @@ BPackageInfo::_ExtractVersion(BMessage* archive, const char* field, int32 index,
 }
 
 
+/**
+ * @brief Extract a BStringList from a named field; treat missing field as empty.
+ *
+ * @param archive  Source BMessage.
+ * @param field    Field name to read.
+ * @param _list    Output list populated from the archive field.
+ * @return B_OK on success or if the field is absent, otherwise a BMessage error.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractStringList(BMessage* archive, const char* field,
 	BStringList& _list)
@@ -1488,6 +2100,15 @@ BPackageInfo::_ExtractStringList(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Decode a list of BPackageResolvable objects from prefixed BMessage fields.
+ *
+ * @param archive       Source BMessage.
+ * @param field         Base field name prefix.
+ * @param _resolvables  Output list populated on success.
+ * @return B_OK on success, B_BAD_VALUE on overflow, B_NO_MEMORY on allocation
+ *         failure, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractResolvables(BMessage* archive, const char* field,
 	ResolvableList& _resolvables)
@@ -1541,6 +2162,15 @@ BPackageInfo::_ExtractResolvables(BMessage* archive, const char* field,
 }
 
 
+/**
+ * @brief Decode a list of BPackageResolvableExpression objects from a BMessage.
+ *
+ * @param archive      Source BMessage.
+ * @param field        Base field name prefix.
+ * @param _expressions Output list populated on success.
+ * @return B_OK on success, B_BAD_VALUE on overflow, B_BAD_DATA on invalid
+ *         operator value, B_NO_MEMORY on allocation failure, or a BMessage error.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractResolvableExpressions(BMessage* archive,
 	const char* field, ResolvableExpressionList& _expressions)
@@ -1597,6 +2227,15 @@ BPackageInfo::_ExtractResolvableExpressions(BMessage* archive,
 }
 
 
+/**
+ * @brief Decode a list of BGlobalWritableFileInfo objects from a BMessage.
+ *
+ * @param archive  Source BMessage.
+ * @param field    Base field name prefix.
+ * @param _infos   Output list populated on success.
+ * @return B_OK on success, B_BAD_VALUE on overflow, B_BAD_DATA on invalid
+ *         update type, B_NO_MEMORY on allocation failure, or a BMessage error.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractGlobalWritableFileInfos(BMessage* archive,
 	const char* field, GlobalWritableFileInfoList& _infos)
@@ -1653,6 +2292,15 @@ BPackageInfo::_ExtractGlobalWritableFileInfos(BMessage* archive,
 }
 
 
+/**
+ * @brief Decode a list of BUserSettingsFileInfo objects from a BMessage.
+ *
+ * @param archive  Source BMessage.
+ * @param field    Base field name prefix.
+ * @param _infos   Output list populated on success.
+ * @return B_OK on success, B_BAD_VALUE on overflow, B_NO_MEMORY on allocation
+ *         failure, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractUserSettingsFileInfos(BMessage* archive,
 	const char* field, UserSettingsFileInfoList& _infos)
@@ -1705,6 +2353,15 @@ BPackageInfo::_ExtractUserSettingsFileInfos(BMessage* archive,
 }
 
 
+/**
+ * @brief Decode a list of BUser objects from prefixed BMessage fields.
+ *
+ * @param archive  Source BMessage.
+ * @param field    Base field name prefix.
+ * @param _users   Output list populated on success.
+ * @return B_OK on success, B_BAD_VALUE on overflow, B_NO_MEMORY on allocation
+ *         or group-split failure, or a BMessage error code.
+ */
 /*static*/ status_t
 BPackageInfo::_ExtractUsers(BMessage* archive, const char* field,
 	UserList& _users)

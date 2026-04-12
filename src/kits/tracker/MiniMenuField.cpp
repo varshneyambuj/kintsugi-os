@@ -1,36 +1,39 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file MiniMenuField.cpp
+ * @brief A compact BView that presents a BPopUpMenu with a drawn arrow indicator.
+ *
+ * MiniMenuField renders a small rectangular button with a right-pointing
+ * triangle.  Clicking the view or pressing Space/Down opens the attached
+ * BPopUpMenu.  A focus ring is drawn when the view has keyboard focus.
+ *
+ * @see BPopUpMenu
+ */
 
 
 #include <ControlLook.h>
@@ -42,6 +45,15 @@ All rights reserved.
 #include "Utilities.h"
 
 
+/**
+ * @brief Construct a MiniMenuField in the given frame.
+ *
+ * @param frame        The frame rectangle in the parent's coordinate system.
+ * @param name         The view name.
+ * @param menu         The BPopUpMenu to display; ownership is taken.
+ * @param resizeFlags  Resize flags passed to BView.
+ * @param flags        View flags passed to BView.
+ */
 MiniMenuField::MiniMenuField(BRect frame, const char* name, BPopUpMenu* menu,
 	uint32 resizeFlags, uint32 flags)
 	:
@@ -52,12 +64,18 @@ MiniMenuField::MiniMenuField(BRect frame, const char* name, BPopUpMenu* menu,
 }
 
 
+/**
+ * @brief Destroy the MiniMenuField, deleting the attached pop-up menu.
+ */
 MiniMenuField::~MiniMenuField()
 {
 	delete fMenu;
 }
 
 
+/**
+ * @brief Inherit parent colours and set the high colour to black on attachment.
+ */
 void
 MiniMenuField::AttachedToWindow()
 {
@@ -66,6 +84,11 @@ MiniMenuField::AttachedToWindow()
 }
 
 
+/**
+ * @brief Invalidate the view so the focus ring is redrawn when focus changes.
+ *
+ * @param on  True when gaining keyboard focus, false when losing it.
+ */
 void
 MiniMenuField::MakeFocus(bool on)
 {
@@ -74,6 +97,12 @@ MiniMenuField::MakeFocus(bool on)
 }
 
 
+/**
+ * @brief Open the pop-up menu on Space, Down, or Right arrow key press.
+ *
+ * @param bytes     Pointer to the UTF-8 byte sequence of the pressed key.
+ * @param numBytes  Length of @p bytes.
+ */
 void
 MiniMenuField::KeyDown(const char* bytes, int32 numBytes)
 {
@@ -92,6 +121,9 @@ MiniMenuField::KeyDown(const char* bytes, int32 numBytes)
 }
 
 
+/**
+ * @brief Render the mini menu field button with optional focus ring and arrow triangle.
+ */
 void
 MiniMenuField::Draw(BRect)
 {
@@ -143,6 +175,9 @@ MiniMenuField::Draw(BRect)
 }
 
 
+/**
+ * @brief Open the pop-up menu when the primary mouse button is pressed.
+ */
 void
 MiniMenuField::MouseDown(BPoint)
 {

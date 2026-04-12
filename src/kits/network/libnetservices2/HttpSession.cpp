@@ -1,10 +1,44 @@
 /*
- * Copyright 2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2022 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
  */
+
+
+/**
+ * @file HttpSession.cpp
+ * @brief Implementation of BHttpSession, the async HTTP/1.1 client.
+ *
+ * BHttpSession manages a pool of HTTP connections through two internal threads:
+ * a control thread that resolves hostnames, opens TCP/TLS connections, and
+ * enforces per-host connection limits; and a data thread that multiplexes
+ * I/O on all active sockets using wait_for_objects().  BHttpResult provides a
+ * future-like interface that blocks until the status, headers, or body are ready.
+ *
+ * @see BHttpRequest, BHttpResult, BHttpFields
+ */
+
 
 #include <algorithm>
 #include <atomic>
@@ -41,12 +75,12 @@ using namespace std::literals;
 using namespace BPrivate::Network;
 
 
-/*!
-	\brief Maximum size of the HTTP Header lines of the message.
-
-	In the RFC there is no maximum, but we need to prevent the situation where we keep growing the
-	internal buffer waiting for the end of line ('\r\n\') characters to occur.
-*/
+/**
+ * @brief Maximum allowed HTTP header line size in bytes.
+ *
+ * Prevents unbounded buffer growth while waiting for CRLF on a line that
+ * never terminates.
+ */
 static constexpr ssize_t kMaxHeaderLineSize = 64 * 1024;
 
 
@@ -179,6 +213,11 @@ struct BHttpSession::Redirect {
 // #pragma mark -- BHttpSession::Impl
 
 
+/**
+ * @brief Construct the session implementation, creating threads and semaphores.
+ *
+ * Throws BRuntimeError if semaphore creation or thread launch fails.
+ */
 BHttpSession::Impl::Impl()
 	:
 	fControlQueueSem(create_sem(0, "http:control")),
@@ -205,6 +244,9 @@ BHttpSession::Impl::Impl()
 }
 
 
+/**
+ * @brief Destructor — signals the threads to quit and waits for them to exit.
+ */
 BHttpSession::Impl::~Impl() noexcept
 {
 	fQuitting.store(true);
@@ -216,6 +258,17 @@ BHttpSession::Impl::~Impl() noexcept
 }
 
 
+/**
+ * @brief Submit a new HTTP request for asynchronous execution.
+ *
+ * Wraps the request in an internal Request object, enqueues it on the
+ * control queue, and returns a BHttpResult future to the caller.
+ *
+ * @param request   The BHttpRequest to execute (moved).
+ * @param target    BBorrow<BDataIO> that receives the response body.
+ * @param observer  Optional BMessenger for progress notifications.
+ * @return A BHttpResult future that provides access to the response.
+ */
 BHttpResult
 BHttpSession::Impl::Execute(BHttpRequest&& request, BBorrow<BDataIO> target, BMessenger observer)
 {
@@ -229,6 +282,14 @@ BHttpSession::Impl::Execute(BHttpRequest&& request, BBorrow<BDataIO> target, BMe
 }
 
 
+/**
+ * @brief Cancel a pending or active request by its identifier.
+ *
+ * Removes the request from the control queue if it is still there, and
+ * marks it as cancelled in the data queue so the data thread can clean up.
+ *
+ * @param identifier  The int32 request ID returned by BHttpResult::Identity().
+ */
 void
 BHttpSession::Impl::Cancel(int32 identifier)
 {
@@ -252,6 +313,11 @@ BHttpSession::Impl::Cancel(int32 identifier)
 }
 
 
+/**
+ * @brief Set the maximum number of simultaneous connections per remote host.
+ *
+ * @param maxConnections  New per-host connection limit (must be between 1 and INT32_MAX-1).
+ */
 void
 BHttpSession::Impl::SetMaxConnectionsPerHost(size_t maxConnections)
 {
@@ -263,6 +329,11 @@ BHttpSession::Impl::SetMaxConnectionsPerHost(size_t maxConnections)
 }
 
 
+/**
+ * @brief Set the maximum number of distinct remote hosts with active connections.
+ *
+ * @param maxConnections  New host limit (must be at least 1).
+ */
 void
 BHttpSession::Impl::SetMaxHosts(size_t maxConnections)
 {
@@ -272,6 +343,16 @@ BHttpSession::Impl::SetMaxHosts(size_t maxConnections)
 }
 
 
+/**
+ * @brief Control thread entry point — dequeues requests, resolves hosts, opens sockets.
+ *
+ * Waits on fControlQueueSem, processes queued requests subject to per-host
+ * connection limits, opens connections, and hands them to the data thread.
+ * On shutdown it cancels all pending requests and waits for the data thread.
+ *
+ * @param arg  Pointer to the owning BHttpSession::Impl.
+ * @return B_OK.
+ */
 /*static*/ status_t
 BHttpSession::Impl::ControlThreadFunc(void* arg)
 {
@@ -343,9 +424,21 @@ BHttpSession::Impl::ControlThreadFunc(void* arg)
 }
 
 
+/** @brief Internal event flag used to signal a cancelled connection to the data thread. */
 static constexpr uint16 EVENT_CANCELLED = 0x4000;
 
 
+/**
+ * @brief Data thread entry point — multiplexes I/O on all active sockets.
+ *
+ * Uses wait_for_objects() to wait on all active socket file descriptors and
+ * the data queue semaphore simultaneously.  Dispatches to TransferRequest()
+ * (write phase) or ReceiveResult() (read phase) based on the event type, and
+ * handles cancellation, disconnection, and redirection.
+ *
+ * @param arg  Pointer to the owning BHttpSession::Impl.
+ * @return B_OK.
+ */
 /*static*/ status_t
 BHttpSession::Impl::DataThreadFunc(void* arg)
 {
@@ -536,12 +629,15 @@ BHttpSession::Impl::DataThreadFunc(void* arg)
 }
 
 
-/*!
-	\brief Internal helper that filters the lists of requests to guard against the concurrent
-		requests limit.
-
-	This method will do the locking of the internal structure.
-*/
+/**
+ * @brief Collect requests from the control queue that may be started immediately.
+ *
+ * Enforces the per-host connection limit and the total host limit by skipping
+ * requests that would exceed either bound.  Increments the connection counter
+ * for each request that is returned.
+ *
+ * @return Vector of Request objects ready for hostname resolution and connection.
+ */
 std::vector<BHttpSession::Request>
 BHttpSession::Impl::GetRequestsForControlThread()
 {
@@ -601,21 +697,48 @@ BHttpSession::Impl::GetRequestsForControlThread()
 // #pragma mark -- BHttpSession (public interface)
 
 
+/**
+ * @brief Construct a BHttpSession, creating the internal Impl and worker threads.
+ */
 BHttpSession::BHttpSession()
 {
 	fImpl = std::make_shared<BHttpSession::Impl>();
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BHttpSession::~BHttpSession() = default;
 
 
+/**
+ * @brief Copy constructor — shares the underlying Impl.
+ *
+ * Multiple BHttpSession objects sharing an Impl all submit to the same thread pool.
+ *
+ * @param other  Source BHttpSession to share with.
+ */
 BHttpSession::BHttpSession(const BHttpSession&) noexcept = default;
 
 
+/**
+ * @brief Copy assignment operator — shares the underlying Impl.
+ *
+ * @param other  Source BHttpSession to share with.
+ * @return Reference to this object.
+ */
 BHttpSession& BHttpSession::operator=(const BHttpSession&) noexcept = default;
 
 
+/**
+ * @brief Submit an HTTP request and return a future BHttpResult.
+ *
+ * @param request   The BHttpRequest to execute (moved).
+ * @param target    BBorrow<BDataIO> that receives the response body bytes.
+ * @param observer  Optional BMessenger for progress and status notifications.
+ * @return BHttpResult that provides blocking access to status, fields, and body.
+ */
 BHttpResult
 BHttpSession::Execute(BHttpRequest&& request, BBorrow<BDataIO> target, BMessenger observer)
 {
@@ -623,6 +746,11 @@ BHttpSession::Execute(BHttpRequest&& request, BBorrow<BDataIO> target, BMessenge
 }
 
 
+/**
+ * @brief Cancel a pending or active request by its numeric identifier.
+ *
+ * @param identifier  The int32 ID returned by BHttpResult::Identity().
+ */
 void
 BHttpSession::Cancel(int32 identifier)
 {
@@ -630,6 +758,11 @@ BHttpSession::Cancel(int32 identifier)
 }
 
 
+/**
+ * @brief Cancel the request associated with a BHttpResult future.
+ *
+ * @param request  The BHttpResult whose underlying request should be cancelled.
+ */
 void
 BHttpSession::Cancel(const BHttpResult& request)
 {
@@ -637,6 +770,11 @@ BHttpSession::Cancel(const BHttpResult& request)
 }
 
 
+/**
+ * @brief Set the maximum number of simultaneous connections per remote host.
+ *
+ * @param maxConnections  New per-host limit.
+ */
 void
 BHttpSession::SetMaxConnectionsPerHost(size_t maxConnections)
 {
@@ -644,6 +782,11 @@ BHttpSession::SetMaxConnectionsPerHost(size_t maxConnections)
 }
 
 
+/**
+ * @brief Set the maximum number of remote hosts with simultaneous connections.
+ *
+ * @param maxConnections  New host count limit.
+ */
 void
 BHttpSession::SetMaxHosts(size_t maxConnections)
 {
@@ -652,6 +795,17 @@ BHttpSession::SetMaxHosts(size_t maxConnections)
 
 
 // #pragma mark -- BHttpSession::Request (helpers)
+
+/**
+ * @brief Construct a new Request wrapping a BHttpRequest, body target, and observer.
+ *
+ * Assigns a unique identifier, creates the shared HttpResultPrivate, and
+ * notifies the parser if the method is HEAD (no content expected).
+ *
+ * @param request   The BHttpRequest to execute (moved).
+ * @param target    BBorrow<BDataIO> for the response body.
+ * @param observer  BMessenger for event notifications.
+ */
 BHttpSession::Request::Request(BHttpRequest&& request, BBorrow<BDataIO> target, BMessenger observer)
 	:
 	fRequest(std::move(request)),
@@ -675,6 +829,15 @@ BHttpSession::Request::Request(BHttpRequest&& request, BBorrow<BDataIO> target, 
 }
 
 
+/**
+ * @brief Construct a redirect Request by copying state from \a original with a new URL.
+ *
+ * Applies the redirect URL, optionally converts the method to GET, and
+ * decrements the remaining redirect counter.
+ *
+ * @param original  The Request being redirected.
+ * @param redirect  Struct containing the new URL and whether to convert to GET.
+ */
 BHttpSession::Request::Request(Request& original, const BHttpSession::Redirect& redirect)
 	:
 	fRequest(std::move(original.fRequest)),
@@ -698,9 +861,11 @@ BHttpSession::Request::Request(Request& original, const BHttpSession::Redirect& 
 }
 
 
-/*!
-	\brief Helper that sets the error in the result to \a e and notifies the listeners.
-*/
+/**
+ * @brief Store the error in the result and send error notifications to the observer.
+ *
+ * @param e  Exception pointer to store and report.
+ */
 void
 BHttpSession::Request::SetError(std::exception_ptr e)
 {
@@ -722,6 +887,11 @@ BHttpSession::Request::SetError(std::exception_ptr e)
 }
 
 
+/**
+ * @brief Return the (hostname, port) pair for this request's target host.
+ *
+ * @return std::pair<BString, int> of hostname and port number.
+ */
 std::pair<BString, int>
 BHttpSession::Request::GetHost() const
 {
@@ -729,6 +899,13 @@ BHttpSession::Request::GetHost() const
 }
 
 
+/**
+ * @brief Associate a connection counter with this request.
+ *
+ * The counter is decremented via CounterDeleter when the request is destroyed.
+ *
+ * @param counter  Pointer to the per-host connection count to decrement on destruction.
+ */
 void
 BHttpSession::Request::SetCounter(int32* counter) noexcept
 {
@@ -736,9 +913,12 @@ BHttpSession::Request::SetCounter(int32* counter) noexcept
 }
 
 
-/*!
-	\brief Resolve the hostname for a request
-*/
+/**
+ * @brief Resolve the target hostname to a BNetworkAddress.
+ *
+ * Determines the port from the URL or defaults to 80 (http) or 443 (https),
+ * then performs a synchronous DNS lookup.
+ */
 void
 BHttpSession::Request::ResolveHostName()
 {
@@ -761,9 +941,12 @@ BHttpSession::Request::ResolveHostName()
 }
 
 
-/*!
-	\brief Open the connection and make the socket non-blocking after opening it
-*/
+/**
+ * @brief Open the TCP/TLS connection and switch the socket to non-blocking mode.
+ *
+ * Creates either a BSecureSocket (https) or BSocket (http), applies the
+ * configured timeout, connects, and sets O_NONBLOCK via fcntl.
+ */
 void
 BHttpSession::Request::OpenConnection()
 {
@@ -798,11 +981,13 @@ BHttpSession::Request::OpenConnection()
 }
 
 
-/*!
-	\brief Transfer data from the request to the socket.
-
-	\returns \c true if the request is complete, or false if there is more.
-*/
+/**
+ * @brief Send the serialised HTTP request over the socket.
+ *
+ * Lazily initialises the HttpSerializer on the first call and drives the
+ * serialisation loop until either the socket would block or all data is sent.
+ * Sends upload-progress notifications and advances the state to RequestSent.
+ */
 void
 BHttpSession::Request::TransferRequest()
 {
@@ -829,11 +1014,16 @@ BHttpSession::Request::TransferRequest()
 }
 
 
-/*!
-	\brief Transfer data from the socket and parse the result.
-
-	\returns \c true if the request is complete, or false if there is more.
-*/
+/**
+ * @brief Read and parse the next chunk of the HTTP response.
+ *
+ * Reads from the socket into the buffer, then drives the HttpParser through
+ * the status, fields, and body states.  Handles redirects by throwing a
+ * Redirect struct to be caught by the data thread.  Sends download-progress
+ * and completion notifications.
+ *
+ * @return true if the response is fully received and processing is complete.
+ */
 bool
 BHttpSession::Request::ReceiveResult()
 {
@@ -1035,9 +1225,9 @@ BHttpSession::Request::ReceiveResult()
 }
 
 
-/*!
-	\brief Disconnect the socket. Does not validate if it actually succeeded.
-*/
+/**
+ * @brief Disconnect the socket, ignoring any errors.
+ */
 void
 BHttpSession::Request::Disconnect() noexcept
 {
@@ -1045,12 +1235,15 @@ BHttpSession::Request::Disconnect() noexcept
 }
 
 
-/*!
-	\brief Send a message to the observer, if one is present
-
-	\param what The code of the message to be sent
-	\param dataFunc Optional function that adds additional data to the message.
-*/
+/**
+ * @brief Send a BMessage notification to the observer, if one is registered.
+ *
+ * Always adds the request identifier field before calling the optional
+ * \a dataFunc so callers can identify which request the event relates to.
+ *
+ * @param what      Message what code (UrlEvent::* constant).
+ * @param dataFunc  Optional function that populates additional message fields.
+ */
 void
 BHttpSession::Request::SendMessage(uint32 what, std::function<void(BMessage&)> dataFunc) const
 {
@@ -1068,8 +1261,15 @@ BHttpSession::Request::SendMessage(uint32 what, std::function<void(BMessage&)> d
 
 
 namespace BPrivate::Network::UrlEventData {
+/** @brief BMessage field name for the HTTP status code in UrlEvent::HttpStatus messages. */
 const char* HttpStatusCode = "url:httpstatuscode";
+
+/** @brief BMessage field name for the SSL certificate in TLS error events. */
 const char* SSLCertificate = "url:sslcertificate";
+
+/** @brief BMessage field name for the SSL error description string. */
 const char* SSLMessage = "url:sslmessage";
+
+/** @brief BMessage field name for the redirect target URL string. */
 const char* HttpRedirectUrl = "url:httpredirecturl";
 } // namespace BPrivate::Network::UrlEventData

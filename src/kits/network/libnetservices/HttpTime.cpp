@@ -1,10 +1,42 @@
 /*
- * Copyright 2010-2016 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Adrien Destugues, pulkomandy@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2016 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Adrien Destugues, pulkomandy@gmail.com
+ */
+
+
+/**
+ * @file HttpTime.cpp
+ * @brief Implementation of BHttpTime for HTTP date/time string parsing and formatting.
+ *
+ * Parses HTTP date strings in the three formats defined by RFC 2616 section 3.3
+ * (RFC 1123, RFC 1036, and asctime) plus common real-world variants. The POSIX
+ * locale is used for strptime/strftime to ensure English month and day names
+ * regardless of the user's system locale.
+ *
+ * @see BNetworkCookie, BHttpResult
  */
 
 #include <HttpTime.h>
@@ -54,6 +86,9 @@ static const char* kDateFormats[] = {
 static locale_t posix = newlocale(LC_ALL_MASK, "POSIX", (locale_t)0);
 
 
+/**
+ * @brief Default constructor — creates a BHttpTime with a zero date.
+ */
 BHttpTime::BHttpTime()
 	:
 	fDate(0),
@@ -62,6 +97,11 @@ BHttpTime::BHttpTime()
 }
 
 
+/**
+ * @brief Construct a BHttpTime from an existing BDateTime value.
+ *
+ * @param date  The date/time to store for subsequent formatting.
+ */
 BHttpTime::BHttpTime(BDateTime date)
 	:
 	fDate(date),
@@ -70,6 +110,13 @@ BHttpTime::BHttpTime(BDateTime date)
 }
 
 
+/**
+ * @brief Construct a BHttpTime from a date string to be parsed later.
+ *
+ * The string is stored verbatim; call Parse() to convert it to a BDateTime.
+ *
+ * @param dateString  An HTTP date string in one of the RFC 2616 formats.
+ */
 BHttpTime::BHttpTime(const BString& dateString)
 	:
 	fDateString(dateString),
@@ -82,6 +129,11 @@ BHttpTime::BHttpTime(const BString& dateString)
 // #pragma mark Date modification
 
 
+/**
+ * @brief Replace the stored date string with a new one.
+ *
+ * @param string  The new HTTP date string to store for subsequent parsing.
+ */
 void
 BHttpTime::SetString(const BString& string)
 {
@@ -89,6 +141,11 @@ BHttpTime::SetString(const BString& string)
 }
 
 
+/**
+ * @brief Replace the stored BDateTime value.
+ *
+ * @param date  The new date/time to store for subsequent formatting.
+ */
 void
 BHttpTime::SetDate(BDateTime date)
 {
@@ -99,6 +156,17 @@ BHttpTime::SetDate(BDateTime date)
 // #pragma mark Date conversion
 
 
+/**
+ * @brief Parse the stored date string into a BDateTime value.
+ *
+ * Iterates through all entries in kDateFormats using strptime() under the
+ * POSIX locale, stopping at the first format that consumes the entire input
+ * string. Records the matching format index so that ToString() can reproduce
+ * the same format by default.
+ *
+ * @return A BDateTime representing the parsed date, or a zero BDateTime if
+ *         the string is too short or does not match any known format.
+ */
 BDateTime
 BHttpTime::Parse()
 {
@@ -144,6 +212,19 @@ BHttpTime::Parse()
 }
 
 
+/**
+ * @brief Format the stored BDateTime as an HTTP date string.
+ *
+ * Uses \a format to select from kDateFormats; if \a format is
+ * B_HTTP_TIME_FORMAT_PARSED, the format that was detected by the last
+ * Parse() call is reused. The output string is capped at 128 characters.
+ *
+ * @param format  Index into kDateFormats, B_HTTP_TIME_FORMAT_PREFERRED for the
+ *                canonical RFC 1123 format, or B_HTTP_TIME_FORMAT_PARSED to
+ *                reuse the format last detected by Parse().
+ * @return A BString containing the formatted date, or an empty string if
+ *         the format cannot be resolved or strftime() fails.
+ */
 BString
 BHttpTime::ToString(int8 format)
 {

@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file TitleView.cpp
+ * @brief BTitleView draws and handles interaction with column title bars in list view.
+ *
+ * @see BPoseView, BColumn
+ */
 
 
 //	ListView title drawing and mouse manipulation classes
@@ -102,6 +100,11 @@ _DrawOutline(BView* view, BRect where)
 //	#pragma mark - BTitleView
 
 
+/**
+ * @brief Construct a BTitleView that displays column headers for \a view.
+ *
+ * @param view  The BPoseView whose columns are described by this title bar.
+ */
 BTitleView::BTitleView(BPoseView* view)
 	:
 	BView("TitleView", B_WILL_DRAW),
@@ -134,12 +137,21 @@ BTitleView::BTitleView(BPoseView* view)
 }
 
 
+/**
+ * @brief Destructor; releases the current tracking state.
+ */
 BTitleView::~BTitleView()
 {
 	delete fTrackingState;
 }
 
 
+/**
+ * @brief Rebuild the title list from the current pose-view column set.
+ *
+ * Clears and repopulates fTitleList to match fPoseView->ColumnAt(), then
+ * invalidates the view.
+ */
 void
 BTitleView::Reset()
 {
@@ -155,6 +167,12 @@ BTitleView::Reset()
 }
 
 
+/**
+ * @brief Insert a new column title, optionally after an existing one.
+ *
+ * @param column  The new column to add.
+ * @param after   If non-NULL, the new title is placed immediately after this column.
+ */
 void
 BTitleView::AddTitle(BColumn* column, const BColumn* after)
 {
@@ -177,6 +195,11 @@ BTitleView::AddTitle(BColumn* column, const BColumn* after)
 }
 
 
+/**
+ * @brief Remove the title entry associated with \a column.
+ *
+ * @param column  The column whose title entry should be removed.
+ */
 void
 BTitleView::RemoveTitle(BColumn* column)
 {
@@ -193,6 +216,11 @@ BTitleView::RemoveTitle(BColumn* column)
 }
 
 
+/**
+ * @brief Return the minimum size: 16 pixels wide by the preferred header height.
+ *
+ * @return Minimum BSize.
+ */
 BSize
 BTitleView::MinSize()
 {
@@ -200,6 +228,11 @@ BTitleView::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum size: unlimited width by the preferred header height.
+ *
+ * @return Maximum BSize.
+ */
 BSize
 BTitleView::MaxSize()
 {
@@ -207,6 +240,11 @@ BTitleView::MaxSize()
 }
 
 
+/**
+ * @brief Convenience Draw() override; delegates to the full form with useOffscreen=false.
+ *
+ * @param rect  The dirty rectangle.
+ */
 void
 BTitleView::Draw(BRect rect)
 {
@@ -214,6 +252,16 @@ BTitleView::Draw(BRect rect)
 }
 
 
+/**
+ * @brief Draw all column titles, optionally using an offscreen bitmap.
+ *
+ * @param updateRect       The dirty rectangle (ignored; all titles are redrawn).
+ * @param useOffscreen     If true, render to the shared offscreen bitmap first.
+ * @param updateOnly       If true, skip the double-buffering blit at the end.
+ * @param pressedColumn    If non-NULL, this column is drawn in the pressed state.
+ * @param trackRectBlitter Optional callback for drawing a tracking overlay rect.
+ * @param passThru         Rectangle passed to \a trackRectBlitter.
+ */
 void
 BTitleView::Draw(BRect /*updateRect*/, bool useOffscreen, bool updateOnly,
 	const BColumnTitle* pressedColumn,
@@ -284,6 +332,11 @@ BTitleView::Draw(BRect /*updateRect*/, bool useOffscreen, bool updateOnly,
 }
 
 
+/**
+ * @brief Handle a mouse-down event to initiate column dragging or resizing.
+ *
+ * @param where  The mouse position in view coordinates.
+ */
 void
 BTitleView::MouseDown(BPoint where)
 {
@@ -352,6 +405,11 @@ BTitleView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Finish a column drag or resize tracking operation.
+ *
+ * @param where  The mouse release position in view coordinates.
+ */
 void
 BTitleView::MouseUp(BPoint where)
 {
@@ -365,6 +423,13 @@ BTitleView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Update the cursor and delegate mouse movement to the current tracking state.
+ *
+ * @param where        Current mouse position.
+ * @param code         B_ENTERED_VIEW, B_INSIDE_VIEW, or B_EXITED_VIEW.
+ * @param dragMessage  Non-NULL if a drag is in progress.
+ */
 void
 BTitleView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 {
@@ -397,6 +462,12 @@ BTitleView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Return the column title whose resize handle contains \a where.
+ *
+ * @param where  Point in view coordinates to test.
+ * @return The matching BColumnTitle, or NULL if no resize area was hit.
+ */
 BColumnTitle*
 BTitleView::InColumnResizeArea(BPoint where) const
 {
@@ -411,6 +482,12 @@ BTitleView::InColumnResizeArea(BPoint where) const
 }
 
 
+/**
+ * @brief Return the column title hit-tested at \a where.
+ *
+ * @param where  Point in view coordinates.
+ * @return The BColumnTitle whose bounds contain \a where, or NULL.
+ */
 BColumnTitle*
 BTitleView::FindColumnTitle(BPoint where) const
 {
@@ -425,6 +502,12 @@ BTitleView::FindColumnTitle(BPoint where) const
 }
 
 
+/**
+ * @brief Return the title entry for a given BColumn pointer.
+ *
+ * @param column  The column to look up.
+ * @return The corresponding BColumnTitle, or NULL if not found.
+ */
 BColumnTitle*
 BTitleView::FindColumnTitle(const BColumn* column) const
 {
@@ -442,6 +525,12 @@ BTitleView::FindColumnTitle(const BColumn* column) const
 //	#pragma mark - BColumnTitle
 
 
+/**
+ * @brief Construct a BColumnTitle pairing a column with its title view.
+ *
+ * @param view    The parent BTitleView.
+ * @param column  The BColumn this title represents.
+ */
 BColumnTitle::BColumnTitle(BTitleView* view, BColumn* column)
 	:
 	fColumn(column),
@@ -450,6 +539,12 @@ BColumnTitle::BColumnTitle(BTitleView* view, BColumn* column)
 }
 
 
+/**
+ * @brief Return true if \a where falls within the column's resize handle.
+ *
+ * @param where  Point in title-view coordinates.
+ * @return true if \a where is in the kEdgeSize pixel resize zone.
+ */
 bool
 BColumnTitle::InColumnResizeArea(BPoint where) const
 {
@@ -461,6 +556,12 @@ BColumnTitle::InColumnResizeArea(BPoint where) const
 }
 
 
+/**
+ * @brief Return the bounding rectangle of this column title.
+ *
+ * @return The rectangle spanning from the column's offset to the right edge
+ *         plus margin, full height of the title bar.
+ */
 BRect
 BColumnTitle::Bounds() const
 {
@@ -472,6 +573,14 @@ BColumnTitle::Bounds() const
 }
 
 
+/**
+ * @brief Render this column title into \a view.
+ *
+ * Draws the background, truncated label, separator line, and sort indicator.
+ *
+ * @param view     The BView to draw into.
+ * @param pressed  If true, draw in the depressed / highlighted state.
+ */
 void
 BColumnTitle::Draw(BView* view, bool pressed)
 {

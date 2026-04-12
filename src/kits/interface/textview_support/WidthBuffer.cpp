@@ -1,12 +1,45 @@
 /*
- * Copyright 2003-2008, Haiku, Inc.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stefano Ceccherini (stefano.ceccherini@gmail.com)
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2008, Haiku, Inc.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stefano Ceccherini (stefano.ceccherini@gmail.com)
  */
 
 //!	Caches string widths in a hash table, to avoid a trip to the app server.
+
+
+/**
+ * @file WidthBuffer.cpp
+ * @brief Per-font character-escapement cache used by BTextView.
+ *
+ * WidthBuffer maintains one open-addressing hash table per font.  Each entry
+ * maps a UTF-8 character code (packed into a uint32) to its escapement value
+ * (advance width expressed as a fraction of the font size).  Lookups avoid
+ * round-trips to the app_server; cache misses are batched and filled via
+ * BFont::GetEscapements().  The table doubles in size when 2/3 full.
+ *
+ * @see BTextView, TextGapBuffer
+ */
 
 
 #include "utf8_functions.h"
@@ -28,12 +61,17 @@ class _BWidthBuffer_;
 namespace BPrivate {
 
 
+/** @brief Number of initial hash-table slots allocated per font. */
 const static uint32 kTableCount = 128;
+
+/** @brief Sentinel code value used to mark empty hash-table slots. */
 const static uint32 kInvalidCode = 0xFFFFFFFF;
+
+/** @brief Global WidthBuffer instance; initialised in InterfaceDefs.cpp. */
 WidthBuffer* gWidthBuffer = NULL;
-	// initialized in InterfaceDefs.cpp
 
 
+/** @brief A single slot in the per-font hash table. */
 struct hashed_escapement {
 	uint32 code;
 	float escapement;
@@ -46,12 +84,16 @@ struct hashed_escapement {
 };
 
 
-/*! \brief Convert a UTF8 char to a code, which will be used
-		to uniquely identify the character in the hash table.
-	\param text A pointer to the character to examine.
-	\param charLen the length of the character to examine.
-	\return The code for the given character,
-*/
+/**
+ * @brief Converts a UTF-8 character to a unique 32-bit code for hashing.
+ *
+ * Packs up to 4 bytes of the character into a uint32, most-significant byte
+ * first, so that different characters always produce different codes.
+ *
+ * @param text    Pointer to the first byte of the character.
+ * @param charLen Byte length of the UTF-8 character.
+ * @return A uint32 that uniquely identifies the character.
+ */
 static inline uint32
 CharToCode(const char* text, const int32 charLen)
 {
@@ -65,8 +107,10 @@ CharToCode(const char* text, const int32 charLen)
 }
 
 
-/*! \brief Initializes the object.
-*/
+/**
+ * @brief Constructs the global WidthBuffer with an initial capacity of one
+ *        font table.
+ */
 WidthBuffer::WidthBuffer()
 	:
 	_BTextViewSupportBuffer_<_width_table_>(1, 0),
@@ -75,8 +119,9 @@ WidthBuffer::WidthBuffer()
 }
 
 
-/*! \brief Frees the allocated resources.
-*/
+/**
+ * @brief Destroys the WidthBuffer, freeing all per-font hash tables.
+ */
 WidthBuffer::~WidthBuffer()
 {
 	for (int32 x = 0; x < fItemCount; x++)
@@ -84,13 +129,19 @@ WidthBuffer::~WidthBuffer()
 }
 
 
-/*! \brief Returns how much room is required to draw a string in the font.
-	\param inText The string to be examined.
-	\param fromOffset The offset in the string where to begin the examination.
-	\param lenght The amount of bytes to be examined.
-	\param inStyle The font.
-	\return The space (in pixels) required to draw the given string.
-*/
+/**
+ * @brief Returns the pixel width of a substring within a raw character array.
+ *
+ * Looks up each UTF-8 character in the hash table for @p inStyle; any
+ * characters not yet cached are queued and passed to HashEscapements() in a
+ * single batch.
+ *
+ * @param inText      Pointer to the source string.
+ * @param fromOffset  Byte offset within @p inText at which to start.
+ * @param length      Number of bytes to measure.
+ * @param inStyle     Font to use for width calculation.
+ * @return Pixel width of the substring, or 0 on error.
+ */
 float
 WidthBuffer::StringWidth(const char* inText, int32 fromOffset, int32 length,
 	const BFont* inStyle)
@@ -156,14 +207,18 @@ WidthBuffer::StringWidth(const char* inText, int32 fromOffset, int32 length,
 }
 
 
-/*! \brief Returns how much room is required to draw a string in the font.
-	\param inBuffer The TextGapBuffer to be examined.
-	\param fromOffset The offset in the TextGapBuffer where to begin the
-	examination.
-	\param lenght The amount of bytes to be examined.
-	\param inStyle The font.
-	\return The space (in pixels) required to draw the given string.
-*/
+/**
+ * @brief Returns the pixel width of a substring within a TextGapBuffer.
+ *
+ * Assembles the substring from the gap buffer and delegates to the
+ * char-pointer overload.
+ *
+ * @param inBuffer    TextGapBuffer containing the source text.
+ * @param fromOffset  Byte offset within the buffer at which to start.
+ * @param length      Number of bytes to measure.
+ * @param inStyle     Font to use for width calculation.
+ * @return Pixel width of the substring.
+ */
 float
 WidthBuffer::StringWidth(TextGapBuffer &inBuffer, int32 fromOffset,
 	int32 length, const BFont* inStyle)
@@ -173,13 +228,14 @@ WidthBuffer::StringWidth(TextGapBuffer &inBuffer, int32 fromOffset,
 }
 
 
-/*! \brief Searches for the table for the given font.
-	\param inStyle The font to search for.
-	\param outIndex a pointer to an int32, where the function will store
-	the index of the table, if found, or -1, if not.
-	\return \c true if the function founds the table,
-		\c false if not.
-*/
+/**
+ * @brief Searches for an existing per-font hash table.
+ *
+ * @param inStyle  Font to look up.
+ * @param outIndex Output: index of the table if found, or -1 if not found;
+ *                 may be NULL.
+ * @return true if a table for @p inStyle was found, false otherwise.
+ */
 bool
 WidthBuffer::FindTable(const BFont* inStyle, int32* outIndex)
 {
@@ -201,10 +257,12 @@ WidthBuffer::FindTable(const BFont* inStyle, int32* outIndex)
 }
 
 
-/*!	\brief Creates and insert an empty table for the given font.
-	\param font The font to create the table for.
-	\return The index of the newly created table.
-*/
+/**
+ * @brief Creates and inserts an empty hash table for the given font.
+ *
+ * @param font Font for which to create the table.
+ * @return Index of the newly created table.
+ */
 int32
 WidthBuffer::InsertTable(const BFont* font)
 {
@@ -222,14 +280,16 @@ WidthBuffer::InsertTable(const BFont* font)
 }
 
 
-/*! \brief Gets the escapement for the given character.
-	\param value An integer which uniquely identifies a character.
-	\param index The index of the table to search.
-	\param escapement A pointer to a float, where the function will
-	store the escapement.
-	\return \c true if the function could find the escapement
-		for the given character, \c false if not.
-*/
+/**
+ * @brief Looks up the cached escapement for a character code.
+ *
+ * Uses open-addressing with linear probing.
+ *
+ * @param value      Character code returned by CharToCode().
+ * @param index      Index of the per-font table to search.
+ * @param escapement Output: escapement value if found; may be NULL.
+ * @return true if the code was found in the table, false otherwise.
+ */
 bool
 WidthBuffer::GetEscapement(uint32 value, int32 index, float* escapement)
 {
@@ -257,6 +317,15 @@ WidthBuffer::GetEscapement(uint32 value, int32 index, float* escapement)
 }
 
 
+/**
+ * @brief Computes a hash value for a character code.
+ *
+ * Uses a hand-crafted mix to spread the 32-bit code across the table index
+ * range.
+ *
+ * @param val Character code to hash.
+ * @return Hash value; caller masks it to the table size.
+ */
 uint32
 WidthBuffer::Hash(uint32 val)
 {
@@ -270,17 +339,22 @@ WidthBuffer::Hash(uint32 val)
 }
 
 
-/*! \brief Gets the escapements for the given string, and put them into
-	the hash table.
-	\param inText The string to be examined.
-	\param numChars The amount of characters contained in the string.
-	\param textLen the amount of bytes contained in the string.
-	\param tableIndex the index of the table where the escapements
-		should be put.
-	\param inStyle the font.
-	\return The width of the supplied string (which should be multiplied by
-		the size of the font).
-*/
+/**
+ * @brief Fetches escapements for a batch of uncached characters and inserts
+ *        them into the hash table.
+ *
+ * Calls BFont::GetEscapements() once for the entire batch, then inserts each
+ * result into the hash table using open-addressing.  The table is doubled if
+ * its load factor exceeds 2/3.
+ *
+ * @param inText      Null-terminated UTF-8 string containing the characters
+ *                    to cache.
+ * @param numChars    Number of characters in @p inText.
+ * @param textLen     Byte length of @p inText (excluding the null terminator).
+ * @param tableIndex  Index of the per-font table to update.
+ * @param inStyle     Font used to fetch escapements.
+ * @return Sum of the escapement values for all characters in @p inText.
+ */
 float
 WidthBuffer::HashEscapements(const char* inText, int32 numChars, int32 textLen,
 	int32 tableIndex, const BFont* inStyle)
@@ -393,4 +467,3 @@ StringWidth__14_BWidthBuffer_PCcllPC5BFont(_BWidthBuffer_* widthBuffer,
 }
 
 #endif // __GNUC__ < 3
-

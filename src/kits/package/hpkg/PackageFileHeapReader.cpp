@@ -1,6 +1,39 @@
 /*
- * Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2014, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageFileHeapReader.cpp
+ * @brief Read-only access to the compressed heap section of an HPKG file.
+ *
+ * PackageFileHeapReader extends PackageFileHeapAccessorBase with the ability
+ * to parse the chunk-size table stored at the end of the compressed heap and
+ * build the OffsetArray index used for random-access decompression.  It also
+ * supports cloning itself so that multiple independent read cursors can share
+ * the same heap without re-reading the chunk table.
+ *
+ * @see PackageFileHeapAccessorBase, PackageFileHeapWriter
  */
 
 
@@ -23,6 +56,18 @@ namespace BHPKG {
 namespace BPrivate {
 
 
+/**
+ * @brief Construct a heap reader for an already-located heap region.
+ *
+ * @param errorOutput            Channel for diagnostic messages.
+ * @param file                   Positioned I/O object for the package file.
+ * @param heapOffset             Byte offset of the heap within \a file.
+ * @param compressedHeapSize     Size of the compressed heap data in bytes
+ *                               (including the chunk-size table).
+ * @param uncompressedHeapSize   Total uncompressed size of all heap data.
+ * @param decompressionAlgorithm Decompression algorithm to use, or NULL for
+ *                               an uncompressed heap.
+ */
 PackageFileHeapReader::PackageFileHeapReader(BErrorOutput* errorOutput,
 	BPositionIO* file, off_t heapOffset, off_t compressedHeapSize,
 	uint64 uncompressedHeapSize,
@@ -37,11 +82,25 @@ PackageFileHeapReader::PackageFileHeapReader(BErrorOutput* errorOutput,
 }
 
 
+/**
+ * @brief Destroy the heap reader.
+ */
 PackageFileHeapReader::~PackageFileHeapReader()
 {
 }
 
 
+/**
+ * @brief Parse the chunk-size table and build the offset index.
+ *
+ * Validates the compressed and uncompressed heap sizes, reads the per-chunk
+ * size array from the tail of the compressed heap, and populates the
+ * OffsetArray used for random-access chunk lookup.  For uncompressed heaps
+ * the chunk-size table is absent and offsets are computed arithmetically.
+ *
+ * @return B_OK on success, B_BAD_DATA if the heap metadata is inconsistent,
+ *         B_NO_MEMORY if buffer allocation fails, or any I/O error.
+ */
 status_t
 PackageFileHeapReader::Init()
 {
@@ -78,7 +137,7 @@ PackageFileHeapReader::Init()
 		return B_OK;
 	}
 
-	size_t chunkSizeTableSize = (chunkCount - 1) * 2; 
+	size_t chunkSizeTableSize = (chunkCount - 1) * 2;
 	if (fCompressedHeapSize <= chunkSizeTableSize) {
 		fErrorOutput->PrintError(
 			"Invalid total compressed heap size (%" B_PRIu64 ", "
@@ -132,6 +191,15 @@ PackageFileHeapReader::Init()
 }
 
 
+/**
+ * @brief Create an independent copy of this heap reader sharing the same file.
+ *
+ * Clones the OffsetArray so that the copy can perform independent reads
+ * against the same underlying package file without re-reading the chunk table.
+ *
+ * @return A pointer to the cloned PackageFileHeapReader on success, or NULL
+ *         if memory allocation fails.
+ */
 PackageFileHeapReader*
 PackageFileHeapReader::Clone() const
 {
@@ -151,6 +219,20 @@ PackageFileHeapReader::Clone() const
 }
 
 
+/**
+ * @brief Decompress a single heap chunk into the caller-supplied buffers.
+ *
+ * Looks up the compressed offset and sizes for \a chunkIndex using the
+ * OffsetArray and delegates to ReadAndDecompressChunkData().
+ *
+ * @param chunkIndex            Zero-based index of the chunk to read.
+ * @param compressedDataBuffer  Scratch buffer for the compressed bytes;
+ *                              must be at least kChunkSize bytes.
+ * @param uncompressedDataBuffer Destination buffer for the decompressed data;
+ *                              must be at least kChunkSize bytes.
+ * @param scratchBuffer         Optional algorithm-specific scratch buffer.
+ * @return B_OK on success, or any error from ReadAndDecompressChunkData().
+ */
 status_t
 PackageFileHeapReader::ReadAndDecompressChunk(size_t chunkIndex,
 	void* compressedDataBuffer, void* uncompressedDataBuffer,

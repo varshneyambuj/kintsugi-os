@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file GeneralInfoView.cpp
+ * @brief General-information tab view displayed inside BInfoWindow.
+ *
+ * GeneralInfoView renders file metadata such as kind, size, location, creation
+ * and modification dates, preferred application, and symlink target.  For
+ * files it also provides a popup to change the preferred handler.  The view
+ * responds to node-monitor notifications to keep displayed data current.
+ *
+ * @see BInfoWindow, HeaderView
+ */
 
 
 #include "GeneralInfoView.h"
@@ -96,6 +100,14 @@ const uint32 kOpenLinkSource = 'opls';
 const uint32 kOpenLinkTarget = 'oplt';
 
 
+/**
+ * @brief Open the parent directory of @p ref in a Tracker window and select it.
+ *
+ * Posts a B_REFS_RECEIVED message with the parent's ref and a nodeRefToSelect
+ * datum so Tracker will highlight the original entry when the window opens.
+ *
+ * @param ref  Entry reference of the item whose parent should be opened.
+ */
 static void
 OpenParentAndSelectOriginal(const entry_ref* ref)
 {
@@ -116,6 +128,21 @@ OpenParentAndSelectOriginal(const entry_ref* ref)
 }
 
 
+/**
+ * @brief Create and show a floating tooltip-style window containing a clickable string.
+ *
+ * Sizes the window to fit the text, constrains it to the screen edges, wraps
+ * the text in a TrackingView that fires @p message to @p target when clicked,
+ * and immediately shows the window.
+ *
+ * @param screen   The screen used for clamping the window position.
+ * @param rect     Preferred position and initial size hint.
+ * @param name     Internal window name.
+ * @param string   The text to display.
+ * @param target   Messenger that receives @p message on a click.
+ * @param message  The message to send when the user clicks the tooltip.
+ * @return Pointer to the newly created and shown BWindow.
+ */
 static BWindow*
 OpenToolTipWindow(BScreen& screen, BRect rect, const char* name,
 	const char* string, BMessenger target, BMessage* message)
@@ -150,6 +177,15 @@ OpenToolTipWindow(BScreen& screen, BRect rect, const char* name,
 }
 
 
+/**
+ * @brief Construct a GeneralInfoView for the supplied model.
+ *
+ * Calculates the label divider width, sets up view flags and font, and — for
+ * regular (non-executable) files — adds a "Opens with" BMenuField populated
+ * with the installed applications that support the file's MIME type.
+ *
+ * @param model  The Model describing the file system entry to display.
+ */
 GeneralInfoView::GeneralInfoView(Model* model)
 	:
 	BGroupView(B_VERTICAL),
@@ -286,6 +322,9 @@ GeneralInfoView::GeneralInfoView(Model* model)
 }
 
 
+/**
+ * @brief Destroy the GeneralInfoView, closing any open tooltip windows.
+ */
 GeneralInfoView::~GeneralInfoView()
 {
 	if (fPathWindow->Lock())
@@ -299,6 +338,15 @@ GeneralInfoView::~GeneralInfoView()
 }
 
 
+/**
+ * @brief Populate display strings (path, dates, kind, link target) from the model.
+ *
+ * Called on construction and whenever the model changes.  For symlinks the
+ * link target path is read and a "(broken)" suffix added if the target is
+ * missing.  For executables the version-info description string is fetched.
+ *
+ * @param model  The Model to read attribute data from; must have an open node.
+ */
 void
 GeneralInfoView::InitStrings(const Model* model)
 {
@@ -381,6 +429,12 @@ GeneralInfoView::InitStrings(const Model* model)
 }
 
 
+/**
+ * @brief Perform final setup once the view is attached to a window.
+ *
+ * Sets the bitmap-spacing font and triggers an initial size check.
+ * Targets the preferred-app menu items at this view.
+ */
 void
 GeneralInfoView::AttachedToWindow()
 {
@@ -397,6 +451,12 @@ GeneralInfoView::AttachedToWindow()
 }
 
 
+/**
+ * @brief Periodically refresh displayed size information.
+ *
+ * Called by the window's pulse at 1 Hz.  Delegates to CheckAndSetSize()
+ * to update volume free-bytes or file size if they have changed.
+ */
 void
 GeneralInfoView::Pulse()
 {
@@ -405,6 +465,16 @@ GeneralInfoView::Pulse()
 }
 
 
+/**
+ * @brief React to a node-monitor message that affects the displayed model.
+ *
+ * Handles B_ENTRY_MOVED (update path and window title), B_STAT_CHANGED
+ * (refresh timestamps and size), and B_ATTR_CHANGED (refresh icon and MIME
+ * kind).  Always refreshes symlink strings if the model is a symlink.
+ *
+ * @param model    The updated Model pointer.
+ * @param message  The node-monitor BMessage describing the change.
+ */
 void
 GeneralInfoView::ModelChanged(Model* model, BMessage* message)
 {
@@ -507,6 +577,11 @@ GeneralInfoView::ModelChanged(Model* model, BMessage* message)
 // the old model and create a new one; BSymLink::SetTarget(),
 // would be nice)
 
+/**
+ * @brief Switch to a new model after the symlink target has been retargeted.
+ *
+ * @param model  The replacement Model; ownership is not transferred.
+ */
 void
 GeneralInfoView::ReLinkTargetModel(Model* model)
 {
@@ -516,6 +591,14 @@ GeneralInfoView::ReLinkTargetModel(Model* model)
 }
 
 
+/**
+ * @brief Begin mouse-down tracking over clickable info fields.
+ *
+ * Starts an inversion animation on the link, path, or size rects when
+ * the mouse is pressed inside one of those regions.
+ *
+ * @param where  The point in view coordinates where the button was pressed.
+ */
 void
 GeneralInfoView::MouseDown(BPoint where)
 {
@@ -540,6 +623,17 @@ GeneralInfoView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Update hover highlights and open tooltip windows for long text fields.
+ *
+ * While a button is held, tracks whether the pointer remains inside the
+ * originally-clicked rect and toggles inversion accordingly.  When no button
+ * is held, detects hover over the path, link, or description fields and opens
+ * a floating tooltip window if the text exceeds the available width.
+ *
+ * @param where        Current pointer position in view coordinates.
+ * @param dragMessage  Unused drag message (may be NULL).
+ */
 void
 GeneralInfoView::MouseMoved(BPoint where, uint32, const BMessage* dragMessage)
 {
@@ -642,6 +736,9 @@ GeneralInfoView::MouseMoved(BPoint where, uint32, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Open the directory that contains the current symlink entry.
+ */
 void
 GeneralInfoView::OpenLinkSource()
 {
@@ -649,6 +746,13 @@ GeneralInfoView::OpenLinkSource()
 }
 
 
+/**
+ * @brief Navigate to the symlink's target or open a panel to relink if broken.
+ *
+ * Resolves the symlink to its final target.  If the target exists, opens its
+ * parent directory.  If it is missing, opens a BFilePanel so the user can
+ * choose a new target.
+ */
 void
 GeneralInfoView::OpenLinkTarget()
 {
@@ -678,6 +782,14 @@ GeneralInfoView::OpenLinkTarget()
 }
 
 
+/**
+ * @brief Complete a click action on a hotspot when the mouse button is released.
+ *
+ * Dispatches to OpenLinkTarget(), OpenLinkSource(), or posts
+ * kRecalculateSize depending on which hotspot was being tracked.
+ *
+ * @param where  The point in view coordinates where the button was released.
+ */
 void
 GeneralInfoView::MouseUp(BPoint where)
 {
@@ -699,6 +811,13 @@ GeneralInfoView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Poll for size/free-bytes changes and update the displayed string.
+ *
+ * For volumes and the root pseudo-volume, recomputes capacity and free bytes;
+ * for regular files, re-stats the node.  Does nothing if the value has not
+ * changed since the last call.
+ */
 void
 GeneralInfoView::CheckAndSetSize()
 {
@@ -769,6 +888,15 @@ GeneralInfoView::CheckAndSetSize()
 }
 
 
+/**
+ * @brief Dispatch info-window-specific messages.
+ *
+ * Handles kSetPreferredApp (write preferred-app signature to node info),
+ * kOpenLinkSource, and kOpenLinkTarget.  All other messages are forwarded
+ * to the base class.
+ *
+ * @param message  The incoming BMessage.
+ */
 void
 GeneralInfoView::MessageReceived(BMessage* message)
 {
@@ -802,6 +930,9 @@ GeneralInfoView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Re-truncate display strings when the view is resized.
+ */
 void
 GeneralInfoView::FrameResized(float, float)
 {
@@ -812,6 +943,14 @@ GeneralInfoView::FrameResized(float, float)
 }
 
 
+/**
+ * @brief Render all attribute labels and values for the current model.
+ *
+ * Clears the background, then draws label/value pairs for capacity or size,
+ * creation date, modification date, kind, location, and (depending on model
+ * type) preferred handler, link target, or version description.  Clickable
+ * fields (path, link, size for directories) are stored as hot-spot rects.
+ */
 void
 GeneralInfoView::Draw(BRect)
 {

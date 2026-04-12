@@ -1,9 +1,42 @@
 /*
- * Copyright 2020-2024 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2020-2024 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *   Authors:
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file Shortcuts.cpp
+ * @brief TShortcuts provides localised BMenuItem and command-constant factories.
+ *
+ * TShortcuts centralises all Tracker menu-item construction so that labels,
+ * keyboard shortcuts, and command constants are defined in one place.  Each
+ * action is exposed as three methods: an Item() factory that allocates a
+ * BMenuItem, a Label() accessor that returns the translated string, and a
+ * Command() accessor that returns the appropriate command constant (some of
+ * which change when a modifier key is held).
+ *
+ * @see BContainerWindow, Commands.h
  */
 
 
@@ -34,6 +67,12 @@
 #define B_TRANSLATION_CONTEXT "ContainerWindow"
 
 
+/**
+ * @brief Construct a TShortcuts without a container window.
+ *
+ * Use this constructor when only adding menu items without requiring
+ * dynamic label or command updates based on window state.
+ */
 TShortcuts::TShortcuts()
 	:
 	fContainerWindow(NULL),
@@ -43,6 +82,14 @@ TShortcuts::TShortcuts()
 }
 
 
+/**
+ * @brief Construct a TShortcuts bound to a specific container window.
+ *
+ * Update methods that depend on window state (e.g. detecting view mode) are
+ * fully functional with this constructor.
+ *
+ * @param window  The BContainerWindow this shortcut set operates on.
+ */
 TShortcuts::TShortcuts(BContainerWindow* window)
 	:
 	fContainerWindow(window),
@@ -1389,6 +1436,14 @@ TShortcuts::UpdateUnmountItem(BMenuItem* item)
 //	#pragma mark - Shortcuts convenience methods
 
 
+/**
+ * @brief Find the first menu item that matches either of two command constants.
+ *
+ * @param menu      The menu to search.
+ * @param command1  Primary command constant to look for.
+ * @param command2  Fallback command constant to look for.
+ * @return The matching BMenuItem, or NULL if neither is found.
+ */
 BMenuItem*
 TShortcuts::FindItem(BMenu* menu, int32 command1, int32 command2)
 {
@@ -1402,6 +1457,14 @@ TShortcuts::FindItem(BMenu* menu, int32 command1, int32 command2)
 }
 
 
+/**
+ * @brief Return true if the current keyboard focus is a BTextView.
+ *
+ * Used to redirect cut/copy/paste and similar shortcuts to text fields
+ * instead of the pose view.
+ *
+ * @return true if the focused view is a BTextView.
+ */
 bool
 TShortcuts::IsCurrentFocusOnTextView() const
 {
@@ -1414,6 +1477,11 @@ TShortcuts::IsCurrentFocusOnTextView() const
 }
 
 
+/**
+ * @brief Return true if the associated window is displaying the Desktop.
+ *
+ * @return true if the pose view is the Desktop view.
+ */
 bool
 TShortcuts::IsDesktop() const
 {
@@ -1421,6 +1489,11 @@ TShortcuts::IsDesktop() const
 }
 
 
+/**
+ * @brief Return true if the target model is a saved query.
+ *
+ * @return true if the pose view's model is a query.
+ */
 bool
 TShortcuts::IsQuery() const
 {
@@ -1428,6 +1501,11 @@ TShortcuts::IsQuery() const
 }
 
 
+/**
+ * @brief Return true if the target model is a query template.
+ *
+ * @return true if the pose view's model is a query template.
+ */
 bool
 TShortcuts::IsQueryTemplate() const
 {
@@ -1435,6 +1513,11 @@ TShortcuts::IsQueryTemplate() const
 }
 
 
+/**
+ * @brief Return true if the target model is the filesystem root.
+ *
+ * @return true if the pose view's model is the root.
+ */
 bool
 TShortcuts::IsRoot() const
 {
@@ -1442,6 +1525,11 @@ TShortcuts::IsRoot() const
 }
 
 
+/**
+ * @brief Return true if the target model resides inside a Trash directory.
+ *
+ * @return true if the model is inside Trash.
+ */
 bool
 TShortcuts::InTrash() const
 {
@@ -1449,6 +1537,11 @@ TShortcuts::InTrash() const
 }
 
 
+/**
+ * @brief Return true if the target model is the Trash directory itself.
+ *
+ * @return true if the model is Trash.
+ */
 bool
 TShortcuts::IsTrash() const
 {
@@ -1456,6 +1549,11 @@ TShortcuts::IsTrash() const
 }
 
 
+/**
+ * @brief Return true if the target model is a virtual (merged) directory.
+ *
+ * @return true if the model is a virtual directory.
+ */
 bool
 TShortcuts::IsVirtualDirectory() const
 {
@@ -1463,6 +1561,11 @@ TShortcuts::IsVirtualDirectory() const
 }
 
 
+/**
+ * @brief Return true if the target model is a mounted volume.
+ *
+ * @return true if the model is a volume.
+ */
 bool
 TShortcuts::IsVolume() const
 {
@@ -1470,6 +1573,11 @@ TShortcuts::IsVolume() const
 }
 
 
+/**
+ * @brief Return true if the pose view has at least one selected pose.
+ *
+ * @return true if one or more poses are selected.
+ */
 bool
 TShortcuts::HasSelection() const
 {
@@ -1477,6 +1585,11 @@ TShortcuts::HasSelection() const
 }
 
 
+/**
+ * @brief Return true if the selected items reside on a read-only volume.
+ *
+ * @return true if the selection's volume is read-only.
+ */
 bool
 TShortcuts::SelectionIsReadOnly() const
 {
@@ -1484,6 +1597,11 @@ TShortcuts::SelectionIsReadOnly() const
 }
 
 
+/**
+ * @brief Return true if the directory being displayed resides on a read-only volume.
+ *
+ * @return true if the target volume is read-only.
+ */
 bool
 TShortcuts::TargetIsReadOnly() const
 {

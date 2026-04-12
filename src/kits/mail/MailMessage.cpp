@@ -1,12 +1,43 @@
 /*
- * Copyright 2007-2015, Haiku Inc. All Rights Reserved.
- * Copyright 2001-2004 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2015, Haiku Inc. All Rights Reserved.
+ *   Copyright 2001-2004 Dr. Zoidberg Enterprises. All rights reserved.
+ *
+ *   Distributed under the terms of the MIT License.
  */
 
 
-//! The main general purpose mail message class
+/**
+ * @file MailMessage.cpp
+ * @brief BEmailMessage — the main general-purpose mail message class.
+ *
+ * BEmailMessage is the top-level RFC 822 message object. It owns the parsed
+ * body tree (plain text, attachments, or a multipart container), provides
+ * typed accessors for the standard envelope headers (To, From, Subject, Date,
+ * etc.), and implements RenderToRFC822() / RenderTo() to compose and write
+ * outgoing messages to disk. Callers then use Send() to queue or immediately
+ * dispatch the rendered file via the mail daemon.
+ *
+ * @see BMIMEMultipartMailContainer, BTextMailComponent, BSimpleMailAttachment
+ */
 
 
 #include <MailMessage.h>
@@ -43,10 +74,25 @@ using namespace BPrivate;
 
 
 //-------Change the following!----------------------
+/** @brief MIME boundary string used when composing new multipart messages. */
 #define mime_boundary "----------Zoidberg-BeMail-temp--------"
+
+/** @brief Preamble text written before the first boundary for legacy clients. */
 #define mime_warning "This is a multipart message in MIME format."
 
 
+/**
+ * @brief Constructs a BEmailMessage from an existing stream, optionally taking ownership.
+ *
+ * If \a file is non-NULL, calls SetToRFC822() to parse the message. The default
+ * outbound account is read from BMailSettings.
+ *
+ * @param file  Readable stream containing an RFC 822 message, or NULL for a
+ *              blank outgoing message.
+ * @param own   If true, the object takes ownership of \a file and deletes it
+ *              on destruction.
+ * @param defaultCharSet  Default character-set conversion constant.
+ */
 BEmailMessage::BEmailMessage(BPositionIO* file, bool own, uint32 defaultCharSet)
 	:
 	BMailContainer(defaultCharSet),
@@ -68,6 +114,14 @@ BEmailMessage::BEmailMessage(BPositionIO* file, bool own, uint32 defaultCharSet)
 }
 
 
+/**
+ * @brief Constructs a BEmailMessage by reading and parsing a mail file by ref.
+ *
+ * Opens the file in read-only mode and parses it with SetToRFC822().
+ *
+ * @param ref             entry_ref of the mail file to open.
+ * @param defaultCharSet  Default character-set conversion constant.
+ */
 BEmailMessage::BEmailMessage(const entry_ref* ref, uint32 defaultCharSet)
 	:
 	BMailContainer(defaultCharSet),
@@ -87,6 +141,9 @@ BEmailMessage::BEmailMessage(const entry_ref* ref, uint32 defaultCharSet)
 }
 
 
+/**
+ * @brief Destroys the BEmailMessage and all owned resources.
+ */
 BEmailMessage::~BEmailMessage()
 {
 	free(fBCC);
@@ -96,6 +153,11 @@ BEmailMessage::~BEmailMessage()
 }
 
 
+/**
+ * @brief Returns the initialisation status of this message object.
+ *
+ * @return B_OK if the message was constructed and parsed without error.
+ */
 status_t
 BEmailMessage::InitCheck() const
 {
@@ -103,6 +165,19 @@ BEmailMessage::InitCheck() const
 }
 
 
+/**
+ * @brief Creates a reply message pre-populated with subject, quote, and recipient.
+ *
+ * Depending on \a replyTo, the new message's To: field is set to the original
+ * sender or to all recipients. The body is quoted using \a quoteStyle, and
+ * "Re: " is prepended to the subject if not already present.
+ *
+ * @param replyTo         B_MAIL_REPLY_TO_SENDER or B_MAIL_REPLY_TO_ALL.
+ * @param accountFromMail If true, selects the outbound account that received
+ *                        the original message.
+ * @param quoteStyle      Per-line prefix string for the quoted body (e.g. "> ").
+ * @return Newly allocated BEmailMessage; caller takes ownership.
+ */
 BEmailMessage*
 BEmailMessage::ReplyMessage(mail_reply_to_mode replyTo, bool accountFromMail,
 	const char* quoteStyle)
@@ -174,6 +249,18 @@ BEmailMessage::ReplyMessage(mail_reply_to_mode replyTo, bool accountFromMail,
 }
 
 
+/**
+ * @brief Creates a forward message with a quoted header summary and optional attachments.
+ *
+ * Builds a new message whose body contains a quoted header block (To, From,
+ * Subject, Date) followed by the original body text. Appends "(fwd)" to the
+ * subject if not already present. If \a includeAttachments is true, all
+ * non-text components are cloned and attached.
+ *
+ * @param accountFromMail       If true, uses the account that received the original.
+ * @param includeAttachments    If true, original attachments are forwarded too.
+ * @return Newly allocated BEmailMessage; caller takes ownership.
+ */
 BEmailMessage*
 BEmailMessage::ForwardMessage(bool accountFromMail, bool includeAttachments)
 {
@@ -225,6 +312,11 @@ BEmailMessage::ForwardMessage(bool accountFromMail, bool includeAttachments)
 }
 
 
+/**
+ * @brief Returns the To header field value.
+ *
+ * @return Pointer to the To string, or NULL if not set.
+ */
 const char*
 BEmailMessage::To() const
 {
@@ -232,6 +324,11 @@ BEmailMessage::To() const
 }
 
 
+/**
+ * @brief Returns the From header field value.
+ *
+ * @return Pointer to the From string, or NULL if not set.
+ */
 const char*
 BEmailMessage::From() const
 {
@@ -239,6 +336,11 @@ BEmailMessage::From() const
 }
 
 
+/**
+ * @brief Returns the Reply-To header field value.
+ *
+ * @return Pointer to the Reply-To string, or NULL if not set.
+ */
 const char*
 BEmailMessage::ReplyTo() const
 {
@@ -246,6 +348,11 @@ BEmailMessage::ReplyTo() const
 }
 
 
+/**
+ * @brief Returns the Cc header field value.
+ *
+ * @return Pointer to the Cc string, or NULL if not set.
+ */
 const char*
 BEmailMessage::CC() const
 {
@@ -254,6 +361,11 @@ BEmailMessage::CC() const
 }
 
 
+/**
+ * @brief Returns the Subject header field value.
+ *
+ * @return Pointer to the Subject string, or NULL if not set.
+ */
 const char*
 BEmailMessage::Subject() const
 {
@@ -261,6 +373,13 @@ BEmailMessage::Subject() const
 }
 
 
+/**
+ * @brief Returns the message date as a time_t.
+ *
+ * Parses the Date header using ParseDateWithTimeZone().
+ *
+ * @return Unix timestamp, or -1 if the Date header is absent or unparseable.
+ */
 time_t
 BEmailMessage::Date() const
 {
@@ -272,6 +391,15 @@ BEmailMessage::Date() const
 }
 
 
+/**
+ * @brief Returns the numeric message priority on a 1–5 scale.
+ *
+ * Checks X-Priority, Priority, and X-Msmail-Priority headers in order of
+ * preference. Returns 3 (normal) if no priority header is found or if the
+ * value cannot be parsed.
+ *
+ * @return Priority value from 1 (highest) to 5 (lowest).
+ */
 int
 BEmailMessage::Priority() const
 {
@@ -309,6 +437,13 @@ BEmailMessage::Priority() const
 }
 
 
+/**
+ * @brief Sets the Subject header with optional charset and encoding hints.
+ *
+ * @param subject   New subject string (UTF-8).
+ * @param charset   Character-set constant for encoding, or B_MAIL_NULL_CONVERSION.
+ * @param encoding  Transfer encoding, or null_encoding.
+ */
 void
 BEmailMessage::SetSubject(const char* subject, uint32 charset,
 	mail_encoding encoding)
@@ -317,6 +452,13 @@ BEmailMessage::SetSubject(const char* subject, uint32 charset,
 }
 
 
+/**
+ * @brief Sets the Reply-To header with optional charset and encoding hints.
+ *
+ * @param replyTo   Reply-To address string.
+ * @param charset   Character-set constant, or B_MAIL_NULL_CONVERSION.
+ * @param encoding  Transfer encoding, or null_encoding.
+ */
 void
 BEmailMessage::SetReplyTo(const char* replyTo, uint32 charset,
 	mail_encoding encoding)
@@ -325,6 +467,13 @@ BEmailMessage::SetReplyTo(const char* replyTo, uint32 charset,
 }
 
 
+/**
+ * @brief Sets the From header with optional charset and encoding hints.
+ *
+ * @param from      From address string.
+ * @param charset   Character-set constant, or B_MAIL_NULL_CONVERSION.
+ * @param encoding  Transfer encoding, or null_encoding.
+ */
 void
 BEmailMessage::SetFrom(const char* from, uint32 charset, mail_encoding encoding)
 {
@@ -332,6 +481,13 @@ BEmailMessage::SetFrom(const char* from, uint32 charset, mail_encoding encoding)
 }
 
 
+/**
+ * @brief Sets the To header with optional charset and encoding hints.
+ *
+ * @param to        Recipient address string.
+ * @param charset   Character-set constant, or B_MAIL_NULL_CONVERSION.
+ * @param encoding  Transfer encoding, or null_encoding.
+ */
 void
 BEmailMessage::SetTo(const char* to, uint32 charset, mail_encoding encoding)
 {
@@ -339,6 +495,13 @@ BEmailMessage::SetTo(const char* to, uint32 charset, mail_encoding encoding)
 }
 
 
+/**
+ * @brief Sets the Cc header with optional charset and encoding hints.
+ *
+ * @param cc        Carbon-copy address string.
+ * @param charset   Character-set constant, or B_MAIL_NULL_CONVERSION.
+ * @param encoding  Transfer encoding, or null_encoding.
+ */
 void
 BEmailMessage::SetCC(const char* cc, uint32 charset, mail_encoding encoding)
 {
@@ -347,6 +510,14 @@ BEmailMessage::SetCC(const char* cc, uint32 charset, mail_encoding encoding)
 }
 
 
+/**
+ * @brief Sets the blind carbon-copy list (not written to file headers).
+ *
+ * The BCC list is used only when building the SMTP recipient list and is
+ * never included in the message headers written to disk.
+ *
+ * @param bcc  Comma-separated BCC address string.
+ */
 void
 BEmailMessage::SetBCC(const char* bcc)
 {
@@ -355,6 +526,14 @@ BEmailMessage::SetBCC(const char* bcc)
 }
 
 
+/**
+ * @brief Sets the message priority, writing all three priority header fields.
+ *
+ * Clamps \a to to the range [1, 5] and sets X-Priority, Priority, and
+ * X-Msmail-Priority accordingly.
+ *
+ * @param to  Desired priority level from 1 (high) to 5 (low).
+ */
 void
 BEmailMessage::SetPriority(int to)
 {
@@ -379,6 +558,14 @@ BEmailMessage::SetPriority(int to)
 }
 
 
+/**
+ * @brief Reads the sender name from the B_MAIL_ATTR_NAME BFS attribute.
+ *
+ * @param name       Output buffer to receive the null-terminated name.
+ * @param maxLength  Size of \a name in bytes.
+ * @return B_OK on success, B_BAD_VALUE if arguments are invalid, B_ERROR if
+ *         the message is not backed by a BFile.
+ */
 status_t
 BEmailMessage::GetName(char* name, int32 maxLength) const
 {
@@ -398,6 +585,12 @@ BEmailMessage::GetName(char* name, int32 maxLength) const
 }
 
 
+/**
+ * @brief Reads the sender name from the B_MAIL_ATTR_NAME BFS attribute into a BString.
+ *
+ * @param name  Output BString to receive the sender name.
+ * @return B_OK on success, or an error code from GetName(char*, int32).
+ */
 status_t
 BEmailMessage::GetName(BString* name) const
 {
@@ -409,6 +602,15 @@ BEmailMessage::GetName(BString* name) const
 }
 
 
+/**
+ * @brief Sets the sending account based on the account that received \a message.
+ *
+ * Reads the account name from \a message's BFS attributes and calls
+ * SendViaAccount(const char*). Does nothing if the account name cannot be
+ * determined.
+ *
+ * @param message  The received message whose account should be used for replies.
+ */
 void
 BEmailMessage::SendViaAccountFrom(BEmailMessage* message)
 {
@@ -422,6 +624,14 @@ BEmailMessage::SendViaAccountFrom(BEmailMessage* message)
 }
 
 
+/**
+ * @brief Selects the outbound account by name and updates the From header.
+ *
+ * Looks up the account by name in BMailAccounts, then calls
+ * SendViaAccount(int32) with the resolved ID.
+ *
+ * @param accountName  Account name string as stored in BMailAccountSettings.
+ */
 void
 BEmailMessage::SendViaAccount(const char* accountName)
 {
@@ -432,6 +642,14 @@ BEmailMessage::SendViaAccount(const char* accountName)
 }
 
 
+/**
+ * @brief Selects the outbound account by ID and updates the From header.
+ *
+ * Reads the account's real name and return address and formats them into the
+ * From header as "Real Name" <address>.
+ *
+ * @param account  Numeric account ID from BMailAccountSettings::AccountID().
+ */
 void
 BEmailMessage::SendViaAccount(int32 account)
 {
@@ -449,6 +667,11 @@ BEmailMessage::SendViaAccount(int32 account)
 }
 
 
+/**
+ * @brief Returns the account ID of the outbound account set for this message.
+ *
+ * @return Numeric outbound account ID.
+ */
 int32
 BEmailMessage::Account() const
 {
@@ -456,6 +679,13 @@ BEmailMessage::Account() const
 }
 
 
+/**
+ * @brief Reads the account name from the B_MAIL_ATTR_ACCOUNT BFS attribute.
+ *
+ * @param accountName  Output BString to receive the account name.
+ * @return B_OK on success, B_ERROR if the message has no backing BFile or
+ *         the attribute is missing.
+ */
 status_t
 BEmailMessage::GetAccountName(BString& accountName) const
 {
@@ -480,6 +710,18 @@ BEmailMessage::GetAccountName(BString& accountName) const
 }
 
 
+/**
+ * @brief Adds a body component (text part or attachment) to this message.
+ *
+ * Manages the progressive build-up of the body structure: the first component
+ * becomes the sole body, the second triggers creation of a
+ * BMIMEMultipartMailContainer, and subsequent components are appended to that
+ * container.
+ *
+ * @param component  Component to add; the message takes ownership.
+ * @return B_OK on success, B_MISMATCHED_VALUES if the body is not a container
+ *         when more than one component is present.
+ */
 status_t
 BEmailMessage::AddComponent(BMailComponent* component)
 {
@@ -510,6 +752,11 @@ BEmailMessage::AddComponent(BMailComponent* component)
 }
 
 
+/**
+ * @brief Stub: component removal is not yet implemented.
+ *
+ * @return B_ERROR always.
+ */
 status_t
 BEmailMessage::RemoveComponent(BMailComponent* /*component*/)
 {
@@ -519,6 +766,11 @@ BEmailMessage::RemoveComponent(BMailComponent* /*component*/)
 }
 
 
+/**
+ * @brief Stub: component removal by index is not yet implemented.
+ *
+ * @return B_ERROR always.
+ */
 status_t
 BEmailMessage::RemoveComponent(int32 /*index*/)
 {
@@ -527,6 +779,17 @@ BEmailMessage::RemoveComponent(int32 /*index*/)
 }
 
 
+/**
+ * @brief Returns the body component at the given index.
+ *
+ * If the body is a multipart container, delegates to
+ * BMIMEMultipartMailContainer::GetComponent(). If the body is a single
+ * component and \a i is 0, returns it directly.
+ *
+ * @param i         Zero-based component index.
+ * @param parseNow  If true, force immediate decoding of the sub-part.
+ * @return Pointer to the component, or NULL if out of range.
+ */
 BMailComponent*
 BEmailMessage::GetComponent(int32 i, bool parseNow)
 {
@@ -541,6 +804,11 @@ BEmailMessage::GetComponent(int32 i, bool parseNow)
 }
 
 
+/**
+ * @brief Returns the total number of body components.
+ *
+ * @return Component count (1 for single-part, >1 for multipart).
+ */
 int32
 BEmailMessage::CountComponents() const
 {
@@ -548,6 +816,15 @@ BEmailMessage::CountComponents() const
 }
 
 
+/**
+ * @brief Attaches a file to the message by entry_ref.
+ *
+ * Uses BAttributedMailAttachment if \a includeAttributes is true, otherwise
+ * BSimpleMailAttachment.
+ *
+ * @param ref                entry_ref of the file to attach.
+ * @param includeAttributes  If true, preserve BFS extended attributes.
+ */
 void
 BEmailMessage::Attach(entry_ref* ref, bool includeAttributes)
 {
@@ -558,6 +835,12 @@ BEmailMessage::Attach(entry_ref* ref, bool includeAttributes)
 }
 
 
+/**
+ * @brief Returns true if the component at \a i is an attachment.
+ *
+ * @param i  Zero-based component index.
+ * @return true if the component reports itself as an attachment.
+ */
 bool
 BEmailMessage::IsComponentAttachment(int32 i)
 {
@@ -580,6 +863,14 @@ BEmailMessage::IsComponentAttachment(int32 i)
 }
 
 
+/**
+ * @brief Sets the plain-text body, creating the text component if needed.
+ *
+ * If no text component exists yet, a new BTextMailComponent is created and
+ * added via AddComponent(). The text is then set on the component.
+ *
+ * @param text  UTF-8 plain-text body content.
+ */
 void
 BEmailMessage::SetBodyTextTo(const char* text)
 {
@@ -592,6 +883,14 @@ BEmailMessage::SetBodyTextTo(const char* text)
 }
 
 
+/**
+ * @brief Returns the plain-text body component, searching the tree if necessary.
+ *
+ * If fTextBody is not set, walks the component tree looking for a
+ * B_MAIL_PLAIN_TEXT_BODY component.
+ *
+ * @return Pointer to the BTextMailComponent, or NULL if none exists.
+ */
 BTextMailComponent*
 BEmailMessage::Body()
 {
@@ -602,6 +901,11 @@ BEmailMessage::Body()
 }
 
 
+/**
+ * @brief Returns the body text as a UTF-8 C string.
+ *
+ * @return Pointer to the body text, or NULL if there is no text component.
+ */
 const char*
 BEmailMessage::BodyText()
 {
@@ -612,6 +916,12 @@ BEmailMessage::BodyText()
 }
 
 
+/**
+ * @brief Sets an explicit text body component, replacing the default one.
+ *
+ * @param body  BTextMailComponent to use as the body.
+ * @return B_OK on success, B_ERROR if a text body has already been set.
+ */
 status_t
 BEmailMessage::SetBody(BTextMailComponent* body)
 {
@@ -628,6 +938,12 @@ BEmailMessage::SetBody(BTextMailComponent* body)
 }
 
 
+/**
+ * @brief Recursively searches a component tree for the first plain-text body part.
+ *
+ * @param component  Root of the component tree to search.
+ * @return Pointer to the first BTextMailComponent found, or NULL.
+ */
 BTextMailComponent*
 BEmailMessage::_RetrieveTextBody(BMailComponent* component)
 {
@@ -664,6 +980,18 @@ BEmailMessage::_RetrieveTextBody(BMailComponent* component)
 }
 
 
+/**
+ * @brief Parses an RFC 822 message from a stream, building the body component tree.
+ *
+ * Reads the account ID attribute if the stream is a BFile, parses the
+ * top-level headers, instantiates the appropriate body component type, and
+ * separates envelope headers (Subject, To, From, etc.) from body headers.
+ *
+ * @param mailFile  Readable stream containing the complete RFC 822 message.
+ * @param length    Maximum bytes to parse (use ~0L to read to end).
+ * @param parseNow  If true, decode body components immediately.
+ * @return B_OK on success, or a negative error code on parse failure.
+ */
 status_t
 BEmailMessage::SetToRFC822(BPositionIO* mailFile, size_t length,
 	bool parseNow)
@@ -723,6 +1051,19 @@ BEmailMessage::SetToRFC822(BPositionIO* mailFile, size_t length,
 }
 
 
+/**
+ * @brief Renders this message as RFC 822 and writes it to an output stream.
+ *
+ * Sets the From header if not already set, builds the SMTP recipient list
+ * from To/CC/BCC, generates the Date and Message-Id headers, calls the
+ * base-class header renderer, then renders the body. If the output stream
+ * is a BFile, writes BFS attributes (type, recipients, status, etc.) after
+ * writing the message content.
+ *
+ * @param file  Output stream (typically a BFile in /boot/home/mail/out).
+ * @return B_OK on success, B_MAIL_INVALID_MAIL if the body is NULL, or an
+ *         IO error code.
+ */
 status_t
 BEmailMessage::RenderToRFC822(BPositionIO* file)
 {
@@ -851,6 +1192,17 @@ BEmailMessage::RenderToRFC822(BPositionIO* file)
 }
 
 
+/**
+ * @brief Renders this message to a new file in \a dir with an auto-generated name.
+ *
+ * Generates a canonical filename from subject, date, and sender (same
+ * algorithm as HaikuMailFormatFilter for incoming mail), creates the file in
+ * \a dir, and calls RenderToRFC822() on it.
+ *
+ * @param dir  Directory in which to create the output mail file.
+ * @param msg  Optional output BEntry set to the created file, or NULL.
+ * @return B_OK on success, or an error code if file creation or rendering fails.
+ */
 status_t
 BEmailMessage::RenderTo(BDirectory* dir, BEntry* msg)
 {
@@ -929,6 +1281,17 @@ BEmailMessage::RenderTo(BDirectory* dir, BEntry* msg)
 }
 
 
+/**
+ * @brief Renders and queues (or immediately sends) this message.
+ *
+ * Resolves the outbound account, determines the outbox directory, calls
+ * RenderTo() to create the file, then optionally notifies the mail daemon
+ * to send it immediately.
+ *
+ * @param sendNow  If true, notifies the mail daemon for immediate delivery.
+ * @return B_OK on success, B_ERROR if no valid outbound account exists, or
+ *         another error code from RenderTo().
+ */
 status_t
 BEmailMessage::Send(bool sendNow)
 {

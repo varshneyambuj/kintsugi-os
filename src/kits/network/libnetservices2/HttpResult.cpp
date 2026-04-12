@@ -1,9 +1,42 @@
 /*
- * Copyright 2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2022 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
+ */
+
+
+/**
+ * @file HttpResult.cpp
+ * @brief Implementation of BHttpStatus and BHttpResult.
+ *
+ * BHttpStatus provides helpers to classify a raw HTTP status code into a
+ * BHttpStatusClass and to map it to the BHttpStatusCode enum.  BHttpResult
+ * is a move-only future-like object that blocks its accessor methods until
+ * the corresponding data (status, headers, body) has been produced by the
+ * background HTTP session worker.
+ *
+ * @see BHttpSession, BHttpFields, HttpResultPrivate
  */
 
 
@@ -19,6 +52,14 @@ using namespace BPrivate::Network;
 // #pragma mark -- BHttpStatus
 
 
+/**
+ * @brief Classify the numeric status code into a broad BHttpStatusClass.
+ *
+ * Maps the hundreds digit (1xx–5xx) to Informational, Success,
+ * Redirection, ClientError, or ServerError.
+ *
+ * @return BHttpStatusClass enum value for this status code.
+ */
 BHttpStatusClass
 BHttpStatus::StatusClass() const noexcept
 {
@@ -40,6 +81,14 @@ BHttpStatus::StatusClass() const noexcept
 }
 
 
+/**
+ * @brief Map the numeric status code to the BHttpStatusCode enum.
+ *
+ * Returns BHttpStatusCode::Unknown for any code not explicitly listed in
+ * the enum.
+ *
+ * @return The matching BHttpStatusCode, or BHttpStatusCode::Unknown.
+ */
 BHttpStatusCode
 BHttpStatus::StatusCode() const noexcept
 {
@@ -145,6 +194,11 @@ BHttpStatus::StatusCode() const noexcept
 // #pragma mark -- BHttpResult
 
 
+/**
+ * @brief Private constructor — creates a BHttpResult backed by shared private state.
+ *
+ * @param data  Shared pointer to the HttpResultPrivate data produced by BHttpSession.
+ */
 /*private*/
 BHttpResult::BHttpResult(std::shared_ptr<HttpResultPrivate> data)
 	:
@@ -153,9 +207,17 @@ BHttpResult::BHttpResult(std::shared_ptr<HttpResultPrivate> data)
 }
 
 
+/**
+ * @brief Move constructor.
+ *
+ * @param other  BHttpResult to move from; \a other becomes invalid.
+ */
 BHttpResult::BHttpResult(BHttpResult&& other) noexcept = default;
 
 
+/**
+ * @brief Destructor — cancels the pending request if it is not yet complete.
+ */
 BHttpResult::~BHttpResult()
 {
 	if (fData)
@@ -163,9 +225,20 @@ BHttpResult::~BHttpResult()
 }
 
 
+/**
+ * @brief Move assignment operator.
+ *
+ * @param other  BHttpResult to move from.
+ * @return Reference to this object.
+ */
 BHttpResult& BHttpResult::operator=(BHttpResult&& other) noexcept = default;
 
 
+/**
+ * @brief Block until the HTTP status line is available and return it.
+ *
+ * @return Const reference to the BHttpStatus populated by the session worker.
+ */
 const BHttpStatus&
 BHttpResult::Status() const
 {
@@ -186,6 +259,11 @@ BHttpResult::Status() const
 }
 
 
+/**
+ * @brief Block until the HTTP header fields are available and return them.
+ *
+ * @return Const reference to the BHttpFields populated by the session worker.
+ */
 const BHttpFields&
 BHttpResult::Fields() const
 {
@@ -206,6 +284,11 @@ BHttpResult::Fields() const
 }
 
 
+/**
+ * @brief Block until the HTTP body is available and return a reference to it.
+ *
+ * @return Reference to the BHttpBody populated by the session worker.
+ */
 BHttpBody&
 BHttpResult::Body() const
 {
@@ -226,6 +309,11 @@ BHttpResult::Body() const
 }
 
 
+/**
+ * @brief Return whether the HTTP status line has been received.
+ *
+ * @return true if Status() would not block.
+ */
 bool
 BHttpResult::HasStatus() const
 {
@@ -235,6 +323,11 @@ BHttpResult::HasStatus() const
 }
 
 
+/**
+ * @brief Return whether the HTTP header fields have been received.
+ *
+ * @return true if Fields() would not block.
+ */
 bool
 BHttpResult::HasFields() const
 {
@@ -244,6 +337,11 @@ BHttpResult::HasFields() const
 }
 
 
+/**
+ * @brief Return whether the HTTP body has been fully received.
+ *
+ * @return true if Body() would not block.
+ */
 bool
 BHttpResult::HasBody() const
 {
@@ -253,6 +351,13 @@ BHttpResult::HasBody() const
 }
 
 
+/**
+ * @brief Return whether the entire HTTP response has been received.
+ *
+ * Equivalent to HasBody().
+ *
+ * @return true if the response is fully complete.
+ */
 bool
 BHttpResult::IsCompleted() const
 {
@@ -262,6 +367,11 @@ BHttpResult::IsCompleted() const
 }
 
 
+/**
+ * @brief Return the unique identifier for the request that produced this result.
+ *
+ * @return int32 identifier assigned by the session at request submission time.
+ */
 int32
 BHttpResult::Identity() const
 {

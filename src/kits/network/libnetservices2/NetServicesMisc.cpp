@@ -1,10 +1,44 @@
 /*
- * Copyright 2021 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2021 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
  */
+
+
+/**
+ * @file NetServicesMisc.cpp
+ * @brief Miscellaneous error types, utility functions, and message constants for the Network
+ *        Services kit.
+ *
+ * Defines BUnsupportedProtocol, BInvalidUrl, and BNetworkRequestError exception
+ * classes, the base64 encoding helper used for HTTP authentication, the
+ * UrlEventData string constants for BMessage-based URL event notifications,
+ * and the atomic request-identifier counter.
+ *
+ * @see BHttpSession, BHttpRequest, ErrorsExt.h
+ */
+
 
 #include <NetServicesDefs.h>
 
@@ -17,6 +51,13 @@ namespace Network {
 // #pragma mark -- BUnsupportedProtocol
 
 
+/**
+ * @brief Construct a BUnsupportedProtocol error with a C-string origin.
+ *
+ * @param origin              Null-terminated origin identifier string.
+ * @param url                 The URL whose protocol is not supported.
+ * @param supportedProtocols  List of protocol strings that are accepted.
+ */
 BUnsupportedProtocol::BUnsupportedProtocol(
 	const char* origin, BUrl url, BStringList supportedProtocols)
 	:
@@ -27,6 +68,13 @@ BUnsupportedProtocol::BUnsupportedProtocol(
 }
 
 
+/**
+ * @brief Construct a BUnsupportedProtocol error with a BString origin.
+ *
+ * @param origin              BString origin identifier.
+ * @param url                 The URL whose protocol is not supported.
+ * @param supportedProtocols  List of protocol strings that are accepted.
+ */
 BUnsupportedProtocol::BUnsupportedProtocol(BString origin, BUrl url, BStringList supportedProtocols)
 	:
 	BError(std::move(origin)),
@@ -36,6 +84,11 @@ BUnsupportedProtocol::BUnsupportedProtocol(BString origin, BUrl url, BStringList
 }
 
 
+/**
+ * @brief Return the human-readable error message.
+ *
+ * @return "Unsupported Protocol".
+ */
 const char*
 BUnsupportedProtocol::Message() const noexcept
 {
@@ -43,6 +96,11 @@ BUnsupportedProtocol::Message() const noexcept
 }
 
 
+/**
+ * @brief Return a const reference to the URL that triggered this error.
+ *
+ * @return Const reference to the stored BUrl.
+ */
 const BUrl&
 BUnsupportedProtocol::Url() const
 {
@@ -50,6 +108,11 @@ BUnsupportedProtocol::Url() const
 }
 
 
+/**
+ * @brief Return the list of protocol strings supported by the caller.
+ *
+ * @return Const reference to the BStringList of supported protocol names.
+ */
 const BStringList&
 BUnsupportedProtocol::SupportedProtocols() const
 {
@@ -60,6 +123,12 @@ BUnsupportedProtocol::SupportedProtocols() const
 // #pragma mark -- BInvalidUrl
 
 
+/**
+ * @brief Construct a BInvalidUrl error with a C-string origin.
+ *
+ * @param origin  Null-terminated origin identifier string.
+ * @param url     The malformed or otherwise invalid URL.
+ */
 BInvalidUrl::BInvalidUrl(const char* origin, BUrl url)
 	:
 	BError(origin),
@@ -68,6 +137,12 @@ BInvalidUrl::BInvalidUrl(const char* origin, BUrl url)
 }
 
 
+/**
+ * @brief Construct a BInvalidUrl error with a BString origin.
+ *
+ * @param origin  BString origin identifier.
+ * @param url     The malformed or otherwise invalid URL.
+ */
 BInvalidUrl::BInvalidUrl(BString origin, BUrl url)
 	:
 	BError(std::move(origin)),
@@ -76,6 +151,11 @@ BInvalidUrl::BInvalidUrl(BString origin, BUrl url)
 }
 
 
+/**
+ * @brief Return the human-readable error message.
+ *
+ * @return "Invalid URL".
+ */
 const char*
 BInvalidUrl::Message() const noexcept
 {
@@ -83,6 +163,11 @@ BInvalidUrl::Message() const noexcept
 }
 
 
+/**
+ * @brief Return a const reference to the invalid URL.
+ *
+ * @return Const reference to the stored BUrl.
+ */
 const BUrl&
 BInvalidUrl::Url() const
 {
@@ -93,6 +178,14 @@ BInvalidUrl::Url() const
 // #pragma mark -- BNetworkRequestError
 
 
+/**
+ * @brief Construct a BNetworkRequestError with a status code and optional custom message.
+ *
+ * @param origin        Null-terminated origin identifier string.
+ * @param type          Error category (HostnameError, NetworkError, ProtocolError, etc.).
+ * @param errorCode     Underlying Haiku status_t code; use B_OK if not applicable.
+ * @param customMessage Additional diagnostic text appended to DebugMessage().
+ */
 BNetworkRequestError::BNetworkRequestError(
 	const char* origin, ErrorType type, status_t errorCode, const BString& customMessage)
 	:
@@ -104,6 +197,13 @@ BNetworkRequestError::BNetworkRequestError(
 }
 
 
+/**
+ * @brief Construct a BNetworkRequestError without a status code.
+ *
+ * @param origin        Null-terminated origin identifier string.
+ * @param type          Error category.
+ * @param customMessage Additional diagnostic text.
+ */
 BNetworkRequestError::BNetworkRequestError(
 	const char* origin, ErrorType type, const BString& customMessage)
 	:
@@ -114,6 +214,11 @@ BNetworkRequestError::BNetworkRequestError(
 }
 
 
+/**
+ * @brief Return a short description of the error category.
+ *
+ * @return Null-terminated string describing the error type.
+ */
 const char*
 BNetworkRequestError::Message() const noexcept
 {
@@ -134,6 +239,12 @@ BNetworkRequestError::Message() const noexcept
 }
 
 
+/**
+ * @brief Build a verbose debug message including error code and custom text.
+ *
+ * @return BString combining the base debug message with system error code
+ *         (if non-OK) and the custom message (if non-empty).
+ */
 BString
 BNetworkRequestError::DebugMessage() const
 {
@@ -150,6 +261,11 @@ BNetworkRequestError::DebugMessage() const
 }
 
 
+/**
+ * @brief Return the error category enum value.
+ *
+ * @return The ErrorType passed at construction time.
+ */
 BNetworkRequestError::ErrorType
 BNetworkRequestError::Type() const noexcept
 {
@@ -157,6 +273,11 @@ BNetworkRequestError::Type() const noexcept
 }
 
 
+/**
+ * @brief Return the underlying Haiku status_t error code.
+ *
+ * @return The status_t value, or B_OK if none was provided.
+ */
 status_t
 BNetworkRequestError::ErrorCode() const noexcept
 {
@@ -164,6 +285,11 @@ BNetworkRequestError::ErrorCode() const noexcept
 }
 
 
+/**
+ * @brief Return the custom diagnostic message.
+ *
+ * @return Null-terminated custom message string, or an empty string if none.
+ */
 const char*
 BNetworkRequestError::CustomMessage() const noexcept
 {
@@ -174,10 +300,20 @@ BNetworkRequestError::CustomMessage() const noexcept
 // #pragma mark -- Public functions
 
 
+/** @brief URL-safe base-64 symbol table (RFC 4648 §5). */
 static const char* kBase64Symbols
 	= "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 
+/**
+ * @brief Encode a BString to URL-safe base-64.
+ *
+ * Processes the input three bytes at a time and appends '=' padding when
+ * the length is not a multiple of three.
+ *
+ * @param string  The raw input string to encode.
+ * @return Base-64 encoded BString.
+ */
 BString
 encode_to_base64(const BString& string)
 {
@@ -219,12 +355,25 @@ encode_to_base64(const BString& string)
 
 // #pragma mark -- message constants
 namespace UrlEventData {
+/** @brief BMessage field name for the request identifier. */
 const char* Id = "url:identifier";
+
+/** @brief BMessage field name for the resolved hostname. */
 const char* HostName = "url:hostname";
+
+/** @brief BMessage field name for the number of bytes transferred so far. */
 const char* NumBytes = "url:numbytes";
+
+/** @brief BMessage field name for the total expected byte count. */
 const char* TotalBytes = "url:totalbytes";
+
+/** @brief BMessage field name for the success flag. */
 const char* Success = "url:success";
+
+/** @brief BMessage field name for the debug event type. */
 const char* DebugType = "url:debugtype";
+
+/** @brief BMessage field name for the debug event message text. */
 const char* DebugMessage = "url:debugmessage";
 } // namespace UrlEventData
 
@@ -232,9 +381,17 @@ const char* DebugMessage = "url:debugmessage";
 // #pragma mark -- Private functions and data
 
 
+/** @brief Atomic counter used to assign unique request identifiers. */
 static int32 gRequestIdentifier = 1;
 
 
+/**
+ * @brief Return the next globally unique network-request identifier.
+ *
+ * Uses atomic_add to ensure uniqueness across threads without locking.
+ *
+ * @return A monotonically increasing int32 identifier starting from 1.
+ */
 int32
 get_netservices_request_identifier()
 {

@@ -1,7 +1,41 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file DebugEventStream.cpp
+ * @brief Sequential I/O streams for the system profiler debug event format.
+ *
+ * Implements BDebugEventInputStream for reading and BDebugEventOutputStream
+ * for writing the binary event format produced by the system profiler. The
+ * format begins with a debug_event_stream_header followed by a sequence of
+ * system_profiler_event_header records each immediately preceded by their
+ * variable-length payload.
+ *
+ * @see BDataIO, system_profiler_defs.h
+ */
+
 
 #include <DebugEventStream.h>
 
@@ -13,9 +47,16 @@
 #include <system_profiler_defs.h>
 
 
+/** @brief Default size of the internal read-ahead buffer for input streams. */
 #define INPUT_BUFFER_SIZE	(128 * 1024)
 
 
+/**
+ * @brief Default constructor — creates an uninitialised input stream.
+ *
+ * All fields are zeroed or set to safe sentinel values. Call SetTo() before
+ * using the stream.
+ */
 BDebugEventInputStream::BDebugEventInputStream()
 	:
 	fStream(NULL),
@@ -31,6 +72,9 @@ BDebugEventInputStream::BDebugEventInputStream()
 }
 
 
+/**
+ * @brief Destructor — calls Unset() and frees the internal buffer if owned.
+ */
 BDebugEventInputStream::~BDebugEventInputStream()
 {
 	Unset();
@@ -40,6 +84,18 @@ BDebugEventInputStream::~BDebugEventInputStream()
 }
 
 
+/**
+ * @brief Attach this stream to a BDataIO source.
+ *
+ * Calls Unset() to release any previous attachment, then allocates an
+ * INPUT_BUFFER_SIZE read-ahead buffer (if one does not already exist) and
+ * reads the stream header via _Init().
+ *
+ * @param stream  The data source to read from; must remain valid for the
+ *                lifetime of this stream object. Must not be NULL.
+ * @return B_OK on success; B_BAD_VALUE if @a stream is NULL; B_NO_MEMORY if
+ *         buffer allocation fails; or a header-validation error.
+ */
 status_t
 BDebugEventInputStream::SetTo(BDataIO* stream)
 {
@@ -68,6 +124,20 @@ BDebugEventInputStream::SetTo(BDataIO* stream)
 }
 
 
+/**
+ * @brief Attach this stream to an in-memory data buffer.
+ *
+ * The buffer replaces any previous buffer managed by this object. When
+ * @a takeOverOwnership is true, the buffer will be free()'d when the stream
+ * is unset or destroyed.
+ *
+ * @param data               Pointer to the raw event stream data.
+ * @param size               Byte size of the data buffer.
+ * @param takeOverOwnership  If true, this object takes ownership of @a data
+ *                           and will call free() on it when appropriate.
+ * @return B_OK on success; B_BAD_VALUE if @a data is NULL or @a size is zero;
+ *         or a header-validation error from _Init().
+ */
 status_t
 BDebugEventInputStream::SetTo(const void* data, size_t size,
 	bool takeOverOwnership)
@@ -93,6 +163,13 @@ BDebugEventInputStream::SetTo(const void* data, size_t size,
 }
 
 
+/**
+ * @brief Detach from the current source and reset all streaming state.
+ *
+ * If an owned buffer of the default INPUT_BUFFER_SIZE is present it is kept
+ * for reuse; any other owned buffer is freed. Unowned buffers are simply
+ * released (not freed).
+ */
 void
 BDebugEventInputStream::Unset()
 {
@@ -116,6 +193,17 @@ BDebugEventInputStream::Unset()
 }
 
 
+/**
+ * @brief Seek to an absolute byte offset within the in-memory buffer.
+ *
+ * Only supported for buffer-backed streams (SetTo(const void*, ...) variant).
+ * Stream-backed sources always return B_UNSUPPORTED.
+ *
+ * @param streamOffset  Byte offset from the beginning of the stream (after the
+ *                      header was consumed by _Init()).
+ * @return B_OK on success; B_UNSUPPORTED for stream sources;
+ *         B_BUFFER_OVERFLOW if @a streamOffset is out of range.
+ */
 status_t
 BDebugEventInputStream::Seek(off_t streamOffset)
 {
@@ -196,6 +284,16 @@ BDebugEventInputStream::ReadNextEvent(uint32* _event, uint32* _cpu,
 }
 
 
+/**
+ * @brief Read and validate the stream header, then position at first event.
+ *
+ * Reads the debug_event_stream_header, verifies the signature, version, and
+ * that the host-endian flag is set (non-host endian is not yet supported),
+ * and initialises fFlags and fEventMask from the header.
+ *
+ * @return B_OK on success; B_BAD_DATA if the header is invalid or the stream
+ *         is non-host-endian.
+ */
 status_t
 BDebugEventInputStream::_Init()
 {
@@ -231,6 +329,17 @@ BDebugEventInputStream::_Init()
 }
 
 
+/**
+ * @brief Read bytes from the underlying BDataIO stream into the internal buffer.
+ *
+ * Reads in a loop until @a size bytes have been transferred or the stream
+ * returns 0 or an error.
+ *
+ * @param _buffer  Destination buffer.
+ * @param size     Number of bytes to read.
+ * @return Total bytes read on success (may be less than @a size at EOF), or a
+ *         negative error code.
+ */
 ssize_t
 BDebugEventInputStream::_Read(void* _buffer, size_t size)
 {
@@ -251,6 +360,18 @@ BDebugEventInputStream::_Read(void* _buffer, size_t size)
 }
 
 
+/**
+ * @brief Ensure at least @a size bytes are available starting at fBufferPosition.
+ *
+ * Moves any unconsumed data to the start of the buffer and reads more data from
+ * the underlying stream if needed. For buffer-backed streams where no stream is
+ * attached, this is a pure capacity check.
+ *
+ * @param size  Minimum number of contiguous bytes required.
+ * @return B_OK if sufficient data is available; B_BUFFER_OVERFLOW if @a size
+ *         exceeds the buffer capacity; B_BAD_DATA if the stream ended before
+ *         enough data could be read.
+ */
 status_t
 BDebugEventInputStream::_GetData(size_t size)
 {
@@ -283,6 +404,9 @@ BDebugEventInputStream::_GetData(size_t size)
 // #pragma mark - BDebugEventOutputStream
 
 
+/**
+ * @brief Default constructor — creates an uninitialised output stream.
+ */
 BDebugEventOutputStream::BDebugEventOutputStream()
 	:
 	fStream(NULL),
@@ -291,12 +415,29 @@ BDebugEventOutputStream::BDebugEventOutputStream()
 }
 
 
+/**
+ * @brief Destructor — calls Unset() to flush and detach from the stream.
+ */
 BDebugEventOutputStream::~BDebugEventOutputStream()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Attach to a BDataIO destination and write the stream header.
+ *
+ * Calls Unset() to release any prior stream, then composes and writes the
+ * debug_event_stream_header with the host-endian flag unconditionally set.
+ * Compression is not yet implemented.
+ *
+ * @param stream     The destination BDataIO; must remain valid for the
+ *                   lifetime of this stream object.
+ * @param flags      Optional stream flags (compression not yet supported).
+ * @param eventMask  Bit mask of profiler events recorded in this stream.
+ * @return B_OK on success; B_BAD_VALUE if @a stream is NULL; B_FILE_ERROR if
+ *         the header write is short; or a BDataIO write error.
+ */
 status_t
 BDebugEventOutputStream::SetTo(BDataIO* stream, uint32 flags, uint32 eventMask)
 {
@@ -334,6 +475,9 @@ BDebugEventOutputStream::SetTo(BDataIO* stream, uint32 flags, uint32 eventMask)
 }
 
 
+/**
+ * @brief Flush any pending data and detach from the current stream.
+ */
 void
 BDebugEventOutputStream::Unset()
 {
@@ -343,6 +487,14 @@ BDebugEventOutputStream::Unset()
 }
 
 
+/**
+ * @brief Write @a size bytes from @a buffer to the output stream.
+ *
+ * @param buffer  Source data to write.
+ * @param size    Number of bytes to write; a size of 0 is a no-op.
+ * @return B_OK on success; B_BAD_VALUE if @a buffer is NULL; B_FILE_ERROR if
+ *         the write is short; or a BDataIO write error.
+ */
 status_t
 BDebugEventOutputStream::Write(const void* buffer, size_t size)
 {
@@ -361,6 +513,14 @@ BDebugEventOutputStream::Write(const void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Flush any internally buffered output data to the underlying stream.
+ *
+ * The current implementation holds no internal write buffer, so this is always
+ * a no-op returning B_OK.
+ *
+ * @return B_OK always.
+ */
 status_t
 BDebugEventOutputStream::Flush()
 {

@@ -1,10 +1,42 @@
 /*
- * Copyright 2003-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Oliver Tappe, zooey@hirschkaefer.de
- *		Adrien Destugues, pulkomandy@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Oliver Tappe, zooey@hirschkaefer.de
+ *       Adrien Destugues, pulkomandy@gmail.com
+ */
+
+
+/**
+ * @file DefaultCatalog.cpp
+ * @brief Implementation of the built-in hash-map catalog type for the Locale Kit.
+ *
+ * DefaultCatalog is the primary catalog backend shipped as part of liblocale.so.
+ * It serializes to a flat BMessage stream and can be loaded from disk files,
+ * application resources (type 'CADA'), or file attributes. Fingerprint-based
+ * version checking detects stale catalogs that no longer match the source code.
+ *
+ * @see HashMapCatalog, BCatalogData, MutableLocaleRoster
  */
 
 
@@ -43,19 +75,25 @@ using std::pair;
 */
 
 
+/** @brief Subdirectory name inside the app folder that holds catalog files. */
 static const char *kCatFolder = "catalogs";
+
+/** @brief File extension for catalog files on disk. */
 static const char *kCatExtension = ".catalog";
 
 
 namespace BPrivate {
 
 
+/** @brief MIME type string registered for the default catalog file format. */
 const char *DefaultCatalog::kCatMimeType
 	= "locale/x-vnd.Be.locale-catalog.default";
 
+/** @brief Version of the BMessage-based catalog archive structure. */
 static int16 kCatArchiveVersion = 1;
 	// version of the catalog archive structure, bump this if you change it!
 
+/** @brief Add-on priority; higher value = checked earlier during catalog lookup. */
 const uint8 DefaultCatalog::kDefaultCatalogAddOnPriority = 1;
 	// give highest priority to our embedded catalog-add-on
 
@@ -65,6 +103,17 @@ const uint8 DefaultCatalog::kDefaultCatalogAddOnPriority = 1;
 	InitCheck() will be B_OK if catalog could be loaded successfully, it will
 	give an appropriate error-code otherwise.
 */
+/**
+ * @brief Construct and load a DefaultCatalog for the given application entry_ref.
+ *
+ * Searches for the catalog file in the application's locale subdirectory, then
+ * in the standard system-wide locale directories, and finally falls back to an
+ * embedded resource inside the application binary.
+ *
+ * @param catalogOwner  entry_ref of the owning application or add-on.
+ * @param language      BCP-47 language tag to load.
+ * @param fingerprint   Version fingerprint; 0 accepts any version.
+ */
 DefaultCatalog::DefaultCatalog(const entry_ref &catalogOwner,
 	const char *language, uint32 fingerprint)
 	:
@@ -107,6 +156,11 @@ DefaultCatalog::DefaultCatalog(const entry_ref &catalogOwner,
 	InitCheck() will be B_OK if catalog could be loaded successfully, it will
 	give an appropriate error-code otherwise.
 */
+/**
+ * @brief Construct a DefaultCatalog by reading from the resources of an entry.
+ *
+ * @param appOrAddOnRef  entry_ref of the file whose resources are searched.
+ */
 DefaultCatalog::DefaultCatalog(entry_ref *appOrAddOnRef)
 	:
 	HashMapCatalog("", "", 0)
@@ -119,6 +173,15 @@ DefaultCatalog::DefaultCatalog(entry_ref *appOrAddOnRef)
 	This is used for editing/testing purposes.
 	InitCheck() will always be B_OK.
 */
+/**
+ * @brief Construct an empty writable DefaultCatalog at the given path.
+ *
+ * Used by catalog editing tools. InitCheck() always returns B_OK.
+ *
+ * @param path       File system path where the catalog will be written.
+ * @param signature  MIME signature for the new catalog.
+ * @param language   BCP-47 language tag for the new catalog.
+ */
 DefaultCatalog::DefaultCatalog(const char *path, const char *signature,
 	const char *language)
 	:
@@ -129,11 +192,22 @@ DefaultCatalog::DefaultCatalog(const char *path, const char *signature,
 }
 
 
+/**
+ * @brief Destroy the DefaultCatalog.
+ */
 DefaultCatalog::~DefaultCatalog()
 {
 }
 
 
+/**
+ * @brief Read the MIME signature from the owning application file.
+ *
+ * Strips the "application/" supertype prefix so that only the subtype is
+ * stored in fSignature (e.g. "x-vnd.MyApp").
+ *
+ * @param catalogOwner  entry_ref of the application whose signature is read.
+ */
 void
 DefaultCatalog::SetSignature(const entry_ref &catalogOwner)
 {
@@ -160,6 +234,16 @@ DefaultCatalog::SetSignature(const entry_ref &catalogOwner)
 }
 
 
+/**
+ * @brief Insert or replace a pre-constructed CatKey/value pair directly.
+ *
+ * Bypasses the normal string-parsing path used by SetString() and stores
+ * the translated value verbatim.
+ *
+ * @param key         The CatKey identifying the source string.
+ * @param translated  The translated string to store.
+ * @return B_OK on success, or an error code from the underlying hash map.
+ */
 status_t
 DefaultCatalog::SetRawString(const CatKey& key, const char *translated)
 {
@@ -167,6 +251,15 @@ DefaultCatalog::SetRawString(const CatKey& key, const char *translated)
 }
 
 
+/**
+ * @brief Search the standard system locale directories for a matching catalog.
+ *
+ * Checks B_USER_NONPACKAGED_DATA_DIRECTORY, B_USER_DATA_DIRECTORY,
+ * B_SYSTEM_NONPACKAGED_DATA_DIRECTORY, and B_SYSTEM_DATA_DIRECTORY in that
+ * priority order.
+ *
+ * @return B_OK if a catalog was found and loaded, B_ENTRY_NOT_FOUND otherwise.
+ */
 status_t
 DefaultCatalog::ReadFromStandardLocations()
 {
@@ -199,6 +292,16 @@ DefaultCatalog::ReadFromStandardLocations()
 }
 
 
+/**
+ * @brief Load catalog contents from a flat-message file on disk.
+ *
+ * Reads the entire file into memory, then calls Unflatten(). If loading
+ * succeeds, UpdateAttributes() is called to keep the file's metadata current.
+ *
+ * @param path  Path to the catalog file, or NULL to use fPath.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the file does not exist,
+ *         B_NO_MEMORY on allocation failure, or another error code.
+ */
 status_t
 DefaultCatalog::ReadFromFile(const char *path)
 {
@@ -240,6 +343,15 @@ DefaultCatalog::ReadFromFile(const char *path)
 }
 
 
+/**
+ * @brief Load catalog contents from an embedded resource in the given file.
+ *
+ * Looks for a resource of type 'CADA' whose name matches fLanguageName.
+ *
+ * @param appOrAddOnRef  entry_ref of the application or add-on to read from.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the file cannot be opened,
+ *         B_NAME_NOT_FOUND if the resource is absent, or another error.
+ */
 status_t
 DefaultCatalog::ReadFromResource(const entry_ref &appOrAddOnRef)
 {
@@ -265,6 +377,15 @@ DefaultCatalog::ReadFromResource(const entry_ref &appOrAddOnRef)
 }
 
 
+/**
+ * @brief Write catalog contents to a flat-message file on disk.
+ *
+ * Flattens the catalog into a BMallocIO buffer, then writes it atomically to
+ * the target file and updates the file's metadata attributes.
+ *
+ * @param path  Destination path, or NULL to use fPath.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DefaultCatalog::WriteToFile(const char *path)
 {
@@ -295,6 +416,15 @@ DefaultCatalog::WriteToFile(const char *path)
 }
 
 
+/**
+ * @brief Write catalog contents as an embedded resource in the given file.
+ *
+ * The resource type is 'CADA' and the resource name is the mangled hash of
+ * fLanguageName so that multiple language catalogs can coexist in one file.
+ *
+ * @param appOrAddOnRef  entry_ref of the target application or add-on file.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 DefaultCatalog::WriteToResource(const entry_ref &appOrAddOnRef)
 {
@@ -328,6 +458,14 @@ DefaultCatalog::WriteToResource(const entry_ref &appOrAddOnRef)
 /*!	Writes mimetype, language-name and signature of catalog into the
 	catalog-file.
 */
+/**
+ * @brief Update the MIME type, language, signature, and fingerprint attributes.
+ *
+ * Only writes each attribute if it is missing or has the wrong value, to avoid
+ * unnecessary disk writes on read-only media.
+ *
+ * @param catalogFile  An open BFile for the catalog; must be writable.
+ */
 void
 DefaultCatalog::UpdateAttributes(BFile& catalogFile)
 {
@@ -360,6 +498,16 @@ DefaultCatalog::UpdateAttributes(BFile& catalogFile)
 }
 
 
+/**
+ * @brief Serialize the catalog to the given BDataIO stream.
+ *
+ * Writes a header BMessage followed by one BMessage per catalog entry.
+ * The fingerprint is recomputed before writing so it reflects the current
+ * state of the map.
+ *
+ * @param dataIO  Output stream to write the serialized catalog to.
+ * @return B_OK on success, or an error code if any operation fails.
+ */
 status_t
 DefaultCatalog::Flatten(BDataIO *dataIO)
 {
@@ -405,6 +553,18 @@ DefaultCatalog::Flatten(BDataIO *dataIO)
 }
 
 
+/**
+ * @brief Deserialize a catalog from the given BDataIO stream.
+ *
+ * Reads and verifies the header BMessage, then reads one BMessage per entry.
+ * If a non-zero fingerprint was requested and does not match the stored
+ * fingerprint, B_MISMATCHED_VALUES is returned.
+ *
+ * @param dataIO  Input stream containing the serialized catalog data.
+ * @return B_OK on success, B_MISMATCHED_VALUES on fingerprint mismatch,
+ *         B_BAD_DATA if the post-load computed fingerprint differs, or
+ *         another error code on failure.
+ */
 status_t
 DefaultCatalog::Unflatten(BDataIO *dataIO)
 {
@@ -470,6 +630,16 @@ DefaultCatalog::Unflatten(BDataIO *dataIO)
 }
 
 
+/**
+ * @brief Factory method: load an existing DefaultCatalog from disk.
+ *
+ * Called by MutableLocaleRoster when the "Default" catalog add-on is selected.
+ *
+ * @param catalogOwner  entry_ref of the owning application.
+ * @param language      BCP-47 language tag to load.
+ * @param fingerprint   Version fingerprint; 0 accepts any.
+ * @return A newly allocated DefaultCatalog on success, or NULL on failure.
+ */
 BCatalogData *
 DefaultCatalog::Instantiate(const entry_ref &catalogOwner, const char *language,
 	uint32 fingerprint)
@@ -484,6 +654,13 @@ DefaultCatalog::Instantiate(const entry_ref &catalogOwner, const char *language,
 }
 
 
+/**
+ * @brief Factory method: create a new empty DefaultCatalog for editing.
+ *
+ * @param signature  MIME application signature for the new catalog.
+ * @param language   BCP-47 language tag for the new catalog.
+ * @return A newly allocated DefaultCatalog on success, or NULL on failure.
+ */
 BCatalogData *
 DefaultCatalog::Create(const char *signature, const char *language)
 {
@@ -500,6 +677,19 @@ DefaultCatalog::Create(const char *signature, const char *language)
 } // namespace BPrivate
 
 
+/**
+ * @brief C-linkage entry point that enumerates available catalog language files.
+ *
+ * Scans the application's locale subdirectory and all standard system locale
+ * directories for .catalog files matching the given signature, adding each
+ * discovered language name to \a availableLanguages.
+ *
+ * @param availableLanguages  Output BMessage; "language" strings are added.
+ * @param sigPattern          Signature pattern to filter by (required).
+ * @param langPattern         Language pattern (currently unused).
+ * @param fingerprint         Fingerprint filter (currently unused).
+ * @return B_OK on success, B_BAD_DATA if required parameters are NULL.
+ */
 extern "C" status_t
 default_catalog_get_available_languages(BMessage* availableLanguages,
 	const char* sigPattern, const char* langPattern, int32 fingerprint)

@@ -1,6 +1,40 @@
 /*
- * Copyright 2011-2016, Haiku, Inc. All rights reserved.
- * Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2016, Haiku, Inc. All rights reserved.
+ *   Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ */
+
+
+/**
+ * @file MailProtocol.cpp
+ * @brief Base classes for inbound and outbound mail protocol add-ons.
+ *
+ * BMailProtocol is a BLooper subclass that owns a pipeline of BMailFilter
+ * objects and provides notification helpers for progress reporting. Protocol
+ * add-ons subclass BInboundMailProtocol or BOutboundMailProtocol and
+ * implement SyncMessages() or HandleSendMessages() respectively.
+ * HaikuMailFormatFilter is always the first filter installed in every pipeline
+ * to handle the Haiku-specific BFS attribute mapping.
+ *
+ * @see BMailFilter, HaikuMailFormatFilter, BMailSettings
  */
 
 
@@ -39,6 +73,12 @@
 using namespace BPrivate;
 
 
+/**
+ * @brief Constructs a BMailProtocol looper with the HaikuMailFormatFilter pre-installed.
+ *
+ * @param name      Human-readable add-on name used to build the looper name.
+ * @param settings  Account settings providing account ID and filter configuration.
+ */
 BMailProtocol::BMailProtocol(const char* name,
 	const BMailAccountSettings& settings)
 	:
@@ -50,6 +90,9 @@ BMailProtocol::BMailProtocol(const char* name,
 }
 
 
+/**
+ * @brief Destroys the protocol, freeing the notifier and all loaded filters.
+ */
 BMailProtocol::~BMailProtocol()
 {
 	delete fMailNotifier;
@@ -63,6 +106,11 @@ BMailProtocol::~BMailProtocol()
 }
 
 
+/**
+ * @brief Returns the account settings associated with this protocol instance.
+ *
+ * @return Const reference to the BMailAccountSettings stored at construction.
+ */
 const BMailAccountSettings&
 BMailProtocol::AccountSettings() const
 {
@@ -70,6 +118,13 @@ BMailProtocol::AccountSettings() const
 }
 
 
+/**
+ * @brief Replaces the mail notifier, taking ownership of the new one.
+ *
+ * The previous notifier (if any) is deleted before the new one is installed.
+ *
+ * @param mailNotifier  New notifier instance, or NULL to remove notifications.
+ */
 void
 BMailProtocol::SetMailNotifier(BMailNotifier* mailNotifier)
 {
@@ -78,6 +133,11 @@ BMailProtocol::SetMailNotifier(BMailNotifier* mailNotifier)
 }
 
 
+/**
+ * @brief Returns the current mail notifier, or NULL if none is set.
+ *
+ * @return Pointer to the BMailNotifier, or NULL.
+ */
 BMailNotifier*
 BMailProtocol::MailNotifier() const
 {
@@ -85,6 +145,14 @@ BMailProtocol::MailNotifier() const
 }
 
 
+/**
+ * @brief Appends a filter to the end of the protocol pipeline.
+ *
+ * Thread-safe: acquires the looper lock before modifying the filter list.
+ *
+ * @param filter  Filter to add; ownership is NOT transferred by this call.
+ * @return true if the filter was added successfully, false on allocation failure.
+ */
 bool
 BMailProtocol::AddFilter(BMailFilter* filter)
 {
@@ -93,6 +161,11 @@ BMailProtocol::AddFilter(BMailFilter* filter)
 }
 
 
+/**
+ * @brief Returns the number of filters in the pipeline.
+ *
+ * @return Filter count.
+ */
 int32
 BMailProtocol::CountFilter() const
 {
@@ -101,6 +174,12 @@ BMailProtocol::CountFilter() const
 }
 
 
+/**
+ * @brief Returns the filter at the given index.
+ *
+ * @param index  Zero-based filter index.
+ * @return Pointer to the BMailFilter, or NULL if out of range.
+ */
 BMailFilter*
 BMailProtocol::FilterAt(int32 index) const
 {
@@ -109,6 +188,14 @@ BMailProtocol::FilterAt(int32 index) const
 }
 
 
+/**
+ * @brief Removes and returns the filter at the given index.
+ *
+ * The caller takes ownership of the returned filter.
+ *
+ * @param index  Zero-based filter index to remove.
+ * @return Pointer to the removed filter, or NULL if out of range.
+ */
 BMailFilter*
 BMailProtocol::RemoveFilter(int32 index)
 {
@@ -117,6 +204,12 @@ BMailProtocol::RemoveFilter(int32 index)
 }
 
 
+/**
+ * @brief Removes a specific filter from the pipeline.
+ *
+ * @param filter  Filter to remove (compared by pointer identity).
+ * @return true if the filter was found and removed.
+ */
 bool
 BMailProtocol::RemoveFilter(BMailFilter* filter)
 {
@@ -125,6 +218,11 @@ BMailProtocol::RemoveFilter(BMailFilter* filter)
 }
 
 
+/**
+ * @brief Dispatches incoming BMessages to the base looper.
+ *
+ * @param message  Incoming message from the looper's queue.
+ */
 void
 BMailProtocol::MessageReceived(BMessage* message)
 {
@@ -132,6 +230,11 @@ BMailProtocol::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Displays an error message via the notifier, if one is set.
+ *
+ * @param error  Null-terminated error string to display.
+ */
 void
 BMailProtocol::ShowError(const char* error)
 {
@@ -140,6 +243,11 @@ BMailProtocol::ShowError(const char* error)
 }
 
 
+/**
+ * @brief Displays an informational message via the notifier, if one is set.
+ *
+ * @param message  Null-terminated message string to display.
+ */
 void
 BMailProtocol::ShowMessage(const char* message)
 {
@@ -148,6 +256,11 @@ BMailProtocol::ShowMessage(const char* message)
 }
 
 
+/**
+ * @brief Sets the total number of items expected for progress reporting.
+ *
+ * @param items  Total item count.
+ */
 void
 BMailProtocol::SetTotalItems(uint32 items)
 {
@@ -156,6 +269,11 @@ BMailProtocol::SetTotalItems(uint32 items)
 }
 
 
+/**
+ * @brief Sets the total expected byte count for progress reporting.
+ *
+ * @param size  Total byte count.
+ */
 void
 BMailProtocol::SetTotalItemsSize(uint64 size)
 {
@@ -164,6 +282,13 @@ BMailProtocol::SetTotalItemsSize(uint64 size)
 }
 
 
+/**
+ * @brief Reports incremental progress to the notifier.
+ *
+ * @param messages  Number of messages processed since last report.
+ * @param bytes     Number of bytes transferred since last report.
+ * @param message   Optional status string to display, or NULL.
+ */
 void
 BMailProtocol::ReportProgress(uint32 messages, uint64 bytes,
 	const char* message)
@@ -173,6 +298,11 @@ BMailProtocol::ReportProgress(uint32 messages, uint64 bytes,
 }
 
 
+/**
+ * @brief Resets the progress indicator to the start of a new operation.
+ *
+ * @param message  Optional message to display when resetting, or NULL.
+ */
 void
 BMailProtocol::ResetProgress(const char* message)
 {
@@ -181,6 +311,14 @@ BMailProtocol::ResetProgress(const char* message)
 }
 
 
+/**
+ * @brief Notifies that a new fetch cycle is beginning with the given message count.
+ *
+ * Resets progress and sets the total item count so the UI can show a meaningful
+ * progress bar.
+ *
+ * @param count  Number of messages to be fetched.
+ */
 void
 BMailProtocol::NotifyNewMessagesToFetch(int32 count)
 {
@@ -189,6 +327,18 @@ BMailProtocol::NotifyNewMessagesToFetch(int32 count)
 }
 
 
+/**
+ * @brief Runs header-fetch filters and, on success, writes attributes to the file.
+ *
+ * Calls _ProcessHeaderFetched() then, if the result is not a delete action,
+ * flushes the accumulated attributes into the file using the NodeMessage
+ * operator.
+ *
+ * @param ref         File reference; may be updated with a canonical name.
+ * @param file        BFile handle for writing attributes.
+ * @param attributes  BMessage accumulating the header attributes.
+ * @return The BMailFilterAction returned by the filter pipeline.
+ */
 BMailFilterAction
 BMailProtocol::ProcessHeaderFetched(entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -201,6 +351,13 @@ BMailProtocol::ProcessHeaderFetched(entry_ref& ref, BFile& file,
 }
 
 
+/**
+ * @brief Runs body-fetch filters and writes updated attributes to the file.
+ *
+ * @param ref         File reference.
+ * @param file        BFile handle for writing attributes.
+ * @param attributes  BMessage of attributes to update and flush.
+ */
 void
 BMailProtocol::NotifyBodyFetched(const entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -210,6 +367,17 @@ BMailProtocol::NotifyBodyFetched(const entry_ref& ref, BFile& file,
 }
 
 
+/**
+ * @brief Runs the complete header+body fetch filter pipeline in one call.
+ *
+ * Combines ProcessHeaderFetched() and NotifyBodyFetched() for protocols that
+ * always fetch the complete message in one operation.
+ *
+ * @param ref         File reference; may be updated with a canonical name.
+ * @param file        BFile handle.
+ * @param attributes  BMessage accumulating attributes.
+ * @return The BMailFilterAction from the header stage.
+ */
 BMailFilterAction
 BMailProtocol::ProcessMessageFetched(entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -224,6 +392,12 @@ BMailProtocol::ProcessMessageFetched(entry_ref& ref, BFile& file,
 }
 
 
+/**
+ * @brief Invokes MessageReadyToSend() on all installed filters.
+ *
+ * @param ref   File reference of the outbound message.
+ * @param file  BFile handle for the message file.
+ */
 void
 BMailProtocol::NotifyMessageReadyToSend(const entry_ref& ref, BFile& file)
 {
@@ -232,6 +406,12 @@ BMailProtocol::NotifyMessageReadyToSend(const entry_ref& ref, BFile& file)
 }
 
 
+/**
+ * @brief Invokes MessageSent() on all installed filters.
+ *
+ * @param ref   File reference of the sent message.
+ * @param file  BFile handle for the message file.
+ */
 void
 BMailProtocol::NotifyMessageSent(const entry_ref& ref, BFile& file)
 {
@@ -240,6 +420,11 @@ BMailProtocol::NotifyMessageSent(const entry_ref& ref, BFile& file)
 }
 
 
+/**
+ * @brief Loads and installs all filter add-ons listed in \a settings.
+ *
+ * @param settings  Protocol settings whose filter list to iterate.
+ */
 void
 BMailProtocol::LoadFilters(const BMailProtocolSettings& settings)
 {
@@ -252,6 +437,13 @@ BMailProtocol::LoadFilters(const BMailProtocolSettings& settings)
 }
 
 
+/**
+ * @brief Constructs the looper name from the add-on name and account name.
+ *
+ * @param addOnName  Add-on name string.
+ * @param settings   Account settings providing the account name suffix.
+ * @return Combined looper name string.
+ */
 /*static*/ BString
 BMailProtocol::_LooperName(const char* addOnName,
 	const BMailAccountSettings& settings)
@@ -266,6 +458,16 @@ BMailProtocol::_LooperName(const char* addOnName,
 }
 
 
+/**
+ * @brief Loads a filter add-on image and instantiates the filter object.
+ *
+ * Resolves the add-on's image (loading it if not already cached), looks up
+ * the instantiate_filter symbol, and calls it to create the filter instance.
+ * The image is retained in fFilterImages so that the symbol remains valid.
+ *
+ * @param settings  Add-on settings providing the entry_ref of the add-on file.
+ * @return Newly allocated BMailFilter, or NULL if loading or instantiation fails.
+ */
 BMailFilter*
 BMailProtocol::_LoadFilter(const BMailAddOnSettings& settings)
 {
@@ -295,6 +497,18 @@ BMailProtocol::_LoadFilter(const BMailAddOnSettings& settings)
 }
 
 
+/**
+ * @brief Passes the header-fetched event through all filters and handles renaming.
+ *
+ * Calls HeaderFetched() on each filter. If a filter returns B_DELETE_MAIL_ACTION
+ * the file is removed. If the ref is changed by a filter, the file is renamed
+ * with a unique name to avoid collisions.
+ *
+ * @param ref         File reference; updated with the final canonical name.
+ * @param file        BFile handle.
+ * @param attributes  Accumulated header attributes.
+ * @return B_DELETE_MAIL_ACTION, B_MOVE_MAIL_ACTION, or B_NO_MAIL_ACTION.
+ */
 BMailFilterAction
 BMailProtocol::_ProcessHeaderFetched(entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -355,6 +569,13 @@ BMailProtocol::_ProcessHeaderFetched(entry_ref& ref, BFile& file,
 }
 
 
+/**
+ * @brief Passes the body-fetched event through all filters.
+ *
+ * @param ref         File reference.
+ * @param file        BFile handle.
+ * @param attributes  Accumulated message attributes.
+ */
 void
 BMailProtocol::_NotifyBodyFetched(const entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -367,6 +588,12 @@ BMailProtocol::_NotifyBodyFetched(const entry_ref& ref, BFile& file,
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a BInboundMailProtocol and loads inbound filters.
+ *
+ * @param name      Add-on name for the looper name.
+ * @param settings  Account settings providing the inbound filter list.
+ */
 BInboundMailProtocol::BInboundMailProtocol(const char* name,
 	const BMailAccountSettings& settings)
 	:
@@ -376,11 +603,22 @@ BInboundMailProtocol::BInboundMailProtocol(const char* name,
 }
 
 
+/**
+ * @brief Destroys the inbound protocol.
+ */
 BInboundMailProtocol::~BInboundMailProtocol()
 {
 }
 
 
+/**
+ * @brief Dispatches kMsgSyncMessages, kMsgFetchBody, and kMsgMarkMessageAsRead.
+ *
+ * Calls SyncMessages(), HandleFetchBody(), or MarkMessageAsRead() based on the
+ * message what code. Unknown messages are forwarded to the base class.
+ *
+ * @param message  Incoming BMessage from the looper queue.
+ */
 void
 BInboundMailProtocol::MessageReceived(BMessage* message)
 {
@@ -422,6 +660,16 @@ BInboundMailProtocol::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Asynchronously requests a body fetch for the given message ref.
+ *
+ * Posts kMsgFetchBody to this looper's own message queue so the fetch runs
+ * on the protocol thread.
+ *
+ * @param ref      entry_ref of the partially fetched message.
+ * @param replyTo  Optional messenger for B_MAIL_BODY_FETCHED notification.
+ * @return B_OK on successful message delivery to the looper.
+ */
 status_t
 BInboundMailProtocol::FetchBody(const entry_ref& ref, BMessenger* replyTo)
 {
@@ -434,6 +682,13 @@ BInboundMailProtocol::FetchBody(const entry_ref& ref, BMessenger* replyTo)
 }
 
 
+/**
+ * @brief Updates the read status attribute on the given message file.
+ *
+ * @param ref   entry_ref of the message to mark.
+ * @param flag  B_READ, B_SEEN, or B_UNREAD.
+ * @return B_OK on success, or an error code from write_read_attr().
+ */
 status_t
 BInboundMailProtocol::MarkMessageAsRead(const entry_ref& ref, read_flags flag)
 {
@@ -442,6 +697,13 @@ BInboundMailProtocol::MarkMessageAsRead(const entry_ref& ref, read_flags flag)
 }
 
 
+/**
+ * @brief Sends a B_MAIL_BODY_FETCHED reply to the given messenger.
+ *
+ * @param replyTo  Destination messenger for the completion notification.
+ * @param ref      entry_ref of the message whose body was fetched.
+ * @param status   Fetch result status code.
+ */
 /*static*/ void
 BInboundMailProtocol::ReplyBodyFetched(const BMessenger& replyTo,
 	const entry_ref& ref, status_t status)
@@ -453,6 +715,11 @@ BInboundMailProtocol::ReplyBodyFetched(const BMessenger& replyTo,
 }
 
 
+/**
+ * @brief Notifies all filters that a mailbox synchronisation has completed.
+ *
+ * @param status  B_OK if the sync succeeded, or an error code.
+ */
 void
 BInboundMailProtocol::NotiyMailboxSynchronized(status_t status)
 {
@@ -464,6 +731,12 @@ BInboundMailProtocol::NotiyMailboxSynchronized(status_t status)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs a BOutboundMailProtocol and loads outbound filters.
+ *
+ * @param name      Add-on name for the looper name.
+ * @param settings  Account settings providing the outbound filter list.
+ */
 BOutboundMailProtocol::BOutboundMailProtocol(const char* name,
 	const BMailAccountSettings& settings)
 	:
@@ -473,11 +746,24 @@ BOutboundMailProtocol::BOutboundMailProtocol(const char* name,
 }
 
 
+/**
+ * @brief Destroys the outbound protocol.
+ */
 BOutboundMailProtocol::~BOutboundMailProtocol()
 {
 }
 
 
+/**
+ * @brief Queues a batch of messages for sending.
+ *
+ * Posts kMsgSendMessages with the file list and total byte count to the
+ * protocol's own looper thread.
+ *
+ * @param files       BMessage containing refs to the files to send.
+ * @param totalBytes  Total byte count of all messages for progress reporting.
+ * @return B_OK on successful delivery to the looper.
+ */
 status_t
 BOutboundMailProtocol::SendMessages(const BMessage& files, off_t totalBytes)
 {
@@ -489,6 +775,13 @@ BOutboundMailProtocol::SendMessages(const BMessage& files, off_t totalBytes)
 }
 
 
+/**
+ * @brief Dispatches kMsgSendMessages to HandleSendMessages().
+ *
+ * Unknown messages are forwarded to the base class.
+ *
+ * @param message  Incoming BMessage from the looper queue.
+ */
 void
 BOutboundMailProtocol::MessageReceived(BMessage* message)
 {

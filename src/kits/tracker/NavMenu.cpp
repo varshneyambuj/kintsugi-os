@@ -1,39 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
-trademarks of Be Incorporated in the United States and other countries.
-Other brand product names are registered trademarks or trademarks of
-their respective holders. All rights reserved.
-*/
-
-//	NavMenu is a hierarchical menu of volumes, folders, files and queries
-//	displays icons, uses the SlowMenu API for full interruptability
+/**
+ * @file NavMenu.cpp
+ * @brief BNavMenu — a hierarchical, lazily-built navigation menu for Tracker.
+ *
+ * BNavMenu is a BSlowMenu subclass that populates its items incrementally to
+ * remain fully interruptible.  It displays icons and names for the immediate
+ * children of a directory, volume, or query container.  Spring-loaded folder
+ * helpers are also provided for enabling/disabling items during drag-and-drop.
+ *
+ * @see BSlowMenu, BContainerWindow, BPoseView
+ */
 
 
 #include "NavMenu.h"
@@ -81,6 +82,17 @@ enum nav_flags {
 };
 
 
+/**
+ * @brief Check whether two drag messages refer to the same set of refs and click point.
+ *
+ * Returns true only if every "refs" entry in @p incoming matches a ref in
+ * @p dragMessage and the "click_pt" fields are identical, indicating this is
+ * not a new drag but the same one.
+ *
+ * @param incoming     The newly-arrived drag message.
+ * @param dragMessage  The previously-seen drag message.
+ * @return True if the messages represent the same drag payload.
+ */
 bool
 SpringLoadedFolderCompareMessages(const BMessage* incoming, const BMessage* dragMessage)
 {
@@ -131,6 +143,16 @@ SpringLoadedFolderCompareMessages(const BMessage* incoming, const BMessage* drag
 }
 
 
+/**
+ * @brief Enable/disable menu items based on whether they can accept the dragged types.
+ *
+ * Iterates ModelMenuItems in @p menu and calls SupportsMimeType() on their
+ * models.  Directories and volumes are always enabled; files and executables
+ * are enabled only if they support at least one type in @p typeslist.
+ *
+ * @param menu       The menu whose items are to be updated.
+ * @param typeslist  List of MIME type strings from the drag payload.
+ */
 void
 SpringLoadedFolderSetMenuStates(const BMenu* menu,
 	const BStringList* typeslist)
@@ -180,6 +202,15 @@ SpringLoadedFolderSetMenuStates(const BMenu* menu,
 }
 
 
+/**
+ * @brief Add the MIME type of @p ref to @p typeslist, avoiding duplicates.
+ *
+ * For symlinks the target's type is added instead.  Does nothing if @p ref
+ * or @p typeslist is NULL, or if the node has no valid MIME type.
+ *
+ * @param ref        The entry whose MIME type is to be added.
+ * @param typeslist  The list to append to.
+ */
 void
 SpringLoadedFolderAddUniqueTypeToList(entry_ref* ref,
 	BStringList* typeslist)
@@ -225,6 +256,17 @@ SpringLoadedFolderAddUniqueTypeToList(entry_ref* ref,
 }
 
 
+/**
+ * @brief Cache a drag message and build the corresponding MIME-type list.
+ *
+ * Replaces *message and *typeslist with newly-allocated objects derived from
+ * @p incoming so spring-loaded folder checks can be done without re-parsing
+ * the message on each mouse-over event.
+ *
+ * @param incoming   The drag BMessage to cache; may be NULL (clears state).
+ * @param message    Output: receives a copy of @p incoming.
+ * @param typeslist  Output: receives the list of unique MIME types from the drag refs.
+ */
 void
 SpringLoadedFolderCacheDragData(const BMessage* incoming, BMessage** message,
 	BStringList** typeslist)
@@ -260,6 +302,15 @@ SpringLoadedFolderCacheDragData(const BMessage* incoming, BMessage** message,
 #define B_TRANSLATION_CONTEXT "NavMenu"
 
 
+/**
+ * @brief Construct a BNavMenu for navigating the children of a directory.
+ *
+ * @param title         The menu title string.
+ * @param message       The what-code sent when an item is selected.
+ * @param target        The handler that receives item messages.
+ * @param parentWindow  Optional window whose location constrains the menu.
+ * @param list          Optional list of accepted MIME types for spring-loading.
+ */
 BNavMenu::BNavMenu(const char* title, uint32 message, const BHandler* target,
 	BWindow* parentWindow, const BStringList* list)
 	:

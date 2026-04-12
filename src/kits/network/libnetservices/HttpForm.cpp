@@ -1,9 +1,42 @@
 /*
- * Copyright 2010-2013 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2013 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ */
+
+
+/**
+ * @file HttpForm.cpp
+ * @brief Implementation of BHttpForm and BHttpFormData for HTTP form encoding.
+ *
+ * BHttpForm manages an ordered collection of BHttpFormData fields and can
+ * serialise them either as URL-encoded (application/x-www-form-urlencoded) or
+ * multipart/form-data, which is required when file uploads are included. The
+ * BHttpForm::Iterator class provides sequential access to fields for streaming
+ * multipart uploads without buffering the entire body in memory.
+ *
+ * @see BHttpRequest
  */
 
 
@@ -28,6 +61,9 @@ using namespace BPrivate::Network;
 // #pragma mark - BHttpFormData
 
 
+/**
+ * @brief Default constructor — creates an empty string-typed form field.
+ */
 BHttpFormData::BHttpFormData()
 	:
 	fDataType(B_HTTPFORM_STRING),
@@ -39,6 +75,12 @@ BHttpFormData::BHttpFormData()
 }
 
 
+/**
+ * @brief Construct a named string field with the given value.
+ *
+ * @param name   The form field name.
+ * @param value  The string value for this field.
+ */
 BHttpFormData::BHttpFormData(const BString& name, const BString& value)
 	:
 	fDataType(B_HTTPFORM_STRING),
@@ -52,6 +94,15 @@ BHttpFormData::BHttpFormData(const BString& name, const BString& value)
 }
 
 
+/**
+ * @brief Construct a named file field pointing to a filesystem path.
+ *
+ * The content type is determined at serialisation time from the file's
+ * node info; the file is not opened at construction.
+ *
+ * @param name  The form field name.
+ * @param file  The BPath of the file to upload.
+ */
 BHttpFormData::BHttpFormData(const BString& name, const BPath& file)
 	:
 	fDataType(B_HTTPFORM_FILE),
@@ -65,6 +116,16 @@ BHttpFormData::BHttpFormData(const BString& name, const BPath& file)
 }
 
 
+/**
+ * @brief Construct a named buffer field referencing an existing memory region.
+ *
+ * The caller retains ownership of \a buffer unless CopyBuffer() is later
+ * called to transfer ownership to this object.
+ *
+ * @param name    The form field name.
+ * @param buffer  Pointer to the raw data buffer.
+ * @param size    Number of bytes in the buffer.
+ */
 BHttpFormData::BHttpFormData(const BString& name, const void* buffer,
 	ssize_t size)
 	:
@@ -78,6 +139,11 @@ BHttpFormData::BHttpFormData(const BString& name, const void* buffer,
 }
 
 
+/**
+ * @brief Copy constructor — delegates to the assignment operator.
+ *
+ * @param other  The source BHttpFormData to copy.
+ */
 BHttpFormData::BHttpFormData(const BHttpFormData& other)
 	:
 	fCopiedBuffer(false),
@@ -89,6 +155,9 @@ BHttpFormData::BHttpFormData(const BHttpFormData& other)
 }
 
 
+/**
+ * @brief Destructor — frees the buffer if it was internally copied.
+ */
 BHttpFormData::~BHttpFormData()
 {
 	if (fCopiedBuffer)
@@ -99,6 +168,14 @@ BHttpFormData::~BHttpFormData()
 // #pragma mark - Retrieve data informations
 
 
+/**
+ * @brief Return whether the field is properly initialised.
+ *
+ * Buffer fields are valid only when the buffer pointer is non-NULL; all other
+ * field types are always considered valid.
+ *
+ * @return true if the field is ready for use, false otherwise.
+ */
 bool
 BHttpFormData::InitCheck() const
 {
@@ -109,6 +186,11 @@ BHttpFormData::InitCheck() const
 }
 
 
+/**
+ * @brief Return the field name.
+ *
+ * @return A const reference to the field name BString.
+ */
 const BString&
 BHttpFormData::Name() const
 {
@@ -116,6 +198,11 @@ BHttpFormData::Name() const
 }
 
 
+/**
+ * @brief Return the string value (valid only for B_HTTPFORM_STRING fields).
+ *
+ * @return A const reference to the string value BString.
+ */
 const BString&
 BHttpFormData::String() const
 {
@@ -123,6 +210,11 @@ BHttpFormData::String() const
 }
 
 
+/**
+ * @brief Return the file path (valid only for B_HTTPFORM_FILE fields).
+ *
+ * @return A const reference to the BPath representing the file.
+ */
 const BPath&
 BHttpFormData::File() const
 {
@@ -130,6 +222,11 @@ BHttpFormData::File() const
 }
 
 
+/**
+ * @brief Return a pointer to the raw buffer (valid only for B_HTTPFORM_BUFFER fields).
+ *
+ * @return A const void pointer to the buffer data, or NULL if not a buffer field.
+ */
 const void*
 BHttpFormData::Buffer() const
 {
@@ -137,6 +234,11 @@ BHttpFormData::Buffer() const
 }
 
 
+/**
+ * @brief Return the size of the raw buffer in bytes.
+ *
+ * @return The buffer size, or 0 if the field is not a buffer field.
+ */
 ssize_t
 BHttpFormData::BufferSize() const
 {
@@ -144,6 +246,11 @@ BHttpFormData::BufferSize() const
 }
 
 
+/**
+ * @brief Return whether this field is marked as a file upload.
+ *
+ * @return true if MarkAsFile() has been called on this field, false otherwise.
+ */
 bool
 BHttpFormData::IsFile() const
 {
@@ -151,6 +258,11 @@ BHttpFormData::IsFile() const
 }
 
 
+/**
+ * @brief Return the file name override set by MarkAsFile().
+ *
+ * @return A const reference to the filename BString, empty if not marked.
+ */
 const BString&
 BHttpFormData::Filename() const
 {
@@ -158,6 +270,11 @@ BHttpFormData::Filename() const
 }
 
 
+/**
+ * @brief Return the MIME type override set by MarkAsFile().
+ *
+ * @return A const reference to the MIME type BString, empty if not marked.
+ */
 const BString&
 BHttpFormData::MimeType() const
 {
@@ -165,6 +282,12 @@ BHttpFormData::MimeType() const
 }
 
 
+/**
+ * @brief Return the data type of this field.
+ *
+ * @return One of the form_content_type constants: B_HTTPFORM_STRING,
+ *         B_HTTPFORM_FILE, B_HTTPFORM_BUFFER, or B_HTTPFORM_UNKNOWN.
+ */
 form_content_type
 BHttpFormData::Type() const
 {
@@ -175,6 +298,17 @@ BHttpFormData::Type() const
 // #pragma mark - Change behavior
 
 
+/**
+ * @brief Mark a string or buffer field as representing a file upload.
+ *
+ * This causes the field to be encoded with a Content-Disposition filename
+ * parameter in multipart/form-data output. The form type is automatically
+ * switched to multipart when this is called via BHttpForm::MarkAsFile().
+ *
+ * @param filename  The filename to advertise in the Content-Disposition header.
+ * @param mimeType  The MIME content type for the file data.
+ * @return B_OK on success, or B_ERROR if the field type is FILE or UNKNOWN.
+ */
 status_t
 BHttpFormData::MarkAsFile(const BString& filename, const BString& mimeType)
 {
@@ -189,6 +323,11 @@ BHttpFormData::MarkAsFile(const BString& filename, const BString& mimeType)
 }
 
 
+/**
+ * @brief Remove the file-upload mark from this field.
+ *
+ * Clears the filename and MIME type overrides and resets the IsFile() flag.
+ */
 void
 BHttpFormData::UnmarkAsFile()
 {
@@ -198,6 +337,15 @@ BHttpFormData::UnmarkAsFile()
 }
 
 
+/**
+ * @brief Make an internal copy of the referenced buffer data.
+ *
+ * After this call the object owns the buffer and will free it in the
+ * destructor, so the original caller may release their copy.
+ *
+ * @return B_OK on success, B_ERROR if this is not a buffer field, or
+ *         B_NO_MEMORY if the allocation fails.
+ */
 status_t
 BHttpFormData::CopyBuffer()
 {
@@ -216,6 +364,15 @@ BHttpFormData::CopyBuffer()
 }
 
 
+/**
+ * @brief Assignment operator — copies all fields from \a other.
+ *
+ * If \a other had an internally copied buffer, CopyBuffer() is called on
+ * this object to ensure independent ownership.
+ *
+ * @param other  The source BHttpFormData to copy from.
+ * @return A reference to this object.
+ */
 BHttpFormData&
 BHttpFormData::operator=(const BHttpFormData& other)
 {
@@ -240,6 +397,9 @@ BHttpFormData::operator=(const BHttpFormData& other)
 // #pragma mark - BHttpForm
 
 
+/**
+ * @brief Default constructor — creates an empty URL-encoded form.
+ */
 BHttpForm::BHttpForm()
 	:
 	fType(B_HTTP_FORM_URL_ENCODED)
@@ -247,6 +407,11 @@ BHttpForm::BHttpForm()
 }
 
 
+/**
+ * @brief Copy constructor — copies all fields and the form type.
+ *
+ * @param other  The source BHttpForm to copy.
+ */
 BHttpForm::BHttpForm(const BHttpForm& other)
 	:
 	fFields(other.fFields),
@@ -256,6 +421,11 @@ BHttpForm::BHttpForm(const BHttpForm& other)
 }
 
 
+/**
+ * @brief Construct a BHttpForm by parsing a URL-encoded query string.
+ *
+ * @param formString  The URL-encoded name=value pairs to parse.
+ */
 BHttpForm::BHttpForm(const BString& formString)
 	:
 	fType(B_HTTP_FORM_URL_ENCODED)
@@ -264,6 +434,9 @@ BHttpForm::BHttpForm(const BString& formString)
 }
 
 
+/**
+ * @brief Destructor — clears all stored form fields.
+ */
 BHttpForm::~BHttpForm()
 {
 	Clear();
@@ -273,6 +446,14 @@ BHttpForm::~BHttpForm()
 // #pragma mark - Form string parsing
 
 
+/**
+ * @brief Parse a URL-encoded query string and add fields to this form.
+ *
+ * Repeatedly calls _ExtractNameValuePair() to process each "name=value"
+ * segment delimited by '&' characters.
+ *
+ * @param formString  The URL-encoded form data string to parse.
+ */
 void
 BHttpForm::ParseString(const BString& formString)
 {
@@ -283,6 +464,16 @@ BHttpForm::ParseString(const BString& formString)
 }
 
 
+/**
+ * @brief Serialise the form to its wire-format string representation.
+ *
+ * For URL-encoded forms, returns a percent-encoded "name=value&..." string.
+ * For multipart forms, returns the complete multipart body including part
+ * headers, field data, and the final boundary terminator. File fields are
+ * read entirely into memory at this point.
+ *
+ * @return The serialised form body as a BString.
+ */
 BString
 BHttpForm::RawData() const
 {
@@ -370,6 +561,13 @@ BHttpForm::RawData() const
 // #pragma mark - Form add
 
 
+/**
+ * @brief Add a named string field to the form.
+ *
+ * @param fieldName  The name of the form field.
+ * @param value      The string value to store.
+ * @return B_OK on success, or B_ERROR if field initialisation fails.
+ */
 status_t
 BHttpForm::AddString(const BString& fieldName, const BString& value)
 {
@@ -382,6 +580,13 @@ BHttpForm::AddString(const BString& fieldName, const BString& value)
 }
 
 
+/**
+ * @brief Add a named integer field by converting the value to a string.
+ *
+ * @param fieldName  The name of the form field.
+ * @param value      The integer value to encode.
+ * @return B_OK on success, or an error code from AddString().
+ */
 status_t
 BHttpForm::AddInt(const BString& fieldName, int32 value)
 {
@@ -392,6 +597,17 @@ BHttpForm::AddInt(const BString& fieldName, int32 value)
 }
 
 
+/**
+ * @brief Add a named file field and switch the form to multipart encoding.
+ *
+ * The file is not opened immediately; it will be read when RawData() or the
+ * iterator serialises the field. The form type is automatically changed to
+ * B_HTTP_FORM_MULTIPART if it is not already.
+ *
+ * @param fieldName  The name of the form field.
+ * @param file       The BPath of the file to upload.
+ * @return B_OK on success, or B_ERROR if field initialisation fails.
+ */
 status_t
 BHttpForm::AddFile(const BString& fieldName, const BPath& file)
 {
@@ -407,6 +623,17 @@ BHttpForm::AddFile(const BString& fieldName, const BPath& file)
 }
 
 
+/**
+ * @brief Add a named raw-buffer field referencing external memory.
+ *
+ * The caller retains ownership of \a buffer. Use AddBufferCopy() if the
+ * lifetime of the form may exceed the lifetime of the buffer.
+ *
+ * @param fieldName  The name of the form field.
+ * @param buffer     Pointer to the data to send.
+ * @param size       Number of bytes in the buffer.
+ * @return B_OK on success, or B_ERROR if field initialisation fails.
+ */
 status_t
 BHttpForm::AddBuffer(const BString& fieldName, const void* buffer,
 	ssize_t size)
@@ -420,6 +647,18 @@ BHttpForm::AddBuffer(const BString& fieldName, const void* buffer,
 }
 
 
+/**
+ * @brief Add a named raw-buffer field and copy the buffer data internally.
+ *
+ * Unlike AddBuffer(), the form takes ownership of an internal copy of the
+ * data so the caller may free \a buffer immediately after this call.
+ *
+ * @param fieldName  The name of the form field.
+ * @param buffer     Pointer to the data to copy and send.
+ * @param size       Number of bytes in the buffer.
+ * @return B_OK on success, B_ERROR if field initialisation fails, or
+ *         B_NO_MEMORY if the internal buffer copy allocation fails.
+ */
 status_t
 BHttpForm::AddBufferCopy(const BString& fieldName, const void* buffer,
 	ssize_t size)
@@ -440,6 +679,15 @@ BHttpForm::AddBufferCopy(const BString& fieldName, const void* buffer,
 // #pragma mark - Mark a field as a filename
 
 
+/**
+ * @brief Mark an existing field as a file-upload field with a MIME type.
+ *
+ * The form type is automatically changed to multipart if necessary.
+ *
+ * @param fieldName  The name of the field to mark.
+ * @param filename   The filename to advertise in the Content-Disposition header.
+ * @param mimeType   The MIME content type for the field data.
+ */
 void
 BHttpForm::MarkAsFile(const BString& fieldName, const BString& filename,
 	const BString& mimeType)
@@ -455,6 +703,12 @@ BHttpForm::MarkAsFile(const BString& fieldName, const BString& filename,
 }
 
 
+/**
+ * @brief Mark an existing field as a file-upload field without a MIME type.
+ *
+ * @param fieldName  The name of the field to mark.
+ * @param filename   The filename to advertise in the Content-Disposition header.
+ */
 void
 BHttpForm::MarkAsFile(const BString& fieldName, const BString& filename)
 {
@@ -462,6 +716,11 @@ BHttpForm::MarkAsFile(const BString& fieldName, const BString& filename)
 }
 
 
+/**
+ * @brief Remove the file-upload mark from a named field.
+ *
+ * @param fieldName  The name of the field to unmark.
+ */
 void
 BHttpForm::UnmarkAsFile(const BString& fieldName)
 {
@@ -477,6 +736,14 @@ BHttpForm::UnmarkAsFile(const BString& fieldName)
 // #pragma mark - Change form type
 
 
+/**
+ * @brief Set the encoding type of the form.
+ *
+ * Switching to B_HTTP_FORM_MULTIPART generates a random boundary string.
+ *
+ * @param type  The desired form encoding: B_HTTP_FORM_URL_ENCODED or
+ *              B_HTTP_FORM_MULTIPART.
+ */
 void
 BHttpForm::SetFormType(form_type type)
 {
@@ -490,6 +757,12 @@ BHttpForm::SetFormType(form_type type)
 // #pragma mark - Form test
 
 
+/**
+ * @brief Test whether a field with the given name exists in the form.
+ *
+ * @param name  The field name to look up.
+ * @return true if the field exists, false otherwise.
+ */
 bool
 BHttpForm::HasField(const BString& name) const
 {
@@ -500,6 +773,13 @@ BHttpForm::HasField(const BString& name) const
 // #pragma mark - Form retrieve
 
 
+/**
+ * @brief Build and return the multipart header for a specific named field.
+ *
+ * @param fieldName  The name of the field whose header is needed.
+ * @return The complete Content-Disposition (and optional Content-Type) header
+ *         block for the field, or an empty string if the field does not exist.
+ */
 BString
 BHttpForm::GetMultipartHeader(const BString& fieldName) const
 {
@@ -512,6 +792,11 @@ BHttpForm::GetMultipartHeader(const BString& fieldName) const
 }
 
 
+/**
+ * @brief Return the current form encoding type.
+ *
+ * @return B_HTTP_FORM_URL_ENCODED or B_HTTP_FORM_MULTIPART.
+ */
 form_type
 BHttpForm::GetFormType() const
 {
@@ -519,6 +804,11 @@ BHttpForm::GetFormType() const
 }
 
 
+/**
+ * @brief Return the multipart boundary string.
+ *
+ * @return A const reference to the boundary BString, empty for URL-encoded forms.
+ */
 const BString&
 BHttpForm::GetMultipartBoundary() const
 {
@@ -526,6 +816,11 @@ BHttpForm::GetMultipartBoundary() const
 }
 
 
+/**
+ * @brief Return the multipart closing boundary line.
+ *
+ * @return A BString of the form "--<boundary>--\r\n".
+ */
 BString
 BHttpForm::GetMultipartFooter() const
 {
@@ -535,6 +830,15 @@ BHttpForm::GetMultipartFooter() const
 }
 
 
+/**
+ * @brief Compute the total Content-Length for the serialised form body.
+ *
+ * For URL-encoded forms, this is the length of RawData(). For multipart
+ * forms, each field's header, data, CRLF separator, and the closing boundary
+ * are summed; file sizes are obtained by seeking to the end of the file.
+ *
+ * @return The total byte length of the serialised form body.
+ */
 ssize_t
 BHttpForm::ContentLength() const
 {
@@ -581,6 +885,11 @@ BHttpForm::ContentLength() const
 // #pragma mark Form iterator
 
 
+/**
+ * @brief Return an iterator positioned at the first field.
+ *
+ * @return A BHttpForm::Iterator for traversing and streaming this form.
+ */
 BHttpForm::Iterator
 BHttpForm::GetIterator()
 {
@@ -591,6 +900,9 @@ BHttpForm::GetIterator()
 // #pragma mark - Form clear
 
 
+/**
+ * @brief Remove all fields from the form.
+ */
 void
 BHttpForm::Clear()
 {
@@ -601,6 +913,15 @@ BHttpForm::Clear()
 // #pragma mark - Overloaded operators
 
 
+/**
+ * @brief Access or create a string field by name using the subscript operator.
+ *
+ * If no field with \a name exists, an empty string field is created. The
+ * returned reference may be used to read or modify the field's value.
+ *
+ * @param name  The field name to look up or create.
+ * @return A reference to the corresponding BHttpFormData.
+ */
 BHttpFormData&
 BHttpForm::operator[](const BString& name)
 {
@@ -611,6 +932,15 @@ BHttpForm::operator[](const BString& name)
 }
 
 
+/**
+ * @brief Extract a single "name=value" pair from a URL-encoded form string.
+ *
+ * Advances \a index past the consumed characters (up to and including the
+ * next '&' delimiter) and calls AddString() to store the extracted pair.
+ *
+ * @param formString  The full URL-encoded form string.
+ * @param index       In/out pointer to the current parse position.
+ */
 void
 BHttpForm::_ExtractNameValuePair(const BString& formString, int32* index)
 {
@@ -646,6 +976,12 @@ BHttpForm::_ExtractNameValuePair(const BString& formString, int32* index)
 }
 
 
+/**
+ * @brief Generate a random multipart boundary string.
+ *
+ * Produces a 28-character fixed prefix followed by kBoundaryRandomSize
+ * random decimal digits.
+ */
 void
 BHttpForm::_GenerateMultipartBoundary()
 {
@@ -663,6 +999,16 @@ BHttpForm::_GenerateMultipartBoundary()
 // #pragma mark - Field information access by std iterator
 
 
+/**
+ * @brief Build the multipart MIME part header for a form field.
+ *
+ * Constructs the "--boundary\r\nContent-Disposition: form-data; name=..."
+ * block, appending a filename and Content-Type line for file-upload fields.
+ *
+ * @param element  Pointer to the BHttpFormData field to generate the header for.
+ * @return The complete MIME part header string (not including the data or
+ *         trailing CRLF after the data).
+ */
 BString
 BHttpForm::_GetMultipartHeader(const BHttpFormData* element) const
 {
@@ -714,6 +1060,11 @@ BHttpForm::_GetMultipartHeader(const BHttpFormData* element) const
 // #pragma mark - Iterator
 
 
+/**
+ * @brief Construct an iterator positioned at the first field of \a form.
+ *
+ * @param form  The BHttpForm to iterate over.
+ */
 BHttpForm::Iterator::Iterator(BHttpForm* form)
 	:
 	fElement(NULL)
@@ -724,12 +1075,22 @@ BHttpForm::Iterator::Iterator(BHttpForm* form)
 }
 
 
+/**
+ * @brief Copy constructor — duplicates the iterator's current position.
+ *
+ * @param other  The source iterator to copy.
+ */
 BHttpForm::Iterator::Iterator(const Iterator& other)
 {
 	*this = other;
 }
 
 
+/**
+ * @brief Return whether more fields remain to be visited.
+ *
+ * @return true if Next() will return a valid field, false at end-of-form.
+ */
 bool
 BHttpForm::Iterator::HasNext() const
 {
@@ -737,6 +1098,11 @@ BHttpForm::Iterator::HasNext() const
 }
 
 
+/**
+ * @brief Advance the iterator and return the current field.
+ *
+ * @return A pointer to the current BHttpFormData, or NULL at end-of-form.
+ */
 BHttpFormData*
 BHttpForm::Iterator::Next()
 {
@@ -746,6 +1112,12 @@ BHttpForm::Iterator::Next()
 }
 
 
+/**
+ * @brief Remove the last field returned by Next() from the form.
+ *
+ * After calling this method, fElement is set to NULL and the internal
+ * std::map iterator is invalidated for the removed element.
+ */
 void
 BHttpForm::Iterator::Remove()
 {
@@ -754,6 +1126,11 @@ BHttpForm::Iterator::Remove()
 }
 
 
+/**
+ * @brief Return the multipart header for the most recently visited field.
+ *
+ * @return The Content-Disposition header block for the previous element.
+ */
 BString
 BHttpForm::Iterator::MultipartHeader()
 {
@@ -761,6 +1138,12 @@ BHttpForm::Iterator::MultipartHeader()
 }
 
 
+/**
+ * @brief Assignment operator — copies all iterator state from \a other.
+ *
+ * @param other  The source iterator to copy.
+ * @return A reference to this iterator.
+ */
 BHttpForm::Iterator&
 BHttpForm::Iterator::operator=(const Iterator& other)
 {
@@ -773,6 +1156,12 @@ BHttpForm::Iterator::operator=(const Iterator& other)
 }
 
 
+/**
+ * @brief Advance the std iterator and cache the next element pointer.
+ *
+ * Saves the current element as fPrevElement, then advances fStdIterator and
+ * updates fElement to point to the next BHttpFormData, or NULL at end.
+ */
 void
 BHttpForm::Iterator::_FindNext()
 {

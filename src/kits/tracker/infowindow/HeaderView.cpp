@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file HeaderView.cpp
+ * @brief Header view for the Tracker info window showing icon and filename.
+ *
+ * HeaderView renders the top section of BInfoWindow, displaying the file's
+ * large icon and its name. It supports inline name editing via a BTextView,
+ * drag-and-drop of the represented entry, and a contextual popup menu.
+ * Symlinks are automatically resolved to show the target's icon.
+ *
+ * @see BInfoWindow, GeneralInfoView
+ */
 
 
 #include "HeaderView.h"
@@ -67,6 +71,15 @@ All rights reserved.
 const float kDragSlop = 3.0f;
 
 
+/**
+ * @brief Construct a HeaderView for the given file system model.
+ *
+ * Initialises icon and title rects based on control-look metrics, resolves
+ * symlink targets so the correct icon is displayed, and sets the view's
+ * preferred height to match the icon.
+ *
+ * @param model  The Model whose entry the header represents.
+ */
 HeaderView::HeaderView(Model* model)
 	:
 	BView("header", B_WILL_DRAW),
@@ -118,6 +131,9 @@ HeaderView::HeaderView(Model* model)
 }
 
 
+/**
+ * @brief Destroy the HeaderView, releasing any separately-allocated icon model.
+ */
 HeaderView::~HeaderView()
 {
 	if (fIconModel != fModel)
@@ -125,6 +141,15 @@ HeaderView::~HeaderView()
 }
 
 
+/**
+ * @brief Update the header when the underlying model changes.
+ *
+ * Re-resolves the icon model (handling symlinks) and invalidates the view
+ * so it is repainted with the new state.
+ *
+ * @param model    Pointer to the updated Model.
+ * @param message  The node-monitor message that triggered the update.
+ */
 void
 HeaderView::ModelChanged(Model* model, BMessage* message)
 {
@@ -153,6 +178,14 @@ HeaderView::ModelChanged(Model* model, BMessage* message)
 }
 
 
+/**
+ * @brief Switch the header to a new model after a symlink retarget.
+ *
+ * Sets a new Model pointer and re-resolves its icon, then invalidates the
+ * view.  Used when the user picks a new link target in the info window.
+ *
+ * @param model  The newly targeted Model.
+ */
 void
 HeaderView::ReLinkTargetModel(Model* model)
 {
@@ -172,6 +205,14 @@ HeaderView::ReLinkTargetModel(Model* model)
 }
 
 
+/**
+ * @brief Enter inline filename-editing mode for the title.
+ *
+ * Creates a BTextView pre-populated with the model's current name,
+ * installs a key filter that commits on Return and cancels on Escape,
+ * and gives the text view keyboard focus.  Does nothing if editing is
+ * already in progress.
+ */
 void
 HeaderView::BeginEditingTitle()
 {
@@ -215,6 +256,15 @@ HeaderView::BeginEditingTitle()
 }
 
 
+/**
+ * @brief Commit or discard the in-progress filename edit.
+ *
+ * If @p commit is true, attempts to rename the file via EditModelName() and
+ * adjusts the title rect width accordingly.  Removes the text view either
+ * way, and reopens editing if the rename failed with a recoverable error.
+ *
+ * @param commit  Pass true to apply the new name, false to discard.
+ */
 void
 HeaderView::FinishEditingTitle(bool commit)
 {
@@ -249,6 +299,13 @@ HeaderView::FinishEditingTitle(bool commit)
 }
 
 
+/**
+ * @brief Render the header — background, icon, and filename.
+ *
+ * Clears the background, draws the model icon via IconCache, then renders
+ * the bold title string (truncated if needed) at the calculated position.
+ * Skips the title while inline editing is active.
+ */
 void
 HeaderView::Draw(BRect)
 {
@@ -299,6 +356,11 @@ HeaderView::Draw(BRect)
 }
 
 
+/**
+ * @brief Commit the title edit when the view loses keyboard focus.
+ *
+ * @param focus  True when gaining focus, false when losing it.
+ */
 void
 HeaderView::MakeFocus(bool focus)
 {
@@ -307,6 +369,11 @@ HeaderView::MakeFocus(bool focus)
 }
 
 
+/**
+ * @brief Commit the title edit when the window loses activation.
+ *
+ * @param active  True when the window becomes active, false when it deactivates.
+ */
 void
 HeaderView::WindowActivated(bool active)
 {
@@ -318,6 +385,16 @@ HeaderView::WindowActivated(bool active)
 }
 
 
+/**
+ * @brief Handle a mouse-button press in the header.
+ *
+ * Begins title editing on a click inside the title rect, commits any open
+ * edit on a click elsewhere, and initiates icon tracking (drag or double-click
+ * detection) on clicks within the icon rect.  A secondary button press over
+ * the icon opens a contextual popup menu.
+ *
+ * @param where  The point in view coordinates where the button was pressed.
+ */
 void
 HeaderView::MouseDown(BPoint where)
 {
@@ -378,6 +455,17 @@ HeaderView::MouseDown(BPoint where)
 }
 
 
+/**
+ * @brief Handle mouse movement, updating drag state and drop highlighting.
+ *
+ * If an external drag is in progress and the pointer is over the icon rect,
+ * the icon is highlighted as a drop target.  When the pointer moves beyond
+ * the slop threshold while icon-tracking, a drag-and-drop operation is
+ * initiated with a composite bitmap representing the file.
+ *
+ * @param where        Current pointer position in view coordinates.
+ * @param dragMessage  Non-NULL while a drag is being tracked by this view.
+ */
 void
 HeaderView::MouseMoved(BPoint where, uint32, const BMessage* dragMessage)
 {
@@ -494,6 +582,14 @@ HeaderView::MouseMoved(BPoint where, uint32, const BMessage* dragMessage)
 }
 
 
+/**
+ * @brief Complete a mouse-tracking sequence, launching the entry on double-click.
+ *
+ * On a double-click over the icon, posts a B_REFS_RECEIVED message to be_app
+ * to open the file.  Resets tracking state and drag flag.
+ *
+ * @param where  The point in view coordinates where the button was released.
+ */
 void
 HeaderView::MouseUp(BPoint where)
 {
@@ -521,6 +617,15 @@ HeaderView::MouseUp(BPoint where)
 }
 
 
+/**
+ * @brief Accept dropped entries onto the header icon.
+ *
+ * When a compatible drag is dropped on the icon rect, delegates to
+ * BPoseView::HandleDropCommon() to perform the copy/move/link operation,
+ * then invalidates the icon rect.
+ *
+ * @param message  The received BMessage, which may be a drop or other message.
+ */
 void
 HeaderView::MessageReceived(BMessage* message)
 {
@@ -541,6 +646,16 @@ HeaderView::MessageReceived(BMessage* message)
 
 
 
+/**
+ * @brief Populate a contextual menu for the header icon.
+ *
+ * Adds navigation, open, rename, unmount, identify, and permissions menu
+ * items appropriate for the current model type.  A navigation submenu is
+ * added for directories and volumes.
+ *
+ * @param parent  The BMenu to populate; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if @p parent is NULL.
+ */
 status_t
 HeaderView::BuildContextMenu(BMenu* parent)
 {
@@ -642,6 +757,17 @@ HeaderView::BuildContextMenu(BMenu* parent)
 }
 
 
+/**
+ * @brief Message filter for the inline title-editing BTextView.
+ *
+ * Adjusts the text rect width on every keystroke and scrolls the cursor into
+ * view.  Intercepts Return (commit) and Escape (cancel) keys so the editing
+ * session can be closed without dispatching the key to the text view.
+ *
+ * @param message  The key-down BMessage being filtered.
+ * @param filter   The owning BMessageFilter (used to locate the HeaderView).
+ * @return B_SKIP_MESSAGE for Return/Escape, B_DISPATCH_MESSAGE otherwise.
+ */
 filter_result
 HeaderView::TextViewFilter(BMessage* message, BHandler**,
 	BMessageFilter* filter)
@@ -669,6 +795,11 @@ HeaderView::TextViewFilter(BMessage* message, BHandler**,
 }
 
 
+/**
+ * @brief Return the full line height of the view's current font.
+ *
+ * @return Ascent + descent + leading + 2 pixels, in view coordinates.
+ */
 float
 HeaderView::CurrentFontHeight()
 {

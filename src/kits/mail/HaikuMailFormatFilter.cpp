@@ -1,9 +1,45 @@
 /*
- * Copyright 2011-2013, Haiku, Inc. All rights reserved.
- * Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>
- * Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2013, Haiku, Inc. All rights reserved.
+ *   Copyright 2011, Clemens Zeidler <haiku@clemens-zeidler.de>
+ *   Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ *
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file HaikuMailFormatFilter.cpp
+ * @brief Built-in mail format filter that maps RFC 822 headers to BFS attributes.
+ *
+ * HaikuMailFormatFilter is inserted automatically as the first filter in every
+ * BMailProtocol pipeline. During inbound processing it extracts well-known
+ * header fields (To, From, Subject, Date, etc.) from the raw mail file and
+ * stores them as indexed BFS attributes so that Tracker queries work correctly.
+ * It also generates a canonical filename for each message and marks fully
+ * fetched messages with the correct MIME type. On outbound delivery it writes
+ * the "Sent" status attribute and optionally moves the file to a configured
+ * outbound directory.
+ *
+ * @see BMailFilter, BMailProtocol, mail_util.h
  */
 
 
@@ -18,6 +54,12 @@
 #include <mail_util.h>
 
 
+/**
+ * @brief Table mapping RFC header names to BFS attribute names and types.
+ *
+ * Used by HeaderFetched() to extract and store header fields as BFS
+ * attributes. The table is terminated by a NULL rfc_name entry.
+ */
 struct mail_header_field {
 	const char*	rfc_name;
 	const char*	attr_name;
@@ -26,6 +68,7 @@ struct mail_header_field {
 };
 
 
+/** @brief Default set of headers extracted and stored as BFS attributes. */
 static const mail_header_field gDefaultFields[] = {
 	{ "To",				B_MAIL_ATTR_TO,			B_STRING_TYPE },
 	{ "From",         	B_MAIL_ATTR_FROM,		B_STRING_TYPE },
@@ -48,7 +91,14 @@ static const mail_header_field gDefaultFields[] = {
 };
 
 
-//!	Replaces tabs and other white space with spaces, compresses spaces.
+/**
+ * @brief Normalizes whitespace in an RFC header value string.
+ *
+ * Replaces all whitespace characters (tabs, newlines, etc.) with spaces and
+ * collapses runs of more than one space into a single space.
+ *
+ * @param string  String to sanitize in-place.
+ */
 void
 sanitize_white_space(BString& string)
 {
@@ -76,6 +126,12 @@ sanitize_white_space(BString& string)
 // #pragma mark -
 
 
+/**
+ * @brief Constructs the filter and reads the configured outbound directory.
+ *
+ * @param protocol  The owning BMailProtocol this filter is attached to.
+ * @param settings  Account settings providing account ID, name, and outbound path.
+ */
 HaikuMailFormatFilter::HaikuMailFormatFilter(BMailProtocol& protocol,
 	const BMailAccountSettings& settings)
 	:
@@ -88,6 +144,11 @@ HaikuMailFormatFilter::HaikuMailFormatFilter(BMailProtocol& protocol,
 }
 
 
+/**
+ * @brief Returns the descriptive name of this built-in filter.
+ *
+ * @return The string "built-in"; never shown in the UI.
+ */
 BString
 HaikuMailFormatFilter::DescriptiveName() const
 {
@@ -96,6 +157,22 @@ HaikuMailFormatFilter::DescriptiveName() const
 }
 
 
+/**
+ * @brief Processes a newly fetched message header and populates BFS attributes.
+ *
+ * Reads the header portion of the mail file, extracts the fields listed in
+ * gDefaultFields, converts date fields to time_t, sanitizes strings, and
+ * stores them as entries in \a attributes. Also derives a canonical filename
+ * from the subject, date, and sender and stores it in \a ref so the protocol
+ * can rename the file.
+ *
+ * @param ref         On entry, the current file ref; on exit, updated with
+ *                    the canonical filename.
+ * @param file        Readable BFile positioned at the start of the message.
+ * @param attributes  BMessage receiving the extracted attribute key/value pairs.
+ * @return B_MOVE_MAIL_ACTION to instruct the protocol to rename/move the file,
+ *         or a negative error code on failure.
+ */
 BMailFilterAction
 HaikuMailFormatFilter::HeaderFetched(entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -206,6 +283,16 @@ HaikuMailFormatFilter::HeaderFetched(entry_ref& ref, BFile& file,
 }
 
 
+/**
+ * @brief Updates the MIME type attribute when the full message body is fetched.
+ *
+ * Called after the complete message body has been downloaded; upgrades the
+ * MIME type from B_PARTIAL_MAIL_TYPE to B_MAIL_TYPE.
+ *
+ * @param ref         File reference (unused here).
+ * @param file        The message file (unused here).
+ * @param attributes  BMessage of attributes to update.
+ */
 void
 HaikuMailFormatFilter::BodyFetched(const entry_ref& ref, BFile& file,
 	BMessage& attributes)
@@ -214,6 +301,16 @@ HaikuMailFormatFilter::BodyFetched(const entry_ref& ref, BFile& file,
 }
 
 
+/**
+ * @brief Writes "Sent" status attributes and optionally moves the sent message.
+ *
+ * After a message has been successfully transmitted, this writes the
+ * B_MAIL_ATTR_FLAGS and B_MAIL_ATTR_STATUS attributes and, if a destination
+ * directory is configured, moves the file there.
+ *
+ * @param ref   entry_ref of the sent message file.
+ * @param file  BFile handle for writing attributes.
+ */
 void
 HaikuMailFormatFilter::MessageSent(const entry_ref& ref, BFile& file)
 {
@@ -233,6 +330,14 @@ HaikuMailFormatFilter::MessageSent(const entry_ref& ref, BFile& file)
 }
 
 
+/**
+ * @brief Removes extra interior whitespace and leading/trailing spaces from a filename.
+ *
+ * Collapses runs of whitespace to a single space and removes any leading or
+ * trailing whitespace characters.
+ *
+ * @param name  String to clean up in-place.
+ */
 void
 HaikuMailFormatFilter::_RemoveExtraWhitespace(BString& name)
 {
@@ -257,6 +362,14 @@ HaikuMailFormatFilter::_RemoveExtraWhitespace(BString& name)
 }
 
 
+/**
+ * @brief Removes any leading dot characters from a filename string.
+ *
+ * Prevents the mail daemon from creating hidden files (those starting with
+ * a dot) on BFS volumes.
+ *
+ * @param name  String to modify in-place.
+ */
 void
 HaikuMailFormatFilter::_RemoveLeadingDots(BString& name)
 {
@@ -269,6 +382,16 @@ HaikuMailFormatFilter::_RemoveLeadingDots(BString& name)
 }
 
 
+/**
+ * @brief Extracts the display name from a From header value.
+ *
+ * Parses strings in the form "Name" <email@domain.com>. If no display name
+ * is present, returns the email address without angle brackets. If neither
+ * component is found, returns the raw header value trimmed.
+ *
+ * @param from  The raw From header value.
+ * @return BString containing the display name or email address.
+ */
 BString
 HaikuMailFormatFilter::_ExtractName(const BString& from)
 {
@@ -307,6 +430,13 @@ HaikuMailFormatFilter::_ExtractName(const BString& from)
 }
 
 
+/**
+ * @brief Stores a MIME type string in the "BEOS:TYPE" attribute field.
+ *
+ * @param attributes  BMessage to update.
+ * @param mimeType    Null-terminated MIME type string to store.
+ * @return B_OK on success, or a BMessage error code on failure.
+ */
 status_t
 HaikuMailFormatFilter::_SetType(BMessage& attributes, const char* mimeType)
 {

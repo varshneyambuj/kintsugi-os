@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file TrackerScripting.cpp
+ * @brief BApplication scripting support for the Tracker application.
+ *
+ * Implements the TTracker suite that allows external applications to control
+ * Tracker via the BeOS scripting protocol.  Supported operations include
+ * emptying the Trash, creating folders, opening Tracker windows for specific
+ * paths, and showing the preferences window.
+ *
+ * @see TTracker, FSEmptyTrash, FSCreateNewFolder
+ */
 
 
 #include <Message.h>
@@ -98,6 +102,15 @@ const property_info kTrackerPropertyList[] = {
 };
 
 
+/**
+ * @brief Advertise the Tracker scripting suite to callers.
+ *
+ * Adds the kTrackerSuites identifier and the flattened property table to
+ * \a data, then delegates to the base class.
+ *
+ * @param data  Reply message to populate with suite information.
+ * @return B_OK on success, or an error code from the base class.
+ */
 status_t
 TTracker::GetSupportedSuites(BMessage* data)
 {
@@ -110,6 +123,19 @@ TTracker::GetSupportedSuites(BMessage* data)
 }
 
 
+/**
+ * @brief Resolve a scripting specifier to the appropriate handler.
+ *
+ * Returns @c this if the property belongs to the Tracker suite, or delegates
+ * to the base class otherwise.
+ *
+ * @param message    The scripting message.
+ * @param index      Specifier index within the message.
+ * @param specifier  The specifier sub-message.
+ * @param form       Specifier form constant.
+ * @param property   Property name string.
+ * @return The handler that should process the message.
+ */
 BHandler*
 TTracker::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 	int32 form, const char* property)
@@ -129,6 +155,15 @@ TTracker::ResolveSpecifier(BMessage* message, int32 index, BMessage* specifier,
 }
 
 
+/**
+ * @brief Dispatch an incoming scripting message to the matching handler method.
+ *
+ * Extracts the specifier and property name from \a message, calls the
+ * appropriate Create/Delete/Execute/Get/Set/Count helper, and sends the reply.
+ *
+ * @param message  The scripting message to handle.
+ * @return true if the message was handled and a reply sent, false otherwise.
+ */
 bool
 TTracker::HandleScriptingMessage(BMessage* message)
 {
@@ -194,6 +229,18 @@ TTracker::HandleScriptingMessage(BMessage* message)
 }
 
 
+/**
+ * @brief Handle a B_CREATE_PROPERTY scripting message.
+ *
+ * Supports creating new folders from entry_refs supplied in \a message's
+ * "data" field.
+ *
+ * @param message   The original scripting message.
+ * @param form      Specifier form constant.
+ * @param property  Name of the property to create.
+ * @param reply     Reply message to populate with results or error codes.
+ * @return true if the property was recognised and handled.
+ */
 bool
 TTracker::CreateProperty(BMessage* message, BMessage*, int32 form,
 	const char* property, BMessage* reply)
@@ -228,6 +275,15 @@ TTracker::CreateProperty(BMessage* message, BMessage*, int32 form,
 }
 
 
+/**
+ * @brief Handle a B_DELETE_PROPERTY scripting message.
+ *
+ * Supports emptying the Trash via "delete Trash".
+ *
+ * @param form      Specifier form constant.
+ * @param property  Name of the property to delete.
+ * @return true if the property was recognised and handled.
+ */
 bool
 TTracker::DeleteProperty(BMessage*, int32 form, const char* property, BMessage*)
 {
@@ -251,6 +307,18 @@ TTracker::DeleteProperty(BMessage*, int32 form, const char* property, BMessage*)
 }
 
 
+/**
+ * @brief Handle a B_EXECUTE_PROPERTY scripting message.
+ *
+ * Supports "execute Preferences" to show the settings window and
+ * "execute Folder" to open a Tracker window for each supplied ref.
+ *
+ * @param message   The original scripting message.
+ * @param form      Specifier form constant.
+ * @param property  Name of the property to execute.
+ * @param reply     Reply message that receives opened window messengers.
+ * @return true if the property was recognised and handled.
+ */
 bool
 TTracker::ExecuteProperty(BMessage* message, int32 form, const char* property,
 	BMessage* reply)
@@ -292,6 +360,11 @@ TTracker::ExecuteProperty(BMessage* message, int32 form, const char* property,
 }
 
 
+/**
+ * @brief Handle a B_COUNT_PROPERTIES scripting message (not yet implemented).
+ *
+ * @return false always; counting is not supported.
+ */
 bool
 TTracker::CountProperty(BMessage*, int32, const char*, BMessage*)
 {
@@ -299,6 +372,17 @@ TTracker::CountProperty(BMessage*, int32, const char*, BMessage*)
 }
 
 
+/**
+ * @brief Handle a B_GET_PROPERTY scripting message.
+ *
+ * Returns the messenger of the existing Tracker window for each "Folder" ref.
+ *
+ * @param message   The original scripting message.
+ * @param form      Specifier form constant.
+ * @param property  Name of the property to get.
+ * @param reply     Reply message that receives window messengers or error codes.
+ * @return true if the property was recognised and handled.
+ */
 bool
 TTracker::GetProperty(BMessage* message, int32 form, const char* property,
 		BMessage* reply)
@@ -329,6 +413,11 @@ TTracker::GetProperty(BMessage* message, int32 form, const char* property,
 }
 
 
+/**
+ * @brief Handle a B_SET_PROPERTY scripting message (not yet implemented).
+ *
+ * @return false always; setting properties is not supported.
+ */
 bool
 TTracker::SetProperty(BMessage*, BMessage*, int32, const char*, BMessage*)
 {

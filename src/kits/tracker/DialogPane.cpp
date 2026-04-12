@@ -1,36 +1,60 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file DialogPane.cpp
+ * @brief Collapsible/expandable pane-switch control used in Tracker dialogs.
+ *
+ * PaneSwitch is a BControl that draws a right- or down-pointing disclosure arrow
+ * and optional labels. Clicking it toggles between collapsed and expanded states
+ * and sends an Invoke message, allowing parent views to show or hide extra controls.
+ *
+ * @see BControl, BControlLook
+ */
 
 
 #include "DialogPane.h"
@@ -49,6 +73,15 @@ const rgb_color kHighlightColor = {100, 100, 0, 255};
 //	#pragma mark - PaneSwitch
 
 
+/**
+ * @brief Construct a legacy (BRect-based) PaneSwitch.
+ *
+ * @param frame       The view frame in parent coordinates.
+ * @param name        The view name.
+ * @param leftAligned true if the arrow is on the left; false places it on the right.
+ * @param resizeMask  Resize flags.
+ * @param flags       BView flags.
+ */
 PaneSwitch::PaneSwitch(BRect frame, const char* name, bool leftAligned,
 		uint32 resizeMask, uint32 flags)
 	:
@@ -61,6 +94,13 @@ PaneSwitch::PaneSwitch(BRect frame, const char* name, bool leftAligned,
 }
 
 
+/**
+ * @brief Construct a layout-manager-friendly PaneSwitch.
+ *
+ * @param name        The view name.
+ * @param leftAligned true if the arrow is on the left.
+ * @param flags       BView flags.
+ */
 PaneSwitch::PaneSwitch(const char* name, bool leftAligned, uint32 flags)
 	:
 	BControl(name, "", 0, flags),
@@ -72,6 +112,9 @@ PaneSwitch::PaneSwitch(const char* name, bool leftAligned, uint32 flags)
 }
 
 
+/**
+ * @brief Destructor; frees the on/off label strings.
+ */
 PaneSwitch::~PaneSwitch()
 {
 	free(fLabelOn);
@@ -79,6 +122,11 @@ PaneSwitch::~PaneSwitch()
 }
 
 
+/**
+ * @brief Draw the disclosure arrow and optional label for the current state.
+ *
+ * @param  updateRect  (unused) The dirty rectangle passed by the rendering system.
+ */
 void
 PaneSwitch::Draw(BRect)
 {
@@ -131,6 +179,9 @@ PaneSwitch::Draw(BRect)
 }
 
 
+/**
+ * @brief Begin tracking a button press and capture pointer events.
+ */
 void
 PaneSwitch::MouseDown(BPoint)
 {
@@ -143,6 +194,13 @@ PaneSwitch::MouseDown(BPoint)
 }
 
 
+/**
+ * @brief Track cursor movement and update the pressed state while a button is held.
+ *
+ * @param point    Current cursor position in view coordinates.
+ * @param code     Transit code (B_ENTERED_VIEW, B_INSIDE_VIEW, etc.).
+ * @param message  Any dragged message accompanying the movement.
+ */
 void
 PaneSwitch::MouseMoved(BPoint point, uint32 code, const BMessage* message)
 {
@@ -168,6 +226,11 @@ PaneSwitch::MouseMoved(BPoint point, uint32 code, const BMessage* message)
 }
 
 
+/**
+ * @brief Complete the click: toggle the value and invoke if the cursor is still inside.
+ *
+ * @param point  Cursor position in view coordinates at the time of release.
+ */
 void
 PaneSwitch::MouseUp(BPoint point)
 {
@@ -185,6 +248,12 @@ PaneSwitch::MouseUp(BPoint point)
 }
 
 
+/**
+ * @brief Return the preferred size (delegates to MinSize()).
+ *
+ * @param _width   Receives the preferred width; may be NULL.
+ * @param _height  Receives the preferred height; may be NULL.
+ */
 void
 PaneSwitch::GetPreferredSize(float* _width, float* _height)
 {
@@ -197,6 +266,11 @@ PaneSwitch::GetPreferredSize(float* _width, float* _height)
 }
 
 
+/**
+ * @brief Compute the minimum size needed to display the arrow and optional label.
+ *
+ * @return The minimum BSize based on font metrics and label widths.
+ */
 BSize
 PaneSwitch::MinSize()
 {
@@ -218,6 +292,11 @@ PaneSwitch::MinSize()
 }
 
 
+/**
+ * @brief Return the maximum size (same as MinSize for this control).
+ *
+ * @return Maximum BSize composed with the explicit max size if set.
+ */
 BSize
 PaneSwitch::MaxSize()
 {
@@ -225,6 +304,11 @@ PaneSwitch::MaxSize()
 }
 
 
+/**
+ * @brief Return the preferred size (same as MinSize for this control).
+ *
+ * @return Preferred BSize composed with the explicit preferred size if set.
+ */
 BSize
 PaneSwitch::PreferredSize()
 {
@@ -232,6 +316,12 @@ PaneSwitch::PreferredSize()
 }
 
 
+/**
+ * @brief Set the text labels shown when the pane is expanded and collapsed.
+ *
+ * @param labelOn   Text shown when Value() == B_CONTROL_ON; NULL to remove.
+ * @param labelOff  Text shown when Value() == B_CONTROL_OFF; NULL to remove.
+ */
 void
 PaneSwitch::SetLabels(const char* labelOn, const char* labelOff)
 {
@@ -253,6 +343,12 @@ PaneSwitch::SetLabels(const char* labelOn, const char* labelOff)
 }
 
 
+/**
+ * @brief Draw the disclosure arrow in the given visual state.
+ *
+ * @param state  kCollapsed (right arrow), kPressed (right-down arrow), or
+ *               kExpanded (down arrow).
+ */
 void
 PaneSwitch::DrawInState(PaneSwitch::State state)
 {

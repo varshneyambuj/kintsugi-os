@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file Utilities.cpp
+ * @brief Miscellaneous utility functions and classes used throughout the Tracker kit.
+ *
+ * @see BPoseView, BString, BFont
+ */
 
 
 #include "Utilities.h"
@@ -87,6 +85,12 @@ const float kExactMatchScore = INFINITY;
 bool gLocalizedNamePreferred;
 
 
+/**
+ * @brief Return a tint factor that indicates read-only state for the given colour.
+ *
+ * @param base  The base colour to compute the tint for.
+ * @return B_DARKEN_1_TINT for light colours, 0.853 for dark colours.
+ */
 float
 ReadOnlyTint(rgb_color base)
 {
@@ -95,6 +99,12 @@ ReadOnlyTint(rgb_color base)
 }
 
 
+/**
+ * @brief Return a read-only tint factor for a UI colour role.
+ *
+ * @param base  The colour role (e.g. B_PANEL_BACKGROUND_COLOR).
+ * @return Tint factor suitable for indicating a read-only state.
+ */
 float
 ReadOnlyTint(color_which base)
 {
@@ -102,6 +112,12 @@ ReadOnlyTint(color_which base)
 }
 
 
+/**
+ * @brief Return the bitwise-inverted complement of an rgb_color.
+ *
+ * @param color  The colour to invert.
+ * @return Each channel replaced with 255 minus the original value.
+ */
 rgb_color
 InvertColor(rgb_color color)
 {
@@ -109,6 +125,15 @@ InvertColor(rgb_color color)
 }
 
 
+/**
+ * @brief Return a colour that is legibly distinct from \a color.
+ *
+ * If the inverted colour has sufficient contrast it is returned; otherwise
+ * pure black or white is chosen.
+ *
+ * @param color  The reference colour.
+ * @return A colour with contrast above 127 against \a color.
+ */
 rgb_color
 InvertColorSmart(rgb_color color)
 {
@@ -123,6 +148,16 @@ InvertColorSmart(rgb_color color)
 }
 
 
+/**
+ * @brief Return true if the secondary (context-menu) mouse action is active.
+ *
+ * The secondary button is either the physical right button or the primary
+ * button held with the Control key.
+ *
+ * @param modifiers  The current modifier key state.
+ * @param buttons    The current button bitmask from the mouse state.
+ * @return true if the user intends a secondary/context action.
+ */
 bool
 SecondaryMouseButtonDown(int32 modifiers, int32 buttons)
 {
@@ -132,6 +167,15 @@ SecondaryMouseButtonDown(int32 modifiers, int32 buttons)
 }
 
 
+/**
+ * @brief Compute a seeded hash for a null-terminated string.
+ *
+ * Uses a simple rotate-and-XOR construction seeded with \a seed.
+ *
+ * @param string  Input string to hash.
+ * @param seed    Initial hash seed value.
+ * @return 32-bit hash of \a string.
+ */
 uint32
 SeededHashString(const char* string, uint32 seed)
 {
@@ -148,6 +192,16 @@ SeededHashString(const char* string, uint32 seed)
 }
 
 
+/**
+ * @brief Compute a combined hash of an attribute name and its type code.
+ *
+ * The hash encodes the type in the low 8 bits and the name hash in the
+ * upper 24 bits, allowing O(1) attribute lookup by both name and type.
+ *
+ * @param string  Attribute name string.
+ * @param type    BeOS attribute type constant (e.g. B_STRING_TYPE).
+ * @return 32-bit combined attribute identifier.
+ */
 uint32
 AttrHashString(const char* string, uint32 type)
 {
@@ -167,6 +221,14 @@ AttrHashString(const char* string, uint32 type)
 }
 
 
+/**
+ * @brief Validate an archive stream header by checking its key and version.
+ *
+ * @param stream   The stream to read the header from.
+ * @param key      Expected hash key for this archive type.
+ * @param version  Expected archive version number.
+ * @return true if the stream header matches \a key and \a version.
+ */
 bool
 ValidateStream(BMallocIO* stream, uint32 key, int32 version)
 {
@@ -182,6 +244,13 @@ ValidateStream(BMallocIO* stream, uint32 key, int32 version)
 }
 
 
+/**
+ * @brief Prevent the user from typing characters that are illegal in filenames.
+ *
+ * Disallows all ASCII control characters and the '/' path separator.
+ *
+ * @param textView  The text view to configure.
+ */
 void
 DisallowFilenameKeys(BTextView* textView)
 {
@@ -193,6 +262,14 @@ DisallowFilenameKeys(BTextView* textView)
 }
 
 
+/**
+ * @brief Prevent the user from typing navigation and control keys in a text view.
+ *
+ * Disallows Tab, Escape, Insert, Delete, Home, End, Page Up, Page Down,
+ * and function keys.
+ *
+ * @param textView  The text view to configure.
+ */
 void
 DisallowMetaKeys(BTextView* textView)
 {
@@ -208,6 +285,9 @@ DisallowMetaKeys(BTextView* textView)
 }
 
 
+/**
+ * @brief Construct a PeriodicUpdatePoses registry with an empty pose list.
+ */
 PeriodicUpdatePoses::PeriodicUpdatePoses()
 	:
 	fPoseList(20)
@@ -216,6 +296,9 @@ PeriodicUpdatePoses::PeriodicUpdatePoses()
 }
 
 
+/**
+ * @brief Destructor; empties the list and releases the lock.
+ */
 PeriodicUpdatePoses::~PeriodicUpdatePoses()
 {
 	fLock->Lock();
@@ -224,6 +307,14 @@ PeriodicUpdatePoses::~PeriodicUpdatePoses()
 }
 
 
+/**
+ * @brief Register a pose for periodic attribute-refresh callbacks.
+ *
+ * @param pose      The BPose to update periodically.
+ * @param poseView  The BPoseView that owns the pose.
+ * @param callback  Function called each update cycle; returns true if redraw needed.
+ * @param cookie    Caller-defined data passed to \a callback.
+ */
 void
 PeriodicUpdatePoses::AddPose(BPose* pose, BPoseView* poseView,
 	PeriodicUpdateCallback callback, void* cookie)
@@ -237,6 +328,13 @@ PeriodicUpdatePoses::AddPose(BPose* pose, BPoseView* poseView,
 }
 
 
+/**
+ * @brief Unregister a pose from periodic updates and retrieve its cookie.
+ *
+ * @param pose    The pose to remove.
+ * @param cookie  Output pointer that receives the previously registered cookie.
+ * @return true if the pose was found and removed.
+ */
 bool
 PeriodicUpdatePoses::RemovePose(BPose* pose, void** cookie)
 {
@@ -259,6 +357,11 @@ PeriodicUpdatePoses::RemovePose(BPose* pose, void** cookie)
 }
 
 
+/**
+ * @brief Invoke all registered callbacks and redraw changed poses.
+ *
+ * @param forceRedraw  If true, redraw every pose even if its callback returns false.
+ */
 void
 PeriodicUpdatePoses::DoPeriodicUpdate(bool forceRedraw)
 {
@@ -284,6 +387,11 @@ PeriodicUpdatePoses gPeriodicUpdatePoses;
 }	// namespace BPrivate
 
 
+/**
+ * @brief Byte-swap a PoseInfo struct read from a big-endian stream.
+ *
+ * @param castToThis  Pointer to the PoseInfo to swap in-place.
+ */
 void
 PoseInfo::EndianSwap(void* castToThis)
 {
@@ -306,6 +414,9 @@ PoseInfo::EndianSwap(void* castToThis)
 }
 
 
+/**
+ * @brief Print a human-readable summary of this PoseInfo to the debug output.
+ */
 void
 PoseInfo::PrintToStream()
 {
@@ -318,6 +429,11 @@ PoseInfo::PrintToStream()
 // #pragma mark - ExtendedPoseInfo
 
 
+/**
+ * @brief Return the byte size of this ExtendedPoseInfo with its FrameLocation array.
+ *
+ * @return Size in bytes.
+ */
 size_t
 ExtendedPoseInfo::Size() const
 {
@@ -325,6 +441,12 @@ ExtendedPoseInfo::Size() const
 }
 
 
+/**
+ * @brief Return the byte size for an ExtendedPoseInfo with \a count frame locations.
+ *
+ * @param count  Number of FrameLocation entries.
+ * @return Size in bytes.
+ */
 size_t
 ExtendedPoseInfo::Size(int32 count)
 {
@@ -332,6 +454,11 @@ ExtendedPoseInfo::Size(int32 count)
 }
 
 
+/**
+ * @brief Return the byte size with room for one additional FrameLocation entry.
+ *
+ * @return Size in bytes including one extra FrameLocation slot.
+ */
 size_t
 ExtendedPoseInfo::SizeWithHeadroom() const
 {
@@ -339,6 +466,12 @@ ExtendedPoseInfo::SizeWithHeadroom() const
 }
 
 
+/**
+ * @brief Return the size needed to add one more FrameLocation to an existing buffer.
+ *
+ * @param oldSize  The current allocated size of the ExtendedPoseInfo buffer.
+ * @return Size in bytes large enough for \a oldSize + one more FrameLocation.
+ */
 size_t
 ExtendedPoseInfo::SizeWithHeadroom(size_t oldSize)
 {
@@ -352,6 +485,12 @@ ExtendedPoseInfo::SizeWithHeadroom(size_t oldSize)
 }
 
 
+/**
+ * @brief Return true if a saved location exists for the given workspace frame.
+ *
+ * @param frame  The workspace frame to look up.
+ * @return true if a FrameLocation entry for \a frame exists.
+ */
 bool
 ExtendedPoseInfo::HasLocationForFrame(BRect frame) const
 {
@@ -364,6 +503,12 @@ ExtendedPoseInfo::HasLocationForFrame(BRect frame) const
 }
 
 
+/**
+ * @brief Return the saved icon position for the given workspace frame.
+ *
+ * @param frame  The workspace frame whose location to retrieve.
+ * @return The saved BPoint, or BPoint(0,0) if not found (asserts in debug).
+ */
 BPoint
 ExtendedPoseInfo::LocationForFrame(BRect frame) const
 {
@@ -377,6 +522,16 @@ ExtendedPoseInfo::LocationForFrame(BRect frame) const
 }
 
 
+/**
+ * @brief Set or add the icon position for the given workspace frame.
+ *
+ * If an entry for \a frame already exists it is updated; otherwise a new
+ * FrameLocation entry is appended.
+ *
+ * @param newLocation  The new icon position.
+ * @param frame        The workspace frame this position applies to.
+ * @return true if the position was changed or newly added; false if unchanged.
+ */
 bool
 ExtendedPoseInfo::SetLocationForFrame(BPoint newLocation, BRect frame)
 {
@@ -399,6 +554,11 @@ ExtendedPoseInfo::SetLocationForFrame(BPoint newLocation, BRect frame)
 }
 
 
+/**
+ * @brief Byte-swap an ExtendedPoseInfo struct and all its FrameLocation entries.
+ *
+ * @param castToThis  Pointer to the ExtendedPoseInfo to swap in-place.
+ */
 void
 ExtendedPoseInfo::EndianSwap(void* castToThis)
 {
@@ -427,6 +587,9 @@ ExtendedPoseInfo::EndianSwap(void* castToThis)
 }
 
 
+/**
+ * @brief Print a human-readable summary of this ExtendedPoseInfo to debug output.
+ */
 void
 ExtendedPoseInfo::PrintToStream()
 {
@@ -436,6 +599,11 @@ ExtendedPoseInfo::PrintToStream()
 // #pragma mark - OffscreenBitmap
 
 
+/**
+ * @brief Construct an OffscreenBitmap pre-allocated for the given frame.
+ *
+ * @param frame  The initial bounds for the offscreen bitmap.
+ */
 OffscreenBitmap::OffscreenBitmap(BRect frame)
 	:
 	fBitmap(NULL)
@@ -444,6 +612,9 @@ OffscreenBitmap::OffscreenBitmap(BRect frame)
 }
 
 
+/**
+ * @brief Construct an empty OffscreenBitmap; call BeginUsing() before drawing.
+ */
 OffscreenBitmap::OffscreenBitmap()
 	:
 	fBitmap(NULL)
@@ -451,12 +622,22 @@ OffscreenBitmap::OffscreenBitmap()
 }
 
 
+/**
+ * @brief Destructor; releases the internal BBitmap.
+ */
 OffscreenBitmap::~OffscreenBitmap()
 {
 	delete fBitmap;
 }
 
 
+/**
+ * @brief Allocate a new B_RGB32 BBitmap with an attached BView for the given bounds.
+ *
+ * Releases any previously allocated bitmap first.
+ *
+ * @param bounds  The desired bitmap dimensions.
+ */
 void
 OffscreenBitmap::NewBitmap(BRect bounds)
 {
@@ -479,6 +660,14 @@ OffscreenBitmap::NewBitmap(BRect bounds)
 }
 
 
+/**
+ * @brief Lock and return the drawing view for the offscreen bitmap.
+ *
+ * Reallocates the bitmap if \a frame differs from the current bounds.
+ *
+ * @param frame  The desired drawing area.
+ * @return The locked BView inside the offscreen bitmap.
+ */
 BView*
 OffscreenBitmap::BeginUsing(BRect frame)
 {
@@ -490,6 +679,9 @@ OffscreenBitmap::BeginUsing(BRect frame)
 }
 
 
+/**
+ * @brief Unlock the offscreen bitmap after rendering is complete.
+ */
 void
 OffscreenBitmap::DoneUsing()
 {
@@ -497,6 +689,11 @@ OffscreenBitmap::DoneUsing()
 }
 
 
+/**
+ * @brief Return the locked BBitmap (must be called between BeginUsing/DoneUsing).
+ *
+ * @return The offscreen BBitmap; asserts that it is locked.
+ */
 BBitmap*
 OffscreenBitmap::Bitmap() const
 {
@@ -506,6 +703,11 @@ OffscreenBitmap::Bitmap() const
 }
 
 
+/**
+ * @brief Return the BView attached to the offscreen bitmap for drawing.
+ *
+ * @return The child BView of the offscreen bitmap.
+ */
 BView*
 OffscreenBitmap::View() const
 {

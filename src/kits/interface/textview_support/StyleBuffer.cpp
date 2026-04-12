@@ -1,10 +1,29 @@
 /*
- * Copyright 2001-2006 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Marc Flerackers, mflerackers@androme.be
- *		Stefano Ceccherini, burton666@libero.it
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001-2006 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Marc Flerackers, mflerackers@androme.be
+ *       Stefano Ceccherini, burton666@libero.it
  */
 
 /**	Style storage used by BTextView */
@@ -21,6 +40,9 @@
 //	#pragma mark - _BStyleRunDescBuffer_
 
 
+/**
+ * @brief Constructs the run-descriptor buffer with an initial capacity of 20.
+ */
 _BStyleRunDescBuffer_::_BStyleRunDescBuffer_()
 	:
 	_BTextViewSupportBuffer_<STEStyleRunDesc>(20)
@@ -28,6 +50,12 @@ _BStyleRunDescBuffer_::_BStyleRunDescBuffer_()
 }
 
 
+/**
+ * @brief Inserts a style-run descriptor at the given buffer position.
+ *
+ * @param inDesc Pointer to the descriptor to insert.
+ * @param index  Position at which to insert the new descriptor.
+ */
 void
 _BStyleRunDescBuffer_::InsertDesc(STEStyleRunDesc* inDesc, int32 index)
 {
@@ -35,6 +63,12 @@ _BStyleRunDescBuffer_::InsertDesc(STEStyleRunDesc* inDesc, int32 index)
 }
 
 
+/**
+ * @brief Removes a contiguous range of style-run descriptors.
+ *
+ * @param index First descriptor index to remove.
+ * @param count Number of descriptors to remove.
+ */
 void
 _BStyleRunDescBuffer_::RemoveDescs(int32 index, int32 count)
 {
@@ -42,6 +76,14 @@ _BStyleRunDescBuffer_::RemoveDescs(int32 index, int32 count)
 }
 
 
+/**
+ * @brief Maps a byte offset to the index of the run that contains it.
+ *
+ * Uses binary search over the descriptor array ordered by STEStyleRunDesc::offset.
+ *
+ * @param offset Byte offset to look up.
+ * @return Index of the run that covers @p offset.
+ */
 int32
 _BStyleRunDescBuffer_::OffsetToRun(int32 offset) const
 {
@@ -68,6 +110,12 @@ _BStyleRunDescBuffer_::OffsetToRun(int32 offset) const
 }
 
 
+/**
+ * @brief Adds @p delta to the byte offset of every run at or after @p index.
+ *
+ * @param delta Signed byte delta (negative for deletions).
+ * @param index First run index to update.
+ */
 void
 _BStyleRunDescBuffer_::BumpOffset(int32 delta, int32 index)
 {
@@ -79,6 +127,9 @@ _BStyleRunDescBuffer_::BumpOffset(int32 delta, int32 index)
 //	#pragma mark - _BStyleRecordBuffer_
 
 
+/**
+ * @brief Constructs an empty style-record buffer.
+ */
 _BStyleRecordBuffer_::_BStyleRecordBuffer_()
 	:
 	_BTextViewSupportBuffer_<STEStyleRecord>()
@@ -86,6 +137,16 @@ _BStyleRecordBuffer_::_BStyleRecordBuffer_()
 }
 
 
+/**
+ * @brief Finds or creates a style record for the given font and colour.
+ *
+ * Searches for an existing matching record first; if none is found it either
+ * reuses an unreferenced slot or expands the buffer.
+ *
+ * @param inFont  Font to look up or add.
+ * @param inColor Text colour to look up or add.
+ * @return Index of the matching or newly created style record.
+ */
 int32
 _BStyleRecordBuffer_::InsertRecord(const BFont* inFont,
 	const rgb_color* inColor)
@@ -126,6 +187,11 @@ _BStyleRecordBuffer_::InsertRecord(const BFont* inFont,
 }
 
 
+/**
+ * @brief Increments the reference count of a style record.
+ *
+ * @param index Index of the style record to retain.
+ */
 void
 _BStyleRecordBuffer_::CommitRecord(int32 index)
 {
@@ -133,6 +199,14 @@ _BStyleRecordBuffer_::CommitRecord(int32 index)
 }
 
 
+/**
+ * @brief Decrements the reference count of a style record.
+ *
+ * When the reference count reaches zero the slot may be reused by
+ * a subsequent InsertRecord() call.
+ *
+ * @param index Index of the style record to release.
+ */
 void
 _BStyleRecordBuffer_::RemoveRecord(int32 index)
 {
@@ -140,6 +214,14 @@ _BStyleRecordBuffer_::RemoveRecord(int32 index)
 }
 
 
+/**
+ * @brief Searches for a style record matching the given font and colour.
+ *
+ * @param inFont    Font to search for.
+ * @param inColor   Colour to search for.
+ * @param outIndex  Output: index of the matching record if found.
+ * @return true if a match was found, false otherwise.
+ */
 bool
 _BStyleRecordBuffer_::MatchRecord(const BFont* inFont, const rgb_color* inColor,
 	int32* outIndex)
@@ -159,6 +241,18 @@ _BStyleRecordBuffer_::MatchRecord(const BFont* inFont, const rgb_color* inColor,
 //	#pragma mark - SetStyleFromMode
 
 
+/**
+ * @brief Copies selected font and colour attributes from one style to another.
+ *
+ * Only attributes whose corresponding bit is set in @p mode are copied.
+ * If @p mode is 0 or B_FONT_ALL, the entire colour is also copied.
+ *
+ * @param mode       Bitmask of B_FONT_* flags indicating which attributes to copy.
+ * @param fromFont   Source font (may be NULL).
+ * @param toFont     Destination font (may be NULL).
+ * @param fromColor  Source colour (may be NULL).
+ * @param toColor    Destination colour (may be NULL).
+ */
 static void
 SetStyleFromMode(uint32 mode, const BFont* fromFont, BFont* toFont,
 	const rgb_color* fromColor, rgb_color* toColor)
@@ -190,6 +284,15 @@ SetStyleFromMode(uint32 mode, const BFont* fromFont, BFont* toFont,
 //	#pragma mark - BTextView::StyleBuffer
 
 
+/**
+ * @brief Constructs the StyleBuffer with the given default font and colour.
+ *
+ * The null style is the style applied to newly inserted text when there is
+ * no surrounding styled text.
+ *
+ * @param inFont  Default font for the null style.
+ * @param inColor Default colour for the null style.
+ */
 BTextView::StyleBuffer::StyleBuffer(const BFont* inFont,
 	const rgb_color* inColor)
 	:
@@ -200,6 +303,9 @@ BTextView::StyleBuffer::StyleBuffer(const BFont* inFont,
 }
 
 
+/**
+ * @brief Marks the null style as invalid so it will be refreshed on next use.
+ */
 void
 BTextView::StyleBuffer::InvalidateNullStyle()
 {
@@ -207,6 +313,11 @@ BTextView::StyleBuffer::InvalidateNullStyle()
 }
 
 
+/**
+ * @brief Returns whether the null style is currently valid.
+ *
+ * @return true if the null style reflects the current insertion point style.
+ */
 bool
 BTextView::StyleBuffer::IsValidNullStyle() const
 {
@@ -214,6 +325,14 @@ BTextView::StyleBuffer::IsValidNullStyle() const
 }
 
 
+/**
+ * @brief Refreshes the null style from the run that covers @p offset.
+ *
+ * If the null style is already valid, or if the run buffer is empty, this
+ * method does nothing.
+ *
+ * @param offset Byte offset used to locate the source run.
+ */
 void
 BTextView::StyleBuffer::SyncNullStyle(int32 offset)
 {
@@ -227,6 +346,18 @@ BTextView::StyleBuffer::SyncNullStyle(int32 offset)
 }
 
 
+/**
+ * @brief Updates the null style by applying a mode-selected subset of attributes.
+ *
+ * If the null style is currently invalid, the style at @p offset - 1 is first
+ * loaded as the base before the mode-filtered attributes are applied.
+ *
+ * @param inMode  Bitmask of B_FONT_* flags selecting which attributes to change.
+ * @param inFont  Source font for the attributes to apply; may be NULL.
+ * @param inColor Source colour to apply; may be NULL.
+ * @param offset  Byte offset used to locate the base style if the null style is
+ *                invalid.
+ */
 void
 BTextView::StyleBuffer::SetNullStyle(uint32 inMode, const BFont* inFont,
 	const rgb_color* inColor, int32 offset)
@@ -245,6 +376,14 @@ BTextView::StyleBuffer::SetNullStyle(uint32 inMode, const BFont* inFont,
 }
 
 
+/**
+ * @brief Returns pointers to the current null-style font and colour.
+ *
+ * Either output pointer may be NULL if that value is not needed.
+ *
+ * @param font  Output pointer to the null-style BFont; may be NULL.
+ * @param color Output pointer to the null-style rgb_color; may be NULL.
+ */
 void
 BTextView::StyleBuffer::GetNullStyle(const BFont** font,
 	const rgb_color** color) const
@@ -257,6 +396,12 @@ BTextView::StyleBuffer::GetNullStyle(const BFont** font,
 }
 
 
+/**
+ * @brief Allocates a STEStyleRange large enough to hold @p numStyles runs.
+ *
+ * @param numStyles Number of style runs to reserve space for.
+ * @return Pointer to the allocated range, or NULL if allocation failed.
+ */
 STEStyleRange*
 BTextView::StyleBuffer::AllocateStyleRange(const int32 numStyles) const
 {
@@ -269,6 +414,20 @@ BTextView::StyleBuffer::AllocateStyleRange(const int32 numStyles) const
 }
 
 
+/**
+ * @brief Applies a style change to all runs within the byte range
+ *        [@p fromOffset, @p toOffset).
+ *
+ * Handles splitting, merging, and inserting run descriptors as needed to
+ * maintain a compact, non-redundant run list.
+ *
+ * @param fromOffset Start of the byte range to restyle.
+ * @param toOffset   End of the byte range (exclusive).
+ * @param textLen    Total text length (used to detect the last run).
+ * @param inMode     B_FONT_* bitmask indicating which attributes to change.
+ * @param inFont     New font to apply; falls back to null-style font if NULL.
+ * @param inColor    New colour to apply; falls back to null-style colour if NULL.
+ */
 void
 BTextView::StyleBuffer::SetStyleRange(int32 fromOffset, int32 toOffset,
 	int32 textLen, uint32 inMode, const BFont* inFont,
@@ -347,6 +506,15 @@ BTextView::StyleBuffer::SetStyleRange(int32 fromOffset, int32 toOffset,
 }
 
 
+/**
+ * @brief Returns the font and colour at a given byte offset.
+ *
+ * Falls back to the null style when no runs have been recorded yet.
+ *
+ * @param inOffset  Byte offset to query.
+ * @param outFont   Output font pointer; may be NULL.
+ * @param outColor  Output colour pointer; may be NULL.
+ */
 void
 BTextView::StyleBuffer::GetStyle(int32 inOffset, BFont* outFont,
 	rgb_color* outColor) const
@@ -372,6 +540,15 @@ BTextView::StyleBuffer::GetStyle(int32 inOffset, BFont* outFont,
 }
 
 
+/**
+ * @brief Returns a heap-allocated STEStyleRange covering the given byte range.
+ *
+ * The caller is responsible for freeing the returned pointer.
+ *
+ * @param startOffset First byte of the range.
+ * @param endOffset   Last byte of the range.
+ * @return Allocated STEStyleRange, or NULL if allocation failed.
+ */
 STEStyleRange*
 BTextView::StyleBuffer::GetStyleRange(int32 startOffset, int32 endOffset) const
 {
@@ -400,6 +577,15 @@ BTextView::StyleBuffer::GetStyleRange(int32 startOffset, int32 endOffset) const
 }
 
 
+/**
+ * @brief Removes all style runs that overlap the deleted byte range.
+ *
+ * Adjusts offsets of surviving runs so that the run list remains consistent
+ * after a text deletion.
+ *
+ * @param fromOffset Start of the deleted byte range.
+ * @param toOffset   End of the deleted byte range.
+ */
 void
 BTextView::StyleBuffer::RemoveStyleRange(int32 fromOffset, int32 toOffset)
 {
@@ -435,6 +621,15 @@ BTextView::StyleBuffer::RemoveStyleRange(int32 fromOffset, int32 toOffset)
 }
 
 
+/**
+ * @brief Removes @p count consecutive style runs starting at @p index.
+ *
+ * Decrements the reference count on each associated style record before
+ * removing the descriptors.
+ *
+ * @param index First run index to remove.
+ * @param count Number of runs to remove (default 1).
+ */
 void
 BTextView::StyleBuffer::RemoveStyles(int32 index, int32 count)
 {
@@ -445,6 +640,24 @@ BTextView::StyleBuffer::RemoveStyles(int32 index, int32 count)
 }
 
 
+/**
+ * @brief Returns the length of the uniform-style segment starting at
+ *        @p fromOffset.
+ *
+ * Fills in the font, colour, and metric pointers for the style covering
+ * @p fromOffset, then returns how many bytes remain until the next style
+ * change (or until @p length bytes have been accounted for).
+ *
+ * @param fromOffset  First byte of the segment.
+ * @param length      Maximum number of bytes to consider.
+ * @param input       InlineInput state (currently unused; reserved for future
+ *                    inline-input highlighting).
+ * @param outFont     Output pointer to the segment's font; may be NULL.
+ * @param outColor    Output pointer to the segment's colour; may be NULL.
+ * @param outAscent   Output: ascent of the segment's font; may be NULL.
+ * @param outDescent  Output: descent + leading; may be NULL.
+ * @return Number of bytes in the uniform segment, or 0 if empty.
+ */
 int32
 BTextView::StyleBuffer::Iterate(int32 fromOffset, int32 length,
 	InlineInput* input,
@@ -481,6 +694,12 @@ BTextView::StyleBuffer::Iterate(int32 fromOffset, int32 length,
 }
 
 
+/**
+ * @brief Maps a byte offset to the index of the style run that contains it.
+ *
+ * @param offset Byte offset to look up.
+ * @return Run index covering @p offset.
+ */
 int32
 BTextView::StyleBuffer::OffsetToRun(int32 offset) const
 {
@@ -488,6 +707,12 @@ BTextView::StyleBuffer::OffsetToRun(int32 offset) const
 }
 
 
+/**
+ * @brief Adjusts run-descriptor offsets after a text insertion or deletion.
+ *
+ * @param delta Signed byte delta to add to each affected offset.
+ * @param index First run index to update.
+ */
 void
 BTextView::StyleBuffer::BumpOffset(int32 delta, int32 index)
 {
@@ -495,6 +720,14 @@ BTextView::StyleBuffer::BumpOffset(int32 delta, int32 index)
 }
 
 
+/**
+ * @brief Returns a copy of the STEStyleRun at the given run-descriptor index.
+ *
+ * Falls back to the null style if the run-descriptor buffer is empty.
+ *
+ * @param index Run-descriptor index.
+ * @return A value-copy of the requested STEStyleRun.
+ */
 STEStyleRun
 BTextView::StyleBuffer::operator[](int32 index) const
 {
@@ -516,6 +749,17 @@ BTextView::StyleBuffer::operator[](int32 index) const
 // TODO: Horrible name, but can't think of a better one
 // ? CompareStyles ?
 // ? FilterStyles ?
+/**
+ * @brief Clears bits in @p mode for font attributes that differ between two styles.
+ *
+ * Used by ContinuousGetStyle() to compute which attributes are uniform across
+ * a selection spanning multiple style runs.
+ *
+ * @param firstStyle  Reference style (first run in the selection).
+ * @param otherStyle  Another run's style to compare against.
+ * @param mode        In/out bitmask; bits are cleared where styles differ.
+ * @param sameColor   In/out flag; set to false if the colours differ.
+ */
 static void
 FixupMode(const STEStyle &firstStyle, const STEStyle &otherStyle, uint32 &mode,
 	bool &sameColor)
@@ -546,6 +790,20 @@ FixupMode(const STEStyle &firstStyle, const STEStyle &otherStyle, uint32 &mode,
 }
 
 
+/**
+ * @brief Returns the common font attributes and colour across a text range.
+ *
+ * Computes the intersection of all style attributes within the range
+ * [@p fromOffset, @p toOffset).  Attributes that differ across runs have
+ * their corresponding bit cleared in @p *ioMode.
+ *
+ * @param outFont     Output: font from the last run in the range; may be NULL.
+ * @param ioMode      In/out bitmask; bits are cleared for differing attributes.
+ * @param outColor    Output: colour from the last run; may be NULL.
+ * @param sameColor   Output: true if all runs share the same colour; may be NULL.
+ * @param fromOffset  Start byte offset.
+ * @param toOffset    End byte offset (exclusive).
+ */
 void
 BTextView::StyleBuffer::ContinuousGetStyle(BFont *outFont, uint32* ioMode,
 	rgb_color* outColor, bool* sameColor, int32 fromOffset,

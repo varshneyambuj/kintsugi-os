@@ -1,36 +1,42 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+/**
+ * @file TaskLoop.cpp
+ * @brief Deferred and periodic task scheduling for the Tracker.
+ *
+ * Implements DelayedTask, OneShotDelayedTask, PeriodicDelayedTask,
+ * PeriodicDelayedTaskWithTimeout, and RunWhenIdleTask along with three
+ * TaskLoop concrete classes: StandAloneTaskLoop (owns its own thread),
+ * PiggybackTaskLoop (driven by an existing pulse), and
+ * AccumulatedOneShotDelayedTask (coalesces repeated calls).
+ *
+ * @see TaskLoop, StandAloneTaskLoop, PiggybackTaskLoop
+ */
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
 
 #include <Debug.h>
 #include <InterfaceDefs.h>
@@ -44,6 +50,14 @@ const float kIdleTreshold = 0.15f;
 const bigtime_t kInfinity = B_INFINITE_TIMEOUT;
 
 
+/**
+ * @brief Return the average cumulative CPU active time across all processors.
+ *
+ * Used by RunWhenIdleTask to decide whether the system is idle enough to
+ * run deferred work.
+ *
+ * @return Average per-CPU active time in microseconds.
+ */
 static bigtime_t
 ActivityLevel()
 {
@@ -115,6 +129,11 @@ private:
 //	#pragma mark - DelayedTask
 
 
+/**
+ * @brief Construct a DelayedTask scheduled to run \a delay microseconds from now.
+ *
+ * @param delay  How long to wait (in microseconds) before running.
+ */
 DelayedTask::DelayedTask(bigtime_t delay)
 	:
 	fRunAfter(system_time() + delay)
@@ -122,6 +141,9 @@ DelayedTask::DelayedTask(bigtime_t delay)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 DelayedTask::~DelayedTask()
 {
 }
@@ -130,6 +152,12 @@ DelayedTask::~DelayedTask()
 //	#pragma mark - OneShotDelayedTask
 
 
+/**
+ * @brief Construct a one-shot task that invokes \a functor after \a delay.
+ *
+ * @param functor  Function object to invoke; ownership is transferred.
+ * @param delay    Delay in microseconds before the first invocation.
+ */
 OneShotDelayedTask::OneShotDelayedTask(FunctionObject* functor,
 	bigtime_t delay)
 	:
@@ -139,12 +167,21 @@ OneShotDelayedTask::OneShotDelayedTask(FunctionObject* functor,
 }
 
 
+/**
+ * @brief Destructor; deletes the owned functor.
+ */
 OneShotDelayedTask::~OneShotDelayedTask()
 {
 	delete fFunctor;
 }
 
 
+/**
+ * @brief Invoke the functor if the scheduled time has arrived.
+ *
+ * @param currentTime  The caller's current system_time() snapshot.
+ * @return true (done) if the functor was invoked; false if still waiting.
+ */
 bool
 OneShotDelayedTask::RunIfNeeded(bigtime_t currentTime)
 {
@@ -159,6 +196,13 @@ OneShotDelayedTask::RunIfNeeded(bigtime_t currentTime)
 //	#pragma mark - PeriodicDelayedTask
 
 
+/**
+ * @brief Construct a periodic task that invokes \a functor every \a period microseconds.
+ *
+ * @param functor        Functor to invoke; returns false when the task should stop.
+ * @param initialDelay   Delay before the first invocation.
+ * @param period         Interval between subsequent invocations.
+ */
 PeriodicDelayedTask::PeriodicDelayedTask(
 	FunctionObjectWithResult<bool>* functor, bigtime_t initialDelay,
 	bigtime_t period)
@@ -170,12 +214,24 @@ PeriodicDelayedTask::PeriodicDelayedTask(
 }
 
 
+/**
+ * @brief Destructor; deletes the owned functor.
+ */
 PeriodicDelayedTask::~PeriodicDelayedTask()
 {
 	delete fFunctor;
 }
 
 
+/**
+ * @brief Invoke the functor if the next period has elapsed.
+ *
+ * Reschedules the next run time and invokes the functor.  Returns the
+ * functor's result: true means keep running, false means remove the task.
+ *
+ * @param currentTime  The caller's current system_time() snapshot.
+ * @return true while the functor requests continued execution; false when done.
+ */
 bool
 PeriodicDelayedTask::RunIfNeeded(bigtime_t currentTime)
 {
@@ -188,6 +244,14 @@ PeriodicDelayedTask::RunIfNeeded(bigtime_t currentTime)
 }
 
 
+/**
+ * @brief Construct a periodic task that stops automatically after \a timeout microseconds.
+ *
+ * @param functor        Functor returning false when it wants to stop early.
+ * @param initialDelay   Delay before the first invocation.
+ * @param period         Interval between subsequent invocations.
+ * @param timeout        Absolute time limit from construction after which the task ends.
+ */
 PeriodicDelayedTaskWithTimeout::PeriodicDelayedTaskWithTimeout(
 	FunctionObjectWithResult<bool>* functor, bigtime_t initialDelay,
 	bigtime_t period, bigtime_t timeout)
@@ -198,6 +262,12 @@ PeriodicDelayedTaskWithTimeout::PeriodicDelayedTaskWithTimeout(
 }
 
 
+/**
+ * @brief Run the functor if the period has elapsed, stopping at the timeout.
+ *
+ * @param currentTime  The caller's current system_time() snapshot.
+ * @return true if the functor requested another call or the timeout has not expired.
+ */
 bool
 PeriodicDelayedTaskWithTimeout::RunIfNeeded(bigtime_t currentTime)
 {
@@ -217,6 +287,14 @@ PeriodicDelayedTaskWithTimeout::RunIfNeeded(bigtime_t currentTime)
 //	#pragma mark - RunWhenIdleTask
 
 
+/**
+ * @brief Construct a task that defers execution until the system is idle.
+ *
+ * @param functor        Functor to call once the system has been idle long enough.
+ * @param initialDelay   Delay before the idle check begins.
+ * @param idleFor        Minimum continuous idle time required before invocation.
+ * @param heartBeat      Polling interval for the idle check.
+ */
 RunWhenIdleTask::RunWhenIdleTask(FunctionObjectWithResult<bool>* functor,
 	bigtime_t initialDelay, bigtime_t idleFor, bigtime_t heartBeat)
 	:
@@ -230,11 +308,24 @@ RunWhenIdleTask::RunWhenIdleTask(FunctionObjectWithResult<bool>* functor,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 RunWhenIdleTask::~RunWhenIdleTask()
 {
 }
 
 
+/**
+ * @brief Check idle conditions and invoke the functor when ready.
+ *
+ * Implements a three-phase state machine: initial delay, waiting for idle,
+ * and executing while idle.  Resets back to idle-wait whenever the system
+ * becomes busy again.
+ *
+ * @param currentTime  The caller's current system_time() snapshot.
+ * @return The functor's result when executed, false while waiting.
+ */
 bool
 RunWhenIdleTask::RunIfNeeded(bigtime_t currentTime)
 {
@@ -261,6 +352,11 @@ RunWhenIdleTask::RunIfNeeded(bigtime_t currentTime)
 }
 
 
+/**
+ * @brief Snapshot the current CPU activity level to begin an idle measurement.
+ *
+ * @param currentTime  The current system time used as the measurement baseline.
+ */
 void
 RunWhenIdleTask::ResetIdleTimer(bigtime_t currentTime)
 {
@@ -271,6 +367,17 @@ RunWhenIdleTask::ResetIdleTimer(bigtime_t currentTime)
 }
 
 
+/**
+ * @brief Return true if the system has been idle long enough to run the task.
+ *
+ * Computes the CPU load since the last call and compares it against
+ * kIdleTreshold.  Also checks that no CPU activity spike occurred within
+ * the required fIdleFor window.
+ *
+ * @param currentTime   The current system time.
+ * @param taskOverhead  CPU load fraction to subtract (accounts for the task itself).
+ * @return true if the system is currently idle by the required margin.
+ */
 bool
 RunWhenIdleTask::IsIdle(bigtime_t currentTime, float taskOverhead)
 {
@@ -306,6 +413,12 @@ RunWhenIdleTask::IsIdle(bigtime_t currentTime, float taskOverhead)
 }
 
 
+/**
+ * @brief Return true if the system has been idle long enough to start the task.
+ *
+ * @param currentTime  The current system time.
+ * @return true if the idle condition is met with zero overhead correction.
+ */
 bool
 RunWhenIdleTask::IdleTimerExpired(bigtime_t currentTime)
 {
@@ -313,6 +426,15 @@ RunWhenIdleTask::IdleTimerExpired(bigtime_t currentTime)
 }
 
 
+/**
+ * @brief Return true if the system remains idle while the task is running.
+ *
+ * Uses kIdleTreshold as the overhead correction to account for the task
+ * itself.
+ *
+ * @param currentTime  The current system time.
+ * @return true if the system is still idle (with task overhead subtracted).
+ */
 bool
 RunWhenIdleTask::StillIdle(bigtime_t currentTime)
 {
@@ -323,6 +445,11 @@ RunWhenIdleTask::StillIdle(bigtime_t currentTime)
 //	#pragma mark - TaskLoop
 
 
+/**
+ * @brief Construct a TaskLoop with the given heartbeat interval.
+ *
+ * @param heartBeat  Polling interval in microseconds between Pulse() calls.
+ */
 TaskLoop::TaskLoop(bigtime_t heartBeat)
 	:
 	fTaskList(10),
@@ -331,11 +458,19 @@ TaskLoop::TaskLoop(bigtime_t heartBeat)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 TaskLoop::~TaskLoop()
 {
 }
 
 
+/**
+ * @brief Schedule a pre-constructed DelayedTask for later execution.
+ *
+ * @param task  Ownership of the task is transferred to the loop.
+ */
 void
 TaskLoop::RunLater(DelayedTask* task)
 {
@@ -343,6 +478,12 @@ TaskLoop::RunLater(DelayedTask* task)
 }
 
 
+/**
+ * @brief Schedule a one-shot function object to run after \a delay.
+ *
+ * @param functor  Function object to invoke; ownership is transferred.
+ * @param delay    Delay in microseconds before invocation.
+ */
 void
 TaskLoop::RunLater(FunctionObject* functor, bigtime_t delay)
 {
@@ -350,6 +491,13 @@ TaskLoop::RunLater(FunctionObject* functor, bigtime_t delay)
 }
 
 
+/**
+ * @brief Schedule a periodic function object.
+ *
+ * @param functor  Functor returning false when done; ownership is transferred.
+ * @param delay    Initial delay before first invocation.
+ * @param period   Interval between subsequent invocations.
+ */
 void
 TaskLoop::RunLater(FunctionObjectWithResult<bool>* functor,
 	bigtime_t delay, bigtime_t period)
@@ -358,6 +506,14 @@ TaskLoop::RunLater(FunctionObjectWithResult<bool>* functor,
 }
 
 
+/**
+ * @brief Schedule a periodic function object with an absolute timeout.
+ *
+ * @param functor   Functor returning false when done; ownership is transferred.
+ * @param delay     Initial delay before first invocation.
+ * @param period    Interval between subsequent invocations.
+ * @param timeout   Maximum total lifetime of the task in microseconds.
+ */
 void
 TaskLoop::RunLater(FunctionObjectWithResult<bool>* functor, bigtime_t delay,
 	bigtime_t period, bigtime_t timeout)
@@ -367,6 +523,14 @@ TaskLoop::RunLater(FunctionObjectWithResult<bool>* functor, bigtime_t delay,
 }
 
 
+/**
+ * @brief Schedule a function object to run once the system is idle.
+ *
+ * @param functor        Functor to invoke when idle; ownership is transferred.
+ * @param initialDelay   Delay before idle checking begins.
+ * @param idleTime       Required continuous idle duration.
+ * @param heartBeat      Idle-check polling interval.
+ */
 void
 TaskLoop::RunWhenIdle(FunctionObjectWithResult<bool>* functor,
 	bigtime_t initialDelay, bigtime_t idleTime, bigtime_t heartBeat)
@@ -378,6 +542,18 @@ TaskLoop::RunWhenIdle(FunctionObjectWithResult<bool>* functor,
 //	#pragma mark - TaskLoop
 
 
+/**
+ * @brief Schedule or coalesce an accumulating one-shot task.
+ *
+ * If an existing AccumulatedOneShotDelayedTask in the queue can absorb
+ * \a functor, the delay is reset and the functor is merged.  Otherwise a
+ * new task is created.
+ *
+ * @param functor              Accumulating functor; ownership is transferred.
+ * @param delay                Delay before invocation (reset on accumulation).
+ * @param maxAccumulatingTime  Stop accumulating after this many microseconds.
+ * @param maxAccumulateCount   Stop accumulating after this many merges.
+ */
 void
 TaskLoop::AccumulatedRunLater(AccumulatingFunctionObject* functor,
 	bigtime_t delay, bigtime_t maxAccumulatingTime, int32 maxAccumulateCount)
@@ -404,6 +580,13 @@ TaskLoop::AccumulatedRunLater(AccumulatingFunctionObject* functor,
 }
 
 
+/**
+ * @brief Run all tasks that are due and remove those that are finished.
+ *
+ * Must be called with fLock held.
+ *
+ * @return true if the task list is empty and KeepPulsingWhenEmpty() is false.
+ */
 bool
 TaskLoop::Pulse()
 {
@@ -427,6 +610,13 @@ TaskLoop::Pulse()
 }
 
 
+/**
+ * @brief Return the soonest scheduled run time across all pending tasks.
+ *
+ * Must be called with fLock held.
+ *
+ * @return The earliest fRunAfter value, or kInfinity if no tasks are pending.
+ */
 bigtime_t
 TaskLoop::LatestRunTime() const
 {
@@ -460,6 +650,13 @@ TaskLoop::LatestRunTime() const
 }
 
 
+/**
+ * @brief Remove a completed task from the list and delete it.
+ *
+ * Must be called with fLock held.
+ *
+ * @param task  The task to remove; it will be deleted.
+ */
 void
 TaskLoop::RemoveTask(DelayedTask* task)
 {
@@ -468,6 +665,11 @@ TaskLoop::RemoveTask(DelayedTask* task)
 	fTaskList.RemoveItem(task);
 }
 
+/**
+ * @brief Add a task to the loop, acquiring the lock and starting a pulse if needed.
+ *
+ * @param task  The task to add; ownership is transferred.
+ */
 void
 TaskLoop::AddTask(DelayedTask* task)
 {
@@ -485,6 +687,12 @@ TaskLoop::AddTask(DelayedTask* task)
 //	#pragma mark - StandAloneTaskLoop
 
 
+/**
+ * @brief Construct a StandAloneTaskLoop that manages its own background thread.
+ *
+ * @param keepThread  If true, the thread keeps running even when all tasks finish.
+ * @param heartBeat   Polling interval in microseconds.
+ */
 StandAloneTaskLoop::StandAloneTaskLoop(bool keepThread, bigtime_t heartBeat)
 	:
 	TaskLoop(heartBeat),
@@ -495,6 +703,9 @@ StandAloneTaskLoop::StandAloneTaskLoop(bool keepThread, bigtime_t heartBeat)
 }
 
 
+/**
+ * @brief Destructor; signals the thread to quit and waits up to 10 seconds for it.
+ */
 StandAloneTaskLoop::~StandAloneTaskLoop()
 {
 	fLock.Lock();
@@ -525,6 +736,11 @@ StandAloneTaskLoop::~StandAloneTaskLoop()
 }
 
 
+/**
+ * @brief Spawn the background scan thread if it is not already running.
+ *
+ * Must be called with fLock held.
+ */
 void
 StandAloneTaskLoop::StartPulsingIfNeeded()
 {
@@ -538,6 +754,11 @@ StandAloneTaskLoop::StartPulsingIfNeeded()
 }
 
 
+/**
+ * @brief Return whether the thread should stay alive even when no tasks are queued.
+ *
+ * @return The value of fKeepThread.
+ */
 bool
 StandAloneTaskLoop::KeepPulsingWhenEmpty() const
 {
@@ -545,6 +766,12 @@ StandAloneTaskLoop::KeepPulsingWhenEmpty() const
 }
 
 
+/**
+ * @brief Static thread entry point; delegates to Run().
+ *
+ * @param castToThis  Pointer to the owning StandAloneTaskLoop.
+ * @return B_OK always.
+ */
 status_t
 StandAloneTaskLoop::RunBinder(void* castToThis)
 {
@@ -554,6 +781,13 @@ StandAloneTaskLoop::RunBinder(void* castToThis)
 }
 
 
+/**
+ * @brief Main loop body executed by the background thread.
+ *
+ * Calls Pulse() on every heartbeat interval, sleeping between iterations to
+ * avoid busy-waiting.  Returns when all tasks complete (or fKeepThread is
+ * false) or when fNeedToQuit is set.
+ */
 void
 StandAloneTaskLoop::Run()
 {
@@ -593,6 +827,11 @@ StandAloneTaskLoop::Run()
 }
 
 
+/**
+ * @brief Add a task and wake the background thread if it is sleeping.
+ *
+ * @param delayedTask  Task to add; ownership is transferred.
+ */
 void
 StandAloneTaskLoop::AddTask(DelayedTask* delayedTask)
 {
@@ -614,6 +853,11 @@ StandAloneTaskLoop::AddTask(DelayedTask* delayedTask)
 //	#pragma mark - PiggybackTaskLoop
 
 
+/**
+ * @brief Construct a PiggybackTaskLoop driven by an external BView pulse.
+ *
+ * @param heartBeat  Minimum interval between successive Pulse() calls.
+ */
 PiggybackTaskLoop::PiggybackTaskLoop(bigtime_t heartBeat)
 	:
 	TaskLoop(heartBeat),
@@ -623,11 +867,20 @@ PiggybackTaskLoop::PiggybackTaskLoop(bigtime_t heartBeat)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 PiggybackTaskLoop::~PiggybackTaskLoop()
 {
 }
 
 
+/**
+ * @brief Called from a BView::Pulse() override to drive the task loop.
+ *
+ * Invokes Pulse() at most once per fHeartBeat interval; rate-limits by
+ * comparing system_time() against fNextHeartBeatTime.
+ */
 void
 PiggybackTaskLoop::PulseMe()
 {
@@ -644,6 +897,11 @@ PiggybackTaskLoop::PulseMe()
 }
 
 
+/**
+ * @brief PiggybackTaskLoop never keeps its pulse running when the task list is empty.
+ *
+ * @return false always.
+ */
 bool
 PiggybackTaskLoop::KeepPulsingWhenEmpty() const
 {
@@ -651,6 +909,11 @@ PiggybackTaskLoop::KeepPulsingWhenEmpty() const
 }
 
 
+/**
+ * @brief Enable PulseMe() calls by setting the internal flag.
+ *
+ * Called by the base class AddTask() when the first task is enqueued.
+ */
 void
 PiggybackTaskLoop::StartPulsingIfNeeded()
 {

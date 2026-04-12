@@ -1,15 +1,49 @@
 /*
- * Copyright 2003-2009, Haiku.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Michael Phipps
- *		Jérôme Duval, jerome.duval@free.fr
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Haiku.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Michael Phipps
+ *       Jérôme Duval, jerome.duval@free.fr
  */
 
 /*!	This is the class that wraps the screensaver settings, as well as the
 	settings of the screensaver preference application.
 */
+
+
+/**
+ * @file ScreenSaverSettings.cpp
+ * @brief Persistent settings store for the Screen Saver preferences.
+ *
+ * ScreenSaverSettings reads and writes the flattened BMessage settings file
+ * stored in B_USER_SETTINGS_DIRECTORY/ScreenSaver_settings. It holds the
+ * active module name, timing parameters (blank/standby/suspend/off), DPMS
+ * flags, hot-corner configuration, password lock settings, and per-module
+ * state sub-messages. It also resolves the system password from shadow/passwd
+ * when the "system" lock method is selected.
+ *
+ * @see ScreenSaverRunner, BScreenSaver
+ */
 
 
 #include "ScreenSaverSettings.h"
@@ -26,6 +60,13 @@
 #include <String.h>
 
 
+/**
+ * @brief Constructor — locates the settings file path and loads defaults.
+ *
+ * Resolves B_USER_SETTINGS_DIRECTORY and appends "ScreenSaver_settings" to
+ * form fSettingsPath, then calls Defaults() to initialise all settings to
+ * their factory values.
+ */
 ScreenSaverSettings::ScreenSaverSettings()
 {
 	BPath path;
@@ -38,6 +79,17 @@ ScreenSaverSettings::ScreenSaverSettings()
 }
 
 
+/**
+ * @brief Load and parse the settings file from disk.
+ *
+ * Opens the settings file at fSettingsPath, unflattens the BMessage, and
+ * copies each recognised field into the corresponding member variable. When
+ * the lock method is "system", also reads the shadow or passwd entry for the
+ * current user to populate fPassword.
+ *
+ * @return true if the file was read and parsed successfully, false if the file
+ *         does not exist or cannot be unflattened.
+ */
 //! Load the flattened settings BMessage from disk and parse it.
 bool
 ScreenSaverSettings::Load()
@@ -109,6 +161,13 @@ ScreenSaverSettings::Load()
 }
 
 
+/**
+ * @brief Reset all settings to their factory defaults.
+ *
+ * Sets the preferences window frame, selects DPMS blanking and all power
+ * management features, and initialises timing, corner, lock, and module-name
+ * fields to their default values.
+ */
 void
 ScreenSaverSettings::Defaults()
 {
@@ -143,6 +202,16 @@ ScreenSaverSettings::Defaults()
 }
 
 
+/**
+ * @brief Synchronise the internal BMessage with the current field values.
+ *
+ * Updates (or adds) each settings field in fSettings using ReplaceXxx() with
+ * an AddXxx() fallback. All time values are converted from microseconds to
+ * whole seconds before storage. The password field is stored as an empty
+ * string when using the system password method.
+ *
+ * @return A reference to the updated fSettings BMessage, ready for flattening.
+ */
 BMessage&
 ScreenSaverSettings::Message()
 {
@@ -185,6 +254,17 @@ ScreenSaverSettings::Message()
 }
 
 
+/**
+ * @brief Retrieve the saved state for a specific screen saver module.
+ *
+ * Looks up the "modulesettings_<name>" sub-message from the settings store
+ * and copies it into @a stateMessage.
+ *
+ * @param name          The module name used to key the stored state.
+ * @param stateMessage  Output — receives the module's saved BMessage state.
+ * @return B_OK if the state was found, B_NAME_NOT_FOUND if no state is stored,
+ *         or B_BAD_VALUE if @a name is NULL or empty.
+ */
 status_t
 ScreenSaverSettings::GetModuleState(const char* name, BMessage* stateMessage)
 {
@@ -197,6 +277,15 @@ ScreenSaverSettings::GetModuleState(const char* name, BMessage* stateMessage)
 }
 
 
+/**
+ * @brief Store the state for a specific screen saver module.
+ *
+ * Removes any existing "modulesettings_<name>" entry and replaces it with a
+ * copy of @a stateMessage. Silently returns if @a name is NULL or empty.
+ *
+ * @param name          The module name used to key the stored state.
+ * @param stateMessage  The BMessage containing the module's current state.
+ */
 void
 ScreenSaverSettings::SetModuleState(const char* name, BMessage* stateMessage)
 {
@@ -210,6 +299,14 @@ ScreenSaverSettings::SetModuleState(const char* name, BMessage* stateMessage)
 }
 
 
+/**
+ * @brief Flatten the current settings BMessage and write it to disk.
+ *
+ * Calls Message() to synchronise fSettings, then opens (or creates) the
+ * settings file at fSettingsPath with B_ERASE_FILE and writes the flattened
+ * message. Logs a warning to stderr if the file cannot be opened or the
+ * flatten fails.
+ */
 void
 ScreenSaverSettings::Save()
 {
@@ -220,4 +317,3 @@ ScreenSaverSettings::Save()
 	if (file.InitCheck() != B_OK || settings.Flatten(&file) != B_OK)
 		fprintf(stderr, "Problem while saving screensaver preferences file!\n");
 }
-

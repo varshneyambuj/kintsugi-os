@@ -1,36 +1,40 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file QueryPoseView.cpp
+ * @brief BQueryPoseView — live-query BPoseView that shows BQuery results.
+ *
+ * Subscribes to live BQuery objects on potentially multiple volumes and
+ * populates the pose list as results arrive via node-monitor notifications.
+ * Uses a read-only background tint to indicate the view is not writable.
+ * Provides default columns (Name, Location, Size, Modified) for new query windows.
+ *
+ * @see BQueryContainerWindow, BPoseView
+ */
 
 
 #include "QueryPoseView.h"
@@ -78,6 +82,14 @@ using std::nothrow;
 //	#pragma mark - BQueryPoseView
 
 
+/**
+ * @brief Construct a BQueryPoseView for the given query model.
+ *
+ * Installs a QueryRefFilter so poses are filtered to exclude certain paths
+ * (e.g., the Trash when filtering is enabled).
+ *
+ * @param model  The Model representing the saved query file.
+ */
 BQueryPoseView::BQueryPoseView(Model* model)
 	:
 	BPoseView(model, kListMode),
@@ -89,6 +101,9 @@ BQueryPoseView::BQueryPoseView(Model* model)
 }
 
 
+/**
+ * @brief Destroy the BQueryPoseView, releasing the ref filter and query container.
+ */
 BQueryPoseView::~BQueryPoseView()
 {
 	delete fRefFilter;
@@ -96,6 +111,14 @@ BQueryPoseView::~BQueryPoseView()
 }
 
 
+/**
+ * @brief Handle kFSClipboardChanges by always refreshing pose clipboard modes.
+ *
+ * Query views must refresh on every clipboard change because items may appear
+ * from different directories.
+ *
+ * @param message  The incoming BMessage.
+ */
 void
 BQueryPoseView::MessageReceived(BMessage* message)
 {
@@ -114,6 +137,9 @@ BQueryPoseView::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Apply a read-only tint to the document background to indicate non-writable content.
+ */
 void
 BQueryPoseView::AdoptSystemColors()
 {
@@ -123,6 +149,11 @@ BQueryPoseView::AdoptSystemColors()
 }
 
 
+/**
+ * @brief Return true if the view currently uses the expected read-only system colours.
+ *
+ * @return True when all three colour roles have the expected values and tints.
+ */
 bool
 BQueryPoseView::HasSystemColors() const
 {
@@ -135,6 +166,12 @@ BQueryPoseView::HasSystemColors() const
 }
 
 
+/**
+ * @brief Open the query editor for this query's model entry.
+ *
+ * Sends a kEditQuery message with the query's entry_ref to the Tracker
+ * application so the Find panel is shown with the current query loaded.
+ */
 void
 BQueryPoseView::EditQueries()
 {
@@ -144,6 +181,9 @@ BQueryPoseView::EditQueries()
 }
 
 
+/**
+ * @brief Add the standard query columns (Name, Location, Size, Modified) if none exist.
+ */
 void
 BQueryPoseView::SetupDefaultColumnsIfNeeded()
 {

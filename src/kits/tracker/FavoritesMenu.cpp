@@ -1,36 +1,60 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file FavoritesMenu.cpp
+ * @brief BSlowMenu subclasses that incrementally populate favorites and recents menus.
+ *
+ * FavoritesMenu builds its item list in stages: first the GoTo favorites folder,
+ * then recent documents, then recent folders. RecentsMenu shows the most recently
+ * used documents, applications, or folders for use in file panels and nav menus.
+ *
+ * @see BSlowMenu, BNavMenu, BRoster
+ */
 
 
 #include "FavoritesMenu.h"
@@ -65,6 +89,16 @@ All rights reserved.
 //	#pragma mark - FavoritesMenu
 
 
+/**
+ * @brief Construct a favorites/recents menu for use in a file panel.
+ *
+ * @param title              Menu title string.
+ * @param openFolderMessage  Message template sent when a folder item is chosen.
+ * @param openFileMessage    Message template sent when a file item is chosen.
+ * @param target             BMessenger that receives open messages.
+ * @param isSavePanel        true if the menu is in a Save panel (hides recent files).
+ * @param filter             Optional BRefFilter applied to all entries.
+ */
 FavoritesMenu::FavoritesMenu(const char* title, BMessage* openFolderMessage,
 	BMessage* openFileMessage, const BMessenger &target,
 	bool isSavePanel, BRefFilter* filter)
@@ -86,6 +120,9 @@ FavoritesMenu::FavoritesMenu(const char* title, BMessage* openFolderMessage,
 }
 
 
+/**
+ * @brief Destructor; deletes the owned message templates and entry container.
+ */
 FavoritesMenu::~FavoritesMenu()
 {
 	delete fOpenFolderMessage;
@@ -94,6 +131,11 @@ FavoritesMenu::~FavoritesMenu()
 }
 
 
+/**
+ * @brief Replace the BRefFilter used to decide which entries are shown.
+ *
+ * @param filter  New filter; may be NULL to show all entries.
+ */
 void
 FavoritesMenu::SetRefFilter(BRefFilter* filter)
 {
@@ -101,6 +143,11 @@ FavoritesMenu::SetRefFilter(BRefFilter* filter)
 }
 
 
+/**
+ * @brief Prepare the menu for rebuilding by stripping stale dynamic items.
+ *
+ * @return true always to allow AddNextItem() to be called.
+ */
 bool
 FavoritesMenu::StartBuildingItemList()
 {
@@ -122,6 +169,13 @@ FavoritesMenu::StartBuildingItemList()
 }
 
 
+/**
+ * @brief Add the next item in the current build phase (favorites, files, or folders).
+ *
+ * Called repeatedly by BSlowMenu until it returns false, signalling completion.
+ *
+ * @return true if more items remain to be added; false when the list is complete.
+ */
 bool
 FavoritesMenu::AddNextItem()
 {
@@ -308,6 +362,9 @@ FavoritesMenu::AddNextItem()
 }
 
 
+/**
+ * @brief Finalise the menu by setting the target for all added items.
+ */
 void
 FavoritesMenu::DoneBuildingItemList()
 {
@@ -315,6 +372,9 @@ FavoritesMenu::DoneBuildingItemList()
 }
 
 
+/**
+ * @brief Reset the build state so the menu is fully rebuilt on the next open.
+ */
 void
 FavoritesMenu::ClearMenuBuildingState()
 {
@@ -327,6 +387,14 @@ FavoritesMenu::ClearMenuBuildingState()
 }
 
 
+/**
+ * @brief Decide whether @a model should appear in the menu.
+ *
+ * Applies the panel mode (save panels hide files) and the optional BRefFilter.
+ *
+ * @param model  The candidate directory or file model.
+ * @return true if the model should be added to the menu.
+ */
 bool
 FavoritesMenu::ShouldShowModel(const Model* model)
 {
@@ -347,6 +415,14 @@ FavoritesMenu::ShouldShowModel(const Model* model)
 //	#pragma mark - RecentsMenu
 
 
+/**
+ * @brief Construct a recents menu for documents, apps, or folders.
+ *
+ * @param name    Menu label.
+ * @param which   0 = recent documents, 1 = applications, 2 = folders.
+ * @param what    Message what-code sent when an item is selected.
+ * @param target  Handler that receives selection messages.
+ */
 RecentsMenu::RecentsMenu(const char* name, int32 which, uint32 what,
 	BHandler* target)
 	:
@@ -369,6 +445,9 @@ RecentsMenu::RecentsMenu(const char* name, int32 which, uint32 what,
 }
 
 
+/**
+ * @brief Detach without propagating to BNavMenu to avoid clearing the types list.
+ */
 void
 RecentsMenu::DetachedFromWindow()
 {
@@ -379,6 +458,11 @@ RecentsMenu::DetachedFromWindow()
 }
 
 
+/**
+ * @brief Clear all existing dynamic items to prepare for a fresh build.
+ *
+ * @return true always.
+ */
 bool
 RecentsMenu::StartBuildingItemList()
 {
@@ -401,6 +485,11 @@ RecentsMenu::StartBuildingItemList()
 }
 
 
+/**
+ * @brief Add the next recent item; returns false when the list is exhausted.
+ *
+ * @return true if more items remain; false when done.
+ */
 bool
 RecentsMenu::AddNextItem()
 {
@@ -412,6 +501,15 @@ RecentsMenu::AddNextItem()
 }
 
 
+/**
+ * @brief Populate fRecentList and add the next model item to the menu.
+ *
+ * Fetches the recent list on the first call (fItemIndex == 0) and then
+ * iterates through it one entry per call.
+ *
+ * @param count  Maximum number of recent entries to fetch from the roster.
+ * @return true if an item was added; false when the list is exhausted.
+ */
 bool
 RecentsMenu::AddRecents(int32 count)
 {
@@ -463,6 +561,9 @@ RecentsMenu::AddRecents(int32 count)
 }
 
 
+/**
+ * @brief Finalise the menu by adding a placeholder or setting item targets.
+ */
 void
 RecentsMenu::DoneBuildingItemList()
 {
@@ -482,6 +583,9 @@ RecentsMenu::DoneBuildingItemList()
 }
 
 
+/**
+ * @brief Force the menu to be rebuilt completely on the next open.
+ */
 void
 RecentsMenu::ClearMenuBuildingState()
 {

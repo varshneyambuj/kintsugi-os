@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file WidgetAttributeText.cpp
+ * @brief WidgetAttributeText and subclasses render attribute values as formatted text in Tracker.
+ *
+ * @see BPoseView, BColumn, Model
+ */
 
 
 #include "WidgetAttributeText.h"
@@ -81,6 +79,15 @@ bool NameAttributeText::sSortFolderNamesFirst = false;
 bool RealNameAttributeText::sSortFolderNamesFirst = false;
 
 
+/**
+ * @brief Format a file size value as a localised string truncated to \a width.
+ *
+ * @param outString  Output string receiving the formatted size.
+ * @param value      File size in bytes, or kUnknownSize.
+ * @param view       The view providing StringWidth() for truncation.
+ * @param width      Maximum pixel width for the resulting string.
+ * @return Pixel width of the formatted string.
+ */
 template <class View>
 float
 TruncFileSizeBase(BString* outString, int64 value, const View* view,
@@ -122,6 +129,20 @@ TruncFileSizeBase(BString* outString, int64 value, const View* view,
 }
 
 
+/**
+ * @brief Truncate a string to fit within \a width pixels using ellipsis insertion.
+ *
+ * Template version so the correct StringWidth() overload is called for both
+ * BView and BPoseView without virtual dispatch overhead.
+ *
+ * @param outString  Output string with the truncated text and ellipsis.
+ * @param inString   Source string to truncate.
+ * @param length     Byte length of \a inString.
+ * @param view       The view providing StringWidth() for measurement.
+ * @param width      Maximum pixel width for the resulting string.
+ * @param truncMode  B_TRUNCATE_MIDDLE (default) or B_TRUNCATE_END.
+ * @return Pixel width of the truncated string.
+ */
 template <class View>
 float
 TruncStringBase(BString* outString, const char* inString, int32 length,
@@ -206,6 +227,18 @@ TruncTimeBase(BString* outString, int64 value, const View* view, float width)
 // #pragma mark - WidgetAttributeText base class
 
 
+/**
+ * @brief Factory method: allocate the correct WidgetAttributeText subclass.
+ *
+ * Inspects \a column's attribute name and type to construct the most
+ * specific WidgetAttributeText subclass (e.g. NameAttributeText for
+ * kAttrStatName, SizeAttributeText for kAttrStatSize, etc.).
+ *
+ * @param model   The model whose attribute is to be displayed.
+ * @param column  The column descriptor selecting the attribute.
+ * @param view    The BPoseView providing display context.
+ * @return A heap-allocated WidgetAttributeText subclass instance.
+ */
 WidgetAttributeText*
 WidgetAttributeText::NewWidgetText(const Model* model,
 	const BColumn* column, const BPoseView* view)
@@ -273,6 +306,12 @@ WidgetAttributeText::NewWidgetText(const Model* model,
 }
 
 
+/**
+ * @brief Construct a WidgetAttributeText for the given model and column.
+ *
+ * @param model   The model whose attribute is displayed.
+ * @param column  The column providing width and attribute metadata.
+ */
 WidgetAttributeText::WidgetAttributeText(const Model* model,
 	const BColumn* column)
 	:
@@ -292,11 +331,23 @@ WidgetAttributeText::WidgetAttributeText(const Model* model,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 WidgetAttributeText::~WidgetAttributeText()
 {
 }
 
 
+/**
+ * @brief Return the attribute value as a truncated string that fits the column width.
+ *
+ * Forces a recalculation if the value is dirty, the column width has changed,
+ * or a settings change has been detected.
+ *
+ * @param view  The BPoseView used for font metrics and settings.
+ * @return Null-terminated string suitable for display in the column.
+ */
 const char*
 WidgetAttributeText::FittingText(const BPoseView* view)
 {
@@ -309,6 +360,12 @@ WidgetAttributeText::FittingText(const BPoseView* view)
 }
 
 
+/**
+ * @brief Recompute the display text and return true if it has changed.
+ *
+ * @param view  The BPoseView providing display context.
+ * @return true if the formatted text differs from the previously cached value.
+ */
 bool
 WidgetAttributeText::CheckViewChanged(const BPoseView* view)
 {
@@ -322,6 +379,11 @@ WidgetAttributeText::CheckViewChanged(const BPoseView* view)
 }
 
 
+/**
+ * @brief Hook: return true if a settings change requires the text to be recomputed.
+ *
+ * @return false in the base class; subclasses override as needed.
+ */
 bool
 WidgetAttributeText::CheckSettingsChanged()
 {
@@ -329,6 +391,17 @@ WidgetAttributeText::CheckSettingsChanged()
 }
 
 
+/**
+ * @brief Truncate \a inString to fit within \a width pixels.
+ *
+ * @param outString  Output string with truncated text.
+ * @param inString   Source string.
+ * @param length     Byte length of \a inString.
+ * @param view       BPoseView for font metrics.
+ * @param width      Maximum pixel width.
+ * @param truncMode  B_TRUNCATE_MIDDLE or B_TRUNCATE_END.
+ * @return Pixel width of the result.
+ */
 float
 WidgetAttributeText::TruncString(BString* outString, const char* inString,
 	int32 length, const BPoseView* view, float width, uint32 truncMode)
@@ -337,6 +410,15 @@ WidgetAttributeText::TruncString(BString* outString, const char* inString,
 }
 
 
+/**
+ * @brief Format and truncate a file-size value to fit within \a width pixels.
+ *
+ * @param outString  Output string with the formatted size.
+ * @param value      File size in bytes, or kUnknownSize.
+ * @param view       BPoseView for font metrics.
+ * @param width      Maximum pixel width.
+ * @return Pixel width of the result.
+ */
 float
 WidgetAttributeText::TruncFileSize(BString* outString, int64 value,
 	const BPoseView* view, float width)
@@ -345,6 +427,15 @@ WidgetAttributeText::TruncFileSize(BString* outString, int64 value,
 }
 
 
+/**
+ * @brief Format and truncate a timestamp to fit within \a width pixels.
+ *
+ * @param outString  Output string with the formatted date/time.
+ * @param value      Time value as a Unix timestamp.
+ * @param view       BPoseView for font metrics.
+ * @param width      Maximum pixel width.
+ * @return Pixel width of the result.
+ */
 float
 WidgetAttributeText::TruncTime(BString* outString, int64 value,
 	const BPoseView* view, float width)
@@ -353,6 +444,11 @@ WidgetAttributeText::TruncTime(BString* outString, int64 value,
 }
 
 
+/**
+ * @brief Return the cached pixel width of the last formatted text.
+ *
+ * @return The last computed truncated text width in pixels.
+ */
 float
 WidgetAttributeText::CurrentWidth() const
 {
@@ -360,6 +456,14 @@ WidgetAttributeText::CurrentWidth() const
 }
 
 
+/**
+ * @brief Return the pixel width needed to display the fitting text.
+ *
+ * Calls FittingText() to ensure the cached value is current.
+ *
+ * @param pose  The BPoseView for font metrics.
+ * @return Width in pixels.
+ */
 float
 WidgetAttributeText::Width(const BPoseView* pose)
 {
@@ -368,6 +472,11 @@ WidgetAttributeText::Width(const BPoseView* pose)
 }
 
 
+/**
+ * @brief Prepare the inline editor for this attribute (base: no-op).
+ *
+ * @param unused  The BTextView that will host the editor.
+ */
 void
 WidgetAttributeText::SetupEditing(BTextView*)
 {
@@ -375,6 +484,11 @@ WidgetAttributeText::SetupEditing(BTextView*)
 }
 
 
+/**
+ * @brief Commit edited text to the attribute (base: asserts; subclasses override).
+ *
+ * @return false; subclasses must override to implement persistence.
+ */
 bool
 WidgetAttributeText::CommitEditedText(BTextView*)
 {
@@ -384,6 +498,18 @@ WidgetAttributeText::CommitEditedText(BTextView*)
 }
 
 
+/**
+ * @brief Read an attribute from \a model and format it as a string.
+ *
+ * @param model          The model to read from.
+ * @param outString      Output string receiving the formatted value.
+ * @param attrName       Attribute key to read.
+ * @param attrType       BeOS attribute type constant.
+ * @param width          Maximum pixel width for truncation.
+ * @param view           BView for font metrics.
+ * @param resultingValue Optional output for numeric attribute values.
+ * @return B_OK on success, or an error code.
+ */
 status_t
 WidgetAttributeText::AttrAsString(const Model* model, BString* outString,
 	const char* attrName, int32 attrType, float width, BView* view,

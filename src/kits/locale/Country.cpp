@@ -1,7 +1,38 @@
 /*
- * Copyright 2003-2011, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2009-2019, Adrien Destugues, pulkomandy@gmail.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2011, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2009-2019, Adrien Destugues, pulkomandy@gmail.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Country.cpp
+ * @brief Implementation of BCountry, the ISO 3166 country representation.
+ *
+ * BCountry wraps an ICU icu::Locale restricted to a country component so it
+ * can provide localized country names, the preferred language for that country,
+ * flag icons, and the list of time zones associated with the country.
+ *
+ * @see BLanguage, BTimeZone, BLocaleRoster
  */
 
 
@@ -31,6 +62,11 @@
 U_NAMESPACE_USE
 
 
+/**
+ * @brief Construct a BCountry for the given ISO 3166-1 alpha-2 country code.
+ *
+ * @param countryCode  Two-letter country code (e.g. "DE", "JP").
+ */
 BCountry::BCountry(const char* countryCode)
 	:
 	fICULocale(NULL)
@@ -39,6 +75,11 @@ BCountry::BCountry(const char* countryCode)
 }
 
 
+/**
+ * @brief Copy-construct a BCountry by cloning the source's ICU locale.
+ *
+ * @param other  The BCountry to copy.
+ */
 BCountry::BCountry(const BCountry& other)
 	:
 	fICULocale(new icu::Locale(*other.fICULocale))
@@ -46,6 +87,12 @@ BCountry::BCountry(const BCountry& other)
 }
 
 
+/**
+ * @brief Copy-assign another BCountry, replacing or creating the ICU locale.
+ *
+ * @param other  The source BCountry to assign from.
+ * @return Reference to this BCountry.
+ */
 BCountry&
 BCountry::operator=(const BCountry& other)
 {
@@ -61,12 +108,22 @@ BCountry::operator=(const BCountry& other)
 }
 
 
+/**
+ * @brief Destroy the BCountry and free the ICU locale object.
+ */
 BCountry::~BCountry()
 {
 	delete fICULocale;
 }
 
 
+/**
+ * @brief Set the country to the given ISO 3166-1 alpha-2 code.
+ *
+ * @param countryCode  Two-letter country code.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, B_BAD_DATA if
+ *         the code produces a bogus ICU locale.
+ */
 status_t
 BCountry::SetTo(const char* countryCode)
 {
@@ -77,6 +134,12 @@ BCountry::SetTo(const char* countryCode)
 }
 
 
+/**
+ * @brief Check whether this BCountry object was initialized successfully.
+ *
+ * @return B_OK if valid, B_NO_MEMORY if the locale could not be allocated,
+ *         B_BAD_DATA if the country code produced a bogus ICU locale.
+ */
 status_t
 BCountry::InitCheck() const
 {
@@ -90,6 +153,12 @@ BCountry::InitCheck() const
 }
 
 
+/**
+ * @brief Get the country name in its own native language, title-cased.
+ *
+ * @param name  Output BString that receives the native country name.
+ * @return B_OK on success, or an error code from InitCheck().
+ */
 status_t
 BCountry::GetNativeName(BString& name) const
 {
@@ -109,6 +178,15 @@ BCountry::GetNativeName(BString& name) const
 }
 
 
+/**
+ * @brief Get the country name in the specified display language.
+ *
+ * If \a displayLanguage is NULL the system preferred language is used.
+ *
+ * @param name             Output BString for the localized country name.
+ * @param displayLanguage  Language to use for the name, or NULL for default.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCountry::GetName(BString& name, const BLanguage* displayLanguage) const
 {
@@ -139,6 +217,15 @@ BCountry::GetName(BString& name, const BLanguage* displayLanguage) const
 }
 
 
+/**
+ * @brief Get the preferred language spoken in this country.
+ *
+ * Uses ICU likely-subtags expansion to determine the most probable language
+ * for the country. Requires ICU 63 or later; returns ENOSYS on older builds.
+ *
+ * @param language  Output BLanguage populated with the preferred language.
+ * @return B_OK on success, ENOSYS if ICU is too old, or another error code.
+ */
 status_t
 BCountry::GetPreferredLanguage(BLanguage& language) const
 {
@@ -168,6 +255,11 @@ BCountry::GetPreferredLanguage(BLanguage& language) const
 }
 
 
+/**
+ * @brief Return the ISO 3166-1 alpha-2 country code string.
+ *
+ * @return The country code (e.g. "DE"), or NULL if InitCheck() fails.
+ */
 const char*
 BCountry::Code() const
 {
@@ -179,6 +271,12 @@ BCountry::Code() const
 }
 
 
+/**
+ * @brief Retrieve the flag icon bitmap for this country.
+ *
+ * @param result  Pre-allocated BBitmap to receive the flag icon data.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCountry::GetIcon(BBitmap* result) const
 {
@@ -190,6 +288,13 @@ BCountry::GetIcon(BBitmap* result) const
 }
 
 
+/**
+ * @brief Populate a BMessage with the time zone IDs available for this country.
+ *
+ * @param timeZones  Output BMessage that will have "timeZone" string fields
+ *                   added for each available zone.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCountry::GetAvailableTimeZones(BMessage* timeZones) const
 {
@@ -200,4 +305,3 @@ BCountry::GetAvailableTimeZones(BMessage* timeZones) const
 	return BLocaleRoster::Default()->GetAvailableTimeZonesForCountry(timeZones,
 		Code());
 }
-

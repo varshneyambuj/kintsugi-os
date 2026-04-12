@@ -1,10 +1,45 @@
 /*
- * Copyright 2013-2020, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
- *		Rene Gollent <rene@gollent.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2020, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ *       Rene Gollent <rene@gollent.com>
+ */
+
+
+/**
+ * @file PackageManager.cpp
+ * @brief Core implementation of BPackageManager, the high-level package lifecycle engine.
+ *
+ * BPackageManager orchestrates install, uninstall, update, full-sync, and
+ * verify operations by building a dependency-resolution job through BSolver,
+ * downloading required packages, and committing the resulting activation
+ * transaction to the package daemon. It owns a set of installed and remote
+ * BSolverRepository objects, a local package repository for files supplied
+ * directly by the caller, and the transaction list that tracks in-progress
+ * changes.
+ *
+ * @see BSolver, BRepositoryBuilder, BRequest
  */
 
 
@@ -55,6 +90,16 @@ namespace BPrivate {
 // #pragma mark - BPackageManager
 
 
+/**
+ * @brief Construct a BPackageManager for the given installation location.
+ *
+ * Allocates the system, home, and local solver repositories. The solver is
+ * created lazily by the first call to Init().
+ *
+ * @param location               The target installation location.
+ * @param installationInterface  Interface to the package-activation backend.
+ * @param userInteractionHandler Handler for progress callbacks and user prompts.
+ */
 BPackageManager::BPackageManager(BPackageInstallationLocation location,
 	InstallationInterface* installationInterface,
 	UserInteractionHandler* userInteractionHandler)
@@ -76,6 +121,9 @@ BPackageManager::BPackageManager(BPackageInstallationLocation location,
 }
 
 
+/**
+ * @brief Destroy the package manager, releasing the solver and all repositories.
+ */
 BPackageManager::~BPackageManager()
 {
 	delete fSolver;
@@ -85,6 +133,16 @@ BPackageManager::~BPackageManager()
 }
 
 
+/**
+ * @brief Initialise the solver and populate it with the requested set of repositories.
+ *
+ * Creates the BSolver instance, optionally adds installed repositories and/or
+ * remote repositories (refreshing them when requested). Calling Init() when
+ * the solver already exists is a no-op.
+ *
+ * @param flags  Bitmask of B_ADD_INSTALLED_REPOSITORIES, B_ADD_REMOTE_REPOSITORIES,
+ *               and B_REFRESH_REPOSITORIES.
+ */
 void
 BPackageManager::Init(uint32 flags)
 {
@@ -146,6 +204,11 @@ BPackageManager::Init(uint32 flags)
 }
 
 
+/**
+ * @brief Set the libsolv debug verbosity level.
+ *
+ * @param level  Debug level; 0 disables debug output.
+ */
 void
 BPackageManager::SetDebugLevel(int32 level)
 {
@@ -156,6 +219,16 @@ BPackageManager::SetDebugLevel(int32 level)
 }
 
 
+/**
+ * @brief Install packages given as an array of name/specifier strings.
+ *
+ * Converts the strings to a BSolverPackageSpecifierList and delegates to
+ * Install(const BSolverPackageSpecifierList&, bool).
+ *
+ * @param packages      Array of package name strings.
+ * @param packageCount  Number of entries in @a packages.
+ * @param refresh       If true, remote repositories are refreshed first.
+ */
 void
 BPackageManager::Install(const char* const* packages, int packageCount, bool refresh)
 {
@@ -165,6 +238,15 @@ BPackageManager::Install(const char* const* packages, int packageCount, bool ref
 }
 
 
+/**
+ * @brief Install packages given as a solver specifier list.
+ *
+ * Initialises the solver, resolves dependencies, handles any problems
+ * interactively, confirms changes with the user, then applies them.
+ *
+ * @param packages  The list of packages to install.
+ * @param refresh   If true, remote repositories are refreshed first.
+ */
 void
 BPackageManager::Install(const BSolverPackageSpecifierList& packages, bool refresh)
 {
@@ -194,6 +276,12 @@ BPackageManager::Install(const BSolverPackageSpecifierList& packages, bool refre
 }
 
 
+/**
+ * @brief Uninstall packages given as an array of name strings.
+ *
+ * @param packages      Array of package name strings.
+ * @param packageCount  Number of entries in @a packages.
+ */
 void
 BPackageManager::Uninstall(const char* const* packages, int packageCount)
 {
@@ -204,6 +292,16 @@ BPackageManager::Uninstall(const char* const* packages, int packageCount)
 }
 
 
+/**
+ * @brief Uninstall packages given as a solver specifier list.
+ *
+ * Resolves the inverse base-package closure, removes the packages from the
+ * solver's installed repository, verifies installation consistency, and
+ * applies the changes across all installation locations from most specific
+ * to least specific.
+ *
+ * @param packages  The list of packages to uninstall.
+ */
 void
 BPackageManager::Uninstall(const BSolverPackageSpecifierList& packages)
 {
@@ -286,6 +384,12 @@ BPackageManager::Uninstall(const BSolverPackageSpecifierList& packages)
 }
 
 
+/**
+ * @brief Update packages given as an array of name strings.
+ *
+ * @param packages      Array of package name strings.
+ * @param packageCount  Number of entries in @a packages.
+ */
 void
 BPackageManager::Update(const char* const* packages, int packageCount)
 {
@@ -295,6 +399,14 @@ BPackageManager::Update(const char* const* packages, int packageCount)
 }
 
 
+/**
+ * @brief Update packages given as a solver specifier list.
+ *
+ * Initialises the solver with remote repositories (refreshing them), runs the
+ * update resolution, and applies the resulting changes.
+ *
+ * @param packages  The list of packages to update.
+ */
 void
 BPackageManager::Update(const BSolverPackageSpecifierList& packages)
 {
@@ -322,6 +434,11 @@ BPackageManager::Update(const BSolverPackageSpecifierList& packages)
 }
 
 
+/**
+ * @brief Perform a full distribution-upgrade sync against all remote repositories.
+ *
+ * Refreshes all remote repositories, runs a DISTUPGRADE solve, and applies changes.
+ */
 void
 BPackageManager::FullSync()
 {
@@ -342,6 +459,13 @@ BPackageManager::FullSync()
 }
 
 
+/**
+ * @brief Verify that the current installation is self-consistent.
+ *
+ * Refreshes remote repositories, iterates over all installation locations
+ * from most to least specific, verifying and applying corrective changes
+ * at each level.
+ */
 void
 BPackageManager::VerifyInstallation()
 {
@@ -369,6 +493,11 @@ BPackageManager::VerifyInstallation()
 }
 
 
+/**
+ * @brief Return the most-specific installed repository managed by this instance.
+ *
+ * @return Reference to the last InstalledRepository in fInstalledRepositories.
+ */
 BPackageManager::InstalledRepository&
 BPackageManager::InstallationRepository()
 {
@@ -379,6 +508,11 @@ BPackageManager::InstallationRepository()
 }
 
 
+/**
+ * @brief Job-started callback; notifies the UI layer about download or checksum starts.
+ *
+ * @param job  The job that just started.
+ */
 void
 BPackageManager::JobStarted(BSupportKit::BJob* job)
 {
@@ -393,6 +527,11 @@ BPackageManager::JobStarted(BSupportKit::BJob* job)
 }
 
 
+/**
+ * @brief Job-progress callback; forwards download progress to the UI layer.
+ *
+ * @param job  The job that reported progress.
+ */
 void
 BPackageManager::JobProgress(BSupportKit::BJob* job)
 {
@@ -405,6 +544,11 @@ BPackageManager::JobProgress(BSupportKit::BJob* job)
 }
 
 
+/**
+ * @brief Job-succeeded callback; notifies the UI layer about download or checksum completion.
+ *
+ * @param job  The job that just completed successfully.
+ */
 void
 BPackageManager::JobSucceeded(BSupportKit::BJob* job)
 {
@@ -419,6 +563,12 @@ BPackageManager::JobSucceeded(BSupportKit::BJob* job)
 }
 
 
+/**
+ * @brief Loop until the solver has no more unresolved problems.
+ *
+ * Delegates to the user-interaction handler which may apply user-selected
+ * solutions before calling SolveAgain().
+ */
 void
 BPackageManager::_HandleProblems()
 {
@@ -432,6 +582,12 @@ BPackageManager::_HandleProblems()
 }
 
 
+/**
+ * @brief Translate the solver result into activate/deactivate package lists.
+ *
+ * Also ensures that base packages are placed in the same installation
+ * location as the packages that require them.
+ */
 void
 BPackageManager::_AnalyzeResult()
 {
@@ -488,6 +644,15 @@ BPackageManager::_AnalyzeResult()
 }
 
 
+/**
+ * @brief Ask the user to confirm the computed package changes.
+ *
+ * Throws BNothingToDoException when there are no changes at all. Delegates
+ * the actual confirmation prompt to the UserInteractionHandler.
+ *
+ * @param fromMostSpecific  If true, changes are presented from the most
+ *                          specific location outward.
+ */
 void
 BPackageManager::_ConfirmChanges(bool fromMostSpecific)
 {
@@ -508,6 +673,15 @@ BPackageManager::_ConfirmChanges(bool fromMostSpecific)
 }
 
 
+/**
+ * @brief Download, verify, and commit all queued package changes.
+ *
+ * Prepares and commits one transaction per InstalledRepository that has
+ * pending changes. When @a fromMostSpecific is true the most specific
+ * location is processed first.
+ *
+ * @param fromMostSpecific  Process locations from most to least specific when true.
+ */
 void
 BPackageManager::_ApplyPackageChanges(bool fromMostSpecific)
 {
@@ -527,6 +701,15 @@ BPackageManager::_ApplyPackageChanges(bool fromMostSpecific)
 }
 
 
+/**
+ * @brief Download packages to activate and build the activation transaction.
+ *
+ * Creates a transaction directory, downloads each package to activate
+ * (reusing previous partial downloads when available), and populates
+ * the ActivationTransaction with the names of files to activate/deactivate.
+ *
+ * @param installationRepository  The repository whose changes are being prepared.
+ */
 void
 BPackageManager::_PreparePackageChanges(
 	InstalledRepository& installationRepository)
@@ -662,6 +845,14 @@ retryDownload:
 }
 
 
+/**
+ * @brief Commit a prepared transaction to the package daemon.
+ *
+ * Notifies the UI layer at start, commits, reports the result, and removes
+ * the transaction directory when complete.
+ *
+ * @param transaction  The transaction to commit.
+ */
 void
 BPackageManager::_CommitPackageChanges(Transaction& transaction)
 {
@@ -695,6 +886,13 @@ BPackageManager::_CommitPackageChanges(Transaction& transaction)
 }
 
 
+/**
+ * @brief Copy a package file from a local repository to the transaction directory.
+ *
+ * @param repository  The local repository that owns the file.
+ * @param package     The package whose file is to be copied.
+ * @param entry       The destination BEntry in the transaction directory.
+ */
 void
 BPackageManager::_ClonePackageFile(LocalRepository* repository,
 	BSolverPackage* package, const BEntry& entry)
@@ -718,6 +916,13 @@ BPackageManager::_ClonePackageFile(LocalRepository* repository,
 }
 
 
+/**
+ * @brief Search @a packages for the base package required by @a info.
+ *
+ * @param packages  The list of candidate packages to search.
+ * @param info      The package info whose base-package requirement is used.
+ * @return Index of the matching package in @a packages, or -1 if not found.
+ */
 int32
 BPackageManager::_FindBasePackage(const PackageList& packages,
 	const BPackageInfo& info)
@@ -758,6 +963,14 @@ BPackageManager::_FindBasePackage(const PackageList& packages,
 }
 
 
+/**
+ * @brief Add an installed repository to the solver and track it.
+ *
+ * Initialises the repository via the installation interface, adds it to the
+ * solver, and appends it to fInstalledRepositories.
+ *
+ * @param repository  The InstalledRepository to add.
+ */
 void
 BPackageManager::_AddInstalledRepository(InstalledRepository* repository)
 {
@@ -772,6 +985,16 @@ BPackageManager::_AddInstalledRepository(InstalledRepository* repository)
 }
 
 
+/**
+ * @brief Load (and optionally refresh) a remote repository and add it to the solver.
+ *
+ * Skips the repository with a warning when its config or cache cannot be
+ * obtained.
+ *
+ * @param roster  BPackageRoster used to retrieve the config and cache.
+ * @param name    Name of the repository to load.
+ * @param refresh If true, the repository cache is refreshed from the network.
+ */
 void
 BPackageManager::_AddRemoteRepository(BPackageRoster& roster, const char* name,
 	bool refresh)
@@ -803,6 +1026,15 @@ BPackageManager::_AddRemoteRepository(BPackageRoster& roster, const char* name,
 }
 
 
+/**
+ * @brief Retrieve the repository cache, refreshing it when needed or requested.
+ *
+ * @param roster   BPackageRoster used to look up and refresh the cache.
+ * @param config   The repository configuration.
+ * @param refresh  If true, always attempt a network refresh.
+ * @param _cache   Output BRepositoryCache filled on success.
+ * @return B_OK on success, or an error code if the cache cannot be obtained.
+ */
 status_t
 BPackageManager::_GetRepositoryCache(BPackageRoster& roster,
 	const BRepositoryConfig& config, bool refresh, BRepositoryCache& _cache)
@@ -820,6 +1052,17 @@ BPackageManager::_GetRepositoryCache(BPackageRoster& roster,
 }
 
 
+/**
+ * @brief Convert an array of name/path strings into package specifiers.
+ *
+ * Strings ending in ".hpkg" that refer to existing files are treated as
+ * local package files and added to fLocalRepository; other strings are
+ * treated as package-name selectors.
+ *
+ * @param searchStrings      Array of package names or file paths.
+ * @param searchStringCount  Number of entries in @a searchStrings.
+ * @param specifierList      The specifier list to populate.
+ */
 void
 BPackageManager::_AddPackageSpecifiers(const char* const* searchStrings,
 	int searchStringCount, BSolverPackageSpecifierList& specifierList)
@@ -838,6 +1081,13 @@ BPackageManager::_AddPackageSpecifiers(const char* const* searchStrings,
 }
 
 
+/**
+ * @brief Determine whether a file name refers to a local .hpkg package file.
+ *
+ * @param fileName  The file name to inspect.
+ * @return True if @a fileName contains ".hpkg" and the file exists as a
+ *         regular file.
+ */
 bool
 BPackageManager::_IsLocalPackage(const char* fileName)
 {
@@ -849,6 +1099,12 @@ BPackageManager::_IsLocalPackage(const char* fileName)
 }
 
 
+/**
+ * @brief Load a local package file into fLocalRepository and return the solver package.
+ *
+ * @param fileName  Path to the .hpkg file.
+ * @return Pointer to the BSolverPackage added to fLocalRepository.
+ */
 BSolverPackage*
 BPackageManager::_AddLocalPackage(const char* fileName)
 {
@@ -858,6 +1114,14 @@ BPackageManager::_AddLocalPackage(const char* fileName)
 }
 
 
+/**
+ * @brief Advance the active installation location to the next more general one.
+ *
+ * Switches from system to home and adds the home repository to the solver.
+ *
+ * @return True if the location was advanced, false if already at the most
+ *         general location.
+ */
 bool
 BPackageManager::_NextSpecificInstallationLocation()
 {
@@ -876,6 +1140,14 @@ BPackageManager::_NextSpecificInstallationLocation()
 }
 
 
+/**
+ * @brief Download a single package file from a URL to a local entry, verifying the checksum.
+ *
+ * @param fileURL     The URL of the package to download.
+ * @param targetEntry The local BEntry where the file will be saved.
+ * @param checksum    The expected SHA-256 checksum of the file.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageManager::DownloadPackage(const BString& fileURL,
 	const BEntry& targetEntry, const BString& checksum)
@@ -887,6 +1159,12 @@ BPackageManager::DownloadPackage(const BString& fileURL,
 }
 
 
+/**
+ * @brief Refresh a repository cache by running a BRefreshRepositoryRequest.
+ *
+ * @param repoConfig  The configuration of the repository to refresh.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageManager::RefreshRepository(const BRepositoryConfig& repoConfig)
 {
@@ -899,6 +1177,11 @@ BPackageManager::RefreshRepository(const BRepositoryConfig& repoConfig)
 // #pragma mark - RemoteRepository
 
 
+/**
+ * @brief Construct a RemoteRepository wrapping the given config.
+ *
+ * @param config  The BRepositoryConfig describing the remote repository.
+ */
 BPackageManager::RemoteRepository::RemoteRepository(
 	const BRepositoryConfig& config)
 	:
@@ -908,6 +1191,11 @@ BPackageManager::RemoteRepository::RemoteRepository(
 }
 
 
+/**
+ * @brief Return the repository configuration for this remote repository.
+ *
+ * @return Reference to the BRepositoryConfig.
+ */
 const BRepositoryConfig&
 BPackageManager::RemoteRepository::Config() const
 {
@@ -918,6 +1206,9 @@ BPackageManager::RemoteRepository::Config() const
 // #pragma mark - LocalRepository
 
 
+/**
+ * @brief Default-construct an unnamed LocalRepository.
+ */
 BPackageManager::LocalRepository::LocalRepository()
 	:
 	BSolverRepository()
@@ -925,6 +1216,11 @@ BPackageManager::LocalRepository::LocalRepository()
 }
 
 
+/**
+ * @brief Construct a named LocalRepository.
+ *
+ * @param name  The display name for this repository.
+ */
 BPackageManager::LocalRepository::LocalRepository(const BString& name)
 	:
 	BSolverRepository(name)
@@ -935,6 +1231,12 @@ BPackageManager::LocalRepository::LocalRepository(const BString& name)
 // #pragma mark - MiscLocalRepository
 
 
+/**
+ * @brief Construct a MiscLocalRepository with lowest solver priority.
+ *
+ * The repository is named "local" and assigned priority -127 so that it
+ * is only used when no remote or installed package matches.
+ */
 BPackageManager::MiscLocalRepository::MiscLocalRepository()
 	:
 	LocalRepository("local"),
@@ -944,6 +1246,12 @@ BPackageManager::MiscLocalRepository::MiscLocalRepository()
 }
 
 
+/**
+ * @brief Load a local package file, add it to this repository, and record its path.
+ *
+ * @param fileName  Path to the .hpkg file.
+ * @return Pointer to the BSolverPackage added to this repository.
+ */
 BSolverPackage*
 BPackageManager::MiscLocalRepository::AddLocalPackage(const char* fileName)
 {
@@ -956,6 +1264,12 @@ BPackageManager::MiscLocalRepository::AddLocalPackage(const char* fileName)
 }
 
 
+/**
+ * @brief Retrieve the on-disk path of a package owned by this repository.
+ *
+ * @param package  The package whose path is requested.
+ * @param _path    Output BPath filled with the package file path.
+ */
 void
 BPackageManager::MiscLocalRepository::GetPackagePath(BSolverPackage* package,
 	BPath& _path)
@@ -975,6 +1289,13 @@ BPackageManager::MiscLocalRepository::GetPackagePath(BSolverPackage* package,
 // #pragma mark - InstalledRepository
 
 
+/**
+ * @brief Construct an InstalledRepository for a given installation location.
+ *
+ * @param name      Initial display name of the repository.
+ * @param location  The BPackageInstallationLocation this repository represents.
+ * @param priority  Initial solver priority for this repository.
+ */
 BPackageManager::InstalledRepository::InstalledRepository(const char* name,
 	BPackageInstallationLocation location, int32 priority)
 	:
@@ -989,6 +1310,12 @@ BPackageManager::InstalledRepository::InstalledRepository(const char* name,
 }
 
 
+/**
+ * @brief Resolve the on-disk path of a package in this installed repository.
+ *
+ * @param package  The package whose path is needed.
+ * @param _path    Output BPath filled with the full package file path.
+ */
 void
 BPackageManager::InstalledRepository::GetPackagePath(BSolverPackage* package,
 	BPath& _path)
@@ -1015,6 +1342,11 @@ BPackageManager::InstalledRepository::GetPackagePath(BSolverPackage* package,
 }
 
 
+/**
+ * @brief Move a package to the disabled list and remove it from the solver.
+ *
+ * @param package  The package to disable; must belong to this repository.
+ */
 void
 BPackageManager::InstalledRepository::DisablePackage(BSolverPackage* package)
 {
@@ -1034,6 +1366,12 @@ BPackageManager::InstalledRepository::DisablePackage(BSolverPackage* package)
 }
 
 
+/**
+ * @brief Remove a package from the disabled list.
+ *
+ * @param package  The package to re-enable.
+ * @return True if the package was found and removed from the disabled list.
+ */
 bool
 BPackageManager::InstalledRepository::EnablePackage(BSolverPackage* package)
 {
@@ -1041,6 +1379,11 @@ BPackageManager::InstalledRepository::EnablePackage(BSolverPackage* package)
 }
 
 
+/**
+ * @brief Check whether this repository has pending activation or deactivation changes.
+ *
+ * @return True if either PackagesToActivate or PackagesToDeactivate is non-empty.
+ */
 bool
 BPackageManager::InstalledRepository::HasChanges() const
 {
@@ -1048,6 +1391,12 @@ BPackageManager::InstalledRepository::HasChanges() const
 }
 
 
+/**
+ * @brief Apply pending changes to the repository's in-memory package list.
+ *
+ * Disables packages marked for deactivation and adds packages marked for
+ * activation so that the solver sees the updated state.
+ */
 void
 BPackageManager::InstalledRepository::ApplyChanges()
 {
@@ -1073,6 +1422,11 @@ BPackageManager::InstalledRepository::ApplyChanges()
 // #pragma mark - Transaction
 
 
+/**
+ * @brief Construct a Transaction for the given installed repository.
+ *
+ * @param repository  The repository whose packages are being transacted.
+ */
 BPackageManager::Transaction::Transaction(InstalledRepository& repository)
 	:
 	fRepository(repository),
@@ -1082,6 +1436,9 @@ BPackageManager::Transaction::Transaction(InstalledRepository& repository)
 }
 
 
+/**
+ * @brief Destroy the transaction.
+ */
 BPackageManager::Transaction::~Transaction()
 {
 }
@@ -1090,11 +1447,21 @@ BPackageManager::Transaction::~Transaction()
 // #pragma mark - InstallationInterface
 
 
+/**
+ * @brief Destroy the InstallationInterface.
+ */
 BPackageManager::InstallationInterface::~InstallationInterface()
 {
 }
 
 
+/**
+ * @brief Called when the solver result has been computed for a repository.
+ *
+ * The default implementation is a no-op; subclasses may override.
+ *
+ * @param repository  The repository for which the result was computed.
+ */
 void
 BPackageManager::InstallationInterface::ResultComputed(
 	InstalledRepository& repository)
@@ -1105,6 +1472,9 @@ BPackageManager::InstallationInterface::ResultComputed(
 // #pragma mark - ClientInstallationInterface
 
 
+/**
+ * @brief Default-construct a ClientInstallationInterface.
+ */
 BPackageManager::ClientInstallationInterface::ClientInstallationInterface()
 	:
 	fDaemonClient()
@@ -1112,11 +1482,20 @@ BPackageManager::ClientInstallationInterface::ClientInstallationInterface()
 }
 
 
+/**
+ * @brief Destroy the ClientInstallationInterface.
+ */
 BPackageManager::ClientInstallationInterface::~ClientInstallationInterface()
 {
 }
 
 
+/**
+ * @brief Populate an InstalledRepository with the currently active packages.
+ *
+ * @param repository  The repository to populate; its location is used to
+ *                    determine which packages to load.
+ */
 void
 BPackageManager::ClientInstallationInterface::InitInstalledRepository(
 	InstalledRepository& repository)
@@ -1127,6 +1506,13 @@ BPackageManager::ClientInstallationInterface::InitInstalledRepository(
 }
 
 
+/**
+ * @brief Create a daemon transaction directory for staging package changes.
+ *
+ * @param transaction  The transaction to prepare.
+ * @return B_OK on success, or an error code if the daemon cannot create
+ *         the transaction.
+ */
 status_t
 BPackageManager::ClientInstallationInterface::PrepareTransaction(
 	Transaction& transaction)
@@ -1137,6 +1523,13 @@ BPackageManager::ClientInstallationInterface::PrepareTransaction(
 }
 
 
+/**
+ * @brief Commit the activation transaction to the package daemon.
+ *
+ * @param transaction  The transaction to commit.
+ * @param _result      Output object filled with the commit result details.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BPackageManager::ClientInstallationInterface::CommitTransaction(
 	Transaction& transaction, BCommitTransactionResult& _result)
@@ -1149,11 +1542,17 @@ BPackageManager::ClientInstallationInterface::CommitTransaction(
 // #pragma mark - UserInteractionHandler
 
 
+/**
+ * @brief Destroy the UserInteractionHandler.
+ */
 BPackageManager::UserInteractionHandler::~UserInteractionHandler()
 {
 }
 
 
+/**
+ * @brief Default handler for solver problems: abort by throwing BAbortedByUserException.
+ */
 void
 BPackageManager::UserInteractionHandler::HandleProblems()
 {
@@ -1161,6 +1560,11 @@ BPackageManager::UserInteractionHandler::HandleProblems()
 }
 
 
+/**
+ * @brief Default change-confirmation handler: abort by throwing BAbortedByUserException.
+ *
+ * @param fromMostSpecific  Unused; present for API compatibility.
+ */
 void
 BPackageManager::UserInteractionHandler::ConfirmChanges(bool fromMostSpecific)
 {
@@ -1168,6 +1572,13 @@ BPackageManager::UserInteractionHandler::ConfirmChanges(bool fromMostSpecific)
 }
 
 
+/**
+ * @brief Default warning handler: silently ignores all warnings.
+ *
+ * @param error   The error code associated with the warning.
+ * @param format  printf-style format string describing the warning.
+ * @param ...     Arguments for the format string.
+ */
 void
 BPackageManager::UserInteractionHandler::Warn(status_t error,
 	const char* format, ...)
@@ -1175,6 +1586,11 @@ BPackageManager::UserInteractionHandler::Warn(status_t error,
 }
 
 
+/**
+ * @brief Called when a package download begins; default is a no-op.
+ *
+ * @param packageName  Name of the package being downloaded.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressPackageDownloadStarted(
 	const char* packageName)
@@ -1182,6 +1598,14 @@ BPackageManager::UserInteractionHandler::ProgressPackageDownloadStarted(
 }
 
 
+/**
+ * @brief Called periodically during a package download; default is a no-op.
+ *
+ * @param packageName          Name of the package being downloaded.
+ * @param completionPercentage Fraction (0..1) of the download completed.
+ * @param bytes                Bytes received so far.
+ * @param totalBytes           Total expected bytes.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressPackageDownloadActive(
 	const char* packageName, float completionPercentage, off_t bytes,
@@ -1190,6 +1614,11 @@ BPackageManager::UserInteractionHandler::ProgressPackageDownloadActive(
 }
 
 
+/**
+ * @brief Called when a package download finishes; default is a no-op.
+ *
+ * @param packageName  Name of the package that was downloaded.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressPackageDownloadComplete(
 	const char* packageName)
@@ -1197,6 +1626,11 @@ BPackageManager::UserInteractionHandler::ProgressPackageDownloadComplete(
 }
 
 
+/**
+ * @brief Called when a checksum validation job starts; default is a no-op.
+ *
+ * @param title  Human-readable description of the checksum operation.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressPackageChecksumStarted(
 	const char* title)
@@ -1204,6 +1638,11 @@ BPackageManager::UserInteractionHandler::ProgressPackageChecksumStarted(
 }
 
 
+/**
+ * @brief Called when a checksum validation job finishes; default is a no-op.
+ *
+ * @param title  Human-readable description of the checksum operation.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressPackageChecksumComplete(
 	const char* title)
@@ -1211,6 +1650,11 @@ BPackageManager::UserInteractionHandler::ProgressPackageChecksumComplete(
 }
 
 
+/**
+ * @brief Called when the activation phase begins for a repository; default is a no-op.
+ *
+ * @param repository  The repository whose changes are being applied.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressStartApplyingChanges(
 	InstalledRepository& repository)
@@ -1218,6 +1662,12 @@ BPackageManager::UserInteractionHandler::ProgressStartApplyingChanges(
 }
 
 
+/**
+ * @brief Called when a transaction has been committed; default is a no-op.
+ *
+ * @param repository  The repository that was modified.
+ * @param result      The commit result from the package daemon.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressTransactionCommitted(
 	InstalledRepository& repository, const BCommitTransactionResult& result)
@@ -1225,6 +1675,11 @@ BPackageManager::UserInteractionHandler::ProgressTransactionCommitted(
 }
 
 
+/**
+ * @brief Called when the activation phase is complete for a repository; default is a no-op.
+ *
+ * @param repository  The repository whose changes have been applied.
+ */
 void
 BPackageManager::UserInteractionHandler::ProgressApplyingChangesDone(
 	InstalledRepository& repository)

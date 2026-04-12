@@ -1,6 +1,40 @@
 /*
- * Copyright 2011-2016, Haiku, Inc. All rights reserved.
- * Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2016, Haiku, Inc. All rights reserved.
+ *   Copyright 2001-2003 Dr. Zoidberg Enterprises. All rights reserved.
+ */
+
+
+/**
+ * @file mail_util.cpp
+ * @brief Mail kit utility functions for encoding, address handling, and header parsing.
+ *
+ * Provides the global mail_charsets table; character-set conversion wrappers
+ * (mail_convert_to_utf8, mail_convert_from_utf8); RFC 2047 encode/decode
+ * (rfc2047_to_utf8, utf8_to_rfc2047); header folding, line reading, address
+ * extraction, subject-to-thread normalisation, date parsing, and read-status
+ * attribute helpers. These are used throughout the mail kit and by protocol
+ * add-ons.
+ *
+ * @see BMailComponent, BTextMailComponent, BEmailMessage
  */
 
 
@@ -39,6 +73,12 @@ struct CharsetConversionEntry {
 	uint32 flavor;
 };
 
+/**
+ * @brief Global table mapping RFC charset names to BeOS conversion constants.
+ *
+ * Ordered so that the first entry for any given conversion constant is the
+ * canonical MIME standard name. Terminated by a NULL charset pointer.
+ */
 extern const CharsetConversionEntry mail_charsets[] = {
 	// In order of authority, so when searching for the name for a particular
 	// numbered conversion, start at the beginning of the array.
@@ -87,13 +127,35 @@ extern const CharsetConversionEntry mail_charsets[] = {
 };
 
 
+/** @brief Atomic lock used to serialise one-time regex compilation in SubjectToThread(). */
 static int32 gLocker = 0;
+
+/** @brief Number of capture groups in the SubjectToThread regex. */
 static size_t gNsub = 1;
+
+/** @brief Compiled regex buffer used by SubjectToThread(). */
 static re_pattern_buffer gRe;
+
+/** @brief Pointer set to &gRe once compilation succeeds; NULL until then. */
 static re_pattern_buffer *gRebuf = NULL;
+
+/** @brief Case-folding translation table used by the subject regex. */
 static unsigned char gTranslation[256];
 
 
+/**
+ * @brief Detects and converts non-RFC-2047 8-bit content to UTF-8.
+ *
+ * If the buffer contains isolated high-bit bytes (suggesting ISO-Latin-1),
+ * converts the entire buffer to UTF-8 via convert_to_utf8(). If the content
+ * appears to be valid UTF-8 multi-byte sequences it is left unchanged.
+ *
+ * @param buffer        Pointer to the buffer pointer; may be reallocated.
+ * @param bufferLength  Pointer to the allocated size; updated if reallocated.
+ * @param sourceLength  Pointer to the content length; updated after conversion.
+ * @return Non-zero if a conversion was performed, zero if the input is already UTF-8
+ *         or contains only ASCII.
+ */
 static int
 handle_non_rfc2047_encoding(char **buffer, size_t *bufferLength,
 	size_t *sourceLength)
@@ -155,6 +217,16 @@ handle_non_rfc2047_encoding(char **buffer, size_t *bufferLength,
 // #pragma mark -
 
 
+/**
+ * @brief Writes the read-status flag and status string to a mail node's attributes.
+ *
+ * Updates B_MAIL_ATTR_READ with \a flag and (if the current status string is
+ * "New", "Read", or "Seen") updates B_MAIL_ATTR_STATUS accordingly.
+ *
+ * @param node  BNode of the mail file to update.
+ * @param flag  B_READ, B_SEEN, or B_UNREAD.
+ * @return B_OK on success, B_ERROR if an attribute write fails.
+ */
 status_t
 write_read_attr(BNode& node, read_flags flag)
 {
@@ -180,6 +252,16 @@ write_read_attr(BNode& node, read_flags flag)
 }
 
 
+/**
+ * @brief Reads the read-status flag from a mail node's attributes.
+ *
+ * Reads B_MAIL_ATTR_READ first; if absent, falls back to interpreting the
+ * B_MAIL_ATTR_STATUS string ("New" maps to B_UNREAD, anything else to B_READ).
+ *
+ * @param node  BNode of the mail file to read.
+ * @param flag  Output read_flags value.
+ * @return B_OK on success, B_ERROR if neither attribute is present.
+ */
 status_t
 read_read_attr(BNode& node, read_flags& flag)
 {
@@ -207,6 +289,23 @@ read_read_attr(BNode& node, read_flags& flag)
 // It also lets us add new conversions, like B_MAIL_US_ASCII_CONVERSION.
 
 
+/**
+ * @brief Converts text from a mail-specific charset encoding to UTF-8.
+ *
+ * Handles B_MAIL_UTF8_CONVERSION (identity copy) and B_MAIL_US_ASCII_CONVERSION
+ * (high-bit stripping) as special cases before delegating to convert_to_utf8().
+ * After conversion, any spurious NUL bytes in the output are replaced with
+ * \a substitute.
+ *
+ * @param srcEncoding  Source charset constant.
+ * @param src          Input bytes in \a srcEncoding.
+ * @param srcLen       Input/output: bytes available / bytes consumed.
+ * @param dst          Output buffer for the UTF-8 result.
+ * @param dstLen       Input/output: buffer size / bytes written.
+ * @param state        Conversion state (passed to convert_to_utf8).
+ * @param substitute   Replacement byte for characters that cannot be converted.
+ * @return B_OK on success, or an error code from convert_to_utf8().
+ */
 status_t
 mail_convert_to_utf8(uint32 srcEncoding, const char *src, int32 *srcLen,
 	char *dst, int32 *dstLen, int32 *state, char substitute)
@@ -265,6 +364,23 @@ mail_convert_to_utf8(uint32 srcEncoding, const char *src, int32 *srcLen,
 }
 
 
+/**
+ * @brief Converts UTF-8 text to a mail-specific charset encoding.
+ *
+ * Handles B_MAIL_UTF8_CONVERSION (identity copy), B_MAIL_US_ASCII_CONVERSION
+ * (strip non-ASCII), and B_JIS_CONVERSION (appends an ASCII-reset escape
+ * sequence so the output is well-formed for use in e-mail headers) as
+ * special cases before delegating to convert_from_utf8().
+ *
+ * @param dstEncoding  Destination charset constant.
+ * @param src          UTF-8 input bytes.
+ * @param srcLen       Input/output: bytes available / bytes consumed.
+ * @param dst          Output buffer for the result.
+ * @param dstLen       Input/output: buffer size / bytes written.
+ * @param state        Conversion state (passed to convert_from_utf8).
+ * @param substitute   Replacement byte for characters that cannot be represented.
+ * @return B_OK on success, or an error code from convert_from_utf8().
+ */
 status_t
 mail_convert_from_utf8(uint32 dstEncoding, const char *src, int32 *srcLen,
 	char *dst, int32 *dstLen, int32 *state, char substitute)
@@ -373,6 +489,19 @@ mail_convert_from_utf8(uint32 dstEncoding, const char *src, int32 *srcLen,
 }
 
 
+/**
+ * @brief Decodes RFC 2047 encoded words in an e-mail header buffer to UTF-8.
+ *
+ * Scans \a *bufp for "=?charset?encoding?text?=" sequences, decodes each one
+ * (QP or base64), converts to UTF-8, and writes the result back into the same
+ * buffer (in-place). White space between two adjacent encoded words is silently
+ * discarded per RFC 2047 section 6.2.
+ *
+ * @param bufp       Pointer to the buffer pointer; the buffer is modified in place.
+ * @param bufLen     Pointer to the allocated buffer size.
+ * @param strLen     Number of significant bytes in the buffer (0 = use strlen).
+ * @return Number of bytes in the result, or a negative error code on failure.
+ */
 ssize_t
 rfc2047_to_utf8(char **bufp, size_t *bufLen, size_t strLen)
 {
@@ -551,6 +680,21 @@ rfc2047_to_utf8(char **bufp, size_t *bufLen, size_t strLen)
 }
 
 
+/**
+ * @brief Encodes a UTF-8 header field value to RFC 2047 format for use in MIME headers.
+ *
+ * Breaks the input into words at whitespace and special characters, converts
+ * each word to \a charset, and encodes words that require it using
+ * quoted-printable or base64. Adjacent encodable words that fit within 53
+ * converted bytes are merged to reduce overhead. The result is written into
+ * a newly allocated buffer; the original *bufp is freed.
+ *
+ * @param bufp     Pointer to the input buffer; replaced with the encoded output.
+ * @param length   Number of bytes in the input.
+ * @param charset  Target charset constant for encoding.
+ * @param encoding Transfer encoding to use (quoted_printable or base64).
+ * @return Number of bytes in the encoded output.
+ */
 ssize_t
 utf8_to_rfc2047 (char **bufp, ssize_t length, uint32 charset, char encoding)
 {
@@ -748,6 +892,15 @@ utf8_to_rfc2047 (char **bufp, ssize_t length, uint32 charset, char encoding)
 }
 
 
+/**
+ * @brief Folds a header line at whitespace, appending CRLF after each segment.
+ *
+ * Wraps lines at the first available whitespace at or before column 78,
+ * preferring to split after a comma+space when possible. The folded output
+ * replaces \a string in-place.
+ *
+ * @param string  Header value string to fold; modified in place.
+ */
 void
 FoldLineAtWhiteSpaceAndAddCRLF(BString &string)
 {
@@ -826,6 +979,19 @@ FoldLineAtWhiteSpaceAndAddCRLF(BString &string)
 }
 
 
+/**
+ * @brief Reads one (possibly folded) header line from a FILE stream.
+ *
+ * Reads characters until a line ending is found, then peeks at the next
+ * character. If the next line starts with whitespace the lines are folded
+ * (joined). CRLF endings are normalised to LF. The buffer is grown as needed.
+ *
+ * @param file    Source FILE to read from.
+ * @param buffer  In/out: pointer to the buffer; reallocated as necessary.
+ * @param buflen  In/out: pointer to the allocated buffer size.
+ * @return Number of significant bytes in the buffer (not including NUL),
+ *         0 for an empty line, or a negative errno on error.
+ */
 ssize_t
 readfoldedline(FILE *file, char **buffer, size_t *buflen)
 {
@@ -909,6 +1075,19 @@ readfoldedline(FILE *file, char **buffer, size_t *buflen)
 }
 
 
+/**
+ * @brief Reads one (possibly folded) header line from a BPositionIO stream.
+ *
+ * Behaves identically to the FILE-based overload but reads from a BPositionIO,
+ * using single-byte Read() calls. The stream position is backed up one byte
+ * if a non-whitespace character is read as a lookahead.
+ *
+ * @param in      Source BPositionIO to read from.
+ * @param buffer  In/out: pointer to the buffer; reallocated as necessary.
+ * @param buflen  In/out: pointer to the allocated buffer size.
+ * @return Number of significant bytes in the buffer, 0 for an empty line,
+ *         or a negative error code on failure.
+ */
 ssize_t
 readfoldedline(BPositionIO &in, char **buffer, size_t *buflen)
 {
@@ -997,6 +1176,19 @@ readfoldedline(BPositionIO &in, char **buffer, size_t *buflen)
 }
 
 
+/**
+ * @brief Reads one (possibly folded) header line from an in-memory string pointer.
+ *
+ * Advances *header through the string, folding continuation lines (those
+ * starting with whitespace). CRLF endings are normalised to LF.
+ *
+ * @param header  In/out: pointer to the current position in the header string;
+ *                advanced past the consumed characters.
+ * @param buffer  In/out: pointer to the output buffer; reallocated as necessary.
+ * @param buflen  In/out: pointer to the allocated buffer size.
+ * @return Number of significant bytes in the buffer, 0 for an empty line,
+ *         or a negative errno on allocation failure.
+ */
 ssize_t
 nextfoldedline(const char** header, char **buffer, size_t *buflen)
 {
@@ -1077,6 +1269,11 @@ nextfoldedline(const char** header, char **buffer, size_t *buflen)
 }
 
 
+/**
+ * @brief Trims leading and trailing whitespace from a BString in-place.
+ *
+ * @param string  String to modify.
+ */
 void
 trim_white_space(BString &string)
 {
@@ -1097,10 +1294,15 @@ trim_white_space(BString &string)
 }
 
 
-/*!	Tries to return a human-readable name from the specified
-	header parameter (should be from "To:" or "From:").
-	Tries to return the name rather than the eMail address.
-*/
+/**
+ * @brief Extracts a human-readable display name from a From or To header value.
+ *
+ * Tries four patterns in order of preference: "name" in brackets, "name" in
+ * quotes, bare name before angle brackets, and the whole string. The result
+ * is trimmed and \a header is replaced with the extracted name.
+ *
+ * @param header  In/out: From or To header value; replaced with the display name.
+ */
 void
 extract_address_name(BString &header)
 {
@@ -1189,11 +1391,16 @@ extract_address_name(BString &header)
 }
 
 
-/*!	Given a subject in a BString, remove the extraneous RE: re: and other stuff
-	to get down to the core subject string, which should be identical for all
-	messages posted about a topic.  The input string is modified in place to
-	become the output core subject string.
-*/
+/**
+ * @brief Strips Re:, Fwd:, list tags, and other prefixes from a subject string.
+ *
+ * Removes leading whitespace, mailing-list tags (e.g. [listname]), Re:/Fwd:
+ * prefixes and variants, and trailing "(fwd)" markers using a compiled POSIX
+ * extended regex. The regex is compiled once on first call. The result is the
+ * core subject string used as the THREAD attribute for message grouping.
+ *
+ * @param string  Subject string to normalise in-place.
+ */
 void
 SubjectToThread (BString &string)
 {
@@ -1285,9 +1492,17 @@ SubjectToThread (BString &string)
 }
 
 
-/*!	Converts a date to a time.  Handles numeric time zones too, unlike
-	parsedate().  Returns -1 if it fails.
-*/
+/**
+ * @brief Parses an RFC 2822 date string, including numeric timezone offsets.
+ *
+ * Strips parenthesised timezone comments, then extracts and removes any
+ * trailing "+HHMM" or "-HHMM" numeric timezone, replaces it with "GMT" so
+ * parsedate() can handle the string, and then applies the timezone delta
+ * manually to produce a UTC time_t.
+ *
+ * @param DateString  Null-terminated RFC 2822 date string.
+ * @return UTC Unix timestamp, or -1 on parse failure.
+ */
 time_t
 ParseDateWithTimeZone(const char *DateString)
 {
@@ -1369,8 +1584,17 @@ ParseDateWithTimeZone(const char *DateString)
 }
 
 
-/*! Parses a mail header and fills the headers BMessage
-*/
+/**
+ * @brief Parses all RFC 822 headers from a BPositionIO stream into a BMessage.
+ *
+ * Reads folded header lines until a blank line is encountered, decodes each
+ * line with rfc2047_to_utf8(), and stores the field/value pairs in \a headers.
+ * Field names are capitalised with CapitalizeEachWord() for uniform lookup.
+ *
+ * @param headers  Output BMessage to receive the parsed header fields.
+ * @param input    Stream positioned at the start of the headers.
+ * @return B_OK on success.
+ */
 status_t
 parse_header(BMessage &headers, BPositionIO &input)
 {
@@ -1409,6 +1633,17 @@ parse_header(BMessage &headers, BPositionIO &input)
 }
 
 
+/**
+ * @brief Extracts the value of a named field from a raw RFC 822 header block.
+ *
+ * Searches \a header for a line starting with \a field followed by ':',
+ * collects continuation lines, decodes rfc2047 encoding, and trims whitespace.
+ *
+ * @param header  Complete raw header block as a BString (e.g. read from the file).
+ * @param field   Header field name to search for (case-insensitive).
+ * @param target  Output BString to receive the decoded field value.
+ * @return B_OK if found, B_BAD_VALUE if \a field is not present.
+ */
 status_t
 extract_from_header(const BString& header, const BString& field,
 	BString& target)
@@ -1461,6 +1696,14 @@ extract_from_header(const BString& header, const BString& field,
 }
 
 
+/**
+ * @brief Extracts a bare e-mail address from a header string, modifying it in place.
+ *
+ * Removes quoted strings, angle-bracket notation, and parenthesised display
+ * names, leaving only the raw address (e.g. "user\@example.com").
+ *
+ * @param address  In/out: header value replaced with the bare address.
+ */
 void
 extract_address(BString &address)
 {
@@ -1508,6 +1751,17 @@ extract_address(BString &address)
 }
 
 
+/**
+ * @brief Splits a comma-separated address list and appends each address to \a list.
+ *
+ * Handles quoted strings (which may contain commas) correctly. After splitting,
+ * each address is trimmed and optionally transformed by \a cleanupFunc before
+ * being heap-duplicated and added to \a list.
+ *
+ * @param list         BList to receive heap-allocated (strdup) address strings.
+ * @param string       Comma-separated address list string, or NULL.
+ * @param cleanupFunc  Optional function to apply to each address (e.g. extract_address).
+ */
 void
 get_address_list(BList &list, const char *string,
 	void (*cleanupFunc)(BString &))
@@ -1550,6 +1804,16 @@ get_address_list(BList &list, const char *string,
 }
 
 
+/**
+ * @brief Copies the mail-folder Tracker query template attributes to a target path.
+ *
+ * Reads attribute metadata from the system's DefaultQueryTemplates/text_x-email
+ * file and copies them to \a targetPath so that new mail folders show the
+ * correct columns in Tracker.
+ *
+ * @param targetPath  Null-terminated path of the target mail folder.
+ * @return B_OK on success, or an error code from find_directory() or CopyAttributes().
+ */
 status_t
 CopyMailFolderAttributes(const char* targetPath)
 {

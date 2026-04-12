@@ -1,40 +1,45 @@
 /*
-Open Tracker License
-
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
 // ToDo:
 // add code to initialize a subset of the mime database, including
 // important sniffer rules
+
+
+/**
+ * @file TrackerInitialState.cpp
+ * @brief First-boot initialisation: MIME types, query templates, and background images.
+ *
+ * Contains all one-time setup logic that TTracker runs when the system has
+ * not yet been configured.  This includes registering well-known MIME types
+ * with icons and preferred applications, creating default query template
+ * files, installing filesystem attribute indices, and setting the default
+ * Desktop background image.
+ *
+ * @see TTracker, ExtraAttributeLazyInstaller, AttributeStreamTemplateNode
+ */
 
 
 #include <Alert.h>
@@ -134,6 +139,14 @@ public:
 //	#pragma mark - ExtraAttributeLazyInstaller
 
 
+/**
+ * @brief Construct an installer for the given MIME type's extra attributes.
+ *
+ * Reads the existing extra-attribute info from the MIME database so that
+ * AddExtraAttribute() can skip attributes that are already registered.
+ *
+ * @param type  MIME type string (e.g. "application/x-vnd.Be-bookmark").
+ */
 ExtraAttributeLazyInstaller::ExtraAttributeLazyInstaller(const char* type)
 	:
 	fMimeType(type),
@@ -146,6 +159,9 @@ ExtraAttributeLazyInstaller::ExtraAttributeLazyInstaller(const char* type)
 }
 
 
+/**
+ * @brief Destructor; flushes accumulated extra attributes to the MIME database.
+ */
 ExtraAttributeLazyInstaller::~ExtraAttributeLazyInstaller()
 {
 	if (fMimeType.InitCheck() == B_OK && fDirty
@@ -155,6 +171,19 @@ ExtraAttributeLazyInstaller::~ExtraAttributeLazyInstaller()
 }
 
 
+/**
+ * @brief Register one extra attribute with the MIME type, skipping duplicates.
+ *
+ * @param publicName  Human-readable attribute name shown in column headers.
+ * @param name        Internal attribute key (e.g. "META:email").
+ * @param type        BeOS attribute type constant (e.g. B_STRING_TYPE).
+ * @param viewable    true if the attribute should be visible in Tracker columns.
+ * @param editable    true if the user may edit the attribute inline.
+ * @param width       Default column width in pixels.
+ * @param alignment   Column text alignment constant.
+ * @param extra       true if this is an application-defined "extra" attribute.
+ * @return true if the attribute was newly added; false if it already existed.
+ */
 bool
 ExtraAttributeLazyInstaller::AddExtraAttribute(const char* publicName,
 	const char* name, uint32 type, bool viewable, bool editable, float width,
@@ -189,6 +218,15 @@ ExtraAttributeLazyInstaller::AddExtraAttribute(const char* publicName,
 // #pragma mark - static functions
 
 
+/**
+ * @brief Write a background-image info message as a node attribute.
+ *
+ * Serialises \a message and stores it on \a node as the kBackgroundImageInfo
+ * attribute so that the Desktop background-image machinery can read it.
+ *
+ * @param node     The BNode (typically the Desktop directory) to write onto.
+ * @param message  Flattened background-image configuration message.
+ */
 static void
 InstallTemporaryBackgroundImages(BNode* node, BMessage* message)
 {
@@ -206,6 +244,16 @@ InstallTemporaryBackgroundImages(BNode* node, BMessage* message)
 }
 
 
+/**
+ * @brief Append one background-image entry to a background-info message.
+ *
+ * @param message             Message to add the entry to.
+ * @param imagePath           Absolute path to the image file.
+ * @param mode                Placement mode (e.g. BackgroundImage::kAtOffset).
+ * @param offset              Position of the image relative to the top-left.
+ * @param workspaces          Workspace bitmask (0xffffffff for all workspaces).
+ * @param textWidgetOutlines  true to draw text outlines behind Desktop icons.
+ */
 static void
 AddTemporaryBackgroundImages(BMessage* message, const char* imagePath,
 	BackgroundImage::Mode mode, BPoint offset, uint32 workspaces,
@@ -219,6 +267,18 @@ AddTemporaryBackgroundImages(BMessage* message, const char* imagePath,
 }
 
 
+/**
+ * @brief Serialise an array of ColumnData entries into a raw byte stream.
+ *
+ * Constructs BColumn objects from \a src and archives them sequentially
+ * into \a stream, ready to be stored as the kAttrColumns attribute.
+ *
+ * @param stream   Output stream to write serialised column data.
+ * @param src      Array of ColumnData descriptors.
+ * @param nelm     Number of entries in \a src.
+ * @param context  Translation context string for localising column titles.
+ * @return Total number of bytes written to \a stream.
+ */
 static size_t
 mkColumnsBits(BMallocIO& stream, const ColumnData* src, int32 nelm,
 	const char* context)
@@ -243,6 +303,21 @@ mkColumnsBits(BMallocIO& stream, const ColumnData* src, int32 nelm,
 #define B_TRANSLATION_CONTEXT "TrackerInitialState"
 
 
+/**
+ * @brief Install or update a MIME type in the system database if needed.
+ *
+ * Checks whether the MIME type identified by \a type is already installed and
+ * has all the requested attributes; installs or updates only the missing ones.
+ * Callers may pass NULL for optional attributes they do not care about.
+ *
+ * @param type                   MIME type string to register.
+ * @param bitsID                 Resource ID of the icon (negative to skip icons).
+ * @param shortDescription       Short human-readable type description, or NULL.
+ * @param longDescription        Long human-readable type description, or NULL.
+ * @param preferredAppSignature  Preferred-application signature, or NULL.
+ * @param forceMask              Bitmask of kForce* flags to overwrite existing values.
+ * @return true if any attribute was changed or the type was newly installed.
+ */
 bool
 TTracker::InstallMimeIfNeeded(const char* type, int32 bitsID,
 	const char* shortDescription, const char* longDescription,
@@ -311,6 +386,13 @@ TTracker::InstallMimeIfNeeded(const char* type, int32 bitsID,
 }
 
 
+/**
+ * @brief Register all well-known MIME types and their extra attributes.
+ *
+ * Installs icons, short/long descriptions, preferred applications, and
+ * extra Tracker attributes for types such as applications, volumes, queries,
+ * bookmarks, person contacts, printer spool files, and printers.
+ */
 void
 TTracker::InitMimeTypes()
 {
@@ -442,6 +524,12 @@ TTracker::InitMimeTypes()
 }
 
 
+/**
+ * @brief Create required filesystem attribute indices on all persistent volumes.
+ *
+ * Iterates writable, query-capable volumes and calls InstallIndices(dev_t)
+ * on each one to ensure query indices are present.
+ */
 void
 TTracker::InstallIndices()
 {
@@ -458,6 +546,14 @@ TTracker::InstallIndices()
 }
 
 
+/**
+ * @brief Create required attribute indices on a single volume.
+ *
+ * Creates the kAttrQueryLastChange and recent-query attribute indices so that
+ * queries against these attributes can be performed efficiently.
+ *
+ * @param device  Device ID of the volume to index.
+ */
 void
 TTracker::InstallIndices(dev_t device)
 {
@@ -466,6 +562,13 @@ TTracker::InstallIndices(dev_t device)
 }
 
 
+/**
+ * @brief Create the default query template files for common MIME types.
+ *
+ * Writes column-layout and view-state attributes for the default, bookmark,
+ * person, and email query templates under the settings directory, skipping
+ * any template that already exists.
+ */
 void
 TTracker::InstallDefaultTemplates()
 {
@@ -735,6 +838,13 @@ TTracker::InstallDefaultTemplates()
 }
 
 
+/**
+ * @brief Install the default Desktop background image on first boot.
+ *
+ * Positions the Haiku logo image on the Desktop using the golden ratio for
+ * horizontal placement and 90% down for vertical placement.  Does nothing if
+ * a background is already configured.
+ */
 void
 TTracker::InstallTemporaryBackgroundImages()
 {

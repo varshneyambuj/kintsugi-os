@@ -1,8 +1,41 @@
 /*
-* Copyright 2003, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
-* Copyright 2010, Adrien Destugues <pulkomandy@pulkomandy.ath.cx>
-* Distributed under the terms of the MIT License.
-*/
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Copyright 2010, Adrien Destugues <pulkomandy@pulkomandy.ath.cx>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Collator.cpp
+ * @brief Implementation of BCollator, the locale-aware string comparison class.
+ *
+ * BCollator wraps an ICU RuleBasedCollator to provide locale-sensitive string
+ * ordering and sort-key generation. Collation strength can be tuned from
+ * B_COLLATE_PRIMARY (ignores accents and case) through B_COLLATE_IDENTICAL.
+ * The collator supports archiving and unarchiving via BMessage so it can be
+ * persisted and restored.
+ *
+ * @see BLanguage, BLocale
+ */
 
 
 #include <unicode/uversion.h>
@@ -25,6 +58,12 @@
 U_NAMESPACE_USE
 
 
+/**
+ * @brief Construct a BCollator using the default ICU locale and tertiary strength.
+ *
+ * Punctuation is ignored by default. The collation strength is set to
+ * B_COLLATE_TERTIARY, which distinguishes base letters, accents, and case.
+ */
 BCollator::BCollator()
 	:
 	fIgnorePunctuation(true)
@@ -39,6 +78,14 @@ BCollator::BCollator()
 }
 
 
+/**
+ * @brief Construct a BCollator for the specified ICU locale and strength.
+ *
+ * @param locale              ICU locale name string (e.g. "de_DE").
+ * @param strength            Collation strength constant (B_COLLATE_*).
+ * @param ignorePunctuation   If true, punctuation characters are skipped
+ *                            during comparisons.
+ */
 BCollator::BCollator(const char* locale, int8 strength, bool ignorePunctuation)
 	:
 	fIgnorePunctuation(ignorePunctuation)
@@ -49,6 +96,15 @@ BCollator::BCollator(const char* locale, int8 strength, bool ignorePunctuation)
 }
 
 
+/**
+ * @brief Reconstruct a BCollator from a BMessage archive.
+ *
+ * If the archive contains serialized collator binary data ("loc:collator"),
+ * a RuleBasedCollator is rebuilt from it. Otherwise the default ICU collator
+ * is used as a fallback.
+ *
+ * @param archive  BMessage produced by a previous Archive() call.
+ */
 BCollator::BCollator(BMessage* archive)
 	:
 	BArchivable(archive),
@@ -75,6 +131,11 @@ BCollator::BCollator(BMessage* archive)
 }
 
 
+/**
+ * @brief Copy-construct a BCollator by cloning the underlying ICU collator.
+ *
+ * @param other  The source BCollator to copy.
+ */
 BCollator::BCollator(const BCollator& other)
 	:
 	fICUCollator(NULL)
@@ -83,12 +144,21 @@ BCollator::BCollator(const BCollator& other)
 }
 
 
+/**
+ * @brief Destroy the BCollator and free the ICU collator instance.
+ */
 BCollator::~BCollator()
 {
 	delete fICUCollator;
 }
 
 
+/**
+ * @brief Copy-assign another BCollator, cloning its ICU collator.
+ *
+ * @param source  The source BCollator to copy from.
+ * @return Reference to this BCollator.
+ */
 BCollator& BCollator::operator=(const BCollator& source)
 {
 	if (&source != this) {
@@ -104,6 +174,11 @@ BCollator& BCollator::operator=(const BCollator& source)
 }
 
 
+/**
+ * @brief Set whether punctuation characters are ignored during comparison.
+ *
+ * @param ignore  true to skip punctuation, false to include it.
+ */
 void
 BCollator::SetIgnorePunctuation(bool ignore)
 {
@@ -111,6 +186,11 @@ BCollator::SetIgnorePunctuation(bool ignore)
 }
 
 
+/**
+ * @brief Return whether punctuation is currently ignored in comparisons.
+ *
+ * @return true if punctuation is ignored, false otherwise.
+ */
 bool
 BCollator::IgnorePunctuation() const
 {
@@ -118,6 +198,15 @@ BCollator::IgnorePunctuation() const
 }
 
 
+/**
+ * @brief Enable or disable numeric (natural) sort order for digit sequences.
+ *
+ * When enabled, "item2" sorts before "item10" rather than after it.
+ *
+ * @param enable  true to enable numeric collation, false to disable.
+ * @return B_OK on success, B_NO_INIT if no ICU collator is set, B_ERROR
+ *         if the ICU call fails.
+ */
 status_t
 BCollator::SetNumericSorting(bool enable)
 {
@@ -132,6 +221,17 @@ BCollator::SetNumericSorting(bool enable)
 }
 
 
+/**
+ * @brief Generate a binary sort key for the given UTF-8 string.
+ *
+ * Sort keys can be compared with memcmp() to determine collation order without
+ * invoking the full collation algorithm on every comparison.
+ *
+ * @param string  Input UTF-8 string.
+ * @param key     Output BString that receives the binary sort key bytes.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, B_ERROR on ICU
+ *         failure.
+ */
 status_t
 BCollator::GetSortKey(const char* string, BString* key) const
 {
@@ -172,6 +272,15 @@ BCollator::GetSortKey(const char* string, BString* key) const
 }
 
 
+/**
+ * @brief Compare two UTF-8 strings using the current collation rules.
+ *
+ * Falls back to plain strcmp() when no ICU collator is available.
+ *
+ * @param s1  First UTF-8 string.
+ * @param s2  Second UTF-8 string.
+ * @return Negative if s1 < s2, zero if equal, positive if s1 > s2.
+ */
 int
 BCollator::Compare(const char* s1, const char* s2) const
 {
@@ -184,6 +293,16 @@ BCollator::Compare(const char* s1, const char* s2) const
 }
 
 
+/**
+ * @brief Flatten this BCollator into a BMessage for persistent storage.
+ *
+ * Stores the punctuation flag and the raw binary representation of the
+ * underlying RuleBasedCollator.
+ *
+ * @param archive  Output BMessage to write the archive data into.
+ * @param deep     Passed to BArchivable::Archive(); unused here.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 BCollator::Archive(BMessage* archive, bool deep) const
 {
@@ -214,6 +333,12 @@ BCollator::Archive(BMessage* archive, bool deep) const
 }
 
 
+/**
+ * @brief Instantiate a BCollator from a BMessage archive.
+ *
+ * @param archive  BMessage previously produced by Archive().
+ * @return A newly allocated BCollator on success, or NULL on failure.
+ */
 BArchivable*
 BCollator::Instantiate(BMessage* archive)
 {
@@ -224,6 +349,15 @@ BCollator::Instantiate(BMessage* archive)
 }
 
 
+/**
+ * @brief Set the collation strength on the underlying ICU collator.
+ *
+ * Maps B_COLLATE_* constants to the corresponding ICU ECollationStrength
+ * values. B_COLLATE_DEFAULT is treated as B_COLLATE_TERTIARY.
+ *
+ * @param strength  One of the B_COLLATE_* constants.
+ * @return B_OK on success, B_NO_INIT if no ICU collator is available.
+ */
 status_t
 BCollator::SetStrength(int8 strength) const
 {

@@ -1,10 +1,43 @@
 /*
- * Copyright 2003-2012, Haiku. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Oliver Tappe, zooey@hirschkaefer.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2012, Haiku. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Oliver Tappe, zooey@hirschkaefer.de
+ */
+
+
+/**
+ * @file LocaleRosterData.cpp
+ * @brief Implementation of LocaleRosterData and CatalogAddOnInfo.
+ *
+ * LocaleRosterData holds the mutable state shared by BLocaleRoster and
+ * MutableLocaleRoster: the list of catalog add-on descriptors, the default
+ * locale, time zone, and preferred language list, and the resource loader
+ * for flag icons. CatalogAddOnInfo describes a single catalog add-on (either
+ * the built-in default or a plugin found in the system add-ons directories).
+ *
+ * @see BLocaleRoster, MutableLocaleRoster, DefaultCatalog
  */
 
 
@@ -45,6 +78,13 @@ namespace BPrivate {
 // #pragma mark - CatalogAddOnInfo
 
 
+/**
+ * @brief Construct a CatalogAddOnInfo descriptor.
+ *
+ * @param name      Filename of the catalog add-on shared object.
+ * @param path      Directory path containing the add-on, or "" for embedded.
+ * @param priority  Loading priority; higher = checked first.
+ */
 CatalogAddOnInfo::CatalogAddOnInfo(const BString& name, const BString& path,
 	uint8 priority)
 	:
@@ -60,6 +100,9 @@ CatalogAddOnInfo::CatalogAddOnInfo(const BString& name, const BString& path,
 }
 
 
+/**
+ * @brief Destroy the CatalogAddOnInfo, deleting all loaded catalogs and unloading.
+ */
 CatalogAddOnInfo::~CatalogAddOnInfo()
 {
 	int32 count = fLoadedCatalogs.CountItems();
@@ -73,6 +116,15 @@ CatalogAddOnInfo::~CatalogAddOnInfo()
 }
 
 
+/**
+ * @brief Load the catalog add-on image if it has not been loaded yet.
+ *
+ * For embedded add-ons this is a no-op (they are always "loaded").
+ * For external add-ons the shared object is dlopen'd and the three
+ * well-known symbols are resolved.
+ *
+ * @return true if the add-on is ready to use, false if loading failed.
+ */
 bool
 CatalogAddOnInfo::MakeSureItsLoaded()
 {
@@ -98,6 +150,11 @@ CatalogAddOnInfo::MakeSureItsLoaded()
 }
 
 
+/**
+ * @brief Unload the add-on image if no catalogs remain loaded from it.
+ *
+ * This is a no-op for embedded add-ons.
+ */
 void
 CatalogAddOnInfo::UnloadIfPossible()
 {
@@ -117,16 +174,29 @@ CatalogAddOnInfo::UnloadIfPossible()
 namespace {
 
 
+/** @brief Filesystem attribute name that stores a catalog add-on's priority. */
 static const char* kPriorityAttr = "ADDON:priority";
 
+/** @brief BMessage field name for preferred language entries. */
 static const char* kLanguageField = "language";
+/** @brief BMessage field name for the default time zone. */
 static const char* kTimezoneField = "timezone";
+/** @brief BMessage field name for the filesystem translation preference. */
 static const char* kTranslateFilesystemField = "filesys";
 
 
 }	// anonymous namespace
 
 
+/**
+ * @brief Construct a LocaleRosterData with the given default language and conventions.
+ *
+ * Calls _Initialize() to discover catalog add-ons and load the user's locale
+ * settings from disk.
+ *
+ * @param language     Initial default language.
+ * @param conventions  Initial formatting conventions.
+ */
 LocaleRosterData::LocaleRosterData(const BLanguage& language,
 	const BFormattingConventions& conventions)
 	:
@@ -139,6 +209,9 @@ LocaleRosterData::LocaleRosterData(const BLanguage& language,
 }
 
 
+/**
+ * @brief Destroy the LocaleRosterData, cleaning up all catalog add-on state.
+ */
 LocaleRosterData::~LocaleRosterData()
 {
 	BAutolock lock(fLock);
@@ -147,6 +220,11 @@ LocaleRosterData::~LocaleRosterData()
 }
 
 
+/**
+ * @brief Return the initialization status of this object.
+ *
+ * @return B_OK if resources are loaded, B_NO_INIT otherwise.
+ */
 status_t
 LocaleRosterData::InitCheck() const
 {
@@ -154,6 +232,11 @@ LocaleRosterData::InitCheck() const
 }
 
 
+/**
+ * @brief Reload locale and time settings from disk.
+ *
+ * @return B_OK on success, B_ERROR on lock failure.
+ */
 status_t
 LocaleRosterData::Refresh()
 {
@@ -168,6 +251,13 @@ LocaleRosterData::Refresh()
 }
 
 
+/**
+ * @brief Comparator for sorting CatalogAddOnInfo pointers by priority.
+ *
+ * @param left   Pointer to a const CatalogAddOnInfo pointer.
+ * @param right  Pointer to a const CatalogAddOnInfo pointer.
+ * @return Negative if left has lower priority, zero if equal, positive if higher.
+ */
 int
 LocaleRosterData::CompareInfos(const void* left, const void* right)
 {
@@ -180,6 +270,14 @@ LocaleRosterData::CompareInfos(const void* left, const void* right)
 }
 
 
+/**
+ * @brief Set the default formatting conventions and persist them to disk.
+ *
+ * Broadcasts B_LOCALE_CHANGED to all running applications after saving.
+ *
+ * @param newFormattingConventions  The new BFormattingConventions to use.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::SetDefaultFormattingConventions(
 	const BFormattingConventions& newFormattingConventions)
@@ -206,6 +304,14 @@ LocaleRosterData::SetDefaultFormattingConventions(
 }
 
 
+/**
+ * @brief Set the default time zone and persist it to disk.
+ *
+ * Broadcasts B_LOCALE_CHANGED to all running applications after saving.
+ *
+ * @param newZone  The new BTimeZone to use.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::SetDefaultTimeZone(const BTimeZone& newZone)
 {
@@ -231,6 +337,14 @@ LocaleRosterData::SetDefaultTimeZone(const BTimeZone& newZone)
 }
 
 
+/**
+ * @brief Set the preferred language list and persist it to disk.
+ *
+ * Broadcasts B_LOCALE_CHANGED to all running applications after saving.
+ *
+ * @param languages  BMessage containing "language" string fields in priority order.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::SetPreferredLanguages(const BMessage* languages)
 {
@@ -256,6 +370,14 @@ LocaleRosterData::SetPreferredLanguages(const BMessage* languages)
 }
 
 
+/**
+ * @brief Set the filesystem translation preference and persist it to disk.
+ *
+ * Broadcasts B_LOCALE_CHANGED to all running applications after saving.
+ *
+ * @param preferred  true to translate filesystem entry names, false to leave them as-is.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::SetFilesystemTranslationPreferred(bool preferred)
 {
@@ -278,6 +400,15 @@ LocaleRosterData::SetFilesystemTranslationPreferred(bool preferred)
 }
 
 
+/**
+ * @brief Lazily load the liblocale.so BResources object and return it.
+ *
+ * On first call the resource file is opened from the image containing
+ * BLocaleRoster::Default and all vector icon resources are preloaded.
+ *
+ * @param resources  Output pointer that receives the BResources pointer.
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::GetResources(BResources** resources)
 {
@@ -302,6 +433,12 @@ LocaleRosterData::GetResources(BResources** resources)
 }
 
 
+/**
+ * @brief Run full initialization: discover add-ons and load settings.
+ *
+ * @return B_OK on success, or an error code from _InitializeCatalogAddOns()
+ *         or Refresh().
+ */
 status_t
 LocaleRosterData::_Initialize()
 {
@@ -321,6 +458,17 @@ LocaleRosterData::_Initialize()
 iterate over add-on-folders and collect information about each
 catalog-add-ons (types of catalogs) into fCatalogAddOnInfos.
 */
+/**
+ * @brief Scan catalog add-on directories and populate fCatalogAddOnInfos.
+ *
+ * Registers the embedded DefaultCatalog first, then scans all add-on
+ * directories under B_FIND_PATH_ADD_ONS_DIRECTORY/locale/catalogs/ for
+ * add-on shared objects, reading their priority from a filesystem attribute
+ * (loading them temporarily if needed).
+ *
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, B_ERROR on lock
+ *         failure.
+ */
 status_t
 LocaleRosterData::_InitializeCatalogAddOns()
 {
@@ -425,6 +573,9 @@ LocaleRosterData::_InitializeCatalogAddOns()
 /*
  * unloads all catalog-add-ons (which will throw away all loaded catalogs, too)
  */
+/**
+ * @brief Delete all CatalogAddOnInfo objects and clear the add-on list.
+ */
 void
 LocaleRosterData::_CleanupCatalogAddOns()
 {
@@ -442,6 +593,13 @@ LocaleRosterData::_CleanupCatalogAddOns()
 }
 
 
+/**
+ * @brief Load the user's locale settings from B_USER_SETTINGS_DIRECTORY.
+ *
+ * Falls back to English defaults if the settings file is absent or invalid.
+ *
+ * @return B_OK on success, or an error code if the file cannot be read.
+ */
 status_t
 LocaleRosterData::_LoadLocaleSettings()
 {
@@ -484,6 +642,13 @@ LocaleRosterData::_LoadLocaleSettings()
 }
 
 
+/**
+ * @brief Load the user's time settings from B_USER_SETTINGS_DIRECTORY.
+ *
+ * Falls back to GMT if the settings file is absent or invalid.
+ *
+ * @return B_OK on success, or an error code if the file cannot be read.
+ */
 status_t
 LocaleRosterData::_LoadTimeSettings()
 {
@@ -515,6 +680,11 @@ LocaleRosterData::_LoadTimeSettings()
 }
 
 
+/**
+ * @brief Persist the current locale settings to B_USER_SETTINGS_DIRECTORY.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::_SaveLocaleSettings()
 {
@@ -544,6 +714,11 @@ LocaleRosterData::_SaveLocaleSettings()
 }
 
 
+/**
+ * @brief Persist the current time settings to B_USER_SETTINGS_DIRECTORY.
+ *
+ * @return B_OK on success, or an error code on failure.
+ */
 status_t
 LocaleRosterData::_SaveTimeSettings()
 {
@@ -569,6 +744,12 @@ LocaleRosterData::_SaveTimeSettings()
 }
 
 
+/**
+ * @brief Apply new formatting conventions to the default locale and ICU global state.
+ *
+ * @param newFormattingConventions  The new conventions to apply.
+ * @return B_OK on success, B_ERROR if the ICU canonical locale is bogus.
+ */
 status_t
 LocaleRosterData::_SetDefaultFormattingConventions(
 	const BFormattingConventions& newFormattingConventions)
@@ -588,6 +769,12 @@ LocaleRosterData::_SetDefaultFormattingConventions(
 }
 
 
+/**
+ * @brief Set the ICU default time zone from a BTimeZone and store it.
+ *
+ * @param newZone  The BTimeZone to adopt as the global ICU default.
+ * @return B_OK on success, B_ERROR if the ICU time zone cannot be created.
+ */
 status_t
 LocaleRosterData::_SetDefaultTimeZone(const BTimeZone& newZone)
 {
@@ -602,6 +789,15 @@ LocaleRosterData::_SetDefaultTimeZone(const BTimeZone& newZone)
 }
 
 
+/**
+ * @brief Update the preferred language list from a BMessage.
+ *
+ * Also updates the default locale's language and collator to match the first
+ * preferred language. Falls back to English if the message is empty or NULL.
+ *
+ * @param languages  BMessage with "language" string fields, or NULL.
+ * @return B_OK always.
+ */
 status_t
 LocaleRosterData::_SetPreferredLanguages(const BMessage* languages)
 {
@@ -626,6 +822,11 @@ LocaleRosterData::_SetPreferredLanguages(const BMessage* languages)
 }
 
 
+/**
+ * @brief Store the filesystem translation preference flag.
+ *
+ * @param preferred  true to translate filesystem entry names.
+ */
 void
 LocaleRosterData::_SetFilesystemTranslationPreferred(bool preferred)
 {
@@ -633,6 +834,12 @@ LocaleRosterData::_SetFilesystemTranslationPreferred(bool preferred)
 }
 
 
+/**
+ * @brief Add the current formatting conventions to a BMessage.
+ *
+ * @param message  Output BMessage to populate.
+ * @return B_OK on success, or an error code from Archive().
+ */
 status_t
 LocaleRosterData::_AddDefaultFormattingConventionsToMessage(
 	BMessage* message) const
@@ -644,6 +851,12 @@ LocaleRosterData::_AddDefaultFormattingConventionsToMessage(
 }
 
 
+/**
+ * @brief Add the current time zone ID to a BMessage.
+ *
+ * @param message  Output BMessage to populate.
+ * @return B_OK on success, or an error from AddString().
+ */
 status_t
 LocaleRosterData::_AddDefaultTimeZoneToMessage(BMessage* message) const
 {
@@ -651,6 +864,12 @@ LocaleRosterData::_AddDefaultTimeZoneToMessage(BMessage* message) const
 }
 
 
+/**
+ * @brief Add all preferred language tags to a BMessage.
+ *
+ * @param message  Output BMessage; "language" string fields are added.
+ * @return B_OK on success, or an error code from AddString().
+ */
 status_t
 LocaleRosterData::_AddPreferredLanguagesToMessage(BMessage* message) const
 {
@@ -668,6 +887,12 @@ LocaleRosterData::_AddPreferredLanguagesToMessage(BMessage* message) const
 }
 
 
+/**
+ * @brief Add the filesystem translation preference flag to a BMessage.
+ *
+ * @param message  Output BMessage to populate.
+ * @return B_OK on success, or an error from AddBool().
+ */
 status_t
 LocaleRosterData::_AddFilesystemTranslationPreferenceToMessage(
 	BMessage* message) const

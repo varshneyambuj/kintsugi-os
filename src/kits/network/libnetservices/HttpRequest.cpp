@@ -1,12 +1,44 @@
 /*
- * Copyright 2010-2021 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
- *		Adrien Destugues, pulkomandy@pulkomandy.tk
- *		Stephan Aßmus, superstippi@gmx.de
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2021 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *       Adrien Destugues, pulkomandy@pulkomandy.tk
+ *       Stephan Aßmus, superstippi@gmx.de
+ */
+
+
+/**
+ * @file HttpRequest.cpp
+ * @brief Implementation of BHttpRequest, the HTTP/HTTPS protocol handler.
+ *
+ * Manages the full HTTP request/response lifecycle including connection
+ * setup (plain or TLS), request serialisation, chunked transfer decoding,
+ * gzip/deflate decompression, cookie handling, HTTP authentication, and
+ * redirect following. Both HTTP/1.0 and HTTP/1.1 are supported.
+ *
+ * @see BNetworkRequest, BHttpAuthentication, BHttpForm, BHttpHeaders
  */
 
 
@@ -51,6 +83,12 @@ namespace BPrivate {
 	};
 
 
+	/**
+	 * @brief Construct a CheckedSecureSocket bound to the given BHttpRequest.
+	 *
+	 * @param request  The owning BHttpRequest whose certificate callback will
+	 *                 be invoked on verification failure.
+	 */
 	CheckedSecureSocket::CheckedSecureSocket(BHttpRequest* request)
 		:
 		BSecureSocket(),
@@ -59,6 +97,14 @@ namespace BPrivate {
 	}
 
 
+	/**
+	 * @brief Delegate certificate verification failure to the owning request.
+	 *
+	 * @param certificate  The certificate that failed verification.
+	 * @param message      A human-readable description of the failure.
+	 * @return true if the connection should continue despite the failure,
+	 *         false to abort.
+	 */
 	bool
 	CheckedSecureSocket::CertificateVerificationFailed(BCertificate& certificate,
 		const char* message)
@@ -80,6 +126,13 @@ namespace BPrivate {
 	};
 
 
+	/**
+	 * @brief Construct a CheckedProxySecureSocket for a TLS-over-proxy connection.
+	 *
+	 * @param proxy    The proxy server address to tunnel through.
+	 * @param request  The owning BHttpRequest whose certificate callback will
+	 *                 be invoked on verification failure.
+	 */
 	CheckedProxySecureSocket::CheckedProxySecureSocket(const BNetworkAddress& proxy,
 		BHttpRequest* request)
 		:
@@ -89,6 +142,14 @@ namespace BPrivate {
 	}
 
 
+	/**
+	 * @brief Delegate certificate verification failure to the owning request.
+	 *
+	 * @param certificate  The certificate that failed verification.
+	 * @param message      A human-readable description of the failure.
+	 * @return true if the connection should continue despite the failure,
+	 *         false to abort.
+	 */
 	bool
 	CheckedProxySecureSocket::CertificateVerificationFailed(BCertificate& certificate,
 		const char* message)
@@ -98,6 +159,18 @@ namespace BPrivate {
 };
 
 
+/**
+ * @brief Construct a BHttpRequest for the given URL.
+ *
+ * Initialises all request options to their defaults via _ResetOptions().
+ *
+ * @param url           The HTTP or HTTPS URL to request.
+ * @param output        BDataIO sink that receives the response body.
+ * @param ssl           true for HTTPS, false for plain HTTP.
+ * @param protocolName  Logical protocol name string (e.g. "HTTP" or "HTTPS").
+ * @param listener      Lifecycle callback listener, or NULL.
+ * @param context       URL context providing cookies and proxy config, or NULL.
+ */
 BHttpRequest::BHttpRequest(const BUrl& url, BDataIO* output, bool ssl,
 	const char* protocolName, BUrlProtocolListener* listener,
 	BUrlContext* context)
@@ -122,6 +195,14 @@ BHttpRequest::BHttpRequest(const BUrl& url, BDataIO* output, bool ssl,
 }
 
 
+/**
+ * @brief Copy constructor — creates a new request with the same URL and options.
+ *
+ * The copy starts in the initial state regardless of the source object's
+ * current state. Some options (e.g. post fields) are not copied.
+ *
+ * @param other  The source BHttpRequest to copy settings from.
+ */
 BHttpRequest::BHttpRequest(const BHttpRequest& other)
 	:
 	BNetworkRequest(other.Url(), other.Output(), other.fListener,
@@ -145,6 +226,9 @@ BHttpRequest::BHttpRequest(const BHttpRequest& other)
 }
 
 
+/**
+ * @brief Destructor — stops the request and frees all owned resources.
+ */
 BHttpRequest::~BHttpRequest()
 {
 	Stop();
@@ -157,6 +241,11 @@ BHttpRequest::~BHttpRequest()
 }
 
 
+/**
+ * @brief Set the HTTP method for the request (e.g. "GET", "POST", "PUT").
+ *
+ * @param method  The HTTP method string.
+ */
 void
 BHttpRequest::SetMethod(const char* const method)
 {
@@ -164,6 +253,11 @@ BHttpRequest::SetMethod(const char* const method)
 }
 
 
+/**
+ * @brief Enable or disable automatic redirect following.
+ *
+ * @param follow  true to follow Location redirects, false to stop at them.
+ */
 void
 BHttpRequest::SetFollowLocation(bool follow)
 {
@@ -171,6 +265,11 @@ BHttpRequest::SetFollowLocation(bool follow)
 }
 
 
+/**
+ * @brief Set the maximum number of redirects to follow before giving up.
+ *
+ * @param redirections  The maximum redirect count (default: 8).
+ */
 void
 BHttpRequest::SetMaxRedirections(int8 redirections)
 {
@@ -178,6 +277,11 @@ BHttpRequest::SetMaxRedirections(int8 redirections)
 }
 
 
+/**
+ * @brief Set the Referer header value.
+ *
+ * @param referrer  The referrer URL string to send.
+ */
 void
 BHttpRequest::SetReferrer(const BString& referrer)
 {
@@ -185,6 +289,11 @@ BHttpRequest::SetReferrer(const BString& referrer)
 }
 
 
+/**
+ * @brief Set the User-Agent header value.
+ *
+ * @param agent  The user agent string to send.
+ */
 void
 BHttpRequest::SetUserAgent(const BString& agent)
 {
@@ -192,6 +301,11 @@ BHttpRequest::SetUserAgent(const BString& agent)
 }
 
 
+/**
+ * @brief Configure whether the response body should be discarded.
+ *
+ * @param discard  true to discard received data without writing to output.
+ */
 void
 BHttpRequest::SetDiscardData(bool discard)
 {
@@ -199,6 +313,11 @@ BHttpRequest::SetDiscardData(bool discard)
 }
 
 
+/**
+ * @brief Suppress all listener callbacks for this request.
+ *
+ * @param disable  true to suppress callbacks, false to restore them.
+ */
 void
 BHttpRequest::SetDisableListener(bool disable)
 {
@@ -206,6 +325,11 @@ BHttpRequest::SetDisableListener(bool disable)
 }
 
 
+/**
+ * @brief Enable or disable automatic Referer header generation on redirects.
+ *
+ * @param enable  true to set the Referer to the previous URL on redirect.
+ */
 void
 BHttpRequest::SetAutoReferrer(bool enable)
 {
@@ -213,6 +337,11 @@ BHttpRequest::SetAutoReferrer(bool enable)
 }
 
 
+/**
+ * @brief Abort the request on 4xx or 5xx HTTP status codes.
+ *
+ * @param stop  true to stop as soon as an error status is received.
+ */
 void
 BHttpRequest::SetStopOnError(bool stop)
 {
@@ -220,6 +349,11 @@ BHttpRequest::SetStopOnError(bool stop)
 }
 
 
+/**
+ * @brief Set the username for HTTP authentication.
+ *
+ * @param name  The username string.
+ */
 void
 BHttpRequest::SetUserName(const BString& name)
 {
@@ -227,6 +361,11 @@ BHttpRequest::SetUserName(const BString& name)
 }
 
 
+/**
+ * @brief Set the password for HTTP authentication.
+ *
+ * @param password  The password string.
+ */
 void
 BHttpRequest::SetPassword(const BString& password)
 {
@@ -234,6 +373,13 @@ BHttpRequest::SetPassword(const BString& password)
 }
 
 
+/**
+ * @brief Set the byte-range start position for a ranged request.
+ *
+ * Only takes effect when called before the request has been dispatched.
+ *
+ * @param position  The first byte offset to request.
+ */
 void
 BHttpRequest::SetRangeStart(off_t position)
 {
@@ -244,6 +390,13 @@ BHttpRequest::SetRangeStart(off_t position)
 }
 
 
+/**
+ * @brief Set the byte-range end position for a ranged request.
+ *
+ * Only takes effect when called before the request has been dispatched.
+ *
+ * @param position  The last byte offset to request (inclusive).
+ */
 void
 BHttpRequest::SetRangeEnd(off_t position)
 {
@@ -254,6 +407,13 @@ BHttpRequest::SetRangeEnd(off_t position)
 }
 
 
+/**
+ * @brief Set the POST form data by copying the provided BHttpForm.
+ *
+ * Implicitly switches the request method to POST.
+ *
+ * @param fields  The BHttpForm to copy and use as the POST body.
+ */
 void
 BHttpRequest::SetPostFields(const BHttpForm& fields)
 {
@@ -261,6 +421,11 @@ BHttpRequest::SetPostFields(const BHttpForm& fields)
 }
 
 
+/**
+ * @brief Set the custom request headers by copying the provided BHttpHeaders.
+ *
+ * @param headers  The BHttpHeaders to copy and merge into the outgoing request.
+ */
 void
 BHttpRequest::SetHeaders(const BHttpHeaders& headers)
 {
@@ -268,6 +433,13 @@ BHttpRequest::SetHeaders(const BHttpHeaders& headers)
 }
 
 
+/**
+ * @brief Take ownership of a heap-allocated BHttpForm for the POST body.
+ *
+ * Deletes any previously set post fields. Implicitly switches the method to POST.
+ *
+ * @param fields  A heap-allocated BHttpForm. The request takes ownership.
+ */
 void
 BHttpRequest::AdoptPostFields(BHttpForm* const fields)
 {
@@ -279,6 +451,16 @@ BHttpRequest::AdoptPostFields(BHttpForm* const fields)
 }
 
 
+/**
+ * @brief Take ownership of a BDataIO for streaming the request body.
+ *
+ * Used for POST or PUT requests where the body data comes from an arbitrary
+ * stream rather than a BHttpForm. If \a size is negative, chunked transfer
+ * encoding is used.
+ *
+ * @param data  A heap-allocated BDataIO. The request takes ownership.
+ * @param size  Total byte count of the stream, or -1 for unknown (chunked).
+ */
 void
 BHttpRequest::AdoptInputData(BDataIO* const data, const ssize_t size)
 {
@@ -288,6 +470,13 @@ BHttpRequest::AdoptInputData(BDataIO* const data, const ssize_t size)
 }
 
 
+/**
+ * @brief Take ownership of a heap-allocated BHttpHeaders for custom headers.
+ *
+ * Deletes any previously set custom headers.
+ *
+ * @param headers  A heap-allocated BHttpHeaders. The request takes ownership.
+ */
 void
 BHttpRequest::AdoptHeaders(BHttpHeaders* const headers)
 {
@@ -296,6 +485,12 @@ BHttpRequest::AdoptHeaders(BHttpHeaders* const headers)
 }
 
 
+/**
+ * @brief Test whether an HTTP status code is in the 1xx informational range.
+ *
+ * @param code  The HTTP status code to test.
+ * @return true if \a code is between 100 and 199 inclusive, false otherwise.
+ */
 /*static*/ bool
 BHttpRequest::IsInformationalStatusCode(int16 code)
 {
@@ -304,6 +499,12 @@ BHttpRequest::IsInformationalStatusCode(int16 code)
 }
 
 
+/**
+ * @brief Test whether an HTTP status code is in the 2xx success range.
+ *
+ * @param code  The HTTP status code to test.
+ * @return true if \a code is between 200 and 299 inclusive, false otherwise.
+ */
 /*static*/ bool
 BHttpRequest::IsSuccessStatusCode(int16 code)
 {
@@ -312,6 +513,12 @@ BHttpRequest::IsSuccessStatusCode(int16 code)
 }
 
 
+/**
+ * @brief Test whether an HTTP status code is in the 3xx redirection range.
+ *
+ * @param code  The HTTP status code to test.
+ * @return true if \a code is between 300 and 399 inclusive, false otherwise.
+ */
 /*static*/ bool
 BHttpRequest::IsRedirectionStatusCode(int16 code)
 {
@@ -320,6 +527,12 @@ BHttpRequest::IsRedirectionStatusCode(int16 code)
 }
 
 
+/**
+ * @brief Test whether an HTTP status code is in the 4xx client-error range.
+ *
+ * @param code  The HTTP status code to test.
+ * @return true if \a code is between 400 and 499 inclusive, false otherwise.
+ */
 /*static*/ bool
 BHttpRequest::IsClientErrorStatusCode(int16 code)
 {
@@ -328,6 +541,12 @@ BHttpRequest::IsClientErrorStatusCode(int16 code)
 }
 
 
+/**
+ * @brief Test whether an HTTP status code is in the 5xx server-error range.
+ *
+ * @param code  The HTTP status code to test.
+ * @return true if \a code is between 500 and 599 inclusive, false otherwise.
+ */
 /*static*/ bool
 BHttpRequest::IsServerErrorStatusCode(int16 code)
 {
@@ -336,6 +555,15 @@ BHttpRequest::IsServerErrorStatusCode(int16 code)
 }
 
 
+/**
+ * @brief Return the broad status class for an HTTP status code.
+ *
+ * @param code  The HTTP status code to classify.
+ * @return One of B_HTTP_STATUS_CLASS_INFORMATIONAL,
+ *         B_HTTP_STATUS_CLASS_SUCCESS, B_HTTP_STATUS_CLASS_REDIRECTION,
+ *         B_HTTP_STATUS_CLASS_CLIENT_ERROR, B_HTTP_STATUS_CLASS_SERVER_ERROR,
+ *         or B_HTTP_STATUS_CLASS_INVALID.
+ */
 /*static*/ int16
 BHttpRequest::StatusCodeClass(int16 code)
 {
@@ -354,6 +582,12 @@ BHttpRequest::StatusCodeClass(int16 code)
 }
 
 
+/**
+ * @brief Return the result object from the most recently completed request.
+ *
+ * @return A const reference to the internal BUrlResult (cast to BHttpResult)
+ *         containing status code, headers, content type, and length.
+ */
 const BUrlResult&
 BHttpRequest::Result() const
 {
@@ -361,6 +595,11 @@ BHttpRequest::Result() const
 }
 
 
+/**
+ * @brief Disconnect the socket and stop the request thread.
+ *
+ * @return B_OK on success, or an error code if the thread join fails.
+ */
 status_t
 BHttpRequest::Stop()
 {
@@ -373,6 +612,12 @@ BHttpRequest::Stop()
 }
 
 
+/**
+ * @brief Reset all optional request parameters to their default values.
+ *
+ * Deletes any previously set post fields and custom headers, then
+ * restores all option fields to their initial defaults.
+ */
 void
 BHttpRequest::_ResetOptions()
 {
@@ -396,6 +641,18 @@ BHttpRequest::_ResetOptions()
 }
 
 
+/**
+ * @brief Run the HTTP protocol loop, handling redirects and authentication.
+ *
+ * Resolves the host name, calls _MakeRequest() in a loop to send the request
+ * and receive the response, then handles 3xx redirects (updating the URL and
+ * possibly switching between HTTP and HTTPS) and 401 authentication challenges
+ * (setting credentials and retrying) until a terminal response is received
+ * or the redirect limit is exhausted.
+ *
+ * @return B_OK on success, B_RESOURCE_NOT_FOUND for 404, or a network/IO
+ *         error code on failure.
+ */
 status_t
 BHttpRequest::_ProtocolLoop()
 {
@@ -550,6 +807,16 @@ BHttpRequest::_ProtocolLoop()
 }
 
 
+/**
+ * @brief Open a socket, send the request, and receive the full response.
+ *
+ * Creates a BSocket (plain or TLS, direct or via proxy), connects it,
+ * sends the serialised request line and headers, transmits any POST body,
+ * then runs a receive loop that handles chunked transfer encoding and
+ * optional gzip/deflate decompression, writing decoded body data to fOutput.
+ *
+ * @return B_OK on success, or a socket/IO error code on failure.
+ */
 status_t
 BHttpRequest::_MakeRequest()
 {
@@ -593,7 +860,6 @@ BHttpRequest::_MakeRequest()
 
 	_SendPostData();
 	fRequestStatus = kRequestInitialState;
-
 
 
 	// Receive loop
@@ -871,6 +1137,13 @@ BHttpRequest::_MakeRequest()
 }
 
 
+/**
+ * @brief Parse the HTTP status line from the input buffer.
+ *
+ * Reads one line from fInputBuffer, validates that it begins with an HTTP
+ * version prefix and contains a three-digit status code, then stores the
+ * code and reason phrase in the result object.
+ */
 void
 BHttpRequest::_ParseStatus()
 {
@@ -900,6 +1173,13 @@ BHttpRequest::_ParseStatus()
 }
 
 
+/**
+ * @brief Read header lines from the input buffer until the blank separator.
+ *
+ * Calls _GetLine() in a loop, adding each line to fHeaders. An empty line
+ * signals the end of the header section and advances fRequestStatus to
+ * kRequestHeadersReceived.
+ */
 void
 BHttpRequest::_ParseHeaders()
 {
@@ -918,6 +1198,14 @@ BHttpRequest::_ParseHeaders()
 }
 
 
+/**
+ * @brief Build the HTTP request line (method, path, version).
+ *
+ * Constructs the first line of the HTTP request, including an absolute URI
+ * when a proxy is in use, and appends a query string if present in the URL.
+ *
+ * @return The formatted request line as a BString (without the trailing CRLF).
+ */
 BString
 BHttpRequest::_SerializeRequest()
 {
@@ -957,6 +1245,16 @@ BHttpRequest::_SerializeRequest()
 }
 
 
+/**
+ * @brief Build the full set of HTTP request headers as a CRLF-terminated string.
+ *
+ * Assembles standard headers (Host, Accept, Connection), optional headers
+ * (User-Agent, Referer, Range), authentication, POST content headers, user-
+ * specified custom headers, and cookie headers. All are returned as a single
+ * string ready to be written to the socket.
+ *
+ * @return A BString containing all headers, each terminated by "\r\n".
+ */
 BString
 BHttpRequest::_SerializeHeaders()
 {
@@ -1099,6 +1397,13 @@ BHttpRequest::_SerializeHeaders()
 }
 
 
+/**
+ * @brief Send the request body (POST fields or raw input data) over the socket.
+ *
+ * For multipart form data, iterates the BHttpForm and streams each part.
+ * For BDataIO input data with unknown size, uses chunked transfer encoding.
+ * Does nothing for GET or HEAD requests.
+ */
 void
 BHttpRequest::_SendPostData()
 {
@@ -1204,6 +1509,11 @@ BHttpRequest::_SendPostData()
 }
 
 
+/**
+ * @brief Return a mutable reference to the result's header collection.
+ *
+ * @return A reference to fResult.fHeaders for use by internal parsing code.
+ */
 BHttpHeaders&
 BHttpRequest::_ResultHeaders()
 {
@@ -1211,6 +1521,11 @@ BHttpRequest::_ResultHeaders()
 }
 
 
+/**
+ * @brief Store an HTTP status code into the result object.
+ *
+ * @param statusCode  The three-digit HTTP status code to store.
+ */
 void
 BHttpRequest::_SetResultStatusCode(int32 statusCode)
 {
@@ -1218,6 +1533,11 @@ BHttpRequest::_SetResultStatusCode(int32 statusCode)
 }
 
 
+/**
+ * @brief Return a mutable reference to the result's status text string.
+ *
+ * @return A reference to fResult.fStatusString for use by _ParseStatus().
+ */
 BString&
 BHttpRequest::_ResultStatusText()
 {
@@ -1225,6 +1545,17 @@ BHttpRequest::_ResultStatusText()
 }
 
 
+/**
+ * @brief Handle a TLS certificate verification failure.
+ *
+ * Checks the context's certificate exception list first; if no exception is
+ * found, asks the listener for permission to continue. If the listener
+ * approves, a temporary exception is added for this session.
+ *
+ * @param certificate  The certificate that failed verification.
+ * @param message      Human-readable description of the failure.
+ * @return true if the connection should proceed, false to abort.
+ */
 bool
 BHttpRequest::_CertificateVerificationFailed(BCertificate& certificate,
 	const char* message)
@@ -1243,6 +1574,14 @@ BHttpRequest::_CertificateVerificationFailed(BCertificate& certificate,
 }
 
 
+/**
+ * @brief Return whether the URL's port is the default port for this scheme.
+ *
+ * Used to suppress the port number from the Host header when it equals the
+ * scheme's well-known default (80 for HTTP, 443 for HTTPS).
+ *
+ * @return true if the port is the default for the current scheme, false otherwise.
+ */
 bool
 BHttpRequest::_IsDefaultPort()
 {

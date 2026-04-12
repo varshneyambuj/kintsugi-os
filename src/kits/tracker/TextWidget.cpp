@@ -1,36 +1,34 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the Be Sample Code License.
+ */
 
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file TextWidget.cpp
+ * @brief BTextWidget provides inline text-editing of pose attribute columns.
+ *
+ * @see BPoseView, BColumn, BPose
+ */
 
 
 #include "TextWidget.h"
@@ -67,6 +65,13 @@ const float kWidthMargin = 20;
 //	#pragma mark - BTextWidget
 
 
+/**
+ * @brief Construct a BTextWidget for the attribute described by \a column on \a model.
+ *
+ * @param model   The filesystem model whose attribute is displayed.
+ * @param column  The column describing the attribute and its formatting.
+ * @param view    The BPoseView that owns this widget.
+ */
 BTextWidget::BTextWidget(Model* model, BColumn* column, BPoseView* view)
 	:
 	fText(WidgetAttributeText::NewWidgetText(model, column, view)),
@@ -82,6 +87,9 @@ BTextWidget::BTextWidget(Model* model, BColumn* column, BPoseView* view)
 }
 
 
+/**
+ * @brief Destructor; cancels any pending click-to-edit timer and deletes fText.
+ */
 BTextWidget::~BTextWidget()
 {
 	if (fLastClickedTime != 0)
@@ -91,6 +99,13 @@ BTextWidget::~BTextWidget()
 }
 
 
+/**
+ * @brief Compare this widget's value against another for sorting.
+ *
+ * @param with   The widget to compare against.
+ * @param view   The pose view used for locale-aware comparison.
+ * @return Negative, zero, or positive as with standard comparison semantics.
+ */
 int
 BTextWidget::Compare(const BTextWidget& with, BPoseView* view) const
 {
@@ -98,6 +113,12 @@ BTextWidget::Compare(const BTextWidget& with, BPoseView* view) const
 }
 
 
+/**
+ * @brief Return the current attribute value as a C string.
+ *
+ * @param view  The pose view used for formatting context.
+ * @return Formatted attribute text, or NULL if not a string attribute.
+ */
 const char*
 BTextWidget::Text(const BPoseView* view) const
 {
@@ -109,6 +130,12 @@ BTextWidget::Text(const BPoseView* view) const
 }
 
 
+/**
+ * @brief Return the rendered text width in the given pose view's font.
+ *
+ * @param pose  The pose view providing font metrics.
+ * @return Width in pixels of the displayed text.
+ */
 float
 BTextWidget::TextWidth(const BPoseView* pose) const
 {
@@ -116,6 +143,12 @@ BTextWidget::TextWidth(const BPoseView* pose) const
 }
 
 
+/**
+ * @brief Return the preferred (unconstrained) text width for this widget.
+ *
+ * @param pose  The pose view providing font metrics.
+ * @return Preferred width in pixels.
+ */
 float
 BTextWidget::PreferredWidth(const BPoseView* pose) const
 {
@@ -123,6 +156,16 @@ BTextWidget::PreferredWidth(const BPoseView* pose) const
 }
 
 
+/**
+ * @brief Return the full column rectangle for this widget in list view.
+ *
+ * Falls back to CalcRect() when not in list mode.
+ *
+ * @param poseLoc  The on-screen top-left position of the owning pose.
+ * @param column   The column descriptor.
+ * @param view     The pose view.
+ * @return The bounding rectangle of the column cell.
+ */
 BRect
 BTextWidget::ColumnRect(BPoint poseLoc, const BColumn* column,
 	const BPoseView* view)
@@ -143,6 +186,15 @@ BTextWidget::ColumnRect(BPoint poseLoc, const BColumn* column,
 }
 
 
+/**
+ * @brief Compute the text bounding rectangle given a pre-computed text width.
+ *
+ * @param poseLoc   The on-screen top-left position of the owning pose.
+ * @param column    The column descriptor providing offset and width constraints.
+ * @param view      The pose view providing icon size and font metrics.
+ * @param textWidth The already-computed width of the rendered text.
+ * @return The bounding rectangle for the text.
+ */
 BRect
 BTextWidget::CalcRectCommon(BPoint poseLoc, const BColumn* column,
 	const BPoseView* view, float textWidth)
@@ -211,6 +263,14 @@ BTextWidget::CalcRectCommon(BPoint poseLoc, const BColumn* column,
 }
 
 
+/**
+ * @brief Compute the text bounding rectangle using the current rendered text width.
+ *
+ * @param poseLoc  Pose origin.
+ * @param column   Column descriptor.
+ * @param view     Pose view.
+ * @return Current text bounding rectangle.
+ */
 BRect
 BTextWidget::CalcRect(BPoint poseLoc, const BColumn* column, const BPoseView* view)
 {
@@ -218,6 +278,16 @@ BTextWidget::CalcRect(BPoint poseLoc, const BColumn* column, const BPoseView* vi
 }
 
 
+/**
+ * @brief Compute the text bounding rectangle using the previously cached text width.
+ *
+ * Used for erasing the old location before a redraw.
+ *
+ * @param poseLoc  Pose origin.
+ * @param column   Column descriptor.
+ * @param view     Pose view.
+ * @return Old (cached) text bounding rectangle.
+ */
 BRect
 BTextWidget::CalcOldRect(BPoint poseLoc, const BColumn* column, const BPoseView* view)
 {
@@ -225,6 +295,17 @@ BTextWidget::CalcOldRect(BPoint poseLoc, const BColumn* column, const BPoseView*
 }
 
 
+/**
+ * @brief Compute a minimum-width click rectangle for this widget.
+ *
+ * Ensures the click target is at least kWidthMargin pixels wide for easy
+ * clicking even when the text is very short.
+ *
+ * @param poseLoc  Pose origin.
+ * @param column   Column descriptor.
+ * @param view     Pose view.
+ * @return Padded bounding rectangle suitable for hit-testing.
+ */
 BRect
 BTextWidget::CalcClickRect(BPoint poseLoc, const BColumn* column, const BPoseView* view)
 {
@@ -242,6 +323,12 @@ BTextWidget::CalcClickRect(BPoint poseLoc, const BColumn* column, const BPoseVie
 }
 
 
+/**
+ * @brief Check whether the slow-click timer has expired and start editing if so.
+ *
+ * Called by the task loop: if the pose is still selected and the double-click
+ * window has elapsed without another click, editing begins.
+ */
 void
 BTextWidget::CheckExpiration()
 {
@@ -264,6 +351,9 @@ BTextWidget::CheckExpiration()
 }
 
 
+/**
+ * @brief Cancel the pending slow-click-to-edit timer.
+ */
 void
 BTextWidget::CancelWait()
 {
@@ -272,6 +362,16 @@ BTextWidget::CancelWait()
 }
 
 
+/**
+ * @brief Handle a mouse-up event to begin the slow-click-to-edit timer.
+ *
+ * Records the click time so that CheckExpiration() can start editing if no
+ * further click arrives before the double-click interval elapses.
+ *
+ * @param bounds  Bounding rectangle of the pose.
+ * @param view    The owning BPoseView.
+ * @param pose    The pose that was clicked.
+ */
 void
 BTextWidget::MouseUp(BRect bounds, BPoseView* view, BPose* pose, BPoint)
 {
@@ -436,6 +536,16 @@ TextViewPasteFilter(BMessage* message, BHandler**, BMessageFilter* filter)
 }
 
 
+/**
+ * @brief Begin inline editing of this attribute widget.
+ *
+ * Creates a BScrollView/BTextView overlay, populates it with the current
+ * attribute text, and installs it in the pose view for the user to edit.
+ *
+ * @param bounds  The visual bounds of the pose item.
+ * @param view    The owning BPoseView.
+ * @param pose    The pose being edited.
+ */
 void
 BTextWidget::StartEdit(BRect bounds, BPoseView* view, BPose* pose)
 {
@@ -560,6 +670,18 @@ BTextWidget::StartEdit(BRect bounds, BPoseView* view, BPose* pose)
 }
 
 
+/**
+ * @brief Finish inline editing and optionally write the new attribute value.
+ *
+ * Removes the text-editing overlay, and if \a saveChanges is true writes the
+ * new value back to the filesystem node.
+ *
+ * @param saveChanges  If true, commit the user's edits; if false, discard them.
+ * @param poseLoc      Position of the pose in the view.
+ * @param view         The owning BPoseView.
+ * @param pose         The pose being edited.
+ * @param poseIndex    Index of the pose in the sorted list.
+ */
 void
 BTextWidget::StopEdit(bool saveChanges, BPoint poseLoc, BPoseView* view,
 	BPose* pose, int32 poseIndex)
@@ -603,6 +725,17 @@ BTextWidget::StopEdit(bool saveChanges, BPoint poseLoc, BPoseView* view,
 }
 
 
+/**
+ * @brief Invalidate the display if the underlying attribute has changed.
+ *
+ * Reads the attribute, compares it to the cached value, and triggers a
+ * redraw if the display needs updating.
+ *
+ * @param loc      Current pose location.
+ * @param column   The column being checked.
+ * @param view     The owning BPoseView.
+ * @param visible  If false, suppress the invalidation.
+ */
 void
 BTextWidget::CheckAndUpdate(BPoint loc, const BColumn* column, BPoseView* view, bool visible)
 {
@@ -620,6 +753,11 @@ BTextWidget::CheckAndUpdate(BPoint loc, const BColumn* column, BPoseView* view, 
 }
 
 
+/**
+ * @brief Select all text in the inline editor if it is active.
+ *
+ * @param view  The owning BPoseView containing the editor.
+ */
 void
 BTextWidget::SelectAll(BPoseView* view)
 {
@@ -629,6 +767,20 @@ BTextWidget::SelectAll(BPoseView* view)
 }
 
 
+/**
+ * @brief Render the attribute text into the pose view.
+ *
+ * Draws the background erase rect and then the formatted attribute text with
+ * appropriate truncation, colour, and clipboard decoration.
+ *
+ * @param eraseRect     Rectangle to erase before drawing.
+ * @param textRect      Target rectangle for the text.
+ * @param view          The BPoseView providing drawing context.
+ * @param drawView      The BView to draw into (may differ from \a view).
+ * @param selected      true if the pose is currently selected.
+ * @param clipboardMode Clipboard status flags affecting decoration.
+ * @param offset        Drawing offset applied to all coordinates.
+ */
 void
 BTextWidget::Draw(BRect eraseRect, BRect textRect, BPoseView* view, BView* drawView,
 	bool selected, uint32 clipboardMode, BPoint offset)

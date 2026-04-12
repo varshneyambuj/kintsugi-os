@@ -1,6 +1,38 @@
 /*
- * Copyright 2026, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2026, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CleanUpAdminDirectoryRequest.cpp
+ * @brief Request that removes stale package-manager state and transaction directories.
+ *
+ * Scans the packages admin directory for state_ and transaction- subdirectories
+ * older than a caller-specified timestamp, then asks the user to confirm before
+ * recursively removing them.  A minimum number of states to retain ensures the
+ * system always has a usable rollback point.
+ *
+ * @see BInstallationLocationInfo, BRemoveEngine
  */
 
 
@@ -25,6 +57,14 @@ namespace BPackageKit {
 using namespace BPrivate;
 
 
+/**
+ * @brief Internal job that performs the actual admin-directory cleanup.
+ *
+ * This private job class is created and enqueued by
+ * CleanUpAdminDirectoryRequest::CreateInitialJobs().  It collects candidate
+ * directories, totals their disk usage, confirms with the user, and then
+ * removes each directory via BRemoveEngine.
+ */
 class CleanUpAdminDirectoryJob : public BJob {
 	typedef	BJob				inherited;
 
@@ -48,6 +88,17 @@ private:
 };
 
 
+/**
+ * @brief Construct the cleanup job.
+ *
+ * @param context           Package-kit context for decisions and temp files.
+ * @param title             Human-readable job title shown in progress UI.
+ * @param location          Installation location info providing the packages directory.
+ * @param cleanupBefore     Only directories with mtime strictly before this
+ *                          timestamp are candidates for removal.
+ * @param minStatesToKeep   Minimum number of state directories to retain even
+ *                          if they are older than \a cleanupBefore.
+ */
 CleanUpAdminDirectoryJob::CleanUpAdminDirectoryJob(const BContext& context,
 	const BString& title, const BInstallationLocationInfo& location,
 	time_t cleanupBefore, int32 minStatesToKeep)
@@ -60,11 +111,24 @@ CleanUpAdminDirectoryJob::CleanUpAdminDirectoryJob(const BContext& context,
 }
 
 
+/**
+ * @brief Destructor.
+ */
 CleanUpAdminDirectoryJob::~CleanUpAdminDirectoryJob()
 {
 }
 
 
+/**
+ * @brief Collect old directories, prompt the user, and remove them.
+ *
+ * Calculates the total size of all candidate directories, formats a
+ * localised confirmation question, and on approval iterates through the
+ * list invoking BRemoveEngine for each entry.
+ *
+ * @return B_OK on success, B_CANCELED if the user declined, or an error code
+ *         if any directory could not be removed.
+ */
 status_t
 CleanUpAdminDirectoryJob::Execute()
 {
@@ -116,6 +180,18 @@ CleanUpAdminDirectoryJob::Execute()
 }
 
 
+/**
+ * @brief Populate \a directories with the paths of old state and transaction directories.
+ *
+ * Iterates the admin directory and categorises entries as either "state_*" or
+ * "transaction-*".  Entries newer than fCleanupBefore, newer/equal to the
+ * active state, or that would reduce the retained state count below
+ * fMinimumStatesToKeep are excluded.  Surviving state entries are sorted so
+ * that the caller can trim from the newest end.
+ *
+ * @param directories  Output list populated with absolute paths of removable directories.
+ * @return B_OK on success, or an error code if the admin directory cannot be opened.
+ */
 status_t
 CleanUpAdminDirectoryJob::_GetOldStateDirectories(BStringList& directories)
 {
@@ -174,6 +250,14 @@ CleanUpAdminDirectoryJob::_GetOldStateDirectories(BStringList& directories)
 }
 
 
+/**
+ * @brief Construct the public request object.
+ *
+ * @param context           Package-kit context.
+ * @param location          Installation location whose admin directory is cleaned.
+ * @param cleanupBefore     Remove directories with mtime before this timestamp.
+ * @param minStatesToKeep   Minimum number of state directories to preserve.
+ */
 CleanUpAdminDirectoryRequest::CleanUpAdminDirectoryRequest(const BContext& context,
 	const BInstallationLocationInfo& location,
 	time_t cleanupBefore, int32 minStatesToKeep)
@@ -186,11 +270,20 @@ CleanUpAdminDirectoryRequest::CleanUpAdminDirectoryRequest(const BContext& conte
 }
 
 
+/**
+ * @brief Destructor.
+ */
 CleanUpAdminDirectoryRequest::~CleanUpAdminDirectoryRequest()
 {
 }
 
 
+/**
+ * @brief Create and queue the single cleanup job.
+ *
+ * @return B_OK if the job was queued successfully, B_NO_INIT if InitCheck()
+ *         fails, or B_NO_MEMORY on allocation failure.
+ */
 status_t
 CleanUpAdminDirectoryRequest::CreateInitialJobs()
 {

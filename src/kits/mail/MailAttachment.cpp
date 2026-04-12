@@ -1,9 +1,40 @@
 /*
- * Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
  */
 
 
-/*! Classes which handle mail attachments */
+/**
+ * @file MailAttachment.cpp
+ * @brief Mail attachment classes for encoding and decoding MIME body parts.
+ *
+ * Implements BSimpleMailAttachment, which handles binary data with base64,
+ * quoted-printable, UU-encode, or 7/8-bit transfer encodings, and
+ * BAttributedMailAttachment, which wraps a file together with its BFS
+ * extended attributes in a multipart/x-bfile container so that attributes
+ * survive round-tripping through e-mail. Callers add attachment instances
+ * to BEmailMessage via BEmailMessage::AddComponent() or Attach().
+ *
+ * @see BEmailMessage, BMailComponent, BMailContainer
+ */
 
 
 #include <MailAttachment.h>
@@ -25,8 +56,14 @@
 #include <NodeMessage.h>
 
 
-/*! No attributes or awareness of the file system at large
-*/
+/**
+ * @brief Default constructor — creates an empty attachment with no data source.
+ *
+ * Initialises the attachment to use base64 transfer encoding and sets the
+ * Content-Disposition to "BMailAttachment". fStatus is set to B_NO_INIT
+ * until a data source is provided via one of the SetTo() or SetDecodedData()
+ * overloads.
+ */
 BSimpleMailAttachment::BSimpleMailAttachment()
 	:
 	fStatus(B_NO_INIT),
@@ -38,6 +75,13 @@ BSimpleMailAttachment::BSimpleMailAttachment()
 }
 
 
+/**
+ * @brief Constructs an attachment wrapping an existing BPositionIO stream.
+ *
+ * @param data      Pointer to the data stream; must remain valid for the
+ *                  lifetime of this object unless ownership is transferred.
+ * @param encoding  Transfer encoding to use when rendering (e.g. base64).
+ */
 BSimpleMailAttachment::BSimpleMailAttachment(BPositionIO *data,
 	mail_encoding encoding)
 	:
@@ -51,6 +95,16 @@ BSimpleMailAttachment::BSimpleMailAttachment(BPositionIO *data,
 }
 
 
+/**
+ * @brief Constructs an attachment from a raw memory buffer.
+ *
+ * Copies the supplied data into an internal BMemoryIO and takes ownership
+ * of the allocation.
+ *
+ * @param data      Pointer to the source bytes.
+ * @param length    Number of bytes to copy.
+ * @param encoding  Transfer encoding to use when rendering.
+ */
 BSimpleMailAttachment::BSimpleMailAttachment(const void *data, size_t length,
 	mail_encoding encoding)
 	:
@@ -64,6 +118,13 @@ BSimpleMailAttachment::BSimpleMailAttachment(const void *data, size_t length,
 }
 
 
+/**
+ * @brief Constructs an attachment from an open BFile.
+ *
+ * @param file             Pointer to an open BFile to read data from.
+ * @param deleteWhenDone   If true, the attachment takes ownership of \a file
+ *                         and deletes it when it is no longer needed.
+ */
 BSimpleMailAttachment::BSimpleMailAttachment(BFile *file, bool deleteWhenDone)
 	:
 	_data(NULL),
@@ -75,6 +136,11 @@ BSimpleMailAttachment::BSimpleMailAttachment(BFile *file, bool deleteWhenDone)
 }
 
 
+/**
+ * @brief Constructs an attachment from an entry_ref, opening the file read-only.
+ *
+ * @param ref  entry_ref identifying the file to attach.
+ */
 BSimpleMailAttachment::BSimpleMailAttachment(entry_ref *ref)
 	:
 	_data(NULL),
@@ -86,6 +152,9 @@ BSimpleMailAttachment::BSimpleMailAttachment(entry_ref *ref)
 }
 
 
+/**
+ * @brief Destroys the attachment, freeing data if owned.
+ */
 BSimpleMailAttachment::~BSimpleMailAttachment()
 {
 	if (_we_own_data)
@@ -93,6 +162,14 @@ BSimpleMailAttachment::~BSimpleMailAttachment()
 }
 
 
+/**
+ * @brief Sets default headers for a new attachment.
+ *
+ * Configures the transfer encoding header and sets the Content-Disposition
+ * to "BMailAttachment". Called from constructors.
+ *
+ * @param encoding  Transfer encoding to apply (e.g. base64).
+ */
 void
 BSimpleMailAttachment::Initialize(mail_encoding encoding)
 {
@@ -101,6 +178,17 @@ BSimpleMailAttachment::Initialize(mail_encoding encoding)
 }
 
 
+/**
+ * @brief Assigns an open BFile as the attachment's data source.
+ *
+ * Reads the MIME type from the file's node info and sets the Content-Type
+ * header accordingly. Ownership of the BFile is transferred if
+ * \a deleteFileWhenDone is true.
+ *
+ * @param file               Pointer to the open BFile.
+ * @param deleteFileWhenDone If true, the attachment takes ownership of \a file.
+ * @return B_OK on success.
+ */
 status_t
 BSimpleMailAttachment::SetTo(BFile *file, bool deleteFileWhenDone)
 {
@@ -123,6 +211,15 @@ BSimpleMailAttachment::SetTo(BFile *file, bool deleteFileWhenDone)
 }
 
 
+/**
+ * @brief Assigns a file identified by entry_ref as the attachment's data source.
+ *
+ * Opens the file in read-only mode, delegates to SetTo(BFile*,bool), and
+ * additionally sets the filename from the ref's name component.
+ *
+ * @param ref  entry_ref of the file to attach.
+ * @return B_OK on success, or an error code if the file cannot be opened.
+ */
 status_t
 BSimpleMailAttachment::SetTo(entry_ref *ref)
 {
@@ -140,6 +237,12 @@ BSimpleMailAttachment::SetTo(entry_ref *ref)
 }
 
 
+/**
+ * @brief Returns the initialisation status of this attachment.
+ *
+ * @return B_OK if the attachment is valid, B_NO_INIT if not yet associated
+ *         with any data, or B_BAD_VALUE if constructed with a NULL source.
+ */
 status_t
 BSimpleMailAttachment::InitCheck()
 {
@@ -147,6 +250,16 @@ BSimpleMailAttachment::InitCheck()
 }
 
 
+/**
+ * @brief Retrieves the attachment filename from the Content-Type or related headers.
+ *
+ * Searches Content-Type, Content-Disposition, and Content-Location headers
+ * in that order for a "name" or "filename" parameter.
+ *
+ * @param text  Output buffer of at least B_FILE_NAME_LENGTH bytes to receive
+ *              the null-terminated filename.
+ * @return B_OK if a filename was found, B_NAME_NOT_FOUND otherwise.
+ */
 status_t
 BSimpleMailAttachment::FileName(char *text)
 {
@@ -176,6 +289,14 @@ BSimpleMailAttachment::FileName(char *text)
 }
 
 
+/**
+ * @brief Sets the filename parameter in the Content-Type header.
+ *
+ * Also requests UTF-8 encoding for the name parameter so that non-ASCII
+ * filenames are handled correctly by rfc2047 encoding.
+ *
+ * @param name  Null-terminated filename string to store.
+ */
 void
 BSimpleMailAttachment::SetFileName(const char *name)
 {
@@ -195,6 +316,16 @@ BSimpleMailAttachment::SetFileName(const char *name)
 }
 
 
+/**
+ * @brief Copies the decoded attachment data into \a data.
+ *
+ * Forces any pending lazy parse, then streams the decoded content from the
+ * internal buffer into the supplied BPositionIO.
+ *
+ * @param data  Destination stream to receive the decoded bytes.
+ * @return B_OK on success, B_IO_ERROR if no decoded data is available,
+ *         B_BAD_VALUE if \a data is NULL.
+ */
 status_t
 BSimpleMailAttachment::GetDecodedData(BPositionIO *data)
 {
@@ -216,6 +347,13 @@ BSimpleMailAttachment::GetDecodedData(BPositionIO *data)
 }
 
 
+/**
+ * @brief Returns a direct pointer to the decoded data stream.
+ *
+ * Forces any pending lazy parse and returns the internal BPositionIO.
+ *
+ * @return Pointer to the decoded data stream, or NULL if unavailable.
+ */
 BPositionIO *
 BSimpleMailAttachment::GetDecodedData()
 {
@@ -224,6 +362,15 @@ BSimpleMailAttachment::GetDecodedData()
 }
 
 
+/**
+ * @brief Assigns a new data source and transfers ownership.
+ *
+ * The previous data stream is deleted if owned. The attachment will delete
+ * \a data when it is no longer needed.
+ *
+ * @param data  New data source; ownership is transferred to this attachment.
+ * @return B_OK always.
+ */
 status_t
 BSimpleMailAttachment::SetDecodedDataAndDeleteWhenDone(BPositionIO *data)
 {
@@ -239,6 +386,15 @@ BSimpleMailAttachment::SetDecodedDataAndDeleteWhenDone(BPositionIO *data)
 }
 
 
+/**
+ * @brief Assigns a new data source without taking ownership.
+ *
+ * The previous data stream is deleted if owned. The caller retains
+ * responsibility for \a data's lifetime.
+ *
+ * @param data  New data source; ownership is NOT transferred.
+ * @return B_OK always.
+ */
 status_t
 BSimpleMailAttachment::SetDecodedData(BPositionIO *data)
 {
@@ -254,6 +410,15 @@ BSimpleMailAttachment::SetDecodedData(BPositionIO *data)
 }
 
 
+/**
+ * @brief Assigns decoded data from a raw memory buffer.
+ *
+ * Wraps the buffer in a BMemoryIO that is owned by this attachment.
+ *
+ * @param data    Pointer to the decoded data bytes.
+ * @param length  Number of bytes in \a data.
+ * @return B_OK always.
+ */
 status_t
 BSimpleMailAttachment::SetDecodedData(const void *data, size_t length)
 {
@@ -269,6 +434,14 @@ BSimpleMailAttachment::SetDecodedData(const void *data, size_t length)
 }
 
 
+/**
+ * @brief Sets the Content-Transfer-Encoding and updates the corresponding header.
+ *
+ * Translates the mail_encoding constant into the appropriate RFC string
+ * (e.g. base64, quoted-printable, 7bit, 8bit) and sets the header field.
+ *
+ * @param encoding  Transfer encoding constant from mail_encoding.h.
+ */
 void
 BSimpleMailAttachment::SetEncoding(mail_encoding encoding)
 {
@@ -301,6 +474,11 @@ BSimpleMailAttachment::SetEncoding(mail_encoding encoding)
 }
 
 
+/**
+ * @brief Returns the current transfer encoding of this attachment.
+ *
+ * @return The mail_encoding constant in use.
+ */
 mail_encoding
 BSimpleMailAttachment::Encoding()
 {
@@ -308,6 +486,18 @@ BSimpleMailAttachment::Encoding()
 }
 
 
+/**
+ * @brief Initialises the attachment from an RFC 822 stream at the current position.
+ *
+ * Reads and parses MIME headers, then records the byte range of the encoded
+ * payload for lazy decoding. If \a parseNow is true, the payload is
+ * immediately decoded into memory.
+ *
+ * @param data       Stream positioned at the start of this MIME part.
+ * @param length     Number of bytes available for this part.
+ * @param parseNow   If true, decode the payload immediately.
+ * @return B_OK on success, B_ERROR if the payload overruns the given length.
+ */
 status_t
 BSimpleMailAttachment::SetToRFC822(BPositionIO *data, size_t length,
 	bool parseNow)
@@ -350,6 +540,13 @@ BSimpleMailAttachment::SetToRFC822(BPositionIO *data, size_t length,
 }
 
 
+/**
+ * @brief Decodes the raw MIME payload into an in-memory buffer.
+ *
+ * Reads the raw encoded bytes from the source stream, decodes them using
+ * the detected transfer encoding, and stores the result in a new BMallocIO.
+ * After this call _raw_data is set to NULL indicating the data is decoded.
+ */
 void
 BSimpleMailAttachment::ParseNow()
 {
@@ -385,6 +582,15 @@ BSimpleMailAttachment::ParseNow()
 }
 
 
+/**
+ * @brief Encodes the attachment data and writes the complete MIME part to a stream.
+ *
+ * Forces lazy parse, then encodes the decoded data using the configured
+ * transfer encoding and writes it to \a renderTo following the MIME headers.
+ *
+ * @param renderTo  Output stream to write the encoded MIME part to.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or an IO error code.
+ */
 status_t
 BSimpleMailAttachment::RenderToRFC822(BPositionIO *renderTo)
 {
@@ -432,8 +638,12 @@ BSimpleMailAttachment::RenderToRFC822(BPositionIO *renderTo)
 //	#pragma mark -
 
 
-/*!	Supports and sends attributes.
-*/
+/**
+ * @brief Default constructor — creates an empty attributed attachment.
+ *
+ * The container and sub-attachments are not initialised until Initialize()
+ * or one of the SetTo() overloads is called.
+ */
 BAttributedMailAttachment::BAttributedMailAttachment()
 	:
 	fContainer(NULL),
@@ -444,6 +654,12 @@ BAttributedMailAttachment::BAttributedMailAttachment()
 }
 
 
+/**
+ * @brief Constructs an attributed attachment from an open BFile.
+ *
+ * @param file             Open BFile; BFS attributes are read from it.
+ * @param deleteWhenDone   If true, takes ownership of \a file.
+ */
 BAttributedMailAttachment::BAttributedMailAttachment(BFile *file,
 	bool deleteWhenDone)
 	:
@@ -455,6 +671,11 @@ BAttributedMailAttachment::BAttributedMailAttachment(BFile *file,
 }
 
 
+/**
+ * @brief Constructs an attributed attachment from an entry_ref.
+ *
+ * @param ref  entry_ref of the file whose data and BFS attributes to include.
+ */
 BAttributedMailAttachment::BAttributedMailAttachment(entry_ref *ref)
 	:
 	fContainer(NULL),
@@ -465,6 +686,11 @@ BAttributedMailAttachment::BAttributedMailAttachment(entry_ref *ref)
 }
 
 
+/**
+ * @brief Destroys the attributed attachment and its container.
+ *
+ * The container deletes _data and _attributes_attach.
+ */
 BAttributedMailAttachment::~BAttributedMailAttachment()
 {
 	// Our SimpleAttachments are deleted by fContainer
@@ -472,6 +698,15 @@ BAttributedMailAttachment::~BAttributedMailAttachment()
 }
 
 
+/**
+ * @brief Sets up the multipart/x-bfile container structure.
+ *
+ * Creates a BMIMEMultipartMailContainer with two sub-parts: one for the file
+ * data and one for the serialised BFS attributes. Also sets the appropriate
+ * Content-Type and Content-Disposition headers on the container.
+ *
+ * @return B_OK on success, or an error code if allocation fails.
+ */
 status_t
 BAttributedMailAttachment::Initialize()
 {
@@ -500,6 +735,16 @@ BAttributedMailAttachment::Initialize()
 }
 
 
+/**
+ * @brief Assigns an open BFile as this attachment's data source.
+ *
+ * Reads the file's BFS attributes into _attributes, delegates file data to
+ * _data, and generates a random MIME boundary string.
+ *
+ * @param file             Open BFile to read data and attributes from.
+ * @param deleteFileWhenDone  If true, takes ownership of \a file.
+ * @return B_OK on success, or B_BAD_VALUE if \a file is NULL.
+ */
 status_t
 BAttributedMailAttachment::SetTo(BFile *file, bool deleteFileWhenDone)
 {
@@ -527,6 +772,15 @@ BAttributedMailAttachment::SetTo(BFile *file, bool deleteFileWhenDone)
 }
 
 
+/**
+ * @brief Assigns a file identified by entry_ref as this attachment's source.
+ *
+ * Reads BFS attributes from the node, opens the file via _data->SetTo(),
+ * and constructs a random boundary incorporating the filename.
+ *
+ * @param ref  entry_ref of the file to attach.
+ * @return B_OK on success, or B_BAD_VALUE if \a ref is NULL.
+ */
 status_t
 BAttributedMailAttachment::SetTo(entry_ref *ref)
 {
@@ -567,6 +821,11 @@ BAttributedMailAttachment::SetTo(entry_ref *ref)
 }
 
 
+/**
+ * @brief Returns the initialisation status of this attributed attachment.
+ *
+ * @return B_OK if valid, B_NO_INIT if not yet initialised.
+ */
 status_t
 BAttributedMailAttachment::InitCheck()
 {
@@ -574,6 +833,14 @@ BAttributedMailAttachment::InitCheck()
 }
 
 
+/**
+ * @brief Saves the attachment file and its BFS attributes to /tmp.
+ *
+ * Reconstructs the file under /tmp using the embedded filename, writes the
+ * BFS attributes, and sets \a entry to point at the new file.
+ *
+ * @param entry  Output BEntry set to the path of the saved file.
+ */
 void
 BAttributedMailAttachment::SaveToDisk(BEntry *entry)
 {
@@ -591,6 +858,11 @@ BAttributedMailAttachment::SaveToDisk(BEntry *entry)
 }
 
 
+/**
+ * @brief Sets the transfer encoding for both the data and attributes sub-parts.
+ *
+ * @param encoding  Transfer encoding to apply to both sub-attachments.
+ */
 void
 BAttributedMailAttachment::SetEncoding(mail_encoding encoding)
 {
@@ -600,6 +872,11 @@ BAttributedMailAttachment::SetEncoding(mail_encoding encoding)
 }
 
 
+/**
+ * @brief Returns the transfer encoding of the data sub-attachment.
+ *
+ * @return The mail_encoding used by the data component.
+ */
 mail_encoding
 BAttributedMailAttachment::Encoding()
 {
@@ -607,6 +884,12 @@ BAttributedMailAttachment::Encoding()
 }
 
 
+/**
+ * @brief Retrieves the filename of this attachment from the data sub-part.
+ *
+ * @param name  Output buffer of at least B_FILE_NAME_LENGTH bytes.
+ * @return B_OK if found, B_NAME_NOT_FOUND otherwise.
+ */
 status_t
 BAttributedMailAttachment::FileName(char *name)
 {
@@ -614,6 +897,11 @@ BAttributedMailAttachment::FileName(char *name)
 }
 
 
+/**
+ * @brief Sets the filename on the data sub-attachment.
+ *
+ * @param name  Null-terminated filename string.
+ */
 void
 BAttributedMailAttachment::SetFileName(const char *name)
 {
@@ -621,6 +909,15 @@ BAttributedMailAttachment::SetFileName(const char *name)
 }
 
 
+/**
+ * @brief Retrieves the decoded file data and restores BFS attributes.
+ *
+ * If \a data is a BNode, the cached BFS attributes are written back to it.
+ * The raw file bytes are then read from the data sub-attachment.
+ *
+ * @param data  Destination stream or BNode to receive decoded data and attributes.
+ * @return B_OK always.
+ */
 status_t
 BAttributedMailAttachment::GetDecodedData(BPositionIO *data)
 {
@@ -633,6 +930,12 @@ BAttributedMailAttachment::GetDecodedData(BPositionIO *data)
 }
 
 
+/**
+ * @brief Assigns decoded data and, if \a data is a BNode, captures its attributes.
+ *
+ * @param data  Data source; BFS attributes are captured if it is a BNode.
+ * @return B_OK always.
+ */
 status_t
 BAttributedMailAttachment::SetDecodedData(BPositionIO *data)
 {
@@ -645,6 +948,18 @@ BAttributedMailAttachment::SetDecodedData(BPositionIO *data)
 }
 
 
+/**
+ * @brief Parses a multipart/x-bfile MIME stream to restore data and attributes.
+ *
+ * Initialises the container, parses the RFC 822 stream, validates the MIME
+ * type, extracts the data and attribute sub-parts, and deserialises the
+ * big-endian attribute binary into the internal _attributes BMessage.
+ *
+ * @param data       RFC 822 stream positioned at the start of this part.
+ * @param length     Number of bytes available for this part.
+ * @param parseNow   If true, forces immediate decoding of sub-part data.
+ * @return B_OK on success, or an error code if the part is malformed.
+ */
 status_t
 BAttributedMailAttachment::SetToRFC822(BPositionIO *data, size_t length,
 	bool parseNow)
@@ -716,6 +1031,16 @@ BAttributedMailAttachment::SetToRFC822(BPositionIO *data, size_t length,
 }
 
 
+/**
+ * @brief Serialises the BFS attributes and renders the full multipart/x-bfile part.
+ *
+ * Serialises all entries from the internal _attributes BMessage into
+ * big-endian binary, stores the result in _attributes_attach, and delegates
+ * rendering to the container.
+ *
+ * @param renderTo  Output stream to write the encoded MIME structure to.
+ * @return B_OK on success, B_NO_MEMORY if allocation fails, or an IO error code.
+ */
 status_t
 BAttributedMailAttachment::RenderToRFC822(BPositionIO *renderTo)
 {
@@ -760,6 +1085,12 @@ BAttributedMailAttachment::RenderToRFC822(BPositionIO *renderTo)
 }
 
 
+/**
+ * @brief Returns the MIME type of the data sub-attachment.
+ *
+ * @param mime  Output BMimeType to receive the type.
+ * @return B_OK on success.
+ */
 status_t
 BAttributedMailAttachment::MIMEType(BMimeType *mime)
 {

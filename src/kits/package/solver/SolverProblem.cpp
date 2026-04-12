@@ -1,9 +1,42 @@
 /*
- * Copyright 2013, Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Ingo Weinhold <ingo_weinhold@gmx.de>
+ */
+
+
+/**
+ * @file SolverProblem.cpp
+ * @brief Implementation of BSolverProblem, a dependency-resolution conflict descriptor.
+ *
+ * BSolverProblem encapsulates a single unresolvable conflict detected by the
+ * solver: its type, the source and target packages involved, an optional
+ * dependency expression, and a list of BSolverProblemSolution objects that the
+ * user may select to resolve it. The ToString() method produces a localised,
+ * human-readable description.
+ *
+ * @see BSolverProblemSolution, BSolver
  */
 
 
@@ -19,6 +52,7 @@
 #define B_TRANSLATION_CONTEXT "SolverProblem"
 
 
+/** @brief Localisation templates indexed by BSolverProblem::BType. */
 static const char* const kToStringTexts[] = {
 	B_TRANSLATE_MARK("unspecified problem"),
 	B_TRANSLATE_MARK("%source% does not belong to a distupgrade repository"),
@@ -49,6 +83,13 @@ static const char* const kToStringTexts[] = {
 namespace BPackageKit {
 
 
+/**
+ * @brief Construct a BSolverProblem without a dependency expression.
+ *
+ * @param type           The type of conflict detected.
+ * @param sourcePackage  The package that triggers the conflict; may be NULL.
+ * @param targetPackage  The conflicting target package; may be NULL.
+ */
 BSolverProblem::BSolverProblem(BType type, BSolverPackage* sourcePackage,
 	BSolverPackage* targetPackage)
 	:
@@ -61,6 +102,14 @@ BSolverProblem::BSolverProblem(BType type, BSolverPackage* sourcePackage,
 }
 
 
+/**
+ * @brief Construct a BSolverProblem with a dependency expression.
+ *
+ * @param type           The type of conflict detected.
+ * @param sourcePackage  The package that triggers the conflict; may be NULL.
+ * @param targetPackage  The conflicting target package; may be NULL.
+ * @param dependency     The resolvable expression involved in the conflict.
+ */
 BSolverProblem::BSolverProblem(BType type, BSolverPackage* sourcePackage,
 	BSolverPackage* targetPackage,
 	const BPackageResolvableExpression& dependency)
@@ -74,11 +123,19 @@ BSolverProblem::BSolverProblem(BType type, BSolverPackage* sourcePackage,
 }
 
 
+/**
+ * @brief Destroy the BSolverProblem and its associated solutions.
+ */
 BSolverProblem::~BSolverProblem()
 {
 }
 
 
+/**
+ * @brief Return the conflict type of this problem.
+ *
+ * @return The BType enum value describing the nature of the conflict.
+ */
 BSolverProblem::BType
 BSolverProblem::Type() const
 {
@@ -86,6 +143,11 @@ BSolverProblem::Type() const
 }
 
 
+/**
+ * @brief Return the source package involved in this conflict.
+ *
+ * @return Pointer to the source BSolverPackage, or NULL if not applicable.
+ */
 BSolverPackage*
 BSolverProblem::SourcePackage() const
 {
@@ -93,6 +155,11 @@ BSolverProblem::SourcePackage() const
 }
 
 
+/**
+ * @brief Return the target package involved in this conflict.
+ *
+ * @return Pointer to the target BSolverPackage, or NULL if not applicable.
+ */
 BSolverPackage*
 BSolverProblem::TargetPackage() const
 {
@@ -100,6 +167,12 @@ BSolverProblem::TargetPackage() const
 }
 
 
+/**
+ * @brief Return the dependency expression involved in this conflict.
+ *
+ * @return Reference to the BPackageResolvableExpression; check InitCheck()
+ *         before use as it may be uninitialised.
+ */
 const BPackageResolvableExpression&
 BSolverProblem::Dependency() const
 {
@@ -107,6 +180,11 @@ BSolverProblem::Dependency() const
 }
 
 
+/**
+ * @brief Return the number of available solutions for this problem.
+ *
+ * @return Count of BSolverProblemSolution objects.
+ */
 int32
 BSolverProblem::CountSolutions() const
 {
@@ -114,6 +192,12 @@ BSolverProblem::CountSolutions() const
 }
 
 
+/**
+ * @brief Return the solution at the given index.
+ *
+ * @param index  Zero-based index of the solution.
+ * @return Pointer to the BSolverProblemSolution, or NULL if out of range.
+ */
 const BSolverProblemSolution*
 BSolverProblem::SolutionAt(int32 index) const
 {
@@ -121,6 +205,12 @@ BSolverProblem::SolutionAt(int32 index) const
 }
 
 
+/**
+ * @brief Append a solution to the list of available solutions.
+ *
+ * @param solution  The solution to append; ownership is transferred.
+ * @return True on success, false if the list could not grow.
+ */
 bool
 BSolverProblem::AppendSolution(BSolverProblemSolution* solution)
 {
@@ -128,6 +218,14 @@ BSolverProblem::AppendSolution(BSolverProblemSolution* solution)
 }
 
 
+/**
+ * @brief Produce a localised, human-readable description of this problem.
+ *
+ * Substitutes %source%, %target%, and %dependency% placeholders with the
+ * versioned names of the involved packages and dependency expression.
+ *
+ * @return A BString containing the formatted problem description.
+ */
 BString
 BSolverProblem::ToString() const
 {
@@ -137,7 +235,7 @@ BSolverProblem::ToString() const
 
 	return BString(B_TRANSLATE_NOCOLLECT(kToStringTexts[index]))
 		.ReplaceAll("%source%",
-			fSourcePackage != NULL 
+			fSourcePackage != NULL
 				? fSourcePackage->VersionedName().String() : "?")
 		.ReplaceAll("%target%",
 			fTargetPackage != NULL

@@ -1,10 +1,44 @@
 /*
- * Copyright (c) 2010, Haiku, Inc.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Adrien Destugues <pulkomandy@pulkomandy.ath.cx>
- * 		Oliver Tappe <zooey@hirschkaefer.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright (c) 2010, Haiku, Inc.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Authors:
+ *       Adrien Destugues <pulkomandy@pulkomandy.ath.cx>
+ *       Oliver Tappe <zooey@hirschkaefer.de>
+ */
+
+
+/**
+ * @file TimeZone.cpp
+ * @brief Implementation of BTimeZone, the ICU time zone wrapper.
+ *
+ * BTimeZone holds an ICU TimeZone object and lazily computes display name
+ * strings (long, daylight-saving, short, and short-DST forms), the GMT
+ * offset in seconds, and the daylight-saving support flag. Each computed
+ * field is cached via a bitmask so it is only fetched from ICU once per
+ * object lifetime. An optional BLanguage determines the locale used for
+ * display name strings.
+ *
+ * @see BLocaleRoster, BDurationFormat
  */
 
 
@@ -23,23 +57,42 @@
 U_NAMESPACE_USE
 
 
+/** @brief The IANA identifier for the UTC/GMT zone. */
 const char* BTimeZone::kNameOfGmtZone = "GMT";
 
 
+/** @brief Empty string returned when a requested field is not set. */
 static const BString skEmptyString;
 
 
+/** @brief Bitmask field: long (generic-location) display name is cached. */
 static const uint32 skNameField 					= 1U << 0;
+/** @brief Bitmask field: long DST display name is cached. */
 static const uint32 skDaylightSavingNameField 		= 1U << 1;
+/** @brief Bitmask field: short (standard) display name is cached. */
 static const uint32 skShortNameField 				= 1U << 2;
+/** @brief Bitmask field: short DST display name is cached. */
 static const uint32 skShortDaylightSavingNameField 	= 1U << 3;
+/** @brief Bitmask field: long generic display name is cached. */
 static const uint32 skLongGenericNameField 			= 1U << 4;
+/** @brief Bitmask field: generic-location display name is cached. */
 static const uint32 skGenericLocationNameField 		= 1U << 5;
+/** @brief Bitmask field: short commonly-used display name is cached. */
 static const uint32 skShortCommonlyUsedNameField	= 1U << 6;
+/** @brief Bitmask field: daylight-saving support flag is cached. */
 static const uint32 skSupportsDaylightSavingField   = 1U << 7;
+/** @brief Bitmask field: GMT offset in seconds is cached. */
 static const uint32 skOffsetFromGMTField			= 1U << 8;
 
 
+/**
+ * @brief Construct a BTimeZone for the given IANA zone identifier.
+ *
+ * If \a zoneID is NULL or empty the system default time zone is used.
+ *
+ * @param zoneID    IANA time zone identifier (e.g. "America/New_York"), or NULL.
+ * @param language  Language for display names, or NULL for the system default.
+ */
 BTimeZone::BTimeZone(const char* zoneID, const BLanguage* language)
 	:
 	fICUTimeZone(NULL),
@@ -51,6 +104,11 @@ BTimeZone::BTimeZone(const char* zoneID, const BLanguage* language)
 }
 
 
+/**
+ * @brief Copy-construct a BTimeZone by cloning all ICU objects.
+ *
+ * @param other  Source BTimeZone to copy.
+ */
 BTimeZone::BTimeZone(const BTimeZone& other)
 	:
 	fICUTimeZone(other.fICUTimeZone == NULL
@@ -72,6 +130,9 @@ BTimeZone::BTimeZone(const BTimeZone& other)
 }
 
 
+/**
+ * @brief Destroy the BTimeZone and free ICU objects.
+ */
 BTimeZone::~BTimeZone()
 {
 	delete fICULocale;
@@ -79,6 +140,12 @@ BTimeZone::~BTimeZone()
 }
 
 
+/**
+ * @brief Copy-assign from another BTimeZone, replacing all fields.
+ *
+ * @param source  Source BTimeZone to copy from.
+ * @return Reference to this BTimeZone.
+ */
 BTimeZone& BTimeZone::operator=(const BTimeZone& source)
 {
 	delete fICUTimeZone;
@@ -102,6 +169,11 @@ BTimeZone& BTimeZone::operator=(const BTimeZone& source)
 }
 
 
+/**
+ * @brief Return the IANA zone identifier string.
+ *
+ * @return Reference to the cached zone ID BString.
+ */
 const BString&
 BTimeZone::ID() const
 {
@@ -109,6 +181,11 @@ BTimeZone::ID() const
 }
 
 
+/**
+ * @brief Return the long generic-location display name, lazily fetched.
+ *
+ * @return Reference to the cached display name BString.
+ */
 const BString&
 BTimeZone::Name() const
 {
@@ -130,6 +207,11 @@ BTimeZone::Name() const
 }
 
 
+/**
+ * @brief Return the long DST generic-location display name, lazily fetched.
+ *
+ * @return Reference to the cached DST display name BString.
+ */
 const BString&
 BTimeZone::DaylightSavingName() const
 {
@@ -151,6 +233,11 @@ BTimeZone::DaylightSavingName() const
 }
 
 
+/**
+ * @brief Return the short (abbreviation) standard-time display name, lazily fetched.
+ *
+ * @return Reference to the cached short name BString.
+ */
 const BString&
 BTimeZone::ShortName() const
 {
@@ -171,6 +258,11 @@ BTimeZone::ShortName() const
 }
 
 
+/**
+ * @brief Return the short DST display name (abbreviation), lazily fetched.
+ *
+ * @return Reference to the cached short DST name BString.
+ */
 const BString&
 BTimeZone::ShortDaylightSavingName() const
 {
@@ -191,6 +283,14 @@ BTimeZone::ShortDaylightSavingName() const
 }
 
 
+/**
+ * @brief Return the total offset from GMT in seconds, lazily computed.
+ *
+ * Queries the ICU time zone for the raw and DST offsets at the current time
+ * and sums them. Positive values are east of GMT.
+ *
+ * @return Offset in seconds from UTC.
+ */
 int
 BTimeZone::OffsetFromGMT() const
 {
@@ -214,6 +314,11 @@ BTimeZone::OffsetFromGMT() const
 }
 
 
+/**
+ * @brief Return whether this time zone observes daylight saving time.
+ *
+ * @return true if DST is supported, false otherwise.
+ */
 bool
 BTimeZone::SupportsDaylightSaving() const
 {
@@ -226,6 +331,12 @@ BTimeZone::SupportsDaylightSaving() const
 }
 
 
+/**
+ * @brief Check whether this BTimeZone was initialized successfully.
+ *
+ * @return B_OK on success, B_NAME_NOT_FOUND if the zone ID was not recognized,
+ *         B_NO_MEMORY if allocation failed.
+ */
 status_t
 BTimeZone::InitCheck() const
 {
@@ -233,6 +344,12 @@ BTimeZone::InitCheck() const
 }
 
 
+/**
+ * @brief Change the display language without changing the time zone.
+ *
+ * @param language  New language for display names, or NULL for the system default.
+ * @return B_OK on success, or an error code from SetTo().
+ */
 status_t
 BTimeZone::SetLanguage(const BLanguage* language)
 {
@@ -240,6 +357,17 @@ BTimeZone::SetLanguage(const BLanguage* language)
 }
 
 
+/**
+ * @brief Set this BTimeZone to a new IANA zone identifier and optional language.
+ *
+ * Clears all cached display-name fields. If \a zoneID is NULL or empty, the
+ * system default time zone is used.
+ *
+ * @param zoneID    IANA time zone identifier, or NULL for the system default.
+ * @param language  Language for display names, or NULL for the system default.
+ * @return B_OK on success, B_NAME_NOT_FOUND if the zone is unrecognized,
+ *         B_NO_MEMORY on allocation failure.
+ */
 status_t
 BTimeZone::SetTo(const char* zoneID, const BLanguage* language)
 {

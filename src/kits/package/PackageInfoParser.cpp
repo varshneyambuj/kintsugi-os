@@ -1,7 +1,39 @@
 /*
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Copyright 2016, Andrew Lindesay <apl@lindesay.co.nz>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
+ *   Copyright 2016, Andrew Lindesay <apl@lindesay.co.nz>
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file PackageInfoParser.cpp
+ * @brief Recursive-descent parser for .PackageInfo text format.
+ *
+ * Implements BPackageInfo::Parser, which tokenises and parses the
+ * .PackageInfo key-value format used inside HPKG files and standalone
+ * package-description files.  Parse errors are reported through the optional
+ * ParseErrorListener interface; allocation failures propagate as std::bad_alloc.
+ *
+ * @see BPackageInfo, BPackageInfo::ParseErrorListener
  */
 
 
@@ -19,11 +51,19 @@
 namespace BPackageKit {
 
 
+/**
+ * @brief Virtual destructor for the ParseErrorListener interface.
+ */
 BPackageInfo::ParseErrorListener::~ParseErrorListener()
 {
 }
 
 
+/**
+ * @brief Construct a parser with an optional error listener.
+ *
+ * @param listener  Receives OnError() calls for parse failures; may be NULL.
+ */
 BPackageInfo::Parser::Parser(ParseErrorListener* listener)
 	:
 	fListener(listener),
@@ -32,6 +72,18 @@ BPackageInfo::Parser::Parser(ParseErrorListener* listener)
 }
 
 
+/**
+ * @brief Parse a complete .PackageInfo string into a BPackageInfo.
+ *
+ * Tokenises and parses \a packageInfoString, calling setters on
+ * \a packageInfo as each field is recognised.  On error the position is
+ * mapped to a line and column number and forwarded to the listener.
+ *
+ * @param packageInfoString  The .PackageInfo-format source text.
+ * @param packageInfo        The BPackageInfo to populate; must not be NULL.
+ * @return B_OK on success, B_BAD_VALUE if \a packageInfo is NULL, B_BAD_DATA
+ *         on parse error, or B_NO_MEMORY on allocation failure.
+ */
 status_t
 BPackageInfo::Parser::Parse(const BString& packageInfoString,
 	BPackageInfo* packageInfo)
@@ -81,6 +133,14 @@ BPackageInfo::Parser::Parse(const BString& packageInfoString,
 }
 
 
+/**
+ * @brief Parse a version string into a BPackageVersion.
+ *
+ * @param versionString       Text in "major.minor.micro~pre-revision" format.
+ * @param revisionIsOptional  If true, a missing "-revision" suffix is allowed.
+ * @param _version            Output version populated on success.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 status_t
 BPackageInfo::Parser::ParseVersion(const BString& versionString,
 	bool revisionIsOptional, BPackageVersion& _version)
@@ -106,6 +166,13 @@ BPackageInfo::Parser::ParseVersion(const BString& versionString,
 }
 
 
+/**
+ * @brief Parse a resolvable string into a BPackageResolvable.
+ *
+ * @param expressionString  Resolvable text (e.g. "libfoo = 1.0 compat >= 0.9").
+ * @param _expression       Output BPackageResolvable populated on success.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 status_t
 BPackageInfo::Parser::ParseResolvable(const BString& expressionString,
 	BPackageResolvable& _expression)
@@ -131,6 +198,13 @@ BPackageInfo::Parser::ParseResolvable(const BString& expressionString,
 }
 
 
+/**
+ * @brief Parse a resolvable-expression string into a BPackageResolvableExpression.
+ *
+ * @param expressionString  Expression text (e.g. "libfoo >= 1.0").
+ * @param _expression       Output BPackageResolvableExpression populated on success.
+ * @return B_OK on success, B_BAD_DATA on parse error, or B_NO_MEMORY.
+ */
 status_t
 BPackageInfo::Parser::ParseResolvableExpression(const BString& expressionString,
 	BPackageResolvableExpression& _expression)
@@ -156,6 +230,16 @@ BPackageInfo::Parser::ParseResolvableExpression(const BString& expressionString,
 }
 
 
+/**
+ * @brief Advance fPos past whitespace/comments and return the next token.
+ *
+ * Skips whitespace, '#' line comments, escaped newlines, and ';' statement
+ * separators (treated the same as newlines).  Returns an item-separator token
+ * if a newline or ';' was the last non-whitespace character seen before the
+ * next real token.
+ *
+ * @return The next Token from the input stream.
+ */
 BPackageInfo::Parser::Token
 BPackageInfo::Parser::_NextToken()
 {
@@ -307,6 +391,13 @@ BPackageInfo::Parser::_NextToken()
 }
 
 
+/**
+ * @brief Reset the parser position to the position stored in \a token.
+ *
+ * Used to "un-consume" a token that was read speculatively.
+ *
+ * @param token  The token whose position to rewind to.
+ */
 void
 BPackageInfo::Parser::_RewindTo(const Token& token)
 {
@@ -314,6 +405,14 @@ BPackageInfo::Parser::_RewindTo(const Token& token)
 }
 
 
+/**
+ * @brief Consume the next token and store its text as a string value.
+ *
+ * Throws ParseError if the next token is not TOKEN_STRING.
+ *
+ * @param value      Output BString receiving the token text.
+ * @param _tokenPos  Optional output pointer receiving the token position.
+ */
 void
 BPackageInfo::Parser::_ParseStringValue(BString* value, const char** _tokenPos)
 {
@@ -327,6 +426,15 @@ BPackageInfo::Parser::_ParseStringValue(BString* value, const char** _tokenPos)
 }
 
 
+/**
+ * @brief Parse the next token as a BPackageArchitecture name.
+ *
+ * Performs a case-insensitive search through kArchitectureNames and sets
+ * \a value to the matching enum.  Throws ParseError if the token is not
+ * a recognised architecture name.
+ *
+ * @param value  Output BPackageArchitecture set on success.
+ */
 void
 BPackageInfo::Parser::_ParseArchitectureValue(BPackageArchitecture* value)
 {
@@ -351,6 +459,12 @@ BPackageInfo::Parser::_ParseArchitectureValue(BPackageArchitecture* value)
 }
 
 
+/**
+ * @brief Consume the next token and parse it as a BPackageVersion (non-static overload).
+ *
+ * @param value              Output version.
+ * @param revisionIsOptional If true, the revision suffix is not required.
+ */
 void
 BPackageInfo::Parser::_ParseVersionValue(BPackageVersion* value,
 	bool revisionIsOptional)
@@ -360,6 +474,16 @@ BPackageInfo::Parser::_ParseVersionValue(BPackageVersion* value,
 }
 
 
+/**
+ * @brief Parse \a word as a BPackageVersion (static overload operating on an existing token).
+ *
+ * Splits the token text into major.minor.micro~pre-revision components and
+ * validates each part.  Throws ParseError for malformed input.
+ *
+ * @param word               Token containing the version string.
+ * @param value              Output version.
+ * @param revisionIsOptional If true, a missing revision is allowed.
+ */
 /*static*/ void
 BPackageInfo::Parser::_ParseVersionValue(Token& word, BPackageVersion* value,
 	bool revisionIsOptional)
@@ -452,6 +576,12 @@ BPackageInfo::Parser::_ParseVersionValue(Token& word, BPackageVersion* value,
 }
 
 
+/**
+ * @brief Parse a resolvable entry (name, optional version, optional compat version).
+ *
+ * @param token   Token containing the resolvable name.
+ * @param _value  Output BPackageResolvable populated on success.
+ */
 void
 BPackageInfo::Parser::_ParseResolvable(const Token& token,
 	BPackageResolvable& _value)
@@ -496,6 +626,14 @@ BPackageInfo::Parser::_ParseResolvable(const Token& token,
 }
 
 
+/**
+ * @brief Parse a resolvable expression (name, operator, version, optional "base" marker).
+ *
+ * @param token        Token containing the resolvable name.
+ * @param _value       Output BPackageResolvableExpression populated on success.
+ * @param _basePackage If non-NULL, receives the base-package name when the
+ *                     "base" keyword follows a versioned requires entry.
+ */
 void
 BPackageInfo::Parser::_ParseResolvableExpression(const Token& token,
 	BPackageResolvableExpression& _value, BString* _basePackage)
@@ -551,6 +689,16 @@ BPackageInfo::Parser::_ParseResolvableExpression(const Token& token,
 }
 
 
+/**
+ * @brief Parse a brace-delimited list, calling \a elementParser for each item.
+ *
+ * If the first token is not a '{', and \a allowSingleNonListElement is true,
+ * the element parser is called directly on that token (single-element shorthand).
+ *
+ * @param elementParser             Functor called with each non-separator token.
+ * @param allowSingleNonListElement If true, a bare token is accepted as a
+ *                                  single-element list without braces.
+ */
 void
 BPackageInfo::Parser::_ParseList(ListElementParser& elementParser,
 	bool allowSingleNonListElement)
@@ -577,6 +725,14 @@ BPackageInfo::Parser::_ParseList(ListElementParser& elementParser,
 }
 
 
+/**
+ * @brief Parse a list of string tokens into a BStringList.
+ *
+ * @param value                  Output list to append strings to.
+ * @param requireResolvableName  If true, each string must be a valid resolvable name.
+ * @param convertToLowerCase     If true, each string is lower-cased before adding.
+ * @param stringValidator        Optional validator called on each string before adding.
+ */
 void
 BPackageInfo::Parser::_ParseStringList(BStringList* value,
 	bool requireResolvableName, bool convertToLowerCase,
@@ -627,6 +783,13 @@ BPackageInfo::Parser::_ParseStringList(BStringList* value,
 }
 
 
+/**
+ * @brief Parse a list of flag tokens and return their combined bitmask.
+ *
+ * Recognises "approve_license" and "system_package".
+ *
+ * @return The combined uint32 flags bitmask.
+ */
 uint32
 BPackageInfo::Parser::_ParseFlags()
 {
@@ -662,6 +825,11 @@ BPackageInfo::Parser::_ParseFlags()
 }
 
 
+/**
+ * @brief Parse a brace-delimited list of resolvables into \a value.
+ *
+ * @param value  Output BObjectList to receive BPackageResolvable objects.
+ */
 void
 BPackageInfo::Parser::_ParseResolvableList(
 	BObjectList<BPackageResolvable, true>* value)
@@ -690,6 +858,13 @@ BPackageInfo::Parser::_ParseResolvableList(
 }
 
 
+/**
+ * @brief Parse a brace-delimited list of resolvable expressions into \a value.
+ *
+ * @param value        Output BObjectList to receive BPackageResolvableExpression objects.
+ * @param _basePackage Optional output receiving the base-package name if any
+ *                     entry carries the "base" keyword.
+ */
 void
 BPackageInfo::Parser::_ParseResolvableExprList(
 	BObjectList<BPackageResolvableExpression, true>* value, BString* _basePackage)
@@ -721,6 +896,14 @@ BPackageInfo::Parser::_ParseResolvableExprList(
 }
 
 
+/**
+ * @brief Parse a brace-delimited list of globally writable file/directory entries.
+ *
+ * Each entry consists of a path string, an optional "directory" keyword, and
+ * an optional update-type keyword (keep-old, manual, auto-merge).
+ *
+ * @param infos  Output list to receive BGlobalWritableFileInfo objects.
+ */
 void
 BPackageInfo::Parser::_ParseGlobalWritableFileInfos(
 	GlobalWritableFileInfoList* infos)
@@ -786,6 +969,14 @@ BPackageInfo::Parser::_ParseGlobalWritableFileInfos(
 }
 
 
+/**
+ * @brief Parse a brace-delimited list of user settings file/directory entries.
+ *
+ * Each entry has a path followed by either "directory", "template <path>", or
+ * nothing.
+ *
+ * @param infos  Output list to receive BUserSettingsFileInfo objects.
+ */
 void
 BPackageInfo::Parser::_ParseUserSettingsFileInfos(
 	UserSettingsFileInfoList* infos)
@@ -847,6 +1038,14 @@ BPackageInfo::Parser::_ParseUserSettingsFileInfos(
 }
 
 
+/**
+ * @brief Parse a brace-delimited list of user declarations into \a users.
+ *
+ * Each user entry consists of a user name followed by optional "real-name",
+ * "home", "shell", and "groups" sub-fields.
+ *
+ * @param users  Output UserList to receive BUser objects.
+ */
 void
 BPackageInfo::Parser::_ParseUsers(UserList* users)
 {
@@ -957,6 +1156,15 @@ BPackageInfo::Parser::_ParseUsers(UserList* users)
 }
 
 
+/**
+ * @brief Top-level parse loop: read key-value pairs and populate \a packageInfo.
+ *
+ * Iterates over all tokens, matches attribute names from BPackageInfo::kElementNames,
+ * dispatches to the appropriate sub-parser, and verifies that all mandatory
+ * attributes (up to and including "provides") were seen.
+ *
+ * @param packageInfo  The BPackageInfo to populate.
+ */
 void
 BPackageInfo::Parser::_Parse(BPackageInfo* packageInfo)
 {
@@ -1140,6 +1348,14 @@ BPackageInfo::Parser::_Parse(BPackageInfo* packageInfo)
 }
 
 
+/**
+ * @brief Check whether a BString consists only of alphanumerics, underscores, and extra chars.
+ *
+ * @param string          The string to validate.
+ * @param additionalChars Additional allowed characters beyond [A-Za-z0-9_].
+ * @param _errorPos       Optional output set to the index of the first invalid character.
+ * @return true if all characters are valid, false otherwise.
+ */
 /*static*/ inline bool
 BPackageInfo::Parser::_IsAlphaNumUnderscore(const BString& string,
 	const char* additionalChars, int32* _errorPos)
@@ -1149,6 +1365,14 @@ BPackageInfo::Parser::_IsAlphaNumUnderscore(const BString& string,
 }
 
 
+/**
+ * @brief Check whether a C-string consists only of alphanumerics, underscores, and extra chars.
+ *
+ * @param string          Null-terminated C-string to validate.
+ * @param additionalChars Additional allowed characters.
+ * @param _errorPos       Optional output set to the index of the first invalid character.
+ * @return true if all characters are valid, false otherwise.
+ */
 /*static*/ inline bool
 BPackageInfo::Parser::_IsAlphaNumUnderscore(const char* string,
 	const char* additionalChars, int32* _errorPos)
@@ -1158,6 +1382,15 @@ BPackageInfo::Parser::_IsAlphaNumUnderscore(const char* string,
 }
 
 
+/**
+ * @brief Check whether all characters in [start, end) are alphanumeric, '_', or in extras.
+ *
+ * @param start           Pointer to the first character.
+ * @param end             Pointer past the last character.
+ * @param additionalChars Additional allowed characters.
+ * @param _errorPos       Optional output set to the offset of the first invalid character.
+ * @return true if all characters pass, false on the first violation.
+ */
 /*static*/ bool
 BPackageInfo::Parser::_IsAlphaNumUnderscore(const char* start, const char* end,
 	const char* additionalChars, int32* _errorPos)
@@ -1174,6 +1407,16 @@ BPackageInfo::Parser::_IsAlphaNumUnderscore(const char* start, const char* end,
 }
 
 
+/**
+ * @brief Check whether \a string is a valid resolvable name.
+ *
+ * A valid resolvable name must not contain whitespace or any of the operator
+ * and delimiter characters used by the parser ('-', '/', '<', '>', '=', '!').
+ *
+ * @param string    C-string to validate.
+ * @param _errorPos Optional output set to the offset of the first invalid character.
+ * @return true if the name is valid, false otherwise.
+ */
 /*static*/ bool
 BPackageInfo::Parser::_IsValidResolvableName(const char* string,
 	int32* _errorPos)
@@ -1200,6 +1443,13 @@ BPackageInfo::Parser::_IsValidResolvableName(const char* string,
 	return true;
 }
 
+
+/**
+ * @brief Validate that \a urlString is a well-formed URL; throw ParseError otherwise.
+ *
+ * @param urlString  The URL string to validate.
+ * @param pos        Source position used in the ParseError if validation fails.
+ */
 void
 BPackageInfo::Parser::UrlStringValidator::Validate(const BString& urlString,
 	const char* pos)

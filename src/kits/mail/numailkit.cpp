@@ -1,7 +1,39 @@
-/* Numail Kit - general header for using the kit
-**
-** Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
-*/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Numail Kit - general header for using the kit
+ *   Copyright 2001 Dr. Zoidberg Enterprises. All rights reserved.
+ */
+
+
+/**
+ * @file numailkit.cpp
+ * @brief Internal BPrivate utilities used throughout the mail kit.
+ *
+ * Provides default_mail_directory(), default_mail_in_directory(), and
+ * default_mail_out_directory() to resolve standard mail folder paths, and
+ * WriteMessageFile() for atomically persisting a BMessage to disk via a
+ * temporary file and rename. These helpers are not part of the public API.
+ *
+ * @see BMailSettings, BMailAccountSettings
+ */
 
 
 #include <MailPrivate.h>
@@ -19,12 +51,20 @@
 #include <String.h>
 
 
+/** @brief Timeout in microseconds for acquiring a lock on settings temp files. */
 #define timeout 5e5
 
 
 namespace BPrivate {
 
 
+/**
+ * @brief Returns the default mail directory path (~\/mail).
+ *
+ * Falls back to /boot/home/mail/ if find_directory() fails.
+ *
+ * @return BPath pointing to the user's mail directory.
+ */
 BPath
 default_mail_directory()
 {
@@ -38,6 +78,11 @@ default_mail_directory()
 }
 
 
+/**
+ * @brief Returns the default incoming mail directory path (~\/mail/in).
+ *
+ * @return BPath pointing to the user's incoming mail folder.
+ */
 BPath
 default_mail_in_directory()
 {
@@ -48,6 +93,11 @@ default_mail_in_directory()
 }
 
 
+/**
+ * @brief Returns the default outgoing mail directory path (~\/mail/out).
+ *
+ * @return BPath pointing to the user's outgoing mail folder.
+ */
 BPath
 default_mail_out_directory()
 {
@@ -58,6 +108,21 @@ default_mail_out_directory()
 }
 
 
+/**
+ * @brief Atomically writes a flattened BMessage to a named file under \a path.
+ *
+ * Creates or opens a temporary file (\a name + ".tmp") in the directory
+ * identified by \a path, acquires an exclusive lock within a configurable
+ * timeout period, flattens \a archive into it, syncs to disk, then renames
+ * the temporary file to \a name — guaranteeing that any existing file of that
+ * name is either fully replaced or untouched.
+ *
+ * @param archive  BMessage to flatten and persist.
+ * @param path     Directory path where the file will be written.
+ * @param name     Final filename (without the .tmp suffix) for the settings file.
+ * @return B_OK on success, B_TIMED_OUT if the lock cannot be acquired within
+ *         the timeout, or another error code if directory access or I/O fails.
+ */
 status_t
 WriteMessageFile(const BMessage& archive, const BPath& path, const char* name)
 {

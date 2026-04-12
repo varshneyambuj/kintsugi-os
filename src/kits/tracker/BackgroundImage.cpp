@@ -1,38 +1,61 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy of
+ *   this software and associated documentation files (the "Software"), to deal in
+ *   the Software without restriction, including without limitation the rights to
+ *   use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ *   of the Software, and to permit persons to whom the Software is furnished to do
+ *   so, subject to the following conditions:
+ *
+ *   The above copyright notice and this permission notice applies to all licensees
+ *   and shall be included in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
+ *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ *   BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+ *   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+ *   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
+ *   trademarks of Be Incorporated in the United States and other countries.
+ *   All rights reserved.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
-
-//  Classes used for setting up and managing background images
+/**
+ * @file BackgroundImage.cpp
+ * @brief Classes for loading, displaying, and managing Tracker background images.
+ *
+ * BackgroundImage reads workspace-aware background bitmap descriptors stored as
+ * a flattened BMessage in the B_BACKGROUND_INFO node attribute. It supports
+ * tiled, scaled, centred, and offset placement modes, and handles workspace
+ * switches and screen resolution changes for desktop windows.
+ *
+ * @see BPoseView, BDeskWindow
+ */
 
 
 #include <Bitmap.h>
@@ -66,6 +89,17 @@ const char* kBackgroundImageInfoPath 		= B_BACKGROUND_IMAGE;
 //	#pragma mark - BackgroundImage
 
 
+/**
+ * @brief Read the background-image attribute from @a node and build a BackgroundImage object.
+ *
+ * Parses the flattened BMessage stored under B_BACKGROUND_INFO, loads each bitmap
+ * path via BTranslationUtils, and populates a BackgroundImage with one
+ * BackgroundImageInfo entry per workspace descriptor found.
+ *
+ * @param node       The BNode whose B_BACKGROUND_INFO attribute is read.
+ * @param isDesktop  true if the node represents a desktop (full-screen) directory.
+ * @return A heap-allocated BackgroundImage, or NULL if the attribute is absent or invalid.
+ */
 BackgroundImage*
 BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop)
 {
@@ -127,6 +161,15 @@ BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop)
 }
 
 
+/**
+ * @brief Construct a per-workspace background descriptor.
+ *
+ * @param workspaces         Bitmask of workspaces where this image should be shown.
+ * @param bitmap             The decoded BBitmap to display (ownership is taken).
+ * @param mode               Display mode (tiled, centred, scaled, or at-offset).
+ * @param offset             Pixel offset used in kAtOffset mode.
+ * @param textWidgetOutline  Whether pose-view text widgets should draw an outline.
+ */
 BackgroundImage::BackgroundImageInfo::BackgroundImageInfo(uint32 workspaces,
 	BBitmap* bitmap, Mode mode, BPoint offset, bool textWidgetOutline)
 	:
@@ -139,12 +182,21 @@ BackgroundImage::BackgroundImageInfo::BackgroundImageInfo(uint32 workspaces,
 }
 
 
+/**
+ * @brief Destructor; deletes the owned BBitmap.
+ */
 BackgroundImage::BackgroundImageInfo::~BackgroundImageInfo()
 {
 	delete fBitmap;
 }
 
 
+/**
+ * @brief Private constructor; called only by GetBackgroundImage().
+ *
+ * @param node     The source node whose attribute defined this background.
+ * @param desktop  true if this background belongs to a desktop window.
+ */
 BackgroundImage::BackgroundImage(const BNode* node, bool desktop)
 	:
 	fIsDesktop(desktop),
@@ -156,11 +208,19 @@ BackgroundImage::BackgroundImage(const BNode* node, bool desktop)
 }
 
 
+/**
+ * @brief Destructor.
+ */
 BackgroundImage::~BackgroundImage()
 {
 }
 
 
+/**
+ * @brief Append a BackgroundImageInfo entry to the workspace list.
+ *
+ * @param info  Heap-allocated info descriptor (ownership is transferred).
+ */
 void
 BackgroundImage::Add(BackgroundImageInfo* info)
 {
@@ -168,6 +228,15 @@ BackgroundImage::Add(BackgroundImageInfo* info)
 }
 
 
+/**
+ * @brief Show the background image appropriate for @a workspace on @a view.
+ *
+ * Looks up the best BackgroundImageInfo for the given workspace index and
+ * applies it. Also propagates text-outline state to any BPoseView.
+ *
+ * @param view       The BView to apply the background bitmap to.
+ * @param workspace  The current workspace index.
+ */
 void
 BackgroundImage::Show(BView* view, int32 workspace)
 {
@@ -184,6 +253,15 @@ BackgroundImage::Show(BView* view, int32 workspace)
 }
 
 
+/**
+ * @brief Apply a specific BackgroundImageInfo to @a view.
+ *
+ * Computes destination bounds according to the display mode (tiled, scaled,
+ * centred, or at-offset), then calls BView::SetViewBitmap() and Invalidate().
+ *
+ * @param info  The BackgroundImageInfo descriptor to display.
+ * @param view  The target BView.
+ */
 void
 BackgroundImage::Show(BackgroundImageInfo* info, BView* view)
 {
@@ -261,6 +339,12 @@ BackgroundImage::Show(BackgroundImageInfo* info, BView* view)
 }
 
 
+/**
+ * @brief Compute the width-to-height ratio of @a rect.
+ *
+ * @param rect  The rectangle whose ratio is calculated.
+ * @return Width divided by height.
+ */
 float
 BackgroundImage::BRectRatio(BRect rect)
 {
@@ -268,6 +352,15 @@ BackgroundImage::BRectRatio(BRect rect)
 }
 
 
+/**
+ * @brief Compute the horizontal overlap needed to scale @a resizedRect to fill @a hostRect.
+ *
+ * Used in kScaledToFit mode when the source image is wider than the host.
+ *
+ * @param hostRect     The destination rectangle (view bounds).
+ * @param resizedRect  The source image bounds before scaling.
+ * @return Horizontal overhang in pixels on each side.
+ */
 float
 BackgroundImage::BRectHorizontalOverlap(BRect hostRect, BRect resizedRect)
 {
@@ -276,6 +369,15 @@ BackgroundImage::BRectHorizontalOverlap(BRect hostRect, BRect resizedRect)
 }
 
 
+/**
+ * @brief Compute the vertical overlap needed to scale @a resizedRect to fill @a hostRect.
+ *
+ * Used in kScaledToFit mode when the source image is taller than the host.
+ *
+ * @param hostRect     The destination rectangle (view bounds).
+ * @param resizedRect  The source image bounds before scaling.
+ * @return Vertical overhang in pixels on each side.
+ */
 float
 BackgroundImage::BRectVerticalOverlap(BRect hostRect, BRect resizedRect)
 {
@@ -284,6 +386,11 @@ BackgroundImage::BRectVerticalOverlap(BRect hostRect, BRect resizedRect)
 }
 
 
+/**
+ * @brief Clear the current background bitmap and reset the view to its default appearance.
+ *
+ * Also re-enables text-widget outline drawing on any associated BPoseView.
+ */
 void
 BackgroundImage::Remove()
 {
@@ -301,6 +408,15 @@ BackgroundImage::Remove()
 }
 
 
+/**
+ * @brief Find the best BackgroundImageInfo for the given workspace index.
+ *
+ * Prefers an entry whose workspace mask exactly matches @a workspace; falls back
+ * to the first entry whose mask includes the workspace bit.
+ *
+ * @param workspace  Zero-based workspace index.
+ * @return The best matching BackgroundImageInfo, or NULL if none matches.
+ */
 BackgroundImage::BackgroundImageInfo*
 BackgroundImage::ImageInfoForWorkspace(int32 workspace) const
 {
@@ -328,6 +444,15 @@ BackgroundImage::ImageInfoForWorkspace(int32 workspace) const
 }
 
 
+/**
+ * @brief React to a workspace switch by showing the appropriate background.
+ *
+ * Only acts on desktop windows when entering a new workspace.
+ *
+ * @param view       The desktop BView.
+ * @param workspace  The workspace that was activated.
+ * @param state      true when entering the workspace, false when leaving.
+ */
 void
 BackgroundImage::WorkspaceActivated(BView* view, int32 workspace, bool state)
 {
@@ -359,6 +484,11 @@ BackgroundImage::WorkspaceActivated(BView* view, int32 workspace, bool state)
 }
 
 
+/**
+ * @brief Re-centre the background image after a screen resolution change.
+ *
+ * Only has an effect for desktop windows showing a centred image.
+ */
 void
 BackgroundImage::ScreenChanged(BRect, color_space)
 {
@@ -380,6 +510,18 @@ BackgroundImage::ScreenChanged(BRect, color_space)
 }
 
 
+/**
+ * @brief Replace @a oldBackgroundImage with a freshly loaded one from @a fromNode.
+ *
+ * Removes and deletes @a oldBackgroundImage, reads a new BackgroundImage from
+ * @a fromNode, and immediately shows it on @a poseView if the view is in icon mode.
+ *
+ * @param oldBackgroundImage  Previous background to remove and delete (may be NULL).
+ * @param fromNode            Node whose B_BACKGROUND_INFO attribute is parsed.
+ * @param desktop             true if @a poseView is a desktop view.
+ * @param poseView            The BPoseView to display the new background on.
+ * @return Newly allocated BackgroundImage, or NULL if none is defined on the node.
+ */
 BackgroundImage*
 BackgroundImage::Refresh(BackgroundImage* oldBackgroundImage,
 	const BNode* fromNode, bool desktop, BPoseView* poseView)

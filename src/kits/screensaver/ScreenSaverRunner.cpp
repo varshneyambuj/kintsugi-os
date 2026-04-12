@@ -1,12 +1,45 @@
 /*
- * Copyright 2003-2013 Haiku, Inc. All rights reserved
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de
- *		Jérôme Duval, jerome.duval@free.fr
- *		Michael Phipps
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2013 Haiku, Inc. All rights reserved
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de
+ *       Jérôme Duval, jerome.duval@free.fr
+ *       Michael Phipps
+ *       John Scipione, jscipione@gmail.com
+ */
+
+
+/**
+ * @file ScreenSaverRunner.cpp
+ * @brief Manages loading, running, and unloading a screen saver add-on.
+ *
+ * ScreenSaverRunner handles the lifecycle of a BScreenSaver add-on: it loads
+ * the shared library from one of the standard Screen Savers directories,
+ * instantiates the saver via instantiate_screen_saver(), spawns a dedicated
+ * low-priority rendering thread, and drives the Draw()/DirectDraw() animation
+ * loop according to the saver's tick size and loop cadence.
+ *
+ * @see BScreenSaver, ScreenSaverSettings
  */
 
 
@@ -20,6 +53,18 @@
 #include <Window.h>
 
 
+/**
+ * @brief Construct a ScreenSaverRunner and immediately load the add-on.
+ *
+ * Stores references to the window and view, determines whether direct drawing
+ * is available, and calls _LoadAddOn() to locate and instantiate the screen
+ * saver module specified in @a settings.
+ *
+ * @param window    The BWindow (or BDirectWindow) the saver will draw into.
+ * @param view      The BView the saver will use for BView-based drawing.
+ * @param settings  The ScreenSaverSettings object providing the module name
+ *                  and any previously saved module state.
+ */
 ScreenSaverRunner::ScreenSaverRunner(BWindow* window, BView* view,
 	ScreenSaverSettings& settings)
 	:
@@ -36,6 +81,12 @@ ScreenSaverRunner::ScreenSaverRunner(BWindow* window, BView* view,
 }
 
 
+/**
+ * @brief Destructor — stops the rendering thread and unloads the add-on.
+ *
+ * Calls Quit() if the thread has not already been stopped, then delegates to
+ * _CleanUp() to delete the BScreenSaver instance and unload the add-on image.
+ */
 ScreenSaverRunner::~ScreenSaverRunner()
 {
 	if (!fQuitting)
@@ -45,6 +96,15 @@ ScreenSaverRunner::~ScreenSaverRunner()
 }
 
 
+/**
+ * @brief Spawn the rendering thread and begin the animation loop.
+ *
+ * Creates a low-priority thread running _ThreadFunc() and resumes it. The
+ * thread will call the saver's Draw() and/or DirectDraw() methods at the
+ * rate determined by BScreenSaver::TickSize().
+ *
+ * @return B_OK on success, or the negative thread spawn error on failure.
+ */
 status_t
 ScreenSaverRunner::Run()
 {
@@ -56,6 +116,12 @@ ScreenSaverRunner::Run()
 }
 
 
+/**
+ * @brief Signal the rendering thread to stop and wait for it to exit.
+ *
+ * Sets fQuitting, wakes the thread via Resume(), and blocks until the thread
+ * terminates. Safe to call from any thread.
+ */
 void
 ScreenSaverRunner::Quit()
 {
@@ -69,6 +135,11 @@ ScreenSaverRunner::Quit()
 }
 
 
+/**
+ * @brief Suspend the rendering thread.
+ *
+ * @return B_OK on success, or a kernel error if the thread cannot be suspended.
+ */
 status_t
 ScreenSaverRunner::Suspend()
 {
@@ -76,6 +147,11 @@ ScreenSaverRunner::Suspend()
 }
 
 
+/**
+ * @brief Resume the rendering thread after a Suspend() call.
+ *
+ * @return B_OK on success, or a kernel error if the thread cannot be resumed.
+ */
 status_t
 ScreenSaverRunner::Resume()
 {
@@ -83,6 +159,17 @@ ScreenSaverRunner::Resume()
 }
 
 
+/**
+ * @brief Load and instantiate the screen saver add-on from disk.
+ *
+ * Searches the standard add-on directories (user non-packaged, user, system
+ * non-packaged, system) for a "Screen Savers/<moduleName>" add-on, loads it,
+ * resolves the instantiate_screen_saver() entry point, and creates the saver
+ * instance. Logs error messages to stderr on failure.
+ *
+ * @note This is called once from the constructor and is not designed for
+ *       reuse after construction.
+ */
 void
 ScreenSaverRunner::_LoadAddOn()
 {
@@ -153,6 +240,12 @@ ScreenSaverRunner::_LoadAddOn()
 }
 
 
+/**
+ * @brief Delete the BScreenSaver instance and unload the add-on image.
+ *
+ * Resets fSaver to NULL and fAddonImage to -1. Called from the destructor and
+ * on error paths inside _LoadAddOn().
+ */
 void
 ScreenSaverRunner::_CleanUp()
 {
@@ -170,6 +263,17 @@ ScreenSaverRunner::_CleanUp()
 }
 
 
+/**
+ * @brief Core rendering loop executed on the dedicated saver thread.
+ *
+ * Sleeps in kInitialTickRate increments, waking more frequently than the
+ * saver's tick interval to remain responsive to the quit signal. When a full
+ * tick has elapsed, calls DirectDraw() and/or Draw() on the saver, increments
+ * the frame counter, and handles the on/off loop cadence. Calls StopSaver()
+ * just before returning.
+ *
+ * @return B_OK when fQuitting is set and the loop exits cleanly.
+ */
 status_t
 ScreenSaverRunner::_Run()
 {
@@ -241,6 +345,12 @@ ScreenSaverRunner::_Run()
 }
 
 
+/**
+ * @brief Thread entry-point that calls _Run() on the ScreenSaverRunner instance.
+ *
+ * @param data  Pointer to the ScreenSaverRunner instance.
+ * @return The status_t returned by _Run().
+ */
 status_t
 ScreenSaverRunner::_ThreadFunc(void* data)
 {

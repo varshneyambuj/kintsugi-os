@@ -1,10 +1,43 @@
 /*
- * Copyright 2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2022 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Niels Sascha Reedijk, niels.reedijk@gmail.com
  */
+
+
+/**
+ * @file HttpBuffer.cpp
+ * @brief Implementation of HttpBuffer, an internal byte-vector for HTTP I/O.
+ *
+ * HttpBuffer manages a fixed-capacity std::vector<std::byte> with a current
+ * read offset, supporting line-oriented parsing for HTTP headers, chunked
+ * writes to an arbitrary transfer function, and streaming reads from a
+ * BDataIO source.
+ *
+ * @see HttpParser, HttpSerializer
+ */
+
 
 #include "HttpBuffer.h"
 
@@ -15,31 +48,34 @@
 using namespace BPrivate::Network;
 
 
-/*!
-	\brief Newline sequence
-
-	As per the RFC, defined as \r\n
-*/
+/**
+ * @brief Newline sequence as per HTTP RFC — CR LF.
+ */
 static constexpr std::array<std::byte, 2> kNewLine = {std::byte('\r'), std::byte('\n')};
 
 
-/*!
-	\brief Create a new HTTP buffer with \a capacity.
-*/
+/**
+ * @brief Construct a new HttpBuffer with the given \a capacity.
+ *
+ * @param capacity  Initial reserved capacity in bytes for the internal vector.
+ */
 HttpBuffer::HttpBuffer(size_t capacity)
 {
 	fBuffer.reserve(capacity);
 };
 
 
-/*!
-	\brief Load data from \a source into the spare capacity of this buffer.
-
-	\exception BNetworkRequestError When BDataIO::Read() returns any error other than B_WOULD_BLOCK
-
-	\retval B_WOULD_BLOCK The read call on the \a source was unsuccessful because it would block.
-	\retval >=0 The actual number of bytes read.
-*/
+/**
+ * @brief Read available data from \a source into the buffer's spare capacity.
+ *
+ * Calls Flush() first to remove consumed bytes, then reads up to the
+ * remaining capacity (or \a maxSize if smaller) from \a source.
+ *
+ * @param source   BDataIO to read from.
+ * @param maxSize  Optional cap on the number of bytes to read in one call.
+ * @return Number of bytes read (>=0), B_WOULD_BLOCK if source would block,
+ *         or throws BNetworkRequestError on other read errors.
+ */
 ssize_t
 HttpBuffer::ReadFrom(BDataIO* source, std::optional<size_t> maxSize)
 {
@@ -74,15 +110,17 @@ HttpBuffer::ReadFrom(BDataIO* source, std::optional<size_t> maxSize)
 }
 
 
-/*!
-	\brief Write the contents of the buffer through the helper \a func.
-
-	\param func Handle the actual writing. The function accepts a pointer and a size as inputs
-		and should return the number of actual written bytes, which may be fewer than the number
-		of available bytes.
-
-	\returns the actual number of bytes written to the \a func.
-*/
+/**
+ * @brief Write buffered data through the transfer function \a func.
+ *
+ * Passes a pointer to the unread data and its size to \a func; advances
+ * the internal offset by the number of bytes \a func reports as written.
+ *
+ * @param func     Callable that performs the actual write; receives
+ *                 (data pointer, byte count) and returns bytes written.
+ * @param maxSize  Optional cap on the number of bytes offered to \a func.
+ * @return Number of bytes consumed by \a func.
+ */
 size_t
 HttpBuffer::WriteTo(HttpTransferFunction func, std::optional<size_t> maxSize)
 {
@@ -103,16 +141,17 @@ HttpBuffer::WriteTo(HttpTransferFunction func, std::optional<size_t> maxSize)
 }
 
 
-/*!
-	\brief Get the next line from this buffer.
-
-	This can be called iteratively until all lines in the current data are read. After using this
-	method, you should use Flush() to make sure that the read lines are cleared from the beginning
-	of the buffer.
-
-	\retval std::nullopt There are no more lines in the buffer.
-	\retval BString The next line.
-*/
+/**
+ * @brief Extract the next CRLF-terminated line from the buffer.
+ *
+ * Searches from the current offset for the first \r\n sequence and
+ * returns everything up to (but not including) the newline.  The offset
+ * is advanced past the newline so the next call returns the following line.
+ * Call Flush() after processing all needed lines to reclaim memory.
+ *
+ * @return A BString containing the line (without CRLF), or std::nullopt if
+ *         no complete line is available yet.
+ */
 std::optional<BString>
 HttpBuffer::GetNextLine()
 {
@@ -128,9 +167,11 @@ HttpBuffer::GetNextLine()
 }
 
 
-/*!
-	\brief Get the number of remaining bytes in this buffer.
-*/
+/**
+ * @brief Return the number of unread bytes remaining in the buffer.
+ *
+ * @return Byte count from the current read offset to the end of valid data.
+ */
 size_t
 HttpBuffer::RemainingBytes() const noexcept
 {
@@ -138,13 +179,12 @@ HttpBuffer::RemainingBytes() const noexcept
 }
 
 
-/*!
-	\brief Move data to the beginning of the buffer to clear at the back.
-
-	The GetNextLine() increases the offset of the internal buffer. This call moves remaining data
-	to the beginning of the buffer sets the correct size, making the remainder of the capacity
-	available for further reading.
-*/
+/**
+ * @brief Compact the buffer by erasing already-consumed bytes at the front.
+ *
+ * Moves remaining data to the beginning of the internal vector and resets
+ * the read offset to zero, freeing capacity for further reads.
+ */
 void
 HttpBuffer::Flush() noexcept
 {
@@ -156,9 +196,9 @@ HttpBuffer::Flush() noexcept
 }
 
 
-/*!
-	\brief Clear the internal buffer
-*/
+/**
+ * @brief Discard all data in the buffer and reset the read offset.
+ */
 void
 HttpBuffer::Clear() noexcept
 {
@@ -167,9 +207,12 @@ HttpBuffer::Clear() noexcept
 }
 
 
-/*!
-	\brief Get a view over the current data
-*/
+/**
+ * @brief Return a string_view over the current unread data.
+ *
+ * @return std::string_view over valid bytes from the current offset, or an
+ *         empty view if no data is available.
+ */
 std::string_view
 HttpBuffer::Data() const noexcept
 {
@@ -181,11 +224,12 @@ HttpBuffer::Data() const noexcept
 }
 
 
-/*!
-	\brief Load data into the buffer
-
-	\exception BNetworkRequestError in case of a buffer overflow
-*/
+/**
+ * @brief Append string_view data to the buffer, throwing on overflow.
+ *
+ * @param data  The string_view to append.
+ * @return Reference to this buffer (for chaining).
+ */
 HttpBuffer&
 HttpBuffer::operator<<(const std::string_view& data)
 {

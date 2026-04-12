@@ -1,36 +1,47 @@
 /*
-Open Tracker License
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Open Tracker License
+ *   Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+ *   Distributed under the terms of the OpenTracker License.
+ *
+ *   Based on regexp.c v.1.3 by Henry Spencer:
+ *   Copyright (c) 1986 by University of Toronto.
+ *   Written by Henry Spencer.  Not derived from licensed software.
+ *   Permission is granted to anyone to use this software for any purpose
+ *   on any computer system, and to redistribute it freely.
+ *   Adapted to ANSI C and C++ for the OpenTracker project, Jul 11 2000.
+ */
 
-Terms and Conditions
 
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered trademarks
-of Be Incorporated in the United States and other countries. Other brand product
-names are registered trademarks or trademarks of their respective holders.
-All rights reserved.
-*/
+/**
+ * @file RegExp.cpp
+ * @brief POSIX-subset regular expression compiler and matcher for Tracker.
+ *
+ * Implements a lightweight NFA-based regexp engine (Henry Spencer's classic
+ * design, adapted for C++).  RegExp::Compile() converts a pattern string into
+ * an internal bytecode representation; RegExp::RunMatcher() executes it against
+ * a subject string.  Used by SelectionWindow and FindPanel for filename matching.
+ *
+ * @see SelectionWindow, FindPanel
+ */
 
 // This code is based on regexp.c, v.1.3 by Henry Spencer:
 
@@ -210,6 +221,9 @@ int32 regnarrate = 0;
 //	#pragma mark - RegExp
 
 
+/**
+ * @brief Default constructor; the object must be initialised with SetTo() before use.
+ */
 RegExp::RegExp()
 	:
 	fError(B_OK),
@@ -227,6 +241,11 @@ RegExp::RegExp()
 }
 
 
+/**
+ * @brief Construct and immediately compile @p pattern.
+ *
+ * @param pattern  The regular expression string to compile.
+ */
 RegExp::RegExp(const char* pattern)
 	:
 	fError(B_OK),
@@ -236,6 +255,11 @@ RegExp::RegExp(const char* pattern)
 }
 
 
+/**
+ * @brief Construct and immediately compile @p pattern from a BString.
+ *
+ * @param pattern  The regular expression string to compile.
+ */
 RegExp::RegExp(const BString& pattern)
 	:
 	fError(B_OK),
@@ -245,12 +269,20 @@ RegExp::RegExp(const BString& pattern)
 }
 
 
+/**
+ * @brief Destroy the RegExp, releasing the compiled bytecode buffer.
+ */
 RegExp::~RegExp()
 {
 	free(fRegExp);
 }
 
 
+/**
+ * @brief Return the error status of the last compile operation.
+ *
+ * @return B_OK if the pattern compiled successfully, an error code otherwise.
+ */
 status_t
 RegExp::InitCheck() const
 {
@@ -258,6 +290,12 @@ RegExp::InitCheck() const
 }
 
 
+/**
+ * @brief Compile a new pattern, replacing any previously compiled expression.
+ *
+ * @param pattern  The regular expression string to compile.
+ * @return B_OK on success, or an error code if compilation fails.
+ */
 status_t
 RegExp::SetTo(const char* pattern)
 {
@@ -268,6 +306,12 @@ RegExp::SetTo(const char* pattern)
 }
 
 
+/**
+ * @brief Compile a new pattern from a BString, replacing any prior expression.
+ *
+ * @param pattern  The BString containing the regular expression to compile.
+ * @return B_OK on success, or an error code if compilation fails.
+ */
 status_t
 RegExp::SetTo(const BString& pattern)
 {
@@ -278,6 +322,12 @@ RegExp::SetTo(const BString& pattern)
 }
 
 
+/**
+ * @brief Test whether the compiled pattern matches anywhere in @p string.
+ *
+ * @param string  The subject string to test; may be NULL (returns false).
+ * @return True if the pattern matches, false otherwise or if not compiled.
+ */
 bool
 RegExp::Matches(const char* string) const
 {
@@ -288,6 +338,12 @@ RegExp::Matches(const char* string) const
 }
 
 
+/**
+ * @brief Test whether the compiled pattern matches anywhere in @p string.
+ *
+ * @param string  The BString subject to test.
+ * @return True if the pattern matches, false otherwise or if not compiled.
+ */
 bool
 RegExp::Matches(const BString& string) const
 {

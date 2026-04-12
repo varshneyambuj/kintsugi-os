@@ -1,10 +1,43 @@
 /*
- * Copyright 2010-2014 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Christophe Huriaux, c.huriaux@gmail.com
- *		Hamish Morrison, hamishm53@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2010-2014 Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Christophe Huriaux, c.huriaux@gmail.com
+ *       Hamish Morrison, hamishm53@gmail.com
+ */
+
+
+/**
+ * @file NetworkCookieJar.cpp
+ * @brief Implementation of BNetworkCookieJar, the thread-safe HTTP cookie store.
+ *
+ * Stores cookies in a domain-keyed hash map where each bucket is a
+ * reader-writer-locked list of BNetworkCookie objects sorted by descending
+ * path length. Supports BArchivable serialisation, Netscape cookie-file
+ * flat-text format via BFlattenable, and two iterator types: a full flat
+ * iterator and a URL-scoped iterator that walks domain suffixes.
+ *
+ * @see BNetworkCookie, BHttpRequest
  */
 
 
@@ -32,6 +65,9 @@ using namespace BPrivate::Network;
 const char* kArchivedCookieMessageName = "be:cookie";
 
 
+/**
+ * @brief Default constructor — creates an empty cookie jar.
+ */
 BNetworkCookieJar::BNetworkCookieJar()
 	:
 	fCookieHashMap(new(std::nothrow) PrivateHashMap())
@@ -39,6 +75,11 @@ BNetworkCookieJar::BNetworkCookieJar()
 }
 
 
+/**
+ * @brief Copy constructor — deep-copies all cookies from \a other.
+ *
+ * @param other  The source BNetworkCookieJar to copy.
+ */
 BNetworkCookieJar::BNetworkCookieJar(const BNetworkCookieJar& other)
 	:
 	fCookieHashMap(new(std::nothrow) PrivateHashMap())
@@ -47,6 +88,11 @@ BNetworkCookieJar::BNetworkCookieJar(const BNetworkCookieJar& other)
 }
 
 
+/**
+ * @brief Construct a cookie jar pre-populated from a list of cookies.
+ *
+ * @param otherList  A BNetworkCookieList whose cookies are added individually.
+ */
 BNetworkCookieJar::BNetworkCookieJar(const BNetworkCookieList& otherList)
 	:
 	fCookieHashMap(new(std::nothrow) PrivateHashMap())
@@ -55,6 +101,15 @@ BNetworkCookieJar::BNetworkCookieJar(const BNetworkCookieList& otherList)
 }
 
 
+/**
+ * @brief Construct a cookie jar by restoring cookies from a BMessage archive.
+ *
+ * Iterates over all "be:cookie" sub-messages and adds each as a new
+ * BNetworkCookie. Cookies that fail to add (invalid or duplicate) are
+ * silently discarded.
+ *
+ * @param archive  A BMessage previously produced by Archive().
+ */
 BNetworkCookieJar::BNetworkCookieJar(BMessage* archive)
 	:
 	fCookieHashMap(new(std::nothrow) PrivateHashMap())
@@ -77,6 +132,12 @@ BNetworkCookieJar::BNetworkCookieJar(BMessage* archive)
 }
 
 
+/**
+ * @brief Destructor — deletes all cookies and frees the hash map.
+ *
+ * Iterates the jar and deletes each cookie, then iterates the hash map
+ * to delete each per-domain list before deleting the map itself.
+ */
 BNetworkCookieJar::~BNetworkCookieJar()
 {
 	for (Iterator it = GetIterator(); it.Next() != NULL;)
@@ -98,6 +159,16 @@ BNetworkCookieJar::~BNetworkCookieJar()
 // #pragma mark Add cookie to cookie jar
 
 
+/**
+ * @brief Add a cookie to the jar by copying it.
+ *
+ * Creates a heap-allocated copy of \a cookie and delegates to the
+ * pointer-taking overload. Deletes the copy if insertion fails.
+ *
+ * @param cookie  The BNetworkCookie to copy and add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         code from the pointer overload if the cookie is invalid.
+ */
 status_t
 BNetworkCookieJar::AddCookie(const BNetworkCookie& cookie)
 {
@@ -113,6 +184,17 @@ BNetworkCookieJar::AddCookie(const BNetworkCookie& cookie)
 }
 
 
+/**
+ * @brief Parse a Set-Cookie string and add the resulting cookie.
+ *
+ * Creates a BNetworkCookie from \a cookie and \a referrer, then delegates
+ * to the pointer-taking overload.
+ *
+ * @param cookie    The Set-Cookie header value string.
+ * @param referrer  The URL from which the Set-Cookie header was received.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or a parse
+ *         error code if the cookie string is invalid.
+ */
 status_t
 BNetworkCookieJar::AddCookie(const BString& cookie, const BUrl& referrer)
 {
@@ -131,6 +213,22 @@ BNetworkCookieJar::AddCookie(const BString& cookie, const BUrl& referrer)
 }
 
 
+/**
+ * @brief Add a heap-allocated cookie to the jar, taking ownership.
+ *
+ * Locates or creates the per-domain list for the cookie, removes any
+ * existing cookie with the same name and path (update semantics), and inserts
+ * the new cookie in descending path-length order. If the cookie's expiration
+ * is in the past, it is deleted (effectively removing the existing entry).
+ *
+ * The cookie's raw string cache is pre-populated before insertion so that
+ * subsequent multi-threaded reads require no locking.
+ *
+ * @param cookie  A heap-allocated BNetworkCookie. The jar takes ownership.
+ * @return B_OK on success, B_NO_MEMORY if the hash map is NULL or a list
+ *         cannot be allocated, B_BAD_VALUE if the cookie is NULL or invalid,
+ *         or B_ERROR on locking failure.
+ */
 status_t
 BNetworkCookieJar::AddCookie(BNetworkCookie* cookie)
 {
@@ -213,6 +311,12 @@ BNetworkCookieJar::AddCookie(BNetworkCookie* cookie)
 }
 
 
+/**
+ * @brief Add all cookies from a BNetworkCookieList by reference-copying each.
+ *
+ * @param cookies  The list of cookies to add.
+ * @return B_OK if all cookies were added, or the first error code encountered.
+ */
 status_t
 BNetworkCookieJar::AddCookies(const BNetworkCookieList& cookies)
 {
@@ -233,6 +337,11 @@ BNetworkCookieJar::AddCookies(const BNetworkCookieList& cookies)
 // #pragma mark Purge useless cookies
 
 
+/**
+ * @brief Remove and delete all cookies whose expiration date has passed.
+ *
+ * @return The number of cookies deleted.
+ */
 uint32
 BNetworkCookieJar::DeleteOutdatedCookies()
 {
@@ -250,6 +359,14 @@ BNetworkCookieJar::DeleteOutdatedCookies()
 }
 
 
+/**
+ * @brief Remove and delete all session cookies and expired cookies.
+ *
+ * Should be called when the application is about to exit to enforce the
+ * semantics of session cookies.
+ *
+ * @return The number of cookies deleted.
+ */
 uint32
 BNetworkCookieJar::PurgeForExit()
 {
@@ -270,6 +387,15 @@ BNetworkCookieJar::PurgeForExit()
 // #pragma mark BArchivable interface
 
 
+/**
+ * @brief Archive all cookies in the jar to a BMessage.
+ *
+ * Each cookie is archived as a sub-message with key "be:cookie".
+ *
+ * @param into  The BMessage to archive into.
+ * @param deep  Passed through to BArchivable::Archive().
+ * @return B_OK on success, or the first error returned by cookie archiving.
+ */
 status_t
 BNetworkCookieJar::Archive(BMessage* into, bool deep) const
 {
@@ -295,6 +421,12 @@ BNetworkCookieJar::Archive(BMessage* into, bool deep) const
 }
 
 
+/**
+ * @brief Instantiate a BNetworkCookieJar from a BMessage archive.
+ *
+ * @param archive  A BMessage previously produced by Archive().
+ * @return A new heap-allocated BNetworkCookieJar, or NULL on failure.
+ */
 BArchivable*
 BNetworkCookieJar::Instantiate(BMessage* archive)
 {
@@ -308,6 +440,11 @@ BNetworkCookieJar::Instantiate(BMessage* archive)
 // #pragma mark BFlattenable interface
 
 
+/**
+ * @brief Return false because the flattened size varies.
+ *
+ * @return false always.
+ */
 bool
 BNetworkCookieJar::IsFixedSize() const
 {
@@ -316,6 +453,11 @@ BNetworkCookieJar::IsFixedSize() const
 }
 
 
+/**
+ * @brief Return the type code used for flattened cookie jar data.
+ *
+ * @return B_ANY_TYPE (a dedicated type constant is not yet defined).
+ */
 type_code
 BNetworkCookieJar::TypeCode() const
 {
@@ -324,6 +466,14 @@ BNetworkCookieJar::TypeCode() const
 }
 
 
+/**
+ * @brief Return the byte size of the flattened cookie jar representation.
+ *
+ * Forces regeneration of the flattened string via _DoFlatten() and returns
+ * its length plus one for the null terminator.
+ *
+ * @return The number of bytes required by Flatten().
+ */
 ssize_t
 BNetworkCookieJar::FlattenedSize() const
 {
@@ -332,6 +482,16 @@ BNetworkCookieJar::FlattenedSize() const
 }
 
 
+/**
+ * @brief Write the flattened cookie jar to a buffer in Netscape cookie format.
+ *
+ * The flat format is tab-separated fields per line: domain, TRUE, path,
+ * secure flag, expiration timestamp, name, value.
+ *
+ * @param buffer  Output buffer to write into; must be at least FlattenedSize() bytes.
+ * @param size    Size of \a buffer in bytes.
+ * @return B_OK on success, or B_ERROR if \a size is too small.
+ */
 status_t
 BNetworkCookieJar::Flatten(void* buffer, ssize_t size) const
 {
@@ -346,6 +506,11 @@ BNetworkCookieJar::Flatten(void* buffer, ssize_t size) const
 }
 
 
+/**
+ * @brief Return false because AllowsTypeCode() is not yet implemented.
+ *
+ * @return false always.
+ */
 bool
 BNetworkCookieJar::AllowsTypeCode(type_code) const
 {
@@ -354,6 +519,18 @@ BNetworkCookieJar::AllowsTypeCode(type_code) const
 }
 
 
+/**
+ * @brief Populate the jar from a Netscape-format flat cookie buffer.
+ *
+ * Parses newline-separated records, each with seven tab-separated fields:
+ * domain, subdomain flag, path, secure flag, expiration timestamp, name,
+ * value. Lines beginning with '#' are treated as comments.
+ *
+ * @param  (unused type_code)  The type code of the flattened data.
+ * @param buffer  The flat buffer to parse.
+ * @param size    Number of bytes in \a buffer.
+ * @return B_OK always (parse errors on individual cookies are silently ignored).
+ */
 status_t
 BNetworkCookieJar::Unflatten(type_code, const void* buffer, ssize_t size)
 {
@@ -423,6 +600,14 @@ BNetworkCookieJar::Unflatten(type_code, const void* buffer, ssize_t size)
 }
 
 
+/**
+ * @brief Assignment operator — replaces all cookies with those from \a other.
+ *
+ * Deletes all existing cookies, then iterates \a other and adds copies.
+ *
+ * @param other  The source BNetworkCookieJar to copy from.
+ * @return A reference to this object.
+ */
 BNetworkCookieJar&
 BNetworkCookieJar::operator=(const BNetworkCookieJar& other)
 {
@@ -452,6 +637,11 @@ BNetworkCookieJar::operator=(const BNetworkCookieJar& other)
 // #pragma mark Iterators
 
 
+/**
+ * @brief Return a flat iterator positioned at the first cookie in the jar.
+ *
+ * @return A BNetworkCookieJar::Iterator for traversing all cookies.
+ */
 BNetworkCookieJar::Iterator
 BNetworkCookieJar::GetIterator() const
 {
@@ -459,6 +649,15 @@ BNetworkCookieJar::GetIterator() const
 }
 
 
+/**
+ * @brief Return a URL-scoped iterator for cookies applicable to \a url.
+ *
+ * If the URL has no path, a path of "/" is assumed so that the iterator
+ * can correctly match cookies.
+ *
+ * @param url  The URL to match cookies against.
+ * @return A BNetworkCookieJar::UrlIterator scoped to \a url.
+ */
 BNetworkCookieJar::UrlIterator
 BNetworkCookieJar::GetUrlIterator(const BUrl& url) const
 {
@@ -472,6 +671,11 @@ BNetworkCookieJar::GetUrlIterator(const BUrl& url) const
 }
 
 
+/**
+ * @brief Rebuild the Netscape-format flat cookie string from the current jar.
+ *
+ * Iterates all cookies and writes each as a tab-separated line into fFlattened.
+ */
 void
 BNetworkCookieJar::_DoFlatten() const
 {
@@ -491,6 +695,11 @@ BNetworkCookieJar::_DoFlatten() const
 // #pragma mark Iterator
 
 
+/**
+ * @brief Copy constructor — creates an independent iterator at the same position.
+ *
+ * @param other  The source iterator to copy.
+ */
 BNetworkCookieJar::Iterator::Iterator(const Iterator& other)
 	:
 	fCookieJar(other.fCookieJar),
@@ -508,6 +717,11 @@ BNetworkCookieJar::Iterator::Iterator(const Iterator& other)
 }
 
 
+/**
+ * @brief Construct an iterator over all cookies in \a cookieJar.
+ *
+ * @param cookieJar  The jar to iterate over.
+ */
 BNetworkCookieJar::Iterator::Iterator(const BNetworkCookieJar* cookieJar)
 	:
 	fCookieJar(const_cast<BNetworkCookieJar*>(cookieJar)),
@@ -526,6 +740,9 @@ BNetworkCookieJar::Iterator::Iterator(const BNetworkCookieJar* cookieJar)
 }
 
 
+/**
+ * @brief Destructor — releases all read locks and deletes the private iterator.
+ */
 BNetworkCookieJar::Iterator::~Iterator()
 {
 	if (fList != NULL)
@@ -537,6 +754,12 @@ BNetworkCookieJar::Iterator::~Iterator()
 }
 
 
+/**
+ * @brief Assignment operator — resets and repositions this iterator.
+ *
+ * @param other  The source iterator to copy.
+ * @return A reference to this iterator.
+ */
 BNetworkCookieJar::Iterator&
 BNetworkCookieJar::Iterator::operator=(const Iterator& other)
 {
@@ -564,6 +787,11 @@ BNetworkCookieJar::Iterator::operator=(const Iterator& other)
 }
 
 
+/**
+ * @brief Return whether more cookies remain in the jar.
+ *
+ * @return true if Next() will return a valid cookie pointer.
+ */
 bool
 BNetworkCookieJar::Iterator::HasNext() const
 {
@@ -571,6 +799,11 @@ BNetworkCookieJar::Iterator::HasNext() const
 }
 
 
+/**
+ * @brief Advance the iterator and return the current cookie.
+ *
+ * @return A const pointer to the current BNetworkCookie, or NULL at end.
+ */
 const BNetworkCookie*
 BNetworkCookieJar::Iterator::Next()
 {
@@ -583,6 +816,14 @@ BNetworkCookieJar::Iterator::Next()
 }
 
 
+/**
+ * @brief Advance to the first cookie of the next domain bucket.
+ *
+ * Skips remaining cookies in the current domain list and returns the first
+ * cookie of the next domain (or NULL if no further domains exist).
+ *
+ * @return A const pointer to the first cookie of the next domain, or NULL.
+ */
 const BNetworkCookie*
 BNetworkCookieJar::Iterator::NextDomain()
 {
@@ -620,6 +861,15 @@ BNetworkCookieJar::Iterator::NextDomain()
 }
 
 
+/**
+ * @brief Remove the last cookie returned by Next() from the jar.
+ *
+ * Handles boundary cases where the last element was in the previous domain
+ * list (fLastList) rather than the current list.
+ *
+ * @return A const pointer to the removed cookie (caller takes ownership), or
+ *         NULL if no cookie has been returned yet.
+ */
 const BNetworkCookie*
 BNetworkCookieJar::Iterator::Remove()
 {
@@ -664,6 +914,13 @@ BNetworkCookieJar::Iterator::Remove()
 }
 
 
+/**
+ * @brief Advance fElement to the next cookie in the flat iteration order.
+ *
+ * Moves within the current domain list, or advances to the next non-empty
+ * domain list when the current one is exhausted. Acquires and releases
+ * reader locks as needed.
+ */
 void
 BNetworkCookieJar::Iterator::_FindNext()
 {
@@ -711,6 +968,11 @@ BNetworkCookieJar::Iterator::_FindNext()
 // #pragma mark URL Iterator
 
 
+/**
+ * @brief Copy constructor — creates an independent URL iterator at the same position.
+ *
+ * @param other  The source UrlIterator to copy.
+ */
 BNetworkCookieJar::UrlIterator::UrlIterator(const UrlIterator& other)
 	:
 	fCookieJar(other.fCookieJar),
@@ -727,6 +989,12 @@ BNetworkCookieJar::UrlIterator::UrlIterator(const UrlIterator& other)
 }
 
 
+/**
+ * @brief Construct a URL iterator for cookies applicable to \a url.
+ *
+ * @param cookieJar  The jar to iterate over.
+ * @param url        The URL used to filter cookies by domain and path.
+ */
 BNetworkCookieJar::UrlIterator::UrlIterator(const BNetworkCookieJar* cookieJar,
 	const BUrl& url)
 	:
@@ -744,6 +1012,9 @@ BNetworkCookieJar::UrlIterator::UrlIterator(const BNetworkCookieJar* cookieJar,
 }
 
 
+/**
+ * @brief Destructor — releases read locks and deletes the private iterator.
+ */
 BNetworkCookieJar::UrlIterator::~UrlIterator()
 {
 	if (fList != NULL)
@@ -755,6 +1026,11 @@ BNetworkCookieJar::UrlIterator::~UrlIterator()
 }
 
 
+/**
+ * @brief Return whether more URL-matching cookies remain.
+ *
+ * @return true if Next() will return a valid cookie pointer.
+ */
 bool
 BNetworkCookieJar::UrlIterator::HasNext() const
 {
@@ -762,6 +1038,11 @@ BNetworkCookieJar::UrlIterator::HasNext() const
 }
 
 
+/**
+ * @brief Advance and return the current URL-matching cookie.
+ *
+ * @return A const pointer to the current BNetworkCookie, or NULL at end.
+ */
 const BNetworkCookie*
 BNetworkCookieJar::UrlIterator::Next()
 {
@@ -774,6 +1055,15 @@ BNetworkCookieJar::UrlIterator::Next()
 }
 
 
+/**
+ * @brief Remove the last URL-matching cookie returned by Next().
+ *
+ * Removes the cookie from its per-domain list. If the list becomes empty,
+ * it is also removed from the hash map.
+ *
+ * @return A const pointer to the removed cookie (caller takes ownership), or
+ *         NULL if no cookie has been returned yet.
+ */
 const BNetworkCookie*
 BNetworkCookieJar::UrlIterator::Remove()
 {
@@ -804,6 +1094,12 @@ BNetworkCookieJar::UrlIterator::Remove()
 }
 
 
+/**
+ * @brief Assignment operator — resets and repositions this URL iterator.
+ *
+ * @param other  The source UrlIterator to copy.
+ * @return A reference to this iterator.
+ */
 BNetworkCookieJar::UrlIterator&
 BNetworkCookieJar::UrlIterator::operator=(
 	const BNetworkCookieJar::UrlIterator& other)
@@ -834,6 +1130,12 @@ BNetworkCookieJar::UrlIterator::operator=(
 }
 
 
+/**
+ * @brief Initialise the iterator by resolving the starting domain.
+ *
+ * Derives the search domain from fUrl, prepends a dot, and advances to the
+ * first matching cookie via _FindNext().
+ */
 void
 BNetworkCookieJar::UrlIterator::_Initialize()
 {
@@ -858,6 +1160,14 @@ BNetworkCookieJar::UrlIterator::_Initialize()
 }
 
 
+/**
+ * @brief Move the iterator key to the next superdomain.
+ *
+ * Strips the leading component of the domain key (up to the first dot),
+ * making the key one level higher in the domain hierarchy.
+ *
+ * @return true if a further superdomain exists, false if at the root.
+ */
 bool
 BNetworkCookieJar::UrlIterator::_SuperDomain()
 {
@@ -876,6 +1186,13 @@ BNetworkCookieJar::UrlIterator::_SuperDomain()
 }
 
 
+/**
+ * @brief Find the next URL-matching cookie, walking up the domain hierarchy.
+ *
+ * Calls _FindPath() on the current domain list, advancing to the next
+ * superdomain via _SuperDomain() and _FindDomain() when the current list is
+ * exhausted or contains no path-matching cookies.
+ */
 void
 BNetworkCookieJar::UrlIterator::_FindNext()
 {
@@ -903,6 +1220,12 @@ BNetworkCookieJar::UrlIterator::_FindNext()
 }
 
 
+/**
+ * @brief Load the cookie list for the current domain key into fList.
+ *
+ * Looks up the current fIterator->fKey in the hash map and, if found,
+ * acquires a read lock on the resulting list.
+ */
 void
 BNetworkCookieJar::UrlIterator::_FindDomain()
 {
@@ -924,6 +1247,15 @@ BNetworkCookieJar::UrlIterator::_FindDomain()
 }
 
 
+/**
+ * @brief Find the next cookie in the current list that matches the URL path.
+ *
+ * Advances fIndex through fList and calls IsValidForPath() on each cookie
+ * until a match is found or the list is exhausted.
+ *
+ * @return true if a matching cookie was found and fElement is set, false if
+ *         no matching cookie remains in the current domain list.
+ */
 bool
 BNetworkCookieJar::UrlIterator::_FindPath()
 {
@@ -944,12 +1276,20 @@ BNetworkCookieJar::UrlIterator::_FindPath()
 // #pragma mark - BNetworkCookieList
 
 
+/**
+ * @brief Construct a BNetworkCookieList and initialise the reader-writer lock.
+ */
 BNetworkCookieList::BNetworkCookieList()
 {
 	pthread_rwlock_init(&fLock, NULL);
 }
 
 
+/**
+ * @brief Destructor — destroys the reader-writer lock.
+ *
+ * Expected to be called with the write lock held by the cookie jar destructor.
+ */
 BNetworkCookieList::~BNetworkCookieList()
 {
 	// Note: this is expected to be called with the write lock held.
@@ -957,6 +1297,11 @@ BNetworkCookieList::~BNetworkCookieList()
 }
 
 
+/**
+ * @brief Acquire a shared read lock on the list.
+ *
+ * @return B_OK on success, or an error code if locking fails.
+ */
 status_t
 BNetworkCookieList::LockForReading()
 {
@@ -964,6 +1309,11 @@ BNetworkCookieList::LockForReading()
 }
 
 
+/**
+ * @brief Acquire an exclusive write lock on the list.
+ *
+ * @return B_OK on success, or an error code if locking fails.
+ */
 status_t
 BNetworkCookieList::LockForWriting()
 {
@@ -971,9 +1321,13 @@ BNetworkCookieList::LockForWriting()
 }
 
 
+/**
+ * @brief Release any held lock (read or write) on the list.
+ *
+ * @return B_OK on success, or an error code if unlocking fails.
+ */
 status_t
 BNetworkCookieList::Unlock()
 {
 	return pthread_rwlock_unlock(&fLock);
 }
-
