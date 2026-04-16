@@ -1,9 +1,45 @@
 /*
- * Copyright 2008-2023, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Salvatore Benedetto <salvatore.benedetto@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2023, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *   		Salvatore Benedetto <salvatore.benedetto@gmail.com>
+ */
+
+/**
+ * @file xsi_message_queue.cpp
+ * @brief XSI (System V) IPC message queue kernel implementation.
+ *
+ * Implements msgget(), msgctl(), msgsnd(), msgrcv() as defined by the
+ * X/Open System Interfaces. Two hash tables are maintained: sIpcHashTable
+ * maps the caller-visible key_t to an Ipc wrapper that carries the current
+ * associated message queue id, and sMessageQueueHashTable maps integer
+ * message queue ids onto XsiMessageQueue objects. Each queue owns a
+ * doubly-linked list of queued_message entries, a permission record, a
+ * mutex, and two ConditionVariables used to block senders (when the queue
+ * is full or the global MAX_XSI_MESSAGE cap is reached) and receivers
+ * (when they need a message that is not yet available). EIDRM is reported
+ * back to waiters if the queue is destroyed while they sleep, which is
+ * detected by snapshotting the queue's sequence number before blocking.
  */
 
 #include <posix/xsi_message_queue.h>
@@ -37,7 +73,24 @@
 namespace {
 
 
+/**
+ * @brief One message sitting on a System V message queue.
+ *
+ * Stores the message type (the first long of the user buffer, per XSI) and
+ * the raw payload that follows. The initOK flag tells callers whether the
+ * constructor successfully copied in the user data.
+ */
 struct queued_message : DoublyLinkedListLinkImpl<queued_message> {
+	/**
+	 * @brief Copy a user-space message into a newly allocated kernel buffer.
+	 *
+	 * Splits the first sizeof(long) bytes into the type field and copies the
+	 * remaining _length bytes into a heap buffer. On any copy failure the
+	 * buffer is freed and initOK stays false.
+	 *
+	 * @param _message User pointer to the msgbuf (type followed by payload).
+	 * @param _length Payload length in bytes (excluding the type prefix).
+	 */
 	queued_message(const void *_message, ssize_t _length)
 		:
 		initOK(false),
@@ -56,12 +109,25 @@ struct queued_message : DoublyLinkedListLinkImpl<queued_message> {
 		initOK = true;
 	}
 
+	/**
+	 * @brief Free the payload buffer if the constructor succeeded.
+	 */
 	~queued_message()
 	{
 		if (initOK)
 			free(message);
 	}
 
+	/**
+	 * @brief Copy this message back out to a user buffer for msgrcv().
+	 *
+	 * Writes the type word and up to _length bytes of payload. The caller is
+	 * responsible for policing MSG_NOERROR / E2BIG before calling this.
+	 *
+	 * @param _message User pointer to receive type + payload.
+	 * @param _length Maximum payload bytes the user buffer can accept.
+	 * @return Actual payload bytes copied, or B_ERROR on copy failure.
+	 */
 	ssize_t copy_to_user_buffer(void *_message, ssize_t _length)
 	{
 		if (_length > length)
@@ -85,8 +151,21 @@ typedef DoublyLinkedList<queued_message> MessageQueue;
 // Arbitrary limit
 #define MAX_BYTES_PER_QUEUE		2048
 
+/**
+ * @brief A single System V message queue and its waiter bookkeeping.
+ *
+ * Wraps the msqid_ds public record together with the private linked list of
+ * messages, the queue-level mutex, the byte-count accumulator used for the
+ * msg_qbytes cap, and two ConditionVariables used to rendezvous senders
+ * against space and receivers against messages.
+ */
 class XsiMessageQueue {
 public:
+	/**
+	 * @brief Construct an empty queue, initialising all msqid_ds fields.
+	 *
+	 * @param flags Caller-supplied permission bits (low nine bits of flags).
+	 */
 	XsiMessageQueue(int flags)
 		:
 		fBytesInQueue(0)
@@ -106,6 +185,18 @@ public:
 	// Implemented after sXsiMessageCount is declared
 	~XsiMessageQueue();
 
+	/**
+	 * @brief Drop the queue lock and block on a condition variable.
+	 *
+	 * The wait is always interruptible, so a signal converts the return into
+	 * B_INTERRUPTED (reported up as EINTR). The caller re-acquires the lock
+	 * explicitly after waking.
+	 *
+	 * @param queueEntry Pre-registered entry on fWaitingToReceive/fWaitingToSend.
+	 * @param queueLocker Locker owning fLock; unlocked for the duration.
+	 * @return B_OK on normal wake, B_INTERRUPTED on signal, or EIDRM if the
+	 *         queue was destroyed.
+	 */
 	status_t BlockAndUnlock(ConditionVariableEntry *queueEntry, MutexLocker *queueLocker)
 	{
 		// Unlock the queue before blocking
@@ -113,6 +204,13 @@ public:
 		return queueEntry->Wait(B_CAN_INTERRUPT);
 	}
 
+	/**
+	 * @brief Apply a user-supplied msqid_ds to this queue (IPC_SET handler).
+	 *
+	 * Updates uid, gid, mode bits, msg_qbytes, and bumps msg_ctime.
+	 *
+	 * @param result User-supplied msqid_ds already copied into kernel memory.
+	 */
 	void DoIpcSet(struct msqid_ds *result)
 	{
 		fMessageQueue.msg_perm.uid = result->msg_perm.uid;
@@ -123,11 +221,25 @@ public:
 		fMessageQueue.msg_ctime = (time_t)real_time_clock();
 	}
 
+	/**
+	 * @brief Remove a waiter's entry without actually sleeping.
+	 *
+	 * Used on the EINTR path to unregister the entry from the condition
+	 * variable by issuing a zero-timeout wait.
+	 *
+	 * @param queueEntry The entry to remove.
+	 */
 	void Dequeue(ConditionVariableEntry *queueEntry)
 	{
 		queueEntry->Wait(B_RELATIVE_TIMEOUT, 0);
 	}
 
+	/**
+	 * @brief Register a waiter on the receive or send condition variable.
+	 *
+	 * @param queueEntry Entry to register.
+	 * @param waitForMessage true for msgrcv() waiters, false for msgsnd().
+	 */
 	void Enqueue(ConditionVariableEntry *queueEntry, bool waitForMessage)
 	{
 		if (waitForMessage) {
@@ -137,11 +249,25 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Access the raw msqid_ds status record (used by IPC_STAT).
+	 *
+	 * @return Reference to the internal msqid_ds.
+	 */
 	struct msqid_ds &GetMessageQueue()
 	{
 		return fMessageQueue;
 	}
 
+	/**
+	 * @brief Write-permission check honoring owner/group/other mode bits.
+	 *
+	 * Returns true when S_IWOTH is set, when the caller is root, when the
+	 * caller owns the queue and S_IWUSR is set, or when the caller's gid
+	 * matches and S_IWGRP is set.
+	 *
+	 * @return true if the caller may modify this queue.
+	 */
 	bool HasPermission() const
 	{
 		if ((fMessageQueue.msg_perm.mode & S_IWOTH) != 0)
@@ -160,12 +286,22 @@ public:
 		return false;
 	}
 
+	/**
+	 * @brief Read-permission check (currently identical to HasPermission).
+	 *
+	 * @return true if the caller may read status from this queue.
+	 */
 	bool HasReadPermission() const
 	{
 		// TODO: fix this
 		return HasPermission();
 	}
 
+	/**
+	 * @brief Accessor for the kernel-assigned integer msqid.
+	 *
+	 * @return This queue's message queue id.
+	 */
 	int ID() const
 	{
 		return fID;
@@ -174,16 +310,31 @@ public:
 	// Implemented after sXsiMessageCount is declared
 	bool Insert(queued_message *message);
 
+	/**
+	 * @brief Accessor for the caller-facing key_t key this queue is bound to.
+	 *
+	 * @return Associated key, or (key_t)-1 for a private (IPC_PRIVATE) queue.
+	 */
 	key_t IpcKey() const
 	{
 		return fMessageQueue.msg_perm.key;
 	}
 
+	/**
+	 * @brief Accessor for the queue-level mutex.
+	 *
+	 * @return Reference to the mutex guarding this queue's state.
+	 */
 	mutex &Lock()
 	{
 		return fLock;
 	}
 
+	/**
+	 * @brief Current msg_qbytes cap (max bytes allowed in this queue).
+	 *
+	 * @return The cap in bytes.
+	 */
 	msglen_t MaxBytes() const
 	{
 		return fMessageQueue.msg_qbytes;
@@ -192,6 +343,11 @@ public:
 	// Implemented after sXsiMessageCount is declared
 	queued_message *Remove(long typeRequested);
 
+	/**
+	 * @brief Version counter used by waiters to detect IPC_RMID under them.
+	 *
+	 * @return Sequence number taken when this queue was created.
+	 */
 	uint32 SequenceNumber() const
 	{
 		return fSequenceNumber;
@@ -200,11 +356,24 @@ public:
 	// Implemented after sMessageQueueHashTable is declared
 	void SetID();
 
+	/**
+	 * @brief Change this queue's associated IPC key.
+	 *
+	 * @param key New key, or (key_t)-1 to mark the queue private.
+	 */
 	void SetIpcKey(key_t key)
 	{
 		fMessageQueue.msg_perm.key = key;
 	}
 
+	/**
+	 * @brief Initialise owner/creator uid and gid plus the permission bits.
+	 *
+	 * Invariant: after this call the cuid/cgid fields are fixed for the
+	 * lifetime of the queue and uid/gid are writable by subsequent IPC_SET.
+	 *
+	 * @param flags Low nine bits carry the permission mode.
+	 */
 	void SetPermissions(int flags)
 	{
 		fMessageQueue.msg_perm.uid = fMessageQueue.msg_perm.cuid = geteuid();
@@ -212,6 +381,16 @@ public:
 		fMessageQueue.msg_perm.mode = (flags & 0x01ff);
 	}
 
+	/**
+	 * @brief Wake receivers (all) or senders (one) depending on direction.
+	 *
+	 * Receivers are woken en-masse because arbitrary messageType selection
+	 * means a single wake cannot know which thread will find a match.
+	 * Senders get a single NotifyOne() because space freed by one Remove()
+	 * only suffices for one Insert().
+	 *
+	 * @param waitForMessage true to wake receivers, false to wake a sender.
+	 */
 	void WakeUpThread(bool waitForMessage)
 	{
 		if (waitForMessage) {
@@ -225,6 +404,11 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Accessor used by the hash table for its intrusive chain link.
+	 *
+	 * @return Reference to the hash-link next pointer.
+	 */
 	XsiMessageQueue*& Link()
 	{
 		return fLink;
@@ -245,26 +429,53 @@ private:
 };
 
 
-// Xsi message queue hash table
+/**
+ * @brief Open-hash-table policy keying XsiMessageQueue entries by msqid.
+ */
 struct MessageQueueHashTableDefinition {
 	typedef int					KeyType;
 	typedef XsiMessageQueue		ValueType;
 
+	/**
+	 * @brief Hash an integer msqid into a table slot.
+	 *
+	 * @param key msqid.
+	 * @return Hash value.
+	 */
 	size_t HashKey (const int key) const
 	{
 		return (size_t)key;
 	}
 
+	/**
+	 * @brief Hash an existing queue by its stored msqid.
+	 *
+	 * @param variable Queue entry.
+	 * @return Hash value matching that of its id.
+	 */
 	size_t Hash(XsiMessageQueue *variable) const
 	{
 		return (size_t)variable->ID();
 	}
 
+	/**
+	 * @brief Compare a lookup key against an entry by msqid equality.
+	 *
+	 * @param key Lookup msqid.
+	 * @param variable Candidate entry.
+	 * @return true when ids match.
+	 */
 	bool Compare(const int key, XsiMessageQueue *variable) const
 	{
 		return (int)key == (int)variable->ID();
 	}
 
+	/**
+	 * @brief Return the chain-link field embedded in the queue.
+	 *
+	 * @param variable Entry whose link is needed.
+	 * @return Reference to the hash-link next pointer.
+	 */
 	XsiMessageQueue*& GetLink(XsiMessageQueue *variable) const
 	{
 		return variable->Link();
@@ -272,30 +483,60 @@ struct MessageQueueHashTableDefinition {
 };
 
 
-// IPC class
+/**
+ * @brief Key-to-msqid mapping stored in sIpcHashTable.
+ *
+ * Every non-IPC_PRIVATE key that has ever been requested has one of these;
+ * it is deleted when the corresponding queue is removed via IPC_RMID.
+ */
 class Ipc {
 public:
+	/**
+	 * @brief Construct an Ipc entry bound to a key with no queue yet.
+	 *
+	 * @param key XSI IPC key this entry represents.
+	 */
 	Ipc(key_t key)
 		: fKey(key),
 		fMessageQueueId(-1)
 	{
 	}
 
+	/**
+	 * @brief Accessor for the IPC key.
+	 *
+	 * @return The key this entry is associated with.
+	 */
 	key_t Key() const
 	{
 		return fKey;
 	}
 
+	/**
+	 * @brief Accessor for the currently associated queue id (-1 if none).
+	 *
+	 * @return msqid, or -1 when unbound.
+	 */
 	int MessageQueueID() const
 	{
 		return fMessageQueueId;
 	}
 
+	/**
+	 * @brief Bind this key entry to a queue by copying its id.
+	 *
+	 * @param messageQueue The queue to bind.
+	 */
 	void SetMessageQueueID(XsiMessageQueue *messageQueue)
 	{
 		fMessageQueueId = messageQueue->ID();
 	}
 
+	/**
+	 * @brief Accessor used by the IPC hash table for its chain link.
+	 *
+	 * @return Reference to the hash-link next pointer.
+	 */
 	Ipc*& Link()
 	{
 		return fLink;
@@ -308,25 +549,53 @@ private:
 };
 
 
+/**
+ * @brief Open-hash-table policy keying Ipc entries by key_t.
+ */
 struct IpcHashTableDefinition {
 	typedef key_t	KeyType;
 	typedef Ipc		ValueType;
 
+	/**
+	 * @brief Hash an IPC key_t into a table slot.
+	 *
+	 * @param key Lookup key.
+	 * @return Hash value.
+	 */
 	size_t HashKey (const key_t key) const
 	{
 		return (size_t)(key);
 	}
 
+	/**
+	 * @brief Hash an existing Ipc entry by its stored key.
+	 *
+	 * @param variable The Ipc entry.
+	 * @return Hash value matching the entry's key.
+	 */
 	size_t Hash(Ipc *variable) const
 	{
 		return (size_t)HashKey(variable->Key());
 	}
 
+	/**
+	 * @brief Compare a key against an entry's key for equality.
+	 *
+	 * @param key Lookup key.
+	 * @param variable Candidate Ipc entry.
+	 * @return true when the keys match.
+	 */
 	bool Compare(const key_t key, Ipc *variable) const
 	{
 		return (key_t)key == (key_t)variable->Key();
 	}
 
+	/**
+	 * @brief Expose the chain-link field used by the hash table.
+	 *
+	 * @param variable Ipc entry whose link is needed.
+	 * @return Reference to the hash-link next pointer.
+	 */
 	Ipc*& GetLink(Ipc *variable) const
 	{
 		return variable->Link();
@@ -353,6 +622,13 @@ static int32 sXsiMessageQueueCount = 0;
 //	#pragma mark -
 
 
+/**
+ * @brief Destroy the queue, waking any sleepers with EIDRM and freeing messages.
+ *
+ * Defined outside the class so it can reach the sXsiMessageCount global.
+ * All threads blocked on either condition variable are notified with the
+ * EIDRM error code so they can report removal to userland per XSI.
+ */
 XsiMessageQueue::~XsiMessageQueue()
 {
 	mutex_destroy(&fLock);
@@ -371,6 +647,18 @@ XsiMessageQueue::~XsiMessageQueue()
 }
 
 
+/**
+ * @brief Try to append a message to the queue; report whether the caller must wait.
+ *
+ * Returns true (the caller should block) when either the byte budget would
+ * be exceeded or the global MAX_XSI_MESSAGE cap is reached. Otherwise the
+ * message is linked in, counters are updated, msg_lspid/msg_stime are
+ * refreshed, and any waiting receivers are woken.
+ *
+ * @param message Pre-built queued_message transferring its storage into the queue.
+ * @return true if the caller needs to wait for space, false if the message
+ *         was successfully enqueued.
+ */
 bool
 XsiMessageQueue::Insert(queued_message *message)
 {
@@ -401,6 +689,17 @@ XsiMessageQueue::Insert(queued_message *message)
 }
 
 
+/**
+ * @brief Remove and return a message matching the XSI msgtyp semantics.
+ *
+ * Behaviour tracks msgrcv(): typeRequested == 0 picks the head, > 0 picks
+ * the first message with a matching type, and < 0 picks the first message
+ * whose type is <= |typeRequested| (lowest-type first). Updates the
+ * msg_qnum/msg_rtime/msg_lrpid fields and wakes one sender on success.
+ *
+ * @param typeRequested XSI msgtyp selector.
+ * @return Detached queued_message pointer, or NULL if nothing matched.
+ */
 queued_message*
 XsiMessageQueue::Remove(long typeRequested)
 {
@@ -446,6 +745,13 @@ XsiMessageQueue::Remove(long typeRequested)
 }
 
 
+/**
+ * @brief Assign a unique msqid and sequence number under the global lock.
+ *
+ * Invariant: the caller holds sXsiMessageQueueLock. Starts the id at the
+ * current real-time clock and linearly probes forward until the id is not
+ * already claimed, then advances the wrapping sGlobalSequenceNumber.
+ */
 void
 XsiMessageQueue::SetID()
 {
@@ -464,6 +770,12 @@ XsiMessageQueue::SetID()
 //	#pragma mark - Kernel exported API
 
 
+/**
+ * @brief One-time kernel initialiser for the XSI message queue subsystem.
+ *
+ * Initialises both hash tables and their guarding mutexes; panics if either
+ * hash table fails to allocate.
+ */
 void
 xsi_msg_init()
 {
@@ -483,6 +795,23 @@ xsi_msg_init()
 //	#pragma mark - Syscalls
 
 
+/**
+ * @brief Syscall entry point for msgctl().
+ *
+ * Dispatches IPC_STAT (copies msqid_ds out after a read-permission check),
+ * IPC_SET (applies a user-supplied msqid_ds after a write-permission check,
+ * forbidding non-root users from raising msg_qbytes), and IPC_RMID (removes
+ * the queue and drops the sIpcHashTable entry; waiters are woken with EIDRM
+ * via the destructor). The ipc and message-queue hash locks are released
+ * early for the non-RMID path so that concurrent callers are not serialised
+ * behind long IPC_SET userland copies.
+ *
+ * @param messageQueueID msqid returned by msgget().
+ * @param command One of IPC_STAT, IPC_SET, IPC_RMID.
+ * @param buffer User pointer to an msqid_ds (required for STAT and SET).
+ * @return B_OK (0) on success, otherwise EINVAL, EPERM, EACCES, or
+ *         B_BAD_ADDRESS.
+ */
 int
 _user_xsi_msgctl(int messageQueueID, int command, struct msqid_ds *buffer)
 {
@@ -593,6 +922,18 @@ _user_xsi_msgctl(int messageQueueID, int command, struct msqid_ds *buffer)
 }
 
 
+/**
+ * @brief Syscall entry point for msgget().
+ *
+ * Looks up (or allocates) the Ipc record for the key, honours IPC_CREAT and
+ * IPC_EXCL semantics, and creates a new XsiMessageQueue when required.
+ * IPC_PRIVATE always forces creation of a fresh, unkeyed queue.
+ *
+ * @param key XSI key or IPC_PRIVATE.
+ * @param flags Permission bits plus IPC_CREAT / IPC_EXCL.
+ * @return The new or existing msqid on success, or a negative errno
+ *         (ENOENT, EEXIST, EACCES, ENOSPC, ENOMEM).
+ */
 int
 _user_xsi_msgget(key_t key, int flags)
 {
@@ -674,6 +1015,25 @@ _user_xsi_msgget(key_t key, int flags)
 }
 
 
+/**
+ * @brief Syscall entry point for msgrcv().
+ *
+ * Sleeps on the queue's receive condition variable until a message matching
+ * messageType appears, unless IPC_NOWAIT is set (in which case ENOMSG is
+ * returned on an empty queue). Detects queue removal underneath a sleeper
+ * by comparing the captured sequence number against the post-wake state
+ * and returns EIDRM; signals convert into EINTR. Oversized messages are
+ * put back and reported as E2BIG unless MSG_NOERROR asked for truncation.
+ *
+ * @param messageQueueID msqid.
+ * @param messagePointer User buffer receiving type + payload.
+ * @param messageSize Max payload bytes the user buffer can accept.
+ * @param messageType XSI msgtyp selector (see Remove()).
+ * @param messageFlags IPC_NOWAIT | MSG_NOERROR.
+ * @return Number of payload bytes received, or a negative errno
+ *         (EINVAL, EACCES, EAGAIN/ENOMSG, EINTR, EIDRM, E2BIG,
+ *         B_BAD_ADDRESS).
+ */
 ssize_t
 _user_xsi_msgrcv(int messageQueueID, void *messagePointer,
 	size_t messageSize, long messageType, int messageFlags)
@@ -772,6 +1132,22 @@ _user_xsi_msgrcv(int messageQueueID, void *messagePointer,
 }
 
 
+/**
+ * @brief Syscall entry point for msgsnd().
+ *
+ * Copies the message from user space, then loops trying to Insert(). If
+ * Insert() reports that the queue is full, the caller either blocks on
+ * the send condition variable (default) or returns EAGAIN when IPC_NOWAIT
+ * was requested. EINTR is returned on signal, EIDRM if the queue is
+ * destroyed while blocked.
+ *
+ * @param messageQueueID msqid.
+ * @param messagePointer User buffer containing type + payload.
+ * @param messageSize Payload length (excluding the type prefix).
+ * @param messageFlags IPC_NOWAIT or 0.
+ * @return 0 on success, or a negative errno (EINVAL, EACCES, EAGAIN,
+ *         EINTR, EIDRM, ENOMEM, B_BAD_ADDRESS).
+ */
 int
 _user_xsi_msgsnd(int messageQueueID, const void *messagePointer,
 	size_t messageSize, int messageFlags)

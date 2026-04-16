@@ -1,6 +1,37 @@
 /*
- * Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file low_latency.cpp
+ * @brief Low-latency scheduler mode: spread threads across cores aggressively.
+ *
+ * Implements the scheduler_mode_operations vtable gSchedulerLowLatencyMode.
+ * Opposite of power_saving.cpp: prefers waking a fresh package or core for
+ * each new runnable thread and migrates running threads toward the least
+ * loaded core whenever doing so narrows the load gap.
+ *
+ * @see scheduler_modes.h, power_saving.cpp
  */
 
 
@@ -19,18 +50,34 @@ using namespace Scheduler;
 const bigtime_t kCacheExpire = 100000;
 
 
+/**
+ * @brief Mode-entry hook — nothing to do for low latency.
+ */
 static void
 switch_to_mode()
 {
 }
 
 
+/**
+ * @brief CPU enable/disable hook — no per-mode state to update.
+ */
 static void
 set_cpu_enabled(int32 /* cpu */, bool /* enabled */)
 {
 }
 
 
+/**
+ * @brief Test whether a thread's cached data on its core has likely been evicted.
+ *
+ * Measured in the core's active time (not wall time), so that a core that has
+ * been idle since the thread slept is not penalized for doing nothing.
+ *
+ * @param threadData Scheduler bookkeeping for the waking thread.
+ * @return true when the core has been active longer than kCacheExpire
+ *         since the thread went to sleep.
+ */
 static bool
 has_cache_expired(const ThreadData* threadData)
 {
@@ -43,6 +90,17 @@ has_cache_expired(const ThreadData* threadData)
 }
 
 
+/**
+ * @brief Pick a destination core, preferring newly woken packages/cores.
+ *
+ * Walks the idle-package list (most-idle first), the idle cores within a
+ * partially idle package, then the least loaded already-awake core, and
+ * finally the least loaded highly loaded core. Always honours the thread's
+ * CPU affinity mask.
+ *
+ * @param threadData Scheduler bookkeeping for the thread being placed.
+ * @return Destination core (never NULL).
+ */
 static CoreEntry*
 choose_core(const ThreadData* threadData)
 {
@@ -85,6 +143,16 @@ choose_core(const ThreadData* threadData)
 }
 
 
+/**
+ * @brief Decide whether to migrate a running thread to a less loaded core.
+ *
+ * Returns the current core unless (a) another eligible core is at least
+ * kLoadDifference less loaded and (b) the migration would actually move
+ * both loads closer to the mean.
+ *
+ * @param threadData Scheduler bookkeeping for the thread being rebalanced.
+ * @return Chosen destination core (may be the current core).
+ */
 static CoreEntry*
 rebalance(const ThreadData* threadData)
 {
@@ -132,6 +200,16 @@ rebalance(const ThreadData* threadData)
 }
 
 
+/**
+ * @brief Migrate the heaviest IRQ off this CPU when worthwhile.
+ *
+ * Never runs from the idle path (that would steal from the CPU we're about to
+ * sleep). Picks the single loudest IRQ on the current CPU and reassigns it
+ * to a core whose load is meaningfully lower than ours.
+ *
+ * @param idle true when called from the idle loop; the function is a no-op
+ *        in that case.
+ */
 static void
 rebalance_irqs(bool idle)
 {

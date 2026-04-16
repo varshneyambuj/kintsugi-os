@@ -53,6 +53,16 @@
 // #pragma mark - Implementation Private
 
 
+/**
+ * @brief Test whether @p team runs with privileges sufficient to bypass the
+ *        POSIX id-change permission checks.
+ *
+ * Today this is simply the "effective uid is root (0)" check. Kept in a
+ * helper so that a future capability model can replace it in one place.
+ *
+ * @param team Team whose credentials are inspected.
+ * @return true if the team is effectively root.
+ */
 static bool
 is_privileged(Team* team)
 {
@@ -61,6 +71,30 @@ is_privileged(Team* team)
 }
 
 
+/**
+ * @brief Shared implementation of setresgid()/setregid()/setgid() semantics.
+ *
+ * Updates the team's real (@c real_gid), effective (@c effective_gid), and
+ * saved-set (@c saved_set_gid) group ids atomically under the team lock,
+ * enforcing POSIX rules: a non-privileged caller may only switch each id
+ * among the current real/effective/saved set, while a privileged caller may
+ * set any value. An argument of @c (gid_t)-1 leaves the corresponding field
+ * untouched. Does not modify the supplementary-group list.
+ *
+ * @param rgid               New real gid, or @c (gid_t)-1 to leave unchanged.
+ * @param egid               New effective gid, or @c (gid_t)-1.
+ * @param ssgid              New saved-set gid, or @c (gid_t)-1 to inherit it
+ *                           from the current value / from @p rgid per
+ *                           setregid() common-practice semantics.
+ * @param setAllIfPrivileged When true, apply setgid()-style semantics: a
+ *                           privileged caller sets all three ids to @p rgid;
+ *                           when false, use setregid()/setresgid() semantics.
+ * @param kernel             Treat the caller as privileged regardless of the
+ *                           team's effective uid (used by the @c _kern_ entry
+ *                           points).
+ * @retval B_OK  The ids were updated.
+ * @retval EPERM The caller lacked privilege for the requested change.
+ */
 static status_t
 common_setresgid(gid_t rgid, gid_t egid, gid_t ssgid, bool setAllIfPrivileged, bool kernel)
 {
@@ -125,6 +159,27 @@ common_setresgid(gid_t rgid, gid_t egid, gid_t ssgid, bool setAllIfPrivileged, b
 }
 
 
+/**
+ * @brief Shared implementation of setresuid()/setreuid()/setuid() semantics.
+ *
+ * Mirror of common_setresgid() for user ids. Updates the team's @c real_uid,
+ * @c effective_uid, and @c saved_set_uid atomically under the team lock,
+ * enforcing POSIX setresuid() semantics: the three arguments name the
+ * _real_, _effective_, and _saved_set_ uid respectively, any of which may be
+ * @c (uid_t)-1 to leave the existing value in place. A non-privileged caller
+ * may only switch each id among the current real/effective/saved set.
+ *
+ * @param ruid               New real uid, or @c (uid_t)-1.
+ * @param euid               New effective uid, or @c (uid_t)-1.
+ * @param ssuid              New saved-set uid, or @c (uid_t)-1.
+ * @param setAllIfPrivileged When true, apply setuid()-style semantics: a
+ *                           privileged caller sets all three ids to @p ruid;
+ *                           when false, use setreuid()/setresuid() semantics.
+ * @param kernel             Treat the caller as privileged regardless of the
+ *                           team's effective uid.
+ * @retval B_OK  The ids were updated.
+ * @retval EPERM The caller lacked privilege for the requested change.
+ */
 static status_t
 common_setresuid(uid_t ruid, uid_t euid, uid_t ssuid, bool setAllIfPrivileged, bool kernel)
 {
@@ -195,6 +250,25 @@ common_setresuid(uid_t ruid, uid_t euid, uid_t ssuid, bool setAllIfPrivileged, b
 }
 
 
+/**
+ * @brief Shared implementation of getgroups() for kernel and userspace callers.
+ *
+ * Reads the team's supplementary-group list (or falls back to the effective
+ * gid when the list is empty, per POSIX which mandates at least one entry)
+ * and copies up to @p groupCount entries into @p groupList. When @p kernel
+ * is false the destination is validated as a user pointer and the copy goes
+ * through user_memcpy().
+ *
+ * @param groupCount Capacity of @p groupList; a value of 0 requests only the
+ *                   current count without copying.
+ * @param groupList  Destination buffer for the gids.
+ * @param kernel     True when the caller is in the kernel and @p groupList
+ *                   is a kernel pointer; false for a userspace destination.
+ * @retval >=0               Number of groups written, or the current group
+ *                           count when @p groupCount is 0.
+ * @retval B_BAD_VALUE       @p groupList is too small for the list.
+ * @retval B_BAD_ADDRESS     Userspace destination is not valid.
+ */
 static ssize_t
 common_getgroups(int groupCount, gid_t* groupList, bool kernel)
 {
@@ -239,6 +313,24 @@ common_getgroups(int groupCount, gid_t* groupList, bool kernel)
 }
 
 
+/**
+ * @brief Shared implementation of setgroups() for kernel and userspace callers.
+ *
+ * Allocates a fresh BKernel::GroupsArray (reference counted) holding a copy
+ * of the supplied gids and replaces the team's supplementary-group list with
+ * it. The previous list is released after the team lock is dropped, so the
+ * last reference cannot be dropped while the lock is held.
+ *
+ * @param groupCount Number of gids in @p groupList; 0 clears the list; must
+ *                   not exceed NGROUPS_MAX.
+ * @param groupList  Source array of gids.
+ * @param kernel     True when @p groupList is a kernel pointer; false for a
+ *                   userspace source copied via user_memcpy().
+ * @retval B_OK          The list was replaced.
+ * @retval B_BAD_VALUE   @p groupCount was negative or exceeded NGROUPS_MAX.
+ * @retval B_NO_MEMORY   Allocation of the new list failed.
+ * @retval B_BAD_ADDRESS Userspace source was not valid.
+ */
 static status_t
 common_setgroups(int groupCount, const gid_t* groupList, bool kernel)
 {
@@ -281,9 +373,16 @@ common_setgroups(int groupCount, const gid_t* groupList, bool kernel)
 // #pragma mark - Kernel Private
 
 
-/*!	Copies the user and group information from \a parent to \a team.
-	The caller must hold the lock to both \a team and \a parent.
-*/
+/**
+ * @brief Copy the full user/group identity block from @p parent to @p team.
+ *
+ * Used during team creation so that a child starts life with the same real,
+ * effective, and saved uid/gid plus the same (reference-counted) supplementary
+ * groups list as its parent. The caller must hold both team locks.
+ *
+ * @param team   Newly created team that receives the credentials.
+ * @param parent Parent team whose credentials are copied.
+ */
 void
 inherit_parent_user_and_group(Team* team, Team* parent)
 {
@@ -297,6 +396,19 @@ inherit_parent_user_and_group(Team* team, Team* parent)
 }
 
 
+/**
+ * @brief Apply set-user-id / set-group-id bits of an executable to @p team.
+ *
+ * Invoked during exec of @p file. If the file has the S_ISUID bit set, the
+ * team's saved-set and effective uid are replaced with the file's owner uid;
+ * S_ISGID likewise updates the saved-set and effective gid. The real uid/gid
+ * are not modified. The supplementary-group list is unaffected.
+ *
+ * @param team Team executing the new image.
+ * @param file Path of the executable being loaded.
+ * @retval B_OK  The relevant ids were updated (or no set-id bits were set).
+ * @retval other An error from vfs_read_stat() when the file cannot be stat'd.
+ */
 status_t
 update_set_id_user_and_group(Team* team, const char* file)
 {
@@ -321,6 +433,17 @@ update_set_id_user_and_group(Team* team, const char* file)
 }
 
 
+/**
+ * @brief Test whether @p team has @p gid as its effective or supplementary group.
+ *
+ * Checks the effective gid first and then iterates the team's supplementary
+ * groups list, under the team lock. Used by the VFS permission checks.
+ *
+ * @param team Team to query.
+ * @param gid  Group id to look for.
+ * @return true if @p gid matches the team's effective gid or any entry in
+ *         its supplementary-groups list.
+ */
 bool
 is_in_group(Team* team, gid_t gid)
 {
@@ -341,6 +464,19 @@ is_in_group(Team* team, gid_t gid)
 }
 
 
+/**
+ * @brief Kernel-internal setresgid(): update the current team's real,
+ *        effective, and saved-set gids without privilege checks.
+ *
+ * The trailing @c true argument to common_setresgid() disables the
+ * privilege check so the kernel itself can always set any gid.
+ *
+ * @param rgid               See common_setresgid().
+ * @param egid               See common_setresgid().
+ * @param ssgid              See common_setresgid().
+ * @param setAllIfPrivileged See common_setresgid().
+ * @return Status from common_setresgid().
+ */
 status_t
 _kern_setresgid(gid_t rgid, gid_t egid, gid_t ssgid, bool setAllIfPrivileged)
 {
@@ -348,6 +484,16 @@ _kern_setresgid(gid_t rgid, gid_t egid, gid_t ssgid, bool setAllIfPrivileged)
 }
 
 
+/**
+ * @brief Kernel-internal setresuid(): update the current team's real,
+ *        effective, and saved-set uids without privilege checks.
+ *
+ * @param ruid               See common_setresuid().
+ * @param euid               See common_setresuid().
+ * @param ssuid              See common_setresuid().
+ * @param setAllIfPrivileged See common_setresuid().
+ * @return Status from common_setresuid().
+ */
 status_t
 _kern_setresuid(uid_t ruid, uid_t euid, uid_t ssuid, bool setAllIfPrivileged)
 {
@@ -355,6 +501,18 @@ _kern_setresuid(uid_t ruid, uid_t euid, uid_t ssuid, bool setAllIfPrivileged)
 }
 
 
+/**
+ * @brief Kernel-internal getresgid(): read the current team's real,
+ *        effective, and saved-set gids.
+ *
+ * Each out-pointer may be NULL to indicate that the caller is not interested
+ * in that particular value.
+ *
+ * @param rgid  Out-pointer for the real gid, or NULL.
+ * @param egid  Out-pointer for the effective gid, or NULL.
+ * @param ssgid Out-pointer for the saved-set gid, or NULL.
+ * @return Always B_OK.
+ */
 status_t
 _kern_getresgid(gid_t *rgid, gid_t *egid, gid_t *ssgid)
 {
@@ -369,6 +527,15 @@ _kern_getresgid(gid_t *rgid, gid_t *egid, gid_t *ssgid)
 }
 
 
+/**
+ * @brief Kernel-internal getresuid(): read the current team's real,
+ *        effective, and saved-set uids.
+ *
+ * @param ruid  Out-pointer for the real uid, or NULL.
+ * @param euid  Out-pointer for the effective uid, or NULL.
+ * @param ssuid Out-pointer for the saved-set uid, or NULL.
+ * @return Always B_OK.
+ */
 status_t
 _kern_getresuid(uid_t *ruid, uid_t *euid, gid_t *ssuid)
 {
@@ -383,6 +550,15 @@ _kern_getresuid(uid_t *ruid, uid_t *euid, gid_t *ssuid)
 }
 
 
+/**
+ * @brief Kernel-internal getgroups(): read the supplementary-groups list.
+ *
+ * Thin wrapper over common_getgroups() that copies into a kernel buffer.
+ *
+ * @param groupCount Capacity of @p groupList; 0 returns only the count.
+ * @param groupList  Kernel-space destination buffer.
+ * @return See common_getgroups().
+ */
 ssize_t
 _kern_getgroups(int groupCount, gid_t* groupList)
 {
@@ -390,6 +566,17 @@ _kern_getgroups(int groupCount, gid_t* groupList)
 }
 
 
+/**
+ * @brief Kernel-internal setgroups(): replace the supplementary-groups list
+ *        from a kernel-space source buffer.
+ *
+ * The kernel bypass of the privilege check is implicit since the privilege
+ * check lives in the userspace entry point below.
+ *
+ * @param groupCount Number of gids in @p groupList; must be in [0, NGROUPS_MAX].
+ * @param groupList  Kernel-space source buffer.
+ * @return See common_setgroups().
+ */
 status_t
 _kern_setgroups(int groupCount, const gid_t* groupList)
 {
@@ -400,6 +587,18 @@ _kern_setgroups(int groupCount, const gid_t* groupList)
 // #pragma mark - Syscalls
 
 
+/**
+ * @brief Syscall: setresgid()/setregid()/setgid() from user space.
+ *
+ * Forwards to common_setresgid() with the privilege-override flag cleared so
+ * the normal POSIX permission checks are enforced.
+ *
+ * @param rgid               New real gid, or @c (gid_t)-1.
+ * @param egid               New effective gid, or @c (gid_t)-1.
+ * @param ssgid              New saved-set gid, or @c (gid_t)-1.
+ * @param setAllIfPrivileged See common_setresgid().
+ * @return See common_setresgid().
+ */
 status_t
 _user_setresgid(gid_t rgid, gid_t egid, gid_t ssgid, bool setAllIfPrivileged)
 {
@@ -407,6 +606,19 @@ _user_setresgid(gid_t rgid, gid_t egid, gid_t ssgid, bool setAllIfPrivileged)
 }
 
 
+/**
+ * @brief Syscall: setresuid()/setreuid()/setuid() from user space.
+ *
+ * The three arguments are the POSIX _real_, _effective_, and _saved_set_
+ * uid respectively. Each may be @c (uid_t)-1 to leave the corresponding
+ * team field unchanged.
+ *
+ * @param ruid               New real uid, or @c (uid_t)-1.
+ * @param euid               New effective uid, or @c (uid_t)-1.
+ * @param ssuid              New saved-set uid, or @c (uid_t)-1.
+ * @param setAllIfPrivileged See common_setresuid().
+ * @return See common_setresuid().
+ */
 status_t
 _user_setresuid(uid_t ruid, uid_t euid, uid_t ssuid, bool setAllIfPrivileged)
 {
@@ -414,6 +626,19 @@ _user_setresuid(uid_t ruid, uid_t euid, uid_t ssuid, bool setAllIfPrivileged)
 }
 
 
+/**
+ * @brief Syscall: getresgid() from user space.
+ *
+ * Copies the current team's real, effective, and saved-set gids into the
+ * userspace destinations (each may be NULL to skip). Every non-NULL
+ * destination is validated as a user address and written via user_memcpy().
+ *
+ * @param rgid  User pointer for the real gid, or NULL.
+ * @param egid  User pointer for the effective gid, or NULL.
+ * @param ssgid User pointer for the saved-set gid, or NULL.
+ * @retval B_OK          All requested fields were written successfully.
+ * @retval B_BAD_ADDRESS One of the user pointers was not valid.
+ */
 status_t
 _user_getresgid(gid_t *rgid, gid_t *egid, gid_t *ssgid)
 {
@@ -440,6 +665,17 @@ _user_getresgid(gid_t *rgid, gid_t *egid, gid_t *ssgid)
 }
 
 
+/**
+ * @brief Syscall: getresuid() from user space.
+ *
+ * Counterpart of _user_getresgid() for user ids.
+ *
+ * @param ruid  User pointer for the real uid, or NULL.
+ * @param euid  User pointer for the effective uid, or NULL.
+ * @param ssuid User pointer for the saved-set uid, or NULL.
+ * @retval B_OK          All requested fields were written successfully.
+ * @retval B_BAD_ADDRESS One of the user pointers was not valid.
+ */
 status_t
 _user_getresuid(uid_t *ruid, uid_t *euid, gid_t *ssuid)
 {
@@ -466,6 +702,16 @@ _user_getresuid(uid_t *ruid, uid_t *euid, gid_t *ssuid)
 }
 
 
+/**
+ * @brief Syscall: getgroups() from user space.
+ *
+ * Copies the current team's supplementary-groups list into @p groupList.
+ * Always returns at least one entry (the effective gid) per POSIX.
+ *
+ * @param groupCount Capacity of @p groupList; 0 returns only the count.
+ * @param groupList  Userspace destination buffer.
+ * @return See common_getgroups().
+ */
 ssize_t
 _user_getgroups(int groupCount, gid_t* groupList)
 {
@@ -473,6 +719,19 @@ _user_getgroups(int groupCount, gid_t* groupList)
 }
 
 
+/**
+ * @brief Syscall: setgroups() from user space.
+ *
+ * Replaces the team's supplementary-groups list from a userspace array.
+ * POSIX restricts this to privileged callers; if the caller is not
+ * effectively root the call fails with EPERM before any data is read.
+ *
+ * @param groupCount Number of gids in @p groupList; must be in [0, NGROUPS_MAX].
+ * @param groupList  Userspace source buffer.
+ * @retval B_OK            The list was replaced.
+ * @retval EPERM           Caller is not privileged.
+ * @retval other           Errors propagated from common_setgroups().
+ */
 ssize_t
 _user_setgroups(int groupCount, const gid_t* groupList)
 {

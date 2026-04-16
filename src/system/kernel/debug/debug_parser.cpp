@@ -1,7 +1,40 @@
 /*
- * Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de
- * Copyright 2006, Stephan Aßmus, superstippi@gmx.de
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Copyright 2006, Stephan Aßmus, superstippi@gmx.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file debug_parser.cpp
+ * @brief Expression and command-line parser for the in-kernel debugger (KDL).
+ *
+ * Implements the tokenizer and recursive-descent parser that KDL uses to
+ * evaluate arithmetic expressions, dereferences (`*addr`, `*{size}addr`),
+ * variable lookups (see debug_variables.cpp) and assignments, plus to parse
+ * command pipes (`cmd | cmd`) and command sequences (`cmd ; cmd`). All public
+ * entry points (evaluate_debug_expression(), evaluate_debug_command(),
+ * parse_next_debug_command_argument()) run under setjmp/longjmp exception
+ * handling so that malformed input in the debugger context aborts cleanly
+ * with a diagnostic instead of corrupting parse state.
  */
 
 
@@ -103,6 +136,13 @@ struct Token {
 	int32	type;
 	int32	position;
 
+	/**
+	 * @brief Populate this Token with text, type and source position.
+	 * @param string Pointer to the token text (not required to be NUL-terminated).
+	 * @param length Number of characters to copy; clamped to the internal buffer.
+	 * @param position Byte offset of the token in the source expression.
+	 * @param type Token type tag (see the TOKEN_* enum).
+	 */
 	void SetTo(const char* string, int32 length, int32 position, int32 type)
 	{
 		length = min_c((size_t)length, (sizeof(this->string) - 1));
@@ -112,6 +152,9 @@ struct Token {
 		this->position = position;
 	}
 
+	/**
+	 * @brief Reset the token to an empty TOKEN_NONE state.
+	 */
 	void Unset()
 	{
 		string[0] = '\0';
@@ -125,6 +168,12 @@ struct Token {
 // #pragma mark - exceptions
 
 
+/**
+ * @brief Raise a parse error by longjmp'ing out of the current parser frame.
+ * @param message Human-readable error text (copied into sExceptionMessage).
+ * @param position Byte offset in the input where the error was detected,
+ *        or -1 if no position is available.
+ */
 static void
 parse_exception(const char* message, int32 position)
 {
@@ -142,6 +191,11 @@ parse_exception(const char* message, int32 position)
 }
 
 
+/**
+ * @brief Allocate from the debug heap, raising a parse exception on failure.
+ * @param size Number of bytes to allocate.
+ * @return Pointer to the allocation; never NULL on normal return.
+ */
 static void*
 checked_malloc(size_t size)
 {
@@ -160,12 +214,20 @@ checked_malloc(size_t size)
 
 class Tokenizer {
 public:
+	/**
+	 * @brief Construct a tokenizer bound to an input string.
+	 * @param string The source text to tokenize; must outlive the tokenizer.
+	 */
 	Tokenizer(const char* string)
 		: fCommandMode(false)
 	{
 		SetTo(string);
 	}
 
+	/**
+	 * @brief Rebind the tokenizer to a new input string and reset parse state.
+	 * @param string New source text; must outlive subsequent token accesses.
+	 */
 	void SetTo(const char* string)
 	{
 		fString = fCurrentChar = string;
@@ -173,6 +235,10 @@ public:
 		fReuseToken = false;
 	}
 
+	/**
+	 * @brief Seek the tokenizer to an absolute byte position in the input.
+	 * @param position Offset from the start of the input string.
+	 */
 	void SetPosition(int32 position)
 	{
 		fCurrentChar = fString + position;
@@ -180,6 +246,14 @@ public:
 		fReuseToken = false;
 	}
 
+	/**
+	 * @brief Switch between expression-token and command-argument token modes.
+	 *
+	 * The two modes classify punctuation differently (e.g. `|` is a pipe token
+	 * in command mode but part of an unquoted string in expression mode).
+	 *
+	 * @param commandMode true to enter command mode, false for expression mode.
+	 */
 	void SetCommandMode(bool commandMode)
 	{
 		if (fCommandMode == commandMode)
@@ -193,11 +267,19 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Return the full input string the tokenizer is operating on.
+	 * @return Pointer to the source string.
+	 */
 	const char* String() const
 	{
 		return fString;
 	}
 
+	/**
+	 * @brief Advance to and return the next token, honouring rewind requests.
+	 * @return Reference to the current token after advancing.
+	 */
 	const Token& NextToken()
 	{
 		if (fCurrentToken.type == TOKEN_END_OF_LINE)
@@ -219,17 +301,28 @@ public:
 		return (fCommandMode ? _NextTokenCommand() : _NextTokenExpression());
 	}
 
+	/**
+	 * @brief Return the most recently scanned token without advancing.
+	 * @return Reference to the current token.
+	 */
 	const Token& CurrentToken() const
 	{
 		return fCurrentToken;
 	}
 
+	/**
+	 * @brief Mark the current token so the next NextToken() returns it again.
+	 */
 	void RewindToken()
 	{
 		fReuseToken = true;
 	}
 
  private:
+	/**
+	 * @brief Scan the next token using expression-mode lexical rules.
+	 * @return Reference to the newly scanned current token.
+	 */
 	const Token& _NextTokenExpression()
 	{
 		if (isdigit(*fCurrentChar)) {
@@ -326,6 +419,10 @@ public:
 		return fCurrentToken;
 	}
 
+	/**
+	 * @brief Scan the next token using command-mode lexical rules.
+	 * @return Reference to the newly scanned current token.
+	 */
 	const Token& _NextTokenCommand()
 	{
 		switch (*fCurrentChar) {
@@ -347,6 +444,10 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Scan a double-quoted string token, handling backslash escapes.
+	 * @return Reference to the current token populated as TOKEN_STRING.
+	 */
 	const Token& _QuotedString()
 	{
 		const char* begin = fCurrentChar++;
@@ -388,6 +489,10 @@ public:
 		return fCurrentToken;
 	}
 
+	/**
+	 * @brief Scan an unquoted string token, terminating at a delimiter.
+	 * @return Reference to the current token populated as TOKEN_UNKNOWN.
+	 */
 	const Token& _UnquotedString()
 	{
 		const char* begin = fCurrentChar;
@@ -402,6 +507,11 @@ public:
 		return fCurrentToken;
 	}
 
+	/**
+	 * @brief Decide whether a character ends an unquoted string in the current mode.
+	 * @param c Character to classify.
+	 * @return true if c terminates an unquoted string, false otherwise.
+	 */
 	bool _IsUnquotedDelimitingChar(char c)
 	{
 		if (isspace(c))
@@ -434,6 +544,10 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Compute the scanner's byte offset within the input string.
+	 * @return Offset from the start of the input.
+	 */
 	int32 _CurrentPos() const
 	{
 		return fCurrentChar - fString;
@@ -488,17 +602,28 @@ class ExpressionParser {
 };
 
 
+/**
+ * @brief Construct an ExpressionParser with an empty tokenizer.
+ */
 ExpressionParser::ExpressionParser()
 	: fTokenizer("")
 {
 }
 
 
+/**
+ * @brief Destroy the ExpressionParser; owns no external resources.
+ */
 ExpressionParser::~ExpressionParser()
 {
 }
 
 
+/**
+ * @brief Evaluate a debugger expression and return its numeric value.
+ * @param expressionString NUL-terminated expression in KDL syntax.
+ * @return The 64-bit value produced by the expression.
+ */
 uint64
 ExpressionParser::EvaluateExpression(const char* expressionString)
 {
@@ -513,6 +638,17 @@ ExpressionParser::EvaluateExpression(const char* expressionString)
 }
 
 
+/**
+ * @brief Parse and execute a debugger command line (possibly a pipe/sequence).
+ *
+ * Accepts a command, an assignment, or a `;`-separated chain of either. Each
+ * segment is parsed in the appropriate (command or expression) mode.
+ *
+ * @param expressionString NUL-terminated command line.
+ * @param[out] returnCode Receives the return code of the last executed command,
+ *        or zero if the last operation was an assignment.
+ * @return The numeric result of the last segment (typically the `_` variable).
+ */
 uint64
 ExpressionParser::EvaluateCommand(const char* expressionString, int& returnCode)
 {
@@ -564,6 +700,19 @@ ExpressionParser::EvaluateCommand(const char* expressionString, int& returnCode)
 }
 
 
+/**
+ * @brief Extract the next whitespace-delimited argument from a command line.
+ *
+ * Used by callers that want to parse arguments manually after the command has
+ * been dispatched. Advances *expressionString past the consumed argument.
+ *
+ * @param[in,out] expressionString On entry the remaining text; on return either
+ *        the position of the next unconsumed character or NULL at end-of-line.
+ * @param[out] buffer Destination for the argument text.
+ * @param bufferSize Size of @p buffer in bytes (including space for NUL).
+ * @return B_OK on success, B_ENTRY_NOT_FOUND when no argument remains, or
+ *         B_BAD_VALUE on parse error.
+ */
 status_t
 ExpressionParser::ParseNextCommandArgument(const char** expressionString,
 	char* buffer, size_t bufferSize)
@@ -593,6 +742,16 @@ ExpressionParser::ParseNextCommandArgument(const char** expressionString,
 }
 
 
+/**
+ * @brief Parse an expression or assignment and return its value.
+ *
+ * Handles plain assignments to variables, compound assignments (`+=`, `-=`,
+ * `*=`, `/=`, `%=`), assignments through a dereferenced address, and falls
+ * through to _ParseSum() for plain expressions.
+ *
+ * @param expectAssignment If true, a non-assignment input raises a parse error.
+ * @return The evaluated 64-bit result.
+ */
 uint64
 ExpressionParser::_ParseExpression(bool expectAssignment)
 {
@@ -744,6 +903,15 @@ ExpressionParser::_ParseExpression(bool expectAssignment)
 }
 
 
+/**
+ * @brief Parse and invoke a pipeline of `|`-separated debugger commands.
+ *
+ * Allocates a debugger_command_pipe on the debug heap, populates each segment
+ * by calling _ParseCommand(), then invokes the pipe.
+ *
+ * @param[out] returnCode Receives the pipe invocation's return code.
+ * @return The value of the `_` debug variable after the pipe completes.
+ */
 uint64
 ExpressionParser::_ParseCommandPipe(int& returnCode)
 {
@@ -776,6 +944,14 @@ ExpressionParser::_ParseCommandPipe(int& returnCode)
 }
 
 
+/**
+ * @brief Parse one command and its argument vector into a pipe segment.
+ *
+ * Looks up the command by name, then collects arguments according to whether
+ * the command has the B_KDEBUG_DONT_PARSE_ARGUMENTS flag.
+ *
+ * @param[out] segment Segment to populate with the resolved command/argv.
+ */
 void
 ExpressionParser::_ParseCommand(debugger_command_pipe_segment& segment)
 {
@@ -832,6 +1008,17 @@ ExpressionParser::_ParseCommand(debugger_command_pipe_segment& segment)
 }
 
 
+/**
+ * @brief Parse one command argument and append it to the argv array.
+ *
+ * Arguments may be parenthesised expressions, bracketed sub-commands, quoted
+ * strings or unquoted strings. Closing brackets/pipes/semicolons are left for
+ * the caller and return false.
+ *
+ * @param[in,out] argc Current argument count; incremented on success.
+ * @param[in,out] argv Argument vector (entries are debug_malloc'ed copies).
+ * @return true if an argument was consumed, false if a terminator was seen.
+ */
 bool
 ExpressionParser::_ParseArgument(int& argc, char** argv)
 {
@@ -886,6 +1073,16 @@ ExpressionParser::_ParseArgument(int& argc, char** argv)
 }
 
 
+/**
+ * @brief Capture the remainder of the line verbatim as a single argument.
+ *
+ * Used for commands flagged B_KDEBUG_DONT_PARSE_ARGUMENTS: consumes tokens
+ * while balancing `()` and `[]` until end-of-line, `|` or `;` at nesting 0.
+ *
+ * @param[in,out] argc Current argument count; incremented if a non-blank
+ *        argument is added.
+ * @param[in,out] argv Argument vector to append into.
+ */
 void
 ExpressionParser::_GetUnparsedArgument(int& argc, char** argv)
 {
@@ -943,6 +1140,13 @@ ExpressionParser::_GetUnparsedArgument(int& argc, char** argv)
 }
 
 
+/**
+ * @brief Copy a string argument into a fresh debug-heap buffer and append it.
+ * @param[in,out] argc Current argument count; incremented on success.
+ * @param[in,out] argv Argument vector to append into.
+ * @param argument Source text; need not be NUL-terminated when length >= 0.
+ * @param length Length to copy, or -1 to use strlen(argument).
+ */
 void
 ExpressionParser::_AddArgument(int& argc, char** argv, const char* argument,
 	int32 length)
@@ -960,6 +1164,13 @@ ExpressionParser::_AddArgument(int& argc, char** argv, const char* argument,
 }
 
 
+/**
+ * @brief Parse a sum (a chain of `+` / `-` over products), left-to-right.
+ * @param useValue If true, use @p value as the initial left operand instead
+ *        of parsing one.
+ * @param value Pre-parsed left operand, used only when @p useValue is true.
+ * @return The resulting 64-bit value.
+ */
 uint64
 ExpressionParser::_ParseSum(bool useValue, uint64 value)
 {
@@ -984,6 +1195,14 @@ ExpressionParser::_ParseSum(bool useValue, uint64 value)
 }
 
 
+/**
+ * @brief Parse a product (a chain of `*`, `/`, `%` over unary terms).
+ *
+ * Division and modulo by zero raise a parse exception at the operator's
+ * source position.
+ *
+ * @return The resulting 64-bit value.
+ */
 uint64
 ExpressionParser::_ParseProduct()
 {
@@ -1018,6 +1237,10 @@ ExpressionParser::_ParseProduct()
 }
 
 
+/**
+ * @brief Parse a unary term: optional negation, dereference, or atom.
+ * @return The resulting 64-bit value.
+ */
 uint64
 ExpressionParser::_ParseUnary()
 {
@@ -1037,6 +1260,17 @@ ExpressionParser::_ParseUnary()
 }
 
 
+/**
+ * @brief Parse a memory dereference `*[{size}]expr` and read the target value.
+ *
+ * The optional `{size}` block specifies an access width of 1, 2, 4 or 8
+ * bytes; the default is 4. The memory is read via debug_memcpy() against the
+ * current team, and read failures raise a parse exception.
+ *
+ * @param[out] _address Optional; receives the computed target address.
+ * @param[out] _size Optional; receives the access width in bytes.
+ * @return The value read from memory, zero-extended to 64 bits.
+ */
 uint64
 ExpressionParser::_ParseDereference(void** _address, uint32* _size)
 {
@@ -1094,6 +1328,11 @@ ExpressionParser::_ParseDereference(void** _address, uint32* _size)
 }
 
 
+/**
+ * @brief Parse an atom: numeric constant, variable, parenthesised expression,
+ *        or bracketed `[command]` sub-invocation.
+ * @return The resulting 64-bit value.
+ */
 uint64
 ExpressionParser::_ParseAtom()
 {
@@ -1138,6 +1377,15 @@ ExpressionParser::_ParseAtom()
 }
 
 
+/**
+ * @brief Consume the next token, requiring it to match an expected type.
+ *
+ * On mismatch, raises a parse exception describing the expected and actual
+ * tokens at the offending source position.
+ *
+ * @param type Expected token type (see TOKEN_* enum).
+ * @return Reference to the consumed token.
+ */
 const Token&
 ExpressionParser::_EatToken(int32 type)
 {
@@ -1156,6 +1404,18 @@ ExpressionParser::_EatToken(int32 type)
 // #pragma mark -
 
 
+/**
+ * @brief Evaluate a debugger expression under exception protection.
+ *
+ * Sets up a setjmp buffer so any parse_exception() during evaluation unwinds
+ * cleanly. Uses a DebugAllocPoolScope to drop any transient allocations on
+ * return, regardless of outcome.
+ *
+ * @param expression NUL-terminated KDL expression.
+ * @param[out] _result Optional; receives the evaluated value on success.
+ * @param silent If true, suppress the diagnostic kprintf on parse failure.
+ * @return true on successful evaluation, false otherwise.
+ */
 bool
 evaluate_debug_expression(const char* expression, uint64* _result, bool silent)
 {
@@ -1194,6 +1454,15 @@ evaluate_debug_expression(const char* expression, uint64* _result, bool silent)
 }
 
 
+/**
+ * @brief Parse and invoke a KDL command line under exception protection.
+ *
+ * Handles the full command grammar (commands, pipes, assignments and `;`
+ * sequences). Diagnostics are printed through kprintf_unfiltered() on error.
+ *
+ * @param commandLine NUL-terminated KDL command line.
+ * @return The return code of the last command, or 0 on parse failure.
+ */
 int
 evaluate_debug_command(const char* commandLine)
 {
@@ -1223,6 +1492,19 @@ evaluate_debug_command(const char* commandLine)
 }
 
 
+/**
+ * @brief Public wrapper around ExpressionParser::ParseNextCommandArgument().
+ *
+ * Extracts one argument from a remaining command-line fragment, with
+ * setjmp-based exception protection.
+ *
+ * @param[in,out] expressionString Remaining command-line text; advanced past
+ *        the consumed argument, or set to NULL at end-of-line.
+ * @param[out] buffer Destination for the argument text.
+ * @param bufferSize Size of @p buffer in bytes.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND at end-of-line, B_BAD_VALUE on
+ *         parse error, or B_ERROR if no jump buffer is available.
+ */
 status_t
 parse_next_debug_command_argument(const char** expressionString, char* buffer,
 	size_t bufferSize)

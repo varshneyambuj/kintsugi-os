@@ -1,7 +1,43 @@
 /*
- * Copyright 2007-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2007-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file wait_for_objects.cpp
+ * @brief select(), poll(), and wait_for_objects() kernel implementation.
+ *
+ * Provides the three multiplexed wait primitives plus the kernel-internal
+ * select_sync_pool helpers used by objects that can have multiple simultaneous
+ * selectors. The wait_for_objects_sync structure owns a semaphore and an array
+ * of select_info records, one per watched object. common_select(),
+ * common_poll(), and common_wait_for_objects() install the records via
+ * select_fd()/select_object(), block on the semaphore with the requested
+ * timeout, then tear everything down and report events back to the caller.
+ * Notify() on select_info releases the semaphore only when the signalled bits
+ * intersect the caller's selected_events mask, which is how these calls are
+ * cancelled or awoken. B_CAN_INTERRUPT on the semaphore wait implements
+ * signal-driven cancellation.
  */
 
 #include <fs/select_sync_pool.h>
@@ -73,6 +109,12 @@ struct wait_for_objects_sync : public select_sync {
 };
 
 
+/**
+ * @brief Virtual destructor for the select_sync base class.
+ *
+ * Concrete sync objects (EventQueue, wait_for_objects_sync) are destroyed via
+ * reference counting; this destructor runs on the final release.
+ */
 select_sync::~select_sync()
 {
 }
@@ -346,12 +388,16 @@ class PollDone : public PollTraceEntry {
 // #pragma mark -
 
 
-/*!
-	Clears all bits in the fd_set - since we are using variable sized
-	arrays in the kernel, we can't use the FD_ZERO() macro provided by
-	sys/select.h for this task.
-	All other FD_xxx() macros are safe to use, though.
-*/
+/**
+ * @brief Zeros a variable-sized kernel fd_set.
+ *
+ * The standard FD_ZERO() macro assumes a fixed-size fd_set, which does not
+ * hold in the kernel where the set is sized to cover @p numFDs. All other
+ * FD_xxx() macros operate on individual bits and are safe.
+ *
+ * @param set    Target fd_set, may be NULL (then nothing is done).
+ * @param numFDs Number of file descriptors the set was sized for.
+ */
 static inline void
 fd_zero(fd_set *set, int numFDs)
 {
@@ -360,6 +406,17 @@ fd_zero(fd_set *set, int numFDs)
 }
 
 
+/**
+ * @brief Allocates a wait_for_objects_sync for @p numFDs watched entries.
+ *
+ * Builds the per-entry select_info array, pointing each entry's sync back at
+ * the wait_for_objects_sync so Notify() can locate the semaphore. Creates the
+ * sleep semaphore that the common_* functions will block on.
+ *
+ * @param numFDs Number of select_info slots to allocate.
+ * @param _sync  Out parameter: the allocated sync object on success.
+ * @return B_OK on success, B_NO_MEMORY or a negative sem id on failure.
+ */
 static status_t
 create_select_sync(int numFDs, wait_for_objects_sync*& _sync)
 {
@@ -388,6 +445,14 @@ create_select_sync(int numFDs, wait_for_objects_sync*& _sync)
 }
 
 
+/**
+ * @brief Pins a select_sync in memory by adding a reference.
+ *
+ * Called by objects whose select hook captures a reference to the sync while
+ * they still hold a select_info on it.
+ *
+ * @param sync The sync object to reference.
+ */
 void
 acquire_select_sync(select_sync* sync)
 {
@@ -396,6 +461,13 @@ acquire_select_sync(select_sync* sync)
 }
 
 
+/**
+ * @brief Releases a previously acquired select_sync reference.
+ *
+ * When the final reference drops the concrete sync destroys itself.
+ *
+ * @param sync The sync object to release.
+ */
 void
 put_select_sync(select_sync* sync)
 {
@@ -404,6 +476,12 @@ put_select_sync(select_sync* sync)
 }
 
 
+/**
+ * @brief Destroys the sync: deletes the semaphore and the select_info array.
+ *
+ * Reached only after all references have been released, ensuring no Notify()
+ * call is still in flight.
+ */
 wait_for_objects_sync::~wait_for_objects_sync()
 {
 	delete_sem(sem);
@@ -411,6 +489,20 @@ wait_for_objects_sync::~wait_for_objects_sync()
 }
 
 
+/**
+ * @brief Delivers events to a select()/poll()/wait_for_objects() waiter.
+ *
+ * Merges @p events into the info's events mask, then releases the sync's
+ * semaphore only if any of the newly reported bits overlap the caller's
+ * selected_events. This keeps unrelated notifications from waking the waiter
+ * but still lets interrupt, error, and disconnect events propagate because
+ * they are automatically added to the selected mask before blocking.
+ *
+ * @param info   select_info slot that the source object was selected on.
+ * @param events Event bits to deliver.
+ * @return B_OK if no wake was needed or release_sem_etc() succeeded,
+ *     B_BAD_VALUE if the sync has no valid semaphore.
+ */
 status_t
 wait_for_objects_sync::Notify(select_info* info, uint16 events)
 {
@@ -428,6 +520,29 @@ wait_for_objects_sync::Notify(select_info* info, uint16 events)
 }
 
 
+/**
+ * @brief Shared implementation of select() for kernel and user callers.
+ *
+ * Validates fds early, allocates a wait_for_objects_sync covering @p numFDs
+ * slots, and for each bit set in the input sets computes the selected_events
+ * mask (read, write, error plus the non-maskable DISCONNECTED/ERROR flags) and
+ * calls select_fd() to register interest. If @p sigMask is non-NULL, temporarily
+ * installs it for the blocking window (and stashes the old mask on the thread
+ * so signal delivery can restore it). Blocks on the sync semaphore with
+ * B_CAN_INTERRUPT so signals abort the wait, then deselects every fd, clears
+ * the output sets, and re-populates them from sync->set[fd].events.
+ *
+ * @param readSet   Input/output fd_set for readable fds; may be NULL.
+ * @param writeSet  Input/output fd_set for writable fds; may be NULL.
+ * @param errorSet  Input/output fd_set for exceptional fds; may be NULL.
+ * @param numFDs    Upper bound on the fd range to inspect.
+ * @param timeout   Absolute timeout (system_time units), 0 for non-blocking,
+ *     or a negative value for infinite (encoded by the caller).
+ * @param sigMask   Optional signal mask active during the wait.
+ * @param kernel    True when called from a kernel thread.
+ * @return Count of ready events, 0 on timeout/would-block, B_INTERRUPTED on
+ *     signal, or a negative status_t for fd or allocation failures.
+ */
 static int
 common_select(int numFDs, fd_set *readSet, fd_set *writeSet, fd_set *errorSet,
 	bigtime_t timeout, const sigset_t *sigMask, bool kernel)
@@ -558,6 +673,25 @@ common_select(int numFDs, fd_set *readSet, fd_set *writeSet, fd_set *errorSet,
 }
 
 
+/**
+ * @brief Shared implementation of poll() for kernel and user callers.
+ *
+ * Allocates a wait_for_objects_sync, augments each pollfd's event mask with
+ * POLLNVAL|POLLERR|POLLHUP so those conditions are always reported, and calls
+ * select_fd() for each positive fd. Invalid fds are marked POLLNVAL in place
+ * and skip the blocking wait. As with common_select(), the thread's signal
+ * mask is swapped in for the duration of the wait when @p sigMask is set.
+ * After the sem wait the fd set is deselected and events are copied back by
+ * intersecting the sync's recorded bits with the caller's requested mask.
+ *
+ * @param fds      Array of pollfd; .events is the request, .revents the reply.
+ * @param numFDs   Number of entries in @p fds.
+ * @param timeout  Absolute timeout in system_time units or negative = infinite.
+ * @param sigMask  Optional signal mask active during the wait.
+ * @param kernel   True when called from a kernel thread.
+ * @return Number of fds with revents set, 0 on timeout/would-block,
+ *     B_INTERRUPTED on signal, or a negative status_t on setup failure.
+ */
 static int
 common_poll(struct pollfd *fds, nfds_t numFDs, bigtime_t timeout,
 	const sigset_t *sigMask, bool kernel)
@@ -652,6 +786,26 @@ common_poll(struct pollfd *fds, nfds_t numFDs, bigtime_t timeout,
 }
 
 
+/**
+ * @brief Shared implementation of wait_for_objects().
+ *
+ * Generalizes common_select()/common_poll() to any kernel object kind
+ * identified by (type, object) pairs. Each object is selected via
+ * select_object() with B_EVENT_INVALID|B_EVENT_ERROR|B_EVENT_DISCONNECTED
+ * silently added to the mask so those always surface. If any object fails to
+ * select (e.g. it was already destroyed), it is recorded as B_EVENT_INVALID
+ * and the wait is bypassed entirely. The blocking sem acquire supports the
+ * full @p flags set (absolute/relative timeout, interruptible). On wake each
+ * info's events field is intersected with what was actually reported.
+ *
+ * @param infos    Caller-provided array of object_wait_info records.
+ * @param numInfos Number of entries in @p infos.
+ * @param flags    Timeout flags combined with B_CAN_INTERRUPT for the sem wait.
+ * @param timeout  Relative or absolute timeout per @p flags.
+ * @param kernel   True when called from a kernel thread.
+ * @return Number of infos with events set, or a negative status on timeout,
+ *     interrupt, or setup failure.
+ */
 static ssize_t
 common_wait_for_objects(object_wait_info* infos, int numInfos, uint32 flags,
 	bigtime_t timeout, bool kernel)
@@ -726,6 +880,17 @@ common_wait_for_objects(object_wait_info* infos, int numInfos, uint32 flags,
 // #pragma mark - kernel private
 
 
+/**
+ * @brief Forwards a select_info notification to its owning sync.
+ *
+ * Entry point used by kernel objects (fds, ports, sems, ...) to report that
+ * events have occurred. The sync's Notify() decides whether a waiter should
+ * be woken.
+ *
+ * @param info   The select_info registered by select_fd()/select_object().
+ * @param events Event flags being signalled.
+ * @return B_OK on success, B_BAD_VALUE if @p info or its sync is NULL.
+ */
 status_t
 notify_select_events(select_info* info, uint16 events)
 {
@@ -739,6 +904,16 @@ notify_select_events(select_info* info, uint16 events)
 }
 
 
+/**
+ * @brief Walks a linked list of select_info records, notifying each.
+ *
+ * Objects that track multiple selectors keep them in a singly-linked list and
+ * use this helper to broadcast an event. The next pointer is captured before
+ * calling Notify() so self-removal inside the hook is safe.
+ *
+ * @param list   Head of the select_info list (may be NULL).
+ * @param events Event flags to deliver to every entry.
+ */
 void
 notify_select_events_list(select_info* list, uint16 events)
 {
@@ -754,6 +929,16 @@ notify_select_events_list(select_info* list, uint16 events)
 //	#pragma mark - public kernel API
 
 
+/**
+ * @brief Public kernel API to notify a single selectsync of a single event.
+ *
+ * Translates the byte event code via SELECT_FLAG() and treats the opaque
+ * selectsync pointer as a select_info, which is the contract drivers use.
+ *
+ * @param sync  Driver-held selectsync pointer.
+ * @param event Event code (B_SELECT_READ, B_SELECT_WRITE, etc.).
+ * @return B_OK or B_BAD_VALUE as propagated from notify_select_events().
+ */
 status_t
 notify_select_event(struct selectsync *sync, uint8 event)
 {
@@ -764,6 +949,13 @@ notify_select_event(struct selectsync *sync, uint8 event)
 //	#pragma mark - private kernel exported API
 
 
+/**
+ * @brief Linear search for a pool entry owning @p sync.
+ *
+ * @param pool Pool to search; must not be NULL.
+ * @param sync Selectsync key to locate.
+ * @return Matching entry or NULL.
+ */
 static select_sync_pool_entry *
 find_select_sync_pool_entry(select_sync_pool *pool, selectsync *sync)
 {
@@ -778,6 +970,17 @@ find_select_sync_pool_entry(select_sync_pool *pool, selectsync *sync)
 }
 
 
+/**
+ * @brief Adds @p event interest for @p sync inside an existing pool.
+ *
+ * Reuses an entry for @p sync if one already exists, otherwise allocates a
+ * fresh entry and appends it.
+ *
+ * @param pool  Pool to mutate; must not be NULL.
+ * @param sync  Selectsync associated with the entry.
+ * @param event Event code whose SELECT_FLAG() bit is added to the entry.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 static status_t
 add_select_sync_pool_entry(select_sync_pool *pool, selectsync *sync,
 	uint8 event)
@@ -801,6 +1004,19 @@ add_select_sync_pool_entry(select_sync_pool *pool, selectsync *sync,
 }
 
 
+/**
+ * @brief Exported helper that lazily creates a pool and adds an entry.
+ *
+ * Drivers that can host multiple select callers keep a pointer to a pool and
+ * hand it here. The pool is allocated on first use and destroyed again here
+ * when it turns out to be empty after the insert (possible only on add
+ * failure).
+ *
+ * @param _pool Pointer to the driver's pool pointer; updated in place.
+ * @param sync  Selectsync associated with the entry.
+ * @param event Event code to add.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 add_select_sync_pool_entry(select_sync_pool **_pool, selectsync *sync,
 	uint8 event)
@@ -828,6 +1044,18 @@ add_select_sync_pool_entry(select_sync_pool **_pool, selectsync *sync,
 }
 
 
+/**
+ * @brief Clears an event interest on a pool entry, pruning empty entries.
+ *
+ * Scans all entries matching @p sync (drivers may keep duplicates), clears the
+ * corresponding bit, and removes entries whose mask drops to zero. If the
+ * last entry is removed the pool is freed and *_pool set to NULL.
+ *
+ * @param _pool Pointer to the driver's pool pointer; may be cleared to NULL.
+ * @param sync  Selectsync to update.
+ * @param event Event code to clear.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching entry existed.
+ */
 status_t
 remove_select_sync_pool_entry(select_sync_pool **_pool, selectsync *sync,
 	uint8 event)
@@ -866,6 +1094,13 @@ remove_select_sync_pool_entry(select_sync_pool **_pool, selectsync *sync,
 }
 
 
+/**
+ * @brief Frees a pool and all of its entries.
+ *
+ * Accepts NULL so callers can unconditionally invoke this on teardown paths.
+ *
+ * @param pool Pool to destroy or NULL.
+ */
 void
 delete_select_sync_pool(select_sync_pool *pool)
 {
@@ -881,6 +1116,14 @@ delete_select_sync_pool(select_sync_pool *pool)
 }
 
 
+/**
+ * @brief Notifies every selectsync in a pool that is interested in @p event.
+ *
+ * Drivers call this when something the pool is tracking changes state.
+ *
+ * @param pool  Pool to scan; tolerated NULL for convenience.
+ * @param event Event code delivered to matching entries.
+ */
 void
 notify_select_event_pool(select_sync_pool *pool, uint8 event)
 {
@@ -901,6 +1144,17 @@ notify_select_event_pool(select_sync_pool *pool, uint8 event)
 //	#pragma mark - Kernel POSIX layer
 
 
+/**
+ * @brief Kernel-internal select(): converts a relative timeout to absolute.
+ *
+ * @param numFDs   Upper bound on the fd range to inspect.
+ * @param readSet  Input/output read fd_set; may be NULL.
+ * @param writeSet Input/output write fd_set; may be NULL.
+ * @param errorSet Input/output exceptional fd_set; may be NULL.
+ * @param timeout  Relative timeout (microseconds), negative means infinite.
+ * @param sigMask  Optional signal mask active during the wait.
+ * @return See common_select().
+ */
 ssize_t
 _kern_select(int numFDs, fd_set *readSet, fd_set *writeSet, fd_set *errorSet,
 	bigtime_t timeout, const sigset_t *sigMask)
@@ -913,6 +1167,15 @@ _kern_select(int numFDs, fd_set *readSet, fd_set *writeSet, fd_set *errorSet,
 }
 
 
+/**
+ * @brief Kernel-internal poll(): converts a relative timeout to absolute.
+ *
+ * @param fds     pollfd array; .revents is written back in place.
+ * @param numFDs  Number of entries in @p fds.
+ * @param timeout Relative timeout, negative = infinite.
+ * @param sigMask Optional signal mask active during the wait.
+ * @return See common_poll().
+ */
 ssize_t
 _kern_poll(struct pollfd *fds, int numFDs, bigtime_t timeout,
 	const sigset_t *sigMask)
@@ -924,6 +1187,15 @@ _kern_poll(struct pollfd *fds, int numFDs, bigtime_t timeout,
 }
 
 
+/**
+ * @brief Kernel-internal wait_for_objects(); timeout is left to common_*.
+ *
+ * @param infos    object_wait_info array describing objects to watch.
+ * @param numInfos Entry count.
+ * @param flags    Timeout flags (see common_wait_for_objects()).
+ * @param timeout  Timeout per @p flags.
+ * @return See common_wait_for_objects().
+ */
 ssize_t
 _kern_wait_for_objects(object_wait_info* infos, int numInfos, uint32 flags,
 	bigtime_t timeout)
@@ -935,6 +1207,14 @@ _kern_wait_for_objects(object_wait_info* infos, int numInfos, uint32 flags,
 //	#pragma mark - User syscalls
 
 
+/**
+ * @brief Validates that @p numFDs does not exceed the current fd table size.
+ *
+ * Reads the user io_context's current table_size under its read lock.
+ *
+ * @param numFDs Requested fd count.
+ * @return True if the count is acceptable, false otherwise.
+ */
 static bool
 check_max_fds(int numFDs)
 {
@@ -947,6 +1227,24 @@ check_max_fds(int numFDs)
 }
 
 
+/**
+ * @brief select() syscall entry point for user space.
+ *
+ * Validates numFDs and user pointer ranges, copies in the three fd_set
+ * buffers and the optional sigset_t, delegates to common_select() with
+ * an absolute timeout (with overflow clamping), and copies any modified sets
+ * back out. Read/write/error sets are sized dynamically so a scratch
+ * BStackOrHeapArray holds the concatenated buffers.
+ *
+ * @param numFDs        Highest fd + 1 supplied by the caller.
+ * @param userReadSet   User-space read fd_set; may be NULL.
+ * @param userWriteSet  User-space write fd_set; may be NULL.
+ * @param userErrorSet  User-space exceptional fd_set; may be NULL.
+ * @param timeout       Relative timeout in microseconds; negative = infinite.
+ * @param userSigMask   User-space sigset_t for pselect; may be NULL.
+ * @return Ready-fd count, B_INTERRUPTED on signal, B_BAD_VALUE/B_BAD_ADDRESS
+ *     on bad arguments, or B_NO_MEMORY.
+ */
 ssize_t
 _user_select(int numFDs, fd_set *userReadSet, fd_set *userWriteSet,
 	fd_set *userErrorSet, bigtime_t timeout, const sigset_t *userSigMask)
@@ -1030,6 +1328,21 @@ _user_select(int numFDs, fd_set *userReadSet, fd_set *userWriteSet,
 }
 
 
+/**
+ * @brief poll() syscall entry point for user space.
+ *
+ * Copies the pollfd array in and out using a stack-or-heap scratch buffer,
+ * applies the overflow-safe relative-to-absolute timeout conversion, and
+ * forwards to common_poll(). Handles the ppoll() sigmask extension when
+ * @p userSigMask is non-NULL.
+ *
+ * @param userfds      User-space pollfd array.
+ * @param numFDs       Number of entries; must be non-negative.
+ * @param timeout      Relative timeout in microseconds; negative = infinite.
+ * @param userSigMask  Optional sigset_t for ppoll; may be NULL.
+ * @return Number of fds with revents set, B_INTERRUPTED, B_BAD_VALUE,
+ *     B_BAD_ADDRESS, or B_NO_MEMORY.
+ */
 ssize_t
 _user_poll(struct pollfd *userfds, int numFDs, bigtime_t timeout,
 	const sigset_t *userSigMask)
@@ -1077,6 +1390,22 @@ _user_poll(struct pollfd *userfds, int numFDs, bigtime_t timeout,
 }
 
 
+/**
+ * @brief wait_for_objects() syscall entry point for user space.
+ *
+ * Validates @p numInfos against the per-context limits for fds, sems, ports,
+ * and threads, copies the infos in and out, and integrates with the syscall
+ * restart machinery so that a B_INTERRUPTED return can be retried with the
+ * remaining timeout. The numInfos==0 special case takes a fast path that
+ * just performs the timed wait without any selections.
+ *
+ * @param userInfos User-space object_wait_info array; may be NULL only if
+ *     @p numInfos is 0.
+ * @param numInfos  Number of entries; must be >= 0.
+ * @param flags     B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT / 0 plus restart bits.
+ * @param timeout   Timeout per @p flags.
+ * @return Number of infos with events, or a negative status on error/timeout.
+ */
 ssize_t
 _user_wait_for_objects(object_wait_info* userInfos, int numInfos, uint32 flags,
 	bigtime_t timeout)

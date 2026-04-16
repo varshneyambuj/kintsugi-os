@@ -77,6 +77,9 @@ allocate_commpage_entry(int entry, size_t size)
 
 
 /** @brief Allocates a commpage slot and copies @p copyFrom into it.
+ *  @param entry    Index into the commpage table.
+ *  @param copyFrom Source buffer whose bytes are copied into the new slot.
+ *  @param size     Number of bytes to copy (and to reserve).
  *  @return Offset of the new payload from the commpage base. */
 addr_t
 fill_commpage_entry(int entry, const void* copyFrom, size_t size)
@@ -87,7 +90,8 @@ fill_commpage_entry(int entry, const void* copyFrom, size_t size)
 }
 
 
-/** @brief Returns the synthetic ELF image id describing the commpage. */
+/** @brief Returns the synthetic ELF image id describing the commpage.
+ *  @return Image id registered with the kernel ELF subsystem. */
 image_id
 get_commpage_image()
 {
@@ -110,7 +114,8 @@ clone_commpage_area(team_id team, void** address)
 }
 
 
-/** @brief Creates the commpage area, fills the header, and registers its ELF image. */
+/** @brief Creates the commpage area, fills the header, and registers its ELF image.
+ *  @return B_OK once the page and its ELF image are in place. */
 status_t
 commpage_init(void)
 {
@@ -142,7 +147,8 @@ commpage_init(void)
 }
 
 
-/** @brief Late-init hook called once secondary CPUs are running. */
+/** @brief Late-init hook called once secondary CPUs are running.
+ *  @return Status returned by the architecture-specific post-CPU init. */
 status_t
 commpage_init_post_cpus(void)
 {

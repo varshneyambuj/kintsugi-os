@@ -1,7 +1,36 @@
 /*
- * Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2007, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2007, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file scheduler_tracing.cpp
+ * @brief Scheduler trace-entry pretty-printers and the `scheduler` kdl command.
+ *
+ * Implements AddDump()/Name() for EnqueueThread, RemoveThread, and
+ * ScheduleThread trace entries, plus the `scheduler <thread-id>` kernel
+ * debugger command that walks the trace buffer and prints per-thread run,
+ * latency, rerun, and preemption statistics.
  */
 
 #include "scheduler_tracing.h"
@@ -16,6 +45,10 @@ namespace SchedulerTracing {
 // #pragma mark - EnqueueThread
 
 
+/**
+ * @brief Dump the "scheduler enqueue" line for this trace entry.
+ * @param out Output sink supplied by the tracing framework.
+ */
 void
 EnqueueThread::AddDump(TraceOutput& out)
 {
@@ -25,6 +58,10 @@ EnqueueThread::AddDump(TraceOutput& out)
 }
 
 
+/**
+ * @brief Return the name of the thread being enqueued.
+ * @return Pointer to the cached thread name.
+ */
 const char*
 EnqueueThread::Name() const
 {
@@ -35,6 +72,10 @@ EnqueueThread::Name() const
 // #pragma mark - RemoveThread
 
 
+/**
+ * @brief Dump the "scheduler remove" line for this trace entry.
+ * @param out Output sink supplied by the tracing framework.
+ */
 void
 RemoveThread::AddDump(TraceOutput& out)
 {
@@ -42,6 +83,10 @@ RemoveThread::AddDump(TraceOutput& out)
 		fPriority);
 }
 
+/**
+ * @brief Removal entries don't carry a thread name.
+ * @return Always NULL.
+ */
 const char*
 RemoveThread::Name() const
 {
@@ -52,6 +97,15 @@ RemoveThread::Name() const
 // #pragma mark - ScheduleThread
 
 
+/**
+ * @brief Dump the "schedule" line, including why the previous thread left CPU.
+ *
+ * Formats the previous thread's wait object type (semaphore, condition
+ * variable, mutex, rw_lock, snooze, signal, other) along with the new
+ * thread id, priority, and CPU.
+ *
+ * @param out Output sink supplied by the tracing framework.
+ */
 void
 ScheduleThread::AddDump(TraceOutput& out)
 {
@@ -105,6 +159,10 @@ ScheduleThread::AddDump(TraceOutput& out)
 }
 
 
+/**
+ * @brief Return the name of the newly scheduled thread.
+ * @return Pointer to the cached thread name.
+ */
 const char*
 ScheduleThread::Name() const
 {
@@ -117,6 +175,17 @@ ScheduleThread::Name() const
 // #pragma mark -
 
 
+/**
+ * @brief Kernel debugger command: summarize one thread's scheduling history.
+ *
+ * Walks the entire trace buffer, tracks the thread through READY / RUNNING /
+ * WAITING / PREEMPTED states, and prints totals/min/max for run time,
+ * wake-up latency, preemption-rerun latency, and the preemption count.
+ *
+ * @param argc Argument count including the command name.
+ * @param argv Argument vector; argv[1] is the thread id expression.
+ * @return Always 0 (the kernel debugger ignores the return value).
+ */
 int
 cmd_scheduler(int argc, char** argv)
 {

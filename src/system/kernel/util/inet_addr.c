@@ -1,3 +1,24 @@
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ */
+
 /*-
  * SPDX-License-Identifier: (BSD-3-Clause AND ISC)
  *
@@ -74,9 +95,23 @@
 
 #include <ctype.h>
 
-/*%
- * Ascii internet address interpretation routine.
- * The value returned is in network order.
+/**
+ * @file inet_addr.c
+ * @brief inet_addr()/inet_aton() — ASCII → in_addr_t parsing.
+ *
+ * Ported verbatim from the BSD/ISC libc to support kernel components that
+ * parse IPv4 addresses at runtime.
+ */
+
+/**
+ * @brief Convert a dotted-quad string to a network-order IPv4 address.
+ *
+ * Wrapper around inet_aton(); returns INADDR_NONE on parse failure, which
+ * is indistinguishable from the local broadcast address — prefer inet_aton()
+ * when error detection matters.
+ *
+ * @param cp NUL-terminated dotted-quad string.
+ * @return Network-order IPv4 address, or INADDR_NONE on error.
  */
 in_addr_t
 inet_addr(const char *cp) {
@@ -87,12 +122,16 @@ inet_addr(const char *cp) {
 	return (INADDR_NONE);
 }
 
-/*%
- * Check whether "cp" is a valid ascii representation
- * of an Internet address and convert to a binary address.
- * Returns 1 if the address is valid, 0 if not.
- * This replaces inet_addr, the return value from which
- * cannot distinguish between failure and a local broadcast address.
+/**
+ * @brief Parse an IPv4 address in any of the historical BSD formats.
+ *
+ * Accepts four octets (a.b.c.d), three octets with 16-bit last field
+ * (a.b.c), two octets with 24-bit last field (a.b), and a single 32-bit
+ * number (a). Each field may be decimal, hex (`0x`), or octal (leading 0).
+ *
+ * @param cp   NUL-terminated input string.
+ * @param addr Output in_addr; set only on success.
+ * @return 1 if @a cp is a valid address, 0 otherwise.
  */
 int
 inet_aton(const char *cp, struct in_addr *addr) {

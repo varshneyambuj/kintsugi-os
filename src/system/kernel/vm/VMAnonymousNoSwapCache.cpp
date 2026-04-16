@@ -110,6 +110,19 @@ VMAnonymousNoSwapCache::Init(bool canOvercommit, int32 numPrecommittedPages,
 }
 
 
+/**
+ * @brief Take ownership of a range of pages from another anonymous cache.
+ *
+ * Invokes the base VMCache::Adopt() to move pages, then transfers the matching
+ * slice of committed physical-memory reservation from the source to this cache
+ * so the two per-cache committed_size counters stay consistent.
+ *
+ * @param _from     Source cache; must also be a VMAnonymousNoSwapCache.
+ * @param offset    Starting byte offset within @p _from to adopt.
+ * @param size      Number of bytes to adopt.
+ * @param newOffset Byte offset at which the adopted pages appear in this cache.
+ * @return Status returned by the base-class Adopt() call.
+ */
 status_t
 VMAnonymousNoSwapCache::Adopt(VMCache* _from, off_t offset, off_t size,
 	off_t newOffset)
@@ -134,6 +147,17 @@ VMAnonymousNoSwapCache::Adopt(VMCache* _from, off_t offset, off_t size,
 }
 
 
+/**
+ * @brief Discard pages in the given range and shrink the commitment if needed.
+ *
+ * Delegates to VMCache::Discard() and, for overcommitting caches, reduces
+ * committed_size by the number of bytes that were actually reclaimed so the
+ * reservation stays in step with the live page count.
+ *
+ * @param offset Byte offset within the cache at which to start discarding.
+ * @param size   Number of bytes to discard.
+ * @return Number of bytes discarded by the base class, or a negative error.
+ */
 ssize_t
 VMAnonymousNoSwapCache::Discard(off_t offset, off_t size)
 {
@@ -144,6 +168,14 @@ VMAnonymousNoSwapCache::Discard(off_t offset, off_t size)
 }
 
 
+/**
+ * @brief Report how many bytes of physical memory this cache has reserved.
+ *
+ * Overrides VMCache::Commitment() to expose committed_size directly, since
+ * this cache type tracks its own reservation counter.
+ *
+ * @return Reserved size in bytes.
+ */
 off_t
 VMAnonymousNoSwapCache::Commitment() const
 {
@@ -225,6 +257,17 @@ VMAnonymousNoSwapCache::Commit(off_t size, int priority)
 }
 
 
+/**
+ * @brief Move a slice of committed reservation from another cache to this one.
+ *
+ * Used during cache-chain reorganisation so that a commitment made by the
+ * source is re-attributed to this cache without touching the global memory
+ * reserve. Both caches must be locked by the caller.
+ *
+ * @param _from      Source cache; must also be a VMAnonymousNoSwapCache and
+ *                   must currently own at least @p commitment bytes.
+ * @param commitment Number of bytes of committed reservation to transfer.
+ */
 void
 VMAnonymousNoSwapCache::TakeCommitmentFrom(VMCache* _from, off_t commitment)
 {
@@ -254,6 +297,20 @@ VMAnonymousNoSwapCache::StoreHasPage(off_t offset)
 }
 
 
+/**
+ * @brief Read pages from the backing store — always panics.
+ *
+ * Overrides VMCache::Read(). Anonymous memory without swap has no backing
+ * store, so vm_soft_fault() should never reach this path; a hit here indicates
+ * a kernel bug.
+ *
+ * @param offset    Byte offset within the cache (unused).
+ * @param vecs      I/O vector array (unused).
+ * @param count     Number of vectors (unused).
+ * @param flags     I/O flags (unused).
+ * @param _numBytes In/out byte count (unused).
+ * @return Never returns normally; triggers a kernel panic.
+ */
 status_t
 VMAnonymousNoSwapCache::Read(off_t offset, const generic_io_vec* vecs, size_t count,
 	uint32 flags, generic_size_t* _numBytes)
@@ -263,6 +320,19 @@ VMAnonymousNoSwapCache::Read(off_t offset, const generic_io_vec* vecs, size_t co
 }
 
 
+/**
+ * @brief Write pages to the backing store — always fails.
+ *
+ * Overrides VMCache::Write(). Returning B_ERROR tells the page daemon that
+ * this cache cannot page out and causes it to skip these pages during reclaim.
+ *
+ * @param offset    Byte offset within the cache (unused).
+ * @param vecs      I/O vector array (unused).
+ * @param count     Number of vectors (unused).
+ * @param flags     I/O flags (unused).
+ * @param _numBytes In/out byte count (unused).
+ * @return Always B_ERROR.
+ */
 status_t
 VMAnonymousNoSwapCache::Write(off_t offset, const generic_io_vec* vecs, size_t count,
 	uint32 flags, generic_size_t* _numBytes)
@@ -369,6 +439,13 @@ VMAnonymousNoSwapCache::Merge(VMCache* _source)
 }
 
 
+/**
+ * @brief Return this cache to its dedicated slab object cache.
+ *
+ * Overrides VMCache::DeleteObject(). Must be used instead of operator delete
+ * because VMAnonymousNoSwapCache instances are allocated from
+ * @c gAnonymousNoSwapCacheObjectCache.
+ */
 void
 VMAnonymousNoSwapCache::DeleteObject()
 {

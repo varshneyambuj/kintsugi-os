@@ -86,6 +86,11 @@ static KernelDaemon sKernelDaemon;
 static KernelDaemon sResourceResizer;
 
 
+/**
+ * @brief Start the daemon's worker thread and its wake-up semaphore.
+ * @param name Name used for the lock, semaphore, and worker thread.
+ * @return B_OK on success, or the semaphore/thread error code on failure.
+ */
 status_t
 KernelDaemon::Init(const char* name)
 {
@@ -107,6 +112,18 @@ KernelDaemon::Init(const char* name)
 }
 
 
+/**
+ * @brief Register a hook to run every @a frequency ticks.
+ *
+ * One tick equals 100 ms. Wakes the daemon so the new entry is picked up
+ * immediately.
+ *
+ * @param function  Hook to invoke.
+ * @param arg       Opaque argument passed to @a function.
+ * @param frequency Number of 100 ms ticks between invocations; must be >= 1.
+ * @return B_OK on success, B_BAD_VALUE for bad inputs, B_NO_MEMORY on
+ *         allocation failure.
+ */
 status_t
 KernelDaemon::Register(daemon_hook function, void* arg, int frequency)
 {
@@ -132,6 +149,16 @@ KernelDaemon::Register(daemon_hook function, void* arg, int frequency)
 }
 
 
+/**
+ * @brief Remove a previously registered (function, arg) hook pair.
+ *
+ * When called from a non-daemon thread, waits for any in-progress execution
+ * of the hook to finish before returning.
+ *
+ * @param function Hook previously passed to Register().
+ * @param arg      Argument previously passed to Register().
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no match exists.
+ */
 status_t
 KernelDaemon::Unregister(daemon_hook function, void* arg)
 {
@@ -163,6 +190,9 @@ KernelDaemon::Unregister(daemon_hook function, void* arg)
 }
 
 
+/**
+ * @brief Print each registered daemon with its resolved symbol to kprintf.
+ */
 void
 KernelDaemon::Dump()
 {
@@ -190,6 +220,11 @@ KernelDaemon::Dump()
 }
 
 
+/**
+ * @brief Trampoline from spawn_kernel_thread() into the per-instance loop.
+ * @param data KernelDaemon pointer disguised as a void*.
+ * @return Status returned by _DaemonThread().
+ */
 /*static*/ status_t
 KernelDaemon::_DaemonThreadEntry(void* data)
 {
@@ -197,6 +232,15 @@ KernelDaemon::_DaemonThreadEntry(void* data)
 }
 
 
+/**
+ * @brief Advance @a marker through the daemon list and return the next entry.
+ *
+ * The marker is re-inserted after the returned daemon so iteration can
+ * continue after dropping and reacquiring the list lock.
+ *
+ * @param marker Marker node maintained across iterations.
+ * @return Next daemon to process, or NULL at end of list.
+ */
 struct daemon*
 KernelDaemon::_NextDaemon(struct daemon& marker)
 {
@@ -219,6 +263,15 @@ KernelDaemon::_NextDaemon(struct daemon& marker)
 }
 
 
+/**
+ * @brief Main loop: invoke due hooks and sleep until the next deadline.
+ *
+ * Walks the daemon list each wake-up, calls every hook whose next-due time
+ * has passed, then waits on the add semaphore with a timeout equal to the
+ * nearest remaining deadline. Notifies unregister waiters when a pass ends.
+ *
+ * @return B_OK (the function never actually returns).
+ */
 status_t
 KernelDaemon::_DaemonThread()
 {
@@ -265,6 +318,10 @@ KernelDaemon::_DaemonThread()
 }
 
 
+/**
+ * @brief Test whether the caller is this daemon's own worker thread.
+ * @return true if the calling thread is the registered worker.
+ */
 bool
 KernelDaemon::_IsDaemon() const
 {
@@ -275,6 +332,12 @@ KernelDaemon::_IsDaemon() const
 // #pragma mark -
 
 
+/**
+ * @brief Debugger command: dump general daemons and resource resizers.
+ * @param argc Unused argument count.
+ * @param argv Unused argument vector.
+ * @return 0 on success.
+ */
 static int
 dump_daemons(int argc, char** argv)
 {
@@ -291,6 +354,13 @@ dump_daemons(int argc, char** argv)
 //	#pragma mark -
 
 
+/**
+ * @brief Public API: register a hook on the general kernel daemon.
+ * @param function  Hook to invoke periodically.
+ * @param arg       Opaque argument passed to @a function.
+ * @param frequency Number of 100 ms ticks between calls.
+ * @return B_OK on success, or KernelDaemon::Register() error code.
+ */
 extern "C" status_t
 register_kernel_daemon(daemon_hook function, void* arg, int frequency)
 {
@@ -298,6 +368,12 @@ register_kernel_daemon(daemon_hook function, void* arg, int frequency)
 }
 
 
+/**
+ * @brief Public API: unregister a previously registered kernel daemon hook.
+ * @param function Hook previously passed to register_kernel_daemon().
+ * @param arg      Argument previously passed to register_kernel_daemon().
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no match exists.
+ */
 extern "C" status_t
 unregister_kernel_daemon(daemon_hook function, void* arg)
 {
@@ -305,6 +381,13 @@ unregister_kernel_daemon(daemon_hook function, void* arg)
 }
 
 
+/**
+ * @brief Public API: register a hook on the resource-resizer daemon.
+ * @param function  Hook to invoke periodically.
+ * @param arg       Opaque argument passed to @a function.
+ * @param frequency Number of 100 ms ticks between calls.
+ * @return B_OK on success, or KernelDaemon::Register() error code.
+ */
 extern "C" status_t
 register_resource_resizer(daemon_hook function, void* arg, int frequency)
 {
@@ -312,6 +395,12 @@ register_resource_resizer(daemon_hook function, void* arg, int frequency)
 }
 
 
+/**
+ * @brief Public API: unregister a resource-resizer hook.
+ * @param function Hook previously passed to register_resource_resizer().
+ * @param arg      Argument previously passed to register_resource_resizer().
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no match exists.
+ */
 extern "C" status_t
 unregister_resource_resizer(daemon_hook function, void* arg)
 {
@@ -322,6 +411,13 @@ unregister_resource_resizer(daemon_hook function, void* arg)
 //	#pragma mark -
 
 
+/**
+ * @brief Construct the two shared daemons and install the debugger command.
+ *
+ * Panics if either worker thread fails to spawn.
+ *
+ * @return B_OK on success.
+ */
 extern "C" status_t
 kernel_daemon_init(void)
 {

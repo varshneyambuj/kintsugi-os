@@ -1,6 +1,35 @@
 /*
- * Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file scheduling_analysis.cpp
+ * @brief Post-hoc analysis of scheduler trace buffers.
+ *
+ * Implements _user_analyze_scheduling(): replays scheduler trace entries over a
+ * [from, until] window and aggregates per-thread run/latency/preemption stats
+ * plus per-wait-object wait times. Builds its data structures in a user-supplied
+ * buffer using a bump allocator and a hash table keyed by thread id / wait object.
  */
 
 #include <scheduling_analysis.h>
@@ -205,8 +234,20 @@ struct ThreadWaitObject : HashObject, scheduling_analysis_thread_wait_object {
 };
 
 
+/**
+ * @brief Accumulates scheduling statistics across a trace-buffer window.
+ *
+ * Lays out Thread, WaitObject, and ThreadWaitObject records plus a hash table
+ * inside the caller-supplied buffer. All allocations are bumped from one end;
+ * the hash table lives at the other end of the buffer.
+ */
 class SchedulingAnalysisManager {
 public:
+	/**
+	 * @brief Construct the manager over the given scratch buffer.
+	 * @param buffer Caller-supplied memory used for records and hash table.
+	 * @param size  Size of @a buffer in bytes.
+	 */
 	SchedulingAnalysisManager(void* buffer, size_t size)
 		:
 		fBuffer(buffer),
@@ -237,11 +278,20 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Return a pointer to the aggregated analysis result.
+	 * @return Read-only view of the populated scheduling_analysis struct.
+	 */
 	const scheduling_analysis* Analysis() const
 	{
 		return &fAnalysis;
 	}
 
+	/**
+	 * @brief Bump-allocate 8-byte-aligned memory from the scratch buffer.
+	 * @param size Requested size in bytes (rounded up to 8).
+	 * @return Aligned address inside the buffer, or NULL if exhausted.
+	 */
 	void* Allocate(size_t size)
 	{
 		size = (size + 7) & ~(size_t)7;
@@ -255,6 +305,10 @@ public:
 		return address;
 	}
 
+	/**
+	 * @brief Insert a freshly allocated record into the hash table.
+	 * @param object Record whose HashKey() determines its bucket.
+	 */
 	void Insert(HashObject* object)
 	{
 		uint32 index = object->HashKey() % fHashTableSize;
@@ -262,6 +316,10 @@ public:
 		fHashTable[index] = object;
 	}
 
+	/**
+	 * @brief Unlink a record from its hash-table bucket.
+	 * @param object Record previously added with Insert().
+	 */
 	void Remove(HashObject* object)
 	{
 		uint32 index = object->HashKey() % fHashTableSize;
@@ -272,6 +330,11 @@ public:
 		*slot = object->next;
 	}
 
+	/**
+	 * @brief Look up a record matching @a key.
+	 * @param key Type-tagged key describing the record to find.
+	 * @return The matching record, or NULL if none exists.
+	 */
 	HashObject* Lookup(const HashObjectKey& key) const
 	{
 		uint32 index = key.HashKey() % fHashTableSize;
@@ -281,16 +344,34 @@ public:
 		return object;
 	}
 
+	/**
+	 * @brief Convenience lookup for the Thread record of a given id.
+	 * @param id Kernel thread id.
+	 * @return Thread record, or NULL if unseen.
+	 */
 	Thread* ThreadFor(thread_id id) const
 	{
 		return dynamic_cast<Thread*>(Lookup(ThreadKey(id)));
 	}
 
+	/**
+	 * @brief Convenience lookup for a WaitObject by (type, object) pair.
+	 * @param type   Wait-object type tag (THREAD_BLOCK_TYPE_*).
+	 * @param object Opaque pointer identifying the primitive instance.
+	 * @return WaitObject record, or NULL if unseen.
+	 */
 	WaitObject* WaitObjectFor(uint32 type, void* object) const
 	{
 		return dynamic_cast<WaitObject*>(Lookup(WaitObjectKey(type, object)));
 	}
 
+	/**
+	 * @brief Convenience lookup for per-thread wait stats on one object.
+	 * @param thread Kernel thread id.
+	 * @param type   Wait-object type tag.
+	 * @param object Opaque pointer identifying the primitive instance.
+	 * @return ThreadWaitObject record, or NULL if unseen.
+	 */
 	ThreadWaitObject* ThreadWaitObjectFor(thread_id thread, uint32 type,
 		void* object) const
 	{
@@ -298,6 +379,12 @@ public:
 			Lookup(ThreadWaitObjectKey(thread, type, object)));
 	}
 
+	/**
+	 * @brief Record a thread (creating it on first sight) and update its name.
+	 * @param id   Kernel thread id.
+	 * @param name Thread name, or NULL to keep existing.
+	 * @return B_OK on success, B_NO_MEMORY if the scratch buffer is full.
+	 */
 	status_t AddThread(thread_id id, const char* name)
 	{
 		Thread* thread = ThreadFor(id);
@@ -317,6 +404,13 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Record a wait object (creating it on first sight).
+	 * @param type         Wait-object type tag.
+	 * @param object       Opaque pointer identifying the primitive instance.
+	 * @param _waitObject  Optional out-pointer to the stored record.
+	 * @return B_OK on success, B_NO_MEMORY if the scratch buffer is full.
+	 */
 	status_t AddWaitObject(uint32 type, void* object,
 		WaitObject** _waitObject = NULL)
 	{
@@ -344,6 +438,18 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Fill in name/referenced-object for a known wait object.
+	 *
+	 * If a record with a non-empty name already exists at (type, object),
+	 * the previous one is replaced (same address reused for a new primitive).
+	 *
+	 * @param type              Wait-object type tag.
+	 * @param object            Opaque pointer identifying the primitive.
+	 * @param name              Human-readable name, or NULL for "?".
+	 * @param referencedObject  Opaque pointer to the underlying object.
+	 * @return B_OK on success, B_NO_MEMORY on allocation failure.
+	 */
 	status_t UpdateWaitObject(uint32 type, void* object, const char* name,
 		void* referencedObject)
 	{
@@ -368,6 +474,18 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Backfill a name on an existing wait object without allocating.
+	 *
+	 * Used in the second pass over the trace buffer to name wait objects that
+	 * were discovered before their naming trace entry appeared.
+	 *
+	 * @param type              Wait-object type tag.
+	 * @param object            Opaque pointer identifying the primitive.
+	 * @param name              Human-readable name, or NULL for "?".
+	 * @param referencedObject  Opaque pointer to the underlying object.
+	 * @return true if a previously unnamed record was updated.
+	 */
 	bool UpdateWaitObjectDontAdd(uint32 type, void* object, const char* name,
 		void* referencedObject)
 	{
@@ -384,6 +502,19 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Associate a thread with the wait object it is currently blocking on.
+	 *
+	 * Creates or reuses a ThreadWaitObject record and links it onto @a thread's
+	 * wait-object list. Also stores the active wait object on the thread so the
+	 * subsequent wake-up event can charge wait time correctly.
+	 *
+	 * @param thread Thread that just started waiting.
+	 * @param type   Wait-object type tag.
+	 * @param object Opaque pointer identifying the primitive.
+	 * @return B_OK on success, B_ERROR if the wait object is unknown,
+	 *         B_NO_MEMORY on buffer exhaustion.
+	 */
 	status_t AddThreadWaitObject(Thread* thread, uint32 type, void* object)
 	{
 		WaitObject* waitObject = WaitObjectFor(type, object);
@@ -417,6 +548,10 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Count wait objects that still lack a human-readable name.
+	 * @return Number of unnamed WaitObject records in the hash table.
+	 */
 	int32 MissingWaitObjects() const
 	{
 		// Iterate through the hash table and count the wait objects that don't
@@ -436,6 +571,16 @@ public:
 		return count;
 	}
 
+	/**
+	 * @brief Materialize the thread array and polish unnamed wait objects.
+	 *
+	 * Walks the hash table once: collects Thread pointers into a fresh array
+	 * referenced by fAnalysis.threads, and resolves names for any WaitObject
+	 * records still missing one (by consulting live kernel primitives).
+	 *
+	 * @return B_OK on success, B_NO_MEMORY if the thread array cannot be
+	 *         allocated in the remaining scratch space.
+	 */
 	status_t FinishAnalysis()
 	{
 		// allocate the thread array
@@ -469,6 +614,15 @@ dprintf("scheduling analysis: free bytes: %lu/%lu\n", fRemainingBytes, fSize);
 	}
 
 private:
+	/**
+	 * @brief Resolve a display name for an unnamed wait object.
+	 *
+	 * Consults the live kernel primitive when the address is still inside the
+	 * kernel image (semaphore, condition variable, mutex, rw_lock, "other").
+	 * Falls back to "?" when no name can be derived.
+	 *
+	 * @param waitObject Wait-object record to update in place.
+	 */
 	void _PolishWaitObject(WaitObject* waitObject)
 	{
 		if (waitObject->name[0] != '\0')
@@ -546,6 +700,11 @@ private:
 		strcpy(waitObject->name, "?");
 	}
 
+	/**
+	 * @brief Test whether @a _address lies inside the kernel text/data image.
+	 * @param _address Address to probe.
+	 * @return true if the address is within the recorded kernel image range.
+	 */
 	bool _IsInKernelImage(const void* _address)
 	{
 		addr_t address = (addr_t)_address;
@@ -565,6 +724,20 @@ private:
 };
 
 
+/**
+ * @brief Replay scheduler trace entries and aggregate per-thread statistics.
+ *
+ * First pass (backwards): enumerate the threads and wait objects that appear
+ * in the [from, until] window and create records for them. Second pass
+ * (forwards): walk schedule/enqueue/remove events in order and transition
+ * each thread through READY → RUNNING → WAITING / PREEMPTED states, charging
+ * run time, latencies, reruns, and wait time to the matching records.
+ *
+ * @param from    Lower bound of the trace-time window (inclusive).
+ * @param until   Upper bound of the trace-time window (exclusive).
+ * @param manager Accumulator populated with the derived statistics.
+ * @return B_OK on success, or an error status from the manager.
+ */
 static status_t
 analyze_scheduling(bigtime_t from, bigtime_t until,
 	SchedulingAnalysisManager& manager)
@@ -820,6 +993,22 @@ analyze_scheduling(bigtime_t from, bigtime_t until,
 #endif	// SCHEDULER_TRACING
 
 
+/**
+ * @brief Syscall entry point: run scheduling analysis into a userspace buffer.
+ *
+ * Aligns and locks the user buffer, replays scheduler trace entries with
+ * tracing locked, and finally copies the resulting scheduling_analysis
+ * descriptor out to userspace. Returns B_BAD_VALUE when scheduler tracing is
+ * not compiled in.
+ *
+ * @param from     Lower bound of the trace-time window (inclusive).
+ * @param until    Upper bound of the trace-time window (exclusive).
+ * @param buffer   Userspace scratch buffer for analysis records.
+ * @param size     Size of @a buffer in bytes.
+ * @param analysis Userspace output pointer that receives the result header.
+ * @return B_OK on success, B_BAD_VALUE for invalid input, or an error from
+ *         memory locking / analysis.
+ */
 status_t
 _user_analyze_scheduling(bigtime_t from, bigtime_t until, void* buffer,
 	size_t size, scheduling_analysis* analysis)

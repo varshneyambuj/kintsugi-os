@@ -1,37 +1,67 @@
-/*-
- * SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright (c) 1990, 1993
- *	The Regents of the University of California.  All rights reserved.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Copyright (c) 2011 The FreeBSD Foundation
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- * Portions of this software were developed by David Chisnall
- * under sponsorship from the FreeBSD Foundation.
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the University nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
  *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ *   SPDX-License-Identifier: BSD-3-Clause
+ *
+ *   Copyright (c) 1990, 1993
+ *     The Regents of the University of California.  All rights reserved.
+ *
+ *   Copyright (c) 2011 The FreeBSD Foundation
+ *
+ *   Portions of this software were developed by David Chisnall
+ *   under sponsorship from the FreeBSD Foundation.
+ *
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions
+ *   are met:
+ *   1. Redistributions of source code must retain the above copyright
+ *      notice, this list of conditions and the following disclaimer.
+ *   2. Redistributions in binary form must reproduce the above copyright
+ *      notice, this list of conditions and the following disclaimer in the
+ *      documentation and/or other materials provided with the distribution.
+ *   3. Neither the name of the University nor the names of its contributors
+ *      may be used to endorse or promote products derived from this software
+ *      without specific prior written permission.
+ *
+ *   THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ *   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ *   ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ *   FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ *   DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ *   OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ *   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ *   LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ *   OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ *   SUCH DAMAGE.
+ */
+
+/**
+ * @file strtol.c
+ * @brief Kernel port of FreeBSD's strtol() for signed long parsing.
+ *
+ * Verbatim libc implementation: skips whitespace, accepts an optional sign,
+ * auto-detects base 8/10/16 when @p base is 0, and uses pre-computed cutoff
+ * and cutlim values to detect overflow without performing the final unsafe
+ * multiply. Writes the one-past-the-end pointer through @p endptr and sets
+ * errno to EINVAL on no conversion or ERANGE on overflow.
  */
 
 
@@ -47,6 +77,21 @@
  * alphabets and digits are each contiguous.
  */
 
+/**
+ * @brief Convert an ASCII numeric string to a signed long.
+ *
+ * Accepts optional leading whitespace, an optional '+' or '-' sign, and an
+ * optional base prefix (0x/0X for hex, 0b/0B for binary, or leading 0 for
+ * octal when @p base is 0). Conversion stops at the first character outside
+ * the selected radix. On overflow the result is clamped to LONG_MIN or
+ * LONG_MAX and errno becomes ERANGE; when no digits are consumed errno is
+ * set to EINVAL.
+ *
+ * @param nptr   Input string.
+ * @param endptr Out: pointer to the first unconsumed character (may be NULL).
+ * @param base   Numeric base in [2, 36] or 0 to auto-detect.
+ * @return Parsed value, or clamped LONG_MIN / LONG_MAX on overflow.
+ */
 long
 strtol(const char * __restrict nptr, char ** __restrict endptr, int base)
 {

@@ -1,6 +1,47 @@
 /*
- * Copyright 2005-2008, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2008, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file MessagingService.cpp
+ * @brief Kernel side of the registrar messaging service.
+ *
+ * The messaging service is a singleton constructed in a static buffer by
+ * init_messaging_service() and lives for the life of the kernel. The
+ * userland registrar registers itself via _user_register_messaging_service()
+ * and provides a (lock, counter) semaphore pair; the kernel then allocates
+ * shared MessagingArea ring buffers and streams command records into them.
+ *
+ * The send path is send_message() -> MessagingService::SendMessage() ->
+ * MessagingService::_AllocateCommand() -> MessagingArea::AllocateCommand().
+ * Commands are written into the last (active) area; if it fills up, a new
+ * area is created (or a previously drained one recycled) and linked in
+ * via MessagingArea::SetNextArea(). When the area was previously empty,
+ * CommitCommand() wakes the registrar by releasing the counter semaphore.
+ *
+ * Locking: the service as a whole is protected by a recursive_lock; each
+ * MessagingArea is independently protected by a benaphore built on its
+ * header's lock_counter plus the registrar's lock semaphore.
  */
 
 
@@ -36,11 +77,23 @@ static const int32 kMessagingAreaSize = B_PAGE_SIZE * 4;
 // #pragma mark - MessagingArea
 
 
+/**
+ * @brief Default-constructs an uninitialised MessagingArea.
+ *
+ * Fields are populated by Create(); this constructor is only used through
+ * placement-/heap-allocation by the factory.
+ */
 MessagingArea::MessagingArea()
 {
 }
 
 
+/**
+ * @brief Destroys the area and releases its shared memory.
+ *
+ * Deletes the kernel area identified by @c fID if it was successfully
+ * created.
+ */
 MessagingArea::~MessagingArea()
 {
 	if (fID >= 0)
@@ -48,6 +101,18 @@ MessagingArea::~MessagingArea()
 }
 
 
+/**
+ * @brief Factory that creates a fully initialised MessagingArea.
+ *
+ * Allocates a new area of @c kMessagingAreaSize bytes, wires up the
+ * (lock, counter) semaphore pair shared with the registrar, and stamps a
+ * fresh header into the shared memory.
+ *
+ * @param lockSem    Semaphore used as the area's lock fall-back.
+ * @param counterSem Semaphore released when a command is pushed onto an
+ *                   empty area.
+ * @return Newly created area, or NULL on allocation failure.
+ */
 MessagingArea *
 MessagingArea::Create(sem_id lockSem, sem_id counterSem)
 {
@@ -76,6 +141,12 @@ MessagingArea::Create(sem_id lockSem, sem_id counterSem)
 }
 
 
+/**
+ * @brief (Re)initialises the shared area header.
+ *
+ * Sets the benaphore counter to locked (1), records the area's size and
+ * id, links to the next area, and marks the ring buffer as empty.
+ */
 void
 MessagingArea::InitHeader()
 {
@@ -89,6 +160,14 @@ MessagingArea::InitHeader()
 }
 
 
+/**
+ * @brief Reports whether a command with @a dataSize bytes of payload can
+ *        ever fit in an area.
+ *
+ * @param dataSize Payload size in bytes.
+ * @return true if a messaging_command plus @a dataSize fits within a
+ *         single area after the fixed header.
+ */
 bool
 MessagingArea::CheckCommandSize(int32 dataSize)
 {
@@ -99,6 +178,16 @@ MessagingArea::CheckCommandSize(int32 dataSize)
 }
 
 
+/**
+ * @brief Acquires the area using its benaphore.
+ *
+ * Fast path: an atomic increment of the shared @c lock_counter from zero
+ * succeeds uncontended. Otherwise falls back to acquiring the registrar's
+ * lock semaphore.
+ *
+ * @return true on success, false if the lock semaphore could not be
+ *         acquired.
+ */
 bool
 MessagingArea::Lock()
 {
@@ -110,6 +199,12 @@ MessagingArea::Lock()
 }
 
 
+/**
+ * @brief Releases the area, waking a waiter when contended.
+ *
+ * Pairs with Lock(); releases the lock semaphore iff the benaphore
+ * counter indicates contention.
+ */
 void
 MessagingArea::Unlock()
 {
@@ -118,6 +213,11 @@ MessagingArea::Unlock()
 }
 
 
+/**
+ * @brief Returns the kernel area id.
+ *
+ * @return Area id assigned by create_area().
+ */
 area_id
 MessagingArea::ID() const
 {
@@ -125,6 +225,11 @@ MessagingArea::ID() const
 }
 
 
+/**
+ * @brief Returns the area's total byte size.
+ *
+ * @return Size of the shared area in bytes.
+ */
 int32
 MessagingArea::Size() const
 {
@@ -132,6 +237,11 @@ MessagingArea::Size() const
 }
 
 
+/**
+ * @brief Reports whether the ring buffer currently holds no commands.
+ *
+ * @return true if no pending commands remain.
+ */
 bool
 MessagingArea::IsEmpty() const
 {
@@ -139,6 +249,21 @@ MessagingArea::IsEmpty() const
 }
 
 
+/**
+ * @brief Reserves space for a new command in the area's ring buffer.
+ *
+ * If the area is empty, the command is placed at the start of the ring;
+ * otherwise the method tries to append after the current last command and
+ * wraps back to the start when there is not enough room at the tail.
+ *
+ * @param commandWhat Command identifier recorded in the header.
+ * @param dataSize    Payload size in bytes.
+ * @param wasEmpty    Out: true if the area had no commands prior to this
+ *                   reservation; used by the caller to decide whether to
+ *                   signal the counter semaphore.
+ * @return Pointer to the command's payload area, or NULL if there is not
+ *         enough free space.
+ */
 void *
 MessagingArea::AllocateCommand(uint32 commandWhat, int32 dataSize,
 	bool &wasEmpty)
@@ -210,6 +335,11 @@ MessagingArea::AllocateCommand(uint32 commandWhat, int32 dataSize,
 }
 
 
+/**
+ * @brief Notifies the registrar that a previously empty area now has work.
+ *
+ * Releases the counter semaphore so the userland consumer wakes up.
+ */
 void
 MessagingArea::CommitCommand()
 {
@@ -218,6 +348,12 @@ MessagingArea::CommitCommand()
 }
 
 
+/**
+ * @brief Links this area to a successor area and updates the shared
+ *        header accordingly.
+ *
+ * @param area New next-area pointer, or NULL to unlink.
+ */
 void
 MessagingArea::SetNextArea(MessagingArea *area)
 {
@@ -226,6 +362,11 @@ MessagingArea::SetNextArea(MessagingArea *area)
 }
 
 
+/**
+ * @brief Returns the next area in the service's linked list.
+ *
+ * @return Successor MessagingArea, or NULL if this is the last area.
+ */
 MessagingArea *
 MessagingArea::NextArea() const
 {
@@ -233,6 +374,18 @@ MessagingArea::NextArea() const
 }
 
 
+/**
+ * @brief Validates a command offset within the ring and returns its size.
+ *
+ * Checks alignment and bounds of the offset and the declared command
+ * size, rounding the size up to the 4-byte alignment that the layout
+ * requires.
+ *
+ * @param offset Byte offset within the area.
+ * @param size   Out: aligned command size in bytes.
+ * @return Pointer to the command at @a offset, or NULL if the offset or
+ *         size is malformed.
+ */
 messaging_command *
 MessagingArea::_CheckCommand(int32 offset, int32 &size)
 {
@@ -260,6 +413,13 @@ MessagingArea::_CheckCommand(int32 offset, int32 &size)
 // #pragma mark - MessagingService
 
 
+/**
+ * @brief Constructs the singleton messaging service.
+ *
+ * Initialises the recursive lock that serialises access to the area list.
+ * In practice the only instance is placement-new'd by
+ * init_messaging_service().
+ */
 MessagingService::MessagingService()
 	:
 	fFirstArea(NULL),
@@ -269,6 +429,12 @@ MessagingService::MessagingService()
 }
 
 
+/**
+ * @brief Destructor; never expected to run.
+ *
+ * The service is designed to live for the kernel's lifetime, so this
+ * destructor only appears on initialisation failure.
+ */
 MessagingService::~MessagingService()
 {
 	// Should actually never be called. Once created the service stays till the
@@ -276,6 +442,11 @@ MessagingService::~MessagingService()
 }
 
 
+/**
+ * @brief Reports post-construction initialisation status.
+ *
+ * @return Always B_OK; present for future compatibility.
+ */
 status_t
 MessagingService::InitCheck() const
 {
@@ -283,6 +454,11 @@ MessagingService::InitCheck() const
 }
 
 
+/**
+ * @brief Acquires the service-wide recursive lock.
+ *
+ * @return true on success.
+ */
 bool
 MessagingService::Lock()
 {
@@ -290,6 +466,9 @@ MessagingService::Lock()
 }
 
 
+/**
+ * @brief Releases the service-wide recursive lock.
+ */
 void
 MessagingService::Unlock()
 {
@@ -297,6 +476,22 @@ MessagingService::Unlock()
 }
 
 
+/**
+ * @brief Registers the calling team as the userland messaging server.
+ *
+ * Validates that the supplied semaphores belong to the caller's team,
+ * creates the first shared MessagingArea, and records the caller as the
+ * server team. Only one service may be registered at a time.
+ *
+ * @param lockSem    Semaphore used to lock individual MessagingAreas.
+ * @param counterSem Semaphore released when a command is pushed onto an
+ *                   empty area.
+ * @param areaID     Out: id of the kernel area that backs the first
+ *                   shared region.
+ * @return B_OK on success; B_BAD_VALUE if a server is already registered
+ *         or the semaphores are invalid; B_NO_MEMORY if no area can be
+ *         allocated.
+ */
 status_t
 MessagingService::RegisterService(sem_id lockSem, sem_id counterSem,
 	area_id &areaID)
@@ -344,6 +539,15 @@ MessagingService::RegisterService(sem_id lockSem, sem_id counterSem,
 }
 
 
+/**
+ * @brief Tears down the registration established by RegisterService().
+ *
+ * Requires the caller to be the server team. Destroys every area in the
+ * list and clears the recorded server identity.
+ *
+ * @return B_OK on success, B_BAD_VALUE if the caller is not the server
+ *         team, or an error from get_thread_info().
+ */
 status_t
 MessagingService::UnregisterService()
 {
@@ -373,6 +577,22 @@ MessagingService::UnregisterService()
 }
 
 
+/**
+ * @brief Enqueues a MESSAGING_COMMAND_SEND_MESSAGE command for the
+ *        registrar.
+ *
+ * Builds the command record (target list followed by the raw message
+ * bytes) inside an allocated region of the active MessagingArea,
+ * releases that area's lock, and signals the counter semaphore when the
+ * area had previously been empty.
+ *
+ * @param message     Pointer to the message payload.
+ * @param messageSize Payload size in bytes.
+ * @param targets     Array of delivery targets.
+ * @param targetCount Number of entries in @a targets.
+ * @return B_OK on success, B_BAD_VALUE for illegal arguments, or an
+ *         error from _AllocateCommand().
+ */
 status_t
 MessagingService::SendMessage(const void *message, int32 messageSize,
 	const messaging_target *targets, int32 targetCount)
@@ -416,6 +636,26 @@ PRINT(("  Allocated space for send message command: area: %p, data: %p, "
 }
 
 
+/**
+ * @brief Reserves space for a command in the active area, growing the
+ *        area list if necessary.
+ *
+ * Walks the front of the area list, discarding drained areas (keeping at
+ * most one for recycling). If the current last area cannot fit the
+ * command, either the recycled area is rewound or a freshly created area
+ * is appended, and the command is allocated there. On exit the chosen
+ * area is still held locked; the caller is responsible for unlocking and
+ * for committing when @a wasEmpty.
+ *
+ * @param commandWhat Command id passed through to AllocateCommand().
+ * @param size        Payload size in bytes.
+ * @param area        Out: area in which space was reserved (still locked).
+ * @param data        Out: pointer to the command payload.
+ * @param wasEmpty    Out: whether the area had been empty before.
+ * @return B_OK on success, B_NO_INIT when no service is registered,
+ *         B_BAD_VALUE if the command is too large, or B_NO_MEMORY if a
+ *         new area cannot be created.
+ */
 status_t
 MessagingService::_AllocateCommand(int32 commandWhat, int32 size,
 	MessagingArea *&area, void *&data, bool &wasEmpty)
@@ -492,6 +732,20 @@ MessagingService::_AllocateCommand(int32 commandWhat, int32 size,
 // #pragma mark - kernel private
 
 
+/**
+ * @brief Kernel-private entry point: send a raw message to targets.
+ *
+ * Locks the singleton service and forwards to
+ * MessagingService::SendMessage().
+ *
+ * @param message     Pointer to the raw message bytes.
+ * @param messageSize Size in bytes.
+ * @param targets     Array of delivery targets.
+ * @param targetCount Number of entries in @a targets.
+ * @return B_NO_INIT if the service has not been initialised yet,
+ *         B_BAD_VALUE if the service lock cannot be acquired, or the
+ *         status reported by SendMessage().
+ */
 status_t
 send_message(const void *message, int32 messageSize,
 	const messaging_target *targets, int32 targetCount)
@@ -512,6 +766,18 @@ send_message(const void *message, int32 messageSize,
 }
 
 
+/**
+ * @brief Kernel-private entry point: send a KMessage to targets.
+ *
+ * Thin wrapper around the raw send_message() using the KMessage's flat
+ * buffer as the payload.
+ *
+ * @param message     KMessage to deliver; must not be NULL.
+ * @param targets     Array of delivery targets.
+ * @param targetCount Number of entries in @a targets.
+ * @return B_BAD_VALUE if @a message is NULL, otherwise the status of the
+ *         underlying raw send.
+ */
 status_t
 send_message(const KMessage *message, const messaging_target *targets,
 	int32 targetCount)
@@ -524,6 +790,15 @@ send_message(const KMessage *message, const messaging_target *targets,
 }
 
 
+/**
+ * @brief Constructs the singleton messaging service at boot time.
+ *
+ * Placement-new's a MessagingService instance into a static buffer so the
+ * service survives for the kernel's lifetime. On InitCheck() failure the
+ * instance is destroyed and the global pointer cleared.
+ *
+ * @return B_OK on success, or the InitCheck() error.
+ */
 status_t
 init_messaging_service()
 {
@@ -549,17 +824,20 @@ init_messaging_service()
 // #pragma mark - syscalls
 
 
-/** \brief Called by the userland server to register itself as a messaging
-		   service for the kernel.
-	\param lockingSem A semaphore used for locking the shared data. Semaphore
-		   counter must be initialized to 0.
-	\param counterSem A semaphore released every time the kernel pushes a
-		   command into an empty area. Semaphore counter must be initialized
-		   to 0.
-	\return
-	- The ID of the kernel area used for communication, if everything went fine,
-	- an error code otherwise.
-*/
+/**
+ * @brief Syscall: registers the calling userland server as the messaging
+ *        service for the kernel.
+ *
+ * The semaphore pair must belong to the caller's team and both counters
+ * must have been initialised to 0: @a lockSem is used as a benaphore
+ * fall-back for per-area locking, and @a counterSem is released every
+ * time the kernel pushes a command into a previously empty area.
+ *
+ * @param lockSem    Locking semaphore (counter initialised to 0).
+ * @param counterSem Work-signal semaphore (counter initialised to 0).
+ * @return The id of the kernel area used for communication on success,
+ *         or a negative error code.
+ */
 area_id
 _user_register_messaging_service(sem_id lockSem, sem_id counterSem)
 {
@@ -580,6 +858,15 @@ _user_register_messaging_service(sem_id lockSem, sem_id counterSem)
 }
 
 
+/**
+ * @brief Syscall: unregisters the caller as the messaging service.
+ *
+ * Locks the service, delegates to MessagingService::UnregisterService(),
+ * and unlocks on exit.
+ *
+ * @return B_NO_INIT if no service exists; B_BAD_VALUE if the lock cannot
+ *         be acquired; otherwise the status from UnregisterService().
+ */
 status_t
 _user_unregister_messaging_service()
 {

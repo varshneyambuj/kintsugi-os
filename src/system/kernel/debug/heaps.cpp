@@ -1,6 +1,48 @@
 /*
- * Copyright 2026, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2026, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file heaps.cpp
+ * @brief Front-end for the kernel's pluggable heap implementations.
+ *
+ * Selects, initialises and dispatches to one of the registered
+ * kernel_heap_implementation back-ends (default, "guarded", "debug" or
+ * "slab") based on the "kernel_malloc" safemode option. Exposes the C
+ * library allocation surface (malloc/free/realloc/memalign/posix_memalign
+ * and their *_etc variants) as thin wrappers that forward into the active
+ * heap. When USE_DEBUG_HEAPS_FOR_ALL_OBJECT_CACHES is set, also provides a
+ * minimal ObjectCache shim that funnels all slab-style allocations through
+ * the same heap.
+ *
+ * @brief Locking / KDL caveats.
+ *
+ * The functions here themselves do no locking: callers reach these entry
+ * points either via the normal kmalloc path (where the back-end heap does
+ * its own locking) or from the kernel debugger. In KDL the heap may be mid
+ * mutation and no locks are honoured, so dumping helpers and walkers
+ * invoked from the debugger must tolerate a possibly inconsistent heap
+ * state and must never try to acquire a semaphore or mutex.
  */
 
 #include "kernel_debug_config.h"
@@ -45,6 +87,19 @@ static int32 sGuardedHeapForObjectCachesCount = 0;
 //	#pragma mark -
 
 
+/**
+ * @brief Maps the initial virtual range for a heap and invokes its init().
+ *
+ * If the heap declares a non-zero initial_size, halves the request until it
+ * fits within 1/8 of available physical memory (panicking under 1 MiB),
+ * reserves that region via vm_allocate_early() with kernel R/W permissions
+ * and then forwards (heapBase, heapSize) to the back-end's init() hook.
+ * Assumes it runs early during boot with no other heap clients active.
+ *
+ * @param args Pointer to the kernel_args blob from the boot loader.
+ * @param heap Heap implementation whose init() should be invoked.
+ * @return B_OK on success or the error returned by heap->init().
+ */
 static status_t
 init_heap(struct kernel_args* args, kernel_heap_implementation* heap)
 {
@@ -68,6 +123,18 @@ init_heap(struct kernel_args* args, kernel_heap_implementation* heap)
 
 
 #if GUARDED_HEAP_CAN_REPLACE_OBJECT_CACHES
+/**
+ * @brief Decides whether an object_cache should be routed to the guarded heap.
+ *
+ * Walks the selector list populated from the "guarded_heap_for_object_caches"
+ * safemode option. Selectors may start and/or end with '*' for
+ * prefix/suffix/substring matching against the cache name. When a match is
+ * found a short dprintf() note is emitted for the boot log.
+ *
+ * @param name Object-cache name being evaluated.
+ * @return true if a selector matches and the cache should use the guarded
+ *         heap, false otherwise.
+ */
 bool
 guarded_heap_replaces_object_cache(const char* name)
 {
@@ -99,6 +166,19 @@ guarded_heap_replaces_object_cache(const char* name)
 }
 
 
+/**
+ * @brief Parses the "guarded_heap_for_object_caches" safemode option.
+ *
+ * Reads the option string, spins up the guarded heap as a secondary
+ * back-end when it is not already the default, and splits the option into
+ * comma-separated selectors. Each selector is copied into
+ * sGuardedHeapForObjectCaches (allocated out of the guarded heap itself,
+ * page-sized), tracking '*' wildcards at the beginning/end of each name.
+ * Runs single-threaded during boot; no locking required.
+ *
+ * @param args Boot-time kernel arguments used to fetch the safemode value.
+ * @return void.
+ */
 static void
 init_object_cache_replacements(struct kernel_args* args)
 {
@@ -182,6 +262,18 @@ init_object_cache_replacements(struct kernel_args* args)
 #endif
 
 
+/**
+ * @brief Selects the primary heap back-end and performs first-stage init.
+ *
+ * Reads the "kernel_malloc" safemode option to pick between the default,
+ * guarded, debug or slab heaps, panicking on unknown names or on builds
+ * where the requested heap is unavailable. Logs the choice, calls
+ * init_heap() for the selected back-end, and if guarded-heap object-cache
+ * replacement is compiled in, invokes init_object_cache_replacements().
+ *
+ * @param args Boot kernel arguments.
+ * @return B_OK on success or the error from init_heap() on failure.
+ */
 status_t
 heap_init(struct kernel_args* args)
 {
@@ -213,6 +305,15 @@ heap_init(struct kernel_args* args)
 }
 
 
+/**
+ * @brief Second-phase heap init, run once the VM area subsystem is up.
+ *
+ * Iterates every registered heap back-end and invokes its init_post_area()
+ * hook (if present), giving the heap a chance to create its own VM areas
+ * and bookkeeping. Bails out on the first failing back-end.
+ *
+ * @return B_OK on success or the first non-B_OK status from a back-end.
+ */
 status_t
 heap_init_post_area()
 {
@@ -228,6 +329,15 @@ heap_init_post_area()
 }
 
 
+/**
+ * @brief Third-phase heap init, run after semaphores become available.
+ *
+ * Calls init_post_sem() on each registered back-end so they can install
+ * locks now that the semaphore allocator works. Stops on the first
+ * failure. Do not call from KDL: the heap is expected to be consistent.
+ *
+ * @return B_OK on success or the first non-B_OK status from a back-end.
+ */
 status_t
 heap_init_post_sem()
 {
@@ -243,6 +353,14 @@ heap_init_post_sem()
 }
 
 
+/**
+ * @brief Final heap init, run after the threading subsystem is ready.
+ *
+ * Invokes init_post_thread() on each back-end so heaps can spawn their own
+ * maintenance / reclamation threads.
+ *
+ * @return B_OK on success or the first non-B_OK status from a back-end.
+ */
 status_t
 heap_init_post_thread()
 {
@@ -258,6 +376,13 @@ heap_init_post_thread()
 }
 
 
+/**
+ * @brief Aligned allocation routed to the primary heap.
+ *
+ * @param alignment Required alignment in bytes (0 means default).
+ * @param size Number of bytes to allocate.
+ * @return Allocated pointer, or NULL on failure.
+ */
 void*
 memalign(size_t alignment, size_t size)
 {
@@ -265,6 +390,14 @@ memalign(size_t alignment, size_t size)
 }
 
 
+/**
+ * @brief Aligned allocation with caller-supplied flags.
+ *
+ * @param alignment Required alignment in bytes.
+ * @param size Number of bytes to allocate.
+ * @param flags Heap-specific flags (e.g. CANNOT_WAIT, DONT_WAIT_FOR_MEMORY).
+ * @return Allocated pointer, or NULL on failure.
+ */
 void*
 memalign_etc(size_t alignment, size_t size, uint32 flags)
 {
@@ -272,6 +405,13 @@ memalign_etc(size_t alignment, size_t size, uint32 flags)
 }
 
 
+/**
+ * @brief Frees a previously allocated block, honouring the given flags.
+ *
+ * @param address Pointer returned by a previous heap allocation (NULL OK).
+ * @param flags Heap-specific free flags.
+ * @return void.
+ */
 void
 free_etc(void* address, uint32 flags)
 {
@@ -279,6 +419,12 @@ free_etc(void* address, uint32 flags)
 }
 
 
+/**
+ * @brief Standard free(3) routed to the primary heap.
+ *
+ * @param address Pointer to free (NULL is a no-op).
+ * @return void.
+ */
 void
 free(void *address)
 {
@@ -286,6 +432,12 @@ free(void *address)
 }
 
 
+/**
+ * @brief Standard malloc(3) routed to the primary heap.
+ *
+ * @param size Number of bytes to allocate.
+ * @return Allocated pointer, or NULL on failure.
+ */
 void*
 malloc(size_t size)
 {
@@ -293,6 +445,14 @@ malloc(size_t size)
 }
 
 
+/**
+ * @brief Reallocation with caller-supplied flags.
+ *
+ * @param address Existing block (NULL behaves like malloc).
+ * @param newSize Desired new size.
+ * @param flags Heap-specific flags.
+ * @return Pointer to the resized block or NULL on failure.
+ */
 void*
 realloc_etc(void* address, size_t newSize, uint32 flags)
 {
@@ -300,6 +460,13 @@ realloc_etc(void* address, size_t newSize, uint32 flags)
 }
 
 
+/**
+ * @brief Standard realloc(3) routed to the primary heap.
+ *
+ * @param address Existing block (NULL behaves like malloc).
+ * @param newSize Desired new size.
+ * @return Pointer to the resized block or NULL on failure.
+ */
 void*
 realloc(void *address, size_t newSize)
 {
@@ -307,6 +474,17 @@ realloc(void *address, size_t newSize)
 }
 
 
+/**
+ * @brief POSIX posix_memalign() bridging into the primary heap.
+ *
+ * Validates that alignment is a multiple of sizeof(void*) and that the
+ * output pointer is non-NULL, then delegates to memalign().
+ *
+ * @param _pointer Out-parameter receiving the allocated pointer.
+ * @param alignment Alignment in bytes (power of two, multiple of sizeof(void*)).
+ * @param size Number of bytes to allocate.
+ * @return 0 on success, B_BAD_VALUE on invalid arguments.
+ */
 extern "C" int
 posix_memalign(void** _pointer, size_t alignment, size_t size)
 {
@@ -334,6 +512,18 @@ struct ObjectCache {
 };
 
 
+/**
+ * @brief Minimal object_cache creator when slabs are disabled.
+ *
+ * Convenience wrapper that forwards to create_object_cache_etc() with all
+ * optional parameters zeroed. Used by slab callers in DEBUG_HEAPS builds
+ * that have no real slab allocator.
+ *
+ * @param name Debug name for the cache (ignored here).
+ * @param object_size Size of a single object in bytes.
+ * @param flags Slab flags (ignored here).
+ * @return Newly allocated ObjectCache, or NULL on failure.
+ */
 object_cache*
 create_object_cache(const char* name, size_t object_size, uint32 flags)
 {
@@ -342,6 +532,21 @@ create_object_cache(const char* name, size_t object_size, uint32 flags)
 }
 
 
+/**
+ * @brief Full-form object_cache creator, heap-backed.
+ *
+ * Allocates a shim ObjectCache struct remembering object size, alignment,
+ * constructor, destructor and cookie; actual allocations later go through
+ * the primary heap rather than a real slab.
+ *
+ * @param unused Cache name (unused).
+ * @param objectSize Size of each object.
+ * @param alignment Required alignment of each object.
+ * @param cookie Opaque value passed to constructor/destructor.
+ * @param ctor Optional constructor invoked after allocation.
+ * @param dtor Optional destructor invoked before free.
+ * @return Newly allocated ObjectCache, or NULL on failure.
+ */
 object_cache*
 create_object_cache_etc(const char*, size_t objectSize, size_t alignment, size_t, size_t,
 	size_t, uint32, void* cookie, object_cache_constructor ctor, object_cache_destructor dtor,
@@ -360,6 +565,12 @@ create_object_cache_etc(const char*, size_t objectSize, size_t alignment, size_t
 }
 
 
+/**
+ * @brief Destroys an object_cache shim.
+ *
+ * @param cache Cache previously returned by create_object_cache[_etc]().
+ * @return void.
+ */
 void
 delete_object_cache(object_cache* cache)
 {
@@ -367,6 +578,13 @@ delete_object_cache(object_cache* cache)
 }
 
 
+/**
+ * @brief No-op reserve hook for the shim implementation.
+ *
+ * @param cache Unused cache pointer.
+ * @param objectCount Unused reservation request.
+ * @return Always B_OK.
+ */
 status_t
 object_cache_set_minimum_reserve(object_cache* cache, size_t objectCount)
 {
@@ -374,6 +592,16 @@ object_cache_set_minimum_reserve(object_cache* cache, size_t objectCount)
 }
 
 
+/**
+ * @brief Allocates and optionally constructs an object from the shim cache.
+ *
+ * Performs a heap memalign() for cache->object_size with cache->alignment
+ * and, if the cache has a constructor, runs it on the fresh memory.
+ *
+ * @param cache Shim cache to allocate from.
+ * @param flags Heap allocation flags.
+ * @return Pointer to the allocated object, or NULL on failure.
+ */
 void*
 object_cache_alloc(object_cache* cache, uint32 flags)
 {
@@ -387,6 +615,14 @@ object_cache_alloc(object_cache* cache, uint32 flags)
 }
 
 
+/**
+ * @brief Runs the destructor (if any) and frees the object back to the heap.
+ *
+ * @param cache Shim cache the object came from.
+ * @param object Object previously returned by object_cache_alloc().
+ * @param flags Heap free flags.
+ * @return void.
+ */
 void
 object_cache_free(object_cache* cache, void* object, uint32 flags)
 {
@@ -396,6 +632,14 @@ object_cache_free(object_cache* cache, void* object, uint32 flags)
 }
 
 
+/**
+ * @brief No-op reservation in the shim object_cache implementation.
+ *
+ * @param cache Unused.
+ * @param objectCount Unused.
+ * @param flags Unused.
+ * @return Always B_OK.
+ */
 status_t
 object_cache_reserve(object_cache* cache, size_t objectCount, uint32 flags)
 {
@@ -403,6 +647,13 @@ object_cache_reserve(object_cache* cache, size_t objectCount, uint32 flags)
 }
 
 
+/**
+ * @brief Reports memory used by the shim cache (always zero here).
+ *
+ * @param cache Unused cache pointer.
+ * @param _allocatedMemory Out-parameter, set to zero.
+ * @return void.
+ */
 void
 object_cache_get_usage(object_cache* cache, size_t* _allocatedMemory)
 {
@@ -410,30 +661,56 @@ object_cache_get_usage(object_cache* cache, size_t* _allocatedMemory)
 }
 
 
+/**
+ * @brief No-op maintenance request when there is no slab allocator to poke.
+ *
+ * @return void.
+ */
 void
 request_memory_manager_maintenance()
 {
 }
 
 
+/**
+ * @brief No-op slab allocator init for DEBUG_HEAPS builds.
+ *
+ * @param args Unused boot arguments.
+ * @return void.
+ */
 void
 slab_init(kernel_args* args)
 {
 }
 
 
+/**
+ * @brief No-op slab post-area init for DEBUG_HEAPS builds.
+ *
+ * @return void.
+ */
 void
 slab_init_post_area()
 {
 }
 
 
+/**
+ * @brief No-op slab post-sem init for DEBUG_HEAPS builds.
+ *
+ * @return void.
+ */
 void
 slab_init_post_sem()
 {
 }
 
 
+/**
+ * @brief No-op slab post-thread init for DEBUG_HEAPS builds.
+ *
+ * @return void.
+ */
 void
 slab_init_post_thread()
 {

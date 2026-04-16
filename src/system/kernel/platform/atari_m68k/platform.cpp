@@ -1,6 +1,37 @@
 /*
-	Atari kernel platform code.
-*/
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Atari kernel platform code.
+ */
+
+/**
+ * @file platform.cpp
+ * @brief Atari (m68k) kernel platform implementation.
+ *
+ * Provides the concrete M68KPlatform subclass for Atari/Falcon-class
+ * machines, wrapping the MFP interrupt controller(s), the MC146818A RTC,
+ * the IKBD keyboard used for the blue screen console, and the ARAnyM
+ * NatFeatures hooks used for debug output. Exposes initialization,
+ * interrupt enable/ack, RTC access, and a hardware timer driven from
+ * the ST MFP.
+ */
 
 #include <arch_platform.h>
 
@@ -191,7 +222,11 @@ using BPrivate::M68KAtari;
 static char sMFP0Buffer[sizeof(M68KAtari::MFP)];
 static char sMFP1Buffer[sizeof(M68KAtari::MFP)];
 
-// constructor
+/**
+ * @brief Constructs an MFP wrapper for a memory-mapped MFP controller.
+ * @param base   Base MMIO address of the MFP.
+ * @param vector First interrupt vector served by this MFP.
+ */
 M68KAtari::MFP::MFP(uint32 base, int vector)
 {
 	fBase = base;
@@ -199,12 +234,20 @@ M68KAtari::MFP::MFP(uint32 base, int vector)
 }
 
 
+/**
+ * @brief Destroys the MFP wrapper. No hardware action is performed.
+ */
 M68KAtari::MFP::~MFP()
 {
 }
 
 #warning M68K: use enable or mark register ?
 
+/**
+ * @brief Enables a single IRQ line on this MFP by setting the matching
+ *        bit in the appropriate Interrupt Enable Register.
+ * @param irq MFP-relative interrupt number (0..15).
+ */
 void
 M68KAtari::MFP::EnableIOInterrupt(int irq)
 {
@@ -219,6 +262,11 @@ M68KAtari::MFP::EnableIOInterrupt(int irq)
 }
 
 
+/**
+ * @brief Disables a single IRQ line on this MFP by clearing the matching
+ *        bit in the appropriate Interrupt Enable Register.
+ * @param irq MFP-relative interrupt number (0..15).
+ */
 void
 M68KAtari::MFP::DisableIOInterrupt(int irq)
 {
@@ -233,6 +281,12 @@ M68KAtari::MFP::DisableIOInterrupt(int irq)
 }
 
 
+/**
+ * @brief Acknowledges a pending IRQ on this MFP by clearing its bit in
+ *        the In-Service Register.
+ * @param irq MFP-relative interrupt number (0..15).
+ * @return true if the IRQ was pending and has been cleared; false otherwise.
+ */
 bool
 M68KAtari::MFP::AcknowledgeIOInterrupt(int irq)
 {
@@ -254,7 +308,11 @@ M68KAtari::MFP::AcknowledgeIOInterrupt(int irq)
 
 static char sRTCBuffer[sizeof(M68KAtari::RTC)];
 
-// constructor
+/**
+ * @brief Constructs an RTC wrapper around a MC146818A-compatible chip.
+ * @param base   Base MMIO address of the RTC (index/data pair).
+ * @param vector Interrupt vector associated with the RTC.
+ */
 M68KAtari::RTC::RTC(uint32 base, int vector)
 {
 	fBase = base;
@@ -262,11 +320,20 @@ M68KAtari::RTC::RTC(uint32 base, int vector)
 }
 
 
+/**
+ * @brief Destroys the RTC wrapper. No hardware action is performed.
+ */
 M68KAtari::RTC::~RTC()
 {
 }
 
 
+/**
+ * @brief Reads an MC146818A-style RTC register through the index/data pair,
+ *        waiting briefly for any time-of-day update in progress to finish.
+ * @param reg Register index to read.
+ * @return The current register value.
+ */
 uint8
 M68KAtari::RTC::ReadReg(uint32 reg)
 {
@@ -286,19 +353,29 @@ M68KAtari::RTC::ReadReg(uint32 reg)
 // #pragma mark - M68KAtari
 
 
-// constructor
+/**
+ * @brief Constructs the Atari m68k platform object and tags it with the
+ *        Atari platform identifier.
+ */
 M68KAtari::M68KAtari()
 	: M68KPlatform(M68K_PLATFORM_ATARI)
 {
 }
 
 
-// destructor
+/**
+ * @brief Destroys the Atari m68k platform object.
+ */
 M68KAtari::~M68KAtari()
 {
 }
 
 
+/**
+ * @brief Probes for optional Atari hardware (TT MFP, TT RTC) and
+ *        constructs wrapper objects for the devices that are present.
+ * @param kernelArgs Kernel boot arguments (unused by the probe).
+ */
 void
 M68KAtari::ProbeHardware(struct kernel_args *kernelArgs)
 {
@@ -317,6 +394,13 @@ M68KAtari::ProbeHardware(struct kernel_args *kernelArgs)
 }
 
 
+/**
+ * @brief Performs the early platform init: clears device pointers, picks
+ *        up ARAnyM NatFeatures hooks from kernel_args, and requires at
+ *        least the ST MFP to be present.
+ * @param kernelArgs Kernel boot arguments carrying ARAnyM hook pointers.
+ * @return B_OK on success; panics if the mandatory ST MFP is missing.
+ */
 status_t
 M68KAtari::Init(struct kernel_args *kernelArgs)
 {
@@ -343,6 +427,12 @@ M68KAtari::Init(struct kernel_args *kernelArgs)
 }
 
 
+/**
+ * @brief Sets up the debug output channel (the ARAnyM debug-printf
+ *        NatFeature) and then probes for optional hardware.
+ * @param kernelArgs Kernel boot arguments carrying the debug-printf hook id.
+ * @return B_OK on success.
+ */
 status_t
 M68KAtari::InitSerialDebug(struct kernel_args *kernelArgs)
 {
@@ -360,6 +450,12 @@ M68KAtari::InitSerialDebug(struct kernel_args *kernelArgs)
 }
 
 
+/**
+ * @brief Post-VM platform init hook. Currently a stub that returns
+ *        B_NO_INIT; debugger commands are left commented out.
+ * @param kernelArgs Kernel boot arguments (unused).
+ * @return B_NO_INIT.
+ */
 status_t
 M68KAtari::InitPostVM(struct kernel_args *kernelArgs)
 {
@@ -375,6 +471,12 @@ M68KAtari::InitPostVM(struct kernel_args *kernelArgs)
 }
 
 
+/**
+ * @brief Initializes the programmable interrupt controller. The MFP
+ *        requires no explicit setup here, so this just returns success.
+ * @param kernelArgs Kernel boot arguments (unused).
+ * @return B_OK.
+ */
 status_t
 M68KAtari::InitPIC(struct kernel_args *kernelArgs)
 {
@@ -382,6 +484,13 @@ M68KAtari::InitPIC(struct kernel_args *kernelArgs)
 }
 
 
+/**
+ * @brief Initializes the real-time clock subsystem by publishing the
+ *        MFP-derived time-base frequency into kernel_args.
+ * @param kernelArgs Kernel boot arguments; time_base_frequency is set here.
+ * @param data       Real-time data structure (currently unused).
+ * @return B_OK.
+ */
 status_t
 M68KAtari::InitRTC(struct kernel_args *kernelArgs,
 	struct real_time_data *data)
@@ -392,6 +501,12 @@ M68KAtari::InitRTC(struct kernel_args *kernelArgs,
 }
 
 
+/**
+ * @brief Initializes the hardware timer by stopping MFP timer A and
+ *        installing the MFP timer interrupt handler.
+ * @param kernelArgs Kernel boot arguments (unused).
+ * @return B_OK.
+ */
 status_t
 M68KAtari::InitTimer(struct kernel_args *kernelArgs)
 {
@@ -402,6 +517,13 @@ M68KAtari::InitTimer(struct kernel_args *kernelArgs)
 }
 
 
+/**
+ * @brief Reads a single character from the IKBD keyboard by polling,
+ *        translating Atari scancodes and modifier state into an ASCII
+ *        byte (with ANSI escape sequences synthesized for cursor keys
+ *        and the like). Used by the kernel blue-screen console.
+ * @return The translated character.
+ */
 char
 M68KAtari::BlueScreenGetChar()
 {
@@ -537,6 +659,12 @@ M68KAtari::BlueScreenGetChar()
 }
 
 
+/**
+ * @brief Reads one character from the serial debug input. Currently
+ *        redirected to BlueScreenGetChar() since no real UART backend is
+ *        wired up yet.
+ * @return The next input character.
+ */
 char
 M68KAtari::SerialDebugGetChar()
 {
@@ -546,6 +674,11 @@ M68KAtari::SerialDebugGetChar()
 }
 
 
+/**
+ * @brief Writes a single character to the debug output using the ARAnyM
+ *        NatFeature debug-printf hook when available.
+ * @param c Character to print.
+ */
 void
 M68KAtari::SerialDebugPutChar(char c)
 {
@@ -567,6 +700,11 @@ M68KAtari::SerialDebugPutChar(char c)
 }
 
 
+/**
+ * @brief Enables the given global IRQ, dispatching to whichever MFP
+ *        instance owns it.
+ * @param irq Global interrupt vector number.
+ */
 void
 M68KAtari::EnableIOInterrupt(int32 irq)
 {
@@ -577,6 +715,10 @@ M68KAtari::EnableIOInterrupt(int32 irq)
 }
 
 
+/**
+ * @brief Disables the given global IRQ, dispatching to the owning MFP.
+ * @param irq Global interrupt vector number.
+ */
 void
 M68KAtari::DisableIOInterrupt(int32 irq)
 {
@@ -587,6 +729,11 @@ M68KAtari::DisableIOInterrupt(int32 irq)
 }
 
 
+/**
+ * @brief Acknowledges the given global IRQ on the owning MFP.
+ * @param irq Global interrupt vector number.
+ * @return true if the IRQ was pending; false otherwise (or if no MFP owns it).
+ */
 bool
 M68KAtari::AcknowledgeIOInterrupt(int32 irq)
 {
@@ -598,6 +745,12 @@ M68KAtari::AcknowledgeIOInterrupt(int32 irq)
 }
 
 
+/**
+ * @brief Reads an RTC register, faking the century byte (register 0x32)
+ *        as 0x20 since we are permanently in the 21st century.
+ * @param reg RTC register index.
+ * @return The register value (possibly faked for the century byte).
+ */
 uint8
 M68KAtari::ReadRTCReg(uint8 reg)
 {
@@ -610,12 +763,22 @@ M68KAtari::ReadRTCReg(uint8 reg)
 }
 
 
+/**
+ * @brief Writes a value to an RTC register.
+ * @param reg RTC register index.
+ * @param val Byte to write.
+ */
 void
 M68KAtari::WriteRTCReg(uint8 reg, uint8 val)
 {
 	fRTC->WriteReg(reg, val);
 }
 
+/**
+ * @brief Sets the hardware RTC to the given UNIX-epoch seconds value.
+ *        Not yet implemented for the Atari platform.
+ * @param seconds Seconds since 1970-01-01 UTC.
+ */
 void
 M68KAtari::SetHardwareRTC(uint64 seconds)
 {
@@ -623,6 +786,11 @@ M68KAtari::SetHardwareRTC(uint64 seconds)
 }
 
 
+/**
+ * @brief Reads the hardware RTC as a UNIX-epoch second count.
+ *        Not yet implemented for the Atari platform.
+ * @return Always 0 in the current stub.
+ */
 uint32
 M68KAtari::GetHardwareRTC()
 {
@@ -631,6 +799,11 @@ M68KAtari::GetHardwareRTC()
 }
 
 
+/**
+ * @brief Arms the MFP timer so that it fires once after the requested
+ *        interval, clamping the count into the MFP's 8-bit range.
+ * @param timeout Microseconds until the next timer interrupt.
+ */
 void
 M68KAtari::SetHardwareTimer(bigtime_t timeout)
 {
@@ -650,6 +823,9 @@ M68KAtari::SetHardwareTimer(bigtime_t timeout)
 }
 
 
+/**
+ * @brief Disables the MFP hardware timer and masks its IRQ.
+ */
 void
 M68KAtari::ClearHardwareTimer(void)
 {
@@ -660,6 +836,11 @@ M68KAtari::ClearHardwareTimer(void)
 }
 
 
+/**
+ * @brief Shuts the machine down or reboots it. Currently unimplemented
+ *        for the Atari platform; this routine panics.
+ * @param reboot true to reboot; false to power off.
+ */
 void
 M68KAtari::ShutDown(bool reboot)
 {
@@ -668,6 +849,11 @@ M68KAtari::ShutDown(bool reboot)
 }
 
 
+/**
+ * @brief Finds the MFP instance that owns the given global IRQ vector.
+ * @param irq Global interrupt vector number.
+ * @return Pointer to the owning MFP, or NULL if none matches.
+ */
 M68KAtari::MFP *
 M68KAtari::MFPForIrq(int irq)
 {
@@ -682,6 +868,12 @@ M68KAtari::MFPForIrq(int irq)
 	return NULL;
 }
 
+/**
+ * @brief MFP timer-interrupt trampoline: clears the hardware timer and
+ *        forwards into the generic kernel timer_interrupt().
+ * @param data Opaque cookie, actually a pointer to the M68KAtari instance.
+ * @return Whatever timer_interrupt() returns.
+ */
 int32
 M68KAtari::MFPTimerInterrupt(void *data)
 {
@@ -698,6 +890,11 @@ static char *sM68KPlatformBuffer[sizeof(M68KAtari)];
 #warning PTR HERE ???
 
 
+/**
+ * @brief Constructs the singleton Atari M68KPlatform instance in a
+ *        static buffer and returns a pointer to it.
+ * @return Pointer to the platform object.
+ */
 M68KPlatform *instanciate_m68k_platform_atari()
 {
 	return new(sM68KPlatformBuffer) M68KAtari;

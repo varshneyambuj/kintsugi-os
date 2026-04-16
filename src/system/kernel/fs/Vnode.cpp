@@ -22,8 +22,23 @@
  *   Distributed under the terms of the MIT License.
  */
 
-/** @file Vnode.cpp
- * @brief Kernel vnode object — represents an open file system node with reference counting and locking.
+/**
+ * @file Vnode.cpp
+ * @brief In-memory handle for a filesystem inode.
+ *
+ * A vnode is the kernel VFS's per-node object that bridges a file system
+ * implementation and the rest of the kernel. It carries a reference count, a
+ * bit-flag word used as a lightweight spin/sleep lock, and links to any
+ * mount-point / covering vnode relationships that apply when a file system is
+ * mounted over it.
+ *
+ * The few operations implemented in this translation unit handle the slow
+ * path of the flag-based lock: when Lock() loses the race on the kFlagsLocked
+ * bit it calls into _WaitForLock() here, and Unlock() calls _WakeUpLocker()
+ * when it notices a parked waiter. The per-bucket mutex serialises access to
+ * the waiter list that hangs off the vnode's hash bucket; the vnode's own
+ * reference-count and SetCovering()/SetMountPoint() invariants are maintained
+ * via Lock()/ReleaseRef() in the inline accessors declared in Vnode.h.
  */
 
 
@@ -35,10 +50,13 @@
 vnode::Bucket vnode::sBuckets[kBucketCount];
 
 
-/** @brief Constructor for a vnode hash bucket.
+/**
+ * @brief Construct a vnode hash bucket and initialise its waiter-list mutex.
  *
- * Initialises the per-bucket mutex that serialises waiter list manipulation
- * for all vnodes that hash into this bucket.
+ * Each bucket owns a single mutex that serialises manipulation of the
+ * LockWaiter list shared by every vnode hashing into that bucket. The waiter
+ * list is only touched on the contended lock / wake paths, so the mutex is
+ * effectively uncontended during normal operation.
  */
 vnode::Bucket::Bucket()
 {
@@ -46,11 +64,13 @@ vnode::Bucket::Bucket()
 }
 
 
-/** @brief One-time static initialisation of all vnode hash buckets.
+/**
+ * @brief One-time initialiser for the global vnode hash-bucket array.
  *
- * Must be called exactly once during kernel VFS initialisation, before any
- * vnode locking operations are performed.  Placement-constructs each Bucket
- * object in the global @c sBuckets array.
+ * Placement-constructs each Bucket entry in sBuckets so their mutexes are
+ * ready before any vnode attempts to acquire its lock. Must be called exactly
+ * once during early VFS initialisation, strictly before any vnode locking
+ * operation.
  */
 /*static*/ void
 vnode::StaticInit()
@@ -60,14 +80,19 @@ vnode::StaticInit()
 }
 
 
-/** @brief Block the calling thread until the vnode lock becomes available.
+/**
+ * @brief Slow path of vnode::Lock() — park the calling thread until the lock
+ *        becomes available.
  *
- * Creates a LockWaiter on the stack, registers it with the vnode's hash
- * bucket, and calls thread_block() to sleep.  If the lock was released
- * between the atomic flag-set and the bucket lock acquisition the function
- * claims the lock immediately without sleeping.
+ * Called only when Lock()'s atomic attempt to set kFlagsLocked failed. Builds
+ * a stack-local LockWaiter, takes the bucket mutex, and re-checks the flag
+ * word under it: if the previous holder dropped the lock in the meantime this
+ * function claims it without ever sleeping. Otherwise the waiter is appended
+ * to the bucket's waiter list and the thread blocks on it with
+ * THREAD_BLOCK_TYPE_OTHER until _WakeUpLocker() unblocks it.
  *
- * Must be called only from vnode::Lock() when a contention is detected.
+ * Invariants on return: kFlagsLocked is set and this thread is the owner; the
+ * waiter structure is no longer referenced by the bucket list.
  */
 void
 vnode::_WaitForLock()
@@ -81,9 +106,9 @@ vnode::_WaitForLock()
 
 	if ((atomic_or(&fFlags, kFlagsWaitingLocker)
 			& (kFlagsLocked | kFlagsWaitingLocker)) == 0) {
-		// The lock holder dropped it in the meantime and no-one else was faster
-		// than us, so it's ours now. Just mark the node locked and clear the
-		// waiting flag again.
+		// The lock holder dropped it in the meantime and no-one else was
+		// faster than us, so it's ours now. Just mark the node locked and
+		// clear the waiting flag again.
 		atomic_or(&fFlags, kFlagsLocked);
 		atomic_and(&fFlags, ~kFlagsWaitingLocker);
 		return;
@@ -100,13 +125,18 @@ vnode::_WaitForLock()
 }
 
 
-/** @brief Wake the next thread waiting to acquire this vnode's lock.
+/**
+ * @brief Slow path of vnode::Unlock() — hand the lock off to the first parked
+ *        waiter.
  *
- * Re-marks the vnode as locked, removes the first matching waiter from the
- * bucket's waiter list, clears the @c kFlagsWaitingLocker flag if that waiter
- * was the only one, and unblocks the waiter's thread.
+ * Called only when Unlock() observed kFlagsWaitingLocker set. Re-stamps the
+ * vnode as locked on behalf of the waiter (direct hand-off avoids a lost
+ * wake-up race), scans this bucket's waiter list for the first LockWaiter
+ * whose vnode matches, removes it, clears kFlagsWaitingLocker if it was the
+ * only one, and finally wakes the waiter's thread.
  *
- * Must be called only from vnode::Unlock() when the waiter flag is set.
+ * Invariants on return: the selected waiter is no longer on the bucket list
+ * and owns the lock; all other waiters for this vnode remain queued.
  */
 void
 vnode::_WakeUpLocker()

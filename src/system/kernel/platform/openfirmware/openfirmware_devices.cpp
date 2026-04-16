@@ -1,6 +1,36 @@
 /*
- * Copyright 2003-2005, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2005, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file openfirmware_devices.cpp
+ * @brief Helpers for walking the Open Firmware device tree by device_type.
+ *
+ * Provides of_get_next_device(), a stateful depth-first iterator over the
+ * firmware device tree that returns the next node whose "device_type"
+ * property matches a caller-specified string. The traversal uses the
+ * tree links themselves as its stack, so only a single intptr_t cookie
+ * has to be kept by the caller.
  */
 
 #include <platform/openfirmware/devices.h>
@@ -10,12 +40,21 @@
 #include <string.h>
 
 
-/** Gets all device types of the specified type by doing a 
- *	depth-first search of the OpenFirmware device tree.
- *	If a root != 0 is given, the function only traverses the subtree spanned
- *	by the root (inclusively). Otherwise the whole device tree is searched.
+/**
+ * @brief Returns the next device-tree node whose "device_type" property
+ *        equals the given string, using a depth-first walk.
  *
- *	The cookie has to be initialized to zero.
+ * On the first call the cookie must be zero. If root is non-zero the
+ * traversal is restricted to the subtree rooted there (inclusive);
+ * otherwise the entire device tree is walked.
+ *
+ * @param _cookie  In/out cookie tracking the traversal (must be 0 initially).
+ * @param root     Optional subtree root phandle (0 for the whole tree).
+ * @param type     Value of the "device_type" property to match exactly.
+ * @param path     Buffer that receives the node path of the next match.
+ * @param pathSize Size of path in bytes.
+ * @return B_OK if a match is found; B_ENTRY_NOT_FOUND when the walk is
+ *         complete; B_ERROR on firmware failure.
  */
 status_t
 of_get_next_device(intptr_t *_cookie, intptr_t root, const char *type,

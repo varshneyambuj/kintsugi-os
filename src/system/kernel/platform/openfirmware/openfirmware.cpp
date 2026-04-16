@@ -1,7 +1,39 @@
 /*
- * Copyright 2003, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Copyright 2019, Adrien Destugues, pulkomandy@pulkomandy.tk
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Copyright 2019, Adrien Destugues, pulkomandy@pulkomandy.tk
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file openfirmware.cpp
+ * @brief Thin C wrappers around IEEE 1275 Open Firmware client services.
+ *
+ * Each entry here packs its arguments into the struct layout expected by
+ * the Open Firmware client-interface trampoline (gCallOpenFirmware) and
+ * returns the result to the caller. Covers device-tree traversal
+ * (finddevice/child/peer/parent), property access (getprop/setprop/
+ * getproplen/nextprop), package/instance conversion, I/O (open/close/
+ * read/write/seek and block queries), memory claim/release, and
+ * miscellaneous services (test, milliseconds, exit).
  */
 
 #include <platform/openfirmware/openfirmware.h>
@@ -14,6 +46,12 @@ static intptr_t (*gCallOpenFirmware)(void *) = 0;
 intptr_t gChosen;
 
 
+/**
+ * @brief Initializes the Open Firmware client wrapper by storing the
+ *        entry-point trampoline and caching the /chosen node handle.
+ * @param openFirmwareEntry Pointer to the firmware client-interface callback.
+ * @return B_OK on success; B_ERROR if /chosen cannot be located.
+ */
 status_t
 of_init(intptr_t (*openFirmwareEntry)(void *))
 {
@@ -27,6 +65,15 @@ of_init(intptr_t (*openFirmwareEntry)(void *))
 }
 
 
+/**
+ * @brief Generic client-function trampoline: packs a variadic argument
+ *        list into the firmware call structure and copies back return
+ *        values.
+ * @param method     Name of the Open Firmware client service to invoke.
+ * @param numArgs    Number of input arguments that follow.
+ * @param numReturns Number of output arguments expected (pointers to store into).
+ * @return 0 on success; OF_FAILED if the firmware call fails.
+ */
 intptr_t
 of_call_client_function(const char *method, intptr_t numArgs,
 	intptr_t numReturns, ...)
@@ -71,6 +118,15 @@ of_call_client_function(const char *method, intptr_t numArgs,
 }
 
 
+/**
+ * @brief Evaluates a Forth command string via the "interpret" client
+ *        service, pushing arguments on the stack and collecting the
+ *        requested number of results.
+ * @param command    Forth source text to evaluate.
+ * @param numArgs    Number of stack arguments to push.
+ * @param numReturns Number of stack results to pop back.
+ * @return 0 on success; OF_FAILED if the firmware reports a catch.
+ */
 intptr_t
 of_interpret(const char *command, intptr_t numArgs, intptr_t numReturns, ...)
 {
@@ -121,6 +177,15 @@ of_interpret(const char *command, intptr_t numArgs, intptr_t numReturns, ...)
 }
 
 
+/**
+ * @brief Invokes a method on an Open Firmware instance via the
+ *        "call-method" client service.
+ * @param handle     Instance handle the method is invoked on.
+ * @param method     Name of the method to call.
+ * @param numArgs    Number of stack arguments to push.
+ * @param numReturns Number of stack results to pop.
+ * @return 0 on success; OF_FAILED if the firmware reports a catch.
+ */
 intptr_t
 of_call_method(uint32_t handle, const char *method, intptr_t numArgs,
 	intptr_t numReturns, ...)
@@ -173,6 +238,11 @@ of_call_method(uint32_t handle, const char *method, intptr_t numArgs,
 }
 
 
+/**
+ * @brief Looks up a device-tree node by its path string.
+ * @param device Device path (e.g. "/chosen").
+ * @return Phandle of the node, or OF_FAILED if it does not exist.
+ */
 intptr_t
 of_finddevice(const char *device)
 {
@@ -191,9 +261,11 @@ of_finddevice(const char *device)
 }
 
 
-/** Returns the first child of the given node
+/**
+ * @brief Returns the first child of the given device-tree node.
+ * @param node Parent phandle.
+ * @return Phandle of the first child, 0 if none, OF_FAILED on error.
  */
-
 intptr_t
 of_child(intptr_t node)
 {
@@ -212,9 +284,11 @@ of_child(intptr_t node)
 }
 
 
-/** Returns the next sibling of the given node
+/**
+ * @brief Returns the next sibling of the given device-tree node.
+ * @param node Current phandle (0 asks for the root's first sibling).
+ * @return Phandle of the sibling, 0 if none, OF_FAILED on error.
  */
-
 intptr_t
 of_peer(intptr_t node)
 {
@@ -233,9 +307,11 @@ of_peer(intptr_t node)
 }
 
 
-/** Returns the parent of the given node
+/**
+ * @brief Returns the parent of the given device-tree node.
+ * @param node Child phandle.
+ * @return Phandle of the parent, or OF_FAILED on error.
  */
-
 intptr_t
 of_parent(intptr_t node)
 {
@@ -254,6 +330,13 @@ of_parent(intptr_t node)
 }
 
 
+/**
+ * @brief Converts an instance handle (ihandle) to a device path string.
+ * @param instance   Open instance handle.
+ * @param pathBuffer Caller-supplied buffer that receives the path.
+ * @param bufferSize Size of pathBuffer in bytes.
+ * @return Number of bytes written, or OF_FAILED on error.
+ */
 intptr_t
 of_instance_to_path(uint32_t instance, char *pathBuffer, intptr_t bufferSize)
 {
@@ -274,6 +357,11 @@ of_instance_to_path(uint32_t instance, char *pathBuffer, intptr_t bufferSize)
 }
 
 
+/**
+ * @brief Converts an instance handle (ihandle) to its package phandle.
+ * @param instance Open instance handle.
+ * @return The corresponding package phandle, or OF_FAILED on error.
+ */
 intptr_t
 of_instance_to_package(uint32_t instance)
 {
@@ -292,6 +380,14 @@ of_instance_to_package(uint32_t instance)
 }
 
 
+/**
+ * @brief Retrieves the value of a named property from a device-tree node.
+ * @param package    Phandle of the node to query.
+ * @param property   Property name.
+ * @param buffer     Output buffer that receives the value.
+ * @param bufferSize Size of buffer in bytes.
+ * @return Number of bytes written, or OF_FAILED on error.
+ */
 intptr_t
 of_getprop(intptr_t package, const char *property, void *buffer, intptr_t bufferSize)
 {
@@ -313,6 +409,14 @@ of_getprop(intptr_t package, const char *property, void *buffer, intptr_t buffer
 }
 
 
+/**
+ * @brief Sets the value of a named property on a device-tree node.
+ * @param package    Phandle of the node to modify.
+ * @param property   Property name.
+ * @param buffer     New value to write.
+ * @param bufferSize Size of buffer in bytes.
+ * @return Number of bytes actually written, or OF_FAILED on error.
+ */
 intptr_t
 of_setprop(intptr_t package, const char *property, const void *buffer,
 	intptr_t bufferSize)
@@ -335,6 +439,12 @@ of_setprop(intptr_t package, const char *property, const void *buffer,
 }
 
 
+/**
+ * @brief Returns the length in bytes of a named property.
+ * @param package  Phandle of the node to query.
+ * @param property Property name.
+ * @return Length in bytes, or OF_FAILED on error.
+ */
 intptr_t
 of_getproplen(intptr_t package, const char *property)
 {
@@ -354,6 +464,14 @@ of_getproplen(intptr_t package, const char *property)
 }
 
 
+/**
+ * @brief Iterates over the property names on a node.
+ * @param package          Phandle of the node being walked.
+ * @param previousProperty Name of the previous property, or NULL to start.
+ * @param nextProperty     Buffer (at least 32 bytes) that receives the next name.
+ * @return 1 if a next property was returned, 0 if the walk is complete,
+ *         OF_FAILED on error.
+ */
 intptr_t
 of_nextprop(intptr_t package, const char *previousProperty, char *nextProperty)
 {
@@ -374,6 +492,13 @@ of_nextprop(intptr_t package, const char *previousProperty, char *nextProperty)
 }
 
 
+/**
+ * @brief Converts a package phandle to its device-tree path string.
+ * @param package    Phandle to resolve.
+ * @param pathBuffer Caller-supplied buffer that receives the path.
+ * @param bufferSize Size of pathBuffer in bytes.
+ * @return Number of bytes written, or OF_FAILED on error.
+ */
 intptr_t
 of_package_to_path(intptr_t package, char *pathBuffer, intptr_t bufferSize)
 {
@@ -397,6 +522,12 @@ of_package_to_path(intptr_t package, char *pathBuffer, intptr_t bufferSize)
 //	I/O functions
 
 
+/**
+ * @brief Opens a device by path, returning an instance handle suitable
+ *        for I/O calls.
+ * @param nodeName Device path to open.
+ * @return Non-zero instance handle on success; OF_FAILED on error.
+ */
 intptr_t
 of_open(const char *nodeName)
 {
@@ -415,6 +546,10 @@ of_open(const char *nodeName)
 }
 
 
+/**
+ * @brief Closes a previously opened instance handle.
+ * @param handle Instance handle to close.
+ */
 void
 of_close(intptr_t handle)
 {
@@ -429,6 +564,13 @@ of_close(intptr_t handle)
 }
 
 
+/**
+ * @brief Reads from an opened instance.
+ * @param handle     Open instance handle.
+ * @param buffer     Buffer that receives the data.
+ * @param bufferSize Maximum number of bytes to read.
+ * @return Number of bytes actually read, or OF_FAILED on error.
+ */
 intptr_t
 of_read(intptr_t handle, void *buffer, intptr_t bufferSize)
 {
@@ -449,6 +591,13 @@ of_read(intptr_t handle, void *buffer, intptr_t bufferSize)
 }
 
 
+/**
+ * @brief Writes to an opened instance.
+ * @param handle     Open instance handle.
+ * @param buffer     Data to write.
+ * @param bufferSize Number of bytes to write.
+ * @return Number of bytes actually written, or OF_FAILED on error.
+ */
 intptr_t
 of_write(intptr_t handle, const void *buffer, intptr_t bufferSize)
 {
@@ -469,6 +618,14 @@ of_write(intptr_t handle, const void *buffer, intptr_t bufferSize)
 }
 
 
+/**
+ * @brief Seeks on an opened instance, splitting the 64-bit position into
+ *        the high/low word pair the firmware expects when off_t is wider
+ *        than intptr_t.
+ * @param handle Open instance handle.
+ * @param pos    New file position in bytes.
+ * @return Firmware-defined status value, or OF_FAILED on error.
+ */
 intptr_t
 of_seek(intptr_t handle, off_t pos)
 {
@@ -493,6 +650,11 @@ of_seek(intptr_t handle, off_t pos)
 }
 
 
+/**
+ * @brief Calls the "#blocks" method on a block-device instance.
+ * @param handle Open instance handle of a block device.
+ * @return Total number of blocks, or OF_FAILED on error.
+ */
 intptr_t
 of_blocks(intptr_t handle)
 {
@@ -511,6 +673,11 @@ of_blocks(intptr_t handle)
 }
 
 
+/**
+ * @brief Calls the "block-size" method on a block-device instance.
+ * @param handle Open instance handle of a block device.
+ * @return Block size in bytes, or OF_FAILED on error.
+ */
 intptr_t
 of_block_size(intptr_t handle)
 {
@@ -532,6 +699,13 @@ of_block_size(intptr_t handle)
 // memory functions
 
 
+/**
+ * @brief Releases a region of virtual memory previously claimed from
+ *        Open Firmware.
+ * @param virtualAddress Start of the region to release.
+ * @param size           Size of the region in bytes.
+ * @return Firmware return code.
+ */
 intptr_t
 of_release(void *virtualAddress, intptr_t size)
 {
@@ -547,6 +721,14 @@ of_release(void *virtualAddress, intptr_t size)
 }
 
 
+/**
+ * @brief Claims a region of virtual memory from Open Firmware.
+ * @param virtualAddress Requested virtual address, or NULL to let the
+ *                       firmware choose one when align is non-zero.
+ * @param size           Size in bytes to claim.
+ * @param align          Required alignment (0 to use virtualAddress as-is).
+ * @return Claimed address on success; NULL if the claim failed.
+ */
 void *
 of_claim(void *virtualAddress, intptr_t size, intptr_t align)
 {
@@ -570,9 +752,12 @@ of_claim(void *virtualAddress, intptr_t size, intptr_t align)
 // misc functions
 
 
-/** tests if the given service is missing
+/**
+ * @brief Tests whether a given Open Firmware service is available.
+ * @param service Name of the client service to probe.
+ * @return Zero if the service is available; non-zero (missing) otherwise;
+ *         OF_FAILED on call failure.
  */
-
 intptr_t
 of_test(const char *service)
 {
@@ -591,9 +776,10 @@ of_test(const char *service)
 }
 
 
-/** Returns the millisecond counter
+/**
+ * @brief Reads the Open Firmware millisecond counter.
+ * @return Current value of the millisecond tick, or OF_FAILED on error.
  */
-
 intptr_t
 of_milliseconds(void)
 {
@@ -611,6 +797,9 @@ of_milliseconds(void)
 }
 
 
+/**
+ * @brief Asks Open Firmware to terminate the client program (no return).
+ */
 void
 of_exit(void)
 {

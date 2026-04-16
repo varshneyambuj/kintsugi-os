@@ -1,8 +1,41 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
- * Copyright 2012, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Copyright 2012, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file tracing.cpp
+ * @brief Kernel tracing ring buffer and the @c traced KDL command.
+ *
+ * Implements the lightweight in-kernel tracing infrastructure used by
+ * SCHEDULER_TRACING, WAIT_FOR_OBJECTS_TRACING, VM_TRACING and friends. A single
+ * contiguous ring buffer of variable-length TraceEntry records is bump-allocated
+ * forward and reclaimed only by wrap-around; writers serialize via a spinlock so
+ * that readers in the kernel debugger observe a consistent snapshot. Also hosts
+ * the TraceEntryIterator used to walk the buffer, the AbstractTraceEntry base
+ * class with its auxiliary data helpers, and the filter mini-language parser
+ * backing the "traced" debugger command.
  */
 
 
@@ -135,6 +168,18 @@ static bool sTracingDataRecovered = false;
 // #pragma mark -
 
 
+/**
+ * @brief Pretty-print a captured tracing stack trace via a caller-supplied printer.
+ *
+ * Walks each return address, resolves it to a symbol/image via the ELF debug
+ * lookup, demangles the C++ symbol name when possible, and emits one line per
+ * frame using @p print. Intended to be called from KDL (panic/debugger)
+ * context, hence the use of @c debug_malloc rather than the regular heap.
+ *
+ * @tparam Print Callable matching @c printf signature used to emit each line.
+ * @param stackTrace  Captured stack trace or @c NULL (no-op if null/empty).
+ * @param print       Sink receiving one formatted line per frame.
+ */
 template<typename Print>
 static void
 print_stack_trace(struct tracing_stack_trace* stackTrace,
@@ -180,6 +225,16 @@ print_stack_trace(struct tracing_stack_trace* stackTrace,
 // #pragma mark - TracingMetaData
 
 
+/**
+ * @brief Acquire the meta-data spinlock, serializing with tracing writers.
+ *
+ * The caller becomes the sole mutator of the ring-buffer state and blocks
+ * every @c AllocateEntry() call on all CPUs for the duration. Callers should
+ * interleave with @c disable_interrupts() when contention with ISR-level
+ * tracers is possible; this helper itself does not touch interrupt state.
+ *
+ * @return Always @c true (kept for API parity with AutoLocker templates).
+ */
 bool
 TracingMetaData::Lock()
 {
@@ -188,6 +243,12 @@ TracingMetaData::Lock()
 }
 
 
+/**
+ * @brief Release the meta-data spinlock previously taken by @c Lock().
+ *
+ * Pairs one-for-one with @c Lock(); must be called on the same CPU with
+ * interrupts in the same state as at acquisition.
+ */
 void
 TracingMetaData::Unlock()
 {
@@ -195,6 +256,14 @@ TracingMetaData::Unlock()
 }
 
 
+/**
+ * @brief Return the oldest entry currently resident in the ring buffer.
+ *
+ * Lock-free and safe to call from KDL/panic context. The returned pointer
+ * aliases bump-allocated storage which is only reclaimed on wrap-around.
+ *
+ * @return Pointer to the first entry, or an empty slot if the buffer is empty.
+ */
 trace_entry*
 TracingMetaData::FirstEntry() const
 {
@@ -202,6 +271,13 @@ TracingMetaData::FirstEntry() const
 }
 
 
+/**
+ * @brief Return the sentinel one-past-the-last allocated entry.
+ *
+ * Useful as a termination cursor when iterating forwards. Lock-free.
+ *
+ * @return Pointer to the slot that the next @c AllocateEntry() will populate.
+ */
 trace_entry*
 TracingMetaData::AfterLastEntry() const
 {
@@ -209,6 +285,13 @@ TracingMetaData::AfterLastEntry() const
 }
 
 
+/**
+ * @brief Return the count of live (non-buffer, non-wrap) entries.
+ *
+ * Lock-free read; may be stale by the time the caller uses it on SMP.
+ *
+ * @return Number of TraceEntry instances currently resident.
+ */
 uint32
 TracingMetaData::Entries() const
 {
@@ -216,6 +299,14 @@ TracingMetaData::Entries() const
 }
 
 
+/**
+ * @brief Return the monotonic count of entries ever written.
+ *
+ * Used by the @c traced command to detect buffer churn between continuations.
+ * Lock-free; may under-count on SMP (see @c IncrementEntriesEver).
+ *
+ * @return Total number of entries since buffer creation.
+ */
 uint32
 TracingMetaData::EntriesEver() const
 {
@@ -223,6 +314,13 @@ TracingMetaData::EntriesEver() const
 }
 
 
+/**
+ * @brief Bump the lifetime-entries counter by one.
+ *
+ * Deliberately non-atomic: the counter is advisory only and losing occasional
+ * increments on SMP is cheaper than an atomic operation on the tracing hot
+ * path. Called exactly once per fully-initialised entry.
+ */
 void
 TracingMetaData::IncrementEntriesEver()
 {
@@ -233,6 +331,12 @@ TracingMetaData::IncrementEntriesEver()
 }
 
 
+/**
+ * @brief Accessor for the scratch buffer used by @c TraceOutput formatting.
+ *
+ * @return Pointer to the trace output scratch buffer (size
+ *         @c kTraceOutputBufferSize).
+ */
 char*
 TracingMetaData::TraceOutputBuffer() const
 {
@@ -240,6 +344,15 @@ TracingMetaData::TraceOutputBuffer() const
 }
 
 
+/**
+ * @brief Step forward to the entry immediately following @p entry.
+ *
+ * Skips a @c WRAP_ENTRY marker by jumping back to the buffer start, so callers
+ * observe a linear sequence. Lock-free; safe under @c Lock() held or not.
+ *
+ * @param entry  Current entry.
+ * @return Next entry, or @c NULL if @p entry was the last one.
+ */
 trace_entry*
 TracingMetaData::NextEntry(trace_entry* entry)
 {
@@ -254,6 +367,15 @@ TracingMetaData::NextEntry(trace_entry* entry)
 }
 
 
+/**
+ * @brief Step backward to the entry immediately preceding @p entry.
+ *
+ * Handles buffer-start wrap by consulting the previous-size of the wrap
+ * sentinel. Lock-free.
+ *
+ * @param entry  Current entry.
+ * @return Previous entry, or @c NULL if @p entry is the first one.
+ */
 trace_entry*
 TracingMetaData::PreviousEntry(trace_entry* entry)
 {
@@ -269,6 +391,19 @@ TracingMetaData::PreviousEntry(trace_entry* entry)
 }
 
 
+/**
+ * @brief Bump-allocate storage for one trace entry with the given flags.
+ *
+ * Takes @c fLock with interrupts disabled, so it is safe to call from any
+ * non-panic kernel context including ISRs. The entry is reclaimed only when
+ * the write head wraps and overwrites it, therefore TraceEntry instances must
+ * never be freed explicitly; their destructors are expected to be empty.
+ *
+ * @param size   Total byte size needed, including the @c trace_entry header.
+ * @param flags  Initial flags word (e.g. @c BUFFER_ENTRY for auxiliary data).
+ * @return Pointer to the allocated @c trace_entry header, or @c NULL on
+ *         failure (buffer not yet created, zero-sized, or oversize request).
+ */
 trace_entry*
 TracingMetaData::AllocateEntry(size_t size, uint16 flags)
 {
@@ -304,6 +439,16 @@ TracingMetaData::AllocateEntry(size_t size, uint16 flags)
 }
 
 
+/**
+ * @brief Test whether @p address..@p address+@p size lies inside the live region.
+ *
+ * Used by validity checks (e.g. verifying a candidate AbstractTraceEntry
+ * pointer) to avoid dereferencing stale or out-of-range memory. Lock-free.
+ *
+ * @param address  Base pointer to test.
+ * @param size     Byte extent of the region starting at @p address.
+ * @return @c true if the whole range is in the currently occupied portion.
+ */
 bool
 TracingMetaData::IsInBuffer(void* address, size_t size)
 {
@@ -323,6 +468,16 @@ TracingMetaData::IsInBuffer(void* address, size_t size)
 }
 
 
+/**
+ * @brief Reclaim the oldest entry by advancing @c fFirstEntry past it.
+ *
+ * Invoked under @c fLock. A not-yet-initialised TraceEntry cannot be freed
+ * safely because its constructor could still be writing into the slot; the
+ * caller must retry later in that case.
+ *
+ * @return @c true on success, @c false if the oldest entry is still being
+ *         constructed.
+ */
 bool
 TracingMetaData::_FreeFirstEntry()
 {
@@ -357,9 +512,17 @@ TracingMetaData::_FreeFirstEntry()
 }
 
 
-/*!	Makes sure we have needed * 4 bytes of memory at fAfterLastEntry.
-	Returns \c false, if unable to free that much.
-*/
+/**
+ * @brief Ensure @p needed trace_entry slots are free after @c fAfterLastEntry.
+ *
+ * Called under @c fLock from @c AllocateEntry. If the contiguous tail is
+ * insufficient, wrap-around is performed (planting a @c WRAP_ENTRY sentinel)
+ * and as many leading entries as necessary are reclaimed via
+ * @c _FreeFirstEntry. Fails if any such entry is still uninitialised.
+ *
+ * @param needed  Number of @c trace_entry-sized slots required.
+ * @return @c true on success, @c false if the space cannot currently be made.
+ */
 bool
 TracingMetaData::_MakeSpace(size_t needed)
 {
@@ -419,6 +582,17 @@ TracingMetaData::_MakeSpace(size_t needed)
 }
 
 
+/**
+ * @brief Locate existing tracing metadata from a prior session or create fresh.
+ *
+ * First probes well-known physical addresses for a previously-valid metadata
+ * block and tries to re-attach its buffer; on any failure falls back to
+ * allocating new metadata plus a contiguous tracing log area. Called once from
+ * @c tracing_init during kernel boot.
+ *
+ * @param[out] _metaData  Receives the instance to drive subsequent allocations.
+ * @return @c B_OK on success, or an error from the area allocator.
+ */
 /*static*/ status_t
 TracingMetaData::Create(TracingMetaData*& _metaData)
 {
@@ -487,6 +661,19 @@ TracingMetaData::Create(TracingMetaData*& _metaData)
 }
 
 
+/**
+ * @brief Create or locate the physical-memory-backed metadata area.
+ *
+ * Scans a fixed sweep of physical addresses, either searching for a magic-
+ * matching previous session (@p findPrevious == @c true) or claiming the first
+ * usable slot. Falls back to @c sFallbackTracingMetaData if every location is
+ * unavailable.
+ *
+ * @param findPrevious  If @c true, require magic match against a prior session.
+ * @param[out] _area     Receives the created/attached area id on success.
+ * @param[out] _metaData Receives the metadata pointer on success.
+ * @return @c B_OK or @c B_ENTRY_NOT_FOUND when no previous session is found.
+ */
 /*static*/ status_t
 TracingMetaData::_CreateMetaDataArea(bool findPrevious, area_id& _area,
 	TracingMetaData*& _metaData)
@@ -537,6 +724,17 @@ TracingMetaData::_CreateMetaDataArea(bool findPrevious, area_id& _area,
 }
 
 
+/**
+ * @brief Attempt to validate and re-attach a tracing buffer from the last boot.
+ *
+ * Re-maps the old contiguous log area at the recorded physical address, then
+ * sweeps the entry list to repair previous-size/size/wrap-flag invariants up
+ * to @c kMaxRecoveringErrorCount problems. Currently short-circuits to
+ * @c false at the top because the vtable pointers in recovered entries are
+ * not yet validated safely.
+ *
+ * @return @c true on successful recovery, @c false otherwise.
+ */
 bool
 TracingMetaData::_InitPreviousTracingData()
 {
@@ -692,6 +890,16 @@ TracingMetaData::_InitPreviousTracingData()
 // #pragma mark -
 
 
+/**
+ * @brief Construct a TraceOutput over a caller-provided scratch buffer.
+ *
+ * No allocations are performed; the buffer is zeroed by @c Clear() so that
+ * partially-formatted output is always C-string-safe.
+ *
+ * @param buffer      Storage for formatted text (owned by caller).
+ * @param bufferSize  Capacity of @p buffer in bytes.
+ * @param flags       Bitmask of @c TRACE_OUTPUT_* format options.
+ */
 TraceOutput::TraceOutput(char* buffer, size_t bufferSize, uint32 flags)
 	: fBuffer(buffer),
 	  fCapacity(bufferSize),
@@ -701,6 +909,12 @@ TraceOutput::TraceOutput(char* buffer, size_t bufferSize, uint32 flags)
 }
 
 
+/**
+ * @brief Reset the buffer to an empty C-string.
+ *
+ * Drops any previously-formatted contents; subsequent PrintArgs() calls start
+ * writing at offset 0.
+ */
 void
 TraceOutput::Clear()
 {
@@ -710,6 +924,15 @@ TraceOutput::Clear()
 }
 
 
+/**
+ * @brief Append a @c printf-style formatted fragment to the output buffer.
+ *
+ * Safe to call from KDL; silently drops additional text once the buffer is
+ * full. The buffer is always kept NUL-terminated.
+ *
+ * @param format  @c printf format string.
+ * @param args    Arguments matching @p format.
+ */
 void
 TraceOutput::PrintArgs(const char* format, va_list args)
 {
@@ -723,6 +946,14 @@ TraceOutput::PrintArgs(const char* format, va_list args)
 }
 
 
+/**
+ * @brief Append a symbolised rendering of @p stackTrace to the output buffer.
+ *
+ * Delegates to @c print_stack_trace with this object as the sink. No-op when
+ * tracing is compile-time disabled.
+ *
+ * @param stackTrace  Captured stack trace to render, or @c NULL.
+ */
 void
 TraceOutput::PrintStackTrace(tracing_stack_trace* stackTrace)
 {
@@ -732,6 +963,14 @@ TraceOutput::PrintStackTrace(tracing_stack_trace* stackTrace)
 }
 
 
+/**
+ * @brief Remember the timestamp of the last printed entry for diff-time mode.
+ *
+ * Used by @c AbstractTraceEntry::Dump to render inter-entry deltas when the
+ * @c TRACE_OUTPUT_DIFF_TIME flag is set.
+ *
+ * @param time  System time (microseconds) of the most recent entry rendered.
+ */
 void
 TraceOutput::SetLastEntryTime(bigtime_t time)
 {
@@ -739,6 +978,11 @@ TraceOutput::SetLastEntryTime(bigtime_t time)
 }
 
 
+/**
+ * @brief Retrieve the timestamp stored by @c SetLastEntryTime.
+ *
+ * @return Last recorded entry time, or 0 if never set.
+ */
 bigtime_t
 TraceOutput::LastEntryTime() const
 {
@@ -749,16 +993,35 @@ TraceOutput::LastEntryTime() const
 //	#pragma mark -
 
 
+/**
+ * @brief Construct a base trace entry.
+ *
+ * Storage is already bump-allocated by the custom @c operator @c new; this
+ * constructor performs no additional work.
+ */
 TraceEntry::TraceEntry()
 {
 }
 
 
+/**
+ * @brief Virtual destructor kept trivial on purpose.
+ *
+ * Entry storage is reclaimed only by ring-buffer wrap-around, so destructors
+ * must be effectively no-ops to avoid touching recycled memory.
+ */
 TraceEntry::~TraceEntry()
 {
 }
 
 
+/**
+ * @brief Default implementation; prints a generic "ENTRY <ptr>" line.
+ *
+ * Subclasses typically override this or @c AddDump to produce meaningful text.
+ *
+ * @param out  Sink for formatted output.
+ */
 void
 TraceEntry::Dump(TraceOutput& out)
 {
@@ -769,12 +1032,28 @@ TraceEntry::Dump(TraceOutput& out)
 }
 
 
+/**
+ * @brief Default no-op stack-trace renderer.
+ *
+ * Overridden by @c AbstractTraceEntryWithStackTrace (and similar classes) to
+ * emit the captured stack frames.
+ *
+ * @param out  Sink for the rendered trace.
+ */
 void
 TraceEntry::DumpStackTrace(TraceOutput& out)
 {
 }
 
 
+/**
+ * @brief Mark this entry as fully constructed and visible to iterators.
+ *
+ * Sets @c ENTRY_INITIALIZED on the trace_entry header and bumps the lifetime
+ * counter. Must be called from the subclass constructor once all fields are
+ * populated; until this runs the allocator will not reclaim the entry but
+ * iterators in the debugger treat it as "uninitialized".
+ */
 void
 TraceEntry::Initialized()
 {
@@ -785,6 +1064,17 @@ TraceEntry::Initialized()
 }
 
 
+/**
+ * @brief Placement-style @c new drawing from the tracing ring buffer.
+ *
+ * Allocates @p size + @c sizeof(trace_entry) bytes via
+ * @c TracingMetaData::AllocateEntry and returns a pointer to the storage
+ * immediately after the header. The returned memory is lifetime-bound to the
+ * ring buffer and must never be released with @c delete.
+ *
+ * @param size        Size of the subclass object in bytes.
+ * @return Pointer to bump-allocated storage, or @c NULL on failure.
+ */
 void*
 TraceEntry::operator new(size_t size, const std::nothrow_t&) throw()
 {
@@ -800,11 +1090,23 @@ TraceEntry::operator new(size_t size, const std::nothrow_t&) throw()
 //	#pragma mark -
 
 
+/**
+ * @brief Virtual destructor kept trivial; see @c TraceEntry::~TraceEntry.
+ */
 AbstractTraceEntry::~AbstractTraceEntry()
 {
 }
 
 
+/**
+ * @brief Render the common "[tid] timestamp:" prefix then delegate to AddDump.
+ *
+ * Honours @c TRACE_OUTPUT_DIFF_TIME (prints delta from the previous entry)
+ * and @c TRACE_OUTPUT_TEAM_ID (prints the team id too). After the subclass
+ * AddDump runs, updates the output's last-entry-time stamp.
+ *
+ * @param out  Sink for formatted output.
+ */
 void
 AbstractTraceEntry::Dump(TraceOutput& out)
 {
@@ -824,12 +1126,23 @@ AbstractTraceEntry::Dump(TraceOutput& out)
 }
 
 
+/**
+ * @brief Default AddDump does nothing; subclasses produce the body text.
+ *
+ * @param out  Sink for formatted output.
+ */
 void
 AbstractTraceEntry::AddDump(TraceOutput& out)
 {
 }
 
 
+/**
+ * @brief Populate the thread id, team id and timestamp fields from the caller.
+ *
+ * Invoked from subclass constructors; captures @c system_time() and the
+ * running thread/team to enable thread- and team-filtered dumps.
+ */
 void
 AbstractTraceEntry::_Init()
 {
@@ -847,6 +1160,17 @@ AbstractTraceEntry::_Init()
 
 
 
+/**
+ * @brief Capture a stack trace into the ring buffer as auxiliary data.
+ *
+ * The storage for the trace is itself allocated with @c BUFFER_ENTRY so that
+ * it follows the same wrap-reclaim lifetime as the owning entry.
+ *
+ * @param stackTraceDepth  Maximum number of frames to record.
+ * @param skipFrames       Frames to skip before recording (constructor frame
+ *                         is implicitly added).
+ * @param kernelOnly       If @c true, omit user-space frames.
+ */
 AbstractTraceEntryWithStackTrace::AbstractTraceEntryWithStackTrace(
 	size_t stackTraceDepth, size_t skipFrames, bool kernelOnly)
 {
@@ -855,6 +1179,11 @@ AbstractTraceEntryWithStackTrace::AbstractTraceEntryWithStackTrace(
 }
 
 
+/**
+ * @brief Emit the captured stack trace via the @c TraceOutput sink.
+ *
+ * @param out  Sink for the rendered trace.
+ */
 void
 AbstractTraceEntryWithStackTrace::DumpStackTrace(TraceOutput& out)
 {
@@ -867,8 +1196,16 @@ AbstractTraceEntryWithStackTrace::DumpStackTrace(TraceOutput& out)
 
 #if ENABLE_TRACING
 
+/**
+ * @brief Trace entry for kernel-originated @c ktrace_printf messages.
+ */
 class KernelTraceEntry : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Snapshot the kernel message string into buffer storage.
+		 *
+		 * @param message  NUL-terminated kernel-space string (max 256 bytes).
+		 */
 		KernelTraceEntry(const char* message)
 		{
 			fMessage = alloc_tracing_buffer_strcpy(message, 256, false);
@@ -880,12 +1217,20 @@ class KernelTraceEntry : public AbstractTraceEntry {
 			Initialized();
 		}
 
+		/**
+		 * @brief Render the entry body prefixed with "kern:".
+		 * @param out  Formatting sink.
+		 */
 		virtual void AddDump(TraceOutput& out)
 		{
 			out.Print("kern: %s", fMessage);
 		}
 
 #if KTRACE_PRINTF_STACK_TRACE
+		/**
+		 * @brief Emit the optional captured stack trace.
+		 * @param out  Formatting sink.
+		 */
 		virtual void DumpStackTrace(TraceOutput& out)
 		{
 			out.PrintStackTrace(fStackTrace);
@@ -900,8 +1245,16 @@ class KernelTraceEntry : public AbstractTraceEntry {
 };
 
 
+/**
+ * @brief Trace entry for user-originated @c _user_ktrace_output messages.
+ */
 class UserTraceEntry : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Copy a user-space message safely into buffer storage.
+		 *
+		 * @param message  User-space pointer to a NUL-terminated string.
+		 */
 		UserTraceEntry(const char* message)
 		{
 			fMessage = alloc_tracing_buffer_strcpy(message, 256, true);
@@ -913,12 +1266,20 @@ class UserTraceEntry : public AbstractTraceEntry {
 			Initialized();
 		}
 
+		/**
+		 * @brief Render the entry body prefixed with "user:".
+		 * @param out  Formatting sink.
+		 */
 		virtual void AddDump(TraceOutput& out)
 		{
 			out.Print("user: %s", fMessage);
 		}
 
 #if KTRACE_PRINTF_STACK_TRACE
+		/**
+		 * @brief Emit the optional captured stack trace.
+		 * @param out  Formatting sink.
+		 */
 		virtual void DumpStackTrace(TraceOutput& out)
 		{
 			out.PrintStackTrace(fStackTrace);
@@ -933,13 +1294,23 @@ class UserTraceEntry : public AbstractTraceEntry {
 };
 
 
+/**
+ * @brief Marker entry emitted once at boot so iterators have a visible origin.
+ */
 class TracingLogStartEntry : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Construct and mark the entry as initialised.
+		 */
 		TracingLogStartEntry()
 		{
 			Initialized();
 		}
 
+		/**
+		 * @brief Emit the literal string "ktrace start".
+		 * @param out  Formatting sink.
+		 */
 		virtual void AddDump(TraceOutput& out)
 		{
 			out.Print("ktrace start");
@@ -952,11 +1323,23 @@ class TracingLogStartEntry : public AbstractTraceEntry {
 //	#pragma mark - trace filters
 
 
+/**
+ * @brief Virtual destructor for the polymorphic filter base class.
+ */
 TraceFilter::~TraceFilter()
 {
 }
 
 
+/**
+ * @brief Default filter: rejects every entry.
+ *
+ * Concrete filter subclasses override this with their predicate.
+ *
+ * @param entry  Entry under consideration (unused in the base class).
+ * @param out    Lazy formatter that concrete filters can consult.
+ * @return Always @c false.
+ */
 bool
 TraceFilter::Filter(const TraceEntry* entry, LazyTraceOutput& out)
 {
@@ -965,8 +1348,17 @@ TraceFilter::Filter(const TraceEntry* entry, LazyTraceOutput& out)
 
 
 
+/**
+ * @brief Filter accepting entries whose thread id matches @c fThread.
+ */
 class ThreadTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Predicate matching on @c AbstractTraceEntry::ThreadID.
+	 * @param _entry  Candidate entry.
+	 * @param out     Lazy formatter (unused).
+	 * @return @c true if the entry is an AbstractTraceEntry for @c fThread.
+	 */
 	virtual bool Filter(const TraceEntry* _entry, LazyTraceOutput& out)
 	{
 		const AbstractTraceEntry* entry
@@ -976,8 +1368,17 @@ public:
 };
 
 
+/**
+ * @brief Filter accepting entries whose team id matches @c fTeam.
+ */
 class TeamTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Predicate matching on @c AbstractTraceEntry::TeamID.
+	 * @param _entry  Candidate entry.
+	 * @param out     Lazy formatter (unused).
+	 * @return @c true if the entry is an AbstractTraceEntry for @c fTeam.
+	 */
 	virtual bool Filter(const TraceEntry* _entry, LazyTraceOutput& out)
 	{
 		const AbstractTraceEntry* entry
@@ -987,8 +1388,17 @@ public:
 };
 
 
+/**
+ * @brief Filter matching entries whose rendered form contains @c fString.
+ */
 class PatternTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Substring predicate against the lazily-dumped entry text.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter used to cache entry rendering.
+	 * @return @c true on substring match.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		return strstr(out.DumpEntry(entry), fString) != NULL;
@@ -996,8 +1406,18 @@ public:
 };
 
 
+/**
+ * @brief Filter matching entries whose rendered form contains @c fValue as
+ *        a decimal literal.
+ */
 class DecimalPatternTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Format @c fValue in base 10 and test substring.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter.
+	 * @return @c true on substring match.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		// TODO: this is *very* slow
@@ -1007,8 +1427,18 @@ public:
 	}
 };
 
+/**
+ * @brief Filter matching entries whose rendered form contains @c fValue as
+ *        a hex literal.
+ */
 class HexPatternTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Format @c fValue in base 16 and test substring.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter.
+	 * @return @c true on substring match.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		// TODO: this is *very* slow
@@ -1018,8 +1448,18 @@ public:
 	}
 };
 
+/**
+ * @brief Filter matching entries whose rendered form contains the string at
+ *        address @c fValue.
+ */
 class StringPatternTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Dereference @c fValue (kernel or user address) and test substring.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter.
+	 * @return @c true on substring match.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		if (IS_KERNEL_ADDRESS(fValue))
@@ -1032,8 +1472,17 @@ public:
 	}
 };
 
+/**
+ * @brief Logical-NOT combinator over the first sub-filter.
+ */
 class NotTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Invert the outcome of the wrapped sub-filter.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter.
+	 * @return Negation of the sub-filter's result.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		return !fSubFilters.first->Filter(entry, out);
@@ -1041,8 +1490,17 @@ public:
 };
 
 
+/**
+ * @brief Short-circuiting logical-AND combinator.
+ */
 class AndTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Evaluate the left, then right, sub-filter.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter.
+	 * @return @c true only if both sub-filters accept.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		return fSubFilters.first->Filter(entry, out)
@@ -1051,8 +1509,17 @@ public:
 };
 
 
+/**
+ * @brief Short-circuiting logical-OR combinator.
+ */
 class OrTraceFilter : public TraceFilter {
 public:
+	/**
+	 * @brief Evaluate the left, then right, sub-filter.
+	 * @param entry  Candidate entry.
+	 * @param out    Lazy formatter.
+	 * @return @c true if either sub-filter accepts.
+	 */
 	virtual bool Filter(const TraceEntry* entry, LazyTraceOutput& out)
 	{
 		return fSubFilters.first->Filter(entry, out)
@@ -1061,13 +1528,34 @@ public:
 };
 
 
+/**
+ * @brief Prefix-notation parser for the tracing filter mini-language.
+ *
+ * The grammar accepts the prefix combinators "not", "and", "or", token
+ * filters "thread <id>", "team <id>", and substring filters prefixed by
+ * '#', 'd#', 'x#', 's#'. Parsed filters are allocated in a fixed-size
+ * in-line arena to avoid touching the heap from the debugger.
+ */
 class TraceFilterParser {
 public:
+	/**
+	 * @brief Obtain the shared singleton parser.
+	 * @return Pointer to the static default instance.
+	 */
 	static TraceFilterParser* Default()
 	{
 		return &sParser;
 	}
 
+	/**
+	 * @brief Parse the argv-style token stream into a filter expression tree.
+	 *
+	 * Resets the parser state on every call so the arena is reused.
+	 *
+	 * @param argc  Number of tokens.
+	 * @param argv  Token array.
+	 * @return @c true if the stream parses to a single complete expression.
+	 */
 	bool Parse(int argc, const char* const* argv)
 	{
 		fTokens = argv;
@@ -1079,12 +1567,25 @@ public:
 		return fTokenIndex == fTokenCount && filter != NULL;
 	}
 
+	/**
+	 * @brief Return the root filter from the most recent successful parse.
+	 * @return Pointer to the root filter (first arena slot).
+	 */
 	TraceFilter* Filter()
 	{
 		return &fFilters[0];
 	}
 
 private:
+	/**
+	 * @brief Recursive-descent parse of one expression starting at the cursor.
+	 *
+	 * Tokens are consumed in prefix order. On syntax error or arena exhaustion
+	 * returns @c NULL; partial filters remain in the arena but are ignored
+	 * because @c fFilterCount is not rolled back beyond what was written.
+	 *
+	 * @return Pointer to the parsed subtree root, or @c NULL on failure.
+	 */
 	TraceFilter* _ParseExpression()
 	{
 		const char* token = _NextToken();
@@ -1168,6 +1669,10 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Peek at the token most recently consumed.
+	 * @return The current token or @c NULL before the first advance.
+	 */
 	const char* _CurrentToken() const
 	{
 		if (fTokenIndex >= 1 && fTokenIndex <= fTokenCount)
@@ -1175,6 +1680,10 @@ private:
 		return NULL;
 	}
 
+	/**
+	 * @brief Advance the cursor and return the next token.
+	 * @return Next token or @c NULL at end-of-stream.
+	 */
 	const char* _NextToken()
 	{
 		if (fTokenIndex >= fTokenCount)
@@ -1204,6 +1713,15 @@ TraceFilterParser TraceFilterParser::sParser;
 #if ENABLE_TRACING
 
 
+/**
+ * @brief Advance the iterator to the next non-buffer entry.
+ *
+ * Hides @c BUFFER_ENTRY auxiliary allocations so callers only see user-
+ * meaningful TraceEntry instances. Not thread-safe; callers serialize via
+ * @c lock_tracing_buffer / the KDL single-threaded context.
+ *
+ * @return Pointer to the new current entry, or @c NULL past the end.
+ */
 TraceEntry*
 TraceEntryIterator::Next()
 {
@@ -1219,6 +1737,13 @@ TraceEntryIterator::Next()
 }
 
 
+/**
+ * @brief Step the iterator back to the previous non-buffer entry.
+ *
+ * When positioned one-past-the-end, wraps to @c AfterLastEntry first.
+ *
+ * @return Pointer to the new current entry, or @c NULL before the start.
+ */
 TraceEntry*
 TraceEntryIterator::Previous()
 {
@@ -1235,6 +1760,16 @@ TraceEntryIterator::Previous()
 }
 
 
+/**
+ * @brief Reposition the iterator to the given 1-based Pascal-style index.
+ *
+ * Selects the shorter of forward/backward traversal from the current position
+ * to amortise cost. An out-of-range index parks the iterator at the nearest
+ * end sentinel (0 or Entries()+1).
+ *
+ * @param index  Target 1-based entry index.
+ * @return Pointer to the entry at @p index, or @c NULL if out of range.
+ */
 TraceEntry*
 TraceEntryIterator::MoveTo(int32 index)
 {
@@ -1278,6 +1813,14 @@ TraceEntryIterator::MoveTo(int32 index)
 }
 
 
+/**
+ * @brief Walk forwards until a non-auxiliary entry is found.
+ *
+ * Internal helper used by @c Next; used also after wrap-around.
+ *
+ * @param entry  Starting raw entry pointer (may be @c NULL).
+ * @return First non-BUFFER_ENTRY at or after @p entry, or @c NULL.
+ */
 trace_entry*
 TraceEntryIterator::_NextNonBufferEntry(trace_entry* entry)
 {
@@ -1288,6 +1831,12 @@ TraceEntryIterator::_NextNonBufferEntry(trace_entry* entry)
 }
 
 
+/**
+ * @brief Walk backwards until a non-auxiliary entry is found.
+ *
+ * @param entry  Starting raw entry pointer (may be @c NULL).
+ * @return First non-BUFFER_ENTRY at or before @p entry, or @c NULL.
+ */
 trace_entry*
 TraceEntryIterator::_PreviousNonBufferEntry(trace_entry* entry)
 {
@@ -1298,6 +1847,21 @@ TraceEntryIterator::_PreviousNonBufferEntry(trace_entry* entry)
 }
 
 
+/**
+ * @brief Implementation backing the @c traced KDL command.
+ *
+ * Parses options, the index window, and the optional filter expression; drives
+ * a @c TraceEntryIterator across the selected range and prints matching
+ * entries. State is retained between invocations to support the "forward" and
+ * "backward" continuation verbs. Runs only from KDL, so no explicit locking
+ * of the tracing buffer is needed here.
+ *
+ * @param argc            Command argument count.
+ * @param argv            Command argument array.
+ * @param wrapperFilter   Optional outer filter layered over the parsed one.
+ * @return @c B_KDEBUG_CONT when the command should be re-invokable via empty
+ *         line, or 0 otherwise.
+ */
 int
 dump_tracing_internal(int argc, char** argv, WrapperTraceFilter* wrapperFilter)
 {
@@ -1575,6 +2139,15 @@ dump_tracing_internal(int argc, char** argv, WrapperTraceFilter* wrapperFilter)
 }
 
 
+/**
+ * @brief Thin KDL shim forwarding to @c dump_tracing_internal with no wrapper.
+ *
+ * Installed as the handler for the @c traced debugger command.
+ *
+ * @param argc  Command argument count.
+ * @param argv  Command argument array.
+ * @return Forwarded return value from @c dump_tracing_internal.
+ */
 static int
 dump_tracing_command(int argc, char** argv)
 {
@@ -1585,6 +2158,17 @@ dump_tracing_command(int argc, char** argv)
 #endif	// ENABLE_TRACING
 
 
+/**
+ * @brief Bump-allocate a raw auxiliary data buffer in the tracing ring.
+ *
+ * The returned storage has the same wrap-reclaimed lifetime as the owning
+ * trace entry. Callers use this to attach variable-length payloads such as
+ * string copies, memcpy-based captures, or stack traces. Safe under
+ * interrupts; tagged @c BUFFER_ENTRY so iterators skip over it.
+ *
+ * @param size  Number of payload bytes required.
+ * @return Pointer to payload storage, or @c NULL on failure.
+ */
 extern "C" uint8*
 alloc_tracing_buffer(size_t size)
 {
@@ -1601,6 +2185,19 @@ alloc_tracing_buffer(size_t size)
 }
 
 
+/**
+ * @brief Copy @p size bytes from @p source into a freshly-allocated buffer.
+ *
+ * Used to snapshot ephemeral structures into the tracing ring. If @p user is
+ * set, a @c user_memcpy is issued so page faults on bad user addresses are
+ * handled gracefully. The allocation itself is still subject to ring-buffer
+ * wrap-around reclamation.
+ *
+ * @param source  Source pointer (kernel or user per @p user).
+ * @param size    Bytes to copy.
+ * @param user    If @c true, treat @p source as a user-space address.
+ * @return Pointer to the snapshot, or @c NULL on allocation/copy failure.
+ */
 uint8*
 alloc_tracing_buffer_memcpy(const void* source, size_t size, bool user)
 {
@@ -1621,6 +2218,17 @@ alloc_tracing_buffer_memcpy(const void* source, size_t size, bool user)
 }
 
 
+/**
+ * @brief Copy a NUL-terminated string into a tracing-ring buffer.
+ *
+ * Length is clamped to @p maxSize. For user-space sources, @c user_strlcpy is
+ * used (after an IS_USER_ADDRESS check) to avoid faulting in kernel code.
+ *
+ * @param source   Source string (kernel or user per @p user).
+ * @param maxSize  Maximum including terminator.
+ * @param user     If @c true, treat @p source as a user-space address.
+ * @return Pointer to the copied string, or @c NULL on failure.
+ */
 char*
 alloc_tracing_buffer_strcpy(const char* source, size_t maxSize, bool user)
 {
@@ -1654,6 +2262,18 @@ alloc_tracing_buffer_strcpy(const char* source, size_t maxSize, bool user)
 }
 
 
+/**
+ * @brief Capture a stack trace and store it in the tracing ring buffer.
+ *
+ * When interrupts are disabled (as in many ISR/panic paths) user-mode frames
+ * are suppressed regardless of @p kernelOnly because the fault handler cannot
+ * recover from a bad user address safely.
+ *
+ * @param maxCount    Maximum frames to record.
+ * @param skipFrames  Top frames to skip (the helper itself is auto-added).
+ * @param kernelOnly  Restrict capture to kernel-mode frames when @c true.
+ * @return Pointer to the stored stack trace, or @c NULL on failure.
+ */
 tracing_stack_trace*
 capture_tracing_stack_trace(int32 maxCount, int32 skipFrames, bool kernelOnly)
 {
@@ -1683,6 +2303,17 @@ capture_tracing_stack_trace(int32 maxCount, int32 skipFrames, bool kernelOnly)
 }
 
 
+/**
+ * @brief Locate the first frame outside a set of address ranges.
+ *
+ * Used by higher-level tracers to skip boilerplate wrappers and report the
+ * actual caller. Pure function; no side effects.
+ *
+ * @param stackTrace         Captured stack trace.
+ * @param excludeRanges      Flat array of [start, end) pairs to exclude.
+ * @param excludeRangeCount  Number of pairs in @p excludeRanges.
+ * @return Return address of the first accepted frame, or 0 if none match.
+ */
 addr_t
 tracing_find_caller_in_stack_trace(struct tracing_stack_trace* stackTrace,
 	const addr_t excludeRanges[], uint32 excludeRangeCount)
@@ -1707,6 +2338,14 @@ tracing_find_caller_in_stack_trace(struct tracing_stack_trace* stackTrace,
 }
 
 
+/**
+ * @brief Print a captured stack trace to the kernel debugger output.
+ *
+ * Convenience wrapper around @c print_stack_trace that emits via @c kprintf,
+ * suitable for direct use from panic or debugger paths.
+ *
+ * @param stackTrace  Captured stack trace, or @c NULL.
+ */
 void
 tracing_print_stack_trace(struct tracing_stack_trace* stackTrace)
 {
@@ -1716,6 +2355,18 @@ tracing_print_stack_trace(struct tracing_stack_trace* stackTrace)
 }
 
 
+/**
+ * @brief Public entry point for dumping the tracing buffer with a wrapper.
+ *
+ * Present so subsystems that define their own @c WrapperTraceFilter can reuse
+ * the standard @c traced rendering pipeline. Returns 0 when tracing is
+ * compile-time disabled.
+ *
+ * @param argc           Command argument count.
+ * @param argv           Command argument array.
+ * @param wrapperFilter  Outer filter layered over any parsed filter.
+ * @return Forwarded return from @c dump_tracing_internal.
+ */
 int
 dump_tracing(int argc, char** argv, WrapperTraceFilter* wrapperFilter)
 {
@@ -1727,6 +2378,17 @@ dump_tracing(int argc, char** argv, WrapperTraceFilter* wrapperFilter)
 }
 
 
+/**
+ * @brief Validate that @p candidate still refers to a live trace entry.
+ *
+ * Checks that the pointer lies within the live buffer region and, when
+ * @p entryTime is non-negative, confirms the timestamp matches (protecting
+ * against buffer reuse since the pointer was captured).
+ *
+ * @param candidate  Pointer to test.
+ * @param entryTime  Expected timestamp, or a negative value to skip matching.
+ * @return @c true if the pointer is still valid.
+ */
 bool
 tracing_is_entry_valid(AbstractTraceEntry* candidate, bigtime_t entryTime)
 {
@@ -1754,6 +2416,14 @@ tracing_is_entry_valid(AbstractTraceEntry* candidate, bigtime_t entryTime)
 }
 
 
+/**
+ * @brief Acquire the global tracing spinlock, serializing with writers.
+ *
+ * Callers use this around multi-step reads of the buffer (e.g. analysis tools
+ * consuming the scheduler trace). While held, every invocation of
+ * @c AllocateEntry on every CPU will block, so the hold time should be kept
+ * short. Compiles to a no-op when tracing is disabled.
+ */
 void
 lock_tracing_buffer()
 {
@@ -1763,6 +2433,12 @@ lock_tracing_buffer()
 }
 
 
+/**
+ * @brief Release the tracing spinlock previously taken by @c lock_tracing_buffer.
+ *
+ * Must be balanced with @c lock_tracing_buffer on the same CPU and with
+ * interrupts in the same state. No-op when tracing is compile-time disabled.
+ */
 void
 unlock_tracing_buffer()
 {
@@ -1772,6 +2448,16 @@ unlock_tracing_buffer()
 }
 
 
+/**
+ * @brief Initialise the tracing subsystem during kernel boot.
+ *
+ * Creates or recovers the metadata area, posts the start-of-log marker, and
+ * registers the @c traced command with the kernel debugger. The command help
+ * text documents the filter mini-language understood by the parser.
+ *
+ * @return @c B_OK on success, or a propagated error from area/metadata
+ *         creation (the fallback metadata is still usable in that case).
+ */
 extern "C" status_t
 tracing_init(void)
 {
@@ -1836,6 +2522,15 @@ tracing_init(void)
 }
 
 
+/**
+ * @brief @c printf-style kernel-side tracing primitive.
+ *
+ * Formats the message onto a 256-byte stack buffer and allocates a
+ * @c KernelTraceEntry for it. Safe from any kernel context except panic-time
+ * (where heap/allocator state may already be inconsistent).
+ *
+ * @param format  @c printf format string.
+ */
 void
 ktrace_printf(const char *format, ...)
 {
@@ -1853,6 +2548,14 @@ ktrace_printf(const char *format, ...)
 }
 
 
+/**
+ * @brief Syscall implementation for user-space @c ktrace_output.
+ *
+ * Creates a @c UserTraceEntry that safely copies the user-supplied string into
+ * the tracing buffer.
+ *
+ * @param message  User-space NUL-terminated message pointer.
+ */
 void
 _user_ktrace_output(const char *message)
 {

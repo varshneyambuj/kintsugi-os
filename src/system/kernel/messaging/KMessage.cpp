@@ -1,8 +1,45 @@
 /*
- * Copyright 2005-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file KMessage.cpp
+ * @brief Kernel-side flat message container used for IPC.
+ *
+ * Implements KMessage and its helper KMessageField. A KMessage is a
+ * self-describing, flat byte buffer laid out as:
+ *   [Header][FieldHeader + name + (fixed | FieldValueHeader+value)*]*
+ * Fields are appended linearly; lookup walks the chain via GetNextField().
+ * The on-the-wire format is portable enough to be shipped across ports
+ * (see SendTo()/ReceiveFrom()) and interpreted in-place by readers via
+ * KMESSAGE_INIT_FROM_BUFFER.
+ *
+ * Buffer ownership is tracked via KMESSAGE_OWNS_BUFFER. Until a field is
+ * added, KMessage lazily uses its embedded Header member (fHeader) as the
+ * backing buffer (see Unset() and _AllocateSpace()), and only promotes to
+ * a heap buffer on first allocation. Buffers may also be read-only
+ * (KMESSAGE_READ_ONLY) or cloned on attach (KMESSAGE_CLONE_BUFFER).
+ */
 
 #include <util/KMessage.h>
 
@@ -57,6 +94,13 @@ const uint32 KMessage::kMessageHeaderMagic = 'kMsG';
 
 // #pragma mark - Helper Functions
 
+/**
+ * @brief Rounds an integer offset up to the message buffer alignment.
+ *
+ * @param offset Raw byte offset within the message buffer.
+ * @return The smallest value >= @a offset that is aligned to
+ *         kMessageBufferAlignment.
+ */
 static inline int32
 _Align(int32 offset)
 {
@@ -65,6 +109,13 @@ _Align(int32 offset)
 }
 
 
+/**
+ * @brief Rounds a pointer up to the message buffer alignment.
+ *
+ * @param address Base address.
+ * @param offset  Optional extra bytes to add before aligning (defaults to 0).
+ * @return The smallest aligned address >= @a address + @a offset.
+ */
 static inline void*
 _Align(void* address, int32 offset = 0)
 {
@@ -79,11 +130,22 @@ _Align(void* address, int32 offset = 0)
 struct KMessage::FieldValueHeader {
 	int32		size;
 
+	/**
+	 * @brief Returns a pointer to the value bytes following this header.
+	 *
+	 * @return Aligned pointer to the start of this value's data region.
+	 */
 	void* Data()
 	{
 		return _Align(this, sizeof(FieldValueHeader));
 	}
 
+	/**
+	 * @brief Advances to the next FieldValueHeader in a non-fixed-size field.
+	 *
+	 * @return Pointer to the next value header immediately after this one's
+	 *         data, aligned to the buffer alignment.
+	 */
 	FieldValueHeader* NextFieldValueHeader()
 	{
 		return (FieldValueHeader*)_Align(Data(), size);
@@ -102,16 +164,38 @@ struct KMessage::FieldHeader {
 	int16		headerSize;
 	char		name[1];
 
+	/**
+	 * @brief Returns a pointer to the field's element area.
+	 *
+	 * @return Pointer to the bytes that follow the field header and name.
+	 */
 	void* Data()
 	{
 		return (uint8*)this + headerSize;
 	}
 
+	/**
+	 * @brief Reports whether the field stores fixed-size elements.
+	 *
+	 * @return true if every element occupies exactly @c elementSize bytes;
+	 *         false if elements carry per-value FieldValueHeader entries.
+	 */
 	bool HasFixedElementSize()
 	{
 		return elementSize >= 0;
 	}
 
+	/**
+	 * @brief Locates the @a index'th element within this field.
+	 *
+	 * For fixed-size fields the lookup is O(1); for variable-size fields it
+	 * walks the chain of FieldValueHeader entries.
+	 *
+	 * @param index Zero-based element index.
+	 * @param size  Out: the element's size in bytes when found.
+	 * @return Pointer to the element data, or NULL if @a index is out of
+	 *         range.
+	 */
 	void* ElementAt(int32 index, int32* size)
 	{
 		if (index < 0 || index >= elementCount)
@@ -129,6 +213,12 @@ struct KMessage::FieldHeader {
 		return valueHeader->Data();
 	}
 
+	/**
+	 * @brief Advances to the next field header in the buffer.
+	 *
+	 * @return Pointer to the FieldHeader that begins immediately after this
+	 *         field's declared @c fieldSize, properly aligned.
+	 */
 	FieldHeader* NextFieldHeader()
 	{
 		return (FieldHeader*)_Align(this, fieldSize);
@@ -139,6 +229,12 @@ struct KMessage::FieldHeader {
 // #pragma mark - KMessage
 
 
+/**
+ * @brief Constructs an empty KMessage.
+ *
+ * Lazily initialises @c fBuffer to point at the embedded @c fHeader so no
+ * heap allocation is performed until a field is added.
+ */
 KMessage::KMessage()
 	:
 	fBuffer(NULL),
@@ -150,6 +246,11 @@ KMessage::KMessage()
 }
 
 
+/**
+ * @brief Constructs an empty KMessage with a preset @c what code.
+ *
+ * @param what Initial message @c what value stored in the header.
+ */
 KMessage::KMessage(uint32 what)
 	:
 	fBuffer(NULL),
@@ -162,12 +263,22 @@ KMessage::KMessage(uint32 what)
 }
 
 
+/**
+ * @brief Destroys the message, releasing any owned buffer.
+ */
 KMessage::~KMessage()
 {
 	Unset();
 }
 
 
+/**
+ * @brief Resets the message to an empty state with the given @c what.
+ *
+ * @param what  New message @c what code.
+ * @param flags Reserved; currently no flags are interpreted in this form.
+ * @return B_OK on success.
+ */
 status_t
 KMessage::SetTo(uint32 what, uint32 flags)
 {
@@ -178,6 +289,24 @@ KMessage::SetTo(uint32 what, uint32 flags)
 }
 
 
+/**
+ * @brief Attaches the message to a caller-supplied buffer.
+ *
+ * Depending on the flags the buffer is either (a) treated as empty scratch
+ * storage to build a new message, (b) parsed as an already-formatted
+ * message (KMESSAGE_INIT_FROM_BUFFER), possibly read-only
+ * (KMESSAGE_READ_ONLY), and/or (c) cloned into a private heap copy
+ * (KMESSAGE_CLONE_BUFFER). If KMESSAGE_OWNS_BUFFER is set, the message
+ * takes responsibility for freeing the buffer on Unset()/destruction.
+ *
+ * @param buffer     Caller-provided buffer; must be non-NULL.
+ * @param bufferSize Buffer size in bytes, or -1 with KMESSAGE_INIT_FROM_BUFFER
+ *                   to read the size from the embedded header.
+ * @param what       Initial @c what value when building a fresh message.
+ * @param flags      Bitmask of KMESSAGE_* flags.
+ * @return B_OK on success; B_BAD_VALUE for illegal argument combinations;
+ *         another error propagated from _InitFromBuffer().
+ */
 status_t
 KMessage::SetTo(void* buffer, int32 bufferSize, uint32 what, uint32 flags)
 {
@@ -221,6 +350,17 @@ KMessage::SetTo(void* buffer, int32 bufferSize, uint32 what, uint32 flags)
 }
 
 
+/**
+ * @brief Attaches the message to a read-only, pre-formatted buffer.
+ *
+ * Convenience wrapper that forces KMESSAGE_INIT_FROM_BUFFER and
+ * KMESSAGE_READ_ONLY on top of any caller-provided flags.
+ *
+ * @param buffer     Pointer to an already-formatted message buffer.
+ * @param bufferSize Buffer size, or -1 to read it from the header.
+ * @param flags      Additional KMESSAGE_* flags OR-ed with the defaults.
+ * @return B_OK on success, or an error from the underlying SetTo().
+ */
 status_t
 KMessage::SetTo(const void* buffer, int32 bufferSize, uint32 flags)
 {
@@ -229,6 +369,13 @@ KMessage::SetTo(const void* buffer, int32 bufferSize, uint32 flags)
 }
 
 
+/**
+ * @brief Releases the current buffer and reverts to the lazy empty state.
+ *
+ * If the message owned its buffer (KMESSAGE_OWNS_BUFFER) the buffer is
+ * freed. The buffer pointer is then redirected to the embedded @c fHeader
+ * so the object remains usable without an immediate allocation.
+ */
 void
 KMessage::Unset()
 {
@@ -241,6 +388,11 @@ KMessage::Unset()
 }
 
 
+/**
+ * @brief Sets the message's @c what identifier.
+ *
+ * @param what Message type code stored in the header.
+ */
 void
 KMessage::SetWhat(uint32 what)
 {
@@ -248,6 +400,11 @@ KMessage::SetWhat(uint32 what)
 }
 
 
+/**
+ * @brief Returns the message's @c what identifier.
+ *
+ * @return Current @c what code from the header.
+ */
 uint32
 KMessage::What() const
 {
@@ -255,6 +412,11 @@ KMessage::What() const
 }
 
 
+/**
+ * @brief Returns the underlying flat buffer.
+ *
+ * @return Read-only pointer to the start of the message buffer.
+ */
 const void*
 KMessage::Buffer() const
 {
@@ -262,6 +424,11 @@ KMessage::Buffer() const
 }
 
 
+/**
+ * @brief Returns the allocated capacity of the buffer.
+ *
+ * @return Buffer capacity in bytes (may exceed ContentSize()).
+ */
 int32
 KMessage::BufferCapacity() const
 {
@@ -269,6 +436,11 @@ KMessage::BufferCapacity() const
 }
 
 
+/**
+ * @brief Returns the in-use size of the buffer.
+ *
+ * @return Number of valid bytes (header + fields) currently in the buffer.
+ */
 int32
 KMessage::ContentSize() const
 {
@@ -276,6 +448,19 @@ KMessage::ContentSize() const
 }
 
 
+/**
+ * @brief Adds a new, initially empty field to the message.
+ *
+ * Fails if a field with the same name already exists.
+ *
+ * @param name        Null-terminated field name; must not be NULL.
+ * @param type        Field type code; must not be B_ANY_TYPE.
+ * @param elementSize Fixed element size, or -1 for variable-sized elements.
+ * @param field       Out (optional): bound to the newly created field.
+ * @return B_OK on success, B_BAD_VALUE for bad arguments,
+ *         B_NAME_IN_USE if a field with this name already exists, or an
+ *         allocation error.
+ */
 status_t
 KMessage::AddField(const char* name, type_code type, int32 elementSize,
 	KMessageField* field)
@@ -289,6 +474,13 @@ KMessage::AddField(const char* name, type_code type, int32 elementSize,
 }
 
 
+/**
+ * @brief Finds a field by name, ignoring its type.
+ *
+ * @param name  Field name to match.
+ * @param field Out (optional): bound to the field when found.
+ * @return B_OK if found, or B_NAME_NOT_FOUND.
+ */
 status_t
 KMessage::FindField(const char* name, KMessageField* field) const
 {
@@ -296,6 +488,19 @@ KMessage::FindField(const char* name, KMessageField* field) const
 }
 
 
+/**
+ * @brief Finds a field matching a name and (optional) type.
+ *
+ * Performs a linear scan over all fields. Pass B_ANY_TYPE to match any
+ * type.
+ *
+ * @param name  Field name to match; must not be NULL.
+ * @param type  Required type code, or B_ANY_TYPE to match any type.
+ * @param field Out (optional): bound to the field when found. When NULL
+ *              an internal stack-local field is used for iteration.
+ * @return B_OK on success, B_BAD_VALUE if @a name is NULL, or
+ *         B_NAME_NOT_FOUND.
+ */
 status_t
 KMessage::FindField(const char* name, type_code type,
 	KMessageField* field) const
@@ -317,6 +522,17 @@ KMessage::FindField(const char* name, type_code type,
 }
 
 
+/**
+ * @brief Advances a KMessageField cursor to the next field in the message.
+ *
+ * If the supplied field is unbound, positions it at the first field of
+ * this message; otherwise moves to the subsequent field in buffer order.
+ *
+ * @param field In/Out: cursor to advance; may not be NULL and must either
+ *              be unbound or already belong to this message.
+ * @return B_OK on successful advance, B_BAD_VALUE for a malformed cursor,
+ *         or B_NAME_NOT_FOUND when there are no further fields.
+ */
 status_t
 KMessage::GetNextField(KMessageField* field) const
 {
@@ -342,6 +558,11 @@ KMessage::GetNextField(KMessageField* field) const
 }
 
 
+/**
+ * @brief Reports whether the message contains no fields.
+ *
+ * @return true when no field has been added; false otherwise.
+ */
 bool
 KMessage::IsEmpty() const
 {
@@ -349,6 +570,23 @@ KMessage::IsEmpty() const
 }
 
 
+/**
+ * @brief Appends a single data element to a field, creating it if needed.
+ *
+ * If the field does not yet exist it is created with the specified type
+ * and fixed-/variable-size classification. If it exists its type must
+ * match.
+ *
+ * @param name        Field name.
+ * @param type        Field type code (not B_ANY_TYPE).
+ * @param data        Pointer to the element bytes.
+ * @param numBytes    Element size in bytes.
+ * @param isFixedSize When creating the field, whether the type uses a
+ *                    fixed element size.
+ * @return B_OK on success; B_BAD_VALUE for illegal args; B_BAD_TYPE if
+ *         the existing field's type does not match; or an allocation
+ *         error.
+ */
 status_t
 KMessage::AddData(const char* name, type_code type, const void* data,
 	int32 numBytes, bool isFixedSize)
@@ -371,6 +609,21 @@ KMessage::AddData(const char* name, type_code type, const void* data,
 }
 
 
+/**
+ * @brief Appends a contiguous array of fixed-size elements to a field.
+ *
+ * Creates the field on first use with the supplied element size; if the
+ * field already exists its type must match.
+ *
+ * @param name         Field name.
+ * @param type         Field type code (not B_ANY_TYPE).
+ * @param data         Pointer to @a elementCount elements of @a elementSize
+ *                     bytes each.
+ * @param elementSize  Size in bytes of one element; must be >= 0.
+ * @param elementCount Number of elements to append; must be >= 0.
+ * @return B_OK on success, B_BAD_VALUE for illegal args, B_BAD_TYPE on a
+ *         type mismatch with an existing field, or an allocation error.
+ */
 status_t
 KMessage::AddArray(const char* name, type_code type, const void* data,
 	int32 elementSize, int32 elementCount)
@@ -394,6 +647,22 @@ KMessage::AddArray(const char* name, type_code type, const void* data,
 }
 
 
+/**
+ * @brief Sets the single-element value of a fixed-size field, replacing
+ *        an existing element in place.
+ *
+ * Requires the buffer to be writable. If the field does not yet exist it
+ * is created; if it exists, its type and element size must match @a type
+ * and @a numBytes. A single element is overwritten in place; if empty,
+ * one is appended.
+ *
+ * @param name     Field name.
+ * @param type     Field type code (not B_ANY_TYPE).
+ * @param data     Pointer to @a numBytes of element data.
+ * @param numBytes Element size in bytes.
+ * @return B_OK on success; B_NOT_ALLOWED on read-only buffers;
+ *         B_BAD_VALUE on type/size mismatch; or an allocation error.
+ */
 status_t
 KMessage::SetData(const char* name, type_code type, const void* data,
 	int32 numBytes)
@@ -428,6 +697,17 @@ KMessage::SetData(const char* name, type_code type, const void* data,
 }
 
 
+/**
+ * @brief Finds the first element of a field by name and type.
+ *
+ * Convenience wrapper around the indexed form with @c index = 0.
+ *
+ * @param name     Field name.
+ * @param type     Required type, or B_ANY_TYPE.
+ * @param data     Out: pointer to element bytes within the buffer.
+ * @param numBytes Out: element size in bytes.
+ * @return B_OK on success, or an error from the indexed form.
+ */
 status_t
 KMessage::FindData(const char* name, type_code type, const void** data,
 	int32* numBytes) const
@@ -436,6 +716,18 @@ KMessage::FindData(const char* name, type_code type, const void** data,
 }
 
 
+/**
+ * @brief Finds a specific element within a named field.
+ *
+ * @param name     Field name.
+ * @param type     Required type, or B_ANY_TYPE.
+ * @param index    Zero-based element index.
+ * @param data     Out: pointer into the message buffer for the element.
+ * @param numBytes Out: element size in bytes.
+ * @return B_OK on success; B_BAD_VALUE for NULL outputs; B_NAME_NOT_FOUND
+ *         when the field is missing; B_BAD_INDEX when @a index is out of
+ *         range.
+ */
 status_t
 KMessage::FindData(const char* name, type_code type, int32 index,
 	const void** data, int32* numBytes) const
@@ -455,6 +747,11 @@ KMessage::FindData(const char* name, type_code type, int32 index,
 }
 
 
+/**
+ * @brief Returns the team that sent this message.
+ *
+ * @return Sender team id as recorded in the header.
+ */
 team_id
 KMessage::Sender() const
 {
@@ -462,6 +759,11 @@ KMessage::Sender() const
 }
 
 
+/**
+ * @brief Returns the target token (handler id) of this message.
+ *
+ * @return Target token as recorded in the header.
+ */
 int32
 KMessage::TargetToken() const
 {
@@ -469,6 +771,11 @@ KMessage::TargetToken() const
 }
 
 
+/**
+ * @brief Returns the port on which a reply is expected.
+ *
+ * @return Reply port id, or -1 if none.
+ */
 port_id
 KMessage::ReplyPort() const
 {
@@ -476,6 +783,11 @@ KMessage::ReplyPort() const
 }
 
 
+/**
+ * @brief Returns the reply token associated with the reply port.
+ *
+ * @return Reply token as recorded in the header.
+ */
 int32
 KMessage::ReplyToken() const
 {
@@ -483,6 +795,14 @@ KMessage::ReplyToken() const
 }
 
 
+/**
+ * @brief Populates the header's delivery metadata.
+ *
+ * @param targetToken Token identifying the recipient handler.
+ * @param replyPort   Port to receive replies, or -1 for none.
+ * @param replyToken  Token identifying the reply handler.
+ * @param senderTeam  Team id of the sender.
+ */
 void
 KMessage::SetDeliveryInfo(int32 targetToken, port_id replyPort,
 	int32 replyToken, team_id senderTeam)
@@ -499,6 +819,22 @@ KMessage::SetDeliveryInfo(int32 targetToken, port_id replyPort,
 #ifndef KMESSAGE_CONTAINER_ONLY
 
 
+/**
+ * @brief Sends the message to a port using caller-supplied reply info.
+ *
+ * Fills in the delivery header, resolves the sender team if needed, and
+ * writes the flat buffer to @a targetPort. With a negative timeout a
+ * blocking write_port() is used; otherwise write_port_etc() is called
+ * with a relative timeout.
+ *
+ * @param targetPort  Destination port id.
+ * @param targetToken Recipient handler token.
+ * @param replyPort   Port to accept replies on, or -1.
+ * @param replyToken  Reply handler token.
+ * @param timeout     Send timeout in microseconds; negative = block.
+ * @param senderTeam  Team id to record as sender; -1 to autofill.
+ * @return B_OK on success, or a port or thread-info error code.
+ */
 status_t
 KMessage::SendTo(port_id targetPort, int32 targetToken, port_id replyPort,
 	int32 replyToken, bigtime_t timeout, team_id senderTeam)
@@ -524,6 +860,23 @@ KMessage::SendTo(port_id targetPort, int32 targetToken, port_id replyPort,
 }
 
 
+/**
+ * @brief Sends the message and synchronously receives a reply.
+ *
+ * Creates a private reply port (transferring ownership to the target team
+ * if cross-team), sends the message, and blocks up to @a replyTimeout for
+ * a reply. An inner PortDeleter guarantees the reply port is cleaned up
+ * on all exit paths.
+ *
+ * @param targetPort      Destination port id.
+ * @param targetToken     Recipient handler token.
+ * @param reply           If non-NULL, filled with the received reply.
+ * @param deliveryTimeout Timeout for the outbound send.
+ * @param replyTimeout    Timeout for receiving the reply.
+ * @param senderTeam      Team id to record as sender; -1 to autofill.
+ * @return B_OK on success, or an error from port creation, sending, or
+ *         receiving.
+ */
 status_t
 KMessage::SendTo(port_id targetPort, int32 targetToken, KMessage* reply,
 	bigtime_t deliveryTimeout, bigtime_t replyTimeout, team_id senderTeam)
@@ -557,8 +910,19 @@ KMessage::SendTo(port_id targetPort, int32 targetToken, KMessage* reply,
 		if (targetTeam != ourTeam && targetTeam != B_SYSTEM_TEAM)
 			set_port_owner(replyPort, targetTeam);
 	}
+	/**
+	 * @brief RAII helper that deletes a reply port on scope exit.
+	 */
 	struct PortDeleter {
+		/**
+		 * @brief Constructs a deleter bound to @a port.
+		 * @param port Port id to delete on destruction, or -1 for a no-op.
+		 */
 		PortDeleter(port_id port) : port(port) {}
+
+		/**
+		 * @brief Deletes the bound port if its id is valid.
+		 */
 		~PortDeleter()
 		{
 			if (port >= 0)
@@ -579,6 +943,20 @@ KMessage::SendTo(port_id targetPort, int32 targetToken, KMessage* reply,
 }
 
 
+/**
+ * @brief Sends @a message back to the sender of this message.
+ *
+ * Uses this message's recorded ReplyPort/ReplyToken as the target.
+ *
+ * @param message     Reply message to deliver.
+ * @param replyPort   Port the replier is willing to receive a further
+ *                    reply on, or -1.
+ * @param replyToken  Token paired with @a replyPort.
+ * @param timeout     Send timeout in microseconds; negative = block.
+ * @param senderTeam  Team id to record as sender; -1 to autofill.
+ * @return B_OK on success, B_BAD_VALUE if @a message is NULL, or a send
+ *         error.
+ */
 status_t
 KMessage::SendReply(KMessage* message, port_id replyPort, int32 replyToken,
 	bigtime_t timeout, team_id senderTeam)
@@ -590,6 +968,17 @@ KMessage::SendReply(KMessage* message, port_id replyPort, int32 replyToken,
 }
 
 
+/**
+ * @brief Sends a reply and synchronously receives a further reply.
+ *
+ * @param message         Reply message to deliver.
+ * @param reply           Out (optional): filled with the further reply.
+ * @param deliveryTimeout Timeout for the outbound send.
+ * @param replyTimeout    Timeout for receiving the further reply.
+ * @param senderTeam      Team id to record as sender; -1 to autofill.
+ * @return B_OK on success, B_BAD_VALUE if @a message is NULL, or a send
+ *         error.
+ */
 status_t
 KMessage::SendReply(KMessage* message, KMessage* reply,
 	bigtime_t deliveryTimeout, bigtime_t replyTimeout, team_id senderTeam)
@@ -601,6 +990,19 @@ KMessage::SendReply(KMessage* message, KMessage* reply,
 }
 
 
+/**
+ * @brief Receives a KMessage from a port into this instance.
+ *
+ * Queries the port for the pending message's size, allocates an aligned
+ * heap buffer, reads the message, and attaches to it with
+ * KMESSAGE_OWNS_BUFFER so the buffer is freed on Unset().
+ *
+ * @param fromPort    Port to read from.
+ * @param timeout     Receive timeout in microseconds; negative = block.
+ * @param messageInfo Out (optional): receives port_message_info details.
+ * @return B_OK on success; B_NO_MEMORY on allocation failure; B_ERROR on
+ *         size mismatch; or a port error.
+ */
 status_t
 KMessage::ReceiveFrom(port_id fromPort, bigtime_t timeout,
 	port_message_info* messageInfo)
@@ -648,6 +1050,15 @@ KMessage::ReceiveFrom(port_id fromPort, bigtime_t timeout,
 #endif	// !KMESSAGE_CONTAINER_ONLY
 
 
+/**
+ * @brief Pretty-prints the message to a caller-provided printf-like sink.
+ *
+ * Iterates every field, formatting common primitive types specially
+ * (bool, int8..int64, strings) and otherwise showing a hex pointer and
+ * byte count.
+ *
+ * @param printFunc Printf-style output function used for each line.
+ */
 void
 KMessage::Dump(void (*printFunc)(const char*, ...)) const
 {
@@ -710,6 +1121,11 @@ KMessage::Dump(void (*printFunc)(const char*, ...)) const
 }
 
 
+/**
+ * @brief Returns the buffer interpreted as its Header.
+ *
+ * @return Pointer to the Header at the start of @c fBuffer.
+ */
 KMessage::Header*
 KMessage::_Header() const
 {
@@ -717,6 +1133,13 @@ KMessage::_Header() const
 }
 
 
+/**
+ * @brief Computes the byte offset of a pointer within the buffer.
+ *
+ * @param data Pointer that must lie within the current buffer (or NULL).
+ * @return Offset in bytes from the buffer start, or -1 when @a data is
+ *         NULL.
+ */
 int32
 KMessage::_BufferOffsetFor(const void* data) const
 {
@@ -726,6 +1149,11 @@ KMessage::_BufferOffsetFor(const void* data) const
 }
 
 
+/**
+ * @brief Returns the address of the first field header.
+ *
+ * @return Aligned pointer just past the fixed Header.
+ */
 KMessage::FieldHeader*
 KMessage::_FirstFieldHeader() const
 {
@@ -733,6 +1161,11 @@ KMessage::_FirstFieldHeader() const
 }
 
 
+/**
+ * @brief Returns the address of the most recently added field header.
+ *
+ * @return Pointer to the last field, or NULL when the message is empty.
+ */
 KMessage::FieldHeader*
 KMessage::_LastFieldHeader() const
 {
@@ -740,6 +1173,13 @@ KMessage::_LastFieldHeader() const
 }
 
 
+/**
+ * @brief Resolves a field header by its byte offset.
+ *
+ * @param offset Offset within the buffer; must lie after the Header and
+ *               inside the valid content size.
+ * @return Field header pointer, or NULL when @a offset is out of range.
+ */
 KMessage::FieldHeader*
 KMessage::_FieldHeaderForOffset(int32 offset) const
 {
@@ -749,6 +1189,19 @@ KMessage::_FieldHeaderForOffset(int32 offset) const
 }
 
 
+/**
+ * @brief Allocates and initialises a new, empty field header in the buffer.
+ *
+ * Reserves space for a FieldHeader plus the field name, then fills in the
+ * type, element-size classification, and size fields, and records the
+ * buffer offset in @c fLastFieldOffset.
+ *
+ * @param name        Null-terminated field name.
+ * @param type        Type code stored in the header.
+ * @param elementSize Element size; >= 0 for fixed, -1 for variable.
+ * @param field       Out (optional): bound to the newly created field.
+ * @return B_OK on success, or an error from _AllocateSpace().
+ */
 status_t
 KMessage::_AddField(const char* name, type_code type, int32 elementSize,
 	KMessageField* field)
@@ -772,6 +1225,21 @@ KMessage::_AddField(const char* name, type_code type, int32 elementSize,
 }
 
 
+/**
+ * @brief Appends element data to the most recently added field.
+ *
+ * Only the last field can be extended (further fields would overlap new
+ * data). Fixed-size fields are appended in bulk; variable-size fields
+ * append one FieldValueHeader + value per element. @c field->_Header()
+ * is re-resolved after each allocation in case the buffer was relocated.
+ *
+ * @param field        Target field; must be bound and be the last field.
+ * @param data         Pointer to the element(s).
+ * @param elementSize  Per-element size in bytes.
+ * @param elementCount Number of elements to append.
+ * @return B_OK on success, B_BAD_VALUE on illegal args / non-last field,
+ *         or an allocation error.
+ */
 status_t
 KMessage::_AddFieldData(KMessageField* field, const void* data,
 	int32 elementSize, int32 elementCount)
@@ -827,6 +1295,21 @@ KMessage::_AddFieldData(KMessageField* field, const void* data,
 }
 
 
+/**
+ * @brief Validates and binds an already-formatted buffer.
+ *
+ * Optionally clones the buffer if requested or if the original is
+ * misaligned, then checks the magic and size fields and walks the full
+ * chain of FieldHeader/FieldValueHeader structures to ensure every
+ * offset, size, and name length is within bounds. Updates
+ * @c fLastFieldOffset to the last valid field seen.
+ *
+ * @param sizeFromBuffer When true, the authoritative buffer size is
+ *                       taken from the embedded Header::size rather than
+ *                       from @c fBufferCapacity.
+ * @return B_OK on a valid buffer; B_BAD_DATA for corruption; B_NO_MEMORY
+ *         when cloning fails.
+ */
 status_t
 KMessage::_InitFromBuffer(bool sizeFromBuffer)
 {
@@ -931,6 +1414,14 @@ KMessage::_InitFromBuffer(bool sizeFromBuffer)
 }
 
 
+/**
+ * @brief Writes a fresh Header into the current buffer.
+ *
+ * Stamps magic and size, clears all delivery info (sender / tokens /
+ * reply port), and resets @c fLastFieldOffset to mark an empty message.
+ *
+ * @param what Initial @c what code stored in the header.
+ */
 void
 KMessage::_InitBuffer(uint32 what)
 {
@@ -946,6 +1437,12 @@ KMessage::_InitBuffer(uint32 what)
 }
 
 
+/**
+ * @brief Debug self-check: re-parses the buffer and panics on mismatch.
+ *
+ * Verifies that parsing the buffer produces the same @c fLastFieldOffset
+ * that was cached, catching silent corruption during development.
+ */
 void
 KMessage::_CheckBuffer()
 {
@@ -959,6 +1456,25 @@ KMessage::_CheckBuffer()
 }
 
 
+/**
+ * @brief Reserves @a size bytes at the tail of the buffer, growing as
+ *        needed.
+ *
+ * Lazily promotes the embedded fHeader-backed buffer to a heap buffer on
+ * first use, then extends via realloc() when more capacity is required.
+ * Read-only buffers are rejected. Supports optional alignment of both
+ * the returned address and the consumed region.
+ *
+ * @param size         Minimum number of bytes needed.
+ * @param alignAddress When true, the returned address is aligned.
+ * @param alignSize    When true, the reserved region is aligned.
+ * @param address      Out: pointer to the reserved region.
+ * @param alignedSize  Out: actual (possibly aligned) number of bytes
+ *                     consumed.
+ * @return B_OK on success, B_NOT_ALLOWED on read-only buffers,
+ *         B_BUFFER_OVERFLOW on non-owned buffers with insufficient room,
+ *         or B_NO_MEMORY on allocation failure.
+ */
 status_t
 KMessage::_AllocateSpace(int32 size, bool alignAddress, bool alignSize,
 	void** address, int32* alignedSize)
@@ -1010,6 +1526,12 @@ KMessage::_AllocateSpace(int32 size, bool alignAddress, bool alignSize,
 }
 
 
+/**
+ * @brief Rounds a requested byte count up to the reallocation chunk size.
+ *
+ * @param size Minimum number of bytes the buffer must hold.
+ * @return A multiple of @c kMessageReallocChunkSize that is >= @a size.
+ */
 int32
 KMessage::_CapacityFor(int32 size)
 {
@@ -1021,6 +1543,11 @@ KMessage::_CapacityFor(int32 size)
 // #pragma mark - KMessageField
 
 
+/**
+ * @brief Constructs an unbound KMessageField.
+ *
+ * The field is not associated with any message until SetTo() is called.
+ */
 KMessageField::KMessageField()
 	:
 	fMessage(NULL),
@@ -1029,6 +1556,9 @@ KMessageField::KMessageField()
 }
 
 
+/**
+ * @brief Detaches the field from any message.
+ */
 void
 KMessageField::Unset()
 {
@@ -1037,6 +1567,11 @@ KMessageField::Unset()
 }
 
 
+/**
+ * @brief Returns the message this field is bound to.
+ *
+ * @return Owning KMessage pointer, or NULL if unbound.
+ */
 KMessage*
 KMessageField::Message() const
 {
@@ -1044,6 +1579,12 @@ KMessageField::Message() const
 }
 
 
+/**
+ * @brief Returns the field's name.
+ *
+ * @return Null-terminated name pointer inside the buffer, or NULL if
+ *         unbound or invalid.
+ */
 const char*
 KMessageField::Name() const
 {
@@ -1052,6 +1593,11 @@ KMessageField::Name() const
 }
 
 
+/**
+ * @brief Returns the field's type code.
+ *
+ * @return Type code from the field header, or 0 if unbound.
+ */
 type_code
 KMessageField::TypeCode() const
 {
@@ -1060,6 +1606,11 @@ KMessageField::TypeCode() const
 }
 
 
+/**
+ * @brief Reports whether the bound field uses fixed-size elements.
+ *
+ * @return true if fixed-size, false otherwise or when unbound.
+ */
 bool
 KMessageField::HasFixedElementSize() const
 {
@@ -1068,6 +1619,12 @@ KMessageField::HasFixedElementSize() const
 }
 
 
+/**
+ * @brief Returns the fixed element size.
+ *
+ * @return Element size in bytes; -1 for variable-size fields or when
+ *         unbound.
+ */
 int32
 KMessageField::ElementSize() const
 {
@@ -1076,6 +1633,14 @@ KMessageField::ElementSize() const
 }
 
 
+/**
+ * @brief Appends a single element to this field.
+ *
+ * @param data Pointer to the element bytes.
+ * @param size Element size; -1 to use the field's fixed ElementSize().
+ * @return B_OK on success; B_BAD_VALUE for illegal args; or an error
+ *         from the underlying KMessage::_AddFieldData().
+ */
 status_t
 KMessageField::AddElement(const void* data, int32 size)
 {
@@ -1091,6 +1656,15 @@ KMessageField::AddElement(const void* data, int32 size)
 }
 
 
+/**
+ * @brief Appends multiple contiguous elements to this field.
+ *
+ * @param data        Pointer to @a count elements of @a elementSize bytes.
+ * @param count       Number of elements to append; must be >= 0.
+ * @param elementSize Element size in bytes; -1 to use ElementSize().
+ * @return B_OK on success, B_BAD_VALUE on illegal args, or an underlying
+ *         append error.
+ */
 status_t
 KMessageField::AddElements(const void* data, int32 count, int32 elementSize)
 {
@@ -1106,6 +1680,14 @@ KMessageField::AddElements(const void* data, int32 count, int32 elementSize)
 }
 
 
+/**
+ * @brief Returns a pointer to a specific element of this field.
+ *
+ * @param index Zero-based element index.
+ * @param size  Out: element size in bytes when found.
+ * @return Pointer to the element data, or NULL when unbound or out of
+ *         range.
+ */
 const void*
 KMessageField::ElementAt(int32 index, int32* size) const
 {
@@ -1114,6 +1696,11 @@ KMessageField::ElementAt(int32 index, int32* size) const
 }
 
 
+/**
+ * @brief Returns the number of elements stored in this field.
+ *
+ * @return Element count, or 0 when unbound.
+ */
 int32
 KMessageField::CountElements() const
 {
@@ -1122,6 +1709,13 @@ KMessageField::CountElements() const
 }
 
 
+/**
+ * @brief Binds this field to a message at a given header offset.
+ *
+ * @param message      Owning KMessage.
+ * @param headerOffset Byte offset within the message buffer to the
+ *                     target FieldHeader.
+ */
 void
 KMessageField::SetTo(KMessage* message, int32 headerOffset)
 {
@@ -1130,6 +1724,12 @@ KMessageField::SetTo(KMessage* message, int32 headerOffset)
 }
 
 
+/**
+ * @brief Resolves the underlying FieldHeader for this bound field.
+ *
+ * @return Pointer to the FieldHeader, or NULL when unbound or when the
+ *         cached offset is now invalid.
+ */
 KMessage::FieldHeader*
 KMessageField::_Header() const
 {

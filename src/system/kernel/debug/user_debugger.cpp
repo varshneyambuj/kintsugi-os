@@ -1,7 +1,40 @@
 /*
- * Copyright 2005-2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2015, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2015, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file user_debugger.cpp
+ * @brief Kernel-side implementation of the user-space debugger protocol.
+ *
+ * Implements the team/thread attach-detach machinery (install_team_debugger,
+ * remove_team_debugger) plus the debug nub thread that services debugger
+ * requests over a port. Intercepts signals, exceptions, breakpoints, watchpoints,
+ * single-stepping, profiling ticks, and syscall/image/thread/team lifecycle
+ * events in a debugged team and forwards B_DEBUGGER_MESSAGE_* payloads to the
+ * debugger's port. Also provides the _user_* syscall entry points that user
+ * space calls to manipulate its own (or another team's) debug state.
  */
 
 
@@ -69,6 +102,18 @@ static status_t ensure_debugger_installed();
 static void get_team_debug_info(team_debug_info &teamDebugInfo);
 
 
+/**
+ * @brief Write to a port in kill-interruptable mode.
+ *
+ * Thin wrapper over write_port_etc() used when posting to a debug port so that
+ * a pending SIGKILL can unblock the write.
+ *
+ * @param port Destination port.
+ * @param code Message code.
+ * @param buffer Message payload.
+ * @param bufferSize Size of @a buffer in bytes.
+ * @return B_OK on success, otherwise a port_etc error.
+ */
 static inline status_t
 kill_interruptable_write_port(port_id port, int32 code, const void *buffer,
 	size_t bufferSize)
@@ -78,6 +123,20 @@ kill_interruptable_write_port(port_id port, int32 code, const void *buffer,
 }
 
 
+/**
+ * @brief Serialized write to the debugger port of the current team.
+ *
+ * Acquires the team's debugger_write_lock, re-checks that the debugger port
+ * has not changed (and that we are not in the middle of a handover), and only
+ * then delivers the message.
+ *
+ * @param port Debugger port the caller intended to write to.
+ * @param code Debugger message code.
+ * @param buffer Message payload.
+ * @param bufferSize Size of @a buffer in bytes.
+ * @param dontWait If true, uses B_RELATIVE_TIMEOUT (0); otherwise blocks kill-interruptably.
+ * @return B_OK on success, error from acquire_sem_etc/write_port_etc otherwise.
+ */
 static status_t
 debugger_write(port_id port, int32 code, const void *buffer, size_t bufferSize,
 	bool dontWait)
@@ -131,10 +190,13 @@ debugger_write(port_id port, int32 code, const void *buffer, size_t bufferSize,
 }
 
 
-/*!	Updates the thread::flags field according to what user debugger flags are
-	set for the thread.
-	Interrupts must be disabled and the thread's debug info lock must be held.
-*/
+/**
+ * @brief Mirror B_THREAD_DEBUG_STOP into Thread::flags.
+ *
+ * Interrupts must be disabled and the thread's debug_info lock must be held.
+ *
+ * @param thread Thread whose flags to update.
+ */
 static void
 update_thread_user_debug_flag(Thread* thread)
 {
@@ -145,10 +207,13 @@ update_thread_user_debug_flag(Thread* thread)
 }
 
 
-/*!	Updates the thread::flags THREAD_FLAGS_BREAKPOINTS_DEFINED bit of the
-	given thread.
-	Interrupts must be disabled and the thread debug info lock must be held.
-*/
+/**
+ * @brief Mirror arch-level "has breakpoints" state into Thread::flags.
+ *
+ * Interrupts must be disabled and the thread's debug_info lock must be held.
+ *
+ * @param thread Thread whose flags to update.
+ */
 static void
 update_thread_breakpoints_flag(Thread* thread)
 {
@@ -161,9 +226,12 @@ update_thread_breakpoints_flag(Thread* thread)
 }
 
 
-/*!	Updates the Thread::flags THREAD_FLAGS_BREAKPOINTS_DEFINED bit of all
-	threads of the current team.
-*/
+/**
+ * @brief Propagate the team's breakpoint state to every thread in the team.
+ *
+ * Walks the current team's thread list under the team lock and updates the
+ * THREAD_FLAGS_BREAKPOINTS_DEFINED bit of each.
+ */
 static void
 update_threads_breakpoints_flag()
 {
@@ -185,9 +253,13 @@ update_threads_breakpoints_flag()
 }
 
 
-/*!	Updates the thread::flags B_TEAM_DEBUG_DEBUGGER_INSTALLED bit of the
-	given thread, which must be the current thread.
-*/
+/**
+ * @brief Mirror the team's B_TEAM_DEBUG_DEBUGGER_INSTALLED bit into Thread::flags.
+ *
+ * @a thread must be the current thread.
+ *
+ * @param thread Thread whose flags to update.
+ */
 static void
 update_thread_debugger_installed_flag(Thread* thread)
 {
@@ -200,10 +272,13 @@ update_thread_debugger_installed_flag(Thread* thread)
 }
 
 
-/*!	Updates the thread::flags THREAD_FLAGS_DEBUGGER_INSTALLED bit of all
-	threads of the given team.
-	The team's lock must be held.
-*/
+/**
+ * @brief Propagate the team's "debugger installed" state to every thread.
+ *
+ * The team's lock must be held by the caller.
+ *
+ * @param team Team whose threads should be updated.
+ */
 static void
 update_threads_debugger_installed_flag(Team* team)
 {
@@ -222,9 +297,14 @@ update_threads_debugger_installed_flag(Team* team)
 
 
 /**
- *	For the first initialization the function must be called with \a initLock
- *	set to \c true. If it would be possible that another thread accesses the
- *	structure at the same time, `lock' must be held when calling the function.
+ * @brief Reset a team_debug_info to the "no debugger" state.
+ *
+ * For the first initialization the function must be called with @a initLock
+ * set to true. If another thread might access the structure concurrently,
+ * @c info->lock must be held when calling.
+ *
+ * @param info team_debug_info to reset.
+ * @param initLock If true, initialize the spinlock and condition pointer.
  */
 void
 clear_team_debug_info(struct team_debug_info *info, bool initLock)
@@ -249,16 +329,14 @@ clear_team_debug_info(struct team_debug_info *info, bool initLock)
 }
 
 /**
- *  `lock' must not be held nor may interrupts be disabled.
- *  \a info must not be a member of a team struct (or the team struct must no
- *  longer be accessible, i.e. the team should already be removed).
+ * @brief Release resources owned by a team_debug_info.
  *
- *	In case the team is still accessible, the procedure is:
- *	1. get `lock'
- *	2. copy the team debug info on stack
- *	3. call clear_team_debug_info() on the team debug info
- *	4. release `lock'
- *	5. call destroy_team_debug_info() on the copied team debug info
+ * Must be called with interrupts enabled and without holding @c info->lock;
+ * deletes the breakpoint manager, the debugger write lock, the nub port, and
+ * waits for the nub thread. The usual pattern is: lock, copy the debug info,
+ * clear_team_debug_info() on the original, unlock, then destroy the copy.
+ *
+ * @param info team_debug_info to destroy.
  */
 static void
 destroy_team_debug_info(struct team_debug_info *info)
@@ -302,6 +380,11 @@ destroy_team_debug_info(struct team_debug_info *info)
 }
 
 
+/**
+ * @brief Initialize a freshly allocated thread_debug_info to defaults.
+ *
+ * @param info thread_debug_info to initialize.
+ */
 void
 init_thread_debug_info(struct thread_debug_info *info)
 {
@@ -321,9 +404,15 @@ init_thread_debug_info(struct thread_debug_info *info)
 }
 
 
-/*!	Clears the debug info for the current thread.
-	Invoked with thread debug info lock being held.
-*/
+/**
+ * @brief Reset a thread_debug_info to the "not being debugged" state.
+ *
+ * Cancels the profiling timer if any and clears arch state. The caller must
+ * hold the thread debug info lock.
+ *
+ * @param info thread_debug_info to clear.
+ * @param dying If true, sets B_THREAD_DEBUG_DYING in the cleared flags.
+ */
 void
 clear_thread_debug_info(struct thread_debug_info *info, bool dying)
 {
@@ -349,6 +438,13 @@ clear_thread_debug_info(struct thread_debug_info *info, bool dying)
 }
 
 
+/**
+ * @brief Tear down a thread_debug_info, releasing its sample area and debug port.
+ *
+ * Called when a thread dies or detaches from its debugger.
+ *
+ * @param info thread_debug_info to destroy.
+ */
 void
 destroy_thread_debug_info(struct thread_debug_info *info)
 {
@@ -377,6 +473,20 @@ destroy_thread_debug_info(struct thread_debug_info *info)
 }
 
 
+/**
+ * @brief Acquire exclusive rights to change a team's debugger.
+ *
+ * Looks up the team by id, installs @a condition as the team's
+ * debugger_changed_condition, and returns with the caller holding that
+ * exclusive right. If another caller already owns it, waits on the existing
+ * condition and retries. Enforces the invariant that debugger changes are
+ * serialized per-team.
+ *
+ * @param teamID Target team id (or B_CURRENT_TEAM).
+ * @param condition Condition variable the caller will notify in finish_debugger_change().
+ * @param team [out] Pointer to the locked team on success (caller does not hold the team lock upon return).
+ * @return B_OK, B_BAD_TEAM_ID, or B_NOT_ALLOWED for the kernel team.
+ */
 static status_t
 prepare_debugger_change(team_id teamID, ConditionVariable& condition,
 	Team*& team)
@@ -419,6 +529,15 @@ prepare_debugger_change(team_id teamID, ConditionVariable& condition,
 }
 
 
+/**
+ * @brief Acquire exclusive debugger-change rights for an already-known team.
+ *
+ * Same semantics as the team_id overload but skips the team lookup. Blocks
+ * until the team has no other pending debugger change.
+ *
+ * @param team Target team.
+ * @param condition Condition variable to install.
+ */
 static void
 prepare_debugger_change(Team* team, ConditionVariable& condition)
 {
@@ -443,6 +562,14 @@ prepare_debugger_change(Team* team, ConditionVariable& condition)
 }
 
 
+/**
+ * @brief Release debugger-change rights and wake any waiters.
+ *
+ * Clears the team's debugger_changed_condition and calls NotifyAll() on the
+ * previously-held condition variable. Must pair with prepare_debugger_change().
+ *
+ * @param team Target team.
+ */
 static void
 finish_debugger_change(Team* team)
 {
@@ -456,6 +583,13 @@ finish_debugger_change(Team* team)
 }
 
 
+/**
+ * @brief Temporarily reparent the debug port before an exec() wipes team ports.
+ *
+ * exec_team() destroys all ports owned by the current team. If a debugger is
+ * installed, transfers ownership of the thread's debug port to the kernel team
+ * so it survives the exec; user_debug_finish_after_exec() restores ownership.
+ */
 void
 user_debug_prepare_for_exec()
 {
@@ -484,6 +618,12 @@ user_debug_prepare_for_exec()
 }
 
 
+/**
+ * @brief Restore debug port ownership to the team after exec() completes.
+ *
+ * Counterpart to user_debug_prepare_for_exec(): hands the port back from the
+ * kernel team to the now-exec'd team.
+ */
 void
 user_debug_finish_after_exec()
 {
@@ -511,6 +651,9 @@ user_debug_finish_after_exec()
 }
 
 
+/**
+ * @brief Perform architecture-specific user-debugger initialization at boot.
+ */
 void
 init_user_debug()
 {
@@ -520,6 +663,15 @@ init_user_debug()
 }
 
 
+/**
+ * @brief Snapshot the current team's team_debug_info under its lock.
+ *
+ * Disables interrupts, takes the team debug info lock, memcpy()s the struct
+ * onto the caller's stack, and releases. Used wherever code needs a stable
+ * read of several fields at once.
+ *
+ * @param teamDebugInfo [out] Destination snapshot.
+ */
 static void
 get_team_debug_info(team_debug_info &teamDebugInfo)
 {
@@ -535,6 +687,22 @@ get_team_debug_info(team_debug_info &teamDebugInfo)
 }
 
 
+/**
+ * @brief Core debug-stop handler: forward an event to the debugger and block.
+ *
+ * Creates the per-thread debug port if needed, marks the thread stopped,
+ * sends the event to the debugger port, then reads from the thread's debug
+ * port in a loop handling B_DEBUGGED_THREAD_MESSAGE_* commands (continue,
+ * get/set cpu state, debugger-changed). If the debugger changes mid-flight,
+ * sets @a restart so the outer loop in thread_hit_debug_event() retries.
+ *
+ * @param event Debugger message code being delivered.
+ * @param message Payload (must start with debug_origin which will be filled in).
+ * @param size Size of @a message.
+ * @param requireDebugger If true, returns B_ERROR when no debugger is installed.
+ * @param restart [out] Set to true if the caller should re-invoke this function.
+ * @return B_THREAD_DEBUG_HANDLE_EVENT / B_THREAD_DEBUG_IGNORE_EVENT, or a negative error.
+ */
 static status_t
 thread_hit_debug_event_internal(debug_debugger_message event,
 	const void *message, int32 size, bool requireDebugger, bool &restart)
@@ -670,6 +838,7 @@ thread_hit_debug_event_internal(debug_debugger_message event,
 			}
 
 			switch (command) {
+				/** @brief Unblock this stopped thread and decide single-step/handle-event. */
 				case B_DEBUGGED_THREAD_MESSAGE_CONTINUE:
 					TRACE(("thread_hit_debug_event(): thread: %" B_PRId32 ": "
 						"B_DEBUGGED_THREAD_MESSAGE_CONTINUE\n",
@@ -680,6 +849,7 @@ thread_hit_debug_event_internal(debug_debugger_message event,
 					done = true;
 					break;
 
+				/** @brief Overwrite this thread's CPU state in place. */
 				case B_DEBUGGED_THREAD_SET_CPU_STATE:
 				{
 					TRACE(("thread_hit_debug_event(): thread: %" B_PRId32 ": "
@@ -691,6 +861,7 @@ thread_hit_debug_event_internal(debug_debugger_message event,
 					break;
 				}
 
+				/** @brief Send this thread's CPU state back to the reply port. */
 				case B_DEBUGGED_THREAD_GET_CPU_STATE:
 				{
 					port_id replyPort = commandMessage.get_cpu_state.reply_port;
@@ -708,6 +879,7 @@ thread_hit_debug_event_internal(debug_debugger_message event,
 					break;
 				}
 
+				/** @brief Notification that the team's debugger changed; re-evaluate and maybe restart. */
 				case B_DEBUGGED_THREAD_DEBUGGER_CHANGED:
 				{
 					// Check, if the debugger really changed, i.e. is different
@@ -784,6 +956,19 @@ thread_hit_debug_event_internal(debug_debugger_message event,
 }
 
 
+/**
+ * @brief Deliver a debug event and handle debugger-change restarts.
+ *
+ * Drives thread_hit_debug_event_internal() in a loop until it settles, then
+ * asks the BreakpointManager to reinstate any breakpoint that was uninstalled
+ * for the single-step.
+ *
+ * @param event Debugger message code.
+ * @param message Payload.
+ * @param size Payload size.
+ * @param requireDebugger If true, fail when no debugger is installed.
+ * @return B_THREAD_DEBUG_HANDLE_EVENT, B_THREAD_DEBUG_IGNORE_EVENT, or an error.
+ */
 static status_t
 thread_hit_debug_event(debug_debugger_message event, const void *message,
 	int32 size, bool requireDebugger)
@@ -817,6 +1002,17 @@ thread_hit_debug_event(debug_debugger_message event, const void *message,
 }
 
 
+/**
+ * @brief Deliver a "serious" debug event, auto-installing the default debugger.
+ *
+ * Used for exceptions, breakpoint/watchpoint hits, and single steps, where we
+ * must stop and cannot silently ignore.
+ *
+ * @param event Debugger message code.
+ * @param message Payload.
+ * @param messageSize Payload size.
+ * @return Result of thread_hit_debug_event(), or the install error.
+ */
 static status_t
 thread_hit_serious_debug_event(debug_debugger_message event,
 	const void *message, int32 messageSize)
@@ -836,6 +1032,16 @@ thread_hit_serious_debug_event(debug_debugger_message event,
 }
 
 
+/**
+ * @brief Deliver a pre-syscall event to the debugger, if subscribed.
+ *
+ * If B_TEAM_DEBUG_PRE_SYSCALL (or the per-thread equivalent) is set, sends
+ * B_DEBUGGER_MESSAGE_PRE_SYSCALL with the syscall number and args; otherwise
+ * just captures the start time for post-syscall timing.
+ *
+ * @param syscall Syscall number.
+ * @param args Pointer to the syscall argument block.
+ */
 void
 user_debug_pre_syscall(uint32 syscall, void *args)
 {
@@ -872,6 +1078,17 @@ user_debug_pre_syscall(uint32 syscall, void *args)
 }
 
 
+/**
+ * @brief Deliver a post-syscall event and flush pending profile samples.
+ *
+ * Flushes the profiling buffer if a sample batch is waiting, then, if
+ * post-syscall tracing is enabled, sends B_DEBUGGER_MESSAGE_POST_SYSCALL with
+ * start/end times and return value.
+ *
+ * @param syscall Syscall number.
+ * @param args Pointer to the syscall argument block.
+ * @param returnValue The syscall's return value.
+ */
 void
 user_debug_post_syscall(uint32 syscall, void *args, uint64 returnValue)
 {
@@ -916,14 +1133,17 @@ user_debug_post_syscall(uint32 syscall, void *args, uint64 returnValue)
 }
 
 
-/**	\brief To be called when an unhandled processor exception (error/fault)
- *		   occurred.
- *	\param exception The debug_why_stopped value identifying the kind of fault.
- *	\param signal The signal corresponding to the exception.
- *	\return \c true, if the caller shall continue normally, i.e. usually send
- *			a deadly signal. \c false, if the debugger insists to continue the
- *			program (e.g. because it has solved the removed the cause of the
- *			problem).
+/**
+ * @brief Handle an unhandled processor exception by consulting the debugger.
+ *
+ * If a user signal handler is already installed for @a signal we just let the
+ * signal through. Otherwise sends B_DEBUGGER_MESSAGE_EXCEPTION_OCCURRED and
+ * reports whether the debugger wants the normal deadly-signal path or has
+ * patched up the cause.
+ *
+ * @param exception The fault kind (debug_why_stopped value).
+ * @param signal The signal that would correspond to the exception.
+ * @return true if the caller should send the signal; false if the debugger continues.
  */
 bool
 user_debug_exception_occurred(debug_exception_type exception, int signal)
@@ -949,6 +1169,19 @@ user_debug_exception_occurred(debug_exception_type exception, int signal)
 }
 
 
+/**
+ * @brief Notify the debugger of an incoming signal; callable from signal-delivery context.
+ *
+ * Only delivers if the team has both B_TEAM_DEBUG_DEBUGGER_INSTALLED and
+ * B_TEAM_DEBUG_SIGNALS set. The debugger may ask for the signal to be
+ * suppressed by returning B_THREAD_DEBUG_IGNORE_EVENT.
+ *
+ * @param signal Signal number.
+ * @param handler Installed sigaction.
+ * @param info siginfo_t describing the signal.
+ * @param deadly Whether the signal's default action is to terminate the team.
+ * @return true to deliver the signal normally, false to suppress it.
+ */
 bool
 user_debug_handle_signal(int signal, struct sigaction *handler, siginfo_t *info,
 	bool deadly)
@@ -974,6 +1207,13 @@ user_debug_handle_signal(int signal, struct sigaction *handler, siginfo_t *info,
 }
 
 
+/**
+ * @brief Enter the debugger because the thread was asked to stop.
+ *
+ * Detects whether this was an emulated single-step notification (in which
+ * case it delegates to user_debug_single_stepped()) and otherwise sends
+ * B_DEBUGGER_MESSAGE_THREAD_DEBUGGED.
+ */
 void
 user_debug_stop_thread()
 {
@@ -1000,6 +1240,13 @@ user_debug_stop_thread()
 }
 
 
+/**
+ * @brief Notify the debugger that a child team was created.
+ *
+ * No-op unless the parent team's debugger subscribed to team-creation events.
+ *
+ * @param teamID Id of the newly created team.
+ */
 void
 user_debug_team_created(team_id teamID)
 {
@@ -1021,6 +1268,18 @@ user_debug_team_created(team_id teamID)
 }
 
 
+/**
+ * @brief Notify a debugger that the team it was attached to has been deleted.
+ *
+ * Called on team teardown; bypasses debugger_write() because the current
+ * thread no longer belongs to the debugged team.
+ *
+ * @param teamID Id of the deleted team.
+ * @param debuggerPort Port to send the notification to (ignored if < 0).
+ * @param status Exit status.
+ * @param signal Terminating signal, or 0.
+ * @param usageInfo Per-team CPU/memory accounting (may be NULL).
+ */
 void
 user_debug_team_deleted(team_id teamID, port_id debuggerPort, status_t status, int signal,
 	team_usage_info* usageInfo)
@@ -1042,6 +1301,12 @@ user_debug_team_deleted(team_id teamID, port_id debuggerPort, status_t status, i
 }
 
 
+/**
+ * @brief Notify the debugger that the team has successfully exec()'d.
+ *
+ * Bumps the image_event counter used to correlate profiler samples with
+ * image state.
+ */
 void
 user_debug_team_exec()
 {
@@ -1064,10 +1329,14 @@ user_debug_team_exec()
 }
 
 
-/*!	Called by a new userland thread to update the debugging related flags of
-	\c Thread::flags before the thread first enters userland.
-	\param thread The calling thread.
-*/
+/**
+ * @brief Sync a newly created thread's debug-related Thread::flags bits.
+ *
+ * Called by a freshly created userland thread before it first returns to
+ * user space.
+ *
+ * @param thread The calling thread.
+ */
 void
 user_debug_update_new_thread_flags(Thread* thread)
 {
@@ -1080,6 +1349,11 @@ user_debug_update_new_thread_flags(Thread* thread)
 }
 
 
+/**
+ * @brief Notify the debugger that a new thread was spawned in the team.
+ *
+ * @param threadID Id of the new thread.
+ */
 void
 user_debug_thread_created(thread_id threadID)
 {
@@ -1100,6 +1374,17 @@ user_debug_thread_created(thread_id threadID)
 }
 
 
+/**
+ * @brief Notify the debugger that a thread has exited.
+ *
+ * Runs after the thread has already been reparented to the kernel team, so
+ * we can't use debugger_write(); instead acquires the debugger write lock
+ * directly and sends B_DEBUGGER_MESSAGE_THREAD_DELETED.
+ *
+ * @param teamID Team the thread belonged to.
+ * @param threadID Exiting thread id.
+ * @param status Exit status.
+ */
 void
 user_debug_thread_deleted(team_id teamID, thread_id threadID, status_t status)
 {
@@ -1158,10 +1443,16 @@ user_debug_thread_deleted(team_id teamID, thread_id threadID, status_t status)
 }
 
 
-/*!	Called for a thread that is about to die, cleaning up all user debug
-	facilities installed for the thread.
-	\param thread The current thread, the one that is going to die.
-*/
+/**
+ * @brief Detach profile buffers and send a final profiler update for a dying thread.
+ *
+ * Called on the current thread's teardown path. Holds the thread debug info
+ * lock while unlinking the sample buffer, then sends
+ * B_DEBUGGER_MESSAGE_PROFILER_UPDATE with the remaining samples before the
+ * sample area is destroyed.
+ *
+ * @param thread The current thread, which is about to die.
+ */
 void
 user_debug_thread_exiting(Thread* thread)
 {
@@ -1234,6 +1525,13 @@ user_debug_thread_exiting(Thread* thread)
 }
 
 
+/**
+ * @brief Notify the debugger that an image (shared object) was loaded.
+ *
+ * Also bumps the team's image_event counter so profilers can correlate.
+ *
+ * @param imageInfo Info for the newly loaded image.
+ */
 void
 user_debug_image_created(const image_info *imageInfo)
 {
@@ -1256,6 +1554,11 @@ user_debug_image_created(const image_info *imageInfo)
 }
 
 
+/**
+ * @brief Notify the debugger that an image was unloaded.
+ *
+ * @param imageInfo Info for the image being removed.
+ */
 void
 user_debug_image_deleted(const image_info *imageInfo)
 {
@@ -1278,6 +1581,14 @@ user_debug_image_deleted(const image_info *imageInfo)
 }
 
 
+/**
+ * @brief Report a breakpoint hit to the debugger.
+ *
+ * Snapshots CPU state and sends B_DEBUGGER_MESSAGE_BREAKPOINT_HIT; this is a
+ * "serious" event so the debugger is auto-installed if missing.
+ *
+ * @param software Whether the breakpoint came from a software trap (informational).
+ */
 void
 user_debug_breakpoint_hit(bool software)
 {
@@ -1290,6 +1601,9 @@ user_debug_breakpoint_hit(bool software)
 }
 
 
+/**
+ * @brief Report a watchpoint hit to the debugger with current CPU state.
+ */
 void
 user_debug_watchpoint_hit()
 {
@@ -1302,6 +1616,11 @@ user_debug_watchpoint_hit()
 }
 
 
+/**
+ * @brief Report a single-step completion to the debugger.
+ *
+ * Clears the single-step thread flag and sends B_DEBUGGER_MESSAGE_SINGLE_STEP.
+ */
 void
 user_debug_single_stepped()
 {
@@ -1318,11 +1637,14 @@ user_debug_single_stepped()
 }
 
 
-/*!	Schedules the profiling timer for the current thread.
-	The caller must hold the thread's debug info lock.
-	\param thread The current thread.
-	\param interval The time after which the timer should fire.
-*/
+/**
+ * @brief Arm the per-CPU profiling timer for the current thread.
+ *
+ * The caller must hold the thread's debug info lock.
+ *
+ * @param thread The current thread.
+ * @param interval Relative delay until the timer should fire.
+ */
 static void
 schedule_profiling_timer(Thread* thread, bigtime_t interval)
 {
@@ -1335,10 +1657,14 @@ schedule_profiling_timer(Thread* thread, bigtime_t interval)
 }
 
 
-/*!	Returns the time remaining for the current profiling timer.
-	The caller must hold the thread's debug info lock.
-	\param thread The current thread.
-*/
+/**
+ * @brief Return the time remaining on the current profiling timer.
+ *
+ * The caller must hold the thread's debug info lock.
+ *
+ * @param thread The current thread.
+ * @return Microseconds until the timer fires (may be negative).
+ */
 static bigtime_t
 profiling_timer_left(Thread* thread)
 {
@@ -1346,10 +1672,15 @@ profiling_timer_left(Thread* thread)
 }
 
 
-/*!	Samples the current thread's instruction pointer/stack trace.
-	The caller must hold the current thread's debug info lock.
-	\returns Whether the profiling timer should be rescheduled.
-*/
+/**
+ * @brief Record one profile sample (PC or stack trace) into the thread's buffer.
+ *
+ * Handles variable/fixed stack depth, image-event markers, and marks the
+ * buffer as needing a flush when the threshold is crossed. The caller must
+ * hold the thread's debug info lock.
+ *
+ * @return Whether the profiling timer should be rescheduled.
+ */
 static bool
 profiling_do_sample()
 {
@@ -1430,6 +1761,13 @@ profiling_do_sample()
 }
 
 
+/**
+ * @brief Flush accumulated profile samples to the debugger.
+ *
+ * May be installed as a post_interrupt_callback, so it tolerates entering
+ * with interrupts either enabled or disabled. Re-arms the profiling timer
+ * if the thread is still being profiled after the flush.
+ */
 static void
 profiling_flush(void*)
 {
@@ -1493,9 +1831,15 @@ profiling_flush(void*)
 }
 
 
-/*!	Profiling timer event callback.
-	Called with interrupts disabled.
-*/
+/**
+ * @brief Profiling timer callback: take a sample and schedule the next tick.
+ *
+ * Runs in timer (interrupt) context. If a flush is needed and we interrupted
+ * user code, defers the flush via post_interrupt_callback so it can block
+ * safely; otherwise just rearms the timer.
+ *
+ * @return B_HANDLED_INTERRUPT.
+ */
 static int32
 profiling_event(timer* /*unused*/)
 {
@@ -1527,9 +1871,14 @@ profiling_event(timer* /*unused*/)
 }
 
 
-/*!	Called by the scheduler when a debugged thread has been unscheduled.
-	The scheduler lock is being held.
-*/
+/**
+ * @brief Scheduler hook: pause the profiling timer when the thread is swapped out.
+ *
+ * Runs with the scheduler lock held. Records how much time was left on the
+ * timer so user_debug_thread_scheduled() can resume where we left off.
+ *
+ * @param thread Thread being unscheduled.
+ */
 void
 user_debug_thread_unscheduled(Thread* thread)
 {
@@ -1554,9 +1903,13 @@ user_debug_thread_unscheduled(Thread* thread)
 }
 
 
-/*!	Called by the scheduler when a debugged thread has been scheduled.
-	The scheduler lock is being held.
-*/
+/**
+ * @brief Scheduler hook: restart the profiling timer when the thread resumes.
+ *
+ * Runs with the scheduler lock held.
+ *
+ * @param thread Thread being scheduled onto a CPU.
+ */
 void
 user_debug_thread_scheduled(Thread* thread)
 {
@@ -1571,10 +1924,17 @@ user_debug_thread_scheduled(Thread* thread)
 }
 
 
-/*!	\brief Called by the debug nub thread of a team to broadcast a message to
-		all threads of the team that are initialized for debugging (and
-		thus have a debug port).
-*/
+/**
+ * @brief Send a message to every debug-initialized thread in the nub's team.
+ *
+ * Iterates the team's threads, skips the nub, and writes to each thread's
+ * debug port (kill-interruptably). Used to push B_DEBUGGED_THREAD_DEBUGGER_CHANGED.
+ *
+ * @param nubThread The nub thread doing the broadcast.
+ * @param code Message code.
+ * @param message Payload (may be NULL when size is 0).
+ * @param size Payload size.
+ */
 static void
 broadcast_debugged_thread_message(Thread *nubThread, int32 code,
 	const void *message, int32 size)
@@ -1619,6 +1979,16 @@ broadcast_debugged_thread_message(Thread *nubThread, int32 code,
 }
 
 
+/**
+ * @brief Detach the debugger when the nub thread is exiting.
+ *
+ * Acquires exclusive debugger-change rights, snapshots and clears the team's
+ * debug info, drops installed breakpoints, releases the rights, then
+ * broadcasts B_DEBUGGED_THREAD_DEBUGGER_CHANGED to all stopped threads so
+ * they wake up and proceed.
+ *
+ * @param nubThread The nub thread being torn down.
+ */
 static void
 nub_thread_cleanup(Thread *nubThread)
 {
@@ -1668,8 +2038,16 @@ nub_thread_cleanup(Thread *nubThread)
 }
 
 
-/**	\brief Debug nub thread helper function that returns the debug port of
- *		   a thread of the same team.
+/**
+ * @brief Resolve a stopped sibling thread's debug port for the nub to talk to.
+ *
+ * Validates that @a threadID belongs to the nub's team and is currently
+ * B_THREAD_DEBUG_STOPPED; otherwise returns a descriptive error.
+ *
+ * @param nubThread The nub thread making the request.
+ * @param threadID The target thread.
+ * @param threadDebugPort [out] The resolved debug port on success.
+ * @return B_OK, B_BAD_THREAD_ID, B_BAD_VALUE, or B_BAD_THREAD_STATE.
  */
 static status_t
 debug_nub_thread_get_thread_debug_port(Thread *nubThread,
@@ -1703,6 +2081,18 @@ debug_nub_thread_get_thread_debug_port(Thread *nubThread,
 }
 
 
+/**
+ * @brief Main loop of the per-team debug nub kernel thread.
+ *
+ * Reads B_DEBUG_MESSAGE_* requests from the team's nub port and dispatches
+ * them: memory read/write, area clone, breakpoint/watchpoint set/clear,
+ * signal mask get/set, handler get/set, profiling start/stop, debugger
+ * handover, core file writing, and per-thread continue/set/get-CPU-state.
+ * Runs until the nub port is deleted or a kill signal arrives, at which
+ * point it calls nub_thread_cleanup() and exits.
+ *
+ * @return The error that terminated the loop (typically a port error or kill).
+ */
 static status_t
 debug_nub_thread(void *)
 {
@@ -1771,6 +2161,7 @@ debug_nub_thread(void *)
 
 		// process the command
 		switch (command) {
+			/** @brief Read memory from the debugged team at @c address via BreakpointManager. */
 			case B_DEBUG_MESSAGE_READ_MEMORY:
 			{
 				// get the parameters
@@ -1805,6 +2196,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Write memory into the debugged team, patching over any breakpoints. */
 			case B_DEBUG_MESSAGE_WRITE_MEMORY:
 			{
 				// get the parameters
@@ -1840,6 +2232,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Clone an area of the debugged team into the debugger team read-only. */
 			case B_DEBUG_MESSAGE_CLONE_AREA:
 			{
 				// get the parameters
@@ -1885,6 +2278,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Replace the user-visible team-wide debug flags. */
 			case B_DEBUG_MESSAGE_SET_TEAM_FLAGS:
 			{
 				// get the parameters
@@ -1909,6 +2303,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Replace the user-visible per-thread debug flags. */
 			case B_DEBUG_MESSAGE_SET_THREAD_FLAGS:
 			{
 				// get the parameters
@@ -1939,6 +2334,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Resume a stopped thread, optionally single-stepping it. */
 			case B_DEBUG_MESSAGE_CONTINUE_THREAD:
 			{
 				// get the parameters
@@ -1986,6 +2382,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Replace a stopped thread's CPU register state. */
 			case B_DEBUG_MESSAGE_SET_CPU_STATE:
 			{
 				// get the parameters
@@ -2014,6 +2411,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Read a stopped thread's CPU register state via its debug port. */
 			case B_DEBUG_MESSAGE_GET_CPU_STATE:
 			{
 				// get the parameters
@@ -2047,6 +2445,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Install a software/code breakpoint through the BreakpointManager. */
 			case B_DEBUG_MESSAGE_SET_BREAKPOINT:
 			{
 				// get the parameters
@@ -2078,6 +2477,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Remove a previously-installed breakpoint. */
 			case B_DEBUG_MESSAGE_CLEAR_BREAKPOINT:
 			{
 				// get the parameters
@@ -2103,6 +2503,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Install a data watchpoint of the given type and length. */
 			case B_DEBUG_MESSAGE_SET_WATCHPOINT:
 			{
 				// get the parameters
@@ -2141,6 +2542,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Remove a previously-installed watchpoint. */
 			case B_DEBUG_MESSAGE_CLEAR_WATCHPOINT:
 			{
 				// get the parameters
@@ -2166,6 +2568,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Update the per-thread "ignore these signals" and "ignore once" masks. */
 			case B_DEBUG_MESSAGE_SET_SIGNAL_MASKS:
 			{
 				// get the parameters
@@ -2223,6 +2626,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Read back a thread's signal ignore masks. */
 			case B_DEBUG_MESSAGE_GET_SIGNAL_MASKS:
 			{
 				// get the parameters
@@ -2262,6 +2666,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Install a sigaction in the debugged team on the debugger's behalf. */
 			case B_DEBUG_MESSAGE_SET_SIGNAL_HANDLER:
 			{
 				// get the parameters
@@ -2278,6 +2683,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Query the currently installed sigaction for a signal. */
 			case B_DEBUG_MESSAGE_GET_SIGNAL_HANDLER:
 			{
 				// get the parameters
@@ -2303,6 +2709,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Set the HANDOVER flag, drain writes, and uninstall breakpoints prior to debugger handover. */
 			case B_DEBUG_MESSAGE_PREPARE_HANDOVER:
 			{
 				TRACE(("nub thread %" B_PRId32 ": B_DEBUG_MESSAGE_PREPARE_HANDOVER"
@@ -2340,6 +2747,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Broadcast that handover finished so stopped threads re-read the debugger port. */
 			case B_DEBUG_MESSAGE_HANDED_OVER:
 			{
 				// notify all threads that the debugger has changed
@@ -2349,6 +2757,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Start sampling a thread's PC/stack into a cloned sample area. */
 			case B_DEBUG_MESSAGE_START_PROFILER:
 			{
 				// get the parameters
@@ -2461,6 +2870,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Stop profiling, return the last batch of samples, and release the sample area. */
 			case B_DEBUG_MESSAGE_STOP_PROFILER:
 			{
 				// get the parameters
@@ -2543,6 +2953,7 @@ debug_nub_thread(void *)
 				break;
 			}
 
+			/** @brief Dump a core file of the debugged team to @c path. */
 			case B_DEBUG_MESSAGE_WRITE_CORE_FILE:
 			{
 				// get the parameters
@@ -2585,13 +2996,20 @@ debug_nub_thread(void *)
 }
 
 
-/**	\brief Helper function for install_team_debugger(), that sets up the team
-		   and thread debug infos.
-
-	The caller must hold the team's lock as well as the team debug info lock.
-
-	The function also clears the arch specific team and thread debug infos
-	(including among other things formerly set break/watchpoints).
+/**
+ * @brief Populate team/thread debug_info for a freshly attached debugger.
+ *
+ * Clears arch-specific break/watchpoints and resets every non-nub thread's
+ * user-visible debug flags to defaults. The caller must hold both the team
+ * lock and the team debug_info lock.
+ *
+ * @param team The team being attached.
+ * @param debuggerTeam Id of the team running the debugger.
+ * @param debuggerPort Port the debugger receives notifications on.
+ * @param nubPort Port the nub listens on.
+ * @param nubThread Spawned nub kernel thread id.
+ * @param debuggerPortWriteLock Sem id serializing writes to the debugger port.
+ * @param causingThread Thread whose event triggered attach (or -1).
  */
 static void
 install_team_debugger_init_debug_infos(Team *team, team_id debuggerTeam,
@@ -2633,6 +3051,23 @@ install_team_debugger_init_debug_infos(Team *team, team_id debuggerTeam,
 }
 
 
+/**
+ * @brief Attach a debugger to a team (creating the nub port + nub thread).
+ *
+ * Enforces the invariant that only one debugger may be installed at a time
+ * per team: if one already is, either fails, succeeds trivially (dontReplace),
+ * or orchestrates a handover via the B_TEAM_DEBUG_DEBUGGER_HANDOVER/HANDING_OVER
+ * flags. On clean attach, creates the debugger_write_lock sem, the nub port
+ * (owned by the debugger team), the BreakpointManager, and spawns the nub
+ * kernel thread.
+ *
+ * @param teamID Team to attach (or B_CURRENT_TEAM).
+ * @param debuggerPort Port to send B_DEBUGGER_MESSAGE_* to (ignored if useDefault).
+ * @param causingThread Thread that triggered attach; -1 if none.
+ * @param useDefault If true, use the sDefaultDebuggerPort instead of @a debuggerPort.
+ * @param dontReplace If true, don't replace an already-installed debugger.
+ * @return The newly created nub port, or a negative error.
+ */
 static port_id
 install_team_debugger(team_id teamID, port_id debuggerPort,
 	thread_id causingThread, bool useDefault, bool dontReplace)
@@ -2884,6 +3319,14 @@ install_team_debugger(team_id teamID, port_id debuggerPort,
 }
 
 
+/**
+ * @brief Install the default debugger for the current team if none is attached.
+ *
+ * Used on serious debug events so that even unattached teams get stopped
+ * rather than terminated outright.
+ *
+ * @return B_OK, or the error returned by install_team_debugger().
+ */
 static status_t
 ensure_debugger_installed()
 {
@@ -2896,6 +3339,15 @@ ensure_debugger_installed()
 // #pragma mark -
 
 
+/**
+ * @brief Syscall entry point: user-space requests a debugger stop.
+ *
+ * Auto-installs the default debugger if needed; if installation fails the
+ * calling team is exited with status 1. Sends B_DEBUGGER_MESSAGE_DEBUGGER_CALL
+ * carrying @a userMessage.
+ *
+ * @param userMessage User pointer to a NUL-terminated string explaining the stop.
+ */
 void
 _user_debugger(const char *userMessage)
 {
@@ -2924,6 +3376,14 @@ _user_debugger(const char *userMessage)
 }
 
 
+/**
+ * @brief Syscall entry point: enable/disable automatic default-debugger install.
+ *
+ * Flips the B_TEAM_DEBUG_DEBUGGER_DISABLED bit for the current team.
+ *
+ * @param state Non-zero to disable the default debugger, zero to re-enable.
+ * @return The previous enable state.
+ */
 int
 _user_disable_debugger(int state)
 {
@@ -2952,6 +3412,14 @@ _user_disable_debugger(int state)
 }
 
 
+/**
+ * @brief Syscall entry point: set the system-wide default debugger port.
+ *
+ * Root-only; validates that @a debuggerPort (if >= 0) belongs to a non-kernel team.
+ *
+ * @param debuggerPort New default debugger port, or < 0 to clear.
+ * @return B_OK, B_PERMISSION_DENIED, B_NOT_ALLOWED, or an error from get_port_info().
+ */
 status_t
 _user_install_default_debugger(port_id debuggerPort)
 {
@@ -2977,6 +3445,16 @@ _user_install_default_debugger(port_id debuggerPort)
 }
 
 
+/**
+ * @brief Syscall entry point: attach a debugger to an arbitrary team.
+ *
+ * Requires root, or that the caller owns the target team. Delegates to
+ * install_team_debugger() with dontReplace=false.
+ *
+ * @param teamID Target team.
+ * @param debuggerPort Port that will receive B_DEBUGGER_MESSAGE_* events.
+ * @return The nub port on success, or a negative error.
+ */
 port_id
 _user_install_team_debugger(team_id teamID, port_id debuggerPort)
 {
@@ -2987,6 +3465,16 @@ _user_install_team_debugger(team_id teamID, port_id debuggerPort)
 }
 
 
+/**
+ * @brief Syscall entry point: detach the debugger from a team.
+ *
+ * Acquires exclusive debugger-change rights, deletes the nub port (which
+ * causes the nub thread to exit and tear down debug state), then waits for
+ * the nub thread to finish.
+ *
+ * @param teamID Target team.
+ * @return B_OK on success, B_BAD_VALUE if no debugger, or B_PERMISSION_DENIED.
+ */
 status_t
 _user_remove_team_debugger(team_id teamID)
 {
@@ -3037,6 +3525,16 @@ _user_remove_team_debugger(team_id teamID)
 }
 
 
+/**
+ * @brief Syscall entry point: request a specific thread to stop in the debugger.
+ *
+ * Sets B_THREAD_DEBUG_STOP and sends SIGNAL_DEBUG_THREAD so the thread enters
+ * the debug event path at the next safe point. Refuses the kernel team, the
+ * nub thread, and dying threads.
+ *
+ * @param threadID Target thread.
+ * @return B_OK, B_BAD_THREAD_ID, B_NOT_ALLOWED, or B_PERMISSION_DENIED.
+ */
 status_t
 _user_debug_thread(thread_id threadID)
 {
@@ -3092,6 +3590,12 @@ _user_debug_thread(thread_id threadID)
 }
 
 
+/**
+ * @brief Syscall entry point: block the caller until a debugger arrives.
+ *
+ * Sends B_DEBUGGER_MESSAGE_THREAD_DEBUGGED with requireDebugger=false, so the
+ * thread sleeps in its debug port waiting for the eventual debugger attach.
+ */
 void
 _user_wait_for_debugger(void)
 {
@@ -3101,6 +3605,19 @@ _user_wait_for_debugger(void)
 }
 
 
+/**
+ * @brief Syscall entry point: set an arch-level breakpoint or watchpoint directly.
+ *
+ * Only valid when no debugger is installed (the debugger would otherwise own
+ * the breakpoint state). A small race against concurrent debugger install is
+ * considered acceptable.
+ *
+ * @param address Address to trap on.
+ * @param type Watchpoint type (ignored for code breakpoints).
+ * @param length Watchpoint length in bytes.
+ * @param watchpoint If true set a data watchpoint; else an instruction breakpoint.
+ * @return B_OK, B_BAD_ADDRESS, B_BAD_VALUE, or arch-layer error.
+ */
 status_t
 _user_set_debugger_breakpoint(void *address, uint32 type, int32 length,
 	bool watchpoint)
@@ -3135,6 +3652,16 @@ _user_set_debugger_breakpoint(void *address, uint32 type, int32 length,
 }
 
 
+/**
+ * @brief Syscall entry point: clear an arch-level breakpoint/watchpoint.
+ *
+ * Mirror of _user_set_debugger_breakpoint(); same "no debugger installed"
+ * precondition.
+ *
+ * @param address Address of the existing break/watchpoint.
+ * @param watchpoint True for a data watchpoint, false for a code breakpoint.
+ * @return B_OK, B_BAD_ADDRESS, B_BAD_VALUE, or arch-layer error.
+ */
 status_t
 _user_clear_debugger_breakpoint(void *address, bool watchpoint)
 {

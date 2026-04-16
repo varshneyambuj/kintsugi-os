@@ -1,6 +1,36 @@
 /*
- * Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file scheduler_profiler.cpp
+ * @brief Optional scheduler-internal function-level profiler.
+ *
+ * Compiled in only when SCHEDULER_PROFILING is defined. Each CPU has its own
+ * call stack of FunctionEntry records; EnterFunction()/ExitFunction() bracket
+ * hot scheduler routines to record inclusive and exclusive time plus call
+ * counts. The aggregated data is inspected with the `scheduler_profiler`
+ * kernel-debugger command.
  */
 
 #include "scheduler_profiler.h"
@@ -23,6 +53,12 @@ static Profiler* sProfiler;
 static int dump_profiler(int argc, char** argv);
 
 
+/**
+ * @brief Allocate per-function and per-CPU stack buffers.
+ *
+ * Failure to allocate any table leaves fStatus at B_NO_MEMORY; callers must
+ * check GetStatus() before using the profiler.
+ */
 Profiler::Profiler()
 	:
 	kMaxFunctionEntries(1024),
@@ -52,6 +88,16 @@ Profiler::Profiler()
 }
 
 
+/**
+ * @brief Push a profiling frame onto the current CPU's function stack.
+ *
+ * Looks up (or inserts) a FunctionData record for @a functionName, bumps its
+ * call counter, and records the entry timestamp. The profiler's own overhead
+ * for this call is stored on the new frame so it can be subtracted later.
+ *
+ * @param cpu          Current CPU index.
+ * @param functionName Stable string identifying the instrumented function.
+ */
 void
 Profiler::EnterFunction(int32 cpu, const char* functionName)
 {
@@ -77,6 +123,17 @@ Profiler::EnterFunction(int32 cpu, const char* functionName)
 }
 
 
+/**
+ * @brief Pop the top profiling frame and charge it.
+ *
+ * Computes elapsed time, subtracts profiler overhead, and atomically adds
+ * the result to the function's inclusive time. Exclusive time excludes the
+ * inclusive time attributed to any nested calls. The parent frame is credited
+ * with the nested-call time so its exclusive total stays accurate.
+ *
+ * @param cpu          Current CPU index.
+ * @param functionName Unused (kept for symmetry with EnterFunction).
+ */
 void
 Profiler::ExitFunction(int32 cpu, const char* functionName)
 {
@@ -106,6 +163,10 @@ Profiler::ExitFunction(int32 cpu, const char* functionName)
 }
 
 
+/**
+ * @brief Print functions sorted by call count.
+ * @param maxCount Upper bound on rows printed (0 means all).
+ */
 void
 Profiler::DumpCalled(uint32 maxCount)
 {
@@ -120,6 +181,10 @@ Profiler::DumpCalled(uint32 maxCount)
 }
 
 
+/**
+ * @brief Print functions sorted by inclusive time (self + descendants).
+ * @param maxCount Upper bound on rows printed (0 means all).
+ */
 void
 Profiler::DumpTimeInclusive(uint32 maxCount)
 {
@@ -134,6 +199,10 @@ Profiler::DumpTimeInclusive(uint32 maxCount)
 }
 
 
+/**
+ * @brief Print functions sorted by exclusive time (self only).
+ * @param maxCount Upper bound on rows printed (0 means all).
+ */
 void
 Profiler::DumpTimeExclusive(uint32 maxCount)
 {
@@ -148,6 +217,10 @@ Profiler::DumpTimeExclusive(uint32 maxCount)
 }
 
 
+/**
+ * @brief Print functions sorted by average inclusive time per call.
+ * @param maxCount Upper bound on rows printed (0 means all).
+ */
 void
 Profiler::DumpTimeInclusivePerCall(uint32 maxCount)
 {
@@ -162,6 +235,10 @@ Profiler::DumpTimeInclusivePerCall(uint32 maxCount)
 }
 
 
+/**
+ * @brief Print functions sorted by average exclusive time per call.
+ * @param maxCount Upper bound on rows printed (0 means all).
+ */
 void
 Profiler::DumpTimeExclusivePerCall(uint32 maxCount)
 {
@@ -176,6 +253,10 @@ Profiler::DumpTimeExclusivePerCall(uint32 maxCount)
 }
 
 
+/**
+ * @brief Return the singleton profiler instance.
+ * @return Pointer to the global Profiler, or NULL before Initialize().
+ */
 /* static */ Profiler*
 Profiler::Get()
 {
@@ -183,6 +264,11 @@ Profiler::Get()
 }
 
 
+/**
+ * @brief Allocate the singleton profiler and register its debugger command.
+ *
+ * Panics if the profiler cannot be allocated.
+ */
 /* static */ void
 Profiler::Initialize()
 {
@@ -202,6 +288,10 @@ Profiler::Initialize()
 }
 
 
+/**
+ * @brief Return the number of function slots currently in use.
+ * @return Index of the first empty slot in the FunctionData table.
+ */
 uint32
 Profiler::_FunctionCount() const
 {
@@ -214,6 +304,10 @@ Profiler::_FunctionCount() const
 }
 
 
+/**
+ * @brief Print the first @a count rows of the (already-sorted) FunctionData table.
+ * @param count Number of rows to print.
+ */
 void
 Profiler::_Dump(uint32 count)
 {
@@ -232,6 +326,15 @@ Profiler::_Dump(uint32 count)
 }
 
 
+/**
+ * @brief Look up or insert the FunctionData record for @a function.
+ *
+ * Two-phase lookup: first a lock-free scan, then a spin-locked scan that may
+ * claim a fresh slot. Returns NULL if the table is full.
+ *
+ * @param function Stable string identifying the function.
+ * @return Pointer to the matching FunctionData, or NULL on table overflow.
+ */
 Profiler::FunctionData*
 Profiler::_FindFunction(const char* function)
 {
@@ -256,6 +359,12 @@ Profiler::_FindFunction(const char* function)
 }
 
 
+/**
+ * @brief qsort comparator ordering FunctionData by the given member, descending.
+ * @tparam Type    Numeric type of the sort key.
+ * @tparam Member  Pointer-to-member selecting the sort key.
+ * @return Negative if @a _a sorts before @a _b, positive if after, zero if equal.
+ */
 template<typename Type, Type Profiler::FunctionData::*Member>
 /* static */ int
 Profiler::_CompareFunctions(const void* _a, const void* _b)
@@ -271,6 +380,12 @@ Profiler::_CompareFunctions(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief qsort comparator ordering FunctionData by (member / fCalled), descending.
+ * @tparam Type    Numeric type of the sort-key member.
+ * @tparam Member  Pointer-to-member selecting the accumulator.
+ * @return Negative if @a _a sorts before @a _b, positive if after, zero if equal.
+ */
 template<typename Type, Type Profiler::FunctionData::*Member>
 /* static */ int
 Profiler::_CompareFunctionsPerCall(const void* _a, const void* _b)
@@ -289,6 +404,16 @@ Profiler::_CompareFunctionsPerCall(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief `scheduler_profiler` kernel debugger command handler.
+ *
+ * Dispatches to the appropriate Dump* routine based on the sort-field
+ * argument and optional row-count argument.
+ *
+ * @param argc Argument count including the command name.
+ * @param argv argv[1] is the sort field, argv[2] optional row limit.
+ * @return Always 0.
+ */
 static int
 dump_profiler(int argc, char** argv)
 {

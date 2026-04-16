@@ -51,6 +51,10 @@ static DPCQueue sRealTimePriorityQueue;
 // #pragma mark - FunctionDPCCallback
 
 
+/**
+ * @brief Construct a recyclable function callback owned by @a owner.
+ * @param owner Queue whose free-list will reclaim this object, or NULL.
+ */
 FunctionDPCCallback::FunctionDPCCallback(DPCQueue* owner)
 	:
 	fOwner(owner)
@@ -58,6 +62,11 @@ FunctionDPCCallback::FunctionDPCCallback(DPCQueue* owner)
 }
 
 
+/**
+ * @brief Bind a C-style function pointer and argument to this callback.
+ * @param function Function to invoke when the callback runs.
+ * @param argument Opaque argument passed through to @a function.
+ */
 void
 FunctionDPCCallback::SetTo(void (*function)(void*), void* argument)
 {
@@ -66,6 +75,14 @@ FunctionDPCCallback::SetTo(void (*function)(void*), void* argument)
 }
 
 
+/**
+ * @brief Invoke the bound function and return the callback to its owner.
+ *
+ * Called from the DPC worker thread. After the hook returns, the callback
+ * recycles itself onto the owning queue's free list when present.
+ *
+ * @param queue Queue that dispatched this callback.
+ */
 void
 FunctionDPCCallback::DoDPC(DPCQueue* queue)
 {
@@ -79,6 +96,9 @@ FunctionDPCCallback::DoDPC(DPCQueue* queue)
 // #pragma mark - DPCCallback
 
 
+/**
+ * @brief Construct an unqueued DPC callback.
+ */
 DPCCallback::DPCCallback()
 	:
 	fInQueue(NULL)
@@ -86,6 +106,9 @@ DPCCallback::DPCCallback()
 }
 
 
+/**
+ * @brief Virtual destructor; derived callbacks clean up their own state.
+ */
 DPCCallback::~DPCCallback()
 {
 }
@@ -94,6 +117,12 @@ DPCCallback::~DPCCallback()
 // #pragma mark - DPCQueue
 
 
+/**
+ * @brief Construct an empty, unstarted DPC queue.
+ *
+ * Initialises the spinlock and the pending-callbacks condition variable.
+ * Call Init() to spawn the worker thread and begin accepting work.
+ */
 DPCQueue::DPCQueue()
 	:
 	fThreadID(-1),
@@ -106,6 +135,9 @@ DPCQueue::DPCQueue()
 }
 
 
+/**
+ * @brief Close the queue if still open and free reserved function callbacks.
+ */
 DPCQueue::~DPCQueue()
 {
 	// close, if not closed yet
@@ -123,6 +155,11 @@ DPCQueue::~DPCQueue()
 }
 
 
+/**
+ * @brief Return the shared default queue matching @a priority.
+ * @param priority Requested thread priority for the target queue.
+ * @return Normal, high, or real-time default queue pointer.
+ */
 /*static*/ DPCQueue*
 DPCQueue::DefaultQueue(int priority)
 {
@@ -136,6 +173,16 @@ DPCQueue::DefaultQueue(int priority)
 }
 
 
+/**
+ * @brief Pre-allocate function-callback slots and start the worker thread.
+ *
+ * @param name          Name used for the kernel worker thread.
+ * @param priority      Scheduling priority of the worker thread.
+ * @param reservedSlots Number of FunctionDPCCallback instances to pre-create
+ *                      for use by the Add(function, argument) overload.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or a thread
+ *         spawn error.
+ */
 status_t
 DPCQueue::Init(const char* name, int32 priority, uint32 reservedSlots)
 {
@@ -160,6 +207,14 @@ DPCQueue::Init(const char* name, int32 priority, uint32 reservedSlots)
 }
 
 
+/**
+ * @brief Close the queue and wait for its worker thread to exit.
+ *
+ * Safe to call from thread context only — blocks until the worker finishes.
+ *
+ * @param cancelPending If true, drop still-queued callbacks instead of
+ *                      running them.
+ */
 void
 DPCQueue::Close(bool cancelPending)
 {
@@ -184,6 +239,15 @@ DPCQueue::Close(bool cancelPending)
 }
 
 
+/**
+ * @brief Enqueue a caller-supplied DPC callback.
+ *
+ * Safe to call from interrupt context.
+ *
+ * @param callback Callback object whose DoDPC() will be run on the worker.
+ * @return B_OK on success, B_NOT_INITIALIZED if closed, EALREADY if @a
+ *         callback is already on a queue.
+ */
 status_t
 DPCQueue::Add(DPCCallback* callback)
 {
@@ -210,6 +274,17 @@ DPCQueue::Add(DPCCallback* callback)
 }
 
 
+/**
+ * @brief Enqueue a plain function pointer using a reserved callback slot.
+ *
+ * Safe to call from interrupt context. Allocates no memory; fails with
+ * B_NO_MEMORY when all reserved slots are exhausted.
+ *
+ * @param function Function to run on the worker thread.
+ * @param argument Opaque argument passed to @a function.
+ * @return B_OK on success, B_BAD_VALUE if @a function is NULL, B_NO_MEMORY
+ *         when no reserved slot is free.
+ */
 status_t
 DPCQueue::Add(void (*function)(void*), void* argument)
 {
@@ -239,6 +314,16 @@ DPCQueue::Add(void (*function)(void*), void* argument)
 }
 
 
+/**
+ * @brief Cancel a previously queued callback, waiting if it is in flight.
+ *
+ * Must be called from thread context: if the callback is currently running,
+ * this blocks until it finishes.
+ *
+ * @param callback Callback previously passed to Add().
+ * @return true if the callback was removed before execution, false if it
+ *         either already ran or finished running during the wait.
+ */
 bool
 DPCQueue::Cancel(DPCCallback* callback)
 {
@@ -276,6 +361,13 @@ DPCQueue::Cancel(DPCCallback* callback)
 }
 
 
+/**
+ * @brief Return a FunctionDPCCallback to the free list for reuse.
+ *
+ * Safe to call from interrupt context.
+ *
+ * @param callback Callback previously handed out by Add(function, argument).
+ */
 void
 DPCQueue::Recycle(FunctionDPCCallback* callback)
 {
@@ -284,6 +376,11 @@ DPCQueue::Recycle(FunctionDPCCallback* callback)
 }
 
 
+/**
+ * @brief Trampoline from spawn_kernel_thread() into the per-instance loop.
+ * @param data DPCQueue pointer disguised as a void*.
+ * @return Status returned by _Thread().
+ */
 /*static*/ status_t
 DPCQueue::_ThreadEntry(void* data)
 {
@@ -291,6 +388,14 @@ DPCQueue::_ThreadEntry(void* data)
 }
 
 
+/**
+ * @brief Worker loop: drain queued callbacks and wake cancellation waiters.
+ *
+ * Blocks on fPendingCallbacksCondition when the queue is empty and exits
+ * only when the queue has been closed.
+ *
+ * @return B_OK when the queue is torn down.
+ */
 status_t
 DPCQueue::_Thread()
 {
@@ -338,6 +443,11 @@ DPCQueue::_Thread()
 // #pragma mark - kernel private
 
 
+/**
+ * @brief Construct and start the three shared default DPC queues.
+ *
+ * Panics if any of the worker threads cannot be spawned.
+ */
 void
 dpc_init()
 {

@@ -1,6 +1,38 @@
 /*
- * Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file system_profiler.cpp
+ * @brief Kernel-side implementation of the system profiler.
+ *
+ * Companion to the userland `profile` tool. Registers a userland team as the
+ * system profiler, cloning a user-provided area as a shared ring buffer for
+ * events. Records team/thread/image add/remove, periodic PC + stack-trace
+ * samples driven by per-CPU one-shot timers, scheduler transitions, wait
+ * object usage, and I/O scheduler events. Implements the `_user_system_profiler_*`
+ * syscalls that the userspace reader uses to start/stop profiling and drain
+ * the buffer.
  */
 
 
@@ -214,9 +246,14 @@ private:
 };
 
 
-/*!	Notifies the profiler thread when the profiling buffer is full enough.
-	The caller must hold fLock.
-*/
+/**
+ * @brief Wake the waiting profiler thread once the ring buffer is more than
+ *        half full.
+ *
+ * Locked variant: caller must already hold @c fLock. Commonly invoked from
+ * scheduler listener callbacks that reenter with the lock held. Sets the
+ * reentry flag so the unblock path does not try to reacquire @c fLock.
+ */
 inline void
 SystemProfiler::_MaybeNotifyProfilerThreadLocked()
 {
@@ -236,6 +273,13 @@ SystemProfiler::_MaybeNotifyProfilerThreadLocked()
 }
 
 
+/**
+ * @brief Lock-free fast path that wakes the profiler thread when the buffer
+ *        needs draining.
+ *
+ * Cheaply checks @c fWaitingProfilerThread without the lock first, then
+ * defers to the locked variant if a waiter is present.
+ */
 inline void
 SystemProfiler::_MaybeNotifyProfilerThread()
 {
@@ -251,6 +295,21 @@ SystemProfiler::_MaybeNotifyProfilerThread()
 // #pragma mark - SystemProfiler public
 
 
+/**
+ * @brief Construct a SystemProfiler bound to the supplied team and user area.
+ *
+ * Records parameters (flags, sampling interval, stack depth, kernel-profile
+ * toggle) and computes the wait-object cache size from
+ * @c parameters.locking_lookup_size, clamped to MIN/MAX_WAIT_OBJECT_COUNT
+ * when scheduling events are requested. Does no allocation nor hardware setup;
+ * Init() performs those.
+ *
+ * @param team            Owning team id allowed to drive the profiler.
+ * @param userAreaInfo    Descriptor for the userland area used as the event
+ *                        ring buffer; it is cloned in Init().
+ * @param parameters      Profiler configuration flags and thresholds copied
+ *                        in from userland.
+ */
 SystemProfiler::SystemProfiler(team_id team, const area_info& userAreaInfo,
 	const system_profiler_parameters& parameters)
 	:
@@ -303,6 +362,16 @@ SystemProfiler::SystemProfiler(team_id team, const area_info& userAreaInfo,
 }
 
 
+/**
+ * @brief Tear down the profiler, detaching every listener and releasing the
+ *        cloned buffer area.
+ *
+ * Wakes any userland thread currently blocked in NextBuffer(), unregisters
+ * from the scheduler, wait-object, and notification-manager services,
+ * cancels the per-CPU sampling timers via call_all_cpus(_UninitTimers,...),
+ * frees the wait-object cache, and unmaps/deletes the kernel clone of the
+ * user area.
+ */
 SystemProfiler::~SystemProfiler()
 {
 	// Wake up the user thread, if it is waiting, and mark profiling
@@ -370,6 +439,19 @@ SystemProfiler::~SystemProfiler()
 }
 
 
+/**
+ * @brief Bring the profiler online: clone the user area, register listeners,
+ *        and kick off sampling.
+ *
+ * Clones the caller-supplied area with kernel R/W rights, wires the buffer
+ * header, allocates and indexes the wait-object cache when scheduling events
+ * are enabled, subscribes to team/thread/image/I/O notifications, seeds the
+ * buffer with the current team/thread/image list, and finally installs the
+ * per-CPU sampling timers (if B_SYSTEM_PROFILER_SAMPLING_EVENTS is set).
+ *
+ * @return B_OK on success; B_NO_MEMORY or B_BUFFER_OVERFLOW on resource
+ *         exhaustion; any error propagated from the notification manager.
+ */
 status_t
 SystemProfiler::Init()
 {
@@ -550,6 +632,24 @@ SystemProfiler::Init()
 }
 
 
+/**
+ * @brief Advance the shared ring buffer past consumed events and block until
+ *        more data is available.
+ *
+ * Invoked from the userland reader via _user_system_profiler_next_buffer().
+ * Releases @c bytesRead from the head of the ring, updates the header, and
+ * if the buffer is still mostly empty blocks the caller until events
+ * accumulate past half full, an error occurs, or a one-second timeout fires.
+ * The last timeout also returns if any data is buffered.
+ *
+ * @param bytesRead        Number of bytes the userland reader finished
+ *                         draining since the previous call.
+ * @param _droppedEvents   [out] Optional counter receiving the dropped-event
+ *                         total accumulated since the last report; cleared on
+ *                         return.
+ * @return B_OK on a successful wake-up; B_BAD_VALUE on nested/aberrant use;
+ *         errors propagated from thread_block_with_timeout().
+ */
 status_t
 SystemProfiler::NextBuffer(size_t bytesRead, uint64* _droppedEvents)
 {
@@ -612,6 +712,20 @@ SystemProfiler::NextBuffer(size_t bytesRead, uint64* _droppedEvents)
 // #pragma mark - NotificationListener interface
 
 
+/**
+ * @brief Dispatch a kernel notification into the correct per-service handler.
+ *
+ * NotificationListener callback invoked when any of the subscribed services
+ * ("teams", "threads", "images", "I/O") fires. Extracts the event code and
+ * the relevant struct pointer from the KMessage, routes to the matching
+ * @c _TeamAdded / @c _ThreadAdded / @c _IORequestScheduled etc. helper, and
+ * then nudges the profiler thread if the buffer has filled.
+ *
+ * @param service  Service that generated the notification.
+ * @param event    KMessage payload describing the event; pointers are extracted
+ *                 by the well-known field names "teamStruct", "threadStruct",
+ *                 "imageStruct", "scheduler", "request", "operation".
+ */
 void
 SystemProfiler::EventOccurred(NotificationService& service,
 	const KMessage* event)
@@ -745,6 +859,17 @@ SystemProfiler::EventOccurred(NotificationService& service,
 // #pragma mark - SchedulerListener interface
 
 
+/**
+ * @brief Record that @p thread has been added to the run queue.
+ *
+ * SchedulerListener callback, typically invoked in scheduler context with
+ * @c fLock already held via reentry. Emits a
+ * B_SYSTEM_PROFILER_THREAD_ENQUEUED_IN_RUN_QUEUE event carrying the current
+ * time, thread id, and priority. Skips unblocking if the thread was waiting
+ * on a condition variable to avoid a deadlock in ConditionVariable::NotifyOne().
+ *
+ * @param thread  Thread that was just enqueued for execution.
+ */
 void
 SystemProfiler::ThreadEnqueuedInRunQueue(Thread* thread)
 {
@@ -776,6 +901,15 @@ SystemProfiler::ThreadEnqueuedInRunQueue(Thread* thread)
 }
 
 
+/**
+ * @brief Record that @p thread has been pulled off the run queue.
+ *
+ * SchedulerListener callback. Emits a
+ * B_SYSTEM_PROFILER_THREAD_REMOVED_FROM_RUN_QUEUE event with the current
+ * time and thread id, then wakes the profiler reader if the ring is ready.
+ *
+ * @param thread  Thread that was removed from the run queue.
+ */
 void
 SystemProfiler::ThreadRemovedFromRunQueue(Thread* thread)
 {
@@ -802,6 +936,17 @@ SystemProfiler::ThreadRemovedFromRunQueue(Thread* thread)
 }
 
 
+/**
+ * @brief Record a context switch from @p oldThread to @p newThread.
+ *
+ * SchedulerListener callback. When the outgoing thread is transitioning into
+ * B_THREAD_WAITING, stamps the associated wait object into the cache so the
+ * userland reader can resolve it. Emits a B_SYSTEM_PROFILER_THREAD_SCHEDULED
+ * event containing previous state, wait type, and wait object.
+ *
+ * @param oldThread  Thread being switched out.
+ * @param newThread  Thread being switched in.
+ */
 void
 SystemProfiler::ThreadScheduled(Thread* oldThread, Thread* newThread)
 {
@@ -838,6 +983,15 @@ SystemProfiler::ThreadScheduled(Thread* oldThread, Thread* newThread)
 // #pragma mark - WaitObjectListener interface
 
 
+/**
+ * @brief WaitObjectListener hook invoked when a new semaphore is created.
+ *
+ * Forwards the creation to @c _WaitObjectCreated so the cache drops any stale
+ * entry for an id that may have been recycled.
+ *
+ * @param id    Newly created semaphore id.
+ * @param name  Semaphore name (unused here; recorded later in _WaitObjectUsed).
+ */
 void
 SystemProfiler::SemaphoreCreated(sem_id id, const char* name)
 {
@@ -845,6 +999,15 @@ SystemProfiler::SemaphoreCreated(sem_id id, const char* name)
 }
 
 
+/**
+ * @brief WaitObjectListener hook invoked when a condition variable is
+ *        initialized.
+ *
+ * Invalidates any stale cache entry for the same address, since the underlying
+ * object has been reinitialized.
+ *
+ * @param variable  Condition variable being initialized.
+ */
 void
 SystemProfiler::ConditionVariableInitialized(ConditionVariable* variable)
 {
@@ -852,6 +1015,11 @@ SystemProfiler::ConditionVariableInitialized(ConditionVariable* variable)
 }
 
 
+/**
+ * @brief WaitObjectListener hook invoked when a mutex is initialized.
+ *
+ * @param lock  Mutex being initialized.
+ */
 void
 SystemProfiler::MutexInitialized(mutex* lock)
 {
@@ -859,6 +1027,11 @@ SystemProfiler::MutexInitialized(mutex* lock)
 }
 
 
+/**
+ * @brief WaitObjectListener hook invoked when an rw_lock is initialized.
+ *
+ * @param lock  Reader/writer lock being initialized.
+ */
 void
 SystemProfiler::RWLockInitialized(rw_lock* lock)
 {
@@ -869,6 +1042,17 @@ SystemProfiler::RWLockInitialized(rw_lock* lock)
 // #pragma mark - SystemProfiler private
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_TEAM_ADDED event describing @p team.
+ *
+ * Allocates a variable-sized buffer slot carrying the team name followed by
+ * its argument string. During the initial team-list scan, teams already
+ * transitioning past TEAM_STATE_DEATH are treated as benign no-ops.
+ *
+ * @param team  Team being added; must remain valid for the duration.
+ * @return @c true if the event was emitted (or intentionally skipped);
+ *         @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_TeamAdded(Team* team)
 {
@@ -906,6 +1090,12 @@ SystemProfiler::_TeamAdded(Team* team)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_TEAM_REMOVED event for @p team.
+ *
+ * @param team  Team being removed.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_TeamRemoved(Team* team)
 {
@@ -931,6 +1121,16 @@ SystemProfiler::_TeamRemoved(Team* team)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_TEAM_EXEC event describing a successful
+ *        exec() in @p team.
+ *
+ * Captures the new main-thread name and command-line arguments so address
+ * resolution in userland can re-map after the address space changed.
+ *
+ * @param team  Team that completed an exec transition.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_TeamExec(Team* team)
 {
@@ -957,6 +1157,16 @@ SystemProfiler::_TeamExec(Team* team)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_THREAD_ADDED event for @p thread.
+ *
+ * Captures team id, thread id, name, and the current CPU time so userland
+ * can compute deltas. During the initial scan, threads already dead are
+ * silently skipped.
+ *
+ * @param thread  Thread being added.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_ThreadAdded(Thread* thread)
 {
@@ -992,6 +1202,15 @@ SystemProfiler::_ThreadAdded(Thread* thread)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_THREAD_REMOVED event for @p thread.
+ *
+ * Records the final accumulated CPU time so userland can close out per-thread
+ * stats.
+ *
+ * @param thread  Thread being removed.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_ThreadRemoved(Thread* thread)
 {
@@ -1023,6 +1242,16 @@ SystemProfiler::_ThreadRemoved(Thread* thread)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IMAGE_ADDED event for @p image.
+ *
+ * Records the owning team and the image_info basic info so userland can
+ * resolve sampled PCs against loaded libraries and binaries.
+ *
+ * @param image  Kernel image descriptor for a newly mapped executable or
+ *               library.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_ImageAdded(struct image* image)
 {
@@ -1043,6 +1272,12 @@ SystemProfiler::_ImageAdded(struct image* image)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IMAGE_REMOVED event for @p image.
+ *
+ * @param image  Kernel image descriptor for an image being unmapped.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_ImageRemoved(struct image* image)
 {
@@ -1063,6 +1298,13 @@ SystemProfiler::_ImageRemoved(struct image* image)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IO_SCHEDULER_ADDED event describing an
+ *        I/O scheduler.
+ *
+ * @param scheduler  I/O scheduler becoming visible to the profiler.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_IOSchedulerAdded(IOScheduler* scheduler)
 {
@@ -1086,6 +1328,12 @@ SystemProfiler::_IOSchedulerAdded(IOScheduler* scheduler)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IO_SCHEDULER_REMOVED event.
+ *
+ * @param scheduler  I/O scheduler that has gone away.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_IOSchedulerRemoved(IOScheduler* scheduler)
 {
@@ -1106,6 +1354,17 @@ SystemProfiler::_IOSchedulerRemoved(IOScheduler* scheduler)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IO_REQUEST_SCHEDULED event.
+ *
+ * Captures the originating team, thread, offset, length, priority, and
+ * read/write direction for an I/O request that has been admitted by the
+ * scheduler.
+ *
+ * @param scheduler  Scheduler that accepted the request.
+ * @param request    Request being scheduled.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_IORequestScheduled(IOScheduler* scheduler, IORequest* request)
 {
@@ -1136,6 +1395,16 @@ SystemProfiler::_IORequestScheduled(IOScheduler* scheduler, IORequest* request)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IO_REQUEST_FINISHED event.
+ *
+ * Records the final status and total bytes transferred for a completed
+ * request.
+ *
+ * @param scheduler  Scheduler owning the request.
+ * @param request    Request that has finished.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_IORequestFinished(IOScheduler* scheduler, IORequest* request)
 {
@@ -1160,6 +1429,17 @@ SystemProfiler::_IORequestFinished(IOScheduler* scheduler, IORequest* request)
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IO_OPERATION_STARTED event.
+ *
+ * Records the per-operation offset and length at the moment the scheduler
+ * dispatches a sub-operation to the device.
+ *
+ * @param scheduler  Scheduler dispatching the operation.
+ * @param request    Parent request.
+ * @param operation  Individual operation beginning execution.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_IOOperationStarted(IOScheduler* scheduler, IORequest* request,
 	IOOperation* operation)
@@ -1187,6 +1467,14 @@ SystemProfiler::_IOOperationStarted(IOScheduler* scheduler, IORequest* request,
 }
 
 
+/**
+ * @brief Emit a B_SYSTEM_PROFILER_IO_OPERATION_FINISHED event.
+ *
+ * @param scheduler  Scheduler that owned the operation.
+ * @param request    Parent request.
+ * @param operation  Operation that completed.
+ * @return @c true on success, @c false on buffer overflow.
+ */
 bool
 SystemProfiler::_IOOperationFinished(IOScheduler* scheduler, IORequest* request,
 	IOOperation* operation)
@@ -1213,6 +1501,18 @@ SystemProfiler::_IOOperationFinished(IOScheduler* scheduler, IORequest* request,
 }
 
 
+/**
+ * @brief Invalidate any cached wait-object entry for the (@p object, @p type)
+ *        pair.
+ *
+ * Called when a wait object (semaphore, mutex, rw_lock, condition variable)
+ * is freshly (re)created at an address that may alias a previously tracked
+ * one. Any stale entry is removed from the hash and recycled onto the free
+ * list; a fresh _WaitObjectUsed call will re-emit its info on demand.
+ *
+ * @param object  Address identifying the wait object.
+ * @param type    THREAD_BLOCK_TYPE_* classifying the wait object.
+ */
 void
 SystemProfiler::_WaitObjectCreated(addr_t object, uint32 type)
 {
@@ -1234,6 +1534,20 @@ SystemProfiler::_WaitObjectCreated(addr_t object, uint32 type)
 	}
 }
 
+/**
+ * @brief Record usage of a wait object, emitting its metadata lazily on first
+ *        sighting.
+ *
+ * If the object is already in the LRU cache, it is moved to most-recently-used
+ * and returned. Otherwise the appropriate name (and referenced-object pointer
+ * for condition variables) is extracted, a
+ * B_SYSTEM_PROFILER_WAIT_OBJECT_INFO event is emitted, and the cache makes
+ * room by evicting the LRU entry if the free list is empty.
+ *
+ * @param object  Address of the wait object.
+ * @param type    THREAD_BLOCK_TYPE_* classifying the wait object. Unsupported
+ *                types (snooze/signal) are ignored.
+ */
 void
 SystemProfiler::_WaitObjectUsed(addr_t object, uint32 type)
 {
@@ -1337,6 +1651,18 @@ SystemProfiler::_WaitObjectUsed(addr_t object, uint32 type)
 }
 
 
+/**
+ * @brief image_iterate_through_images() callback used during Init() to seed
+ *        the buffer with already-loaded images.
+ *
+ * Enables image notifications as a side effect while the image-subsystem lock
+ * is held, which makes the transition from snapshot to live notifications
+ * race-free.
+ *
+ * @param image   Image visited by the iteration.
+ * @param cookie  SystemProfiler pointer as passed to the iterator.
+ * @return @c false to continue iteration; @c true to stop on buffer overflow.
+ */
 /*static*/ bool
 SystemProfiler::_InitialImageIterator(struct image* image, void* cookie)
 {
@@ -1347,6 +1673,23 @@ SystemProfiler::_InitialImageIterator(struct image* image, void* cookie)
 }
 
 
+/**
+ * @brief Reserve space in the shared ring buffer for a new event record.
+ *
+ * Aligns @p size up to four bytes, accounts for the event header, handles
+ * wrap-around by writing a B_SYSTEM_PROFILER_BUFFER_END sentinel before the
+ * end of the buffer when necessary, and drops the event (incrementing
+ * fDroppedEvents) if there is insufficient contiguous space before the
+ * reader's head. The returned pointer addresses the payload following the
+ * written header.
+ *
+ * @param size   Requested payload size in bytes.
+ * @param event  B_SYSTEM_PROFILER_* event tag stored in the header.
+ * @param cpu    CPU index recorded in the header.
+ * @param count  Auxiliary count (e.g. number of stack samples).
+ * @return Pointer to the payload area on success, @c NULL when the event had
+ *         to be dropped.
+ */
 void*
 SystemProfiler::_AllocateBuffer(size_t size, int event, int cpu, int count)
 {
@@ -1384,6 +1727,14 @@ SystemProfiler::_AllocateBuffer(size_t size, int event, int cpu, int count)
 }
 
 
+/**
+ * @brief call_all_cpus() callback that arms the sampling timer on @p cpu.
+ *
+ * Runs on the target CPU and delegates to _ScheduleTimer().
+ *
+ * @param cookie  SystemProfiler instance pointer.
+ * @param cpu     Logical CPU index whose timer should be armed.
+ */
 /*static*/ void
 SystemProfiler::_InitTimers(void* cookie, int cpu)
 {
@@ -1392,6 +1743,15 @@ SystemProfiler::_InitTimers(void* cookie, int cpu)
 }
 
 
+/**
+ * @brief call_all_cpus() callback that disarms the sampling timer on @p cpu.
+ *
+ * Cancels the per-CPU one-shot timer and clears @c timerScheduled; runs on
+ * the target CPU.
+ *
+ * @param cookie  SystemProfiler instance pointer.
+ * @param cpu     Logical CPU index whose timer should be cancelled.
+ */
 /*static*/ void
 SystemProfiler::_UninitTimers(void* cookie, int cpu)
 {
@@ -1403,6 +1763,14 @@ SystemProfiler::_UninitTimers(void* cookie, int cpu)
 }
 
 
+/**
+ * @brief Arm the per-CPU profiling timer for @p cpu at fInterval in the future.
+ *
+ * Stores the deadline and installs a one-shot relative timer whose handler is
+ * _ProfilingEvent(). Called both at startup and re-armed after every sample.
+ *
+ * @param cpu  Logical CPU index.
+ */
 void
 SystemProfiler::_ScheduleTimer(int cpu)
 {
@@ -1415,6 +1783,14 @@ SystemProfiler::_ScheduleTimer(int cpu)
 }
 
 
+/**
+ * @brief Take a single stack-trace sample on the current CPU.
+ *
+ * Runs in the sampling timer interrupt context via _ProfilingEvent(). Asks
+ * arch_debug_get_stack_trace() for up to fStackDepth return addresses (user
+ * only, or user+kernel when fProfileKernel is set), then emits a
+ * B_SYSTEM_PROFILER_SAMPLES event carrying the captured PCs.
+ */
 void
 SystemProfiler::_DoSample()
 {
@@ -1448,6 +1824,16 @@ SystemProfiler::_DoSample()
 }
 
 
+/**
+ * @brief Per-CPU sampling timer handler.
+ *
+ * Runs in interrupt context when the one-shot timer armed by
+ * _ScheduleTimer() fires. Invokes _DoSample() to capture the stack trace of
+ * the currently running thread and re-arms the timer for the next interval.
+ *
+ * @param timer  Timer whose user_data points at the SystemProfiler.
+ * @return Always B_HANDLED_INTERRUPT.
+ */
 /*static*/ int32
 SystemProfiler::_ProfilingEvent(struct timer* timer)
 {
@@ -1465,10 +1851,31 @@ SystemProfiler::_ProfilingEvent(struct timer* timer)
 
 #if SYSTEM_PROFILER
 
+/**
+ * @brief Start profiling the kernel itself from within the kernel.
+ *
+ * Compiled in only when SYSTEM_PROFILER is defined. Creates an internal
+ * kernel-owned buffer area (attributed to the B_SYSTEM_TEAM), fills a
+ * @c system_profiler_parameters struct defaulting to team/thread events plus
+ * sampling when @p interval and @p stackDepth are positive, constructs and
+ * initializes a SystemProfiler, and installs it as the global @c sProfiler.
+ *
+ * @param areaSize    Size of the event ring buffer area in bytes.
+ * @param stackDepth  Number of return addresses to capture per sample.
+ * @param interval    Sampling interval in microseconds.
+ * @return B_OK on success; B_NO_MEMORY, B_BUSY (if another profiler is
+ *         active), or an error from profiler->Init().
+ */
 status_t
 start_system_profiler(size_t areaSize, uint32 stackDepth, bigtime_t interval)
 {
 	struct ParameterDeleter {
+		/**
+		 * @brief Construct a deleter that owns the buffer area plus the
+		 *        allocated sRecordedParameters until Detach() is called.
+		 *
+		 * @param area  Area id to delete on scope exit if not detached.
+		 */
 		ParameterDeleter(area_id area)
 			:
 			fArea(area),
@@ -1476,6 +1883,10 @@ start_system_profiler(size_t areaSize, uint32 stackDepth, bigtime_t interval)
 		{
 		}
 
+		/**
+		 * @brief Destroy the deleter, freeing the buffer area and the global
+		 *        recorded-parameters struct if ownership was not detached.
+		 */
 		~ParameterDeleter()
 		{
 			if (!fDetached) {
@@ -1485,6 +1896,9 @@ start_system_profiler(size_t areaSize, uint32 stackDepth, bigtime_t interval)
 			}
 		}
 
+		/**
+		 * @brief Release ownership so the held resources survive destruction.
+		 */
 		void Detach()
 		{
 			fDetached = true;
@@ -1553,6 +1967,13 @@ start_system_profiler(size_t areaSize, uint32 stackDepth, bigtime_t interval)
 }
 
 
+/**
+ * @brief Stop an in-kernel profiling session started by
+ *        start_system_profiler().
+ *
+ * Clears the global @c sProfiler slot and drops the reference; the destructor
+ * runs once the final reference is released.
+ */
 void
 stop_system_profiler()
 {
@@ -1573,6 +1994,22 @@ stop_system_profiler()
 // #pragma mark - syscalls
 
 
+/**
+ * @brief Syscall wrapper that registers the calling team as the system
+ *        profiler.
+ *
+ * _user_* syscall: copies the user-supplied parameters in safely
+ * (IS_USER_ADDRESS + user_memcpy), validates that the buffer area belongs to
+ * the caller, normalizes sampling parameters against B_DEBUG_MIN_PROFILE_INTERVAL
+ * and B_DEBUG_STACK_TRACE_DEPTH, constructs a SystemProfiler, calls Init()
+ * (which clones the area and installs listeners), and atomically publishes it
+ * as the global profiler. Requires euid 0.
+ *
+ * @param userParameters  User-space pointer to a system_profiler_parameters
+ *                        struct describing the buffer area and event flags.
+ * @return B_OK on success; B_PERMISSION_DENIED, B_BAD_ADDRESS, B_BAD_VALUE,
+ *         B_NO_MEMORY, B_BUSY, or an Init() error.
+ */
 status_t
 _user_system_profiler_start(struct system_profiler_parameters* userParameters)
 {
@@ -1639,6 +2076,21 @@ _user_system_profiler_start(struct system_profiler_parameters* userParameters)
 }
 
 
+/**
+ * @brief Syscall wrapper that drains consumed events and waits for more.
+ *
+ * _user_* syscall: validates permissions and caller identity (must be the
+ * team that started the profiler), acquires a BReference to the current
+ * SystemProfiler, delegates to NextBuffer(), and optionally copies the
+ * dropped-event counter back to userland.
+ *
+ * @param bytesRead        Bytes of ring buffer consumed since the previous
+ *                         call.
+ * @param _droppedEvents   Optional userland pointer receiving the
+ *                         dropped-event total.
+ * @return B_OK on success; B_PERMISSION_DENIED, B_BAD_ADDRESS, B_BAD_VALUE,
+ *         or errors forwarded from NextBuffer().
+ */
 status_t
 _user_system_profiler_next_buffer(size_t bytesRead, uint64* _droppedEvents)
 {
@@ -1669,6 +2121,15 @@ _user_system_profiler_next_buffer(size_t bytesRead, uint64* _droppedEvents)
 }
 
 
+/**
+ * @brief Syscall wrapper that stops profiling for the calling team.
+ *
+ * _user_* syscall: verifies the caller owns the active profiler, clears the
+ * global @c sProfiler pointer, and releases the owning reference, which
+ * triggers teardown in the destructor.
+ *
+ * @return B_OK on success; B_PERMISSION_DENIED or B_BAD_VALUE otherwise.
+ */
 status_t
 _user_system_profiler_stop()
 {
@@ -1691,6 +2152,22 @@ _user_system_profiler_stop()
 }
 
 
+/**
+ * @brief Syscall wrapper that hands the in-kernel recorded profile off to
+ *        userland.
+ *
+ * _user_* syscall: only meaningful when SYSTEM_PROFILER is compiled in and
+ * start_system_profiler() previously recorded data. Stops the active
+ * profiler, transfers the kernel-owned buffer area to the caller's team with
+ * read-only protection, copies the parameters struct back to userland, and
+ * tears down the stored @c sRecordedParameters. Requires euid 0.
+ *
+ * @param userParameters  User-space pointer receiving the recorded parameter
+ *                        struct, including the transferred buffer area id.
+ * @return B_OK on success; B_PERMISSION_DENIED, B_BAD_ADDRESS, B_ERROR
+ *         (no recorded data), B_NOT_SUPPORTED when SYSTEM_PROFILER is
+ *         disabled, or an error from transfer_area / user_memcpy.
+ */
 status_t
 _user_system_profiler_recorded(system_profiler_parameters* userParameters)
 {

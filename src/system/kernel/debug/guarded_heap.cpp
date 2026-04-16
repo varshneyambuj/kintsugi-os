@@ -1,7 +1,46 @@
 /*
- * Copyright 2011-2020, Michael Lotz <mmlr@mlotz.ch>.
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2020, Michael Lotz <mmlr@mlotz.ch>.
+ *   Copyright 2025, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file guarded_heap.cpp
+ * @brief Debug-only kernel heap that places a guard page after each allocation.
+ *
+ * The guarded heap satisfies requests by allocating N+1 contiguous pages of
+ * kernel virtual address space: N data pages that hold the allocation, plus
+ * one trailing unmapped guard page. Each returned pointer is positioned so
+ * the allocation ends exactly on the last mapped byte, meaning any linear
+ * overrun immediately faults through GuardedHeapCache::Fault() and triggers
+ * a panic. Freed chunks are kept quarantined in a `dead_chunks` tree (their
+ * pages fully unmapped) unless the `R` safemode option has re-enabled memory
+ * reuse, in which case they move to `free_chunks` and may back later
+ * allocations. Meta chunks are allocated via a separate SimpleAllocator so
+ * bookkeeping never competes with user data for heap pages.
+ *
+ * The module also exports three KDL debugger commands -- `guarded_heap`,
+ * `guarded_heap_chunk` and `allocations` -- for runtime inspection, and is
+ * compiled only when DEBUG_HEAPS is defined.
  */
 
 
@@ -33,6 +72,14 @@
 #define GUARDED_HEAP_STACK_TRACE_DEPTH	0
 
 
+/**
+ * @brief Per-allocation bookkeeping record for the guarded heap.
+ *
+ * Tracks the page run backing one allocation: its base, page count, the
+ * actual returned pointer (allocation_base), the caller-visible size and
+ * alignment, and the team/thread that last touched the chunk. Acts as a
+ * splay-tree node via the SplayTreeLink base.
+ */
 struct GuardedHeapChunk : public SplayTreeLink<GuardedHeapChunk> {
 	GuardedHeapChunk*	tree_list_link;
 
@@ -49,20 +96,39 @@ struct GuardedHeapChunk : public SplayTreeLink<GuardedHeapChunk> {
 #endif
 };
 
+/**
+ * @brief IteratableSplayTree traits for indexing GuardedHeapChunk by base address.
+ */
 struct GuardedHeapChunksTreeDefinition {
 	typedef addr_t		KeyType;
 	typedef GuardedHeapChunk NodeType;
 
+	/**
+	 * @brief Extract the splay-tree key (base virtual address) of a chunk.
+	 * @param node Chunk to inspect.
+	 * @return The chunk's base virtual address.
+	 */
 	static addr_t GetKey(const GuardedHeapChunk* node)
 	{
 		return node->base;
 	}
 
+	/**
+	 * @brief Return the SplayTreeLink embedded in a chunk.
+	 * @param node Chunk whose link is needed.
+	 * @return Pointer to the chunk's splay-tree link (the chunk itself).
+	 */
 	static SplayTreeLink<GuardedHeapChunk>* GetLink(GuardedHeapChunk* node)
 	{
 		return node;
 	}
 
+	/**
+	 * @brief Order a chunk relative to an address key.
+	 * @param key Address being searched for.
+	 * @param node Chunk to compare against.
+	 * @return 0 on equal keys, negative if @p key is below @p node, positive if above.
+	 */
 	static int Compare(const addr_t& key, const GuardedHeapChunk* node)
 	{
 		if (key == node->base)
@@ -70,6 +136,11 @@ struct GuardedHeapChunksTreeDefinition {
 		return (key < node->base) ? -1 : 1;
 	}
 
+	/**
+	 * @brief Return the list-of-duplicates link pointer for a chunk.
+	 * @param node Chunk to inspect.
+	 * @return Address of the chunk's tree_list_link field.
+	 */
 	static GuardedHeapChunk** GetListLink(GuardedHeapChunk* node)
 	{
 		return &node->tree_list_link;
@@ -78,8 +149,20 @@ struct GuardedHeapChunksTreeDefinition {
 typedef IteratableSplayTree<GuardedHeapChunksTreeDefinition> GuardedHeapChunksTree;
 
 
+/**
+ * @brief VM cache that backs every guarded-heap area.
+ *
+ * Behaves like VMAnonymousNoSwapCache for the pages that are intentionally
+ * mapped (allocated data pages), but escalates any page fault through
+ * Fault() -- since only unmapped guard pages can raise one, a fault always
+ * indicates an out-of-bounds access and trips a panic.
+ */
 class GuardedHeapCache final : public VMAnonymousNoSwapCache {
 public:
+	/**
+	 * @brief Initialize the backing VM cache used by the guarded heap.
+	 * @return B_OK on success, or an error from VMAnonymousNoSwapCache::Init().
+	 */
 	status_t Init()
 	{
 		return VMAnonymousNoSwapCache::Init(false, 0, 0, 0);
@@ -88,6 +171,9 @@ public:
 	status_t Fault(VMAddressSpace* aspace, off_t offset) override;
 
 protected:
+	/**
+	 * @brief Prevent destruction of the singleton cache; fires an assertion.
+	 */
 	virtual	void DeleteObject() override
 	{
 		ASSERT_UNREACHABLE();
@@ -95,6 +181,13 @@ protected:
 };
 
 
+/**
+ * @brief Top-level guarded heap state.
+ *
+ * Holds the lock protecting the three chunk trees (live, free, dead), the
+ * meta allocator used for bookkeeping records, and the sentinels that
+ * serialise concurrent attempts to grow the meta or page pools.
+ */
 struct guarded_heap {
 	mutex				lock;
 	bool				reuse_memory;
@@ -122,6 +215,18 @@ static addr_t sGuardedHeapEarlyMetaBase, sGuardedHeapEarlyBase;
 static size_t sGuardedHeapEarlySize;
 
 
+/**
+ * @brief Allocate a GuardedHeapChunk-sized bookkeeping record from meta storage.
+ *
+ * Grows the meta SimpleAllocator by creating a new kernel area when the
+ * remaining capacity falls below half a grow-step. Only one thread may grow
+ * meta at a time; others wait on heap.memory_added_condition.
+ *
+ * @param heap Heap instance to allocate from.
+ * @param size Byte count requested (normally sizeof(GuardedHeapChunk)).
+ * @param flags Allocation flags, e.g. HEAP_DONT_LOCK_KERNEL_SPACE.
+ * @return Pointer to zero-initialised memory, or NULL on failure.
+ */
 static void*
 guarded_heap_allocate_meta(guarded_heap& heap, size_t size, uint32 flags)
 {
@@ -167,6 +272,20 @@ guarded_heap_allocate_meta(guarded_heap& heap, size_t size, uint32 flags)
 }
 
 
+/**
+ * @brief Reserve additional kernel virtual address space for the heap.
+ *
+ * Creates a new VMArea backed by the guarded-heap cache, inserts it into the
+ * kernel address space, and adds its pages to the `free_chunks` tree. The
+ * request may be serialised against other concurrent growers via the
+ * `acquiring_pages` sentinel.
+ *
+ * @param heap Heap instance to grow.
+ * @param minimumPages Minimum page count the new area must supply, or 0 to
+ *        top up to the default grow size.
+ * @param flags Allocation flags; HEAP_DONT_LOCK_KERNEL_SPACE forbids growth.
+ * @return true if the heap grew (or already had enough), false otherwise.
+ */
 static bool
 guarded_heap_add_area(guarded_heap& heap, size_t minimumPages, uint32 flags)
 {
@@ -232,6 +351,12 @@ guarded_heap_add_area(guarded_heap& heap, size_t minimumPages, uint32 flags)
 }
 
 
+/**
+ * @brief Locate the chunk in a tree that covers a given virtual address.
+ * @param tree Chunks tree to search (live, free or dead).
+ * @param address Virtual address to look up.
+ * @return The covering chunk, or NULL if @p address falls outside every chunk.
+ */
 static GuardedHeapChunk*
 guarded_heap_find_chunk(GuardedHeapChunksTree& tree, addr_t address)
 {
@@ -245,6 +370,20 @@ guarded_heap_find_chunk(GuardedHeapChunksTree& tree, addr_t address)
 }
 
 
+/**
+ * @brief Allocate @p size bytes with a trailing guard page from the heap.
+ *
+ * Carves a (rounded-up + guard) run of pages out of `free_chunks`, maps the
+ * data pages through the guarded-heap cache, and positions the returned
+ * pointer so the allocation ends exactly at the last mapped byte -- any
+ * linear overrun then faults against the unmapped guard page.
+ *
+ * @param heap Heap instance to allocate from.
+ * @param size Requested allocation size in bytes.
+ * @param alignment Required alignment in bytes (0 means sizeof(void*)).
+ * @param flags Allocation flags, e.g. HEAP_DONT_WAIT_FOR_MEMORY.
+ * @return Pointer to the allocation, or NULL on failure.
+ */
 static void*
 guarded_heap_allocate(guarded_heap& heap, size_t size, size_t alignment,
 	uint32 flags)
@@ -383,6 +522,13 @@ guarded_heap_allocate(guarded_heap& heap, size_t size, size_t alignment,
 }
 
 
+/**
+ * @brief Detach and free a single physical page backing a heap address.
+ * @param heap Heap whose cache owns the page.
+ * @param pageAddress Virtual address of the page to free.
+ * @param reservation Optional reservation to return the page into.
+ * @return true if a page was found and freed, false if nothing was mapped.
+ */
 static bool
 guarded_heap_free_page(guarded_heap& heap, addr_t pageAddress,
 	vm_page_reservation* reservation = NULL)
@@ -399,6 +545,18 @@ guarded_heap_free_page(guarded_heap& heap, addr_t pageAddress,
 }
 
 
+/**
+ * @brief Release a previously allocated block back to the guarded heap.
+ *
+ * Unmaps the chunk's data pages, moves it to either `free_chunks` (when
+ * memory reuse is enabled) or `dead_chunks` (quarantined), and merges with
+ * neighbouring chunks where possible. Freeing a non-live, misaligned or
+ * unknown pointer panics -- this is a debugging allocator.
+ *
+ * @param heap Heap instance that owns the allocation.
+ * @param address Pointer previously returned by guarded_heap_allocate().
+ * @param flags Flags inherited from the malloc API; currently unused here.
+ */
 static void
 guarded_heap_free(guarded_heap& heap, void* address, uint32 flags)
 {
@@ -490,6 +648,19 @@ guarded_heap_free(guarded_heap& heap, void* address, uint32 flags)
 }
 
 
+/**
+ * @brief Resize a live allocation, moving it to a new chunk if size changes.
+ *
+ * A resize to the same size is a no-op. Otherwise allocates a fresh chunk,
+ * copies min(oldSize, newSize) bytes, and frees the old chunk. Panics if
+ * @p address is not a live allocation.
+ *
+ * @param heap Heap instance that owns the allocation.
+ * @param address Pointer to resize (must not be NULL).
+ * @param newSize Requested new size in bytes.
+ * @param flags Allocation flags forwarded to guarded_heap_allocate().
+ * @return Pointer to the resized allocation, or NULL on allocation failure.
+ */
 static void*
 guarded_heap_realloc(guarded_heap& heap, void* address, size_t newSize, uint32 flags)
 {
@@ -522,6 +693,16 @@ guarded_heap_realloc(guarded_heap& heap, void* address, size_t newSize, uint32 f
 }
 
 
+/**
+ * @brief VM fault handler for guarded-heap cache pages.
+ *
+ * Any page fault against the guarded-heap cache indicates access to a guard
+ * or dead page, so we panic immediately with the offending offset.
+ *
+ * @param aspace Address space that took the fault (unused).
+ * @param offset Offset within the cache that was faulted on.
+ * @return B_BAD_ADDRESS (never returns normally; panics first).
+ */
 status_t
 GuardedHeapCache::Fault(VMAddressSpace* aspace, off_t offset)
 {
@@ -534,6 +715,15 @@ GuardedHeapCache::Fault(VMAddressSpace* aspace, off_t offset)
 // #pragma mark - Debugger commands
 
 
+/**
+ * @brief Print the recorded allocation/free stack trace for a chunk.
+ *
+ * Only produces output when GUARDED_HEAP_STACK_TRACE_DEPTH > 0; otherwise
+ * compiles to a no-op. Addresses are resolved through the ELF debug symbol
+ * tables when possible.
+ *
+ * @param chunk Chunk whose stack trace should be printed.
+ */
 static void
 dump_guarded_heap_stack_trace(GuardedHeapChunk& chunk)
 {
@@ -559,6 +749,17 @@ dump_guarded_heap_stack_trace(GuardedHeapChunk& chunk)
 }
 
 
+/**
+ * @brief KDL command `guarded_heap_chunk`: dump info about one heap chunk.
+ *
+ * Searches live, free and dead chunk trees for the chunk covering the given
+ * address and prints its base, page count, allocation size/base, alignment
+ * and last-accessor team/thread, plus any recorded stack trace.
+ *
+ * @param argc Argument count (must be 2).
+ * @param argv Argument vector; argv[1] is the address expression.
+ * @return 0 on success, 1 if no covering chunk was found.
+ */
 static int
 dump_guarded_heap_chunk(int argc, char** argv)
 {
@@ -606,6 +807,17 @@ dump_guarded_heap_chunk(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command `guarded_heap`: dump summary info about the heap.
+ *
+ * With no arguments, prints the global sGuardedHeap; with one argument, the
+ * specified heap address expression. Reports the heap pointer, lock address
+ * and current backing page count.
+ *
+ * @param argc Argument count (1 or 2).
+ * @param argv Argument vector.
+ * @return 0 on success.
+ */
 static int
 dump_guarded_heap(int argc, char** argv)
 {
@@ -627,6 +839,17 @@ dump_guarded_heap(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command `allocations`: dump live allocations, optionally filtered.
+ *
+ * Accepts any of the optional filters `team <id>`, `thread <id>`,
+ * `address <addr>`, and the flags `stats` (counts only) and `trace` (include
+ * stack traces, only when built with stack tracing).
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success (including "no matches").
+ */
 static int
 dump_guarded_heap_allocations(int argc, char** argv)
 {
@@ -690,6 +913,18 @@ dump_guarded_heap_allocations(int argc, char** argv)
 // #pragma mark - Malloc API
 
 
+/**
+ * @brief Early-boot initialisation of the guarded heap.
+ *
+ * Reads the `guarded_heap_options` safemode string (the `r`/`R` characters
+ * toggle memory reuse), carves the supplied region into a meta area and a
+ * free-data area, and installs the initial free chunk.
+ *
+ * @param args Kernel boot arguments (used for safemode options).
+ * @param address Base of the region reserved for heap use.
+ * @param size Size of the reserved region in bytes.
+ * @return B_OK on success.
+ */
 static status_t
 guarded_heap_init(struct kernel_args* args, addr_t address, size_t size)
 {
@@ -727,6 +962,14 @@ guarded_heap_init(struct kernel_args* args, addr_t address, size_t size)
 }
 
 
+/**
+ * @brief Post-area heap initialisation; wraps the early region in VMAreas.
+ *
+ * Once the area subsystem is up, covers the early meta and data regions
+ * with B_EXACT_ADDRESS / B_ALREADY_WIRED areas so their pages are tracked.
+ *
+ * @return B_OK on success.
+ */
 static status_t
 guarded_heap_init_post_area()
 {
@@ -746,6 +989,18 @@ guarded_heap_init_post_area()
 }
 
 
+/**
+ * @brief Post-semaphore initialisation: switch to the proper guarded cache
+ *        and register KDL commands.
+ *
+ * Constructs the real GuardedHeapCache, re-homes the early area under it,
+ * unmaps and frees guard and free-chunk pages that no longer need backing
+ * storage, replays any dead chunks accumulated during early boot, and
+ * registers the `guarded_heap`, `guarded_heap_chunk` and `allocations`
+ * debugger commands.
+ *
+ * @return B_OK on success.
+ */
 static status_t
 guarded_heap_init_post_sem()
 {
@@ -853,6 +1108,13 @@ guarded_heap_init_post_sem()
 }
 
 
+/**
+ * @brief kernel_heap_implementation memalign entry point.
+ * @param alignment Required alignment in bytes (0 picks a pointer-sized default).
+ * @param size Allocation size in bytes.
+ * @param flags Allocation flags.
+ * @return Pointer to the new allocation, or NULL on failure.
+ */
 static void*
 guarded_heap_memalign(size_t alignment, size_t size, uint32 flags)
 {
@@ -860,6 +1122,11 @@ guarded_heap_memalign(size_t alignment, size_t size, uint32 flags)
 }
 
 
+/**
+ * @brief kernel_heap_implementation free entry point.
+ * @param address Pointer previously returned by the guarded heap.
+ * @param flags Allocation flags passed through to guarded_heap_free().
+ */
 static void
 guarded_heap_free_etc(void *address, uint32 flags)
 {
@@ -867,6 +1134,17 @@ guarded_heap_free_etc(void *address, uint32 flags)
 }
 
 
+/**
+ * @brief kernel_heap_implementation realloc entry point.
+ *
+ * A size of 0 frees @p address and returns NULL. A NULL @p address with a
+ * non-zero size is equivalent to malloc.
+ *
+ * @param address Existing allocation to resize, or NULL to allocate fresh.
+ * @param newSize Requested new size in bytes.
+ * @param flags Allocation flags.
+ * @return Pointer to the resulting allocation, or NULL if freed/failed.
+ */
 static void*
 guarded_heap_realloc_etc(void* address, size_t newSize, uint32 flags)
 {
@@ -882,6 +1160,12 @@ guarded_heap_realloc_etc(void* address, size_t newSize, uint32 flags)
 }
 
 
+/**
+ * @brief Vtable binding the guarded heap to the kernel's heap dispatch layer.
+ *
+ * The reserve sizes differ based on whether the object-cache layer is also
+ * routed through the debug heaps (much larger budgets are then required).
+ */
 kernel_heap_implementation kernel_guarded_heap = {
 	"guarded_heap",
 #if USE_DEBUG_HEAPS_FOR_ALL_OBJECT_CACHES

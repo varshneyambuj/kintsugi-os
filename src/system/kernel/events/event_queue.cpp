@@ -1,7 +1,39 @@
 /*
- * Copyright 2015, Hamish Morrison, hamishm53@gmail.com.
- * Copyright 2023, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Hamish Morrison, hamishm53@gmail.com.
+ *   Copyright 2023, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file event_queue.cpp
+ * @brief kqueue-style event queue primitive for the kernel.
+ *
+ * Implements the EventQueue object exposed as a file descriptor to user space.
+ * Callers register (object, type) selections with desired event flags and
+ * behaviors (level-triggered, one-shot), then wait on the queue for ready
+ * events. Internally an AVL tree indexes active select_event records by
+ * (object, type) while a doubly-linked list holds events currently queued as
+ * ready. Events are fed by the generic select_sync Notify() path so any kernel
+ * object that supports select_object()/deselect_object() can drive the queue.
  */
 
 #include <event_queue.h>
@@ -150,6 +182,16 @@ private:
 };
 
 
+/**
+ * @brief Constructs an empty event queue.
+ *
+ * Initializes the queue lock and the two condition variables used to wake
+ * waiters and to serialize concurrent select/deselect transitions on an
+ * individual select_event.
+ *
+ * @param kernel True if the queue is created for kernel use, false for a
+ *     user-space owned queue; propagated to select_object()/deselect_object().
+ */
 EventQueue::EventQueue(bool kernel)
 	:
 	fKernel(kernel),
@@ -162,6 +204,13 @@ EventQueue::EventQueue(bool kernel)
 }
 
 
+/**
+ * @brief Destroys the queue and all remaining select_event records.
+ *
+ * Must be invoked only after Closed() has been called. Walks the event tree
+ * deselecting each registered object, then frees any list-only remnants and
+ * destroys the queue lock.
+ */
 EventQueue::~EventQueue()
 {
 	mutex_lock(&fQueueLock);
@@ -195,6 +244,12 @@ EventQueue::~EventQueue()
 }
 
 
+/**
+ * @brief Marks the queue as closing and wakes every waiting Wait() call.
+ *
+ * After this returns, new Wait() calls return B_FILE_ERROR. The destructor
+ * later relies on fClosing being set.
+ */
 void
 EventQueue::Closed()
 {
@@ -208,6 +263,23 @@ EventQueue::Closed()
 }
 
 
+/**
+ * @brief Registers or updates interest in events for an (object, type) pair.
+ *
+ * If the event is already registered with the same flags/behavior, this is a
+ * no-op. Otherwise any existing registration is deselected and a fresh
+ * select_event is inserted in the AVL tree, the queue lock is dropped, and the
+ * underlying select_object() callback is invoked. The B_EVENT_SELECTING flag
+ * shields the in-progress event from concurrent use or deletion.
+ *
+ * @param object   Kernel object identifier (fd, port, sem, thread, ...).
+ * @param type     Selector type identifying the object's kind.
+ * @param events   Selected event mask combined with B_EVENT_LEVEL_TRIGGERED or
+ *                 B_EVENT_ONE_SHOT behavior bits.
+ * @param userData Opaque cookie returned in event_wait_info::user_data.
+ * @return B_OK on success, EEXIST if it was concurrently re-selected,
+ *     B_NO_MEMORY on allocation failure, or any status_t from select_object().
+ */
 status_t
 EventQueue::Select(int32 object, uint16 type, uint32 events, void* userData)
 {
@@ -274,6 +346,15 @@ EventQueue::Select(int32 object, uint16 type, uint32 events, void* userData)
 }
 
 
+/**
+ * @brief Retrieves the currently registered event mask and user cookie.
+ *
+ * @param object         Kernel object identifier to look up.
+ * @param type           Selector type identifying the object's kind.
+ * @param selectedEvents Out parameter: combined selected events and behavior.
+ * @param userData       Out parameter: the cookie passed to Select().
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no such registration exists.
+ */
 status_t
 EventQueue::Query(int32 object, uint16 type, uint32* selectedEvents, void** userData)
 {
@@ -290,6 +371,18 @@ EventQueue::Query(int32 object, uint16 type, uint32* selectedEvents, void** user
 }
 
 
+/**
+ * @brief Removes a previously registered (object, type) selection.
+ *
+ * Marks the event with B_EVENT_DELETING, calls deselect_object() with the
+ * queue lock dropped, then removes the event from both the AVL tree and the
+ * ready list before freeing it. Safe against concurrent deletion.
+ *
+ * @param object Kernel object identifier.
+ * @param type   Selector type identifying the object's kind.
+ * @return B_OK on success or when a delete is already in progress,
+ *     B_ENTRY_NOT_FOUND if no such registration exists.
+ */
 status_t
 EventQueue::Deselect(int32 object, uint16 type)
 {
@@ -319,6 +412,14 @@ EventQueue::Deselect(int32 object, uint16 type)
 }
 
 
+/**
+ * @brief Dispatches a deselect_object() call for the given event.
+ *
+ * Helper used from both Deselect() and ~EventQueue().
+ *
+ * @param event The select_event to tear down.
+ * @return Status returned by deselect_object().
+ */
 status_t
 EventQueue::_DeselectEvent(select_event* event)
 {
@@ -326,6 +427,15 @@ EventQueue::_DeselectEvent(select_event* event)
 }
 
 
+/**
+ * @brief select_sync Notify() override invoked by underlying kernel objects.
+ *
+ * Downcasts to select_event and forwards to _Notify().
+ *
+ * @param info   select_info pointer known to be a select_event for this queue.
+ * @param events Event flags being signalled.
+ * @return B_OK.
+ */
 status_t
 EventQueue::Notify(select_info* info, uint16 events)
 {
@@ -335,6 +445,18 @@ EventQueue::Notify(select_info* info, uint16 events)
 }
 
 
+/**
+ * @brief Core event delivery: marks an event ready and enqueues it if needed.
+ *
+ * Filters out events not in the event's selected mask, ignores notifications
+ * for events already marked for deletion, and handles B_EVENT_INVALID by
+ * removing the event from the tree (its object id may now be reused). Adds
+ * the event to the ready list and wakes a waiter when it transitions from
+ * unqueued to queued.
+ *
+ * @param event  Target select_event.
+ * @param events Event flags being signalled.
+ */
 void
 EventQueue::_Notify(select_event* event, uint16 events)
 {
@@ -376,6 +498,21 @@ EventQueue::_Notify(select_event* event, uint16 events)
 }
 
 
+/**
+ * @brief Blocks until ready events exist, then fills the caller's buffer.
+ *
+ * Sleeps on fQueueCondition while the queue is empty or another thread is
+ * dequeuing. Respects B_ABSOLUTE_TIMEOUT and B_INFINITE_TIMEOUT semantics and
+ * is interruptible via B_CAN_INTERRUPT. Loops to re-sleep when level-triggered
+ * re-selection transiently drains the list without producing results.
+ *
+ * @param infos    Output array to be filled with ready event descriptors.
+ * @param numInfos Capacity of @p infos; may be 0 to test for activity.
+ * @param flags    Timeout flags (B_ABSOLUTE_TIMEOUT, B_RELATIVE_TIMEOUT, ...).
+ * @param timeout  Absolute or relative timeout, or B_INFINITE_TIMEOUT.
+ * @return Number of events written on success, 0 if numInfos was 0 and
+ *     events were available, a negative status_t on close/timeout/interrupt.
+ */
 ssize_t
 EventQueue::Wait(event_wait_info* infos, int numInfos,
 	int32 flags, bigtime_t timeout)
@@ -415,6 +552,20 @@ EventQueue::Wait(event_wait_info* infos, int numInfos,
 }
 
 
+/**
+ * @brief Pulls ready events off the list, applying level/one-shot semantics.
+ *
+ * Uses a marker node to bound the pass so that dropping the lock for
+ * re-selection or deferred deselect cannot cause an infinite loop. For
+ * level-triggered events the registration is torn down and rebuilt so the
+ * object can re-evaluate readiness; for one-shot events the registration is
+ * marked for deletion and batch-deselected after the lock is released (up to
+ * kMaxToDeselect per call). Events marked B_EVENT_INVALID are freed here.
+ *
+ * @param infos    Output array to fill with ready events.
+ * @param numInfos Maximum number of events to produce.
+ * @return Count of events populated in @p infos.
+ */
 ssize_t
 EventQueue::_DequeueEvents(event_wait_info* infos, int numInfos)
 {
@@ -516,10 +667,17 @@ EventQueue::_DequeueEvents(event_wait_info* infos, int numInfos)
 }
 
 
-/*
- * Get the select_event for the given object and type. Must be called with the
- * queue lock held. This method will sleep if the event is undergoing selection
- * or deletion.
+/**
+ * @brief Looks up a select_event by (object, type), waiting out transitions.
+ *
+ * Must be called with fQueueLock held. If the matching event has
+ * B_EVENT_SELECTING or B_EVENT_DELETING set, sleeps on fEventCondition and
+ * retries until the transition completes, at which point the event may have
+ * been removed entirely.
+ *
+ * @param object Kernel object identifier.
+ * @param type   Selector type.
+ * @return Pointer to the stable select_event, or NULL if none exists.
  */
 select_event*
 EventQueue::_GetEvent(int32 object, uint16 type)
@@ -546,6 +704,14 @@ EventQueue::_GetEvent(int32 object, uint16 type)
 
 
 
+/**
+ * @brief fd_ops close hook for event-queue descriptors.
+ *
+ * Invokes EventQueue::Closed() which wakes all waiters with B_FILE_ERROR.
+ *
+ * @param descriptor The event queue file descriptor being closed.
+ * @return B_OK.
+ */
 static status_t
 event_queue_close(file_descriptor* descriptor)
 {
@@ -555,6 +721,14 @@ event_queue_close(file_descriptor* descriptor)
 }
 
 
+/**
+ * @brief fd_ops free hook; drops the reference that the descriptor held.
+ *
+ * When the last reference goes away the EventQueue is destroyed via the
+ * select_sync reference-counting machinery.
+ *
+ * @param descriptor The descriptor whose cookie is the owning EventQueue.
+ */
 static void
 event_queue_free(file_descriptor* descriptor)
 {
@@ -577,6 +751,19 @@ static struct fd_ops sEventQueueFDOps = {
 };
 
 
+/**
+ * @brief Resolves an fd to a file_descriptor that must be an event queue.
+ *
+ * Validates the fd range, fetches the descriptor (acquiring a reference), and
+ * ensures the ops table is the event-queue ops. On failure the reference is
+ * released before returning.
+ *
+ * @param fd         Caller-supplied file descriptor.
+ * @param kernel     True when resolving against the kernel's io_context.
+ * @param descriptor Out parameter: the resolved descriptor on success.
+ * @return B_OK on success, B_FILE_ERROR for a bad fd, B_BAD_VALUE if the
+ *     descriptor exists but is not an event queue.
+ */
 static status_t
 get_queue_descriptor(int fd, bool kernel, file_descriptor*& descriptor)
 {
@@ -599,6 +786,17 @@ get_queue_descriptor(int fd, bool kernel, file_descriptor*& descriptor)
 //	#pragma mark - User syscalls
 
 
+/**
+ * @brief Syscall: creates a new event queue and returns its file descriptor.
+ *
+ * Allocates an EventQueue, wraps it in a file_descriptor using sEventQueueFDOps,
+ * and installs it in the current user io_context. Honors O_CLOEXEC and
+ * O_CLOFORK from @p openFlags when setting close-on-exec/close-on-fork.
+ *
+ * @param openFlags open() style flags; only O_CLOEXEC and O_CLOFORK are honored.
+ * @return Non-negative fd on success, B_NO_MEMORY on allocation failure, or a
+ *     negative status from new_fd() on descriptor installation failure.
+ */
 int
 _user_event_queue_create(int openFlags)
 {
@@ -633,6 +831,21 @@ _user_event_queue_create(int openFlags)
 }
 
 
+/**
+ * @brief Syscall: applies a batch of select/query/deselect ops to a queue.
+ *
+ * Each entry in @p userInfos is dispatched based on its events field: a
+ * positive mask performs Select(), a negative mask performs Query() (and the
+ * current mask is written back to user space), and zero performs Deselect().
+ * Per-entry errors are encoded back into userInfos[i].events while the overall
+ * return value reports whether any entry failed.
+ *
+ * @param queue     Event queue file descriptor.
+ * @param userInfos User pointer to array of event_wait_info records.
+ * @param numInfos  Number of entries in @p userInfos (must be > 0).
+ * @return B_OK if all entries succeeded, B_ERROR if any entry failed,
+ *     B_BAD_VALUE/B_BAD_ADDRESS/B_NO_MEMORY on argument/resource failures.
+ */
 status_t
 _user_event_queue_select(int queue, event_wait_info* userInfos, int numInfos)
 {
@@ -683,6 +896,21 @@ _user_event_queue_select(int queue, event_wait_info* userInfos, int numInfos)
 }
 
 
+/**
+ * @brief Syscall: waits for ready events on an event queue.
+ *
+ * Defaults @p timeout to B_INFINITE_TIMEOUT when neither relative nor absolute
+ * timeout flags are set, bounces into EventQueue::Wait(), and copies any
+ * produced event_wait_info records back to user space. Integrates with the
+ * syscall timeout restart machinery so the call can be resumed after signals.
+ *
+ * @param queue     Event queue file descriptor.
+ * @param userInfos User buffer to receive ready events.
+ * @param numInfos  Size of @p userInfos (may be 0).
+ * @param flags     B_RELATIVE_TIMEOUT / B_ABSOLUTE_TIMEOUT / 0.
+ * @param timeout   Relative or absolute timeout.
+ * @return Number of events returned, or a negative status on error.
+ */
 ssize_t
 _user_event_queue_wait(int queue, event_wait_info* userInfos, int numInfos,
 	uint32 flags, bigtime_t timeout)

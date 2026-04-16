@@ -34,14 +34,21 @@ WaitObjectListenerList gWaitObjectListeners;
 rw_spinlock gWaitObjectListenerLock = B_RW_SPINLOCK_INITIALIZER;
 
 
+/**
+ * @brief Virtual destructor; derived listeners clean up their own state.
+ */
 WaitObjectListener::~WaitObjectListener()
 {
 }
 
 
-/** @brief Adds @p listener to the global list.
+/**
+ * @brief Add @a listener to the global wait-object listener list.
  *
- * @c gWaitObjectListenerLock must be held in write mode. */
+ * Caller must hold @c gWaitObjectListenerLock in write mode.
+ *
+ * @param listener Listener to insert.
+ */
 void
 add_wait_object_listener(struct WaitObjectListener* listener)
 {
@@ -49,9 +56,13 @@ add_wait_object_listener(struct WaitObjectListener* listener)
 }
 
 
-/** @brief Removes @p listener from the global list.
+/**
+ * @brief Remove @a listener from the global wait-object listener list.
  *
- * @c gWaitObjectListenerLock must be held in write mode. */
+ * Caller must hold @c gWaitObjectListenerLock in write mode.
+ *
+ * @param listener Listener previously passed to add_wait_object_listener().
+ */
 void
 remove_wait_object_listener(struct WaitObjectListener* listener)
 {

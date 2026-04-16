@@ -1,12 +1,40 @@
 /*
- * Copyright 2014 Jonathan Schleifer <js@webkeks.org>
- * Copyright 2014 Haiku, Inc. All rights reserved.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Distributed under the terms of the MIT License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Jonathan Schleifer, js@webkeks.org
- *		John Scipione, jscipione@gmail.com
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014 Jonathan Schleifer <js@webkeks.org>
+ *   Copyright 2014 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Jonathan Schleifer, js@webkeks.org
+ *       John Scipione, jscipione@gmail.com
+ */
+
+/**
+ * @file convertutf.cpp
+ * @brief UTF-16 (LE/BE) → UTF-8 conversion used by filesystems.
+ *
+ * Converts a UTF-16 code-unit sequence into a UTF-8 byte sequence, honouring
+ * surrogate pairs for codepoints above U+FFFF. Callers that truncate the
+ * output (target buffer full or the kernel's B_FILE_NAME_LENGTH reached) get
+ * B_NAME_TOO_LONG plus a NUL-terminated prefix they can recover with strlen().
  */
 
 
@@ -18,6 +46,11 @@
 #include <StorageDefs.h>
 
 
+/**
+ * @brief Return the UTF-8 byte length needed to encode @a glyph.
+ * @param glyph Unicode codepoint.
+ * @return 1, 2, 3 or 4 for valid codepoints; 0 for codepoints above U+10FFFF.
+ */
 static inline size_t
 glyph_length(uint32 glyph)
 {
@@ -34,6 +67,16 @@ glyph_length(uint32 glyph)
 }
 
 
+/**
+ * @brief Emit the UTF-8 encoding of @a glyph into @a buffer.
+ *
+ * Caller must have allocated at least @a glyphLength bytes and obtained
+ * @a glyphLength from glyph_length(). No output terminator is appended.
+ *
+ * @param glyph       Unicode codepoint.
+ * @param glyphLength Byte length returned by glyph_length().
+ * @param buffer      Output buffer.
+ */
 static void
 encode_glyph(uint32 glyph, size_t glyphLength, char* buffer)
 {
@@ -55,6 +98,20 @@ encode_glyph(uint32 glyph, size_t glyphLength, char* buffer)
 }
 
 
+/**
+ * @brief Core UTF-16 → UTF-8 conversion with selectable byte order.
+ *
+ * Scans @a source, decodes surrogate pairs, and writes UTF-8 bytes into
+ * @a target. The output is always NUL-terminated (including on truncation).
+ *
+ * @param source              UTF-16 code units.
+ * @param sourceCodeUnitCount Number of input code units.
+ * @param target              Output buffer for UTF-8 bytes.
+ * @param targetLength        Size of @a target in bytes (including NUL).
+ * @param isLittleEndian      true if @a source is UTF-16LE; false for UTF-16BE.
+ * @return Bytes written (excluding NUL) on success, B_BAD_VALUE for invalid
+ *         input, B_NAME_TOO_LONG if truncation occurred.
+ */
 static ssize_t
 utf16_to_utf8(const uint16* source, size_t sourceCodeUnitCount, char* target,
 	size_t targetLength, bool isLittleEndian)
@@ -117,6 +174,10 @@ utf16_to_utf8(const uint16* source, size_t sourceCodeUnitCount, char* target,
 }
 
 
+/**
+ * @brief UTF-16LE → UTF-8 conversion.
+ * @see utf16_to_utf8() for parameter semantics and return values.
+ */
 ssize_t
 utf16le_to_utf8(const uint16* source, size_t sourceCodeUnitCount,
 	char* target, size_t targetLength)
@@ -126,6 +187,10 @@ utf16le_to_utf8(const uint16* source, size_t sourceCodeUnitCount,
 }
 
 
+/**
+ * @brief UTF-16BE → UTF-8 conversion.
+ * @see utf16_to_utf8() for parameter semantics and return values.
+ */
 ssize_t
 utf16be_to_utf8(const uint16* source, size_t sourceCodeUnitCount,
 	char* target, size_t targetLength)

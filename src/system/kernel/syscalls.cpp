@@ -113,6 +113,16 @@ static int dump_syscall_tracing(int argc, char** argv);
 #endif
 
 
+/**
+ * @brief Locate the currently registered generic_syscall by subsystem name.
+ *
+ * Linear scan over sGenericSyscalls. The caller must hold
+ * sGenericSyscallLock — this is asserted on entry.
+ *
+ * @param subsystem Null-terminated subsystem name to match.
+ * @return Pointer to the matching record, or NULL if no subsystem of that
+ *         name is currently registered.
+ */
 static generic_syscall*
 find_generic_syscall(const char* subsystem)
 {
@@ -223,6 +233,14 @@ _user_generic_syscall(const char* userSubsystem, uint32 function,
 }
 
 
+/**
+ * @brief Syscall: report whether the computer is powered on.
+ *
+ * A trivial syscall that always returns 1 when the kernel is running; used by
+ * userspace as a sanity check that a live kernel is responding.
+ *
+ * @return Always 1.
+ */
 int
 _user_is_computer_on(void)
 {
@@ -239,7 +257,11 @@ _user_is_computer_on(void)
  * Called from the architecture-specific syscall entry path. Invokes the
  * pre- and post-syscall debug hooks, then uses a generated switch statement
  * (from syscall_dispatcher.h) to call the appropriate handler and store the
- * 64-bit return value.
+ * 64-bit return value. Unknown indices fall through to the default arm and
+ * return B_BAD_VALUE via @p _returnValue.
+ *
+ * The same dispatcher is linked into both the regular kernel binary and the
+ * debug kernel (KDEBUG) — the handler table is identical in both modes.
  *
  * @param callIndex     The syscall number extracted from the trap frame.
  * @param args          Pointer to the packed syscall argument block.
@@ -271,6 +293,15 @@ syscall_dispatcher(uint32 callIndex, void* args, uint64* _returnValue)
 }
 
 
+/**
+ * @brief Initialize the generic-syscall subsystem.
+ *
+ * Placement-new constructs the global sGenericSyscalls list and, when
+ * SYSCALL_TRACING is enabled, registers the "straced" kernel-debugger command
+ * that pretty-prints recorded syscall trace entries.
+ *
+ * @return B_OK on success. No failure paths today.
+ */
 status_t
 generic_syscall_init(void)
 {
@@ -417,6 +448,13 @@ unregister_generic_syscall(const char* subsystem, uint32 version)
 namespace SyscallTracing {
 
 
+/**
+ * @brief Resolve a syscall number to its symbolic name for tracing output.
+ *
+ * @param syscall Syscall index from the trap.
+ * @return A pointer to the C-string name for @p syscall, or a static
+ *         "<invalid syscall number>" placeholder for out-of-range indices.
+ */
 static const char*
 get_syscall_name(uint32 syscall)
 {
@@ -427,8 +465,20 @@ get_syscall_name(uint32 syscall)
 }
 
 
+/**
+ * @brief Trace entry recorded at syscall entry, capturing the arguments.
+ *
+ * Snapshots the packed parameter block into the tracing buffer along with up
+ * to MAX_PARAM_STRINGS inlined C-string arguments so that dumps do not need
+ * to dereference user memory after the fact.
+ */
 class PreSyscall : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Record a pre-syscall trace entry for @p syscall.
+		 * @param syscall    Syscall number being invoked.
+		 * @param parameters Pointer to the packed argument block.
+		 */
 		PreSyscall(uint32 syscall, const void* parameters)
 			:
 			fSyscall(syscall),
@@ -463,6 +513,10 @@ class PreSyscall : public AbstractTraceEntry {
 			Initialized();
 		}
 
+		/**
+		 * @brief Format the captured call and its arguments to @p out.
+		 * @param out Destination trace-output stream.
+		 */
 		virtual void AddDump(TraceOutput& out)
 		{
 			out.Print("syscall pre:  %s(", get_syscall_name(fSyscall));
@@ -522,8 +576,16 @@ class PreSyscall : public AbstractTraceEntry {
 };
 
 
+/**
+ * @brief Trace entry recorded at syscall return, capturing the return value.
+ */
 class PostSyscall : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Record a post-syscall trace entry.
+		 * @param syscall     Syscall number that just completed.
+		 * @param returnValue 64-bit raw return value from the handler.
+		 */
 		PostSyscall(uint32 syscall, uint64 returnValue)
 			:
 			fSyscall(syscall),
@@ -540,6 +602,10 @@ class PostSyscall : public AbstractTraceEntry {
 #endif
 		}
 
+		/**
+		 * @brief Format the post-syscall trace line to @p out.
+		 * @param out Destination trace-output stream.
+		 */
 		virtual void AddDump(TraceOutput& out)
 		{
 			out.Print("syscall post: %s() -> %#" B_PRIx64,
@@ -556,6 +622,15 @@ class PostSyscall : public AbstractTraceEntry {
 
 extern "C" void trace_pre_syscall(uint32 syscallNumber, const void* parameters);
 
+/**
+ * @brief Emit a pre-syscall tracing entry, called from the arch-specific stub.
+ *
+ * The emission is skipped for SYSCALL_KTRACE_OUTPUT when
+ * SYSCALL_TRACING_IGNORE_KTRACE_OUTPUT is set, to avoid tracing the tracer.
+ *
+ * @param syscallNumber Syscall index being entered.
+ * @param parameters    Pointer to the packed parameter block.
+ */
 void
 trace_pre_syscall(uint32 syscallNumber, const void* parameters)
 {
@@ -570,6 +645,14 @@ trace_pre_syscall(uint32 syscallNumber, const void* parameters)
 
 extern "C" void trace_post_syscall(int syscallNumber, uint64 returnValue);
 
+/**
+ * @brief Emit a post-syscall tracing entry, called from the arch-specific stub.
+ *
+ * Mirrors trace_pre_syscall() with the same SYSCALL_KTRACE_OUTPUT filter.
+ *
+ * @param syscallNumber Syscall index that just returned.
+ * @param returnValue   Raw 64-bit return value from the handler.
+ */
 void
 trace_post_syscall(int syscallNumber, uint64 returnValue)
 {
@@ -585,8 +668,23 @@ trace_post_syscall(int syscallNumber, uint64 returnValue)
 
 using namespace SyscallTracing;
 
+/**
+ * @brief Trace filter that treats a PreSyscall/PostSyscall pair as a unit.
+ *
+ * When a PreSyscall is accepted by the inner filter, the thread id is
+ * remembered so that the matching PostSyscall — and any other trace entries
+ * on that thread while the syscall is in flight — are also accepted, giving
+ * the user a coherent picture of each call's activity.
+ */
 class SyscallWrapperTraceFilter : public WrapperTraceFilter {
 public:
+	/**
+	 * @brief Initialize the wrapper before a tracing query.
+	 * @param filter    Inner filter to apply to each entry.
+	 * @param direction Forward (>=0) or backward (<0) iteration direction.
+	 * @param continued True when resuming an earlier query (pending-thread
+	 *                  state is preserved); false to start fresh.
+	 */
 	virtual void Init(TraceFilter* filter, int direction, bool continued)
 	{
 		fFilter = filter;
@@ -597,6 +695,19 @@ public:
 			fPendingThreadCount = 0;
 	}
 
+	/**
+	 * @brief Apply the wrapping filter to one trace entry.
+	 *
+	 * For PreSyscall entries, runs the inner filter and tracks the thread id
+	 * on accept. For PostSyscall entries, accepts if the corresponding
+	 * PreSyscall was accepted; otherwise consults the inner filter. For other
+	 * AbstractTraceEntry subclasses, accepts while the owning thread has an
+	 * in-flight accepted syscall.
+	 *
+	 * @param _entry Trace entry to consider.
+	 * @param out    Lazy trace-output helper (unused here).
+	 * @return true if the entry should be included in the dump.
+	 */
 	virtual bool Filter(const TraceEntry* _entry, LazyTraceOutput& out)
 	{
 		if (fFilter == NULL)
@@ -630,11 +741,19 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Report whether the pending-thread buffer was ever exhausted.
+	 * @return true if MAX_PENDING_THREADS was reached during the query.
+	 */
 	bool HitThreadLimit() const
 	{
 		return fHitThreadLimit;
 	}
 
+	/**
+	 * @brief Iteration direction passed to Init().
+	 * @return Non-negative for forward, negative for backward.
+	 */
 	int Direction() const
 	{
 		return fDirection;
@@ -645,6 +764,12 @@ private:
 		MAX_PENDING_THREADS = 32
 	};
 
+	/**
+	 * @brief Mark @p thread as having an in-flight accepted syscall.
+	 * @param thread Thread id whose syscall was just accepted.
+	 * @return true on success, false if the pending-thread buffer was full
+	 *         (in which case HitThreadLimit() becomes true).
+	 */
 	bool _AddPendingThread(thread_id thread)
 	{
 		int32 index = _PendingThreadIndex(thread);
@@ -660,6 +785,11 @@ private:
 		return true;
 	}
 
+	/**
+	 * @brief Forget a previously tracked pending thread.
+	 * @param thread Thread id whose syscall just completed.
+	 * @return true if the thread was present and removed.
+	 */
 	bool _RemovePendingThread(thread_id thread)
 	{
 		int32 index = _PendingThreadIndex(thread);
@@ -675,11 +805,21 @@ private:
 		return true;
 	}
 
+	/**
+	 * @brief Test whether @p thread currently has an in-flight accepted syscall.
+	 * @param thread Thread id to query.
+	 * @return true if the thread is being tracked.
+	 */
 	bool _IsPendingThread(thread_id thread)
 	{
 		return _PendingThreadIndex(thread) >= 0;
 	}
 
+	/**
+	 * @brief Linear search for @p thread in the pending-threads array.
+	 * @param thread Thread id to locate.
+	 * @return Index of the entry, or -1 if not present.
+	 */
 	int32 _PendingThreadIndex(thread_id thread)
 	{
 		for (int32 i = 0; i < fPendingThreadCount; i++) {
@@ -699,6 +839,17 @@ private:
 
 static SyscallWrapperTraceFilter sFilter;
 
+/**
+ * @brief Kernel-debugger "straced" command implementation.
+ *
+ * Installs a fresh SyscallWrapperTraceFilter and delegates to dump_tracing();
+ * warns if the pending-thread buffer was exhausted or if the user asked for
+ * an unsupported backward iteration.
+ *
+ * @param argc Argument count from the debugger command line.
+ * @param argv Argument vector forwarded unchanged to dump_tracing().
+ * @return The status returned by dump_tracing().
+ */
 static int
 dump_syscall_tracing(int argc, char** argv)
 {

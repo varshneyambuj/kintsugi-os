@@ -1,9 +1,39 @@
 /*
- * Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
- * Copyright 2005-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2018, Jérôme Duval, jerome.duval@gmail.com.
+ *   Copyright 2005-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file frame_buffer_console.cpp
+ * @brief Text-mode console rendered onto a linear framebuffer.
+ *
+ * Implements a simple character-cell console that draws glyphs from a bitmap
+ * font directly into the boot-splash / bootloader-provided framebuffer. Used
+ * by blue_screen.cpp and by early boot output before a real graphics stack is
+ * up. Supports 8/15/16/24/32-bit color depths, a monochrome VGA fallback,
+ * cursor drawing via XOR blitting, scrolling via memmove, and the standard
+ * console_module_info entry points (put_glyph, fill_glyph, blit, clear).
+ */
 
 #include <frame_buffer_console.h>
 
@@ -98,6 +128,12 @@ static struct vesa_mode* sVesaModes;
 #endif
 
 
+/**
+ * @brief Extract the foreground color index from a VGA-style attribute byte.
+ *
+ * @param attr Attribute byte; low nibble holds the foreground.
+ * @return Palette index in the range [0, 7].
+ */
 static inline uint8
 foreground_color(uint8 attr)
 {
@@ -105,6 +141,13 @@ foreground_color(uint8 attr)
 }
 
 
+/**
+ * @brief Extract the background color index from a VGA-style attribute byte.
+ *
+ * @param attr Attribute byte; high nibble holds the background (bit 7 is
+ *             blink/intensity and is masked off).
+ * @return Palette index in the range [0, 7].
+ */
 static inline uint8
 background_color(uint8 attr)
 {
@@ -112,6 +155,15 @@ background_color(uint8 attr)
 }
 
 
+/**
+ * @brief Look up a palette entry in the table matching the console's depth.
+ *
+ * Selects one of the sPalette8/15/16/32 tables based on sConsole.depth. The
+ * 32-bit table is also used for 24 bpp modes.
+ *
+ * @param index Palette index (0 - 7).
+ * @return Pointer to the raw pixel bytes for that color.
+ */
 static uint8*
 get_palette_entry(uint8 index)
 {
@@ -128,6 +180,16 @@ get_palette_entry(uint8 index)
 }
 
 
+/**
+ * @brief Fetch a single scanline of bitmap data for a glyph.
+ *
+ * Supports both 8-wide (uint8 rows) and wider (uint16 rows) glyphs depending
+ * on the currently selected font.
+ *
+ * @param glyph ASCII glyph index.
+ * @param y     Row within the glyph, [0, font->glyphHeight).
+ * @return Bitmask of set pixels for that row.
+ */
 static uint16
 get_font_data(uint8 glyph, int y)
 {
@@ -139,6 +201,19 @@ get_font_data(uint8 glyph, int y)
 }
 
 
+/**
+ * @brief Rasterize a single glyph cell into the framebuffer.
+ *
+ * Plots foreground/background pixels for the glyph at character-cell
+ * coordinates (column, row). For depths >= 8 the glyph is drawn in color via
+ * the palette; for lower depths the path degenerates to a monochrome VGA
+ * plane-0 write. Non-ASCII glyphs are clamped to 127.
+ *
+ * @param column Cell column index.
+ * @param row    Cell row index.
+ * @param glyph  ASCII glyph to render.
+ * @param attr   VGA-style color attribute.
+ */
 static void
 render_glyph(int32 column, int32 row, uint8 glyph, uint8 attr)
 {
@@ -208,6 +283,16 @@ render_glyph(int32 column, int32 row, uint8 glyph, uint8 attr)
 }
 
 
+/**
+ * @brief Toggle the cursor rectangle by XOR-inverting pixel cells.
+ *
+ * Because the operation is its own inverse, calling draw_cursor twice at the
+ * same location erases the cursor. Negative coordinates are treated as "no
+ * cursor" and ignored.
+ *
+ * @param x Cell column (or -1 to suppress).
+ * @param y Cell row (or -1 to suppress).
+ */
 static void
 draw_cursor(int32 x, int32 y)
 {
@@ -236,6 +321,13 @@ draw_cursor(int32 x, int32 y)
 }
 
 
+/**
+ * @brief Return the console dimensions in character cells.
+ *
+ * @param _width  Out parameter receiving the column count.
+ * @param _height Out parameter receiving the row count.
+ * @return B_OK on success.
+ */
 static status_t
 console_get_size(int32* _width, int32* _height)
 {
@@ -246,6 +338,15 @@ console_get_size(int32* _width, int32* _height)
 }
 
 
+/**
+ * @brief Move the text cursor to a new cell location.
+ *
+ * Erases the cursor at its previous position and re-draws it at (x, y) using
+ * XOR inversion. A no-op if the framebuffer is not yet available.
+ *
+ * @param x New cursor column.
+ * @param y New cursor row.
+ */
 static void
 console_move_cursor(int32 x, int32 y)
 {
@@ -260,6 +361,17 @@ console_move_cursor(int32 x, int32 y)
 }
 
 
+/**
+ * @brief Draw a single glyph at a character-cell position.
+ *
+ * Out-of-range coordinates or an unavailable framebuffer are treated as a
+ * silent no-op.
+ *
+ * @param x     Cell column.
+ * @param y     Cell row.
+ * @param glyph ASCII glyph to render.
+ * @param attr  VGA-style color attribute.
+ */
 static void
 console_put_glyph(int32 x, int32 y, uint8 glyph, uint8 attr)
 {
@@ -271,6 +383,19 @@ console_put_glyph(int32 x, int32 y, uint8 glyph, uint8 attr)
 }
 
 
+/**
+ * @brief Fill a rectangular block of cells with a single glyph.
+ *
+ * Used typically to clear regions or paint borders. The rectangle is clipped
+ * to the console bounds.
+ *
+ * @param x      Left-most cell column.
+ * @param y      Top-most cell row.
+ * @param width  Rectangle width in cells.
+ * @param height Rectangle height in cells.
+ * @param glyph  ASCII glyph to repeat.
+ * @param attr   VGA-style color attribute.
+ */
 static void
 console_fill_glyph(int32 x, int32 y, int32 width, int32 height, uint8 glyph,
 	uint8 attr)
@@ -295,6 +420,20 @@ console_fill_glyph(int32 x, int32 y, int32 width, int32 height, uint8 glyph,
 }
 
 
+/**
+ * @brief Copy a rectangular region of cells to another location via memmove.
+ *
+ * Primarily used to implement scrolling; the cell coordinates are converted
+ * to pixel/byte offsets based on glyph dimensions and bytes-per-pixel (or
+ * bits in the monochrome fallback path).
+ *
+ * @param srcx   Source rectangle left cell column.
+ * @param srcy   Source rectangle top cell row.
+ * @param width  Rectangle width in cells.
+ * @param height Rectangle height in cells.
+ * @param destx  Destination left cell column.
+ * @param desty  Destination top cell row.
+ */
 static void
 console_blit(int32 srcx, int32 srcy, int32 width, int32 height, int32 destx,
 	int32 desty)
@@ -328,6 +467,14 @@ console_blit(int32 srcx, int32 srcy, int32 width, int32 height, int32 destx,
 }
 
 
+/**
+ * @brief Clear the entire framebuffer to the background color of attr.
+ *
+ * Uses a fast memset path for 8-bit modes and falls back to a per-pixel loop
+ * for deeper formats. The cursor position is invalidated (set to -1, -1).
+ *
+ * @param attr VGA-style color attribute whose background nibble is used.
+ */
 static void
 console_clear(uint8 attr)
 {
@@ -370,6 +517,15 @@ console_clear(uint8 attr)
 }
 
 
+/**
+ * @brief Module init/uninit callback registered with the module subsystem.
+ *
+ * B_MODULE_INIT succeeds only if a framebuffer has been mapped; B_MODULE_UNINIT
+ * is a no-op that returns success.
+ *
+ * @param op Module operation code.
+ * @return B_OK on success, B_ERROR otherwise.
+ */
 static status_t
 console_std_ops(int32 op, ...)
 {
@@ -403,6 +559,11 @@ console_module_info gFrameBufferConsoleModule = {
 //	#pragma mark -
 
 
+/**
+ * @brief Test whether a framebuffer has been configured.
+ *
+ * @return true if frame_buffer_update() has installed a non-zero base address.
+ */
 bool
 frame_buffer_console_available(void)
 {
@@ -410,6 +571,20 @@ frame_buffer_console_available(void)
 }
 
 
+/**
+ * @brief Install/replace the framebuffer backing the console.
+ *
+ * Selects small or big bitmap font based on display size, recomputes row/col
+ * counts, and hides the cursor. Safe to call multiple times; protected by the
+ * console lock.
+ *
+ * @param baseAddress Virtual address of the framebuffer.
+ * @param width       Pixel width.
+ * @param height      Pixel height.
+ * @param depth       Bits per pixel (8/15/16/24/32 supported).
+ * @param bytesPerRow Scanline pitch in bytes.
+ * @return B_OK.
+ */
 status_t
 frame_buffer_update(addr_t baseAddress, int32 width, int32 height, int32 depth,
 	int32 bytesPerRow)
@@ -447,6 +622,17 @@ frame_buffer_update(addr_t baseAddress, int32 width, int32 height, int32 depth,
 
 
 #ifndef _BOOT_MODE
+/**
+ * @brief Early-boot console bring-up.
+ *
+ * Initializes the console mutex and, if the bootloader passed us a
+ * framebuffer, registers it using a physical-map alias (KERNEL_PMAP_BASE).
+ * On architectures without a kernel pmap window this becomes a stub that
+ * returns B_NO_INIT.
+ *
+ * @param args Kernel boot arguments.
+ * @return B_OK on success, B_NO_INIT if no pmap window exists.
+ */
 status_t
 frame_buffer_console_init(kernel_args* args)
 {
@@ -468,6 +654,17 @@ frame_buffer_console_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Second-stage console init once the VM is available.
+ *
+ * Maps the physical framebuffer into the kernel address space via
+ * map_physical_memory(), re-registers the console backing at the new virtual
+ * address, and publishes a frame_buffer_boot_info / VESA mode list / EDID
+ * blob as boot items for consumers such as the app_server.
+ *
+ * @param args Kernel boot arguments.
+ * @return B_OK on success or the mapping error from map_physical_memory().
+ */
 status_t
 frame_buffer_console_init_post_vm(kernel_args* args)
 {
@@ -517,6 +714,16 @@ frame_buffer_console_init_post_vm(kernel_args* args)
 }
 
 
+/**
+ * @brief Final init pass run once modules are available.
+ *
+ * Upgrades the framebuffer memory type to write-combining, which materially
+ * accelerates linear writes on typical hardware. A no-op if no framebuffer
+ * is attached.
+ *
+ * @param args Kernel boot arguments.
+ * @return Result of vm_set_area_memory_type(), or B_OK if no framebuffer.
+ */
 status_t
 frame_buffer_console_init_post_modules(kernel_args* args)
 {
@@ -533,6 +740,21 @@ frame_buffer_console_init_post_modules(kernel_args* args)
 //	#pragma mark -
 
 
+/**
+ * @brief User-space syscall entry to reconfigure the kernel framebuffer.
+ *
+ * Stops on-screen debug output, enforces root privilege, validates that the
+ * supplied base address is either kernel-space or NULL, and then calls
+ * frame_buffer_update(). Used by userland graphics setup code to hand over
+ * the display.
+ *
+ * @param baseAddress Virtual address of the new framebuffer.
+ * @param width       Pixel width.
+ * @param height      Pixel height.
+ * @param depth       Bits per pixel.
+ * @param bytesPerRow Scanline pitch in bytes.
+ * @return B_OK, B_NOT_ALLOWED for non-root callers, or B_BAD_ADDRESS.
+ */
 status_t
 _user_frame_buffer_update(addr_t baseAddress, int32 width, int32 height,
 	int32 depth, int32 bytesPerRow)

@@ -1,6 +1,37 @@
 /*
- * Copyright 2004-2009, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2004-2009, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file safemode_settings.cpp
+ * @brief Readers for the boot-menu safemode settings file.
+ *
+ * The boot loader menu lets the user toggle safe-mode options (disable SMP,
+ * disable swap, skip user add-ons, and so on) and persists the selections
+ * into a driver_settings-style file. This module exposes the lookup entry
+ * points used across the kernel (`get_safemode_option`, the `_early`
+ * variants, and the `_user_get_safemode_option` syscall) plus a hand-rolled
+ * parser that works before the heap is functional.
  */
 
 
@@ -23,6 +54,24 @@
 #ifndef _BOOT_MODE
 
 
+/**
+ * @brief Parse a driver_settings file embedded in kernel_args for one option.
+ *
+ * Used during early boot before the heap and driver_settings infrastructure
+ * are available. Walks the raw text buffer for the matching settings file,
+ * performs minimal line-oriented tokenisation, and returns the first value
+ * whose key matches `parameter`.
+ *
+ * @param args Kernel argument block carrying the preloaded settings files.
+ * @param settingsName Name of the settings file to search (e.g. "safemode").
+ * @param parameter Key to locate within that file.
+ * @param parameterLength Length of `parameter` in bytes (no NUL required).
+ * @param buffer Output buffer that receives the NUL-terminated value.
+ * @param _bufferSize [in/out] Size of `buffer` on entry; required length on
+ *                    return (may exceed the supplied buffer).
+ * @return B_OK on match, B_ENTRY_NOT_FOUND if the settings file is absent,
+ *         or B_NAME_NOT_FOUND if the key is not present.
+ */
 static status_t
 get_option_from_kernel_args(kernel_args* args, const char* settingsName,
 	const char* parameter, size_t parameterLength, char* buffer,
@@ -150,6 +199,21 @@ get_option_from_kernel_args(kernel_args* args, const char* settingsName,
 #endif	// !_BOOT_MODE
 
 
+/**
+ * @brief Look up an option in a named settings file (early or runtime path).
+ *
+ * When called with a non-NULL `args` (and outside _BOOT_MODE) the raw kernel
+ * args buffer is searched via get_option_from_kernel_args(). Otherwise the
+ * driver_settings subsystem is used.
+ *
+ * @param args Early-boot kernel args, or NULL to use driver_settings.
+ * @param settingsName Name of the settings file.
+ * @param parameter Key to look up.
+ * @param parameterLength Length of `parameter` in bytes.
+ * @param buffer Output buffer for the value.
+ * @param _bufferSize [in/out] Size of buffer; actual length on return.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND or B_NAME_NOT_FOUND on miss.
+ */
 static status_t
 get_option(kernel_args* args, const char* settingsName, const char* parameter,
 	size_t parameterLength, char* buffer, size_t* _bufferSize)
@@ -178,6 +242,18 @@ get_option(kernel_args* args, const char* settingsName, const char* parameter,
 }
 
 
+/**
+ * @brief Look up `parameter` in the safemode file, falling back to "kernel".
+ *
+ * Convenience overload that hides the two fixed settings file names used by
+ * the safemode mechanism: B_SAFEMODE_DRIVER_SETTINGS first, then "kernel".
+ *
+ * @param args Early-boot kernel args, or NULL for the driver_settings path.
+ * @param parameter Key to look up.
+ * @param buffer Output buffer for the value.
+ * @param _bufferSize [in/out] Size of buffer; actual length on return.
+ * @return B_OK on success or the last error code if neither file matched.
+ */
 static status_t
 get_option(kernel_args* args, const char* parameter, char* buffer,
 	size_t* _bufferSize)
@@ -195,6 +271,18 @@ get_option(kernel_args* args, const char* parameter, char* buffer,
 }
 
 
+/**
+ * @brief Look up a boolean safemode option.
+ *
+ * Reads the raw string value via get_option() and accepts the usual
+ * affirmative spellings (case-insensitive "on"/"true"/"yes"/"enabled" and
+ * the literal "1"). Any other value resolves to `defaultValue`.
+ *
+ * @param args Early-boot kernel args, or NULL for the driver_settings path.
+ * @param parameter Key to look up.
+ * @param defaultValue Value returned when the option is missing.
+ * @return Parsed boolean value.
+ */
 static bool
 get_boolean(kernel_args* args, const char* parameter, bool defaultValue)
 {
@@ -213,6 +301,17 @@ get_boolean(kernel_args* args, const char* parameter, bool defaultValue)
 // #pragma mark -
 
 
+/**
+ * @brief Public accessor for a safemode option string.
+ *
+ * Thin wrapper around get_option() that always uses the runtime
+ * driver_settings path.
+ *
+ * @param parameter Key to look up.
+ * @param buffer Output buffer that receives the value string.
+ * @param _bufferSize [in/out] Size of buffer; actual length on return.
+ * @return B_OK on success or an error status on miss.
+ */
 status_t
 get_safemode_option(const char* parameter, char* buffer, size_t* _bufferSize)
 {
@@ -220,6 +319,13 @@ get_safemode_option(const char* parameter, char* buffer, size_t* _bufferSize)
 }
 
 
+/**
+ * @brief Public accessor for a safemode option interpreted as a boolean.
+ *
+ * @param parameter Key to look up.
+ * @param defaultValue Value returned if the option is missing or invalid.
+ * @return Parsed boolean value.
+ */
 bool
 get_safemode_boolean(const char* parameter, bool defaultValue)
 {
@@ -230,6 +336,18 @@ get_safemode_boolean(const char* parameter, bool defaultValue)
 #ifndef _BOOT_MODE
 
 
+/**
+ * @brief Early-boot safemode option lookup using raw kernel_args.
+ *
+ * Callable before the heap and driver_settings subsystem are available;
+ * parses the settings text preloaded in `args` directly.
+ *
+ * @param args Kernel arguments carrying the preloaded settings buffers.
+ * @param parameter Key to look up.
+ * @param buffer Output buffer.
+ * @param _bufferSize [in/out] Size of buffer; actual length on return.
+ * @return B_OK on success or an error status on miss.
+ */
 status_t
 get_safemode_option_early(kernel_args* args, const char* parameter,
 	char* buffer, size_t* _bufferSize)
@@ -238,6 +356,14 @@ get_safemode_option_early(kernel_args* args, const char* parameter,
 }
 
 
+/**
+ * @brief Early-boot boolean safemode lookup using raw kernel_args.
+ *
+ * @param args Kernel arguments carrying the preloaded settings buffers.
+ * @param parameter Key to look up.
+ * @param defaultValue Value returned if the option is missing or invalid.
+ * @return Parsed boolean value.
+ */
 bool
 get_safemode_boolean_early(kernel_args* args, const char* parameter,
 	bool defaultValue)
@@ -255,6 +381,20 @@ get_safemode_boolean_early(kernel_args* args, const char* parameter,
 #ifndef _BOOT_MODE
 
 
+/**
+ * @brief Syscall implementation of get_safemode_option() for userland.
+ *
+ * Validates user pointers, copies the parameter name and buffer size in,
+ * invokes get_safemode_option(), and then copies the value and updated size
+ * back out. All user pointer accesses go through user_memcpy/user_strlcpy
+ * so that faults are caught rather than crashing the kernel.
+ *
+ * @param userParameter User-space pointer to the NUL-terminated key name.
+ * @param userBuffer User-space output buffer for the value.
+ * @param _userBufferSize User-space [in/out] size word.
+ * @return B_BAD_ADDRESS if any user pointer fails validation, otherwise the
+ *         status returned by get_safemode_option().
+ */
 extern "C" status_t
 _user_get_safemode_option(const char* userParameter, char* userBuffer,
 	size_t* _userBufferSize)

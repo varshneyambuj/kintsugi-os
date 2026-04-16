@@ -108,6 +108,12 @@ static HandlerList sLowResourceHandlers;
 static ConditionVariable sLowResourceWaiterCondition;
 
 
+/**
+ * @brief Render a B_LOW_RESOURCE_* state as a debug-friendly string.
+ * @param state One of B_NO_LOW_RESOURCE / B_LOW_RESOURCE_NOTE / WARNING /
+ *              CRITICAL.
+ * @return Static string literal describing the level.
+ */
 static const char*
 state_to_string(uint32 state)
 {
@@ -125,6 +131,16 @@ state_to_string(uint32 state)
 }
 
 
+/**
+ * @brief Compute the worst current state across a mask of resources.
+ *
+ * Uses cached state values without refreshing them.
+ *
+ * @param resources Bitmask of B_KERNEL_RESOURCE_* flags (PAGES, MEMORY,
+ *                  SEMAPHORES, ADDRESS_SPACE) to consider.
+ * @return Highest (most critical) state observed across the selected
+ *         resources.
+ */
 static int32
 low_resource_state_no_update(uint32 resources)
 {
@@ -143,9 +159,14 @@ low_resource_state_no_update(uint32 resources)
 }
 
 
-/*!	Calls low resource handlers for the given resources.
-	sLowResourceLock must be held.
-*/
+/**
+ * @brief Invoke registered handlers for the given set of low resources.
+ *
+ * Uses a marker node so the list can be traversed safely while the lock is
+ * released across each handler call. sLowResourceLock must be held on entry.
+ *
+ * @param lowResources Bitmask of B_KERNEL_RESOURCE_* flags currently low.
+ */
 static void
 call_handlers(uint32 lowResources)
 {
@@ -177,6 +198,14 @@ call_handlers(uint32 lowResources)
 }
 
 
+/**
+ * @brief Sample live system counters and update every per-resource state.
+ *
+ * Updates sLowPagesState, sLowMemoryState, sLowSemaphoresState, and
+ * sLowSpaceState based on current thresholds and clears or sets the
+ * corresponding bits of sLowResources. Emits a dprintf() line whenever a
+ * resource transitions between severity levels.
+ */
 static void
 compute_state(void)
 {
@@ -268,6 +297,15 @@ compute_state(void)
 }
 
 
+/**
+ * @brief Manager worker loop: sample state, notify handlers, wake waiters.
+ *
+ * Wakes periodically (every 3 s normally, 0.5 s while in WARNING or above)
+ * or immediately when low_resource() releases the wake semaphore. Calls
+ * registered handlers when any tracked resource is at NOTE level or worse.
+ *
+ * @return Unused; the function runs until the kernel shuts down.
+ */
 static status_t
 low_resource_manager(void*)
 {
@@ -306,6 +344,12 @@ low_resource_manager(void*)
 }
 
 
+/**
+ * @brief Debugger command: print current resource states and handler list.
+ * @param argc Unused argument count.
+ * @param argv Unused argument vector.
+ * @return 0 on success.
+ */
 static int
 dump_handlers(int argc, char** argv)
 {
@@ -351,11 +395,22 @@ dump_handlers(int argc, char** argv)
 //	#pragma mark - private kernel API
 
 
-/*!	Notifies the low resource manager that a resource is lacking. If \a flags
-	and \a timeout specify a timeout, the function will wait until the low
-	resource manager has finished its next iteration of calling low resource
-	handlers, or until the timeout occurs (whichever happens first).
-*/
+/**
+ * @brief Notify the manager that a specific resource is running short.
+ *
+ * Raises the corresponding cached state (if @a requirements imply a higher
+ * severity than currently recorded) and wakes the manager thread. When
+ * @a flags and @a timeout permit, blocks until the next handler pass ends
+ * or the timeout elapses.
+ *
+ * @param resource     Single B_KERNEL_RESOURCE_* flag identifying the
+ *                     low resource (PAGES, MEMORY, SEMAPHORES, or
+ *                     ADDRESS_SPACE).
+ * @param requirements Amount of the resource the caller still needs; used
+ *                     to decide NOTE vs WARNING vs CRITICAL.
+ * @param flags        Wait flags (e.g. B_RELATIVE_TIMEOUT).
+ * @param timeout      Wait timeout in microseconds; 0 returns immediately.
+ */
 void
 low_resource(uint32 resource, uint64 requirements, uint32 flags, uint32 timeout)
 {
@@ -423,6 +478,15 @@ low_resource(uint32 resource, uint64 requirements, uint32 flags, uint32 timeout)
 }
 
 
+/**
+ * @brief Query the current worst state for the given resources.
+ *
+ * Refreshes the cached state if the last measurement is more than 500 ms
+ * old.
+ *
+ * @param resources Bitmask of B_KERNEL_RESOURCE_* flags to consider.
+ * @return Highest severity level observed across those resources.
+ */
 int32
 low_resource_state(uint32 resources)
 {
@@ -439,6 +503,14 @@ low_resource_state(uint32 resources)
 }
 
 
+/**
+ * @brief First-phase initialisation: set up handler list and memory limits.
+ *
+ * Scales the note / warning / critical memory thresholds from total RAM,
+ * falling back to the fixed floors on very small systems.
+ *
+ * @return B_OK on success.
+ */
 status_t
 low_resource_manager_init(void)
 {
@@ -464,6 +536,13 @@ low_resource_manager_init(void)
 }
 
 
+/**
+ * @brief Second-phase initialisation: create wake semaphore and spawn worker.
+ *
+ * Also installs the @c low_resource debugger command.
+ *
+ * @return B_OK on success, or the semaphore/thread error code on failure.
+ */
 status_t
 low_resource_manager_init_post_thread(void)
 {
@@ -481,6 +560,15 @@ low_resource_manager_init_post_thread(void)
 }
 
 
+/**
+ * @brief Remove a previously registered low-resource handler.
+ *
+ * @param function Callback previously passed to
+ *                 register_low_resource_handler().
+ * @param data     Cookie previously passed to
+ *                 register_low_resource_handler().
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if no matching handler exists.
+ */
 status_t
 unregister_low_resource_handler(low_resource_func function, void* data)
 {
@@ -504,9 +592,19 @@ unregister_low_resource_handler(low_resource_func function, void* data)
 }
 
 
-/*! Registers a low resource handler. The higher the \a priority, the earlier
-	the handler will be called in low resource situations.
-*/
+/**
+ * @brief Register a handler to be called when specific resources run low.
+ *
+ * Handlers are invoked in priority order (highest first) and may shed
+ * caches, free memory, or otherwise reduce their resource footprint.
+ *
+ * @param function  Callback invoked as function(data, resources, state).
+ * @param data      Opaque cookie passed back to @a function.
+ * @param resources Bitmask of B_KERNEL_RESOURCE_* flags the handler
+ *                  subscribes to (PAGES, MEMORY, SEMAPHORES, ADDRESS_SPACE).
+ * @param priority  Relative ordering; higher runs earlier.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure.
+ */
 status_t
 register_low_resource_handler(low_resource_func function, void* data,
 	uint32 resources, int32 priority)

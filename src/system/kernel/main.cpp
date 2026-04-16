@@ -132,21 +132,41 @@ non_boot_cpu_init(void* args, int currentCPU)
 /**
  * @brief Primary kernel entry point called by the bootloader on every CPU.
  *
- * On the boot CPU (currentCPU == 0) this function drives the complete kernel
- * initialization sequence: architecture platform, VM, scheduling, drivers, and
- * all other subsystems. It then spawns main2() as the first kernel thread,
- * enables the scheduler, wakes up the AP CPUs, and falls into the idle loop.
+ * On the boot CPU (currentCPU == 0) this function drives the full initialization
+ * pipeline. The ordering is deliberate: each phase only assumes facilities set
+ * up by earlier phases. The notable phases, in order, are:
+ *  - kernel_args version check and snapshot to static storage;
+ *  - smp_cpu_rendezvous() barriers to align all CPUs;
+ *  - cpu_preboot_init_percpu() / thread_preboot_init_percpu() for minimal
+ *    per-CPU state needed before any locks work;
+ *  - arch_platform_init() to bring up the architecture layer (page tables,
+ *    MMU, platform-specific timers);
+ *  - debug_init() to enable dprintf output and the kernel debugger;
+ *  - cpu_init() / interrupts_init() to set up the CPU and IDT/IRQ tables;
+ *  - vm_init() to bring up the virtual-memory subsystem and kernel heap;
+ *  - boot_item_init(), low_resource_manager_init(), driver_settings_init();
+ *  - team_init(), elf_init(), module_init(), haiku_sem_init(),
+ *    commpage_init() to populate the core object subsystems;
+ *  - smp_init(), timer_init(), rtc_init(), condition_variable_init();
+ *  - vm_init_post_sem(), generic_syscall_init(), scheduler_init(),
+ *    thread_init(), kernel_daemon_init(), stack_protector_init();
+ *  - interrupts_init_io(), vm_init_post_thread(), dpc_init(), vfs_init();
+ *  - realtime_sem_init(), xsi_sem_init(), xsi_msg_init() for POSIX IPC.
+ * After the subsystems are up, main2() is spawned as the first kernel thread,
+ * the scheduler is enabled, the AP CPUs are released, gKernelStartup is cleared,
+ * scheduler_start() is called, interrupts are enabled, and the boot CPU drops
+ * into the idle loop.
  *
  * On application processors the function synchronizes with the boot CPU via
- * rendezvous barriers, runs per-CPU SMP initialization, starts the scheduler,
- * enables interrupts, and enters the idle loop.
+ * the same rendezvous barriers, runs per-CPU SMP initialization, starts the
+ * scheduler, enables interrupts, and enters the idle loop.
  *
  * @param bootKernelArgs Pointer to the kernel_args struct provided by the
  *                       bootloader. The struct is copied to static storage
  *                       before the bootloader's memory is reclaimed.
  * @param currentCPU     Logical index (0-based) of the CPU executing _start().
- * @return               Never returns under normal operation; returns -1 if
- *                       the kernel_args version or size does not match.
+ * @return Never returns under normal operation; returns -1 if the kernel_args
+ *         version or size does not match (printed via early debug).
  */
 extern "C" int
 _start(kernel_args *bootKernelArgs, int currentCPU)
@@ -346,10 +366,26 @@ _start(kernel_args *bootKernelArgs, int currentCPU)
  * @brief Second-stage kernel initialization thread; completes system startup.
  *
  * Spawned as the first kernel thread by _start() and scheduled once the
- * scheduler is running. Initializes the remaining kernel subsystems that
- * require a thread context (ports, VFS, device manager, swap, modules), mounts
- * the boot file system, frees the kernel args ranges, and finally loads and
- * resumes the launch_daemon process to hand off to user space.
+ * scheduler is running. Initializes the remaining subsystems that require a
+ * thread context and the boot splash driver in roughly the following order:
+ *  - start_system_profiler() if SYSTEM_PROFILER is enabled;
+ *  - boot_splash_init() to present early graphical feedback;
+ *  - commpage_init_post_cpus() for user-visible common-page routines;
+ *  - port_init() to enable Haiku-style message ports;
+ *  - user_mutex_init() for userspace-visible mutex primitives;
+ *  - system_notifications_init() and scheduler_loadavg_init();
+ *  - module_init_post_threads() so modules can create threads;
+ *  - init_user_debug() and init_messaging_service();
+ *  - vfs_bootstrap_file_systems() to publish rootfs/devfs/pipefs etc.;
+ *  - device_manager_init() and legacy_driver_add_preloaded();
+ *  - interrupts_init_post_device_manager();
+ *  - vfs_mount_boot_file_system() to mount the real boot volume;
+ *  - cpu_init_post_modules(), vm_init_post_modules(), debug_init_post_modules(),
+ *    and device_manager_init_post_modules() to wire up module-provided hooks;
+ *  - boot_splash_uninit() and vm_free_kernel_args() to release boot memory.
+ * Finally, the launch_daemon binary is located under the system servers
+ * directory and loaded via load_image(); a successful resume_thread() hands
+ * control off to user space. The kernel thread then exits.
  *
  * @param unused Unused thread argument (always NULL).
  * @return 0 on success; the thread exits normally after spawning launch_daemon.

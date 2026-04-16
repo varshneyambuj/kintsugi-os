@@ -1,10 +1,57 @@
 /*
- * Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de
- * Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008, Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Copyright 2002-2008, Axel Dörfler, axeld@pinc-software.de
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file debug_builtin_commands.cpp
+ * @brief Built-in kernel debugger (KDL) command handlers.
+ *
+ * Implements the set of commands that are registered unconditionally at boot
+ * so they are always available inside the kernel debugger prompt: session
+ * control (help, continue, reboot, shutdown, gdb), expression evaluation
+ * (expr, error), fault-handling toggle (faults), and a small collection of
+ * pipe-aware text filters (head, tail, grep, wc) that can be chained with '|'
+ * to post-process the output of other KDL commands. Each handler follows the
+ * (argc, argv) convention and prints via kprintf.
+ *
+ * @brief Command dispatch convention.
+ *
+ * Every handler in this file is a function returning int that takes (argc,
+ * argv). A return value of 0 means "success, stay in KDL"; B_KDEBUG_QUIT
+ * causes the debugger loop to resume the kernel; B_KDEBUG_ERROR reports a
+ * usage problem; and B_KDEBUG_RESTART_PIPE requests the pipe machinery to
+ * feed the command a second time.
+ *
+ * @brief Pipe-segment state handling.
+ *
+ * Pipe-aware filters (head, tail, grep, wc) stash their running state in
+ * the per-segment user_data block returned by
+ * get_current_debugger_command_pipe_segment(), so multiple invocations can
+ * accumulate counters or line tallies without touching globals.
  */
 
 #include "debug_builtin_commands.h"
@@ -20,6 +67,19 @@
 #include "gdb.h"
 
 
+/**
+ * @brief KDL "reboot" command: hard-reboots the machine.
+ *
+ * Usage: reboot
+ *
+ * Invokes arch_cpu_shutdown(true) which does not return under normal
+ * circumstances. The trailing return 0 is therefore only reached if the
+ * architecture layer unexpectedly fails to restart the CPU.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return 0 on the unlikely case arch_cpu_shutdown() returns.
+ */
 static int
 cmd_reboot(int argc, char **argv)
 {
@@ -29,6 +89,18 @@ cmd_reboot(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL "shutdown" command: powers the machine off.
+ *
+ * Usage: shutdown
+ *
+ * Calls arch_cpu_shutdown(false) to request a clean power-off from the
+ * architecture backend.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return 0 if control unexpectedly returns from the shutdown path.
+ */
 static int
 cmd_shutdown(int argc, char **argv)
 {
@@ -37,6 +109,21 @@ cmd_shutdown(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL "help" command: lists registered debugger commands.
+ *
+ * Usage: help [name]
+ *
+ * With no argument, prints every registered KDL command and its short
+ * description. With an argument that matches a command exactly, prints the
+ * command and all of its aliases. Otherwise treats the argument as a prefix
+ * and lists commands whose names start with it.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector; argv[1] optionally holds a command name or
+ *             prefix.
+ * @return 0 always.
+ */
 static int
 cmd_help(int argc, char **argv)
 {
@@ -75,6 +162,18 @@ cmd_help(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL "continue" command: leaves the kernel debugger.
+ *
+ * Usage: continue (aliases: exit, es)
+ *
+ * Returns B_KDEBUG_QUIT to signal the debugger loop to resume normal kernel
+ * execution.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return B_KDEBUG_QUIT to exit the KDL prompt.
+ */
 static int
 cmd_continue(int argc, char **argv)
 {
@@ -82,6 +181,19 @@ cmd_continue(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL "expr" command: evaluates a debug expression.
+ *
+ * Usage: expr <expression>
+ *
+ * Parses argv[1] through evaluate_debug_expression() and, on success, prints
+ * the result in both decimal and hexadecimal and stores it in the "_"
+ * debug variable for reuse by later commands.
+ *
+ * @param argc Argument count; must be exactly 2.
+ * @param argv Argument vector; argv[1] is the expression string.
+ * @return 0 always (errors are reported via the expression machinery).
+ */
 static int
 cmd_expr(int argc, char **argv)
 {
@@ -100,6 +212,19 @@ cmd_expr(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL "error" command: translates an error code to text.
+ *
+ * Usage: error <error>
+ *
+ * Parses argv[1] as a numeric expression and prints the matching
+ * strerror() description so that raw negative/positive error constants seen
+ * inside the debugger can be decoded.
+ *
+ * @param argc Argument count; must be exactly 2.
+ * @param argv Argument vector; argv[1] is the numeric error code.
+ * @return 0 always.
+ */
 static int
 cmd_error(int argc, char **argv)
 {
@@ -115,6 +240,22 @@ cmd_error(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL "head" pipe filter: prints the first N lines of a pipe segment.
+ *
+ * Usage: <other command> | head <maxLines>
+ *
+ * Must be invoked as part of a debugger command pipe. On the first
+ * invocation the maximum line count is parsed from argv[1] into per-segment
+ * user data; on each subsequent call the current pipe line (argv[2]) is
+ * echoed until the cap is reached, after which further lines are silently
+ * discarded.
+ *
+ * @param argc Argument count; must be 3 (maxLines + current line).
+ * @param argv Argument vector provided by the pipe machinery.
+ * @return 0 on success, B_KDEBUG_ERROR when misused outside a pipe or with
+ *         bad arguments.
+ */
 static int
 cmd_head(int argc, char** argv)
 {
@@ -151,6 +292,21 @@ cmd_head(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL "tail" pipe filter: prints the last N lines of a pipe segment.
+ *
+ * Usage: <other command> | tail [maxLines]
+ *
+ * Must be invoked as part of a debugger command pipe. First pass counts the
+ * incoming lines; on end-of-input the pipe is restarted via
+ * B_KDEBUG_RESTART_PIPE and the final pass echoes only the trailing
+ * <maxLines> (default 10).
+ *
+ * @param argc Argument count; 2 or 3.
+ * @param argv Argument vector provided by the pipe machinery.
+ * @return 0 on success, B_KDEBUG_ERROR on misuse, or B_KDEBUG_RESTART_PIPE
+ *         when the pipe needs to be re-run for the output phase.
+ */
 static int
 cmd_tail(int argc, char** argv)
 {
@@ -204,6 +360,20 @@ cmd_tail(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL "grep" pipe filter: matches lines against a pattern.
+ *
+ * Usage: <other command> | grep [-i] [-v] <pattern>
+ *
+ * Parses option flags -i (case-insensitive) and -v (invert match), then for
+ * each piped line prints it when the match/invert state agrees. The
+ * case-insensitive path uses a simple strncasecmp scan, which is fine at
+ * KDL-usage scale.
+ *
+ * @param argc Argument count (flags + pattern + current line).
+ * @param argv Argument vector from the pipe machinery.
+ * @return 0 on success, B_KDEBUG_ERROR on argument errors.
+ */
 static int
 cmd_grep(int argc, char** argv)
 {
@@ -261,6 +431,21 @@ cmd_grep(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL "wc" pipe filter: counts lines, words and characters.
+ *
+ * Usage: <other command> | wc
+ *
+ * Must be invoked as part of a debugger command pipe. On each piped line
+ * bumps the running totals in the per-segment user data; on the final run
+ * (line == NULL, signalled via B_KDEBUG_PIPE_FINAL_RERUN) prints the
+ * aggregated counts in the classic wc layout.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector; argv[1] is the current line or NULL for the
+ *             terminating call.
+ * @return 0 on success, B_KDEBUG_ERROR on misuse outside a pipe.
+ */
 static int
 cmd_wc(int argc, char** argv)
 {
@@ -316,6 +501,20 @@ cmd_wc(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL "faults" command: toggles fault handling for KDL commands.
+ *
+ * Usage: faults [0|1]
+ *
+ * Without arguments prints the current setting. With argv[1] evaluating to
+ * zero, disables the fault-catching wrapper so commands are invoked
+ * directly (useful when the wrapper itself is suspect); non-zero re-enables
+ * it.
+ *
+ * @param argc Argument count; 1 or 2.
+ * @param argv Argument vector; argv[1] optionally holds 0 or 1.
+ * @return 0 on success, B_KDEBUG_ERROR on too many arguments.
+ */
 static int
 cmd_faults(int argc, char** argv)
 {
@@ -336,6 +535,17 @@ cmd_faults(int argc, char** argv)
 // #pragma mark -
 
 
+/**
+ * @brief Registers every built-in command with the KDL command table.
+ *
+ * Called once during kernel debugger initialisation. For each handler in
+ * this file it installs a command entry plus help text via
+ * add_debugger_command_etc(), and wires up the "exit" / "es" aliases for
+ * "continue". Pipe-aware commands pass B_KDEBUG_PIPE_FINAL_RERUN so their
+ * finaliser is invoked once the upstream stage has drained.
+ *
+ * @return void.
+ */
 void
 debug_builtin_commands_init()
 {

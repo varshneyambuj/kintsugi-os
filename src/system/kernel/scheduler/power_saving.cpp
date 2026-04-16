@@ -1,6 +1,37 @@
 /*
- * Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013, Paweł Dziepak, pdziepak@quarnos.org.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file power_saving.cpp
+ * @brief Power-saving scheduler mode: pack work and IRQs onto few cores.
+ *
+ * Implements the scheduler_mode_operations vtable gSchedulerPowerSavingMode.
+ * The strategy favours keeping as many cores idle as possible by funnelling
+ * small tasks (and their IRQs) onto a single "small-task core" and only
+ * spreading work when the chosen core becomes overloaded.
+ *
+ * @see scheduler_modes.h, low_latency.cpp
  */
 
 
@@ -22,6 +53,12 @@ const bigtime_t kCacheExpire = 100000;
 static CoreEntry* sSmallTaskCore;
 
 
+/**
+ * @brief Reset mode state when the scheduler switches into power saving.
+ *
+ * Clears the cached small-task core so the next placement decision picks
+ * a fresh victim based on current load.
+ */
 static void
 switch_to_mode()
 {
@@ -29,6 +66,15 @@ switch_to_mode()
 }
 
 
+/**
+ * @brief React to a CPU being enabled or disabled at runtime.
+ *
+ * Clearing sSmallTaskCore on disable forces re-election next time, since the
+ * previously chosen core may no longer be usable.
+ *
+ * @param cpu     CPU index whose state changed.
+ * @param enabled true if the CPU is being enabled, false if disabled.
+ */
 static void
 set_cpu_enabled(int32 cpu, bool enabled)
 {
@@ -37,6 +83,15 @@ set_cpu_enabled(int32 cpu, bool enabled)
 }
 
 
+/**
+ * @brief Return true if the thread slept long enough to lose cache affinity.
+ *
+ * Used by the scheduler to decide whether to rebalance a waking thread off
+ * its previous core.
+ *
+ * @param threadData Scheduler bookkeeping for the thread being woken.
+ * @return true if the thread has been asleep longer than kCacheExpire.
+ */
 static bool
 has_cache_expired(const ThreadData* threadData)
 {
@@ -47,6 +102,15 @@ has_cache_expired(const ThreadData* threadData)
 }
 
 
+/**
+ * @brief Elect (or return) the single core used to host small tasks.
+ *
+ * Picks the busiest non-idle core from gCoreLoadHeap and installs it as
+ * sSmallTaskCore if no other thread raced ahead. Subsequent calls return
+ * whichever core first won the race.
+ *
+ * @return Small-task core, or NULL only if no eligible cores exist.
+ */
 static CoreEntry*
 choose_small_task_core()
 {
@@ -65,6 +129,14 @@ choose_small_task_core()
 }
 
 
+/**
+ * @brief Pick an idle core, preferring packages that already have activity.
+ *
+ * Returning an idle core on a partially awake package keeps fully idle
+ * packages in deep sleep for longer.
+ *
+ * @return Idle core to wake, or NULL if none is available.
+ */
 static CoreEntry*
 choose_idle_core()
 {
@@ -81,6 +153,16 @@ choose_idle_core()
 }
 
 
+/**
+ * @brief Choose the destination core for a newly runnable thread.
+ *
+ * First tries to pile onto the small-task core, falling back to the least
+ * loaded awake core, then to waking an idle core, then to the least loaded
+ * highly loaded core. Honours the thread's CPU affinity mask.
+ *
+ * @param threadData Scheduler bookkeeping for the thread being placed.
+ * @return Destination core (never NULL).
+ */
 static CoreEntry*
 choose_core(const ThreadData* threadData)
 {
@@ -126,6 +208,17 @@ choose_core(const ThreadData* threadData)
 }
 
 
+/**
+ * @brief Decide whether to migrate a running thread to a different core.
+ *
+ * When the current core is hot and the thread is the small-task core's
+ * main contributor, consider stealing back the small-task core or moving
+ * to the least loaded alternative. When the current core is cool enough,
+ * try to consolidate the thread onto the small-task core instead.
+ *
+ * @param threadData Scheduler bookkeeping for the thread being rebalanced.
+ * @return Chosen destination core (may be the current core).
+ */
 static CoreEntry*
 rebalance(const ThreadData* threadData)
 {
@@ -186,6 +279,13 @@ rebalance(const ThreadData* threadData)
 }
 
 
+/**
+ * @brief Move all IRQs off this CPU onto the small-task core.
+ *
+ * Walks the current CPU's IRQ list and reassigns each to the least loaded
+ * CPU of sSmallTaskCore. Intended to be called from the idle path to let
+ * non-small-task cores enter deeper sleep states.
+ */
 static inline void
 pack_irqs()
 {
@@ -214,6 +314,16 @@ pack_irqs()
 }
 
 
+/**
+ * @brief Rebalance this CPU's IRQs according to the power-saving policy.
+ *
+ * When going idle and there is a small-task core elected, pack_irqs() moves
+ * IRQs there. Otherwise — only when no small-task core exists — pick the
+ * heaviest IRQ on this CPU and consider migrating it to a noticeably less
+ * loaded core.
+ *
+ * @param idle true when called from the idle path.
+ */
 static void
 rebalance_irqs(bool idle)
 {

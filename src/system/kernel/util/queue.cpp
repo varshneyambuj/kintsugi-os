@@ -1,9 +1,40 @@
-/* Standard queue */
-
 /*
-** Copyright 2001, Travis Geiselbrecht. All rights reserved.
-** Distributed under the terms of the NewOS License.
-*/
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2001, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file queue.cpp
+ * @brief Plain and fixed-size FIFO queues used by kernel subsystems.
+ *
+ * Two independent implementations live here:
+ *
+ *  - An intrusive singly-linked list queue (`queue`, `queue_element`) where
+ *    each enqueued object stores a `next` pointer at its head.
+ *  - A bounded circular queue (`fixed_queue`) that stores opaque `void*`
+ *    entries in a pre-allocated array.
+ *
+ * Neither queue is thread-safe; callers synchronize externally.
+ */
 
 #include <kernel.h>
 #include <queue.h>
@@ -21,6 +52,11 @@ typedef struct queue_typed {
 } queue_typed;
 
 
+/**
+ * @brief Initialize an empty intrusive queue.
+ * @param q Queue to reset.
+ * @return Always 0.
+ */
 int
 queue_init(queue *q)
 {
@@ -30,6 +66,12 @@ queue_init(queue *q)
 }
 
 
+/**
+ * @brief Remove the first occurrence of @a e from the queue.
+ * @param _q Queue to search.
+ * @param e  Element pointer (must have been previously enqueued).
+ * @return 0 if removed, -1 if @a e was not on the queue.
+ */
 int
 queue_remove_item(queue *_q, void *e)
 {
@@ -58,6 +100,12 @@ queue_remove_item(queue *_q, void *e)
 }
 
 
+/**
+ * @brief Append an element to the tail of the queue.
+ * @param _q Queue receiving the element.
+ * @param e  Element to enqueue; its first word is used as a next-pointer.
+ * @return Always 0.
+ */
 int
 queue_enqueue(queue *_q, void *e)
 {
@@ -77,6 +125,11 @@ queue_enqueue(queue *_q, void *e)
 }
 
 
+/**
+ * @brief Remove and return the head element.
+ * @param _q Queue to dequeue from.
+ * @return Head element, or NULL if the queue is empty.
+ */
 void *
 queue_dequeue(queue *_q)
 {
@@ -96,6 +149,11 @@ queue_dequeue(queue *_q)
 }
 
 
+/**
+ * @brief Return the head element without removing it.
+ * @param q Queue to peek.
+ * @return Head element, or NULL if the queue is empty.
+ */
 void *
 queue_peek(queue *q)
 {
@@ -107,6 +165,12 @@ queue_peek(queue *q)
 /* fixed queue stuff */
 
 
+/**
+ * @brief Allocate the backing array for a bounded ring buffer.
+ * @param q    Queue to initialize.
+ * @param size Capacity in entries; must be > 0.
+ * @return 0 on success, EINVAL for bad size, ENOMEM on allocation failure.
+ */
 int
 fixed_queue_init(fixed_queue *q, int size)
 {
@@ -125,6 +189,10 @@ fixed_queue_init(fixed_queue *q, int size)
 }
 
 
+/**
+ * @brief Release the backing array of a fixed-size queue.
+ * @param q Queue to destroy.
+ */
 void
 fixed_queue_destroy(fixed_queue *q)
 {
@@ -132,6 +200,12 @@ fixed_queue_destroy(fixed_queue *q)
 }
 
 
+/**
+ * @brief Append an entry to a fixed-size queue.
+ * @param q Queue receiving the entry.
+ * @param e Opaque pointer to store.
+ * @return 0 on success, ENOMEM when the queue is full.
+ */
 int
 fixed_queue_enqueue(fixed_queue *q, void *e)
 {
@@ -147,6 +221,11 @@ fixed_queue_enqueue(fixed_queue *q, void *e)
 }
 
 
+/**
+ * @brief Remove and return the oldest entry.
+ * @param q Queue to dequeue from.
+ * @return Entry pointer, or NULL if the queue is empty.
+ */
 void *
 fixed_queue_dequeue(fixed_queue *q)
 {
@@ -164,6 +243,11 @@ fixed_queue_dequeue(fixed_queue *q)
 }
 
 
+/**
+ * @brief Return the oldest entry without removing it.
+ * @param q Queue to peek.
+ * @return Entry pointer, or NULL if the queue is empty.
+ */
 void *
 fixed_queue_peek(fixed_queue *q)
 {
@@ -172,5 +256,4 @@ fixed_queue_peek(fixed_queue *q)
 
 	return q->table[q->tail];
 }
-
 

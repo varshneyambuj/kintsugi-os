@@ -1,65 +1,91 @@
-/* [zooey]:
- * This implementation is broken, as e.g. strtod("1.7E+064", ...) yields an
- * incorrect (inaccurate) result.
- * For libroot, we use the glibc version instead.
- * This file is still used in the kernel, however, since I didn't dare
- * introducing a glibc-based source into the kernel.
- * So, currently we have to live with the fact that strtod() in our kernel
- * gives somewhat inaccurate results.
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   [zooey]:
+ *   This implementation is broken, as e.g. strtod("1.7E+064", ...) yields an
+ *   incorrect (inaccurate) result.
+ *   For libroot, we use the glibc version instead.
+ *   This file is still used in the kernel, however, since I didn't dare
+ *   introducing a glibc-based source into the kernel.
+ *   So, currently we have to live with the fact that strtod() in our kernel
+ *   gives somewhat inaccurate results.
+ *
+ *   Copyright (c) 1993
+ *     The Regents of the University of California.  All rights reserved.
+ *
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions
+ *   are met:
+ *   1. Redistributions of source code must retain the above copyright
+ *      notice, this list of conditions and the following disclaimer.
+ *   2. Redistributions in binary form must reproduce the above copyright
+ *      notice, this list of conditions and the following disclaimer in the
+ *      documentation and/or other materials provided with the distribution.
+ *   3. All advertising materials mentioning features or use of this software
+ *      must display the following acknowledgement:
+ *     This product includes software developed by the University of
+ *     California, Berkeley and its contributors.
+ *   4. Neither the name of the University nor the names of its contributors
+ *      may be used to endorse or promote products derived from this software
+ *      without specific prior written permission.
+ *
+ *   THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ *   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ *   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ *   ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ *   FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ *   DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ *   OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ *   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ *   LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ *   OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ *   SUCH DAMAGE.
+ *
+ *   The author of this software is David M. Gay.
+ *
+ *   Copyright (c) 1991 by AT&T.
+ *
+ *   Permission to use, copy, modify, and distribute this software for any
+ *   purpose without fee is hereby granted, provided that this entire notice
+ *   is included in all copies of any software which is or includes a copy
+ *   or modification of this software and in all copies of the supporting
+ *   documentation for such software.
+ *
+ *   THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
+ *   WARRANTY.  IN PARTICULAR, NEITHER THE AUTHOR NOR AT&T MAKES ANY
+ *   REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
+ *   OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
  */
 
-/*-
- * Copyright (c) 1993
- *	The Regents of the University of California.  All rights reserved.
+/**
+ * @file strtod.c
+ * @brief Kernel verbatim port of David M. Gay's dtoa/strtod implementation.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *	This product includes software developed by the University of
- *	California, Berkeley and its contributors.
- * 4. Neither the name of the University nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ * Converts decimal strings to IEEE / VAX / IBM double-precision values using
+ * the Bigint-based algorithm described by Clinger and Steele / White.
+ * Retained unchanged for the kernel even though userland uses the glibc
+ * version; the inherited strtod() is known to be mildly inaccurate for
+ * extreme exponents. The file also exposes __strtod_internal,
+ * __strtold_internal and __strtof_internal shims plus the currently unused
+ * __dtoa() (compiled out via #if 0).
  */
-
-
-/****************************************************************
- *
- * The author of this software is David M. Gay.
- *
- * Copyright (c) 1991 by AT&T.
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose without fee is hereby granted, provided that this entire notice
- * is included in all copies of any software which is or includes a copy
- * or modification of this software and in all copies of the supporting
- * documentation for such software.
- *
- * THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
- * WARRANTY.  IN PARTICULAR, NEITHER THE AUTHOR NOR AT&T MAKES ANY
- * REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
- * OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
- *
- ***************************************************************/
 
 /* Please send bug reports to
 	David M. Gay
@@ -376,6 +402,11 @@ Bigint {
 
 typedef struct Bigint Bigint;
 
+/**
+ * @brief Allocate a Bigint able to hold 2^k Long limbs.
+ * @param k Power-of-two bucket index determining capacity.
+ * @return Freshly allocated Bigint with sign and wds cleared.
+ */
 static Bigint *
 Balloc(int k)
 {
@@ -391,6 +422,10 @@ Balloc(int k)
 }
 
 
+/**
+ * @brief Release a Bigint previously returned by Balloc().
+ * @param v Bigint to free; may be NULL.
+ */
 static void
 Bfree(Bigint *v)
 {
@@ -402,6 +437,13 @@ Bfree(Bigint *v)
 	y->wds*sizeof(Long) + 2*sizeof(int))
 
 
+/**
+ * @brief Compute b = b*m + a in place, growing the Bigint if needed.
+ * @param b Bigint to scale.
+ * @param m Scalar multiplier.
+ * @param a Scalar addend combined with the lowest limb.
+ * @return Possibly relocated Bigint pointer (caller must assign back).
+ */
 static Bigint *
 multadd(Bigint *b, int m, int a)	/* multiply by m and add a */
 {
@@ -442,6 +484,14 @@ multadd(Bigint *b, int m, int a)	/* multiply by m and add a */
 }
 
 
+/**
+ * @brief Decode a decimal digit string into a Bigint.
+ * @param s   Source digits (mantissa portion already scanned).
+ * @param nd0 Number of digits before the decimal point.
+ * @param nd  Total digit count.
+ * @param y9  Pre-computed first nine digits packed as ULong.
+ * @return Bigint representing the full mantissa.
+ */
 static Bigint *
 s2b(const char *s, int nd0, int nd, ULong y9)
 {
@@ -476,6 +526,11 @@ s2b(const char *s, int nd0, int nd, ULong y9)
 }
 
 
+/**
+ * @brief Count leading zero bits in a 32-bit word.
+ * @param x Word to inspect.
+ * @return Number of zero bits above the highest set bit; 32 if @p x is zero.
+ */
 static int
 hi0bits(ULong x)
 {
@@ -506,6 +561,11 @@ hi0bits(ULong x)
 }
 
 
+/**
+ * @brief Count trailing zero bits, right-shifting @p *y by that amount.
+ * @param y In/out pointer; on return @p *y is shifted right by the count.
+ * @return Trailing zero bit count, or 32 if @p *y was zero.
+ */
 static int
 lo0bits(ULong *y)
 {
@@ -550,6 +610,11 @@ lo0bits(ULong *y)
 }
 
 
+/**
+ * @brief Build a one-limb Bigint from a small integer.
+ * @param i Value to wrap.
+ * @return Bigint with x[0] == i and wds == 1.
+ */
 static Bigint *
 i2b(int i)
 {
@@ -562,6 +627,12 @@ i2b(int i)
 }
 
 
+/**
+ * @brief Multiply two Bigints, returning a freshly allocated product.
+ * @param a First operand.
+ * @param b Second operand.
+ * @return New Bigint holding @p a * @p b; caller must Bfree() it.
+ */
 static Bigint *
 mult(Bigint *a, Bigint *b)
 {
@@ -646,6 +717,12 @@ mult(Bigint *a, Bigint *b)
 static Bigint *p5s;
 
 
+/**
+ * @brief Multiply @p b by 5^k using a cached chain of powers.
+ * @param b Bigint to scale (freed and replaced internally).
+ * @param k Non-negative exponent.
+ * @return Bigint representing @p b * 5^@p k.
+ */
 static Bigint *
 pow5mult(Bigint *b, int k)
 {
@@ -681,6 +758,12 @@ pow5mult(Bigint *b, int k)
 }
 
 
+/**
+ * @brief Shift a Bigint left by @p k bits, returning a new Bigint.
+ * @param b Bigint to shift; freed on return.
+ * @param k Non-negative shift amount in bits.
+ * @return Newly allocated Bigint holding @p b << @p k.
+ */
 static Bigint *
 lshift(Bigint *b, int k)
 {
@@ -736,6 +819,12 @@ lshift(Bigint *b, int k)
 }
 
 
+/**
+ * @brief Compare two non-negative Bigints.
+ * @param a First operand.
+ * @param b Second operand.
+ * @return Negative, zero, or positive when @p a is less than, equal to, or greater than @p b.
+ */
 static int
 cmp(Bigint *a, Bigint *b)
 {
@@ -766,6 +855,12 @@ cmp(Bigint *a, Bigint *b)
 }
 
 
+/**
+ * @brief Compute |a - b| as a Bigint, recording which operand was larger.
+ * @param a First operand.
+ * @param b Second operand.
+ * @return New Bigint whose sign field is 1 when @p b exceeded @p a, else 0.
+ */
 static Bigint *
 diff(Bigint *a, Bigint *b)
 {
@@ -841,6 +936,11 @@ diff(Bigint *a, Bigint *b)
 }
 
 
+/**
+ * @brief Compute the unit-in-the-last-place (ulp) of @p x.
+ * @param x Reference double.
+ * @return The smallest double that, when added to @p x, changes its value.
+ */
 static double
 ulp(double x)
 {
@@ -873,6 +973,12 @@ ulp(double x)
 }
 
 
+/**
+ * @brief Convert a Bigint mantissa to a double with an auxiliary exponent.
+ * @param a Bigint mantissa.
+ * @param e Out: binary exponent of the leading limb.
+ * @return Scaled double whose unnormalised value is @p a * 2^-(*e).
+ */
 static double
 b2d(Bigint *a, int *e)
 {
@@ -938,6 +1044,13 @@ b2d(Bigint *a, int *e)
 }
 
 
+/**
+ * @brief Decompose a double into a Bigint mantissa plus exponent/bit count.
+ * @param d    Double to decompose (assumed non-zero).
+ * @param e    Out: unbiased power-of-two exponent.
+ * @param bits Out: number of significant mantissa bits.
+ * @return Bigint holding the normalised mantissa.
+ */
 static Bigint *
 d2b(double d, int *e, int *bits)
 {
@@ -1058,6 +1171,12 @@ d2b(double d, int *e, int *bits)
 #undef d1
 
 
+/**
+ * @brief Compute the ratio @p a / @p b as a double.
+ * @param a Numerator Bigint.
+ * @param b Denominator Bigint.
+ * @return Quotient in double precision.
+ */
 static double
 ratio(Bigint *a, Bigint *b)
 {
@@ -1121,6 +1240,19 @@ static double tinytens[] = { 1e-16, 1e-32 };
 #endif
 
 
+/**
+ * @brief Convert a decimal ASCII string into a double.
+ *
+ * Parses an optional sign, a mantissa (with optional decimal point), and an
+ * optional exponent of the form e[+/-]nnn, then drives the Bigint-based
+ * algorithm to produce a nearly correctly-rounded IEEE 754 double. Sets
+ * errno to ERANGE on overflow (HUGE_VAL) or underflow (0.0); known to be
+ * slightly inaccurate for very large exponents such as 1.7e+064.
+ *
+ * @param s00 Input string (leading whitespace is skipped).
+ * @param se  Out: pointer to the first unconsumed character (may be NULL).
+ * @return The converted double, negated when a leading '-' was present.
+ */
 double
 strtod(const char * __restrict s00, char ** __restrict se)
 {
@@ -1623,6 +1755,17 @@ strtod(const char * __restrict s00, char ** __restrict se)
 
 double __strtod_internal(const char *number, char **_end, int group);
 
+/**
+ * @brief glibc-compatible strtod() shim used by format helpers.
+ *
+ * Delegates to strtod(); the locale-aware thousands-separator ("group") mode
+ * is currently unsupported and the argument is ignored.
+ *
+ * @param number Input string.
+ * @param _end   Out: pointer to the first unconsumed character.
+ * @param group  Non-zero to request grouping (ignored).
+ * @return Converted double.
+ */
 double
 __strtod_internal(const char *number, char **_end, int group)
 {
@@ -1636,6 +1779,17 @@ __strtod_internal(const char *number, char **_end, int group)
 
 long double __strtold_internal(const char *number, char **_end, int group);
 
+/**
+ * @brief long-double variant of __strtod_internal (currently loses precision).
+ *
+ * Forwards to __strtod_internal(); long double conversion is approximated by
+ * the double result, as the kernel lacks an extended-precision implementation.
+ *
+ * @param number Input string.
+ * @param _end   Out: pointer to the first unconsumed character.
+ * @param group  Grouping flag (ignored).
+ * @return Converted value as long double.
+ */
 long double
 __strtold_internal(const char *number, char **_end, int group)
 {
@@ -1644,6 +1798,17 @@ __strtold_internal(const char *number, char **_end, int group)
 
 float __strtof_internal(const char *number, char **_end, int group);
 
+/**
+ * @brief float variant of __strtod_internal.
+ *
+ * Forwards to __strtod_internal() and allows the compiler to narrow the
+ * double result to float.
+ *
+ * @param number Input string.
+ * @param _end   Out: pointer to the first unconsumed character.
+ * @param group  Grouping flag (ignored).
+ * @return Converted value as float.
+ */
 float
 __strtof_internal(const char *number, char **_end, int group)
 {
@@ -1653,6 +1818,12 @@ __strtof_internal(const char *number, char **_end, int group)
 
 /* removed from the build, is only used by __dtoa() */
 #if 0
+/**
+ * @brief Compute the quotient digit b/S and replace b with the remainder.
+ *
+ * Helper for __dtoa(); compiled out because __dtoa() itself is currently
+ * disabled in the kernel build.
+ */
 static int
 quorem(Bigint *b, Bigint *S)
 {
@@ -1788,6 +1959,13 @@ quorem(Bigint *b, Bigint *S)
  */
 
 #if 0
+/**
+ * @brief Convert a double to an ASCII decimal string (currently disabled).
+ *
+ * Full David Gay dtoa() implementation producing shortest or fixed-precision
+ * representations. Kept for reference but compiled out; the kernel does not
+ * currently format doubles via this routine.
+ */
 char *
 __dtoa(double d, int mode, int ndigits, int *decpt, int *sign, char **rve,
 	 char **resultp)

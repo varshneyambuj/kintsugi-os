@@ -1,3 +1,24 @@
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ */
+
 /*-
  * Copyright (c) 1998 Matthew Dillon.  All Rights Reserved.
  * Redistribution and use in source and binary forms, with or without
@@ -99,9 +120,41 @@
 #include <stdlib.h>
 #include <util/RadixBitmap.h>
 
+/**
+ * @file RadixBitmap.cpp
+ * @brief Radix-tree-backed bitmap allocator (ex-FreeBSD blist).
+ *
+ * Maintains a radix tree of leaves (each a BITMAP_RADIX-bit bitmap) with
+ * interior nodes that cache the largest contiguous free run beneath them
+ * in a `big_hint`. Allocation walks down the tree skipping any subtree
+ * whose hint says the request cannot fit; deallocation propagates updated
+ * hints back up. All memory is wired at create() — allocation and free are
+ * non-blocking and safe from interrupt-restricted contexts.
+ *
+ * Modifications relative to the FreeBSD original:
+ *   1. Renamed variables/constants for local style.
+ *   2. Dropped the ALL_FREE/ALL_ALLOCATED collapsed-state optimizations.
+ *   3. Larger-than-BITMAP_RADIX requests return RADIX_SLOT_NONE instead
+ *      of panicking.
+ *   4. Debug-only scaffolding removed.
+ */
+
 #define TERMINATOR -1
 
 
+/**
+ * @brief Recursively size and (optionally) populate a radix subtree.
+ *
+ * When @a node is NULL, only traverses the structure to compute the total
+ * number of nodes required. When @a node is non-NULL, additionally writes
+ * the initial big_hint / bitmap / available fields for each node.
+ *
+ * @param node   Subtree root, or NULL to dry-run.
+ * @param radix  Number of slots covered by @a node.
+ * @param skip   Offset to the last child node within the flat array.
+ * @param slots  Number of usable slots still to place under @a node.
+ * @return Index of the last node written (tree size - 1 at the root).
+ */
 static uint32
 radix_bitmap_init(radix_node *node, uint32 radix, uint32 skip, uint32 slots)
 {
@@ -153,6 +206,16 @@ radix_bitmap_init(radix_node *node, uint32 radix, uint32 skip, uint32 slots)
 }
 
 
+/**
+ * @brief Allocate a radix_bitmap able to address @a slots slots.
+ *
+ * Performs two radix_bitmap_init() passes: one to size the flat node array,
+ * and one to populate it. All storage is wired up-front so later alloc/free
+ * operations never need to malloc.
+ *
+ * @param slots Number of slots the bitmap must manage.
+ * @return New radix_bitmap, or NULL on allocation failure.
+ */
 radix_bitmap *
 radix_bitmap_create(uint32 slots)
 {
@@ -185,6 +248,10 @@ radix_bitmap_create(uint32 slots)
 }
 
 
+/**
+ * @brief Free the bitmap and its backing node array.
+ * @param bmp Bitmap previously created with radix_bitmap_create().
+ */
 void
 radix_bitmap_destroy(radix_bitmap *bmp)
 {
@@ -193,6 +260,18 @@ radix_bitmap_destroy(radix_bitmap *bmp)
 }
 
 
+/**
+ * @brief Attempt to allocate @a count bits inside a single leaf bitmap.
+ *
+ * Scans every possible @a count-bit-wide window starting at bit positions
+ * [0, BITMAP_RADIX - count]. On success, marks the window used; on failure,
+ * lowers big_hint so future searches can skip this leaf quickly.
+ *
+ * @param leaf      Leaf node to search.
+ * @param slotIndex Starting slot index represented by @a leaf.
+ * @param count     Number of consecutive slots requested.
+ * @return Slot index on success, RADIX_SLOT_NONE on failure.
+ */
 static radix_slot_t
 radix_leaf_alloc(radix_node *leaf, radix_slot_t slotIndex, int32 count)
 {
@@ -216,6 +295,20 @@ radix_leaf_alloc(radix_node *leaf, radix_slot_t slotIndex, int32 count)
 }
 
 
+/**
+ * @brief Recursive interior-node allocation step.
+ *
+ * Descends into each eligible child whose big_hint accommodates @a count,
+ * terminating early at the first TERMINATOR child. On success, updates the
+ * node's available counter and big_hint; on failure, lowers big_hint.
+ *
+ * @param node      Interior node root.
+ * @param slotIndex Starting slot covered by @a node.
+ * @param count     Number of consecutive slots requested.
+ * @param radix     Slots covered by @a node.
+ * @param skip      Index offset of @a node's last child.
+ * @return Slot index on success, RADIX_SLOT_NONE on failure.
+ */
 static radix_slot_t
 radix_node_alloc(radix_node *node, radix_slot_t slotIndex, int32 count,
 		uint32 radix, uint32 skip)
@@ -252,6 +345,16 @@ radix_node_alloc(radix_node *node, radix_slot_t slotIndex, int32 count,
 }
 
 
+/**
+ * @brief Allocate @a count consecutive slots from @a bmp.
+ *
+ * Delegates to radix_leaf_alloc() for single-leaf bitmaps, otherwise to
+ * radix_node_alloc(). Decrements bmp->free_slots on success.
+ *
+ * @param bmp   Bitmap to allocate from.
+ * @param count Number of consecutive slots requested.
+ * @return Starting slot index, or RADIX_SLOT_NONE when the request cannot fit.
+ */
 radix_slot_t
 radix_bitmap_alloc(radix_bitmap *bmp, uint32 count)
 {
@@ -269,6 +372,16 @@ radix_bitmap_alloc(radix_bitmap *bmp, uint32 count)
 }
 
 
+/**
+ * @brief Mark @a count slots starting at @a slotIndex as free in @a leaf.
+ *
+ * Resets the leaf's big_hint to BITMAP_RADIX so future searches rediscover
+ * the freed run.
+ *
+ * @param leaf      Leaf node covering @a slotIndex.
+ * @param slotIndex Starting slot.
+ * @param count     Number of slots to free.
+ */
 static void
 radix_leaf_dealloc(radix_node *leaf, radix_slot_t slotIndex, uint32 count)
 {
@@ -281,6 +394,19 @@ radix_leaf_dealloc(radix_node *leaf, radix_slot_t slotIndex, uint32 count)
 }
 
 
+/**
+ * @brief Recursive interior-node deallocation step.
+ *
+ * Splits the freed range across the affected children, recurses into each,
+ * then lifts the maximum child big_hint up into @a node.
+ *
+ * @param node      Interior node covering the range.
+ * @param slotIndex First slot being freed.
+ * @param count     Number of slots to free.
+ * @param radix     Slots covered by @a node.
+ * @param skip      Index offset of @a node's last child.
+ * @param index     Absolute slot index represented by @a node's first child.
+ */
 static void
 radix_node_dealloc(radix_node *node, radix_slot_t slotIndex, uint32 count,
 		uint32 radix, uint32 skip, radix_slot_t index)
@@ -316,6 +442,16 @@ radix_node_dealloc(radix_node *node, radix_slot_t slotIndex, uint32 count,
 }
 
 
+/**
+ * @brief Free @a count consecutive slots starting at @a slotIndex.
+ *
+ * Delegates to radix_leaf_dealloc() or radix_node_dealloc() depending on
+ * whether the bitmap collapsed to a single leaf; bumps bmp->free_slots.
+ *
+ * @param bmp       Bitmap.
+ * @param slotIndex First slot to free (must currently be allocated).
+ * @param count     Number of slots to free.
+ */
 void
 radix_bitmap_dealloc(radix_bitmap *bmp, radix_slot_t slotIndex, uint32 count)
 {

@@ -1,6 +1,38 @@
 /*
- * Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file debug_heap.cpp
+ * @brief Private allocator for the kernel debugger (KDL).
+ *
+ * KDL commands occasionally need scratch memory, but calling into the real
+ * kernel heap is unsafe when the debugger has been entered due to heap
+ * corruption. This file provides a tiny self-contained allocator backed by a
+ * page-sized static buffer at boot and by a dedicated KDEBUG_HEAP area once
+ * the VM comes up. Allocations are served from a stack of DebugAllocPool
+ * instances so commands can push a short-lived pool, run freely, and pop it
+ * on exit to deterministically release all transient allocations.
  */
 
 
@@ -227,6 +259,17 @@ static DebugAllocPool* sCurrentPool;
 static DebugAllocPool sInitialPool;
 
 
+/**
+ * @brief Push a new debug allocation pool onto the KDL pool stack.
+ *
+ * The first call lazily initialises the root pool over the current backing
+ * buffer (static or VM-backed). Subsequent calls carve a child pool out of
+ * the current pool's remaining space; the child becomes the active pool so
+ * that later debug_malloc() calls are local to it.
+ *
+ * @return Handle to the newly active pool, or NULL if no space was available
+ *         in the parent pool.
+ */
 debug_alloc_pool*
 create_debug_alloc_pool()
 {
@@ -245,6 +288,18 @@ create_debug_alloc_pool()
 }
 
 
+/**
+ * @brief Pop a previously created debug allocation pool.
+ *
+ * Walks up the current pool's ancestor chain to verify that `pool` is still
+ * on the stack, then destroys it and reinstates its parent as the active
+ * pool. The pool object memory itself is released back to the parent unless
+ * it is the initial pool.
+ *
+ * @param pool Pool returned by create_debug_alloc_pool(); may be NULL or a
+ *             pool already released, in which case the call is a no-op.
+ * @return void
+ */
 void
 delete_debug_alloc_pool(debug_alloc_pool* pool)
 {
@@ -268,6 +323,15 @@ delete_debug_alloc_pool(debug_alloc_pool* pool)
 }
 
 
+/**
+ * @brief Allocate `size` bytes from the currently active debug pool.
+ *
+ * Mirrors malloc() semantics but operates only within the KDL's private
+ * heap; returns NULL if no pool is active or if the pool is exhausted.
+ *
+ * @param size Number of bytes requested.
+ * @return Pointer to 8-byte-aligned memory, or NULL on failure.
+ */
 void*
 debug_malloc(size_t size)
 {
@@ -278,6 +342,16 @@ debug_malloc(size_t size)
 }
 
 
+/**
+ * @brief Allocate and zero-fill `num * size` bytes from the debug pool.
+ *
+ * Convenience wrapper around debug_malloc() that zeros the returned block,
+ * analogous to libc calloc().
+ *
+ * @param num Element count.
+ * @param size Size of each element in bytes.
+ * @return Pointer to a zero-filled allocation, or NULL on failure.
+ */
 void*
 debug_calloc(size_t num, size_t size)
 {
@@ -291,6 +365,15 @@ debug_calloc(size_t num, size_t size)
 }
 
 
+/**
+ * @brief Return an allocation to the currently active debug pool.
+ *
+ * NULL addresses are accepted (no-op). Double-frees and addresses outside
+ * the pool are diagnosed via kprintf() but do not abort the debugger.
+ *
+ * @param address Pointer previously returned by debug_malloc()/debug_calloc().
+ * @return void
+ */
 void
 debug_free(void* address)
 {
@@ -299,6 +382,16 @@ debug_free(void* address)
 }
 
 
+/**
+ * @brief Upgrade the debug heap from the boot-time static buffer to a VM area.
+ *
+ * Creates a KDEBUG_HEAP-sized kernel-only area, and (with interrupts
+ * disabled) swaps the heap base pointer and size so that subsequent pool
+ * creation draws from the larger VM-backed region. Silently leaves the
+ * static buffer in place if area creation fails.
+ *
+ * @return void
+ */
 void
 debug_heap_init()
 {

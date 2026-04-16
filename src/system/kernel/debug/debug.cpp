@@ -1,14 +1,42 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2015, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2015, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
-
-/*! This file contains the debugger and debug output facilities */
+/**
+ * @file debug.cpp
+ * @brief Kernel debug output and kernel debugger (KDL) core.
+ *
+ * Implements the primary kernel output paths (dprintf, kprintf, panic,
+ * kernel_debugger) plus the KDL session machinery: CPU-state capture, halting
+ * peer CPUs, taking over the serial/blue-screen console, command registration
+ * and lookup, line editing with history and tab-completion, and emergency-key
+ * hotkeys. Also hosts the syslog ring buffer, the dprintf repeat collapser,
+ * and debugger-only memory accessors guarded by a setjmp/fault handler.
+ */
 
 
 #include "blue_screen.h"
@@ -156,28 +184,56 @@ static bool sCPUTrapped[SMP_MAX_CPUS];
 // #pragma mark - DebugOutputFilter
 
 
+/**
+ * @brief Default constructs a base output filter.
+ */
 DebugOutputFilter::DebugOutputFilter()
 {
 }
 
 
+/**
+ * @brief Virtual destructor for the output filter base class.
+ */
 DebugOutputFilter::~DebugOutputFilter()
 {
 }
 
 
+/**
+ * @brief No-op base implementation of PrintString.
+ *
+ * Subclasses override to route raw text to serial, syslog, and/or screen.
+ *
+ * @param string NUL-terminated text to emit (ignored by the base class).
+ */
 void
 DebugOutputFilter::PrintString(const char* string)
 {
 }
 
 
+/**
+ * @brief No-op base implementation of printf-style Print.
+ *
+ * @param format printf-style format string (ignored by the base class).
+ * @param args Variadic argument list matching @a format.
+ */
 void
 DebugOutputFilter::Print(const char* format, va_list args)
 {
 }
 
 
+/**
+ * @brief Emits a raw string to every enabled debug sink.
+ *
+ * Called from both thread and KDL context. Writes to serial, syslog, blue
+ * screen, and any registered debugger modules as dictated by the current
+ * enable flags.
+ *
+ * @param string NUL-terminated text to emit.
+ */
 void
 DefaultDebugOutputFilter::PrintString(const char* string)
 {
@@ -197,6 +253,15 @@ DefaultDebugOutputFilter::PrintString(const char* string)
 }
 
 
+/**
+ * @brief Formats into the interrupt scratch buffer and emits the result.
+ *
+ * Uses @c sInterruptOutputBuffer directly and flushes any pending repeat
+ * summary first. Safe to call with interrupts disabled (KDL / panic path).
+ *
+ * @param format printf-style format string.
+ * @param args Variadic argument list matching @a format.
+ */
 void
 DefaultDebugOutputFilter::Print(const char* format, va_list args)
 {
@@ -209,6 +274,16 @@ DefaultDebugOutputFilter::Print(const char* format, va_list args)
 // #pragma mark -
 
 
+/**
+ * @brief Installs a new debug output filter and returns the previous one.
+ *
+ * Called by subsystems that want to intercept kprintf output (for example
+ * the GDB serial stub). Must be invoked with interrupts disabled while
+ * inside KDL.
+ *
+ * @param filter New filter to install (may be @c NULL to detach).
+ * @return Previously installed filter, or @c NULL if none was set.
+ */
 DebugOutputFilter*
 set_debug_output_filter(DebugOutputFilter* filter)
 {
@@ -218,6 +293,15 @@ set_debug_output_filter(DebugOutputFilter* filter)
 }
 
 
+/**
+ * @brief Writes a single character directly to every enabled sink.
+ *
+ * Used by the line editor to update the terminal one character at a time.
+ * Bypasses the repeat collapser and the output filter, so it is safe to
+ * call with interrupts disabled and from within KDL.
+ *
+ * @param c Character to emit.
+ */
 static void
 kputchar(char c)
 {
@@ -231,6 +315,14 @@ kputchar(char c)
 }
 
 
+/**
+ * @brief Writes a string through the active output filter.
+ *
+ * Intended for use from KDL command handlers; falls through silently if no
+ * filter is installed (i.e. not currently inside a KDL session).
+ *
+ * @param s NUL-terminated string to print.
+ */
 void
 kputs(const char* s)
 {
@@ -239,6 +331,14 @@ kputs(const char* s)
 }
 
 
+/**
+ * @brief Writes a string bypassing any currently installed filter.
+ *
+ * Always uses the default filter, so text reaches the serial/screen sinks
+ * even when a GDB stub or similar has hijacked output.
+ *
+ * @param s NUL-terminated string to print.
+ */
 void
 kputs_unfiltered(const char* s)
 {
@@ -246,6 +346,19 @@ kputs_unfiltered(const char* s)
 }
 
 
+/**
+ * @brief Inserts a run of characters into the KDL edit buffer at the cursor.
+ *
+ * Shifts the tail of the line right to make room, copies the new bytes,
+ * echoes them to the terminal, and repositions the cursor with an ANSI CUB
+ * sequence when the insertion happened mid-line.
+ *
+ * @param buffer Backing edit buffer.
+ * @param position [in,out] Cursor position; advanced by @a charCount.
+ * @param length [in,out] Current buffer length; grown by @a charCount.
+ * @param chars Characters to insert.
+ * @param charCount Number of characters in @a chars.
+ */
 static void
 insert_chars_into_line(char* buffer, int32& position, int32& length,
 	const char* chars, int32 charCount)
@@ -272,6 +385,14 @@ insert_chars_into_line(char* buffer, int32& position, int32& length,
 }
 
 
+/**
+ * @brief Convenience wrapper that inserts a single character.
+ *
+ * @param buffer Backing edit buffer.
+ * @param position [in,out] Cursor position; advanced by one.
+ * @param length [in,out] Current buffer length; grown by one.
+ * @param c Character to insert.
+ */
 static void
 insert_char_into_line(char* buffer, int32& position, int32& length, char c)
 {
@@ -279,6 +400,18 @@ insert_char_into_line(char* buffer, int32& position, int32& length, char c)
 }
 
 
+/**
+ * @brief Deletes the character under the cursor and redraws the line tail.
+ *
+ * If the cursor is already at the end of the line the call is a no-op. The
+ * trailing residue is overwritten with a space and the cursor is moved back
+ * into place with an ANSI CUB sequence.
+ *
+ * @param buffer Backing edit buffer.
+ * @param position [in,out] Cursor position; unchanged on return.
+ * @param length [in,out] Current buffer length; decremented by one when a
+ *   character was removed.
+ */
 static void
 remove_char_from_line(char* buffer, int32& position, int32& length)
 {
@@ -315,12 +448,29 @@ public:
 
 class CommandLineEditingHelper : public LineEditingHelper {
 public:
+	/**
+	 * @brief Default constructs a KDL command-line tab completion helper.
+	 */
 	CommandLineEditingHelper()
 	{
 	}
 
 	virtual	~CommandLineEditingHelper() {}
 
+	/**
+	 * @brief Expands or suggests debugger command names on TAB.
+	 *
+	 * If the line already contains a space, prints the usage of the command
+	 * before the space. Otherwise it enumerates matching registered commands:
+	 * a single hit is auto-completed and followed by a space, a common prefix
+	 * longer than what has been typed is appended, and multiple matches are
+	 * printed in columns. Called from KDL context with interrupts disabled.
+	 *
+	 * @param buffer Edit buffer holding the partial command.
+	 * @param capacity Total capacity of @a buffer including the NUL.
+	 * @param position [in,out] Cursor position, adjusted as text is inserted.
+	 * @param length [in,out] Current line length, grown as text is inserted.
+	 */
 	virtual	void TabCompletion(char* buffer, int32 capacity, int32& position,
 		int32& length)
 	{
@@ -449,6 +599,22 @@ public:
 };
 
 
+/**
+ * @brief Reads a single line of input inside the kernel debugger.
+ *
+ * Implements the KDL line editor: cursor movement, backspace, delete,
+ * kill-line (CTRL-K), screen clear (CTRL-L), history navigation (up/down
+ * and PgUp/PgDn prefix search), GDB remote-protocol autodetect, and
+ * optional TAB completion via @a editingHelper. Pulls one character at a
+ * time from kgetc() and must only be called from KDL context (interrupts
+ * disabled).
+ *
+ * @param buffer Destination line buffer.
+ * @param maxLength Capacity of @a buffer in bytes.
+ * @param editingHelper Optional helper used to service TAB completion.
+ * @return Number of characters stored in @a buffer including the trailing
+ *   NUL.
+ */
 static int
 read_line(char* buffer, int32 maxLength,
 	LineEditingHelper* editingHelper = NULL)
@@ -690,6 +856,17 @@ read_line(char* buffer, int32 maxLength,
 }
 
 
+/**
+ * @brief Blocking single-character read from any KDL input source.
+ *
+ * Polls the serial port, the blue-screen keyboard driver, and any
+ * registered debugger module's @c debugger_getchar hook in turn, sleeping
+ * briefly between rounds. Only safe inside KDL, where interrupts are
+ * disabled and the normal keyboard stack is unavailable.
+ *
+ * @return The character read. This function never returns on error; it
+ *   loops until some source yields input.
+ */
 char
 kgetc(void)
 {
@@ -720,6 +897,16 @@ kgetc(void)
 }
 
 
+/**
+ * @brief Reads a line from the KDL console without tab completion.
+ *
+ * Thin C-linkage wrapper over read_line() used by helpers that just want
+ * raw line input (for example the GDB protocol implementation). KDL only.
+ *
+ * @param buffer Destination buffer.
+ * @param length Capacity of @a buffer in bytes.
+ * @return Number of characters stored including the trailing NUL.
+ */
 int
 kgets(char* buffer, int length)
 {
@@ -727,6 +914,14 @@ kgets(char* buffer, int length)
 }
 
 
+/**
+ * @brief Prints the prefix and message passed to the current KDL entry.
+ *
+ * Used on first entry and by the @c message KDL command. If the saved
+ * format string contains the command separator ("@!"), only the portion
+ * before the separator is printed: the trailing part is a command list
+ * reserved for execute_panic_commands(). KDL context only.
+ */
 static void
 print_kernel_debugger_message()
 {
@@ -771,6 +966,14 @@ print_kernel_debugger_message()
 }
 
 
+/**
+ * @brief Evaluates the command suffix embedded in a panic() format string.
+ *
+ * panic() callers may append "@!<cmds>" to their message to have a list of
+ * KDL commands executed automatically on entry. This function expands the
+ * format string, locates that suffix, and feeds it to
+ * evaluate_debug_command(). KDL context only.
+ */
 static void
 execute_panic_commands()
 {
@@ -806,6 +1009,16 @@ execute_panic_commands()
 }
 
 
+/**
+ * @brief Trampoline that invokes the architecture stack tracer.
+ *
+ * Packaged as a @c void(*)(void*) so it can be launched under
+ * debug_call_with_fault_handler() and survive a page fault while walking
+ * a corrupt stack.
+ *
+ * @param ignored Parameter required by the fault-handler calling
+ *   convention; unused.
+ */
 static void
 stack_trace_trampoline(void*)
 {
@@ -813,6 +1026,22 @@ stack_trace_trampoline(void*)
 }
 
 
+/**
+ * @brief Runs the interactive KDL prompt until the user quits.
+ *
+ * Establishes a debug alloc pool, prints the banner and any entry message,
+ * initialises the @c _cpu/_thread/_team debug variables, dumps a stack
+ * trace when appropriate, executes the panic() command suffix, then enters
+ * the read-line / evaluate loop. Must be called from KDL context with
+ * interrupts disabled and after enter_kernel_debugger() has taken effect.
+ *
+ * @param messagePrefix Optional prefix already printed to distinguish the
+ *   entry reason (for example "PANIC: ").
+ * @param message Optional printf-style message passed to panic()/
+ *   kernel_debugger().
+ * @param args Variadic list matching @a message.
+ * @param cpu Index of the CPU driving the KDL session.
+ */
 static void
 kernel_debugger_loop(const char* messagePrefix, const char* message,
 	va_list args, int32 cpu)
@@ -949,6 +1178,19 @@ kernel_debugger_loop(const char* messagePrefix, const char* message,
 }
 
 
+/**
+ * @brief Takes over the machine for a new KDL session.
+ *
+ * Races with other CPUs on @c sInDebugger; the winner saves CPU registers,
+ * enables dprintf output, broadcasts an SMP_MSG_CPU_HALT ICI so peers spin
+ * in debug_trap_cpu_in_kdl(), switches to blue-screen output when
+ * configured, installs the default output filter, and sorts the command
+ * table. Interrupts must already be disabled on entry.
+ *
+ * @param cpu Index of the entering CPU.
+ * @param previousCPU [out] Receives the previous value of
+ *   @c sDebuggerOnCPU; used on recursive entries so exit can restore it.
+ */
 static void
 enter_kernel_debugger(int32 cpu, int32& previousCPU)
 {
@@ -1001,6 +1243,13 @@ enter_kernel_debugger(int32 cpu, int32& previousCPU)
 }
 
 
+/**
+ * @brief Tears down the KDL session and resumes normal operation.
+ *
+ * Mirrors enter_kernel_debugger(): notifies debugger modules, restores
+ * dprintf state, drops the output filter, and decrements @c sInDebugger
+ * which unblocks halted peer CPUs waiting in debug_trap_cpu_in_kdl().
+ */
 static void
 exit_kernel_debugger()
 {
@@ -1017,6 +1266,13 @@ exit_kernel_debugger()
 }
 
 
+/**
+ * @brief Blocks until another CPU has picked up the KDL session.
+ *
+ * Invoked after the user types "cpu <n>": spins on @c sHandOverKDLToCPU
+ * while the target CPU, trapped in debug_trap_cpu_in_kdl(), accepts the
+ * hand-off and clears the variable. KDL context only.
+ */
 static void
 hand_over_kernel_debugger()
 {
@@ -1031,6 +1287,20 @@ hand_over_kernel_debugger()
 }
 
 
+/**
+ * @brief Central KDL dispatch: enter, run, and possibly hand over.
+ *
+ * Handles the first entry, recursive re-entry, and CPU-to-CPU hand-off in
+ * a single loop. The outer loop body enters the debugger, runs the prompt,
+ * and either exits cleanly, continues on the same CPU, or waits for the
+ * designated successor to pick up the session. Must be called with
+ * interrupts disabled.
+ *
+ * @param messagePrefix Optional entry prefix (e.g. "PANIC: ").
+ * @param message Optional entry message; may embed a panic command suffix.
+ * @param args Variadic arguments for @a message.
+ * @param cpu Index of the CPU making the call.
+ */
 static void
 kernel_debugger_internal(const char* messagePrefix, const char* message,
 	va_list args, int32 cpu)
@@ -1071,6 +1341,16 @@ kernel_debugger_internal(const char* messagePrefix, const char* message,
 }
 
 
+/**
+ * @brief KDL command handler: reprints the current entry message.
+ *
+ * Bound to the "message" command. Invoked with interrupts disabled inside
+ * a KDL session.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return Always 0.
+ */
 static int
 cmd_dump_kdl_message(int argc, char** argv)
 {
@@ -1079,6 +1359,15 @@ cmd_dump_kdl_message(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command handler: re-runs the panic() command suffix.
+ *
+ * Bound to the "panic_commands" command. Invoked with interrupts disabled.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return Always 0.
+ */
 static int
 cmd_execute_panic_commands(int argc, char** argv)
 {
@@ -1087,6 +1376,18 @@ cmd_execute_panic_commands(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command handler: dumps the kernel syslog ring buffer.
+ *
+ * Accepts "-n" to limit output to unsent messages, and "-k" to include the
+ * KDL-session output that is otherwise suppressed. Reads through the ring
+ * buffer in chunks, stripping padding bytes, and prints to the active
+ * output filter. Interrupts-off invariant of KDL applies.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on completion.
+ */
 static int
 cmd_dump_syslog(int argc, char** argv)
 {
@@ -1171,6 +1472,18 @@ cmd_dump_syslog(int argc, char** argv)
 }
 
 
+/**
+ * @brief KDL command handler: displays or switches the active KDL CPU.
+ *
+ * With no argument, prints the CPU currently running the prompt. With one
+ * argument, records the hand-off target in @c sHandOverKDLToCPU and
+ * returns @c B_KDEBUG_QUIT so the loop drops into hand_over_kernel_debugger().
+ * Interrupts-off invariant of KDL applies.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return @c B_KDEBUG_QUIT when a hand-off was requested, 0 otherwise.
+ */
 static int
 cmd_switch_cpu(int argc, char** argv)
 {
@@ -1201,6 +1514,19 @@ cmd_switch_cpu(int argc, char** argv)
 }
 
 
+/**
+ * @brief Kernel thread that forwards syslog data to the userland daemon.
+ *
+ * Waits on @c sSyslogNotify (with a 5 s timeout so it also polls), drains
+ * the syslog ring buffer under @c sOutputLock and @c sSpinlock, and posts
+ * SYSLOG_MESSAGE packets to @c sSyslogPort. If the daemon's port
+ * disappears the thread exits; transient failures cause a retry using the
+ * previously formatted buffer. Thread context only.
+ *
+ * @param data Unused thread argument.
+ * @return @c B_BAD_PORT_ID when the destination port is gone; otherwise
+ *   the loop never returns.
+ */
 static status_t
 syslog_sender(void* data)
 {
@@ -1280,6 +1606,19 @@ syslog_sender(void* data)
 }
 
 
+/**
+ * @brief Appends text to the syslog ring buffer, dropping older data if full.
+ *
+ * Called from both thread context (via dprintf) and KDL/interrupt context
+ * via the default output filter, so it assumes the caller holds the
+ * appropriate lock. Text longer than the buffer is truncated with a
+ * "<TRUNC>" marker. If space must be reclaimed, older bytes are flushed
+ * and @c sSyslogDropped is raised so the sender prepends "<DROP>".
+ *
+ * @param text Bytes to append.
+ * @param length Number of bytes in @a text.
+ * @param notify When @c true, releases @c sSyslogNotify to wake the sender.
+ */
 static void
 syslog_write(const char* text, int32 length, bool notify)
 {
@@ -1315,6 +1654,16 @@ syslog_write(const char* text, int32 length, bool notify)
 }
 
 
+/**
+ * @brief Creates the syslog notify semaphore once threading is available.
+ *
+ * On failure the syslog subsystem is torn down: the buffer and message
+ * scratch area are released and syslog output is disabled for the rest of
+ * the session. Must be called from thread context.
+ *
+ * @return @c B_OK on success, @c B_ERROR when the semaphore could not be
+ *   created.
+ */
 static status_t
 syslog_init_post_threads(void)
 {
@@ -1345,6 +1694,18 @@ syslog_init_post_threads(void)
 }
 
 
+/**
+ * @brief Allocates the syslog ring buffer once VM is ready.
+ *
+ * Reads the @c syslog_buffer_size kernel driver setting, creates the ring
+ * buffer (or wraps the already-existing debug-syslog buffer), primes the
+ * syslog message envelope, copies any early boot output into it, and
+ * registers the "syslog" KDL command. Called once from debug_init_post_settings().
+ *
+ * @param args Kernel-args block containing optional pre-boot debug output.
+ * @return @c B_OK on success, @c B_NO_MEMORY if buffer or message
+ *   allocation failed.
+ */
 static status_t
 syslog_init_post_vm(struct kernel_args* args)
 {
@@ -1444,6 +1805,13 @@ err1:
 	return status;
 }
 
+/**
+ * @brief Persists the previous session's debug-syslog buffer to disk.
+ *
+ * If the boot loader preserved output from the previous boot, writes it to
+ * @c /var/log/previous_syslog and frees the buffer. Safe to call only once
+ * modules and the VFS are up.
+ */
 static void
 syslog_init_post_modules()
 {
@@ -1467,6 +1835,17 @@ syslog_init_post_modules()
 	close(fd);
 }
 
+/**
+ * @brief Bootstraps syslog early by adopting the bootloader's debug buffer.
+ *
+ * Only takes effect when the bootloader preserved its debug output buffer
+ * (@c keep_debug_output_buffer). The buffer is re-wrapped as a ring
+ * buffer so early dprintf output is retained. Called from debug_init()
+ * before the VM subsystem is up.
+ *
+ * @param args Kernel-args block.
+ * @return Always @c B_OK.
+ */
 static status_t
 syslog_init(struct kernel_args* args)
 {
@@ -1481,6 +1860,14 @@ syslog_init(struct kernel_args* args)
 }
 
 
+/**
+ * @brief Trampoline that wraps memcpy() for execution under a fault handler.
+ *
+ * Called by debug_memcpy() through debug_call_with_fault_handler() so a
+ * bad address causes a setjmp/longjmp rather than crashing the debugger.
+ *
+ * @param _parameters Pointer to a @ref debug_memcpy_parameters struct.
+ */
 static void
 debug_memcpy_trampoline(void* _parameters)
 {
@@ -1489,6 +1876,14 @@ debug_memcpy_trampoline(void* _parameters)
 }
 
 
+/**
+ * @brief Trampoline that wraps strlcpy() for execution under a fault handler.
+ *
+ * Stores the strlcpy() return value back into the parameter struct so
+ * debug_strlcpy() can observe it after the fault-handler frame unwinds.
+ *
+ * @param _parameters Pointer to a @ref debug_strlcpy_parameters struct.
+ */
 static void
 debug_strlcpy_trampoline(void* _parameters)
 {
@@ -1499,6 +1894,14 @@ debug_strlcpy_trampoline(void* _parameters)
 }
 
 
+/**
+ * @brief Notifies every registered debugger module of a KDL transition.
+ *
+ * Walks @c sDebuggerModules and invokes the module's @c enter_debugger or
+ * @c exit_debugger callback as appropriate. Called from KDL context.
+ *
+ * @param enter @c true to notify modules of entry, @c false for exit.
+ */
 void
 call_modules_hook(bool enter)
 {
@@ -1516,6 +1919,20 @@ call_modules_hook(bool enter)
 }
 
 
+/**
+ * @brief Core dprintf sink: de-duplicates and fans out to every channel.
+ *
+ * Compares the new text against the most recent output and, when they
+ * match, simply bumps the repeat counter so flush_pending_repeats() can
+ * later collapse them into "Last message repeated N times." Otherwise the
+ * pending summary is flushed and the string is dispatched to serial,
+ * syslog, blue screen, and debugger modules. Must be called with
+ * @c sSpinlock held, so it is safe from both thread and interrupt context.
+ *
+ * @param string Bytes to emit.
+ * @param length Length of @a string in bytes.
+ * @param notifySyslog When @c true, wake the syslog sender after writing.
+ */
 //!	Must be called with the sSpinlock held.
 static void
 debug_output(const char* string, int32 length, bool notifySyslog)
@@ -1551,6 +1968,15 @@ debug_output(const char* string, int32 length, bool notifySyslog)
 }
 
 
+/**
+ * @brief Emits the pending repeat summary (or the original line) to all sinks.
+ *
+ * If more than one repeat was accumulated, prints "Last message repeated N
+ * times."; if exactly one, re-emits the original line. Resets the repeat
+ * counters. Must be called with @c sSpinlock held.
+ *
+ * @param notifySyslog When @c true, wake the syslog sender after writing.
+ */
 //!	Must be called with the sSpinlock held.
 static void
 flush_pending_repeats(bool notifySyslog)
@@ -1601,6 +2027,17 @@ flush_pending_repeats(bool notifySyslog)
 }
 
 
+/**
+ * @brief Kernel daemon tick: flushes stale repeat counts if time elapsed.
+ *
+ * Registered with register_kernel_daemon() at 10 Hz. Acquires
+ * @c sOutputLock with a short timeout so it cannot stall on a busy log,
+ * then flushes the pending repeat summary if at least one second passed
+ * since the last match (or three seconds since the first). Thread context.
+ *
+ * @param data Unused.
+ * @param iteration Unused.
+ */
 static void
 check_pending_repeats(void* /*data*/, int /*iteration*/)
 {
@@ -1622,6 +2059,18 @@ check_pending_repeats(void* /*data*/, int /*iteration*/)
 }
 
 
+/**
+ * @brief Shared dprintf implementation that formats into the output buffer.
+ *
+ * When interrupts are enabled, takes @c sOutputLock and uses the regular
+ * @c sOutputBuffer. When they are not (KDL/panic/interrupt path), skips
+ * the mutex and uses @c sInterruptOutputBuffer under @c sSpinlock only.
+ * Both paths funnel into debug_output().
+ *
+ * @param format printf-style format string.
+ * @param args Variadic arguments matching @a format.
+ * @param notifySyslog When @c true, wake the syslog sender after writing.
+ */
 static void
 dprintf_args(const char* format, va_list args, bool notifySyslog)
 {
@@ -1649,6 +2098,11 @@ dprintf_args(const char* format, va_list args, bool notifySyslog)
 // #pragma mark - private kernel API
 
 
+/**
+ * @brief Reports whether the low-level debug framebuffer console is active.
+ *
+ * @return @c true if @c sDebugScreenEnabled is set.
+ */
 bool
 debug_screen_output_enabled(void)
 {
@@ -1656,6 +2110,12 @@ debug_screen_output_enabled(void)
 }
 
 
+/**
+ * @brief Disables future debug output through the framebuffer console.
+ *
+ * Called once user-space has claimed the framebuffer so the kernel stops
+ * drawing over it. Does not tear down serial or syslog output.
+ */
 void
 debug_stop_screen_debug_output(void)
 {
@@ -1663,6 +2123,14 @@ debug_stop_screen_debug_output(void)
 }
 
 
+/**
+ * @brief Reports whether a KDL session is currently in progress.
+ *
+ * Safe to call from any context. Used by locking primitives to avoid
+ * deadlock when they are exercised from within KDL.
+ *
+ * @return @c true when some CPU holds the debugger.
+ */
 bool
 debug_debugger_running(void)
 {
@@ -1670,6 +2138,16 @@ debug_debugger_running(void)
 }
 
 
+/**
+ * @brief Synchronous variant of dprintf() that takes a pre-formatted buffer.
+ *
+ * Acquires @c sOutputLock and @c sSpinlock and calls debug_output() with
+ * syslog notification enabled. Thread context only, since it takes the
+ * mutex unconditionally.
+ *
+ * @param string Bytes to emit.
+ * @param length Number of bytes in @a string.
+ */
 void
 debug_puts(const char* string, int32 length)
 {
@@ -1679,6 +2157,14 @@ debug_puts(const char* string, int32 length)
 }
 
 
+/**
+ * @brief Emits a message via the very early serial path only.
+ *
+ * Used before debug_init() when neither the syslog buffer nor the filter
+ * chain exist. Any context.
+ *
+ * @param string NUL-terminated message to print.
+ */
 void
 debug_early_boot_message(const char* string)
 {
@@ -1686,6 +2172,16 @@ debug_early_boot_message(const char* string)
 }
 
 
+/**
+ * @brief First-stage debug-subsystem initialisation.
+ *
+ * Placement-constructs the default output filter, adopts any preserved
+ * boot-loader debug buffer via syslog_init(), wires up paranoia tracking,
+ * the serial console, and (when available) the blue-screen framebuffer.
+ * Runs before VM is up.
+ *
+ * @param args Kernel-args block from the bootloader.
+ */
 void
 debug_init(kernel_args* args)
 {
@@ -1701,6 +2197,15 @@ debug_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Registers core KDL commands once VM is available.
+ *
+ * Installs the "cpu", "message", and "panic_commands" commands, brings up
+ * the builtin command table, arch-specific debug helpers, the debug heap,
+ * debug variables, framebuffer console, and tracing. Thread context.
+ *
+ * @param args Kernel-args block from the bootloader.
+ */
 void
 debug_init_post_vm(kernel_args* args)
 {
@@ -1729,6 +2234,16 @@ debug_init_post_vm(kernel_args* args)
 }
 
 
+/**
+ * @brief Applies safemode toggles and starts post-VM debug services.
+ *
+ * Reads the user's safemode preferences for serial debug, syslog output,
+ * blue-screen, emergency keys, and debug-screen, attempts to bring up
+ * blue-screen when requested, finalises arch console settings, and calls
+ * syslog_init_post_vm(). Thread context.
+ *
+ * @param args Kernel-args block from the bootloader.
+ */
 void
 debug_init_post_settings(struct kernel_args* args)
 {
@@ -1755,6 +2270,16 @@ debug_init_post_settings(struct kernel_args* args)
 }
 
 
+/**
+ * @brief Final debug-subsystem initialisation after modules are available.
+ *
+ * Persists the previous boot's syslog, starts the repeat-flush daemon,
+ * spawns the syslog sender thread, loads every kernel debugger add-on
+ * module (including the optional demangler), and finalises the
+ * framebuffer console. Thread context.
+ *
+ * @param args Kernel-args block from the bootloader.
+ */
 void
 debug_init_post_modules(struct kernel_args* args)
 {
@@ -1797,6 +2322,17 @@ debug_init_post_modules(struct kernel_args* args)
 }
 
 
+/**
+ * @brief Records the page-fault details that triggered a KDL entry.
+ *
+ * Populates the static @c sPageFaultInfo block that the arch fault handler
+ * consults before dropping into kernel_debugger_internal(). Invoked from
+ * the arch fault handler with interrupts disabled.
+ *
+ * @param faultAddress Linear address the faulting access targeted.
+ * @param pc Instruction pointer at the time of the fault.
+ * @param flags Bitmask describing the fault (see @c debug_page_fault_info).
+ */
 void
 debug_set_page_fault_info(addr_t faultAddress, addr_t pc, uint32 flags)
 {
@@ -1806,6 +2342,14 @@ debug_set_page_fault_info(addr_t faultAddress, addr_t pc, uint32 flags)
 }
 
 
+/**
+ * @brief Returns a pointer to the most recent page-fault info.
+ *
+ * Consumed by KDL command handlers ("page_fault_info") and demand-paging
+ * diagnostics. KDL context only.
+ *
+ * @return Address of the internal @c debug_page_fault_info record.
+ */
 debug_page_fault_info*
 debug_get_page_fault_info()
 {
@@ -1813,6 +2357,19 @@ debug_get_page_fault_info()
 }
 
 
+/**
+ * @brief Halts the current CPU while another CPU owns the debugger.
+ *
+ * Called from the SMP halt ICI handler: saves registers, marks this CPU
+ * trapped, and spins until @c sInDebugger drops back to zero, servicing
+ * ICIs in the meantime. If a hand-off targets this CPU, either returns
+ * (when @a returnIfHandedOver is @c true) or recursively enters the
+ * debugger. Interrupts must already be off.
+ *
+ * @param cpu Index of the current CPU.
+ * @param returnIfHandedOver When @c true, return instead of entering KDL
+ *   after a successful hand-off.
+ */
 void
 debug_trap_cpu_in_kdl(int32 cpu, bool returnIfHandedOver)
 {
@@ -1844,6 +2401,15 @@ debug_trap_cpu_in_kdl(int32 cpu, bool returnIfHandedOver)
 }
 
 
+/**
+ * @brief Enters KDL labelled as a double-fault.
+ *
+ * Called from the arch double-fault handler after the CPU has already
+ * pivoted to the double-fault stack. Interrupts are off on entry and the
+ * call does not return normally.
+ *
+ * @param cpu Index of the faulting CPU.
+ */
 void
 debug_double_fault(int32 cpu)
 {
@@ -1852,6 +2418,16 @@ debug_double_fault(int32 cpu)
 }
 
 
+/**
+ * @brief Dispatches an alt-sysrq style emergency keystroke.
+ *
+ * Invoked from the keyboard driver ISR. The built-in "d" keystroke enters
+ * the debugger via kernel_debugger(); all other keys are offered to every
+ * registered debugger module until one claims them. Interrupt context.
+ *
+ * @param key Key character delivered by the keyboard driver.
+ * @return @c true if some handler claimed the key, @c false otherwise.
+ */
 bool
 debug_emergency_key_pressed(char key)
 {
@@ -1876,18 +2452,19 @@ debug_emergency_key_pressed(char key)
 }
 
 
-/*!	Verifies that the complete given memory range is accessible in the current
-	context.
-
-	Invoked in the kernel debugger only.
-
-	\param address The start address of the memory range to be checked.
-	\param size The size of the memory range to be checked.
-	\param protection The area protection for which to check. Valid is a bitwise
-		or of one or more of \c B_KERNEL_READ_AREA or \c B_KERNEL_WRITE_AREA.
-	\return \c true, if the complete memory range can be accessed in all ways
-		specified by \a protection, \c false otherwise.
-*/
+/**
+ * @brief Verifies that a memory range is accessible in the current context.
+ *
+ * Walks the range page by page through the arch translation map, so it
+ * works even when the VM core cannot be trusted. KDL context only.
+ *
+ * @param address Start of the range to probe.
+ * @param size Length of the range in bytes.
+ * @param protection Bitwise OR of @c B_KERNEL_READ_AREA and/or
+ *   @c B_KERNEL_WRITE_AREA describing the required access.
+ * @return @c true when every page satisfies @a protection, @c false
+ *   otherwise.
+ */
 bool
 debug_is_kernel_memory_accessible(addr_t address, size_t size,
 	uint32 protection)
@@ -1909,18 +2486,20 @@ debug_is_kernel_memory_accessible(addr_t address, size_t size,
 }
 
 
-/*!	Calls a function in a setjmp() + fault handler context.
-	May only be used in the kernel debugger.
-
-	\param jumpBuffer Buffer to be used for setjmp()/longjmp().
-	\param function The function to be called.
-	\param parameter The parameter to be passed to the function to be called.
-	\return
-		- \c 0, when the function executed without causing a page fault or
-		  calling longjmp().
-		- \c 1, when the function caused a page fault.
-		- Any other value the function passes to longjmp().
-*/
+/**
+ * @brief Invokes @a function under a setjmp() + per-CPU fault handler.
+ *
+ * Saves the CPU's current fault handler state, plants @a jumpBuffer as the
+ * new handler, and calls @a function. If the callee page-faults, control
+ * returns here via longjmp() and the original handler is restored. KDL
+ * context only.
+ *
+ * @param jumpBuffer Scratch buffer used by setjmp()/longjmp().
+ * @param function Callback to execute while protected.
+ * @param parameter Opaque pointer forwarded to @a function.
+ * @return 0 on clean execution, 1 on page fault, or any other value the
+ *   callee passes to longjmp().
+ */
 int
 debug_call_with_fault_handler(jmp_buf jumpBuffer, void (*function)(void*),
 	void* parameter)
@@ -1944,13 +2523,23 @@ debug_call_with_fault_handler(jmp_buf jumpBuffer, void (*function)(void*),
 }
 
 
-/*!	Similar to user_memcpy(), but can only be invoked from within the kernel
-	debugger (and must not be used outside).
-	The supplied \a teamID specifies the address space in which to interpret
-	the addresses. It can be \c B_CURRENT_TEAM for debug_get_debugged_thread(),
-	or any valid team ID. If the addresses are both kernel addresses, the
-	argument is ignored and the current address space is used.
-*/
+/**
+ * @brief Debugger-safe memcpy() across a possibly-foreign address space.
+ *
+ * First tries a regular memcpy() guarded by the fault handler; if that
+ * fails it falls back to vm_debug_copy_page_memory() which can read from
+ * cached-but-unmapped pages. Never sleeps and never takes the VM locks.
+ * KDL context only.
+ *
+ * @param teamID Address space selector (@c B_CURRENT_TEAM for the
+ *   currently debugged thread's team, or any valid team ID). Ignored when
+ *   both addresses are kernel addresses.
+ * @param to Destination address.
+ * @param from Source address.
+ * @param size Number of bytes to copy.
+ * @return @c B_OK on success, @c B_BAD_ADDRESS when the range could not
+ *   be satisfied.
+ */
 status_t
 debug_memcpy(team_id teamID, void* to, const void* from, size_t size)
 {
@@ -1998,13 +2587,20 @@ debug_memcpy(team_id teamID, void* to, const void* from, size_t size)
 }
 
 
-/*!	Similar to user_strlcpy(), but can only be invoked from within the kernel
-	debugger (and must not be used outside).
-	The supplied \a teamID specifies the address space in which to interpret
-	the addresses. It can be \c B_CURRENT_TEAM for debug_get_debugged_thread(),
-	or any valid team ID. If the addresses are both kernel addresses, the
-	argument is ignored and the current address space is used.
-*/
+/**
+ * @brief Debugger-safe strlcpy() across a possibly-foreign address space.
+ *
+ * Like debug_memcpy(), but stops at the first NUL. Handles the case where
+ * @a size is smaller than the source string and returns the would-be
+ * length for strlcpy() callers. KDL context only.
+ *
+ * @param teamID Address space selector (@c B_CURRENT_TEAM or a valid team
+ *   ID). Ignored when both addresses are kernel addresses.
+ * @param to Destination buffer.
+ * @param from Source string.
+ * @param size Capacity of @a to in bytes.
+ * @return Length of @a from on success, or @c B_BAD_ADDRESS on failure.
+ */
 ssize_t
 debug_strlcpy(team_id teamID, char* to, const char* from, size_t size)
 {
@@ -2097,6 +2693,15 @@ debug_strlcpy(team_id teamID, char* to, const char* from, size_t size)
 // #pragma mark - public API
 
 
+/**
+ * @brief Evaluates a KDL arithmetic expression and returns its value.
+ *
+ * Delegates to evaluate_debug_expression(); warnings are printed to the
+ * KDL output by the evaluator itself. KDL context only.
+ *
+ * @param expression NUL-terminated expression to parse.
+ * @return The numeric value of @a expression, or 0 if evaluation failed.
+ */
 uint64
 parse_expression(const char* expression)
 {
@@ -2105,6 +2710,17 @@ parse_expression(const char* expression)
 }
 
 
+/**
+ * @brief Aborts the kernel and drops into KDL with a formatted message.
+ *
+ * The message may embed a command suffix separated by "@!" which will be
+ * fed to evaluate_debug_command() after the prompt appears. Note that a
+ * second panic() while already inside a panic-triggered KDL session is
+ * treated as an unrecoverable fault by the arch layer and triggers a hard
+ * reset. Safe to call from any context; interrupts are disabled on entry.
+ *
+ * @param format printf-style format string describing the failure.
+ */
 void
 panic(const char* format, ...)
 {
@@ -2122,6 +2738,15 @@ panic(const char* format, ...)
 }
 
 
+/**
+ * @brief Voluntarily enters KDL with a plain (non-formatted) message.
+ *
+ * Unlike panic(), this path is recoverable: once the user types "continue"
+ * the caller resumes execution. Any context; interrupts are disabled on
+ * entry and restored on return.
+ *
+ * @param message Text to display as the entry banner.
+ */
 void
 kernel_debugger(const char* message)
 {
@@ -2134,6 +2759,15 @@ kernel_debugger(const char* message)
 }
 
 
+/**
+ * @brief Toggles serial dprintf output and returns the previous state.
+ *
+ * Used by KDL to force dprintf on during a session and to restore it on
+ * exit. Can be called from any context.
+ *
+ * @param newState Desired enabled state.
+ * @return The previous enabled state.
+ */
 bool
 set_dprintf_enabled(bool newState)
 {
@@ -2144,6 +2778,15 @@ set_dprintf_enabled(bool newState)
 }
 
 
+/**
+ * @brief Kernel printf to every enabled debug sink with syslog notification.
+ *
+ * Early-outs if serial, syslog, and blue screen are all disabled. Safe
+ * from any context: takes @c sOutputLock only when interrupts are enabled.
+ *
+ * @param format printf-style format string.
+ * @param ... Variadic arguments for @a format.
+ */
 void
 dprintf(const char* format, ...)
 {
@@ -2158,6 +2801,12 @@ dprintf(const char* format, ...)
 }
 
 
+/**
+ * @brief va_list variant of dprintf().
+ *
+ * @param format printf-style format string.
+ * @param args Pre-captured variadic argument list.
+ */
 void
 dvprintf(const char* format, va_list args)
 {
@@ -2168,6 +2817,16 @@ dvprintf(const char* format, va_list args)
 }
 
 
+/**
+ * @brief dprintf variant that suppresses the syslog-daemon wake-up.
+ *
+ * Used from paths where waking the syslog sender would be unsafe (for
+ * instance deep inside a semaphore release). Serial and blue-screen sinks
+ * still receive the output. Any context.
+ *
+ * @param format printf-style format string.
+ * @param ... Variadic arguments for @a format.
+ */
 void
 dprintf_no_syslog(const char* format, ...)
 {
@@ -2182,9 +2841,17 @@ dprintf_no_syslog(const char* format, ...)
 }
 
 
-/*!	Similar to dprintf() but thought to be used in the kernel
-	debugger only (it doesn't lock).
-*/
+/**
+ * @brief printf for KDL output that honours the installed filter.
+ *
+ * Unlike dprintf(), does not take any lock and does not touch the repeat
+ * collapser; this makes it safe to call with interrupts disabled from
+ * within KDL command handlers. Silently drops output when no filter is
+ * installed (i.e. outside a KDL session).
+ *
+ * @param format printf-style format string.
+ * @param ... Variadic arguments for @a format.
+ */
 void
 kprintf(const char* format, ...)
 {
@@ -2197,6 +2864,15 @@ kprintf(const char* format, ...)
 }
 
 
+/**
+ * @brief kprintf that always targets the default (unfiltered) sink.
+ *
+ * Used when a filter (for example the GDB stub) has hijacked kprintf but
+ * the caller needs to reach the raw console regardless. KDL context.
+ *
+ * @param format printf-style format string.
+ * @param ... Variadic arguments for @a format.
+ */
 void
 kprintf_unfiltered(const char* format, ...)
 {
@@ -2207,6 +2883,20 @@ kprintf_unfiltered(const char* format, ...)
 }
 
 
+/**
+ * @brief Demangles a symbol through the optional demangler module.
+ *
+ * Falls back to returning @a symbol unchanged when no demangler has been
+ * registered. Safe to call from any context.
+ *
+ * @param symbol Mangled symbol string.
+ * @param buffer Scratch buffer the demangler may write into.
+ * @param bufferSize Size of @a buffer in bytes.
+ * @param _isObjectMethod [out, optional] Set to @c true if the symbol
+ *   denotes a non-static member function.
+ * @return Pointer to the demangled name (typically inside @a buffer) or
+ *   @a symbol itself if demangling is unavailable.
+ */
 const char*
 debug_demangle_symbol(const char* symbol, char* buffer, size_t bufferSize,
 	bool* _isObjectMethod)
@@ -2223,6 +2913,23 @@ debug_demangle_symbol(const char* symbol, char* buffer, size_t bufferSize,
 }
 
 
+/**
+ * @brief Iterates over the parameter list encoded in a mangled symbol.
+ *
+ * Delegates to the demangler module; returns @c B_NOT_SUPPORTED when no
+ * demangler is loaded. Any context.
+ *
+ * @param _cookie [in,out] Opaque iteration cookie; start with 0.
+ * @param symbol Mangled symbol string being decoded.
+ * @param name [out] Buffer to receive the argument's decoded name.
+ * @param nameSize Size of @a name in bytes.
+ * @param _type [out] Receives a type classifier understood by the
+ *   demangler module.
+ * @param _argumentLength [out] Receives the raw byte length of the
+ *   argument in memory.
+ * @return @c B_OK on a successful step, @c B_NOT_SUPPORTED when no
+ *   demangler is loaded, or another error from the demangler.
+ */
 status_t
 debug_get_next_demangled_argument(uint32* _cookie, const char* symbol,
 	char* name, size_t nameSize, int32* _type, size_t* _argumentLength)
@@ -2236,6 +2943,15 @@ debug_get_next_demangled_argument(uint32* _cookie, const char* symbol,
 }
 
 
+/**
+ * @brief Returns the saved register set captured when @a cpu entered KDL.
+ *
+ * Used by arch backtrace code. KDL context only.
+ *
+ * @param cpu Index of the CPU whose state is requested.
+ * @return Pointer to the arch register snapshot, or @c NULL when @a cpu
+ *   is out of range.
+ */
 struct arch_debug_registers*
 debug_get_debug_registers(int32 cpu)
 {
@@ -2246,6 +2962,17 @@ debug_get_debug_registers(int32 cpu)
 }
 
 
+/**
+ * @brief Designates a thread as the "debugged" thread for follow-up queries.
+ *
+ * debug_get_debugged_thread() and debug_is_debugged_team() consult the
+ * thread set by this call, which lets "thread X" commands pivot subsequent
+ * memory accesses into that thread's address space. KDL context.
+ *
+ * @param thread Thread to designate, or @c NULL to fall back to the
+ *   current running thread.
+ * @return Previously designated thread.
+ */
 Thread*
 debug_set_debugged_thread(Thread* thread)
 {
@@ -2255,6 +2982,15 @@ debug_set_debugged_thread(Thread* thread)
 }
 
 
+/**
+ * @brief Returns the currently designated KDL target thread.
+ *
+ * Falls back to thread_get_current_thread() when no override is active.
+ * KDL context only.
+ *
+ * @return The target thread, or whatever thread_get_current_thread()
+ *   returns when none has been set.
+ */
 Thread*
 debug_get_debugged_thread()
 {
@@ -2263,10 +2999,14 @@ debug_get_debugged_thread()
 }
 
 
-/*!	Returns whether the supplied team ID refers to the same team the currently
-	debugged thread (debug_get_debugged_thread()) belongs to.
-	Always returns \c true, if \c B_CURRENT_TEAM is given.
-*/
+/**
+ * @brief Tests whether @a teamID is the team of the current debugged thread.
+ *
+ * @c B_CURRENT_TEAM is treated as always matching. KDL context.
+ *
+ * @param teamID Team ID to test, or @c B_CURRENT_TEAM.
+ * @return @c true when @a teamID matches the debugged thread's team.
+ */
 bool
 debug_is_debugged_team(team_id teamID)
 {
@@ -2283,6 +3023,17 @@ debug_is_debugged_team(team_id teamID)
 //	userland syscalls
 
 
+/**
+ * @brief Syscall entry that lets a privileged process enter KDL.
+ *
+ * Only root may invoke this. The user-supplied message is copied into a
+ * bounded kernel buffer, prefixed with "USER: ", and forwarded to
+ * kernel_debugger(). Thread context.
+ *
+ * @param userMessage User-pointer to a NUL-terminated message.
+ * @return @c B_OK on return from KDL, @c B_NOT_ALLOWED if the caller is
+ *   not root, @c B_BAD_ADDRESS on user-pointer validation failure.
+ */
 status_t
 _user_kernel_debugger(const char* userMessage)
 {
@@ -2303,6 +3054,14 @@ _user_kernel_debugger(const char* userMessage)
 }
 
 
+/**
+ * @brief Registers the userland syslog daemon and starts the forwarder.
+ *
+ * Root-only. Records the daemon's port and lazily spawns @ref syslog_sender
+ * if it is not already running. Thread context.
+ *
+ * @param port Port to which SYSLOG_MESSAGE packets should be delivered.
+ */
 void
 _user_register_syslog_daemon(port_id port)
 {
@@ -2320,6 +3079,15 @@ _user_register_syslog_daemon(port_id port)
 }
 
 
+/**
+ * @brief Syscall that forwards a user string to the kernel debug log.
+ *
+ * Copies the user pointer in chunks (up to 512 bytes each) and calls
+ * debug_puts(). Silently returns if no debug sink is enabled or if the
+ * pointer is not in user space. Thread context.
+ *
+ * @param userString User-pointer to a NUL-terminated string.
+ */
 void
 _user_debug_output(const char* userString)
 {
@@ -2343,6 +3111,16 @@ _user_debug_output(const char* userString)
 }
 
 
+/**
+ * @brief Hex/ASCII dumps @a size bytes via dprintf(), 16 bytes per line.
+ *
+ * Each line is prefixed with @a prefix and the byte offset. Safe from any
+ * context that can safely call dprintf().
+ *
+ * @param buffer Start of the data to dump.
+ * @param size Number of bytes in @a buffer.
+ * @param prefix String emitted at the beginning of every output line.
+ */
 void
 dump_block(const char* buffer, int size, const char* prefix)
 {

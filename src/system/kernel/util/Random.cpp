@@ -1,9 +1,43 @@
 /*
- * Copyright 2013 Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Paweł Dziepak, pdziepak@quarnos.org
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013 Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Paweł Dziepak, pdziepak@quarnos.org
+ */
+
+/**
+ * @file Random.cpp
+ * @brief Non-cryptographic and best-effort random helpers for kernel use.
+ *
+ * Provides three generators with increasing quality:
+ *  - fast_random_value(): linear congruential generator, single 32-bit state.
+ *  - random_value(): Park–Miller MINSTD, single 32-bit state.
+ *  - secure_random_value(): simplified MD4 over a mix of system_time(), CPU
+ *    index, thread id, real-time clock, and the other generators' states.
+ *
+ * All three use shared state and are intentionally non-atomic; a lost update
+ * merely costs entropy, so callers that need thread-safety or cryptographic
+ * guarantees must use a different primitive.
  */
 
 
@@ -25,7 +59,16 @@ static uint32	sSecureLast	= 0;
 	(a += f((b), (c), (d)) + (xk), a = (a << (s)) | (a >> (32 - (s))))
 
 
-// MD4 based hash function. Simplified in order to improve performance.
+/**
+ * @brief Simplified MD4-style mixer over eight 32-bit words.
+ *
+ * Runs the three MD4 round functions (F/G/H) without the full padding and
+ * length finalization of the standard construction. Fast and good enough
+ * for non-cryptographic randomness inside the kernel.
+ *
+ * @param data Eight-word input to mix.
+ * @return Mixed 32-bit value.
+ */
 static uint32
 hash(uint32* data)
 {
@@ -73,7 +116,14 @@ hash(uint32* data)
 // are non-deterministic it is not a big problem.
 
 
-// A simple linear congruential generator
+/**
+ * @brief Fast LCG pseudo-random value (15 bits of output).
+ *
+ * Seeds from system_time() on first call. Not thread-safe — shared 32-bit
+ * state is updated without locking by design.
+ *
+ * @return Pseudo-random value in [0, 0x7fff].
+ */
 unsigned int
 fast_random_value()
 {
@@ -86,9 +136,14 @@ fast_random_value()
 }
 
 
-// Taken from "Random number generators: good ones are hard to find",
-// Park and Miller, Communications of the ACM, vol. 31, no. 10,
-// October 1988, p. 1195.
+/**
+ * @brief Park–Miller MINSTD pseudo-random value.
+ *
+ * Seeds from system_time() on first call. Not thread-safe — shared 32-bit
+ * state is updated without locking by design.
+ *
+ * @return Pseudo-random value in [0, MAX_RANDOM_VALUE].
+ */
 unsigned int
 random_value()
 {
@@ -106,6 +161,17 @@ random_value()
 }
 
 
+/**
+ * @brief Best-effort high-entropy pseudo-random value.
+ *
+ * Mixes an atomic counter, the current time, thread id, CPU index, the
+ * real-time clock, and the states of the other two generators through the
+ * simplified MD4 hash. Not cryptographically secure — callers needing that
+ * must use a different primitive — but good enough for defence-in-depth
+ * against pattern-dependent attacks on kernel data structures.
+ *
+ * @return 32-bit pseudo-random value.
+ */
 unsigned int
 secure_random_value()
 {

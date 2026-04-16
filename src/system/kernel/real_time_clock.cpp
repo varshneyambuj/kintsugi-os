@@ -67,6 +67,9 @@ static bigtime_t sTimezoneOffset = 0;
 static char sTimezoneName[B_FILE_NAME_LENGTH] = "GMT";
 
 
+/**
+ * @brief Notify the kernel timer and user-timer layers of a wall-clock change.
+ */
 static void
 real_time_clock_changed()
 {
@@ -75,7 +78,12 @@ real_time_clock_changed()
 }
 
 
-/*! Write the system time to CMOS. */
+/**
+ * @brief Write the current wall-clock time into the hardware RTC.
+ *
+ * Honours sIsGMT: when the hardware clock is running in local time, the
+ * current timezone offset is added before writing.
+ */
 static void
 rtc_system_to_hw(void)
 {
@@ -88,7 +96,11 @@ rtc_system_to_hw(void)
 }
 
 
-/*! Read the CMOS clock and update the system time accordingly. */
+/**
+ * @brief Read the hardware RTC and update the kernel wall-clock offset.
+ *
+ * Adds the timezone offset when the RTC runs in local time.
+ */
 static void
 rtc_hw_to_system(void)
 {
@@ -99,6 +111,10 @@ rtc_hw_to_system(void)
 }
 
 
+/**
+ * @brief Return the wall-clock offset applied to system_time() at boot.
+ * @return Microseconds between system_time() == 0 and the Unix epoch.
+ */
 bigtime_t
 rtc_boot_time(void)
 {
@@ -106,6 +122,17 @@ rtc_boot_time(void)
 }
 
 
+/**
+ * @brief Debugger command: print RTC state or set the wall-clock time.
+ *
+ * With no arguments prints system_time(), the current offset, and the
+ * derived Unix time. With one numeric argument, passes it to
+ * set_real_time_clock().
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector; argv[1] if present is seconds-since-epoch.
+ * @return 0 on success.
+ */
 static int
 rtc_debug(int argc, char **argv)
 {
@@ -128,6 +155,16 @@ rtc_debug(int argc, char **argv)
 }
 
 
+/**
+ * @brief Initialise real-time data, publish it to user space, and sync from HW.
+ *
+ * Allocates the commpage real_time_data entry (plus the compat-mode copy
+ * when built with _COMPAT_MODE), invokes the arch layer, then seeds the
+ * kernel clock from the hardware RTC.
+ *
+ * @param args Boot-time kernel arguments.
+ * @return B_OK on success.
+ */
 status_t
 rtc_init(kernel_args *args)
 {
@@ -152,6 +189,14 @@ rtc_init(kernel_args *args)
 //	#pragma mark - public kernel API
 
 
+/**
+ * @brief Set the wall-clock time from a microsecond Unix timestamp.
+ *
+ * Updates the system_time() offset, writes the hardware RTC, and notifies
+ * timer subsystems.
+ *
+ * @param currentTime Microseconds since the Unix epoch.
+ */
 void
 set_real_time_clock_usecs(bigtime_t currentTime)
 {
@@ -166,6 +211,10 @@ set_real_time_clock_usecs(bigtime_t currentTime)
 }
 
 
+/**
+ * @brief Set the wall-clock time from a whole-seconds Unix timestamp.
+ * @param currentTime Seconds since the Unix epoch.
+ */
 void
 set_real_time_clock(unsigned long currentTime)
 {
@@ -173,6 +222,10 @@ set_real_time_clock(unsigned long currentTime)
 }
 
 
+/**
+ * @brief Return the current wall-clock time in whole seconds.
+ * @return Seconds since the Unix epoch.
+ */
 unsigned long
 real_time_clock(void)
 {
@@ -181,6 +234,10 @@ real_time_clock(void)
 }
 
 
+/**
+ * @brief Return the current wall-clock time in microseconds.
+ * @return Microseconds since the Unix epoch.
+ */
 bigtime_t
 real_time_clock_usecs(void)
 {
@@ -188,6 +245,10 @@ real_time_clock_usecs(void)
 }
 
 
+/**
+ * @brief Return the configured local-timezone offset in seconds.
+ * @return Seconds east of UTC.
+ */
 uint32
 get_timezone_offset(void)
 {
@@ -198,9 +259,15 @@ get_timezone_offset(void)
 // #pragma mark -
 
 
-/*!	Converts the \a tm data to seconds. Note that the base year is not
-	1900 as in POSIX, but 1970.
-*/
+/**
+ * @brief Convert a broken-down @c tm to seconds since the Unix epoch.
+ *
+ * Uses the Fliegel / van Flandern (1968) Julian-day formula. Note that
+ * @c tm_year is relative to RTC_EPOCH_BASE_YEAR (1970), not 1900.
+ *
+ * @param tm Calendar time in UTC.
+ * @return Seconds since 1970-01-01 00:00:00 UTC.
+ */
 uint64
 rtc_tm_to_secs(const struct tm *tm)
 {
@@ -222,6 +289,15 @@ rtc_tm_to_secs(const struct tm *tm)
 }
 
 
+/**
+ * @brief Convert seconds-since-epoch into a broken-down calendar time.
+ *
+ * Inverse of rtc_tm_to_secs(); @c tm_year is relative to
+ * RTC_EPOCH_BASE_YEAR (1970).
+ *
+ * @param seconds Seconds since 1970-01-01 00:00:00 UTC.
+ * @param t       Destination calendar time.
+ */
 void
 rtc_secs_to_tm(uint64 seconds, struct tm *t)
 {
@@ -256,6 +332,10 @@ rtc_secs_to_tm(uint64 seconds, struct tm *t)
 //	#pragma mark - syscalls
 
 
+/**
+ * @brief Syscall entry point for system_time().
+ * @return Microseconds since boot.
+ */
 bigtime_t
 _user_system_time(void)
 {
@@ -265,6 +345,11 @@ _user_system_time(void)
 }
 
 
+/**
+ * @brief Syscall entry point for set_real_time_clock(); requires root.
+ * @param time Microseconds since the Unix epoch.
+ * @return B_OK on success, B_NOT_ALLOWED for non-root callers.
+ */
 status_t
 _user_set_real_time_clock(bigtime_t time)
 {
@@ -276,6 +361,18 @@ _user_set_real_time_clock(bigtime_t time)
 }
 
 
+/**
+ * @brief Syscall entry point: update the kernel's timezone; requires root.
+ *
+ * Adjusts the RTC offset so that wall-clock readings remain continuous when
+ * the hardware clock is running in local time.
+ *
+ * @param timezoneOffset New offset east of UTC, in seconds.
+ * @param name           Userspace buffer holding the timezone name, or NULL.
+ * @param nameLength     Length of @a name in bytes.
+ * @return B_OK on success, B_NOT_ALLOWED for non-root callers, B_BAD_ADDRESS
+ *         if @a name is invalid.
+ */
 status_t
 _user_set_timezone(int32 timezoneOffset, const char *name, size_t nameLength)
 {
@@ -318,6 +415,16 @@ _user_set_timezone(int32 timezoneOffset, const char *name, size_t nameLength)
 }
 
 
+/**
+ * @brief Syscall entry point: return the current timezone offset and name.
+ *
+ * Either output pointer may be NULL.
+ *
+ * @param _timezoneOffset Userspace out-pointer for the offset in seconds.
+ * @param userName        Userspace buffer to receive the timezone name.
+ * @param nameLength      Size of @a userName in bytes.
+ * @return B_OK on success, B_BAD_ADDRESS on invalid userspace pointers.
+ */
 status_t
 _user_get_timezone(int32 *_timezoneOffset, char *userName, size_t nameLength)
 {
@@ -337,6 +444,15 @@ _user_get_timezone(int32 *_timezoneOffset, char *userName, size_t nameLength)
 }
 
 
+/**
+ * @brief Syscall entry point: declare whether the RTC runs in GMT or local.
+ *
+ * Requires root. When the flag changes, the system-time offset is adjusted
+ * by the current timezone offset so wall-clock readings remain continuous.
+ *
+ * @param isGMT true if the hardware RTC holds UTC, false for local time.
+ * @return B_OK on success, B_NOT_ALLOWED for non-root callers.
+ */
 status_t
 _user_set_real_time_clock_is_gmt(bool isGMT)
 {
@@ -363,6 +479,12 @@ _user_set_real_time_clock_is_gmt(bool isGMT)
 }
 
 
+/**
+ * @brief Syscall entry point: return whether the RTC is running in GMT.
+ * @param _userIsGMT Userspace out-pointer for the boolean flag.
+ * @return B_OK on success, B_BAD_VALUE if @a _userIsGMT is NULL,
+ *         B_BAD_ADDRESS on invalid userspace pointer.
+ */
 status_t
 _user_get_real_time_clock_is_gmt(bool *_userIsGMT)
 {

@@ -1,10 +1,61 @@
 /*
- * Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2011, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2002-2009, Axel Dörfler, axeld@pinc-software.de. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file lock.cpp
+ * @brief Kernel blocking-lock primitives: mutex, recursive_lock, rw_lock.
+ *
+ * Implements the sleeping lock primitives that sit above the scheduler's
+ * spinlocks. Each lock has a small per-lock spinlock that guards its waiter
+ * queue; contended acquirers enqueue a stack-allocated waiter struct, prepare
+ * to block via thread_prepare_to_block(), release the spinlock, and call
+ * thread_block() (or thread_block_with_timeout()). The unlock path dequeues
+ * the head waiter and calls thread_unblock() to hand off ownership directly,
+ * which avoids thundering-herd wakeups and keeps the lock held across the
+ * handoff (so a newly arriving contender cannot starve the woken waiter).
+ *
+ * Three flavours are provided:
+ *  - mutex: exclusive FIFO sleeping lock. In non-KDEBUG builds the fast path
+ *    is inline (atomic count) and only contended acquires enter this file.
+ *    In KDEBUG builds the holder thread_id is tracked for double-lock /
+ *    wrong-unlocker detection.
+ *  - recursive_lock: mutex plus a holder thread_id and recursion counter so
+ *    the same thread may re-enter.
+ *  - rw_lock: writer-biased reader/writer lock. A pending writer is noted in
+ *    the count so new readers start waiting and active readers drain; this
+ *    prevents reader starvation of writers. To avoid priority inversion on
+ *    recursive read-locks held by a thread that later becomes the writer,
+ *    a thread already holding the write lock is allowed to take read locks
+ *    without blocking (owner_count tracks the nested count).
+ *
+ * All non-trylock acquire paths require interrupts to be enabled at entry
+ * (checked via panic() in KDEBUG builds), because they may block. The unlock
+ * paths only briefly disable interrupts while holding the internal spinlock.
  */
 
 
@@ -51,6 +102,15 @@ struct rw_lock_waiter {
 #define MUTEX_FLAG_RELEASED		0x2
 
 
+/**
+ * @brief Returns the current recursion depth of a recursive lock for the caller.
+ *
+ * Only meaningful if the current thread is the holder; any other thread gets
+ * -1 because they cannot safely observe another holder's nested count.
+ *
+ * @param lock Recursive lock to query.
+ * @return Recursion depth (>= 1) if the caller holds the lock; -1 otherwise.
+ */
 int32
 recursive_lock_get_recursion(recursive_lock *lock)
 {
@@ -61,6 +121,14 @@ recursive_lock_get_recursion(recursive_lock *lock)
 }
 
 
+/**
+ * @brief Initializes a recursive lock with no special flags.
+ *
+ * Convenience wrapper around recursive_lock_init_etc() with flags=0.
+ *
+ * @param lock Storage to initialize.
+ * @param name Human-readable name used for debugger dumps (not copied).
+ */
 void
 recursive_lock_init(recursive_lock *lock, const char *name)
 {
@@ -68,6 +136,16 @@ recursive_lock_init(recursive_lock *lock, const char *name)
 }
 
 
+/**
+ * @brief Initializes a recursive lock with custom flags.
+ *
+ * Initializes the underlying mutex, resets the holder id (non-KDEBUG only;
+ * KDEBUG reuses the mutex holder field) and zeros the recursion counter.
+ *
+ * @param lock Storage to initialize.
+ * @param name Human-readable name, or NULL to use the default "recursive lock".
+ * @param flags Flags forwarded to mutex_init_etc() (e.g. MUTEX_FLAG_CLONE_NAME).
+ */
 void
 recursive_lock_init_etc(recursive_lock *lock, const char *name, uint32 flags)
 {
@@ -79,6 +157,14 @@ recursive_lock_init_etc(recursive_lock *lock, const char *name, uint32 flags)
 }
 
 
+/**
+ * @brief Destroys a recursive lock, waking any blocked waiters with B_ERROR.
+ *
+ * Delegates to mutex_destroy(). Accepts a NULL pointer as a no-op for
+ * convenient use in cleanup paths.
+ *
+ * @param lock Lock to destroy; may be NULL.
+ */
 void
 recursive_lock_destroy(recursive_lock *lock)
 {
@@ -89,6 +175,16 @@ recursive_lock_destroy(recursive_lock *lock)
 }
 
 
+/**
+ * @brief Acquires a recursive lock, blocking if held by another thread.
+ *
+ * If the current thread already owns the lock, only the recursion counter is
+ * bumped. Otherwise acquires the underlying mutex (may sleep) and records the
+ * holder. Must be called with interrupts enabled (checked in KDEBUG builds).
+ *
+ * @param lock Recursive lock to acquire.
+ * @return B_OK on success.
+ */
 status_t
 recursive_lock_lock(recursive_lock *lock)
 {
@@ -113,6 +209,17 @@ recursive_lock_lock(recursive_lock *lock)
 }
 
 
+/**
+ * @brief Non-blocking attempt to acquire a recursive lock.
+ *
+ * If the current thread already holds the lock, increments recursion and
+ * succeeds; otherwise calls mutex_trylock() on the underlying mutex and
+ * only bumps the counter on success.
+ *
+ * @param lock Recursive lock to attempt to acquire.
+ * @return B_OK on acquisition; B_WOULD_BLOCK (or other mutex_trylock error)
+ *         if the lock is held by another thread.
+ */
 status_t
 recursive_lock_trylock(recursive_lock *lock)
 {
@@ -140,6 +247,14 @@ recursive_lock_trylock(recursive_lock *lock)
 }
 
 
+/**
+ * @brief Releases one recursion level of a recursive lock.
+ *
+ * Panics if called by a thread that is not the current holder. The underlying
+ * mutex is only released when recursion drops back to zero.
+ *
+ * @param lock Recursive lock currently held by the calling thread.
+ */
 void
 recursive_lock_unlock(recursive_lock *lock)
 {
@@ -155,6 +270,19 @@ recursive_lock_unlock(recursive_lock *lock)
 }
 
 
+/**
+ * @brief Atomically releases one recursive_lock and acquires another.
+ *
+ * If the outgoing lock is still held recursively after the decrement, only
+ * the incoming lock is acquired. If the caller already holds 'to', its
+ * recursion is bumped and 'from' is released. Otherwise mutex_switch_lock()
+ * hands off between the underlying mutexes without a window where the
+ * caller holds neither. Must be called with interrupts enabled.
+ *
+ * @param from Recursive lock to release (one level).
+ * @param to   Recursive lock to acquire.
+ * @return B_OK on success; on error, 'from' is re-held at the original depth.
+ */
 status_t
 recursive_lock_switch_lock(recursive_lock* from, recursive_lock* to)
 {
@@ -197,6 +325,18 @@ recursive_lock_switch_lock(recursive_lock* from, recursive_lock* to)
 }
 
 
+/**
+ * @brief Atomically releases a plain mutex and acquires a recursive lock.
+ *
+ * If the caller already holds 'to' recursively, its counter is bumped and
+ * 'from' is simply released. Otherwise mutex_switch_lock() is used so the
+ * caller never gives up all locking before picking up the new one. Must be
+ * called with interrupts enabled.
+ *
+ * @param from Mutex currently held by the caller.
+ * @param to   Recursive lock to acquire.
+ * @return B_OK on success, error from the underlying mutex switch otherwise.
+ */
 status_t
 recursive_lock_switch_from_mutex(mutex* from, recursive_lock* to)
 {
@@ -227,6 +367,19 @@ recursive_lock_switch_from_mutex(mutex* from, recursive_lock* to)
 }
 
 
+/**
+ * @brief Atomically releases a read lock and acquires a recursive lock.
+ *
+ * When the caller already holds 'to' recursively, the read lock on 'from'
+ * is simply released and the recursion counter bumped. Otherwise delegates
+ * to mutex_switch_from_read_lock() to hand off directly. Must be called
+ * with interrupts enabled.
+ *
+ * @param from Read-locked rw_lock to release.
+ * @param to   Recursive lock to acquire.
+ * @return B_OK on success; on error, 'from' read-lock is released and
+ *         nothing is held.
+ */
 status_t
 recursive_lock_switch_from_read_lock(rw_lock* from, recursive_lock* to)
 {
@@ -256,6 +409,16 @@ recursive_lock_switch_from_read_lock(rw_lock* from, recursive_lock* to)
 }
 
 
+/**
+ * @brief Kernel-debugger command that prints the state of a recursive_lock.
+ *
+ * Dumps the underlying mutex pointer, name, flags, holder thread id,
+ * recursion depth, and the list of waiting thread ids.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv argv[1] must parse to the address of a recursive_lock.
+ * @return 0 (debugger commands ignore the return value).
+ */
 static int
 dump_recursive_lock_info(int argc, char** argv)
 {
@@ -297,6 +460,21 @@ dump_recursive_lock_info(int argc, char** argv)
 //	#pragma mark -
 
 
+/**
+ * @brief Enqueues the current thread on an rw_lock waiter list and blocks.
+ *
+ * Appends a stack-allocated waiter to the FIFO queue, drops the lock's
+ * internal spinlock (via @p locker), then sleeps in thread_block(). On
+ * successful wakeup the unblocker has already updated the lock state,
+ * marked the waiter's thread field as NULL, and transferred ownership.
+ * The caller's @p locker is re-acquired before returning.
+ *
+ * @param lock   rw_lock whose spinlock is held by @p locker.
+ * @param writer true to enqueue as a writer, false as a reader.
+ * @param locker Interrupts-spinlock guard for lock->lock; unlocked and
+ *               re-locked across the block.
+ * @return B_OK on acquisition, or the error code returned by thread_block().
+ */
 static status_t
 rw_lock_wait(rw_lock* lock, bool writer, InterruptsSpinLocker& locker)
 {
@@ -325,6 +503,22 @@ rw_lock_wait(rw_lock* lock, bool writer, InterruptsSpinLocker& locker)
 }
 
 
+/**
+ * @brief Hands off an rw_lock to the next eligible waiters.
+ *
+ * Called with the lock's spinlock held. Implements writer-biased wakeup:
+ *  - If the head waiter is a writer, it is granted ownership only after
+ *    all active and pending readers drain; the writer is then marked as
+ *    holder before being unblocked.
+ *  - Otherwise, wakes one or more consecutive reader waiters and bumps
+ *    active_readers so that readers hold the lock across the handoff.
+ *
+ * The caller must update lock->count appropriately before/after this call.
+ *
+ * @param lock rw_lock being released.
+ * @return RW_LOCK_WRITER_COUNT_BASE if a writer was unblocked, the number
+ *         of readers unblocked otherwise, or 0 if no one could be woken.
+ */
 static int32
 rw_lock_unblock(rw_lock* lock)
 {
@@ -375,6 +569,15 @@ rw_lock_unblock(rw_lock* lock)
 }
 
 
+/**
+ * @brief Initializes an rw_lock with default flags.
+ *
+ * Equivalent to rw_lock_init_etc() with flags=0. The name string is stored
+ * by pointer (not copied).
+ *
+ * @param lock Storage to initialize.
+ * @param name Stable name string used for debugger dumps and analysis.
+ */
 void
 rw_lock_init(rw_lock* lock, const char* name)
 {
@@ -393,6 +596,17 @@ rw_lock_init(rw_lock* lock, const char* name)
 }
 
 
+/**
+ * @brief Initializes an rw_lock with custom flags.
+ *
+ * If RW_LOCK_FLAG_CLONE_NAME is set the name is strdup()'d; otherwise the
+ * pointer is kept as-is. Also notifies scheduler-analysis tracing and any
+ * registered WaitObjectListeners.
+ *
+ * @param lock  Storage to initialize.
+ * @param name  Human-readable name.
+ * @param flags Currently only RW_LOCK_FLAG_CLONE_NAME is honoured.
+ */
 void
 rw_lock_init_etc(rw_lock* lock, const char* name, uint32 flags)
 {
@@ -411,6 +625,16 @@ rw_lock_init_etc(rw_lock* lock, const char* name, uint32 flags)
 }
 
 
+/**
+ * @brief Destroys an rw_lock and unblocks all waiters with B_ERROR.
+ *
+ * In KDEBUG builds, if the lock is still in use and the caller is not the
+ * writer, it panics and then attempts to acquire the write lock to drain
+ * waiters safely. Frees any cloned name string after releasing the
+ * internal spinlock.
+ *
+ * @param lock rw_lock to destroy.
+ */
 void
 rw_lock_destroy(rw_lock* lock)
 {
@@ -451,6 +675,15 @@ rw_lock_destroy(rw_lock* lock)
 
 #if KDEBUG_RW_LOCK_DEBUG
 
+/**
+ * @brief KDEBUG_RW_LOCK_DEBUG: checks whether the caller holds a read lock.
+ *
+ * Returns true if the caller is the writer (writers may recursively read),
+ * otherwise scans the per-thread held_read_locks array for the lock.
+ *
+ * @param lock rw_lock to check.
+ * @return true if the calling thread holds the lock for reading or writing.
+ */
 bool
 _rw_lock_is_read_locked(rw_lock* lock)
 {
@@ -466,6 +699,14 @@ _rw_lock_is_read_locked(rw_lock* lock)
 }
 
 
+/**
+ * @brief KDEBUG_RW_LOCK_DEBUG: records that the caller now holds a read lock.
+ *
+ * Inserts the lock pointer into the first free slot of the current thread's
+ * held_read_locks array. Panics if that array is full.
+ *
+ * @param lock rw_lock just acquired for reading.
+ */
 static void
 _rw_lock_set_read_locked(rw_lock* lock)
 {
@@ -482,6 +723,14 @@ _rw_lock_set_read_locked(rw_lock* lock)
 }
 
 
+/**
+ * @brief KDEBUG_RW_LOCK_DEBUG: clears the read-lock bookkeeping entry.
+ *
+ * Removes the lock pointer from the caller's held_read_locks array; panics
+ * if no matching entry is found (unbalanced unlock).
+ *
+ * @param lock rw_lock being released.
+ */
 static void
 _rw_lock_unset_read_locked(rw_lock* lock)
 {
@@ -500,6 +749,19 @@ _rw_lock_unset_read_locked(rw_lock* lock)
 #endif
 
 
+/**
+ * @brief Acquires a read lock on an rw_lock, blocking if needed.
+ *
+ * Fast path (non-debug): the inline wrapper handles uncontended cases via
+ * atomic_add on count; only the contended slow path reaches here. If the
+ * caller is the writer, owner_count is bumped (no blocking). If a pending
+ * reader slot was left behind by a releasing writer, the caller consumes
+ * it without blocking. Otherwise enqueues and sleeps via rw_lock_wait().
+ * Must be called with interrupts enabled.
+ *
+ * @param lock rw_lock to read-lock.
+ * @return B_OK on success, error from thread_block() otherwise.
+ */
 status_t
 _rw_lock_read_lock(rw_lock* lock)
 {
@@ -560,6 +822,20 @@ _rw_lock_read_lock(rw_lock* lock)
 }
 
 
+/**
+ * @brief Read-lock an rw_lock with a timeout.
+ *
+ * Identical to _rw_lock_read_lock() except it sleeps in
+ * thread_block_with_timeout() and, on timeout, carefully dequeues the
+ * waiter structure from the waiter list and decrements lock->count.
+ * If the unblocker overtook us after the timeout fired, we still return
+ * B_OK because the lock is ours. Must be called with interrupts enabled.
+ *
+ * @param lock         rw_lock to read-lock.
+ * @param timeoutFlags Timeout flags (absolute/relative, etc.).
+ * @param timeout      Timeout value (interpreted per timeoutFlags).
+ * @return B_OK on acquisition; B_TIMED_OUT / B_INTERRUPTED on failure.
+ */
 status_t
 _rw_lock_read_lock_with_timeout(rw_lock* lock, uint32 timeoutFlags,
 	bigtime_t timeout)
@@ -668,6 +944,16 @@ _rw_lock_read_lock_with_timeout(rw_lock* lock, uint32 timeoutFlags,
 }
 
 
+/**
+ * @brief Releases one read-lock on an rw_lock.
+ *
+ * If the caller is the writer, only owner_count is decremented (nested
+ * read lock held by the writer). Otherwise decrements active_readers; when
+ * it hits zero, calls rw_lock_unblock() to hand off to any waiting writer.
+ * Panics if the lock was not read-locked.
+ *
+ * @param lock rw_lock to release.
+ */
 void
 _rw_lock_read_unlock(rw_lock* lock)
 {
@@ -706,6 +992,19 @@ _rw_lock_read_unlock(rw_lock* lock)
 }
 
 
+/**
+ * @brief Acquires the write lock on an rw_lock.
+ *
+ * If the caller is already the writer, owner_count is bumped by
+ * RW_LOCK_WRITER_COUNT_BASE (nested write locks). Otherwise the writer
+ * count bit is atomically added to lock->count; if no one else held the
+ * lock, ownership is taken immediately. Otherwise active_readers is
+ * snapshotted so the unblocker knows how many readers must drain, and the
+ * thread sleeps via rw_lock_wait(). Must be called with interrupts enabled.
+ *
+ * @param lock rw_lock to write-lock.
+ * @return B_OK on success, error from thread_block() otherwise.
+ */
 status_t
 rw_lock_write_lock(rw_lock* lock)
 {
@@ -753,6 +1052,18 @@ rw_lock_write_lock(rw_lock* lock)
 }
 
 
+/**
+ * @brief Releases one level of the write lock.
+ *
+ * If writes were nested (owner_count >= RW_LOCK_WRITER_COUNT_BASE after the
+ * decrement), simply returns. On the final release: the remaining
+ * owner_count (which counts nested read locks the writer also held) is
+ * salvaged; if another writer is waiting it inherits those readers via
+ * active_readers, otherwise pending_readers is set so incoming readers
+ * know not to block even though they observed a writer bit before.
+ *
+ * @param lock rw_lock to release.
+ */
 void
 _rw_lock_write_unlock(rw_lock* lock)
 {
@@ -804,6 +1115,17 @@ _rw_lock_write_unlock(rw_lock* lock)
 }
 
 
+/**
+ * @brief Kernel-debugger command that prints the state of an rw_lock.
+ *
+ * Dumps name, holder, count, active/pending readers, owner_count, flags,
+ * the per-thread reader list (KDEBUG_RW_LOCK_DEBUG only) and the queue of
+ * waiting threads tagged r/w.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv argv[1] must parse to the address of an rw_lock.
+ * @return 0 (debugger commands ignore the return value).
+ */
 static int
 dump_rw_lock_info(int argc, char** argv)
 {
@@ -859,6 +1181,14 @@ dump_rw_lock_info(int argc, char** argv)
 // #pragma mark -
 
 
+/**
+ * @brief Initializes a mutex with default flags.
+ *
+ * Convenience wrapper that forwards to mutex_init_etc() with flags=0.
+ *
+ * @param lock Storage to initialize.
+ * @param name Human-readable name used for debugger dumps.
+ */
 void
 mutex_init(mutex* lock, const char *name)
 {
@@ -866,6 +1196,17 @@ mutex_init(mutex* lock, const char *name)
 }
 
 
+/**
+ * @brief Initializes a mutex with custom flags.
+ *
+ * In KDEBUG builds holder is set to -1; otherwise count is zeroed. The
+ * internal spinlock is initialized and the lock is reported to the
+ * scheduling-analysis subsystem and any wait-object listeners.
+ *
+ * @param lock  Storage to initialize.
+ * @param name  Human-readable name (strdup()'d if MUTEX_FLAG_CLONE_NAME).
+ * @param flags Currently only MUTEX_FLAG_CLONE_NAME is honoured.
+ */
 void
 mutex_init_etc(mutex* lock, const char *name, uint32 flags)
 {
@@ -884,6 +1225,16 @@ mutex_init_etc(mutex* lock, const char *name, uint32 flags)
 }
 
 
+/**
+ * @brief Destroys a mutex, unblocking all waiters with B_ERROR.
+ *
+ * In KDEBUG builds, if the lock is still held by another thread the
+ * function panics and then acquires the lock itself to drain waiters
+ * safely. Sets holder/count to a poison value so subsequent use is
+ * detected. The name string is freed if it was cloned.
+ *
+ * @param lock Mutex to destroy.
+ */
 void
 mutex_destroy(mutex* lock)
 {
@@ -927,6 +1278,18 @@ mutex_destroy(mutex* lock)
 }
 
 
+/**
+ * @brief Slow-path helper that acquires a mutex with its spinlock held.
+ *
+ * The caller has already taken the lock's internal spinlock; this routine
+ * tests whether contention exists (non-KDEBUG: atomic count; KDEBUG: via
+ * _mutex_lock()) and either returns B_OK immediately or drops into the
+ * sleeping slow path.
+ *
+ * @param lock   Mutex whose spinlock is held.
+ * @param locker Spinlock guard; may be temporarily released by _mutex_lock().
+ * @return B_OK on acquisition, error from thread_block() otherwise.
+ */
 static inline status_t
 mutex_lock_threads_locked(mutex* lock, InterruptsSpinLocker* locker)
 {
@@ -940,6 +1303,17 @@ mutex_lock_threads_locked(mutex* lock, InterruptsSpinLocker* locker)
 }
 
 
+/**
+ * @brief Atomically releases one mutex and acquires another.
+ *
+ * Takes the 'to' mutex's internal spinlock before releasing 'from', so
+ * there is no window in which a newly arriving contender on 'to' can
+ * overtake the switching thread. Must be called with interrupts enabled.
+ *
+ * @param from Mutex currently held by the caller.
+ * @param to   Mutex to acquire.
+ * @return B_OK on success, error from the sleeping acquire path otherwise.
+ */
 status_t
 mutex_switch_lock(mutex* from, mutex* to)
 {
@@ -958,6 +1332,16 @@ mutex_switch_lock(mutex* from, mutex* to)
 }
 
 
+/**
+ * @brief Transfers ownership of a held mutex to another thread (KDEBUG only).
+ *
+ * Updates the holder id so that KDEBUG wrong-unlocker checks accept the
+ * designated thread. Panics if the caller is not the current holder. A
+ * no-op in non-KDEBUG builds (where holder tracking is absent).
+ *
+ * @param lock   Mutex held by the caller.
+ * @param thread New holder thread id.
+ */
 void
 mutex_transfer_lock(mutex* lock, thread_id thread)
 {
@@ -969,6 +1353,18 @@ mutex_transfer_lock(mutex* lock, thread_id thread)
 }
 
 
+/**
+ * @brief Atomically releases a read lock and acquires a mutex.
+ *
+ * Takes the mutex's internal spinlock, releases the read lock, and
+ * completes the mutex acquire via mutex_lock_threads_locked(). ASSERTs
+ * the caller is not the writer of @p from. Must be called with interrupts
+ * enabled.
+ *
+ * @param from Read-locked rw_lock to release.
+ * @param to   Mutex to acquire.
+ * @return B_OK on success, error from the acquire path otherwise.
+ */
 status_t
 mutex_switch_from_read_lock(rw_lock* from, mutex* to)
 {
@@ -988,6 +1384,21 @@ mutex_switch_from_read_lock(rw_lock* from, mutex* to)
 }
 
 
+/**
+ * @brief Sleeping slow-path acquire for a mutex.
+ *
+ * If @p _locker is non-NULL, the caller already holds the lock's internal
+ * spinlock; otherwise one is taken here. In KDEBUG builds the holder is
+ * updated directly if the lock is free, and double-locks / uninitialized
+ * locks are detected. Non-KDEBUG handles the race where the previous
+ * holder released the lock between the atomic decrement and this call via
+ * MUTEX_FLAG_RELEASED. Enqueues a stack waiter, releases the spinlock,
+ * blocks, and on success finds itself as the holder (set by the unlocker).
+ *
+ * @param lock    Mutex to acquire.
+ * @param _locker InterruptsSpinLocker* already guarding lock->lock, or NULL.
+ * @return B_OK on acquisition, error from thread_block() otherwise.
+ */
 KDEBUG_STATIC status_t
 _mutex_lock(mutex* lock, void* _locker)
 {
@@ -1056,6 +1467,17 @@ _mutex_lock(mutex* lock, void* _locker)
 }
 
 
+/**
+ * @brief Sleeping slow-path release for a mutex.
+ *
+ * Called only when there is a waiter (non-KDEBUG fast path sets
+ * MUTEX_FLAG_RELEASED inline). Dequeues the head waiter, sets the lock
+ * holder to that thread (avoiding a -1 window that would race with
+ * incoming lockers), and unblocks it. If no waiters remain, either clears
+ * the holder (KDEBUG) or sets MUTEX_FLAG_RELEASED (non-KDEBUG).
+ *
+ * @param lock Mutex being released; must be held by the caller.
+ */
 KDEBUG_STATIC void
 _mutex_unlock(mutex* lock)
 {
@@ -1098,6 +1520,21 @@ _mutex_unlock(mutex* lock)
 }
 
 
+/**
+ * @brief Sleeping acquire for a mutex with a timeout.
+ *
+ * Like _mutex_lock() but uses thread_block_with_timeout(). On timeout this
+ * routine carefully dequeues its waiter structure (if still present) and,
+ * in non-KDEBUG builds, re-increments the lock count that the inline fast
+ * path had decremented. If the unblocker removed the waiter before the
+ * timeout took effect, the caller owns the lock and B_OK is returned. Must
+ * be called with interrupts enabled.
+ *
+ * @param lock         Mutex to acquire.
+ * @param timeoutFlags Timeout flags (absolute/relative, etc.).
+ * @param timeout      Timeout value (interpreted per timeoutFlags).
+ * @return B_OK on acquisition; B_TIMED_OUT / B_INTERRUPTED / B_ERROR on fail.
+ */
 KDEBUG_STATIC status_t
 _mutex_lock_with_timeout(mutex* lock, uint32 timeoutFlags, bigtime_t timeout)
 {
@@ -1199,6 +1636,17 @@ _mutex_lock_with_timeout(mutex* lock, uint32 timeoutFlags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Non-blocking attempt to acquire a mutex.
+ *
+ * In KDEBUG builds takes the internal spinlock, tests the holder field,
+ * sets it to the current thread on success and otherwise returns
+ * B_WOULD_BLOCK; panics on an uninitialized lock. In non-KDEBUG builds
+ * forwards to the inline fast path.
+ *
+ * @param lock Mutex to try to acquire.
+ * @return B_OK on acquisition; B_WOULD_BLOCK if held by another thread.
+ */
 #undef mutex_trylock
 status_t
 mutex_trylock(mutex* lock)
@@ -1219,6 +1667,16 @@ mutex_trylock(mutex* lock)
 }
 
 
+/**
+ * @brief Acquires a mutex, blocking if necessary.
+ *
+ * In KDEBUG builds always goes through the slow path so holder tracking
+ * runs; in release builds this out-of-line symbol forwards to the inline
+ * fast-path wrapper for external callers that take the mutex_lock address.
+ *
+ * @param lock Mutex to acquire.
+ * @return B_OK on success, error from the sleep path otherwise.
+ */
 #undef mutex_lock
 status_t
 mutex_lock(mutex* lock)
@@ -1231,6 +1689,15 @@ mutex_lock(mutex* lock)
 }
 
 
+/**
+ * @brief Releases a mutex held by the current thread.
+ *
+ * In KDEBUG builds delegates to _mutex_unlock() so holder checks run; in
+ * release builds forwards to the inline fast path (which only enters the
+ * slow path when waiters are queued).
+ *
+ * @param lock Mutex to release.
+ */
 #undef mutex_unlock
 void
 mutex_unlock(mutex* lock)
@@ -1243,6 +1710,17 @@ mutex_unlock(mutex* lock)
 }
 
 
+/**
+ * @brief Acquires a mutex with a timeout.
+ *
+ * In KDEBUG builds always goes through the slow-path timeout acquire; in
+ * release builds forwards to the inline fast-path wrapper.
+ *
+ * @param lock         Mutex to acquire.
+ * @param timeoutFlags Timeout flags (absolute/relative, etc.).
+ * @param timeout      Timeout value (interpreted per timeoutFlags).
+ * @return B_OK on acquisition; B_TIMED_OUT / B_INTERRUPTED on failure.
+ */
 #undef mutex_lock_with_timeout
 status_t
 mutex_lock_with_timeout(mutex* lock, uint32 timeoutFlags, bigtime_t timeout)
@@ -1255,6 +1733,16 @@ mutex_lock_with_timeout(mutex* lock, uint32 timeoutFlags, bigtime_t timeout)
 }
 
 
+/**
+ * @brief Kernel-debugger command that prints the state of a mutex.
+ *
+ * Dumps name, flags, holder (KDEBUG) or count (non-KDEBUG) and the list
+ * of waiting thread ids.
+ *
+ * @param argc Argument count; must be at least 2.
+ * @param argv argv[1] must parse to the address of a mutex.
+ * @return 0 (debugger commands ignore the return value).
+ */
 static int
 dump_mutex_info(int argc, char** argv)
 {
@@ -1294,6 +1782,12 @@ dump_mutex_info(int argc, char** argv)
 // #pragma mark -
 
 
+/**
+ * @brief Registers the mutex / rwlock / recursivelock debugger commands.
+ *
+ * Called once during kernel bring-up to make the three dump_* helpers
+ * available at the KDL prompt.
+ */
 void
 lock_debug_init()
 {

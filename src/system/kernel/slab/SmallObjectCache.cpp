@@ -25,11 +25,20 @@
 
 /**
  * @file SmallObjectCache.cpp
- * @brief Slab object cache for small objects with embedded slab metadata.
+ * @brief Slab object-cache specialisation for objects much smaller than a
+ *        page.
  *
- * For objects small enough that the slab control structure fits in the same
- * memory page as the objects themselves. Offers better cache locality than
- * HashedObjectCache for small allocations.
+ * SmallObjectCache is a strategy-pattern override of ObjectCache that places
+ * the slab descriptor *inside* the slab's backing page chunk — specifically,
+ * in the last sizeof(slab) bytes of the chunk, right after the usable object
+ * storage. Because the slab metadata shares the chunk with the objects it
+ * manages, ObjectSlab() can recover the owning slab from a free()-style
+ * pointer by masking it down to its chunk boundary; no auxiliary hash table
+ * is required (compare HashedObjectCache, which is used when the objects are
+ * too large to share a chunk with their descriptor).
+ *
+ * Only the per-slab lifecycle hooks that differ from the base ObjectCache
+ * live here — the common depot, magazine and quota machinery is inherited.
  *
  * @see HashedObjectCache.cpp, ObjectCache.cpp
  */
@@ -46,17 +55,16 @@ RANGE_MARKER_FUNCTION_BEGIN(SlabSmallObjectCache)
 
 
 /**
- * @brief Return a pointer to the @c slab descriptor embedded at the end of a
- *        memory page group.
+ * @brief Return the slab descriptor embedded at the tail of a chunk.
  *
- * The @c slab struct is placed in the last @c sizeof(slab) bytes of the
- * page chunk, immediately after the usable object storage. Using a
- * @c BytePointer avoids strict-aliasing violations.
+ * The descriptor is placed in the last sizeof(slab) bytes of the chunk so
+ * that its address is easily recovered from any object pointer via a mask
+ * down to the chunk boundary. Using BytePointer avoids strict-aliasing
+ * violations when stepping by raw byte counts.
  *
  * @param pages      Base address of the page chunk.
  * @param slab_size  Total size of the page chunk in bytes.
- * @return           Pointer to the @c slab descriptor at
- *                   @c pages + slab_size - sizeof(slab).
+ * @return Pointer to the slab descriptor at pages + slab_size - sizeof(slab).
  */
 static inline slab *
 slab_in_pages(void *pages, size_t slab_size)
@@ -68,29 +76,29 @@ slab_in_pages(void *pages, size_t slab_size)
 
 
 /**
- * @brief Factory method — allocate and fully initialise a @c SmallObjectCache.
+ * @brief Factory entry point — allocate and fully initialise a
+ *        SmallObjectCache.
  *
- * Allocates the cache struct from the internal slab allocator using placement
- * new, then calls @c ObjectCache::Init() to set up the depot and common
- * fields. The slab size defaults to @c SLAB_CHUNK_SIZE_SMALL or, when
- * @c CACHE_LARGE_SLAB is set, to 1024x the object size; in both cases the
- * value is rounded to an acceptable chunk size by the memory manager.
+ * Obtains raw storage from the internal slab allocator, placement-constructs
+ * the cache, and delegates the shared setup (depot, magazines, callbacks,
+ * quota) to ObjectCache::Init(). Finally, chooses a slab chunk size: the
+ * default SLAB_CHUNK_SIZE_SMALL, or 1024 * object_size when
+ * CACHE_LARGE_SLAB is requested. In either case the chosen size is rounded
+ * up to a chunk granularity the memory manager actually accepts.
  *
  * @param name              Human-readable cache name.
  * @param object_size       Size of each managed object in bytes.
  * @param alignment         Required object alignment in bytes.
- * @param maximum           Byte limit on total cache memory, or 0 for none.
+ * @param maximum           Byte ceiling on total cache memory, or 0 for none.
  * @param magazineCapacity  Objects per depot magazine; 0 for automatic sizing.
- * @param maxMagazineCount  Maximum full magazines in the depot; 0 for automatic.
- * @param flags             Cache creation flags (e.g. @c CACHE_LARGE_SLAB,
- *                          @c CACHE_NO_DEPOT, @c CACHE_DURING_BOOT).
- * @param cookie            Opaque value forwarded to @p constructor and
- *                          @p destructor.
- * @param constructor       Per-object constructor callback; may be @c NULL.
- * @param destructor        Per-object destructor callback; may be @c NULL.
- * @param reclaimer         Memory-pressure reclaim callback; may be @c NULL.
- * @return                  Pointer to the initialised cache, or @c NULL if
- *                          allocation or initialisation failed.
+ * @param maxMagazineCount  Maximum full magazines kept in the depot; 0 auto.
+ * @param flags             Cache flags (CACHE_LARGE_SLAB, CACHE_NO_DEPOT,
+ *                          CACHE_DURING_BOOT, etc.).
+ * @param cookie            Opaque value forwarded to the ctor/dtor callbacks.
+ * @param constructor       Per-object constructor; may be NULL.
+ * @param destructor        Per-object destructor; may be NULL.
+ * @param reclaimer         Memory-pressure reclaim callback; may be NULL.
+ * @return The initialised cache, or NULL on allocation or Init() failure.
  */
 /*static*/ SmallObjectCache*
 SmallObjectCache::Create(const char* name, size_t object_size,
@@ -124,10 +132,11 @@ SmallObjectCache::Create(const char* name, size_t object_size,
 
 
 /**
- * @brief Destroy and free this @c SmallObjectCache.
+ * @brief Destroy this cache and return its storage to the slab allocator.
  *
- * Explicitly invokes the destructor to release depot and mutex resources,
- * then returns the storage to the internal slab allocator.
+ * Runs the destructor explicitly so the depot, mutex, and any other members
+ * release their resources, then frees the raw buffer obtained from
+ * slab_internal_alloc() at construction time.
  */
 void
 SmallObjectCache::Delete()
@@ -138,16 +147,18 @@ SmallObjectCache::Delete()
 
 
 /**
- * @brief Allocate a new slab backed by a contiguous page chunk.
+ * @brief Allocate a fresh slab backed by one contiguous page chunk.
  *
- * Checks the cache quota, drops the cache lock while asking the memory manager
- * for a fresh chunk, then locates the embedded @c slab descriptor at the end
- * of the chunk. If allocation tracking is enabled, allocates tracking info
- * before calling @c InitSlab(). All partially-completed work is rolled back on
- * failure.
+ * Honours the cache's byte quota, drops the cache lock across the
+ * potentially-blocking MemoryManager::Allocate() call, and on return locates
+ * the embedded slab descriptor at the end of the chunk. Allocates any
+ * tracking metadata required by kernel debugging before handing the slab to
+ * InitSlab(), which populates the object free list and bookkeeping. Failures
+ * roll back the partial state — the chunk is returned to the memory manager
+ * and NULL is reported to the caller.
  *
- * @param flags  Allocation flags controlling memory-pressure behaviour.
- * @return       Pointer to the initialised @c slab, or @c NULL on failure.
+ * @param flags Allocation flags controlling memory-pressure behaviour.
+ * @return Pointer to the new slab, or NULL if quota or memory is exhausted.
  */
 slab*
 SmallObjectCache::CreateSlab(uint32 flags)
@@ -176,13 +187,15 @@ SmallObjectCache::CreateSlab(uint32 flags)
 
 
 /**
- * @brief Return a fully-empty slab's pages to the memory manager.
+ * @brief Return a fully-empty slab's backing pages to the memory manager.
  *
- * Uninitialises the slab (running all object destructors), drops the cache
- * lock, frees the tracking info and backing pages, then re-acquires the lock.
+ * Invokes UninitSlab() to run any per-object destructors and tear down the
+ * free list, drops the cache lock across the blocking free path, releases
+ * tracking info and the page chunk, and re-acquires the cache lock before
+ * returning. The caller guarantees the slab has no outstanding objects.
  *
- * @param slab   Pointer to the @c slab to return; must be completely empty.
- * @param flags  Deallocation flags forwarded to @c MemoryManager::Free().
+ * @param slab  The slab to release; must be completely empty.
+ * @param flags Deallocation flags forwarded to MemoryManager::Free().
  */
 void
 SmallObjectCache::ReturnSlab(slab* slab, uint32 flags)
@@ -197,14 +210,16 @@ SmallObjectCache::ReturnSlab(slab* slab, uint32 flags)
 
 
 /**
- * @brief Locate the @c slab that contains @p object.
+ * @brief Recover the owning slab for an object allocated from this cache.
  *
- * Computes the page-aligned base address of the chunk containing @p object
- * using @c lower_boundary(), then returns the embedded @c slab descriptor
- * at the end of that chunk via @c slab_in_pages().
+ * Because the slab descriptor lives in the last sizeof(slab) bytes of the
+ * chunk, it can be found by rounding an object pointer down to its chunk
+ * boundary (lower_boundary()) and indexing to the tail via slab_in_pages().
+ * This is the key property that gives SmallObjectCache its O(1) free path
+ * without needing a hash lookup.
  *
- * @param object  Pointer to an object managed by this cache.
- * @return        Pointer to the owning @c slab descriptor.
+ * @param object Pointer to an object managed by this cache.
+ * @return Pointer to the slab descriptor that owns @p object.
  */
 slab*
 SmallObjectCache::ObjectSlab(void* object) const

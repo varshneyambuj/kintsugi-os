@@ -1,6 +1,39 @@
 /*
- * Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file core_dump.cpp
+ * @brief Kernel-side ELF core-dump writer for killed or crashing teams.
+ *
+ * Produces a standards-conforming ET_CORE ELF file at a caller-specified
+ * filesystem path. The dumper walks the crashing team's address space (user
+ * memory) to enumerate areas, collects thread state (registers, priority,
+ * stack bounds) with the appropriate locks held, and resolves mapped files
+ * and loaded images. It then emits an ELF header, a PT_NOTE segment
+ * containing team/area/image/thread notes (plus symbol tables for the
+ * commpage), and PT_LOAD segments with the contents of every area copied
+ * page-by-page from user memory.
  */
 
 
@@ -53,6 +86,9 @@ static const char* const kHaikuNote = ELF_NOTE_HAIKU;
 
 
 struct Allocator {
+	/**
+	 * @brief Construct an empty two-arena allocator with no backing storage.
+	 */
 	Allocator()
 		:
 		fAligned(NULL),
@@ -64,16 +100,34 @@ struct Allocator {
 	{
 	}
 
+	/**
+	 * @brief Free the single backing block that holds both arenas.
+	 */
 	~Allocator()
 	{
 		free(fAligned);
 	}
 
+	/**
+	 * @brief Report whether any allocation during the previous pass exceeded
+	 *        the currently reserved capacity.
+	 *
+	 * Used by two-pass consumers that grow the backing block until every
+	 * allocation fits.
+	 *
+	 * @return @c true if the arenas overflowed and Reallocate() is required.
+	 */
 	bool HasMissingAllocations() const
 	{
 		return fAlignedSize > fAlignedCapacity || fStringSize > fStringCapacity;
 	}
 
+	/**
+	 * @brief Resize the backing block to match the sizes observed in the last
+	 *        pass, discarding any content and resetting the arenas.
+	 *
+	 * @return @c true on success; @c false if allocation failed.
+	 */
 	bool Reallocate()
 	{
 		free(fAligned);
@@ -91,6 +145,16 @@ struct Allocator {
 		return true;
 	}
 
+	/**
+	 * @brief Bump-allocate a block in the 8-byte-aligned arena.
+	 *
+	 * Always advances fAlignedSize so the first pass can be run against zero
+	 * capacity to compute the required size.
+	 *
+	 * @param size  Requested size in bytes.
+	 * @return Pointer into the arena on success, @c NULL if the capacity was
+	 *         exceeded (the caller should Reallocate() and retry).
+	 */
 	void* AllocateAligned(size_t size)
 	{
 		size_t offset = fAlignedSize;
@@ -100,6 +164,13 @@ struct Allocator {
 		return NULL;
 	}
 
+	/**
+	 * @brief Bump-allocate a NUL-terminated string slot of @p length + 1 bytes.
+	 *
+	 * @param length  Character length of the string (excluding terminator).
+	 * @return Pointer into the string arena or @c NULL when capacity is
+	 *         exceeded.
+	 */
 	char* AllocateString(size_t length)
 	{
 		size_t offset = fStringSize;
@@ -109,6 +180,12 @@ struct Allocator {
 		return NULL;
 	}
 
+	/**
+	 * @brief Construct a new @c Type instance using placement new on top of an
+	 *        AllocateAligned() slot.
+	 *
+	 * @return Newly constructed object or @c NULL on capacity exhaustion.
+	 */
 	template <typename Type>
 	Type* New()
 	{
@@ -118,6 +195,14 @@ struct Allocator {
 		return new(buffer) Type;
 	}
 
+	/**
+	 * @brief Copy a NUL-terminated string into the arena's string pool.
+	 *
+	 * @param string  Source string; may be @c NULL in which case @c NULL is
+	 *                returned.
+	 * @return Pointer to the copied string, or @c NULL on exhaustion or when
+	 *         @p string is @c NULL.
+	 */
 	char* DuplicateString(const char* string)
 	{
 		if (string == NULL)
@@ -143,6 +228,9 @@ struct TeamInfo : team_info {
 
 
 struct ThreadState : DoublyLinkedListLinkImpl<ThreadState> {
+	/**
+	 * @brief Construct an empty per-thread snapshot slot.
+	 */
 	ThreadState()
 		:
 		fThread(NULL),
@@ -150,11 +238,19 @@ struct ThreadState : DoublyLinkedListLinkImpl<ThreadState> {
 	{
 	}
 
+	/**
+	 * @brief Release the held Thread reference (if any).
+	 */
 	~ThreadState()
 	{
 		SetThread(NULL);
 	}
 
+	/**
+	 * @brief Factory creating a new ThreadState on the heap.
+	 *
+	 * @return New ThreadState or @c NULL on allocation failure.
+	 */
 	static ThreadState* Create()
 	{
 		ThreadState* state = new(std::nothrow) ThreadState;
@@ -163,11 +259,24 @@ struct ThreadState : DoublyLinkedListLinkImpl<ThreadState> {
 		return state;
 	}
 
+	/**
+	 * @brief Accessor for the bound Thread, held as a refcounted pointer.
+	 *
+	 * @return The bound Thread, or @c NULL if none is set.
+	 */
 	Thread* GetThread() const
 	{
 		return fThread;
 	}
 
+	/**
+	 * @brief Replace the bound Thread, managing reference counts.
+	 *
+	 * Releases the reference to any currently held thread and acquires one
+	 * for @p thread. Passing @c NULL just releases.
+	 *
+	 * @param thread  New thread to track; may be @c NULL.
+	 */
 	void SetThread(Thread* thread)
 	{
 		if (fThread != NULL)
@@ -179,7 +288,15 @@ struct ThreadState : DoublyLinkedListLinkImpl<ThreadState> {
 			fThread->AcquireReference();
 	}
 
-	/*!	Invoke with thread lock and scheduler lock being held. */
+	/**
+	 * @brief Capture the thread's state, priority, stack bounds, name, and
+	 *        CPU register set.
+	 *
+	 * Must be invoked with both the thread lock and the scheduler lock held.
+	 * Reads the Thread struct (kernel memory) and calls
+	 * arch_get_thread_debug_cpu_state() to fetch the saved user-mode register
+	 * set; on failure the CPU-state buffer is zeroed.
+	 */
 	void GetState()
 	{
 		fState = fThread->state;
@@ -191,16 +308,27 @@ struct ThreadState : DoublyLinkedListLinkImpl<ThreadState> {
 			memset(&fCpuState, 0, sizeof(fCpuState));
 	}
 
+	/**
+	 * @brief Whether GetState() has successfully captured this thread.
+	 */
 	bool IsComplete() const
 	{
 		return fComplete;
 	}
 
+	/**
+	 * @brief Mark or unmark the snapshot as complete.
+	 *
+	 * @param complete  New completion flag value.
+	 */
 	void SetComplete(bool complete)
 	{
 		fComplete = complete;
 	}
 
+	// The accessors below are trivial getters for the fields captured by
+	// GetState(); no per-method Doxygen because each one simply returns the
+	// identically-named member.
 	int32 State() const
 	{
 		return fState;
@@ -247,6 +375,16 @@ typedef DoublyLinkedList<ThreadState> ThreadStateList;
 
 
 struct ImageInfo : DoublyLinkedListLinkImpl<ImageInfo> {
+	/**
+	 * @brief Snapshot all relevant fields from a kernel image struct.
+	 *
+	 * Reads kernel memory only (the @c struct @c image lives in kernel space)
+	 * and duplicates the image name. When the image is the commpage, also
+	 * pulls its symbol/string tables via elf_read_kernel_image_symbols() so
+	 * userland debuggers can resolve commpage addresses.
+	 *
+	 * @param image  Kernel image descriptor to snapshot.
+	 */
 	ImageInfo(struct image* image)
 		:
 		fId(image->info.basic_info.id),
@@ -273,12 +411,22 @@ struct ImageInfo : DoublyLinkedListLinkImpl<ImageInfo> {
 			_GetCommpageSymbols();
 	}
 
+	/**
+	 * @brief Release the duplicated name and any commpage symbol buffers.
+	 */
 	~ImageInfo()
 	{
 		free(fName);
 		_FreeSymbolData();
 	}
 
+	/**
+	 * @brief Heap-allocate an ImageInfo snapshot, failing cleanly if the name
+	 *        could not be duplicated.
+	 *
+	 * @param image  Kernel image to snapshot.
+	 * @return New ImageInfo or @c NULL on allocation failure.
+	 */
 	static ImageInfo* Create(struct image* image)
 	{
 		ImageInfo* imageInfo = new(std::nothrow) ImageInfo(image);
@@ -290,6 +438,9 @@ struct ImageInfo : DoublyLinkedListLinkImpl<ImageInfo> {
 		return imageInfo;
 	}
 
+	// The accessors below are trivial snapshot getters for the fields
+	// populated in the constructor; no per-method Doxygen because each one
+	// simply returns the identically-named member.
 	image_id Id() const
 	{
 		return fId;
@@ -386,6 +537,14 @@ struct ImageInfo : DoublyLinkedListLinkImpl<ImageInfo> {
 	}
 
 private:
+	/**
+	 * @brief Fetch symbol and string tables for the commpage image.
+	 *
+	 * Two-pass call: first sizing, then filling heap buffers. The commpage
+	 * is a kernel-managed image, so the symbols are read out of kernel
+	 * memory via elf_read_kernel_image_symbols(). On any failure the buffers
+	 * are released and the image continues without symbols.
+	 */
 	void _GetCommpageSymbols()
 	{
 		image_id commpageId = get_commpage_image();
@@ -420,6 +579,9 @@ private:
 			_FreeSymbolData();
 	}
 
+	/**
+	 * @brief Release and null out the kernel-owned symbol/string buffers.
+	 */
 	void _FreeSymbolData()
 	{
 		free(fSymbolTableData);
@@ -459,6 +621,24 @@ typedef DoublyLinkedList<ImageInfo> ImageInfoList;
 
 
 struct AreaInfo : DoublyLinkedListLinkImpl<AreaInfo> {
+	/**
+	 * @brief Allocate and populate a per-area snapshot out of the supplied
+	 *        bump allocator.
+	 *
+	 * Reads the VMArea struct (kernel memory) to snapshot id, base, size,
+	 * protection, and cache offset. The name is copied into the allocator's
+	 * string arena; returning a partially-initialized struct with a @c NULL
+	 * name is expected when the allocator is undersized, prompting the
+	 * caller to grow capacity and retry.
+	 *
+	 * @param allocator  Bump allocator for the struct and its name copy.
+	 * @param area       VMArea being snapshotted.
+	 * @param ramSize    Resident page count * B_PAGE_SIZE.
+	 * @param deviceId   Device id of the mapped file (-1 if anonymous).
+	 * @param nodeId     Inode id of the mapped file (-1 if anonymous).
+	 * @return Pointer into the arena or @c NULL if the aligned arena was
+	 *         exhausted.
+	 */
 	static AreaInfo* Create(Allocator& allocator, VMArea* area, size_t ramSize,
 		dev_t deviceId, ino_t nodeId)
 	{
@@ -482,6 +662,9 @@ struct AreaInfo : DoublyLinkedListLinkImpl<AreaInfo> {
 		return areaInfo;
 	}
 
+	// The accessors below are trivial snapshot getters for the fields
+	// populated by Create(); no per-method Doxygen because each one simply
+	// returns the identically-named member.
 	area_id Id() const
 	{
 		return fId;
@@ -537,6 +720,11 @@ struct AreaInfo : DoublyLinkedListLinkImpl<AreaInfo> {
 		return fImageInfo;
 	}
 
+	/**
+	 * @brief Link an ImageInfo whose device/inode matches this area.
+	 *
+	 * @param imageInfo  ImageInfo to associate, or @c NULL to clear.
+	 */
 	void SetImageInfo(ImageInfo* imageInfo)
 	{
 		fImageInfo = imageInfo;
@@ -561,6 +749,11 @@ typedef DoublyLinkedList<AreaInfo> AreaInfoList;
 
 
 struct BufferedFile {
+	/**
+	 * @brief Construct an uninitialized BufferedFile.
+	 *
+	 * The initial Status() is @c B_NO_INIT until Init() is called.
+	 */
 	BufferedFile()
 		:
 		fFd(-1),
@@ -572,6 +765,9 @@ struct BufferedFile {
 	{
 	}
 
+	/**
+	 * @brief Close the underlying fd and free the write buffer.
+	 */
 	~BufferedFile()
 	{
 		if (fFd >= 0)
@@ -580,6 +776,16 @@ struct BufferedFile {
 		free(fBuffer);
 	}
 
+	/**
+	 * @brief Allocate the write buffer and create the destination file.
+	 *
+	 * Opens @p path with O_WRONLY|O_CREAT|O_EXCL so an existing dump cannot
+	 * be silently overwritten, with mode S_IRUSR.
+	 *
+	 * @param path  Absolute filesystem path of the core file to create.
+	 * @return B_OK on success; B_NO_MEMORY on allocation failure; @c errno
+	 *         mapped value on open() failure.
+	 */
 	status_t Init(const char* path)
 	{
 		fCapacity = kBufferSize;
@@ -595,16 +801,31 @@ struct BufferedFile {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Sticky error status captured on the first failure.
+	 */
 	status_t Status() const
 	{
 		return fStatus;
 	}
 
+	/**
+	 * @brief Logical offset of the first byte beyond the buffered region.
+	 *
+	 * @return Sum of the flushed file offset and the in-memory buffered size.
+	 */
 	off_t EndOffset() const
 	{
 		return fOffset + (off_t)fBuffered;
 	}
 
+	/**
+	 * @brief Write any pending buffered data to disk via pwrite().
+	 *
+	 * Short writes are treated as B_IO_ERROR and set the sticky status.
+	 *
+	 * @return B_OK on success; the captured error on failure.
+	 */
 	status_t Flush()
 	{
 		if (fStatus != B_OK)
@@ -624,6 +845,15 @@ struct BufferedFile {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Reposition the logical write cursor to @p offset.
+	 *
+	 * If the destination differs from the current buffered tail, the buffer
+	 * is flushed first.
+	 *
+	 * @param offset  Absolute file offset for subsequent writes.
+	 * @return B_OK on success; a sticky error otherwise.
+	 */
 	status_t Seek(off_t offset)
 	{
 		if (fStatus != B_OK)
@@ -641,6 +871,17 @@ struct BufferedFile {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Append @p size bytes of @p data to the buffer, flushing when it
+	 *        fills up.
+	 *
+	 * Reads from kernel memory (the caller-supplied @p data pointer); user
+	 * memory is handled separately via WriteUserArea().
+	 *
+	 * @param data  Kernel-side pointer to the bytes to append.
+	 * @param size  Number of bytes to append.
+	 * @return B_OK on success; a sticky error otherwise.
+	 */
 	status_t Write(const void* data, size_t size)
 	{
 		if (fStatus != B_OK)
@@ -666,12 +907,26 @@ struct BufferedFile {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Convenience overload that writes a POD value.
+	 *
+	 * @param data  Value whose bytes are streamed into the buffer.
+	 * @return B_OK on success; a sticky error otherwise.
+	 */
 	template<typename Data>
 	status_t Write(const Data& data)
 	{
 		return Write(&data, sizeof(data));
 	}
 
+	/**
+	 * @brief Seek to @p offset and write @p size bytes from @p data.
+	 *
+	 * @param offset  Absolute file offset.
+	 * @param data    Kernel-side source pointer.
+	 * @param size    Number of bytes to write.
+	 * @return B_OK on success; a sticky error otherwise.
+	 */
 	status_t WriteAt(off_t offset, const void* data, size_t size)
 	{
 		if (Seek(offset) != B_OK)
@@ -680,6 +935,18 @@ struct BufferedFile {
 		return Write(data, size);
 	}
 
+	/**
+	 * @brief Stream a range of user memory into the file page by page.
+	 *
+	 * Walks user memory at @p base using user_memcpy(), zero-filling any
+	 * unreadable pages (e.g. swapped-out or unmapped) so the resulting
+	 * PT_LOAD segment has a consistent size. Flushes the buffer whenever a
+	 * new page would not fit.
+	 *
+	 * @param base  User-space start address; rounded down by caller.
+	 * @param size  Length in bytes, truncated to a page multiple.
+	 * @return B_OK on success; a sticky error otherwise.
+	 */
 	status_t WriteUserArea(addr_t base, size_t size)
 	{
 		uint8* data = (uint8*)base;
@@ -715,28 +982,51 @@ private:
 
 
 struct DummyWriter {
+	/**
+	 * @brief Construct a zero-length dummy writer used for size-computation
+	 *        passes.
+	 */
 	DummyWriter()
 		:
 		fWritten(0)
 	{
 	}
 
+	/**
+	 * @brief Always B_OK: the dummy writer cannot fail.
+	 */
 	status_t Status() const
 	{
 		return B_OK;
 	}
 
+	/**
+	 * @brief Cumulative byte count accumulated by Write() calls.
+	 */
 	size_t BytesWritten() const
 	{
 		return fWritten;
 	}
 
+	/**
+	 * @brief Accumulate @p size bytes without actually writing anything.
+	 *
+	 * @param data  Ignored.
+	 * @param size  Bytes to add to the running counter.
+	 * @return Always B_OK.
+	 */
 	status_t Write(const void* data, size_t size)
 	{
 		fWritten += size;
 		return B_OK;
 	}
 
+	/**
+	 * @brief POD convenience overload mirroring BufferedFile::Write.
+	 *
+	 * @param data  Value whose size contributes to the counter.
+	 * @return Always B_OK.
+	 */
 	template<typename Data>
 	status_t Write(const Data& data)
 	{
@@ -749,6 +1039,13 @@ private:
 
 
 struct CoreDumper {
+	/**
+	 * @brief Initialize a dumper bound to the calling thread's team.
+	 *
+	 * Captures the current Thread and Team pointers, initializes the
+	 * condition variable that threads trapped in core_dump_trap_thread()
+	 * wait on, and leaves the rest of the state empty for Dump().
+	 */
 	CoreDumper()
 		:
 		fCurrentThread(thread_get_current_thread()),
@@ -765,6 +1062,12 @@ struct CoreDumper {
 		fThreadBlockCondition.Init(this, "core dump");
 	}
 
+	/**
+	 * @brief Release every ThreadState and ImageInfo owned by the dumper.
+	 *
+	 * AreaInfo instances live inside the bump allocator and are freed with
+	 * it. ThreadStates release their Thread references in their destructors.
+	 */
 	~CoreDumper()
 	{
 		while (ThreadState* state = fThreadStates.RemoveHead())
@@ -775,6 +1078,21 @@ struct CoreDumper {
 			delete info;
 	}
 
+	/**
+	 * @brief Write the team's core dump to @p path and optionally kill it.
+	 *
+	 * Marks the team as dumping core (TEAM_FLAG_DUMP_CORE), parks peer
+	 * threads on the core-dump condition variable so their user-mode state
+	 * is quiescent, delegates to _Dump() to produce the ELF file, then
+	 * tears the flags down and wakes any trapped threads. When @p killTeam
+	 * is true, kill_team() is invoked once the dump has been produced.
+	 *
+	 * @param path      Absolute filesystem path; must start with '/'.
+	 * @param killTeam  Whether to signal-kill the team after dumping.
+	 * @return B_OK on success, B_BAD_VALUE for a relative path, B_BUSY if
+	 *         another core dump is in flight for the same team, or the
+	 *         error produced by _Dump().
+	 */
 	status_t Dump(const char* path, bool killTeam)
 	{
 		// gcc thinks fTeam may be null in atomic_or
@@ -822,6 +1140,20 @@ struct CoreDumper {
 	}
 
 private:
+	/**
+	 * @brief Produce the ELF core file, assuming Dump() has already parked
+	 *        the team's threads.
+	 *
+	 * Fetches team info, pre-allocates ThreadState slots, snapshots thread
+	 * states (user register state) and team areas + images, opens the
+	 * destination file, and writes the ELF header, PT_NOTE segment, program
+	 * headers, and PT_LOAD area data. The ELF header is rewritten at the end
+	 * so any offsets derived from note-segment placement are finalized.
+	 *
+	 * @param path         Destination path (already validated by Dump()).
+	 * @param threadCount  Approximate initial thread count hint.
+	 * @return B_OK on success; first error propagated from the steps above.
+	 */
 	status_t _Dump(const char* path, int32 threadCount)
 	{
 		status_t error = _GetTeamInfo();
@@ -873,6 +1205,17 @@ private:
 		return _WriteElfHeader();
 	}
 
+	/**
+	 * @brief Set or clear THREAD_FLAGS_TRAP_FOR_CORE_DUMP on every thread of
+	 *        the team and return the count.
+	 *
+	 * Runs with the team lock held and walks the thread list (kernel
+	 * structures). Threads that observe the flag on their way back to user
+	 * space end up parked in core_dump_trap_thread().
+	 *
+	 * @param setFlag  @c true to arm the trap; @c false to disarm.
+	 * @return Number of threads traversed.
+	 */
 	int32 _SetThreadsCoreDumpFlag(bool setFlag)
 	{
 		int32 count = 0;
@@ -891,11 +1234,27 @@ private:
 		return count;
 	}
 
+	/**
+	 * @brief Populate @c fTeamInfo with the team's team_info metadata.
+	 *
+	 * @return B_OK on success; error from get_team_info() otherwise.
+	 */
 	status_t _GetTeamInfo()
 	{
 		return get_team_info(fTeam->id, &fTeamInfo);
 	}
 
+	/**
+	 * @brief Allocate one ThreadState per thread, coping with races where
+	 *        threads join mid-allocation.
+	 *
+	 * Pre-allocates @p count slots, then walks the team's thread list (with
+	 * the team lock held) binding slots to threads; if more threads than
+	 * expected are observed, grows the pre-allocation list and retries.
+	 *
+	 * @param count  Initial thread-count estimate.
+	 * @return @c true on success, @c false on allocation failure.
+	 */
 	bool _AllocateThreadStates(int32 count)
 	{
 		if (!_PreAllocateThreadStates(count))
@@ -933,6 +1292,13 @@ private:
 		return true;
 	}
 
+	/**
+	 * @brief Append @p count heap-allocated ThreadState objects to the
+	 *        pre-allocation free list.
+	 *
+	 * @param count  Number of fresh ThreadStates to create.
+	 * @return @c true on success, @c false on allocation failure.
+	 */
 	bool _PreAllocateThreadStates(int32 count)
 	{
 		for (int32 i = 0; i < count; i++) {
@@ -945,6 +1311,16 @@ private:
 		return true;
 	}
 
+	/**
+	 * @brief Snapshot each tracked thread's state by polling until every
+	 *        thread is off-CPU.
+	 *
+	 * Reads kernel memory (Thread struct, scheduler state). For each
+	 * ThreadState, takes the thread lock and scheduler lock, drops threads
+	 * that migrated to the kernel team during death, and calls GetState()
+	 * on the rest. If a thread other than the current one is still running,
+	 * loops with a 10ms snooze until it becomes quiescent.
+	 */
 	void _GetThreadStates()
 	{
 		for (;;) {
@@ -986,6 +1362,17 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Walk the team's address space (user memory mappings) and
+	 *        snapshot every VMArea.
+	 *
+	 * Holds the address-space read lock and the per-area cache lock chain
+	 * so it can reach the root VMCache and extract device/inode ids for
+	 * mapped files. Produces AreaInfo records out of @c fAreaInfoAllocator
+	 * and grows the allocator on overflow, re-running the scan.
+	 *
+	 * @return @c true on success, @c false on allocator exhaustion.
+	 */
 	bool _GetAreaInfos()
 	{
 		for (;;) {
@@ -1036,17 +1423,41 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Snapshot every image loaded in the team via
+	 *        image_iterate_through_team_images().
+	 *
+	 * Reads kernel image descriptors; the iterator itself handles locking.
+	 *
+	 * @return @c true if all images were captured, @c false on allocation
+	 *         failure (detected via the non-@c NULL iterator return).
+	 */
 	bool _GetImageInfos()
 	{
 		return image_iterate_through_team_images(fTeam->id,
 			&_GetImageInfoCallback, this) == NULL;
 	}
 
+	/**
+	 * @brief Trampoline from the image-iterator C API to the member hook.
+	 *
+	 * @param image   Kernel image descriptor being visited.
+	 * @param cookie  CoreDumper instance pointer.
+	 * @return @c true to stop iteration (e.g. on allocation failure);
+	 *         @c false to continue.
+	 */
 	static bool _GetImageInfoCallback(struct image* image, void* cookie)
 	{
 		return ((CoreDumper*)cookie)->_GetImageInfo(image);
 	}
 
+	/**
+	 * @brief Snapshot a single image into @c fImageInfos.
+	 *
+	 * @param image  Kernel image descriptor to snapshot.
+	 * @return @c true on allocation failure (stops iteration),
+	 *         @c false on success.
+	 */
 	bool _GetImageInfo(struct image* image)
 	{
 		ImageInfo* info = ImageInfo::Create(image);
@@ -1057,6 +1468,15 @@ private:
 		return false;
 	}
 
+	/**
+	 * @brief Cross-reference areas with images and compute static core-file
+	 *        layout offsets.
+	 *
+	 * For each area backed by a file, looks up the matching ImageInfo by
+	 * (device id, inode id) and records the link. Counts areas, images,
+	 * mapped files, and computes the program-header table and notes-segment
+	 * offsets.
+	 */
 	void _PrepareCoreFileInfo()
 	{
 		// assign image infos to area infos where possible
@@ -1082,6 +1502,14 @@ private:
 			+ sizeof(elf_phdr) * fSegmentCount;
 	}
 
+	/**
+	 * @brief Linear search for an ImageInfo matching a (deviceId, nodeId)
+	 *        pair.
+	 *
+	 * @param deviceId  Device id to match.
+	 * @param nodeId    Inode id to match.
+	 * @return Matching ImageInfo or @c NULL when none is found.
+	 */
 	ImageInfo* _FindImageInfo(dev_t deviceId, ino_t nodeId) const
 	{
 		for (ImageInfoList::ConstIterator it = fImageInfos.GetIterator();
@@ -1093,6 +1521,16 @@ private:
 		return NULL;
 	}
 
+	/**
+	 * @brief Write the ELF header at file offset zero.
+	 *
+	 * Selects ELFCLASS32/64, endianness, and e_machine based on build-time
+	 * macros, and sets @c e_type to ET_CORE with the correct program-header
+	 * count. Called twice by _Dump(): once as a placeholder, once at the
+	 * end to finalize any fields that depend on the notes segment.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteElfHeader()
 	{
 		elf_ehdr header;
@@ -1156,6 +1594,15 @@ private:
 		return fFile.WriteAt(0, &header, sizeof(header));
 	}
 
+	/**
+	 * @brief Emit the program-header table: one PT_NOTE plus one PT_LOAD
+	 *        per area.
+	 *
+	 * Maps each area's B_{READ,WRITE,EXECUTE}_AREA flags to the matching
+	 * PF_ flags and records file offsets for later payload writes.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteProgramHeaders()
 	{
 		fFile.Seek(fProgramHeadersOffset);
@@ -1201,6 +1648,15 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Stream each area's contents from user memory into the file as
+	 *        its PT_LOAD payload.
+	 *
+	 * Walks user memory page-by-page via BufferedFile::WriteUserArea, which
+	 * zero-fills any unreadable pages.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteAreaSegments()
 	{
 		fFile.Seek(fFirstAreaSegmentOffset);
@@ -1216,6 +1672,15 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Emit the PT_NOTE segment: files, team, areas, images, symbols,
+	 *        threads.
+	 *
+	 * Writes purely kernel-side data accumulated during the snapshot phase;
+	 * does not touch user memory.
+	 *
+	 * @return B_OK on success; first error from the note writers otherwise.
+	 */
 	status_t _WriteNotes()
 	{
 		status_t error = fFile.Seek((off_t)fNoteSegmentOffset);
@@ -1249,6 +1714,15 @@ private:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Stream the NT_TEAM note payload through @p writer.
+	 *
+	 * Writes an elf_note_team header followed by the team's argv string.
+	 * Used with both DummyWriter (to size the note) and BufferedFile (to
+	 * emit it). Reads kernel-side team_info fields only.
+	 *
+	 * @param writer  Writer sink (DummyWriter or BufferedFile).
+	 */
 	template<typename Writer>
 	void _WriteTeamNote(Writer& writer)
 	{
@@ -1265,6 +1739,14 @@ private:
 		writer.Write(args, strlen(args) + 1);
 	}
 
+	/**
+	 * @brief Emit the full NT_TEAM note: header, payload, padding.
+	 *
+	 * Performs a size pass with DummyWriter, writes a note header, streams
+	 * the payload to @c fFile, then pads to 4 bytes.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteTeamNote()
 	{
 		// determine needed size for the note's data
@@ -1284,6 +1766,16 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Stream the NT_FILE note payload describing mapped files
+	 *        through @p writer.
+	 *
+	 * For every area linked to an ImageInfo, emits [start, end, page-offset]
+	 * triplets followed by a run of NUL-terminated file-name strings, in
+	 * the ptrace NT_FILE-compatible format.
+	 *
+	 * @param writer  Writer sink (DummyWriter or BufferedFile).
+	 */
 	template<typename Writer>
 	void _WriteFilesNote(Writer& writer)
 	{
@@ -1315,6 +1807,11 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Emit the complete NT_FILE note with header and padding.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteFilesNote()
 	{
 		// determine needed size for the note's data
@@ -1334,6 +1831,15 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Stream the Haiku NT_AREAS note payload through @p writer.
+	 *
+	 * Emits a count, the entry size, one elf_note_area_entry per area, and
+	 * a string table of area names. Reads only the kernel-side AreaInfo
+	 * snapshots.
+	 *
+	 * @param writer  Writer sink (DummyWriter or BufferedFile).
+	 */
 	template<typename Writer>
 	void _WriteAreasNote(Writer& writer)
 	{
@@ -1363,6 +1869,11 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Emit the complete Haiku NT_AREAS note with header and padding.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteAreasNote()
 	{
 		// determine needed size for the note's data
@@ -1382,6 +1893,15 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Stream the Haiku NT_IMAGES note payload through @p writer.
+	 *
+	 * Emits count + entry size, an elf_note_image_entry per image, and a
+	 * run of NUL-terminated image names. Works on kernel-side ImageInfo
+	 * snapshots.
+	 *
+	 * @param writer  Writer sink (DummyWriter or BufferedFile).
+	 */
 	template<typename Writer>
 	void _WriteImagesNote(Writer& writer)
 	{
@@ -1419,6 +1939,11 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Emit the complete Haiku NT_IMAGES note with header and padding.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteImagesNote()
 	{
 		// determine needed size for the note's data
@@ -1438,6 +1963,16 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Write one NT_SYMBOLS note per image that carries a
+	 *        kernel-owned symbol/string table copy.
+	 *
+	 * Only the commpage currently populates such tables; userland images
+	 * expose their symbols via the in-image tables referenced by the
+	 * NT_IMAGES note.
+	 *
+	 * @return B_OK on success; first error encountered otherwise.
+	 */
 	status_t _WriteImageSymbolsNotes()
 	{
 		// write table
@@ -1456,6 +1991,15 @@ private:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Stream one NT_SYMBOLS payload for @p imageInfo.
+	 *
+	 * Writes image id, symbol count, per-entry size, the symbol blob, and
+	 * the string table blob from the kernel-owned buffers.
+	 *
+	 * @param imageInfo  ImageInfo whose symbols should be emitted.
+	 * @param writer     Writer sink.
+	 */
 	template<typename Writer>
 	void _WriteImageSymbolsNote(const ImageInfo* imageInfo, Writer& writer)
 	{
@@ -1471,6 +2015,13 @@ private:
 			imageInfo->StringTableSize());
 	}
 
+	/**
+	 * @brief Emit a full NT_SYMBOLS note (header + payload + padding) for
+	 *        @p imageInfo.
+	 *
+	 * @param imageInfo  Image being exported.
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteImageSymbolsNote(const ImageInfo* imageInfo)
 	{
 		// determine needed size for the note's data
@@ -1490,6 +2041,16 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Stream the Haiku NT_THREADS note payload through @p writer.
+	 *
+	 * Emits thread count, per-entry size, debug_cpu_state size, one
+	 * elf_note_thread_entry + debug_cpu_state per thread (the user-mode
+	 * register snapshot captured in _GetThreadStates()), followed by a
+	 * string table of thread names.
+	 *
+	 * @param writer  Writer sink (DummyWriter or BufferedFile).
+	 */
 	template<typename Writer>
 	void _WriteThreadsNote(Writer& writer)
 	{
@@ -1520,6 +2081,11 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Emit the complete Haiku NT_THREADS note with header and padding.
+	 *
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteThreadsNote()
 	{
 		// determine needed size for the note's data
@@ -1539,6 +2105,17 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Emit an Elf32_Nhdr followed by the note name and padding.
+	 *
+	 * The 32-bit Nhdr shape is used on both 32- and 64-bit hosts because it
+	 * matches the on-disk format the notes subsystem expects.
+	 *
+	 * @param name      Note-name string (ELF_NOTE_CORE or ELF_NOTE_HAIKU).
+	 * @param type      Note type id (NT_TEAM, NT_FILE, NT_THREADS, ...).
+	 * @param dataSize  Size of the payload that will follow.
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteNoteHeader(const char* name, uint32 type, uint32 dataSize)
 	{
 		// prepare and write the header
@@ -1557,6 +2134,13 @@ private:
 		return fFile.Status();
 	}
 
+	/**
+	 * @brief Write up to 3 zero bytes so @p sizeToPad is rounded up to the
+	 *        ELF note 4-byte alignment.
+	 *
+	 * @param sizeToPad  Size of the blob just written.
+	 * @return B_OK on success; sticky file error otherwise.
+	 */
 	status_t _WriteNotePadding(size_t sizeToPad)
 	{
 		if (sizeToPad % 4 != 0) {
@@ -1592,6 +2176,19 @@ private:
 } // unnamed namespace
 
 
+/**
+ * @brief Public entry point to produce a core file for the current team.
+ *
+ * Allocates a CoreDumper on the heap, tied to the calling thread's Team,
+ * and invokes CoreDumper::Dump(). Not a @c _user_* syscall wrapper: it is
+ * invoked from kernel contexts such as the signal handler for fatal
+ * signals and the debugger.
+ *
+ * @param path      Absolute filesystem path for the core file.
+ * @param killTeam  If true, kill the team after writing the dump.
+ * @return B_OK on success; B_NO_MEMORY on allocation failure; any error
+ *         returned by CoreDumper::Dump().
+ */
 status_t
 core_dump_write_core_file(const char* path, bool killTeam)
 {
@@ -1606,6 +2203,15 @@ core_dump_write_core_file(const char* path, bool killTeam)
 }
 
 
+/**
+ * @brief Park the calling thread until the active core dump completes.
+ *
+ * Called from the thread-exit path of peer threads when the core dumper
+ * sets THREAD_FLAGS_TRAP_FOR_CORE_DUMP via _SetThreadsCoreDumpFlag(). The
+ * thread waits on the team's core-dump condition variable (kernel memory),
+ * re-checking the flag each time it is woken so it loops while the flag
+ * remains set.
+ */
 void
 core_dump_trap_thread()
 {

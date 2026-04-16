@@ -1,6 +1,37 @@
 /*
- * Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Ingo Weinhold, ingo_weinhold@gmx.de
+ *   Distributed under the terms of the MIT License.
+ */
+
+/**
+ * @file debug_variables.cpp
+ * @brief Named variable store for the kernel debugger (KDL) expression parser.
+ *
+ * Implements the `$foo = 42` style named variables used by KDL commands to
+ * capture intermediate values (typically addresses) between invocations. Two
+ * pools are maintained: a fixed set of persistent slots and a smaller LRU pool
+ * for temporary variables whose names begin with '_'. Symbol-prefixed names
+ * ('@') and architecture-prefixed names ('$') are forwarded to the ELF symbol
+ * lookup and the per-arch debug-variable backend respectively.
  */
 
 
@@ -60,6 +91,7 @@ static TemporaryVariable sTemporaryVariables[kTemporaryVariableCount];
 static DoublyLinkedList<TemporaryVariable> sTemporaryVariablesLRUQueue;
 
 
+// Returns true if the name begins with the temporary-variable prefix ('_').
 static inline bool
 is_temporary_variable(const char* variableName)
 {
@@ -67,6 +99,7 @@ is_temporary_variable(const char* variableName)
 }
 
 
+// Returns true if the name uses the arch-specific sigil ('$').
 static inline bool
 is_arch_specific_variable(const char* variableName)
 {
@@ -74,6 +107,7 @@ is_arch_specific_variable(const char* variableName)
 }
 
 
+// Returns true if the name uses the ELF-symbol sigil ('@').
 static inline bool
 is_symbol_variable(const char* variableName)
 {
@@ -81,6 +115,16 @@ is_symbol_variable(const char* variableName)
 }
 
 
+/**
+ * @brief Remove a temporary variable from the LRU queue if currently queued.
+ *
+ * The temporary-variable LRU tracks usage order so the oldest slot can be
+ * reclaimed when the pool is full.
+ *
+ * @param variable Temporary variable to detach from the queue; may already be
+ *                 unqueued in which case the call is a no-op.
+ * @return void
+ */
 static void
 dequeue_temporary_variable(TemporaryVariable* variable)
 {
@@ -92,6 +136,15 @@ dequeue_temporary_variable(TemporaryVariable* variable)
 }
 
 
+/**
+ * @brief Release a variable slot, updating LRU bookkeeping if temporary.
+ *
+ * For temporary variables the LRU entry is first removed; then the slot's
+ * name is cleared which marks it as free for reuse.
+ *
+ * @param variable Variable slot to free; must be currently in use.
+ * @return void
+ */
 static void
 unset_variable(Variable* variable)
 {
@@ -102,6 +155,15 @@ unset_variable(Variable* variable)
 }
 
 
+/**
+ * @brief Mark a variable as recently used by moving it to the LRU tail.
+ *
+ * Only temporary variables participate in the LRU; calls for persistent
+ * variables return immediately.
+ *
+ * @param _variable Variable that was just read or written.
+ * @return void
+ */
 static void
 touch_variable(Variable* _variable)
 {
@@ -117,6 +179,15 @@ touch_variable(Variable* _variable)
 }
 
 
+/**
+ * @brief Evict the least-recently-used temporary variable and return its slot.
+ *
+ * Used when a new temporary variable must be created but all slots are
+ * occupied; the evicted slot is cleared before being returned.
+ *
+ * @return Pointer to a now-free TemporaryVariable slot, or NULL if the LRU
+ *         queue was empty.
+ */
 static Variable*
 free_temporary_variable_slot()
 {
@@ -130,6 +201,18 @@ free_temporary_variable_slot()
 }
 
 
+/**
+ * @brief Look up a variable slot, optionally creating one on miss.
+ *
+ * Scans either the temporary or persistent array based on the name prefix;
+ * on miss the first free slot (or an LRU-evicted one, for temporaries) is
+ * initialised with the given name and returned.
+ *
+ * @param variableName Null-terminated variable name.
+ * @param create If true, allocate a new slot when the variable is not found.
+ * @return Pointer to the matching or freshly created Variable, or NULL if not
+ *         found and not creating, or if no slot could be allocated.
+ */
 static Variable*
 get_variable(const char* variableName, bool create)
 {
@@ -177,6 +260,16 @@ get_variable(const char* variableName, bool create)
 // #pragma mark - debugger commands
 
 
+/**
+ * @brief KDL command handler: `unset <variable>`.
+ *
+ * Clears a single named variable. Prints usage if arguments are malformed or
+ * if `--help` is supplied.
+ *
+ * @param argc Argument count as passed by the KDL dispatcher.
+ * @param argv Argument vector; argv[1] is the variable name.
+ * @return Always 0 (KDL commands do not propagate status here).
+ */
 static int
 cmd_unset_variable(int argc, char **argv)
 {
@@ -196,6 +289,15 @@ cmd_unset_variable(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL command handler: `unset_all`.
+ *
+ * Clears every persistent and temporary debug variable slot.
+ *
+ * @param argc Argument count; only `--help` is recognised.
+ * @param argv Argument vector.
+ * @return Always 0.
+ */
 static int
 cmd_unset_all_variables(int argc, char **argv)
 {
@@ -212,6 +314,15 @@ cmd_unset_all_variables(int argc, char **argv)
 }
 
 
+/**
+ * @brief KDL command handler: `vars` — list currently defined variables.
+ *
+ * Iterates both arrays and prints every used slot in both decimal and hex.
+ *
+ * @param argc Argument count; command takes no arguments.
+ * @param argv Argument vector (unused other than argv[0]).
+ * @return Always 0.
+ */
 static int
 cmd_variables(int argc, char **argv)
 {
@@ -247,6 +358,15 @@ cmd_variables(int argc, char **argv)
 // #pragma mark - kernel public functions
 
 
+/**
+ * @brief Report whether a variable name resolves to something.
+ *
+ * Checks the local pools first, then falls back to ELF symbol lookup for
+ * '@' names and to the arch backend for '$' names.
+ *
+ * @param variableName Null-terminated variable name including any sigil.
+ * @return true if a value can be produced for this name.
+ */
 bool
 is_debug_variable_defined(const char* variableName)
 {
@@ -261,6 +381,18 @@ is_debug_variable_defined(const char* variableName)
 }
 
 
+/**
+ * @brief Assign a 64-bit value to a named debug variable.
+ *
+ * Symbol-prefixed names are read-only and rejected. Arch-prefixed names are
+ * forwarded to the arch backend. All other names are stored in the local
+ * pools, creating a slot if necessary and updating LRU state for temporaries.
+ *
+ * @param variableName Null-terminated variable name (may include sigil).
+ * @param value 64-bit value to store.
+ * @return true on success, false if assignment is not permitted or no slot
+ *         could be obtained.
+ */
 bool
 set_debug_variable(const char* variableName, uint64 value)
 {
@@ -280,6 +412,17 @@ set_debug_variable(const char* variableName, uint64 value)
 }
 
 
+/**
+ * @brief Fetch the value of a named debug variable.
+ *
+ * Local pool entries are consulted first (and touched in the LRU), falling
+ * back to the arch backend for '$' names and to ELF symbol resolution for
+ * '@' names. If none yield a value, `defaultValue` is returned.
+ *
+ * @param variableName Null-terminated variable name (may include sigil).
+ * @param defaultValue Value to return when no definition is found.
+ * @return The stored value, the resolved symbol address, or defaultValue.
+ */
 uint64
 get_debug_variable(const char* variableName, uint64 defaultValue)
 {
@@ -304,6 +447,15 @@ get_debug_variable(const char* variableName, uint64 defaultValue)
 }
 
 
+/**
+ * @brief Delete a named debug variable from the local pools.
+ *
+ * Only locally stored variables are affected; symbol and arch-backed names
+ * are not cleared by this function and simply report a miss.
+ *
+ * @param variableName Null-terminated variable name.
+ * @return true if a slot was found and cleared, false otherwise.
+ */
 bool
 unset_debug_variable(const char* variableName)
 {
@@ -316,6 +468,14 @@ unset_debug_variable(const char* variableName)
 }
 
 
+/**
+ * @brief Clear every persistent and temporary variable slot.
+ *
+ * Walks both arrays and releases each currently used entry, including
+ * updating LRU bookkeeping for temporaries.
+ *
+ * @return void
+ */
 void
 unset_all_debug_variables()
 {
@@ -335,6 +495,14 @@ unset_all_debug_variables()
 }
 
 
+/**
+ * @brief Register the debug-variable KDL commands during debugger init.
+ *
+ * Installs `unset`, `unset_all` and `vars` into the command table. Called
+ * once from the kernel debugger's bring-up path.
+ *
+ * @return void
+ */
 void
 debug_variables_init()
 {

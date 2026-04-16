@@ -1,14 +1,47 @@
 /*
- * Copyright 2003-2022, Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Axel Dörfler, axeld@pinc-software.de.
- *		Ingo Weinhold, bonefish@users.sf.net.
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2022, Haiku Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Axel Dörfler, axeld@pinc-software.de.
+ *       Ingo Weinhold, bonefish@users.sf.net.
  */
 
-
-//!	C++ in the kernel
+/**
+ * @file kernel_cpp.cpp
+ * @brief C++ runtime shims for the kernel and bootloader.
+ *
+ * Supplies the minimum surface needed to run C++ code without linking
+ * against libstdc++ or libgcc's unwinder:
+ *   - operator new / delete (backed by malloc/free).
+ *   - std::nothrow sentinel plus the kernel-local mynothrow variant.
+ *   - Stub bodies for every libgcc unwinder entry point — any call panics
+ *     because the kernel does not use exceptions.
+ *   - fprintf/fwrite/fputs/fputc/printf/puts redirected to dprintf().
+ *   - abort()/exit()/debugger() that route to panic() / kernel_debugger().
+ *
+ * Active compilation is gated by _KERNEL_MODE / _LOADER_MODE / _BOOT_MODE;
+ * the file is also reused by the loader and the boot code.
+ */
 
 
 #include "util/kernel_cpp.h"
@@ -53,6 +86,7 @@ const mynothrow_t mynothrow = {};
 
 #if __GNUC__ == 2
 
+/** @brief GCC-2 ABI hook: called when a pure virtual is invoked. */
 extern "C" void
 __pure_virtual()
 {
@@ -61,6 +95,7 @@ __pure_virtual()
 
 #elif __GNUC__ >= 3
 
+/** @brief Itanium C++ ABI hook: called when a pure virtual is invoked. */
 extern "C" void
 __cxa_pure_virtual()
 {
@@ -68,6 +103,14 @@ __cxa_pure_virtual()
 }
 
 
+/**
+ * @brief Stub for the Itanium ABI atexit hook registry.
+ *
+ * The kernel has no shared-library unload semantics, so registered destructors
+ * would never run; silently return success.
+ *
+ * @return Always 0.
+ */
 extern "C" int
 __cxa_atexit(void (*hook)(void*), void* data, void* dsoHandle)
 {
@@ -75,6 +118,7 @@ __cxa_atexit(void (*hook)(void*), void* data, void* dsoHandle)
 }
 
 
+/** @brief Stub for __cxa_finalize; nothing registered by __cxa_atexit. */
 extern "C" void
 __cxa_finalize(void* dsoHandle)
 {
@@ -84,6 +128,18 @@ __cxa_finalize(void* dsoHandle)
 
 // full C++ support in the kernel
 #if (defined(_KERNEL_MODE) || defined(_LOADER_MODE))
+/**
+ * @brief Kernel-side operator new / delete family.
+ *
+ * All overloads forward to malloc()/free(). The throwing `new` keeps its
+ * declared signature for ABI compatibility but never actually throws — the
+ * kernel has no exception runtime; callers that want a null return on
+ * failure use the std::nothrow or mynothrow overload.
+ *
+ * @param size Byte count requested for `new` overloads.
+ * @param ptr  Pointer returned by `new` for the `delete` overloads.
+ * @return Allocated pointer or NULL for `new`; void for `delete`.
+ */
 void *
 operator new(size_t size) _THROW(std::bad_alloc)
 {
@@ -94,6 +150,7 @@ operator new(size_t size) _THROW(std::bad_alloc)
 }
 
 
+/** @copydoc operator new(size_t) */
 void *
 operator new[](size_t size)
 {
@@ -101,6 +158,7 @@ operator new[](size_t size)
 }
 
 
+/** @copydoc operator new(size_t) */
 void *
 operator new(size_t size, const std::nothrow_t &) _NOEXCEPT
 {
@@ -108,6 +166,7 @@ operator new(size_t size, const std::nothrow_t &) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) */
 void *
 operator new[](size_t size, const std::nothrow_t &) _NOEXCEPT
 {
@@ -115,6 +174,7 @@ operator new[](size_t size, const std::nothrow_t &) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) */
 void *
 operator new(size_t size, const mynothrow_t &) _NOEXCEPT
 {
@@ -122,6 +182,7 @@ operator new(size_t size, const mynothrow_t &) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) */
 void *
 operator new[](size_t size, const mynothrow_t &) _NOEXCEPT
 {
@@ -129,6 +190,7 @@ operator new[](size_t size, const mynothrow_t &) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) */
 void
 operator delete(void *ptr) _NOEXCEPT
 {
@@ -136,6 +198,7 @@ operator delete(void *ptr) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) */
 void
 operator delete[](void *ptr) _NOEXCEPT
 {
@@ -143,6 +206,7 @@ operator delete[](void *ptr) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) */
 void
 operator delete(void *ptr, std::nothrow_t const &) _NOEXCEPT
 {
@@ -152,6 +216,7 @@ operator delete(void *ptr, std::nothrow_t const &) _NOEXCEPT
 
 #if __cplusplus >= 201402L
 
+/** @copydoc operator new(size_t) — C++14 sized deallocation. */
 void
 operator delete(void* ptr, std::size_t) _NOEXCEPT
 {
@@ -159,6 +224,7 @@ operator delete(void* ptr, std::size_t) _NOEXCEPT
 }
 
 
+/** @copydoc operator new(size_t) — C++14 sized deallocation. */
 void
 operator delete[](void* ptr, std::size_t) _NOEXCEPT
 {
@@ -172,6 +238,10 @@ operator delete[](void* ptr, std::size_t) _NOEXCEPT
 
 FILE *stderr = NULL;
 
+/**
+ * @brief stdio-compatibility shim: dispatches to dprintf() for the format string.
+ * @return Always 0 — the return value is not meaningful in kernel context.
+ */
 extern "C"
 int
 fprintf(FILE *f, const char *format, ...)
@@ -181,6 +251,9 @@ fprintf(FILE *f, const char *format, ...)
 	return 0;
 }
 
+/**
+ * @brief stdio-compatibility shim: writes via dprintf(). Return value is not meaningful.
+ */
 extern "C"
 size_t
 fwrite(const void *buffer, size_t size, size_t numItems, FILE *stream)
@@ -189,6 +262,7 @@ fwrite(const void *buffer, size_t size, size_t numItems, FILE *stream)
 	return 0;
 }
 
+/** @brief stdio-compatibility shim: writes via dprintf(). */
 extern "C"
 int
 fputs(const char *string, FILE *stream)
@@ -197,6 +271,7 @@ fputs(const char *string, FILE *stream)
 	return 0;
 }
 
+/** @brief stdio-compatibility shim: writes a single char via dprintf(). */
 extern "C"
 int
 fputc(int c, FILE *stream)
@@ -206,6 +281,7 @@ fputc(int c, FILE *stream)
 }
 
 #ifndef _LOADER_MODE
+/** @brief stdio-compatibility shim: dispatches to dprintf(). */
 extern "C"
 int
 printf(const char *format, ...)
@@ -216,6 +292,7 @@ printf(const char *format, ...)
 }
 #endif // #ifndef _LOADER_MODE
 
+/** @brief stdio-compatibility shim: writes the string and a newline via fputs(). */
 extern "C"
 int
 puts(const char *string)
@@ -227,6 +304,13 @@ puts(const char *string)
 
 #if __GNUC__ >= 4
 
+/**
+ * @brief libgcc unwinder stubs.
+ *
+ * The kernel does not ship an unwinder, so every unwinder entry point is a
+ * panic. These symbols exist only to satisfy the linker when object files
+ * reference them for cold-path exception handling code that is never taken.
+ */
 extern "C"
 void
 _Unwind_DeleteException()
@@ -385,6 +469,12 @@ __gnu_unwind_frame(void)
 
 #endif	// __GNUC__ >= 4
 
+/**
+ * @brief Never-returning abort() — panics in a loop.
+ *
+ * Kept as a loop so the compiler is happy with the [[noreturn]] contract even
+ * if panic() ever becomes non-terminal on some build configuration.
+ */
 extern "C"
 void
 abort()
@@ -396,6 +486,7 @@ abort()
 
 #ifndef _BOOT_MODE
 
+/** @brief Drop into the kernel debugger with the given message. */
 extern "C"
 void
 debugger(const char *message)
@@ -408,6 +499,7 @@ debugger(const char *message)
 #endif	// #if (defined(_KERNEL_MODE) || defined(_LOADER_MODE))
 
 
+/** @brief Never-returning exit() — panics in a loop with the given status. */
 extern "C"
 void
 exit(int status)

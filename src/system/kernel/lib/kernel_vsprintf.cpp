@@ -1,10 +1,41 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2003-2008, Axel Dörfler. All rights reserved.
- * Distributed under the terms of the MIT license.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2003-2008, Axel Dörfler. All rights reserved.
+ *   Distributed under the terms of the MIT license.
+ *
+ *   Copyright 2001, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file kernel_vsprintf.cpp
+ * @brief Kernel implementation of printf-family string formatters.
+ *
+ * Provides the kernel's self-contained vsnprintf/vsprintf/snprintf/sprintf so
+ * formatting does not depend on user-space libc. Output is funnelled through
+ * a small Buffer helper that tracks capacity and bytes written, allowing the
+ * truncation semantics of (v)snprintf to be honoured while still reporting
+ * the full would-be length. A compact floating-point path is available for
+ * debug output when FLOATING_SUPPORT is defined.
  */
 
 
@@ -96,6 +127,15 @@ private:
 };
 
 
+/**
+ * @brief Parse a run of decimal digits, advancing the cursor.
+ *
+ * Consumes digits from the position pointed to by @p s and converts them to
+ * an int. On return, @p *s points at the first non-digit character.
+ *
+ * @param s In/out pointer to the format-string cursor; updated past digits.
+ * @return The decoded integer value, or 0 if no digits are present.
+ */
 static int
 skip_atoi(const char **s)
 {
@@ -108,6 +148,15 @@ skip_atoi(const char **s)
 }
 
 
+/**
+ * @brief Divide a 64-bit value by @p base in place and return the remainder.
+ *
+ * Used by number() to peel one digit at a time off a value being formatted.
+ *
+ * @param _number In/out pointer to the dividend; updated to the quotient.
+ * @param base    Divisor (typically 2..36 for a printable radix).
+ * @return The remainder after dividing @p *_number by @p base.
+ */
 static uint64
 do_div(uint64 *_number, uint32 base)
 {
@@ -118,6 +167,17 @@ do_div(uint64 *_number, uint32 base)
 }
 
 
+/**
+ * @brief Select the leading sign character for a numeric conversion.
+ *
+ * Honours the printf flag characters '+' and ' ' in addition to the natural
+ * '-' for negative values. Returns '\0' when no sign character should be
+ * emitted (typically because the SIGN flag is not set).
+ *
+ * @param flags    Bitmask of PLUS / SPACE / SIGN flags.
+ * @param negative True if the value to be printed is negative.
+ * @return Sign character to emit, or '\0' for none.
+ */
 static char
 sign_symbol(int flags, bool negative)
 {
@@ -135,6 +195,22 @@ sign_symbol(int flags, bool negative)
 }
 
 
+/**
+ * @brief Format an integer into @p outBuffer using printf-style options.
+ *
+ * Implements the core of %d, %u, %o, %x, %X and %p conversions. Handles
+ * sign selection, the '0x'/'0' SPECIAL prefix, zero vs space padding, left
+ * justification, and minimum precision (leading zeros independent of field
+ * width). The temporary digit buffer holds at most 66 characters which
+ * suffices for any 64-bit value in any base >= 2.
+ *
+ * @param outBuffer Destination buffer wrapper.
+ * @param num       Value to render (signed interpretation if SIGN is set).
+ * @param base      Numeric base, clamped to [2, 36]; higher values are ignored.
+ * @param size      Minimum field width in characters.
+ * @param precision Minimum number of digits (leading zeros added as needed).
+ * @param flags     Bitmask of ZEROPAD, SIGN, PLUS, SPACE, LEFT, SPECIAL, LARGE.
+ */
 static void
 number(Buffer& outBuffer, uint64 num, uint32 base, int size,
 	int precision, int flags)
@@ -208,11 +284,19 @@ number(Buffer& outBuffer, uint64 num, uint32 base, int size,
 
 
 #ifdef FLOATING_SUPPORT
-/*!
-	This is a very basic floating point to string conversion routine.
-	It prints up to 3 fraction digits, and doesn't support any precision arguments.
-	It's just here for your convenience so that you can use it for debug output.
-*/
+/**
+ * @brief Minimal double-to-string conversion for kernel debug output.
+ *
+ * Emits at most three fractional digits and ignores the usual precision
+ * argument; the implementation is deliberately small so it can be compiled
+ * into the kernel when FLOATING_SUPPORT is enabled. Intended for tracing and
+ * printk-style debugging rather than general-purpose formatting.
+ *
+ * @param outBuffer  Destination buffer wrapper.
+ * @param value      Value to print.
+ * @param fieldWidth Minimum total width; padding is added with spaces.
+ * @param flags      Bitmask with LEFT, SIGN, PLUS, SPACE honoured.
+ */
 static void
 floating(Buffer& outBuffer, double value, int fieldWidth, int flags)
 {
@@ -270,6 +354,22 @@ floating(Buffer& outBuffer, double value, int fieldWidth, int flags)
 #endif	// FLOATING_SUPPORT
 
 
+/**
+ * @brief Format a va_list into a bounded character buffer.
+ *
+ * Kernel equivalent of C99 vsnprintf(): walks @p format, interpreting the
+ * usual %-conversions (d, i, u, o, x, X, c, s, p, n, %, and when
+ * FLOATING_SUPPORT is defined f/F/g/G), pulling arguments from @p args,
+ * width/precision modifiers, and length qualifiers h, l, ll/L and z. Writes
+ * at most @p bufferSize - 1 characters plus a NUL terminator, and always
+ * returns the would-be length so callers can detect truncation.
+ *
+ * @param buffer     Destination character array; may be NULL only if @p bufferSize is 0.
+ * @param bufferSize Capacity of @p buffer including space for the terminator.
+ * @param format     printf-style format string.
+ * @param args       Argument list positioned at the first conversion.
+ * @return Number of bytes that would have been written ignoring truncation.
+ */
 int
 vsnprintf(char *buffer, size_t bufferSize, const char *format, va_list args)
 {
@@ -477,6 +577,18 @@ out:
 }
 
 
+/**
+ * @brief Format a va_list into an unbounded character buffer.
+ *
+ * Thin wrapper around vsnprintf() using the largest possible size, mirroring
+ * the unsafe semantics of C vsprintf(). Callers are responsible for ensuring
+ * @p buffer is large enough for the expansion.
+ *
+ * @param buffer Destination character array sized by the caller.
+ * @param format printf-style format string.
+ * @param args   Argument list for the conversions in @p format.
+ * @return Number of bytes written (excluding the NUL terminator).
+ */
 int
 vsprintf(char *buffer, const char *format, va_list args)
 {
@@ -484,6 +596,17 @@ vsprintf(char *buffer, const char *format, va_list args)
 }
 
 
+/**
+ * @brief Variadic front-end for vsnprintf().
+ *
+ * Assembles a va_list from its trailing arguments and delegates to
+ * vsnprintf() with the caller-supplied capacity.
+ *
+ * @param buffer     Destination character array.
+ * @param bufferSize Capacity of @p buffer including the NUL terminator.
+ * @param format     printf-style format string.
+ * @return Number of bytes that would have been written ignoring truncation.
+ */
 int
 snprintf(char *buffer, size_t bufferSize, const char *format, ...)
 {
@@ -498,6 +621,17 @@ snprintf(char *buffer, size_t bufferSize, const char *format, ...)
 }
 
 
+/**
+ * @brief Variadic front-end for vsprintf() with no bounds checking.
+ *
+ * Builds a va_list from trailing arguments and defers to vsnprintf() with an
+ * effectively unlimited destination size. The caller must guarantee that
+ * @p buffer is large enough.
+ *
+ * @param buffer Destination character array sized by the caller.
+ * @param format printf-style format string.
+ * @return Number of bytes written (excluding the NUL terminator).
+ */
 int
 sprintf(char *buffer, const char *format, ...)
 {

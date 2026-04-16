@@ -31,9 +31,16 @@
 #include <syscalls.h>
 
 
-/** @brief Tears down user teams, syncs the file system, and asks the arch layer to halt or reboot.
- *  @param reboot If true, reboot the machine; if false, power off.
- *  @return Should not return on success. */
+/**
+ * @brief Tear down user teams, sync filesystems, and ask the arch layer to halt or reboot.
+ *
+ * Sets gKernelShutdown, kills every non-system team (only when rebooting),
+ * calls sync(), then hands control to arch_cpu_shutdown().
+ *
+ * @param reboot true to reboot the machine, false to power off.
+ * @return Does not return on success; propagates an error from the arch
+ *         layer otherwise.
+ */
 status_t
 system_shutdown(bool reboot)
 {
@@ -62,7 +69,12 @@ system_shutdown(bool reboot)
 //	#pragma mark -
 
 
-/** @brief Syscall entry point for shutdown(); requires the caller to be root. */
+/**
+ * @brief Syscall entry point for shutdown(); requires the caller to be root.
+ * @param reboot true to reboot, false to power off.
+ * @return B_NOT_ALLOWED for non-root callers, otherwise forwards the result
+ *         of system_shutdown().
+ */
 status_t
 _user_shutdown(bool reboot)
 {

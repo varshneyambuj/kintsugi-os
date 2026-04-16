@@ -115,10 +115,17 @@ VMArea::Init(const char* name, uint32 allocationFlags)
 }
 
 
-/*!	Returns whether any part of the given address range intersects with a wired
-	range of this area.
-	The area's top cache must be locked.
-*/
+/**
+ * @brief Test whether any part of a given range overlaps a wired sub-range.
+ *
+ * Walks the per-area list of VMAreaWiredRange records and reports on the first
+ * overlap. The area's top cache must be locked by the caller.
+ *
+ * @param base Start of the address range to test.
+ * @param size Length of the range in bytes.
+ * @return @c true if any wired range intersects [base, base + size);
+ *         @c false otherwise.
+ */
 bool
 VMArea::IsWired(addr_t base, size_t size) const
 {
@@ -132,9 +139,14 @@ VMArea::IsWired(addr_t base, size_t size) const
 }
 
 
-/*!	Adds the given wired range to this area.
-	The area's top cache must be locked.
-*/
+/**
+ * @brief Attach a wired-range record to this area.
+ *
+ * Links @p range into the per-area list and back-points its @c area field at
+ * this VMArea. The area's top cache must be locked by the caller.
+ *
+ * @param range Range record; must not already be owned by another area.
+ */
 void
 VMArea::Wire(VMAreaWiredRange* range)
 {
@@ -145,10 +157,15 @@ VMArea::Wire(VMAreaWiredRange* range)
 }
 
 
-/*!	Removes the given wired range from this area.
-	Must balance a previous Wire() call.
-	The area's top cache must be locked.
-*/
+/**
+ * @brief Detach a wired-range record and wake any threads waiting on it.
+ *
+ * Balances a prior Wire() call: unlinks @p range from the per-area list,
+ * clears its back-pointer, and notifies all waiters queued on the range so
+ * they can resume. The area's top cache must be locked by the caller.
+ *
+ * @param range Range record previously installed by Wire().
+ */
 void
 VMArea::Unwire(VMAreaWiredRange* range)
 {
@@ -168,13 +185,19 @@ VMArea::Unwire(VMAreaWiredRange* range)
 }
 
 
-/*!	Removes a wired range from this area.
-
-	Must balance a previous Wire() call. The first implicit range with matching
-	\a base, \a size, and \a writable attributes is removed and returned. It's
-	waiters are woken up as well.
-	The area's top cache must be locked.
-*/
+/**
+ * @brief Remove the first implicit wired range matching the given attributes.
+ *
+ * Locates the first implicit VMAreaWiredRange with the supplied @p base,
+ * @p size, and @p writable flag, detaches it via the overload above (which
+ * also wakes waiters), and returns it so the caller can free or reuse it.
+ * Panics if no matching range exists. The area's top cache must be locked.
+ *
+ * @param base     Start address recorded on the target range.
+ * @param size     Byte length recorded on the target range.
+ * @param writable Whether the target range was wired for writing.
+ * @return The detached range record (never @c NULL on a normal return).
+ */
 VMAreaWiredRange*
 VMArea::Unwire(addr_t base, size_t size, bool writable)
 {
@@ -193,11 +216,16 @@ VMArea::Unwire(addr_t base, size_t size, bool writable)
 }
 
 
-/*!	If the area has any wired range, the given waiter is added to the range and
-	prepared for waiting.
-
-	\return \c true, if the waiter has been added, \c false otherwise.
-*/
+/**
+ * @brief Enqueue a waiter if this area currently has any wired range.
+ *
+ * If the per-area wired list is non-empty, fills @p waiter with the area's
+ * full extent, initialises its condition variable, and links it onto the head
+ * range so the caller can subsequently block until the range is unwired.
+ *
+ * @param waiter Caller-owned waiter record to populate and enqueue.
+ * @return @c true if the waiter was enqueued; @c false if no ranges are wired.
+ */
 bool
 VMArea::AddWaiterIfWired(VMAreaUnwiredWaiter* waiter)
 {
@@ -217,17 +245,21 @@ VMArea::AddWaiterIfWired(VMAreaUnwiredWaiter* waiter)
 }
 
 
-/*!	If the given address range intersect with a wired range of this area, the
-	given waiter is added to the range and prepared for waiting.
-
-	\param waiter The waiter structure that will be added to the wired range
-		that intersects with the given address range.
-	\param base The base of the address range to check.
-	\param size The size of the address range to check.
-	\param flags
-		- \c IGNORE_WRITE_WIRED_RANGES: Ignore ranges wired for writing.
-	\return \c true, if the waiter has been added, \c false otherwise.
-*/
+/**
+ * @brief Enqueue a waiter if a specific sub-range overlaps any wired range.
+ *
+ * Scans the per-area wired list for a range intersecting [base, base + size).
+ * On the first match, populates @p waiter with the supplied sub-range,
+ * initialises its condition variable, links it onto that range, and returns.
+ *
+ * @param waiter Caller-owned waiter record to populate and enqueue.
+ * @param base   Start of the sub-range the caller is interested in.
+ * @param size   Length of the sub-range in bytes.
+ * @param flags  Bitmask; @c IGNORE_WRITE_WIRED_RANGES skips ranges wired for
+ *               writing.
+ * @return @c true if the waiter was enqueued; @c false if no wired range
+ *         intersects the requested sub-range.
+ */
 bool
 VMArea::AddWaiterIfWired(VMAreaUnwiredWaiter* waiter, addr_t base, size_t size,
 	uint32 flags)

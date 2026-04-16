@@ -68,11 +68,14 @@ static per_cpu_timer_data sPerCPU[SMP_MAX_CPUS];
 #endif
 
 
-/*!	Sets the hardware timer to the given absolute time.
-
-	\param scheduleTime The absolute system time for the timer expiration.
-	\param now The current system time.
-*/
+/**
+ * @brief Program the arch hardware timer to fire at an absolute deadline.
+ *
+ * Safe to call from interrupt context.
+ *
+ * @param scheduleTime Absolute system-time deadline.
+ * @param now          Reference "now" used to compute the relative delay.
+ */
 static void
 set_hardware_timer(bigtime_t scheduleTime, bigtime_t now)
 {
@@ -80,10 +83,13 @@ set_hardware_timer(bigtime_t scheduleTime, bigtime_t now)
 }
 
 
-/*!	Sets the hardware timer to the given absolute time.
-
-	\param scheduleTime The absolute system time for the timer expiration.
-*/
+/**
+ * @brief Program the hardware timer relative to the current system time.
+ *
+ * Safe to call from interrupt context.
+ *
+ * @param scheduleTime Absolute system-time deadline.
+ */
 static inline void
 set_hardware_timer(bigtime_t scheduleTime)
 {
@@ -91,7 +97,15 @@ set_hardware_timer(bigtime_t scheduleTime)
 }
 
 
-/*! NOTE: expects the list to be locked. */
+/**
+ * @brief Insert a timer into a per-CPU list in ascending schedule-time order.
+ *
+ * Safe to call from interrupt context. Caller must hold the enclosing
+ * per-CPU spinlock.
+ *
+ * @param event Timer to insert.
+ * @param list  Head pointer of the sorted list.
+ */
 static void
 add_event_to_list(timer* event, timer** list)
 {
@@ -111,6 +125,16 @@ add_event_to_list(timer* event, timer** list)
 }
 
 
+/**
+ * @brief Re-base absolute real-time timers on a single CPU after an RTC change.
+ *
+ * Dequeues every B_ONE_SHOT_ABSOLUTE_TIMER with B_TIMER_REAL_TIME_BASE set,
+ * shifts its schedule_time by the delta between the old and new real-time
+ * offsets (saturating on under/overflow), then reinserts it. Reprograms the
+ * hardware deadline if the list head changed.
+ *
+ * @param cpu CPU whose per-CPU timer data is being updated.
+ */
 static void
 per_cpu_real_time_clock_changed(void*, int cpu)
 {
@@ -179,6 +203,12 @@ per_cpu_real_time_clock_changed(void*, int cpu)
 // #pragma mark - debugging
 
 
+/**
+ * @brief Debugger command: print each CPU's pending timer queue.
+ * @param argc Unused argument count.
+ * @param argv Unused argument vector.
+ * @return 0 on success.
+ */
 static int
 dump_timers(int argc, char** argv)
 {
@@ -229,6 +259,14 @@ dump_timers(int argc, char** argv)
 // #pragma mark - kernel-private
 
 
+/**
+ * @brief Early-boot initialisation: bring up the arch timer and debugger cmd.
+ *
+ * Panics if the arch layer fails to initialise its timer hardware.
+ *
+ * @param args Kernel boot arguments forwarded to the arch layer.
+ * @return B_OK on success.
+ */
 status_t
 timer_init(kernel_args* args)
 {
@@ -245,6 +283,9 @@ timer_init(kernel_args* args)
 }
 
 
+/**
+ * @brief Seed each CPU's real-time offset once the RTC subsystem is ready.
+ */
 void
 timer_init_post_rtc(void)
 {
@@ -256,6 +297,9 @@ timer_init_post_rtc(void)
 }
 
 
+/**
+ * @brief Broadcast an RTC change so every CPU re-bases its absolute timers.
+ */
 void
 timer_real_time_clock_changed()
 {
@@ -263,6 +307,16 @@ timer_real_time_clock_changed()
 }
 
 
+/**
+ * @brief Interrupt handler invoked when the per-CPU hardware timer fires.
+ *
+ * Called from interrupt context. Dispatches every timer whose schedule_time
+ * has passed, reinserting periodic timers with their next deadline, then
+ * reprograms the hardware for the new head of the queue.
+ *
+ * @return B_HANDLED_INTERRUPT on normal dispatch, or the most recent hook's
+ *         return value.
+ */
 int32
 timer_interrupt()
 {
@@ -333,6 +387,23 @@ timer_interrupt()
 // #pragma mark - public API
 
 
+/**
+ * @brief Arm a timer on the current CPU.
+ *
+ * Safe to call from interrupt context. Depending on @a flags, @a period is
+ * interpreted as a relative delay, absolute system time, or an absolute
+ * real-time timestamp; B_PERIODIC_TIMER reuses @a period as the tick
+ * interval. Reprograms the hardware timer when the new event becomes the
+ * earliest deadline.
+ *
+ * @param event  Caller-owned timer structure.
+ * @param hook   Callback invoked at expiration.
+ * @param period Delay / deadline / tick interval, per @a flags.
+ * @param flags  Combination of B_ONE_SHOT_RELATIVE_TIMER,
+ *               B_ONE_SHOT_ABSOLUTE_TIMER, B_PERIODIC_TIMER,
+ *               B_TIMER_REAL_TIME_BASE, or B_TIMER_USE_TIMER_STRUCT_TIMES.
+ * @return B_OK on success, B_BAD_VALUE on invalid arguments.
+ */
 status_t
 add_timer(timer* event, timer_hook hook, bigtime_t period, int32 flags)
 {
@@ -381,6 +452,17 @@ add_timer(timer* event, timer_hook hook, bigtime_t period, int32 flags)
 }
 
 
+/**
+ * @brief Cancel a previously armed timer.
+ *
+ * Safe to call from interrupt context for timers owned by the current CPU.
+ * When the hook is currently executing on another CPU, waits for it to
+ * finish before returning, unless it is also the caller's own timer hook.
+ *
+ * @param event Timer previously passed to add_timer().
+ * @return true if the timer had already fired (or was mid-execution),
+ *         false if it was removed from the queue before firing.
+ */
 bool
 cancel_timer(timer* event)
 {
@@ -467,6 +549,14 @@ cancel_timer(timer* event)
 }
 
 
+/**
+ * @brief Busy-wait for the given number of microseconds.
+ *
+ * Safe to call from interrupt context. Uses cpu_pause() inside the loop to
+ * be friendly to SMT siblings.
+ *
+ * @param microseconds Duration to spin.
+ */
 void
 spin(bigtime_t microseconds)
 {

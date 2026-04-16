@@ -1,8 +1,36 @@
 /*
- * Copyright 2003-2009, Ingo Weinhold <ingo_weinhold@gmx.de>.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2003-2009, Ingo Weinhold <ingo_weinhold@gmx.de>.
+ *   Distributed under the terms of the MIT License.
  */
 
+/**
+ * @file AVLTreeBase.cpp
+ * @brief Untyped core of the kernel's intrusive AVL tree.
+ *
+ * Implements insertion, deletion, traversal, and rebalancing on AVLTreeNode
+ * links without knowing the element type. Key ordering is delegated to an
+ * AVLTreeCompare callback, so typed wrappers layer value semantics on top of
+ * this file. Rebalancing uses explicit stacks bounded by kMaxAVLTreeHeight.
+ */
 
 #include <util/AVLTreeBase.h>
 
@@ -36,6 +64,9 @@ static const int kMaxAVLTreeHeight = 32;
 // #pragma mark - AVLTreeCompare
 
 
+/**
+ * @brief Virtual destructor for the comparator interface.
+ */
 AVLTreeCompare::~AVLTreeCompare()
 {
 }
@@ -44,6 +75,10 @@ AVLTreeCompare::~AVLTreeCompare()
 // #pragma mark - AVLTreeBase
 
 
+/**
+ * @brief Construct an empty tree bound to the given comparator.
+ * @param compare Comparator used for all key/node ordering decisions.
+ */
 AVLTreeBase::AVLTreeBase(AVLTreeCompare* compare)
 	: fRoot(NULL),
 	  fNodeCount(0),
@@ -52,11 +87,19 @@ AVLTreeBase::AVLTreeBase(AVLTreeCompare* compare)
 }
 
 
+/**
+ * @brief Destroy the tree structure. Nodes are not freed.
+ */
 AVLTreeBase::~AVLTreeBase()
 {
 }
 
 
+/**
+ * @brief Detach every node by forgetting the root and count.
+ *
+ * Does not walk or free the nodes; caller owns their storage.
+ */
 void
 AVLTreeBase::MakeEmpty()
 {
@@ -65,6 +108,11 @@ AVLTreeBase::MakeEmpty()
 }
 
 
+/**
+ * @brief Return the leftmost descendant of @a node.
+ * @param node Subtree root, or NULL.
+ * @return The smallest node in the subtree, or NULL if @a node is NULL.
+ */
 AVLTreeNode*
 AVLTreeBase::LeftMost(AVLTreeNode* node) const
 {
@@ -77,6 +125,11 @@ AVLTreeBase::LeftMost(AVLTreeNode* node) const
 }
 
 
+/**
+ * @brief Return the rightmost descendant of @a node.
+ * @param node Subtree root, or NULL.
+ * @return The largest node in the subtree, or NULL if @a node is NULL.
+ */
 AVLTreeNode*
 AVLTreeBase::RightMost(AVLTreeNode* node) const
 {
@@ -89,6 +142,11 @@ AVLTreeBase::RightMost(AVLTreeNode* node) const
 }
 
 
+/**
+ * @brief In-order predecessor of @a node.
+ * @param node Starting node.
+ * @return The node with the immediately smaller key, or NULL if none.
+ */
 AVLTreeNode*
 AVLTreeBase::Previous(AVLTreeNode* node) const
 {
@@ -114,6 +172,11 @@ AVLTreeBase::Previous(AVLTreeNode* node) const
 }
 
 
+/**
+ * @brief In-order successor of @a node.
+ * @param node Starting node.
+ * @return The node with the immediately larger key, or NULL if none.
+ */
 AVLTreeNode*
 AVLTreeBase::Next(AVLTreeNode* node) const
 {
@@ -139,6 +202,11 @@ AVLTreeBase::Next(AVLTreeNode* node) const
 }
 
 
+/**
+ * @brief Look up the node whose key equals @a key.
+ * @param key Caller-supplied key passed to the comparator.
+ * @return Matching node, or NULL if not present.
+ */
 AVLTreeNode*
 AVLTreeBase::Find(const void* key) const
 {
@@ -159,6 +227,14 @@ AVLTreeBase::Find(const void* key) const
 }
 
 
+/**
+ * @brief Find the closest node to @a key in a given direction.
+ * @param key  Caller-supplied key.
+ * @param less If true, return the largest node less-or-equal; else the
+ *             smallest greater-or-equal.
+ * @return Matching neighbor, or NULL if the tree has no node in that
+ *         direction.
+ */
 AVLTreeNode*
 AVLTreeBase::FindClosest(const void* key, bool less) const
 {
@@ -196,6 +272,11 @@ AVLTreeBase::FindClosest(const void* key, bool less) const
 }
 
 
+/**
+ * @brief Insert a node into the tree, rebalancing as necessary.
+ * @param nodeToInsert Caller-owned node; its link fields are overwritten.
+ * @return B_OK on success, B_BAD_VALUE if a duplicate key already exists.
+ */
 status_t
 AVLTreeBase::Insert(AVLTreeNode* nodeToInsert)
 {
@@ -213,6 +294,11 @@ AVLTreeBase::Insert(AVLTreeNode* nodeToInsert)
 }
 
 
+/**
+ * @brief Remove and return the node matching @a key.
+ * @param key Key identifying the node to remove.
+ * @return Removed node (still caller-owned), or NULL if not found.
+ */
 AVLTreeNode*
 AVLTreeBase::Remove(const void* key)
 {
@@ -238,6 +324,11 @@ AVLTreeBase::Remove(const void* key)
 }
 
 
+/**
+ * @brief Remove the specific node @a node from the tree.
+ * @param node Node previously linked into this tree.
+ * @return true on success, false if the node was not found.
+ */
 bool
 AVLTreeBase::Remove(AVLTreeNode* node)
 {
@@ -252,6 +343,12 @@ AVLTreeBase::Remove(AVLTreeNode* node)
 }
 
 
+/**
+ * @brief Debug helper that verifies parent pointers, balance factors, and
+ *        the node count.
+ *
+ * Panics via CHECK_FAILED() on any detected inconsistency.
+ */
 void
 AVLTreeBase::CheckTree() const
 {
@@ -264,6 +361,14 @@ AVLTreeBase::CheckTree() const
 }
 
 
+/**
+ * @brief Perform a single right rotation around *@a nodeP.
+ *
+ * Updates parent links and balance factors in place.
+ *
+ * @param nodeP Pointer-to-pointer at the pivot slot (so its parent link
+ *              is updated too).
+ */
 void
 AVLTreeBase::_RotateRight(AVLTreeNode** nodeP)
 {
@@ -295,6 +400,10 @@ AVLTreeBase::_RotateRight(AVLTreeNode** nodeP)
 }
 
 
+/**
+ * @brief Perform a single left rotation around *@a nodeP.
+ * @param nodeP Pointer-to-pointer at the pivot slot.
+ */
 void
 AVLTreeBase::_RotateLeft(AVLTreeNode** nodeP)
 {
@@ -326,6 +435,12 @@ AVLTreeBase::_RotateLeft(AVLTreeNode** nodeP)
 }
 
 
+/**
+ * @brief Rebalance after an insert into the left subtree.
+ * @param node Pointer-to-pointer to the node whose balance factor just
+ *             decreased.
+ * @return OK if the subtree height is unchanged, HEIGHT_CHANGED otherwise.
+ */
 int
 AVLTreeBase::_BalanceInsertLeft(AVLTreeNode** node)
 {
@@ -350,6 +465,12 @@ AVLTreeBase::_BalanceInsertLeft(AVLTreeNode** node)
 }
 
 
+/**
+ * @brief Rebalance after an insert into the right subtree.
+ * @param node Pointer-to-pointer to the node whose balance factor just
+ *             increased.
+ * @return OK if the subtree height is unchanged, HEIGHT_CHANGED otherwise.
+ */
 int
 AVLTreeBase::_BalanceInsertRight(AVLTreeNode** node)
 {
@@ -374,6 +495,15 @@ AVLTreeBase::_BalanceInsertRight(AVLTreeNode** node)
 }
 
 
+/**
+ * @brief Iterative AVL insert that records the descent path on a stack.
+ *
+ * Walks the stack back up, adjusting balance factors and rotating until the
+ * subtree height stops growing.
+ *
+ * @param nodeToInsert Node whose link fields get initialized here.
+ * @return OK, HEIGHT_CHANGED, or DUPLICATE.
+ */
 int
 AVLTreeBase::_Insert(AVLTreeNode* nodeToInsert)
 {
@@ -437,6 +567,13 @@ AVLTreeBase::_Insert(AVLTreeNode* nodeToInsert)
 }
 
 
+/**
+ * @brief Rebalance after a remove from the left subtree.
+ * @param node Pointer-to-pointer to the node whose balance factor just
+ *             increased.
+ * @return OK if propagation stops here, HEIGHT_CHANGED if the parent must
+ *         also be rebalanced.
+ */
 int
 AVLTreeBase::_BalanceRemoveLeft(AVLTreeNode** node)
 {
@@ -464,6 +601,12 @@ AVLTreeBase::_BalanceRemoveLeft(AVLTreeNode** node)
 }
 
 
+/**
+ * @brief Rebalance after a remove from the right subtree.
+ * @param node Pointer-to-pointer to the node whose balance factor just
+ *             decreased.
+ * @return OK if propagation stops here, HEIGHT_CHANGED otherwise.
+ */
 int
 AVLTreeBase::_BalanceRemoveRight(AVLTreeNode** node)
 {
@@ -491,6 +634,16 @@ AVLTreeBase::_BalanceRemoveRight(AVLTreeNode** node)
 }
 
 
+/**
+ * @brief Detach the rightmost node of the subtree rooted at *@a node.
+ *
+ * Used when removing an interior node: its in-order predecessor takes its
+ * place. Rebalancing walks the recorded descent path upwards.
+ *
+ * @param node       Pointer-to-pointer at the subtree root.
+ * @param foundNode  Out-pointer receiving the detached rightmost node.
+ * @return OK or HEIGHT_CHANGED.
+ */
 int
 AVLTreeBase::_RemoveRightMostChild(AVLTreeNode** node, AVLTreeNode** foundNode)
 {

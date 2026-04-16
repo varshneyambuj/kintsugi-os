@@ -1,4 +1,25 @@
 /*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ */
+
+/*
  * Copyright (c) 2004 by Internet Systems Consortium, Inc. ("ISC")
  * Copyright (c) 1996-1999 by Internet Software Consortium.
  *
@@ -37,21 +58,27 @@ static const char rcsid[] = "$Id: inet_ntop.c,v 1.5 2005/11/03 22:59:52 marka Ex
 # define SPRINTF(x) ((size_t)sprintf x)
 #endif
 
-/*%
- * WARNING: Don't even consider trying to compile this on a system where
- * sizeof(int) < 4.  sizeof(int) > 4 is fine; all the world's not a VAX.
+/**
+ * @file inet_ntop.c
+ * @brief inet_ntop() — network → presentation format for IPv4/IPv6 addresses.
+ *
+ * Ported from the ISC libc. Requires `sizeof(int) >= 4`.
  */
 
 static const char *inet_ntop4 __P((const u_char *src, char *dst, size_t size));
 static const char *inet_ntop6 __P((const u_char *src, char *dst, size_t size));
 
-/* char *
- * inet_ntop(af, src, dst, size)
- *	convert a network format address to presentation format.
- * return:
- *	pointer to presentation format address (`dst'), or NULL (see errno).
- * author:
- *	Paul Vixie, 1996.
+/**
+ * @brief Format a binary network address as a printable string.
+ *
+ * Dispatches to inet_ntop4() or inet_ntop6() depending on @a af; sets
+ * errno to EAFNOSUPPORT on unknown families.
+ *
+ * @param af   Address family (AF_INET or AF_INET6).
+ * @param src  Binary address in network order.
+ * @param dst  Destination buffer.
+ * @param size Capacity of @a dst in bytes.
+ * @return Pointer to @a dst on success, NULL on error (errno set).
  */
 const char *
 inet_ntop(af, src, dst, size)
@@ -72,16 +99,15 @@ inet_ntop(af, src, dst, size)
 	/* NOTREACHED */
 }
 
-/* const char *
- * inet_ntop4(src, dst, size)
- *	format an IPv4 address
- * return:
- *	`dst' (as a const)
- * notes:
- *	(1) uses no statics
- *	(2) takes a u_char* not an in_addr as input
- * author:
- *	Paul Vixie, 1996.
+/**
+ * @brief Format a four-byte IPv4 address as `A.B.C.D`.
+ *
+ * Uses no static storage; reentrant.
+ *
+ * @param src  Four network-order bytes.
+ * @param dst  Destination buffer.
+ * @param size Capacity of @a dst in bytes.
+ * @return @a dst on success, NULL with errno=ENOSPC when too small.
  */
 static const char *
 inet_ntop4(src, dst, size)
@@ -100,11 +126,16 @@ inet_ntop4(src, dst, size)
 	return (dst);
 }
 
-/* const char *
- * inet_ntop6(src, dst, size)
- *	convert IPv6 binary address into presentation (printable) format
- * author:
- *	Paul Vixie, 1996.
+/**
+ * @brief Format a 16-byte IPv6 address using the preferred presentation form.
+ *
+ * Collapses the longest run of zero words to `::`, and emits IPv4-mapped /
+ * IPv4-compatible addresses as `::ffff:A.B.C.D` / `::A.B.C.D` where appropriate.
+ *
+ * @param src  Sixteen network-order bytes.
+ * @param dst  Destination buffer.
+ * @param size Capacity of @a dst in bytes.
+ * @return @a dst on success, NULL with errno=ENOSPC when too small.
  */
 static const char *
 inet_ntop6(src, dst, size)

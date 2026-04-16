@@ -1,9 +1,50 @@
 /*
- * Copyright 2005-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001-2002, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file blue_screen.cpp
+ * @brief Kernel Debug Land (KDL) / panic "blue screen" framebuffer renderer.
+ *
+ * Takes over the framebuffer (or serial console, depending on which module is
+ * installed as gFrameBufferConsoleModule) when the kernel enters KDL or panics,
+ * and implements a small VT100 emulator so the shared kprintf() formatting code
+ * can draw the panic banner, register dump, stack trace, and command output.
+ * Also implements on-screen paging with user keyboard input.
+ *
+ * Panic-time safety: by the time KDL is entered, interrupts are disabled, the
+ * scheduler is stopped and the normal VM may not be trustworthy. Every function
+ * in this file must therefore avoid sleeping locks, heap allocation, and any
+ * operation that depends on page faults being serviced. The functions marked
+ * "panic-safe" below are called from the KDL context; all of them only touch
+ * the static sScreen state and the console module's direct glyph/cursor hooks,
+ * plus spin() and kgetc() which are themselves panic-safe. blue_screen_init()
+ * (but not blue_screen_init_early()) is the sole exception: it is invoked once
+ * during normal boot and does register a debugger command, but is not called
+ * again from panic context.
  */
 
 
@@ -65,6 +106,12 @@ struct screen_info {
 console_module_info *sModule = NULL;
 
 
+/**
+ * @brief Hide the hardware text cursor (panic-safe).
+ *
+ * Delegates to the console module's move_cursor with sentinel coordinates.
+ * Called before a burst of glyph writes to prevent flicker.
+ */
 static inline void
 hide_cursor(void)
 {
@@ -72,6 +119,12 @@ hide_cursor(void)
 }
 
 
+/**
+ * @brief Move the hardware cursor without touching logical state (panic-safe).
+ *
+ * @param x Column (0-based).
+ * @param y Row (0-based).
+ */
 static inline void
 update_cursor(int32 x, int32 y)
 {
@@ -79,6 +132,12 @@ update_cursor(int32 x, int32 y)
 }
 
 
+/**
+ * @brief Update both logical and hardware cursor position (panic-safe).
+ *
+ * @param x New column.
+ * @param y New row.
+ */
 static inline void
 move_cursor(int32 x, int32 y)
 {
@@ -90,9 +149,13 @@ move_cursor(int32 x, int32 y)
 
 #if USE_SCROLLING
 
-/*!	Scroll from the cursor line up to the top of the scroll region up one
-	line.
-*/
+/**
+ * @brief Scroll the screen up one line (panic-safe; compile-time disabled).
+ *
+ * Only compiled when USE_SCROLLING is nonzero. Blits the screen up and clears
+ * the exposed bottom line. Normally disabled because framebuffer blits are
+ * prohibitively slow at panic time.
+ */
 static void
 scroll_up(void)
 {
@@ -105,6 +168,16 @@ scroll_up(void)
 #endif
 
 
+/**
+ * @brief Advance to the next line, handling wrap and on-screen paging (panic-safe).
+ *
+ * When a debugger command is running, tracks the number of rows it has emitted;
+ * once the screen has filled, prompts the user via kgetc() for paging input
+ * (continue, skip, quit, disable paging, or enable timeout). If the user
+ * chooses 'q' during a command, invokes abort_debugger_command(), which does
+ * not return. At end-of-screen the cursor wraps back to row 0 and the top
+ * three rows are cleared to act as a scroll frame.
+ */
 static void
 next_line(void)
 {
@@ -188,6 +261,12 @@ next_line(void)
 }
 
 
+/**
+ * @brief Erase part or all of the cursor's current line (panic-safe).
+ *
+ * @param mode LINE_ERASE_WHOLE, LINE_ERASE_LEFT (up to and including cursor),
+ *             or LINE_ERASE_RIGHT (from cursor to end of line).
+ */
 static void
 erase_line(erase_line_mode mode)
 {
@@ -208,6 +287,11 @@ erase_line(erase_line_mode mode)
 }
 
 
+/**
+ * @brief Handle a backspace by erasing the glyph to the left of the cursor.
+ *
+ * No-op at column zero. Panic-safe.
+ */
 static void
 back_space(void)
 {
@@ -219,6 +303,11 @@ back_space(void)
 }
 
 
+/**
+ * @brief Write a single printable glyph at the cursor, wrapping if needed (panic-safe).
+ *
+ * @param c Character to deposit with the current attribute.
+ */
 static void
 put_character(char c)
 {
@@ -231,6 +320,17 @@ put_character(char c)
 }
 
 
+/**
+ * @brief Apply an ANSI SGR (Set Graphic Rendition) escape sequence (panic-safe).
+ *
+ * Handles reset, bright/dim, blink, reverse, and the 30-37/40-47 colour ranges
+ * by mutating sScreen.attr. Haiku's console module uses a single-byte attr with
+ * the foreground in the low nibble and background in bits 4-6, so the mapping
+ * table converts from ANSI colour order to that layout.
+ *
+ * @param args     Parsed numeric arguments from the escape.
+ * @param argCount Number of valid entries in @p args (0 implies reset).
+ */
 static void
 set_vt100_attributes(int32 *args, int32 argCount)
 {
@@ -300,6 +400,20 @@ set_vt100_attributes(int32 *args, int32 argCount)
 }
 
 
+/**
+ * @brief Dispatch a parsed VT100 escape sequence (panic-safe).
+ *
+ * Supports cursor motion (H/f/A/B/C/D/G/d and their lowercase aliases), line
+ * erase (K), and SGR attribute changes (m). Unsupported letters are ignored
+ * and reported back to the parser so it can resync.
+ *
+ * @param c           Final command byte.
+ * @param seenBracket True if the sequence was introduced with CSI "ESC [".
+ * @param args        Parsed numeric arguments.
+ * @param argCount    Number of valid entries in @p args.
+ * @return true if the command was recognised; false to make the parser drop
+ *         the unknown sequence.
+ */
 static bool
 process_vt100_command(const char c, bool seenBracket, int32 *args,
 	int32 argCount)
@@ -467,6 +581,16 @@ process_vt100_command(const char c, bool seenBracket, int32 *args,
 }
 
 
+/**
+ * @brief Feed one input byte through the VT100 state machine (panic-safe).
+ *
+ * Handles the common control characters (newline, backspace, tab, CR, bell)
+ * directly and shuttles ESC-introduced bytes through the states
+ * CONSOLE_STATE_GOT_ESCAPE / SEEN_BRACKET / NEW_ARG / PARSING_ARG until a
+ * final command byte is seen and dispatched to process_vt100_command().
+ *
+ * @param c Input byte.
+ */
 static void
 parse_character(char c)
 {
@@ -567,6 +691,17 @@ parse_character(char c)
 }
 
 
+/**
+ * @brief "paging" debugger command: toggle/enable/disable on-screen paging.
+ *
+ * Called from KDL with interrupts disabled. With no argument it toggles;
+ * "on"/"off" set explicitly; any other token is parsed as an expression
+ * whose truthiness controls the flag.
+ *
+ * @param argc Argument count (including argv[0] == "paging").
+ * @param argv Argument vector.
+ * @return Always 0.
+ */
 static int
 set_paging(int argc, char **argv)
 {
@@ -592,6 +727,15 @@ set_paging(int argc, char **argv)
 //	#pragma mark -
 
 
+/**
+ * @brief Early initialisation, runnable before the module subsystem is up.
+ *
+ * Bypasses get_module() (which is not usable this early) and binds directly
+ * to gFrameBufferConsoleModule. Clears the paging flags. Safe to call from
+ * the panic path as a last resort if blue_screen_init() was never reached.
+ *
+ * @return B_OK on success; B_ERROR if the console module failed B_MODULE_INIT.
+ */
 status_t
 blue_screen_init_early()
 {
@@ -609,6 +753,16 @@ blue_screen_init_early()
 }
 
 
+/**
+ * @brief Full initialisation, called once during kernel boot.
+ *
+ * Chains blue_screen_init_early() if it did not previously succeed, reads the
+ * "disable_onscreen_paging" safemode flag, and registers the "paging" KDL
+ * command. Not panic-safe: this runs in normal kernel context and touches the
+ * command registry and safemode subsystem.
+ *
+ * @return B_OK on success; B_ERROR if the console module is unavailable.
+ */
 status_t
 blue_screen_init()
 {
@@ -627,6 +781,17 @@ blue_screen_init()
 }
 
 
+/**
+ * @brief Enter KDL/panic mode and paint a clean screen (panic-safe).
+ *
+ * Resets the VT100 state, chooses the colour scheme (black on white for KDL,
+ * white on black for boot debug output), clears the top three rows and places
+ * the cursor at the origin. Called with interrupts disabled from the panic
+ * path, so it only uses the direct console module hooks.
+ *
+ * @param debugOutput True for boot-debug colouring, false for KDL colouring.
+ * @return B_OK on success; B_NO_INIT if the console module has not been bound.
+ */
 status_t
 blue_screen_enter(bool debugOutput)
 {
@@ -651,6 +816,11 @@ blue_screen_enter(bool debugOutput)
 }
 
 
+/**
+ * @brief Query whether on-screen paging is currently enabled (panic-safe).
+ *
+ * @return true if next_line() should prompt the user at screen boundaries.
+ */
 bool
 blue_screen_paging_enabled(void)
 {
@@ -658,6 +828,11 @@ blue_screen_paging_enabled(void)
 }
 
 
+/**
+ * @brief Enable or disable on-screen paging (panic-safe).
+ *
+ * @param enabled New value for the paging flag.
+ */
 void
 blue_screen_set_paging(bool enabled)
 {
@@ -665,6 +840,11 @@ blue_screen_set_paging(bool enabled)
 }
 
 
+/**
+ * @brief Clear the entire screen and home the cursor (panic-safe).
+ *
+ * Used between KDL commands when a clean slate is desired.
+ */
 void
 blue_screen_clear_screen(void)
 {
@@ -673,6 +853,11 @@ blue_screen_clear_screen(void)
 }
 
 
+/**
+ * @brief Non-blocking read of one keyboard byte (panic-safe).
+ *
+ * @return The byte, or -1 if none is available.
+ */
 int
 blue_screen_try_getchar(void)
 {
@@ -680,6 +865,14 @@ blue_screen_try_getchar(void)
 }
 
 
+/**
+ * @brief Blocking read of one keyboard byte (panic-safe).
+ *
+ * Spins on the arch-specific debug console until a key is pressed. Since
+ * interrupts are off in panic context, this is how KDL receives input.
+ *
+ * @return The received byte.
+ */
 char
 blue_screen_getchar(void)
 {
@@ -687,6 +880,15 @@ blue_screen_getchar(void)
 }
 
 
+/**
+ * @brief Write one character through the VT100 parser (panic-safe).
+ *
+ * If the user previously pressed 's' to skip output during a command or boot
+ * debug output, the character is silently dropped. Hides the cursor for the
+ * duration of the write and restores it afterwards.
+ *
+ * @param c Byte to render.
+ */
 void
 blue_screen_putchar(char c)
 {
@@ -703,6 +905,15 @@ blue_screen_putchar(char c)
 }
 
 
+/**
+ * @brief Write a NUL-terminated string through the VT100 parser (panic-safe).
+ *
+ * Equivalent to repeated blue_screen_putchar() but hides/restores the cursor
+ * only once around the burst for less flicker. Respects the same skip-output
+ * behaviour.
+ *
+ * @param text NUL-terminated string to render.
+ */
 void
 blue_screen_puts(const char *text)
 {

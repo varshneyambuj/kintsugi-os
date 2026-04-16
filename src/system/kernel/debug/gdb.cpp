@@ -1,9 +1,59 @@
 /*
- * Copyright 2005-2007, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2002, Manuel J. Petit. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2005-2007, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2002, Manuel J. Petit. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
+ */
+
+/**
+ * @file gdb.cpp
+ * @brief In-kernel stub implementing the GDB Remote Serial Protocol.
+ *
+ * Provides a minimal gdbserver-compatible target that a host "target
+ * remote" gdb session can talk to over the debug serial port. Implements
+ * the essential packet subset: "?" (stop reason), "H" (set thread,
+ * stubbed OK), "q" (a few queries), "g" (read registers), "m" (read
+ * memory through debug_memcpy), plus "c" / "s" / "D" / "k" which all
+ * unwind the state machine back to the normal KDL prompt. Write-register
+ * ("G") and set-breakpoint packets are not implemented and return "E01".
+ *
+ * @brief Packet framing and checksums.
+ *
+ * A full GDB packet has the shape "$payload#cc" where cc is the two-digit
+ * modulo-256 checksum of payload. The receive side is structured as a
+ * small state machine (INIT -> CMDREAD -> CKSUM1 -> CKSUM2 -> WAITACK)
+ * driven one input byte at a time by gdb_state_dispatch(). Replies are
+ * built into sReply with the same framing and acknowledged / retransmitted
+ * based on '+' / '-' from the host.
+ *
+ * @brief KDL / interrupt context.
+ *
+ * cmd_gdb() is entered from the kernel debugger, which itself runs with
+ * interrupts disabled and on a single CPU. No locking is performed
+ * anywhere in this file because nothing else in the kernel is running
+ * while the stub owns the serial line. Memory reads go through
+ * debug_memcpy() so that bad pointers from gdb only produce E02 replies
+ * instead of triple-faulting the CPU.
  */
 
 /** Contains the code to interface with a remote GDB */
@@ -39,6 +89,15 @@ static char sSafeMemory[512];
 // utility functions
 
 
+/**
+ * @brief Converts a single hex ASCII character into its 4-bit value.
+ *
+ * Accepts '0'-'9', 'a'-'f' and 'A'-'F'. Any other input returns 0xff,
+ * which callers treat as a framing error.
+ *
+ * @param input ASCII character to decode.
+ * @return Nibble value 0x0-0xf, or 0xff when the byte is not a hex digit.
+ */
 static int
 parse_nibble(int input)
 {
@@ -60,6 +119,13 @@ parse_nibble(int input)
 //	#pragma mark - GDB protocol
 
 
+/**
+ * @brief Sends a positive packet acknowledgement ('+') to the host.
+ *
+ * Used when a packet has been received and its checksum verified.
+ *
+ * @return void.
+ */
 static void
 gdb_ack(void)
 {
@@ -67,6 +133,14 @@ gdb_ack(void)
 }
 
 
+/**
+ * @brief Sends a negative packet acknowledgement ('-') to the host.
+ *
+ * Requests that the host retransmit the last packet because of a
+ * checksum mismatch or framing error.
+ *
+ * @return void.
+ */
 static void
 gdb_nak(void)
 {
@@ -74,6 +148,14 @@ gdb_nak(void)
 }
 
 
+/**
+ * @brief Retransmits the last reply packet verbatim.
+ *
+ * Invoked in response to a '-' from the host, or after sReply has been
+ * freshly composed and needs to hit the wire for the first time.
+ *
+ * @return void.
+ */
 static void
 gdb_resend_reply(void)
 {
@@ -81,6 +163,17 @@ gdb_resend_reply(void)
 }
 
 
+/**
+ * @brief Formats, checksums and transmits a reply packet.
+ *
+ * Expands the printf-style format into sReply after the '$' framing byte,
+ * computes the modulo-256 checksum over the payload, appends "#xx" and
+ * transmits the complete packet via the serial backend.
+ *
+ * @param format printf-style format string for the packet payload.
+ * @param ...    Arguments consumed by the format string.
+ * @return void.
+ */
 static void
 gdb_reply(char const* format, ...)
 {
@@ -107,6 +200,16 @@ gdb_reply(char const* format, ...)
 }
 
 
+/**
+ * @brief Builds a reply packet containing the current register file.
+ *
+ * Delegates to arch_debug_gdb_get_registers() which writes the
+ * architecture-defined hex-encoded register dump directly into sReply.
+ * If the architecture call fails, or the checksum trailer does not fit
+ * in the reply buffer, an E01 error reply is sent instead.
+ *
+ * @return void.
+ */
 static void
 gdb_regreply()
 {
@@ -141,6 +244,17 @@ gdb_regreply()
 }
 
 
+/**
+ * @brief Replies to an 'm' packet with a hex-encoded memory block.
+ *
+ * Each byte of the caller-supplied buffer is emitted as two hex digits
+ * into sReply following the '$' framing byte; the trailing checksum and
+ * '#xx' delimiter are then appended and the full packet transmitted.
+ *
+ * @param bytes Pointer to the bytes already copied out of kernel memory.
+ * @param numbytes Number of bytes to encode.
+ * @return void.
+ */
 static void
 gdb_memreply(char const* bytes, int numbytes)
 {
@@ -167,6 +281,14 @@ gdb_memreply(char const* bytes, int numbytes)
 //	#pragma mark - checksum verification
 
 
+/**
+ * @brief Validates the checksum of the just-received command packet.
+ *
+ * Recomputes the modulo-256 sum of every byte in sCommand and compares it
+ * against sCheckSum, which was parsed out of the two hex digits after '#'.
+ *
+ * @return 1 when the checksum matches, 0 otherwise.
+ */
 static int
 gdb_verify_checksum(void)
 {
@@ -187,6 +309,27 @@ gdb_verify_checksum(void)
 //	#pragma mark - command parsing
 
 
+/**
+ * @brief Dispatches a fully-received GDB packet by its first byte.
+ *
+ * Validates the checksum (responding '-' + returning to INIT on failure,
+ * '+' otherwise), then switches on sCommand[0] to implement the subset of
+ * packets the stub supports:
+ *   - '?'  fake stop reason (S09 / SIGKILL)
+ *   - 'H'  set-thread, stubbed OK
+ *   - 'q'  queries (Supported returns empty, Offsets returns kernel
+ *          text/data deltas, others return empty)
+ *   - 'c', 'D', 'k' detach/continue/kill - all unwind to QUIT
+ *   - 'g'  register read (delegates to gdb_regreply)
+ *   - 'G'  register write - not implemented, E01
+ *   - 'm'  memory read - parses hex "AAA,LLL", caps len at 128 and uses
+ *          debug_memcpy() through the safe sSafeMemory bounce buffer
+ *   - 's'  step - not implemented, E01
+ *   - default: empty reply (GDB treats as unsupported).
+ *
+ * @return Next state machine state, either WAITACK (packet answered) or
+ *         QUIT (leave the stub) or INIT on checksum failure.
+ */
 static int
 gdb_parse_command(void)
 {
@@ -323,6 +466,18 @@ gdb_parse_command(void)
 //	#pragma mark - protocol state machine
 
 
+/**
+ * @brief State-machine handler for the INIT state.
+ *
+ * Waits for a '$' to mark the start of a new packet. All other bytes are
+ * silently swallowed (the alternative '-' would be strictly correct but
+ * empirically causes more churn with some gdb versions). On '$' the
+ * sCommand buffer is cleared, the index reset, and the machine advances
+ * to CMDREAD.
+ *
+ * @param input Byte just read from the serial port.
+ * @return Next state (INIT or CMDREAD).
+ */
 static int
 gdb_init_handler(int input)
 {
@@ -346,6 +501,15 @@ gdb_init_handler(int input)
 }
 
 
+/**
+ * @brief State-machine handler for the CMDREAD state.
+ *
+ * Appends each byte to sCommand until '#' is seen, which marks the end of
+ * the packet payload and triggers the transition to CKSUM1.
+ *
+ * @param input Byte just read from the serial port.
+ * @return Next state (CMDREAD or CKSUM1).
+ */
 static int
 gdb_cmdread_handler(int input)
 {
@@ -361,6 +525,17 @@ gdb_cmdread_handler(int input)
 }
 
 
+/**
+ * @brief State-machine handler for the first checksum nibble.
+ *
+ * Decodes the high nibble of the modulo-256 checksum following '#'. If
+ * parse_nibble() reports a bad character, the input is silently dropped
+ * (see the commented-out NAK path) but the machine still advances so the
+ * eventual checksum comparison will fail and trigger retransmission.
+ *
+ * @param input ASCII hex digit just read.
+ * @return Next state CKSUM2.
+ */
 static int
 gdb_cksum1_handler(int input)
 {
@@ -384,6 +559,15 @@ gdb_cksum1_handler(int input)
 }
 
 
+/**
+ * @brief State-machine handler for the second checksum nibble.
+ *
+ * Completes sCheckSum with the low nibble and immediately hands off to
+ * gdb_parse_command() which validates the packet and dispatches it.
+ *
+ * @param input ASCII hex digit just read.
+ * @return The state returned by gdb_parse_command() (WAITACK, QUIT or INIT).
+ */
 static int
 gdb_cksum2_handler(int input)
 {
@@ -407,6 +591,17 @@ gdb_cksum2_handler(int input)
 }
 
 
+/**
+ * @brief State-machine handler for WAITACK.
+ *
+ * After sending a reply, the stub waits for the host to acknowledge it
+ * with '+'. A '-' means the host wants a retransmit; any other byte is
+ * treated as a framing desync: we NAK and drop back to INIT to hunt for
+ * the next '$'.
+ *
+ * @param input Byte just read from the serial port.
+ * @return Next state INIT or WAITACK.
+ */
 static int
 gdb_waitack_handler(int input)
 {
@@ -426,6 +621,16 @@ gdb_waitack_handler(int input)
 }
 
 
+/**
+ * @brief State-machine handler for QUIT.
+ *
+ * Terminal state; the outer loop should already have exited before we
+ * ever enter here. Provided so the dispatch table has a non-NULL entry
+ * for every declared state.
+ *
+ * @param input Unused.
+ * @return Always QUIT.
+ */
 static int
 gdb_quit_handler(int input)
 {
@@ -446,6 +651,17 @@ static int (*dispatch_table[GDBSTATES])(int) = {
 };
 
 
+/**
+ * @brief Dispatches a single input byte to the handler for the current state.
+ *
+ * Guards against stray state values by forcing QUIT when curr is out of
+ * range, otherwise indexes into dispatch_table[] and returns the handler's
+ * chosen next state.
+ *
+ * @param curr Current state.
+ * @param input Byte read from the serial port.
+ * @return The next state.
+ */
 static int
 gdb_state_dispatch(int curr, int input)
 {
@@ -456,6 +672,16 @@ gdb_state_dispatch(int curr, int input)
 }
 
 
+/**
+ * @brief Runs the blocking packet-reception loop until QUIT.
+ *
+ * Seeds the state to INIT and then repeatedly pulls bytes off the debug
+ * serial port, feeding each one into gdb_state_dispatch(). Returns only
+ * when a packet that terminates the session ('c', 'D' or 'k') has been
+ * processed, at which point the kernel debugger regains control.
+ *
+ * @return 0 always.
+ */
 static int
 gdb_state_machine(void)
 {
@@ -474,6 +700,20 @@ gdb_state_machine(void)
 //	#pragma mark -
 
 
+/**
+ * @brief KDL "gdb" command: hand control to the in-kernel gdb stub.
+ *
+ * Usage: gdb
+ *
+ * Drops into gdb_state_machine() which runs until the remote host sends a
+ * continue, detach or kill packet. Executed with interrupts disabled as
+ * part of the KDL prompt; no locking is required because the stub owns
+ * the machine for the duration of its run.
+ *
+ * @param argc Argument count (unused).
+ * @param argv Argument vector (unused).
+ * @return 0 when the state machine exits normally.
+ */
 int
 cmd_gdb(int argc, char** argv)
 {

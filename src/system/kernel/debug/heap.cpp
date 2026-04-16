@@ -1,12 +1,46 @@
 /*
- * Copyright 2008-2010, Michael Lotz, mmlr@mlotz.ch.
- * Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Copyright 2001, Travis Geiselbrecht. All rights reserved.
- * Distributed under the terms of the NewOS License.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2010, Michael Lotz, mmlr@mlotz.ch.
+ *   Copyright 2002-2010, Axel Dörfler, axeld@pinc-software.de.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Copyright 2001, Travis Geiselbrecht. All rights reserved.
+ *   Distributed under the terms of the NewOS License.
  */
 
+/**
+ * @file heap.cpp
+ * @brief KDEBUG debug heap: a diagnostic allocator used in place of the
+ *        regular kernel slab/heap when DEBUG_HEAPS is enabled.
+ *
+ * Provides malloc/free/realloc/memalign replacements that add extensive
+ * bookkeeping for catching heap corruption: optional redzone/dead-beef fill
+ * patterns (PARANOID_KERNEL_MALLOC / PARANOID_KERNEL_FREE), per-allocation
+ * leak-check records (KERNEL_HEAP_LEAK_CHECK) capturing caller/size/thread/
+ * team, and full heap-structure validation walks (PARANOID_HEAP_VALIDATION).
+ * Exposes KDL debugger commands ("heap", "allocations",
+ * "allocations_per_caller") for post-mortem inspection, plus a dedicated
+ * grow-heap and VIP heap so out-of-memory recovery does not re-enter the
+ * primary heaps. Per-CPU heap arrays reduce contention under load.
+ */
 
 #include <arch/debug.h>
 #include <debug.h>
@@ -48,6 +82,13 @@
 
 
 #if KERNEL_HEAP_LEAK_CHECK
+/**
+ * @brief Per-allocation footer recording who made the allocation.
+ *
+ * Placed at the tail of every allocation when KERNEL_HEAP_LEAK_CHECK is
+ * enabled so leak walks can attribute blocks to their originating caller,
+ * thread, and team.
+ */
 typedef struct heap_leak_check_info_s {
 	addr_t		caller;
 	size_t		size;
@@ -55,18 +96,34 @@ typedef struct heap_leak_check_info_s {
 	team_id		team;
 } heap_leak_check_info;
 
+/**
+ * @brief Aggregated allocation statistics keyed by caller return address.
+ *
+ * Populated by @c analyze_allocation_callers and consumed by the
+ * "allocations_per_caller" KDL command.
+ */
 struct caller_info {
 	addr_t		caller;
 	uint32		count;
 	uint32		size;
 };
 
+/** @brief Maximum number of distinct callers tracked by the leak walk. */
 static const int32 kCallerInfoTableSize = 1024;
+/** @brief Aggregation table populated during per-caller leak analysis. */
 static caller_info sCallerInfoTable[kCallerInfoTableSize];
+/** @brief Number of valid entries currently in @c sCallerInfoTable. */
 static int32 sCallerInfoCount = 0;
 #endif	// KERNEL_HEAP_LEAK_CHECK
 
 
+/**
+ * @brief Static configuration describing one size-class of the debug heap.
+ *
+ * The table @c sHeapClasses defines three such classes (small, medium,
+ * large) which carve the initial heap memory at startup and determine
+ * the bin layout inside each allocator.
+ */
 typedef struct heap_class_s {
 	const char *name;
 	uint32		initial_percentage;
@@ -80,6 +137,14 @@ typedef struct heap_class_s {
 
 typedef struct heap_page_s heap_page;
 
+/**
+ * @brief One backing memory region inside an allocator.
+ *
+ * Each area owns a contiguous @c page_count page range, a matching
+ * @c page_table, and a free-page list. Areas are threaded into two lists
+ * on the owning allocator: @c areas (size-ordered, excludes completely
+ * full areas) and @c all_areas (base-ordered, used for address lookups).
+ */
 typedef struct heap_area_s {
 	area_id			area;
 
@@ -99,6 +164,14 @@ typedef struct heap_area_s {
 
 #define MAX_BIN_COUNT	31	// depends on the size of the bin_index field
 
+/**
+ * @brief Per-page bookkeeping entry inside an area's page table.
+ *
+ * Small bin allocations set @c bin_index to the owning bin; large
+ * (multi-page) allocations set @c bin_index to the sentinel
+ * @c heap->bin_count and share a single @c allocation_id across the run.
+ * The free list threads through the page's free slots.
+ */
 typedef struct heap_page_s {
 	heap_area *		area;
 	uint16			index;
@@ -114,6 +187,13 @@ typedef struct heap_page_s {
 	addr_t *		free_list;
 } heap_page;
 
+/**
+ * @brief Bin managing a single fixed-size allocation class.
+ *
+ * Each bin owns a page list sorted so that the page with the fewest free
+ * slots appears first, keeping cache hot pages preferred. Access is
+ * serialised by the embedded per-bin mutex.
+ */
 typedef struct heap_bin_s {
 	mutex		lock;
 	uint32		element_size;
@@ -121,6 +201,15 @@ typedef struct heap_bin_s {
 	heap_page *	page_list; // sorted so that the desired page is always first
 } heap_bin;
 
+/**
+ * @brief Primary debug-heap allocator instance.
+ *
+ * One of these is created per heap class (and per CPU where configured).
+ * The @c area_lock protects the @c areas / @c all_areas lists, the
+ * @c page_lock protects free-page manipulation, and each @c heap_bin has
+ * its own mutex. Bookkeeping counters track total / free / empty areas
+ * so the grow thread can decide when to enlarge the heap.
+ */
 struct heap_allocator_s {
 	rw_lock		area_lock;
 	mutex		page_lock;
@@ -145,6 +234,14 @@ struct heap_allocator_s {
 typedef struct heap_allocator_s heap_allocator;
 
 static const uint32 kAreaAllocationMagic = 'AAMG';
+/**
+ * @brief Header stamped at the base of every "huge" (per-area) allocation.
+ *
+ * Allocations larger than @c HEAP_AREA_USE_THRESHOLD bypass the heaps and
+ * get their own @c area_id. The @c kAreaAllocationMagic sentinel lets
+ * @c debug_heap_free / @c debug_heap_realloc recognise these blocks and
+ * tear them down via @c delete_area.
+ */
 typedef struct area_allocation_info_s {
 	area_id		area;
 	void *		base;
@@ -160,6 +257,13 @@ typedef struct area_allocation_info_s {
 
 // Heap class configuration
 #define HEAP_CLASS_COUNT 3
+/**
+ * @brief Static heap-class table consumed at allocator creation time.
+ *
+ * Three classes span small, medium and large allocations with
+ * progressively larger page and bin sizes to keep internal fragmentation
+ * bounded across the full allocation spectrum.
+ */
 static const heap_class sHeapClasses[HEAP_CLASS_COUNT] = {
 	{
 		"small",					/* name */
@@ -194,19 +298,31 @@ static const heap_class sHeapClasses[HEAP_CLASS_COUNT] = {
 };
 
 
+/** @brief Base of the bootstrap heap memory carved at early init. */
 static addr_t sInitialBase;
+/** @brief Size of the bootstrap heap memory carved at early init. */
 static size_t sInitialSize;
 
+/** @brief Number of active entries in @c sHeaps. */
 static uint32 sHeapCount;
+/** @brief All heap allocator instances (HEAP_CLASS_COUNT per CPU). */
 static heap_allocator *sHeaps[HEAP_CLASS_COUNT * SMP_MAX_CPUS];
+/** @brief Monotonic counter of grow requests posted per heap. */
 static uint32 *sLastGrowRequest[HEAP_CLASS_COUNT * SMP_MAX_CPUS];
+/** @brief Value of @c sLastGrowRequest the grow thread last observed. */
 static uint32 *sLastHandledGrowRequest[HEAP_CLASS_COUNT * SMP_MAX_CPUS];
 
+/** @brief Dedicated heap for HEAP_PRIORITY_VIP (interrupt-context) allocs. */
 static heap_allocator *sVIPHeap;
+/** @brief Private heap used exclusively by the grow thread. */
 static heap_allocator *sGrowHeap = NULL;
+/** @brief Thread ID of the heap grower. */
 static thread_id sHeapGrowThread = -1;
+/** @brief Semaphore used to request heap growth. */
 static sem_id sHeapGrowSem = -1;
+/** @brief Semaphore released once growth has completed. */
 static sem_id sHeapGrownNotify = -1;
+/** @brief Flag asking for a new grow heap area on the next grow pass. */
 static bool sAddGrowHeap = false;
 
 
@@ -215,8 +331,18 @@ static bool sAddGrowHeap = false;
 #if KERNEL_HEAP_TRACING
 namespace KernelHeapTracing {
 
+/**
+ * @brief Trace entry recording a successful heap allocation.
+ */
 class Allocate : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Constructs the trace entry and marks it initialised so
+		 *        the tracing subsystem publishes it.
+		 *
+		 * @param address Address returned by the allocator.
+		 * @param size    Requested size in bytes.
+		 */
 		Allocate(addr_t address, size_t size)
 			:	fAddress(address),
 				fSize(size)
@@ -224,6 +350,11 @@ class Allocate : public AbstractTraceEntry {
 			Initialized();
 		}
 
+		/**
+		 * @brief Renders a human-readable description of the entry.
+		 *
+		 * @param out Sink used by the tracing subsystem.
+		 */
 		virtual void AddDump(TraceOutput &out)
 		{
 			out.Print("heap allocate: 0x%08lx (%lu bytes)", fAddress, fSize);
@@ -235,8 +366,18 @@ class Allocate : public AbstractTraceEntry {
 };
 
 
+/**
+ * @brief Trace entry recording a heap reallocation.
+ */
 class Reallocate : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Constructs the trace entry and marks it initialised.
+		 *
+		 * @param oldAddress Address of the source allocation.
+		 * @param newAddress Address of the resulting allocation.
+		 * @param newSize    Requested new size.
+		 */
 		Reallocate(addr_t oldAddress, addr_t newAddress, size_t newSize)
 			:	fOldAddress(oldAddress),
 				fNewAddress(newAddress),
@@ -245,6 +386,11 @@ class Reallocate : public AbstractTraceEntry {
 			Initialized();
 		};
 
+		/**
+		 * @brief Renders a human-readable description of the entry.
+		 *
+		 * @param out Sink used by the tracing subsystem.
+		 */
 		virtual void AddDump(TraceOutput &out)
 		{
 			out.Print("heap reallocate: 0x%08lx -> 0x%08lx (%lu bytes)",
@@ -258,14 +404,27 @@ class Reallocate : public AbstractTraceEntry {
 };
 
 
+/**
+ * @brief Trace entry recording a heap free.
+ */
 class Free : public AbstractTraceEntry {
 	public:
+		/**
+		 * @brief Constructs the trace entry and marks it initialised.
+		 *
+		 * @param address Address whose allocation was released.
+		 */
 		Free(addr_t address)
 			:	fAddress(address)
 		{
 			Initialized();
 		};
 
+		/**
+		 * @brief Renders a human-readable description of the entry.
+		 *
+		 * @param out Sink used by the tracing subsystem.
+		 */
 		virtual void AddDump(TraceOutput &out)
 		{
 			out.Print("heap free: 0x%08lx", fAddress);
@@ -288,6 +447,16 @@ class Free : public AbstractTraceEntry {
 
 
 #if KERNEL_HEAP_LEAK_CHECK
+/**
+ * @brief Walks the current call stack to find the first return address
+ *        outside the allocator code, used to attribute allocations.
+ *
+ * Scans up to five return addresses and returns the first one whose value
+ * is below @c get_caller itself, which heuristically skips frames that
+ * belong to the heap machinery.
+ *
+ * @return Caller return address, or 0 if none could be determined.
+ */
 static addr_t
 get_caller()
 {
@@ -307,6 +476,14 @@ get_caller()
 #endif
 
 
+/**
+ * @brief Prints a single heap page's bookkeeping to the debugger console.
+ *
+ * Walks the page's free list, counting entries, and dumps bin_index,
+ * free_count, empty_index and the free-list head. Called from KDL.
+ *
+ * @param page Heap page to describe.
+ */
 static void
 dump_page(heap_page *page)
 {
@@ -321,6 +498,11 @@ dump_page(heap_page *page)
 }
 
 
+/**
+ * @brief Prints a single heap bin and each of its pages.
+ *
+ * @param bin Bin whose metadata and page list should be dumped.
+ */
 static void
 dump_bin(heap_bin *bin)
 {
@@ -337,6 +519,11 @@ dump_bin(heap_bin *bin)
 }
 
 
+/**
+ * @brief Prints all bins in the given allocator.
+ *
+ * @param heap Allocator whose bin list should be dumped.
+ */
 static void
 dump_bin_list(heap_allocator *heap)
 {
@@ -346,6 +533,11 @@ dump_bin_list(heap_allocator *heap)
 }
 
 
+/**
+ * @brief Prints each area belonging to an allocator (base/size/free pages).
+ *
+ * @param heap Allocator whose @c all_areas list should be walked.
+ */
 static void
 dump_allocator_areas(heap_allocator *heap)
 {
@@ -363,6 +555,13 @@ dump_allocator_areas(heap_allocator *heap)
 }
 
 
+/**
+ * @brief Prints a one-line summary of an allocator plus optional detail.
+ *
+ * @param heap  Allocator to describe.
+ * @param areas If true, also dump the per-area list.
+ * @param bins  If true, also dump the per-bin list.
+ */
 static void
 dump_allocator(heap_allocator *heap, bool areas, bool bins)
 {
@@ -379,6 +578,17 @@ dump_allocator(heap_allocator *heap, bool areas, bool bins)
 }
 
 
+/**
+ * @brief KDL command handler that dumps info about one or all kernel heaps.
+ *
+ * Invoked from the kernel debugger with interrupts disabled. Accepts
+ * "grow" to print only the dedicated grow heap, "stats" to limit output,
+ * or a raw heap address expression.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 always (command result code).
+ */
 static int
 dump_heap_list(int argc, char **argv)
 {
@@ -424,6 +634,20 @@ dump_heap_list(int argc, char **argv)
 
 #if !KERNEL_HEAP_LEAK_CHECK
 
+/**
+ * @brief KDL command handler that dumps live allocations without leak
+ *        tracking compiled in.
+ *
+ * Runs with interrupts disabled from the debugger context. Iterates every
+ * page of every area of every (or the specified) heap, distinguishing
+ * small-bin allocations (by consulting the per-page free list) from
+ * multi-page large allocations (which share an @c allocation_id). With
+ * "stats" only the totals are printed.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success or after printing usage.
+ */
 static int
 dump_allocations(int argc, char **argv)
 {
@@ -533,6 +757,19 @@ dump_allocations(int argc, char **argv)
 
 #else // !KERNEL_HEAP_LEAK_CHECK
 
+/**
+ * @brief KDL command handler that dumps live allocations with leak-check
+ *        metadata filtering.
+ *
+ * Runs with interrupts disabled in the debugger. Supports filtering by
+ * team, thread, caller or address using the @c heap_leak_check_info record
+ * stored at the tail of each allocation. With "stats" only counts/totals
+ * are printed.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success or after printing usage.
+ */
 static int
 dump_allocations(int argc, char **argv)
 {
@@ -658,6 +895,16 @@ dump_allocations(int argc, char **argv)
 }
 
 
+/**
+ * @brief Returns (and lazily creates) the caller_info entry for @p caller.
+ *
+ * The entries are stored in a small fixed-size table populated during the
+ * per-caller summary run. Returns NULL when the table is exhausted.
+ *
+ * @param caller Caller return address to look up.
+ * @return Pointer to an existing or new caller_info, or NULL if the table
+ *         is full.
+ */
 static caller_info*
 get_caller_info(addr_t caller)
 {
@@ -680,6 +927,13 @@ get_caller_info(addr_t caller)
 }
 
 
+/**
+ * @brief qsort comparator: orders caller_info entries by descending size.
+ *
+ * @param _a First caller_info pointer.
+ * @param _b Second caller_info pointer.
+ * @return Negative, zero, or positive per qsort convention.
+ */
 static int
 caller_info_compare_size(const void* _a, const void* _b)
 {
@@ -689,6 +943,13 @@ caller_info_compare_size(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief qsort comparator: orders caller_info entries by descending count.
+ *
+ * @param _a First caller_info pointer.
+ * @param _b Second caller_info pointer.
+ * @return Negative, zero, or positive per qsort convention.
+ */
 static int
 caller_info_compare_count(const void* _a, const void* _b)
 {
@@ -698,6 +959,18 @@ caller_info_compare_count(const void* _a, const void* _b)
 }
 
 
+/**
+ * @brief Walks every live allocation in @p heap and accumulates per-caller
+ *        counts/sizes into @c sCallerInfoTable.
+ *
+ * Used to build the summary displayed by the "allocations_per_caller" KDL
+ * command. The walk handles both bin-sized and multi-page large
+ * allocations, reading the @c heap_leak_check_info record placed at the
+ * tail of each allocation.
+ *
+ * @param heap Allocator to traverse.
+ * @return True on success, false if the caller info table overflowed.
+ */
 static bool
 analyze_allocation_callers(heap_allocator *heap)
 {
@@ -777,6 +1050,19 @@ analyze_allocation_callers(heap_allocator *heap)
 }
 
 
+/**
+ * @brief KDL command handler summarising live allocations grouped by the
+ *        captured caller address.
+ *
+ * Runs with interrupts disabled from the debugger. Accepts @c -c to sort
+ * by allocation count instead of total size, and @c -h to restrict the
+ * analysis to a specific heap address. For each caller, prints count,
+ * size, and the resolved ELF symbol when available.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success or after printing usage.
+ */
 static int
 dump_allocations_per_caller(int argc, char **argv)
 {
@@ -847,6 +1133,20 @@ dump_allocations_per_caller(int argc, char **argv)
 
 
 #if PARANOID_HEAP_VALIDATION
+/**
+ * @brief Exhaustively validates every internal data structure of a heap,
+ *        panicking on the first corruption it detects.
+ *
+ * Acquires all locks (area read lock, every bin lock, and the page lock)
+ * then walks: the per-area free-page list (checking pointer bounds,
+ * indices, prev-link integrity, and the @c free_page_count counter); the
+ * @c areas and @c all_areas ordering invariants; and each bin's page list
+ * including per-page free lists (which must lie on element boundaries).
+ * Corruptions caught include orphaned pages, double-free chains,
+ * mis-linked pages, and free-count mismatches.
+ *
+ * @param heap Allocator to validate.
+ */
 static void
 heap_validate_heap(heap_allocator *heap)
 {
@@ -1021,6 +1321,19 @@ heap_validate_heap(heap_allocator *heap)
 // #pragma mark - Heap functions
 
 
+/**
+ * @brief Adds a memory region to a heap allocator as a new heap area.
+ *
+ * Carves the area header and page table out of the front of @p base, then
+ * inserts the area into both the size-ordered @c areas list (empty, at the
+ * tail) and the base-ordered @c all_areas list. Adjusts the heap's total
+ * page and free-page counters. Takes the area write lock and page lock.
+ *
+ * @param heap   Allocator receiving the new area.
+ * @param areaID Backing @c area_id, or -1 for the initial bootstrap area.
+ * @param base   Base address of the raw memory region.
+ * @param size   Size of the region in bytes.
+ */
 void
 heap_add_area(heap_allocator *heap, area_id areaID, addr_t base, size_t size)
 {
@@ -1108,6 +1421,19 @@ heap_add_area(heap_allocator *heap, area_id areaID, addr_t base, size_t size)
 }
 
 
+/**
+ * @brief Detaches an entirely-empty area from an allocator.
+ *
+ * Assumes both the area write lock and the page lock are held by the
+ * caller. Panics if the area still has in-use pages or is the sole
+ * non-full area left. Updates the @c areas and @c all_areas lists and
+ * decrements heap-wide page counters; the backing @c area_id is deleted
+ * by the caller after the locks are dropped.
+ *
+ * @param heap Allocator owning the area.
+ * @param area Area to unlink.
+ * @return B_OK on success, B_ERROR if preconditions are violated.
+ */
 static status_t
 heap_remove_area(heap_allocator *heap, heap_area *area)
 {
@@ -1156,6 +1482,23 @@ heap_remove_area(heap_allocator *heap, heap_area *area)
 }
 
 
+/**
+ * @brief Constructs a new heap_allocator either at the head of @p base or
+ *        on the existing kernel heap.
+ *
+ * Computes the bin layout from @p heapClass (min_bin_size, min_count_per_
+ * page, bin_alignment, max_waste_per_page), initialises per-bin mutexes,
+ * the area rw-lock and page lock, then calls @c heap_add_area to install
+ * the remaining memory as the allocator's first area.
+ *
+ * @param name          Name used in debug output.
+ * @param base          Base of the backing memory region.
+ * @param size          Size of the backing memory region.
+ * @param heapClass     Configuration describing bin shapes.
+ * @param allocateOnHeap If true, allocate the header via @c malloc rather
+ *                      than embedding it in @p base.
+ * @return The newly initialised allocator.
+ */
 static heap_allocator *
 heap_create_allocator(const char *name, addr_t base, size_t size,
 	const heap_class *heapClass, bool allocateOnHeap)
@@ -1216,6 +1559,19 @@ heap_create_allocator(const char *name, addr_t base, size_t size,
 }
 
 
+/**
+ * @brief Updates bookkeeping after @p pageCount pages are returned to the
+ *        area's free list.
+ *
+ * Assumes the heap's page lock is held by the caller. Re-links the area
+ * into the size-ordered @c areas list so that areas with more free pages
+ * appear first, and updates the heap's empty-area count when an area
+ * becomes completely free.
+ *
+ * @param heap      Owning allocator.
+ * @param area      Area whose pages were freed.
+ * @param pageCount Number of pages just returned.
+ */
 static inline void
 heap_free_pages_added(heap_allocator *heap, heap_area *area, uint32 pageCount)
 {
@@ -1258,6 +1614,18 @@ heap_free_pages_added(heap_allocator *heap, heap_area *area, uint32 pageCount)
 }
 
 
+/**
+ * @brief Updates bookkeeping after @p pageCount pages are taken from an
+ *        area's free list.
+ *
+ * Assumes the heap's page lock is held. Removes the area from @c areas
+ * if it is now full, or re-sorts it forward so areas with more free pages
+ * stay at the head. Also decrements the empty-area count if applicable.
+ *
+ * @param heap      Owning allocator.
+ * @param area      Area whose pages were consumed.
+ * @param pageCount Number of pages just taken.
+ */
 static inline void
 heap_free_pages_removed(heap_allocator *heap, heap_area *area, uint32 pageCount)
 {
@@ -1304,6 +1672,14 @@ heap_free_pages_removed(heap_allocator *heap, heap_area *area, uint32 pageCount)
 }
 
 
+/**
+ * @brief Inserts @p page at the head of a doubly-linked page list.
+ *
+ * Assumes the appropriate bin or area lock is held by the caller.
+ *
+ * @param page Page to insert.
+ * @param list Address of the list head pointer.
+ */
 static inline void
 heap_link_page(heap_page *page, heap_page **list)
 {
@@ -1315,6 +1691,16 @@ heap_link_page(heap_page *page, heap_page **list)
 }
 
 
+/**
+ * @brief Removes @p page from a doubly-linked page list, fixing up the
+ *        head pointer if needed.
+ *
+ * Assumes the appropriate bin or area lock is held by the caller.
+ *
+ * @param page Page to unlink.
+ * @param list Address of the list head pointer, or NULL if only neighbour
+ *             fix-up is needed.
+ */
 static inline void
 heap_unlink_page(heap_page *page, heap_page **list)
 {
@@ -1330,6 +1716,21 @@ heap_unlink_page(heap_page *page, heap_page **list)
 }
 
 
+/**
+ * @brief Finds and reserves @p pageCount contiguous free pages across the
+ *        allocator's areas honouring @p alignment.
+ *
+ * Acquires the heap page lock. Iterates the size-ordered @c areas list,
+ * stepping by @p alignment when it exceeds the page size, and greedily
+ * searches for a run of free pages. Marks each selected page in-use,
+ * tags @c bin_index as the "large allocation" sentinel and stamps the
+ * starting index into @c allocation_id for later free/realloc walks.
+ *
+ * @param heap      Allocator to allocate from.
+ * @param pageCount Number of contiguous pages required.
+ * @param alignment Required alignment in bytes (may exceed the page size).
+ * @return First page of the run, or NULL if none of the areas can satisfy.
+ */
 static heap_page *
 heap_allocate_contiguous_pages(heap_allocator *heap, uint32 pageCount,
 	size_t alignment)
@@ -1397,6 +1798,19 @@ heap_allocate_contiguous_pages(heap_allocator *heap, uint32 pageCount,
 
 
 #if KERNEL_HEAP_LEAK_CHECK
+/**
+ * @brief Stamps a @c heap_leak_check_info footer at the tail of an
+ *        allocation so future walks can attribute it.
+ *
+ * The record captures the requested size, current thread/team, and the
+ * caller return address reported by the allocator's @c get_caller hook.
+ *
+ * @param heap      Allocator performing the allocation (for its caller
+ *                  hook).
+ * @param address   Base of the allocation.
+ * @param allocated Total bytes reserved (bin element size or page run).
+ * @param size      Requested user-visible size including leak-check fudge.
+ */
 static void
 heap_add_leak_check_info(heap_allocator *heap, addr_t address, size_t allocated,
 	size_t size)
@@ -1411,6 +1825,19 @@ heap_add_leak_check_info(heap_allocator *heap, addr_t address, size_t allocated,
 #endif
 
 
+/**
+ * @brief Serves an allocation by reserving a page run from the allocator
+ *        rather than from a bin.
+ *
+ * Rounds @p size up to a whole number of pages, requests contiguous pages
+ * via @c heap_allocate_contiguous_pages, and stamps leak-check metadata
+ * into the tail when compiled in.
+ *
+ * @param heap      Allocator to allocate from.
+ * @param size      Requested size in bytes.
+ * @param alignment Requested alignment (forwarded to the page allocator).
+ * @return Pointer to the allocated memory, or NULL on failure.
+ */
 static void *
 heap_raw_alloc(heap_allocator *heap, size_t size, size_t alignment)
 {
@@ -1434,6 +1861,20 @@ heap_raw_alloc(heap_allocator *heap, size_t size, size_t alignment)
 }
 
 
+/**
+ * @brief Allocates one element from a specific bin of @p heap.
+ *
+ * Acquires the bin lock (and, on cold paths that need a new page, the
+ * page lock). If the bin has no partially-used page, pulls one off the
+ * area free list and initialises it. Reuses a previously-freed slot via
+ * the page's @c free_list when present; otherwise bumps @c empty_index.
+ * Updates the bin page list ordering when the page becomes full.
+ *
+ * @param heap     Allocator to allocate from.
+ * @param binIndex Index into @c heap->bins.
+ * @param size     Requested user size (used for leak-check metadata).
+ * @return Pointer to the allocated element, or NULL if no pages are free.
+ */
 static void *
 heap_allocate_from_bin(heap_allocator *heap, uint32 binIndex, size_t size)
 {
@@ -1505,6 +1946,14 @@ heap_allocate_from_bin(heap_allocator *heap, uint32 binIndex, size_t size)
 }
 
 
+/**
+ * @brief Tests whether @p number is zero or a power of two.
+ *
+ * Used to sanity-check alignment arguments passed to memalign.
+ *
+ * @param number Candidate alignment value.
+ * @return True if @p number is zero or a single-bit integer.
+ */
 static bool
 is_valid_alignment(size_t number)
 {
@@ -1513,6 +1962,15 @@ is_valid_alignment(size_t number)
 }
 
 
+/**
+ * @brief Returns true when @p heap is close enough to full that the grow
+ *        thread should be notified.
+ *
+ * The threshold is 20% of the configured grow size of free memory.
+ *
+ * @param heap Allocator to inspect.
+ * @return True if the heap should be grown soon.
+ */
 inline bool
 heap_should_grow(heap_allocator *heap)
 {
@@ -1521,6 +1979,22 @@ heap_should_grow(heap_allocator *heap)
 }
 
 
+/**
+ * @brief Core aligned allocation entry point for a single heap instance.
+ *
+ * Picks the smallest suitable bin whose element size satisfies @p size and
+ * whose alignment matches when @p alignment is non-zero; otherwise falls
+ * back to @c heap_raw_alloc. When PARANOID_KERNEL_MALLOC is enabled the
+ * returned memory is filled with 0xcc, and when PARANOID_KERNEL_FREE is
+ * enabled the second word is cleared of its stale 0xdeadbeef poison so
+ * a subsequent free does not misdiagnose double-free. Records the
+ * allocation with the tracing macro @c T(Allocate...).
+ *
+ * @param heap      Allocator to serve from.
+ * @param alignment Required alignment (must be a power of two, or zero).
+ * @param size      Requested size in bytes.
+ * @return Pointer to the allocation, or NULL on failure.
+ */
 static void *
 heap_memalign(heap_allocator *heap, size_t alignment, size_t size)
 {
@@ -1591,6 +2065,25 @@ heap_memalign(heap_allocator *heap, size_t alignment, size_t size)
 }
 
 
+/**
+ * @brief Releases an allocation back to its owning heap.
+ *
+ * Walks the base-ordered @c all_areas list to locate the containing area
+ * (returning @c B_ENTRY_NOT_FOUND if the address is not ours). For small
+ * allocations: when PARANOID_KERNEL_FREE is on, detects double-free by
+ * checking the 0xdeadbeef sentinel and by scanning the page's free list;
+ * otherwise pushes the address onto the free list and overwrites the rest
+ * with 0xdeadbeef. Rejects misaligned pointers. Updates the bin page list
+ * and, if the page becomes empty, returns it to the area free-page list.
+ * For large allocations, walks the consecutive pages sharing the same
+ * @c allocation_id and releases them all at once. When more than one
+ * empty area exists, deletes the redundant ones to return memory.
+ *
+ * @param heap    Allocator to attempt the free on.
+ * @param address Pointer returned by a previous allocation, or NULL.
+ * @return B_OK on success, B_ENTRY_NOT_FOUND if the address is not in this
+ *         heap, or B_ERROR on detected corruption.
+ */
 static status_t
 heap_free(heap_allocator *heap, void *address)
 {
@@ -1762,6 +2255,16 @@ heap_free(heap_allocator *heap, void *address)
 
 
 #if KERNEL_HEAP_LEAK_CHECK
+/**
+ * @brief Overrides the caller-capture hook used by an allocator.
+ *
+ * Allows subsystems such as the slab layer to install a custom unwind
+ * routine so that leak records attribute allocations to their real
+ * user instead of the inner heap machinery.
+ *
+ * @param heap      Allocator whose hook should be replaced.
+ * @param getCaller New caller-resolution function.
+ */
 extern "C" void
 heap_set_get_caller(heap_allocator* heap, addr_t (*getCaller)())
 {
@@ -1770,6 +2273,26 @@ heap_set_get_caller(heap_allocator* heap, addr_t (*getCaller)())
 #endif
 
 
+/**
+ * @brief Resizes an allocation belonging to @p heap.
+ *
+ * Locates the source area via the base-ordered @c all_areas list. Works
+ * out the current min/max size (bin element size boundary for small
+ * allocations, consecutive same-@c allocation_id page count for large
+ * ones). If @p newSize fits in the existing slot the pointer is reused
+ * and leak-check metadata updated in place; otherwise a new block is
+ * allocated with @c malloc_etc, the payload is copied up to the smaller
+ * of the two sizes, and the original is freed.
+ *
+ * @param heap       Allocator that owns the block.
+ * @param address    Current allocation.
+ * @param newAddress [out] Resulting pointer (may equal @p address).
+ * @param newSize    Requested new size.
+ * @param flags      Allocation flags forwarded to @c malloc_etc.
+ * @return B_OK on success or when the allocator could not fulfil (in
+ *         which case @c *newAddress is NULL), or B_ENTRY_NOT_FOUND if the
+ *         address does not belong to @p heap.
+ */
 static status_t
 heap_realloc(heap_allocator *heap, void *address, void **newAddress,
 	size_t newSize, uint32 flags)
@@ -1877,6 +2400,18 @@ heap_realloc(heap_allocator *heap, void *address, void **newAddress,
 }
 
 
+/**
+ * @brief Selects the heap index that should serve an allocation of a
+ *        given size on a given CPU.
+ *
+ * Chooses the smallest heap class whose @c max_allocation_size covers
+ * @p size, then rotates across per-CPU duplicates to spread contention.
+ *
+ * @param size Requested allocation size (leak-check overhead added when
+ *             compiled in).
+ * @param cpu  Origin CPU number.
+ * @return Index into @c sHeaps.
+ */
 inline uint32
 heap_index_for(size_t size, int32 cpu)
 {
@@ -1895,6 +2430,21 @@ heap_index_for(size_t size, int32 cpu)
 }
 
 
+/**
+ * @brief Attempts an allocation without triggering synchronous heap
+ *        growth.
+ *
+ * Used when the caller cannot block (e.g. the grow thread itself, or
+ * allocations flagged @c HEAP_DONT_WAIT_FOR_MEMORY). Prefers the
+ * dedicated grow heap when running on the grow thread, nudging the heap
+ * grower asynchronously when its reserves look thin; otherwise walks the
+ * per-CPU public heaps in rotation. Returns NULL rather than waiting for
+ * more memory.
+ *
+ * @param alignment Required alignment.
+ * @param size      Requested size in bytes.
+ * @return Pointer to the allocation, or NULL if no heap could satisfy.
+ */
 static void *
 memalign_nogrow(size_t alignment, size_t size)
 {
@@ -1936,6 +2486,18 @@ memalign_nogrow(size_t alignment, size_t size)
 }
 
 
+/**
+ * @brief Creates a fresh backing kernel area and attaches it to @p heap.
+ *
+ * Invoked from the grow thread to enlarge a heap that is running low. On
+ * PARANOID_HEAP_VALIDATION builds the newly enlarged heap is then
+ * re-validated.
+ *
+ * @param heap Allocator to extend.
+ * @param name Debug name for the new area.
+ * @param size Size of the new area in bytes.
+ * @return B_OK on success; propagated @c create_area error otherwise.
+ */
 static status_t
 heap_create_new_heap_area(heap_allocator *heap, const char *name, size_t size)
 {
@@ -1956,6 +2518,18 @@ heap_create_new_heap_area(heap_allocator *heap, const char *name, size_t size)
 }
 
 
+/**
+ * @brief Worker thread body that grows the public and grow heaps on
+ *        demand.
+ *
+ * Blocks on @c sHeapGrowSem, then extends the dedicated grow heap first
+ * when requested, followed by any public heap that has accumulated an
+ * un-handled grow request or that @c heap_should_grow now deems low.
+ * Signals @c sHeapGrownNotify to release waiters retrying failed
+ * allocations.
+ *
+ * @return Never returns.
+ */
 static int32
 heap_grow_thread(void *)
 {
@@ -1999,6 +2573,18 @@ heap_grow_thread(void *)
 //	#pragma mark -
 
 
+/**
+ * @brief First-phase initialiser for the debug heap.
+ *
+ * Carves the initial kernel heap memory into one allocator per heap class
+ * using each class's @c initial_percentage, and registers KDL commands
+ * ("heap", "allocations", "allocations_per_caller") so debugging support
+ * is available as early as possible.
+ *
+ * @param base  Base of the initial kernel heap region.
+ * @param size  Size of that region.
+ * @return B_OK.
+ */
 static status_t
 debug_heap_init(struct kernel_args*, addr_t base, size_t size)
 {
@@ -2055,6 +2641,18 @@ debug_heap_init(struct kernel_args*, addr_t base, size_t size)
 }
 
 
+/**
+ * @brief Area-subsystem init phase: promotes the bootstrap heap and
+ *        creates the dedicated grow and VIP heaps.
+ *
+ * Wraps the pre-existing kernel heap memory in a proper @c area_id,
+ * allocates a private 1 MiB "grow" area used by the grow thread to avoid
+ * re-entering the public heaps, and a 1 MiB "VIP I/O" heap for
+ * allocations tagged @c HEAP_PRIORITY_VIP.
+ *
+ * @return B_OK on success; B_ERROR or propagated @c create_area error
+ *         otherwise.
+ */
 static status_t
 debug_heap_init_post_area()
 {
@@ -2111,6 +2709,12 @@ debug_heap_init_post_area()
 }
 
 
+/**
+ * @brief Semaphore-subsystem init phase: creates the semaphores used to
+ *        wake and synchronise the grow thread.
+ *
+ * @return B_OK on success; B_ERROR on @c create_sem failure.
+ */
 static status_t
 debug_heap_init_post_sem()
 {
@@ -2130,6 +2734,17 @@ debug_heap_init_post_sem()
 }
 
 
+/**
+ * @brief Thread-subsystem init phase: spawns the grow thread and the
+ *        per-CPU heap duplicates.
+ *
+ * When there is enough physical memory, allocates additional heap
+ * instances (one set of HEAP_CLASS_COUNT allocators per extra CPU) so
+ * allocation load can be spread across CPUs. Also registers per-heap
+ * variants of the "heap" and "heap_allocations" KDL commands.
+ *
+ * @return B_OK on success; propagated thread-creation error otherwise.
+ */
 static status_t
 debug_heap_init_post_thread()
 {
@@ -2188,6 +2803,23 @@ debug_heap_init_post_thread()
 
 
 
+/**
+ * @brief Top-level aligned allocation entry point of the debug heap.
+ *
+ * Replaces the normal kernel heap's memalign under DEBUG_HEAPS. Panics
+ * when called with interrupts disabled outside the kernel startup window.
+ * Huge allocations (> HEAP_AREA_USE_THRESHOLD) bypass the heaps entirely
+ * and get their own @c area_id framed by an @c area_allocation_info
+ * header so @c debug_heap_free can recognise them. Regular allocations
+ * round-robin through the per-CPU heaps, and when none can satisfy, an
+ * urgent grow request is sent and the caller waits on
+ * @c sHeapGrownNotify before retrying.
+ *
+ * @param alignment Required alignment (power of two or zero).
+ * @param size      Requested size in bytes.
+ * @return Pointer to allocated memory; never returns NULL (panics if all
+ *         heaps are exhausted even after growth).
+ */
 static void *
 debug_heap_memalign(size_t alignment, size_t size)
 {
@@ -2281,6 +2913,20 @@ debug_heap_memalign(size_t alignment, size_t size)
 }
 
 
+/**
+ * @brief Flag-aware allocation dispatcher wired into
+ *        @c kernel_debug_heap::memalign_etc.
+ *
+ * Routes @c HEAP_PRIORITY_VIP requests to the VIP heap, non-blocking
+ * requests (@c HEAP_DONT_WAIT_FOR_MEMORY / @c HEAP_DONT_LOCK_KERNEL_SPACE)
+ * to @c memalign_nogrow, and everything else to the normal path.
+ *
+ * @param alignment Required alignment.
+ * @param size      Requested size in bytes.
+ * @param flags     Allocation flag bitmask.
+ * @return Pointer to the allocated memory (may be NULL for non-blocking
+ *         paths).
+ */
 static void *
 debug_heap_memalign_etc(size_t alignment, size_t size, uint32 flags)
 {
@@ -2296,6 +2942,19 @@ debug_heap_memalign_etc(size_t alignment, size_t size, uint32 flags)
 }
 
 
+/**
+ * @brief Top-level free entry point of the debug heap.
+ *
+ * Replaces the normal kernel heap's free under DEBUG_HEAPS. Panics if
+ * called with interrupts disabled outside kernel startup. Tries each
+ * public per-CPU heap (starting from the current CPU's offset), then the
+ * dedicated grow heap and the VIP heap, and finally handles huge-area
+ * allocations identified by their @c kAreaAllocationMagic sentinel. If
+ * no owner can be found the caller passed a bogus pointer and the
+ * function panics.
+ *
+ * @param address Pointer returned by a previous allocation.
+ */
 static void
 debug_heap_free(void *address)
 {
@@ -2344,6 +3003,16 @@ debug_heap_free(void *address)
 }
 
 
+/**
+ * @brief Flag-aware free dispatcher wired into
+ *        @c kernel_debug_heap::free_etc.
+ *
+ * Routes frees tagged @c HEAP_PRIORITY_VIP directly to the VIP heap, and
+ * otherwise delegates to @c debug_heap_free.
+ *
+ * @param address Pointer to free.
+ * @param flags   Allocation-flag bitmask used at the matching allocation.
+ */
 static void
 debug_heap_free_etc(void *address, uint32 flags)
 {
@@ -2354,6 +3023,22 @@ debug_heap_free_etc(void *address, uint32 flags)
 }
 
 
+/**
+ * @brief Top-level realloc entry point of the debug heap.
+ *
+ * Replaces the normal kernel heap's realloc under DEBUG_HEAPS. Panics if
+ * called with interrupts disabled outside kernel startup. Handles the
+ * alloc/free degenerate cases, then asks each public per-CPU heap and
+ * the grow heap in turn. Huge-area allocations are resized in place when
+ * possible, otherwise a new block is allocated, the payload copied, and
+ * the old area destroyed.
+ *
+ * @param address Existing allocation, or NULL to allocate fresh.
+ * @param newSize New requested size; 0 frees.
+ * @param flags   Allocation-flag bitmask.
+ * @return Pointer to the (possibly moved) allocation, or NULL on failure
+ *         / after a free.
+ */
 static void *
 debug_heap_realloc(void *address, size_t newSize, uint32 flags)
 {
@@ -2429,6 +3114,13 @@ debug_heap_realloc(void *address, size_t newSize, uint32 flags)
 }
 
 
+/**
+ * @brief Vtable wiring this debug heap into the kernel's heap dispatcher.
+ *
+ * Selected by the boot code when DEBUG_HEAPS is enabled so that every
+ * kernel @c malloc / @c free / @c realloc / @c memalign call goes through
+ * the allocator defined in this file instead of the normal slab/heap.
+ */
 kernel_heap_implementation kernel_debug_heap = {
 	"debug_heap",
 	// allocate 16MB initial heap for the kernel

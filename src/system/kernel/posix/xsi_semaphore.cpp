@@ -1,9 +1,47 @@
 /*
- * Copyright 2008-2023, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Salvatore Benedetto <salvatore.benedetto@gmail.com>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2008-2023, Haiku, Inc. All rights reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *   		Salvatore Benedetto <salvatore.benedetto@gmail.com>
+ */
+
+/**
+ * @file xsi_semaphore.cpp
+ * @brief XSI (System V) IPC semaphore kernel implementation.
+ *
+ * Implements semget(), semctl() and the multi-op semop() semantics, plus the
+ * semadj/SEM_UNDO bookkeeping that must survive team exit. A key_t is mapped
+ * through sIpcHashTable to an Ipc wrapper holding the current semid; an
+ * integer semid is mapped through sSemaphoreHashTable to an XsiSemaphoreSet
+ * containing an array of XsiSemaphore slots. Each slot owns two condition
+ * variables (waiters-for-zero and waiters-to-increase) so semop() can block
+ * exactly the right set of threads. SEM_UNDO operations are recorded into
+ * per-set and per-team lists; the team-exit hook xsi_sem_undo() walks the
+ * team list and replays negated deltas to preserve the classic invariant
+ * that a terminated process cannot leave a semaphore permanently decremented.
+ * Waiters detect IPC_RMID during their sleep by snapshotting the set
+ * sequence number before blocking and re-checking it after wake; a mismatch
+ * is reported back as EIDRM, while a signal becomes EINTR.
  */
 
 #include <posix/xsi_semaphore.h>
@@ -40,7 +78,22 @@ namespace {
 
 class XsiSemaphoreSet;
 
+/**
+ * @brief Per-(team,set) SEM_UNDO record linking into two lists.
+ *
+ * Invariant: every sem_undo is simultaneously a member of its owning
+ * XsiSemaphoreSet's fUndoList (via the primary link) and of its team's
+ * xsi_sem_context->undo_list (via team_link). Tearing either side down
+ * must remove the node from both lists.
+ */
 struct sem_undo : DoublyLinkedListLinkImpl<sem_undo> {
+	/**
+	 * @brief Build a sem_undo binding a team to a semaphore set.
+	 *
+	 * @param semaphoreSet Set this undo record belongs to.
+	 * @param team Team owning the adjustments.
+	 * @param undoValues Heap array of per-semaphore undo deltas (semadj).
+	 */
 	sem_undo(XsiSemaphoreSet *semaphoreSet, Team *team, int16 *undoValues)
 		:
 		semaphore_set(semaphoreSet),
@@ -63,12 +116,25 @@ typedef DoublyLinkedList<sem_undo,
 
 
 // Forward declared in global namespace.
+/**
+ * @brief Per-team SEM_UNDO context (lives on Team::xsi_sem_context).
+ *
+ * Holds the list of every sem_undo belonging to this team, protected by a
+ * private mutex that is always acquired inside the owning set's lock to
+ * preserve the "set-then-team" lock ordering used throughout the file.
+ */
 struct xsi_sem_context {
+	/**
+	 * @brief Construct the context and initialise its mutex.
+	 */
 	xsi_sem_context()
 	{
 		mutex_init(&lock, "Private team undo_list lock");
 	}
 
+	/**
+	 * @brief Destroy the context's mutex; the team-list must already be empty.
+	 */
 	~xsi_sem_context()
 	{
 		mutex_destroy(&lock);
@@ -81,9 +147,18 @@ struct xsi_sem_context {
 
 namespace {
 
-// Xsi semaphore definition
+/**
+ * @brief One slot in an XSI semaphore set.
+ *
+ * Stores the XSI-visible semval and sempid together with two condition
+ * variables: fWaitingToIncrease wakes threads that need the counter to go
+ * above zero, fWaitingToBeZero wakes threads that need it to return to zero.
+ */
 class XsiSemaphore {
 public:
+	/**
+	 * @brief Initialise an empty semaphore slot with value 0 and no owner pid.
+	 */
 	XsiSemaphore()
 		:
 		fLastPidOperation(0),
@@ -93,6 +168,13 @@ public:
 		fWaitingToBeZero.Init(this, "XsiSemaphore");
 	}
 
+	/**
+	 * @brief Destroy the slot, waking every waiter with EIDRM.
+	 *
+	 * sem_undo records referencing this slot are intentionally left in
+	 * place; the team-exit path xsi_sem_undo() handles the case where the
+	 * backing set has been destroyed by looking the set up and skipping it.
+	 */
 	~XsiSemaphore()
 	{
 		// For some reason the semaphore is getting destroyed.
@@ -108,9 +190,18 @@ public:
 		// number nor our semaphore set id.
 	}
 
-	// We return true in case the operation causes the
-	// caller to wait, so it can undo all the operations
-	// previously done
+	/**
+	 * @brief Attempt to apply a sem_op delta; report whether the caller must sleep.
+	 *
+	 * The caller inspects the return: true means value would have gone
+	 * negative so the caller must undo previously-applied ops from the same
+	 * semop() call and then block. A successful add wakes zero-waiters if
+	 * the value hit zero, or increase-waiters if it went positive.
+	 *
+	 * @param value Signed delta to apply.
+	 * @return true if the operation would block (nothing was mutated),
+	 *         false if value was applied.
+	 */
 	bool Add(short value)
 	{
 		if ((int)(fValue + value) < 0) {
@@ -126,11 +217,26 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Unregister a waiter entry without actually sleeping on it.
+	 *
+	 * Called on the EINTR path so the entry does not linger on the
+	 * condition variable after the thread decides not to retry.
+	 *
+	 * @param queueEntry Entry to unregister.
+	 */
 	static void Dequeue(ConditionVariableEntry *queueEntry)
 	{
 		queueEntry->Wait(B_RELATIVE_TIMEOUT, 0);
 	}
 
+	/**
+	 * @brief Register a waiter on the appropriate condition variable.
+	 *
+	 * @param queueEntry Entry to register.
+	 * @param waitForZero true for "waiting for semval == 0" (sem_op == 0),
+	 *                    false for "waiting for semval to increase" (sem_op < 0).
+	 */
 	void Enqueue(ConditionVariableEntry *queueEntry, bool waitForZero)
 	{
 		if (waitForZero) {
@@ -140,11 +246,25 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Last pid that modified this slot (GETPID).
+	 *
+	 * @return sempid value.
+	 */
 	pid_t LastPid() const
 	{
 		return fLastPidOperation;
 	}
 
+	/**
+	 * @brief Reverse an earlier Add(), used for rollback and SEM_UNDO.
+	 *
+	 * Invariant: Revert(v) followed by Add(v) is a no-op modulo wakeups.
+	 * Wakes zero-waiters or increase-waiters as appropriate after the
+	 * adjustment.
+	 *
+	 * @param value Delta that was previously added; will be subtracted out.
+	 */
 	void Revert(short value)
 	{
 		fValue -= value;
@@ -154,31 +274,66 @@ public:
 			WakeUpThreads(false);
 	}
 
+	/**
+	 * @brief Record the pid of the last process to touch this slot.
+	 *
+	 * @param pid Process id to store.
+	 */
 	void SetPid(pid_t pid)
 	{
 		fLastPidOperation = pid;
 	}
 
+	/**
+	 * @brief Directly overwrite the semaphore value (SETVAL / SETALL).
+	 *
+	 * @param value New semval.
+	 */
 	void SetValue(ushort value)
 	{
 		fValue = value;
 	}
 
+	/**
+	 * @brief Count of threads blocked waiting for semval to increase (GETNCNT).
+	 *
+	 * @return Number of waiters on fWaitingToIncrease.
+	 */
 	ushort ThreadsWaitingToIncrease()
 	{
 		return fWaitingToIncrease.EntriesCount();
 	}
 
+	/**
+	 * @brief Count of threads blocked waiting for semval to hit zero (GETZCNT).
+	 *
+	 * @return Number of waiters on fWaitingToBeZero.
+	 */
 	ushort ThreadsWaitingToBeZero()
 	{
 		return fWaitingToBeZero.EntriesCount();
 	}
 
+	/**
+	 * @brief Accessor for the current semaphore value (GETVAL).
+	 *
+	 * @return Current semval.
+	 */
 	ushort Value() const
 	{
 		return fValue;
 	}
 
+	/**
+	 * @brief Wake every thread on exactly one of the two condition variables.
+	 *
+	 * Both kinds of waiters are broadcast en-masse because multiple waiters
+	 * may be able to complete their semop() after one Add(), and picking
+	 * exactly the right subset would require per-waiter op knowledge.
+	 *
+	 * @param waitingForZero true to wake fWaitingToBeZero, false for
+	 *                       fWaitingToIncrease.
+	 */
 	void WakeUpThreads(bool waitingForZero)
 	{
 		if (waitingForZero) {
@@ -198,9 +353,25 @@ private:
 
 #define MAX_XSI_SEMS_PER_TEAM	128
 
-// Xsi semaphore set definition (semid_ds)
+/**
+ * @brief A set of XSI semaphores accessible through a single semid.
+ *
+ * Mirrors the XSI semid_ds record plus internal state: an array of
+ * XsiSemaphore slots, the permission mask, timestamps, a per-set mutex,
+ * a sequence number used to detect IPC_RMID across blocking, and the
+ * per-set fUndoList of sem_undo records.
+ */
 class XsiSemaphoreSet {
 public:
+	/**
+	 * @brief Allocate the slot array and initialise metadata.
+	 *
+	 * Success is reported through InitOK() so the caller can distinguish
+	 * a well-constructed-but-unallocated set from a good one.
+	 *
+	 * @param numberOfSemaphores Number of slots to allocate.
+	 * @param flags Permission bits (low nine bits).
+	 */
 	XsiSemaphoreSet(int numberOfSemaphores, int flags)
 		: fInitOK(false),
 		fLastSemctlTime((time_t)real_time_clock()),
@@ -219,6 +390,12 @@ public:
 			fInitOK = true;
 	}
 
+	/**
+	 * @brief Destroy the set, releasing the slot array and the lock.
+	 *
+	 * Waking of threads blocked on the individual slots is performed by
+	 * each XsiSemaphore's own destructor as part of deleting fSemaphores.
+	 */
 	~XsiSemaphoreSet()
 	{
 		TRACE(("XsiSemaphoreSet::~XsiSemaphoreSet(): removing semaphore "
@@ -227,6 +404,15 @@ public:
 		delete[] fSemaphores;
 	}
 
+	/**
+	 * @brief Zero the calling team's undo delta for one slot (SETVAL helper).
+	 *
+	 * Invariant: after SETVAL the semaphore's value no longer depends on
+	 * earlier operations, so any pending semadj contribution from the
+	 * calling team must be discarded.
+	 *
+	 * @param semaphoreNumber Slot index whose undo value is cleared.
+	 */
 	void ClearUndo(ushort semaphoreNumber)
 	{
 		Team *team = thread_get_current_thread()->team;
@@ -244,6 +430,12 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Zero every undo delta for the calling team (SETALL helper).
+	 *
+	 * Invariant: SETALL rewrites all slots, so every semadj contribution
+	 * from the calling team becomes meaningless and is cleared in one pass.
+	 */
 	void ClearUndos()
 	{
 		// Clear all undo_values (POSIX semadj equivalent)
@@ -263,6 +455,14 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Apply a user-supplied semid_ds to this set (IPC_SET handler).
+	 *
+	 * Only uid, gid, and the low nine permission bits are copied; cuid and
+	 * cgid remain fixed per XSI.
+	 *
+	 * @param result User-supplied semid_ds already in kernel memory.
+	 */
 	void DoIpcSet(struct semid_ds *result)
 	{
 		fPermissions.uid = result->sem_perm.uid;
@@ -271,6 +471,14 @@ public:
 			| (result->sem_perm.mode & 0x01ff);
 	}
 
+	/**
+	 * @brief Check whether the effective uid/gid may modify this set.
+	 *
+	 * Invariant implemented: S_IWOTH always grants, root always grants,
+	 * S_IWUSR grants to the owner, S_IWGRP grants to the primary group.
+	 *
+	 * @return true if the caller has write permission.
+	 */
 	bool HasPermission() const
 	{
 		if ((fPermissions.mode & S_IWOTH) != 0)
@@ -288,55 +496,117 @@ public:
 		return false;
 	}
 
+	/**
+	 * @brief Read-permission check (currently delegates to HasPermission).
+	 *
+	 * @return true if the caller may read status from this set.
+	 */
 	bool HasReadPermission() const
 	{
 		// TODO: fix this
 		return HasPermission();
 	}
 
+	/**
+	 * @brief Accessor for the kernel-assigned semid.
+	 *
+	 * @return semid of this set.
+	 */
 	int ID() const
 	{
 		return fID;
 	}
 
+	/**
+	 * @brief Report whether construction successfully allocated the slot array.
+	 *
+	 * @return true when the constructor succeeded in allocating fSemaphores.
+	 */
 	bool InitOK()
 	{
 		return fInitOK;
 	}
 
+	/**
+	 * @brief Accessor for the associated IPC key.
+	 *
+	 * @return key_t, or (key_t)-1 for a private (IPC_PRIVATE) set.
+	 */
 	key_t IpcKey() const
 	{
 		return fPermissions.key;
 	}
 
+	/**
+	 * @brief Return a copy of this set's ipc_perm record.
+	 *
+	 * @return ipc_perm snapshot suitable for IPC_STAT userland copy-out.
+	 */
 	struct ipc_perm IpcPermission() const
 	{
 		return fPermissions;
 	}
 
+	/**
+	 * @brief Timestamp of the last semctl() call (sem_ctime).
+	 *
+	 * @return Unix time in seconds.
+	 */
 	time_t LastSemctlTime() const
 	{
 		return fLastSemctlTime;
 	}
 
+	/**
+	 * @brief Timestamp of the last successful semop() call (sem_otime).
+	 *
+	 * @return Unix time in seconds, or 0 if semop() has never succeeded.
+	 */
 	time_t LastSemopTime() const
 	{
 		return fLastSemopTime;
 	}
 
+	/**
+	 * @brief Accessor for the per-set mutex.
+	 *
+	 * @return Reference to the mutex guarding this set's state.
+	 */
 	mutex &Lock()
 	{
 		return fLock;
 	}
 
+	/**
+	 * @brief Accessor for the number of slots in the set (sem_nsems).
+	 *
+	 * @return Slot count set at construction time.
+	 */
 	ushort NumberOfSemaphores() const
 	{
 		return fNumberOfSemaphores;
 	}
 
-	// Record the sem_undo operation into our private fUndoList and
-	// the team undo_list. The only limit here is the memory needed
-	// for creating a new sem_undo structure.
+	/**
+	 * @brief Record (or extend) a SEM_UNDO adjustment for the calling team.
+	 *
+	 * Invariants upheld:
+	 *   * At most one sem_undo per (team, set) pair.
+	 *   * undo_values[i] stays in the [-USHRT_MAX, USHRT_MAX] window so
+	 *     replay during team exit cannot overflow a short.
+	 *   * The record is linked into BOTH fUndoList (per-set) and the
+	 *     team's xsi_sem_context->undo_list before this function returns,
+	 *     so either traversal path can later find and destroy it.
+	 * On the first recorded undo for a team, the team's xsi_sem_context is
+	 * lazily created with an atomic compare-exchange so concurrent callers
+	 * agree on a single context.
+	 *
+	 * @param semaphoreNumber Slot the operation applies to.
+	 * @param value Delta that was just applied to the semaphore (to be
+	 *              subtracted at team exit).
+	 * @return B_OK on success, ERANGE if the accumulated delta would
+	 *         overflow the semadj range, B_NO_MEMORY on allocation failure.
+	 */
 	int RecordUndo(ushort semaphoreNumber, short value)
 	{
 		// Look if there is already a record from the team caller
@@ -411,6 +681,17 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Undo a prior RecordUndo-driven Add() after a later op failed.
+	 *
+	 * Invariant: only invoked on the rollback path of a multi-op semop()
+	 * that has already recorded some undos and must now reverse them.
+	 * Unlike ClearUndo(), this does not touch the undo_values array; only
+	 * the live semval is adjusted back.
+	 *
+	 * @param semaphoreNumber Slot to revert.
+	 * @param value Delta previously applied (will be subtracted).
+	 */
 	void RevertUndo(ushort semaphoreNumber, short value)
 	{
 		// This can be called only when RecordUndo fails.
@@ -426,11 +707,22 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Access the nth slot in the set.
+	 *
+	 * @param nth Zero-based slot index; caller is responsible for bounds.
+	 * @return Pointer to the XsiSemaphore at that index.
+	 */
 	XsiSemaphore* Semaphore(int nth) const
 	{
 		return &fSemaphores[nth];
 	}
 
+	/**
+	 * @brief Sequence number assigned by SetID(); used for IPC_RMID detection.
+	 *
+	 * @return Monotonically increasing number unique per creation event.
+	 */
 	uint32 SequenceNumber() const
 	{
 		return fSequenceNumber;
@@ -439,21 +731,39 @@ public:
 	// Implemented after sGlobalSequenceNumber is declared
 	void SetID();
 
+	/**
+	 * @brief Bind this set to an IPC key.
+	 *
+	 * @param key New key, or (key_t)-1 to mark the set private.
+	 */
 	void SetIpcKey(key_t key)
 	{
 		fPermissions.key = key;
 	}
 
+	/**
+	 * @brief Stamp the sem_ctime timestamp with the current real-time clock.
+	 */
 	void SetLastSemctlTime()
 	{
 		fLastSemctlTime = real_time_clock();
 	}
 
+	/**
+	 * @brief Stamp the sem_otime timestamp with the current real-time clock.
+	 */
 	void SetLastSemopTime()
 	{
 		fLastSemopTime = real_time_clock();
 	}
 
+	/**
+	 * @brief Initialise owner/creator uid/gid and permission bits.
+	 *
+	 * Invariant: after this call cuid/cgid are fixed for the set's lifetime.
+	 *
+	 * @param flags Low nine bits carry the mode bits.
+	 */
 	void SetPermissions(int flags)
 	{
 		fPermissions.uid = fPermissions.cuid = geteuid();
@@ -461,11 +771,21 @@ public:
 		fPermissions.mode = (flags & 0x01ff);
 	}
 
+	/**
+	 * @brief Access the per-set list of sem_undo records.
+	 *
+	 * @return Reference to the fUndoList list.
+	 */
 	UndoList &GetUndoList()
 	{
 		return fUndoList;
 	}
 
+	/**
+	 * @brief Accessor used by the hash table for its intrusive chain link.
+	 *
+	 * @return Reference to the hash-link next pointer.
+	 */
 	XsiSemaphoreSet*& Link()
 	{
 		return fLink;
@@ -486,26 +806,53 @@ private:
 	XsiSemaphoreSet*			fLink;
 };
 
-// Xsi semaphore set hash table
+/**
+ * @brief Open-hash-table policy keying XsiSemaphoreSet entries by semid.
+ */
 struct SemaphoreHashTableDefinition {
 	typedef int					KeyType;
 	typedef XsiSemaphoreSet		ValueType;
 
+	/**
+	 * @brief Hash an integer semid into a table slot.
+	 *
+	 * @param key semid.
+	 * @return Hash value.
+	 */
 	size_t HashKey (const int key) const
 	{
 		return (size_t)key;
 	}
 
+	/**
+	 * @brief Hash an existing set by its stored semid.
+	 *
+	 * @param variable Set entry.
+	 * @return Hash value matching its id.
+	 */
 	size_t Hash(XsiSemaphoreSet *variable) const
 	{
 		return (size_t)variable->ID();
 	}
 
+	/**
+	 * @brief Compare a key against an entry by semid equality.
+	 *
+	 * @param key Lookup semid.
+	 * @param variable Candidate entry.
+	 * @return true when the ids match.
+	 */
 	bool Compare(const int key, XsiSemaphoreSet *variable) const
 	{
 		return (int)key == (int)variable->ID();
 	}
 
+	/**
+	 * @brief Return the chain-link field embedded in the entry.
+	 *
+	 * @param variable Entry whose link is needed.
+	 * @return Reference to the hash-link next pointer.
+	 */
 	XsiSemaphoreSet*& GetLink(XsiSemaphoreSet *variable) const
 	{
 		return variable->Link();
@@ -513,30 +860,60 @@ struct SemaphoreHashTableDefinition {
 };
 
 
-// IPC class
+/**
+ * @brief Key-to-semid mapping stored in sIpcHashTable.
+ *
+ * Created the first time a non-private key is requested and destroyed when
+ * the corresponding set is removed via IPC_RMID.
+ */
 class Ipc {
 public:
+	/**
+	 * @brief Construct an Ipc entry for a key with no bound set yet.
+	 *
+	 * @param key XSI IPC key this entry represents.
+	 */
 	Ipc(key_t key)
 		: fKey(key),
 		fSemaphoreSetId(-1)
 	{
 	}
 
+	/**
+	 * @brief Accessor for the IPC key.
+	 *
+	 * @return key_t associated with this entry.
+	 */
 	key_t Key() const
 	{
 		return fKey;
 	}
 
+	/**
+	 * @brief Accessor for the bound semid (-1 if none).
+	 *
+	 * @return semid currently bound to this key, or -1 if unbound.
+	 */
 	int SemaphoreSetID() const
 	{
 		return fSemaphoreSetId;
 	}
 
+	/**
+	 * @brief Bind this key entry to a semaphore set by copying its id.
+	 *
+	 * @param semaphoreSet The set to bind.
+	 */
 	void SetSemaphoreSetID(XsiSemaphoreSet *semaphoreSet)
 	{
 		fSemaphoreSetId = semaphoreSet->ID();
 	}
 
+	/**
+	 * @brief Accessor used by the IPC hash table for its chain link.
+	 *
+	 * @return Reference to the hash-link next pointer.
+	 */
 	Ipc*& Link()
 	{
 		return fLink;
@@ -549,25 +926,53 @@ private:
 };
 
 
+/**
+ * @brief Open-hash-table policy keying Ipc entries by key_t.
+ */
 struct IpcHashTableDefinition {
 	typedef key_t	KeyType;
 	typedef Ipc		ValueType;
 
+	/**
+	 * @brief Hash a key_t into a table slot.
+	 *
+	 * @param key Lookup key.
+	 * @return Hash value.
+	 */
 	size_t HashKey (const key_t key) const
 	{
 		return (size_t)(key);
 	}
 
+	/**
+	 * @brief Hash an existing Ipc entry by its stored key.
+	 *
+	 * @param variable Ipc entry.
+	 * @return Hash value matching the entry's key.
+	 */
 	size_t Hash(Ipc *variable) const
 	{
 		return (size_t)HashKey(variable->Key());
 	}
 
+	/**
+	 * @brief Compare a key against an entry's key.
+	 *
+	 * @param key Lookup key.
+	 * @param variable Candidate entry.
+	 * @return true when the keys match.
+	 */
 	bool Compare(const key_t key, Ipc *variable) const
 	{
 		return (key_t)key == (key_t)variable->Key();
 	}
 
+	/**
+	 * @brief Expose the chain-link field used by the hash table.
+	 *
+	 * @param variable Ipc entry whose link is needed.
+	 * @return Reference to the hash-link next pointer.
+	 */
 	Ipc*& GetLink(Ipc *variable) const
 	{
 		return variable->Link();
@@ -594,6 +999,14 @@ static int32 sXsiSemaphoreSetCount = 0;
 //	#pragma mark -
 
 
+/**
+ * @brief Assign a unique semid and sequence number under the global lock.
+ *
+ * Invariant: caller holds sXsiSemaphoreSetLock. Starts the id at the
+ * current wall-clock seconds and linearly probes upward (mod INT_MAX) until
+ * the id is free. The global sequence number is then advanced and copied
+ * in so that post-IPC_RMID lookups can detect reused ids.
+ */
 void
 XsiSemaphoreSet::SetID()
 {
@@ -612,6 +1025,12 @@ XsiSemaphoreSet::SetID()
 //	#pragma mark - Kernel exported API
 
 
+/**
+ * @brief One-time kernel initialiser for the XSI semaphore subsystem.
+ *
+ * Brings up the two hash tables (Ipc and semaphore set) and their guarding
+ * mutexes. Panics if either hash table fails to initialise.
+ */
 void
 xsi_sem_init()
 {
@@ -628,7 +1047,17 @@ xsi_sem_init()
 }
 
 
-/*!	Function called on team exit to process any sem_undo requests */
+/**
+ * @brief Replay and tear down every SEM_UNDO request on team exit.
+ *
+ * Invariant the helper preserves: when a team terminates, every slot it
+ * touched with SEM_UNDO is rolled back by the accumulated semadj value.
+ * The semaphore-set hash lock is held across the traversal so IPC_RMID
+ * cannot free sets out from under us; per-set and team locks are taken in
+ * the conventional order (set first, then team).
+ *
+ * @param team Exiting team.
+ */
 void
 xsi_sem_undo(Team *team)
 {
@@ -673,6 +1102,21 @@ xsi_sem_undo(Team *team)
 //	#pragma mark - Syscalls
 
 
+/**
+ * @brief Syscall entry point for semget().
+ *
+ * Looks up (or lazily creates) the Ipc record for the key, enforces
+ * IPC_CREAT/IPC_EXCL semantics, and allocates a new XsiSemaphoreSet if
+ * required. IPC_PRIVATE always creates a fresh unkeyed set. Honors the
+ * global MAX_XSI_SEMAPHORE and MAX_XSI_SEMAPHORE_SET caps.
+ *
+ * @param key XSI key or IPC_PRIVATE.
+ * @param numberOfSemaphores Slot count (must be > 0 and < MAX_XSI_SEMS_PER_TEAM
+ *        when creating; may be 0 to attach to an existing set).
+ * @param flags Permission bits plus IPC_CREAT/IPC_EXCL.
+ * @return New or existing semid on success, or a negative errno (ENOENT,
+ *         EEXIST, EACCES, EINVAL, ENOSPC, ENOMEM).
+ */
 int
 _user_xsi_semget(key_t key, int numberOfSemaphores, int flags)
 {
@@ -780,6 +1224,30 @@ _user_xsi_semget(key_t key, int numberOfSemaphores, int flags)
 }
 
 
+/**
+ * @brief Syscall entry point for semctl().
+ *
+ * Dispatches the full XSI command table: GETVAL/SETVAL/GETPID/GETNCNT/
+ * GETZCNT/GETALL/SETALL for individual slots and slot vectors, plus
+ * IPC_STAT/IPC_SET/IPC_RMID for the set as a whole. Read operations check
+ * read permission; mutating operations check write permission; IPC_RMID
+ * removes the set, drops the Ipc entry, sweeps out every queued sem_undo,
+ * and wakes all sleepers via the destructor chain.
+ *
+ * Lock ordering: the ipc-hash and set-hash locks are acquired first; for
+ * non-RMID commands both are released once the per-set mutex is held so
+ * concurrent callers on other sets can make progress. IPC_RMID keeps both
+ * hash locks held until the set is gone so no waiter can latch on to a
+ * destroyed mutex.
+ *
+ * @param semaphoreID semid.
+ * @param semaphoreNumber Slot index (only consulted for slot commands).
+ * @param command One of GETVAL/SETVAL/GETPID/GETNCNT/GETZCNT/GETALL/SETALL/
+ *                IPC_STAT/IPC_SET/IPC_RMID.
+ * @param _args User pointer to a semun (interpretation depends on command).
+ * @return Command-specific non-negative value on success (e.g. GETVAL
+ *         returns the semval) or a negative errno on failure.
+ */
 int
 _user_xsi_semctl(int semaphoreID, int semaphoreNumber, int command,
 	union semun *_args)
@@ -1017,6 +1485,26 @@ _user_xsi_semctl(int semaphoreID, int semaphoreNumber, int command,
 }
 
 
+/**
+ * @brief Syscall entry point for semop().
+ *
+ * Atomic multi-operation primitive. The loop attempts to apply every
+ * sembuf entry in order; if any entry would block, operations already
+ * applied in this pass are reverted before the thread enqueues on the
+ * offending slot's condition variable and sleeps. Post-wake, the set is
+ * re-looked-up and the sequence number compared so that an IPC_RMID that
+ * ran during the sleep becomes EIDRM, while signal-driven wakeups become
+ * EINTR (distinct from the IPC_NOWAIT fast-fail path that returns EAGAIN).
+ * SEM_UNDO entries are recorded only after the whole set of ops succeeds;
+ * a late RecordUndo() failure rolls back both the semaphore deltas and
+ * any undo entries registered earlier in the same call.
+ *
+ * @param semaphoreID semid.
+ * @param ops User pointer to an array of sembuf structures.
+ * @param numOps Number of sembuf entries.
+ * @return B_OK (0) on success, or an errno-style value (EINVAL, EAGAIN,
+ *         EINTR, EIDRM, ENOSPC, ENOMEM, B_BAD_ADDRESS).
+ */
 status_t
 _user_xsi_semop(int semaphoreID, struct sembuf *ops, size_t numOps)
 {
