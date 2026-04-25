@@ -1,10 +1,29 @@
-/******************************************************************************
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright 1995-97, Be Incorporated.
+ */
 
-	File:	AudioStream.h
+/** @file OldAudioStream.h
+    @brief Legacy R5 BADCStream and BDACStream classes wrapping the audio
+           server's capture and playback buffer streams. Deprecated; retained
+           for binary compatibility. */
 
-	Copyright 1995-97, Be Incorporated
-
-******************************************************************************/
 #ifndef _AUDIO_STREAM_H
 #define _AUDIO_STREAM_H
 
@@ -16,6 +35,8 @@
    Class definition for BADCStream and BDACStream
    ================ */
 
+/** @brief Legacy buffer-stream client for capturing audio from the ADC, with
+           controls for input device, sampling rate, and mic boost. Deprecated. */
 class BADCStream : public BAbstractBufferStream
 {
 public:
@@ -51,6 +72,8 @@ virtual	void		_ReservedADCStream3();
 };
 
 
+/** @brief Legacy buffer-stream client for playing audio through the DAC, with
+           controls for sampling rate and per-device volume/enable. Deprecated. */
 class BDACStream : public BAbstractBufferStream
 {
 public:

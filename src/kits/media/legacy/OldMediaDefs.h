@@ -1,10 +1,29 @@
-/******************************************************************************
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright 1995-97, Be Incorporated.
+ */
 
-	File:	MediaDefs.h
+/** @file OldMediaDefs.h
+    @brief Legacy R5 media-kit constants and enums (audio device codes,
+           subscriber sentinels, sample formats) used by the deprecated
+           BSubscriber/BBufferStream APIs. */
 
-	Copyright 1995-97, Be Incorporated
-
-******************************************************************************/
 #ifndef _MEDIA_DEFS_H
 #define _MEDIA_DEFS_H
 

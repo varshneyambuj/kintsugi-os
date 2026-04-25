@@ -1,75 +1,84 @@
-/* $Xorg: Region.c,v 1.6 2001/02/09 02:03:35 xorgcvs Exp $ */
-/************************************************************************
-
-Copyright 1987, 1988, 1998  The Open Group
-
-Permission to use, copy, modify, distribute, and sell this software and its
-documentation for any purpose is hereby granted without fee, provided that
-the above copyright notice appear in all copies and that both that
-copyright notice and this permission notice appear in supporting
-documentation.
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
-OPEN GROUP BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of The Open Group shall not be
-used in advertising or otherwise to promote the sale, use or other dealings
-in this Software without prior written authorization from The Open Group.
-
-
-Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
-
-                        All Rights Reserved
-
-Permission to use, copy, modify, and distribute this software and its
-documentation for any purpose and without fee is hereby granted,
-provided that the above copyright notice appear in all copies and that
-both that copyright notice and this permission notice appear in
-supporting documentation, and that the name of Digital not be
-used in advertising or publicity pertaining to distribution of the
-software without specific, written prior permission.
-
-DIGITAL DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE, INCLUDING
-ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL
-DIGITAL BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR
-ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
-WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
-ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
-SOFTWARE.
-
-************************************************************************/
-/* $XFree86: xc/lib/X11/Region.c,v 1.9 2002/06/04 22:19:57 dawes Exp $ */
 /*
- * The functions in this file implement the BRegion* abstraction, similar to one
- * used in the X11 sample server. A BRegion* is simply an area, as the name
- * implies, and is implemented as a "y-x-banded" array of rectangles. To
- * explain: Each BRegion* is made up of a certain number of rectangles sorted
- * by y coordinate first, and then by x coordinate.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Furthermore, the rectangles are banded such that every rectangle with a
- * given upper-left y coordinate (top) will have the same lower-right y
- * coordinate (bottom) and vice versa. If a rectangle has scanlines in a band, it
- * will span the entire vertical distance of the band. This means that some
- * areas that could be merged into a taller rectangle will be represented as
- * several shorter rectangles to account for shorter rectangles to its left
- * or right but within its "vertical scope".
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * An added constraint on the rectangles is that they must cover as much
- * horizontal area as possible. E.g. no two rectangles in a band are allowed
- * to touch.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
- * Whenever possible, bands will be merged together to cover a greater vertical
- * distance (and thus reduce the number of rectangles). Two bands can be merged
- * only if the bottom of one touches the top of the other and they have
- * rectangles in the same places (of the same width, of course). This maintains
- * the y-x-banding that's so nice to have...
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   $Xorg: Region.c,v 1.6 2001/02/09 02:03:35 xorgcvs Exp $
+ *   $XFree86: xc/lib/X11/Region.c,v 1.9 2002/06/04 22:19:57 dawes Exp $
+ *
+ *   Copyright 1987, 1988, 1998  The Open Group
+ *
+ *   Permission to use, copy, modify, distribute, and sell this software and
+ *   its documentation for any purpose is hereby granted without fee, provided
+ *   that the above copyright notice appear in all copies and that both that
+ *   copyright notice and this permission notice appear in supporting
+ *   documentation.
+ *
+ *   The above copyright notice and this permission notice shall be included
+ *   in all copies or substantial portions of the Software.
+ *
+ *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ *   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ *   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ *   IN NO EVENT SHALL THE OPEN GROUP BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ *   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ *   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ *   OTHER DEALINGS IN THE SOFTWARE.
+ *
+ *   Except as contained in this notice, the name of The Open Group shall not
+ *   be used in advertising or otherwise to promote the sale, use or other
+ *   dealings in this Software without prior written authorization from The
+ *   Open Group.
+ *
+ *   Copyright 1987, 1988 by Digital Equipment Corporation, Maynard,
+ *   Massachusetts. All Rights Reserved.
+ *
+ *   Permission to use, copy, modify, and distribute this software and its
+ *   documentation for any purpose and without fee is hereby granted, provided
+ *   that the above copyright notice appear in all copies and that both that
+ *   copyright notice and this permission notice appear in supporting
+ *   documentation, and that the name of Digital not be used in advertising or
+ *   publicity pertaining to distribution of the software without specific,
+ *   written prior permission.
+ *
+ *   DIGITAL DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE, INCLUDING
+ *   ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL
+ *   DIGITAL BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR
+ *   ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+ *   WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ *   ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS
+ *   SOFTWARE.
+ */
+
+
+/**
+ * @file RegionSupport.cpp
+ * @brief Implementation of the BRegion arithmetic primitives (y-x banded rectangles).
+ *
+ * The functions in this file implement the BRegion* abstraction, similar to
+ * the one used in the X11 sample server. A BRegion* is an area implemented
+ * as a "y-x-banded" array of rectangles: rectangles are sorted by y first,
+ * then by x. Every rectangle with a given upper-left y coordinate (top) has
+ * the same lower-right y coordinate (bottom) and vice versa, so each
+ * rectangle spans the full vertical distance of its band. Adjacent bands are
+ * merged when their top/bottom edges touch and their x-spans match.
+ *
+ * @see BRegion
  */
 
 #include "RegionSupport.h"

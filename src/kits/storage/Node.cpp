@@ -709,7 +709,7 @@ void BNode::_RudeNode6() { }
 		class specific resources freed in their close_fd() version
 		thereafter.
 
-	\param fd the file descriptor this BNode should be set to (may be -1).
+	@param fd the file descriptor this BNode should be set to (may be -1).
 
 	\returns \c B_OK if everything went fine, or an error code if something
 		went wrong.
@@ -760,7 +760,7 @@ BNode::close_fd()
 	To be used by derived classes instead of accessing the BNode's private
 	\c fCStatus member directly.
 
-	\param newStatus the new value for the status variable.
+	@param newStatus the new value for the status variable.
 */
 /**
  * @brief Sets the BNode's initialization status variable.
@@ -789,12 +789,12 @@ BNode::set_status(status_t newStatus)
 
 	The \a fCStatus member will be set to the return value of this method.
 
-	\param fd Either a directory FD or a value < 0. In the latter case \a path
+	@param fd Either a directory FD or a value < 0. In the latter case \a path
 	       must be specified.
-	\param path Either \a NULL in which case \a fd must be given, absolute, or
+	@param path Either \a NULL in which case \a fd must be given, absolute, or
 	       relative to the directory specified by \a fd (if given) or to the
 	       current working directory.
-	\param traverse If the node identified by \a fd and \a path is a symlink
+	@param traverse If the node identified by \a fd and \a path is a symlink
 	       and \a traverse is \c true, the symlink will be resolved recursively.
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
@@ -837,8 +837,8 @@ BNode::_SetTo(int fd, const char* path, bool traverse)
 
 	The \a fCStatus member will be set to the return value of this method.
 
-	\param ref An entry_ref identifying the node to be opened.
-	\param traverse If the node identified by \a ref is a symlink and
+	@param ref An entry_ref identifying the node to be opened.
+	@param traverse If the node identified by \a ref is a symlink and
 	       \a traverse is \c true, the symlink will be resolved recursively.
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
@@ -878,8 +878,8 @@ BNode::_SetTo(const entry_ref* ref, bool traverse)
 
 	Inherited from and called by BStatable.
 
-	\param st a stat structure containing the value to be set.
-	\param what specifies what setting to be modified.
+	@param st a stat structure containing the value to be set.
+	@param what specifies what setting to be modified.
 
 	\returns \c B_OK if everything went fine, or an error code otherwise.
 */

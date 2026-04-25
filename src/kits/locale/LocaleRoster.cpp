@@ -301,7 +301,7 @@ BLocaleRoster::GetPreferredLanguages(BMessage* languages) const
 
 
 /**
- * \brief Fills \c message with 'language'-fields containing the language-
+ * @brief Fills \c message with 'language'-fields containing the language-
  * ID(s) of all available languages.
  */
 /**
@@ -640,11 +640,11 @@ BLocaleRoster::IsFilesystemTranslationPreferred() const
 }
 
 
-/*!	\brief Looks up a localized filename from a catalog.
-	\param localizedFileName A pre-allocated BString object for the result
+/*!	@brief Looks up a localized filename from a catalog.
+	@param localizedFileName A pre-allocated BString object for the result
 		of the lookup.
-	\param ref An entry_ref with an attribute holding data for catalog lookup.
-	\param traverse A boolean to decide if symlinks are to be traversed.
+	@param ref An entry_ref with an attribute holding data for catalog lookup.
+	@param traverse A boolean to decide if symlinks are to be traversed.
 	\return
 	- \c B_OK: success
 	- \c B_ENTRY_NOT_FOUND: failure. Attribute not found, entry not found

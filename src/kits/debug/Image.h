@@ -1,7 +1,27 @@
 /*
- * Copyright 2005-2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2005-2009, Ingo Weinhold.
  */
+
+/** @file Image.h
+    @brief Abstract Image hierarchy for representing a loaded ELF image's
+           metadata and symbol table during debugging. */
 
 #ifndef IMAGE_H
 #define IMAGE_H
@@ -23,16 +43,23 @@ namespace BPrivate {
 namespace Debug {
 
 
+/** @brief Abstract base for a loaded image's metadata; concrete subclasses
+ *         resolve symbols against a memory-mapped ELF file or kernel image. */
 class Image : public DoublyLinkedListLinkImpl<Image> {
 public:
 								Image();
 	virtual						~Image();
 
+	/** @brief Returns the image_info captured for this image. */
 			const image_info&	Info() const		{ return fInfo; }
+	/** @brief Returns the image_id assigned to this image by the loader. */
 			image_id			ID() const			{ return fInfo.id; }
+	/** @brief Returns the path/name of the underlying file. */
 			const char*			Name() const		{ return fInfo.name; }
+	/** @brief Returns the base address of the image's text segment. */
 			addr_t				TextAddress() const
 				{ return (addr_t)fInfo.text; }
+	/** @brief Returns the size of the image's text segment in bytes. */
 			size_t				TextSize() const	{ return fInfo.text_size; }
 
 	virtual	const elf_sym*		LookupSymbol(addr_t address,
@@ -55,6 +82,8 @@ protected:
 };
 
 
+/** @brief Image specialisation that resolves symbols by linearly scanning a
+ *         loaded ELF symbol/string table pair. */
 class SymbolTableBasedImage : public Image {
 public:
 								SymbolTableBasedImage();
@@ -83,6 +112,8 @@ protected:
 };
 
 
+/** @brief Concrete Image backed by an ELF file mapped from disk; used when the
+ *         original executable is still available outside the running team. */
 class ImageFile : public SymbolTableBasedImage {
 public:
 								ImageFile();
@@ -106,6 +137,8 @@ private:
 };
 
 
+/** @brief Concrete Image representing the kernel itself, loaded from the
+ *         running kernel's symbol tables. */
 class KernelImage : public SymbolTableBasedImage {
 public:
 								KernelImage();
@@ -115,6 +148,8 @@ public:
 };
 
 
+/** @brief Concrete Image representing the kernel-shared "comm page" image
+ *         that exposes a small set of vsyscall-style entry points. */
 class CommPageImage : public SymbolTableBasedImage {
 public:
 								CommPageImage();

@@ -108,13 +108,13 @@ const BRoster* be_roster;
 	The function searchs for a field "app_info" typed B_REG_APP_INFO_TYPE
 	and initializes \a info with the found data.
 
-	\param message The message
-	\param info A pointer to a pre-allocated app_info to be filled in with the
+	@param message The message
+	@param info A pointer to a pre-allocated app_info to be filled in with the
 	       info found in the message.
 
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE \c NULL \a message or \a info.
+	@return A status code.
+	@retval B_OK Everything went fine.
+	@retval B_BAD_VALUE \c NULL \a message or \a info.
 */
 static status_t
 find_message_app_info(BMessage* message, app_info* info)
@@ -152,14 +152,14 @@ find_message_app_info(BMessage* message, app_info* info)
 
 	Currently it is only checked whether the application is in the trash.
 
-	\param ref An entry_ref referring to the application executable.
+	@param ref An entry_ref referring to the application executable.
 
-	\return A status code, \c B_OK on success oir other error codes specifying
+	@return A status code, \c B_OK on success oir other error codes specifying
 	        why the application cannot be used.
-	\retval B_OK The application can be used.
-	\retval B_ENTRY_NOT_FOUND \a ref doesn't refer to and existing entry.
-	\retval B_IS_A_DIRECTORY \a ref refers to a directory.
-	\retval B_LAUNCH_FAILED_APP_IN_TRASH The application executable is in the
+	@retval B_OK The application can be used.
+	@retval B_ENTRY_NOT_FOUND \a ref doesn't refer to and existing entry.
+	@retval B_IS_A_DIRECTORY \a ref refers to a directory.
+	@retval B_LAUNCH_FAILED_APP_IN_TRASH The application executable is in the
 	        trash.
 */
 static status_t
@@ -196,10 +196,10 @@ can_app_be_used(const entry_ref* ref)
 
 /*!	Compares the supplied version infos.
 
-	\param info1 The first info.
-	\param info2 The second info.
+	@param info1 The first info.
+	@param info2 The second info.
 
-	\return \c -1, if the first info is less than the second one, \c 1, if
+	@return \c -1, if the first info is less than the second one, \c 1, if
 	        the first one is greater than the second one, and \c 0, if both
 	        are equal.
 */
@@ -242,9 +242,9 @@ compare_version_infos(const version_info& info1, const version_info& info2)
 	If one file has a version info, it is said to be greater. If both
 	files have no version info, their modification times are compared.
 
-	\param app1 An entry_ref referring to the first application.
-	\param app2 An entry_ref referring to the second application.
-	\return \c -1, if the first application version is less than the second
+	@param app1 An entry_ref referring to the first application.
+	@param app2 An entry_ref referring to the second application.
+	@return \c -1, if the first application version is less than the second
 	        one, \c 1, if the first one is greater than the second one, and
 	        \c 0, if both are equal.
 */
@@ -341,14 +341,14 @@ compare_queried_apps(const entry_ref* app1, const entry_ref* app2)
 
 /*!	Finds an app by signature on any mounted volume.
 
-	\param signature The app's signature.
-	\param appRef A pointer to a pre-allocated entry_ref to be filled with
+	@param signature The app's signature.
+	@param appRef A pointer to a pre-allocated entry_ref to be filled with
 	       a reference to the found application's executable.
 
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE: \c NULL \a signature or \a appRef.
-	\retval B_LAUNCH_FAILED_APP_NOT_FOUND: An application with this signature
+	@return A status code.
+	@retval B_OK Everything went fine.
+	@retval B_BAD_VALUE: \c NULL \a signature or \a appRef.
+	@retval B_LAUNCH_FAILED_APP_NOT_FOUND: An application with this signature
 	        could not be found.
 */
 static status_t
@@ -515,11 +515,11 @@ BRoster::ArgVector::~ArgVector()
 	if no or an empty \a args vector is supplied, the resulting argument
 	vector contains only one element, the path associated with \a appRef.
 
-	\param argc Specifies the number of elements \a args contains.
-	\param args Argument vector. May be \c NULL.
-	\param appRef entry_ref referring to the entry whose path shall be the
+	@param argc Specifies the number of elements \a args contains.
+	@param args Argument vector. May be \c NULL.
+	@param appRef entry_ref referring to the entry whose path shall be the
 	       first element of the resulting argument vector.
-	\param docRef entry_ref referring to the entry whose path shall be the
+	@param docRef entry_ref referring to the entry whose path shall be the
 	       last element of the resulting argument vector. May be \c NULL.
 	\return
 	- \c B_OK: Everything went fine.

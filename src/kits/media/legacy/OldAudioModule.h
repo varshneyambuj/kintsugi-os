@@ -1,12 +1,28 @@
-/* ================
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright (c) 1997 by Be Incorporated. All Rights Reserved.
+ */
 
-   FILE:  AudioModule.h
-   REVS:  $Revision: 1.1 $
-   NAME:  marc
-
-   Copyright (c) 1997 by Be Incorporated.  All Rights Reserved.
-
-================ */
+/** @file OldAudioModule.h
+    @brief Legacy R5 audio-module classes layered on the BMediaRenderer/
+           BEventStream framework: BAudioEvent, BDACRenderer, BAudioFileStream,
+           and BADCSource. Deprecated; retained for binary compatibility. */
 
 #ifndef _AUDIO_MODULE_H
 #define _AUDIO_MODULE_H
@@ -20,6 +36,8 @@ class BADCStream;
 class BDACStream;
 class BSubscriber;
 
+/** @brief Legacy media event carrying a block of float audio samples (mono or
+           stereo) with a destination channel and gain. Deprecated. */
 class BAudioEvent : public BMediaEvent {
 public:
   BAudioEvent(int32 frames, bool stereo, float* samples = NULL);
@@ -52,6 +70,8 @@ private:
 };
 
 
+/** @brief Legacy renderer that mixes active BAudioEvents and writes the result
+           to the system DAC via a BDACStream subscriber. Deprecated. */
 class BDACRenderer : public BMediaRenderer {
 public:
   BDACRenderer(const char* name = NULL);
@@ -90,6 +110,8 @@ private:
 };
 
 
+/** @brief Legacy event stream that decodes audio frames from a BFile and
+           delivers them as BAudioEvents. Deprecated. */
 class BAudioFileStream : public BEventStream {
 public:
   BAudioFileStream(BMediaChannel* channel, BFile* file,
@@ -113,6 +135,8 @@ private:
 };
 
 
+/** @brief Legacy event stream that captures audio from the ADC via a
+           BADCStream subscriber and yields BAudioEvents. Deprecated. */
 class BADCSource : public BEventStream {
 public:
   BADCSource(BMediaChannel* channel, mk_time start = 0);

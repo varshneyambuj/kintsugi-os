@@ -1,10 +1,29 @@
-/******************************************************************************
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright 1995-97, Be Incorporated.
+ */
 
-	File:	BufferStream.h
+/** @file OldBufferStream.h
+    @brief Legacy BeOS R5 buffer-stream API: BAbstractBufferStream and
+           BBufferStream classes used by the deprecated BSubscriber audio
+           pipeline. Retained for binary compatibility only. */
 
-	Copyright 1995-97, Be Incorporated
-
-******************************************************************************/
 #ifndef _BUFFER_STREAM_H
 #define _BUFFER_STREAM_H
 
@@ -70,6 +89,9 @@ class BBufferStreamManager;
 typedef BBufferStream* stream_id;  // for now
 
 
+/** @brief Legacy abstract base class for buffer-stream implementations used by
+           the BeOS R5 audio server protocol. Deprecated; new code should use
+           the modern Media Kit node graph instead. */
 class BAbstractBufferStream
 {
 public:
@@ -119,6 +141,9 @@ virtual	void		_ReservedAbstractBufferStream4();
 };
 
 
+/** @brief Legacy shared-memory buffer ring used by BSubscriber-based clients
+           to exchange fixed-size buffers with the BeOS R5 audio server. Retained
+           for binary compatibility with R5 add-ons. */
 class BBufferStream : public BAbstractBufferStream
 {
 public:

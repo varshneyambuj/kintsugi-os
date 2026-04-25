@@ -65,7 +65,7 @@ namespace Mime {
 
 /*!
 	\class AssociatedTypes
-	\brief Information about file extensions and their associated types
+	@brief Information about file extensions and their associated types
 */
 
 /**

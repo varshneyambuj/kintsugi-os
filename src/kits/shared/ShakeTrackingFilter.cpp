@@ -34,7 +34,7 @@
 
 /*!
 	\class ShakeTrackingFilter
-	\brief A simple mouse shake detection filter
+	@brief A simple mouse shake detection filter
 	*
 	* A simple mouse filter that detects quick mouse shakes.
 	*

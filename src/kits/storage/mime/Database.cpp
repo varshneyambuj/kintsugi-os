@@ -83,7 +83,7 @@ Database::NotificationListener::~NotificationListener()
 
 /*!
 	\class Database
-	\brief Mime::Database is the master of the MIME data base.
+	@brief Mime::Database is the master of the MIME data base.
 
 	All write and non-atomic read accesses are carried out by this class.
 

@@ -36,7 +36,7 @@
 
 /*!
 	\class HashString
-	\brief A very simple string class.
+	@brief A very simple string class.
 */
 
 /**

@@ -33,7 +33,7 @@
 
 /*!
 	\class LongAndDragTrackingFilter
-	\brief A simple long mouse down and drag detection filter
+	@brief A simple long mouse down and drag detection filter
 	*
 	* A simple mouse filter that detects long clicks and pointer drags.
 	* A long click message is sent when the mouse button is kept down

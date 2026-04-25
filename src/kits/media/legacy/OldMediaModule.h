@@ -1,12 +1,28 @@
-/* ================
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright (c) 1997 by Be Incorporated. All Rights Reserved.
+ */
 
-   FILE:  MediaModule.h
-   REVS:  $Revision: 1.1 $
-   NAME:  marc
-
-   Copyright (c) 1997 by Be Incorporated.  All Rights Reserved.
-
-================ */
+/** @file OldMediaModule.h
+    @brief Legacy R5 "media kit module" classes: BMediaEvent, BEventStream,
+           BMediaRenderer, BTransport, BTimeBase, and BMediaChannel. Deprecated;
+           retained for binary compatibility with R5 add-ons. */
 
 #ifndef _MEDIA_MODULE_H
 #define _MEDIA_MODULE_H
@@ -46,6 +62,8 @@ class BMessage;
 class BMediaChannel;
 
 
+/** @brief Legacy abstract media event with a start time, duration, and
+           capture timestamp. Deprecated. */
 class BMediaEvent {
 public:
   virtual				~BMediaEvent() {};
@@ -55,6 +73,8 @@ public:
 };
 
 
+/** @brief Legacy event source feeding BMediaChannel with timed BMediaEvents.
+           Deprecated; superseded by the modern Media Kit node graph. */
 class BEventStream {
 public:
   BEventStream();
@@ -76,6 +96,8 @@ private:
 };
 
 
+/** @brief Legacy renderer that consumes events from a BTransport and emits
+           output (audio/video). Deprecated. */
 class BMediaRenderer {
 public:
   BMediaRenderer(const char* name = NULL, int32 priority = B_NORMAL_PRIORITY);
@@ -120,6 +142,8 @@ private:
 };
 
 
+/** @brief Legacy transport coordinating one or more renderers across a shared
+           timebase. Deprecated. */
 class BTransport {
 public:
   BTransport();
@@ -157,6 +181,8 @@ private:
 };
 
 
+/** @brief Legacy time base mapping media-kit time (mk_time) to system time.
+           Deprecated. */
 class BTimeBase {
 public:
   BTimeBase(mk_rate rate = 1.0);
@@ -189,6 +215,8 @@ private:
 };
 
 
+/** @brief Legacy connection between a BEventStream and a BMediaRenderer at a
+           given rate. Deprecated. */
 class BMediaChannel {
 public:
   BMediaChannel(mk_rate rate,

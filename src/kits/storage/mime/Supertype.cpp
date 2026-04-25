@@ -52,7 +52,7 @@ namespace Mime {
 
 /*!
 	\class Supertype
-	\brief Installed types information for a single supertype
+	@brief Installed types information for a single supertype
 */
 
 /**

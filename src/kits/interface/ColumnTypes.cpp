@@ -1,14 +1,43 @@
-/*******************************************************************************
-/
-/	File:			ColumnTypes.h
-/
-/   Description:    Experimental classes that implement particular column/field
-/					data types for use in BColumnListView.
-/
-/	Copyright 2000+, Be Incorporated, All Rights Reserved
-/	Copyright 2024, Haiku, Inc. All Rights Reserved
-/
-*******************************************************************************/
+/*
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   File:			ColumnTypes.h
+ *
+ *   Description:    Experimental classes that implement particular
+ *                   column/field data types for use in BColumnListView.
+ *
+ *   Copyright 2000+, Be Incorporated, All Rights Reserved
+ *   Copyright 2024, Haiku, Inc. All Rights Reserved
+ */
+
+/**
+ * @file ColumnTypes.cpp
+ * @brief Implementation of concrete BColumn/BField subclasses for BColumnListView.
+ *
+ * Provides the standard column and field types used by BColumnListView:
+ * titled (header-only), string, date, size, integer, graph (percentage bar),
+ * and bitmap. Each pair (BXxxField + BXxxColumn) handles its own painting,
+ * preferred-width measurement, and sort comparison.
+ *
+ * @see BColumnListView
+ */
 
 
 #include "ColumnTypes.h"

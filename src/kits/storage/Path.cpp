@@ -694,11 +694,11 @@ void BPath::_WarPath3() {}
 	The path is copied, if \a path is \c NULL the path of the object is set to
 	\c NULL as well. The old path is deleted.
 
-	\param path the path to be set
+	@param path the path to be set
 
 	\returns A status code.
-	\retval B_OK Everything went fine.
-	\retval B_NO_MEMORY Insufficient memory.
+	@retval B_OK Everything went fine.
+	@retval B_NO_MEMORY Insufficient memory.
 */
 /**
  * @brief Sets the internal path string, copying the supplied value.
@@ -738,10 +738,10 @@ BPath::_SetPath(const char* path)
 	- Redundant slashes ("/boot//ltj")
 	- A trailing slash ("/boot/ltj/")
 
-	\param _error A pointer to an error variable that will be set if the input
+	@param _error A pointer to an error variable that will be set if the input
 		is not a valid path.
 
-	\return \c true if \a path requires normalization, \c false otherwise.
+	@return \c true if \a path requires normalization, \c false otherwise.
 */
 /**
  * @brief Checks a path to determine whether normalization is required.

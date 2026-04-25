@@ -63,15 +63,20 @@ namespace BPrivate {
 static team_id sCurrentTeam = -1;
 
 
-/*!	\brief Returns the path to an application's executable.
-	\param team The application's team ID.
-	\param buffer A pointer to a pre-allocated character array of at least
-		   size B_PATH_NAME_LENGTH to be filled in by this function.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a buffer.
-	- another error code
-*/
+/**
+ * @brief Returns the path to an application's executable.
+ *
+ * Walks the team's image list and returns the path of the image typed
+ * @c B_APP_IMAGE.
+ *
+ * @param team The application's team ID.
+ * @param buffer A pointer to a pre-allocated character array of at least
+ *        @c B_PATH_NAME_LENGTH bytes; receives the executable path on success.
+ * @retval B_OK                 The buffer was populated successfully.
+ * @retval B_BAD_VALUE          @a buffer is @c NULL.
+ * @retval B_ENTRY_NOT_FOUND    No B_APP_IMAGE was found for the team.
+ * @return Another error code propagated from get_next_image_info().
+ */
 status_t
 get_app_path(team_id team, char *buffer)
 {
@@ -96,14 +101,17 @@ get_app_path(team_id team, char *buffer)
 }
 
 
-/*!	\brief Returns the path to the application's executable.
-	\param buffer A pointer to a pre-allocated character array of at least
-		   size B_PATH_NAME_LENGTH to be filled in by this function.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a buffer.
-	- another error code
-*/
+/**
+ * @brief Returns the path to the current application's executable.
+ *
+ * Convenience overload that calls get_app_path(B_CURRENT_TEAM, buffer).
+ *
+ * @param buffer A pointer to a pre-allocated character array of at least
+ *        @c B_PATH_NAME_LENGTH bytes; receives the executable path on success.
+ * @retval B_OK         The buffer was populated successfully.
+ * @retval B_BAD_VALUE  @a buffer is @c NULL.
+ * @return Another error code if the path cannot be retrieved.
+ */
 status_t
 get_app_path(char *buffer)
 {
@@ -111,16 +119,17 @@ get_app_path(char *buffer)
 }
 
 
-/*!	\brief Returns an entry_ref referring to an application's executable.
-	\param team The application's team ID.
-	\param ref A pointer to a pre-allocated entry_ref to be initialized
-		   to an entry_ref referring to the application's executable.
-	\param traverse If \c true, the function traverses symbolic links.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a ref.
-	- another error code
-*/
+/**
+ * @brief Returns an entry_ref referring to an application's executable.
+ *
+ * @param team The application's team ID.
+ * @param ref A pointer to a pre-allocated entry_ref that receives the result.
+ * @param traverse If @c true, the function traverses symbolic links when
+ *        resolving the path.
+ * @retval B_OK         The entry_ref was populated successfully.
+ * @retval B_BAD_VALUE  @a ref is @c NULL.
+ * @return Another error code propagated from get_app_path() or BEntry.
+ */
 status_t
 get_app_ref(team_id team, entry_ref *ref, bool traverse)
 {
@@ -139,15 +148,18 @@ get_app_ref(team_id team, entry_ref *ref, bool traverse)
 }
 
 
-/*!	\brief Returns an entry_ref referring to the application's executable.
-	\param ref A pointer to a pre-allocated entry_ref to be initialized
-		   to an entry_ref referring to the application's executable.
-	\param traverse If \c true, the function traverses symbolic links.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a ref.
-	- another error code
-*/
+/**
+ * @brief Returns an entry_ref referring to the current application's executable.
+ *
+ * Convenience overload that calls get_app_ref(B_CURRENT_TEAM, ref, traverse).
+ *
+ * @param ref A pointer to a pre-allocated entry_ref that receives the result.
+ * @param traverse If @c true, the function traverses symbolic links when
+ *        resolving the path.
+ * @retval B_OK         The entry_ref was populated successfully.
+ * @retval B_BAD_VALUE  @a ref is @c NULL.
+ * @return Another error code if the entry_ref cannot be retrieved.
+ */
 status_t
 get_app_ref(entry_ref *ref, bool traverse)
 {
@@ -155,9 +167,15 @@ get_app_ref(entry_ref *ref, bool traverse)
 }
 
 
-/*!	\brief Returns the ID of the current team.
-	\return The ID of the current team.
-*/
+/**
+ * @brief Returns the ID of the current team.
+ *
+ * The team ID is cached in @c sCurrentTeam after the first lookup so that
+ * subsequent calls do not re-enter the kernel. The cache is invalidated by
+ * init_team_after_fork().
+ *
+ * @return The ID of the current team.
+ */
 team_id
 current_team()
 {
@@ -182,13 +200,17 @@ init_team_after_fork()
 }
 
 
-/*!	Returns the ID of the supplied team's main thread.
-	\param team The team.
-	\return
-	- The thread ID of the supplied team's main thread
-	- \c B_BAD_TEAM_ID: The supplied team ID does not identify a running team.
-	- another error code
-*/
+/**
+ * @brief Returns the ID of the supplied team's main thread.
+ *
+ * On Haiku the team ID is identical to the team's main thread ID; this
+ * function fetches a team_info to verify the team exists and then returns
+ * the team ID itself.
+ *
+ * @param team The team to query.
+ * @return The thread ID of the team's main thread on success.
+ * @retval B_BAD_TEAM_ID The supplied team ID does not identify a running team.
+ */
 thread_id
 main_thread_for(team_id team)
 {
@@ -200,12 +222,17 @@ main_thread_for(team_id team)
 }
 
 
-/*!	\brief Returns whether the application identified by the supplied
-		   \c team_id is currently showing a modal window.
-	\param team the ID of the application in question.
-	\return \c true, if the application is showing a modal window, \c false
-			otherwise.
-*/
+/**
+ * @brief Returns whether the application identified by @a team is currently
+ *        showing a modal window.
+ *
+ * Iterates over the team's window tokens and checks each window's feel for
+ * one of the modal feels (subset, application, or global modal).
+ *
+ * @param team The ID of the application in question.
+ * @return @c true if the application is showing a modal window, @c false
+ *         otherwise (including the case where the team has no windows).
+ */
 bool
 is_app_showing_modal_window(team_id team)
 {
@@ -239,8 +266,20 @@ is_app_showing_modal_window(team_id team)
 #ifndef HAIKU_TARGET_PLATFORM_LIBBE_TEST
 
 
-/*!	Creates a connection with the desktop.
-*/
+/**
+ * @brief Creates a connection with the desktop's app_server.
+ *
+ * Allocates a client-side reply port, then sends an @c AS_GET_DESKTOP message
+ * via BMessenger to the app_server to retrieve the per-desktop send port.
+ * The resulting send/receive port pair is installed into @a link.
+ *
+ * @param link     The ServerLink to populate with the resolved send port and
+ *                 a freshly created receive port.
+ * @param name     Name to assign to the receive port.
+ * @param capacity Capacity (number of messages) for the receive port.
+ * @return B_OK on success, or a negative error code if the port cannot be
+ *         created or the app_server fails to respond with a valid desktop port.
+ */
 status_t
 create_desktop_connection(ServerLink* link, const char* name, int32 capacity)
 {
@@ -297,8 +336,20 @@ get_app_server_port()
 }
 
 
-/*! Creates a connection with the desktop.
-*/
+/**
+ * @brief Creates a connection with the desktop (libbe test build).
+ *
+ * Test-mode variant that uses the already-known app_server port returned by
+ * get_app_server_port() and exchanges desktop port handles directly through
+ * the ServerLink protocol rather than via BMessenger.
+ *
+ * @param link     The ServerLink to populate with the resolved send port and
+ *                 a freshly created receive port.
+ * @param name     Name to assign to the receive port.
+ * @param capacity Capacity (number of messages) for the receive port.
+ * @return B_OK on success, B_ERROR if the desktop reply is not B_OK, or a
+ *         negative port-creation error.
+ */
 status_t
 create_desktop_connection(ServerLink* link, const char* name, int32 capacity)
 {

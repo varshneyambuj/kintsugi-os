@@ -43,18 +43,20 @@
 #include <locks.h>
 
 
-/*!	\class BRoster::Private
-	\brief Class used to access private BRoster members.
+/**
+ * @class BRoster::Private
+ * @brief Class used to access private BRoster members.
+ *
+ * This way, the only friend BRoster needs is this class.
+ */
 
-	This way, the only friend BRoster needs is this class.
-*/
 
-
-/*!	\brief Initializes the roster.
-
-	\param mainMessenger A BMessenger targeting the registrar application.
-	\param mimeMessenger A BMessenger targeting the MIME manager.
-*/
+/**
+ * @brief Initializes the roster's messengers.
+ *
+ * @param mainMessenger A BMessenger targeting the registrar application.
+ * @param mimeMessenger A BMessenger targeting the MIME manager.
+ */
 void
 BRoster::Private::SetTo(BMessenger mainMessenger, BMessenger mimeMessenger)
 {
@@ -66,23 +68,24 @@ BRoster::Private::SetTo(BMessenger mainMessenger, BMessenger mimeMessenger)
 }
 
 
-/*!	\brief Sends a message to the registrar.
-
-	\a mime specifies whether to send the message to the roster or to the
-	MIME data base service.
-	If \a reply is not \c NULL, the function waits for a reply.
-
-	\param message The message to be sent.
-	\param reply A pointer to a pre-allocated BMessage into which the reply
-		   message will be copied. May be \c NULL.
-	\param mime \c true, if the message should be sent to the MIME data base
-		   service, \c false for the roster.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_BAD_VALUE: \c NULL \a message.
-	- \c B_NO_INIT: the roster is \c NULL.
-	- another error code
-*/
+/**
+ * @brief Sends a message to the registrar.
+ *
+ * @a mime specifies whether to send the message to the roster or to the
+ * MIME data base service. If @a reply is not @c NULL, the function waits
+ * for a reply.
+ *
+ * @param message The message to be sent.
+ * @param reply A pointer to a pre-allocated BMessage into which the reply
+ *        message will be copied. May be @c NULL.
+ * @param mime @c true if the message should be sent to the MIME data base
+ *        service, @c false for the roster.
+ * @retval B_OK         Everything went fine.
+ * @retval B_BAD_VALUE  @c NULL @a message, or the selected messenger targets
+ *                      a local handler.
+ * @retval B_NO_INIT    The roster is @c NULL.
+ * @return Another error code if the underlying SendMessage() call fails.
+ */
 status_t
 BRoster::Private::SendTo(BMessage *message, BMessage *reply, bool mime)
 {
@@ -102,15 +105,16 @@ BRoster::Private::SendTo(BMessage *message, BMessage *reply, bool mime)
 }
 
 
-/*!	\brief Returns whether the roster's messengers are valid.
-
-	\a mime specifies whether to check the roster messenger or the one of
-	the MIME data base service.
-
-	\param mime \c true, if the MIME data base service messenger should be
-		   checked, \c false for the roster messenger.
-	\return \true, if the selected messenger is valid, \c false otherwise.
-*/
+/**
+ * @brief Returns whether the roster's messengers are valid.
+ *
+ * @a mime specifies whether to check the roster messenger or the one of
+ * the MIME data base service.
+ *
+ * @param mime @c true if the MIME data base service messenger should be
+ *        checked, @c false for the roster messenger.
+ * @return @c true if the selected messenger is valid, @c false otherwise.
+ */
 bool
 BRoster::Private::IsMessengerValid(bool mime) const
 {
@@ -119,10 +123,11 @@ BRoster::Private::IsMessengerValid(bool mime) const
 }
 
 
-/*!	\brief Initializes the global be_roster variable.
-
-	Called before the global constructors are invoked.
-*/
+/**
+ * @brief Initializes the global be_roster variable.
+ *
+ * Called before the global constructors are invoked.
+ */
 void
 BRoster::Private::InitBeRoster()
 {
@@ -130,10 +135,11 @@ BRoster::Private::InitBeRoster()
 }
 
 
-/*!	\brief Deletes the global be_roster.
-
-	Called after the global destructors are invoked.
-*/
+/**
+ * @brief Deletes the global be_roster.
+ *
+ * Called after the global destructors are invoked.
+ */
 void
 BRoster::Private::DeleteBeRoster()
 {

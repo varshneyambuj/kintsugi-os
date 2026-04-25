@@ -222,22 +222,22 @@ BDebugEventInputStream::Seek(off_t streamOffset)
 }
 
 
-/*!	\brief Returns the next event in the stream.
+/*!	@brief Returns the next event in the stream.
 
 	At the end of the stream \c 0 is returned and \c *_buffer is set to \c NULL.
 	For events that don't have data associated with them, \c *_buffer will still
 	be non-NULL, even if dereferencing that address is not allowed.
 
-	\param _event Pointer to a pre-allocated location where the event ID shall
+	@param _event Pointer to a pre-allocated location where the event ID shall
 		be stored.
-	\param _cpu Pointer to a pre-allocated location where the CPU index shall
+	@param _cpu Pointer to a pre-allocated location where the CPU index shall
 		be stored.
-	\param _buffer Pointer to a pre-allocated location where the pointer to the
+	@param _buffer Pointer to a pre-allocated location where the pointer to the
 		event data shall be stored.
-	\param _streamOffset Pointer to a pre-allocated location where the event
+	@param _streamOffset Pointer to a pre-allocated location where the event
 		header's offset relative to the beginning of the stream shall be stored.
 		May be \c NULL.
-	\return A negative error code in case an error occurred while trying to read
+	@return A negative error code in case an error occurred while trying to read
 		the info, the size of the data associated with the event otherwise.
 */
 ssize_t

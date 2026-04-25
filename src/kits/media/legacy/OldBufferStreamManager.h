@@ -1,10 +1,28 @@
-/******************************************************************************
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright 1995-97, Be Incorporated.
+ */
 
-	File:	BufferStreamManager.h
+/** @file OldBufferStreamManager.h
+    @brief Legacy BBufferStreamManager class controlling the lifecycle of an
+           R5-era BBufferStream. Deprecated; retained for binary compatibility. */
 
-	Copyright 1995-97, Be Incorporated
-
-******************************************************************************/
 #ifndef _BUFFER_STREAM_MANAGER_H
 #define _BUFFER_STREAM_MANAGER_H
 
@@ -38,6 +56,9 @@ enum stream_state {
    ================ */
 
 
+/** @brief Legacy controller that owns a BBufferStream, drives its processing
+           thread, and handles state transitions (idle/running/stopping) for the
+           BeOS R5 audio pipeline. Deprecated. */
 class BBufferStreamManager {
 
 public:

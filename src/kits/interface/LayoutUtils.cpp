@@ -387,10 +387,10 @@ BLayoutUtils::AlignOnRect(BRect rect, BSize size, BAlignment alignment)
 	If the rectangle is too wide/high to fully fit in the frame, its left/top
 	edge is offset to 0. The rect's size always remains unchanged.
 
-	\param rect The rectangle to be moved.
-	\param frameSize The size of the frame the rect shall be moved into. The
+	@param rect The rectangle to be moved.
+	@param frameSize The size of the frame the rect shall be moved into. The
 		frame's left-top is (0, 0).
-	\return The modified rect.
+	@return The modified rect.
 */
 /**
  * @brief Offsets a rectangle so that it lies fully within a frame of the given size.

@@ -1291,9 +1291,9 @@ BLooper::_PostMessage(BMessage* msg, BHandler* handler, BHandler* replyTo)
 /*!
 	Locks a looper either by port or using a direct pointer to the looper.
 
-	\param looper looper to lock, if not NULL
-	\param port port to identify the looper in case \a looper is NULL
-	\param timeout timeout for acquiring the lock
+	@param looper looper to lock, if not NULL
+	@param port port to identify the looper in case \a looper is NULL
+	@param timeout timeout for acquiring the lock
 */
 status_t
 BLooper::_Lock(BLooper* looper, port_id port, bigtime_t timeout)

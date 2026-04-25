@@ -1567,9 +1567,9 @@ BMimeType::GetSupportedTypes(BMessage* types)
 	with a \c true \a fullSync parameter, the next call to BMimeType::Delete(),
 	or the next reboot.
 
-	\param types The supported types to be assigned to the file.
+	@param types The supported types to be assigned to the file.
 	       May be \c NULL.
-	\param fullSync \c true to also synchronize the previously supported
+	@param fullSync \c true to also synchronize the previously supported
 	       types, \c false otherwise.
 
 	\returns \c B_OK on success or another error code on failure.
@@ -1625,8 +1625,8 @@ BMimeType::SetSupportedTypes(const BMessage* types, bool fullSync)
 	by \a types. The types are stored in the message's "types" field, which
 	is an array of \c B_STRING_TYPE values.
 
-	\param extension The file extension of interest
-	\param types Pointer to a pre-allocated BMessage into which the result will
+	@param extension The file extension of interest
+	@param types Pointer to a pre-allocated BMessage into which the result will
 	       be stored.
 
 	\returns \c B_OK on success or another error code on failure.

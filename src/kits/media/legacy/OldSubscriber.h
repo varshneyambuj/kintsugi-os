@@ -1,12 +1,28 @@
-/******************************************************************************
+/*
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Be Incorporated media kit headers, originally
+ * Copyright 1995-97, Be Incorporated. Support for communication with a
+ * buffer-stream server.
+ */
 
-	File:			Subscriber.h
-
-	Description:	Support for communication with a buffer stream server
-
-	Copyright 1995-97, Be Incorporated
-
-******************************************************************************/
+/** @file OldSubscriber.h
+    @brief Legacy BSubscriber API for clients of an R5 BBufferStream-based
+           audio server. Deprecated; retained for binary compatibility. */
 
 #ifndef _SUBSCRIBER_H
 #define _SUBSCRIBER_H
@@ -27,6 +43,9 @@ typedef status_t (*exit_stream_hook)(void *userData, status_t error);
    Class definition for BSubscriber
    ================ */
 
+/** @brief Legacy R5 client that subscribes to a BBufferStream, enters the
+           buffer chain at a chosen position, and invokes user callbacks per
+           buffer. Deprecated; superseded by the modern BBufferConsumer node. */
 class BSubscriber
 {
 public:

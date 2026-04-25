@@ -578,7 +578,7 @@ BQuery::CountEntries()
 
 /*!	Gets whether Fetch() has already been called on this object.
 
-	\return \c true, if Fetch() was already called, \c false otherwise.
+	@return \c true, if Fetch() was already called, \c false otherwise.
 */
 /**
  * @brief Returns whether Fetch() has already been called on this object.
@@ -604,14 +604,14 @@ BQuery::_HasFetched() const
 	node and thus is responsible for deleting it, if \a deleteOnError is
 	\c false. If it is \c true, the node is deleted, if an error occurs.
 
-	\param node The node to push.
-	\param deleteOnError Whether or not to delete the node if an error occurs.
+	@param node The node to push.
+	@param deleteOnError Whether or not to delete the node if an error occurs.
 
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_NO_MEMORY \a node was \c NULL or there was insufficient memory to
+	@return A status code.
+	@retval B_OK Everything went fine.
+	@retval B_NO_MEMORY \a node was \c NULL or there was insufficient memory to
 	        allocate the predicate stack or push the node.
-	\retval B_NOT_ALLOWED _PushNode() was called after Fetch().
+	@retval B_NOT_ALLOWED _PushNode() was called after Fetch().
 */
 /**
  * @brief Pushes a QueryNode onto the predicate stack, allocating the stack if necessary.
@@ -645,11 +645,11 @@ BQuery::_PushNode(QueryNode* node, bool deleteOnError)
 
 	Does not check whether Fetch() has already been invoked.
 
-	\param expression The predicate string to set.
+	@param expression The predicate string to set.
 
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_NO_MEMORY There was insufficient memory to store the predicate.
+	@return A status code.
+	@retval B_OK Everything went fine.
+	@retval B_NO_MEMORY There was insufficient memory to store the predicate.
 */
 /**
  * @brief Internal helper that sets the predicate string without checking Fetch() state.
@@ -682,10 +682,10 @@ BQuery::_SetPredicate(const char* expression)
 	If the stack is not  \c null and Fetch() has already been called, this
 	method fails.
 
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_NO_MEMORY There was insufficient memory.
-	\retval B_NOT_ALLOWED _EvaluateStack() was called after Fetch().
+	@return A status code.
+	@retval B_OK Everything went fine.
+	@retval B_NO_MEMORY There was insufficient memory.
+	@retval B_NOT_ALLOWED _EvaluateStack() was called after Fetch().
 */
 /**
  * @brief Evaluates the predicate node stack into a predicate string.
@@ -719,7 +719,7 @@ BQuery::_EvaluateStack()
 
 /*!	Fills out \a parsedPredicate with a parsed predicate string.
 
-	\param parsedPredicate The predicate string to fill out.
+	@param parsedPredicate The predicate string to fill out.
 */
 /**
  * @brief Replaces date placeholders in the predicate string with numeric timestamps.

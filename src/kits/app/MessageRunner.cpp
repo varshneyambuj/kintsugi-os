@@ -300,13 +300,13 @@ BMessageRunner::operator=(const BMessageRunner&)
 	      becomes unusable. InitCheck() will still return \c B_OK, but
 	      SetInterval(), SetCount() and GetInfo() will fail.
 
-	\param target Target of the message(s).
-	\param message The message to be sent to the target.
-	\param interval Period of time before the first message is sent and
+	@param target Target of the message(s).
+	@param message The message to be sent to the target.
+	@param interval Period of time before the first message is sent and
 	       between messages (if more than one shall be sent) in microseconds.
-	\param count Specifies how many times the message shall be sent.
+	@param count Specifies how many times the message shall be sent.
 	       A value less than \c 0 for an unlimited number of repetitions.
-	\param replyTo Target replies to the delivered message(s) shall be sent to.
+	@param replyTo Target replies to the delivered message(s) shall be sent to.
 */
 void
 BMessageRunner::_InitData(BMessenger target, const BMessage* message,
@@ -318,15 +318,15 @@ BMessageRunner::_InitData(BMessenger target, const BMessage* message,
 
 /*!	Registers the BMessageRunner in the registrar.
 
-	\param target Target of the message(s).
-	\param message The message to be sent to the target.
-	\param interval Period of time before the first message is sent and
+	@param target Target of the message(s).
+	@param message The message to be sent to the target.
+	@param interval Period of time before the first message is sent and
 	       between messages (if more than one shall be sent) in microseconds.
-	\param count Specifies how many times the message shall be sent.
+	@param count Specifies how many times the message shall be sent.
 	       A value less than \c 0 for an unlimited number of repetitions.
-	\param replyTo Target replies to the delivered message(s) shall be sent to.
+	@param replyTo Target replies to the delivered message(s) shall be sent to.
 
-	\return The token the message runner is registered with, or the error code
+	@return The token the message runner is registered with, or the error code
 	        while trying to register it.
 */
 /*static*/ int32
@@ -390,17 +390,17 @@ BMessageRunner::_RegisterRunner(BMessenger target, const BMessage* message,
 	At least one parameter must be set, otherwise the methods returns
 	\c B_BAD_VALUE.
 
-	\param resetInterval \c true, if the interval shall be reset, \c false
+	@param resetInterval \c true, if the interval shall be reset, \c false
 	       otherwise -- then \a interval is ignored.
-	\param interval The new interval in microseconds.
-	\param resetCount \c true, if the count shall be reset, \c false
+	@param interval The new interval in microseconds.
+	@param resetCount \c true, if the count shall be reset, \c false
 	       otherwise -- then \a count is ignored.
-	\param count Specifies how many times the message shall be sent.
+	@param count Specifies how many times the message shall be sent.
 	       A value less than \c 0 for an unlimited number of repetitions.
 
-	\return A status code.
-	\retval B_OK Everything went fine.
-	\retval B_BAD_VALUE The message runner is not longer valid. All the
+	@return A status code.
+	@retval B_OK Everything went fine.
+	@retval B_BAD_VALUE The message runner is not longer valid. All the
 	        messages that had to be sent have already been sent. Or both
 	        \a resetInterval and \a resetCount are \c false.
 */

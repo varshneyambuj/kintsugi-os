@@ -110,7 +110,7 @@ BClipboard::Name() const
 }
 
 
-/*!	\brief Returns the (locally cached) number of commits to the clipboard.
+/*!	@brief Returns the (locally cached) number of commits to the clipboard.
 
 	The returned value is the number of successful Commit() invocations for
 	the clipboard represented by this object, either invoked on this object
@@ -118,7 +118,7 @@ BClipboard::Name() const
 	cached value, which might already be obsolete. For an up-to-date value
 	SystemCount() can be invoked.
 
-	\return The number of commits to the clipboard.
+	@return The number of commits to the clipboard.
 */
 uint32
 BClipboard::LocalCount() const
@@ -127,7 +127,7 @@ BClipboard::LocalCount() const
 }
 
 
-/*!	\brief Returns the number of commits to the clipboard.
+/*!	@brief Returns the number of commits to the clipboard.
 
 	The returned value is the number of successful Commit() invocations for
 	the clipboard represented by this object, either invoked on this object
@@ -136,7 +136,7 @@ BClipboard::LocalCount() const
 	more expensive, but more up-to-date than LocalCount(), which returns a
 	locally cached value.
 
-	\return The number of commits to the clipboard.
+	@return The number of commits to the clipboard.
 */
 uint32
 BClipboard::SystemCount() const

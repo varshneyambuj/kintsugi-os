@@ -270,7 +270,7 @@ void BSymLink::_MissingSymLink6() {}
 	This method should be used instead of accessing the private \c fFd member
 	of the BNode directly.
 
-	\return The object's file descriptor, or -1 if not properly initialized.
+	@return The object's file descriptor, or -1 if not properly initialized.
 */
 /**
  * @brief Returns the underlying file descriptor for this symbolic link node.

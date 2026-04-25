@@ -33,7 +33,7 @@
 
 /*!
 	\class DragTrackingFilter
-	\brief A simple mouse drag detection filter
+	@brief A simple mouse drag detection filter
 	*
 	* A simple mouse filter that detects the start of a mouse drag over a
 	* threshold distance and sends a message with the 'what' field of your

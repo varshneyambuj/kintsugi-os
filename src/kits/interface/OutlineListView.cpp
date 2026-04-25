@@ -1772,7 +1772,7 @@ BOutlineListView::_SwapItems(int32 first, int32 second)
 }
 
 
-/*!	\brief Removes a single item from the list and all of its children.
+/*!	@brief Removes a single item from the list and all of its children.
 
 	Unlike the BeOS version, this one will actually delete the children, too,
 	as there should be no reference left to them. This may cause problems for

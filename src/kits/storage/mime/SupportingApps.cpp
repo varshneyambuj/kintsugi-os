@@ -64,7 +64,7 @@ namespace Mime {
 
 /*!
 	\class SupportingApps
-	\brief Supporting apps information for the entire MIME database
+	@brief Supporting apps information for the entire MIME database
 */
 
 

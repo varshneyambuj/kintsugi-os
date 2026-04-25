@@ -1,9 +1,28 @@
 /*
- * Copyright 2007, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
- * All rights reserved. Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Layouter implementation that can handle complex constraints.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2007, Ingo Weinhold <bonefish@cs.tu-berlin.de>.
  */
+
+/** @file ComplexLayouter.h
+    @brief Layouter that handles constraints spanning multiple elements (used by
+           BGridLayout); falls back on LayoutOptimizer for the hard cases. */
+
 #ifndef COMPLEX_LAYOUTER_H
 #define COMPLEX_LAYOUTER_H
 
@@ -17,6 +36,16 @@ namespace Layout {
 
 class LayoutOptimizer;
 
+/**
+ * @brief Layouter that supports min/max/preferred constraints spanning
+ *        multiple consecutive elements (e.g. a grid cell that straddles
+ *        several columns).
+ *
+ * Internally maintains per-element constraint lists and a running prefix-sum
+ * representation. When constraints cannot be satisfied directly the layouter
+ * delegates to a LayoutOptimizer to find a feasible solution by quadratic
+ * programming.
+ */
 class ComplexLayouter : public Layouter {
 public:
 								ComplexLayouter(int32 elementCount,
@@ -34,7 +63,7 @@ public:
 	virtual	float				PreferredSize();
 
 	virtual	LayoutInfo*			CreateLayoutInfo();
-	
+
 	virtual	void				Layout(LayoutInfo* layoutInfo, float size);
 
 	virtual	Layouter*			CloneLayouter();
@@ -59,7 +88,7 @@ private:
 			void				_PropagateChangesBack(SumItem* sums,
 									int32 changedIndex,
 									Constraint* lastMaxConstraint);
-		
+
 			void				_BackupValues(int32 maxIndex);
 			void				_RestoreValues(int32 maxIndex);
 

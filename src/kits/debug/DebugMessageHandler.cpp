@@ -51,9 +51,9 @@ BDebugMessageHandler::~BDebugMessageHandler()
 	Can be overridded by subclasses. The base class implementation calls the
 	respective Handle*() hook for the message.
 
-	\param messageCode The (port) message code identifying the debugger message.
-	\param message The message data.
-	\return \c true, if the caller is supposed to continue the thread, \c false
+	@param messageCode The (port) message code identifying the debugger message.
+	@param message The message data.
+	@return \c true, if the caller is supposed to continue the thread, \c false
 		otherwise.
 */
 /**

@@ -248,15 +248,15 @@ extern const char* const *__libc_argv;
 
 
 /*!
-	\brief Checks whether the supplied string is a valid application signature.
+	@brief Checks whether the supplied string is a valid application signature.
 
 	An error message is printed, if the string is no valid app signature.
 
-	\param signature The string to be checked.
+	@param signature The string to be checked.
 
-	\return A status code.
-	\retval B_OK \a signature is a valid app signature.
-	\retval B_BAD_VALUE \a signature is \c NULL or no valid app signature.
+	@return A status code.
+	@retval B_OK \a signature is a valid app signature.
+	@retval B_BAD_VALUE \a signature is \c NULL or no valid app signature.
 */
 static status_t
 check_app_signature(const char* signature)

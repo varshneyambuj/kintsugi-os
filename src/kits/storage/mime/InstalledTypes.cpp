@@ -62,7 +62,7 @@ namespace Mime {
 
 /*!
 	\class InstalledTypes
-	\brief Installed types information for the entire database
+	@brief Installed types information for the entire database
 */
 
 /**

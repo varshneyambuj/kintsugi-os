@@ -713,9 +713,9 @@ BRegion::ExclusiveInclude(const BRegion* region)
 
 /*!
 	\fn void BRegion::_AdoptRegionData(BRegion& region)
-	\brief Takes over the data of \a region and empties it.
+	@brief Takes over the data of \a region and empties it.
 
-	\param region The \a region to adopt data from.
+	@param region The \a region to adopt data from.
 */
 /** @brief Take ownership of the internal rectangle array from a temporary BRegion.
  *
@@ -751,9 +751,9 @@ BRegion::_AdoptRegionData(BRegion& region)
 
 /*!
 	\fn bool BRegion::_SetSize(int32 newSize)
-	\brief Reallocate the memory in the region.
+	@brief Reallocate the memory in the region.
 
-	\param newSize The amount of rectangles that the region should be
+	@param newSize The amount of rectangles that the region should be
 		able to hold.
 */
 /** @brief Grow the internal rectangle array to hold at least \a newSize rectangles.

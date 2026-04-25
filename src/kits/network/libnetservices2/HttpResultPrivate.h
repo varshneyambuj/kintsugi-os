@@ -1,10 +1,29 @@
 /*
- * Copyright 2022 Haiku Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Niels Sascha Reedijk, niels.reedijk@gmail.com
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2022, Haiku Inc.
+ * Original author: Niels Sascha Reedijk.
  */
+
+/** @file HttpResultPrivate.h
+    @brief Shared state block backing BHttpResult — atomically tracks request
+           status, holds the parsed response, and synchronises the producer
+           BHttpSession thread with consumer threads waiting on the result. */
 
 #ifndef _HTTP_RESULT_PRIVATE_H_
 #define _HTTP_RESULT_PRIVATE_H_
@@ -24,6 +43,8 @@ namespace BPrivate {
 
 namespace Network {
 
+/** @brief Shared producer/consumer state for an in-flight HTTP request,
+           guarded by atomic status word and a data-wait semaphore. */
 struct HttpResultPrivate {
 	// Read-only properties (multi-thread safe)
 	const	int32				id;
@@ -57,6 +78,12 @@ struct HttpResultPrivate {
 };
 
 
+/**
+ * @brief Initialise the shared state with a unique @a identifier and create
+ *        the data-wait semaphore used to signal consumers.
+ *
+ * @param identifier  Stable id used to name the semaphore for debugging.
+ */
 inline HttpResultPrivate::HttpResultPrivate(int32 identifier)
 	:
 	id(identifier)
@@ -68,6 +95,12 @@ inline HttpResultPrivate::HttpResultPrivate(int32 identifier)
 }
 
 
+/**
+ * @brief Return the current request status without acquiring any lock.
+ *
+ * @return One of the kNoData, kStatusReady, kHeadersReady, kBodyReady, or
+ *         kError sentinels.
+ */
 inline int32
 HttpResultPrivate::GetStatusAtomic()
 {
@@ -75,6 +108,12 @@ HttpResultPrivate::GetStatusAtomic()
 }
 
 
+/**
+ * @brief Whether the request is in a state where a cancel signal will be
+ *        honoured by the session thread.
+ *
+ * @return true if cancellation is currently safe.
+ */
 inline bool
 HttpResultPrivate::CanCancel()
 {
@@ -82,6 +121,7 @@ HttpResultPrivate::CanCancel()
 }
 
 
+/** @brief Atomically set the cancel-allowed flag. */
 inline void
 HttpResultPrivate::SetCancel()
 {
@@ -89,6 +129,12 @@ HttpResultPrivate::SetCancel()
 }
 
 
+/**
+ * @brief Record a fatal error, release any borrowed body target, and wake
+ *        any thread blocked on the data-wait semaphore.
+ *
+ * @param e  Exception pointer carrying the failure reason.
+ */
 inline void
 HttpResultPrivate::SetError(std::exception_ptr e)
 {
@@ -101,6 +147,11 @@ HttpResultPrivate::SetError(std::exception_ptr e)
 }
 
 
+/**
+ * @brief Publish the parsed response status line and signal waiters.
+ *
+ * @param s  Parsed BHttpStatus moved into the result.
+ */
 inline void
 HttpResultPrivate::SetStatus(BHttpStatus&& s)
 {
@@ -110,6 +161,11 @@ HttpResultPrivate::SetStatus(BHttpStatus&& s)
 }
 
 
+/**
+ * @brief Publish the parsed response header fields and signal waiters.
+ *
+ * @param f  Parsed BHttpFields moved into the result.
+ */
 inline void
 HttpResultPrivate::SetFields(BHttpFields&& f)
 {
@@ -119,6 +175,10 @@ HttpResultPrivate::SetFields(BHttpFields&& f)
 }
 
 
+/**
+ * @brief Finalise the response body — either swap in the in-memory string
+ *        or release the borrowed BDataIO target — and signal waiters.
+ */
 inline void
 HttpResultPrivate::SetBody()
 {
@@ -133,6 +193,16 @@ HttpResultPrivate::SetBody()
 }
 
 
+/**
+ * @brief Append @a size bytes from @a buffer to the response body sink.
+ *
+ * Routes to the borrowed BDataIO target when one was supplied, otherwise
+ * appends to the internal bodyString.
+ *
+ * @param buffer  Pointer to the bytes received from the network.
+ * @param size    Byte count.
+ * @return The number of bytes accepted by the sink.
+ */
 inline size_t
 HttpResultPrivate::WriteToBody(const void* buffer, size_t size)
 {

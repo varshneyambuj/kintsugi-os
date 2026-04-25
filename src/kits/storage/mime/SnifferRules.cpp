@@ -67,7 +67,7 @@ using namespace BPrivate::Storage;
 
 /*!
 	\struct SnifferRules::sniffer_rule
-	\brief A parsed sniffer rule and its corresponding mime type and rule string
+	@brief A parsed sniffer rule and its corresponding mime type and rule string
 
 	The parse sniffer rule is stored in the \c rule member, which is a pointer
 	to a \c Sniffer::Rule object. This design was chosen to allow \c sniffer_rule
@@ -131,7 +131,7 @@ bool operator<(const SnifferRules::sniffer_rule &left, const SnifferRules::sniff
 
 /*!
 	\class SnifferRules
-	\brief Manages the sniffer rules for the entire database
+	@brief Manages the sniffer rules for the entire database
 */
 
 /**
