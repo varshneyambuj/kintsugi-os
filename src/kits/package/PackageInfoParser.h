@@ -1,8 +1,29 @@
 /*
- * Copyright 2011, Oliver Tappe <zooey@hirschkaefer.de>
- * Copyright 2016, Andrew Lindesay <apl@lindesay.co.nz>
- * Distributed under the terms of the MIT License.
+ * Copyright 2026, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2011, 2016, Haiku.
+ * Original authors: Oliver Tappe <zooey@hirschkaefer.de>,
+ *                   Andrew Lindesay <apl@lindesay.co.nz>.
  */
+
+/** @file PackageInfoParser.h
+    @brief Tokenising parser for ".PackageInfo" descriptions used by BPackageInfo. */
+
 #ifndef PACKAGE_INFO_PARSER_H
 #define PACKAGE_INFO_PARSER_H
 
@@ -13,9 +34,9 @@
 namespace BPackageKit {
 
 
-/*
- * Parses a ".PackageInfo" file and fills a BPackageInfo object with the
- * package info elements found.
+/**
+ * @brief Parses a ".PackageInfo" file and populates a BPackageInfo with the
+ *        attributes, versions, and resolvable expressions it discovers.
  */
 class BPackageInfo::Parser {
 public:

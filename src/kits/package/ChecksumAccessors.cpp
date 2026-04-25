@@ -54,6 +54,7 @@ namespace BPackageKit {
 namespace BPrivate {
 
 
+/** @brief Convert a 4-bit value (0-15) into its lowercase ASCII hex digit. */
 #define NIBBLE_AS_HEX(nibble) \
 	(nibble >= 10 ? 'a' + nibble - 10 : '0' + nibble)
 

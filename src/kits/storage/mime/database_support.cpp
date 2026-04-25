@@ -63,23 +63,39 @@ namespace Mime {
 #define MINI_ICON_ATTR_PREFIX ATTR_PREFIX "M:"
 #define LARGE_ICON_ATTR_PREFIX ATTR_PREFIX "L:"
 
+/** @brief Attribute-name prefix for per-type 16x16 mini icons. */
 const char *kMiniIconAttrPrefix		= MINI_ICON_ATTR_PREFIX;
+/** @brief Attribute-name prefix for per-type 32x32 large icons. */
 const char *kLargeIconAttrPrefix	= LARGE_ICON_ATTR_PREFIX;
+/** @brief Generic META: attribute-name prefix shared by all MIME database attributes. */
 const char *kIconAttrPrefix			= ATTR_PREFIX;
 
 // attribute names
+/** @brief Attribute name carrying the MIME type string of a regular filesystem entry. */
 const char *kFileTypeAttr			= "BEOS:TYPE";
+/** @brief Attribute name carrying the MIME type string of a database entry. */
 const char *kTypeAttr				= ATTR_PREFIX "TYPE";
+/** @brief Attribute name holding the preferred-application path hint. */
 const char *kAppHintAttr			= ATTR_PREFIX "PPATH";
+/** @brief Attribute name holding the flattened file-attribute info BMessage. */
 const char *kAttrInfoAttr			= ATTR_PREFIX "ATTR_INFO";
+/** @brief Attribute name holding the short human-readable description. */
 const char *kShortDescriptionAttr	= ATTR_PREFIX "S:DESC";
+/** @brief Attribute name holding the long human-readable description. */
 const char *kLongDescriptionAttr	= ATTR_PREFIX "L:DESC";
+/** @brief Attribute name holding the flattened list of associated filename extensions. */
 const char *kFileExtensionsAttr		= ATTR_PREFIX "EXTENS";
+/** @brief Attribute name holding the standard 16x16 mini icon. */
 const char *kMiniIconAttr			= MINI_ICON_ATTR_PREFIX "STD_ICON";
+/** @brief Attribute name holding the standard 32x32 large icon. */
 const char *kLargeIconAttr			= LARGE_ICON_ATTR_PREFIX "STD_ICON";
+/** @brief Attribute name holding the resolution-independent vector icon. */
 const char *kIconAttr				= ATTR_PREFIX "ICON";
+/** @brief Attribute name holding the preferred-application signature. */
 const char *kPreferredAppAttr		= ATTR_PREFIX "PREF_APP";
+/** @brief Attribute name holding the type's MIME sniffer rule string. */
 const char *kSnifferRuleAttr		= ATTR_PREFIX "SNIFF_RULE";
+/** @brief Attribute name holding the flattened list of supported MIME types (for apps). */
 const char *kSupportedTypesAttr		= ATTR_PREFIX "FILE_TYPES";
 
 // attribute data types (as used in the R5 database)
@@ -98,26 +114,38 @@ const int32 kSnifferRuleType		= B_STRING_TYPE;
 const int32 kSupportedTypesType		= B_MESSAGE_TYPE;
 
 // Message fields
+/** @brief BMessage field name for application signature lists. */
 const char *kApplicationsField				= "applications";
+/** @brief BMessage field name for file-extension string lists. */
 const char *kExtensionsField				= "extensions";
+/** @brief BMessage field name for the list of MIME supertypes. */
 const char *kSupertypesField				= "super_types";
+/** @brief BMessage field name for the count of subtype-supporting applications. */
 const char *kSupportingAppsSubCountField	= "be:sub";
+/** @brief BMessage field name for the count of supertype-supporting applications. */
 const char *kSupportingAppsSuperCountField	= "be:super";
+/** @brief BMessage field name for MIME type string lists. */
 const char *kTypesField						= "types";
 
 // Mime types
+/** @brief Default MIME type for files of unknown content. */
 const char *kGenericFileType	= "application/octet-stream";
+/** @brief MIME type used to represent a directory entry. */
 const char *kDirectoryType		= "application/x-vnd.Be-directory";
+/** @brief MIME type used to represent a symbolic-link entry. */
 const char *kSymlinkType		= "application/x-vnd.Be-symlink";
+/** @brief MIME type used to represent a meta-MIME (database) entry itself. */
 const char *kMetaMimeType		= "application/x-vnd.Be-meta-mime";
 
 // Error codes
+/** @brief Sentinel status_t indicating that MIME-type guessing failed. */
 const status_t kMimeGuessFailureError	= B_ERRORS_END+1;
 
 
 #if defined(__HAIKU__) && !defined(HAIKU_HOST_PLATFORM_HAIKU)
 
 
+/** @brief Ordered list of base directories searched for "mime_db" subfolders. */
 static const directory_which kBaseDirectoryConstants[] = {
 	B_USER_SETTINGS_DIRECTORY,
 	B_USER_NONPACKAGED_DATA_DIRECTORY,
@@ -126,7 +154,9 @@ static const directory_which kBaseDirectoryConstants[] = {
 	B_SYSTEM_DATA_DIRECTORY
 };
 
+/** @brief Guard ensuring the process-wide DatabaseLocation is initialised exactly once. */
 static pthread_once_t sDefaultDatabaseLocationInitOnce = PTHREAD_ONCE_INIT;
+/** @brief Process-wide DatabaseLocation instance returned by default_database_location(). */
 static DatabaseLocation* sDefaultDatabaseLocation = NULL;
 
 

@@ -58,6 +58,7 @@
 #include "ValidateChecksumJob.h"
 
 #undef B_TRANSLATION_CONTEXT
+/** @brief Translation context used by B_TRANSLATE() for user-visible job titles. */
 #define B_TRANSLATION_CONTEXT "RefreshRepositoryRequest"
 
 

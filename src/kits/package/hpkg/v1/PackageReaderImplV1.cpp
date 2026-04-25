@@ -74,23 +74,47 @@ namespace BPrivate {
 #define TRACE(format...)	do {} while (false)
 
 
-// maximum TOC size we support reading
+/** @brief Maximum TOC size in bytes the v1 reader will accept. */
 static const size_t kMaxTOCSize					= 64 * 1024 * 1024;
 
-// maximum package attributes size we support reading
+/** @brief Maximum package attributes section size the v1 reader will
+ *         accept. */
 static const size_t kMaxPackageAttributesSize	= 1 * 1024 * 1024;
 
 
 // #pragma mark - DataAttributeHandler
 
 
+/**
+ * @brief Attribute handler that fills out a BPackageData (v1) from
+ *        @c B_HPKG_ATTRIBUTE_ID_DATA_* sub-attributes.
+ *
+ * Captures size, compression method, and chunk size of an entry's data
+ * stream while the package's TOC is being parsed.
+ */
 struct PackageReaderImpl::DataAttributeHandler : AttributeHandler {
+	/**
+	 * @brief Construct the handler bound to the data record being filled.
+	 * @param data Package data record updated as attributes are decoded.
+	 */
 	DataAttributeHandler(BPackageData* data)
 		:
 		fData(data)
 	{
 	}
 
+	/**
+	 * @brief Initialise the basic data fields from the leading data
+	 *        attribute value.
+	 *
+	 * Distinguishes between inline and heap-resident data and records the
+	 * uncompressed size as a starting point.
+	 *
+	 * @param context Reader context (unused here, accepted for symmetry).
+	 * @param data    Package data record to initialise.
+	 * @param value   Decoded attribute value carrying the data reference.
+	 * @return Always B_OK.
+	 */
 	static status_t InitData(AttributeHandlerContext* context,
 		BPackageData* data, const AttributeValue& value)
 	{
@@ -104,6 +128,17 @@ struct PackageReaderImpl::DataAttributeHandler : AttributeHandler {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Allocate a DataAttributeHandler and run InitData() on its
+	 *        backing record.
+	 *
+	 * @param context  Reader context.
+	 * @param data     Package data record to populate.
+	 * @param value    Decoded data attribute value.
+	 * @param _handler Output: heap-allocated handler on success.
+	 * @retval B_OK         Handler created.
+	 * @retval B_NO_MEMORY  Allocation failed.
+	 */
 	static status_t Create(AttributeHandlerContext* context,
 		BPackageData* data, const AttributeValue& value,
 		AttributeHandler*& _handler)
@@ -119,6 +154,23 @@ struct PackageReaderImpl::DataAttributeHandler : AttributeHandler {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Apply a single data sub-attribute to the bound BPackageData
+	 *        record.
+	 *
+	 * Recognises @c B_HPKG_ATTRIBUTE_ID_DATA_SIZE,
+	 * @c B_HPKG_ATTRIBUTE_ID_DATA_COMPRESSION (validating the method), and
+	 * @c B_HPKG_ATTRIBUTE_ID_DATA_CHUNK_SIZE. Unknown IDs are forwarded to
+	 * the base class.
+	 *
+	 * @param context  Reader context.
+	 * @param id       Attribute ID being handled.
+	 * @param value    Decoded attribute value.
+	 * @param _handler Optional output for a child handler.
+	 * @retval B_OK         The attribute was applied.
+	 * @retval B_BAD_DATA   Unsupported compression method.
+	 * @return Otherwise the result of the base class handler.
+	 */
 	virtual status_t HandleAttribute(AttributeHandlerContext* context,
 		uint8 id, const AttributeValue& value, AttributeHandler** _handler)
 	{
@@ -153,6 +205,7 @@ struct PackageReaderImpl::DataAttributeHandler : AttributeHandler {
 	}
 
 private:
+	/** @brief Package data record being populated by this handler. */
 	BPackageData*	fData;
 };
 
@@ -160,7 +213,20 @@ private:
 // #pragma mark - AttributeAttributeHandler
 
 
+/**
+ * @brief Handler for a single extended-attribute record attached to a
+ *        package entry.
+ *
+ * Builds a BPackageEntryAttribute from @c FILE_ATTRIBUTE_TYPE and @c DATA
+ * sub-attributes and notifies the package content handler when the
+ * attribute is complete.
+ */
 struct PackageReaderImpl::AttributeAttributeHandler : AttributeHandler {
+	/**
+	 * @brief Construct the handler with the parent entry and attribute name.
+	 * @param entry Entry the extended attribute belongs to.
+	 * @param name  Name of the extended attribute.
+	 */
 	AttributeAttributeHandler(BPackageEntry* entry, const char* name)
 		:
 		fEntry(entry),
@@ -168,6 +234,19 @@ struct PackageReaderImpl::AttributeAttributeHandler : AttributeHandler {
 	{
 	}
 
+	/**
+	 * @brief Apply a single sub-attribute to the in-flight extended
+	 *        attribute record.
+	 *
+	 * Recognises @c B_HPKG_ATTRIBUTE_ID_DATA (delegating to a
+	 * DataAttributeHandler) and @c B_HPKG_ATTRIBUTE_ID_FILE_ATTRIBUTE_TYPE.
+	 *
+	 * @param context  Reader context.
+	 * @param id       Attribute ID being handled.
+	 * @param value    Decoded attribute value.
+	 * @param _handler Optional output for a child handler.
+	 * @return B_OK on success, otherwise the base class result.
+	 */
 	virtual status_t HandleAttribute(AttributeHandlerContext* context,
 		uint8 id, const AttributeValue& value, AttributeHandler** _handler)
 	{
@@ -188,6 +267,13 @@ struct PackageReaderImpl::AttributeAttributeHandler : AttributeHandler {
 		return AttributeHandler::HandleAttribute(context, id, value, _handler);
 	}
 
+	/**
+	 * @brief Notify the content handler that the extended attribute is
+	 *        complete and self-destruct.
+	 *
+	 * @param context Reader context.
+	 * @return B_OK on success, otherwise the content handler's error.
+	 */
 	virtual status_t Delete(AttributeHandlerContext* context)
 	{
 		status_t error = context->packageContentHandler->HandleEntryAttribute(
@@ -198,7 +284,9 @@ struct PackageReaderImpl::AttributeAttributeHandler : AttributeHandler {
 	}
 
 private:
+	/** @brief Parent entry that owns the extended attribute. */
 	BPackageEntry*			fEntry;
+	/** @brief Extended attribute being assembled. */
 	BPackageEntryAttribute	fAttribute;
 };
 
@@ -206,7 +294,27 @@ private:
 // #pragma mark - EntryAttributeHandler
 
 
+/**
+ * @brief Handler for one entry (file/directory/symlink) inside the package
+ *        TOC tree.
+ *
+ * Maintains a BPackageEntry across nested attribute calls, recording file
+ * type, permissions, timestamps, symlink target, and data range. Spawns
+ * child handlers for nested directory entries, file attributes, and data
+ * sub-records, and emits @c HandleEntry / @c HandleEntryDone notifications
+ * to the content handler.
+ */
 struct PackageReaderImpl::EntryAttributeHandler : AttributeHandler {
+	/**
+	 * @brief Construct the handler with a parent entry and a child name.
+	 *
+	 * Initialises the entry's file type to the default and records the
+	 * default permissions; subsequent attributes may override these.
+	 *
+	 * @param context     Reader context.
+	 * @param parentEntry Parent directory entry, or NULL for top-level.
+	 * @param name        Name of the new entry.
+	 */
 	EntryAttributeHandler(AttributeHandlerContext* context,
 		BPackageEntry* parentEntry, const char* name)
 		:
@@ -216,6 +324,19 @@ struct PackageReaderImpl::EntryAttributeHandler : AttributeHandler {
 		_SetFileType(context, B_HPKG_DEFAULT_FILE_TYPE);
 	}
 
+	/**
+	 * @brief Validate @a name and allocate an EntryAttributeHandler.
+	 *
+	 * Rejects empty names, "." / ".." , and names containing '/'.
+	 *
+	 * @param context     Reader context.
+	 * @param parentEntry Parent directory entry, or NULL.
+	 * @param name        Proposed name of the entry.
+	 * @param _handler    Output: heap-allocated handler on success.
+	 * @retval B_OK         Handler created.
+	 * @retval B_BAD_DATA   Invalid entry name.
+	 * @retval B_NO_MEMORY  Allocation failure.
+	 */
 	static status_t Create(AttributeHandlerContext* context,
 		BPackageEntry* parentEntry, const char* name,
 		AttributeHandler*& _handler)
@@ -238,6 +359,22 @@ struct PackageReaderImpl::EntryAttributeHandler : AttributeHandler {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Apply a sub-attribute to the in-flight entry.
+	 *
+	 * Dispatches over the entry-relevant attribute IDs (file type,
+	 * permissions, timestamps, symlink path, nested directory entry, file
+	 * attribute, and data). For new directory entries and file attributes
+	 * the entry's @c HandleEntry callback is fired before delegating to
+	 * the appropriate child handler.
+	 *
+	 * @param context  Reader context.
+	 * @param id       Attribute ID being handled.
+	 * @param value    Decoded attribute value.
+	 * @param _handler Optional output for a child handler.
+	 * @return B_OK on success, otherwise the first error from a callback or
+	 *         child handler.
+	 */
 	virtual status_t HandleAttribute(AttributeHandlerContext* context,
 		uint8 id, const AttributeValue& value, AttributeHandler** _handler)
 	{
@@ -327,6 +464,16 @@ struct PackageReaderImpl::EntryAttributeHandler : AttributeHandler {
 		return AttributeHandler::HandleAttribute(context, id, value, _handler);
 	}
 
+	/**
+	 * @brief Emit @c HandleEntryDone for the entry and self-destruct.
+	 *
+	 * Ensures @c HandleEntry has fired (in case the entry had no
+	 * sub-attributes that triggered it earlier), then notifies the content
+	 * handler that the entry is fully consumed.
+	 *
+	 * @param context Reader context.
+	 * @return B_OK on success, otherwise the content handler's error.
+	 */
 	virtual status_t Delete(AttributeHandlerContext* context)
 	{
 		// notify if not done yet
@@ -343,6 +490,15 @@ struct PackageReaderImpl::EntryAttributeHandler : AttributeHandler {
 	}
 
 private:
+	/**
+	 * @brief Fire @c HandleEntry exactly once for this entry.
+	 *
+	 * Subsequent calls are no-ops.
+	 *
+	 * @param context Reader context.
+	 * @return B_OK on success or when already notified, otherwise the
+	 *         content handler's error.
+	 */
 	status_t _Notify(AttributeHandlerContext* context)
 	{
 		if (fNotified)
@@ -352,6 +508,19 @@ private:
 		return context->packageContentHandler->HandleEntry(&fEntry);
 	}
 
+	/**
+	 * @brief Translate a v1 file-type code into POSIX type and default
+	 *        permissions on the entry.
+	 *
+	 * Recognises @c B_HPKG_FILE_TYPE_FILE, @c B_HPKG_FILE_TYPE_DIRECTORY,
+	 * and @c B_HPKG_FILE_TYPE_SYMLINK; reports invalid types as
+	 * @c B_BAD_DATA.
+	 *
+	 * @param context  Reader context.
+	 * @param fileType File-type code from the attribute payload.
+	 * @retval B_OK         Type accepted.
+	 * @retval B_BAD_DATA   Unrecognised file type.
+	 */
 	status_t _SetFileType(AttributeHandlerContext* context, uint64 fileType)
 	{
 		switch (fileType) {
@@ -379,7 +548,9 @@ private:
 	}
 
 private:
+	/** @brief Entry being assembled by this handler. */
 	BPackageEntry	fEntry;
+	/** @brief Whether @c HandleEntry has already been emitted. */
 	bool			fNotified;
 };
 
@@ -387,9 +558,27 @@ private:
 // #pragma mark - RootAttributeHandler
 
 
+/**
+ * @brief Top-level handler for a v1 package's TOC root.
+ *
+ * Specialises PackageAttributeHandler to recognise top-level directory
+ * entries; non-entry attributes are delegated back to the package
+ * attribute handler base class.
+ */
 struct PackageReaderImpl::RootAttributeHandler : PackageAttributeHandler {
 	typedef PackageAttributeHandler inherited;
 
+	/**
+	 * @brief Dispatch a top-level attribute to either an EntryAttributeHandler
+	 *        or the package-attribute base class.
+	 *
+	 * @param context  Reader context.
+	 * @param id       Attribute ID being handled.
+	 * @param value    Decoded attribute value.
+	 * @param _handler Optional output for a child handler.
+	 * @return B_OK on success, otherwise an error from the child handler or
+	 *         the base class.
+	 */
 	virtual status_t HandleAttribute(AttributeHandlerContext* context,
 		uint8 id, const AttributeValue& value, AttributeHandler** _handler)
 	{
@@ -409,6 +598,10 @@ struct PackageReaderImpl::RootAttributeHandler : PackageAttributeHandler {
 // #pragma mark - PackageReaderImpl
 
 
+/**
+ * @brief Construct an empty v1 package reader bound to an error output.
+ * @param errorOutput Sink for diagnostic messages emitted while reading.
+ */
 PackageReaderImpl::PackageReaderImpl(BErrorOutput* errorOutput)
 	:
 	inherited(errorOutput),
@@ -417,11 +610,24 @@ PackageReaderImpl::PackageReaderImpl(BErrorOutput* errorOutput)
 }
 
 
+/**
+ * @brief Destroy the reader and release any sections still held open.
+ */
 PackageReaderImpl::~PackageReaderImpl()
 {
 }
 
 
+/**
+ * @brief Open a v1 package file by path and prepare it for parsing.
+ *
+ * Opens the named file read-only and forwards to the descriptor-based
+ * overload, transferring ownership of the descriptor.
+ *
+ * @param fileName Path to the .hpkg file.
+ * @return B_OK on success, an errno-mapped error on open failure, or an
+ *         init error from the file-descriptor overload.
+ */
 status_t
 PackageReaderImpl::Init(const char* fileName)
 {
@@ -437,6 +643,25 @@ PackageReaderImpl::Init(const char* fileName)
 }
 
 
+/**
+ * @brief Initialise the reader from an already-open file descriptor.
+ *
+ * Reads and validates the v1 hpkg_header, including the magic, version,
+ * total file size, and section descriptors for both the TOC and the
+ * package attributes section. Loads both sections fully into memory
+ * (subject to size sanity limits) and parses their string tables so that
+ * subsequent parses can resolve string references quickly.
+ *
+ * @param fd     File descriptor opened for reading on the package file.
+ * @param keepFD If @c true, the reader takes ownership and will close the
+ *               descriptor when destroyed.
+ * @retval B_OK             Reader is ready to parse content.
+ * @retval B_BAD_DATA       Header values fail integrity checks.
+ * @retval B_MISMATCHED_VALUES Package version is not supported.
+ * @retval B_UNSUPPORTED    A section size exceeds the reader's limits.
+ * @retval B_NO_MEMORY      Section buffers could not be allocated.
+ * @return Otherwise an error from the underlying I/O.
+ */
 status_t
 PackageReaderImpl::Init(int fd, bool keepFD)
 {
@@ -617,6 +842,17 @@ PackageReaderImpl::Init(int fd, bool keepFD)
 }
 
 
+/**
+ * @brief Parse the package's content with a high-level
+ *        BPackageContentHandler.
+ *
+ * Walks the package attributes section first, then the TOC, dispatching
+ * callbacks to the supplied handler for entries, attributes, and
+ * package-info attributes.
+ *
+ * @param contentHandler Caller-supplied content handler.
+ * @return B_OK on success, otherwise the first error encountered.
+ */
 status_t
 PackageReaderImpl::ParseContent(BPackageContentHandler* contentHandler)
 {
@@ -636,6 +872,17 @@ PackageReaderImpl::ParseContent(BPackageContentHandler* contentHandler)
 }
 
 
+/**
+ * @brief Parse the package's content with a low-level
+ *        BLowLevelPackageContentHandler.
+ *
+ * Provides raw attribute callbacks without higher-level entry/data
+ * reconstruction. Useful for tools that want to inspect the on-disk
+ * attribute tree directly.
+ *
+ * @param contentHandler Caller-supplied low-level content handler.
+ * @return B_OK on success, otherwise the first error encountered.
+ */
 status_t
 PackageReaderImpl::ParseContent(BLowLevelPackageContentHandler* contentHandler)
 {
@@ -655,6 +902,21 @@ PackageReaderImpl::ParseContent(BLowLevelPackageContentHandler* contentHandler)
 }
 
 
+/**
+ * @brief Walk the TOC attribute tree using the supplied root handler.
+ *
+ * Sets the current section to TOC, configures the heap range on @a context,
+ * pushes @a rootAttributeHandler onto the handler stack, and runs
+ * ParseAttributeTree(). On error the handler stack is unwound (calling
+ * @c Delete on every handler except the caller-owned root) and the
+ * context is notified.
+ *
+ * @param context              Reader context to drive.
+ * @param rootAttributeHandler Caller-owned root handler.
+ * @retval B_OK         The TOC was parsed completely.
+ * @retval B_BAD_DATA   Bytes remained after parsing finished.
+ * @return Otherwise an error from ParseAttributeTree().
+ */
 status_t
 PackageReaderImpl::_ParseTOC(AttributeHandlerContext* context,
 	AttributeHandler* rootAttributeHandler)
@@ -697,6 +959,23 @@ PackageReaderImpl::_ParseTOC(AttributeHandlerContext* context,
 }
 
 
+/**
+ * @brief Decode a v1 attribute value of the given type and encoding from
+ *        the current section.
+ *
+ * Adds handling for raw payloads on top of the base class: heap-encoded
+ * raw values store an offset/size pair into the heap, and inline raw
+ * values are read directly from the TOC stream. Other types are forwarded
+ * to the base class.
+ *
+ * @param type     Attribute value type.
+ * @param encoding Encoding flag carried in the attribute header.
+ * @param _value   Output: decoded attribute value.
+ * @retval B_OK         Value decoded.
+ * @retval B_BAD_DATA   Invalid raw encoding, oversized inline data, or
+ *                      out-of-range heap reference.
+ * @return Otherwise the base class result.
+ */
 status_t
 PackageReaderImpl::ReadAttributeValue(uint8 type, uint8 encoding,
 	AttributeValue& _value)
@@ -749,6 +1028,19 @@ PackageReaderImpl::ReadAttributeValue(uint8 type, uint8 encoding,
 }
 
 
+/**
+ * @brief Carve @a size bytes out of the in-memory TOC at the current
+ *        cursor.
+ *
+ * Used by inline raw attribute values to obtain a pointer to their bytes
+ * without copying. Advances the TOC cursor by @a size.
+ *
+ * @param size    Number of bytes the caller wants to consume.
+ * @param _buffer Output: pointer into the TOC buffer (valid for the
+ *                lifetime of the reader).
+ * @retval B_OK         A buffer of the requested size was returned.
+ * @retval B_BAD_DATA   The TOC does not have @a size bytes remaining.
+ */
 status_t
 PackageReaderImpl::_GetTOCBuffer(size_t size, const void*& _buffer)
 {

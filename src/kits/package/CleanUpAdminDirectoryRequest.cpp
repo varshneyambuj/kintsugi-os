@@ -82,8 +82,11 @@ private:
 	status_t _GetOldStateDirectories(BStringList& directories);
 
 private:
+	/** @brief Reference to the installation location whose admin directory is cleaned. */
 	const BInstallationLocationInfo& fLocationInfo;
+	/** @brief Cutoff timestamp; only entries with mtime strictly before this are removable. */
 	time_t fCleanupBefore;
+	/** @brief Minimum number of state directories to retain regardless of age. */
 	int32 fMinimumStatesToKeep;
 };
 

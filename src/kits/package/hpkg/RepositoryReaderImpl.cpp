@@ -68,21 +68,34 @@ namespace BPrivate {
 #define TRACE(format...)	do {} while (false)
 
 
-// maximum repository info size we support reading
+/** @brief Maximum size in bytes of the repository info section we will read. */
 static const size_t kMaxRepositoryInfoSize		= 1 * 1024 * 1024;
 
-// maximum package attributes size we support reading
+/** @brief Maximum size in bytes of the package attributes section we will read. */
 static const size_t kMaxPackageAttributesSize	= 64 * 1024 * 1024;
 
 
 // #pragma mark - PackagesAttributeHandler
 
 
+/**
+ * @brief Top-level attribute handler that walks the repository's per-package
+ *        attribute records.
+ *
+ * Forwards each encountered package and its attributes to the supplied
+ * BRepositoryContentHandler, signalling start and end of every package.
+ */
 class RepositoryReaderImpl::PackagesAttributeHandler
 	: public AttributeHandler {
 private:
 	typedef AttributeHandler super;
 public:
+	/**
+	 * @brief Construct a packages attribute handler bound to a content
+	 *        handler.
+	 * @param contentHandler Caller-supplied repository content handler that
+	 *                       receives package notifications. May be NULL.
+	 */
 	PackagesAttributeHandler(BRepositoryContentHandler* contentHandler)
 		:
 		fContentHandler(contentHandler),
@@ -90,6 +103,22 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Dispatch a single attribute appearing under the packages section.
+	 *
+	 * Recognises @c B_HPKG_ATTRIBUTE_ID_PACKAGE entries and notifies the
+	 * content handler of every new package. A nested
+	 * PackageAttributeHandler is allocated to consume the package's
+	 * sub-attributes.
+	 *
+	 * @param context Reader context (memory pool, error output, options).
+	 * @param id      The attribute ID being handled.
+	 * @param value   Decoded attribute value.
+	 * @param _handler Output for a child handler when the attribute opens a
+	 *                 nested attribute scope.
+	 * @return B_OK on success, B_BAD_DATA on unexpected attributes, or an
+	 *         error from the content handler.
+	 */
 	virtual status_t HandleAttribute(AttributeHandlerContext* context, uint8 id,
 		const AttributeValue& value, AttributeHandler** _handler)
 	{
@@ -129,6 +158,16 @@ public:
 		return B_OK;
 	}
 
+	/**
+	 * @brief Finalise the current package then defer to the parent handler.
+	 *
+	 * Called when the packages attribute scope closes. Ensures the in-flight
+	 * package is reported as done before the base handler runs its own
+	 * shutdown logic.
+	 *
+	 * @param context Reader context.
+	 * @return B_OK on success, otherwise the first error encountered.
+	 */
 	virtual status_t NotifyDone(AttributeHandlerContext* context)
 	{
 		status_t result = _NotifyPackageDone();
@@ -138,6 +177,14 @@ public:
 	}
 
 private:
+	/**
+	 * @brief Emit a HandlePackageDone() callback for the current package.
+	 *
+	 * No-op when no package is in flight or when no content handler was
+	 * supplied.
+	 *
+	 * @return B_OK on success, otherwise the content handler's error code.
+	 */
 	status_t _NotifyPackageDone()
 	{
 		if (fPackageName == NULL || fContentHandler == NULL)
@@ -149,7 +196,9 @@ private:
 	}
 
 private:
+	/** @brief Content handler that receives every package callback. */
 	BRepositoryContentHandler*	fContentHandler;
+	/** @brief Name of the package currently being decoded, or NULL. */
 	const char*					fPackageName;
 };
 
@@ -157,43 +206,68 @@ private:
 // #pragma mark - PackageContentHandlerAdapter
 
 
+/**
+ * @brief Bridges a BPackageContentHandler interface onto a
+ *        BRepositoryContentHandler.
+ *
+ * Repository attribute parsing is implemented in terms of the package
+ * content handler API; this adapter forwards only the package-level
+ * attribute callbacks that a repository handler actually exposes and
+ * silently swallows the entry/attribute callbacks that do not apply to
+ * repository indexes.
+ */
 class RepositoryReaderImpl::PackageContentHandlerAdapter
 	: public BPackageContentHandler {
 public:
+	/**
+	 * @brief Construct the adapter wrapping a repository content handler.
+	 * @param contentHandler Repository content handler to forward to.
+	 */
 	PackageContentHandlerAdapter(BRepositoryContentHandler* contentHandler)
 		:
 		fContentHandler(contentHandler)
 	{
 	}
 
+	/** @brief No-op; entries are not part of repository indexes. */
 	virtual status_t HandleEntry(BPackageEntry* entry)
 	{
 		return B_OK;
 	}
 
+	/** @brief No-op; entry attributes are not part of repository indexes. */
 	virtual status_t HandleEntryAttribute(BPackageEntry* entry,
 		BPackageEntryAttribute* attribute)
 	{
 		return B_OK;
 	}
 
+	/** @brief No-op; entries are not part of repository indexes. */
 	virtual status_t HandleEntryDone(BPackageEntry* entry)
 	{
 		return B_OK;
 	}
 
+	/**
+	 * @brief Forward a package attribute value to the repository handler.
+	 * @param value Decoded package info attribute value.
+	 * @return The underlying repository handler's status.
+	 */
 	virtual status_t HandlePackageAttribute(
 		const BPackageInfoAttributeValue& value)
 	{
 		return fContentHandler->HandlePackageAttribute(value);
 	}
 
+	/** @brief Forward an asynchronous error notification to the repository
+	 *         handler. */
 	virtual void HandleErrorOccurred()
 	{
 		return fContentHandler->HandleErrorOccurred();
 	}
 
 private:
+	/** @brief Underlying repository handler that receives forwarded callbacks. */
 	BRepositoryContentHandler*	fContentHandler;
 };
 
@@ -201,6 +275,10 @@ private:
 // #pragma mark - RepositoryReaderImpl
 
 
+/**
+ * @brief Construct an empty repository reader bound to an error output.
+ * @param errorOutput Sink for diagnostic messages emitted while reading.
+ */
 RepositoryReaderImpl::RepositoryReaderImpl(BErrorOutput* errorOutput)
 	:
 	inherited("repository", errorOutput)
@@ -208,11 +286,24 @@ RepositoryReaderImpl::RepositoryReaderImpl(BErrorOutput* errorOutput)
 }
 
 
+/**
+ * @brief Destroy the reader and release any sections still held open.
+ */
 RepositoryReaderImpl::~RepositoryReaderImpl()
 {
 }
 
 
+/**
+ * @brief Open a repository index file by path and prepare it for parsing.
+ *
+ * Opens the named file read-only, transferring ownership of the resulting
+ * file descriptor to the reader.
+ *
+ * @param fileName Path to the .hpkr repository index file.
+ * @return B_OK on success, errno-mapped error on open failure, or an init
+ *         error from the descriptor-based overload.
+ */
 status_t
 RepositoryReaderImpl::Init(const char* fileName)
 {
@@ -229,6 +320,18 @@ RepositoryReaderImpl::Init(const char* fileName)
 }
 
 
+/**
+ * @brief Initialise the reader from an open file descriptor.
+ *
+ * Wraps @a fd in a BFdIO so that the standard ReaderImplBase machinery can
+ * issue positioned reads.
+ *
+ * @param fd     A file descriptor opened for reading on a repository file.
+ * @param keepFD If @c true, the reader takes ownership and will close the
+ *               descriptor when destroyed.
+ * @return B_OK on success, B_NO_MEMORY if the wrapper cannot be allocated,
+ *         or an init error from the BPositionIO overload.
+ */
 status_t
 RepositoryReaderImpl::Init(int fd, bool keepFD)
 {
@@ -243,6 +346,20 @@ RepositoryReaderImpl::Init(int fd, bool keepFD)
 }
 
 
+/**
+ * @brief Initialise the reader from a positioned I/O object.
+ *
+ * Reads and validates the repository header, then prepares the repository
+ * info and package attributes sections so they can be parsed on demand.
+ * Unflattens the embedded BMessage carrying the repository info and stores
+ * it for later retrieval.
+ *
+ * @param file     The repository file as a positioned I/O object.
+ * @param keepFile If @c true, the reader owns @a file and will delete it
+ *                 when destroyed.
+ * @return B_OK on success, otherwise an error describing why the file could
+ *         not be opened or interpreted.
+ */
 status_t
 RepositoryReaderImpl::Init(BPositionIO* file, bool keepFile)
 {
@@ -300,6 +417,14 @@ RepositoryReaderImpl::Init(BPositionIO* file, bool keepFile)
 }
 
 
+/**
+ * @brief Retrieve the repository's metadata as parsed during Init().
+ *
+ * @param _repositoryInfo Output target that receives a copy of the repository
+ *                        info; must not be NULL.
+ * @retval B_OK         The info was copied successfully.
+ * @retval B_BAD_VALUE  @a _repositoryInfo is NULL.
+ */
 status_t
 RepositoryReaderImpl::GetRepositoryInfo(BRepositoryInfo* _repositoryInfo) const
 {
@@ -311,6 +436,19 @@ RepositoryReaderImpl::GetRepositoryInfo(BRepositoryInfo* _repositoryInfo) const
 }
 
 
+/**
+ * @brief Walk the package attributes section, dispatching callbacks to the
+ *        supplied content handler.
+ *
+ * Notifies @a contentHandler of the repository info first, then iterates
+ * over every package record using a PackagesAttributeHandler chain. The
+ * minor-version mismatch flag is forwarded so that newer repositories can
+ * be tolerated by older clients when they only use known attributes.
+ *
+ * @param contentHandler Caller-supplied repository content handler.
+ * @return B_OK on success, otherwise the first error encountered while
+ *         parsing or while a callback was running.
+ */
 status_t
 RepositoryReaderImpl::ParseContent(BRepositoryContentHandler* contentHandler)
 {

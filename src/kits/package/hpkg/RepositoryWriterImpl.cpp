@@ -80,7 +80,22 @@ namespace {
 // #pragma mark - PackageEntryDataFetcher
 
 
+/**
+ * @brief Helper that pulls the raw bytes of a single package entry's data
+ *        stream into a BString.
+ *
+ * Used by the repository writer to extract licence text from packages that
+ * require licence approval, so the text can be embedded in the repository
+ * info.
+ */
 struct PackageEntryDataFetcher {
+	/**
+	 * @brief Bind the fetcher to an error sink and a specific package data
+	 *        descriptor.
+	 *
+	 * @param errorOutput Sink that receives diagnostic messages on failure.
+	 * @param packageData The package entry data record to read.
+	 */
 	PackageEntryDataFetcher(BErrorOutput* errorOutput,
 		BPackageData& packageData)
 		:
@@ -89,6 +104,20 @@ struct PackageEntryDataFetcher {
 	{
 	}
 
+	/**
+	 * @brief Read the entire data stream described by @c fPackageData into a
+	 *        BString buffer.
+	 *
+	 * Allocates a PackageDataReader on top of @a heapReader, locks a buffer
+	 * of the data's full size in @a _contents, and reads everything in.
+	 *
+	 * @param heapReader Reader providing access to the package's compressed
+	 *                   heap.
+	 * @param _contents  Output BString that receives the data; contents are
+	 *                   undefined on error.
+	 * @return B_OK on success, B_NO_MEMORY if the buffer cannot be locked,
+	 *         or an error from the reader factory or the read itself.
+	 */
 	status_t ReadIntoString(BAbstractBufferedDataReader* heapReader,
 		BString& _contents)
 	{
@@ -118,7 +147,9 @@ struct PackageEntryDataFetcher {
 	}
 
 private:
+	/** @brief Sink for error reporting. */
 	BErrorOutput*			fErrorOutput;
+	/** @brief Package data descriptor whose bytes will be fetched. */
 	BPackageData&			fPackageData;
 };
 
@@ -126,7 +157,25 @@ private:
 // #pragma mark - PackageContentHandler
 
 
+/**
+ * @brief Content handler used while reading an existing HPKG to populate a
+ *        BPackageInfo and harvest licence files into the repository info.
+ *
+ * Inherits the package-info parsing from BPackageInfoContentHandler and
+ * overrides HandleEntry() so that any file inside a package's
+ * "data/licenses" directory is read out and registered with the repository
+ * info when @c B_PACKAGE_FLAG_APPROVE_LICENSE is set on the package.
+ */
 struct PackageContentHandler : public BPackageInfoContentHandler {
+	/**
+	 * @brief Construct the handler for one specific package and repository.
+	 *
+	 * @param errorOutput    Sink for diagnostic messages.
+	 * @param packageInfo    Output info object that will be populated by
+	 *                       the parent class as attributes are decoded.
+	 * @param heapReader     Reader providing the package's compressed heap.
+	 * @param repositoryInfo Repository info that gathers harvested licences.
+	 */
 	PackageContentHandler(BErrorOutput* errorOutput, BPackageInfo* packageInfo,
 		BAbstractBufferedDataReader* heapReader,
 		BRepositoryInfo* repositoryInfo)
@@ -137,6 +186,20 @@ struct PackageContentHandler : public BPackageInfoContentHandler {
 	{
 	}
 
+	/**
+	 * @brief Inspect a package entry and harvest licence text when
+	 *        applicable.
+	 *
+	 * Returns immediately for packages that do not require licence
+	 * approval. For licence-bearing packages, reads any file located at
+	 * @c ./data/licenses/<name> and registers @a entry's name and contents
+	 * with the bound repository info. Duplicates already registered with
+	 * the repository are skipped.
+	 *
+	 * @param entry The entry being visited; @c NULL terminates the walk.
+	 * @return B_OK on success or skipped entries; otherwise an error from
+	 *         the data reader or the repository info.
+	 */
 	virtual status_t HandleEntry(BPackageEntry* entry)
 	{
 		// if license must be approved, read any license files from package such
@@ -181,24 +244,32 @@ struct PackageContentHandler : public BPackageInfoContentHandler {
 		return fRepositoryInfo->AddLicense(entry->Name(), licenseText);
 	}
 
+	/** @brief No-op; entry attributes are not relevant for repository
+	 *         indexing. */
 	virtual status_t HandleEntryAttribute(BPackageEntry* entry,
 		BPackageEntryAttribute* attribute)
 	{
 		return B_OK;
 	}
 
+	/** @brief No-op; the repository writer does not track per-entry
+	 *         completion. */
 	virtual status_t HandleEntryDone(BPackageEntry* entry)
 	{
 		return B_OK;
 	}
 
+	/** @brief Asynchronous error notification; unused by this handler. */
 	virtual void HandleErrorOccurred()
 	{
 	}
 
 private:
+	/** @brief Reserved for an outer package reader (unused in this path). */
 	BPackageReader*					fPackageReader;
+	/** @brief Reader providing access to the package's compressed heap. */
 	BAbstractBufferedDataReader*	fHeapReader;
+	/** @brief Repository info that gathers harvested licence text. */
 	BRepositoryInfo*				fRepositoryInfo;
 };
 
@@ -209,6 +280,10 @@ private:
 // #pragma mark - PackageNameSet
 
 
+/**
+ * @brief Hash set of package names already added to the repository, keyed by
+ *        case-sensitive hashable strings.
+ */
 struct RepositoryWriterImpl::PackageNameSet
 	: public ::BPrivate::HashSet<HashableString> {
 };
@@ -217,6 +292,17 @@ struct RepositoryWriterImpl::PackageNameSet
 // #pragma mark - RepositoryWriterImpl
 
 
+/**
+ * @brief Construct a repository writer bound to a listener and repository
+ *        metadata object.
+ *
+ * The listener receives progress callbacks and error messages while the
+ * writer runs. The repository info supplies the vendor, architecture, and
+ * licence collection that constraints individual packages must satisfy.
+ *
+ * @param listener       Caller-supplied listener for progress and errors.
+ * @param repositoryInfo Repository-wide metadata (not owned by the writer).
+ */
 RepositoryWriterImpl::RepositoryWriterImpl(BRepositoryWriterListener* listener,
 	BRepositoryInfo* repositoryInfo)
 	:
@@ -229,12 +315,26 @@ RepositoryWriterImpl::RepositoryWriterImpl(BRepositoryWriterListener* listener,
 }
 
 
+/**
+ * @brief Destroy the writer and release the duplicate-name guard set.
+ */
 RepositoryWriterImpl::~RepositoryWriterImpl()
 {
 	delete fPackageNames;
 }
 
 
+/**
+ * @brief Open the repository file for writing and prepare internal state.
+ *
+ * Creates the duplicate-name guard set and then forwards to @c _Init() to
+ * open the underlying file and heap writer. Catches and translates
+ * std::bad_alloc and status_t-typed exceptions thrown by the lower layers.
+ *
+ * @param fileName Path of the repository file to create or truncate.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         from the base writer's Init().
+ */
 status_t
 RepositoryWriterImpl::Init(const char* fileName)
 {
@@ -253,6 +353,17 @@ RepositoryWriterImpl::Init(const char* fileName)
 }
 
 
+/**
+ * @brief Read a built HPKG file from disk and add its metadata to the
+ *        repository being written.
+ *
+ * Catches and translates std::bad_alloc and status_t-typed exceptions
+ * thrown by the lower layers.
+ *
+ * @param packageEntry BEntry referring to an existing .hpkg file on disk.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         describing why the package could not be parsed or registered.
+ */
 status_t
 RepositoryWriterImpl::AddPackage(const BEntry& packageEntry)
 {
@@ -267,6 +378,17 @@ RepositoryWriterImpl::AddPackage(const BEntry& packageEntry)
 }
 
 
+/**
+ * @brief Add a package to the repository directly from a BPackageInfo
+ *        object.
+ *
+ * Used when the caller has already produced or unpacked the package info
+ * and does not need a checksum to be computed from the on-disk file.
+ *
+ * @param packageInfo The package metadata to register.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         from validation (mismatched vendor, duplicate name, etc.).
+ */
 status_t
 RepositoryWriterImpl::AddPackageInfo(const BPackageInfo& packageInfo)
 {
@@ -281,6 +403,16 @@ RepositoryWriterImpl::AddPackageInfo(const BPackageInfo& packageInfo)
 }
 
 
+/**
+ * @brief Flush all repository data to disk and close out the file.
+ *
+ * Writes the repository info section, the package attributes section,
+ * finalises the heap writer, and updates the file header. Catches and
+ * translates std::bad_alloc and status_t-typed exceptions.
+ *
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         from the underlying heap or attribute writers.
+ */
 status_t
 RepositoryWriterImpl::Finish()
 {
@@ -295,6 +427,16 @@ RepositoryWriterImpl::Finish()
 }
 
 
+/**
+ * @brief Open the underlying writer base and the heap writer.
+ *
+ * Internal helper called from Init() with exception handling already in
+ * place.
+ *
+ * @param fileName Path of the repository file to create or truncate.
+ * @return B_OK on success, otherwise an error from the base writer or
+ *         heap writer initialisation.
+ */
 status_t
 RepositoryWriterImpl::_Init(const char* fileName)
 {
@@ -307,6 +449,18 @@ RepositoryWriterImpl::_Init(const char* fileName)
 }
 
 
+/**
+ * @brief Serialise repository metadata, finalise the heap, and write the
+ *        file header.
+ *
+ * Builds the repository info section, then the package attributes section,
+ * flushes the heap writer (gathering compressed/uncompressed sizes), and
+ * patches the @c hpkg_repo_header at offset 0 with the section sizes,
+ * compression method, and final total file size.
+ *
+ * @return B_OK on success, otherwise an error from one of the section
+ *         writers or the heap writer.
+ */
 status_t
 RepositoryWriterImpl::_Finish()
 {
@@ -354,6 +508,18 @@ RepositoryWriterImpl::_Finish()
 }
 
 
+/**
+ * @brief Parse an HPKG file and register its metadata with the repository.
+ *
+ * Resolves @a packageEntry to a path, opens it with a BPackageReader,
+ * parses package attributes through PackageContentHandler (also harvesting
+ * any approval-required licence text), computes the file's checksum, and
+ * delegates to _RegisterCurrentPackageInfo() to validate and store it.
+ *
+ * @param packageEntry BEntry referring to an existing .hpkg file on disk.
+ * @return B_OK on success, otherwise an error describing why the package
+ *         could not be opened, parsed, checksummed, or registered.
+ */
 status_t
 RepositoryWriterImpl::_AddPackage(const BEntry& packageEntry)
 {
@@ -403,6 +569,16 @@ RepositoryWriterImpl::_AddPackage(const BEntry& packageEntry)
 }
 
 
+/**
+ * @brief Copy a caller-supplied BPackageInfo into the writer and register
+ *        it.
+ *
+ * Skips file I/O entirely; useful when the caller has already gathered the
+ * metadata from another source.
+ *
+ * @param packageInfo Package metadata to register.
+ * @return B_OK on success, otherwise an error from validation.
+ */
 status_t
 RepositoryWriterImpl::_AddPackageInfo(const BPackageInfo& packageInfo)
 {
@@ -417,6 +593,24 @@ RepositoryWriterImpl::_AddPackageInfo(const BPackageInfo& packageInfo)
 }
 
 
+/**
+ * @brief Validate the in-flight @c fPackageInfo and append it to the
+ *        repository.
+ *
+ * Enforces the duplicate-name guard, vendor match against the repository,
+ * and architecture compatibility (the package must match the repository
+ * architecture or be one of @c B_PACKAGE_ARCHITECTURE_ANY /
+ * @c B_PACKAGE_ARCHITECTURE_SOURCE). On success the package's
+ * info attributes are written into the package attribute tree and the
+ * listener is notified.
+ *
+ * @retval B_OK            The package was accepted.
+ * @retval B_NAME_IN_USE   A package with the same name was already added.
+ * @retval B_BAD_DATA      The package's vendor or architecture does not
+ *                         match the repository.
+ * @return Otherwise an error from BPackageInfo::InitCheck() or the hash
+ *         set.
+ */
 status_t
 RepositoryWriterImpl::_RegisterCurrentPackageInfo()
 {
@@ -472,6 +666,18 @@ RepositoryWriterImpl::_RegisterCurrentPackageInfo()
 }
 
 
+/**
+ * @brief Archive the repository info into a flattened BMessage and write it
+ *        to the file.
+ *
+ * Updates @a header.info_length with the section's flattened size and
+ * notifies the listener that the section is complete.
+ *
+ * @param header  The repository file header being assembled (output).
+ * @param _length Output variable receiving the section's flattened size.
+ * @return B_OK on success, otherwise an error from BMessage::Archive() or
+ *         BMessage::Flatten().
+ */
 status_t
 RepositoryWriterImpl::_WriteRepositoryInfo(hpkg_repo_header& header,
 	uint64& _length)
@@ -504,6 +710,15 @@ RepositoryWriterImpl::_WriteRepositoryInfo(hpkg_repo_header& header,
 }
 
 
+/**
+ * @brief Serialise the accumulated package attribute tree into the heap.
+ *
+ * Records section size, string count, and string-table length in the
+ * header for later retrieval by the reader, and notifies the listener.
+ *
+ * @param header  The repository file header being assembled (output).
+ * @param _length Output variable receiving the section's uncompressed size.
+ */
 void
 RepositoryWriterImpl::_WritePackageAttributes(hpkg_repo_header& header,
 	uint64& _length)

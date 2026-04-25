@@ -59,6 +59,7 @@
 #include <mime/database_support.h>
 
 
+/** @brief Extended-attribute name carrying a shared object's BAppFileInfo flags. */
 static const char *kAppFlagsAttribute = "BEOS:APP_FLAGS";
 
 

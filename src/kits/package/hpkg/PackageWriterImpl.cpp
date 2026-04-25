@@ -82,6 +82,8 @@
 using BPrivate::FileDescriptorCloser;
 
 
+/** @brief Name of the special licence string treated as not requiring a
+ *         licence file in the package. */
 static const char* const kPublicDomainLicenseName = "Public Domain";
 
 
@@ -97,39 +99,70 @@ namespace BPrivate {
 // #pragma mark - Attributes
 
 
+/**
+ * @brief Node in the in-memory attribute tree built up while a package is
+ *        being written.
+ *
+ * Each Attribute carries an attribute ID, a typed value, and a list of
+ * child attributes. The tree is later linearised into the package's TOC.
+ */
 struct PackageWriterImpl::Attribute
 	: public DoublyLinkedListLinkImpl<Attribute> {
+	/** @brief HPKG attribute identifier for this node. */
 	BHPKGAttributeID			id;
+	/** @brief Decoded attribute value. */
 	AttributeValue				value;
+	/** @brief Owned child attributes that nest under this one. */
 	DoublyLinkedList<Attribute>	children;
 
+	/**
+	 * @brief Construct an attribute with the given ID and an empty value.
+	 * @param id_ Attribute ID; defaults to a sentinel meaning "uninitialised".
+	 */
 	Attribute(BHPKGAttributeID id_ = B_HPKG_ATTRIBUTE_ID_ENUM_COUNT)
 		:
 		id(id_)
 	{
 	}
 
+	/** @brief Destroy the attribute and all of its children. */
 	~Attribute()
 	{
 		DeleteChildren();
 	}
 
+	/**
+	 * @brief Append @a child to the children list (taking ownership).
+	 * @param child Attribute to append.
+	 */
 	void AddChild(Attribute* child)
 	{
 		children.Add(child);
 	}
 
+	/**
+	 * @brief Detach @a child from the children list without deleting it.
+	 * @param child Attribute to detach.
+	 */
 	void RemoveChild(Attribute* child)
 	{
 		children.Remove(child);
 	}
 
+	/** @brief Delete every child attribute and clear the children list. */
 	void DeleteChildren()
 	{
 		while (Attribute* child = children.RemoveHead())
 			delete child;
 	}
 
+	/**
+	 * @brief Find a directory-entry child whose string value equals
+	 *        @a fileName.
+	 *
+	 * @param fileName Null-terminated child name to look up.
+	 * @return The matching child, or NULL if none was found.
+	 */
 	Attribute* FindEntryChild(const char* fileName) const
 	{
 		for (DoublyLinkedList<Attribute>::ConstIterator it
@@ -146,6 +179,15 @@ struct PackageWriterImpl::Attribute
 		return NULL;
 	}
 
+	/**
+	 * @brief Find a directory-entry child whose name equals @a fileName for
+	 *        @a nameLength bytes.
+	 *
+	 * @param fileName   Pointer to the name (need not be null-terminated).
+	 * @param nameLength Length of @a fileName in bytes.
+	 * @return The matching child, or NULL when @a fileName contains
+	 *         embedded NULs or no match exists.
+	 */
 	Attribute* FindEntryChild(const char* fileName, size_t nameLength) const
 	{
 		BString name(fileName, nameLength);
@@ -153,6 +195,13 @@ struct PackageWriterImpl::Attribute
 			? FindEntryChild(name) : NULL;
 	}
 
+	/**
+	 * @brief Find an extended-attribute child whose name equals
+	 *        @a attributeName.
+	 *
+	 * @param attributeName Null-terminated attribute name to look up.
+	 * @return The matching child, or NULL if none was found.
+	 */
 	Attribute* FindNodeAttributeChild(const char* attributeName) const
 	{
 		for (DoublyLinkedList<Attribute>::ConstIterator it
@@ -169,6 +218,12 @@ struct PackageWriterImpl::Attribute
 		return NULL;
 	}
 
+	/**
+	 * @brief Find the first child whose attribute ID matches @a id.
+	 *
+	 * @param id Attribute ID to search for.
+	 * @return The matching child, or NULL if none was found.
+	 */
 	Attribute* ChildWithID(BHPKGAttributeID id) const
 	{
 		for (DoublyLinkedList<Attribute>::ConstIterator it
@@ -185,8 +240,24 @@ struct PackageWriterImpl::Attribute
 // #pragma mark - PackageContentHandler
 
 
+/**
+ * @brief Low-level content handler used in update mode to rebuild the
+ *        in-memory attribute tree from an existing package's TOC.
+ *
+ * Only attributes from @c B_HPKG_SECTION_PACKAGE_TOC are processed;
+ * package-info attributes are reparsed elsewhere from the .PackageInfo
+ * entry.
+ */
 struct PackageWriterImpl::PackageContentHandler
 	: BLowLevelPackageContentHandler {
+	/**
+	 * @brief Construct the handler bound to a writer's root attribute and
+	 *        string cache.
+	 *
+	 * @param rootAttribute Root of the attribute tree to populate.
+	 * @param errorOutput   Sink for diagnostic messages.
+	 * @param stringCache   String cache shared with the writer.
+	 */
 	PackageContentHandler(Attribute* rootAttribute, BErrorOutput* errorOutput,
 		StringCache& stringCache)
 		:
@@ -197,6 +268,17 @@ struct PackageWriterImpl::PackageContentHandler
 	{
 	}
 
+	/**
+	 * @brief Decide whether the given section should be processed.
+	 *
+	 * Only the TOC section is forwarded; @a _handleSection is set to false
+	 * for every other section so it can be skipped.
+	 *
+	 * @param sectionID      ID of the section about to be parsed.
+	 * @param _handleSection Output: @c true if attributes from this section
+	 *                       should be delivered.
+	 * @return Always B_OK.
+	 */
 	virtual status_t HandleSectionStart(BHPKGPackageSectionID sectionID,
 		bool& _handleSection)
 	{
@@ -205,11 +287,30 @@ struct PackageWriterImpl::PackageContentHandler
 		return B_OK;
 	}
 
+	/** @brief No-op section-end notification; the writer needs no
+	 *         end-of-section bookkeeping. */
 	virtual status_t HandleSectionEnd(BHPKGPackageSectionID sectionID)
 	{
 		return B_OK;
 	}
 
+	/**
+	 * @brief Materialise an Attribute object from a low-level attribute
+	 *        callback and link it under its parent.
+	 *
+	 * Translates the value type (int / uint / string / raw) and routes
+	 * raw values to their inline or heap-resident form based on the
+	 * encoding flag.
+	 *
+	 * @param attributeID Attribute ID being delivered.
+	 * @param value       Decoded attribute value.
+	 * @param parentToken Token previously returned for the parent, or NULL
+	 *                    for top-level attributes.
+	 * @param _token      Output: token referring to the new Attribute.
+	 * @retval B_OK         The attribute was added.
+	 * @retval B_BAD_DATA   Invalid encoding or value type.
+	 * @note Raises std::bad_alloc when the string cache is exhausted.
+	 */
 	virtual status_t HandleAttribute(BHPKGAttributeID attributeID,
 		const BPackageAttributeValue& value, void* parentToken, void*& _token)
 	{
@@ -265,21 +366,28 @@ struct PackageWriterImpl::PackageContentHandler
 		return B_OK;
 	}
 
+	/** @brief No-op end-of-attribute callback; tree linkage is done in
+	 *         HandleAttribute(). */
 	virtual status_t HandleAttributeDone(BHPKGAttributeID attributeID,
 		const BPackageAttributeValue& value, void* parentToken, void* token)
 	{
 		return B_OK;
 	}
 
+	/** @brief Record that an asynchronous error was reported by the parser. */
 	virtual void HandleErrorOccurred()
 	{
 		fErrorOccurred = true;
 	}
 
 private:
+	/** @brief Sink for diagnostic messages. */
 	BErrorOutput*	fErrorOutput;
+	/** @brief Writer's string cache (shared, not owned). */
 	StringCache&	fStringCache;
+	/** @brief Root of the attribute tree being populated. */
 	Attribute*		fRootAttribute;
+	/** @brief Latched flag set by HandleErrorOccurred(). */
 	bool			fErrorOccurred;
 };
 
@@ -287,7 +395,25 @@ private:
 // #pragma mark - Entry
 
 
+/**
+ * @brief Node in the in-memory tree of entries that have been registered
+ *        with the writer but not yet emitted into the package.
+ *
+ * An entry mirrors a directory tree: each node holds a name, an optional
+ * file descriptor (when the caller supplied one explicitly), an
+ * "implicit" flag (true for ancestor directories synthesised solely to
+ * carry an explicit descendant), and a list of children.
+ */
 struct PackageWriterImpl::Entry : DoublyLinkedListLinkImpl<Entry> {
+	/**
+	 * @brief Construct an entry with a transferred name buffer.
+	 *
+	 * @param name       Heap-allocated, null-terminated name (ownership
+	 *                   transfers to the entry).
+	 * @param nameLength Length of @a name in bytes (excluding terminator).
+	 * @param fd         Optional file descriptor for the entry, or -1.
+	 * @param isImplicit Whether this entry is a synthesised ancestor.
+	 */
 	Entry(char* name, size_t nameLength, int fd, bool isImplicit)
 		:
 		fName(name),
@@ -297,12 +423,23 @@ struct PackageWriterImpl::Entry : DoublyLinkedListLinkImpl<Entry> {
 	{
 	}
 
+	/** @brief Destroy the entry, its children, and free the name buffer. */
 	~Entry()
 	{
 		DeleteChildren();
 		free(fName);
 	}
 
+	/**
+	 * @brief Allocate an Entry, copying @a name into a fresh heap buffer.
+	 *
+	 * @param name       Source name, not necessarily null-terminated.
+	 * @param nameLength Length of @a name in bytes.
+	 * @param fd         Optional file descriptor for the entry, or -1.
+	 * @param isImplicit Whether this entry is a synthesised ancestor.
+	 * @return The new Entry.
+	 * @note Throws std::bad_alloc on allocation failure.
+	 */
 	static Entry* Create(const char* name, size_t nameLength, int fd,
 		bool isImplicit)
 	{
@@ -322,48 +459,69 @@ struct PackageWriterImpl::Entry : DoublyLinkedListLinkImpl<Entry> {
 		return entry;
 	}
 
+	/** @brief Name of the entry. */
 	const char* Name() const
 	{
 		return fName;
 	}
 
+	/** @brief File descriptor associated with the entry, or -1. */
 	int FD() const
 	{
 		return fFD;
 	}
 
+	/** @brief Update the entry's associated file descriptor. */
 	void SetFD(int fd)
 	{
 		fFD = fd;
 	}
 
+	/** @brief Whether this entry is a synthesised ancestor directory. */
 	bool IsImplicit() const
 	{
 		return fIsImplicit;
 	}
 
+	/** @brief Update the entry's implicit/explicit flag. */
 	void SetImplicit(bool isImplicit)
 	{
 		fIsImplicit = isImplicit;
 	}
 
+	/**
+	 * @brief Test whether the entry's name equals @a name for @a nameLength
+	 *        bytes.
+	 * @param name       Candidate name (not necessarily null-terminated).
+	 * @param nameLength Length of @a name in bytes.
+	 * @return @c true on a byte-exact match.
+	 */
 	bool HasName(const char* name, size_t nameLength)
 	{
 		return nameLength == fNameLength
 			&& strncmp(name, fName, nameLength) == 0;
 	}
 
+	/** @brief Append @a child to the children list (taking ownership). */
 	void AddChild(Entry* child)
 	{
 		fChildren.Add(child);
 	}
 
+	/** @brief Delete every child entry and clear the children list. */
 	void DeleteChildren()
 	{
 		while (Entry* child = fChildren.RemoveHead())
 			delete child;
 	}
 
+	/**
+	 * @brief Find the first child whose name matches @a name for
+	 *        @a nameLength bytes.
+	 * @param name       Candidate name.
+	 * @param nameLength Length of @a name.
+	 * @return The matching child, or NULL.
+	 */
 	Entry* GetChild(const char* name, size_t nameLength) const
 	{
 		EntryList::ConstIterator it = fChildren.GetIterator();
@@ -375,16 +533,22 @@ struct PackageWriterImpl::Entry : DoublyLinkedListLinkImpl<Entry> {
 		return NULL;
 	}
 
+	/** @brief Iterator over the entry's children. */
 	EntryList::ConstIterator ChildIterator() const
 	{
 		return fChildren.GetIterator();
 	}
 
 private:
+	/** @brief Heap-allocated null-terminated entry name. */
 	char*		fName;
+	/** @brief Length of @c fName in bytes. */
 	size_t		fNameLength;
+	/** @brief File descriptor for the entry, or -1. */
 	int			fFD;
+	/** @brief Whether this entry is a synthesised ancestor directory. */
 	bool		fIsImplicit;
+	/** @brief Owned list of child entries. */
 	EntryList	fChildren;
 };
 
@@ -392,7 +556,25 @@ private:
 // #pragma mark - SubPathAdder
 
 
+/**
+ * @brief RAII helper that appends a path component to a buffer for the
+ *        scope of its lifetime.
+ *
+ * On construction it appends "/<subPath>" to @c pathBuffer; on destruction
+ * it restores the buffer to its original contents. Used while traversing
+ * a directory tree so error messages can include the full path of the
+ * current entry.
+ */
 struct PackageWriterImpl::SubPathAdder {
+	/**
+	 * @brief Append @a subPath to @a pathBuffer, throwing on overflow.
+	 *
+	 * @param errorOutput Sink for the diagnostic message on overflow.
+	 * @param pathBuffer  In/out buffer of B_PATH_NAME_LENGTH bytes.
+	 * @param subPath     Component to append.
+	 * @note Throws @c status_t(B_BUFFER_OVERFLOW) when the result would
+	 *       exceed @c B_PATH_NAME_LENGTH.
+	 */
 	SubPathAdder(BErrorOutput* errorOutput, char* pathBuffer,
 		const char* subPath)
 		:
@@ -410,12 +592,16 @@ struct PackageWriterImpl::SubPathAdder {
 		}
 	}
 
+	/** @brief Restore the path buffer to its state before the appender was
+	 *         constructed. */
 	~SubPathAdder()
 	{
 		*fOriginalPathEnd = '\0';
 	}
 
 private:
+	/** @brief Pointer to where the appended segment begins; restored to
+	 *         '\0' on destruction. */
 	char* fOriginalPathEnd;
 };
 
@@ -423,7 +609,24 @@ private:
 // #pragma mark - HeapAttributeOffsetter
 
 
+/**
+ * @brief Visitor that adjusts heap-resident attribute offsets after ranges
+ *        have been compacted out of the heap.
+ *
+ * Used in update mode after _CompactHeap() has computed how many bytes of
+ * each removed range precede every retained byte. The visitor walks the
+ * attribute tree and subtracts the cumulative delta from any
+ * @c B_HPKG_ATTRIBUTE_ENCODING_RAW_HEAP attribute's offset.
+ */
 struct PackageWriterImpl::HeapAttributeOffsetter {
+	/**
+	 * @brief Construct the visitor with the removed ranges and per-range
+	 *        cumulative deltas.
+	 *
+	 * @param ranges Removed ranges sorted by offset.
+	 * @param deltas Cumulative removed-bytes preceding each insertion
+	 *               point in @a ranges.
+	 */
 	HeapAttributeOffsetter(const RangeArray<uint64>& ranges,
 		const Array<uint64>& deltas)
 		:
@@ -432,6 +635,12 @@ struct PackageWriterImpl::HeapAttributeOffsetter {
 	{
 	}
 
+	/**
+	 * @brief Visit @a attribute and recurse into its children, rewriting
+	 *        heap offsets in place.
+	 *
+	 * @param attribute Attribute subtree to process.
+	 */
 	void ProcessAttribute(Attribute* attribute)
 	{
 		// If the attribute refers to a heap value, adjust it
@@ -452,7 +661,9 @@ struct PackageWriterImpl::HeapAttributeOffsetter {
 	}
 
 private:
+	/** @brief Removed ranges sorted by offset. */
 	const RangeArray<uint64>&	fRanges;
+	/** @brief Cumulative removed-bytes per range insertion point. */
 	const Array<uint64>&		fDeltas;
 };
 
@@ -460,6 +671,18 @@ private:
 // #pragma mark - PackageWriterImpl (Inline Methods)
 
 
+/**
+ * @brief Add an attribute child carrying a value of arbitrary primitive
+ *        type to the current top attribute.
+ *
+ * Convenience wrapper that constructs an AttributeValue from @a value and
+ * defers to the AttributeValue overload of _AddAttribute().
+ *
+ * @tparam Type        Type accepted by AttributeValue::SetTo().
+ * @param attributeID  ID of the new attribute.
+ * @param value        Value to store.
+ * @return Pointer to the newly created attribute.
+ */
 template<typename Type>
 inline PackageWriterImpl::Attribute*
 PackageWriterImpl::_AddAttribute(BHPKGAttributeID attributeID, Type value)
@@ -473,6 +696,14 @@ PackageWriterImpl::_AddAttribute(BHPKGAttributeID attributeID, Type value)
 // #pragma mark - PackageWriterImpl
 
 
+/**
+ * @brief Construct a package writer bound to a listener.
+ *
+ * Internal state (root entry, root attribute, heap range tracker) is left
+ * unallocated; Init() must be called before any other operation.
+ *
+ * @param listener Caller-supplied listener for progress and errors.
+ */
 PackageWriterImpl::PackageWriterImpl(BPackageWriterListener* listener)
 	:
 	inherited("package", listener),
@@ -486,6 +717,10 @@ PackageWriterImpl::PackageWriterImpl(BPackageWriterListener* listener)
 }
 
 
+/**
+ * @brief Destroy the writer and release the in-memory entry tree, attribute
+ *        tree, and heap range tracker.
+ */
 PackageWriterImpl::~PackageWriterImpl()
 {
 	delete fHeapRangesToRemove;
@@ -494,6 +729,17 @@ PackageWriterImpl::~PackageWriterImpl()
 }
 
 
+/**
+ * @brief Initialise the writer for output to a file path.
+ *
+ * Catches std::bad_alloc and status_t-typed exceptions thrown by the
+ * lower layers and translates them into status codes.
+ *
+ * @param fileName   Path of the .hpkg file to create or update.
+ * @param parameters Writer parameters (compression, flags, ...).
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         from the base writer.
+ */
 status_t
 PackageWriterImpl::Init(const char* fileName,
 	const BPackageWriterParameters& parameters)
@@ -509,6 +755,15 @@ PackageWriterImpl::Init(const char* fileName,
 }
 
 
+/**
+ * @brief Initialise the writer for output to a positioned I/O object.
+ *
+ * @param file       Output target supporting positional reads and writes.
+ * @param keepFile   If @c true, the writer takes ownership of @a file.
+ * @param parameters Writer parameters (compression, flags, ...).
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         from the base writer.
+ */
 status_t
 PackageWriterImpl::Init(BPositionIO* file, bool keepFile,
 	const BPackageWriterParameters& parameters)
@@ -524,6 +779,14 @@ PackageWriterImpl::Init(BPositionIO* file, bool keepFile,
 }
 
 
+/**
+ * @brief Override the install path that will be written into the package
+ *        info.
+ *
+ * @param installPath Path string to record, or NULL to clear.
+ * @retval B_OK         The install path was stored (or cleared).
+ * @retval B_NO_MEMORY  The internal copy could not be allocated.
+ */
 status_t
 PackageWriterImpl::SetInstallPath(const char* installPath)
 {
@@ -534,6 +797,12 @@ PackageWriterImpl::SetInstallPath(const char* installPath)
 }
 
 
+/**
+ * @brief Enable or disable validation that every declared licence is
+ *        either a known system licence or shipped in the package.
+ *
+ * @param checkLicenses @c true to enforce, @c false to skip.
+ */
 void
 PackageWriterImpl::SetCheckLicenses(bool checkLicenses)
 {
@@ -541,13 +810,32 @@ PackageWriterImpl::SetCheckLicenses(bool checkLicenses)
 }
 
 
+/**
+ * @brief Register an entry to be included in the package.
+ *
+ * If @a fileName equals the special @c .PackageInfo name the file is
+ * parsed immediately so that the writer can validate the metadata before
+ * emitting any data. All other entries are queued in the internal entry
+ * tree for later processing in Finish().
+ *
+ * @param fileName Path or name of the entry to add.
+ * @param fd       Optional pre-opened file descriptor; -1 to let the
+ *                 writer open the file by name.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or an error
+ *         from the package-info parser or the entry registrar.
+ */
 status_t
 PackageWriterImpl::AddEntry(const char* fileName, int fd)
 {
 	try {
 		// if it's ".PackageInfo", parse it
 		if (strcmp(fileName, B_HPKG_PACKAGE_INFO_FILE_NAME) == 0) {
+			/**
+			 * @brief Parse-error listener that forwards .PackageInfo
+			 *        diagnostics to the writer listener.
+			 */
 			struct ErrorListener : public BPackageInfo::ParseErrorListener {
+				/** @brief Construct the listener wrapping a writer listener. */
 				ErrorListener(BPackageWriterListener* _listener)
 					:
 					listener(_listener),
@@ -555,6 +843,8 @@ PackageWriterImpl::AddEntry(const char* fileName, int fd)
 				{
 				}
 
+				/** @brief Forward a parse error to the writer listener and
+				 *         record that an error was seen. */
 				virtual void OnError(const BString& msg, int line, int col) {
 					listener->PrintError("Parse error in %s(%d:%d) -> %s\n",
 						B_HPKG_PACKAGE_INFO_FILE_NAME, line, col, msg.String());
@@ -616,6 +906,20 @@ PackageWriterImpl::AddEntry(const char* fileName, int fd)
 }
 
 
+/**
+ * @brief Serialise the registered entries into the package and close it.
+ *
+ * In update mode this checks for collisions between newly added entries
+ * and pre-existing ones, recovers the package info from the existing
+ * .PackageInfo entry if necessary, optionally validates licences, and
+ * compacts the heap before writing. Catches and translates std::bad_alloc
+ * and status_t-typed exceptions.
+ *
+ * @retval B_OK         The package was finalised.
+ * @retval B_BAD_DATA   No package info could be found.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @return Otherwise an error from the licence check or _Finish().
+ */
 status_t
 PackageWriterImpl::Finish()
 {
@@ -656,6 +960,21 @@ PackageWriterImpl::Finish()
 }
 
 
+/**
+ * @brief Re-emit an existing package's heap into the writer's output using
+ *        a different compression method.
+ *
+ * Used by tools that simply want to recompress a package without
+ * modifying its contents. Catches and translates std::bad_alloc and
+ * status_t-typed exceptions.
+ *
+ * @param inputFile Source package file (must not be NULL).
+ * @retval B_OK         The package was recompressed and finalised.
+ * @retval B_BAD_VALUE  @a inputFile is NULL.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @return Otherwise an error from the underlying reader, heap writer, or
+ *         I/O.
+ */
 status_t
 PackageWriterImpl::Recompress(BPositionIO* inputFile)
 {
@@ -673,6 +992,25 @@ PackageWriterImpl::Recompress(BPositionIO* inputFile)
 }
 
 
+/**
+ * @brief Initialise the writer, optionally bootstrapping from an existing
+ *        package when running in update mode.
+ *
+ * Creates the empty entry and attribute trees, sets the heap offset, and
+ * spins up the heap writer. In update mode the existing TOC is parsed
+ * back into the attribute tree and the old TOC and package-attributes
+ * regions are queued for removal from the heap.
+ *
+ * @param file       Output target as positioned I/O, or NULL to use
+ *                   @a fileName.
+ * @param keepFile   Whether the writer takes ownership of @a file.
+ * @param fileName   Output path; NULL when @a file is supplied.
+ * @param parameters Writer parameters.
+ * @return B_OK on success, otherwise an error from the base writer, the
+ *         package reader, or the heap reader.
+ * @note  Throws std::bad_alloc if the string cache or range tracker
+ *        cannot be initialised.
+ */
 status_t
 PackageWriterImpl::_Init(BPositionIO* file, bool keepFile, const char* fileName,
 	const BPackageWriterParameters& parameters)
@@ -741,6 +1079,19 @@ PackageWriterImpl::_Init(BPositionIO* file, bool keepFile, const char* fileName,
 }
 
 
+/**
+ * @brief Walk the registered entry tree, emit the TOC and package
+ *        attribute sections, and write the file header.
+ *
+ * After all entries have been added to the heap and the attribute tree
+ * has been serialised, the heap writer is flushed and the file is
+ * truncated to its final length. The header is written last (as a raw
+ * write at offset 0).
+ *
+ * @retval B_OK   Package successfully written.
+ * @return Otherwise an error from the heap writer or the underlying file
+ *         I/O.
+ */
 status_t
 PackageWriterImpl::_Finish()
 {
@@ -806,6 +1157,21 @@ PackageWriterImpl::_Finish()
 }
 
 
+/**
+ * @brief Internal recompression worker called from Recompress().
+ *
+ * Streams the source package's heap data through this writer's heap
+ * writer (which applies the new compression method) and rewrites the
+ * header. When the new compression method is @c B_HPKG_COMPRESSION_NONE
+ * the header is written before the data is copied so that the package
+ * can be streamed without seeking.
+ *
+ * @param inputFile Source package file.
+ * @retval B_OK         Recompression completed.
+ * @retval B_BAD_VALUE  @a inputFile is NULL.
+ * @return Otherwise an error from the package reader, the heap writer,
+ *         or the underlying I/O.
+ */
 status_t
 PackageWriterImpl::_Recompress(BPositionIO* inputFile)
 {
@@ -874,6 +1240,18 @@ PackageWriterImpl::_Recompress(BPositionIO* inputFile)
 }
 
 
+/**
+ * @brief Verify that every licence declared by the package can be
+ *        resolved.
+ *
+ * Each declared licence must be either the special "Public Domain"
+ * marker, a known system licence found under the host's system data
+ * directory, or shipped inside the package at @c data/licenses/<name>.
+ *
+ * @retval B_OK         All declared licences are resolvable.
+ * @retval B_BAD_DATA   A licence is missing.
+ * @return Otherwise an error from path resolution.
+ */
 status_t
 PackageWriterImpl::_CheckLicenses()
 {
@@ -921,6 +1299,17 @@ PackageWriterImpl::_CheckLicenses()
 }
 
 
+/**
+ * @brief Test whether an entry at @a fileName is included in the package
+ *        (either added in this session or already present in update mode).
+ *
+ * Walks the registered entry tree first; if the path lies entirely under
+ * implicit ancestors the test falls through to the pre-existing TOC
+ * attribute tree.
+ *
+ * @param fileName Slash-separated path relative to the package root.
+ * @return @c true if the entry is present, @c false otherwise.
+ */
 bool
 PackageWriterImpl::_IsEntryInPackage(const char* fileName)
 {
@@ -1002,6 +1391,17 @@ PackageWriterImpl::_IsEntryInPackage(const char* fileName)
 }
 
 
+/**
+ * @brief Recover the package info from the existing .PackageInfo entry in
+ *        update mode.
+ *
+ * Locates the .PackageInfo entry in the rebuilt attribute tree, fetches
+ * its data (either inline or from the heap), and parses it via
+ * BPackageInfo::ReadFromConfigString().
+ *
+ * @note Throws status_t on parse or I/O failure and std::bad_alloc on
+ *       allocation failure.
+ */
 void
 PackageWriterImpl::_UpdateReadPackageInfo()
 {
@@ -1064,6 +1464,12 @@ PackageWriterImpl::_UpdateReadPackageInfo()
 }
 
 
+/**
+ * @brief Top-level driver that walks each registered entry and checks for
+ *        collisions with pre-existing entries in update mode.
+ *
+ * Defers to the recursive overload for each child of the root entry.
+ */
 void
 PackageWriterImpl::_UpdateCheckEntryCollisions()
 {
@@ -1077,6 +1483,23 @@ PackageWriterImpl::_UpdateCheckEntryCollisions()
 }
 
 
+/**
+ * @brief Recursive collision check for a single entry against the
+ *        pre-existing TOC.
+ *
+ * Removes pre-existing entries that conflict with newly added ones,
+ * subject to @c B_HPKG_WRITER_FORCE_ADD. Also detects type clashes (file
+ * vs directory) and recurses into directory contents.
+ *
+ * @param parentAttribute Pre-existing parent attribute in the rebuilt
+ *                        TOC.
+ * @param dirFD           Directory FD to use with openat()/fstatat().
+ * @param entry           Entry to check, or NULL for filesystem entries
+ *                        encountered while recursing.
+ * @param fileName        Name of the entry within @a parentAttribute.
+ * @param pathBuffer      Scratch buffer used to build error messages.
+ * @note Throws status_t on collisions or system errors.
+ */
 void
 PackageWriterImpl::_UpdateCheckEntryCollisions(Attribute* parentAttribute,
 	int dirFD, Entry* entry, const char* fileName, char* pathBuffer)
@@ -1233,6 +1656,16 @@ PackageWriterImpl::_UpdateCheckEntryCollisions(Attribute* parentAttribute,
 }
 
 
+/**
+ * @brief Remove queued ranges from the heap and rewrite affected attribute
+ *        offsets.
+ *
+ * Computes per-range cumulative deltas, runs HeapAttributeOffsetter over
+ * the attribute tree to fix up offsets, then asks the heap writer to
+ * physically remove the ranges.
+ *
+ * @note Throws std::bad_alloc on delta-array allocation failure.
+ */
 void
 PackageWriterImpl::_CompactHeap()
 {
@@ -1262,6 +1695,16 @@ PackageWriterImpl::_CompactHeap()
 }
 
 
+/**
+ * @brief Walk an attribute subtree being removed from the writer and
+ *        release the heap or string-cache resources it referenced.
+ *
+ * Heap-resident raw values queue their ranges for later removal in
+ * _CompactHeap(); string values are returned to the string cache.
+ *
+ * @param attribute Attribute subtree being discarded.
+ * @note Throws std::bad_alloc when the heap range tracker cannot grow.
+ */
 void
 PackageWriterImpl::_AttributeRemoved(Attribute* attribute)
 {
@@ -1281,6 +1724,19 @@ PackageWriterImpl::_AttributeRemoved(Attribute* attribute)
 }
 
 
+/**
+ * @brief Walk @a fileName component-by-component and ensure each one has
+ *        an Entry under the root entry.
+ *
+ * Intermediate components are created as implicit entries. The final
+ * component receives the supplied file descriptor (if any).
+ *
+ * @param fileName Slash-separated path relative to the package root.
+ * @param fd       Optional pre-opened file descriptor for the leaf, or -1.
+ * @retval B_OK         The path was registered.
+ * @retval B_BAD_VALUE  @a fileName is empty.
+ * @note Throws status_t(B_BAD_VALUE) on "." or ".." components.
+ */
 status_t
 PackageWriterImpl::_RegisterEntry(const char* fileName, int fd)
 {
@@ -1323,6 +1779,21 @@ PackageWriterImpl::_RegisterEntry(const char* fileName, int fd)
 }
 
 
+/**
+ * @brief Register a single path component as a child of @a parent.
+ *
+ * If a child by the same name already exists and was implicit but the
+ * caller is upgrading it to an explicit entry, the existing children are
+ * dropped and the file descriptor and explicit flag are taken over.
+ *
+ * @param parent     Parent entry.
+ * @param name       Component name (not necessarily null-terminated).
+ * @param nameLength Length of @a name in bytes.
+ * @param fd         Optional file descriptor, or -1.
+ * @param isImplicit Whether the entry should be marked implicit.
+ * @return The (possibly newly created) child entry.
+ * @note Throws status_t(B_BAD_VALUE) on "." or ".." names.
+ */
 PackageWriterImpl::Entry*
 PackageWriterImpl::_RegisterEntry(Entry* parent, const char* name,
 	size_t nameLength, int fd, bool isImplicit)
@@ -1355,6 +1826,16 @@ PackageWriterImpl::_RegisterEntry(Entry* parent, const char* name,
 }
 
 
+/**
+ * @brief Serialise the cached strings and the root attribute tree as the
+ *        package's TOC section.
+ *
+ * Records section sizes and string statistics in @a header for later
+ * retrieval by the reader and notifies the listener of the TOC layout.
+ *
+ * @param header  The hpkg_header being assembled.
+ * @param _length Output: total uncompressed TOC length.
+ */
 void
 PackageWriterImpl::_WriteTOC(hpkg_header& header, uint64& _length)
 {
@@ -1385,6 +1866,15 @@ PackageWriterImpl::_WriteTOC(hpkg_header& header, uint64& _length)
 }
 
 
+/**
+ * @brief Recursively serialise an attribute's children into the TOC.
+ *
+ * For each child the attribute tag and value are emitted; children with
+ * their own children recurse, and a terminating zero LEB128 byte is
+ * written at the end of every level.
+ *
+ * @param attribute Parent attribute whose children are emitted.
+ */
 void
 PackageWriterImpl::_WriteAttributeChildren(Attribute* attribute)
 {
@@ -1407,6 +1897,16 @@ PackageWriterImpl::_WriteAttributeChildren(Attribute* attribute)
 }
 
 
+/**
+ * @brief Serialise the package-info attribute tree into the package
+ *        attributes section.
+ *
+ * Updates @a header with section length, string count, and string-table
+ * length, and notifies the listener of the resulting size.
+ *
+ * @param header  The hpkg_header being assembled.
+ * @param _length Output: total uncompressed section length.
+ */
 void
 PackageWriterImpl::_WritePackageAttributes(hpkg_header& header, uint64& _length)
 {
@@ -1430,6 +1930,22 @@ PackageWriterImpl::_WritePackageAttributes(hpkg_header& header, uint64& _length)
 }
 
 
+/**
+ * @brief Add a single entry (file, directory, or symlink) to the
+ *        attribute tree, recursing into directories.
+ *
+ * Opens the underlying node, stats it, allocates a directory-entry
+ * attribute (if there is no pre-existing one to merge into), populates
+ * permissions, timestamps, data or symlink target, harvests extended
+ * attributes, and finally recurses into any child directory.
+ *
+ * @param dirFD      Directory FD relative to which @a fileName is opened.
+ * @param entry      Caller-tracked Entry, or NULL when discovered by
+ *                   directory traversal.
+ * @param fileName   Name of the entry within @a dirFD.
+ * @param pathBuffer Scratch buffer used for diagnostic messages.
+ * @note Throws status_t on system errors and unsupported node types.
+ */
 void
 PackageWriterImpl::_AddEntry(int dirFD, Entry* entry, const char* fileName,
 	char* pathBuffer)
@@ -1591,6 +2107,19 @@ PackageWriterImpl::_AddEntry(int dirFD, Entry* entry, const char* fileName,
 }
 
 
+/**
+ * @brief Add the children of a directory to the attribute tree.
+ *
+ * For implicit entries the registered child Entry list is used so that
+ * only the explicitly-requested descendants are emitted. For explicit
+ * directories the on-disk directory is read with fdopendir() and every
+ * entry except "." and ".." is included.
+ *
+ * @param entry      Entry corresponding to the directory, or NULL.
+ * @param fd         Directory FD (must remain owned by the caller).
+ * @param pathBuffer Scratch buffer used for diagnostic messages.
+ * @note Throws status_t on system errors.
+ */
 void
 PackageWriterImpl::_AddDirectoryChildren(Entry* entry, int fd, char* pathBuffer)
 {
@@ -1632,6 +2161,15 @@ PackageWriterImpl::_AddDirectoryChildren(Entry* entry, int fd, char* pathBuffer)
 }
 
 
+/**
+ * @brief Append an attribute carrying a pre-built value to the current
+ *        top attribute.
+ *
+ * @param id    Attribute ID for the new node.
+ * @param value Value to store (copied by value).
+ * @return Pointer to the newly created attribute (still owned by the
+ *         attribute tree).
+ */
 PackageWriterImpl::Attribute*
 PackageWriterImpl::_AddAttribute(BHPKGAttributeID id,
 	const AttributeValue& value)
@@ -1645,6 +2183,14 @@ PackageWriterImpl::_AddAttribute(BHPKGAttributeID id,
 }
 
 
+/**
+ * @brief Append a string attribute, interning @a value through the string
+ *        cache.
+ *
+ * @param attributeID Attribute ID for the new node.
+ * @param value       Null-terminated string value.
+ * @return Pointer to the newly created attribute.
+ */
 PackageWriterImpl::Attribute*
 PackageWriterImpl::_AddStringAttribute(BHPKGAttributeID attributeID,
 	const char* value)
@@ -1655,6 +2201,14 @@ PackageWriterImpl::_AddStringAttribute(BHPKGAttributeID attributeID,
 }
 
 
+/**
+ * @brief Append a heap-resident raw data attribute.
+ *
+ * @param attributeID Attribute ID for the new node.
+ * @param dataSize    Size of the heap region in bytes.
+ * @param dataOffset  Offset into the heap where the data begins.
+ * @return Pointer to the newly created attribute.
+ */
 PackageWriterImpl::Attribute*
 PackageWriterImpl::_AddDataAttribute(BHPKGAttributeID attributeID,
 	uint64 dataSize, uint64 dataOffset)
@@ -1665,6 +2219,15 @@ PackageWriterImpl::_AddDataAttribute(BHPKGAttributeID attributeID,
 }
 
 
+/**
+ * @brief Append an inline raw data attribute.
+ *
+ * @param attributeID Attribute ID for the new node.
+ * @param dataSize    Number of inline bytes (must fit
+ *                    @c B_HPKG_MAX_INLINE_DATA_SIZE).
+ * @param data        Pointer to the inline bytes.
+ * @return Pointer to the newly created attribute.
+ */
 PackageWriterImpl::Attribute*
 PackageWriterImpl::_AddDataAttribute(BHPKGAttributeID attributeID,
 	uint64 dataSize, const uint8* data)
@@ -1675,6 +2238,19 @@ PackageWriterImpl::_AddDataAttribute(BHPKGAttributeID attributeID,
 }
 
 
+/**
+ * @brief Add a data stream to the heap (or inline if small enough) and
+ *        emit a corresponding @c B_HPKG_ATTRIBUTE_ID_DATA attribute.
+ *
+ * Data of at most @c B_HPKG_MAX_INLINE_DATA_SIZE bytes is read into a
+ * stack buffer and stored inline; larger data is appended to the
+ * compressed heap and referenced by offset.
+ *
+ * @param dataReader Reader producing the bytes.
+ * @param size       Total number of bytes to read.
+ * @return B_OK on success, otherwise an error from the data reader or
+ *         heap writer.
+ */
 status_t
 PackageWriterImpl::_AddData(BDataReader& dataReader, off_t size)
 {
