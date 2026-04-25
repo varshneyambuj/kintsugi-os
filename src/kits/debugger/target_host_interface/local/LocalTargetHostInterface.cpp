@@ -1,8 +1,40 @@
 /*
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file LocalTargetHostInterface.cpp
+ * @brief Local-host transport for debugging teams running on the same machine.
+ *
+ * Owns a TargetHost populated from get_next_team_info() and kept current via
+ * a watcher thread that consumes B_WATCH_SYSTEM_TEAM_CREATION /
+ * B_WATCH_SYSTEM_TEAM_DELETION notifications. Attach, spawn-from-args, and
+ * core-file load each produce a fresh DebuggerInterface for the rest of the
+ * debugger to use.
+ */
+
 
 #include "LocalTargetHostInterface.h"
 
@@ -27,6 +59,9 @@
 
 using std::set;
 
+/**
+ * @brief Constructs the interface with the display name "Local"; Init() must follow.
+ */
 LocalTargetHostInterface::LocalTargetHostInterface()
 	:
 	TargetHostInterface(),
@@ -37,6 +72,9 @@ LocalTargetHostInterface::LocalTargetHostInterface()
 }
 
 
+/**
+ * @brief Stops the watcher thread, deletes the data port, and releases the host.
+ */
 LocalTargetHostInterface::~LocalTargetHostInterface()
 {
 	Close();
@@ -46,6 +84,16 @@ LocalTargetHostInterface::~LocalTargetHostInterface()
 }
 
 
+/**
+ * @brief Initializes the local transport: discovers the host name, builds the
+ *        TargetHost, populates it with current teams, and starts the
+ *        team-watching thread.
+ *
+ * @param settings  Ignored; the local transport requires no configuration.
+ * @return B_OK on success, B_NO_MEMORY on TargetHost allocation failure, or
+ *         the first failing status from get_team_info(), create_port(),
+ *         spawn_thread(), or __start_watching_system().
+ */
 status_t
 LocalTargetHostInterface::Init(Settings* settings)
 {
@@ -102,6 +150,12 @@ LocalTargetHostInterface::Init(Settings* settings)
 }
 
 
+/**
+ * @brief Stops watching for team events and joins the watcher thread.
+ *
+ * Stopping the system watch causes the next read on the data port to fail,
+ * which lets the loop exit so wait_for_thread() returns promptly.
+ */
 void
 LocalTargetHostInterface::Close()
 {
@@ -121,6 +175,11 @@ LocalTargetHostInterface::Close()
 }
 
 
+/**
+ * @brief Identifies this interface as a local-host transport.
+ *
+ * @return Always true.
+ */
 bool
 LocalTargetHostInterface::IsLocal() const
 {
@@ -128,6 +187,11 @@ LocalTargetHostInterface::IsLocal() const
 }
 
 
+/**
+ * @brief Reports whether the interface can currently be used.
+ *
+ * @return Always true; the local transport is always considered connected.
+ */
 bool
 LocalTargetHostInterface::Connected() const
 {
@@ -135,6 +199,11 @@ LocalTargetHostInterface::Connected() const
 }
 
 
+/**
+ * @brief Returns the TargetHost owned by this interface.
+ *
+ * @return Borrowed pointer to the TargetHost; valid for the interface lifetime.
+ */
 TargetHost*
 LocalTargetHostInterface::GetTargetHost()
 {
@@ -142,6 +211,17 @@ LocalTargetHostInterface::GetTargetHost()
 }
 
 
+/**
+ * @brief Attaches to a local team (resolved from @a teamID or @a threadID) and
+ *        constructs a LocalDebuggerInterface for it.
+ *
+ * @param teamID      Team to attach to, or -1 to resolve from @a threadID.
+ * @param threadID    Optional thread id to seed the resolution from.
+ * @param _interface  On success, set to a fresh DebuggerInterface owned by the caller.
+ * @return B_OK on success, B_BAD_VALUE if neither id is valid, B_NO_MEMORY
+ *         on allocation failure, or any error from get_thread_info() or the
+ *         interface's Init().
+ */
 status_t
 LocalTargetHostInterface::Attach(team_id teamID, thread_id threadID,
 	DebuggerInterface*& _interface) const
@@ -175,6 +255,15 @@ LocalTargetHostInterface::Attach(team_id teamID, thread_id threadID,
 }
 
 
+/**
+ * @brief Spawns a new team via load_program() and returns its id.
+ *
+ * @param commandLineArgc  Number of arguments in @a arguments.
+ * @param arguments        Argv-style argument vector.
+ * @param _teamID          On success, set to the team id (which equals the
+ *                         main thread id).
+ * @return B_OK on success, or any negative status returned by load_program().
+ */
 status_t
 LocalTargetHostInterface::CreateTeam(int commandLineArgc,
 	const char* const* arguments, team_id& _teamID) const
@@ -189,6 +278,15 @@ LocalTargetHostInterface::CreateTeam(int commandLineArgc,
 }
 
 
+/**
+ * @brief Loads a core file and wraps it in a CoreFileDebuggerInterface.
+ *
+ * @param coreFilePath  Filesystem path to the core file.
+ * @param _interface    On success, set to a fresh DebuggerInterface owned by the caller.
+ * @param _thread       On success, set to the recorded team/thread id from the dump.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+ *         from CoreFile::Init() or the interface's Init().
+ */
 status_t
 LocalTargetHostInterface::LoadCore(const char* coreFilePath,
 	DebuggerInterface*& _interface, thread_id& _thread) const
@@ -224,6 +322,13 @@ LocalTargetHostInterface::LoadCore(const char* coreFilePath,
 }
 
 
+/**
+ * @brief Maps a thread id to its owning team via get_thread_info().
+ *
+ * @param thread   Thread id to resolve.
+ * @param _teamID  On success, set to the owning team id.
+ * @return B_OK on success or any error from get_thread_info().
+ */
 status_t
 LocalTargetHostInterface::FindTeamByThread(thread_id thread,
 	team_id& _teamID) const
@@ -238,6 +343,17 @@ LocalTargetHostInterface::FindTeamByThread(thread_id thread,
 }
 
 
+/**
+ * @brief Worker thread main loop that consumes team-watching messages.
+ *
+ * Drains the data port, parses each message, and forwards
+ * created/exec'd/deleted teams into _HandleTeamEvent(). Newly-created teams
+ * whose application image has not yet shown up are kept on a "waiting" set
+ * and retried with a 20 ms timeout until their app image is present.
+ *
+ * @param arg  Pointer to the LocalTargetHostInterface instance owning the port.
+ * @return Status from a fatal port read; B_OK is unreachable in practice.
+ */
 status_t
 LocalTargetHostInterface::_PortLoop(void* arg)
 {
@@ -308,6 +424,21 @@ LocalTargetHostInterface::_PortLoop(void* arg)
 }
 
 
+/**
+ * @brief Applies a single team-creation/deletion/exec event to the TargetHost.
+ *
+ * For B_TEAM_CREATED and B_TEAM_EXEC, defers the update until at least one
+ * B_APP_IMAGE has been loaded so the team's name is meaningful when the UI
+ * sees it. Sets @a addToWaiters when a defer is required.
+ *
+ * @param team          Team id described by the event.
+ * @param opcode        One of B_TEAM_CREATED, B_TEAM_EXEC, B_TEAM_DELETED.
+ * @param addToWaiters  Output flag set true when the caller should re-queue
+ *                      this team for a retry once its image table has populated.
+ * @return B_OK on success, B_OK with @a addToWaiters set when deferring, or
+ *         any error from get_team_info() (other than B_BAD_TEAM_ID, which is
+ *         silently swallowed for already-gone teams).
+ */
 status_t
 LocalTargetHostInterface::_HandleTeamEvent(team_id team, int32 opcode,
 	bool& addToWaiters)

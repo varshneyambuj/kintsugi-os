@@ -1,8 +1,36 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2008, François Revol, revol@free.fr
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008, François Revol, revol@free.fr
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DisassemblerX86.cpp
+ * @brief IA-32 disassembler wrapper around the Zydis library.
+ *
+ * Mirrors DisassemblerX8664 for 32-bit x86 code, producing AT&T-style
+ * disassembly text and InstructionInfo records used by ArchitectureX86.
  */
 
 #include "DisassemblerX86.h"
@@ -19,6 +47,12 @@
 #include "InstructionInfo.h"
 
 
+/**
+ * @brief Copy general-purpose register values from a CpuStateX86 into a Zydis context.
+ *
+ * @param state    Source CPU state.
+ * @param context  Output Zydis register context populated with EIP/ESP/EAX/etc.
+ */
 void
 CpuStateToZydisRegContext(CpuStateX86* state, ZydisRegisterContext* context)
 {
@@ -35,6 +69,7 @@ CpuStateToZydisRegContext(CpuStateX86* state, ZydisRegisterContext* context)
 }
 
 
+/** @brief Opaque holder for the Zydis decoder/formatter and current decode offset. */
 struct DisassemblerX86::ZydisData {
 	ZydisDecoder decoder ;
 	ZydisFormatter formatter;
@@ -42,6 +77,7 @@ struct DisassemblerX86::ZydisData {
 };
 
 
+/** @brief Construct an uninitialized disassembler; call Init() before use. */
 DisassemblerX86::DisassemblerX86()
 	:
 	fAddress(0),
@@ -52,12 +88,24 @@ DisassemblerX86::DisassemblerX86()
 }
 
 
+/** @brief Destroy the disassembler and release the Zydis state. */
 DisassemblerX86::~DisassemblerX86()
 {
 	delete fZydisData;
 }
 
 
+/**
+ * @brief Initialize the disassembler over a code buffer.
+ *
+ * Configures Zydis for AT&T-style 32-bit decoding with no operand padding.
+ *
+ * @param address   Absolute address corresponding to the first byte of @a code.
+ * @param code      Pointer to the code bytes.
+ * @param codeSize  Number of bytes in @a code.
+ * @retval B_OK         Initialized.
+ * @retval B_NO_MEMORY  Could not allocate the Zydis state.
+ */
 status_t
 DisassemblerX86::Init(target_addr_t address, const void* code, size_t codeSize)
 {
@@ -95,6 +143,18 @@ DisassemblerX86::Init(target_addr_t address, const void* code, size_t codeSize)
 }
 
 
+/**
+ * @brief Decode and format the next instruction in the buffer.
+ *
+ * Produces a line of the form "0xADDRESS: hex-bytes  mnemonic operands".
+ *
+ * @param line                 Output BString that receives the formatted line.
+ * @param _address             Output address of the decoded instruction.
+ * @param _size                Output instruction length in bytes.
+ * @param _breakpointAllowed   Output flag; currently always set to true.
+ * @retval B_OK               Instruction decoded.
+ * @retval B_ENTRY_NOT_FOUND  No more bytes remain or decoding failed.
+ */
 status_t
 DisassemblerX86::GetNextInstruction(BString& line, target_addr_t& _address,
 	target_size_t& _size, bool& _breakpointAllowed)
@@ -136,6 +196,16 @@ DisassemblerX86::GetNextInstruction(BString& line, target_addr_t& _address,
 }
 
 
+/**
+ * @brief Find the address and size of the instruction that ends at @a nextAddress.
+ *
+ * @param nextAddress  Address at which the previous instruction ends.
+ * @param _address     Output address.
+ * @param _size        Output size of the previous instruction.
+ * @retval B_OK               Previous instruction located.
+ * @retval B_BAD_VALUE        @a nextAddress lies outside the buffer.
+ * @retval B_ENTRY_NOT_FOUND  Decoding failed before reaching @a nextAddress.
+ */
 status_t
 DisassemblerX86::GetPreviousInstruction(target_addr_t nextAddress,
 	target_addr_t& _address, target_size_t& _size)
@@ -164,6 +234,19 @@ DisassemblerX86::GetPreviousInstruction(target_addr_t nextAddress,
 }
 
 
+/**
+ * @brief Decode the next instruction into an InstructionInfo (rather than just text).
+ *
+ * Recognizes call and jmp mnemonics so the resulting record carries the
+ * correct INSTRUCTION_TYPE_*. When @a state is non-NULL the Zydis register
+ * context is populated so absolute target addresses are resolved.
+ *
+ * @param _info  Output info record describing address, target, size, and text.
+ * @param state  Optional CPU state used for absolute-target resolution.
+ * @retval B_OK               Instruction decoded.
+ * @retval B_NO_MEMORY        SetTo() on @a _info failed.
+ * @retval B_ENTRY_NOT_FOUND  No more bytes remain or decoding failed.
+ */
 status_t
 DisassemblerX86::GetNextInstructionInfo(InstructionInfo& _info,
 	CpuState* state)

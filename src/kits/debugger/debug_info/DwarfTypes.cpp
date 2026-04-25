@@ -1,7 +1,43 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copryight 2012-2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copryight 2012-2014, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfTypes.cpp
+ * @brief Implementation of the DWARF-derived Type hierarchy and the
+ *        DwarfTypeContext that supports DWARF location-expression
+ *        evaluation.
+ *
+ * Each Dwarf*Type subclass adapts a DIE-derived structural description
+ * into the abstract Type model used by the rest of the debugger. Layout
+ * resolution (member offsets, array element addresses) is implemented in
+ * terms of DwarfType::ResolveLocation(), which evaluates the DIE's
+ * location description against the live CPU and target memory exposed
+ * through DwarfTargetInterface.
+ *
+ * @see DwarfTypeFactory, DwarfImageDebugInfo, DwarfStackFrameDebugInfo
  */
 
 
@@ -28,6 +64,10 @@ namespace {
 // #pragma mark - HasBitStridePredicate
 
 
+/**
+ * @brief Predicate template that returns @c true when a DIE supplies a
+ *        valid @c DW_AT_bit_stride attribute.
+ */
 template<typename EntryType>
 struct HasBitStridePredicate {
 	inline bool operator()(EntryType* entry) const
@@ -40,6 +80,10 @@ struct HasBitStridePredicate {
 // #pragma mark - HasByteStridePredicate
 
 
+/**
+ * @brief Predicate template that returns @c true when a DIE supplies a
+ *        valid @c DW_AT_byte_stride attribute.
+ */
 template<typename EntryType>
 struct HasByteStridePredicate {
 	inline bool operator()(EntryType* entry) const
@@ -52,6 +96,13 @@ struct HasByteStridePredicate {
 }	// unnamed namespace
 
 
+/**
+ * @brief Maps a DWARF tag to the abstract @c type_kind enumerator.
+ *
+ * @param tag  DWARF tag (one of the @c DW_TAG_* constants).
+ * @return Matching @c type_kind, or @c TYPE_UNSPECIFIED for unrecognized
+ *         tags.
+ */
 type_kind
 dwarf_tag_to_type_kind(int32 tag)
 {
@@ -103,6 +154,16 @@ dwarf_tag_to_type_kind(int32 tag)
 }
 
 
+/**
+ * @brief Maps a DWARF tag to its abstract subtype kind.
+ *
+ * Used to distinguish struct vs class vs union for compound types and
+ * pointer vs reference for derived types.
+ *
+ * @param tag  DWARF tag.
+ * @return The corresponding subtype-kind constant, or -1 if @a tag has no
+ *         subtype distinction.
+ */
 int32
 dwarf_tag_to_subtype_kind(int32 tag)
 {
@@ -133,6 +194,25 @@ dwarf_tag_to_subtype_kind(int32 tag)
 // #pragma mark - DwarfTypeContext
 
 
+/**
+ * @brief Constructs a DwarfTypeContext, acquiring references on the
+ *        architecture, file and (optional) target interface.
+ *
+ * The compilation unit and subprogram-entry pointers are borrowed; their
+ * lifetime is bound to the owning DwarfFile.
+ *
+ * @param architecture          Target architecture.
+ * @param imageID               Image ID of the containing image.
+ * @param file                  DWARF file the types come from.
+ * @param compilationUnit       CU governing the active scope.
+ * @param subprogramEntry       Active subprogram or @c NULL when not in a
+ *                              subprogram (e.g. global type construction).
+ * @param instructionPointer    Live PC, used by location expressions.
+ * @param framePointer          Live FP, used by location expressions.
+ * @param relocationDelta       Image relocation offset.
+ * @param targetInterface       Target memory/register access (may be NULL).
+ * @param fromDwarfRegisterMap  DWARF-to-architecture register mapping.
+ */
 DwarfTypeContext::DwarfTypeContext(Architecture* architecture, image_id imageID,
 	DwarfFile* file, CompilationUnit* compilationUnit,
 	DIESubprogram* subprogramEntry, target_addr_t instructionPointer,
@@ -157,6 +237,10 @@ DwarfTypeContext::DwarfTypeContext(Architecture* architecture, image_id imageID,
 }
 
 
+/**
+ * @brief Releases references on the architecture, file and target
+ *        interface (if any).
+ */
 DwarfTypeContext::~DwarfTypeContext()
 {
 	fArchitecture->ReleaseReference();
@@ -166,6 +250,12 @@ DwarfTypeContext::~DwarfTypeContext()
 }
 
 
+/**
+ * @brief Returns the address size in bytes for this context.
+ *
+ * @return Compilation-unit address size when available; otherwise the
+ *         architecture's default.
+ */
 uint8
 DwarfTypeContext::AddressSize() const
 {
@@ -174,6 +264,12 @@ DwarfTypeContext::AddressSize() const
 }
 
 
+/**
+ * @brief Reports the endianness applicable to this context.
+ *
+ * @return Compilation-unit endianness when available; otherwise the
+ *         architecture's.
+ */
 bool
 DwarfTypeContext::IsBigEndian() const
 {
@@ -185,6 +281,16 @@ DwarfTypeContext::IsBigEndian() const
 // #pragma mark - DwarfType
 
 
+/**
+ * @brief Constructs a DwarfType bound to a context and DIE entry.
+ *
+ * Acquires a reference on @a typeContext and computes a stable ID from
+ * @a entry via GetTypeID().
+ *
+ * @param typeContext  Context shared by all types in the same scope.
+ * @param name         Type name; may be empty for anonymous types.
+ * @param entry        DIE the type was derived from.
+ */
 DwarfType::DwarfType(DwarfTypeContext* typeContext, const BString& name,
 	const DIEType* entry)
 	:
@@ -198,12 +304,26 @@ DwarfType::DwarfType(DwarfTypeContext* typeContext, const BString& name,
 }
 
 
+/**
+ * @brief Releases the held DwarfTypeContext reference.
+ */
 DwarfType::~DwarfType()
 {
 	fTypeContext->ReleaseReference();
 }
 
 
+/**
+ * @brief Builds a stable, process-unique ID for a DIEType.
+ *
+ * The ID is a string of the form @c "dwarf:0x...." encoding the entry
+ * pointer; uniqueness lasts as long as the DIE is alive.
+ *
+ * @param entry  Entry to identify; may be @c NULL.
+ * @param _id    Out parameter receiving the ID string.
+ * @return @c true on success; @c false only if formatting produced an
+ *         empty string (defensive check).
+ */
 /*static*/ bool
 DwarfType::GetTypeID(const DIEType* entry, BString& _id)
 {
@@ -218,6 +338,7 @@ DwarfType::GetTypeID(const DIEType* entry, BString& _id)
 }
 
 
+/** @brief Returns the image ID of the type's image. */
 image_id
 DwarfType::ImageID() const
 {
@@ -225,6 +346,7 @@ DwarfType::ImageID() const
 }
 
 
+/** @brief Returns the type's stable ID. */
 const BString&
 DwarfType::ID() const
 {
@@ -232,6 +354,7 @@ DwarfType::ID() const
 }
 
 
+/** @brief Returns the type's name. */
 const BString&
 DwarfType::Name() const
 {
@@ -239,6 +362,7 @@ DwarfType::Name() const
 }
 
 
+/** @brief Returns the cached byte size, or 0 if not yet known. */
 target_size_t
 DwarfType::ByteSize() const
 {
@@ -246,6 +370,17 @@ DwarfType::ByteSize() const
 }
 
 
+/**
+ * @brief Builds a pointer or reference type whose pointee is this type.
+ *
+ * The result has its byte size set to the architecture's address size.
+ *
+ * @param addressType  Whether to produce a pointer or a reference.
+ * @param _resultType  Out parameter receiving the new AddressType;
+ *                     reference transferred to caller.
+ * @retval B_OK         Type created.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfType::CreateDerivedAddressType(address_type_kind addressType,
 	AddressType*& _resultType)
@@ -266,6 +401,19 @@ DwarfType::CreateDerivedAddressType(address_type_kind addressType,
 }
 
 
+/**
+ * @brief Wraps this type in an array (or extends an existing one) with a
+ *        new dimension.
+ *
+ * @param lowerBound      Lower bound of the new dimension.
+ * @param elementCount    Number of elements in the dimension.
+ * @param extendExisting  When @c true and this object is already a
+ *                        DwarfArrayType, append the dimension to it.
+ * @param _resultType     Out parameter receiving the array type;
+ *                        reference transferred to caller.
+ * @retval B_OK         Array type produced.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfType::CreateDerivedArrayType(int64 lowerBound, int64 elementCount,
 	bool extendExisting, ArrayType*& _resultType)
@@ -310,6 +458,19 @@ DwarfType::CreateDerivedArrayType(int64 lowerBound, int64 elementCount,
 }
 
 
+/**
+ * @brief Refines an object's value location for use as data of this type.
+ *
+ * If @a objectLocation already has explicit size or multiple pieces it is
+ * cloned verbatim. A single zero-sized memory piece is upgraded to use
+ * the type's byte size so callers can read the object payload.
+ *
+ * @param objectLocation  Source location describing where the object lives.
+ * @param _location       Out parameter receiving the refined location.
+ * @retval B_OK         Location was produced.
+ * @retval B_BAD_VALUE  @a objectLocation has no pieces.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfType::ResolveObjectDataLocation(const ValueLocation& objectLocation,
 	ValueLocation*& _location)
@@ -356,6 +517,15 @@ DwarfType::ResolveObjectDataLocation(const ValueLocation& objectLocation,
 }
 
 
+/**
+ * @brief Convenience overload that builds a ValueLocation for an object at
+ *        a known runtime address and forwards to the location-based
+ *        overload.
+ *
+ * @param objectAddress  Runtime address of the object.
+ * @param _location      Out parameter receiving the resulting location.
+ * @return Status from the underlying ResolveObjectDataLocation().
+ */
 status_t
 DwarfType::ResolveObjectDataLocation(target_addr_t objectAddress,
 	ValueLocation*& _location)
@@ -376,6 +546,28 @@ DwarfType::ResolveObjectDataLocation(target_addr_t objectAddress,
 }
 
 
+/**
+ * @brief Evaluates a DWARF location description into a concrete
+ *        ValueLocation.
+ *
+ * Delegates to DwarfFile::ResolveLocation() for expression interpretation
+ * then post-processes each piece: register indices are mapped from the
+ * DWARF numbering to the architecture's, bit offsets are flipped for
+ * little-endian memory pieces, and a final unsized piece adopts the type's
+ * byte size.
+ *
+ * @param typeContext       Context whose live PC/FP and target interface
+ *                          are used during evaluation.
+ * @param description       DWARF location description to evaluate; must
+ *                          be valid.
+ * @param objectAddress     Object address operand for the expression.
+ * @param hasObjectAddress  Whether @a objectAddress should be pushed onto
+ *                          the operand stack as a starting value.
+ * @param _location         Filled in with the resulting pieces.
+ * @retval B_OK         Evaluation succeeded.
+ * @retval B_NO_MEMORY  Allocation failure during piece processing.
+ * @retval other        Errors from DwarfFile::ResolveLocation().
+ */
 status_t
 DwarfType::ResolveLocation(DwarfTypeContext* typeContext,
 	const LocationDescription* description, target_addr_t objectAddress,
@@ -455,6 +647,7 @@ DwarfType::ResolveLocation(DwarfTypeContext* typeContext,
 // #pragma mark - DwarfInheritance
 
 
+/** @brief Constructs an inheritance node and acquires the type reference. */
 DwarfInheritance::DwarfInheritance(DIEInheritance* entry, DwarfType* type)
 	:
 	fEntry(entry),
@@ -464,12 +657,15 @@ DwarfInheritance::DwarfInheritance(DIEInheritance* entry, DwarfType* type)
 }
 
 
+/** @brief Releases the held DwarfType reference. */
 DwarfInheritance::~DwarfInheritance()
 {
 	fType->ReleaseReference();
 }
 
 
+/** @brief Returns the base Type as required by the abstract BaseType
+           interface. */
 Type*
 DwarfInheritance::GetType() const
 {
@@ -480,6 +676,7 @@ DwarfInheritance::GetType() const
 // #pragma mark - DwarfDataMember
 
 
+/** @brief Constructs a data member node and acquires the type reference. */
 DwarfDataMember::DwarfDataMember(DIEMember* entry, const BString& name,
 	DwarfType* type)
 	:
@@ -491,11 +688,13 @@ DwarfDataMember::DwarfDataMember(DIEMember* entry, const BString& name,
 }
 
 
+/** @brief Releases the held DwarfType reference. */
 DwarfDataMember::~DwarfDataMember()
 {
 	fType->ReleaseReference();
 }
 
+/** @brief Returns the member name, or @c NULL when anonymous. */
 const char*
 DwarfDataMember::Name() const
 {
@@ -503,6 +702,7 @@ DwarfDataMember::Name() const
 }
 
 
+/** @brief Returns the member's Type as required by DataMember. */
 Type*
 DwarfDataMember::GetType() const
 {
@@ -513,6 +713,7 @@ DwarfDataMember::GetType() const
 // #pragma mark - DwarfEnumeratorValue
 
 
+/** @brief Constructs an enumerator value node. */
 DwarfEnumeratorValue::DwarfEnumeratorValue(DIEEnumerator* entry,
 	const BString& name, const BVariant& value)
 	:
@@ -523,10 +724,12 @@ DwarfEnumeratorValue::DwarfEnumeratorValue(DIEEnumerator* entry,
 }
 
 
+/** @brief Destructor; nothing to release. */
 DwarfEnumeratorValue::~DwarfEnumeratorValue()
 {
 }
 
+/** @brief Returns the enumerator name, or @c NULL when empty. */
 const char*
 DwarfEnumeratorValue::Name() const
 {
@@ -534,6 +737,7 @@ DwarfEnumeratorValue::Name() const
 }
 
 
+/** @brief Returns the enumerator's numeric value as a BVariant. */
 BVariant
 DwarfEnumeratorValue::Value() const
 {
@@ -544,6 +748,8 @@ DwarfEnumeratorValue::Value() const
 // #pragma mark - DwarfArrayDimension
 
 
+/** @brief Constructs an array dimension and acquires the index-type
+           reference. */
 DwarfArrayDimension::DwarfArrayDimension(DwarfType* type)
 	:
 	fType(type)
@@ -552,12 +758,14 @@ DwarfArrayDimension::DwarfArrayDimension(DwarfType* type)
 }
 
 
+/** @brief Releases the held DwarfType reference. */
 DwarfArrayDimension::~DwarfArrayDimension()
 {
 	fType->ReleaseReference();
 }
 
 
+/** @brief Returns the index-type Type as required by ArrayDimension. */
 Type*
 DwarfArrayDimension::GetType() const
 {
@@ -568,6 +776,8 @@ DwarfArrayDimension::GetType() const
 // #pragma mark - DwarfFunctionParameter
 
 
+/** @brief Constructs a function parameter and acquires the type
+           reference. */
 DwarfFunctionParameter::DwarfFunctionParameter(DIEFormalParameter* entry,
 	const BString& name, DwarfType* type)
 	:
@@ -579,12 +789,14 @@ DwarfFunctionParameter::DwarfFunctionParameter(DIEFormalParameter* entry,
 }
 
 
+/** @brief Releases the held DwarfType reference. */
 DwarfFunctionParameter::~DwarfFunctionParameter()
 {
 	fType->ReleaseReference();
 }
 
 
+/** @brief Returns the parameter name, or @c NULL when anonymous. */
 const char*
 DwarfFunctionParameter::Name() const
 {
@@ -592,6 +804,7 @@ DwarfFunctionParameter::Name() const
 }
 
 
+/** @brief Returns the parameter's Type as required by FunctionParameter. */
 Type*
 DwarfFunctionParameter::GetType() const
 {
@@ -602,6 +815,15 @@ DwarfFunctionParameter::GetType() const
 // #pragma mark - DwarfTemplateParameter
 
 
+/**
+ * @brief Constructs a template parameter, distinguishing between type and
+ *        non-type parameters and capturing the constant value when present.
+ *
+ * @param entry  DWARF DIE: either DIETemplateTypeParameter or
+ *               DIETemplateValueParameter.
+ * @param type   Resolved type for the parameter (the parameter type for
+ *               non-type parameters; the bound type for type parameters).
+ */
 DwarfTemplateParameter::DwarfTemplateParameter(DebugInfoEntry* entry,
 	DwarfType* type)
 	:
@@ -632,6 +854,7 @@ DwarfTemplateParameter::DwarfTemplateParameter(DebugInfoEntry* entry,
 }
 
 
+/** @brief Releases the held DwarfType reference. */
 DwarfTemplateParameter::~DwarfTemplateParameter()
 {
 	fType->ReleaseReference();
@@ -641,6 +864,7 @@ DwarfTemplateParameter::~DwarfTemplateParameter()
 // #pragma mark - DwarfPrimitiveType
 
 
+/** @brief Constructs a primitive type with the given Haiku type constant. */
 DwarfPrimitiveType::DwarfPrimitiveType(DwarfTypeContext* typeContext,
 	const BString& name, DIEBaseType* entry, uint32 typeConstant)
 	:
@@ -651,6 +875,7 @@ DwarfPrimitiveType::DwarfPrimitiveType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfPrimitiveType::GetDIEType() const
 {
@@ -658,6 +883,8 @@ DwarfPrimitiveType::GetDIEType() const
 }
 
 
+/** @brief Returns the Haiku-style numeric type constant
+           (e.g. @c B_INT32_TYPE). */
 uint32
 DwarfPrimitiveType::TypeConstant() const
 {
@@ -668,6 +895,7 @@ DwarfPrimitiveType::TypeConstant() const
 // #pragma mark - DwarfCompoundType
 
 
+/** @brief Constructs a compound type with the given compound kind. */
 DwarfCompoundType::DwarfCompoundType(DwarfTypeContext* typeContext,
 	const BString& name, DIECompoundType* entry,
 	compound_type_kind compoundKind)
@@ -679,6 +907,8 @@ DwarfCompoundType::DwarfCompoundType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases references on inheritances, members, and template
+           parameters. */
 DwarfCompoundType::~DwarfCompoundType()
 {
 	for (int32 i = 0;
@@ -695,6 +925,7 @@ DwarfCompoundType::~DwarfCompoundType()
 }
 
 
+/** @brief Returns the compound kind (struct, class, union, interface). */
 compound_type_kind
 DwarfCompoundType::CompoundKind() const
 {
@@ -702,6 +933,7 @@ DwarfCompoundType::CompoundKind() const
 }
 
 
+/** @brief Returns the number of registered base classes. */
 int32
 DwarfCompoundType::CountBaseTypes() const
 {
@@ -709,6 +941,7 @@ DwarfCompoundType::CountBaseTypes() const
 }
 
 
+/** @brief Returns the BaseType at @a index, or @c NULL when out of range. */
 BaseType*
 DwarfCompoundType::BaseTypeAt(int32 index) const
 {
@@ -716,6 +949,7 @@ DwarfCompoundType::BaseTypeAt(int32 index) const
 }
 
 
+/** @brief Returns the number of declared data members. */
 int32
 DwarfCompoundType::CountDataMembers() const
 {
@@ -723,6 +957,7 @@ DwarfCompoundType::CountDataMembers() const
 }
 
 
+/** @brief Returns the DataMember at @a index, or @c NULL when out of range. */
 DataMember*
 DwarfCompoundType::DataMemberAt(int32 index) const
 {
@@ -730,6 +965,7 @@ DwarfCompoundType::DataMemberAt(int32 index) const
 }
 
 
+/** @brief Returns the number of template parameters. */
 int32
 DwarfCompoundType::CountTemplateParameters() const
 {
@@ -737,6 +973,8 @@ DwarfCompoundType::CountTemplateParameters() const
 }
 
 
+/** @brief Returns the TemplateParameter at @a index, or @c NULL when out of
+           range. */
 TemplateParameter*
 DwarfCompoundType::TemplateParameterAt(int32 index) const
 {
@@ -744,6 +982,17 @@ DwarfCompoundType::TemplateParameterAt(int32 index) const
 }
 
 
+/**
+ * @brief Resolves the in-memory location of an inherited base subobject.
+ *
+ * @param _baseType       Inheritance node (must be a DwarfInheritance).
+ * @param parentLocation  Location of the enclosing object.
+ * @param _location       Out parameter receiving the base subobject's
+ *                        location.
+ * @retval B_OK         Base location resolved.
+ * @retval B_BAD_VALUE  @a _baseType is not a DwarfInheritance.
+ * @retval other        Errors from _ResolveDataMemberLocation().
+ */
 status_t
 DwarfCompoundType::ResolveBaseTypeLocation(BaseType* _baseType,
 	const ValueLocation& parentLocation, ValueLocation*& _location)
@@ -757,6 +1006,22 @@ DwarfCompoundType::ResolveBaseTypeLocation(BaseType* _baseType,
 }
 
 
+/**
+ * @brief Resolves the in-memory location of a data member, including
+ *        bit-field handling.
+ *
+ * The shared @c _ResolveDataMemberLocation() does the per-piece offset
+ * arithmetic; this method then layers on bit-field accounting using the
+ * member's byte size, bit size and bit offset attributes.
+ *
+ * @param _member         Data member node (must be a DwarfDataMember).
+ * @param parentLocation  Location of the enclosing object.
+ * @param _location       Out parameter receiving the member's location.
+ * @retval B_OK         Location resolved.
+ * @retval B_BAD_VALUE  @a _member is not a DwarfDataMember.
+ * @retval other        Errors from byte/bit-size evaluation or location
+ *                      resolution.
+ */
 status_t
 DwarfCompoundType::ResolveDataMemberLocation(DataMember* _member,
 	const ValueLocation& parentLocation, ValueLocation*& _location)
@@ -855,6 +1120,7 @@ DwarfCompoundType::ResolveDataMemberLocation(DataMember* _member,
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfCompoundType::GetDIEType() const
 {
@@ -862,6 +1128,7 @@ DwarfCompoundType::GetDIEType() const
 }
 
 
+/** @brief Appends an inheritance edge and acquires its reference. */
 bool
 DwarfCompoundType::AddInheritance(DwarfInheritance* inheritance)
 {
@@ -873,6 +1140,7 @@ DwarfCompoundType::AddInheritance(DwarfInheritance* inheritance)
 }
 
 
+/** @brief Appends a data member and acquires its reference. */
 bool
 DwarfCompoundType::AddDataMember(DwarfDataMember* member)
 {
@@ -884,6 +1152,7 @@ DwarfCompoundType::AddDataMember(DwarfDataMember* member)
 }
 
 
+/** @brief Appends a template parameter and acquires its reference. */
 bool
 DwarfCompoundType::AddTemplateParameter(DwarfTemplateParameter* parameter)
 {
@@ -895,6 +1164,25 @@ DwarfCompoundType::AddTemplateParameter(DwarfTemplateParameter* parameter)
 }
 
 
+/**
+ * @brief Computes a member's value location given its DWARF
+ *        DW_AT_data_member_location attribute.
+ *
+ * Handles three forms: a constant byte offset, a DWARF expression block
+ * to evaluate, and a location list pointer. Bit-field members request
+ * bit-precision offsets via @a isBitField.
+ *
+ * @param memberType      Type of the member (drives byte size).
+ * @param memberLocation  DW_AT_data_member_location attribute value.
+ * @param parentLocation  Location of the enclosing object.
+ * @param isBitField      Whether the member is being treated as a bit
+ *                        field.
+ * @param _location       Out parameter receiving the new ValueLocation;
+ *                        reference transferred to caller.
+ * @retval B_OK         Location resolved.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Errors from expression evaluation.
+ */
 status_t
 DwarfCompoundType::_ResolveDataMemberLocation(DwarfType* memberType,
 	const MemberLocation* memberLocation,
@@ -990,6 +1278,8 @@ DwarfCompoundType::_ResolveDataMemberLocation(DwarfType* memberType,
 // #pragma mark - DwarfArrayType
 
 
+/** @brief Constructs an array type and acquires the element-type
+           reference. */
 DwarfArrayType::DwarfArrayType(DwarfTypeContext* typeContext,
 	const BString& name, DIEArrayType* entry, DwarfType* baseType)
 	:
@@ -1001,6 +1291,7 @@ DwarfArrayType::DwarfArrayType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases dimensions and the element-type reference. */
 DwarfArrayType::~DwarfArrayType()
 {
 	for (int32 i = 0;
@@ -1012,6 +1303,7 @@ DwarfArrayType::~DwarfArrayType()
 }
 
 
+/** @brief Returns the element type. */
 Type*
 DwarfArrayType::BaseType() const
 {
@@ -1019,6 +1311,7 @@ DwarfArrayType::BaseType() const
 }
 
 
+/** @brief Returns the number of registered dimensions. */
 int32
 DwarfArrayType::CountDimensions() const
 {
@@ -1026,6 +1319,8 @@ DwarfArrayType::CountDimensions() const
 }
 
 
+/** @brief Returns the ArrayDimension at @a index, or @c NULL when out of
+           range. */
 ArrayDimension*
 DwarfArrayType::DimensionAt(int32 index) const
 {
@@ -1033,6 +1328,23 @@ DwarfArrayType::DimensionAt(int32 index) const
 }
 
 
+/**
+ * @brief Computes the in-memory location of the array element identified
+ *        by @a indexPath relative to a parent array location.
+ *
+ * Honors per-array, per-dimension and per-index-type bit/byte strides as
+ * defined by the DWARF spec, falling back to the element type size when
+ * not provided.
+ *
+ * @param indexPath       Multi-dimensional index of the element.
+ * @param parentLocation  Location describing the array as a whole.
+ * @param _location       Out parameter receiving the element location.
+ * @retval B_OK         Element location resolved.
+ * @retval B_BAD_VALUE  Index path arity disagrees with dimensions or
+ *                      stride is unknown for a non-zero index.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Errors from stride evaluation.
+ */
 status_t
 DwarfArrayType::ResolveElementLocation(const ArrayIndexPath& indexPath,
 	const ValueLocation& parentLocation, ValueLocation*& _location)
@@ -1199,6 +1511,7 @@ DwarfArrayType::ResolveElementLocation(const ArrayIndexPath& indexPath,
 
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfArrayType::GetDIEType() const
 {
@@ -1206,6 +1519,7 @@ DwarfArrayType::GetDIEType() const
 }
 
 
+/** @brief Appends a dimension and acquires its reference. */
 bool
 DwarfArrayType::AddDimension(DwarfArrayDimension* dimension)
 {
@@ -1220,6 +1534,8 @@ DwarfArrayType::AddDimension(DwarfArrayDimension* dimension)
 // #pragma mark - DwarfModifiedType
 
 
+/** @brief Constructs a modified type and acquires the base-type
+           reference. */
 DwarfModifiedType::DwarfModifiedType(DwarfTypeContext* typeContext,
 	const BString& name, DIEModifiedType* entry, uint32 modifiers,
 	DwarfType* baseType)
@@ -1233,12 +1549,14 @@ DwarfModifiedType::DwarfModifiedType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases the base-type reference. */
 DwarfModifiedType::~DwarfModifiedType()
 {
 	fBaseType->ReleaseReference();
 }
 
 
+/** @brief Returns the modifier bit mask (const, volatile, ...). */
 uint32
 DwarfModifiedType::Modifiers() const
 {
@@ -1246,6 +1564,7 @@ DwarfModifiedType::Modifiers() const
 }
 
 
+/** @brief Returns the modified base type. */
 Type*
 DwarfModifiedType::BaseType() const
 {
@@ -1253,6 +1572,7 @@ DwarfModifiedType::BaseType() const
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfModifiedType::GetDIEType() const
 {
@@ -1263,6 +1583,8 @@ DwarfModifiedType::GetDIEType() const
 // #pragma mark - DwarfTypedefType
 
 
+/** @brief Constructs a typedef alias and acquires the base-type
+           reference. */
 DwarfTypedefType::DwarfTypedefType(DwarfTypeContext* typeContext,
 	const BString& name, DIETypedef* entry, DwarfType* baseType)
 	:
@@ -1274,12 +1596,14 @@ DwarfTypedefType::DwarfTypedefType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases the base-type reference. */
 DwarfTypedefType::~DwarfTypedefType()
 {
 	fBaseType->ReleaseReference();
 }
 
 
+/** @brief Returns the underlying type the typedef aliases. */
 Type*
 DwarfTypedefType::BaseType() const
 {
@@ -1287,6 +1611,7 @@ DwarfTypedefType::BaseType() const
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfTypedefType::GetDIEType() const
 {
@@ -1297,6 +1622,8 @@ DwarfTypedefType::GetDIEType() const
 // #pragma mark - DwarfAddressType
 
 
+/** @brief Constructs a pointer/reference type and acquires the pointee
+           reference. */
 DwarfAddressType::DwarfAddressType(DwarfTypeContext* typeContext,
 	const BString& name, DIEAddressingType* entry,
 	address_type_kind addressKind, DwarfType* baseType)
@@ -1310,12 +1637,14 @@ DwarfAddressType::DwarfAddressType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases the pointee-type reference. */
 DwarfAddressType::~DwarfAddressType()
 {
 	fBaseType->ReleaseReference();
 }
 
 
+/** @brief Returns whether this is a pointer or a reference. */
 address_type_kind
 DwarfAddressType::AddressKind() const
 {
@@ -1323,6 +1652,7 @@ DwarfAddressType::AddressKind() const
 }
 
 
+/** @brief Returns the pointee/referent type. */
 Type*
 DwarfAddressType::BaseType() const
 {
@@ -1330,6 +1660,7 @@ DwarfAddressType::BaseType() const
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfAddressType::GetDIEType() const
 {
@@ -1340,6 +1671,8 @@ DwarfAddressType::GetDIEType() const
 // #pragma mark - DwarfEnumerationType
 
 
+/** @brief Constructs an enumeration type and (optionally) acquires the
+           base-type reference. */
 DwarfEnumerationType::DwarfEnumerationType(DwarfTypeContext* typeContext,
 	const BString& name, DIEEnumerationType* entry, DwarfType* baseType)
 	:
@@ -1352,6 +1685,8 @@ DwarfEnumerationType::DwarfEnumerationType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases enumerator values and (optionally) the base-type
+           reference. */
 DwarfEnumerationType::~DwarfEnumerationType()
 {
 	for (int32 i = 0; DwarfEnumeratorValue* value = fValues.ItemAt(i); i++)
@@ -1362,6 +1697,7 @@ DwarfEnumerationType::~DwarfEnumerationType()
 }
 
 
+/** @brief Returns the underlying integer base type, or @c NULL if absent. */
 Type*
 DwarfEnumerationType::BaseType() const
 {
@@ -1369,6 +1705,7 @@ DwarfEnumerationType::BaseType() const
 }
 
 
+/** @brief Returns the number of declared enumerator values. */
 int32
 DwarfEnumerationType::CountValues() const
 {
@@ -1376,6 +1713,8 @@ DwarfEnumerationType::CountValues() const
 }
 
 
+/** @brief Returns the EnumeratorValue at @a index, or @c NULL when out of
+           range. */
 EnumeratorValue*
 DwarfEnumerationType::ValueAt(int32 index) const
 {
@@ -1383,6 +1722,7 @@ DwarfEnumerationType::ValueAt(int32 index) const
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfEnumerationType::GetDIEType() const
 {
@@ -1390,6 +1730,7 @@ DwarfEnumerationType::GetDIEType() const
 }
 
 
+/** @brief Appends an enumerator value and acquires its reference. */
 bool
 DwarfEnumerationType::AddValue(DwarfEnumeratorValue* value)
 {
@@ -1404,6 +1745,7 @@ DwarfEnumerationType::AddValue(DwarfEnumeratorValue* value)
 // #pragma mark - DwarfSubrangeType
 
 
+/** @brief Constructs a subrange type with explicit low and high bounds. */
 DwarfSubrangeType::DwarfSubrangeType(DwarfTypeContext* typeContext,
 	const BString& name, DIESubrangeType* entry, Type* baseType,
 	const BVariant& lowerBound, const BVariant& upperBound)
@@ -1418,12 +1760,14 @@ DwarfSubrangeType::DwarfSubrangeType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases the base-type reference. */
 DwarfSubrangeType::~DwarfSubrangeType()
 {
 	fBaseType->ReleaseReference();
 }
 
 
+/** @brief Returns the integer base type the subrange refines. */
 Type*
 DwarfSubrangeType::BaseType() const
 {
@@ -1431,6 +1775,7 @@ DwarfSubrangeType::BaseType() const
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfSubrangeType::GetDIEType() const
 {
@@ -1438,6 +1783,7 @@ DwarfSubrangeType::GetDIEType() const
 }
 
 
+/** @brief Returns the lower bound of the subrange. */
 BVariant
 DwarfSubrangeType::LowerBound() const
 {
@@ -1445,6 +1791,7 @@ DwarfSubrangeType::LowerBound() const
 }
 
 
+/** @brief Returns the upper bound of the subrange. */
 BVariant
 DwarfSubrangeType::UpperBound() const
 {
@@ -1455,6 +1802,8 @@ DwarfSubrangeType::UpperBound() const
 // #pragma mark - DwarfUnspecifiedType
 
 
+/** @brief Constructs an unspecified-type placeholder. The DIE entry may
+           legitimately be @c NULL. */
 DwarfUnspecifiedType::DwarfUnspecifiedType(DwarfTypeContext* typeContext,
 	const BString& name, DIEUnspecifiedType* entry)
 	:
@@ -1464,11 +1813,14 @@ DwarfUnspecifiedType::DwarfUnspecifiedType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Destructor; nothing to release. */
 DwarfUnspecifiedType::~DwarfUnspecifiedType()
 {
 }
 
 
+/** @brief Returns the underlying DIE entry, or @c NULL when not bound to
+           one. */
 DIEType*
 DwarfUnspecifiedType::GetDIEType() const
 {
@@ -1479,6 +1831,8 @@ DwarfUnspecifiedType::GetDIEType() const
 // #pragma mark - DwarfFunctionType
 
 
+/** @brief Constructs a function type and (optionally) acquires the return-
+           type reference. */
 DwarfFunctionType::DwarfFunctionType(DwarfTypeContext* typeContext,
 	const BString& name, DIESubroutineType* entry, DwarfType* returnType)
 	:
@@ -1492,6 +1846,8 @@ DwarfFunctionType::DwarfFunctionType(DwarfTypeContext* typeContext,
 }
 
 
+/** @brief Releases parameters and (optionally) the return-type
+           reference. */
 DwarfFunctionType::~DwarfFunctionType()
 {
 	for (int32 i = 0;
@@ -1504,6 +1860,8 @@ DwarfFunctionType::~DwarfFunctionType()
 }
 
 
+/** @brief Returns the return type, or @c NULL for void-returning
+           functions. */
 Type*
 DwarfFunctionType::ReturnType() const
 {
@@ -1511,6 +1869,7 @@ DwarfFunctionType::ReturnType() const
 }
 
 
+/** @brief Returns the number of parameters. */
 int32
 DwarfFunctionType::CountParameters() const
 {
@@ -1518,6 +1877,8 @@ DwarfFunctionType::CountParameters() const
 }
 
 
+/** @brief Returns the FunctionParameter at @a index, or @c NULL when out of
+           range. */
 FunctionParameter*
 DwarfFunctionType::ParameterAt(int32 index) const
 {
@@ -1525,6 +1886,7 @@ DwarfFunctionType::ParameterAt(int32 index) const
 }
 
 
+/** @brief Reports whether the function uses variadic arguments. */
 bool
 DwarfFunctionType::HasVariableArguments() const
 {
@@ -1532,6 +1894,7 @@ DwarfFunctionType::HasVariableArguments() const
 }
 
 
+/** @brief Sets the variadic flag. */
 void
 DwarfFunctionType::SetHasVariableArguments(bool hasVarArgs)
 {
@@ -1539,6 +1902,7 @@ DwarfFunctionType::SetHasVariableArguments(bool hasVarArgs)
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfFunctionType::GetDIEType() const
 {
@@ -1546,6 +1910,7 @@ DwarfFunctionType::GetDIEType() const
 }
 
 
+/** @brief Appends a parameter and acquires its reference. */
 bool
 DwarfFunctionType::AddParameter(DwarfFunctionParameter* parameter)
 {
@@ -1560,6 +1925,8 @@ DwarfFunctionType::AddParameter(DwarfFunctionParameter* parameter)
 // #pragma mark - DwarfPointerToMemberType
 
 
+/** @brief Constructs a pointer-to-member type and acquires references on
+           both the containing compound and the pointee type. */
 DwarfPointerToMemberType::DwarfPointerToMemberType(
 	DwarfTypeContext* typeContext, const BString& name,
 	DIEPointerToMemberType* entry, DwarfCompoundType* containingType,
@@ -1575,6 +1942,7 @@ DwarfPointerToMemberType::DwarfPointerToMemberType(
 }
 
 
+/** @brief Releases the containing-type and pointee-type references. */
 DwarfPointerToMemberType::~DwarfPointerToMemberType()
 {
 	fContainingType->ReleaseReference();
@@ -1582,6 +1950,8 @@ DwarfPointerToMemberType::~DwarfPointerToMemberType()
 }
 
 
+/** @brief Returns the compound type the pointer-to-member targets a
+           member of. */
 CompoundType*
 DwarfPointerToMemberType::ContainingType() const
 {
@@ -1589,6 +1959,7 @@ DwarfPointerToMemberType::ContainingType() const
 }
 
 
+/** @brief Returns the type of the member the pointer addresses. */
 Type*
 DwarfPointerToMemberType::BaseType() const
 {
@@ -1596,6 +1967,7 @@ DwarfPointerToMemberType::BaseType() const
 }
 
 
+/** @brief Returns the underlying DIE entry. */
 DIEType*
 DwarfPointerToMemberType::GetDIEType() const
 {

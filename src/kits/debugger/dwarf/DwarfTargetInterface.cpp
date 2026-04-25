@@ -1,12 +1,48 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfTargetInterface.cpp
+ * @brief Out-of-line destructor for the DWARF target abstraction interface.
+ *
+ * DwarfTargetInterface is the abstract surface that the DWARF expression
+ * evaluator and CFA unwinder use to query register values, read target
+ * memory, and inspect register metadata of the inferior process.  This
+ * translation unit only anchors its virtual destructor; all pure virtuals
+ * are implemented by concrete debugger backends.
  */
 
 
 #include "DwarfTargetInterface.h"
 
 
+/**
+ * @brief Destroys the abstract target interface.
+ *
+ * Defined out-of-line to provide a single home for the vtable.
+ */
 DwarfTargetInterface::~DwarfTargetInterface()
 {
 }

@@ -1,7 +1,44 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2012-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2012-2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file TeamDebugInfo.cpp
+ * @brief Implementation of TeamDebugInfo, the team-wide aggregate of
+ *        per-image debug data, type cache and source-code bookkeeping.
+ *
+ * TeamDebugInfo orchestrates the entire debugger debug-info subsystem for
+ * one target team. It owns the prioritized list of SpecificTeamDebugInfo
+ * backends, materializes ImageDebugInfo objects per loaded image, merges
+ * per-image FunctionInstance lists into shared Function objects keyed by
+ * source location, and caches FileSourceCode for each LocatableFile that
+ * functions resolve to. It also provides the type lookup entry point used
+ * across the debugger.
+ *
+ * @see ImageDebugInfo, Function, FunctionInstance, GlobalTypeCache,
+ *      DwarfTeamDebugInfo, DebuggerTeamDebugInfo
  */
 
 
@@ -36,10 +73,20 @@
 // #pragma mark - FunctionHashDefinition
 
 
+/**
+ * @brief Hash-table policy used to look up a Function by FunctionInstance.
+ *
+ * Instances backed by the same source file, name and source location are
+ * considered to denote the same logical Function. Instances without a
+ * source file degenerate to identity comparison so each one becomes its
+ * own Function.
+ */
 struct TeamDebugInfo::FunctionHashDefinition {
 	typedef const FunctionInstance*	KeyType;
 	typedef	Function				ValueType;
 
+	/** @brief Hashes a key built from the instance's name and source
+	           location, or its address when no source file is known. */
 	size_t HashKey(const FunctionInstance* key) const
 	{
 		// Instances without source file only equal themselves.
@@ -55,11 +102,13 @@ struct TeamDebugInfo::FunctionHashDefinition {
 		return hash;
 	}
 
+	/** @brief Hashes a stored Function via its first instance. */
 	size_t Hash(const Function* value) const
 	{
 		return HashKey(value->FirstInstance());
 	}
 
+	/** @brief Equality predicate used for hash-table collisions. */
 	bool Compare(const FunctionInstance* key, const Function* value) const
 	{
 		// source file must be the same
@@ -75,6 +124,7 @@ struct TeamDebugInfo::FunctionHashDefinition {
 			&& key->Name() == value->Name();
 	}
 
+	/** @brief Returns the chain pointer used by the hash table. */
 	Function*& GetLink(Function* value) const
 	{
 		return value->fNext;
@@ -85,7 +135,16 @@ struct TeamDebugInfo::FunctionHashDefinition {
 // #pragma mark - SourceFileEntry
 
 
+/**
+ * @brief Per-source-file aggregate keeping the list of Functions known in a
+ *        file and the cached FileSourceCode (when loaded).
+ *
+ * Functions are kept sorted by source location so a binary search can find
+ * the function covering an arbitrary line/column.
+ */
 struct TeamDebugInfo::SourceFileEntry {
+	/** @brief Constructs an empty entry and acquires a reference on the
+	           source file. */
 	SourceFileEntry(LocatableFile* sourceFile)
 		:
 		fSourceFile(sourceFile),
@@ -94,27 +153,32 @@ struct TeamDebugInfo::SourceFileEntry {
 		fSourceFile->AcquireReference();
 	}
 
+	/** @brief Destroys the entry and releases all held references. */
 	~SourceFileEntry()
 	{
 		SetSourceCode(NULL);
 		fSourceFile->ReleaseReference();
 	}
 
+	/** @brief No-op initialization hook reserved for symmetry. */
 	status_t Init()
 	{
 		return B_OK;
 	}
 
+	/** @brief Returns the LocatableFile this entry represents. */
 	LocatableFile* SourceFile() const
 	{
 		return fSourceFile;
 	}
 
+	/** @brief Returns the cached FileSourceCode or @c NULL if not loaded. */
 	FileSourceCode* GetSourceCode() const
 	{
 		return fSourceCode;
 	}
 
+	/** @brief Replaces the cached source code, adjusting refcounts. */
 	void SetSourceCode(FileSourceCode* sourceCode)
 	{
 		if (sourceCode == fSourceCode)
@@ -130,11 +194,13 @@ struct TeamDebugInfo::SourceFileEntry {
 	}
 
 
+	/** @brief Reports whether the function list is empty. */
 	bool IsUnused() const
 	{
 		return fFunctions.IsEmpty();
 	}
 
+	/** @brief Adds a Function in sorted order keyed by source location. */
 	status_t AddFunction(Function* function)
 	{
 		if (!fFunctions.BinaryInsert(function, &_CompareFunctions))
@@ -143,6 +209,7 @@ struct TeamDebugInfo::SourceFileEntry {
 		return B_OK;
 	}
 
+	/** @brief Removes a previously added Function from the sorted list. */
 	void RemoveFunction(Function* function)
 	{
 		int32 index = fFunctions.BinarySearchIndex(*function,
@@ -151,6 +218,15 @@ struct TeamDebugInfo::SourceFileEntry {
 			fFunctions.RemoveItemAt(index);
 	}
 
+	/**
+	 * @brief Looks up the function that covers a given source location.
+	 *
+	 * If no function declares its start at exactly @a location the previous
+	 * function (which may still contain the line) is returned.
+	 *
+	 * @param location  Source line/column to query.
+	 * @return Pointer to the covering Function, or @c NULL.
+	 */
 	Function* FunctionAtLocation(const SourceLocation& location) const
 	{
 		int32 index = fFunctions.BinarySearchIndexByKey(location,
@@ -168,11 +244,13 @@ struct TeamDebugInfo::SourceFileEntry {
 		return fFunctions.ItemAt(index - 1);
 	}
 
+	/** @brief Returns the function at the given list index. */
 	Function* FunctionAt(int32 index) const
 	{
 		return fFunctions.ItemAt(index);
 	}
 
+	/** @brief Linear search for a function by exact name. */
 	Function* FunctionByName(const BString& name) const
 	{
 		// TODO: That's not exactly optimal.
@@ -187,6 +265,8 @@ private:
 	typedef BObjectList<Function> FunctionList;
 
 private:
+	/** @brief Compares two Functions by source location, breaking ties by
+	           name (so distinct template instantiations differ). */
 	static int _CompareFunctions(const Function* a, const Function* b)
 	{
 		SourceLocation locationA = a->GetSourceLocation();
@@ -204,6 +284,7 @@ private:
 		return a->Name().Compare(b->Name());
 	}
 
+	/** @brief Compares a SourceLocation key against a Function. */
 	static int _CompareLocationFunction(const SourceLocation* location,
 		const Function* function)
 	{
@@ -228,25 +309,33 @@ public:
 // #pragma mark - SourceFileHashDefinition
 
 
+/**
+ * @brief Hash-table policy keying SourceFileEntry by its LocatableFile
+ *        pointer; the pointer is unique per source file in the team.
+ */
 struct TeamDebugInfo::SourceFileHashDefinition {
 	typedef const LocatableFile*	KeyType;
 	typedef	SourceFileEntry			ValueType;
 
+	/** @brief Hashes the LocatableFile pointer directly. */
 	size_t HashKey(const LocatableFile* key) const
 	{
 		return (size_t)(addr_t)key;
 	}
 
+	/** @brief Hashes a stored entry by its source-file pointer. */
 	size_t Hash(const SourceFileEntry* value) const
 	{
 		return HashKey(value->SourceFile());
 	}
 
+	/** @brief Pointer-equality comparison. */
 	bool Compare(const LocatableFile* key, const SourceFileEntry* value) const
 	{
 		return key == value->SourceFile();
 	}
 
+	/** @brief Returns the chain pointer used by the hash table. */
 	SourceFileEntry*& GetLink(SourceFileEntry* value) const
 	{
 		return value->fNext;
@@ -257,6 +346,17 @@ struct TeamDebugInfo::SourceFileHashDefinition {
 // #pragma mark - TeamDebugInfo
 
 
+/**
+ * @brief Constructs an uninitialized TeamDebugInfo bound to the given
+ *        debugger interface, architecture and file manager.
+ *
+ * Init() must be called before any other method to allocate hash tables,
+ * the type cache and the per-backend SpecificTeamDebugInfo objects.
+ *
+ * @param debuggerInterface  Debugger interface; reference acquired.
+ * @param architecture       Target architecture used by all backends.
+ * @param fileManager        File manager used to resolve source files.
+ */
 TeamDebugInfo::TeamDebugInfo(DebuggerInterface* debuggerInterface,
 	Architecture* architecture, FileManager* fileManager)
 	:
@@ -274,6 +374,10 @@ TeamDebugInfo::TeamDebugInfo(DebuggerInterface* debuggerInterface,
 }
 
 
+/**
+ * @brief Destroys the team debug info, releasing every owned table,
+ *        cached entry and reference.
+ */
 TeamDebugInfo::~TeamDebugInfo()
 {
 	if (fTypeCache != NULL)
@@ -305,6 +409,18 @@ TeamDebugInfo::~TeamDebugInfo()
 }
 
 
+/**
+ * @brief Initializes lock, hash tables, type cache and SpecificTeamDebugInfo
+ *        backends in descending order of expressiveness.
+ *
+ * Two backends are registered: the DWARF-based info first, the live
+ * debugger fallback second. Either failing to construct or initialize
+ * aborts the whole call.
+ *
+ * @retval B_OK         The team debug info is ready to use.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Errors propagated from a backend's Init().
+ */
 status_t
 TeamDebugInfo::Init()
 {
@@ -373,6 +489,15 @@ TeamDebugInfo::Init()
 }
 
 
+/**
+ * @brief Convenience wrapper calling GetType() against the team's own type
+ *        cache.
+ *
+ * @param name        Type name to look up.
+ * @param constraints Optional kind/subkind constraints.
+ * @param _type       Out parameter receiving the resolved Type.
+ * @return Status from GetType().
+ */
 status_t
 TeamDebugInfo::LookupTypeByName(const BString& name,
 	const TypeLookupConstraints& constraints, Type*& _type)
@@ -381,6 +506,13 @@ TeamDebugInfo::LookupTypeByName(const BString& name,
 }
 
 
+/**
+ * @brief Reports whether a type by the given name exists in the team.
+ *
+ * @param name        Type name to test.
+ * @param constraints Optional kind/subkind constraints.
+ * @return @c true if any image debug info contains the type.
+ */
 bool
 TeamDebugInfo::TypeExistsByName(const BString& name,
 	const TypeLookupConstraints& constraints)
@@ -389,6 +521,22 @@ TeamDebugInfo::TypeExistsByName(const BString& name,
 }
 
 
+/**
+ * @brief Resolves a type by name, consulting a given GlobalTypeCache first
+ *        and falling back to per-image queries.
+ *
+ * The cache is checked under its own lock; on cache miss the team lock is
+ * taken briefly to clone the image list (with references), and queries are
+ * issued without any lock held to avoid contention.
+ *
+ * @param cache       Cache to consult and (via the backends) populate.
+ * @param name        Type name to look up.
+ * @param constraints Optional kind/subkind constraints.
+ * @param _type       Out parameter receiving the resolved Type.
+ * @retval B_OK              A type was returned.
+ * @retval B_ENTRY_NOT_FOUND No backend resolved @a name.
+ * @retval other             Errors from a backend (e.g. @c B_NO_MEMORY).
+ */
 status_t
 TeamDebugInfo::GetType(GlobalTypeCache* cache, const BString& name,
 	const TypeLookupConstraints& constraints, Type*& _type)
@@ -435,6 +583,17 @@ TeamDebugInfo::GetType(GlobalTypeCache* cache, const BString& name,
 }
 
 
+/**
+ * @brief Reports whether the type identified by @a name is known.
+ *
+ * Mirrors GetType() but stops at the first match without resolving the
+ * concrete Type object.
+ *
+ * @param cache       Cache to consult.
+ * @param name        Type name to test.
+ * @param constraints Optional kind/subkind constraints.
+ * @return @c true if any cache entry or image backend reports the type.
+ */
 bool
 TeamDebugInfo::HasType(GlobalTypeCache* cache, const BString& name,
 	const TypeLookupConstraints& constraints)
@@ -476,6 +635,21 @@ TeamDebugInfo::HasType(GlobalTypeCache* cache, const BString& name,
 }
 
 
+/**
+ * @brief Returns the currently loaded SourceCode for a given function info.
+ *
+ * Tries the source-file path first: if the Function at @a info's start
+ * location holds loaded source code, that is returned. Falls through to a
+ * lazy attach if a SourceFileEntry already has the FileSourceCode but the
+ * Function does not. As a last resort, scans the image list and returns
+ * the disassembled code attached to a matching FunctionInstance.
+ *
+ * @param info   FunctionDebugInfo whose code is being requested.
+ * @param _code  Out parameter receiving an additional reference to the
+ *               source code.
+ * @retval B_OK              A SourceCode was returned.
+ * @retval B_ENTRY_NOT_FOUND No loaded code was found for @a info.
+ */
 status_t
 TeamDebugInfo::GetActiveSourceCode(FunctionDebugInfo* info, SourceCode*& _code)
 {
@@ -530,6 +704,30 @@ TeamDebugInfo::GetActiveSourceCode(FunctionDebugInfo* info, SourceCode*& _code)
 }
 
 
+/**
+ * @brief Drives every registered backend to materialize per-image debug
+ *        info for a newly loaded image.
+ *
+ * Iterates SpecificTeamDebugInfo backends in order. Each backend that
+ * succeeds appends a SpecificImageDebugInfo to the new ImageDebugInfo. A
+ * backend that requires user input causes the call to return early with
+ * the corresponding error so the orchestrator can interact with the user
+ * and resume. After all backends have been queried the aggregated
+ * ImageDebugInfo is finalized via FinishInit() and the team's main
+ * function is recorded if a backend identified one.
+ *
+ * @param imageInfo         Image identity passed to each backend.
+ * @param imageFile         Located image file (may be @c NULL for purely
+ *                          symbol-driven backends).
+ * @param _state            Loading state used to convey backend-specific
+ *                          progress and user prompts.
+ * @param _imageDebugInfo   Out parameter receiving the new ImageDebugInfo
+ *                          on success; reference transferred to caller.
+ * @retval B_OK         The image is fully described.
+ * @retval B_NO_MEMORY  Allocation failure inside a backend.
+ * @retval other        Backend errors propagated as-is, including the
+ *                      "user input required" indication.
+ */
 status_t
 TeamDebugInfo::LoadImageDebugInfo(const ImageInfo& imageInfo,
 	LocatableFile* imageFile, ImageDebugInfoLoadingState& _state,
@@ -579,6 +777,24 @@ TeamDebugInfo::LoadImageDebugInfo(const ImageInfo& imageInfo,
 }
 
 
+/**
+ * @brief Loads source-code lines for a known source file and annotates
+ *        them with statement information from every covering image.
+ *
+ * Reuses a previously cached FileSourceCode when present. Otherwise,
+ * picks the source language from one of the file's functions, asks the
+ * file manager to read the on-disk file, builds a FileSourceCode and
+ * calls AddSourceCodeInfo() on every image that knows the file.
+ *
+ * @param file         Source file to load.
+ * @param _sourceCode  Out parameter receiving the (newly cached) source
+ *                     code; reference transferred to caller.
+ * @retval B_OK              Source code is available and returned.
+ * @retval B_ENTRY_NOT_FOUND The file is unknown or no image contributed
+ *                           statement info.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval other             Errors from the file manager or backends.
+ */
 status_t
 TeamDebugInfo::LoadSourceCode(LocatableFile* file, FileSourceCode*& _sourceCode)
 {
@@ -651,6 +867,13 @@ TeamDebugInfo::LoadSourceCode(LocatableFile* file, FileSourceCode*& _sourceCode)
 }
 
 
+/**
+ * @brief Drops the cached source code for a file (e.g. after the file
+ *        moves on disk).
+ *
+ * @param sourceFile  Source file whose cached FileSourceCode should be
+ *                    invalidated; no-op if unknown.
+ */
 void
 TeamDebugInfo::ClearSourceCode(LocatableFile* sourceFile)
 {
@@ -662,6 +885,21 @@ TeamDebugInfo::ClearSourceCode(LocatableFile* sourceFile)
 }
 
 
+/**
+ * @brief Reads the function's instructions from the target and returns
+ *        DisassembledCode produced by the architecture.
+ *
+ * Reads up to 64 KiB or the function size, whichever is smaller. The
+ * caller-provided allocation is freed automatically.
+ *
+ * @param functionInstance  Function instance to disassemble.
+ * @param _sourceCode       Out parameter receiving the new
+ *                          DisassembledCode on success.
+ * @retval B_OK         Disassembly succeeded.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Negative ssize_t errors from ReadCode() or codes
+ *                      from the architecture's disassembler.
+ */
 status_t
 TeamDebugInfo::DisassembleFunction(FunctionInstance* functionInstance,
 	DisassembledCode*& _sourceCode)
@@ -688,6 +926,21 @@ TeamDebugInfo::DisassembleFunction(FunctionInstance* functionInstance,
 }
 
 
+/**
+ * @brief Inserts a fully-populated ImageDebugInfo into the team and merges
+ *        its FunctionInstance objects with existing Functions.
+ *
+ * For every instance, a Function with the same source identity is reused;
+ * otherwise a new Function is created and registered. After merging, every
+ * SourceFileEntry that has cached source code is given a chance to
+ * absorb additional statement information contributed by the new image.
+ *
+ * @param imageDebugInfo  Newly produced per-image info to take ownership
+ *                        of.
+ * @retval B_OK         Image successfully integrated.
+ * @retval B_NO_MEMORY  Allocation failure; partial work is rolled back via
+ *                      RemoveImageDebugInfo().
+ */
 status_t
 TeamDebugInfo::AddImageDebugInfo(ImageDebugInfo* imageDebugInfo)
 {
@@ -755,6 +1008,15 @@ TeamDebugInfo::AddImageDebugInfo(ImageDebugInfo* imageDebugInfo)
 }
 
 
+/**
+ * @brief Detaches an ImageDebugInfo from the team and unwinds the
+ *        Function/FunctionInstance bookkeeping.
+ *
+ * Also evicts any types that originated from this image from the global
+ * type cache so subsequent lookups do not return stale entries.
+ *
+ * @param imageDebugInfo  Image debug info to remove.
+ */
 void
 TeamDebugInfo::RemoveImageDebugInfo(ImageDebugInfo* imageDebugInfo)
 {
@@ -792,6 +1054,12 @@ TeamDebugInfo::RemoveImageDebugInfo(ImageDebugInfo* imageDebugInfo)
 }
 
 
+/**
+ * @brief Looks up an ImageDebugInfo by image name.
+ *
+ * @param name  Image name to find.
+ * @return Pointer to the matching ImageDebugInfo, or @c NULL.
+ */
 ImageDebugInfo*
 TeamDebugInfo::ImageDebugInfoByName(const char* name) const
 {
@@ -804,6 +1072,14 @@ TeamDebugInfo::ImageDebugInfoByName(const char* name) const
 }
 
 
+/**
+ * @brief Finds the Function whose declaration covers the given source
+ *        location.
+ *
+ * @param file      Source file.
+ * @param location  Line/column in @a file.
+ * @return Pointer to the Function, or @c NULL when @a file is unknown.
+ */
 Function*
 TeamDebugInfo::FunctionAtSourceLocation(LocatableFile* file,
 	const SourceLocation& location) const
@@ -814,6 +1090,16 @@ TeamDebugInfo::FunctionAtSourceLocation(LocatableFile* file,
 }
 
 
+/**
+ * @brief Resolves a FunctionID to the corresponding Function.
+ *
+ * Handles both SourceFunctionID (looked up via SourceFileEntry) and
+ * ImageFunctionID (looked up via ImageDebugInfoByName + FunctionByName).
+ *
+ * @param functionID  Identifier to resolve.
+ * @return Pointer to the Function, or @c NULL when not found or when
+ *         @a functionID is of an unsupported subtype.
+ */
 Function*
 TeamDebugInfo::FunctionByID(FunctionID* functionID) const
 {
@@ -847,6 +1133,14 @@ TeamDebugInfo::FunctionByID(FunctionID* functionID) const
 }
 
 
+/**
+ * @brief Adds a Function to the team-wide hash and to its source file's
+ *        per-file list (creating a SourceFileEntry on demand).
+ *
+ * @param function  Function to register.
+ * @retval B_OK         Function added to all relevant indexes.
+ * @retval B_NO_MEMORY  Allocation failure; any partial work is undone.
+ */
 status_t
 TeamDebugInfo::_AddFunction(Function* function)
 {
@@ -885,6 +1179,12 @@ TeamDebugInfo::_AddFunction(Function* function)
 }
 
 
+/**
+ * @brief Removes a Function from the team-wide hash and its
+ *        SourceFileEntry, if one exists.
+ *
+ * @param function  Function to remove.
+ */
 void
 TeamDebugInfo::_RemoveFunction(Function* function)
 {

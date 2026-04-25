@@ -1,6 +1,41 @@
 /*
- * Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CoreFile.cpp
+ * @brief Implementation of CoreFile, the parser for an ELF core dump
+ *        produced by the kernel for a debugged team.
+ *
+ * The parser opens the core file via @c ElfFile, locates the @c PT_NOTE
+ * program-header segments, and decodes the Haiku-specific note types
+ * (@c NT_TEAM, @c NT_AREAS, @c NT_IMAGES, @c NT_SYMBOLS, @c NT_THREADS)
+ * into the corresponding descriptor structs (CoreFileTeamInfo,
+ * CoreFileAreaInfo, CoreFileImageInfo, CoreFileSymbolsInfo,
+ * CoreFileThreadInfo). It also exposes a factory that wires an
+ * @c ElfSymbolLookup walker over an image's symbol/string-table addresses
+ * inside the core's text segment.
  */
 
 
@@ -18,12 +53,16 @@
 #include "Tracing.h"
 
 
+/** @brief Hard upper bound on the size of a single PT_NOTE segment. */
 static const size_t kMaxNotesSize = 10 * 1024 * 1024;
 
 
 // pragma mark - CoreFileTeamInfo
 
 
+/**
+ * @brief Constructs an empty CoreFileTeamInfo with invalid identifiers.
+ */
 CoreFileTeamInfo::CoreFileTeamInfo()
 	:
 	fId(-1),
@@ -34,6 +73,14 @@ CoreFileTeamInfo::CoreFileTeamInfo()
 }
 
 
+/**
+ * @brief Populates the team info from the values in the @c NT_TEAM note.
+ *
+ * @param id   Team identifier.
+ * @param uid  Owning user id.
+ * @param gid  Owning group id.
+ * @param args Command-line argument string.
+ */
 void
 CoreFileTeamInfo::Init(int32 id, int32 uid, int32 gid, const BString& args)
 {
@@ -47,6 +94,18 @@ CoreFileTeamInfo::Init(int32 id, int32 uid, int32 gid, const BString& args)
 // pragma mark - CoreFileAreaInfo
 
 
+/**
+ * @brief Constructs a CoreFileAreaInfo binding an area to its backing segment.
+ *
+ * @param segment    ElfSegment inside the core that backs the area's contents.
+ * @param id         Area identifier.
+ * @param baseAddress Base address of the area in the dumped team.
+ * @param size       Virtual size of the area in bytes.
+ * @param ramSize    Resident size in bytes.
+ * @param locking    Locking flags.
+ * @param protection Protection flags.
+ * @param name       Display name (currently stored on the field but not used here).
+ */
 CoreFileAreaInfo::CoreFileAreaInfo(ElfSegment* segment, int32 id,
 	uint64 baseAddress, uint64 size, uint64 ramSize, uint32 locking,
 	uint32 protection, const BString& name)
@@ -65,6 +124,31 @@ CoreFileAreaInfo::CoreFileAreaInfo(ElfSegment* segment, int32 id,
 // pragma mark - CoreFileImageInfo
 
 
+/**
+ * @brief Constructs a CoreFileImageInfo from one entry of the @c NT_IMAGES note.
+ *
+ * Stores back-pointers to the @c CoreFileAreaInfo objects that own the
+ * text and data segments so symbol lookups can locate the actual bytes
+ * inside the dump.
+ *
+ * @param id          Image identifier.
+ * @param type        Image type.
+ * @param initRoutine Init function address.
+ * @param termRoutine Term function address.
+ * @param textBase    Base address of the text segment.
+ * @param textSize    Size of the text segment in bytes.
+ * @param textDelta   Address adjustment applied to text-segment symbols.
+ * @param dataBase    Base address of the data segment.
+ * @param dataSize    Size of the data segment in bytes.
+ * @param deviceId    Device id of the on-disk file.
+ * @param nodeId      Inode number of the on-disk file.
+ * @param symbolTable Source-space address of the image's symbol table.
+ * @param symbolHash  Source-space address of the image's symbol-hash table.
+ * @param stringTable Source-space address of the image's string table.
+ * @param textArea    CoreFileAreaInfo for the text segment.
+ * @param dataArea    CoreFileAreaInfo for the data segment.
+ * @param name        Display name (path) of the image.
+ */
 CoreFileImageInfo::CoreFileImageInfo(int32 id, int32 type, uint64 initRoutine,
 	uint64 termRoutine, uint64 textBase, uint64 textSize, int64 textDelta,
 	uint64 dataBase, uint64 dataSize, int32 deviceId, int64 nodeId,
@@ -93,12 +177,20 @@ CoreFileImageInfo::CoreFileImageInfo(int32 id, int32 type, uint64 initRoutine,
 }
 
 
+/**
+ * @brief Releases any owned CoreFileSymbolsInfo via @c SetSymbolsInfo(NULL).
+ */
 CoreFileImageInfo::~CoreFileImageInfo()
 {
 	SetSymbolsInfo(NULL);
 }
 
 
+/**
+ * @brief Replaces (and deletes) the owned CoreFileSymbolsInfo.
+ *
+ * @param symbolsInfo New symbols info to take ownership of, or NULL to clear.
+ */
 void
 CoreFileImageInfo::SetSymbolsInfo(CoreFileSymbolsInfo* symbolsInfo)
 {
@@ -111,6 +203,9 @@ CoreFileImageInfo::SetSymbolsInfo(CoreFileSymbolsInfo* symbolsInfo)
 
 // pragma mark - CoreFileSymbolsInfo
 
+/**
+ * @brief Constructs an empty CoreFileSymbolsInfo with NULL buffers.
+ */
 CoreFileSymbolsInfo::CoreFileSymbolsInfo()
 	:
 	fSymbolTable(NULL),
@@ -122,6 +217,9 @@ CoreFileSymbolsInfo::CoreFileSymbolsInfo()
 }
 
 
+/**
+ * @brief Frees the owned symbol-table and string-table buffers.
+ */
 CoreFileSymbolsInfo::~CoreFileSymbolsInfo()
 {
 	free(fSymbolTable);
@@ -129,6 +227,16 @@ CoreFileSymbolsInfo::~CoreFileSymbolsInfo()
 }
 
 
+/**
+ * @brief Allocates and copies the symbol- and string-table buffers from the note.
+ *
+ * @param symbolTable          Pointer to the source symbol-table bytes.
+ * @param symbolCount          Number of symbol-table entries.
+ * @param symbolTableEntrySize Size of one symbol-table entry in bytes.
+ * @param stringTable          Pointer to the source string-table bytes.
+ * @param stringTableSize      Length of the string table in bytes.
+ * @return                    True on success, false on allocation failure.
+ */
 bool
 CoreFileSymbolsInfo::Init(const void* symbolTable, uint32 symbolCount,
 	uint32 symbolTableEntrySize, const char* stringTable,
@@ -154,6 +262,18 @@ CoreFileSymbolsInfo::Init(const void* symbolTable, uint32 symbolCount,
 // pragma mark - CoreFileThreadInfo
 
 
+/**
+ * @brief Constructs a CoreFileThreadInfo from one entry of the @c NT_THREADS note.
+ *
+ * The CPU-state blob is filled later via @c SetCpuState().
+ *
+ * @param id        Thread identifier.
+ * @param state     Scheduling state at dump time.
+ * @param priority  Thread priority at dump time.
+ * @param stackBase Lower bound of the thread's user stack.
+ * @param stackEnd  Upper bound of the thread's user stack.
+ * @param name      Thread display name.
+ */
 CoreFileThreadInfo::CoreFileThreadInfo(int32 id, int32 state, int32 priority,
 	uint64 stackBase, uint64 stackEnd, const BString& name)
 	:
@@ -169,12 +289,22 @@ CoreFileThreadInfo::CoreFileThreadInfo(int32 id, int32 state, int32 priority,
 }
 
 
+/**
+ * @brief Frees the captured CPU-state blob.
+ */
 CoreFileThreadInfo::~CoreFileThreadInfo()
 {
 	free(fCpuState);
 }
 
 
+/**
+ * @brief Replaces the captured CPU-state blob.
+ *
+ * @param state Pointer to the source bytes; NULL clears the field.
+ * @param size  Number of bytes to copy from @a state.
+ * @return     True on success, false on allocation failure.
+ */
 bool
 CoreFileThreadInfo::SetCpuState(const void* state, size_t size)
 {
@@ -197,6 +327,9 @@ CoreFileThreadInfo::SetCpuState(const void* state, size_t size)
 // pragma mark - CoreFile
 
 
+/**
+ * @brief Constructs an empty CoreFile; @c Init() must be called before use.
+ */
 CoreFile::CoreFile()
 	:
 	fElfFile(),
@@ -208,11 +341,21 @@ CoreFile::CoreFile()
 }
 
 
+/**
+ * @brief Destroys the CoreFile and lets the BObjectLists release their items.
+ */
 CoreFile::~CoreFile()
 {
 }
 
 
+/**
+ * @brief Opens @a fileName and parses every PT_NOTE segment it contains.
+ *
+ * @param fileName Path to the ELF core dump.
+ * @return        @c B_OK on success, or the propagated error from
+ *                 @c ElfFile::Init() or the templated note-decoding worker.
+ */
 status_t
 CoreFile::Init(const char* fileName)
 {
@@ -226,6 +369,12 @@ CoreFile::Init(const char* fileName)
 }
 
 
+/**
+ * @brief Looks up a thread descriptor by id via linear search.
+ *
+ * @param id Thread identifier.
+ * @return  The matching CoreFileThreadInfo, or NULL.
+ */
 const CoreFileThreadInfo*
 CoreFile::ThreadInfoForId(int32 id) const
 {
@@ -240,6 +389,22 @@ CoreFile::ThreadInfoForId(int32 id) const
 }
 
 
+/**
+ * @brief Builds an ElfSymbolLookup walker over an image's symbol/string tables.
+ *
+ * The walker reads through a fresh @c ElfSymbolLookupSource pointed at
+ * the file-resident bytes of the text segment, allowing symbol lookup
+ * without requiring the on-disk image to still exist.
+ *
+ * @param imageInfo Image whose symbols to expose.
+ * @param _lookup   On success, receives the walker; ownership transfers.
+ * @return         @c B_OK on success; @c B_UNSUPPORTED when the image
+ *                  lacks symbol information; @c B_NO_MEMORY on
+ *                  allocation failure; or a propagated walker init error.
+ *
+ * @todo Read DT_SYMENT to determine the actual symbol-table entry size
+ *       rather than assuming the canonical layout.
+ */
 status_t
 CoreFile::CreateSymbolLookup(const CoreFileImageInfo* imageInfo,
 	ElfSymbolLookup*& _lookup)
@@ -278,6 +443,16 @@ CoreFile::CreateSymbolLookup(const CoreFileImageInfo* imageInfo,
 }
 
 
+/**
+ * @brief Templated stage-two initialiser dispatching note parsing.
+ *
+ * Templated on @c ElfClass32 / @c ElfClass64 so the same code resolves
+ * 32-bit and 64-bit dumps. Currently delegates to @c _ReadNotes().
+ *
+ * @return @c B_OK on success or the propagated note-parser error.
+ *
+ * @todo Verify that the dump produced at least one usable record.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_Init()
@@ -292,6 +467,11 @@ B_PRId32 " threads\n", CountAreaInfos(), CountImageInfos(), CountThreadInfos());
 }
 
 
+/**
+ * @brief Walks every PT_NOTE segment of the core file.
+ *
+ * @return @c B_OK on success, or the first error from a sub-call.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadNotes()
@@ -310,6 +490,19 @@ CoreFile::_ReadNotes()
 }
 
 
+/**
+ * @brief Reads one PT_NOTE segment fully into memory and iterates its notes.
+ *
+ * Each note has a header, a name, and a data area, each padded to a
+ * 4-byte boundary. Names are NUL-validated; data is dispatched to
+ * @c _ReadNote().
+ *
+ * @param segment PT_NOTE segment to consume.
+ * @return       @c B_OK on success, @c B_UNSUPPORTED if the segment
+ *                exceeds @c kMaxNotesSize, an @c errno code on read
+ *                failure, @c B_IO_ERROR on a short read, or
+ *                @c B_BAD_DATA on validation failures.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadNotes(ElfSegment* segment)
@@ -388,6 +581,20 @@ CoreFile::_ReadNotes(ElfSegment* segment)
 }
 
 
+/**
+ * @brief Dispatches one note to its type-specific decoder.
+ *
+ * Recognises @c ELF_NOTE_HAIKU notes carrying team, areas, images,
+ * symbols, or threads payloads. @c ELF_NOTE_CORE / @c NT_FILE notes are
+ * accepted but currently ignored.
+ *
+ * @param name     Note name (NUL-terminated).
+ * @param type     Note type identifier.
+ * @param data     Pointer to the note data.
+ * @param dataSize Length of the note data in bytes.
+ * @return        @c B_OK on success or the propagated decoder error;
+ *                 unknown notes are logged and skipped.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadNote(const char* name, uint32 type, const void* data,
@@ -420,6 +627,17 @@ CoreFile::_ReadNote(const char* name, uint32 type, const void* data,
 }
 
 
+/**
+ * @brief Decodes the @c NT_TEAM note into @c fTeamInfo.
+ *
+ * Reads the leading entry-size word, the @c NoteTeam structure, and the
+ * trailing NUL-terminated arguments string.
+ *
+ * @param data     Pointer to the note data.
+ * @param dataSize Length of the note data in bytes.
+ * @return        @c B_OK on success; @c B_BAD_DATA on malformed input;
+ *                 @c B_NO_MEMORY on string allocation failure.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadTeamNote(const void* data, uint32 dataSize)
@@ -464,6 +682,18 @@ CoreFile::_ReadTeamNote(const void* data, uint32 dataSize)
 }
 
 
+/**
+ * @brief Decodes the @c NT_AREAS note into @c fAreaInfos.
+ *
+ * Reads the area count and per-entry size, then walks the entries
+ * followed by a NUL-separated string table of area names. Each entry
+ * is paired with its backing PT_LOAD segment via @c _FindAreaSegment().
+ *
+ * @param data     Pointer to the note data.
+ * @param dataSize Length of the note data in bytes.
+ * @return        @c B_OK on success, @c B_BAD_DATA on validation
+ *                 failure, @c B_NO_MEMORY on allocation failure.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadAreasNote(const void* data, uint32 dataSize)
@@ -544,6 +774,18 @@ CoreFile::_ReadAreasNote(const void* data, uint32 dataSize)
 }
 
 
+/**
+ * @brief Decodes the @c NT_IMAGES note into @c fImageInfos.
+ *
+ * Each image entry is paired with its text and data CoreFileAreaInfo
+ * via @c _FindArea() so subsequent symbol lookups can locate the bytes
+ * inside the dump.
+ *
+ * @param data     Pointer to the note data.
+ * @param dataSize Length of the note data in bytes.
+ * @return        @c B_OK on success, @c B_BAD_DATA on validation
+ *                 failure, @c B_NO_MEMORY on allocation failure.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadImagesNote(const void* data, uint32 dataSize)
@@ -628,6 +870,18 @@ CoreFile::_ReadImagesNote(const void* data, uint32 dataSize)
 }
 
 
+/**
+ * @brief Decodes one @c NT_SYMBOLS note and attaches it to the matching image.
+ *
+ * The note contains the image id followed by a symbol-table block and a
+ * trailing string-table block. The decoded data is wrapped in a
+ * CoreFileSymbolsInfo and installed via @c CoreFileImageInfo::SetSymbolsInfo().
+ *
+ * @param data     Pointer to the note data.
+ * @param dataSize Length of the note data in bytes.
+ * @return        @c B_OK on success; @c B_BAD_DATA on validation
+ *                 failure; @c B_NO_MEMORY on allocation failure.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadSymbolsNote(const void* data, uint32 dataSize)
@@ -686,6 +940,18 @@ CoreFile::_ReadSymbolsNote(const void* data, uint32 dataSize)
 }
 
 
+/**
+ * @brief Decodes the @c NT_THREADS note into @c fThreadInfos.
+ *
+ * Reads thread count, per-entry size, and per-CPU-state size, then
+ * iterates entries pairing each one with the matching CPU-state blob
+ * and trailing thread name from the string table.
+ *
+ * @param data     Pointer to the note data.
+ * @param dataSize Length of the note data in bytes.
+ * @return        @c B_OK on success; @c B_BAD_DATA on validation
+ *                 failure; @c B_NO_MEMORY on allocation failure.
+ */
 template<typename ElfClass>
 status_t
 CoreFile::_ReadThreadsNote(const void* data, uint32 dataSize)
@@ -773,6 +1039,12 @@ CoreFile::_ReadThreadsNote(const void* data, uint32 dataSize)
 }
 
 
+/**
+ * @brief Looks up the CoreFileAreaInfo whose virtual range contains @a address.
+ *
+ * @param address Target-space address.
+ * @return       The matching area, or NULL if @a address is unmapped.
+ */
 CoreFileAreaInfo*
 CoreFile::_FindArea(uint64 address) const
 {
@@ -789,6 +1061,12 @@ CoreFile::_FindArea(uint64 address) const
 }
 
 
+/**
+ * @brief Looks up the PT_LOAD segment whose load address equals @a address.
+ *
+ * @param address Target-space load address.
+ * @return       The matching segment, or NULL if no segment matches.
+ */
 ElfSegment*
 CoreFile::_FindAreaSegment(uint64 address) const
 {
@@ -803,6 +1081,12 @@ CoreFile::_FindAreaSegment(uint64 address) const
 }
 
 
+/**
+ * @brief Looks up the CoreFileImageInfo for an image id via linear search.
+ *
+ * @param id Image identifier.
+ * @return  The matching image info, or NULL if absent.
+ */
 CoreFileImageInfo*
 CoreFile::_ImageInfoForId(int32 id) const
 {
@@ -817,6 +1101,15 @@ CoreFile::_ImageInfoForId(int32 id) const
 }
 
 
+/**
+ * @brief Reads one endianness-corrected primitive @c Type from @a data.
+ *
+ * Advances @a data and decrements @a dataSize by @c sizeof(Type).
+ *
+ * @param data     In/out cursor into the note data.
+ * @param dataSize In/out remaining byte count.
+ * @return        Host-order value of the read primitive.
+ */
 template<typename Type>
 Type
 CoreFile::_ReadValue(const void*& data, uint32& dataSize)
@@ -827,6 +1120,18 @@ CoreFile::_ReadValue(const void*& data, uint32& dataSize)
 }
 
 
+/**
+ * @brief Copies one variable-size note entry into @a entry.
+ *
+ * Copies the smaller of the on-disk entry size and the in-memory struct
+ * size to tolerate the kernel writing more (or fewer) fields than this
+ * build understands. Always advances by @a entrySize.
+ *
+ * @param data      In/out cursor into the note data.
+ * @param dataSize  In/out remaining byte count.
+ * @param entry     Destination struct.
+ * @param entrySize On-disk byte size of one entry.
+ */
 template<typename Entry>
 void
 CoreFile::_ReadEntry(const void*& data, uint32& dataSize, Entry& entry,
@@ -837,6 +1142,13 @@ CoreFile::_ReadEntry(const void*& data, uint32& dataSize, Entry& entry,
 }
 
 
+/**
+ * @brief Advances the (data, dataSize) cursor by @a by bytes.
+ *
+ * @param data     In/out cursor.
+ * @param dataSize In/out remaining byte count.
+ * @param by       Bytes to consume.
+ */
 void
 CoreFile::_Advance(const void*& data, uint32& dataSize, size_t by)
 {

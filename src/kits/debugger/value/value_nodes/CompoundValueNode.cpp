@@ -1,7 +1,38 @@
 /*
- * Copyright 2015, Rene Gollent, rene@gollent.com.
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CompoundValueNode.cpp
+ * @brief Implementation of CompoundValueNode -- renders structs/classes/unions in the variables view.
+ *
+ * Children come in two flavours: BaseTypeChild (one per inherited base class)
+ * and MemberChild (one per data member). Both delegate to the CompoundType
+ * to compute their location relative to the parent struct's address.
+ *
+ * @see CompoundType, ValueNode
  */
 
 
@@ -21,8 +52,17 @@
 // #pragma mark - Child
 
 
+/**
+ * @brief Common base for the two compound child kinds: holds parent + display name.
+ */
 class CompoundValueNode::Child : public ValueNodeChild {
 public:
+	/**
+	 * @brief Constructs the child with a parent back-pointer and display name.
+	 *
+	 * @param parent  Owning CompoundValueNode.
+	 * @param name    Display name.
+	 */
 	Child(CompoundValueNode* parent, const BString& name)
 		:
 		fParent(parent),
@@ -30,11 +70,21 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Returns the cached display name.
+	 *
+	 * @return Reference to the name string.
+	 */
 	virtual const BString& Name() const
 	{
 		return fName;
 	}
 
+	/**
+	 * @brief Returns the owning CompoundValueNode.
+	 *
+	 * @return The parent node.
+	 */
 	virtual ValueNode* Parent() const
 	{
 		return fParent;
@@ -49,8 +99,20 @@ protected:
 // #pragma mark - BaseTypeChild
 
 
+/**
+ * @brief Compound child wrapping an inherited base class subobject.
+ *
+ * Display name is the base class's type name. ResolveLocation() asks the
+ * CompoundType to compute the base-subobject offset within the parent.
+ */
 class CompoundValueNode::BaseTypeChild : public Child {
 public:
+	/**
+	 * @brief Constructs the base-class subobject child.
+	 *
+	 * @param parent    Owning CompoundValueNode.
+	 * @param baseType  BaseType description from DWARF.
+	 */
 	BaseTypeChild(CompoundValueNode* parent, BaseType* baseType)
 		:
 		Child(parent, baseType->GetType()->Name()),
@@ -59,16 +121,33 @@ public:
 		fBaseType->AcquireReference();
 	}
 
+	/**
+	 * @brief Releases the reference held on the BaseType.
+	 */
 	virtual ~BaseTypeChild()
 	{
 		fBaseType->ReleaseReference();
 	}
 
+	/**
+	 * @brief Returns the inherited base class's type.
+	 *
+	 * @return The base class Type.
+	 */
 	virtual Type* GetType() const
 	{
 		return fBaseType->GetType();
 	}
 
+	/**
+	 * @brief Computes the location of the base-class subobject within the parent.
+	 *
+	 * @param valueLoader  Unused.
+	 * @param _location    Set to the resolved location on success.
+	 * @retval B_OK         On success.
+	 * @retval B_BAD_VALUE  When the parent location is missing.
+	 * @return Other status_t propagated from CompoundType::ResolveBaseTypeLocation().
+	 */
 	virtual status_t ResolveLocation(ValueLoader* valueLoader,
 		ValueLocation*& _location)
 	{
@@ -99,8 +178,17 @@ private:
 // #pragma mark - MemberChild
 
 
+/**
+ * @brief Compound child wrapping a single named data member.
+ */
 class CompoundValueNode::MemberChild : public Child {
 public:
+	/**
+	 * @brief Constructs the data-member child.
+	 *
+	 * @param parent  Owning CompoundValueNode.
+	 * @param member  DataMember description from DWARF.
+	 */
 	MemberChild(CompoundValueNode* parent, DataMember* member)
 		:
 		Child(parent, member->Name()),
@@ -109,16 +197,33 @@ public:
 		fMember->AcquireReference();
 	}
 
+	/**
+	 * @brief Releases the reference held on the DataMember.
+	 */
 	virtual ~MemberChild()
 	{
 		fMember->ReleaseReference();
 	}
 
+	/**
+	 * @brief Returns the data member's declared type.
+	 *
+	 * @return The member's Type.
+	 */
 	virtual Type* GetType() const
 	{
 		return fMember->GetType();
 	}
 
+	/**
+	 * @brief Computes the location of this data member within the parent.
+	 *
+	 * @param valueLoader  Unused.
+	 * @param _location    Set to the resolved location on success.
+	 * @retval B_OK         On success.
+	 * @retval B_BAD_VALUE  When the parent location is missing.
+	 * @return Other status_t propagated from CompoundType::ResolveDataMemberLocation().
+	 */
 	virtual status_t ResolveLocation(ValueLoader* valueLoader,
 		ValueLocation*& _location)
 	{
@@ -149,6 +254,12 @@ private:
 // #pragma mark - CompoundValueNode
 
 
+/**
+ * @brief Constructs the node and references the CompoundType.
+ *
+ * @param nodeChild  Child this node renders for.
+ * @param type       Compound (struct/class/union) DWARF type.
+ */
 CompoundValueNode::CompoundValueNode(ValueNodeChild* nodeChild,
 	CompoundType* type)
 	:
@@ -159,6 +270,9 @@ CompoundValueNode::CompoundValueNode(ValueNodeChild* nodeChild,
 }
 
 
+/**
+ * @brief Releases the type and every materialised child.
+ */
 CompoundValueNode::~CompoundValueNode()
 {
 	fType->ReleaseReference();
@@ -168,6 +282,11 @@ CompoundValueNode::~CompoundValueNode()
 }
 
 
+/**
+ * @brief Returns the wrapped CompoundType.
+ *
+ * @return The DWARF compound type.
+ */
 Type*
 CompoundValueNode::GetType() const
 {
@@ -175,6 +294,15 @@ CompoundValueNode::GetType() const
 }
 
 
+/**
+ * @brief Returns the parent location verbatim; compounds have no scalar value.
+ *
+ * @param valueLoader  Unused.
+ * @param _location    Receives a re-referenced copy of the parent location.
+ * @param _value       Always set to NULL.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When the parent location is missing.
+ */
 status_t
 CompoundValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 	ValueLocation*& _location, Value*& _value)
@@ -191,6 +319,15 @@ CompoundValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 }
 
 
+/**
+ * @brief Materialises one BaseTypeChild per inherited base, then one MemberChild per data member.
+ *
+ * Idempotent: a second call with children already present is a no-op.
+ *
+ * @param info  Unused.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ */
 status_t
 CompoundValueNode::CreateChildren(TeamTypeInformation* info)
 {
@@ -230,6 +367,11 @@ CompoundValueNode::CreateChildren(TeamTypeInformation* info)
 }
 
 
+/**
+ * @brief Returns the number of currently materialised children.
+ *
+ * @return Count of children (bases + members).
+ */
 int32
 CompoundValueNode::CountChildren() const
 {
@@ -237,6 +379,12 @@ CompoundValueNode::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the child at @a index, or NULL if out of range.
+ *
+ * @param index  Zero-based index.
+ * @return The child reference, or NULL.
+ */
 ValueNodeChild*
 CompoundValueNode::ChildAt(int32 index) const
 {

@@ -1,6 +1,35 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file SourceFile.cpp
+ * @brief Reads and indexes a source file so the debugger can render lines on demand.
+ *
+ * Loads the entire source file into a single buffer, splits it on '\n',
+ * and stores line-start offsets for O(1) line lookup. Capped at
+ * @c kMaxSourceFileSize to avoid blowing memory on accidentally huge files.
  */
 
 #include "SourceFile.h"
@@ -16,12 +45,14 @@
 #include <new>
 
 
+/** @brief Hard upper bound on the size of a source file the debugger will load (10 MiB). */
 static const int32 kMaxSourceFileSize = 10 * 1024 * 1024;
 
 
 // #pragma mark - SourceFileOwner
 
 
+/** @brief Virtual destructor anchor for the SourceFileOwner interface. */
 SourceFileOwner::~SourceFileOwner()
 {
 }
@@ -30,6 +61,13 @@ SourceFileOwner::~SourceFileOwner()
 // #pragma mark - SourceFile
 
 
+/**
+ * @brief Construct an empty SourceFile bound to @a owner.
+ *
+ * Init() must be called before any line accessors are valid.
+ *
+ * @param owner  Owner that receives unused/deleted callbacks.
+ */
 SourceFile::SourceFile(SourceFileOwner* owner)
 	:
 	fOwner(owner),
@@ -40,6 +78,7 @@ SourceFile::SourceFile(SourceFileOwner* owner)
 }
 
 
+/** @brief Free the file buffer and notify the owner of deletion. */
 SourceFile::~SourceFile()
 {
 	free(fFileContent);
@@ -48,6 +87,20 @@ SourceFile::~SourceFile()
 }
 
 
+/**
+ * @brief Read @a path into memory and build the line index.
+ *
+ * Replaces newline characters with NULs in place so each line can be
+ * returned as a C string. Allocates a parallel line-offset array.
+ *
+ * @param path  Absolute or relative path to the source file.
+ * @retval B_OK              Loaded and indexed.
+ * @retval B_FILE_TOO_LARGE  File exceeds @c kMaxSourceFileSize.
+ * @retval B_BAD_VALUE       File is empty.
+ * @retval B_FILE_ERROR      Short read.
+ * @retval B_NO_MEMORY       Out of memory.
+ * @return Other status codes propagated from open()/fstat()/read().
+ */
 status_t
 SourceFile::Init(const char* path)
 {
@@ -118,6 +171,7 @@ SourceFile::Init(const char* path)
 }
 
 
+/** @brief Number of lines in the file (always at least 1 for non-empty files). */
 int32
 SourceFile::CountLines() const
 {
@@ -125,6 +179,12 @@ SourceFile::CountLines() const
 }
 
 
+/**
+ * @brief Pointer to the NUL-terminated text of line @a index.
+ *
+ * @param index  Zero-based line number.
+ * @return Pointer to the line content, or NULL if @a index is out of range.
+ */
 const char*
 SourceFile::LineAt(int32 index) const
 {
@@ -133,6 +193,12 @@ SourceFile::LineAt(int32 index) const
 }
 
 
+/**
+ * @brief Length of line @a index in bytes, excluding the terminating NUL.
+ *
+ * @param index  Zero-based line number.
+ * @return Length in bytes, or 0 if @a index is out of range.
+ */
 int32
 SourceFile::LineLengthAt(int32 index) const
 {
@@ -140,6 +206,11 @@ SourceFile::LineLengthAt(int32 index) const
 		? fLineOffsets[index + 1] - fLineOffsets[index] - 1: 0;
 }
 
+/**
+ * @brief BReferenceable hook invoked when the last reference is released.
+ *
+ * Notifies the owner that the file is unused, then suicides.
+ */
 void
 SourceFile::LastReferenceReleased()
 {

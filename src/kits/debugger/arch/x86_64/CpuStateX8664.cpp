@@ -1,8 +1,38 @@
 /*
- * Copyright 2012, Alex Smith, alex@alex-smith.me.uk.
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012, Alex Smith, alex@alex-smith.me.uk.
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011-2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CpuStateX8664.cpp
+ * @brief x86_64 implementation of the CpuState interface.
+ *
+ * Stores the integer GP registers, segment registers, x87 ST*, MMX MM*,
+ * and XMM/YMM SIMD registers. Provides bidirectional conversion between
+ * the kernel debugger's @c x86_64_debug_cpu_state blob and the kit's
+ * accessor interface.
  */
 
 #include "CpuStateX8664.h"
@@ -14,6 +44,7 @@
 #include "Register.h"
 
 
+/** @brief Construct an empty state with all register-set bits cleared. */
 CpuStateX8664::CpuStateX8664()
 	:
 	fSetRegisters()
@@ -21,6 +52,15 @@ CpuStateX8664::CpuStateX8664()
 }
 
 
+/**
+ * @brief Decode an x86_64_debug_cpu_state blob into the per-register fields.
+ *
+ * Copies all integer/segment/x87/MMX registers verbatim. The 256-bit YMM
+ * register value is split between fp_ymm[i] (upper half) and
+ * fp_fxsave.xmm[i] (lower half) in the source blob and is rejoined here.
+ *
+ * @param state  Kernel debugger CPU-state blob.
+ */
 CpuStateX8664::CpuStateX8664(const x86_64_debug_cpu_state& state)
 	:
 	fSetRegisters(),
@@ -119,11 +159,22 @@ CpuStateX8664::CpuStateX8664(const x86_64_debug_cpu_state& state)
 }
 
 
+/** @brief Virtual destructor. */
 CpuStateX8664::~CpuStateX8664()
 {
 }
 
 
+/**
+ * @brief Allocate and return a deep copy of this CPU state.
+ *
+ * Copies the integer/float/MMX/XMM register banks plus the bitmask of
+ * which registers have been set and the interrupt vector.
+ *
+ * @param _clone  Output that receives the new CpuState.
+ * @retval B_OK         Clone allocated.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 status_t
 CpuStateX8664::Clone(CpuState*& _clone) const
 {
@@ -147,6 +198,17 @@ CpuStateX8664::Clone(CpuState*& _clone) const
 }
 
 
+/**
+ * @brief Serialize this state back into a kernel x86_64_debug_cpu_state blob.
+ *
+ * Writes integer/segment registers unconditionally and only emits MMX/XMM
+ * registers that have actually been set; the remaining XMM slots are zeroed.
+ *
+ * @param state  Output blob; must be at least sizeof(x86_64_debug_cpu_state) bytes.
+ * @param size   Size of @a state. Must equal sizeof(x86_64_debug_cpu_state).
+ * @retval B_OK         Blob written.
+ * @retval B_BAD_VALUE  @a size mismatch.
+ */
 status_t
 CpuStateX8664::UpdateDebugState(void* state, size_t size) const
 {
@@ -203,6 +265,7 @@ CpuStateX8664::UpdateDebugState(void* state, size_t size) const
 }
 
 
+/** @brief Return RIP if set, otherwise zero. */
 target_addr_t
 CpuStateX8664::InstructionPointer() const
 {
@@ -211,6 +274,11 @@ CpuStateX8664::InstructionPointer() const
 }
 
 
+/**
+ * @brief Update RIP to @a address.
+ *
+ * @param address  New value of the instruction pointer.
+ */
 void
 CpuStateX8664::SetInstructionPointer(target_addr_t address)
 {
@@ -218,6 +286,7 @@ CpuStateX8664::SetInstructionPointer(target_addr_t address)
 }
 
 
+/** @brief Return RBP if set, otherwise zero. */
 target_addr_t
 CpuStateX8664::StackFramePointer() const
 {
@@ -226,6 +295,7 @@ CpuStateX8664::StackFramePointer() const
 }
 
 
+/** @brief Return RSP if set, otherwise zero. */
 target_addr_t
 CpuStateX8664::StackPointer() const
 {
@@ -234,6 +304,17 @@ CpuStateX8664::StackPointer() const
 }
 
 
+/**
+ * @brief Read the value of a register described by @a reg into @a _value.
+ *
+ * Honors the register's value type, so 16-bit segment registers are
+ * returned as uint16, x87 doubles as float or double, and MMX/XMM
+ * registers as raw byte spans.
+ *
+ * @param reg     Register descriptor.
+ * @param _value  Output that receives the value.
+ * @return true if the register was set and decoded; false otherwise.
+ */
 bool
 CpuStateX8664::GetRegisterValue(const Register* reg, BVariant& _value) const
 {
@@ -269,6 +350,13 @@ CpuStateX8664::GetRegisterValue(const Register* reg, BVariant& _value) const
 }
 
 
+/**
+ * @brief Update the value of the register described by @a reg.
+ *
+ * @param reg    Register descriptor.
+ * @param value  New value.
+ * @return true on success, false when @a reg is unknown or @a value is too large.
+ */
 bool
 CpuStateX8664::SetRegisterValue(const Register* reg, const BVariant& value)
 {
@@ -304,6 +392,12 @@ CpuStateX8664::SetRegisterValue(const Register* reg, const BVariant& value)
 }
 
 
+/**
+ * @brief Test whether the register at @a index has been written.
+ *
+ * @param index  Native register index.
+ * @return true if the register is set, false if it is unknown or unset.
+ */
 bool
 CpuStateX8664::IsRegisterSet(int32 index) const
 {
@@ -311,6 +405,12 @@ CpuStateX8664::IsRegisterSet(int32 index) const
 }
 
 
+/**
+ * @brief Read an integer register by index, returning 0 if unset.
+ *
+ * @param index  Integer register index.
+ * @return The 64-bit register value, or 0 if unset or out of range.
+ */
 uint64
 CpuStateX8664::IntRegisterValue(int32 index) const
 {
@@ -321,6 +421,12 @@ CpuStateX8664::IntRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an integer register and mark it as set.
+ *
+ * @param index  Integer register index.
+ * @param value  New value. Out-of-range indices are silently ignored.
+ */
 void
 CpuStateX8664::SetIntRegister(int32 index, uint64 value)
 {
@@ -332,6 +438,12 @@ CpuStateX8664::SetIntRegister(int32 index, uint64 value)
 }
 
 
+/**
+ * @brief Read an x87 floating-point register.
+ *
+ * @param index  Index in the ST0..ST7 range.
+ * @return The double value, or 0.0 if unset or out of range.
+ */
 double
 CpuStateX8664::FloatRegisterValue(int32 index) const
 {
@@ -344,6 +456,12 @@ CpuStateX8664::FloatRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an x87 floating-point register.
+ *
+ * @param index  Index in the ST0..ST7 range.
+ * @param value  New value.
+ */
 void
 CpuStateX8664::SetFloatRegister(int32 index, double value)
 {
@@ -355,6 +473,12 @@ CpuStateX8664::SetFloatRegister(int32 index, double value)
 }
 
 
+/**
+ * @brief Pointer to the raw bytes of an MMX register.
+ *
+ * @param index  Index in the MM0..MM7 range.
+ * @return Pointer to the 64-bit raw value, or NULL if unset or out of range.
+ */
 const void*
 CpuStateX8664::MMXRegisterValue(int32 index) const
 {
@@ -367,6 +491,12 @@ CpuStateX8664::MMXRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an MMX register from an 8-byte source buffer.
+ *
+ * @param index  Index in the MM0..MM7 range.
+ * @param value  Source bytes; assumed to be sizeof(uint64) bytes long.
+ */
 void
 CpuStateX8664::SetMMXRegister(int32 index, const uint8* value)
 {
@@ -379,6 +509,12 @@ CpuStateX8664::SetMMXRegister(int32 index, const uint8* value)
 }
 
 
+/**
+ * @brief Pointer to the raw bytes of an XMM (or YMM) register.
+ *
+ * @param index  Index in the XMM0..XMM15 range.
+ * @return Pointer to the raw value, or NULL if unset or out of range.
+ */
 const void*
 CpuStateX8664::XMMRegisterValue(int32 index) const
 {
@@ -391,6 +527,13 @@ CpuStateX8664::XMMRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update a 256-bit XMM/YMM register from a high/low pair.
+ *
+ * @param index      XMM register index.
+ * @param highValue  Upper 128 bits (YMM extension).
+ * @param lowValue   Lower 128 bits (legacy XMM).
+ */
 void
 CpuStateX8664::SetXMMRegister(int32 index, const uint8* highValue, const uint8* lowValue)
 {
@@ -405,6 +548,11 @@ CpuStateX8664::SetXMMRegister(int32 index, const uint8* highValue, const uint8* 
 }
 
 
+/**
+ * @brief Mark a register as unset, clearing its bit in @c fSetRegisters.
+ *
+ * @param index  Native register index. Out-of-range values are ignored.
+ */
 void
 CpuStateX8664::UnsetRegister(int32 index)
 {

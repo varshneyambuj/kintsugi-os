@@ -1,11 +1,31 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold; Copyright 2013, Rene Gollent.
  */
+
+/** @file Dwarf.h
+    @brief Numeric constants from the DWARF v2-v5 specifications (tags, attributes, forms, opcodes). */
+
 #ifndef DWARF_H
 #define DWARF_H
 
+/** @brief DW_TAG_* DIE tag codes (DWARF v5 section 7.5.3). */
 // tag
 enum {
 	DW_TAG_array_type				= 0x01,
@@ -88,12 +108,14 @@ enum {
 	DW_TAG_hi_user					= 0xffff
 };
 
+/** @brief DW_CHILDREN_* flag indicating whether a DIE has children. */
 // has children flag value
 enum {
 	DW_CHILDREN_no	= 0x00,
 	DW_CHILDREN_yes	= 0x01
 };
 
+/** @brief DW_AT_* DIE attribute name codes (DWARF v5 section 7.5.4). */
 // attribute name
 enum {
 	DW_AT_sibling				= 0x01,		// reference
@@ -236,6 +258,7 @@ enum {
 	DW_AT_hi_user				= 0x3fff
 };
 
+/** @brief DW_FORM_* attribute form codes used in abbreviations. */
 // attribute form
 enum {
 	DW_FORM_addr		= 0x01,	// address
@@ -288,6 +311,7 @@ enum {
 
 };
 
+/** @brief DW_OP_* DWARF expression virtual-machine opcodes. */
 // expression operation
 enum {
 	DW_OP_addr					= 0x03,
@@ -371,6 +395,7 @@ enum {
 	DW_OP_hi_user				= 0xff
 };
 
+/** @brief DW_ATE_* base-type encoding identifiers (signed, unsigned, float, ...). */
 // base type
 enum {
 	DW_ATE_address			= 0x01,
@@ -395,6 +420,7 @@ enum {
 	DW_ATE_hi_user			= 0xff
 };
 
+/** @brief DW_DS_* decimal-sign encodings (for DW_AT_decimal_sign). */
 // decimal sign
 enum {
 	DW_DS_unsigned				= 0x01,
@@ -404,6 +430,7 @@ enum {
 	DW_DS_trailing_separate		= 0x05
 };
 
+/** @brief DW_END_* per-type endianness override codes. */
 // endianess
 enum {
 	DW_END_default		= 0x00,
@@ -413,6 +440,7 @@ enum {
 	DW_END_hi_user		= 0xff
 };
 
+/** @brief DW_ACCESS_* C++ access-control specifiers (public, protected, private). */
 // accessibility
 enum {
 	DW_ACCESS_public	= 0x01,
@@ -420,6 +448,7 @@ enum {
 	DW_ACCESS_private	= 0x03
 };
 
+/** @brief DW_VIS_* visibility codes (local, exported, qualified). */
 // visibility
 enum {
 	DW_VIS_local		= 0x01,
@@ -427,6 +456,7 @@ enum {
 	DW_VIS_qualified	= 0x03
 };
 
+/** @brief DW_VIRTUALITY_* virtual / pure-virtual specifiers. */
 // virtuality
 enum {
 	DW_VIRTUALITY_none			= 0x00,
@@ -434,6 +464,7 @@ enum {
 	DW_VIRTUALITY_pure_virtual	= 0x02
 };
 
+/** @brief DW_LANG_* source-language identifiers reported by DW_AT_language. */
 // source language
 enum {
 	DW_LANG_C89				= 0x0001,
@@ -477,6 +508,7 @@ enum {
 	DW_LANG_hi_user			= 0xffff
 };
 
+/** @brief DW_ID_* identifier case-sensitivity codes for DW_AT_identifier_case. */
 // identifier case
 enum {
 	DW_ID_case_sensitive	= 0x00,
@@ -485,6 +517,7 @@ enum {
 	DW_ID_case_insensitive	= 0x03
 };
 
+/** @brief DW_CC_* calling-convention identifiers (normal, program, nocall, ...). */
 // calling convention
 enum {
 	DW_CC_normal			= 0x01,
@@ -496,6 +529,7 @@ enum {
 	DW_CC_hi_user			= 0xff
 };
 
+/** @brief DW_INL_* inlining state codes (not_inlined, inlined, declared_*). */
 // inlining
 enum {
 	DW_INL_not_inlined			= 0x00,
@@ -504,18 +538,21 @@ enum {
 	DW_INL_declared_inlined		= 0x03
 };
 
+/** @brief DW_ORD_* array index ordering codes (row major / column major). */
 // array ordering
 enum {
 	DW_ORD_row_major			= 0x00,
 	DW_ORD_col_major			= 0x01
 };
 
+/** @brief DW_DSC_* discriminant descriptor codes for variant parts. */
 // discriminant descriptor
 enum {
 	DW_DSC_label			= 0x00,
 	DW_DSC_range			= 0x01
 };
 
+/** @brief DW_LNS_* standard line-number-program opcodes. */
 // line number standard opcode
 enum {
 	DW_LNS_copy					= 0x01,
@@ -532,6 +569,7 @@ enum {
 	DW_LNS_set_isa				= 0x0c
 };
 
+/** @brief DW_LNE_* extended line-number-program opcodes. */
 // line number extended opcode
 enum {
 	DW_LNE_end_sequence			= 0x01,
@@ -542,6 +580,7 @@ enum {
 	DW_LNE_hi_user				= 0xff
 };
 
+/** @brief DW_LNCT_* DWARF v5 line-program header entry-format codes. */
 // line number header entry format
 enum {
 	DW_LNCT_path				= 0x0001,
@@ -553,6 +592,7 @@ enum {
 	DW_LNCT_hi_user				= 0x3fff
 };
 
+/** @brief DW_MACINFO_* / DW_MACRO_* opcode types for the macro section. */
 // macro information type
 enum {
 	DW_MACINFO_define		= 0x01,
@@ -562,6 +602,7 @@ enum {
 	DW_MACINFO_vendor_ext	= 0xff
 };
 
+/** @brief DW_CFA_* call-frame-information opcodes for unwinding. */
 // call frame instruction (high 2 bits for the first 3 items, low 6 bits for
 // the remaining ones)
 enum {
@@ -601,6 +642,7 @@ enum {
     DW_CFA_GNU_negative_offset_extended	= 0x2f
 };
 
+/** @brief DW_UT_* DWARF v5 unit-type codes (compile, type, partial, skeleton, ...). */
 // unit type
 enum {
 	DW_UT_compile				= 0x01,

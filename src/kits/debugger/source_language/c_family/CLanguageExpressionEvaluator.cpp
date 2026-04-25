@@ -1,13 +1,51 @@
 /*
- * Copyright 2006-2014 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Rene Gollent <rene@gollent.com>
- *		John Scipione <jscipione@gmail.com>
- *		Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2014 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Rene Gollent <rene@gollent.com>
+ *       John Scipione <jscipione@gmail.com>
+ *       Ingo Weinhold <bonefish@cs.tu-berlin.de>
  */
+
+
+/**
+ * @file CLanguageExpressionEvaluator.cpp
+ * @brief Hand-written recursive-descent evaluator for C/C++ expressions.
+ *
+ * The evaluator implements a small expression VM operating on three kinds
+ * of operands -- primitive values (BVariant), value nodes (live debugged
+ * variables), and types (for casts). The grammar is parsed directly into
+ * results; there is no intermediate AST. The two parsing entry points are
+ * @c _ParseSum() (additive precedence) and @c _ParseProduct() (which in
+ * this implementation also folds in multiplicative, bitwise, logical, and
+ * comparison operators so they all share precedence above unary).
+ *
+ * When the user references a variable whose value has not been resolved
+ * yet, the evaluator throws @c ValueNeededException; the caller then
+ * schedules a ResolveValueNodeValueJob and re-runs the evaluation.
+ */
+
 
 #include "CLanguageExpressionEvaluator.h"
 
@@ -39,6 +77,7 @@
 using namespace CLanguage;
 
 
+/** @brief Discriminator for the three Operand value categories. */
 enum operand_kind {
 	OPERAND_KIND_UNKNOWN = 0,
 	OPERAND_KIND_PRIMITIVE,
@@ -47,6 +86,14 @@ enum operand_kind {
 };
 
 
+/**
+ * @brief Returns a human-readable rendering of a token type code.
+ *
+ * Used to format diagnostics produced by @c _EatToken().
+ *
+ * @param type  One of the @c TOKEN_* enumerators.
+ * @return BString containing the operator text or a fallback "Unknown".
+ */
 static BString TokenTypeToString(int32 type)
 {
 	BString token;
@@ -148,8 +195,19 @@ static BString TokenTypeToString(int32 type)
 // #pragma mark - CLanguageExpressionEvaluator::InternalVariableID
 
 
+/**
+ * @brief ObjectID identifying a synthetic variable created on-the-fly to
+ *        hold a primitive operand involved in a typecast.
+ *
+ * Equality is decided by comparing the wrapped BVariant.
+ */
 class CLanguageExpressionEvaluator::InternalVariableID : public ObjectID {
 public:
+	/**
+	 * @brief Construct an InternalVariableID wrapping @a value.
+	 *
+	 * @param value  Primitive value the synthetic variable will represent.
+	 */
 	InternalVariableID(const BVariant& value)
 		:
 		fValue(value)
@@ -184,8 +242,22 @@ private:
 // #pragma mark - CLanguageExpressionEvaluator::Operand
 
 
+/**
+ * @brief Tagged union representing a value on the evaluator's stack.
+ *
+ * An Operand holds exactly one of the three @c operand_kind variants:
+ *   - @c OPERAND_KIND_PRIMITIVE: a numeric BVariant value.
+ *   - @c OPERAND_KIND_VALUE_NODE: a reference-counted ValueNode whose
+ *     primitive contents are mirrored into @c fPrimitive on demand.
+ *   - @c OPERAND_KIND_TYPE: a Type reference produced by a cast token.
+ *
+ * Arithmetic/relational/bitwise operators are defined as compound-assign
+ * methods that promote both sides to a common numeric type via
+ * @c _ResolveTypesIfNeeded() before performing the operation.
+ */
 class CLanguageExpressionEvaluator::Operand {
 public:
+	/** @brief Construct an empty (kind unknown) operand. */
 	Operand()
 		:
 		fPrimitive(),
@@ -195,6 +267,7 @@ public:
 	{
 	}
 
+	/** @brief Construct a primitive operand from an int64. */
 	Operand(int64 value)
 		:
 		fPrimitive(value),
@@ -204,6 +277,7 @@ public:
 	{
 	}
 
+	/** @brief Construct a primitive operand from a double. */
 	Operand(double value)
 		:
 		fPrimitive(value),
@@ -213,6 +287,7 @@ public:
 	{
 	}
 
+	/** @brief Construct a value-node operand. */
 	Operand(ValueNode* node)
 		:
 		fPrimitive(),
@@ -223,6 +298,7 @@ public:
 		SetTo(node);
 	}
 
+	/** @brief Construct a type operand for cast expressions. */
 	Operand(Type* type)
 		:
 		fPrimitive(),
@@ -233,6 +309,7 @@ public:
 		SetTo(type);
 	}
 
+	/** @brief Copy-construct via assignment. */
 	Operand(const Operand& X)
 		:
 		fPrimitive(),
@@ -244,11 +321,18 @@ public:
 	}
 
 
+	/** @brief Destructor; releases value-node / type references. */
 	virtual ~Operand()
 	{
 		Unset();
 	}
 
+	/**
+	 * @brief Copy-assignment that dispatches on the source operand's kind.
+	 *
+	 * @param X  Source operand whose state is duplicated.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator=(const Operand& X)
 	{
 		switch (X.fKind) {
@@ -272,6 +356,7 @@ public:
 		return *this;
 	}
 
+	/** @brief Replace the operand state with a primitive value. */
 	void SetTo(const BVariant& value)
 	{
 		Unset();
@@ -279,6 +364,12 @@ public:
 		fKind = OPERAND_KIND_PRIMITIVE;
 	}
 
+	/**
+	 * @brief Replace the operand with a value-node reference.
+	 *
+	 * Acquires a reference on @a node and snapshots its current primitive
+	 * value into @c fPrimitive when one is available.
+	 */
 	void SetTo(ValueNode* node)
 	{
 		Unset();
@@ -292,6 +383,11 @@ public:
 		fKind = OPERAND_KIND_VALUE_NODE;
 	}
 
+	/**
+	 * @brief Replace the operand with a type reference.
+	 *
+	 * @param type  Type to wrap. A reference is acquired.
+	 */
 	void SetTo(Type* type)
 	{
 		Unset();
@@ -301,6 +397,10 @@ public:
 		fKind = OPERAND_KIND_TYPE;
 	}
 
+	/**
+	 * @brief Releases any held references and resets the operand to an
+	 *        empty/unknown state.
+	 */
 	void Unset()
 	{
 		if (fValueNode != NULL)
@@ -314,27 +414,40 @@ public:
 		fKind = OPERAND_KIND_UNKNOWN;
 	}
 
+	/** @brief Returns the operand's category. */
 	inline operand_kind Kind() const
 	{
 		return fKind;
 	}
 
+	/** @brief Returns the underlying primitive value. */
 	inline const BVariant& PrimitiveValue() const
 	{
 		return fPrimitive;
 	}
 
+	/** @brief Returns the held ValueNode, or @c NULL when not value-node-typed. */
 	inline ValueNode* GetValueNode() const
 	{
 		return fValueNode;
 
 	}
 
+	/** @brief Returns the held Type, or @c NULL when not type-typed. */
 	inline Type* GetType() const
 	{
 		return fType;
 	}
 
+	/**
+	 * @brief Numeric @c += across all integer and floating types.
+	 *
+	 * Promotes both sides to a common type, then dispatches by
+	 * @c BVariant::Type() for the actual addition.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator+=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -415,6 +528,12 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Numeric @c -= across all integer and floating types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator-=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -495,6 +614,14 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Numeric @c /= across all integer and floating types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 * @note The caller is responsible for rejecting division by zero;
+	 *       this overload performs the raw operation.
+	 */
 	Operand& operator/=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -575,6 +702,12 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Numeric @c *= across all integer and floating types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator*=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -655,6 +788,14 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Integer @c %= across all integer types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 * @note Float and double types are silently no-ops here; the parser
+	 *       rejects them earlier.
+	 */
 	Operand& operator%=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -721,6 +862,12 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Bitwise @c &= across all integer types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator&=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -787,6 +934,12 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Bitwise @c |= across all integer types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator|=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -853,6 +1006,12 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Bitwise @c ^= across all integer types.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Reference to @c *this.
+	 */
 	Operand& operator^=(const Operand& rhs)
 	{
 		Operand temp = rhs;
@@ -919,6 +1078,14 @@ public:
 		return *this;
 	}
 
+	/**
+	 * @brief Unary minus.
+	 *
+	 * Promotes the operand to its primitive form and negates per its
+	 * underlying numeric type.
+	 *
+	 * @return Negated copy.
+	 */
 	Operand operator-() const
 	{
 		Operand value(*this);
@@ -989,6 +1156,12 @@ public:
 		return value;
 	}
 
+	/**
+	 * @brief Unary bitwise complement.
+	 *
+	 * @return Bit-inverted copy. Float and double types are left
+	 *         unchanged (the parser does not allow @c ~ on those).
+	 */
 	Operand operator~() const
 	{
 		Operand value(*this);
@@ -1047,6 +1220,12 @@ public:
 		return value;
 	}
 
+	/**
+	 * @brief Less-than comparison after promoting to a common type.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Non-zero when this is strictly less than @a rhs.
+	 */
 	int operator<(const Operand& rhs) const
 	{
 		Operand lhs = *this;
@@ -1124,11 +1303,20 @@ public:
 		return result;
 	}
 
+	/**
+	 * @brief Less-or-equal comparison; expressed in terms of @c < and @c ==.
+	 */
 	int operator<=(const Operand& rhs) const
 	{
 		return (*this < rhs) || (*this == rhs);
 	}
 
+	/**
+	 * @brief Greater-than comparison after promoting to a common type.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Non-zero when this is strictly greater than @a rhs.
+	 */
 	int operator>(const Operand& rhs) const
 	{
 		Operand lhs = *this;
@@ -1205,11 +1393,20 @@ public:
 		return result;
 	}
 
+	/**
+	 * @brief Greater-or-equal comparison; expressed in terms of @c > and @c ==.
+	 */
 	int operator>=(const Operand& rhs) const
 	{
 		return (*this > rhs) || (*this == rhs);
 	}
 
+	/**
+	 * @brief Equality comparison after promoting to a common type.
+	 *
+	 * @param rhs  Right-hand operand.
+	 * @return Non-zero when both sides compare equal under their common type.
+	 */
 	int	operator==(const Operand& rhs) const
 	{
 		Operand lhs = *this;
@@ -1286,12 +1483,21 @@ public:
 		return result;
 	}
 
+	/**
+	 * @brief Inequality comparison; expressed as the logical complement
+	 *        of @c ==.
+	 */
 	int operator!=(const Operand& rhs) const
 	{
 		return !(*this == rhs);
 	}
 
 private:
+	/**
+	 * @brief Coerces the stored primitive value to the given type.
+	 *
+	 * @param type  Destination @c B_*_TYPE code.
+	 */
 	void _GetAsType(type_code type)
 	{
 		switch (type) {
@@ -1328,6 +1534,16 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Promotes both operands to a single common numeric type.
+	 *
+	 * Both sides are first reduced to primitive form, then a priority
+	 * type is chosen (largest size, signed/unsigned reconciled, float
+	 * dominates). Throws @c ParseException when either side is not
+	 * numeric or the types cannot be reconciled.
+	 *
+	 * @param other  Operand on the other side of the binary expression.
+	 */
 	void _ResolveTypesIfNeeded(Operand& other)
 	{
 		_ResolveToPrimitive();
@@ -1352,6 +1568,12 @@ private:
 			other._GetAsType(resolvedType);
 	}
 
+	/**
+	 * @brief Reduces a value-node operand to its primitive value.
+	 *
+	 * Throws @c ParseException for type operands or when the value node's
+	 * underlying value cannot be retrieved.
+	 */
 	void _ResolveToPrimitive()
 	{
 		if (Kind() == OPERAND_KIND_PRIMITIVE)
@@ -1381,6 +1603,17 @@ private:
 		}
 	}
 
+	/**
+	 * @brief Picks a single numeric type to promote two operands to.
+	 *
+	 * Floats dominate ints; when both are integer the largest size wins;
+	 * signed wins when either side is signed.
+	 *
+	 * @param lhs  Type of the left operand.
+	 * @param rhs  Type of the right operand.
+	 * @return The chosen common @c B_*_TYPE code.
+	 * @note Throws @c ParseException when the sizes are not 1/2/4/8.
+	 */
 	type_code _ResolvePriorityType(type_code lhs, type_code rhs) const
 	{
 		size_t byteSize = std::max(BVariant::SizeOfType(lhs),
@@ -1430,6 +1663,9 @@ private:
 // #pragma mark - CLanguageExpressionEvaluator
 
 
+/**
+ * @brief Construct an evaluator with its own owned Tokenizer instance.
+ */
 CLanguageExpressionEvaluator::CLanguageExpressionEvaluator()
 	:
 	fTokenizer(new Tokenizer()),
@@ -1439,12 +1675,31 @@ CLanguageExpressionEvaluator::CLanguageExpressionEvaluator()
 }
 
 
+/**
+ * @brief Destructor; deletes the owned Tokenizer.
+ */
 CLanguageExpressionEvaluator::~CLanguageExpressionEvaluator()
 {
 	delete fTokenizer;
 }
 
 
+/**
+ * @brief Parses and evaluates a complete expression string.
+ *
+ * Sets up the tokeniser, drives the recursive-descent parser, and packages
+ * the resulting Operand into a freshly-allocated ExpressionResult. The
+ * caller takes ownership of the returned object.
+ *
+ * @param expressionString  Null-terminated source expression.
+ * @param manager           Value-node manager for variable lookups.
+ * @param info              Type-information service for type lookups.
+ * @return Newly allocated ExpressionResult, or @c NULL on allocation
+ *         failure for primitive output values.
+ * @note Throws @c ParseException on malformed input or
+ *       @c ValueNeededException when an unresolved variable's value is
+ *       needed.
+ */
 ExpressionResult*
 CLanguageExpressionEvaluator::Evaluate(const char* expressionString,
 	ValueNodeManager* manager, TeamTypeInformation* info)
@@ -1489,6 +1744,16 @@ CLanguageExpressionEvaluator::Evaluate(const char* expressionString,
 }
 
 
+/**
+ * @brief Parses an additive (sum/difference) expression.
+ *
+ * Grammar level: @c sum := product { (@c + | @c -) product }*. Higher
+ * precedence (multiplicative, bitwise, comparison, logical) is handled
+ * inside @c _ParseProduct(); lower precedence (none in this dialect) does
+ * not exist.
+ *
+ * @return Operand carrying the evaluated sum.
+ */
 CLanguageExpressionEvaluator::Operand
 CLanguageExpressionEvaluator::_ParseSum()
 {
@@ -1512,6 +1777,19 @@ CLanguageExpressionEvaluator::_ParseSum()
 }
 
 
+/**
+ * @brief Parses a product-level expression.
+ *
+ * Despite the name, this level folds together every binary operator above
+ * additive precedence: multiplicative (@c * @c / @c %), bitwise (@c & @c
+ * | @c ^), logical (@c && @c ||), and comparison/equality (@c == @c != @c
+ * < @c <= @c > @c >=). Each binary operator dispatches to the matching
+ * Operand operator; @c && / @c || and the comparison operators produce
+ * an int64-typed primitive truth value.
+ *
+ * @return Operand carrying the evaluated subexpression.
+ * @note Throws @c ParseException on division/modulo by zero.
+ */
 CLanguageExpressionEvaluator::Operand
 CLanguageExpressionEvaluator::_ParseProduct()
 {
@@ -1602,6 +1880,16 @@ CLanguageExpressionEvaluator::_ParseProduct()
 }
 
 
+/**
+ * @brief Parses a unary expression.
+ *
+ * Handles unary @c +, unary @c -, bitwise @c ~, logical @c !, and the
+ * special-case dispatch into @c _ParseIdentifier() for identifier-led
+ * expressions. Anything else delegates to @c _ParseAtom().
+ *
+ * @return Operand carrying the evaluated unary expression.
+ * @note Throws @c ParseException on premature end-of-input.
+ */
 CLanguageExpressionEvaluator::Operand
 CLanguageExpressionEvaluator::_ParseUnary()
 {
@@ -1638,6 +1926,21 @@ CLanguageExpressionEvaluator::_ParseUnary()
 }
 
 
+/**
+ * @brief Parses an identifier reference, possibly chained via @c ->.
+ *
+ * Resolves the identifier against the value-node container (or the
+ * current parent value node when chasing a member access), falling back
+ * on a type lookup if no variable matches. Handles the implicit @c this
+ * lookup, address-type indirection, and recursive member-pointer
+ * traversal.
+ *
+ * @param parentNode  When non-NULL, restricts the search to children of
+ *                    @a parentNode (post-@c -> chain).
+ * @return Operand referencing the located ValueNode or Type.
+ * @note Throws @c ParseException when the identifier cannot be resolved
+ *       or @c ValueNeededException when an unresolved value is required.
+ */
 CLanguageExpressionEvaluator::Operand
 CLanguageExpressionEvaluator::_ParseIdentifier(ValueNode* parentNode)
 {
@@ -1735,6 +2038,19 @@ CLanguageExpressionEvaluator::_ParseIdentifier(ValueNode* parentNode)
 }
 
 
+/**
+ * @brief Parses an atomic expression: a constant, parenthesised subexpression,
+ *        or a typecast.
+ *
+ * If the parenthesised expression evaluates to a type and more tokens
+ * follow, this is interpreted as a C-style cast: the rest of the
+ * expression is parsed and a synthetic ValueNode is wrapped over the
+ * casted result.
+ *
+ * @return Operand carrying the evaluated atom.
+ * @note Throws @c ParseException on premature end-of-input or when a
+ *       cast cannot be applied to the right-hand expression.
+ */
 CLanguageExpressionEvaluator::Operand
 CLanguageExpressionEvaluator::_ParseAtom()
 {
@@ -1795,6 +2111,14 @@ CLanguageExpressionEvaluator::_ParseAtom()
 }
 
 
+/**
+ * @brief Consumes a token of the expected type or throws.
+ *
+ * Used to enforce required punctuation (e.g. closing parens, brackets).
+ *
+ * @param type  Expected token type (a @c TOKEN_* enumerator).
+ * @note Throws @c ParseException when the next token does not match.
+ */
 void
 CLanguageExpressionEvaluator::_EatToken(int32 type)
 {
@@ -1831,6 +2155,19 @@ CLanguageExpressionEvaluator::_EatToken(int32 type)
 }
 
 
+/**
+ * @brief Parses optional pointer/reference/array modifiers on a type.
+ *
+ * After the caller has identified a base Type, this routine consumes any
+ * trailing @c *, @c &, or @c [N] modifiers, building up the appropriate
+ * derived type via Type::CreateDerivedAddressType() and
+ * CreateDerivedArrayType().
+ *
+ * @param baseType  Initial base type already recognised.
+ * @return Operand carrying the final derived type.
+ * @note Throws @c ParseException on invalid array sizes or when the
+ *       runtime cannot construct the requested derived type.
+ */
 CLanguageExpressionEvaluator::Operand
 CLanguageExpressionEvaluator::_ParseType(Type* baseType)
 {
@@ -1901,6 +2238,19 @@ CLanguageExpressionEvaluator::_ParseType(Type* baseType)
 }
 
 
+/**
+ * @brief Ensures the supplied value-node child has a resolved value.
+ *
+ * Requests child enumeration when the node has no children yet, then
+ * inspects the location/value resolution states. An unresolved state is
+ * reported by throwing @c ValueNeededException so the calling job can
+ * suspend, schedule a resolve, and re-evaluate.
+ *
+ * @param token  Token used to anchor any thrown ParseException position.
+ * @param child  Value-node child whose value the evaluator needs.
+ * @note Throws @c ParseException on resolver errors and
+ *       @c ValueNeededException when a follow-up resolve is required.
+ */
 void
 CLanguageExpressionEvaluator::_RequestValueIfNeeded(
 	const Token& token, ValueNodeChild* child)
@@ -1937,6 +2287,20 @@ CLanguageExpressionEvaluator::_RequestValueIfNeeded(
 }
 
 
+/**
+ * @brief Builds a synthetic ValueNodeChild wrapping a primitive value.
+ *
+ * Used to re-enter the regular value-node machinery for primitive operands
+ * that participate in a typecast. Allocates a SyntheticPrimitiveType, a
+ * ValueLocation backed by the value's bytes, an InternalVariableID, and a
+ * Variable, and finally a VariableValueNodeChild bound to that Variable.
+ *
+ * @param token   Token used to anchor any thrown ParseException position.
+ * @param value   Primitive value to wrap.
+ * @param _output Out: receives the freshly allocated child. Caller takes
+ *                ownership.
+ * @note Throws @c ParseException on any allocation/formatting failure.
+ */
 void
 CLanguageExpressionEvaluator::_GetNodeChildForPrimitive(const Token& token,
 	const BVariant& value, ValueNodeChild*& _output) const

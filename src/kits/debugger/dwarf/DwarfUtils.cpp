@@ -1,7 +1,37 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011-2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfUtils.cpp
+ * @brief Free helpers that walk DIE chains to extract names and locations.
+ *
+ * Many DWARF DIEs do not carry a name directly: they reference an
+ * abstract-origin or specification DIE that does.  These helpers chase
+ * those references uniformly and also synthesise C++-style names
+ * (qualified, parameter list, modifier suffix, ...) from a DIE tree.
  */
 
 #include "DwarfUtils.h"
@@ -13,6 +43,15 @@
 #include "DwarfFile.h"
 
 
+/**
+ * @brief Extracts the simple (unqualified) DIE name into @a _name.
+ *
+ * Falls back to @c DW_AT_abstract_origin and then @c DW_AT_specification
+ * when @a entry has no direct DW_AT_name.
+ *
+ * @param entry  DIE to inspect.
+ * @param _name  Output BString receiving the name (cleared if not found).
+ */
 /*static*/ void
 DwarfUtils::GetDIEName(const DebugInfoEntry* entry, BString& _name)
 {
@@ -39,6 +78,17 @@ DwarfUtils::GetDIEName(const DebugInfoEntry* entry, BString& _name)
 }
 
 
+/**
+ * @brief Synthesises a human-readable type name including modifiers.
+ *
+ * Walks the chain of DIEModifiedType wrappers (DW_TAG_pointer_type,
+ * DW_TAG_reference_type, DW_TAG_const_type) and prepends or suffixes
+ * modifier glyphs to produce names like "int * const".
+ *
+ * @param entry           Root type DIE.
+ * @param _name           Output BString that receives the name.
+ * @param requestingEntry Optional DIE whose namespace should be elided.
+ */
 /*static*/ void
 DwarfUtils::GetDIETypeName(const DebugInfoEntry* entry, BString& _name,
 	const DebugInfoEntry* requestingEntry)
@@ -101,6 +151,18 @@ DwarfUtils::GetDIETypeName(const DebugInfoEntry* entry, BString& _name,
 }
 
 
+/**
+ * @brief Builds a "name(parameters)" rendering for subprogram DIEs.
+ *
+ * For non-subprogram DIEs it returns the simple name (with the same
+ * abstract-origin / specification fallback as @ref GetDIEName).
+ * For subprograms it walks the formal-parameter children and renders
+ * each parameter type, skipping artificial parameters ("this") and
+ * substituting "..." for unspecified parameters.
+ *
+ * @param entry DIE to inspect.
+ * @param _name Output BString that receives the name.
+ */
 /*static*/ void
 DwarfUtils::GetFullDIEName(const DebugInfoEntry* entry, BString& _name)
 {
@@ -184,6 +246,17 @@ DwarfUtils::GetFullDIEName(const DebugInfoEntry* entry, BString& _name)
 }
 
 
+/**
+ * @brief Builds a "Namespace::...::name" rendering for the DIE.
+ *
+ * Walks parents looking for namespace-bearing DIEs and prefixes their
+ * names with "::".  Stops early if @a requestingEntry is encountered so
+ * that names are rendered relative to the caller's context.
+ *
+ * @param entry           DIE whose qualified name is requested.
+ * @param _name           Output BString that receives the name.
+ * @param requestingEntry Optional DIE marking the relative-name root.
+ */
 /*static*/ void
 DwarfUtils::GetFullyQualifiedDIEName(const DebugInfoEntry* entry,
 	BString& _name, const DebugInfoEntry* requestingEntry)
@@ -234,6 +307,23 @@ DwarfUtils::GetFullyQualifiedDIEName(const DebugInfoEntry* entry,
 }
 
 
+/**
+ * @brief Resolves a DIE's declaration location to (directory, file, line, col).
+ *
+ * Reads DW_AT_decl_file / DW_AT_decl_line / DW_AT_decl_column from
+ * @a entry and falls back to its abstract-origin and specification DIEs
+ * for any value that is missing.  The file index is then resolved
+ * against the owning compilation unit's file table.
+ *
+ * @param dwarfFile   DWARF file containing @a entry.
+ * @param entry       DIE whose declaration location is requested.
+ * @param _directory  Output directory string (owned by the CU file table).
+ * @param _file       Output file name string (owned by the CU file table).
+ * @param _line       Output line number, zero-based.
+ * @param _column     Output column number, zero-based.
+ * @return @c true if a complete declaration location was resolved,
+ *         @c false if the file index was missing or could not be looked up.
+ */
 /*static*/ bool
 DwarfUtils::GetDeclarationLocation(DwarfFile* dwarfFile,
 	const DebugInfoEntry* entry, const char*& _directory, const char*& _file,

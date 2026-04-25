@@ -1,7 +1,36 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011-2014, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CpuStateX86.cpp
+ * @brief IA-32 implementation of the CpuState interface.
+ *
+ * Stores the integer GP registers, segment registers, x87 ST*, MMX MM*,
+ * and XMM SIMD registers, providing bidirectional conversion between the
+ * kernel debugger's @c x86_debug_cpu_state blob and the kit's accessor API.
  */
 
 #include "CpuStateX86.h"
@@ -13,6 +42,7 @@
 #include "Register.h"
 
 
+/** @brief Construct an empty state with all register-set bits cleared. */
 CpuStateX86::CpuStateX86()
 	:
 	fSetRegisters(),
@@ -21,6 +51,11 @@ CpuStateX86::CpuStateX86()
 }
 
 
+/**
+ * @brief Decode an x86_debug_cpu_state blob into the per-register fields.
+ *
+ * @param state  Kernel debugger CPU-state blob.
+ */
 CpuStateX86::CpuStateX86(const x86_debug_cpu_state& state)
 	:
 	fSetRegisters(),
@@ -82,11 +117,19 @@ CpuStateX86::CpuStateX86(const x86_debug_cpu_state& state)
 }
 
 
+/** @brief Virtual destructor. */
 CpuStateX86::~CpuStateX86()
 {
 }
 
 
+/**
+ * @brief Allocate and return a deep copy of this CPU state.
+ *
+ * @param _clone  Output that receives the new CpuState.
+ * @retval B_OK         Clone allocated.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 status_t
 CpuStateX86::Clone(CpuState*& _clone) const
 {
@@ -110,6 +153,17 @@ CpuStateX86::Clone(CpuState*& _clone) const
 }
 
 
+/**
+ * @brief Serialize this state back into a kernel x86_debug_cpu_state blob.
+ *
+ * Writes integer/segment registers and the interrupt vector unconditionally;
+ * MMX/XMM registers are emitted only when set, and unset XMM slots are zeroed.
+ *
+ * @param state  Output blob; must be at least sizeof(x86_debug_cpu_state) bytes.
+ * @param size   Size of @a state. Must equal sizeof(x86_debug_cpu_state).
+ * @retval B_OK         Blob written.
+ * @retval B_BAD_VALUE  @a size mismatch.
+ */
 status_t
 CpuStateX86::UpdateDebugState(void* state, size_t size) const
 {
@@ -157,6 +211,7 @@ CpuStateX86::UpdateDebugState(void* state, size_t size) const
 }
 
 
+/** @brief Return EIP if set, otherwise zero. */
 target_addr_t
 CpuStateX86::InstructionPointer() const
 {
@@ -165,6 +220,11 @@ CpuStateX86::InstructionPointer() const
 }
 
 
+/**
+ * @brief Update EIP to @a address (truncated to 32 bits).
+ *
+ * @param address  New value of the instruction pointer.
+ */
 void
 CpuStateX86::SetInstructionPointer(target_addr_t address)
 {
@@ -172,6 +232,7 @@ CpuStateX86::SetInstructionPointer(target_addr_t address)
 }
 
 
+/** @brief Return EBP if set, otherwise zero. */
 target_addr_t
 CpuStateX86::StackFramePointer() const
 {
@@ -180,6 +241,7 @@ CpuStateX86::StackFramePointer() const
 }
 
 
+/** @brief Return ESP if set, otherwise zero. */
 target_addr_t
 CpuStateX86::StackPointer() const
 {
@@ -188,6 +250,13 @@ CpuStateX86::StackPointer() const
 }
 
 
+/**
+ * @brief Read the value of a register described by @a reg into @a _value.
+ *
+ * @param reg     Register descriptor.
+ * @param _value  Output that receives the value.
+ * @return true if the register was set and decoded; false otherwise.
+ */
 bool
 CpuStateX86::GetRegisterValue(const Register* reg, BVariant& _value) const
 {
@@ -223,6 +292,13 @@ CpuStateX86::GetRegisterValue(const Register* reg, BVariant& _value) const
 }
 
 
+/**
+ * @brief Update the value of the register described by @a reg.
+ *
+ * @param reg    Register descriptor.
+ * @param value  New value.
+ * @return true on success, false when @a reg is unknown or @a value is too large.
+ */
 bool
 CpuStateX86::SetRegisterValue(const Register* reg, const BVariant& value)
 {
@@ -257,6 +333,12 @@ CpuStateX86::SetRegisterValue(const Register* reg, const BVariant& value)
 }
 
 
+/**
+ * @brief Test whether the register at @a index has been written.
+ *
+ * @param index  Native register index.
+ * @return true if the register is set, false if it is unknown or unset.
+ */
 bool
 CpuStateX86::IsRegisterSet(int32 index) const
 {
@@ -264,6 +346,12 @@ CpuStateX86::IsRegisterSet(int32 index) const
 }
 
 
+/**
+ * @brief Read an integer register by index, returning 0 if unset.
+ *
+ * @param index  Integer register index.
+ * @return The 32-bit register value, or 0 if unset or out of range.
+ */
 uint32
 CpuStateX86::IntRegisterValue(int32 index) const
 {
@@ -274,6 +362,12 @@ CpuStateX86::IntRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an integer register and mark it as set.
+ *
+ * @param index  Integer register index.
+ * @param value  New value. Out-of-range indices are silently ignored.
+ */
 void
 CpuStateX86::SetIntRegister(int32 index, uint32 value)
 {
@@ -285,6 +379,12 @@ CpuStateX86::SetIntRegister(int32 index, uint32 value)
 }
 
 
+/**
+ * @brief Read an x87 floating-point register.
+ *
+ * @param index  Index in the ST0..ST7 range.
+ * @return The double value, or 0.0 if unset or out of range.
+ */
 double
 CpuStateX86::FloatRegisterValue(int32 index) const
 {
@@ -297,6 +397,12 @@ CpuStateX86::FloatRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an x87 floating-point register.
+ *
+ * @param index  Index in the ST0..ST7 range.
+ * @param value  New value.
+ */
 void
 CpuStateX86::SetFloatRegister(int32 index, double value)
 {
@@ -308,6 +414,12 @@ CpuStateX86::SetFloatRegister(int32 index, double value)
 }
 
 
+/**
+ * @brief Pointer to the raw bytes of an MMX register.
+ *
+ * @param index  Index in the MM0..MM7 range.
+ * @return Pointer to the 64-bit raw value, or NULL if unset or out of range.
+ */
 const void*
 CpuStateX86::MMXRegisterValue(int32 index) const
 {
@@ -320,6 +432,12 @@ CpuStateX86::MMXRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an MMX register from an 8-byte source buffer.
+ *
+ * @param index  Index in the MM0..MM7 range.
+ * @param value  Source bytes; assumed to be sizeof(uint64) bytes long.
+ */
 void
 CpuStateX86::SetMMXRegister(int32 index, const uint8* value)
 {
@@ -332,6 +450,12 @@ CpuStateX86::SetMMXRegister(int32 index, const uint8* value)
 }
 
 
+/**
+ * @brief Pointer to the raw bytes of an XMM register.
+ *
+ * @param index  Index in the XMM0..XMM7 range.
+ * @return Pointer to the raw value, or NULL if unset or out of range.
+ */
 const void*
 CpuStateX86::XMMRegisterValue(int32 index) const
 {
@@ -344,6 +468,12 @@ CpuStateX86::XMMRegisterValue(int32 index) const
 }
 
 
+/**
+ * @brief Update an XMM register from a 16-byte source buffer.
+ *
+ * @param index  Index in the XMM0..XMM7 range.
+ * @param value  Source bytes; assumed to be sizeof(x86_xmm_register) bytes long.
+ */
 void
 CpuStateX86::SetXMMRegister(int32 index, const uint8* value)
 {
@@ -356,6 +486,11 @@ CpuStateX86::SetXMMRegister(int32 index, const uint8* value)
 }
 
 
+/**
+ * @brief Mark a register as unset, clearing its bit in @c fSetRegisters.
+ *
+ * @param index  Native register index. Out-of-range values are ignored.
+ */
 void
 CpuStateX86::UnsetRegister(int32 index)
 {

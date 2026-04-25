@@ -1,6 +1,38 @@
 /*
- * Copyright 2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2014, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CLanguageFamilySyntaxHighlightInfo.cpp
+ * @brief Per-document highlight cache produced by the C-family highlighter.
+ *
+ * Lazily tokenises every line on the first GetLineHighlightRanges() call,
+ * stashing column/highlight-type pairs in a per-line LineInfo. Subsequent
+ * queries are served from the cache. Identifiers are classified as
+ * keywords, known type names (via TeamTypeInformation), or plain text;
+ * comment-block state is carried across line boundaries so multi-line
+ * slash-star block comments highlight correctly across line breaks.
  */
 
 
@@ -17,6 +49,7 @@
 using namespace CLanguage;
 
 
+/** @brief Sorted list of C/C++ keywords searched by binary search. */
 static const char* kLanguageKeywords[] = {
 	"NULL",
 	"asm",
@@ -83,6 +116,14 @@ static const char* kLanguageKeywords[] = {
 };
 
 
+/**
+ * @brief Returns @c true when @a token's text is a known C/C++ keyword.
+ *
+ * Performs a binary search against @c kLanguageKeywords.
+ *
+ * @param token  Identifier token to test.
+ * @return @c true when the token text matches an entry in the keyword table.
+ */
 static bool IsLanguageKeyword(const Token& token)
 {
 	int lower = 0;
@@ -107,10 +148,22 @@ static bool IsLanguageKeyword(const Token& token)
 // #pragma mark - CLanguageFamilySyntaxHighlightInfo::SyntaxPair
 
 
+/**
+ * @brief Column-anchored highlight transition stored per line.
+ *
+ * Each pair records the column where a new highlight type starts; the type
+ * remains in effect until the next pair (or end of line).
+ */
 struct CLanguageFamilySyntaxHighlightInfo::SyntaxPair {
 	int32 column;
 	syntax_highlight_type type;
 
+	/**
+	 * @brief Construct a SyntaxPair.
+	 *
+	 * @param column  Column at which the highlight type starts.
+	 * @param type    Highlight type to apply from @a column onward.
+	 */
 	SyntaxPair(int32 column, syntax_highlight_type type)
 		:
 		column(column),
@@ -123,8 +176,16 @@ struct CLanguageFamilySyntaxHighlightInfo::SyntaxPair {
 // #pragma mark - CLanguageFamilySyntaxHighlightInfo::LineInfo
 
 
+/**
+ * @brief Cached highlight transitions for a single source line.
+ */
 class CLanguageFamilySyntaxHighlightInfo::LineInfo {
 public:
+	/**
+	 * @brief Construct an empty LineInfo for line @a line.
+	 *
+	 * @param line  Zero-based line index this object describes.
+	 */
 	LineInfo(int32 line)
 		:
 		fLine(line),
@@ -132,16 +193,30 @@ public:
 	{
 	}
 
+	/** @brief Returns the number of recorded transitions. */
 	inline int32 CountPairs() const
 	{
 		return fPairs.CountItems();
 	}
 
+	/**
+	 * @brief Returns the transition at @a index.
+	 *
+	 * @param index  Zero-based index.
+	 * @return Pointer to the pair or @c NULL when out of range.
+	 */
 	SyntaxPair* PairAt(int32 index) const
 	{
 		return fPairs.ItemAt(index);
 	}
 
+	/**
+	 * @brief Appends a (column, type) transition.
+	 *
+	 * @param column  Column where @a type starts.
+	 * @param type    Highlight type from @a column onward.
+	 * @return @c true on success, @c false on allocation failure.
+	 */
 	bool AddPair(int32 column, syntax_highlight_type type)
 	{
 		SyntaxPair* pair = new(std::nothrow) SyntaxPair(column, type);
@@ -168,6 +243,15 @@ private:
 // #pragma mark - CLanguageFamilySyntaxHighlightInfo;
 
 
+/**
+ * @brief Construct a highlight-info bound to a line data source.
+ *
+ * Acquires a reference on @a source and takes ownership of @a tokenizer.
+ *
+ * @param source     Line data source providing text to highlight.
+ * @param tokenizer  Tokeniser used to lex each line; ownership transfers.
+ * @param typeInfo   Type-information service used to recognise type names.
+ */
 CLanguageFamilySyntaxHighlightInfo::CLanguageFamilySyntaxHighlightInfo(
 	LineDataSource* source, Tokenizer* tokenizer,
 	TeamTypeInformation* typeInfo)
@@ -182,6 +266,9 @@ CLanguageFamilySyntaxHighlightInfo::CLanguageFamilySyntaxHighlightInfo(
 }
 
 
+/**
+ * @brief Releases the line data source reference and deletes the tokeniser.
+ */
 CLanguageFamilySyntaxHighlightInfo::~CLanguageFamilySyntaxHighlightInfo()
 {
 	fHighlightSource->ReleaseReference();
@@ -189,6 +276,20 @@ CLanguageFamilySyntaxHighlightInfo::~CLanguageFamilySyntaxHighlightInfo()
 }
 
 
+/**
+ * @brief Returns the highlight transitions for line @a line.
+ *
+ * On the first call the entire source is tokenised and cached; subsequent
+ * calls are served from the cache. Up to @a maxCount transitions are
+ * written into @a _columns and @a _types.
+ *
+ * @param line       Zero-based line index.
+ * @param _columns   Out: receives the start columns of each transition.
+ * @param _types     Out: receives the highlight type for each transition.
+ * @param maxCount   Capacity of @a _columns / @a _types.
+ * @return Number of transitions written. The last entry's column starts
+ *         the highlight that runs to end-of-line.
+ */
 int32
 CLanguageFamilySyntaxHighlightInfo::GetLineHighlightRanges(int32 line,
 	int32* _columns, syntax_highlight_type* _types, int32 maxCount)
@@ -224,6 +325,16 @@ CLanguageFamilySyntaxHighlightInfo::GetLineHighlightRanges(int32 line,
 }
 
 
+/**
+ * @brief Tokenises every line and caches per-line highlight transitions.
+ *
+ * Carries the running highlight type across line boundaries so multi-line
+ * comment blocks remain coloured.
+ *
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  When a line's LineInfo cannot be appended.
+ * @return Otherwise the first _ParseLine() error encountered.
+ */
 status_t
 CLanguageFamilySyntaxHighlightInfo::_ParseLines()
 {
@@ -249,6 +360,21 @@ CLanguageFamilySyntaxHighlightInfo::_ParseLines()
 }
 
 
+/**
+ * @brief Tokenises a single line, recording highlight transitions.
+ *
+ * Tracks block-comment and preprocessor state, and emits a SyntaxPair
+ * whenever the highlight type would change. Tokeniser exceptions are
+ * swallowed: the partial result is preferred over nothing.
+ *
+ * @param line       Zero-based line index being parsed.
+ * @param _lastType  In/out: the current highlight type carried across
+ *                   adjacent lines (e.g. inside a comment block).
+ * @param _info      Out: receives the freshly allocated LineInfo. Caller
+ *                   takes ownership through the returned status.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  When a transition could not be recorded.
+ */
 status_t
 CLanguageFamilySyntaxHighlightInfo::_ParseLine(int32 line,
 	syntax_highlight_type& _lastType, LineInfo*& _info)
@@ -311,6 +437,18 @@ CLanguageFamilySyntaxHighlightInfo::_ParseLine(int32 line,
 }
 
 
+/**
+ * @brief Maps a tokeniser token to the matching highlight type.
+ *
+ * Identifiers are first checked against the keyword list, then against
+ * known type names registered with TeamTypeInformation. Operators,
+ * literals, comments, and the preprocessor pound sign each map to their
+ * own highlight type.
+ *
+ * @param token  Token whose syntactic role is being classified.
+ * @return The corresponding @c syntax_highlight_type, or
+ *         @c SYNTAX_HIGHLIGHT_NONE for tokens with no special role.
+ */
 syntax_highlight_type
 CLanguageFamilySyntaxHighlightInfo::_MapTokenToSyntaxType(const Token& token)
 {

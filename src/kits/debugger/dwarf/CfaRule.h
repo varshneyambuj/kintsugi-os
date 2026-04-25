@@ -1,7 +1,27 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold.
  */
+
+/** @file CfaRule.h
+    @brief Recovery rule types for the CFA and individual registers in DWARF CFI. */
+
 #ifndef CFA_RULE_H
 #define CFA_RULE_H
 
@@ -9,6 +29,11 @@
 #include "Types.h"
 
 
+/**
+ * @brief Kind of register recovery rule produced by the CFI interpreter.
+ *
+ * Mirrors the rule types defined in the DWARF v5 specification, section 6.4.
+ */
 enum cfa_rule_type {
 	CFA_RULE_UNDEFINED,
 	CFA_RULE_SAME_VALUE,
@@ -20,6 +45,12 @@ enum cfa_rule_type {
 };
 
 
+/**
+ * @brief Kind of canonical-frame-address (CFA) rule.
+ *
+ * The CFA can be defined either as register+offset or as the result of a
+ * DWARF expression.
+ */
 enum cfa_cfa_rule_type {
 	CFA_CFA_RULE_UNDEFINED,
 	CFA_CFA_RULE_REGISTER_OFFSET,
@@ -27,12 +58,18 @@ enum cfa_cfa_rule_type {
 };
 
 
+/**
+ * @brief Pointer/length pair describing a DWARF expression byte block.
+ */
 struct CfaExpression {
 	const void*	block;
 	size_t		size;
 };
 
 
+/**
+ * @brief Per-register recovery rule (location, value, expression, ...).
+ */
 class CfaRule {
 public:
 	inline						CfaRule();
@@ -63,6 +100,9 @@ private:
 };
 
 
+/**
+ * @brief Recovery rule for the canonical frame address itself.
+ */
 class CfaCfaRule {
 public:
 	inline						CfaCfaRule();

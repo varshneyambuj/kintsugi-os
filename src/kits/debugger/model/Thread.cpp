@@ -1,7 +1,38 @@
 /*
- * Copyright 2013-2016, Rene Gollent, rene@gollent.com.
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2016, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Thread.cpp
+ * @brief Implementation of Thread, the per-thread state object held by the
+ *        debugger model.
+ *
+ * Thread records run/stop state, the captured CpuState and StackTrace at
+ * the most recent stop, an optional list of return-value snapshots, and
+ * the reason a thread was halted. State changes route through the owning
+ * Team so that listeners (UI, scripting) receive notifications.
  */
 
 #include "model/Thread.h"
@@ -13,6 +44,12 @@
 #include "Team.h"
 
 
+/**
+ * @brief Constructs a Thread bound to @a team with kernel id @a threadID.
+ *
+ * @param team     Owning Team; not reference-counted by Thread.
+ * @param threadID Kernel thread identifier.
+ */
 Thread::Thread(Team* team, thread_id threadID)
 	:
 	fTeam(team),
@@ -27,6 +64,10 @@ Thread::Thread(Team* team, thread_id threadID)
 }
 
 
+/**
+ * @brief Releases CpuState and StackTrace references and clears
+ *        return-value snapshots.
+ */
 Thread::~Thread()
 {
 	if (fCpuState != NULL)
@@ -39,6 +80,13 @@ Thread::~Thread()
 }
 
 
+/**
+ * @brief Performs late initialisation that may fail.
+ *
+ * Allocates the return-value-info container.
+ *
+ * @return @c B_OK on success, @c B_NO_MEMORY on allocation failure.
+ */
 status_t
 Thread::Init()
 {
@@ -50,6 +98,11 @@ Thread::Init()
 }
 
 
+/**
+ * @brief Returns true when this Thread is the team's main thread.
+ *
+ * @return True if the thread id matches the owning team's id.
+ */
 bool
 Thread::IsMainThread() const
 {
@@ -57,6 +110,11 @@ Thread::IsMainThread() const
 }
 
 
+/**
+ * @brief Replaces the thread's display name.
+ *
+ * @param name New thread name.
+ */
 void
 Thread::SetName(const BString& name)
 {
@@ -64,6 +122,17 @@ Thread::SetName(const BString& name)
 }
 
 
+/**
+ * @brief Updates run state, stop reason, and dependent caches.
+ *
+ * If the new state is not @c THREAD_STATE_STOPPED the cached CpuState,
+ * StackTrace, and return-value snapshots are cleared, and any pending
+ * stop request is reset. Listeners are notified through the Team.
+ *
+ * @param state  New run state (running, stopped, unknown, etc.).
+ * @param reason Reason code for the most recent stop.
+ * @param info   Free-form description of the stop reason.
+ */
 void
 Thread::SetState(uint32 state, uint32 reason, const BString& info)
 {
@@ -86,6 +155,11 @@ Thread::SetState(uint32 state, uint32 reason, const BString& info)
 }
 
 
+/**
+ * @brief Replaces the cached CpuState and notifies listeners.
+ *
+ * @param state New CpuState, or NULL to clear; reference acquired/released.
+ */
 void
 Thread::SetCpuState(CpuState* state)
 {
@@ -104,6 +178,11 @@ Thread::SetCpuState(CpuState* state)
 }
 
 
+/**
+ * @brief Replaces the cached StackTrace and notifies listeners.
+ *
+ * @param trace New StackTrace, or NULL to clear; reference acquired/released.
+ */
 void
 Thread::SetStackTrace(StackTrace* trace)
 {
@@ -121,6 +200,12 @@ Thread::SetStackTrace(StackTrace* trace)
 	fTeam->NotifyThreadStackTraceChanged(this);
 }
 
+/**
+ * @brief Marks that a stop request is pending for this thread.
+ *
+ * The flag is cleared automatically when the thread next leaves the
+ * stopped state.
+ */
 void
 Thread::SetStopRequestPending()
 {
@@ -128,6 +213,12 @@ Thread::SetStopRequestPending()
 }
 
 
+/**
+ * @brief Appends a captured return-value snapshot to the thread's history.
+ *
+ * @param info Snapshot to append; reference acquired on success.
+ * @return    @c B_OK on success, @c B_NO_MEMORY on allocation failure.
+ */
 status_t
 Thread::AddReturnValueInfo(ReturnValueInfo* info)
 {
@@ -139,6 +230,9 @@ Thread::AddReturnValueInfo(ReturnValueInfo* info)
 }
 
 
+/**
+ * @brief Releases all stored return-value snapshots and empties the list.
+ */
 void
 Thread::ClearReturnValueInfos()
 {

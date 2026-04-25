@@ -1,8 +1,28 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013-2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold; Copyright 2013-2014, Rene
+ * Gollent.
  */
+
+/** @file DebugInfoEntry.h
+    @brief Abstract base class shared by every concrete DWARF DIE type. */
+
 #ifndef DEBUG_INFO_ENTRY_H
 #define DEBUG_INFO_ENTRY_H
 
@@ -13,10 +33,18 @@
 #include "Types.h"
 
 
+/** @brief Helper macro that declares a virtual @c AddAttribute_xxx setter on DebugInfoEntry. */
 #define DECLARE_DEBUG_INFO_ENTRY_ATTR_SETTER(name)	\
 	virtual	status_t			AddAttribute_##name(uint16 attributeName, \
 									const AttributeValue& value);
 
+/**
+ * @brief Sentinel codes returned by attribute and child setters.
+ *
+ * The DWARF parser uses these to recognise that a generic-base setter
+ * declined to handle the attribute or DIE so a more specific override
+ * could try.
+ */
 enum {
 	ATTRIBUTE_NOT_HANDLED	= 1,
 	ENTRY_NOT_HANDLED		= 2
@@ -32,11 +60,23 @@ struct MemberLocation;
 struct SourceLanguageInfo;
 
 
+/**
+ * @brief Bag of context information passed to DIE post-parse initialisation hooks.
+ */
 struct DebugInfoEntryInitInfo {
 	const SourceLanguageInfo*	languageInfo;
 };
 
 
+/**
+ * @brief Abstract base for every concrete debug-information-entry class.
+ *
+ * Provides the parent pointer, the polymorphic Tag()/Name() interface,
+ * and a sea of @c AddAttribute_xxx virtual setters - one per known
+ * DW_AT_* attribute - so the parser can dispatch parsed values without
+ * a switch.  Subclasses override only the attributes they care about
+ * and let the base class return @c ATTRIBUTE_NOT_HANDLED for the rest.
+ */
 class DebugInfoEntry : public DoublyLinkedListLinkImpl<DebugInfoEntry> {
 public:
 								DebugInfoEntry();

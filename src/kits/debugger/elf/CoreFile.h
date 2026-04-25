@@ -1,7 +1,28 @@
 /*
- * Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2016, Ingo Weinhold.
  */
+
+/** @file CoreFile.h
+    @brief CoreFile parser and the per-team / per-area / per-image / per-thread
+           descriptor structs it produces from an ELF core dump. */
+
 #ifndef CORE_FILE_H
 #define CORE_FILE_H
 
@@ -11,6 +32,12 @@
 #include <String.h>
 
 
+/**
+ * @brief Team-level metadata extracted from the core file's TEAM note.
+ *
+ * Holds the kernel team id, owning user/group ids, and the recorded
+ * command-line arguments string.
+ */
 struct CoreFileTeamInfo {
 								CoreFileTeamInfo();
 			void				Init(int32 id, int32 uid, int32 gid,
@@ -27,6 +54,12 @@ private:
 };
 
 
+/**
+ * @brief Per-area record extracted from the core file's AREAS note.
+ *
+ * Captures one mapped memory area and pairs it with the @c ElfSegment
+ * inside the core that backs the area's contents.
+ */
 struct CoreFileAreaInfo {
 								CoreFileAreaInfo(ElfSegment* segment, int32 id,
 									uint64 baseAddress, uint64 size,
@@ -54,6 +87,12 @@ private:
 };
 
 
+/**
+ * @brief Symbol-table descriptor extracted from the core file's SYMBOLS note.
+ *
+ * Owns its own copy of the symbol-table and string-table buffers so the
+ * underlying ELF segment data may be released independently.
+ */
 struct CoreFileSymbolsInfo {
 								CoreFileSymbolsInfo();
 								~CoreFileSymbolsInfo();
@@ -81,6 +120,14 @@ private:
 };
 
 
+/**
+ * @brief Loaded-image descriptor extracted from the core file's IMAGES note.
+ *
+ * Records text/data placement, init/term routine addresses, the optional
+ * symbol-table location inside the dump, and back-pointers to the
+ * @c CoreFileAreaInfo entries that own the text and data segments. Owns
+ * an optional CoreFileSymbolsInfo for the image.
+ */
 struct CoreFileImageInfo {
 								CoreFileImageInfo(int32 id, int32 type,
 									uint64 initRoutine, uint64 termRoutine,
@@ -136,6 +183,13 @@ private:
 };
 
 
+/**
+ * @brief Per-thread record extracted from the core file's THREADS note.
+ *
+ * Carries thread identity, scheduling state, stack range, and the
+ * architecture-specific CPU-state blob captured at the moment the dump
+ * was produced.
+ */
 struct CoreFileThreadInfo {
 								CoreFileThreadInfo(int32 id, int32 state,
 									int32 priority, uint64 stackBase,
@@ -163,6 +217,14 @@ private:
 };
 
 
+/**
+ * @brief Top-level parser for an ELF core-dump file.
+ *
+ * Owns the underlying @c ElfFile and the lists of per-team, per-area,
+ * per-image, and per-thread descriptors decoded from the core's note
+ * segments. Provides lookup helpers and a factory for constructing
+ * symbol-lookup walkers anchored at a specific image.
+ */
 class CoreFile {
 public:
 								CoreFile();

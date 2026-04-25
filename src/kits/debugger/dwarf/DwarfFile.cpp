@@ -1,7 +1,43 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2012-2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2012-2014, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfFile.cpp
+ * @brief Implementation of DwarfFile, the DWARF debug-information loader.
+ *
+ * This translation unit hosts the bulk of the DWARF reader: it locates
+ * the relevant ELF sections (.debug_info, .debug_abbrev, .debug_line,
+ * .debug_frame / .eh_frame, .debug_types, .debug_ranges, etc.), parses
+ * compilation units and type units into trees of @ref DebugInfoEntry
+ * objects, walks abbreviation tables, replays line-number programs,
+ * resolves cross-unit references, and provides high-level evaluators
+ * for DWARF expressions, location descriptions, and call-frame
+ * information.  Inner helpers like @c CIEAugmentation and
+ * @c ExpressionEvaluationContext are defined here as private to the
+ * file.
  */
 
 
@@ -34,8 +70,15 @@
 // #pragma mark - AutoSectionPutter
 
 
+/**
+ * @brief Scope guard that returns a borrowed ElfSection back to its ElfFile.
+ *
+ * The DWARF parser pins the sections it needs while parsing.  This
+ * helper releases them on scope exit, even on the error paths.
+ */
 class AutoSectionPutter {
 public:
+	/** @brief Constructs the guard binding @a elfSection (may be NULL). */
 	AutoSectionPutter(ElfFile* elfFile, ElfSection* elfSection)
 		:
 		fElfFile(elfFile),
@@ -43,6 +86,7 @@ public:
 	{
 	}
 
+	/** @brief Releases the section reference back to the ElfFile if held. */
 	~AutoSectionPutter()
 	{
 		if (fElfSection != NULL)
@@ -58,9 +102,18 @@ private:
 // #pragma mark - ExpressionEvaluationContext
 
 
+/**
+ * @brief Concrete @ref DwarfExpressionEvaluationContext bound to a CU and frame.
+ *
+ * Knows how to consult the DwarfFile to resolve DW_OP_call_* targets,
+ * how to compute the frame base on demand by evaluating the subprogram
+ * DIE's @c DW_AT_frame_base expression, and how to expose the cached
+ * object/frame pointers supplied by the caller.
+ */
 struct DwarfFile::ExpressionEvaluationContext
 	: DwarfExpressionEvaluationContext {
 public:
+	/** @brief Captures the surrounding state for a single expression evaluation. */
 	ExpressionEvaluationContext(DwarfFile* file, CompilationUnit* unit,
 		uint8 addressSize, bool isBigEndian, DIESubprogram* subprogramEntry,
 		const DwarfTargetInterface* targetInterface,
@@ -82,6 +135,7 @@ public:
 	{
 	}
 
+	/** @brief Provides the implicit object pointer (DW_OP_push_object_address). */
 	virtual bool GetObjectAddress(target_addr_t& _address)
 	{
 		if (!fHasObjectPointer)
@@ -91,6 +145,7 @@ public:
 		return true;
 	}
 
+	/** @brief Provides the current frame's address. */
 	virtual bool GetFrameAddress(target_addr_t& _address)
 	{
 		if (fFramePointer == 0)
@@ -100,6 +155,13 @@ public:
 		return true;
 	}
 
+	/**
+	 * @brief Lazily evaluates and caches the subprogram's frame base.
+	 *
+	 * Reads DW_AT_frame_base, materialises a DWARF expression for the
+	 * current PC if it lives in a location list, and runs the
+	 * expression evaluator to compute the frame base register / offset.
+	 */
 	virtual bool GetFrameBaseAddress(target_addr_t& _address)
 	{
 		if (fFrameBaseEvaluated) {
@@ -141,6 +203,7 @@ public:
 		return true;
 	}
 
+	/** @brief Resolves a thread-local-storage address (currently unimplemented). */
 	virtual bool GetTLSAddress(target_addr_t localAddress,
 		target_addr_t& _address)
 	{
@@ -148,6 +211,16 @@ public:
 		return false;
 	}
 
+	/**
+	 * @brief Resolves a DW_OP_call_* target to the called DIE's location expression.
+	 *
+	 * @param offset   Section-relative offset of the target DIE.
+	 * @param refType  Reference form indicator.
+	 * @param _block   Output block pointer (NULL if the target has no location).
+	 * @param _size    Output block size in bytes.
+	 * @return Status from DwarfFile::_GetLocationExpression on success,
+	 *         B_ENTRY_NOT_FOUND if the reference cannot be resolved.
+	 */
 	virtual status_t GetCallTarget(uint64 offset, uint8 refType,
 		const void*& _block, off_t& _size)
 	{
@@ -185,6 +258,7 @@ private:
 // #pragma mark - FDEAugmentation
 
 
+/** @brief Placeholder for FDE-level augmentation data (currently ignored). */
 struct DwarfFile::FDEAugmentation {
 	// Currently we're ignoring all augmentation data.
 };
@@ -193,6 +267,7 @@ struct DwarfFile::FDEAugmentation {
 // #pragma mark - CIEAugmentation
 
 
+/** @brief Bit flags identifying which CIE augmentation features are present. */
 enum {
 	CFI_AUGMENTATION_DATA					= 0x01,
 	CFI_AUGMENTATION_LANGUAGE_SPECIFIC_DATA	= 0x02,
@@ -201,6 +276,7 @@ enum {
 };
 
 
+/** @brief Encoding subtype for the CFI augmentation address pointer format. */
 // encodings for CFI_AUGMENTATION_ADDRESS_POINTER_FORMAT
 enum {
 	CFI_ADDRESS_FORMAT_ABSOLUTE			= 0x00,
@@ -220,6 +296,7 @@ enum {
 };
 
 
+/** @brief Address-type modifier flags layered on top of the encoding format. */
 enum {
 	CFI_ADDRESS_TYPE_PC_RELATIVE		= 0x10,
 	CFI_ADDRESS_TYPE_TEXT_RELATIVE		= 0x20,
@@ -230,7 +307,17 @@ enum {
 };
 
 
+/**
+ * @brief Parser/state object for CFI Common-Information-Entry augmentation data.
+ *
+ * Standard .debug_frame entries carry no augmentation; the GCC-emitted
+ * .eh_frame format reuses the format with extra fields encoded in the
+ * augmentation string ("z", "L", "P", "R" and combinations).  This
+ * struct decodes that string, reads the augmentation block, and answers
+ * questions the FDE parser asks (encoding, base offset, ...).
+ */
 struct DwarfFile::CIEAugmentation {
+	/** @brief Constructs an empty augmentation defaulting to absolute encoding. */
 	CIEAugmentation()
 		:
 		fString(NULL),
@@ -242,12 +329,20 @@ struct DwarfFile::CIEAugmentation {
 		// .eh_frame will generally override that via augmentation 'R'
 	}
 
+	/** @brief Reads the augmentation NUL-terminated string from @a dataReader. */
 	void Init(DataReader& dataReader)
 	{
 		fFlags = 0;
 		fString = dataReader.ReadString();
 	}
 
+	/**
+	 * @brief Decodes the augmentation block referenced by the CIE.
+	 *
+	 * @retval B_OK         Augmentation parsed (or empty/standard "eh").
+	 * @retval B_BAD_DATA   Length mismatch or reader overflow.
+	 * @retval B_UNSUPPORTED Augmentation contained a character we don't handle.
+	 */
 	status_t Read(DataReader& dataReader)
 	{
 		if (fString == NULL || *fString == '\0')
@@ -316,6 +411,11 @@ struct DwarfFile::CIEAugmentation {
 		return B_UNSUPPORTED;
 	}
 
+	/**
+	 * @brief Skips the per-FDE augmentation block.
+	 *
+	 * @return B_OK on success or @c B_BAD_DATA on overflow.
+	 */
 	status_t ReadFDEData(DataReader& dataReader,
 		FDEAugmentation& fdeAugmentation)
 	{
@@ -336,21 +436,31 @@ struct DwarfFile::CIEAugmentation {
 		return B_OK;
 	}
 
+	/** @brief Returns the raw augmentation string from the CIE. */
 	const char* String() const
 	{
 		return fString;
 	}
 
+	/** @brief Returns @c true if augmentation data was present (z prefix). */
 	bool HasData() const
 	{
 		return (fFlags & CFI_AUGMENTATION_DATA) != 0;
 	}
 
+	/** @brief Returns @c true if FDE addresses use a non-default encoding. */
 	bool HasFDEAddressFormat() const
 	{
 		return (fFlags & CFI_AUGMENTATION_ADDRESS_POINTER_FORMAT) != 0;
 	}
 
+	/**
+	 * @brief Returns the base offset added to FDE addresses for relative encodings.
+	 *
+	 * @param file              Owning ELF file (provides text/data segments).
+	 * @param debugFrameSection Owning .debug_frame / .eh_frame section.
+	 * @return Base offset in bytes, depending on the address-type modifier.
+	 */
 	target_addr_t FDEAddressOffset(ElfFile* file,
 		ElfSection* debugFrameSection) const
 	{
@@ -381,11 +491,21 @@ struct DwarfFile::CIEAugmentation {
 		return 0;
 	}
 
+	/** @brief Returns the FDE address-type bits (PC, text, data relative, ...). */
 	uint8 FDEAddressType() const
 	{
 		return fAddressEncoding & 0x70;
 	}
 
+	/**
+	 * @brief Reads an FDE address using the configured encoding.
+	 *
+	 * @param reader              Reader positioned at the address field.
+	 * @param file                Owning ELF file (for relative bases).
+	 * @param debugFrameSection   Owning frame section (for PC-relative bases).
+	 * @param valueOnly           When @c true, do not add the base offset.
+	 * @return Decoded target address.
+	 */
 	target_addr_t ReadEncodedAddress(DataReader &reader,
 		ElfFile* file, ElfSection* debugFrameSection,
 		bool valueOnly = false) const
@@ -436,8 +556,11 @@ struct DwarfFile::CIEAugmentation {
 
 
 private:
+	/** @brief Raw augmentation string read from the CIE. */
 	const char*	fString;
+	/** @brief Bitmask of CFI_AUGMENTATION_* flags decoded from @c fString. */
 	uint32		fFlags;
+	/** @brief CFI address encoding format derived from the augmentation block. */
 	int8		fAddressEncoding;
 };
 
@@ -445,8 +568,16 @@ private:
 // #pragma mark - FDELookupInfo
 
 
+/**
+ * @brief Sortable index entry mapping an address range to its FDE offset.
+ *
+ * Built once when a frame section is parsed; lookups during unwinding
+ * binary-search over a sorted FDEInfoList to find the FDE covering a
+ * given PC.  The associated CIE is also recorded for quick reuse.
+ */
 struct DwarfFile::FDELookupInfo {
 public:
+	/** @brief Captures the FDE/CIE offsets and the [start, end) range. */
 	FDELookupInfo(target_addr_t start, target_addr_t end,
 		uint64 fdeOffset, uint64 cieOffset, bool ehFrame)
 	:
@@ -458,6 +589,7 @@ public:
 	{
 	}
 
+	/** @brief Comparator used to sort FDEs by their starting address. */
 	static int CompareFDEInfos(const FDELookupInfo* a, const FDELookupInfo* b)
 	{
 		if (a->start < b->start)
@@ -468,15 +600,21 @@ public:
 		return 0;
 	}
 
+	/** @brief Returns @c true if @a address lies in the FDE's PC range. */
 	inline bool ContainsAddress(target_addr_t address) const
 	{
 		return address >= start && address < end;
 	}
 
+	/** @brief Inclusive starting PC of the FDE's range. */
 	target_addr_t 		start;
+	/** @brief Exclusive ending PC of the FDE's range. */
 	target_addr_t 		end;
+	/** @brief Section offset of the FDE this entry indexes. */
 	uint64				fdeOffset;
+	/** @brief Section offset of the CIE associated with the FDE. */
 	uint64				cieOffset;
+	/** @brief @c true when the FDE lives in .eh_frame, @c false for .debug_frame. */
 	bool				ehFrame;
 };
 
@@ -484,6 +622,13 @@ public:
 // #pragma mark - DwarfFile
 
 
+/**
+ * @brief Constructs an empty DwarfFile with all section pointers nulled.
+ *
+ * Loading happens in two phases via @ref StartLoading and @ref Load so
+ * that the user can be prompted for an external debug-info file
+ * (build-id / .gnu_debuglink) between the two.
+ */
 DwarfFile::DwarfFile()
 	:
 	fName(NULL),
@@ -515,6 +660,13 @@ DwarfFile::DwarfFile()
 }
 
 
+/**
+ * @brief Destroys the DwarfFile, releasing every section and parsed unit.
+ *
+ * Releases the ELF section reservations to the owning ElfFile in the
+ * reverse order of acquisition and frees the cached abbreviation
+ * tables, type-unit hash entries, and string buffers.
+ */
 DwarfFile::~DwarfFile()
 {
 	while (AbbreviationTable* table = fAbbreviationTables.RemoveHead())
@@ -552,6 +704,19 @@ DwarfFile::~DwarfFile()
 }
 
 
+/**
+ * @brief Begins phase 1 of loading: locate ELF file and inspect its sections.
+ *
+ * @param fileName               Path to the ELF object on disk.
+ * @param _requiredExternalFile  Set to a non-empty string when the binary
+ *                               needs an external debug-info file the
+ *                               caller must locate.
+ * @retval B_OK                  Sections found locally; ready for @ref Load.
+ * @retval B_NO_MEMORY           Allocation failure.
+ * @retval other                 ELF or section-discovery failure; caller
+ *                               may retry once @c _requiredExternalFile
+ *                               has been resolved.
+ */
 status_t
 DwarfFile::StartLoading(const char* fileName, BString& _requiredExternalFile)
 {
@@ -576,6 +741,21 @@ DwarfFile::StartLoading(const char* fileName, BString& _requiredExternalFile)
 }
 
 
+/**
+ * @brief Performs phase 2 of loading: parse the DWARF sections.
+ *
+ * Parses .debug_info, .debug_types (when present), .debug_frame /
+ * .eh_frame, line-number programs, and public-type indexes.  Unit-level
+ * post-processing is deferred to @ref FinishLoading so that cross-unit
+ * references can be resolved once every CU has been parsed.
+ *
+ * @param addressSize          Target ABI address width in bytes.
+ * @param isBigEndian          @c true for big-endian targets.
+ * @param externalInfoFilePath Path to the external debug-info file
+ *                             discovered in phase 1, or empty.
+ * @retval B_OK   Parsing completed.
+ * @retval other  First failure encountered while parsing a section.
+ */
 status_t
 DwarfFile::Load(uint8 addressSize, bool isBigEndian, const BString& externalInfoFilePath)
 {
@@ -649,6 +829,18 @@ DwarfFile::Load(uint8 addressSize, bool isBigEndian, const BString& externalInfo
 }
 
 
+/**
+ * @brief Performs phase 3 of loading: post-process every parsed unit.
+ *
+ * Resolves cross-CU references between DIEs and parses the public-type
+ * index after every compilation and type unit has been individually
+ * parsed.  Idempotent: subsequent calls return the cached status.
+ *
+ * @param addressSize Target ABI address width in bytes.
+ * @param isBigEndian @c true for big-endian targets.
+ * @retval B_OK   All post-processing succeeded.
+ * @retval other  First failure returned by @c _FinishUnit.
+ */
 status_t
 DwarfFile::FinishLoading(uint8 addressSize, bool isBigEndian)
 {
@@ -679,6 +871,7 @@ DwarfFile::FinishLoading(uint8 addressSize, bool isBigEndian)
 }
 
 
+/** @brief Returns the number of parsed compilation units. */
 int32
 DwarfFile::CountCompilationUnits() const
 {
@@ -686,6 +879,7 @@ DwarfFile::CountCompilationUnits() const
 }
 
 
+/** @brief Returns the @a index-th compilation unit, or NULL if out of range. */
 CompilationUnit*
 DwarfFile::CompilationUnitAt(int32 index) const
 {
@@ -693,6 +887,15 @@ DwarfFile::CompilationUnitAt(int32 index) const
 }
 
 
+/**
+ * @brief Locates the compilation unit that owns @a entry.
+ *
+ * Climbs the DIE parent chain until the unit-root DIE is reached, then
+ * looks it up in the CU list.
+ *
+ * @param entry DIE whose CU is required.
+ * @return Pointer to the CU, or NULL if @a entry is detached.
+ */
 CompilationUnit*
 DwarfFile::CompilationUnitForDIE(const DebugInfoEntry* entry) const
 {
@@ -717,6 +920,17 @@ DwarfFile::CompilationUnitForDIE(const DebugInfoEntry* entry) const
 }
 
 
+/**
+ * @brief Reads a DW_AT_ranges range list out of .debug_ranges.
+ *
+ * Walks the (start, end) pairs at @a offset, accounting for base
+ * address selection markers.
+ *
+ * @param unit   Owning compilation unit (provides base address and ABI).
+ * @param offset Section offset of the list within .debug_ranges.
+ * @return Newly-allocated TargetAddressRangeList owning a reference, or
+ *         NULL on out-of-bounds, allocation failure, or overflow.
+ */
 TargetAddressRangeList*
 DwarfFile::ResolveRangeList(CompilationUnit* unit, uint64 offset) const
 {
@@ -763,6 +977,23 @@ DwarfFile::ResolveRangeList(CompilationUnit* unit, uint64 offset) const
 }
 
 
+/**
+ * @brief Unwinds one frame from a given PC.
+ *
+ * Finds the FDE covering @a location and replays the CIE and FDE CFI
+ * programs to populate register-recovery rules in @a outputInterface.
+ *
+ * @param unit              Compilation unit @a location lives in (for context).
+ * @param addressSize       Target ABI address width.
+ * @param isBigEndian       @c true for big-endian targets.
+ * @param subprogramEntry   Subprogram DIE owning @a location.
+ * @param location          Program counter at which to unwind.
+ * @param inputInterface    Reads the current frame's registers and memory.
+ * @param outputInterface   Receives the unwound (caller's) register rules.
+ * @param _framePointer     Output canonical frame address.
+ * @retval B_OK              Frame unwound successfully.
+ * @retval B_ENTRY_NOT_FOUND No FDE covers @a location.
+ */
 status_t
 DwarfFile::UnwindCallFrame(CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
 	DIESubprogram* subprogramEntry, target_addr_t location,
@@ -779,6 +1010,27 @@ DwarfFile::UnwindCallFrame(CompilationUnit* unit, uint8 addressSize, bool isBigE
 }
 
 
+/**
+ * @brief Evaluates a value-producing DWARF expression in the file's context.
+ *
+ * Convenience wrapper that constructs an @ref ExpressionEvaluationContext
+ * tied to a compilation unit and subprogram, optionally seeds the stack,
+ * and runs the expression evaluator.
+ *
+ * @param unit                CU providing locale (file table, language).
+ * @param addressSize         Target ABI address width.
+ * @param isBigEndian         @c true for big-endian targets.
+ * @param subprogramEntry     Subprogram DIE used for frame-base lookup.
+ * @param expression          Expression byte stream.
+ * @param expressionLength    Length of @a expression in bytes.
+ * @param targetInterface     Provider of register / memory reads.
+ * @param instructionPointer  Current PC (for location-list selection).
+ * @param framePointer        Current frame pointer.
+ * @param valueToPush         Optional initial value for the stack.
+ * @param pushValue           When @c true, push @a valueToPush.
+ * @param _result             Output value left on the stack.
+ * @return Status from the underlying expression evaluator.
+ */
 status_t
 DwarfFile::EvaluateExpression(CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
 	DIESubprogram* subprogramEntry, const void* expression,
@@ -798,6 +1050,27 @@ DwarfFile::EvaluateExpression(CompilationUnit* unit, uint8 addressSize, bool isB
 }
 
 
+/**
+ * @brief Resolves a DW_AT_location description to a concrete ValueLocation.
+ *
+ * Selects the active expression (single block or location-list entry
+ * matching @a instructionPointer) and runs the location evaluator so the
+ * result preserves register references and bit-piece composition.
+ *
+ * @param unit                Owning compilation unit.
+ * @param addressSize         Target ABI address width.
+ * @param isBigEndian         @c true for big-endian targets.
+ * @param subprogramEntry     Subprogram DIE for frame-base lookup.
+ * @param location            Location description to resolve.
+ * @param targetInterface     Provider of register / memory reads.
+ * @param instructionPointer  Current PC (for location-list selection).
+ * @param objectPointer       Implicit object address for member accesses.
+ * @param hasObjectPointer    Whether @a objectPointer is meaningful.
+ * @param framePointer        Current frame pointer.
+ * @param relocationDelta     Offset added to DW_OP_addr operands.
+ * @param _result             Output location populated with pieces.
+ * @return Status from the underlying evaluator.
+ */
 status_t
 DwarfFile::ResolveLocation(CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
 	DIESubprogram* subprogramEntry, const LocationDescription* location,
@@ -824,6 +1097,24 @@ DwarfFile::ResolveLocation(CompilationUnit* unit, uint8 addressSize, bool isBigE
 }
 
 
+/**
+ * @brief Materialises a ConstantAttributeValue into a BVariant.
+ *
+ * Constants and strings are returned directly; block-form values are
+ * fed through the expression evaluator.
+ *
+ * @param unit                Compilation unit context.
+ * @param addressSize         Target address width in bytes.
+ * @param isBigEndian         @c true for big-endian targets.
+ * @param subprogramEntry     Subprogram DIE for frame-base lookup.
+ * @param value               Value to materialise.
+ * @param targetInterface     Provider of register / memory reads.
+ * @param instructionPointer  Current PC.
+ * @param framePointer        Current frame pointer.
+ * @param _result             Output BVariant.
+ * @retval B_OK         Value materialised.
+ * @retval B_BAD_VALUE  Value invalid or attribute class unsupported.
+ */
 status_t
 DwarfFile::EvaluateConstantValue(CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
 	DIESubprogram* subprogramEntry, const ConstantAttributeValue* value,
@@ -860,6 +1151,26 @@ DwarfFile::EvaluateConstantValue(CompilationUnit* unit, uint8 addressSize, bool 
 }
 
 
+/**
+ * @brief Materialises a DynamicAttributeValue, possibly evaluating a referenced DIE.
+ *
+ * Constants are returned directly; references are resolved by reading the
+ * referenced DIE's @c DW_AT_const_value (if present); blocks are evaluated
+ * through the expression evaluator.  Optionally returns the value's type.
+ *
+ * @param unit                Compilation unit context.
+ * @param addressSize         Target address width in bytes.
+ * @param isBigEndian         @c true for big-endian targets.
+ * @param subprogramEntry     Subprogram DIE for frame-base lookup.
+ * @param value               Value to materialise.
+ * @param targetInterface     Provider of register / memory reads.
+ * @param instructionPointer  Current PC.
+ * @param framePointer        Current frame pointer.
+ * @param _result             Output BVariant.
+ * @param _type               Optional output for the value's type DIE.
+ * @retval B_OK         Value materialised.
+ * @retval B_BAD_VALUE  Value invalid or referenced DIE has no const value.
+ */
 status_t
 DwarfFile::EvaluateDynamicValue(CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
 	DIESubprogram* subprogramEntry, const DynamicAttributeValue* value,
@@ -975,6 +1286,17 @@ DwarfFile::EvaluateDynamicValue(CompilationUnit* unit, uint8 addressSize, bool i
 }
 
 
+/**
+ * @brief Parses the .debug_info section into a list of CompilationUnits.
+ *
+ * Walks back-to-back unit headers and creates a CompilationUnit for each.
+ * The DIEs themselves are parsed lazily by @ref _ParseCompilationUnit.
+ *
+ * @param _addressSize Default target address width.
+ * @param isBigEndian  @c true for big-endian targets.
+ * @retval B_OK   Section parsed.
+ * @retval other  Header decode failure.
+ */
 status_t
 DwarfFile::_ParseDebugInfoSection(uint8 _addressSize, bool isBigEndian)
 {
@@ -1068,6 +1390,17 @@ DwarfFile::_ParseDebugInfoSection(uint8 _addressSize, bool isBigEndian)
 }
 
 
+/**
+ * @brief Parses the .debug_types section into a hash table of TypeUnits.
+ *
+ * Each type unit is keyed by its 64-bit signature so DW_FORM_ref_sig8
+ * references resolve in O(1).
+ *
+ * @param _addressSize Default target address width.
+ * @param isBigEndian  @c true for big-endian targets.
+ * @retval B_OK   Section parsed (or absent).
+ * @retval other  Header decode or hash-insert failure.
+ */
 status_t
 DwarfFile::_ParseTypesSection(uint8 _addressSize, bool isBigEndian)
 {
@@ -1161,6 +1494,21 @@ DwarfFile::_ParseTypesSection(uint8 _addressSize, bool isBigEndian)
 }
 
 
+/**
+ * @brief Parses one frame section (.debug_frame or .eh_frame) into FDE infos.
+ *
+ * Walks every CIE and FDE in @a section, builds a FDELookupInfo for
+ * each FDE, and sorts the resulting list by start address so unwind
+ * lookups can binary-search.
+ *
+ * @param section      Frame section to parse.
+ * @param addressSize  Default target address width.
+ * @param isBigEndian  @c true for big-endian targets.
+ * @param ehFrame      @c true when parsing .eh_frame (GCC format).
+ * @param infos        Output list populated with parsed entries.
+ * @retval B_OK   Section parsed.
+ * @retval other  Decode failure or augmentation not supported.
+ */
 status_t
 DwarfFile::_ParseFrameSection(ElfSection* section, uint8 addressSize, bool isBigEndian,
 	bool ehFrame, FDEInfoList& infos)
@@ -1276,6 +1624,16 @@ DwarfFile::_ParseFrameSection(ElfSection* section, uint8 addressSize, bool isBig
 }
 
 
+/**
+ * @brief Parses every DIE belonging to a single compilation unit.
+ *
+ * Loads the unit's abbreviation table, then descends recursively
+ * through @ref _ParseDebugInfoEntry to build the DIE tree.
+ *
+ * @param unit  CU whose DIEs should be parsed in place.
+ * @retval B_OK   Unit parsed.
+ * @retval other  Abbreviation or DIE parsing failure.
+ */
 status_t
 DwarfFile::_ParseCompilationUnit(CompilationUnit* unit)
 {
@@ -1320,6 +1678,13 @@ DwarfFile::_ParseCompilationUnit(CompilationUnit* unit)
 }
 
 
+/**
+ * @brief Parses every DIE belonging to a type unit.
+ *
+ * @param unit Type unit whose DIEs should be parsed in place.
+ * @retval B_OK   Unit parsed.
+ * @retval other  Abbreviation or DIE parsing failure.
+ */
 status_t
 DwarfFile::_ParseTypeUnit(TypeUnit* unit)
 {
@@ -1371,6 +1736,22 @@ DwarfFile::_ParseTypeUnit(TypeUnit* unit)
 }
 
 
+/**
+ * @brief Recursively parses one DIE from the reader.
+ *
+ * Reads the abbreviation code, instantiates the matching DIE subclass
+ * via @ref DebugInfoEntryFactory, parses every attribute, and recurses
+ * to consume the DIE's children (depth-first, terminated by a null DIE
+ * code at the same level).
+ *
+ * @param dataReader         Reader positioned at the DIE start.
+ * @param unit               Owning CU/TU (provides abbreviation table).
+ * @param abbreviationTable  Active abbreviation table.
+ * @param _entry             Output: newly-parsed DIE.
+ * @param _endOfEntryList    Output: @c true when null sibling was read.
+ * @param level              Recursion depth (used for tracing).
+ * @return Status from attribute parsing.
+ */
 status_t
 DwarfFile::_ParseDebugInfoEntry(DataReader& dataReader,
 	BaseUnit* unit, AbbreviationTable* abbreviationTable,
@@ -1464,6 +1845,17 @@ DwarfFile::_ParseDebugInfoEntry(DataReader& dataReader,
 }
 
 
+/**
+ * @brief Performs post-parse fixups on every DIE in @a unit.
+ *
+ * Drives the InitAfterAttributes / InitAfterHierarchy hooks once every
+ * cross-DIE reference can be resolved, and parses the unit's
+ * line-number program (for compilation units only).
+ *
+ * @param unit Unit to finalise.
+ * @retval B_OK   Unit finalised successfully.
+ * @retval other  First failure from a DIE init hook or line-info parser.
+ */
 status_t
 DwarfFile::_FinishUnit(BaseUnit* unit)
 {
@@ -1553,6 +1945,15 @@ DwarfFile::_FinishUnit(BaseUnit* unit)
 }
 
 
+/**
+ * @brief Reads a DW_FORM_strx string via the .debug_str_offsets indirection.
+ *
+ * @param unit   Owning unit (provides @c str_offsets_base attribute).
+ * @param index  Index into the per-unit string-offsets sub-table.
+ * @param value  Output pointer to the resolved string in .debug_str.
+ * @retval B_OK         String resolved.
+ * @retval B_BAD_VALUE  Indices out of range or sections missing.
+ */
 status_t
 DwarfFile::_ReadStringIndirect(BaseUnit* unit, uint64 index, const char*& value) const
 {
@@ -1584,6 +1985,15 @@ DwarfFile::_ReadStringIndirect(BaseUnit* unit, uint64 index, const char*& value)
 }
 
 
+/**
+ * @brief Reads a DW_FORM_addrx address via the .debug_addr indirection.
+ *
+ * @param unit   Owning unit (provides @c addr_base attribute).
+ * @param index  Index into the per-unit address sub-table.
+ * @param value  Output address.
+ * @retval B_OK         Address resolved.
+ * @retval B_BAD_VALUE  Indices out of range or sections missing.
+ */
 status_t
 DwarfFile::_ReadAddressIndirect(BaseUnit* unit, uint64 index, uint64& value) const
 {
@@ -1611,6 +2021,21 @@ DwarfFile::_ReadAddressIndirect(BaseUnit* unit, uint64 index, uint64& value) con
 }
 
 
+/**
+ * @brief Decodes every attribute described by an abbreviation entry.
+ *
+ * For each (name, form) pair in the abbreviation, reads the raw bytes
+ * out of @a dataReader, normalises them into an AttributeValue, and
+ * dispatches to the DIE's matching @c AddAttribute_xxx setter.  Knows
+ * about every DW_FORM_* form code from DWARF v2 through DWARF v5.
+ *
+ * @param dataReader          Reader positioned at the first attribute.
+ * @param unit                Owning unit (for indirect forms).
+ * @param entry               DIE receiving the parsed attributes.
+ * @param abbreviationEntry   Abbreviation describing the attribute layout.
+ * @retval B_OK   All attributes parsed.
+ * @retval other  Decode failure or DIE rejected the value.
+ */
 status_t
 DwarfFile::_ParseEntryAttributes(DataReader& dataReader,
 	BaseUnit* unit, DebugInfoEntry* entry, AbbreviationEntry& abbreviationEntry)
@@ -1927,6 +2352,16 @@ DwarfFile::_ParseEntryAttributes(DataReader& dataReader,
 }
 
 
+/**
+ * @brief Reads a string entry described by a DWARF v5 line-program @c format code.
+ *
+ * @param unit        Owning compilation unit.
+ * @param dataReader  Reader positioned at the field.
+ * @param format      DW_FORM_* code that encodes the string.
+ * @param value       Output string pointer.
+ * @retval B_OK         String resolved.
+ * @retval B_BAD_VALUE  Format unsupported.
+ */
 status_t
 DwarfFile::_ParseLineInfoFormatString(CompilationUnit* unit, DataReader &dataReader,
 	uint64 format, const char*& value)
@@ -1986,6 +2421,16 @@ DwarfFile::_ParseLineInfoFormatString(CompilationUnit* unit, DataReader &dataRea
 }
 
 
+/**
+ * @brief Reads an unsigned integer entry described by a DWARF v5 line-program format.
+ *
+ * @param unit        Owning compilation unit.
+ * @param dataReader  Reader positioned at the field.
+ * @param format      DW_FORM_* code that encodes the value.
+ * @param value       Output integer.
+ * @retval B_OK         Value read.
+ * @retval B_BAD_VALUE  Format unsupported.
+ */
 status_t
 DwarfFile::_ParseLineInfoFormatUint(CompilationUnit* unit, DataReader &dataReader,
 	uint64 format, uint64 &value)
@@ -2017,6 +2462,18 @@ DwarfFile::_ParseLineInfoFormatUint(CompilationUnit* unit, DataReader &dataReade
 }
 
 
+/**
+ * @brief Parses the line-number program prologue and primes the line-number VM.
+ *
+ * Reads version, header lengths, opcode parameters, the directory and
+ * file tables, and finally hands the program byte stream to the
+ * compilation unit's @ref LineNumberProgram.  Supports both the DWARF
+ * v2-v4 and DWARF v5 prologue formats.
+ *
+ * @param unit Compilation unit whose line program should be parsed.
+ * @retval B_OK   Line info parsed.
+ * @retval other  Decode or version-support failure.
+ */
 status_t
 DwarfFile::_ParseLineInfo(CompilationUnit* unit)
 {
@@ -2292,6 +2749,27 @@ DwarfFile::_ParseLineInfo(CompilationUnit* unit)
 }
 
 
+/**
+ * @brief Replays the CIE+FDE CFI programs for a specific PC.
+ *
+ * Initialises a CfaContext with register and code/data alignment from
+ * the CIE prologue, runs the CIE initial instructions, snapshots the
+ * resulting rule set, runs the FDE instructions to advance to
+ * @a location, then computes the canonical frame address and applies
+ * register-recovery rules to populate @a outputInterface.
+ *
+ * @param unit               Owning CU (mostly for context).
+ * @param addressSize        Target address width.
+ * @param isBigEndian        @c true for big-endian targets.
+ * @param subprogramEntry    Subprogram DIE for the location.
+ * @param location           Program counter to unwind to.
+ * @param info               FDE entry that covers @a location.
+ * @param inputInterface     Reads the current frame's registers.
+ * @param outputInterface    Receives the unwound rules.
+ * @param _framePointer      Output canonical frame address.
+ * @retval B_OK   Frame unwound successfully.
+ * @retval other  CIE/FDE decode failure or evaluator error.
+ */
 status_t
 DwarfFile::_UnwindCallFrame(CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
 	DIESubprogram* subprogramEntry, target_addr_t location,
@@ -2521,6 +2999,27 @@ DwarfFile::_UnwindCallFrame(CompilationUnit* unit, uint8 addressSize, bool isBig
 }
 
 
+/**
+ * @brief Decodes a Common Information Entry header.
+ *
+ * Reads the version, augmentation, code/data alignment, return-address
+ * register, and any augmentation block, populating both @a context and
+ * @a cieAugmentation.  Supports both DWARF .debug_frame and GCC
+ * .eh_frame conventions.
+ *
+ * @param debugFrameSection      Owning frame section.
+ * @param usingEHFrameSection    @c true when parsing .eh_frame.
+ * @param unit                   Compilation unit context.
+ * @param addressSize            Target address width.
+ * @param isBigEndian            @c true for big-endian targets.
+ * @param context                Output: CFA interpreter state.
+ * @param cieOffset              Section offset of the CIE.
+ * @param cieAugmentation        Output: parsed augmentation state.
+ * @param reader                 Reader pre-positioned to the CIE body.
+ * @param _cieRemaining          Output: remaining bytes after the header.
+ * @retval B_OK   Header parsed.
+ * @retval other  Version mismatch or decode failure.
+ */
 status_t
 DwarfFile::_ParseCIEHeader(ElfSection* debugFrameSection,
 	bool usingEHFrameSection, CompilationUnit* unit, uint8 addressSize, bool isBigEndian,
@@ -2600,6 +3099,20 @@ DwarfFile::_ParseCIEHeader(ElfSection* debugFrameSection,
 }
 
 
+/**
+ * @brief Replays a CIE or FDE call-frame-instruction stream.
+ *
+ * Dispatches every DW_CFA_* opcode (advance_loc, def_cfa, offset,
+ * register, remember/restore_state, expression, ...) onto the
+ * corresponding CfaContext / CfaRuleSet operations.
+ *
+ * @param unit              Owning compilation unit.
+ * @param context           CFA interpreter state.
+ * @param dataReader        Reader positioned at the first opcode.
+ * @param cieAugmentation   Augmentation state from the parent CIE.
+ * @retval B_OK   Stream replayed successfully (or stopped at target PC).
+ * @retval other  Unknown opcode or evaluator error.
+ */
 status_t
 DwarfFile::_ParseFrameInfoInstructions(CompilationUnit* unit,
 	CfaContext& context, DataReader& dataReader, CIEAugmentation& augmentation)
@@ -2993,6 +3506,13 @@ DwarfFile::_ParseFrameInfoInstructions(CompilationUnit* unit,
 }
 
 
+/**
+ * @brief Parses .debug_pubtypes if present.
+ *
+ * @param _addressSize Default address size.
+ * @param isBigEndian  @c true for big-endian targets.
+ * @retval B_OK Section parsed (or absent).
+ */
 status_t
 DwarfFile::_ParsePublicTypesInfo(uint8 _addressSize, bool isBigEndian)
 {
@@ -3031,6 +3551,13 @@ DwarfFile::_ParsePublicTypesInfo(uint8 _addressSize, bool isBigEndian)
 }
 
 
+/**
+ * @brief Parses one .debug_pubtypes contribution from @a dataReader.
+ *
+ * @param dataReader Reader positioned at the contribution start.
+ * @param dwarf64    @c true if the contribution uses 64-bit length encoding.
+ * @retval B_OK Contribution parsed.
+ */
 status_t
 DwarfFile::_ParsePublicTypesInfo(DataReader& dataReader, bool dwarf64)
 {
@@ -3070,6 +3597,17 @@ DwarfFile::_ParsePublicTypesInfo(DataReader& dataReader, bool dwarf64)
 }
 
 
+/**
+ * @brief Returns (and lazily parses) the abbreviation table at @a offset.
+ *
+ * Tables are cached on a doubly-linked list keyed by section offset so
+ * units sharing a table only parse it once.
+ *
+ * @param offset Byte offset of the table within .debug_abbrev.
+ * @param _table Output table pointer (owned by the DwarfFile).
+ * @retval B_OK   Table found or parsed.
+ * @retval other  Allocation or parse failure.
+ */
 status_t
 DwarfFile::_GetAbbreviationTable(off_t offset, AbbreviationTable*& _table)
 {
@@ -3101,6 +3639,19 @@ DwarfFile::_GetAbbreviationTable(off_t offset, AbbreviationTable*& _table)
 }
 
 
+/**
+ * @brief Resolves a DWARF DIE reference to the target entry.
+ *
+ * Handles the four reference flavours (relative-to-unit, section-wide,
+ * type-signature, and supplementary) by routing through the proper unit
+ * lookup table.
+ *
+ * @param unit    Source unit (used as the base for relative references).
+ * @param offset  Reference offset interpreted per @a refType.
+ * @param refType One of the @c dwarf_reference_type_* tags.
+ * @return Pointer to the target DIE, or NULL when the reference cannot
+ *         be resolved.
+ */
 DebugInfoEntry*
 DwarfFile::_ResolveReference(BaseUnit* unit, uint64 offset,
 	uint8 refType) const
@@ -3135,6 +3686,20 @@ DwarfFile::_ResolveReference(BaseUnit* unit, uint64 offset,
 }
 
 
+/**
+ * @brief Selects the active expression for a LocationDescription at @a instructionPointer.
+ *
+ * For inline-block locations returns the block directly; for
+ * location-list locations dispatches to @ref _FindLocationExpression.
+ *
+ * @param unit                Owning compilation unit.
+ * @param location            Description to resolve.
+ * @param instructionPointer  Current PC.
+ * @param _expression         Output pointer to the active expression.
+ * @param _length             Output length in bytes.
+ * @retval B_OK         Expression found.
+ * @retval B_BAD_VALUE  Description invalid.
+ */
 status_t
 DwarfFile::_GetLocationExpression(CompilationUnit* unit,
 	const LocationDescription* location, target_addr_t instructionPointer,
@@ -3158,6 +3723,21 @@ DwarfFile::_GetLocationExpression(CompilationUnit* unit,
 }
 
 
+/**
+ * @brief Walks a .debug_loc location list and returns the entry covering @a address.
+ *
+ * Honours base-address selection markers and stops at the
+ * end-of-list marker (two equal-zero entries).
+ *
+ * @param unit         Owning compilation unit.
+ * @param offset       Section offset of the location list.
+ * @param address      PC for which an expression is required.
+ * @param _expression  Output pointer to the matching expression block.
+ * @param _length      Output length of the expression in bytes.
+ * @retval B_OK         Match found.
+ * @retval B_ENTRY_NOT_FOUND No entry covered @a address.
+ * @retval B_BAD_VALUE  Section absent or list overflowed.
+ */
 status_t
 DwarfFile::_FindLocationExpression(CompilationUnit* unit, uint64 offset,
 	target_addr_t address, const void*& _expression, off_t& _length) const
@@ -3210,6 +3790,22 @@ DwarfFile::_FindLocationExpression(CompilationUnit* unit, uint64 offset,
 }
 
 
+/**
+ * @brief Locates the .debug_info section, possibly via an external debug file.
+ *
+ * Inspects the main ELF file first.  If it has no DWARF, follows the
+ * @c .gnu_debuglink reference (or build-id) to an external debug-info
+ * object, opening it via @a locatedFilePath when supplied.
+ *
+ * @param _requiredExternalFileName  Output: name of an external file the
+ *                                   user must locate, or empty when
+ *                                   debug info was found locally.
+ * @param locatedFilePath            Path provided by the user, or NULL
+ *                                   when no resolution attempt has been
+ *                                   made yet.
+ * @retval B_OK   Section located.
+ * @retval other  Lookup or open failure.
+ */
 status_t
 DwarfFile::_LocateDebugInfo(BString& _requiredExternalFileName,
 	const char* locatedFilePath)
@@ -3281,6 +3877,16 @@ DwarfFile::_LocateDebugInfo(BString& _requiredExternalFileName,
 }
 
 
+/**
+ * @brief Resolves an external debug-info filename to an absolute path.
+ *
+ * Searches the conventional debug-info directories for @a debugFileName.
+ *
+ * @param debugFileName Name referenced from the .gnu_debuglink section.
+ * @param _infoPath     Output absolute path.
+ * @retval B_OK                      Path found.
+ * @retval B_ENTRY_NOT_FOUND         No matching file in any search dir.
+ */
 status_t
 DwarfFile::_GetDebugInfoPath(const char* debugFileName,
 	BString& _infoPath) const
@@ -3328,6 +3934,12 @@ DwarfFile::_GetDebugInfoPath(const char* debugFileName,
 }
 
 
+/**
+ * @brief Looks up a type unit by its 64-bit signature.
+ *
+ * @param signature Type signature from a DW_FORM_ref_sig8 attribute.
+ * @return Hash-table entry, or NULL when the signature is unknown.
+ */
 TypeUnitTableEntry*
 DwarfFile::_GetTypeUnit(uint64 signature) const
 {
@@ -3335,6 +3947,15 @@ DwarfFile::_GetTypeUnit(uint64 signature) const
 }
 
 
+/**
+ * @brief Locates the compilation unit whose section span contains @a refAddr.
+ *
+ * Used to resolve section-wide DIE references back to the parsed CU
+ * that owns the target DIE.
+ *
+ * @param refAddr Absolute byte offset within .debug_info.
+ * @return Owning CU, or NULL when no CU covers @a refAddr.
+ */
 CompilationUnit*
 DwarfFile::_GetContainingCompilationUnit(off_t refAddr) const
 {
@@ -3357,6 +3978,14 @@ DwarfFile::_GetContainingCompilationUnit(off_t refAddr) const
 }
 
 
+/**
+ * @brief Finds the FDE entry covering a target PC, preferring .debug_frame.
+ *
+ * Falls back to .eh_frame if no match was found in .debug_frame.
+ *
+ * @param offset Target program counter.
+ * @return Matching FDELookupInfo, or NULL when no FDE covers @a offset.
+ */
 DwarfFile::FDELookupInfo*
 DwarfFile::_GetContainingFDEInfo(target_addr_t offset) const
 {
@@ -3371,6 +4000,13 @@ DwarfFile::_GetContainingFDEInfo(target_addr_t offset) const
 }
 
 
+/**
+ * @brief Binary-searches a sorted FDE info list for the entry covering @a offset.
+ *
+ * @param offset    Target program counter.
+ * @param infoList  Sorted list of FDELookupInfo entries.
+ * @return Matching entry, or NULL when none covers @a offset.
+ */
 DwarfFile::FDELookupInfo*
 DwarfFile::_GetContainingFDEInfo(target_addr_t offset,
 	const FDEInfoList& infoList) const

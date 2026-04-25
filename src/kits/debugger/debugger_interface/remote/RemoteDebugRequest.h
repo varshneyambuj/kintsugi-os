@@ -1,7 +1,27 @@
 /*
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2016, Rene Gollent, rene@gollent.com.
  */
+
+/** @file RemoteDebugRequest.h
+    @brief Marshalled request/response protocol used by the network debugger transport. */
+
 #ifndef REMOTE_DEBUG_REQUEST_H
 #define REMOTE_DEBUG_REQUEST_H
 
@@ -48,6 +68,8 @@ class BMessage;
 class CpuState;
 
 
+/** @brief Abstract base for marshalled remote debug requests; encodes the
+           request type and per-subclass payload to/from a BMessage. */
 class RemoteDebugRequest : public BReferenceable {
 public:
 								RemoteDebugRequest();
@@ -73,6 +95,8 @@ private:
 };
 
 
+/** @brief Base class for marshalled responses paired with a RemoteDebugRequest;
+           always carries a status code and may carry subclass-specific data. */
 class RemoteDebugResponse : public BReferenceable {
 public:
 								RemoteDebugResponse();
@@ -112,6 +136,7 @@ private:
 // #pragma mark - Requests
 
 
+/** @brief Request to read a contiguous range of debugged-team memory. */
 class RemoteDebugReadMemoryRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugReadMemoryRequest();
@@ -137,6 +162,7 @@ private:
 };
 
 
+/** @brief Request to write a contiguous buffer into debugged-team memory. */
 class RemoteDebugWriteMemoryRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugWriteMemoryRequest();
@@ -164,6 +190,7 @@ private:
 };
 
 
+/** @brief Request to update team-wide debug flags on the remote target. */
 class RemoteDebugSetTeamFlagsRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugSetTeamFlagsRequest();
@@ -186,6 +213,7 @@ private:
 };
 
 
+/** @brief Request to update per-thread debug flags on the remote target. */
 class RemoteDebugSetThreadFlagsRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugSetThreadFlagsRequest();
@@ -213,6 +241,8 @@ private:
 // abstract base for the various thread actions, as those all
 // take a thread ID as a parameter and have no special response
 // requirements, with only the action to be taken differing.
+/** @brief Abstract base for thread-targeted remote actions that need only a
+           thread id and a status reply (continue, stop, single-step, ...). */
 class RemoteDebugThreadActionRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugThreadActionRequest();
@@ -233,6 +263,7 @@ private:
 };
 
 
+/** @brief Request to resume a stopped thread on the remote target. */
 class RemoteDebugContinueThreadRequest
 	: public RemoteDebugThreadActionRequest {
 public:
@@ -243,6 +274,7 @@ public:
 };
 
 
+/** @brief Request to stop a running thread on the remote target. */
 class RemoteDebugStopThreadRequest
 	: public RemoteDebugThreadActionRequest {
 public:
@@ -253,6 +285,7 @@ public:
 };
 
 
+/** @brief Request to single-step a thread on the remote target. */
 class RemoteDebugSingleStepThreadRequest
 	: public RemoteDebugThreadActionRequest {
 public:
@@ -263,6 +296,7 @@ public:
 };
 
 
+/** @brief Request to retrieve the CPU state of a thread on the remote target. */
 class RemoteDebugGetCpuStateRequest
 	: public RemoteDebugThreadActionRequest {
 public:
@@ -273,6 +307,7 @@ public:
 };
 
 
+/** @brief Request to overwrite the CPU state of a thread on the remote target. */
 class RemoteDebugSetCpuStateRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugSetCpuStateRequest();
@@ -298,6 +333,8 @@ private:
 
 // abstract base for the various actions that influence how the CPU
 // reacts to a particular memory address, ergo break/watchpoints.
+/** @brief Abstract base for address-targeted requests (install/uninstall
+           breakpoints and address-only watchpoint operations). */
 class RemoteDebugAddressActionRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugAddressActionRequest();
@@ -318,6 +355,7 @@ private:
 };
 
 
+/** @brief Request to install a breakpoint at a target address. */
 class RemoteDebugInstallBreakpointRequest
 	: public RemoteDebugAddressActionRequest {
 public:
@@ -328,6 +366,7 @@ public:
 };
 
 
+/** @brief Request to remove a previously-installed breakpoint. */
 class RemoteDebugUninstallBreakpointRequest
 	: public RemoteDebugAddressActionRequest {
 public:
@@ -338,6 +377,7 @@ public:
 };
 
 
+/** @brief Request to install a hardware watchpoint with type and length. */
 class RemoteDebugInstallWatchpointRequest : public RemoteDebugRequest {
 public:
 								RemoteDebugInstallWatchpointRequest();
@@ -365,6 +405,7 @@ private:
 };
 
 
+/** @brief Request to remove a previously-installed watchpoint. */
 class RemoteDebugUninstallWatchpointRequest
 	: public RemoteDebugAddressActionRequest {
 public:
@@ -378,6 +419,7 @@ public:
 // #pragma mark - Responses
 
 
+/** @brief Response carrying the data buffer returned by a read-memory request. */
 class RemoteDebugReadMemoryResponse : public RemoteDebugResponse {
 public:
 								RemoteDebugReadMemoryResponse();
@@ -398,6 +440,7 @@ private:
 };
 
 
+/** @brief Response carrying the CPU state returned by a get-CPU-state request. */
 class RemoteDebugGetCpuStateResponse : public RemoteDebugResponse {
 public:
 								RemoteDebugGetCpuStateResponse();

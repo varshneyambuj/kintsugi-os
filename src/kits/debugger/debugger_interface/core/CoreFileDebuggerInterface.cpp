@@ -1,6 +1,36 @@
 /*
- * Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file CoreFileDebuggerInterface.cpp
+ * @brief DebuggerInterface implementation backed by an ELF core dump.
+ *
+ * Exposes a frozen team to the debugger UI: thread infos, image infos, CPU
+ * state and memory reads come from the dump; control operations (continue,
+ * step, set breakpoint, write memory, ...) all return B_UNSUPPORTED because
+ * the snapshot is read-only.
  */
 
 
@@ -23,6 +53,12 @@
 #include "Tracing.h"
 
 
+/**
+ * @brief Constructs the interface around an already-parsed core file.
+ *
+ * @param coreFile  CoreFile instance whose ownership transfers to this object;
+ *                  it is deleted in the destructor.
+ */
 CoreFileDebuggerInterface::CoreFileDebuggerInterface(CoreFile* coreFile)
 	:
 	fCoreFile(coreFile),
@@ -31,6 +67,9 @@ CoreFileDebuggerInterface::CoreFileDebuggerInterface(CoreFile* coreFile)
 }
 
 
+/**
+ * @brief Releases the architecture reference and deletes the underlying core file.
+ */
 CoreFileDebuggerInterface::~CoreFileDebuggerInterface()
 {
 	if (fArchitecture != NULL)
@@ -40,6 +79,13 @@ CoreFileDebuggerInterface::~CoreFileDebuggerInterface()
 }
 
 
+/**
+ * @brief Selects an Architecture implementation based on the core file's ELF machine.
+ *
+ * @return B_OK on success, B_UNSUPPORTED if the machine type is not handled,
+ *         B_NO_MEMORY on allocation failure, or any error from
+ *         Architecture::Init().
+ */
 status_t
 CoreFileDebuggerInterface::Init()
 {
@@ -64,12 +110,22 @@ CoreFileDebuggerInterface::Init()
 }
 
 
+/**
+ * @brief No-op close; nothing to release on a read-only core file.
+ *
+ * @param killTeam  Ignored; there is no live team to kill.
+ */
 void
 CoreFileDebuggerInterface::Close(bool killTeam)
 {
 }
 
 
+/**
+ * @brief A core file is always considered "connected" once parsed.
+ *
+ * @return Always true.
+ */
 bool
 CoreFileDebuggerInterface::Connected() const
 {
@@ -77,6 +133,11 @@ CoreFileDebuggerInterface::Connected() const
 }
 
 
+/**
+ * @brief Identifies this interface as a post-mortem (snapshot) target.
+ *
+ * @return Always true.
+ */
 bool
 CoreFileDebuggerInterface::IsPostMortem() const
 {
@@ -84,6 +145,11 @@ CoreFileDebuggerInterface::IsPostMortem() const
 }
 
 
+/**
+ * @brief Returns the team id captured in the core file.
+ *
+ * @return Recorded team id.
+ */
 team_id
 CoreFileDebuggerInterface::TeamID() const
 {
@@ -91,6 +157,11 @@ CoreFileDebuggerInterface::TeamID() const
 }
 
 
+/**
+ * @brief Returns the Architecture object selected during Init().
+ *
+ * @return Borrowed pointer to the Architecture; valid for the interface lifetime.
+ */
 Architecture*
 CoreFileDebuggerInterface::GetArchitecture() const
 {
@@ -98,6 +169,12 @@ CoreFileDebuggerInterface::GetArchitecture() const
 }
 
 
+/**
+ * @brief Core files don't produce a live event stream.
+ *
+ * @param _event  Unused output parameter.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::GetNextDebugEvent(DebugEvent*& _event)
 {
@@ -105,6 +182,12 @@ CoreFileDebuggerInterface::GetNextDebugEvent(DebugEvent*& _event)
 }
 
 
+/**
+ * @brief Cannot change team debugging flags on a snapshot.
+ *
+ * @param flags  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::SetTeamDebuggingFlags(uint32 flags)
 {
@@ -112,6 +195,12 @@ CoreFileDebuggerInterface::SetTeamDebuggingFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Threads in a core file cannot be resumed.
+ *
+ * @param thread  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::ContinueThread(thread_id thread)
 {
@@ -119,6 +208,12 @@ CoreFileDebuggerInterface::ContinueThread(thread_id thread)
 }
 
 
+/**
+ * @brief Threads in a core file are already stopped.
+ *
+ * @param thread  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::StopThread(thread_id thread)
 {
@@ -126,6 +221,12 @@ CoreFileDebuggerInterface::StopThread(thread_id thread)
 }
 
 
+/**
+ * @brief Cannot single-step a snapshot.
+ *
+ * @param thread  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::SingleStepThread(thread_id thread)
 {
@@ -133,6 +234,12 @@ CoreFileDebuggerInterface::SingleStepThread(thread_id thread)
 }
 
 
+/**
+ * @brief Cannot install breakpoints on a snapshot.
+ *
+ * @param address  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::InstallBreakpoint(target_addr_t address)
 {
@@ -140,6 +247,12 @@ CoreFileDebuggerInterface::InstallBreakpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief Cannot uninstall breakpoints on a snapshot.
+ *
+ * @param address  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::UninstallBreakpoint(target_addr_t address)
 {
@@ -147,6 +260,14 @@ CoreFileDebuggerInterface::UninstallBreakpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief Cannot install watchpoints on a snapshot.
+ *
+ * @param address  Ignored.
+ * @param type     Ignored.
+ * @param length   Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::InstallWatchpoint(target_addr_t address, uint32 type,
 	int32 length)
@@ -155,6 +276,12 @@ CoreFileDebuggerInterface::InstallWatchpoint(target_addr_t address, uint32 type,
 }
 
 
+/**
+ * @brief Cannot uninstall watchpoints on a snapshot.
+ *
+ * @param address  Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::UninstallWatchpoint(target_addr_t address)
 {
@@ -162,6 +289,12 @@ CoreFileDebuggerInterface::UninstallWatchpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief System-level info is not retained in a core file.
+ *
+ * @param info  Output parameter; left untouched.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::GetSystemInfo(SystemInfo& info)
 {
@@ -169,6 +302,12 @@ CoreFileDebuggerInterface::GetSystemInfo(SystemInfo& info)
 }
 
 
+/**
+ * @brief Fills @a info with the team id and command-line arguments from the dump.
+ *
+ * @param info  Output parameter populated from the core file's team info.
+ * @return Always @c B_OK.
+ */
 status_t
 CoreFileDebuggerInterface::GetTeamInfo(TeamInfo& info)
 {
@@ -178,6 +317,13 @@ CoreFileDebuggerInterface::GetTeamInfo(TeamInfo& info)
 }
 
 
+/**
+ * @brief Builds a list of ThreadInfo entries from the core file's thread records.
+ *
+ * @param infos  Output list; ownership of the appended ThreadInfo objects
+ *               transfers to the list.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 CoreFileDebuggerInterface::GetThreadInfos(BObjectList<ThreadInfo, true>& infos)
 {
@@ -197,6 +343,13 @@ CoreFileDebuggerInterface::GetThreadInfos(BObjectList<ThreadInfo, true>& infos)
 }
 
 
+/**
+ * @brief Builds a list of ImageInfo entries from the core file's image records.
+ *
+ * @param infos  Output list; ownership of the appended ImageInfo objects
+ *               transfers to the list.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 CoreFileDebuggerInterface::GetImageInfos(BObjectList<ImageInfo, true>& infos)
 {
@@ -218,6 +371,12 @@ CoreFileDebuggerInterface::GetImageInfos(BObjectList<ImageInfo, true>& infos)
 }
 
 
+/**
+ * @brief Areas are not currently captured in core files.
+ *
+ * @param infos  Output list; left untouched.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::GetAreaInfos(BObjectList<AreaInfo, true>& infos)
 {
@@ -225,6 +384,12 @@ CoreFileDebuggerInterface::GetAreaInfos(BObjectList<AreaInfo, true>& infos)
 }
 
 
+/**
+ * @brief Semaphore state is not currently captured in core files.
+ *
+ * @param infos  Output list; left untouched.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::GetSemaphoreInfos(BObjectList<SemaphoreInfo, true>& infos)
 {
@@ -232,6 +397,20 @@ CoreFileDebuggerInterface::GetSemaphoreInfos(BObjectList<SemaphoreInfo, true>& i
 }
 
 
+/**
+ * @brief Resolves the symbol table for an image, drawing on whichever source
+ *        is available (in-core symbols, on-disk ELF, or core-derived lookup).
+ *
+ * Strategy: prefer the in-core symbol table when present; if not, fall back
+ * to symbols from the on-disk ELF file; if that fails, attempt to build a
+ * lookup directly from data captured in the dump.
+ *
+ * @param team   Team id; used only for error context.
+ * @param image  Image identifier inside the core file.
+ * @param infos  Output list; ownership of appended SymbolInfo objects transfers.
+ * @return B_OK on success, B_BAD_IMAGE_ID if @a image is not in the dump,
+ *         or any error from the underlying ELF/symbol-lookup path.
+ */
 status_t
 CoreFileDebuggerInterface::GetSymbolInfos(team_id team, image_id image,
 	BObjectList<SymbolInfo, true>& infos)
@@ -271,6 +450,17 @@ CoreFileDebuggerInterface::GetSymbolInfos(team_id team, image_id image,
 }
 
 
+/**
+ * @brief Single-symbol lookup is not yet implemented for core files.
+ *
+ * @param team        Ignored.
+ * @param image       Ignored.
+ * @param name        Ignored.
+ * @param symbolType  Ignored.
+ * @param info        Output parameter; left untouched.
+ * @return Always @c B_UNSUPPORTED.
+ * @todo Implement targeted symbol lookup against the ELF symbol cache.
+ */
 status_t
 CoreFileDebuggerInterface::GetSymbolInfo(team_id team, image_id image,
 	const char* name, int32 symbolType, SymbolInfo& info)
@@ -280,6 +470,13 @@ CoreFileDebuggerInterface::GetSymbolInfo(team_id team, image_id image,
 }
 
 
+/**
+ * @brief Returns a single ThreadInfo by thread id from the core file.
+ *
+ * @param thread  Thread id to look up.
+ * @param info    Output parameter populated on success.
+ * @return B_OK on success, B_BAD_THREAD_ID if the dump has no such thread.
+ */
 status_t
 CoreFileDebuggerInterface::GetThreadInfo(thread_id thread, ThreadInfo& info)
 {
@@ -292,6 +489,14 @@ CoreFileDebuggerInterface::GetThreadInfo(thread_id thread, ThreadInfo& info)
 }
 
 
+/**
+ * @brief Reconstructs a CpuState object from the per-thread state in the dump.
+ *
+ * @param thread  Thread id whose CPU state is requested.
+ * @param _state  On success, set to a freshly-allocated CpuState owned by the caller.
+ * @return B_OK on success, B_BAD_THREAD_ID if @a thread is not in the dump,
+ *         or any error from Architecture::CreateCpuState().
+ */
 status_t
 CoreFileDebuggerInterface::GetCpuState(thread_id thread, CpuState*& _state)
 {
@@ -304,6 +509,13 @@ CoreFileDebuggerInterface::GetCpuState(thread_id thread, CpuState*& _state)
 }
 
 
+/**
+ * @brief CPU state cannot be modified on a snapshot.
+ *
+ * @param thread  Ignored.
+ * @param state   Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::SetCpuState(thread_id thread, const CpuState* state)
 {
@@ -311,6 +523,12 @@ CoreFileDebuggerInterface::SetCpuState(thread_id thread, const CpuState* state)
 }
 
 
+/**
+ * @brief Reports CPU feature flags as discovered by the Architecture object.
+ *
+ * @param flags  Output parameter populated by the Architecture.
+ * @return Whatever Architecture::GetCpuFeatures() returns.
+ */
 status_t
 CoreFileDebuggerInterface::GetCpuFeatures(uint32& flags)
 {
@@ -318,6 +536,12 @@ CoreFileDebuggerInterface::GetCpuFeatures(uint32& flags)
 }
 
 
+/**
+ * @brief Writing a new core file from a core file is not supported.
+ *
+ * @param path  Ignored.
+ * @return Always @c B_NOT_SUPPORTED.
+ */
 status_t
 CoreFileDebuggerInterface::WriteCoreFile(const char* path)
 {
@@ -325,6 +549,17 @@ CoreFileDebuggerInterface::WriteCoreFile(const char* path)
 }
 
 
+/**
+ * @brief Returns the protection and locking flags for the area covering @a address.
+ *
+ * @note Write protection is masked off because this interface cannot honor
+ *       writes anyway.
+ *
+ * @param address     Target-side address to look up.
+ * @param protection  Output parameter; receives the masked protection flags.
+ * @param locking     Output parameter; receives the area's locking flags.
+ * @return B_OK on success, B_BAD_ADDRESS if no captured area covers @a address.
+ */
 status_t
 CoreFileDebuggerInterface::GetMemoryProperties(target_addr_t address,
 	uint32& protection, uint32& locking)
@@ -340,6 +575,19 @@ CoreFileDebuggerInterface::GetMemoryProperties(target_addr_t address,
 }
 
 
+/**
+ * @brief Reads bytes from the captured memory regions, splicing across segments
+ *        as needed.
+ *
+ * Walks the area list and pread()s the appropriate ELF segment's file offset.
+ * Returns whatever it could copy if a partial read crosses an unmapped region.
+ *
+ * @param address  Target-side starting address.
+ * @param _buffer  Destination buffer; must hold @a size bytes.
+ * @param size     Number of bytes to read.
+ * @return Number of bytes actually read, B_BAD_ADDRESS if no segment covers
+ *         the very first byte, or a negative errno-derived status on I/O error.
+ */
 ssize_t
 CoreFileDebuggerInterface::ReadMemory(target_addr_t address, void* _buffer,
 	size_t size)
@@ -378,6 +626,14 @@ CoreFileDebuggerInterface::ReadMemory(target_addr_t address, void* _buffer,
 }
 
 
+/**
+ * @brief Memory cannot be written through a core file interface.
+ *
+ * @param address  Ignored.
+ * @param buffer   Ignored.
+ * @param size     Ignored.
+ * @return Always @c B_UNSUPPORTED.
+ */
 ssize_t
 CoreFileDebuggerInterface::WriteMemory(target_addr_t address, void* buffer,
 	size_t size)
@@ -386,6 +642,12 @@ CoreFileDebuggerInterface::WriteMemory(target_addr_t address, void* buffer,
 }
 
 
+/**
+ * @brief Copies the relevant fields of a CoreFileThreadInfo into a ThreadInfo.
+ *
+ * @param coreInfo  Source thread record from the core file.
+ * @param info      Destination ThreadInfo populated with team id, thread id, and name.
+ */
 void
 CoreFileDebuggerInterface::_GetThreadInfo(const CoreFileThreadInfo& coreInfo,
 	ThreadInfo& info)

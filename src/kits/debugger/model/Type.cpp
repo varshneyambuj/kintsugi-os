@@ -1,6 +1,39 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Type.cpp
+ * @brief Vtable anchors and default-implementation methods for the Type
+ *        family of debug-info type descriptors.
+ *
+ * The Type hierarchy mirrors the DWARF type model: primitive, compound,
+ * array, modified (cv-qualified), typedef, enum, subrange, address,
+ * function, pointer-to-member, etc. Most methods are pure virtual; this
+ * translation unit anchors the vtables and provides a few default
+ * implementations such as @c ResolveRawType() for typedefs and modified
+ * types.
  */
 
 
@@ -10,6 +43,9 @@
 // #pragma mark - BaseType
 
 
+/**
+ * @brief Virtual destructor anchor for the BaseType interface.
+ */
 BaseType::~BaseType()
 {
 }
@@ -18,6 +54,9 @@ BaseType::~BaseType()
 // #pragma mark - DataMember
 
 
+/**
+ * @brief Virtual destructor anchor for the DataMember interface.
+ */
 DataMember::~DataMember()
 {
 }
@@ -26,6 +65,9 @@ DataMember::~DataMember()
 // #pragma mark - EnumeratorValue
 
 
+/**
+ * @brief Virtual destructor anchor for the EnumeratorValue interface.
+ */
 EnumeratorValue::~EnumeratorValue()
 {
 }
@@ -34,11 +76,22 @@ EnumeratorValue::~EnumeratorValue()
 // #pragma mark - ArrayDimension
 
 
+/**
+ * @brief Virtual destructor anchor for the ArrayDimension interface.
+ */
 ArrayDimension::~ArrayDimension()
 {
 }
 
 
+/**
+ * @brief Computes the number of elements covered by this array dimension.
+ *
+ * Handles enumeration index types (count of enumerators) and subrange
+ * index types (upper minus lower plus one). Other types report zero.
+ *
+ * @return Element count, or zero if the dimension type is not enumerable.
+ */
 uint64
 ArrayDimension::CountElements() const
 {
@@ -67,6 +120,9 @@ ArrayDimension::CountElements() const
 // #pragma mark - FunctionParameter
 
 
+/**
+ * @brief Virtual destructor anchor for the FunctionParameter interface.
+ */
 FunctionParameter::~FunctionParameter()
 {
 }
@@ -75,6 +131,9 @@ FunctionParameter::~FunctionParameter()
 // #pragma mark - TemplateParameter
 
 
+/**
+ * @brief Virtual destructor anchor for the TemplateParameter interface.
+ */
 TemplateParameter::~TemplateParameter()
 {
 }
@@ -83,11 +142,23 @@ TemplateParameter::~TemplateParameter()
 // #pragma mark - Type
 
 
+/**
+ * @brief Virtual destructor anchor for the Type interface.
+ */
 Type::~Type()
 {
 }
 
 
+/**
+ * @brief Default raw-type resolver returning @c this.
+ *
+ * Subclasses such as TypedefType and ModifiedType override this to peel
+ * a layer of indirection per call.
+ *
+ * @param nextOneOnly Unused at this level; honoured by overrides.
+ * @return           A non-const pointer to this Type.
+ */
 Type*
 Type::ResolveRawType(bool nextOneOnly) const
 {
@@ -95,6 +166,13 @@ Type::ResolveRawType(bool nextOneOnly) const
 }
 
 
+/**
+ * @brief Default factory for derived address types: not supported here.
+ *
+ * @param kind        Address-type kind requested.
+ * @param _resultType Set to NULL on return.
+ * @return           Always @c B_ERROR.
+ */
 status_t
 Type::CreateDerivedAddressType(address_type_kind kind,
 	AddressType*& _resultType)
@@ -104,6 +182,15 @@ Type::CreateDerivedAddressType(address_type_kind kind,
 }
 
 
+/**
+ * @brief Default factory for derived array types: not supported here.
+ *
+ * @param lowerBound     Lower bound of the synthetic dimension.
+ * @param elementCount   Element count for the new dimension.
+ * @param extendExisting Whether to extend an existing array type.
+ * @param _resultType    Set to NULL on return.
+ * @return              Always @c B_ERROR.
+ */
 status_t
 Type::CreateDerivedArrayType(int64 lowerBound, int64 elementCount,
 	bool extendExisting, ArrayType*& _resultType)
@@ -116,11 +203,19 @@ Type::CreateDerivedArrayType(int64 lowerBound, int64 elementCount,
 // #pragma mark - PrimitiveType
 
 
+/**
+ * @brief Virtual destructor anchor for PrimitiveType.
+ */
 PrimitiveType::~PrimitiveType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_PRIMITIVE.
+ */
 type_kind
 PrimitiveType::Kind() const
 {
@@ -131,11 +226,19 @@ PrimitiveType::Kind() const
 // #pragma mark - CompoundType
 
 
+/**
+ * @brief Virtual destructor anchor for CompoundType.
+ */
 CompoundType::~CompoundType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_COMPOUND.
+ */
 type_kind
 CompoundType::Kind() const
 {
@@ -146,11 +249,19 @@ CompoundType::Kind() const
 // #pragma mark - ModifiedType
 
 
+/**
+ * @brief Virtual destructor anchor for ModifiedType.
+ */
 ModifiedType::~ModifiedType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_MODIFIED.
+ */
 type_kind
 ModifiedType::Kind() const
 {
@@ -158,6 +269,14 @@ ModifiedType::Kind() const
 }
 
 
+/**
+ * @brief Peels the modifier and returns the underlying base type.
+ *
+ * @param nextOneOnly If true, returns just the immediate base type;
+ *                    otherwise recursively resolves until a non-typedef,
+ *                    non-modified type is reached.
+ * @return           The resolved underlying type.
+ */
 Type*
 ModifiedType::ResolveRawType(bool nextOneOnly) const
 {
@@ -169,11 +288,19 @@ ModifiedType::ResolveRawType(bool nextOneOnly) const
 // #pragma mark - TypedefType
 
 
+/**
+ * @brief Virtual destructor anchor for TypedefType.
+ */
 TypedefType::~TypedefType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_TYPEDEF.
+ */
 type_kind
 TypedefType::Kind() const
 {
@@ -181,6 +308,13 @@ TypedefType::Kind() const
 }
 
 
+/**
+ * @brief Peels the typedef and returns the aliased type.
+ *
+ * @param nextOneOnly If true, returns just the immediate aliased type;
+ *                    otherwise recursively resolves further.
+ * @return           The resolved aliased type.
+ */
 Type*
 TypedefType::ResolveRawType(bool nextOneOnly) const
 {
@@ -192,11 +326,19 @@ TypedefType::ResolveRawType(bool nextOneOnly) const
 // #pragma mark - AddressType
 
 
+/**
+ * @brief Virtual destructor anchor for AddressType.
+ */
 AddressType::~AddressType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_ADDRESS.
+ */
 type_kind
 AddressType::Kind() const
 {
@@ -207,11 +349,19 @@ AddressType::Kind() const
 // #pragma mark - EnumerationType
 
 
+/**
+ * @brief Virtual destructor anchor for EnumerationType.
+ */
 EnumerationType::~EnumerationType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_ENUMERATION.
+ */
 type_kind
 EnumerationType::Kind() const
 {
@@ -219,6 +369,13 @@ EnumerationType::Kind() const
 }
 
 
+/**
+ * @brief Returns the EnumeratorValue whose stored value equals @a value.
+ *
+ * @param value Value to look up.
+ * @return     Matching EnumeratorValue, or NULL if no match exists.
+ * @todo Optimise via a lookup table when the enum has many values.
+ */
 EnumeratorValue*
 EnumerationType::ValueFor(const BVariant& value) const
 {
@@ -235,11 +392,19 @@ EnumerationType::ValueFor(const BVariant& value) const
 // #pragma mark - SubrangeType
 
 
+/**
+ * @brief Virtual destructor anchor for SubrangeType.
+ */
 SubrangeType::~SubrangeType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_SUBRANGE.
+ */
 type_kind
 SubrangeType::Kind() const
 {
@@ -250,11 +415,19 @@ SubrangeType::Kind() const
 // #pragma mark - ArrayType
 
 
+/**
+ * @brief Virtual destructor anchor for ArrayType.
+ */
 ArrayType::~ArrayType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_ARRAY.
+ */
 type_kind
 ArrayType::Kind() const
 {
@@ -265,11 +438,19 @@ ArrayType::Kind() const
 // #pragma mark - UnspecifiedType
 
 
+/**
+ * @brief Virtual destructor anchor for UnspecifiedType.
+ */
 UnspecifiedType::~UnspecifiedType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_UNSPECIFIED.
+ */
 type_kind
 UnspecifiedType::Kind() const
 {
@@ -280,11 +461,19 @@ UnspecifiedType::Kind() const
 // #pragma mark - FunctionType
 
 
+/**
+ * @brief Virtual destructor anchor for FunctionType.
+ */
 FunctionType::~FunctionType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_FUNCTION.
+ */
 type_kind
 FunctionType::Kind() const
 {
@@ -295,11 +484,19 @@ FunctionType::Kind() const
 // #pragma mark - PointerToMemberType
 
 
+/**
+ * @brief Virtual destructor anchor for PointerToMemberType.
+ */
 PointerToMemberType::~PointerToMemberType()
 {
 }
 
 
+/**
+ * @brief Reports the type kind.
+ *
+ * @return Always @c TYPE_POINTER_TO_MEMBER.
+ */
 type_kind
 PointerToMemberType::Kind() const
 {

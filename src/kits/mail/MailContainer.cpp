@@ -27,7 +27,7 @@
  * @file MailContainer.cpp
  * @brief MIME multipart container class for the mail kit.
  *
- * BMIMEMultipartMailContainer parses and renders multipart/* MIME structures.
+ * BMIMEMultipartMailContainer parses and renders MIME multipart structures.
  * It lazily decodes sub-parts: at parse time only the byte ranges of each
  * sub-part within the source stream are recorded; sub-parts are decoded into
  * concrete BMailComponent instances on demand when GetComponent() is called.
@@ -318,7 +318,7 @@ status_t BMIMEMultipartMailContainer::SetDecodedData(BPositionIO *) {
 
 
 /**
- * @brief Parses a multipart/* RFC 822 stream and records sub-part byte ranges.
+ * @brief Parses a MIME multipart RFC 822 stream and records sub-part byte ranges.
  *
  * Reads the container headers, extracts the boundary string, then scans the
  * source stream byte-by-byte for boundary delimiters. For each part found,

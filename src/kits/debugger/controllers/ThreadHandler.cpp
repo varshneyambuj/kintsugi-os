@@ -1,7 +1,40 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2010-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2010-2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ThreadHandler.cpp
+ * @brief Per-thread state machine that drives stepping, breakpoint handling,
+ *        and stop conditions for one thread inside a debugged team.
+ *
+ * Each ThreadHandler reacts to debug events (breakpoint hit, single step,
+ * exception, signal, ...) for its thread. It coordinates the temporary
+ * breakpoints used to implement step-over/step-out, evaluates user-supplied
+ * breakpoint conditions, and decides whether to resume the thread or surface
+ * a stop to the UI. The class also serves as the JobListener for any async
+ * work (stack-trace builds, source loads) it kicks off via the Worker.
  */
 
 
@@ -41,18 +74,26 @@
 #include "Worker.h"
 
 
-// step modes
+/** @brief Internal step-mode codes recorded in fStepMode. */
 enum {
-	STEP_NONE,
-	STEP_OVER,
-	STEP_INTO,
-	STEP_OUT,
-	STEP_UNTIL
+	STEP_NONE,    /**< @brief No stepping in progress. */
+	STEP_OVER,    /**< @brief Step over the current source statement. */
+	STEP_INTO,    /**< @brief Step into a called function. */
+	STEP_OUT,     /**< @brief Step out of the current function. */
+	STEP_UNTIL    /**< @brief Step until reaching a target address. */
 };
 
 
+/**
+ * @brief Adapter listener that forwards an asynchronous breakpoint-condition
+ *        evaluation result to the owning ThreadHandler.
+ *
+ * Holds a reference to the handler for the duration of the evaluation so the
+ * handler stays alive even if the thread races past the breakpoint.
+ */
 class ExpressionEvaluationListener : public ExpressionInfo::Listener {
 public:
+	/** @brief Captures the handler and acquires a reference on it. */
 	ExpressionEvaluationListener(ThreadHandler* handler)
 	:
 	fHandler(handler)
@@ -60,11 +101,19 @@ public:
 		fHandler->AcquireReference();
 	}
 
+	/** @brief Releases the reference taken in the constructor. */
 	~ExpressionEvaluationListener()
 	{
 		fHandler->ReleaseReference();
 	}
 
+	/**
+	 * @brief Forwards the result to the handler's internal evaluator hook.
+	 *
+	 * @param info    Originating expression info (unused by the forwarder).
+	 * @param result  Status from evaluation (unused; @a value carries the meaning).
+	 * @param value   Result value to deliver, or NULL if evaluation failed.
+	 */
 	virtual void ExpressionEvaluated(ExpressionInfo* info, status_t result,
 		ExpressionResult* value)
 	{
@@ -76,6 +125,16 @@ private:
 };
 
 
+/**
+ * @brief Constructs the handler bound to a specific thread and acquires a
+ *        reference on the debugger interface.
+ *
+ * @param thread             Thread whose state this handler will manage.
+ * @param worker             Worker used to dispatch asynchronous jobs.
+ * @param debuggerInterface  Back-end used for control and CPU operations.
+ * @param jobListener        Listener that observes job completion.
+ * @param breakpointManager  Manager used for temporary breakpoint installation.
+ */
 ThreadHandler::ThreadHandler(::Thread* thread, Worker* worker,
 	DebuggerInterface* debuggerInterface, JobListener* jobListener,
 	BreakpointManager* breakpointManager)
@@ -99,6 +158,10 @@ ThreadHandler::ThreadHandler(::Thread* thread, Worker* worker,
 }
 
 
+/**
+ * @brief Cleans up step continuation state, releases the debugger interface,
+ *        and deletes the optional condition-wait semaphore.
+ */
 ThreadHandler::~ThreadHandler()
 {
 	_ClearContinuationState();
@@ -109,6 +172,9 @@ ThreadHandler::~ThreadHandler()
 }
 
 
+/**
+ * @brief Schedules an initial GetThreadStateJob and creates the condition-wait semaphore.
+ */
 void
 ThreadHandler::Init()
 {
@@ -118,6 +184,16 @@ ThreadHandler::Init()
 }
 
 
+/**
+ * @brief Installs a temporary breakpoint at @a address and resumes the thread.
+ *
+ * Used by "run to here" and similar commands. The handler enters STEP_OUT
+ * mode so the temporary breakpoint, when hit, is recognized as the intended
+ * stop point rather than treated as a spurious event.
+ *
+ * @param address  Address to break on once the thread reaches it.
+ * @return B_OK on success or any error from the breakpoint manager / debugger interface.
+ */
 status_t
 ThreadHandler::SetBreakpointAndRun(target_addr_t address)
 {
@@ -137,6 +213,13 @@ ThreadHandler::SetBreakpointAndRun(target_addr_t address)
 }
 
 
+/**
+ * @brief Handles a generic "thread is debugged" event by surfacing a stop.
+ *
+ * @param event           The originating event (unused beyond delivery).
+ * @param stoppedReason   Caller-supplied reason string shown to the user.
+ * @return true; the thread should remain stopped.
+ */
 bool
 ThreadHandler::HandleThreadDebugged(ThreadDebuggedEvent* event,
 	const BString& stoppedReason)
@@ -145,6 +228,12 @@ ThreadHandler::HandleThreadDebugged(ThreadDebuggedEvent* event,
 }
 
 
+/**
+ * @brief Handles a debugger() call by reading the message string and stopping.
+ *
+ * @param event  Event carrying the target-side message address.
+ * @return true; the thread remains stopped with the message as the reason.
+ */
 bool
 ThreadHandler::HandleDebuggerCall(DebuggerCallEvent* event)
 {
@@ -154,6 +243,14 @@ ThreadHandler::HandleDebuggerCall(DebuggerCallEvent* event)
 }
 
 
+/**
+ * @brief Handles a breakpoint-hit event, dispatching among step-mode logic,
+ *        spurious-hit handling, and user-breakpoint condition evaluation.
+ *
+ * @param event  Event with the captured CPU state.
+ * @return true if the thread is to remain stopped (or was already resumed by
+ *         the handler internally), false to let the caller continue it.
+ */
 bool
 ThreadHandler::HandleBreakpointHit(BreakpointHitEvent* event)
 {
@@ -215,6 +312,12 @@ ThreadHandler::HandleBreakpointHit(BreakpointHitEvent* event)
 }
 
 
+/**
+ * @brief Handles a watchpoint-hit event by stopping the thread.
+ *
+ * @param event  Event with the captured CPU state.
+ * @return true; the thread remains stopped.
+ */
 bool
 ThreadHandler::HandleWatchpointHit(WatchpointHitEvent* event)
 {
@@ -223,6 +326,14 @@ ThreadHandler::HandleWatchpointHit(WatchpointHitEvent* event)
 }
 
 
+/**
+ * @brief Handles a single-step completion event, routing through step-mode
+ *        logic if a step sequence is in progress.
+ *
+ * @param event  Event with the captured CPU state.
+ * @return true if the handler kept the thread running, false to let the
+ *         normal stop path take over.
+ */
 bool
 ThreadHandler::HandleSingleStep(SingleStepEvent* event)
 {
@@ -237,6 +348,12 @@ ThreadHandler::HandleSingleStep(SingleStepEvent* event)
 }
 
 
+/**
+ * @brief Handles a CPU exception by formatting the exception name as the stop reason.
+ *
+ * @param event  Event describing the exception.
+ * @return true; the thread remains stopped.
+ */
 bool
 ThreadHandler::HandleExceptionOccurred(ExceptionOccurredEvent* event)
 {
@@ -246,6 +363,17 @@ ThreadHandler::HandleExceptionOccurred(ExceptionOccurredEvent* event)
 }
 
 
+/**
+ * @brief Handles a delivered signal according to the team's signal disposition.
+ *
+ * Supports the SIGNAL_DISPOSITION_IGNORE / STOP_AT_SIGNAL_HANDLER /
+ * STOP_AT_RECEIPT settings. For STOP_AT_SIGNAL_HANDLER it installs a
+ * temporary breakpoint at the handler entry and continues; otherwise it
+ * stops the thread with a "Received signal N (name)" reason.
+ *
+ * @param event  Event describing the signal and its handler.
+ * @return true if the handler took action, false to let the team continue.
+ */
 bool
 ThreadHandler::HandleSignalReceived(SignalReceivedEvent* event)
 {
@@ -299,6 +427,21 @@ ThreadHandler::HandleSignalReceived(SignalReceivedEvent* event)
 }
 
 
+/**
+ * @brief Implements user-initiated thread actions: run, stop, set IP,
+ *        step over, step into, step out.
+ *
+ * For step actions the function takes care of acquiring a stack trace if one
+ * is not yet cached, then dispatches to the appropriate strategy: temporary
+ * breakpoint at the return address (step out / syscall return), single-step
+ * with statement-aware stop checking (step into), or step-over via
+ * _DoStepOver(). Falls back to a plain single-step when richer info is
+ * unavailable.
+ *
+ * @param action   One of the MSG_THREAD_* action codes.
+ * @param address  For MSG_THREAD_RUN, optional break-on address; for
+ *                 MSG_THREAD_SET_ADDRESS, the new IP. Ignored otherwise.
+ */
 void
 ThreadHandler::HandleThreadAction(uint32 action, target_addr_t address)
 {
@@ -445,6 +588,13 @@ ThreadHandler::HandleThreadAction(uint32 action, target_addr_t address)
 }
 
 
+/**
+ * @brief Reacts to thread state changes by aborting or scheduling jobs.
+ *
+ * Cancels any in-flight CPU-state and stack-trace jobs (their results are no
+ * longer valid for the new state) and, when the thread has just stopped
+ * without a cached CPU state, schedules a GetCpuStateJob.
+ */
 void
 ThreadHandler::HandleThreadStateChanged()
 {
@@ -464,6 +614,12 @@ ThreadHandler::HandleThreadStateChanged()
 }
 
 
+/**
+ * @brief Reacts to a CPU-state update by scheduling a stack-trace job if needed.
+ *
+ * Cancels any existing stack-trace job and, if the thread now has a CPU
+ * state but still no stack trace, schedules a fresh GetStackTraceJob.
+ */
 void
 ThreadHandler::HandleCpuStateChanged()
 {
@@ -482,12 +638,28 @@ ThreadHandler::HandleCpuStateChanged()
 }
 
 
+/**
+ * @brief Hook for stack-trace-changed events; currently a no-op.
+ */
 void
 ThreadHandler::HandleStackTraceChanged()
 {
 }
 
 
+/**
+ * @brief Returns or schedules generation of debug info for @a image.
+ *
+ * If the image already carries debug info it is returned with a reference; if
+ * not, a load job is scheduled and B_BUSY is returned so the caller can retry
+ * once the listener notifies completion.
+ *
+ * @param image  Image whose debug info is wanted.
+ * @param _info  On success, set to a referenced ImageDebugInfo owned by the
+ *               caller; on B_BUSY left unchanged.
+ * @return B_OK on cached hit, B_BUSY when a job has been scheduled, or any
+ *         error from job scheduling.
+ */
 status_t
 ThreadHandler::GetImageDebugInfo(Image* image, ImageDebugInfo*& _info)
 {
@@ -505,6 +677,17 @@ ThreadHandler::GetImageDebugInfo(Image* image, ImageDebugInfo*& _info)
 }
 
 
+/**
+ * @brief Centralized "stop the thread" path used by every Handle* method.
+ *
+ * Clears any in-progress step state, then transitions the Thread model object
+ * into THREAD_STATE_STOPPED with the supplied reason.
+ *
+ * @param cpuState           Captured CPU state, or NULL if not available.
+ * @param stoppedReason      One of THREAD_STOPPED_*.
+ * @param stoppedReasonInfo  Human-readable supplemental reason.
+ * @return Always true.
+ */
 bool
 ThreadHandler::_HandleThreadStopped(CpuState* cpuState, uint32 stoppedReason,
 	const BString& stoppedReasonInfo)
@@ -520,6 +703,16 @@ ThreadHandler::_HandleThreadStopped(CpuState* cpuState, uint32 stoppedReason,
 }
 
 
+/**
+ * @brief Implements the "set instruction pointer" action.
+ *
+ * Clones @a state, rewrites its IP, pushes the new CPU state to the kernel,
+ * and clears the cached stack trace so the UI rebuilds it.
+ *
+ * @param state    Current CPU state (cloned, not modified).
+ * @param address  New instruction pointer.
+ * @return true on success, false if state cloning or the kernel call failed.
+ */
 bool
 ThreadHandler::_HandleSetAddress(CpuState* state, target_addr_t address)
 {
@@ -540,6 +733,14 @@ ThreadHandler::_HandleSetAddress(CpuState* state, target_addr_t address)
 }
 
 
+/**
+ * @brief Updates the Thread model's recorded state and CPU state in one shot.
+ *
+ * @param state              New THREAD_STATE_*.
+ * @param cpuState           New CPU state to associate, or NULL.
+ * @param stoppedReason      Reason code (only meaningful when stopping).
+ * @param stoppedReasonInfo  Human-readable reason text.
+ */
 void
 ThreadHandler::_SetThreadState(uint32 state, CpuState* cpuState,
 	uint32 stoppedReason, const BString& stoppedReasonInfo)
@@ -549,6 +750,16 @@ ThreadHandler::_SetThreadState(uint32 state, CpuState* cpuState,
 }
 
 
+/**
+ * @brief Resolves the source-level statement covering @a frame 's IP.
+ *
+ * Drops the team lock around the GetStatement() call because that call may
+ * have to read debug info and shouldn't keep the team lock held.
+ *
+ * @param frame  Stack frame whose containing statement should be returned.
+ * @return Referenced Statement on success, NULL if the frame has no
+ *         function or the statement could not be resolved.
+ */
 Statement*
 ThreadHandler::_GetStatementAtInstructionPointer(StackFrame* frame)
 {
@@ -583,6 +794,12 @@ ThreadHandler::_GetStatementAtInstructionPointer(StackFrame* frame)
 }
 
 
+/**
+ * @brief Last-resort step path: clear step mode and emit a single-step.
+ *
+ * Used when statement-level info is unavailable so the user still gets some
+ * forward motion at the instruction level.
+ */
 void
 ThreadHandler::_StepFallback()
 {
@@ -591,6 +808,15 @@ ThreadHandler::_StepFallback()
 }
 
 
+/**
+ * @brief Implements step-over: single-step unless the IP names a subroutine
+ *        call, in which case install a temporary breakpoint at the return
+ *        site and resume.
+ *
+ * @param cpuState  CPU state at the current IP.
+ * @return true if a stepping action (single-step or run-to-bp) was issued,
+ *         false if instruction-info retrieval or breakpoint install failed.
+ */
 bool
 ThreadHandler::_DoStepOver(CpuState* cpuState)
 {
@@ -627,6 +853,12 @@ ThreadHandler::_DoStepOver(CpuState* cpuState)
 }
 
 
+/**
+ * @brief Replaces any prior temporary breakpoint with a new one at @a address.
+ *
+ * @param address  Address to break on.
+ * @return B_OK on success or any error from the breakpoint manager.
+ */
 status_t
 ThreadHandler::_InstallTemporaryBreakpoint(target_addr_t address)
 {
@@ -642,6 +874,9 @@ ThreadHandler::_InstallTemporaryBreakpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief Drops the currently-installed temporary breakpoint, if any.
+ */
 void
 ThreadHandler::_UninstallTemporaryBreakpoint()
 {
@@ -653,6 +888,10 @@ ThreadHandler::_UninstallTemporaryBreakpoint()
 }
 
 
+/**
+ * @brief Resets every piece of in-progress step state so the next event is
+ *        treated as a fresh stop.
+ */
 void
 ThreadHandler::_ClearContinuationState()
 {
@@ -668,6 +907,11 @@ ThreadHandler::_ClearContinuationState()
 }
 
 
+/**
+ * @brief Resumes the thread (no single-step) and remembers the previous IP.
+ *
+ * @param instructionPointer  IP to record as the previous IP.
+ */
 void
 ThreadHandler::_RunThread(target_addr_t instructionPointer)
 {
@@ -677,6 +921,11 @@ ThreadHandler::_RunThread(target_addr_t instructionPointer)
 }
 
 
+/**
+ * @brief Single-steps the thread and remembers the previous IP.
+ *
+ * @param instructionPointer  IP to record as the previous IP.
+ */
 void
 ThreadHandler::_SingleStepThread(target_addr_t instructionPointer)
 {
@@ -686,6 +935,22 @@ ThreadHandler::_SingleStepThread(target_addr_t instructionPointer)
 }
 
 
+/**
+ * @brief Decides what to do when a temporary breakpoint installed for stepping
+ *        is hit.
+ *
+ * Handles three step modes:
+ *  - STEP_OVER: if we left the original frame (recursion etc.) reinstall the
+ *    breakpoint at the new IP and resume; otherwise check whether we left
+ *    the original statement and step further if not.
+ *  - STEP_INTO: never reaches here; returns false.
+ *  - STEP_OUT: confirm the originating frame was actually exited (recursion
+ *    safe), record any return-value info, and let the caller stop.
+ *
+ * @param cpuState  CPU state at the breakpoint hit.
+ * @return true if the handler resumed the thread, false if the caller should
+ *         deliver a stop.
+ */
 bool
 ThreadHandler::_HandleBreakpointHitStep(CpuState* cpuState)
 {
@@ -797,6 +1062,18 @@ ThreadHandler::_HandleBreakpointHitStep(CpuState* cpuState)
 }
 
 
+/**
+ * @brief Decides what to do after a single-step completes during stepping.
+ *
+ * For STEP_INTO, keeps single-stepping while the IP stays inside the
+ * original statement and keeps stepping past PLT trampolines so the user
+ * lands in the actual called function. For STEP_OVER, stops once the IP
+ * leaves the original statement, otherwise re-issues a step-over. STEP_OUT
+ * never single-steps and always returns false here.
+ *
+ * @param cpuState  CPU state after the step.
+ * @return true if the handler kept the thread running, false to deliver a stop.
+ */
 bool
 ThreadHandler::_HandleSingleStepStep(CpuState* cpuState)
 {
@@ -889,6 +1166,18 @@ ThreadHandler::_HandleSingleStepStep(CpuState* cpuState)
 }
 
 
+/**
+ * @brief Evaluates any user-supplied condition attached to the breakpoint at
+ *        the current IP and either resumes or stops the thread.
+ *
+ * Builds a stack trace if one isn't cached, locates a SourceLanguage for the
+ * containing function, then schedules an ExpressionEvaluationJob. Blocks on
+ * fConditionWaitSem until _HandleBreakpointConditionEvaluated() wakes it.
+ *
+ * @param cpuState  CPU state at the breakpoint hit.
+ * @return true if the breakpoint condition evaluated to "skip" and the
+ *         thread was resumed, false to let the normal stop path take over.
+ */
 bool
 ThreadHandler::_HandleBreakpointConditionIfNeeded(CpuState* cpuState)
 {
@@ -992,6 +1281,11 @@ ThreadHandler::_HandleBreakpointConditionIfNeeded(CpuState* cpuState)
 }
 
 
+/**
+ * @brief Stores the evaluated condition result and wakes _HandleBreakpointConditionIfNeeded().
+ *
+ * @param value  Evaluated expression result; the handler acquires a reference.
+ */
 void
 ThreadHandler::_HandleBreakpointConditionEvaluated(ExpressionResult* value)
 {
@@ -1002,6 +1296,14 @@ ThreadHandler::_HandleBreakpointConditionEvaluated(ExpressionResult* value)
 }
 
 
+/**
+ * @brief Translates the cached condition result into a stop/continue decision.
+ *
+ * On NULL or non-primitive results behaves like an unconditional breakpoint
+ * and stops; otherwise stops only when the value is non-zero.
+ *
+ * @return true to stop the thread, false to continue.
+ */
 bool
 ThreadHandler::_CheckStopCondition()
 {
@@ -1021,6 +1323,16 @@ ThreadHandler::_CheckStopCondition()
 }
 
 
+/**
+ * @brief Tells whether @a framePointer indicates that the thread has exited
+ *        the previously-recorded frame.
+ *
+ * Direction-aware: a positive-growth stack means the new frame pointer must
+ * be smaller than the previous one, and the reverse for negative growth.
+ *
+ * @param framePointer  Current stack frame pointer.
+ * @return true if the frame is on the outer side of fPreviousFrameAddress.
+ */
 bool
 ThreadHandler::_HasExitedFrame(target_addr_t framePointer) const
 {

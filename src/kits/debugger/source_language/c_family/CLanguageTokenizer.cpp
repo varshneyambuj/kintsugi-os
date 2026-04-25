@@ -1,12 +1,44 @@
 /*
- * Copyright 2006-2014 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Rene Gollent <rene@gollent.com>
- *		John Scipione <jscipione@gmail.com>
- *		Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2006-2014 Haiku, Inc. All Rights Reserved.
+ *   Distributed under the terms of the MIT License.
+ *
+ *   Authors:
+ *       Stephan Aßmus <superstippi@gmx.de>
+ *       Rene Gollent <rene@gollent.com>
+ *       John Scipione <jscipione@gmail.com>
+ *       Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ */
+
+
+/**
+ * @file CLanguageTokenizer.cpp
+ * @brief Hand-written lexer for the debugger's C/C++ expression language.
+ *
+ * Tokenizer steps a cursor through an in-memory expression string and
+ * produces a stream of Tokens consumed by CLanguageExpressionEvaluator and
+ * the syntax highlighter. It recognises identifiers, decimal/hex/float
+ * numeric constants, string literals, every C operator the evaluator
+ * supports, and the punctuation needed for casts and member access. On
+ * malformed input it throws ParseException with a column position.
  */
 
 
@@ -25,6 +57,9 @@ using CLanguage::Tokenizer;
 // #pragma mark - Token
 
 
+/**
+ * @brief Construct an empty token of type @c TOKEN_NONE.
+ */
 Token::Token()
 	:
 	string(""),
@@ -35,6 +70,11 @@ Token::Token()
 }
 
 
+/**
+ * @brief Copy-construct a Token from @a other.
+ *
+ * @param other  Source token whose fields are duplicated.
+ */
 Token::Token(const Token& other)
 	:
 	string(other.string),
@@ -45,6 +85,14 @@ Token::Token(const Token& other)
 }
 
 
+/**
+ * @brief Construct a Token from raw input.
+ *
+ * @param string    Pointer to the start of the token's text in the buffer.
+ * @param length    Number of characters in the token.
+ * @param position  Column position where the token begins.
+ * @param type      One of the @c TOKEN_* enumerators.
+ */
 Token::Token(const char* string, int32 length, int32 position, int32 type)
 	:
 	string(string, length),
@@ -55,6 +103,12 @@ Token::Token(const char* string, int32 length, int32 position, int32 type)
 }
 
 
+/**
+ * @brief Copy-assignment.
+ *
+ * @param other  Source token whose fields replace this token's state.
+ * @return Reference to @c *this.
+ */
 Token&
 Token::operator=(const Token& other)
 {
@@ -69,6 +123,11 @@ Token::operator=(const Token& other)
 // #pragma mark - Tokenizer
 
 
+/**
+ * @brief Construct a Tokenizer with no input attached.
+ *
+ * The tokeniser must be primed via SetTo() before NextToken() is called.
+ */
 Tokenizer::Tokenizer()
 	:
 	fString(""),
@@ -79,6 +138,15 @@ Tokenizer::Tokenizer()
 }
 
 
+/**
+ * @brief Bind the tokeniser to a new expression string.
+ *
+ * Resets the cursor and the cached current token. The supplied string must
+ * remain valid for the lifetime of the next sequence of NextToken() calls;
+ * an internal BString copy is made.
+ *
+ * @param string  Null-terminated expression text to tokenise.
+ */
 void
 Tokenizer::SetTo(const char* string)
 {
@@ -89,6 +157,19 @@ Tokenizer::SetTo(const char* string)
 }
 
 
+/**
+ * @brief Advances the cursor and returns the next token.
+ *
+ * Skips whitespace, classifies the next character, and dispatches to the
+ * appropriate sub-parser (numeric constant / hex constant / identifier /
+ * string literal / operator / punctuation). At end of input the cached
+ * @c TOKEN_END_OF_LINE is returned repeatedly. RewindToken() makes the
+ * subsequent call re-emit the same token.
+ *
+ * @return Reference to the cached current token.
+ * @note Throws @c ParseException on malformed numeric constants or
+ *       unexpected characters.
+ */
 const Token&
 Tokenizer::NextToken()
 {
@@ -260,6 +341,16 @@ Tokenizer::NextToken()
 }
 
 
+/**
+ * @brief Attempts to consume a one- or two-character operator.
+ *
+ * Recognises arithmetic, bitwise, logical, comparison, member-access, and
+ * comment-marker operators (e.g. @c +, @c ->, @c &&, @c <=, @c \/\* and
+ * @c \*\/). On a match the current token is updated and the cursor
+ * advanced; otherwise the cursor is left untouched.
+ *
+ * @return @c true when an operator was consumed, @c false otherwise.
+ */
 bool
 Tokenizer::_ParseOperator()
 {
@@ -411,6 +502,11 @@ Tokenizer::_ParseOperator()
 }
 
 
+/**
+ * @brief Causes the next NextToken() call to re-emit the cached token.
+ *
+ * Used by recursive-descent parsers that need a one-token lookahead.
+ */
 void
 Tokenizer::RewindToken()
 {
@@ -418,6 +514,11 @@ Tokenizer::RewindToken()
 }
 
 
+/**
+ * @brief Returns the character one position past the current cursor.
+ *
+ * @return Lookahead character, or @c '\0' at end of input.
+ */
 char
 Tokenizer::_Peek() const
 {
@@ -428,6 +529,11 @@ Tokenizer::_Peek() const
 }
 
 
+/**
+ * @brief Returns @c true when @a c is a hexadecimal digit (0-9, a-f, A-F).
+ *
+ * @param c  Character to test.
+ */
 /*static*/ bool
 Tokenizer::_IsHexDigit(char c)
 {
@@ -435,6 +541,15 @@ Tokenizer::_IsHexDigit(char c)
 }
 
 
+/**
+ * @brief Consumes a @c 0x-prefixed hexadecimal constant.
+ *
+ * The numeric value is stored on the token as either @c uint32 or @c uint64
+ * depending on the token width.
+ *
+ * @return Reference to the updated current token.
+ * @note Throws @c ParseException when no hex digits follow @c 0x.
+ */
 Token&
 Tokenizer::_ParseHexOperand()
 {
@@ -466,6 +581,11 @@ Tokenizer::_ParseHexOperand()
 }
 
 
+/**
+ * @brief Returns the current cursor position as a column offset.
+ *
+ * @return Number of characters consumed so far.
+ */
 int32
 Tokenizer::_CurrentPos() const
 {

@@ -1,7 +1,27 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold.
  */
+
+/** @file AttributeValue.h
+    @brief Discriminated-union wrappers describing parsed DWARF DIE attribute values. */
+
 #ifndef ATTRIBUTE_VALUE_H
 #define ATTRIBUTE_VALUE_H
 
@@ -12,6 +32,12 @@
 class DebugInfoEntry;
 
 
+/**
+ * @brief Discriminated union covering every DWARF attribute-class payload.
+ *
+ * Used during parsing to deliver an attribute's value to its owning DIE,
+ * which then routes it into its specialised typed storage.
+ */
 struct AttributeValue {
 	union {
 		target_addr_t		address;
@@ -150,6 +176,12 @@ struct AttributeValue {
 };
 
 
+/**
+ * @brief Smaller value carrier for attributes that may resolve dynamically.
+ *
+ * Stores a constant, a DIE reference, or a block; used for attributes
+ * whose value can be a constant expression or a DIE-bound expression.
+ */
 struct DynamicAttributeValue {
 	union {
 		uint64				constant;
@@ -194,6 +226,9 @@ struct DynamicAttributeValue {
 };
 
 
+/**
+ * @brief Compile-time constant attribute value (constant, string, or block).
+ */
 struct ConstantAttributeValue {
 	union {
 		uint64				constant;
@@ -237,6 +272,11 @@ struct ConstantAttributeValue {
 };
 
 
+/**
+ * @brief Member-offset description: constant, expression, or location list.
+ *
+ * Mirrors the three possible forms of DW_AT_data_member_location.
+ */
 struct MemberLocation {
 	union {
 		uint64				constant;
@@ -296,6 +336,11 @@ struct MemberLocation {
 };
 
 
+/**
+ * @brief Location description: either an inline expression or a location list.
+ *
+ * Mirrors the two forms of DW_AT_location.
+ */
 struct LocationDescription {
 	union {
 		off_t			listOffset;	// location list
@@ -345,6 +390,12 @@ struct LocationDescription {
 };
 
 
+/**
+ * @brief Source-file declaration location (file/line/column triple).
+ *
+ * Stores the DW_AT_decl_file / DW_AT_decl_line / DW_AT_decl_column
+ * attributes as 0xffffffff-sentinelled fields.
+ */
 struct DeclarationLocation {
 	uint32	file;
 	uint32	line;

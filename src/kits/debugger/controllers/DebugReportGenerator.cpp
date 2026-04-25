@@ -1,6 +1,40 @@
 /*
- * Copyright 2012-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012-2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DebugReportGenerator.cpp
+ * @brief Asynchronous helper that walks a debugged Team and emits a textual
+ *        crash/state report.
+ *
+ * The generator runs in its own BLooper. _GenerateReport() blocks on a
+ * semaphore while it waits for asynchronous data the team must produce
+ * (resolved value nodes, retrieved memory blocks, lazily-loaded source) and
+ * is woken by the corresponding listener callbacks. The result is a multi-
+ * section text report covering the system header, loaded images, areas,
+ * semaphores, every thread (including disassembly and stack-frame memory
+ * dumps for the focused thread), suitable for pasting into a bug report.
  */
 
 
@@ -43,6 +77,10 @@
 #include "ValueNodeManager.h"
 
 
+/**
+ * @brief Writes @a data into @a output and returns from the enclosing function
+ *        if the write fails. Used everywhere a section emits text.
+ */
 #define WRITE_AND_CHECK(output, data) \
 	{ \
 		ssize_t error = output.Write(data.String(), data.Length()); \
@@ -51,6 +89,15 @@
 	}
 
 
+/**
+ * @brief Constructs the generator and registers it as a listener of the team
+ *        and architecture it will report on.
+ *
+ * @param team       Team to report on; the generator becomes a Team::Listener.
+ * @param listener   UI-level listener used to drive on-demand operations such
+ *                   as stack-trace and source-code resolution.
+ * @param interface  Debugger interface used for memory/area/semaphore queries.
+ */
 DebugReportGenerator::DebugReportGenerator(::Team* team,
 	UserInterfaceListener* listener, DebuggerInterface* interface)
 	:
@@ -72,6 +119,11 @@ DebugReportGenerator::DebugReportGenerator(::Team* team,
 }
 
 
+/**
+ * @brief Tears down the generator after detaching from the team and dropping
+ *        any in-flight memory block, semaphore, and value-node-manager
+ *        references.
+ */
 DebugReportGenerator::~DebugReportGenerator()
 {
 	fTeam->RemoveListener(this);
@@ -89,6 +141,12 @@ DebugReportGenerator::~DebugReportGenerator()
 }
 
 
+/**
+ * @brief Allocates the wait semaphore and value-node manager and starts the looper.
+ *
+ * @return B_OK on success, an error from create_sem(), or B_NO_MEMORY if the
+ *         value-node manager cannot be allocated.
+ */
 status_t
 DebugReportGenerator::Init()
 {
@@ -108,6 +166,15 @@ DebugReportGenerator::Init()
 }
 
 
+/**
+ * @brief Convenience factory that constructs and initializes a generator in one step.
+ *
+ * @param team       Team to report on.
+ * @param listener   UI-level listener used during report generation.
+ * @param interface  Debugger interface used for off-team queries.
+ * @return Newly-allocated generator running on its own looper.
+ * @note Caller takes ownership; rethrows on failure after deleting the half-built object.
+ */
 DebugReportGenerator*
 DebugReportGenerator::Create(::Team* team, UserInterfaceListener* listener,
 	DebuggerInterface* interface)
@@ -126,6 +193,18 @@ DebugReportGenerator::Create(::Team* team, UserInterfaceListener* listener,
 }
 
 
+/**
+ * @brief Drives the full report generation pipeline against @a outputPath.
+ *
+ * Truncates or creates the output file, then emits the header, running-thread
+ * dump (which carries the heaviest payload), image list, areas, and
+ * semaphores. On success the team is notified so any UI listening for the
+ * outcome can refresh.
+ *
+ * @param outputPath  Filesystem path to write the report to.
+ * @return B_OK on success, the InitCheck() error from the BFile, or any
+ *         section-level error if a dump helper fails.
+ */
 status_t
 DebugReportGenerator::_GenerateReport(const char* outputPath)
 {
@@ -161,6 +240,13 @@ DebugReportGenerator::_GenerateReport(const char* outputPath)
 }
 
 
+/**
+ * @brief BLooper hook: handles MSG_GENERATE_DEBUG_REPORT requests.
+ *
+ * @param message  Incoming message; for MSG_GENERATE_DEBUG_REPORT the "target"
+ *                 entry_ref names the output file. Other codes are forwarded
+ *                 to BLooper.
+ */
 void
 DebugReportGenerator::MessageReceived(BMessage* message)
 {
@@ -184,6 +270,11 @@ DebugReportGenerator::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Team listener hook: wakes the generator when the awaited stack trace arrives.
+ *
+ * @param event  Stack-trace-change event delivered by the Team.
+ */
 void
 DebugReportGenerator::ThreadStackTraceChanged(const ::Team::ThreadEvent& event)
 {
@@ -194,6 +285,12 @@ DebugReportGenerator::ThreadStackTraceChanged(const ::Team::ThreadEvent& event)
 }
 
 
+/**
+ * @brief Memory-block listener hook: forwards a successful retrieval to the
+ *        common handler.
+ *
+ * @param block  Block whose contents have been read from the team.
+ */
 void
 DebugReportGenerator::MemoryBlockRetrieved(TeamMemoryBlock* block)
 {
@@ -201,6 +298,12 @@ DebugReportGenerator::MemoryBlockRetrieved(TeamMemoryBlock* block)
 }
 
 
+/**
+ * @brief Memory-block listener hook: forwards a failed retrieval with status code.
+ *
+ * @param block   Block whose retrieval failed.
+ * @param result  Failure status code.
+ */
 void
 DebugReportGenerator::MemoryBlockRetrievalFailed(TeamMemoryBlock* block,
 	status_t result)
@@ -209,6 +312,11 @@ DebugReportGenerator::MemoryBlockRetrievalFailed(TeamMemoryBlock* block,
 }
 
 
+/**
+ * @brief Value-node listener hook: wakes the generator when the awaited node resolves.
+ *
+ * @param node  Value node whose value just became available.
+ */
 void
 DebugReportGenerator::ValueNodeValueChanged(ValueNode* node)
 {
@@ -219,6 +327,12 @@ DebugReportGenerator::ValueNodeValueChanged(ValueNode* node)
 }
 
 
+/**
+ * @brief Function listener hook: wakes the generator once source-code state
+ *        reaches a terminal value (loaded, suppressed, or unavailable).
+ *
+ * @param function  Function whose source-code state has changed.
+ */
 void
 DebugReportGenerator::FunctionSourceCodeChanged(Function* function)
 {
@@ -242,6 +356,14 @@ DebugReportGenerator::FunctionSourceCodeChanged(Function* function)
 	}
 }
 
+/**
+ * @brief Emits the report's preamble: team name/id, CPU description, memory
+ *        usage, and host system identification.
+ *
+ * @param _output  File to write to.
+ * @return B_OK on success, an error from any failed write, or B_NO_MEMORY if
+ *         the CPU topology buffer cannot be allocated.
+ */
 status_t
 DebugReportGenerator::_GenerateReportHeader(BFile& _output)
 {
@@ -317,6 +439,12 @@ DebugReportGenerator::_GenerateReportHeader(BFile& _output)
 }
 
 
+/**
+ * @brief Emits a sorted table of every image currently loaded in the team.
+ *
+ * @param _output  File to write to.
+ * @return B_OK on success, or any error from the underlying write calls.
+ */
 status_t
 DebugReportGenerator::_DumpLoadedImages(BFile& _output)
 {
@@ -364,6 +492,12 @@ DebugReportGenerator::_DumpLoadedImages(BFile& _output)
 }
 
 
+/**
+ * @brief Emits a sorted table of every area mapped in the team.
+ *
+ * @param _output  File to write to.
+ * @return B_OK on success, an error from GetAreaInfos(), or any write error.
+ */
 status_t
 DebugReportGenerator::_DumpAreas(BFile& _output)
 {
@@ -410,6 +544,12 @@ DebugReportGenerator::_DumpAreas(BFile& _output)
 }
 
 
+/**
+ * @brief Emits a sorted table of every semaphore owned by the team.
+ *
+ * @param _output  File to write to.
+ * @return B_OK on success, an error from GetSemaphoreInfos(), or any write error.
+ */
 status_t
 DebugReportGenerator::_DumpSemaphores(BFile& _output)
 {
@@ -445,6 +585,14 @@ DebugReportGenerator::_DumpSemaphores(BFile& _output)
 }
 
 
+/**
+ * @brief Emits a per-thread block listing every active thread, with a deep
+ *        dump for any thread that is currently stopped.
+ *
+ * @param _output  File to write to.
+ * @return B_OK on success, B_NO_MEMORY on string allocation failure, or any
+ *         error returned by _DumpDebuggedThreadInfo().
+ */
 status_t
 DebugReportGenerator::_DumpRunningThreads(BFile& _output)
 {
@@ -500,6 +648,20 @@ DebugReportGenerator::_DumpRunningThreads(BFile& _output)
 }
 
 
+/**
+ * @brief Dumps the focused-thread report: stack trace, per-frame source
+ *        location, register state, disassembly, variables, and stack memory.
+ *
+ * Blocks (via fTeamDataSem) while waiting for a stack trace and for any
+ * functions whose source code must be loaded on demand. Releases the team
+ * lock around those waits so the rest of the debugger keeps running.
+ *
+ * @param _output  File to write to.
+ * @param thread   Thread whose detailed state should be emitted; must be in
+ *                 THREAD_STATE_STOPPED.
+ * @return B_OK on success, or any error from a blocked semaphore wait, value
+ *         resolution, source loading, or write call.
+ */
 status_t
 DebugReportGenerator::_DumpDebuggedThreadInfo(BFile& _output,
 	::Thread* thread)
@@ -655,6 +817,19 @@ DebugReportGenerator::_DumpDebuggedThreadInfo(BFile& _output,
 }
 
 
+/**
+ * @brief Emits the disassembly of the function containing @a instructionPointer
+ *        up to and including the line that contains it.
+ *
+ * Falls back to a "not available" line whenever any required piece (image,
+ * debug info, function instance, statement) is missing — this never returns
+ * an error to its caller in those cases.
+ *
+ * @param _output             File to write to.
+ * @param instructionPointer  Faulting instruction address.
+ * @return B_OK on success or whenever the fallback path runs; an error from
+ *         underlying writes if those fail.
+ */
 status_t
 DebugReportGenerator::_DumpFunctionDisassembly(BFile& _output,
 	target_addr_t instructionPointer)
@@ -734,6 +909,18 @@ DebugReportGenerator::_DumpFunctionDisassembly(BFile& _output,
 }
 
 
+/**
+ * @brief Dumps the bytes between the stack pointer and frame pointer in
+ *        16-byte rows, fetching the underlying memory block on demand.
+ *
+ * @param _output         File to write to.
+ * @param state           CPU state used to locate the stack pointer.
+ * @param framePointer    Frame pointer used as the upper or lower bound
+ *                        depending on the stack direction.
+ * @param stackDirection  Architecture-defined stack direction; selects the
+ *                        ordering of @a framePointer relative to the stack pointer.
+ * @return B_OK on success or any error from a blocking memory-block wait.
+ */
 status_t
 DebugReportGenerator::_DumpStackFrameMemory(BFile& _output,
 	CpuState* state, target_addr_t framePointer, uint8 stackDirection)
@@ -779,6 +966,20 @@ DebugReportGenerator::_DumpStackFrameMemory(BFile& _output,
 }
 
 
+/**
+ * @brief Forces resolution of a value node (and optionally its descendants)
+ *        before printing it into the report.
+ *
+ * Triggers ValueNodeManager work via the UI listener and blocks until the
+ * value-changed callback fires. Recurses up to @a maxDepth levels through the
+ * node's children so that aggregate values are pre-resolved before the dump.
+ *
+ * @param node      Value node whose value should be resolved.
+ * @param frame     Stack frame providing the resolution context.
+ * @param maxDepth  Maximum recursion depth into children.
+ * @return B_OK on success or any error from semaphore waits or the underlying
+ *         resolution path.
+ */
 status_t
 DebugReportGenerator::_ResolveValueIfNeeded(ValueNode* node, StackFrame* frame,
 	int32 maxDepth)
@@ -820,6 +1021,14 @@ DebugReportGenerator::_ResolveValueIfNeeded(ValueNode* node, StackFrame* frame,
 }
 
 
+/**
+ * @brief Stores the freshly-retrieved memory block (or failure status) and
+ *        wakes the waiting generator thread.
+ *
+ * @param block   New current block; ownership of the reference passes to the
+ *                generator and the previous block is released.
+ * @param result  Status from the retrieval; cached for the dump path to read.
+ */
 void
 DebugReportGenerator::_HandleMemoryBlockRetrieved(TeamMemoryBlock* block,
 	status_t result)
@@ -837,6 +1046,13 @@ DebugReportGenerator::_HandleMemoryBlockRetrieved(TeamMemoryBlock* block,
 
 
 
+/**
+ * @brief Comparator that orders AreaInfo objects by base address ascending.
+ *
+ * @param a  Left-hand area.
+ * @param b  Right-hand area.
+ * @return -1 if @a a precedes @a b, 1 otherwise.
+ */
 /*static*/ int
 DebugReportGenerator::_CompareAreas(const AreaInfo* a, const AreaInfo* b)
 {
@@ -847,6 +1063,13 @@ DebugReportGenerator::_CompareAreas(const AreaInfo* a, const AreaInfo* b)
 }
 
 
+/**
+ * @brief Comparator that orders Image objects by text-base ascending.
+ *
+ * @param a  Left-hand image.
+ * @param b  Right-hand image.
+ * @return -1 if @a a precedes @a b, 1 otherwise.
+ */
 /*static*/ int
 DebugReportGenerator::_CompareImages(const Image* a, const Image* b)
 {
@@ -857,6 +1080,13 @@ DebugReportGenerator::_CompareImages(const Image* a, const Image* b)
 }
 
 
+/**
+ * @brief Comparator that orders semaphores by id ascending.
+ *
+ * @param a  Left-hand semaphore.
+ * @param b  Right-hand semaphore.
+ * @return -1 if @a a precedes @a b, 1 otherwise.
+ */
 /*static*/ int
 DebugReportGenerator::_CompareSemaphores(const SemaphoreInfo* a,
 	const SemaphoreInfo* b)
@@ -868,6 +1098,14 @@ DebugReportGenerator::_CompareSemaphores(const SemaphoreInfo* a,
 }
 
 
+/**
+ * @brief Comparator that orders threads with running threads first and
+ *        stopped threads last; ties break by thread id.
+ *
+ * @param a  Left-hand thread.
+ * @param b  Right-hand thread.
+ * @return -1 or 1 according to the rule above.
+ */
 /*static*/ int
 DebugReportGenerator::_CompareThreads(const ::Thread* a,
 	const ::Thread* b)

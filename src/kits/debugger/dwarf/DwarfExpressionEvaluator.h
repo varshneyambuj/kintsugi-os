@@ -1,7 +1,27 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold.
  */
+
+/** @file DwarfExpressionEvaluator.h
+    @brief Stack-machine evaluator for DWARF location and expression byte streams. */
+
 #ifndef DWARF_EXPRESSION_EVALUATOR_H
 #define DWARF_EXPRESSION_EVALUATOR_H
 
@@ -15,6 +35,13 @@ class ValueLocation;
 struct ValuePieceLocation;
 
 
+/**
+ * @brief Pluggable context the evaluator uses to query the inferior process.
+ *
+ * Concrete subclasses provide the object address, frame address, frame
+ * base, TLS lookup, and DW_OP_call_* target resolution.  The evaluator
+ * remains agnostic of the surrounding debugger machinery.
+ */
 class DwarfExpressionEvaluationContext {
 public:
 								DwarfExpressionEvaluationContext(
@@ -55,6 +82,14 @@ protected:
 };
 
 
+/**
+ * @brief Stack-machine interpreter for DW_OP_* expression byte streams.
+ *
+ * Used both for value-producing expressions (Evaluate) and for
+ * location-producing ones (EvaluateLocation, which preserves register
+ * numbers and bit-piece descriptors so callers can still inspect
+ * register-resident values).
+ */
 class DwarfExpressionEvaluator {
 public:
 								DwarfExpressionEvaluator(

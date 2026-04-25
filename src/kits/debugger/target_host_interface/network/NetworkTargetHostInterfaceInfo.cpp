@@ -1,7 +1,37 @@
 /*
- * Copyright 2016-2017, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016-2017, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file NetworkTargetHostInterfaceInfo.cpp
+ * @brief Descriptor implementation for the network-attached debugger transport.
+ *
+ * Publishes a settings schema (hostname + port) and constructs
+ * NetworkTargetHostInterface instances configured from that schema.
+ */
+
+
 #include "NetworkTargetHostInterfaceInfo.h"
 
 #include <AutoDeleter.h>
@@ -12,10 +42,15 @@
 #include "Setting.h"
 
 
+/** @brief Settings key used to identify the remote host name. */
 static const char* kHostnameSetting = "hostname";
+/** @brief Settings key used to identify the remote TCP port. */
 static const char* kPortSetting = "port";
 
 
+/**
+ * @brief Constructs the descriptor with the user-visible name "Network".
+ */
 NetworkTargetHostInterfaceInfo::NetworkTargetHostInterfaceInfo()
 	:
 	TargetHostInterfaceInfo("Network"),
@@ -24,6 +59,9 @@ NetworkTargetHostInterfaceInfo::NetworkTargetHostInterfaceInfo()
 }
 
 
+/**
+ * @brief Releases the cached settings description if present.
+ */
 NetworkTargetHostInterfaceInfo::~NetworkTargetHostInterfaceInfo()
 {
 	if (fDescription != NULL)
@@ -31,6 +69,11 @@ NetworkTargetHostInterfaceInfo::~NetworkTargetHostInterfaceInfo()
 }
 
 
+/**
+ * @brief Builds the settings schema describing hostname and port.
+ *
+ * @return B_OK on success, B_NO_MEMORY if any settings object cannot be allocated.
+ */
 status_t
 NetworkTargetHostInterfaceInfo::Init()
 {
@@ -59,6 +102,11 @@ NetworkTargetHostInterfaceInfo::Init()
 }
 
 
+/**
+ * @brief Identifies this descriptor as describing a remote transport.
+ *
+ * @return Always false.
+ */
 bool
 NetworkTargetHostInterfaceInfo::IsLocal() const
 {
@@ -66,6 +114,12 @@ NetworkTargetHostInterfaceInfo::IsLocal() const
 }
 
 
+/**
+ * @brief Validates that @a settings carries a non-empty host name and a numeric port.
+ *
+ * @param settings  Settings instance to inspect.
+ * @return true if the settings are usable, false otherwise.
+ */
 bool
 NetworkTargetHostInterfaceInfo::IsConfigured(Settings* settings) const
 {
@@ -82,6 +136,12 @@ NetworkTargetHostInterfaceInfo::IsConfigured(Settings* settings) const
 }
 
 
+/**
+ * @brief Returns the settings schema produced by Init().
+ *
+ * @return Borrowed pointer to the cached SettingsDescription, or @c NULL if
+ *         Init() has not yet succeeded.
+ */
 SettingsDescription*
 NetworkTargetHostInterfaceInfo::GetSettingsDescription() const
 {
@@ -89,6 +149,16 @@ NetworkTargetHostInterfaceInfo::GetSettingsDescription() const
 }
 
 
+/**
+ * @brief Builds a new NetworkTargetHostInterface from the descriptor.
+ *
+ * @param settings    Settings carrying the connection parameters; passed through
+ *                    to the interface's Init().
+ * @param _interface  On success, set to the freshly-initialized interface;
+ *                    ownership transfers to the caller.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+ *         propagated from NetworkTargetHostInterface::Init().
+ */
 status_t
 NetworkTargetHostInterfaceInfo::CreateInterface(Settings* settings,
 	TargetHostInterface*& _interface) const

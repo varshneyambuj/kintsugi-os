@@ -1,8 +1,27 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold; Copyright 2013, Rene Gollent.
  */
+
+/** @file DebugEvent.h
+    @brief Polymorphic class hierarchy describing events raised by a debugged team. */
+
 #ifndef DEBUG_EVENT_H
 #define DEBUG_EVENT_H
 
@@ -25,6 +44,8 @@ enum {
 };
 
 
+/** @brief Base class for all debugger events; carries event type plus the team
+           and thread that produced it. */
 class DebugEvent {
 public:
 								DebugEvent(int32 eventType,
@@ -46,6 +67,7 @@ private:
 };
 
 
+/** @brief DebugEvent that carries an attached CpuState snapshot for the thread. */
 class CpuStateEvent : public DebugEvent {
 public:
 								CpuStateEvent(debug_debugger_message eventType,
@@ -60,6 +82,7 @@ private:
 };
 
 
+/** @brief Event signaling that a thread has entered debugged state. */
 class ThreadDebuggedEvent : public DebugEvent {
 public:
 								ThreadDebuggedEvent(team_id team,
@@ -67,6 +90,7 @@ public:
 };
 
 
+/** @brief Event raised when the team called debugger() with a diagnostic message. */
 class DebuggerCallEvent : public DebugEvent {
 public:
 								DebuggerCallEvent(team_id team,
@@ -79,6 +103,7 @@ private:
 };
 
 
+/** @brief Event raised when an installed breakpoint fires in a thread. */
 class BreakpointHitEvent : public CpuStateEvent {
 public:
 								BreakpointHitEvent(team_id team,
@@ -86,6 +111,7 @@ public:
 };
 
 
+/** @brief Event raised when a hardware watchpoint fires in a thread. */
 class WatchpointHitEvent : public CpuStateEvent {
 public:
 								WatchpointHitEvent(team_id team,
@@ -93,6 +119,7 @@ public:
 };
 
 
+/** @brief Event raised after the kernel completes a single-step request. */
 class SingleStepEvent : public CpuStateEvent {
 public:
 								SingleStepEvent(team_id team,
@@ -100,6 +127,7 @@ public:
 };
 
 
+/** @brief Event raised when the thread takes a CPU exception (page fault, etc.). */
 class ExceptionOccurredEvent : public DebugEvent {
 public:
 								ExceptionOccurredEvent(team_id team,
@@ -113,6 +141,7 @@ private:
 };
 
 
+/** @brief Event raised when the debugged team has exited. */
 class TeamDeletedEvent : public DebugEvent {
 public:
 								TeamDeletedEvent(team_id team,
@@ -120,12 +149,14 @@ public:
 };
 
 
+/** @brief Event raised when the team performs an exec() and replaces its image. */
 class TeamExecEvent : public DebugEvent {
 public:
 								TeamExecEvent(team_id team, thread_id thread);
 };
 
 
+/** @brief Event raised when a new thread is spawned in the debugged team. */
 class ThreadCreatedEvent : public DebugEvent {
 public:
 								ThreadCreatedEvent(team_id team,
@@ -138,6 +169,7 @@ private:
 };
 
 
+/** @brief Synthetic event reporting that a thread's name has been changed. */
 class ThreadRenamedEvent : public DebugEvent {
 public:
 								ThreadRenamedEvent(team_id team,
@@ -153,6 +185,7 @@ private:
 };
 
 
+/** @brief Synthetic event reporting that a thread's scheduling priority has changed. */
 class ThreadPriorityChangedEvent : public DebugEvent {
 public:
 								ThreadPriorityChangedEvent(team_id team,
@@ -168,6 +201,7 @@ private:
 };
 
 
+/** @brief Event raised when a thread in the debugged team has terminated. */
 class ThreadDeletedEvent : public DebugEvent {
 public:
 								ThreadDeletedEvent(team_id team,
@@ -175,6 +209,7 @@ public:
 };
 
 
+/** @brief Event raised when a new image (executable or library) is loaded. */
 class ImageCreatedEvent : public DebugEvent {
 public:
 								ImageCreatedEvent(team_id team,
@@ -187,6 +222,7 @@ private:
 };
 
 
+/** @brief Event raised when a previously-loaded image is unloaded. */
 class ImageDeletedEvent : public DebugEvent {
 public:
 								ImageDeletedEvent(team_id team,
@@ -199,6 +235,7 @@ private:
 };
 
 
+/** @brief Event raised after a syscall completes when syscall tracing is enabled. */
 class PostSyscallEvent : public DebugEvent {
 public:
 								PostSyscallEvent(team_id team,
@@ -212,6 +249,7 @@ private:
 };
 
 
+/** @brief Event raised when team debugging is handed over from another debugger. */
 class HandedOverEvent : public DebugEvent {
 public:
 								HandedOverEvent(team_id team,
@@ -224,6 +262,7 @@ private:
 };
 
 
+/** @brief Event raised when a thread receives a signal. */
 class SignalReceivedEvent : public DebugEvent {
 public:
 								SignalReceivedEvent(team_id team,

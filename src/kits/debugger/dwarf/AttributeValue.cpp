@@ -1,6 +1,37 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file AttributeValue.cpp
+ * @brief Pretty-printer for parsed DWARF DIE attribute values.
+ *
+ * Each DIE attribute carries a typed value belonging to one of the DWARF
+ * attribute classes (address, block, constant, flag, reference, ...).
+ * AttributeValue is the discriminated-union wrapper used during parsing;
+ * the @ref AttributeValue::ToString helper here renders a debug-friendly
+ * string used by diagnostic logging and the debug_info dumper.
  */
 
 #include "AttributeValue.h"
@@ -10,6 +41,18 @@
 #include "AttributeClasses.h"
 
 
+/**
+ * @brief Formats this attribute value into @a buffer for diagnostic output.
+ *
+ * The chosen rendering depends on @c attributeClass; addresses and
+ * pointers are printed in hex, references as raw pointer values, strings
+ * in quotes, and unknown classes as the literal "<unknown>".
+ *
+ * @param buffer Caller-provided output buffer of at least @a size bytes.
+ * @param size   Capacity of @a buffer in bytes.
+ * @return Pointer to a NUL-terminated string; either @a buffer or a
+ *         static literal for the unknown case.
+ */
 const char*
 AttributeValue::ToString(char* buffer, size_t size)
 {

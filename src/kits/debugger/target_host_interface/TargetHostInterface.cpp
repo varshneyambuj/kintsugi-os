@@ -1,7 +1,39 @@
 /*
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file TargetHostInterface.cpp
+ * @brief Per-host coordination layer that owns the active TeamDebugger objects
+ *        and the listener fan-out for one debugging transport.
+ *
+ * Subclasses (LocalTargetHostInterface, NetworkTargetHostInterface) implement
+ * the actual attach/spawn/load-core primitives; this file factors out the
+ * BLooper plumbing, debugger bookkeeping, and restart handling that is the
+ * same regardless of transport.
+ */
+
 
 #include "TargetHostInterface.h"
 
@@ -17,6 +49,13 @@
 // #pragma mark - TeamDebuggerOptions
 
 
+/**
+ * @brief Default-initializes the options struct with sentinel values.
+ *
+ * Callers populate the fields relevant to their request type; sentinel values
+ * (-1 ids, NULL pointers, UNKNOWN request type) make it clear when a field
+ * has not been set.
+ */
 TeamDebuggerOptions::TeamDebuggerOptions()
 	:
 	requestType(TEAM_DEBUGGER_REQUEST_UNKNOWN),
@@ -34,6 +73,9 @@ TeamDebuggerOptions::TeamDebuggerOptions()
 // #pragma mark - TargetHostInterface
 
 
+/**
+ * @brief Constructs the interface as a BLooper with empty listener and debugger lists.
+ */
 TargetHostInterface::TargetHostInterface()
 	:
 	BLooper(),
@@ -43,6 +85,9 @@ TargetHostInterface::TargetHostInterface()
 }
 
 
+/**
+ * @brief Notifies all attached listeners that the interface is going away.
+ */
 TargetHostInterface::~TargetHostInterface()
 {
 	for (ListenerList::Iterator it = fListeners.GetIterator();
@@ -52,6 +97,17 @@ TargetHostInterface::~TargetHostInterface()
 }
 
 
+/**
+ * @brief Entry point that starts a debugger session described by @a options.
+ *
+ * Handles team creation, attach-by-thread fallback, deduplication against an
+ * already-running debugger for the same team, and finally delegation to
+ * _StartTeamDebugger() to spin up the back-end and the TeamDebugger looper.
+ *
+ * @param options  Fully-populated options struct describing the request.
+ * @return B_OK on success, B_BAD_VALUE if neither a team nor a thread is
+ *         specified, or any error propagated from the underlying transport.
+ */
 status_t
 TargetHostInterface::StartTeamDebugger(const TeamDebuggerOptions& options)
 {
@@ -92,6 +148,11 @@ TargetHostInterface::StartTeamDebugger(const TeamDebuggerOptions& options)
 }
 
 
+/**
+ * @brief Returns the number of TeamDebuggers currently owned by this interface.
+ *
+ * @return Count of debugger sessions.
+ */
 int32
 TargetHostInterface::CountTeamDebuggers() const
 {
@@ -99,6 +160,12 @@ TargetHostInterface::CountTeamDebuggers() const
 }
 
 
+/**
+ * @brief Returns the TeamDebugger at @a index in the internal sorted list.
+ *
+ * @param index  Zero-based index into the debugger list.
+ * @return Pointer to the TeamDebugger, or NULL if @a index is out of range.
+ */
 TeamDebugger*
 TargetHostInterface::TeamDebuggerAt(int32 index) const
 {
@@ -106,6 +173,12 @@ TargetHostInterface::TeamDebuggerAt(int32 index) const
 }
 
 
+/**
+ * @brief Looks up a live (non-post-mortem) debugger session for @a team.
+ *
+ * @param team  Team id to search for.
+ * @return Matching TeamDebugger or NULL if no live session exists.
+ */
 TeamDebugger*
 TargetHostInterface::FindTeamDebugger(team_id team) const
 {
@@ -119,6 +192,12 @@ TargetHostInterface::FindTeamDebugger(team_id team) const
 }
 
 
+/**
+ * @brief Inserts @a debugger into the team-id-sorted debugger list.
+ *
+ * @param debugger  TeamDebugger to register.
+ * @return B_OK on success, B_NO_MEMORY if the insert fails.
+ */
 status_t
 TargetHostInterface::AddTeamDebugger(TeamDebugger* debugger)
 {
@@ -129,6 +208,11 @@ TargetHostInterface::AddTeamDebugger(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Removes @a debugger from the internal list (no-op if absent).
+ *
+ * @param debugger  TeamDebugger to unregister.
+ */
 void
 TargetHostInterface::RemoveTeamDebugger(TeamDebugger* debugger)
 {
@@ -141,6 +225,11 @@ TargetHostInterface::RemoveTeamDebugger(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Registers @a listener for interface-lifecycle and team-debugger events.
+ *
+ * @param listener  Listener instance owned by the caller.
+ */
 void
 TargetHostInterface::AddListener(Listener* listener)
 {
@@ -149,6 +238,11 @@ TargetHostInterface::AddListener(Listener* listener)
 }
 
 
+/**
+ * @brief Unregisters a previously-added listener.
+ *
+ * @param listener  Listener to remove.
+ */
 void
 TargetHostInterface::RemoveListener(Listener* listener)
 {
@@ -157,6 +251,12 @@ TargetHostInterface::RemoveListener(Listener* listener)
 }
 
 
+/**
+ * @brief Quits the BLooper only if no debugger sessions remain.
+ *
+ * @note  Suppresses Quit() while there are still active debuggers so they get
+ *        a chance to finish unwinding.
+ */
 void
 TargetHostInterface::Quit()
 {
@@ -165,6 +265,19 @@ TargetHostInterface::Quit()
 }
 
 
+/**
+ * @brief Routes incoming messages for debugger-quit and team-restart requests.
+ *
+ * Handles two main internal codes:
+ *  - MSG_TEAM_DEBUGGER_QUIT: blocks on the now-defunct debugger thread so
+ *    its resources are reclaimed before the looper continues.
+ *  - MSG_TEAM_RESTART_REQUESTED: clones the originating user interface and
+ *    spawns a fresh TeamDebugger for the same arguments, then asks the old
+ *    debugger to quit.
+ * Anything else is forwarded to BLooper::MessageReceived().
+ *
+ * @param message  Incoming message; must be non-NULL.
+ */
 void
 TargetHostInterface::MessageReceived(BMessage* message)
 {
@@ -210,6 +323,11 @@ TargetHostInterface::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief Records a freshly-started TeamDebugger and notifies listeners.
+ *
+ * @param debugger  Newly-running TeamDebugger.
+ */
 void
 TargetHostInterface::TeamDebuggerStarted(TeamDebugger* debugger)
 {
@@ -219,6 +337,11 @@ TargetHostInterface::TeamDebuggerStarted(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Posts a restart message to the looper for asynchronous handling.
+ *
+ * @param debugger  TeamDebugger requesting a restart.
+ */
 void
 TargetHostInterface::TeamDebuggerRestartRequested(TeamDebugger* debugger)
 {
@@ -228,6 +351,11 @@ TargetHostInterface::TeamDebuggerRestartRequested(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Removes @a debugger from the list and queues a join on its thread.
+ *
+ * @param debugger  TeamDebugger that has finished.
+ */
 void
 TargetHostInterface::TeamDebuggerQuit(TeamDebugger* debugger)
 {
@@ -243,6 +371,16 @@ TargetHostInterface::TeamDebuggerQuit(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Performs the back-end attach (or core load) and constructs the TeamDebugger.
+ *
+ * @param teamID      Resolved team identifier.
+ * @param options     Caller's options struct (already vetted by StartTeamDebugger).
+ * @param stopInMain  True to ask the new debugger to halt at main(); only used
+ *                    for teams the debugger spawned itself.
+ * @return B_OK on success, B_BAD_VALUE if no user interface was supplied, or
+ *         any error from the underlying transport or TeamDebugger::Init().
+ */
 status_t
 TargetHostInterface::_StartTeamDebugger(team_id teamID,
 	const TeamDebuggerOptions& options, bool stopInMain)
@@ -300,6 +438,11 @@ TargetHostInterface::_StartTeamDebugger(team_id teamID,
 }
 
 
+/**
+ * @brief Notifies every registered listener that a debugger session has started.
+ *
+ * @param debugger  Newly-started TeamDebugger.
+ */
 void
 TargetHostInterface::_NotifyTeamDebuggerStarted(TeamDebugger* debugger)
 {
@@ -310,6 +453,11 @@ TargetHostInterface::_NotifyTeamDebuggerStarted(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Notifies every registered listener that a debugger session has ended.
+ *
+ * @param debugger  TeamDebugger that has finished.
+ */
 void
 TargetHostInterface::_NotifyTeamDebuggerQuit(TeamDebugger* debugger)
 {
@@ -320,6 +468,15 @@ TargetHostInterface::_NotifyTeamDebuggerQuit(TeamDebugger* debugger)
 }
 
 
+/**
+ * @brief Comparison callback for keeping the debugger list sorted by team id.
+ *
+ * @param a  Left-hand TeamDebugger.
+ * @param b  Right-hand TeamDebugger.
+ * @return -1 if @a a precedes @a b, 1 otherwise.
+ * @note Equal team ids cannot occur because FindTeamDebugger() rejects
+ *       duplicates earlier; the binary `< -1 : 1` form is intentional.
+ */
 /*static*/ int
 TargetHostInterface::_CompareDebuggers(const TeamDebugger* a,
 	const TeamDebugger* b)
@@ -331,23 +488,41 @@ TargetHostInterface::_CompareDebuggers(const TeamDebugger* a,
 // #pragma mark - TargetHostInterface::Listener
 
 
+/**
+ * @brief Virtual destructor for the listener interface.
+ */
 TargetHostInterface::Listener::~Listener()
 {
 }
 
 
+/**
+ * @brief Default no-op hook called when a TeamDebugger starts on this interface.
+ *
+ * @param debugger  Newly-running TeamDebugger; ignored.
+ */
 void
 TargetHostInterface::Listener::TeamDebuggerStarted(TeamDebugger* debugger)
 {
 }
 
 
+/**
+ * @brief Default no-op hook called when a TeamDebugger ends on this interface.
+ *
+ * @param debugger  TeamDebugger that has quit; ignored.
+ */
 void
 TargetHostInterface::Listener::TeamDebuggerQuit(TeamDebugger* debugger)
 {
 }
 
 
+/**
+ * @brief Default no-op hook called when the host interface itself is shutting down.
+ *
+ * @param interface  Interface that is quitting; ignored.
+ */
 void
 TargetHostInterface::Listener::TargetHostInterfaceQuit(
 	TargetHostInterface* interface)

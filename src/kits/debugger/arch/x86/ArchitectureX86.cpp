@@ -1,7 +1,39 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011-2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ArchitectureX86.cpp
+ * @brief 32-bit x86 (IA-32) backend for the architecture-neutral Architecture base.
+ *
+ * Defines the IA-32 register set, DWARF register-number maps, frame
+ * unwinding (handling syscall, frameless, and standard prologue cases),
+ * Zydis-based disassembly, and ABI-specific return-value placement (EAX,
+ * EAX:EDX, or memory).
+ *
+ * @see Architecture, CpuStateX86, DisassemblerX86
  */
 
 
@@ -29,10 +61,18 @@
 #include "disasm/DisassemblerX86.h"
 
 
+/** @brief CPUID feature bit indicating MMX support. */
 #define IA32_FEATURE_MMX	(1 << 23)
+/** @brief CPUID feature bit indicating SSE support. */
 #define IA32_FEATURE_SSE	(1 << 25)
 
 
+/**
+ * @brief DWARF-register-number to IA-32 register-index lookup table.
+ *
+ * Indexed by the DWARF register number assigned by the System V IA-32 ABI.
+ * Entries with the value -1 indicate registers the debugger kit does not model.
+ */
 static const int32 kFromDwarfRegisters[] = {
 	X86_REGISTER_EAX,
 	X86_REGISTER_ECX,
@@ -73,13 +113,21 @@ static const int32 kFromDwarfRegisters[] = {
 	X86_REGISTER_MM7,
 };
 
+/** @brief Number of entries in @c kFromDwarfRegisters. */
 static const int32 kFromDwarfRegisterCount = sizeof(kFromDwarfRegisters) / 4;
 
 
 // #pragma mark - ToDwarfRegisterMap
 
 
+/**
+ * @brief Maps native IA-32 register indices to DWARF register numbers.
+ *
+ * Builds the inverse of @c kFromDwarfRegisters at construction time so
+ * MapRegisterIndex() runs in O(1).
+ */
 struct ArchitectureX86::ToDwarfRegisterMap : RegisterMap {
+	/** @brief Build the reverse-lookup index from kFromDwarfRegisters. */
 	ToDwarfRegisterMap()
 	{
 		// init the index array from the reverse map
@@ -90,11 +138,17 @@ struct ArchitectureX86::ToDwarfRegisterMap : RegisterMap {
 		}
 	}
 
+	/** @brief Number of native IA-32 registers. */
 	virtual int32 CountRegisters() const
 	{
 		return X86_REGISTER_COUNT;
 	}
 
+	/**
+	 * @brief Translate a native register index to a DWARF register number.
+	 * @param index  Native IA-32 register index.
+	 * @return DWARF register number, or -1 when @a index is out of range.
+	 */
 	virtual int32 MapRegisterIndex(int32 index) const
 	{
 		return index >= 0 && index < X86_REGISTER_COUNT ? fIndices[index] : -1;
@@ -108,12 +162,21 @@ private:
 // #pragma mark - FromDwarfRegisterMap
 
 
+/**
+ * @brief Maps DWARF register numbers to native IA-32 register indices.
+ */
 struct ArchitectureX86::FromDwarfRegisterMap : RegisterMap {
+	/** @brief Number of DWARF entries this map knows about. */
 	virtual int32 CountRegisters() const
 	{
 		return kFromDwarfRegisterCount;
 	}
 
+	/**
+	 * @brief Translate a DWARF register number to a native register index.
+	 * @param index  DWARF register number.
+	 * @return Native register index, or -1 when out of range or unmapped.
+	 */
 	virtual int32 MapRegisterIndex(int32 index) const
 	{
 		return index >= 0 && index < kFromDwarfRegisterCount
@@ -125,6 +188,13 @@ struct ArchitectureX86::FromDwarfRegisterMap : RegisterMap {
 // #pragma mark - ArchitectureX86
 
 
+/**
+ * @brief Construct the IA-32 architecture wrapper.
+ *
+ * Defers register-table population until Init().
+ *
+ * @param teamMemory  Memory accessor used to read target memory.
+ */
 ArchitectureX86::ArchitectureX86(TeamMemory* teamMemory)
 	:
 	Architecture(teamMemory, 4, sizeof(x86_debug_cpu_state), false),
@@ -136,6 +206,7 @@ ArchitectureX86::ArchitectureX86(TeamMemory* teamMemory)
 }
 
 
+/** @brief Release references on the register maps and assembly language helper. */
 ArchitectureX86::~ArchitectureX86()
 {
 	if (fToDwarfRegisterMap != NULL)
@@ -147,6 +218,17 @@ ArchitectureX86::~ArchitectureX86()
 }
 
 
+/**
+ * @brief Build the IA-32 register table and DWARF maps.
+ *
+ * Detects MMX/SSE support via cpuid (only when running natively on i386),
+ * then registers EIP, ESP, EBP, GP, segment, x87 ST*, and any optional
+ * MMX/XMM banks the host CPU advertises.
+ *
+ * @retval B_OK         Architecture initialized.
+ * @retval B_NO_MEMORY  Allocation failed for one of the helper objects.
+ * @return Other status codes propagated from get_cpuid().
+ */
 status_t
 ArchitectureX86::Init()
 {
@@ -259,6 +341,7 @@ ArchitectureX86::Init()
 }
 
 
+/** @brief Return STACK_GROWTH_DIRECTION_NEGATIVE; the IA-32 stack grows downward. */
 int32
 ArchitectureX86::StackGrowthDirection() const
 {
@@ -266,6 +349,7 @@ ArchitectureX86::StackGrowthDirection() const
 }
 
 
+/** @brief Number of registers populated by Init(). */
 int32
 ArchitectureX86::CountRegisters() const
 {
@@ -273,6 +357,7 @@ ArchitectureX86::CountRegisters() const
 }
 
 
+/** @brief Pointer to the contiguous register-descriptor array. */
 const Register*
 ArchitectureX86::Registers() const
 {
@@ -281,6 +366,15 @@ ArchitectureX86::Registers() const
 
 
 
+/**
+ * @brief Install IA-32-specific DWARF register rules on top of the defaults.
+ *
+ * Calls the base implementation then sets EIP to a CFA-relative location
+ * (offset -4), as required by the System V IA-32 unwind ABI.
+ *
+ * @param context  CFA context to mutate.
+ * @return Status from the base call.
+ */
 status_t
 ArchitectureX86::InitRegisterRules(CfaContext& context) const
 {
@@ -296,6 +390,15 @@ ArchitectureX86::InitRegisterRules(CfaContext& context) const
 }
 
 
+/**
+ * @brief Hand out additional references to the cached DWARF maps.
+ *
+ * Either output pointer may be NULL.
+ *
+ * @param _toDwarf    Output that receives a referenced ToDwarfRegisterMap.
+ * @param _fromDwarf  Output that receives a referenced FromDwarfRegisterMap.
+ * @retval B_OK  Always; the caller must release any returned references.
+ */
 status_t
 ArchitectureX86::GetDwarfRegisterMaps(RegisterMap** _toDwarf,
 	RegisterMap** _fromDwarf) const
@@ -314,6 +417,12 @@ ArchitectureX86::GetDwarfRegisterMaps(RegisterMap** _toDwarf,
 }
 
 
+/**
+ * @brief Report the CPU feature bitset detected at Init() time.
+ *
+ * @param flags  Output that receives the feature flags.
+ * @retval B_OK  Always.
+ */
 status_t
 ArchitectureX86::GetCpuFeatures(uint32& flags)
 {
@@ -323,6 +432,13 @@ ArchitectureX86::GetCpuFeatures(uint32& flags)
 }
 
 
+/**
+ * @brief Allocate a default-constructed CpuStateX86.
+ *
+ * @param _state  Output that receives the new state.
+ * @retval B_OK         Allocation succeeded.
+ * @retval B_NO_MEMORY  Out of memory.
+ */
 status_t
 ArchitectureX86::CreateCpuState(CpuState*& _state)
 {
@@ -335,6 +451,16 @@ ArchitectureX86::CreateCpuState(CpuState*& _state)
 }
 
 
+/**
+ * @brief Construct a CpuStateX86 from an x86_debug_cpu_state blob.
+ *
+ * @param cpuStateData  Pointer to a x86_debug_cpu_state value.
+ * @param size          Size in bytes; must equal sizeof(x86_debug_cpu_state).
+ * @param _state        Output that receives the new state.
+ * @retval B_OK         State decoded successfully.
+ * @retval B_BAD_VALUE  @a size does not match.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 status_t
 ArchitectureX86::CreateCpuState(const void* cpuStateData, size_t size,
 	CpuState*& _state)
@@ -352,6 +478,24 @@ ArchitectureX86::CreateCpuState(const void* cpuStateData, size_t size,
 }
 
 
+/**
+ * @brief Build a single IA-32 stack frame from a CPU state.
+ *
+ * Detects syscall frames (interrupt vector 99), recognizes the standard
+ * "push %ebp; mov %esp, %ebp" prologue, and falls back to reading the
+ * return address from ESP for frameless functions or instructions that
+ * lie before the prologue.
+ *
+ * @param image              Image hosting @a function.
+ * @param function           Function metadata used for the prologue check.
+ * @param _cpuState          CPU state at the entry point of this frame.
+ * @param isTopFrame         true when this is the most recent frame.
+ * @param _frame             Output that receives the new StackFrame.
+ * @param _previousCpuState  Output that receives the inferred caller's CpuState
+ *                           (may be NULL).
+ * @retval B_OK         Frame created.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 status_t
 ArchitectureX86::CreateStackFrame(Image* image, FunctionDebugInfo* function,
 	CpuState* _cpuState, bool isTopFrame, StackFrame*& _frame,
@@ -494,6 +638,18 @@ ArchitectureX86::CreateStackFrame(Image* image, FunctionDebugInfo* function,
 }
 
 
+/**
+ * @brief Adjust the inherited CPU state so EIP points at the call site, not after it.
+ *
+ * For non-top frames the saved instruction pointer points just past the
+ * call instruction. To map back to the calling instruction we disassemble
+ * the function's code and subtract the size of the previous instruction.
+ *
+ * @param frame             Frame whose previous CPU state is being adjusted.
+ * @param previousImage     Image hosting @a previousFunction (unused).
+ * @param previousFunction  Function the previous frame is executing.
+ * @param previousCpuState  Inherited CPU state to adjust in place.
+ */
 void
 ArchitectureX86::UpdateStackFrameCpuState(const StackFrame* frame,
 	Image* previousImage, FunctionDebugInfo* previousFunction,
@@ -535,6 +691,17 @@ ArchitectureX86::UpdateStackFrameCpuState(const StackFrame* frame,
 }
 
 
+/**
+ * @brief Read a primitive value from target memory.
+ *
+ * @param address    Address to read from.
+ * @param valueType  BVariant type code identifying the primitive.
+ * @param _value     Output that receives the decoded value.
+ * @retval B_OK         Read succeeded and the value was decoded.
+ * @retval B_BAD_VALUE  Unsupported @a valueType or zero/over-large size.
+ * @retval B_ERROR      Short read.
+ * @return Other status codes propagated from TeamMemory::ReadMemory().
+ */
 status_t
 ArchitectureX86::ReadValueFromMemory(target_addr_t address, uint32 valueType,
 	BVariant& _value) const
@@ -591,6 +758,15 @@ ArchitectureX86::ReadValueFromMemory(target_addr_t address, uint32 valueType,
 }
 
 
+/**
+ * @brief Address-space aware overload; not applicable on IA-32.
+ *
+ * @param addressSpace  Ignored.
+ * @param address       Ignored.
+ * @param valueType     Ignored.
+ * @param _value        Ignored.
+ * @retval B_BAD_VALUE  Always.
+ */
 status_t
 ArchitectureX86::ReadValueFromMemory(target_addr_t addressSpace,
 	target_addr_t address, uint32 valueType, BVariant& _value) const
@@ -600,6 +776,17 @@ ArchitectureX86::ReadValueFromMemory(target_addr_t addressSpace,
 }
 
 
+/**
+ * @brief Disassemble a contiguous code buffer into a DisassembledCode listing.
+ *
+ * @param function     Function whose code is being disassembled.
+ * @param buffer       Pointer to the code bytes (already read from the target).
+ * @param bufferSize   Number of bytes in @a buffer.
+ * @param _sourceCode  Output that receives the assembled DisassembledCode.
+ * @retval B_OK         Listing produced.
+ * @retval B_NO_MEMORY  Allocation failed.
+ * @return Other status codes propagated from DisassemblerX86::Init().
+ */
 status_t
 ArchitectureX86::DisassembleCode(FunctionDebugInfo* function,
 	const void* buffer, size_t bufferSize, DisassembledCode*& _sourceCode)
@@ -640,6 +827,18 @@ ArchitectureX86::DisassembleCode(FunctionDebugInfo* function,
 }
 
 
+/**
+ * @brief Synthesize a single-instruction Statement for an address.
+ *
+ * Used as a fallback when no source-level statement information is available.
+ *
+ * @param function    Function the statement belongs to (unused).
+ * @param address     Address that should be wrapped in a statement.
+ * @param _statement  Output that receives the new ContiguousStatement.
+ * @retval B_OK         Statement created.
+ * @retval B_NO_MEMORY  Allocation failed.
+ * @return Other status codes propagated from GetInstructionInfo().
+ */
 status_t
 ArchitectureX86::GetStatement(FunctionDebugInfo* function,
 	target_addr_t address, Statement*& _statement)
@@ -662,6 +861,18 @@ ArchitectureX86::GetStatement(FunctionDebugInfo* function,
 }
 
 
+/**
+ * @brief Decode the instruction at @a address into an InstructionInfo record.
+ *
+ * Reads up to 16 bytes (the maximum x86 instruction length) from the target
+ * and dispatches to DisassemblerX86.
+ *
+ * @param address  Address of the instruction.
+ * @param _info    Output that receives the decoded info.
+ * @param state    Optional CPU state used for absolute target resolution.
+ * @return Status from TeamMemory::ReadMemory(), DisassemblerX86::Init(),
+ *         or DisassemblerX86::GetNextInstructionInfo().
+ */
 status_t
 ArchitectureX86::GetInstructionInfo(target_addr_t address,
 	InstructionInfo& _info, CpuState* state)
@@ -683,6 +894,18 @@ ArchitectureX86::GetInstructionInfo(target_addr_t address,
 }
 
 
+/**
+ * @brief Resolve the actual target of a call routed through a PLT slot.
+ *
+ * Uses the disassembled jump target as a memory pointer and dereferences it.
+ *
+ * @param instructionAddress  Address of the instruction that produced the
+ *                            apparent call into the PLT.
+ * @param state               CPU state (unused on IA-32 but part of the signature).
+ * @param _targetAddress      Output that receives the resolved address.
+ * @retval B_OK         Resolution succeeded.
+ * @retval B_BAD_VALUE  Disassembly or memory read failed.
+ */
 status_t
 ArchitectureX86::ResolvePICFunctionAddress(target_addr_t instructionAddress,
 	CpuState* state, target_addr_t& _targetAddress)
@@ -708,6 +931,17 @@ ArchitectureX86::ResolvePICFunctionAddress(target_addr_t instructionAddress,
 }
 
 
+/**
+ * @brief Report the watchpoint capabilities of the IA-32 debug registers.
+ *
+ * Two of the four hardware debug registers are available for watchpoints
+ * (one is reserved by the kernel and one is needed for breakpoints).
+ *
+ * @param _maxRegisterCount         Output: number of available registers (2).
+ * @param _maxBytesPerRegister      Output: maximum span per register (4).
+ * @param _watchpointCapabilityFlags Output: supported access modes.
+ * @retval B_OK  Always.
+ */
 status_t
 ArchitectureX86::GetWatchpointDebugCapabilities(int32& _maxRegisterCount,
 	int32& _maxBytesPerRegister, uint8& _watchpointCapabilityFlags)
@@ -726,6 +960,19 @@ ArchitectureX86::GetWatchpointDebugCapabilities(int32& _maxRegisterCount,
 }
 
 
+/**
+ * @brief Describe where a return value of size @a valueSize is placed by the SysV ABI.
+ *
+ * Values up to 4 bytes are returned in EAX; up to 8 bytes are returned in
+ * the EAX:EDX pair; larger values are returned via an implicit memory
+ * pointer in EAX.
+ *
+ * @param frame      Frame whose return value is being requested.
+ * @param valueSize  Size of the return value in bytes.
+ * @param _location  Output that receives the new ValueLocation.
+ * @retval B_OK         Location described.
+ * @retval B_NO_MEMORY  Allocation failed.
+ */
 status_t
 ArchitectureX86::GetReturnAddressLocation(StackFrame* frame,
 	target_size_t valueSize, ValueLocation*& _location)
@@ -773,6 +1020,17 @@ ArchitectureX86::GetReturnAddressLocation(StackFrame* frame,
 }
 
 
+/**
+ * @brief Append a register descriptor to fRegisters, throwing on allocation failure.
+ *
+ * @param index            Native register index.
+ * @param name             Display name.
+ * @param bitSize          Width in bits.
+ * @param valueType        BVariant type code.
+ * @param type             Semantic role.
+ * @param calleePreserved  ABI calling-convention flag.
+ * @throws std::bad_alloc on allocation failure.
+ */
 void
 ArchitectureX86::_AddRegister(int32 index, const char* name,
 	uint32 bitSize, uint32 valueType, register_type type, bool calleePreserved)
@@ -784,6 +1042,15 @@ ArchitectureX86::_AddRegister(int32 index, const char* name,
 }
 
 
+/**
+ * @brief Add an integer register, deriving the bit size from @a valueType.
+ *
+ * @param index            Native register index.
+ * @param name             Display name.
+ * @param valueType        Integer BVariant type code.
+ * @param type             Semantic role.
+ * @param calleePreserved  Calling-convention flag.
+ */
 void
 ArchitectureX86::_AddIntegerRegister(int32 index, const char* name,
 	uint32 valueType, register_type type, bool calleePreserved)
@@ -793,6 +1060,12 @@ ArchitectureX86::_AddIntegerRegister(int32 index, const char* name,
 }
 
 
+/**
+ * @brief Add an x87 floating-point register modeled as B_DOUBLE_TYPE.
+ *
+ * @param index  Native register index.
+ * @param name   Display name (e.g. "st0").
+ */
 void
 ArchitectureX86::_AddFPRegister(int32 index, const char* name)
 {
@@ -801,6 +1074,13 @@ ArchitectureX86::_AddFPRegister(int32 index, const char* name)
 }
 
 
+/**
+ * @brief Add a SIMD (MMX/XMM) register modeled as B_RAW_TYPE bytes.
+ *
+ * @param index     Native register index.
+ * @param name      Display name (e.g. "xmm0").
+ * @param byteSize  Width in bytes.
+ */
 void
 ArchitectureX86::_AddSIMDRegister(int32 index, const char* name,
 	uint32 byteSize)
@@ -810,6 +1090,14 @@ ArchitectureX86::_AddSIMDRegister(int32 index, const char* name,
 }
 
 
+/**
+ * @brief Test whether @a function begins with the canonical IA-32 prologue.
+ *
+ * Looks for the bytes "push %ebp; mov %esp, %ebp" (55 89 e5).
+ *
+ * @param function  Function metadata. May be NULL.
+ * @return true if the prologue was found, false otherwise.
+ */
 bool
 ArchitectureX86::_HasFunctionPrologue(FunctionDebugInfo* function) const
 {

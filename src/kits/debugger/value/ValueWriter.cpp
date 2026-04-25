@@ -1,7 +1,39 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013-2015, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2013-2015, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ValueWriter.cpp
+ * @brief Implementation of ValueWriter, the inverse of ValueLoader for committing edits.
+ *
+ * Where ValueLoader reads bytes out of the target into a BVariant, ValueWriter
+ * accepts a freshly edited BVariant and pushes it back into the target via
+ * memory writes and CPU-state updates. Used by the variables view's inline
+ * edit path.
+ *
+ * @see ValueLoader, DebuggerInterface
  */
 
 
@@ -17,6 +49,17 @@
 #include "ValueLocation.h"
 
 
+/**
+ * @brief Constructs a writer bound to a target architecture and debugger interface.
+ *
+ * Acquires references on all collaborators so the writer is safe to use even
+ * if the caller drops its own references.
+ *
+ * @param architecture   Architecture providing endianness and registers.
+ * @param interface      Debugger interface used to write memory and push CPU state.
+ * @param cpuState       Optional CPU state for register pieces; may be NULL.
+ * @param targetThread   Thread whose CPU state should be updated.
+ */
 ValueWriter::ValueWriter(Architecture* architecture,
 	DebuggerInterface* interface, CpuState* cpuState, thread_id targetThread)
 	:
@@ -32,6 +75,10 @@ ValueWriter::ValueWriter(Architecture* architecture,
 }
 
 
+/**
+ * @brief Releases the references held on the architecture, debugger interface,
+ *        and CPU state.
+ */
 ValueWriter::~ValueWriter()
 {
 	fArchitecture->ReleaseReference();
@@ -41,6 +88,23 @@ ValueWriter::~ValueWriter()
 }
 
 
+/**
+ * @brief Writes a BVariant back into the target through a piece-wise location.
+ *
+ * Memory pieces are pushed via DebuggerInterface::WriteMemory(); register
+ * pieces are folded into the cached CpuState which is then committed once at
+ * the end via DebuggerInterface::SetCpuState().
+ *
+ * @param location  Destination piece list -- must be writable.
+ * @param value     Value to commit; must hold at least the bytes implied by @a location.
+ * @retval B_OK            On success.
+ * @retval B_BAD_VALUE     When @a location is not writable.
+ * @retval B_BAD_ADDRESS   When a memory write was short.
+ * @retval B_NO_MEMORY     When updating a register failed.
+ * @retval B_UNSUPPORTED   When a register piece is requested but no CpuState
+ *                         was provided, or a piece size cannot be packed into
+ *                         a single register write.
+ */
 status_t
 ValueWriter::WriteValue(ValueLocation* location, BVariant& value)
 {

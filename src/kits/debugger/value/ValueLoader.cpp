@@ -1,7 +1,39 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013-2015, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2013-2015, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ValueLoader.cpp
+ * @brief Implementation of ValueLoader, the bridge that materialises a ValueLocation into bytes.
+ *
+ * Given a ValueLocation (a list of memory and/or register pieces produced by
+ * the DWARF location expression evaluator), the loader fetches the bytes from
+ * the live target via TeamMemory plus the cached CpuState, normalises endian,
+ * and packs them into a BVariant typed by @c type_code.
+ *
+ * @see ValueWriter, Architecture, TeamMemory
  */
 
 
@@ -16,6 +48,16 @@
 #include "ValueLocation.h"
 
 
+/**
+ * @brief Constructs a loader bound to a target architecture and memory view.
+ *
+ * Acquires references on all collaborators so the loader is safe to use even
+ * if the caller drops its own references.
+ *
+ * @param architecture  Architecture providing endianness, address size, and registers.
+ * @param teamMemory    Live target memory accessor.
+ * @param cpuState      Optional CPU state for resolving register pieces; may be NULL.
+ */
 ValueLoader::ValueLoader(Architecture* architecture, TeamMemory* teamMemory,
 	CpuState* cpuState)
 	:
@@ -30,6 +72,9 @@ ValueLoader::ValueLoader(Architecture* architecture, TeamMemory* teamMemory,
 }
 
 
+/**
+ * @brief Releases the references held on the architecture, memory, and CPU state.
+ */
 ValueLoader::~ValueLoader()
 {
 	fArchitecture->ReleaseReference();
@@ -39,6 +84,27 @@ ValueLoader::~ValueLoader()
 }
 
 
+/**
+ * @brief Reads a typed value from a list of location pieces.
+ *
+ * Walks @a location piece by piece, reading memory or registers as required,
+ * normalising endianness, and accumulating bits into a BitBuffer that is then
+ * decoded into @a _value as @a valueType.
+ *
+ * @param location          The piece list produced by location-expression evaluation.
+ * @param valueType         The B_*_TYPE describing the desired interpretation of the bytes.
+ * @param shortValueIsFine  When true, accept fewer bits than @a valueType expects (zero-extending).
+ * @param _value            Set to the decoded BVariant on success.
+ * @retval B_OK              On successful decode.
+ * @retval B_ENTRY_NOT_FOUND When a piece is invalid/unknown or no bits are available.
+ * @retval B_UNSUPPORTED     When a piece is too large or the total exceeds 64 bits.
+ * @retval B_BAD_VALUE       When the buffer is shorter than @a valueType requires
+ *                           and @a shortValueIsFine is false.
+ * @retval B_BAD_ADDRESS     When a memory piece could not be fully read.
+ * @retval B_NO_MEMORY       When buffer assembly failed.
+ * @note  Bit ordering currently follows C/C++ conventions; non-C/C++ source
+ *        languages will need additional plumbing.
+ */
 status_t
 ValueLoader::LoadValue(ValueLocation* location, type_code valueType,
 	bool shortValueIsFine, BVariant& _value)
@@ -211,6 +277,19 @@ ValueLoader::LoadValue(ValueLocation* location, type_code valueType,
 }
 
 
+/**
+ * @brief Reads a raw byte sequence from the target at the address in @a location.
+ *
+ * Used by clients that need to copy a struct or buffer verbatim, bypassing
+ * type-driven decoding.
+ *
+ * @param location     BVariant whose 64-bit value is the source address.
+ * @param bytesToRead  Number of bytes to copy into @a _value.
+ * @param _value       Caller-supplied destination buffer of at least @a bytesToRead bytes.
+ * @retval B_OK          On a complete read.
+ * @retval B_BAD_ADDRESS On a short read.
+ * @return Negative status_t propagated from TeamMemory::ReadMemory().
+ */
 status_t
 ValueLoader::LoadRawValue(BVariant& location, size_t bytesToRead, void* _value)
 {
@@ -224,6 +303,16 @@ ValueLoader::LoadRawValue(BVariant& location, size_t bytesToRead, void* _value)
 }
 
 
+/**
+ * @brief Reads a NUL-terminated string from the target into @a _value.
+ *
+ * Caps the read at min(@a maxSize, 255) to avoid runaway scans on bad pointers.
+ *
+ * @param location  BVariant whose 64-bit value is the source address.
+ * @param maxSize   Caller-requested maximum number of bytes to read.
+ * @param _value    Receives the resulting string.
+ * @return Status from TeamMemory::ReadMemoryString().
+ */
 status_t
 ValueLoader::LoadStringValue(BVariant& location, size_t maxSize, BString& _value)
 {

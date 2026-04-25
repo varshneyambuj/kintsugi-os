@@ -1,7 +1,40 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011-2014, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DebugInfoEntries.cpp
+ * @brief Member-function bodies for every concrete DIE class.
+ *
+ * Each DIE subclass implements a small set of overrides that mirror the
+ * DWARF attributes its tag accepts: an @c InitAfterAttributes hook that
+ * runs once parsing is complete, a few accessors that expose
+ * tag-specific values (e.g. @c LowPC, @c Specification, @c ConstValue),
+ * and a number of @c AddAttribute_xxx setters that route attribute
+ * values into typed storage.  The file is organised by class with
+ * @c #pragma mark separators between sections.
  */
 
 #include "DebugInfoEntries.h"
@@ -15,7 +48,9 @@
 
 // #pragma mark - DIECompileUnitBase
 
-
+/**
+ * @brief Constructs a DIECompileUnitBase.
+ */
 DIECompileUnitBase::DIECompileUnitBase()
 	:
 	fName(NULL),
@@ -33,12 +68,17 @@ DIECompileUnitBase::DIECompileUnitBase()
 {
 }
 
-
+/**
+ * @brief Destroys the DIECompileUnitBase.
+ */
 DIECompileUnitBase::~DIECompileUnitBase()
 {
 }
 
 
+/**
+ * @brief Post-parse hook invoked once every attribute has been read.
+ */
 status_t
 DIECompileUnitBase::InitAfterAttributes(DebugInfoEntryInitInfo& info)
 {
@@ -65,6 +105,9 @@ DIECompileUnitBase::InitAfterAttributes(DebugInfoEntryInitInfo& info)
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIECompileUnitBase::Name() const
 {
@@ -72,6 +115,9 @@ DIECompileUnitBase::Name() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIECompileUnitBase::AddChild(DebugInfoEntry* child)
 {
@@ -83,6 +129,9 @@ DIECompileUnitBase::AddChild(DebugInfoEntry* child)
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -92,6 +141,9 @@ DIECompileUnitBase::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_comp_dir attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_comp_dir(uint16 attributeName,
 	const AttributeValue& value)
@@ -101,6 +153,9 @@ DIECompileUnitBase::AddAttribute_comp_dir(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_low_pc attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_low_pc(uint16 attributeName,
 	const AttributeValue& value)
@@ -110,6 +165,9 @@ DIECompileUnitBase::AddAttribute_low_pc(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_high_pc attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_high_pc(uint16 attributeName,
 	const AttributeValue& value)
@@ -122,6 +180,9 @@ DIECompileUnitBase::AddAttribute_high_pc(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_producer attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_producer(uint16 attributeName,
 	const AttributeValue& value)
@@ -131,6 +192,9 @@ DIECompileUnitBase::AddAttribute_producer(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_stmt_list attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_stmt_list(uint16 attributeName,
 	const AttributeValue& value)
@@ -140,6 +204,9 @@ DIECompileUnitBase::AddAttribute_stmt_list(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_macro_info attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_macro_info(uint16 attributeName,
 	const AttributeValue& value)
@@ -149,6 +216,9 @@ DIECompileUnitBase::AddAttribute_macro_info(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_base_types attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_base_types(uint16 attributeName,
 	const AttributeValue& value)
@@ -158,6 +228,9 @@ DIECompileUnitBase::AddAttribute_base_types(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_language attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_language(uint16 attributeName,
 	const AttributeValue& value)
@@ -167,6 +240,9 @@ DIECompileUnitBase::AddAttribute_language(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_identifier_case attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_identifier_case(uint16 attributeName,
 	const AttributeValue& value)
@@ -176,6 +252,9 @@ DIECompileUnitBase::AddAttribute_identifier_case(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_use_UTF8 attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_use_UTF8(uint16 attributeName,
 	const AttributeValue& value)
@@ -185,6 +264,9 @@ DIECompileUnitBase::AddAttribute_use_UTF8(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_ranges attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_ranges(uint16 attributeName,
 	const AttributeValue& value)
@@ -194,6 +276,9 @@ DIECompileUnitBase::AddAttribute_ranges(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_main_subprogram attribute value.
+ */
 status_t
 DIECompileUnitBase::AddAttribute_main_subprogram(uint16 attributeName,
 	const AttributeValue& value)
@@ -205,7 +290,9 @@ DIECompileUnitBase::AddAttribute_main_subprogram(uint16 attributeName,
 
 // #pragma mark - DIEType
 
-
+/**
+ * @brief Constructs a DIEType.
+ */
 DIEType::DIEType()
 	:
 	fName(NULL)
@@ -215,6 +302,9 @@ DIEType::DIEType()
 }
 
 
+/**
+ * @brief Reports whether this DIE represents a type.
+ */
 bool
 DIEType::IsType() const
 {
@@ -222,6 +312,9 @@ DIEType::IsType() const
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIEType::Name() const
 {
@@ -229,6 +322,9 @@ DIEType::Name() const
 }
 
 
+/**
+ * @brief Reports whether this DIE is a non-defining declaration.
+ */
 bool
 DIEType::IsDeclaration() const
 {
@@ -236,6 +332,9 @@ DIEType::IsDeclaration() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIEType::ByteSize() const
 {
@@ -243,6 +342,9 @@ DIEType::ByteSize() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIEType::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -252,6 +354,9 @@ DIEType::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_allocated attribute value.
+ */
 status_t
 DIEType::AddAttribute_allocated(uint16 attributeName,
 	const AttributeValue& value)
@@ -260,6 +365,9 @@ DIEType::AddAttribute_allocated(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_associated attribute value.
+ */
 status_t
 DIEType::AddAttribute_associated(uint16 attributeName,
 	const AttributeValue& value)
@@ -270,7 +378,9 @@ DIEType::AddAttribute_associated(uint16 attributeName,
 
 // #pragma mark - DIEModifiedType
 
-
+/**
+ * @brief Constructs a DIEModifiedType.
+ */
 DIEModifiedType::DIEModifiedType()
 	:
 	fType(NULL)
@@ -278,6 +388,9 @@ DIEModifiedType::DIEModifiedType()
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEModifiedType::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -289,7 +402,9 @@ DIEModifiedType::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIEAddressingType
 
-
+/**
+ * @brief Constructs a DIEAddressingType.
+ */
 DIEAddressingType::DIEAddressingType()
 	:
 	fAddressClass(0)
@@ -297,6 +412,9 @@ DIEAddressingType::DIEAddressingType()
 }
 
 
+/**
+ * @brief Stores the DW_AT_address_class attribute value.
+ */
 status_t
 DIEAddressingType::AddAttribute_address_class(uint16 attributeName,
 	const AttributeValue& value)
@@ -309,7 +427,9 @@ DIEAddressingType::AddAttribute_address_class(uint16 attributeName,
 
 // #pragma mark - DIEDeclaredType
 
-
+/**
+ * @brief Constructs a DIEDeclaredType.
+ */
 DIEDeclaredType::DIEDeclaredType()
 	:
 	fDescription(NULL),
@@ -321,6 +441,9 @@ DIEDeclaredType::DIEDeclaredType()
 }
 
 
+/**
+ * @brief Returns the DIE's DW_AT_description string.
+ */
 const char*
 DIEDeclaredType::Description() const
 {
@@ -328,6 +451,9 @@ DIEDeclaredType::Description() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_abstract_origin reference.
+ */
 DebugInfoEntry*
 DIEDeclaredType::AbstractOrigin() const
 {
@@ -335,6 +461,9 @@ DIEDeclaredType::AbstractOrigin() const
 }
 
 
+/**
+ * @brief Returns the type unit referenced via DW_AT_signature.
+ */
 DebugInfoEntry*
 DIEDeclaredType::SignatureType() const
 {
@@ -342,6 +471,9 @@ DIEDeclaredType::SignatureType() const
 }
 
 
+/**
+ * @brief Reports whether this DIE is a non-defining declaration.
+ */
 bool
 DIEDeclaredType::IsDeclaration() const
 {
@@ -349,6 +481,9 @@ DIEDeclaredType::IsDeclaration() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_accessibility attribute value.
+ */
 status_t
 DIEDeclaredType::AddAttribute_accessibility(uint16 attributeName,
 	const AttributeValue& value)
@@ -358,6 +493,9 @@ DIEDeclaredType::AddAttribute_accessibility(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_declaration attribute value.
+ */
 status_t
 DIEDeclaredType::AddAttribute_declaration(uint16 attributeName,
 	const AttributeValue& value)
@@ -367,6 +505,9 @@ DIEDeclaredType::AddAttribute_declaration(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_description attribute value.
+ */
 status_t
 DIEDeclaredType::AddAttribute_description(uint16 attributeName,
 	const AttributeValue& value)
@@ -376,6 +517,9 @@ DIEDeclaredType::AddAttribute_description(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_abstract_origin attribute value.
+ */
 status_t
 DIEDeclaredType::AddAttribute_abstract_origin(uint16 attributeName,
 	const AttributeValue& value)
@@ -385,6 +529,9 @@ DIEDeclaredType::AddAttribute_abstract_origin(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_signature attribute value.
+ */
 status_t
 DIEDeclaredType::AddAttribute_signature(uint16 attributeName,
 	const AttributeValue& value)
@@ -394,6 +541,9 @@ DIEDeclaredType::AddAttribute_signature(uint16 attributeName,
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's declaration-location storage.
+ */
 DeclarationLocation*
 DIEDeclaredType::GetDeclarationLocation()
 {
@@ -403,7 +553,9 @@ DIEDeclaredType::GetDeclarationLocation()
 
 // #pragma mark - DIEDerivedType
 
-
+/**
+ * @brief Constructs a DIEDerivedType.
+ */
 DIEDerivedType::DIEDerivedType()
 	:
 	fType(NULL)
@@ -411,6 +563,9 @@ DIEDerivedType::DIEDerivedType()
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEDerivedType::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -424,7 +579,9 @@ DIEDerivedType::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIECompoundType
 
-
+/**
+ * @brief Constructs a DIECompoundType.
+ */
 DIECompoundType::DIECompoundType()
 	:
 	fSpecification(NULL)
@@ -432,6 +589,9 @@ DIECompoundType::DIECompoundType()
 }
 
 
+/**
+ * @brief Reports whether this DIE introduces a namespace-like scope.
+ */
 bool
 DIECompoundType::IsNamespace() const
 {
@@ -439,6 +599,9 @@ DIECompoundType::IsNamespace() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_specification reference.
+ */
 DebugInfoEntry*
 DIECompoundType::Specification() const
 {
@@ -446,6 +609,9 @@ DIECompoundType::Specification() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIECompoundType::ByteSize() const
 {
@@ -453,6 +619,9 @@ DIECompoundType::ByteSize() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIECompoundType::AddChild(DebugInfoEntry* child)
 {
@@ -466,6 +635,9 @@ DIECompoundType::AddChild(DebugInfoEntry* child)
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIECompoundType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -474,6 +646,9 @@ DIECompoundType::AddAttribute_byte_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_specification attribute value.
+ */
 status_t
 DIECompoundType::AddAttribute_specification(uint16 attributeName,
 	const AttributeValue& value)
@@ -485,12 +660,17 @@ DIECompoundType::AddAttribute_specification(uint16 attributeName,
 
 // #pragma mark - DIEClassBaseType
 
-
+/**
+ * @brief Constructs a DIEClassBaseType.
+ */
 DIEClassBaseType::DIEClassBaseType()
 {
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIEClassBaseType::AddChild(DebugInfoEntry* child)
 {
@@ -527,7 +707,9 @@ DIEClassBaseType::AddChild(DebugInfoEntry* child)
 
 // #pragma mark - DIENamedBase
 
-
+/**
+ * @brief Constructs a DIENamedBase.
+ */
 DIENamedBase::DIENamedBase()
 	:
 	fName(NULL),
@@ -536,6 +718,9 @@ DIENamedBase::DIENamedBase()
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIENamedBase::Name() const
 {
@@ -543,6 +728,9 @@ DIENamedBase::Name() const
 }
 
 
+/**
+ * @brief Returns the DIE's DW_AT_description string.
+ */
 const char*
 DIENamedBase::Description() const
 {
@@ -550,6 +738,9 @@ DIENamedBase::Description() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIENamedBase::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -559,6 +750,9 @@ DIENamedBase::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_description attribute value.
+ */
 status_t
 DIENamedBase::AddAttribute_description(uint16 attributeName,
 	const AttributeValue& value)
@@ -570,12 +764,17 @@ DIENamedBase::AddAttribute_description(uint16 attributeName,
 
 // #pragma mark - DIEDeclaredBase
 
-
+/**
+ * @brief Constructs a DIEDeclaredBase.
+ */
 DIEDeclaredBase::DIEDeclaredBase()
 {
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's declaration-location storage.
+ */
 DeclarationLocation*
 DIEDeclaredBase::GetDeclarationLocation()
 {
@@ -585,7 +784,9 @@ DIEDeclaredBase::GetDeclarationLocation()
 
 // #pragma mark - DIEDeclaredNamedBase
 
-
+/**
+ * @brief Constructs a DIEDeclaredNamedBase.
+ */
 DIEDeclaredNamedBase::DIEDeclaredNamedBase()
 	:
 	fName(NULL),
@@ -597,6 +798,9 @@ DIEDeclaredNamedBase::DIEDeclaredNamedBase()
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIEDeclaredNamedBase::Name() const
 {
@@ -604,6 +808,9 @@ DIEDeclaredNamedBase::Name() const
 }
 
 
+/**
+ * @brief Returns the DIE's DW_AT_description string.
+ */
 const char*
 DIEDeclaredNamedBase::Description() const
 {
@@ -611,6 +818,9 @@ DIEDeclaredNamedBase::Description() const
 }
 
 
+/**
+ * @brief Reports whether this DIE is a non-defining declaration.
+ */
 bool
 DIEDeclaredNamedBase::IsDeclaration() const
 {
@@ -618,6 +828,9 @@ DIEDeclaredNamedBase::IsDeclaration() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIEDeclaredNamedBase::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -627,6 +840,9 @@ DIEDeclaredNamedBase::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_description attribute value.
+ */
 status_t
 DIEDeclaredNamedBase::AddAttribute_description(uint16 attributeName,
 	const AttributeValue& value)
@@ -636,6 +852,9 @@ DIEDeclaredNamedBase::AddAttribute_description(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_accessibility attribute value.
+ */
 status_t
 DIEDeclaredNamedBase::AddAttribute_accessibility(uint16 attributeName,
 	const AttributeValue& value)
@@ -645,6 +864,9 @@ DIEDeclaredNamedBase::AddAttribute_accessibility(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_declaration attribute value.
+ */
 status_t
 DIEDeclaredNamedBase::AddAttribute_declaration(uint16 attributeName,
 	const AttributeValue& value)
@@ -656,12 +878,17 @@ DIEDeclaredNamedBase::AddAttribute_declaration(uint16 attributeName,
 
 // #pragma mark - DIEArrayIndexType
 
-
+/**
+ * @brief Constructs a DIEArrayIndexType.
+ */
 DIEArrayIndexType::DIEArrayIndexType()
 {
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIEArrayIndexType::ByteSize() const
 {
@@ -669,6 +896,9 @@ DIEArrayIndexType::ByteSize() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_bit_stride attribute value.
+ */
 status_t
 DIEArrayIndexType::AddAttribute_bit_stride(uint16 attributeName,
 	const AttributeValue& value)
@@ -677,6 +907,9 @@ DIEArrayIndexType::AddAttribute_bit_stride(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIEArrayIndexType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -685,6 +918,9 @@ DIEArrayIndexType::AddAttribute_byte_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_stride attribute value.
+ */
 status_t
 DIEArrayIndexType::AddAttribute_byte_stride(uint16 attributeName,
 	const AttributeValue& value)
@@ -695,7 +931,9 @@ DIEArrayIndexType::AddAttribute_byte_stride(uint16 attributeName,
 
 // #pragma mark - DIEArrayType
 
-
+/**
+ * @brief Constructs a DIEArrayType.
+ */
 DIEArrayType::DIEArrayType()
 	:
 	fSpecification(NULL),
@@ -704,6 +942,9 @@ DIEArrayType::DIEArrayType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEArrayType::Tag() const
 {
@@ -711,6 +952,9 @@ DIEArrayType::Tag() const
 }
 
 
+/**
+ * @brief Post-parse hook invoked once parent/child links are set.
+ */
 status_t
 DIEArrayType::InitAfterHierarchy(DebugInfoEntryInitInfo& info)
 {
@@ -719,6 +963,9 @@ DIEArrayType::InitAfterHierarchy(DebugInfoEntryInitInfo& info)
 }
 
 
+/**
+ * @brief Returns the DW_AT_specification reference.
+ */
 DebugInfoEntry*
 DIEArrayType::Specification() const
 {
@@ -726,6 +973,9 @@ DIEArrayType::Specification() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIEArrayType::ByteSize() const
 {
@@ -733,6 +983,9 @@ DIEArrayType::ByteSize() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIEArrayType::AddChild(DebugInfoEntry* child)
 {
@@ -747,6 +1000,9 @@ DIEArrayType::AddChild(DebugInfoEntry* child)
 }
 
 
+/**
+ * @brief Stores the DW_AT_ordering attribute value.
+ */
 status_t
 DIEArrayType::AddAttribute_ordering(uint16 attributeName,
 	const AttributeValue& value)
@@ -756,6 +1012,9 @@ DIEArrayType::AddAttribute_ordering(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_bit_stride attribute value.
+ */
 status_t
 DIEArrayType::AddAttribute_bit_stride(uint16 attributeName,
 	const AttributeValue& value)
@@ -764,6 +1023,9 @@ DIEArrayType::AddAttribute_bit_stride(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_stride_size attribute value.
+ */
 status_t
 DIEArrayType::AddAttribute_stride_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -772,6 +1034,9 @@ DIEArrayType::AddAttribute_stride_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIEArrayType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -780,6 +1045,9 @@ DIEArrayType::AddAttribute_byte_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_specification attribute value.
+ */
 status_t
 DIEArrayType::AddAttribute_specification(uint16 attributeName,
 	const AttributeValue& value)
@@ -791,12 +1059,17 @@ DIEArrayType::AddAttribute_specification(uint16 attributeName,
 
 // #pragma mark - DIEClassType
 
-
+/**
+ * @brief Constructs a DIEClassType.
+ */
 DIEClassType::DIEClassType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEClassType::Tag() const
 {
@@ -806,12 +1079,17 @@ DIEClassType::Tag() const
 
 // #pragma mark - DIEEntryPoint
 
-
+/**
+ * @brief Constructs a DIEEntryPoint.
+ */
 DIEEntryPoint::DIEEntryPoint()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEEntryPoint::Tag() const
 {
@@ -821,7 +1099,9 @@ DIEEntryPoint::Tag() const
 
 // #pragma mark - DIEEnumerationType
 
-
+/**
+ * @brief Constructs a DIEEnumerationType.
+ */
 DIEEnumerationType::DIEEnumerationType()
 	:
 	fSpecification(NULL)
@@ -829,6 +1109,9 @@ DIEEnumerationType::DIEEnumerationType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEEnumerationType::Tag() const
 {
@@ -836,6 +1119,9 @@ DIEEnumerationType::Tag() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_specification reference.
+ */
 DebugInfoEntry*
 DIEEnumerationType::Specification() const
 {
@@ -843,6 +1129,9 @@ DIEEnumerationType::Specification() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIEEnumerationType::AddChild(DebugInfoEntry* child)
 {
@@ -855,6 +1144,9 @@ DIEEnumerationType::AddChild(DebugInfoEntry* child)
 }
 
 
+/**
+ * @brief Stores the DW_AT_specification attribute value.
+ */
 status_t
 DIEEnumerationType::AddAttribute_specification(uint16 attributeName,
 	const AttributeValue& value)
@@ -866,7 +1158,9 @@ DIEEnumerationType::AddAttribute_specification(uint16 attributeName,
 
 // #pragma mark - DIEFormalParameter
 
-
+/**
+ * @brief Constructs a DIEFormalParameter.
+ */
 DIEFormalParameter::DIEFormalParameter()
 	:
 	fAbstractOrigin(NULL),
@@ -876,6 +1170,9 @@ DIEFormalParameter::DIEFormalParameter()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEFormalParameter::Tag() const
 {
@@ -883,6 +1180,9 @@ DIEFormalParameter::Tag() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_abstract_origin reference.
+ */
 DebugInfoEntry*
 DIEFormalParameter::AbstractOrigin() const
 {
@@ -890,6 +1190,9 @@ DIEFormalParameter::AbstractOrigin() const
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's location description.
+ */
 LocationDescription*
 DIEFormalParameter::GetLocationDescription()
 {
@@ -897,6 +1200,9 @@ DIEFormalParameter::GetLocationDescription()
 }
 
 
+/**
+ * @brief Stores the DW_AT_abstract_origin attribute value.
+ */
 status_t
 DIEFormalParameter::AddAttribute_abstract_origin(uint16 attributeName,
 	const AttributeValue& value)
@@ -906,6 +1212,9 @@ DIEFormalParameter::AddAttribute_abstract_origin(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_artificial attribute value.
+ */
 status_t
 DIEFormalParameter::AddAttribute_artificial(uint16 attributeName,
 	const AttributeValue& value)
@@ -915,6 +1224,9 @@ DIEFormalParameter::AddAttribute_artificial(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_const_value attribute value.
+ */
 status_t
 DIEFormalParameter::AddAttribute_const_value(uint16 attributeName,
 	const AttributeValue& value)
@@ -923,6 +1235,9 @@ DIEFormalParameter::AddAttribute_const_value(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEFormalParameter::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -934,12 +1249,17 @@ DIEFormalParameter::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIEImportedDeclaration
 
-
+/**
+ * @brief Constructs a DIEImportedDeclaration.
+ */
 DIEImportedDeclaration::DIEImportedDeclaration()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEImportedDeclaration::Tag() const
 {
@@ -949,12 +1269,17 @@ DIEImportedDeclaration::Tag() const
 
 // #pragma mark - DIELabel
 
-
+/**
+ * @brief Constructs a DIELabel.
+ */
 DIELabel::DIELabel()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIELabel::Tag() const
 {
@@ -964,7 +1289,9 @@ DIELabel::Tag() const
 
 // #pragma mark - DIELexicalBlock
 
-
+/**
+ * @brief Constructs a DIELexicalBlock.
+ */
 DIELexicalBlock::DIELexicalBlock()
 	:
 	fLowPC(0),
@@ -975,6 +1302,9 @@ DIELexicalBlock::DIELexicalBlock()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIELexicalBlock::Tag() const
 {
@@ -982,6 +1312,9 @@ DIELexicalBlock::Tag() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_abstract_origin reference.
+ */
 DebugInfoEntry*
 DIELexicalBlock::AbstractOrigin() const
 {
@@ -989,6 +1322,9 @@ DIELexicalBlock::AbstractOrigin() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIELexicalBlock::AddChild(DebugInfoEntry* child)
 {
@@ -1005,6 +1341,9 @@ DIELexicalBlock::AddChild(DebugInfoEntry* child)
 }
 
 
+/**
+ * @brief Stores the DW_AT_low_pc attribute value.
+ */
 status_t
 DIELexicalBlock::AddAttribute_low_pc(uint16 attributeName,
 	const AttributeValue& value)
@@ -1014,6 +1353,9 @@ DIELexicalBlock::AddAttribute_low_pc(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_high_pc attribute value.
+ */
 status_t
 DIELexicalBlock::AddAttribute_high_pc(uint16 attributeName,
 	const AttributeValue& value)
@@ -1026,6 +1368,9 @@ DIELexicalBlock::AddAttribute_high_pc(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_ranges attribute value.
+ */
 status_t
 DIELexicalBlock::AddAttribute_ranges(uint16 attributeName,
 	const AttributeValue& value)
@@ -1035,6 +1380,9 @@ DIELexicalBlock::AddAttribute_ranges(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_abstract_origin attribute value.
+ */
 status_t
 DIELexicalBlock::AddAttribute_abstract_origin(uint16 attributeName,
 	const AttributeValue& value)
@@ -1046,7 +1394,9 @@ DIELexicalBlock::AddAttribute_abstract_origin(uint16 attributeName,
 
 // #pragma mark - DIEMember
 
-
+/**
+ * @brief Constructs a DIEMember.
+ */
 DIEMember::DIEMember()
 	:
 	fType(NULL)
@@ -1054,6 +1404,9 @@ DIEMember::DIEMember()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEMember::Tag() const
 {
@@ -1061,6 +1414,9 @@ DIEMember::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEMember::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -1070,6 +1426,9 @@ DIEMember::AddAttribute_type(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIEMember::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1078,6 +1437,9 @@ DIEMember::AddAttribute_byte_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_bit_size attribute value.
+ */
 status_t
 DIEMember::AddAttribute_bit_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1086,6 +1448,9 @@ DIEMember::AddAttribute_bit_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_data_member_location attribute value.
+ */
 status_t
 DIEMember::AddAttribute_data_member_location(uint16 attributeName,
 	const AttributeValue& value)
@@ -1094,6 +1459,9 @@ DIEMember::AddAttribute_data_member_location(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_bit_offset attribute value.
+ */
 status_t
 DIEMember::AddAttribute_bit_offset(uint16 attributeName,
 	const AttributeValue& value)
@@ -1102,6 +1470,9 @@ DIEMember::AddAttribute_bit_offset(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_data_bit_offset attribute value.
+ */
 status_t
 DIEMember::AddAttribute_data_bit_offset(uint16 attributeName,
 	const AttributeValue& value)
@@ -1112,7 +1483,9 @@ DIEMember::AddAttribute_data_bit_offset(uint16 attributeName,
 
 // #pragma mark - DIEPointerType
 
-
+/**
+ * @brief Constructs a DIEPointerType.
+ */
 DIEPointerType::DIEPointerType()
 	:
 	fSpecification(NULL)
@@ -1120,6 +1493,9 @@ DIEPointerType::DIEPointerType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEPointerType::Tag() const
 {
@@ -1127,6 +1503,9 @@ DIEPointerType::Tag() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_specification reference.
+ */
 DebugInfoEntry*
 DIEPointerType::Specification() const
 {
@@ -1134,6 +1513,9 @@ DIEPointerType::Specification() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_specification attribute value.
+ */
 status_t
 DIEPointerType::AddAttribute_specification(uint16 attributeName,
 	const AttributeValue& value)
@@ -1145,12 +1527,17 @@ DIEPointerType::AddAttribute_specification(uint16 attributeName,
 
 // #pragma mark - DIEReferenceType
 
-
+/**
+ * @brief Constructs a DIEReferenceType.
+ */
 DIEReferenceType::DIEReferenceType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEReferenceType::Tag() const
 {
@@ -1160,12 +1547,17 @@ DIEReferenceType::Tag() const
 
 // #pragma mark - DIECompileUnit
 
-
+/**
+ * @brief Constructs a DIECompileUnit.
+ */
 DIECompileUnit::DIECompileUnit()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECompileUnit::Tag() const
 {
@@ -1175,12 +1567,17 @@ DIECompileUnit::Tag() const
 
 // #pragma mark - DIEStringType
 
-
+/**
+ * @brief Constructs a DIEStringType.
+ */
 DIEStringType::DIEStringType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEStringType::Tag() const
 {
@@ -1188,6 +1585,9 @@ DIEStringType::Tag() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIEStringType::ByteSize() const
 {
@@ -1195,6 +1595,9 @@ DIEStringType::ByteSize() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIEStringType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1205,12 +1608,17 @@ DIEStringType::AddAttribute_byte_size(uint16 attributeName,
 
 // #pragma mark - DIEStructureType
 
-
+/**
+ * @brief Constructs a DIEStructureType.
+ */
 DIEStructureType::DIEStructureType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEStructureType::Tag() const
 {
@@ -1220,7 +1628,9 @@ DIEStructureType::Tag() const
 
 // #pragma mark - DIESubroutineType
 
-
+/**
+ * @brief Constructs a DIESubroutineType.
+ */
 DIESubroutineType::DIESubroutineType()
 	:
 	fReturnType(NULL),
@@ -1230,6 +1640,9 @@ DIESubroutineType::DIESubroutineType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIESubroutineType::Tag() const
 {
@@ -1237,6 +1650,9 @@ DIESubroutineType::Tag() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIESubroutineType::AddChild(DebugInfoEntry* child)
 {
@@ -1251,6 +1667,9 @@ DIESubroutineType::AddChild(DebugInfoEntry* child)
 }
 
 
+/**
+ * @brief Stores the DW_AT_address_class attribute value.
+ */
 status_t
 DIESubroutineType::AddAttribute_address_class(uint16 attributeName,
 	const AttributeValue& value)
@@ -1261,6 +1680,9 @@ DIESubroutineType::AddAttribute_address_class(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_prototyped attribute value.
+ */
 status_t
 DIESubroutineType::AddAttribute_prototyped(uint16 attributeName,
 	const AttributeValue& value)
@@ -1270,6 +1692,9 @@ DIESubroutineType::AddAttribute_prototyped(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIESubroutineType::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -1281,12 +1706,17 @@ DIESubroutineType::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIETypedef
 
-
+/**
+ * @brief Constructs a DIETypedef.
+ */
 DIETypedef::DIETypedef()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETypedef::Tag() const
 {
@@ -1296,12 +1726,17 @@ DIETypedef::Tag() const
 
 // #pragma mark - DIEUnionType
 
-
+/**
+ * @brief Constructs a DIEUnionType.
+ */
 DIEUnionType::DIEUnionType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEUnionType::Tag() const
 {
@@ -1311,12 +1746,17 @@ DIEUnionType::Tag() const
 
 // #pragma mark - DIEUnspecifiedParameters
 
-
+/**
+ * @brief Constructs a DIEUnspecifiedParameters.
+ */
 DIEUnspecifiedParameters::DIEUnspecifiedParameters()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEUnspecifiedParameters::Tag() const
 {
@@ -1326,12 +1766,17 @@ DIEUnspecifiedParameters::Tag() const
 
 // #pragma mark - DIEVariant
 
-
+/**
+ * @brief Constructs a DIEVariant.
+ */
 DIEVariant::DIEVariant()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEVariant::Tag() const
 {
@@ -1341,12 +1786,17 @@ DIEVariant::Tag() const
 
 // #pragma mark - DIECommonBlock
 
-
+/**
+ * @brief Constructs a DIECommonBlock.
+ */
 DIECommonBlock::DIECommonBlock()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECommonBlock::Tag() const
 {
@@ -1354,6 +1804,9 @@ DIECommonBlock::Tag() const
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's location description.
+ */
 LocationDescription*
 DIECommonBlock::GetLocationDescription()
 {
@@ -1363,12 +1816,17 @@ DIECommonBlock::GetLocationDescription()
 
 // #pragma mark - DIECommonInclusion
 
-
+/**
+ * @brief Constructs a DIECommonInclusion.
+ */
 DIECommonInclusion::DIECommonInclusion()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECommonInclusion::Tag() const
 {
@@ -1378,7 +1836,9 @@ DIECommonInclusion::Tag() const
 
 // #pragma mark - DIEInheritance
 
-
+/**
+ * @brief Constructs a DIEInheritance.
+ */
 DIEInheritance::DIEInheritance()
 	:
 	fType(NULL)
@@ -1386,6 +1846,9 @@ DIEInheritance::DIEInheritance()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEInheritance::Tag() const
 {
@@ -1393,6 +1856,9 @@ DIEInheritance::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEInheritance::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -1402,6 +1868,9 @@ DIEInheritance::AddAttribute_type(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_data_member_location attribute value.
+ */
 status_t
 DIEInheritance::AddAttribute_data_member_location(uint16 attributeName,
 	const AttributeValue& value)
@@ -1412,12 +1881,17 @@ DIEInheritance::AddAttribute_data_member_location(uint16 attributeName,
 
 // #pragma mark - DIEInlinedSubroutine
 
-
+/**
+ * @brief Constructs a DIEInlinedSubroutine.
+ */
 DIEInlinedSubroutine::DIEInlinedSubroutine()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEInlinedSubroutine::Tag() const
 {
@@ -1427,12 +1901,17 @@ DIEInlinedSubroutine::Tag() const
 
 // #pragma mark - DIEModule
 
-
+/**
+ * @brief Constructs a DIEModule.
+ */
 DIEModule::DIEModule()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEModule::Tag() const
 {
@@ -1442,7 +1921,9 @@ DIEModule::Tag() const
 
 // #pragma mark - DIEPointerToMemberType
 
-
+/**
+ * @brief Constructs a DIEPointerToMemberType.
+ */
 DIEPointerToMemberType::DIEPointerToMemberType()
 	:
 	fContainingType(NULL),
@@ -1451,6 +1932,9 @@ DIEPointerToMemberType::DIEPointerToMemberType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEPointerToMemberType::Tag() const
 {
@@ -1458,6 +1942,9 @@ DIEPointerToMemberType::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_address_class attribute value.
+ */
 status_t
 DIEPointerToMemberType::AddAttribute_address_class(uint16 attributeName,
 	const AttributeValue& value)
@@ -1468,6 +1955,9 @@ DIEPointerToMemberType::AddAttribute_address_class(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_containing_type attribute value.
+ */
 status_t
 DIEPointerToMemberType::AddAttribute_containing_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -1482,6 +1972,9 @@ DIEPointerToMemberType::AddAttribute_containing_type(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_use_location attribute value.
+ */
 status_t
 DIEPointerToMemberType::AddAttribute_use_location(uint16 attributeName,
 	const AttributeValue& value)
@@ -1502,12 +1995,17 @@ DIEPointerToMemberType::AddAttribute_use_location(uint16 attributeName,
 
 // #pragma mark - DIESetType
 
-
+/**
+ * @brief Constructs a DIESetType.
+ */
 DIESetType::DIESetType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIESetType::Tag() const
 {
@@ -1515,6 +2013,9 @@ DIESetType::Tag() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIESetType::ByteSize() const
 {
@@ -1522,6 +2023,9 @@ DIESetType::ByteSize() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIESetType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1532,7 +2036,9 @@ DIESetType::AddAttribute_byte_size(uint16 attributeName,
 
 // #pragma mark - DIESubrangeType
 
-
+/**
+ * @brief Constructs a DIESubrangeType.
+ */
 DIESubrangeType::DIESubrangeType()
 	:
 	fThreadsScaled(false)
@@ -1540,6 +2046,9 @@ DIESubrangeType::DIESubrangeType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIESubrangeType::Tag() const
 {
@@ -1547,6 +2056,9 @@ DIESubrangeType::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_count attribute value.
+ */
 status_t
 DIESubrangeType::AddAttribute_count(uint16 attributeName,
 	const AttributeValue& value)
@@ -1555,6 +2067,9 @@ DIESubrangeType::AddAttribute_count(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_lower_bound attribute value.
+ */
 status_t
 DIESubrangeType::AddAttribute_lower_bound(uint16 attributeName,
 	const AttributeValue& value)
@@ -1563,6 +2078,9 @@ DIESubrangeType::AddAttribute_lower_bound(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_upper_bound attribute value.
+ */
 status_t
 DIESubrangeType::AddAttribute_upper_bound(uint16 attributeName,
 	const AttributeValue& value)
@@ -1571,6 +2089,9 @@ DIESubrangeType::AddAttribute_upper_bound(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_threads_scaled attribute value.
+ */
 status_t
 DIESubrangeType::AddAttribute_threads_scaled(uint16 attributeName,
 	const AttributeValue& value)
@@ -1582,7 +2103,9 @@ DIESubrangeType::AddAttribute_threads_scaled(uint16 attributeName,
 
 // #pragma mark - DIEWithStatement
 
-
+/**
+ * @brief Constructs a DIEWithStatement.
+ */
 DIEWithStatement::DIEWithStatement()
 	:
 	fType(NULL)
@@ -1590,6 +2113,9 @@ DIEWithStatement::DIEWithStatement()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEWithStatement::Tag() const
 {
@@ -1597,6 +2123,9 @@ DIEWithStatement::Tag() const
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's location description.
+ */
 LocationDescription*
 DIEWithStatement::GetLocationDescription()
 {
@@ -1604,6 +2133,9 @@ DIEWithStatement::GetLocationDescription()
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEWithStatement::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -1615,12 +2147,17 @@ DIEWithStatement::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIEAccessDeclaration
 
-
+/**
+ * @brief Constructs a DIEAccessDeclaration.
+ */
 DIEAccessDeclaration::DIEAccessDeclaration()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEAccessDeclaration::Tag() const
 {
@@ -1630,7 +2167,9 @@ DIEAccessDeclaration::Tag() const
 
 // #pragma mark - DIEBaseType
 
-
+/**
+ * @brief Constructs a DIEBaseType.
+ */
 DIEBaseType::DIEBaseType()
 	:
 	fEncoding(0),
@@ -1639,6 +2178,9 @@ DIEBaseType::DIEBaseType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEBaseType::Tag() const
 {
@@ -1646,6 +2188,9 @@ DIEBaseType::Tag() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIEBaseType::ByteSize() const
 {
@@ -1653,6 +2198,9 @@ DIEBaseType::ByteSize() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_encoding attribute value.
+ */
 status_t
 DIEBaseType::AddAttribute_encoding(uint16 attributeName,
 	const AttributeValue& value)
@@ -1662,6 +2210,9 @@ DIEBaseType::AddAttribute_encoding(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIEBaseType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1670,6 +2221,9 @@ DIEBaseType::AddAttribute_byte_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_bit_size attribute value.
+ */
 status_t
 DIEBaseType::AddAttribute_bit_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1678,6 +2232,9 @@ DIEBaseType::AddAttribute_bit_size(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_bit_offset attribute value.
+ */
 status_t
 DIEBaseType::AddAttribute_bit_offset(uint16 attributeName,
 	const AttributeValue& value)
@@ -1686,6 +2243,9 @@ DIEBaseType::AddAttribute_bit_offset(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_data_bit_offset attribute value.
+ */
 status_t
 DIEBaseType::AddAttribute_data_bit_offset(uint16 attributeName,
 	const AttributeValue& value)
@@ -1694,6 +2254,9 @@ DIEBaseType::AddAttribute_data_bit_offset(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_endianity attribute value.
+ */
 status_t
 DIEBaseType::AddAttribute_endianity(uint16 attributeName,
 	const AttributeValue& value)
@@ -1705,12 +2268,17 @@ DIEBaseType::AddAttribute_endianity(uint16 attributeName,
 
 // #pragma mark - DIECatchBlock
 
-
+/**
+ * @brief Constructs a DIECatchBlock.
+ */
 DIECatchBlock::DIECatchBlock()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECatchBlock::Tag() const
 {
@@ -1720,12 +2288,17 @@ DIECatchBlock::Tag() const
 
 // #pragma mark - DIEConstType
 
-
+/**
+ * @brief Constructs a DIEConstType.
+ */
 DIEConstType::DIEConstType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEConstType::Tag() const
 {
@@ -1735,7 +2308,9 @@ DIEConstType::Tag() const
 
 // #pragma mark - DIEConstant
 
-
+/**
+ * @brief Constructs a DIEConstant.
+ */
 DIEConstant::DIEConstant()
 	:
 	fType(NULL)
@@ -1743,6 +2318,9 @@ DIEConstant::DIEConstant()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEConstant::Tag() const
 {
@@ -1750,6 +2328,9 @@ DIEConstant::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_const_value attribute value.
+ */
 status_t
 DIEConstant::AddAttribute_const_value(uint16 attributeName,
 	const AttributeValue& value)
@@ -1758,6 +2339,9 @@ DIEConstant::AddAttribute_const_value(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEConstant::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -1769,12 +2353,17 @@ DIEConstant::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIEEnumerator
 
-
+/**
+ * @brief Constructs a DIEEnumerator.
+ */
 DIEEnumerator::DIEEnumerator()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEEnumerator::Tag() const
 {
@@ -1782,6 +2371,9 @@ DIEEnumerator::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_const_value attribute value.
+ */
 status_t
 DIEEnumerator::AddAttribute_const_value(uint16 attributeName,
 	const AttributeValue& value)
@@ -1792,12 +2384,17 @@ DIEEnumerator::AddAttribute_const_value(uint16 attributeName,
 
 // #pragma mark - DIEFileType
 
-
+/**
+ * @brief Constructs a DIEFileType.
+ */
 DIEFileType::DIEFileType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEFileType::Tag() const
 {
@@ -1805,6 +2402,9 @@ DIEFileType::Tag() const
 }
 
 
+/**
+ * @brief Returns the byte size of values of this type.
+ */
 const DynamicAttributeValue*
 DIEFileType::ByteSize() const
 {
@@ -1812,6 +2412,9 @@ DIEFileType::ByteSize() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_byte_size attribute value.
+ */
 status_t
 DIEFileType::AddAttribute_byte_size(uint16 attributeName,
 	const AttributeValue& value)
@@ -1822,12 +2425,17 @@ DIEFileType::AddAttribute_byte_size(uint16 attributeName,
 
 // #pragma mark - DIEFriend
 
-
+/**
+ * @brief Constructs a DIEFriend.
+ */
 DIEFriend::DIEFriend()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEFriend::Tag() const
 {
@@ -1837,12 +2445,17 @@ DIEFriend::Tag() const
 
 // #pragma mark - DIENameList
 
-
+/**
+ * @brief Constructs a DIENameList.
+ */
 DIENameList::DIENameList()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIENameList::Tag() const
 {
@@ -1852,12 +2465,17 @@ DIENameList::Tag() const
 
 // #pragma mark - DIENameListItem
 
-
+/**
+ * @brief Constructs a DIENameListItem.
+ */
 DIENameListItem::DIENameListItem()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIENameListItem::Tag() const
 {
@@ -1867,12 +2485,17 @@ DIENameListItem::Tag() const
 
 // #pragma mark - DIENamespace
 
-
+/**
+ * @brief Constructs a DIENamespace.
+ */
 DIENamespace::DIENamespace()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIENamespace::Tag() const
 {
@@ -1880,6 +2503,9 @@ DIENamespace::Tag() const
 }
 
 
+/**
+ * @brief Reports whether this DIE introduces a namespace-like scope.
+ */
 bool
 DIENamespace::IsNamespace() const
 {
@@ -1887,6 +2513,9 @@ DIENamespace::IsNamespace() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIENamespace::AddChild(DebugInfoEntry* child)
 {
@@ -1897,12 +2526,17 @@ DIENamespace::AddChild(DebugInfoEntry* child)
 
 // #pragma mark - DIEPackedType
 
-
+/**
+ * @brief Constructs a DIEPackedType.
+ */
 DIEPackedType::DIEPackedType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEPackedType::Tag() const
 {
@@ -1912,7 +2546,9 @@ DIEPackedType::Tag() const
 
 // #pragma mark - DIESubprogram
 
-
+/**
+ * @brief Constructs a DIESubprogram.
+ */
 DIESubprogram::DIESubprogram()
 	:
 	fLowPC(0),
@@ -1930,12 +2566,17 @@ DIESubprogram::DIESubprogram()
 {
 }
 
-
+/**
+ * @brief Destroys the DIESubprogram.
+ */
 DIESubprogram::~DIESubprogram()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIESubprogram::Tag() const
 {
@@ -1943,6 +2584,9 @@ DIESubprogram::Tag() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_specification reference.
+ */
 DebugInfoEntry*
 DIESubprogram::Specification() const
 {
@@ -1951,6 +2595,9 @@ DIESubprogram::Specification() const
 
 
 
+/**
+ * @brief Returns the DW_AT_abstract_origin reference.
+ */
 DebugInfoEntry*
 DIESubprogram::AbstractOrigin() const
 {
@@ -1958,6 +2605,9 @@ DIESubprogram::AbstractOrigin() const
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIESubprogram::AddChild(DebugInfoEntry* child)
 {
@@ -1989,6 +2639,9 @@ DIESubprogram::AddChild(DebugInfoEntry* child)
 
 
 
+/**
+ * @brief Stores the DW_AT_low_pc attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_low_pc(uint16 attributeName,
 	const AttributeValue& value)
@@ -1998,6 +2651,9 @@ DIESubprogram::AddAttribute_low_pc(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_high_pc attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_high_pc(uint16 attributeName,
 	const AttributeValue& value)
@@ -2010,6 +2666,9 @@ DIESubprogram::AddAttribute_high_pc(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_ranges attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_ranges(uint16 attributeName,
 	const AttributeValue& value)
@@ -2019,6 +2678,9 @@ DIESubprogram::AddAttribute_ranges(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_specification attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_specification(uint16 attributeName,
 	const AttributeValue& value)
@@ -2028,6 +2690,9 @@ DIESubprogram::AddAttribute_specification(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_address_class attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_address_class(uint16 attributeName,
 	const AttributeValue& value)
@@ -2038,6 +2703,9 @@ DIESubprogram::AddAttribute_address_class(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_prototyped attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_prototyped(uint16 attributeName,
 	const AttributeValue& value)
@@ -2047,6 +2715,9 @@ DIESubprogram::AddAttribute_prototyped(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -2056,6 +2727,9 @@ DIESubprogram::AddAttribute_type(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_inline attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_inline(uint16 attributeName,
 	const AttributeValue& value)
@@ -2066,6 +2740,9 @@ DIESubprogram::AddAttribute_inline(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_abstract_origin attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_abstract_origin(uint16 attributeName,
 	const AttributeValue& value)
@@ -2075,6 +2752,9 @@ DIESubprogram::AddAttribute_abstract_origin(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_frame_base attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_frame_base(uint16 attributeName,
 	const AttributeValue& value)
@@ -2093,6 +2773,9 @@ DIESubprogram::AddAttribute_frame_base(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_artificial attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_artificial(uint16 attributeName,
 	const AttributeValue& value)
@@ -2102,6 +2785,9 @@ DIESubprogram::AddAttribute_artificial(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_calling_convention attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_calling_convention(uint16 attributeName,
 	const AttributeValue& value)
@@ -2111,6 +2797,9 @@ DIESubprogram::AddAttribute_calling_convention(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_main_subprogram attribute value.
+ */
 status_t
 DIESubprogram::AddAttribute_main_subprogram(uint16 attributeName,
 	const AttributeValue& value)
@@ -2122,7 +2811,9 @@ DIESubprogram::AddAttribute_main_subprogram(uint16 attributeName,
 
 // #pragma mark - DIETemplateTypeParameter
 
-
+/**
+ * @brief Constructs a DIETemplateTypeParameter.
+ */
 DIETemplateTypeParameter::DIETemplateTypeParameter()
 	:
 	fType(NULL)
@@ -2130,6 +2821,9 @@ DIETemplateTypeParameter::DIETemplateTypeParameter()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETemplateTypeParameter::Tag() const
 {
@@ -2137,6 +2831,9 @@ DIETemplateTypeParameter::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIETemplateTypeParameter::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -2148,7 +2845,9 @@ DIETemplateTypeParameter::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIETemplateValueParameter
 
-
+/**
+ * @brief Constructs a DIETemplateValueParameter.
+ */
 DIETemplateValueParameter::DIETemplateValueParameter()
 	:
 	fType(NULL)
@@ -2156,6 +2855,9 @@ DIETemplateValueParameter::DIETemplateValueParameter()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETemplateValueParameter::Tag() const
 {
@@ -2163,6 +2865,9 @@ DIETemplateValueParameter::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_const_value attribute value.
+ */
 status_t
 DIETemplateValueParameter::AddAttribute_const_value(uint16 attributeName,
 	const AttributeValue& value)
@@ -2171,6 +2876,9 @@ DIETemplateValueParameter::AddAttribute_const_value(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIETemplateValueParameter::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -2182,7 +2890,9 @@ DIETemplateValueParameter::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIEThrownType
 
-
+/**
+ * @brief Constructs a DIEThrownType.
+ */
 DIEThrownType::DIEThrownType()
 	:
 	fType(NULL)
@@ -2190,6 +2900,9 @@ DIEThrownType::DIEThrownType()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEThrownType::Tag() const
 {
@@ -2197,6 +2910,9 @@ DIEThrownType::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEThrownType::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -2208,12 +2924,17 @@ DIEThrownType::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIETryBlock
 
-
+/**
+ * @brief Constructs a DIETryBlock.
+ */
 DIETryBlock::DIETryBlock()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETryBlock::Tag() const
 {
@@ -2223,7 +2944,9 @@ DIETryBlock::Tag() const
 
 // #pragma mark - DIEVariantPart
 
-
+/**
+ * @brief Constructs a DIEVariantPart.
+ */
 DIEVariantPart::DIEVariantPart()
 	:
 	fType(NULL)
@@ -2231,6 +2954,9 @@ DIEVariantPart::DIEVariantPart()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEVariantPart::Tag() const
 {
@@ -2238,6 +2964,9 @@ DIEVariantPart::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEVariantPart::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -2249,7 +2978,9 @@ DIEVariantPart::AddAttribute_type(uint16 attributeName,
 
 // #pragma mark - DIEVariable
 
-
+/**
+ * @brief Constructs a DIEVariable.
+ */
 DIEVariable::DIEVariable()
 	:
 	fType(NULL),
@@ -2260,6 +2991,9 @@ DIEVariable::DIEVariable()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEVariable::Tag() const
 {
@@ -2267,6 +3001,9 @@ DIEVariable::Tag() const
 }
 
 
+/**
+ * @brief Returns the DW_AT_specification reference.
+ */
 DebugInfoEntry*
 DIEVariable::Specification() const
 {
@@ -2275,6 +3012,9 @@ DIEVariable::Specification() const
 
 
 
+/**
+ * @brief Returns the DW_AT_abstract_origin reference.
+ */
 DebugInfoEntry*
 DIEVariable::AbstractOrigin() const
 {
@@ -2282,6 +3022,9 @@ DIEVariable::AbstractOrigin() const
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's location description.
+ */
 LocationDescription*
 DIEVariable::GetLocationDescription()
 {
@@ -2289,6 +3032,9 @@ DIEVariable::GetLocationDescription()
 }
 
 
+/**
+ * @brief Stores the DW_AT_const_value attribute value.
+ */
 status_t
 DIEVariable::AddAttribute_const_value(uint16 attributeName,
 	const AttributeValue& value)
@@ -2297,6 +3043,9 @@ DIEVariable::AddAttribute_const_value(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_type attribute value.
+ */
 status_t
 DIEVariable::AddAttribute_type(uint16 attributeName,
 	const AttributeValue& value)
@@ -2306,6 +3055,9 @@ DIEVariable::AddAttribute_type(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_specification attribute value.
+ */
 status_t
 DIEVariable::AddAttribute_specification(uint16 attributeName,
 	const AttributeValue& value)
@@ -2321,6 +3073,9 @@ DIEVariable::AddAttribute_specification(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_abstract_origin attribute value.
+ */
 status_t
 DIEVariable::AddAttribute_abstract_origin(uint16 attributeName,
 	const AttributeValue& value)
@@ -2330,6 +3085,9 @@ DIEVariable::AddAttribute_abstract_origin(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_start_scope attribute value.
+ */
 status_t
 DIEVariable::AddAttribute_start_scope(uint16 attributeName,
 	const AttributeValue& value)
@@ -2339,6 +3097,9 @@ DIEVariable::AddAttribute_start_scope(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_external attribute value.
+ */
 status_t
 DIEVariable::AddAttribute_external(uint16 attributeName,
 	const AttributeValue& value)
@@ -2350,12 +3111,17 @@ DIEVariable::AddAttribute_external(uint16 attributeName,
 
 // #pragma mark - DIEVolatileType
 
-
+/**
+ * @brief Constructs a DIEVolatileType.
+ */
 DIEVolatileType::DIEVolatileType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEVolatileType::Tag() const
 {
@@ -2363,6 +3129,9 @@ DIEVolatileType::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_file attribute value.
+ */
 status_t
 DIEVolatileType::AddAttribute_decl_file(uint16 attributeName,
 	const AttributeValue& value)
@@ -2372,6 +3141,9 @@ DIEVolatileType::AddAttribute_decl_file(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_line attribute value.
+ */
 status_t
 DIEVolatileType::AddAttribute_decl_line(uint16 attributeName,
 	const AttributeValue& value)
@@ -2381,6 +3153,9 @@ DIEVolatileType::AddAttribute_decl_line(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_column attribute value.
+ */
 status_t
 DIEVolatileType::AddAttribute_decl_column(uint16 attributeName,
 	const AttributeValue& value)
@@ -2392,12 +3167,17 @@ DIEVolatileType::AddAttribute_decl_column(uint16 attributeName,
 
 // #pragma mark - DIEDwarfProcedure
 
-
+/**
+ * @brief Constructs a DIEDwarfProcedure.
+ */
 DIEDwarfProcedure::DIEDwarfProcedure()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEDwarfProcedure::Tag() const
 {
@@ -2405,6 +3185,9 @@ DIEDwarfProcedure::Tag() const
 }
 
 
+/**
+ * @brief Returns a writable pointer to the DIE's location description.
+ */
 LocationDescription*
 DIEDwarfProcedure::GetLocationDescription()
 {
@@ -2414,12 +3197,17 @@ DIEDwarfProcedure::GetLocationDescription()
 
 // #pragma mark - DIERestrictType
 
-
+/**
+ * @brief Constructs a DIERestrictType.
+ */
 DIERestrictType::DIERestrictType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIERestrictType::Tag() const
 {
@@ -2429,12 +3217,17 @@ DIERestrictType::Tag() const
 
 // #pragma mark - DIEInterfaceType
 
-
+/**
+ * @brief Constructs a DIEInterfaceType.
+ */
 DIEInterfaceType::DIEInterfaceType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEInterfaceType::Tag() const
 {
@@ -2444,12 +3237,17 @@ DIEInterfaceType::Tag() const
 
 // #pragma mark - DIEImportedModule
 
-
+/**
+ * @brief Constructs a DIEImportedModule.
+ */
 DIEImportedModule::DIEImportedModule()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEImportedModule::Tag() const
 {
@@ -2459,12 +3257,17 @@ DIEImportedModule::Tag() const
 
 // #pragma mark - DIEUnspecifiedType
 
-
+/**
+ * @brief Constructs a DIEUnspecifiedType.
+ */
 DIEUnspecifiedType::DIEUnspecifiedType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEUnspecifiedType::Tag() const
 {
@@ -2472,6 +3275,9 @@ DIEUnspecifiedType::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_file attribute value.
+ */
 status_t
 DIEUnspecifiedType::AddAttribute_decl_file(uint16 attributeName,
 	const AttributeValue& value)
@@ -2481,6 +3287,9 @@ DIEUnspecifiedType::AddAttribute_decl_file(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_line attribute value.
+ */
 status_t
 DIEUnspecifiedType::AddAttribute_decl_line(uint16 attributeName,
 	const AttributeValue& value)
@@ -2490,6 +3299,9 @@ DIEUnspecifiedType::AddAttribute_decl_line(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_column attribute value.
+ */
 status_t
 DIEUnspecifiedType::AddAttribute_decl_column(uint16 attributeName,
 	const AttributeValue& value)
@@ -2501,12 +3313,17 @@ DIEUnspecifiedType::AddAttribute_decl_column(uint16 attributeName,
 
 // #pragma mark - DIEPartialUnit
 
-
+/**
+ * @brief Constructs a DIEPartialUnit.
+ */
 DIEPartialUnit::DIEPartialUnit()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEPartialUnit::Tag() const
 {
@@ -2516,12 +3333,17 @@ DIEPartialUnit::Tag() const
 
 // #pragma mark - DIEImportedUnit
 
-
+/**
+ * @brief Constructs a DIEImportedUnit.
+ */
 DIEImportedUnit::DIEImportedUnit()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIEImportedUnit::Tag() const
 {
@@ -2531,12 +3353,17 @@ DIEImportedUnit::Tag() const
 
 // #pragma mark - DIECondition
 
-
+/**
+ * @brief Constructs a DIECondition.
+ */
 DIECondition::DIECondition()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECondition::Tag() const
 {
@@ -2546,13 +3373,18 @@ DIECondition::Tag() const
 
 // #pragma mark - DIESharedType
 
-
+/**
+ * @brief Constructs a DIESharedType.
+ */
 DIESharedType::DIESharedType()
 {
 	fBlockSize.SetTo(~(uint64)0);
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIESharedType::Tag() const
 {
@@ -2560,6 +3392,9 @@ DIESharedType::Tag() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_count attribute value.
+ */
 status_t
 DIESharedType::AddAttribute_count(uint16 attributeName,
 	const AttributeValue& value)
@@ -2568,6 +3403,9 @@ DIESharedType::AddAttribute_count(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_file attribute value.
+ */
 status_t
 DIESharedType::AddAttribute_decl_file(uint16 attributeName,
 	const AttributeValue& value)
@@ -2577,6 +3415,9 @@ DIESharedType::AddAttribute_decl_file(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_line attribute value.
+ */
 status_t
 DIESharedType::AddAttribute_decl_line(uint16 attributeName,
 	const AttributeValue& value)
@@ -2586,6 +3427,9 @@ DIESharedType::AddAttribute_decl_line(uint16 attributeName,
 }
 
 
+/**
+ * @brief Stores the DW_AT_decl_column attribute value.
+ */
 status_t
 DIESharedType::AddAttribute_decl_column(uint16 attributeName,
 	const AttributeValue& value)
@@ -2597,12 +3441,17 @@ DIESharedType::AddAttribute_decl_column(uint16 attributeName,
 
 // #pragma mark - DIETypeUnit
 
-
+/**
+ * @brief Constructs a DIETypeUnit.
+ */
 DIETypeUnit::DIETypeUnit()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETypeUnit::Tag() const
 {
@@ -2612,12 +3461,17 @@ DIETypeUnit::Tag() const
 
 // #pragma mark - DIERValueReferenceType
 
-
+/**
+ * @brief Constructs a DIERValueReferenceType.
+ */
 DIERValueReferenceType::DIERValueReferenceType()
 {
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIERValueReferenceType::Tag() const
 {
@@ -2627,7 +3481,9 @@ DIERValueReferenceType::Tag() const
 
 // #pragma mark - DIETemplateTemplateParameter
 
-
+/**
+ * @brief Constructs a DIETemplateTemplateParameter.
+ */
 DIETemplateTemplateParameter::DIETemplateTemplateParameter()
 	:
 	fName(NULL)
@@ -2635,6 +3491,9 @@ DIETemplateTemplateParameter::DIETemplateTemplateParameter()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETemplateTemplateParameter::Tag() const
 {
@@ -2642,6 +3501,9 @@ DIETemplateTemplateParameter::Tag() const
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIETemplateTemplateParameter::Name() const
 {
@@ -2649,6 +3511,9 @@ DIETemplateTemplateParameter::Name() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIETemplateTemplateParameter::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -2660,7 +3525,9 @@ DIETemplateTemplateParameter::AddAttribute_name(uint16 attributeName,
 
 // #pragma mark - DIETemplateTypeParameterPack
 
-
+/**
+ * @brief Constructs a DIETemplateTypeParameterPack.
+ */
 DIETemplateTypeParameterPack::DIETemplateTypeParameterPack()
 	:
 	fName(NULL)
@@ -2668,6 +3535,9 @@ DIETemplateTypeParameterPack::DIETemplateTypeParameterPack()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETemplateTypeParameterPack::Tag() const
 {
@@ -2675,6 +3545,9 @@ DIETemplateTypeParameterPack::Tag() const
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIETemplateTypeParameterPack::Name() const
 {
@@ -2682,6 +3555,9 @@ DIETemplateTypeParameterPack::Name() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIETemplateTypeParameterPack::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -2691,6 +3567,9 @@ DIETemplateTypeParameterPack::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIETemplateTypeParameterPack::AddChild(DebugInfoEntry* child)
 {
@@ -2705,7 +3584,9 @@ DIETemplateTypeParameterPack::AddChild(DebugInfoEntry* child)
 
 // #pragma mark - DIETemplateValueParameterPack
 
-
+/**
+ * @brief Constructs a DIETemplateValueParameterPack.
+ */
 DIETemplateValueParameterPack::DIETemplateValueParameterPack()
 	:
 	fName(NULL)
@@ -2713,6 +3594,9 @@ DIETemplateValueParameterPack::DIETemplateValueParameterPack()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIETemplateValueParameterPack::Tag() const
 {
@@ -2720,6 +3604,9 @@ DIETemplateValueParameterPack::Tag() const
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIETemplateValueParameterPack::Name() const
 {
@@ -2727,6 +3614,9 @@ DIETemplateValueParameterPack::Name() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIETemplateValueParameterPack::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -2736,6 +3626,9 @@ DIETemplateValueParameterPack::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIETemplateValueParameterPack::AddChild(DebugInfoEntry* child)
 {
@@ -2750,7 +3643,9 @@ DIETemplateValueParameterPack::AddChild(DebugInfoEntry* child)
 
 // #pragma mark - DIECallSite
 
-
+/**
+ * @brief Constructs a DIECallSite.
+ */
 DIECallSite::DIECallSite()
 	:
 	fName(NULL)
@@ -2758,6 +3653,9 @@ DIECallSite::DIECallSite()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECallSite::Tag() const
 {
@@ -2765,6 +3663,9 @@ DIECallSite::Tag() const
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIECallSite::Name() const
 {
@@ -2772,6 +3673,9 @@ DIECallSite::Name() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIECallSite::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -2781,6 +3685,9 @@ DIECallSite::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIECallSite::AddChild(DebugInfoEntry* child)
 {
@@ -2796,7 +3703,9 @@ DIECallSite::AddChild(DebugInfoEntry* child)
 
 // #pragma mark - DIECallSiteParameter
 
-
+/**
+ * @brief Constructs a DIECallSiteParameter.
+ */
 DIECallSiteParameter::DIECallSiteParameter()
 	:
 	fName(NULL)
@@ -2804,6 +3713,9 @@ DIECallSiteParameter::DIECallSiteParameter()
 }
 
 
+/**
+ * @brief Returns the DW_TAG_* code for this DIE.
+ */
 uint16
 DIECallSiteParameter::Tag() const
 {
@@ -2811,6 +3723,9 @@ DIECallSiteParameter::Tag() const
 }
 
 
+/**
+ * @brief Returns the DIE's name (or the DIE chain's name).
+ */
 const char*
 DIECallSiteParameter::Name() const
 {
@@ -2818,6 +3733,9 @@ DIECallSiteParameter::Name() const
 }
 
 
+/**
+ * @brief Stores the DW_AT_name attribute value.
+ */
 status_t
 DIECallSiteParameter::AddAttribute_name(uint16 attributeName,
 	const AttributeValue& value)
@@ -2827,6 +3745,9 @@ DIECallSiteParameter::AddAttribute_name(uint16 attributeName,
 }
 
 
+/**
+ * @brief Adds a child DIE during parsing.
+ */
 status_t
 DIECallSiteParameter::AddChild(DebugInfoEntry* child)
 {
@@ -2836,12 +3757,17 @@ DIECallSiteParameter::AddChild(DebugInfoEntry* child)
 
 // #pragma mark - DebugInfoEntryFactory
 
-
+/**
+ * @brief Constructs a DebugInfoEntryFactory.
+ */
 DebugInfoEntryFactory::DebugInfoEntryFactory()
 {
 }
 
 
+/**
+ * @brief Instantiates a concrete DIE for the given DW_TAG_* code.
+ */
 status_t
 DebugInfoEntryFactory::CreateDebugInfoEntry(uint16 tag, DebugInfoEntry*& _entry)
 {

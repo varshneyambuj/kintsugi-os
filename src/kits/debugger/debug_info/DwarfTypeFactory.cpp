@@ -1,7 +1,44 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfTypeFactory.cpp
+ * @brief Implementation of DwarfTypeFactory, the entry point for turning a
+ *        DIEType into a DwarfType.
+ *
+ * The factory consults a GlobalTypeCache so that two requests for the same
+ * DIE return the same DwarfType. Compound types are also resolved against
+ * a cross-image GlobalTypeLookup before being constructed locally so that
+ * inheritance and member types refer to a single representative across
+ * the team. Various nested predicates are used together with
+ * DwarfUtils::GetDIEByPredicate() to walk
+ * abstract-origin/specification chains in search of attributes that the
+ * direct DIE may not carry.
+ *
+ * @see DwarfTypes, GlobalTypeCache, GlobalTypeLookup
  */
 
 
@@ -37,6 +74,10 @@ namespace {
 // #pragma mark - HasTypePredicate
 
 
+/**
+ * @brief Predicate template selecting DIEs that carry a non-null
+ *        @c DW_AT_type attribute.
+ */
 template<typename EntryType>
 struct HasTypePredicate {
 	inline bool operator()(EntryType* entry) const
@@ -49,6 +90,10 @@ struct HasTypePredicate {
 // #pragma mark - HasReturnTypePredicate
 
 
+/**
+ * @brief Predicate template selecting DIEs that carry a non-null
+ *        return-type attribute.
+ */
 template<typename EntryType>
 struct HasReturnTypePredicate {
 	inline bool operator()(EntryType* entry) const
@@ -61,6 +106,10 @@ struct HasReturnTypePredicate {
 // #pragma mark - HasEnumeratorsPredicate
 
 
+/**
+ * @brief Predicate selecting DIEEnumerationType DIEs that already declare
+ *        their enumerators (rather than deferring to an abstract origin).
+ */
 struct HasEnumeratorsPredicate {
 	inline bool operator()(DIEEnumerationType* entry) const
 	{
@@ -72,6 +121,10 @@ struct HasEnumeratorsPredicate {
 // #pragma mark - HasDimensionsPredicate
 
 
+/**
+ * @brief Predicate selecting DIEArrayType DIEs that already declare
+ *        their dimensions.
+ */
 struct HasDimensionsPredicate {
 	inline bool operator()(DIEArrayType* entry) const
 	{
@@ -83,6 +136,10 @@ struct HasDimensionsPredicate {
 // #pragma mark - HasMembersPredicate
 
 
+/**
+ * @brief Predicate selecting DIECompoundType DIEs that already declare
+ *        data members.
+ */
 struct HasMembersPredicate {
 	inline bool operator()(DIECompoundType* entry) const
 	{
@@ -94,6 +151,10 @@ struct HasMembersPredicate {
 // #pragma mark - HasBaseTypesPredicate
 
 
+/**
+ * @brief Predicate selecting DIEClassBaseType DIEs that already declare
+ *        base classes.
+ */
 struct HasBaseTypesPredicate {
 	inline bool operator()(DIEClassBaseType* entry) const
 	{
@@ -105,6 +166,10 @@ struct HasBaseTypesPredicate {
 // #pragma mark - HasTemplateParametersPredicate
 
 
+/**
+ * @brief Predicate selecting DIEClassBaseType DIEs that already declare
+ *        template parameters.
+ */
 struct HasTemplateParametersPredicate {
 	inline bool operator()(DIEClassBaseType* entry) const
 	{
@@ -116,6 +181,10 @@ struct HasTemplateParametersPredicate {
 // #pragma mark - HasParametersPredicate
 
 
+/**
+ * @brief Predicate template selecting DIEs that already declare formal
+ *        parameters.
+ */
 template<typename EntryType>
 struct HasParametersPredicate {
 	inline bool operator()(EntryType* entry) const
@@ -128,6 +197,10 @@ struct HasParametersPredicate {
 // #pragma mark - HasLowerBoundPredicate
 
 
+/**
+ * @brief Predicate selecting DIESubrangeType DIEs that supply a valid
+ *        lower bound.
+ */
 struct HasLowerBoundPredicate {
 	inline bool operator()(DIESubrangeType* entry) const
 	{
@@ -139,6 +212,10 @@ struct HasLowerBoundPredicate {
 // #pragma mark - HasUpperBoundPredicate
 
 
+/**
+ * @brief Predicate selecting DIESubrangeType DIEs that supply a valid
+ *        upper bound.
+ */
 struct HasUpperBoundPredicate {
 	inline bool operator()(DIESubrangeType* entry) const
 	{
@@ -150,6 +227,10 @@ struct HasUpperBoundPredicate {
 // #pragma mark - HasCountPredicate
 
 
+/**
+ * @brief Predicate selecting DIESubrangeType DIEs that supply a valid
+ *        element count attribute.
+ */
 struct HasCountPredicate {
 	inline bool operator()(DIESubrangeType* entry) const
 	{
@@ -161,6 +242,10 @@ struct HasCountPredicate {
 // #pragma mark - HasContainingTypePredicate
 
 
+/**
+ * @brief Predicate selecting DIEPointerToMemberType DIEs that supply a
+ *        valid containing-type attribute.
+ */
 struct HasContainingTypePredicate {
 	inline bool operator()(DIEPointerToMemberType* entry) const
 	{
@@ -175,8 +260,17 @@ struct HasContainingTypePredicate {
 // #pragma mark - ArtificialIntegerType
 
 
+/**
+ * @brief Synthetic PrimitiveType used as a fallback when DWARF lacks an
+ *        explicit base type for an integer subrange.
+ *
+ * Each instance is fabricated on demand with a width-appropriate Haiku
+ * type constant (e.g. @c B_INT32_TYPE) and a synthetic ID so the
+ * surrounding code can treat it like any other primitive type.
+ */
 class DwarfTypeFactory::ArtificialIntegerType : public PrimitiveType {
 public:
+	/** @brief Stores the supplied identity and width parameters verbatim. */
 	ArtificialIntegerType(const BString& id, const BString& name,
 		target_size_t byteSize, uint32 typeConstant)
 		:
@@ -187,6 +281,17 @@ public:
 	{
 	}
 
+	/**
+	 * @brief Creates an ArtificialIntegerType with the requested width and
+	 *        signedness.
+	 *
+	 * @param byteSize  Width of the integer in bytes (1, 2, 4 or 8).
+	 * @param isSigned  Whether the integer is signed.
+	 * @param _type     Out parameter receiving the new Type.
+	 * @retval B_OK         Type created.
+	 * @retval B_BAD_VALUE  Unsupported byte size.
+	 * @retval B_NO_MEMORY  Allocation failure.
+	 */
 	static status_t Create(target_size_t byteSize, bool isSigned, Type*& _type)
 	{
 		// get the matching type constant
@@ -226,26 +331,31 @@ public:
 		return B_OK;
 	}
 
+	/** @brief Synthetic types are not associated with any image. */
 	virtual image_id ImageID() const
 	{
 		return -1;
 	}
 
+	/** @brief Returns the synthetic ID string. */
 	virtual const BString& ID() const
 	{
 		return fID;
 	}
 
+	/** @brief Returns the synthetic name (matches the ID). */
 	virtual const BString& Name() const
 	{
 		return fName;
 	}
 
+	/** @brief Returns the integer width in bytes. */
 	virtual target_size_t ByteSize() const
 	{
 		return fByteSize;
 	}
 
+	/** @brief Location resolution is not supported for synthetic types. */
 	virtual status_t ResolveObjectDataLocation(
 		const ValueLocation& objectLocation, ValueLocation*& _location)
 	{
@@ -253,6 +363,7 @@ public:
 		return B_UNSUPPORTED;
 	}
 
+	/** @brief Location resolution is not supported for synthetic types. */
 	virtual status_t ResolveObjectDataLocation(target_addr_t objectAddress,
 		ValueLocation*& _location)
 	{
@@ -260,6 +371,7 @@ public:
 		return B_UNSUPPORTED;
 	}
 
+	/** @brief Returns the underlying Haiku-style numeric type constant. */
 	virtual uint32 TypeConstant() const
 	{
 		return fTypeConstant;
@@ -276,6 +388,11 @@ private:
 // #pragma mark - DwarfTypeFactory
 
 
+/**
+ * @brief Constructs the factory bound to a type context, lookup and
+ *        cache. References on @a typeContext and @a typeCache are
+ *        acquired.
+ */
 DwarfTypeFactory::DwarfTypeFactory(DwarfTypeContext* typeContext,
 	GlobalTypeLookup* typeLookup, GlobalTypeCache* typeCache)
 	:
@@ -288,6 +405,9 @@ DwarfTypeFactory::DwarfTypeFactory(DwarfTypeContext* typeContext,
 }
 
 
+/**
+ * @brief Destroys the factory and releases held references.
+ */
 DwarfTypeFactory::~DwarfTypeFactory()
 {
 	fTypeContext->ReleaseReference();
@@ -295,6 +415,25 @@ DwarfTypeFactory::~DwarfTypeFactory()
 }
 
 
+/**
+ * @brief Materializes the DwarfType corresponding to a DIEType.
+ *
+ * Consults the cache by ID first, returns an additional reference if
+ * found, and otherwise dispatches to one of the kind-specific
+ * @c _Create*Type() helpers based on the entry's tag. Every constructed
+ * type is added to the cache before being returned.
+ *
+ * @param typeEntry  DIE describing the type.
+ * @param _type      Out parameter receiving the new DwarfType; reference
+ *                   transferred to caller.
+ * @retval B_OK              Type created or returned from cache.
+ * @retval B_BAD_VALUE       @a typeEntry is unknown or has an unsupported
+ *                           tag.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval B_ENTRY_NOT_FOUND Anonymous type whose definition could not be
+ *                           located.
+ * @retval other             Errors from helper routines.
+ */
 status_t
 DwarfTypeFactory::CreateType(DIEType* typeEntry, DwarfType*& _type)
 {
@@ -374,6 +513,22 @@ DwarfTypeFactory::CreateType(DIEType* typeEntry, DwarfType*& _type)
 }
 
 
+/**
+ * @brief Internal dispatcher that creates a DwarfType subclass from a
+ *        DIEType.
+ *
+ * Recognizes structure/class/union, base, pointer, reference, modifier,
+ * typedef, array, enumeration, subrange, unspecified, subroutine and
+ * pointer-to-member tags, delegating to the corresponding
+ * @c _Create*Type() member.
+ *
+ * @param name       Name to attach to the type.
+ * @param typeEntry  DIE describing the type.
+ * @param _type      Out parameter receiving the new DwarfType.
+ * @retval B_OK         Construction succeeded.
+ * @retval B_BAD_VALUE  Unsupported DWARF tag.
+ * @retval other        Errors from the helper.
+ */
 status_t
 DwarfTypeFactory::_CreateTypeInternal(const BString& name,
 	DIEType* typeEntry, DwarfType*& _type)
@@ -461,6 +616,23 @@ DwarfTypeFactory::_CreateTypeInternal(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfCompoundType, resolving inheritances, data members
+ *        and template parameters via abstract-origin/specification
+ *        lookup chains.
+ *
+ * Cross-image type identity is preserved by consulting the
+ * GlobalTypeLookup before constructing locally; on a hit the existing
+ * type is wrapped/reused, on miss the locally-built type is returned and
+ * inserted into the cache.
+ *
+ * @param name          Compound type name.
+ * @param typeEntry     DIE describing the compound.
+ * @param compoundKind  Whether this is a struct, class, union or
+ *                      interface.
+ * @param _type         Out parameter receiving the compound type.
+ * @return Status from intermediate lookups and constructors.
+ */
 status_t
 DwarfTypeFactory::_CreateCompoundType(const BString& name,
 	DIECompoundType* typeEntry, compound_type_kind compoundKind, DwarfType*& _type)
@@ -613,6 +785,17 @@ printf("  -> failed to add type to cache\n");
 }
 
 
+/**
+ * @brief Builds a DwarfPrimitiveType from a DIEBaseType, mapping the
+ *        DWARF encoding/byte-size combination to a Haiku type constant.
+ *
+ * @param name      Primitive type name.
+ * @param typeEntry DIE describing the base type.
+ * @param _type     Out parameter receiving the new primitive type.
+ * @retval B_OK         Type created.
+ * @retval B_BAD_VALUE  Encoding/size combination is unsupported.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfTypeFactory::_CreatePrimitiveType(const BString& name,
 	DIEBaseType* typeEntry, DwarfType*& _type)
@@ -724,6 +907,18 @@ DwarfTypeFactory::_CreatePrimitiveType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfAddressType (pointer or reference).
+ *
+ * Resolves the pointee type recursively; pointers to void are
+ * accommodated by allowing a NULL base type.
+ *
+ * @param name         Address-type name.
+ * @param typeEntry    DIE describing the addressing type.
+ * @param addressKind  Pointer vs reference.
+ * @param _type        Out parameter receiving the new type.
+ * @return Status from recursive type creation.
+ */
 status_t
 DwarfTypeFactory::_CreateAddressType(const BString& name,
 	DIEAddressingType* typeEntry, address_type_kind addressKind,
@@ -763,6 +958,19 @@ DwarfTypeFactory::_CreateAddressType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfModifiedType wrapping a base type with one or more
+ *        modifier flags.
+ *
+ * Modifier DIEs may be chained (e.g. @c const @c volatile T); this helper
+ * recurses, accumulating the flags.
+ *
+ * @param name      Combined type name.
+ * @param typeEntry DIE describing the modifier.
+ * @param modifiers Already-accumulated modifier mask.
+ * @param _type     Out parameter receiving the modified type.
+ * @return Status from recursive type creation.
+ */
 status_t
 DwarfTypeFactory::_CreateModifiedType(const BString& name,
 	DIEModifiedType* typeEntry, uint32 modifiers, DwarfType*& _type)
@@ -855,6 +1063,15 @@ DwarfTypeFactory::_CreateModifiedType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfTypedefType aliasing a previously-resolved base
+ *        type.
+ *
+ * @param name       Typedef name.
+ * @param typeEntry  DIE describing the typedef.
+ * @param _type      Out parameter receiving the new typedef type.
+ * @return Status from base-type resolution.
+ */
 status_t
 DwarfTypeFactory::_CreateTypedefType(const BString& name,
 	DIETypedef* typeEntry, DwarfType*& _type)
@@ -882,6 +1099,16 @@ DwarfTypeFactory::_CreateTypedefType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfArrayType, resolving the element type and walking
+ *        the chain of dimension DIEs to install one DwarfArrayDimension
+ *        per dimension.
+ *
+ * @param name      Array type name.
+ * @param typeEntry DIE describing the array.
+ * @param _type     Out parameter receiving the new array type.
+ * @return Status from element/dimension resolution.
+ */
 status_t
 DwarfTypeFactory::_CreateArrayType(const BString& name,
 	DIEArrayType* typeEntry, DwarfType*& _type)
@@ -952,6 +1179,16 @@ DwarfTypeFactory::_CreateArrayType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfEnumerationType, resolving the optional integer
+ *        base type and adding one DwarfEnumeratorValue per declared
+ *        enumerator.
+ *
+ * @param name      Enumeration type name.
+ * @param typeEntry DIE describing the enumeration.
+ * @param _type     Out parameter receiving the new type.
+ * @return Status from base-type resolution and enumerator construction.
+ */
 status_t
 DwarfTypeFactory::_CreateEnumerationType(const BString& name,
 	DIEEnumerationType* typeEntry, DwarfType*& _type)
@@ -1019,6 +1256,21 @@ DwarfTypeFactory::_CreateEnumerationType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfSubrangeType, computing low/high bounds and
+ *        synthesizing an integer base type when DWARF lacks an explicit
+ *        one.
+ *
+ * Lower-bound, upper-bound and count attributes may live on
+ * abstract-origin/specification chains; the helper walks them via
+ * DwarfUtils::GetDIEByPredicate(). Missing base types fall back to an
+ * ArtificialIntegerType chosen by the bound widths.
+ *
+ * @param name      Subrange type name.
+ * @param typeEntry DIE describing the subrange.
+ * @param _type     Out parameter receiving the new type.
+ * @return Status from bound evaluation and base-type creation.
+ */
 status_t
 DwarfTypeFactory::_CreateSubrangeType(const BString& name,
 	DIESubrangeType* typeEntry, DwarfType*& _type)
@@ -1154,6 +1406,15 @@ DwarfTypeFactory::_CreateSubrangeType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfUnspecifiedType placeholder.
+ *
+ * @param name      Type name (often a language-specific keyword).
+ * @param typeEntry DIE describing the unspecified type.
+ * @param _type     Out parameter receiving the new type.
+ * @retval B_OK         Type created.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfTypeFactory::_CreateUnspecifiedType(const BString& name,
 	DIEUnspecifiedType* typeEntry, DwarfType*& _type)
@@ -1167,6 +1428,18 @@ DwarfTypeFactory::_CreateUnspecifiedType(const BString& name,
 	return B_OK;
 }
 
+/**
+ * @brief Builds a DwarfFunctionType, resolving the return type (if any)
+ *        and walking the parameter chain to install one
+ *        DwarfFunctionParameter per formal parameter.
+ *
+ * Sets the variadic flag when an unspecified-parameters DIE is present.
+ *
+ * @param name      Function type name.
+ * @param typeEntry DIE describing the subroutine.
+ * @param _type     Out parameter receiving the new function type.
+ * @return Status from return-type and parameter construction.
+ */
 status_t
 DwarfTypeFactory::_CreateFunctionType(const BString& name,
 	DIESubroutineType* typeEntry, DwarfType*& _type)
@@ -1241,6 +1514,18 @@ DwarfTypeFactory::_CreateFunctionType(const BString& name,
 }
 
 
+/**
+ * @brief Builds a DwarfPointerToMemberType, resolving both the pointee
+ *        type and the containing compound type.
+ *
+ * @param name      Type name.
+ * @param typeEntry DIE describing the pointer-to-member.
+ * @param _type     Out parameter receiving the new type.
+ * @retval B_OK         Type created.
+ * @retval B_BAD_VALUE  The DIE lacks a containing-type attribute or it
+ *                      does not refer to a compound.
+ * @retval other        Errors from recursive type creation.
+ */
 status_t
 DwarfTypeFactory::_CreatePointerToMemberType(const BString& name,
 	DIEPointerToMemberType* typeEntry, DwarfType*& _type)
@@ -1292,6 +1577,15 @@ DwarfTypeFactory::_CreatePointerToMemberType(const BString& name,
 }
 
 
+/**
+ * @brief Walks a chain of DIETypedef entries until a non-typedef base is
+ *        found.
+ *
+ * @param entry           First typedef in the chain.
+ * @param _baseTypeEntry  Out parameter receiving the underlying type DIE.
+ * @retval B_OK              The chain terminated in a non-typedef DIE.
+ * @retval B_ENTRY_NOT_FOUND The chain dead-ended without a target type.
+ */
 status_t
 DwarfTypeFactory::_ResolveTypedef(DIETypedef* entry,
 	DIEType*& _baseTypeEntry)
@@ -1315,6 +1609,19 @@ DwarfTypeFactory::_ResolveTypedef(DIETypedef* entry,
 }
 
 
+/**
+ * @brief Recursively determines the byte size of a DIE-described type.
+ *
+ * Honors @c DW_AT_byte_size when present, follows typedefs, computes
+ * compound size from member layout, and uses pointee size for derived
+ * pointer/reference types.
+ *
+ * @param typeEntry  DIE describing the type.
+ * @param _size      Out parameter receiving the resolved size.
+ * @retval B_OK              Size resolved.
+ * @retval B_BAD_VALUE       Type cannot be sized statically.
+ * @retval other             Errors from attribute evaluation.
+ */
 status_t
 DwarfTypeFactory::_ResolveTypeByteSize(DIEType* typeEntry,
 	uint64& _size)

@@ -1,8 +1,27 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold; Copyright 2013, Rene Gollent.
  */
+
+/** @file CompilationUnit.h
+    @brief BaseUnit specialisation modelling a DWARF .debug_info compilation unit. */
+
 #ifndef COMPILATION_UNIT_H
 #define COMPILATION_UNIT_H
 
@@ -18,6 +37,12 @@ class DIECompileUnitBase;
 class TargetAddressRangeList;
 
 
+/**
+ * @brief One DWARF compilation unit and the data that hangs off it.
+ *
+ * Bundles the line number program, file and directory tables, address
+ * ranges, and the unit's top-level DIE alongside the BaseUnit fields.
+ */
 class CompilationUnit : public BaseUnit {
 public:
 								CompilationUnit(off_t headerOffset,
@@ -68,6 +93,11 @@ private:
 };
 
 
+/**
+ * @brief Returns the largest representable address for the unit's ABI.
+ *
+ * @return @c 0xffffffff on 32-bit targets, @c 0xffffffffffffffff on 64-bit.
+ */
 target_addr_t
 CompilationUnit::MaxAddress() const
 {

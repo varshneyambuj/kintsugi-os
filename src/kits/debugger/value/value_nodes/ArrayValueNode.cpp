@@ -1,7 +1,41 @@
 /*
- * Copyright 2013-2015, Rene Gollent, rene@gollent.com.
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2013-2015, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ArrayValueNode.cpp
+ * @brief Implementation of the array-rendering node hierarchy: one node per array dimension.
+ *
+ * Multidimensional arrays are decomposed into a chain of nodes:
+ * ArrayValueNode handles the outermost dimension and InternalArrayValueNode
+ * handles each non-final dimension. Children are either
+ * ArrayValueNodeChild (final dimension -- has a real element location) or
+ * InternalArrayValueNodeChild (non-final -- spawns the next dimension's
+ * internal node).
+ *
+ * @see ArrayType, ValueNode
  */
 
 
@@ -19,13 +53,20 @@
 #include "ValueNodeContainer.h"
 
 
-// maximum number of array elements to show by default
+/** @brief Default upper bound on the number of element children created on first expand. */
 static const uint64 kMaxArrayElementCount = 10;
 
 
 // #pragma mark - AbstractArrayValueNode
 
 
+/**
+ * @brief Constructs the per-dimension array node and references its type.
+ *
+ * @param nodeChild  Child this node renders for.
+ * @param type       Whole-array DWARF type.
+ * @param dimension  Zero-based index of the dimension this node represents.
+ */
 AbstractArrayValueNode::AbstractArrayValueNode(ValueNodeChild* nodeChild,
 	ArrayType* type, int32 dimension)
 	:
@@ -40,6 +81,9 @@ AbstractArrayValueNode::AbstractArrayValueNode(ValueNodeChild* nodeChild,
 }
 
 
+/**
+ * @brief Releases all element children and the type.
+ */
 AbstractArrayValueNode::~AbstractArrayValueNode()
 {
 	fType->ReleaseReference();
@@ -51,6 +95,11 @@ AbstractArrayValueNode::~AbstractArrayValueNode()
 }
 
 
+/**
+ * @brief Returns the wrapped array type.
+ *
+ * @return The DWARF ArrayType.
+ */
 Type*
 AbstractArrayValueNode::GetType() const
 {
@@ -58,6 +107,15 @@ AbstractArrayValueNode::GetType() const
 }
 
 
+/**
+ * @brief Returns the parent location verbatim; arrays have no scalar value.
+ *
+ * @param valueLoader  Unused.
+ * @param _location    Receives a re-referenced copy of the parent location.
+ * @param _value       Always set to NULL.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When the parent location is missing.
+ */
 status_t
 AbstractArrayValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 	ValueLocation*& _location, Value*& _value)
@@ -74,6 +132,12 @@ AbstractArrayValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 }
 
 
+/**
+ * @brief Initial-expand entry point: creates up to kMaxArrayElementCount slots.
+ *
+ * @param info  Type-information service.
+ * @return Status from CreateChildrenInRange().
+ */
 status_t
 AbstractArrayValueNode::CreateChildren(TeamTypeInformation* info)
 {
@@ -84,6 +148,11 @@ AbstractArrayValueNode::CreateChildren(TeamTypeInformation* info)
 }
 
 
+/**
+ * @brief Returns the number of currently materialised element children.
+ *
+ * @return Count of children.
+ */
 int32
 AbstractArrayValueNode::CountChildren() const
 {
@@ -91,6 +160,12 @@ AbstractArrayValueNode::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the child at @a index, or NULL if out of range.
+ *
+ * @param index  Zero-based index.
+ * @return The child reference, or NULL.
+ */
 ValueNodeChild*
 AbstractArrayValueNode::ChildAt(int32 index) const
 {
@@ -98,6 +173,11 @@ AbstractArrayValueNode::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Reports that this node hands out children in user-controlled ranges.
+ *
+ * @return true.
+ */
 bool
 AbstractArrayValueNode::IsRangedContainer() const
 {
@@ -105,6 +185,9 @@ AbstractArrayValueNode::IsRangedContainer() const
 }
 
 
+/**
+ * @brief Drops every materialised child and notifies listeners.
+ */
 void
 AbstractArrayValueNode::ClearChildren()
 {
@@ -116,6 +199,22 @@ AbstractArrayValueNode::ClearChildren()
 }
 
 
+/**
+ * @brief Materialises element children in the inclusive index range.
+ *
+ * For the final dimension creates ArrayValueNodeChild instances (with real
+ * element locations); for inner dimensions creates
+ * InternalArrayValueNodeChild instances which spawn the next dimension's
+ * internal node on expand.
+ *
+ * @param info       Type-information service.
+ * @param lowIndex   Lower bound of the requested window (clamped to fLowerBound).
+ * @param highIndex  Upper bound of the requested window (clamped to fUpperBound).
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ * @return Other status_t propagated from SupportedChildRange().
+ * @todo  Skip indices that already have a child rather than re-creating them.
+ */
 status_t
 AbstractArrayValueNode::CreateChildrenInRange(TeamTypeInformation* info,
 	int32 lowIndex, int32 highIndex)
@@ -175,6 +274,17 @@ AbstractArrayValueNode::CreateChildrenInRange(TeamTypeInformation* info,
 }
 
 
+/**
+ * @brief Reports the legal index range for this dimension.
+ *
+ * Reads the bounds from the dimension's SubrangeType on first call and
+ * caches them in fLowerBound/fUpperBound.
+ *
+ * @param lowIndex   Set to the inclusive lower bound on success.
+ * @param highIndex  Set to the inclusive upper bound on success.
+ * @retval B_OK           On success.
+ * @retval B_UNSUPPORTED  When the dimension type is not a SubrangeType.
+ */
 status_t
 AbstractArrayValueNode::SupportedChildRange(int32& lowIndex,
 	int32& highIndex) const
@@ -202,6 +312,12 @@ AbstractArrayValueNode::SupportedChildRange(int32& lowIndex,
 // #pragma mark - ArrayValueNode
 
 
+/**
+ * @brief Constructs the outermost (dimension 0) array node.
+ *
+ * @param nodeChild  Child this node renders for.
+ * @param type       Whole-array DWARF type.
+ */
 ArrayValueNode::ArrayValueNode(ValueNodeChild* nodeChild, ArrayType* type)
 	:
 	AbstractArrayValueNode(nodeChild, type, 0)
@@ -209,6 +325,9 @@ ArrayValueNode::ArrayValueNode(ValueNodeChild* nodeChild, ArrayType* type)
 }
 
 
+/**
+ * @brief Trivial destructor.
+ */
 ArrayValueNode::~ArrayValueNode()
 {
 }
@@ -217,6 +336,13 @@ ArrayValueNode::~ArrayValueNode()
 // #pragma mark - InternalArrayValueNode
 
 
+/**
+ * @brief Constructs an inner-dimension array node spawned from a non-final child.
+ *
+ * @param nodeChild  Child this node renders for.
+ * @param type       Whole-array DWARF type.
+ * @param dimension  Zero-based index of the dimension this node represents.
+ */
 InternalArrayValueNode::InternalArrayValueNode(ValueNodeChild* nodeChild,
 	ArrayType* type, int32 dimension)
 	:
@@ -225,6 +351,9 @@ InternalArrayValueNode::InternalArrayValueNode(ValueNodeChild* nodeChild,
 }
 
 
+/**
+ * @brief Trivial destructor.
+ */
 InternalArrayValueNode::~InternalArrayValueNode()
 {
 }
@@ -233,6 +362,13 @@ InternalArrayValueNode::~InternalArrayValueNode()
 // #pragma mark - AbstractArrayValueNodeChild
 
 
+/**
+ * @brief Constructs the per-element child base.
+ *
+ * @param parent        Owning array node.
+ * @param name          Display name (typically "name[i]").
+ * @param elementIndex  Index inside this dimension.
+ */
 AbstractArrayValueNodeChild::AbstractArrayValueNodeChild(
 	AbstractArrayValueNode* parent, const BString& name, int64 elementIndex)
 	:
@@ -243,11 +379,19 @@ AbstractArrayValueNodeChild::AbstractArrayValueNodeChild(
 }
 
 
+/**
+ * @brief Trivial destructor.
+ */
 AbstractArrayValueNodeChild::~AbstractArrayValueNodeChild()
 {
 }
 
 
+/**
+ * @brief Returns the child's display name.
+ *
+ * @return Reference to the cached name string.
+ */
 const BString&
 AbstractArrayValueNodeChild::Name() const
 {
@@ -255,6 +399,11 @@ AbstractArrayValueNodeChild::Name() const
 }
 
 
+/**
+ * @brief Returns the owning array node.
+ *
+ * @return The parent node.
+ */
 ValueNode*
 AbstractArrayValueNodeChild::Parent() const
 {
@@ -265,6 +414,14 @@ AbstractArrayValueNodeChild::Parent() const
 // #pragma mark - ArrayValueNodeChild
 
 
+/**
+ * @brief Constructs a final-dimension element child.
+ *
+ * @param parent        Owning array node.
+ * @param name          Display name (typically "name[i]").
+ * @param elementIndex  Index inside this dimension.
+ * @param type          Element type (the array's BaseType()).
+ */
 ArrayValueNodeChild::ArrayValueNodeChild(AbstractArrayValueNode* parent,
 	const BString& name, int64 elementIndex, Type* type)
 	:
@@ -275,12 +432,20 @@ ArrayValueNodeChild::ArrayValueNodeChild(AbstractArrayValueNode* parent,
 }
 
 
+/**
+ * @brief Releases the reference held on the element type.
+ */
 ArrayValueNodeChild::~ArrayValueNodeChild()
 {
 	fType->ReleaseReference();
 }
 
 
+/**
+ * @brief Returns the element type.
+ *
+ * @return The array's BaseType().
+ */
 Type*
 ArrayValueNodeChild::GetType() const
 {
@@ -288,6 +453,20 @@ ArrayValueNodeChild::GetType() const
 }
 
 
+/**
+ * @brief Computes the in-target address of this element.
+ *
+ * Walks back up through internal-array ancestor children to assemble a full
+ * ArrayIndexPath (one index per dimension), then asks the ArrayType to
+ * resolve the resulting element location.
+ *
+ * @param valueLoader  Loader (passed through to the type system).
+ * @param _location    Set to the resolved location on success.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When the parent's location is missing.
+ * @retval B_NO_MEMORY  On allocation failure when assembling the index path.
+ * @return Other status_t propagated from ArrayType::ResolveElementLocation().
+ */
 status_t
 ArrayValueNodeChild::ResolveLocation(ValueLoader* valueLoader,
 	ValueLocation*& _location)
@@ -335,6 +514,14 @@ ArrayValueNodeChild::ResolveLocation(ValueLoader* valueLoader,
 // #pragma mark - InternalArrayValueNodeChild
 
 
+/**
+ * @brief Constructs a non-final-dimension placeholder child.
+ *
+ * @param parent        Owning array node.
+ * @param name          Display name.
+ * @param elementIndex  Index inside this dimension.
+ * @param type          Whole-array type (passed through to the spawned inner node).
+ */
 InternalArrayValueNodeChild::InternalArrayValueNodeChild(
 	AbstractArrayValueNode* parent, const BString& name, int64 elementIndex,
 	ArrayType* type)
@@ -346,12 +533,20 @@ InternalArrayValueNodeChild::InternalArrayValueNodeChild(
 }
 
 
+/**
+ * @brief Releases the reference held on the array type.
+ */
 InternalArrayValueNodeChild::~InternalArrayValueNodeChild()
 {
 	fType->ReleaseReference();
 }
 
 
+/**
+ * @brief Returns the array type.
+ *
+ * @return The whole-array DWARF type.
+ */
 Type*
 InternalArrayValueNodeChild::GetType() const
 {
@@ -359,6 +554,11 @@ InternalArrayValueNodeChild::GetType() const
 }
 
 
+/**
+ * @brief Reports that this child requires an internal (no-real-location) node.
+ *
+ * @return true.
+ */
 bool
 InternalArrayValueNodeChild::IsInternal() const
 {
@@ -366,6 +566,13 @@ InternalArrayValueNodeChild::IsInternal() const
 }
 
 
+/**
+ * @brief Allocates the next-dimension InternalArrayValueNode.
+ *
+ * @param _node  Set to the freshly allocated node on success.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ */
 status_t
 InternalArrayValueNodeChild::CreateInternalNode(ValueNode*& _node)
 {
@@ -379,6 +586,14 @@ InternalArrayValueNodeChild::CreateInternalNode(ValueNode*& _node)
 }
 
 
+/**
+ * @brief Inner-dimension children share the parent's location verbatim.
+ *
+ * @param valueLoader  Unused.
+ * @param _location    Set to a re-referenced copy of the parent's location.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When the parent location is missing.
+ */
 status_t
 InternalArrayValueNodeChild::ResolveLocation(ValueLoader* valueLoader,
 	ValueLocation*& _location)

@@ -1,8 +1,42 @@
 /*
- * Copyright 2015, Rene Gollent, rene@gollent.com.
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file StringValueFormatter.cpp
+ * @brief Formatter that wraps a Value's string form in quotes and escapes control characters.
+ *
+ * Converts a Value's textual representation into a C-style quoted literal:
+ * control bytes below 0x20 are rendered as \\0, \\a, \\b, \\t, \\r, \\n, \\f or
+ * \\xNN; double quotes are escaped as \\"; everything else is passed through
+ * verbatim.
+ *
+ * @see Value, StringValue
+ */
+
+
 #include "StringValueFormatter.h"
 
 #include <stdio.h>
@@ -12,6 +46,9 @@
 #include "Value.h"
 
 
+/**
+ * @brief Trivial constructor; StringValueFormatter is stateless.
+ */
 StringValueFormatter::StringValueFormatter()
 	:
 	ValueFormatter()
@@ -19,11 +56,22 @@ StringValueFormatter::StringValueFormatter()
 }
 
 
+/**
+ * @brief Trivial destructor.
+ */
 StringValueFormatter::~StringValueFormatter()
 {
 }
 
 
+/**
+ * @brief Renders @a value as a C-style quoted string with escaped control bytes.
+ *
+ * @param value    Value supplying the string via Value::ToString().
+ * @param _output  Receives the quoted, escaped representation.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When @a value cannot produce a string.
+ */
 status_t
 StringValueFormatter::FormatValue(Value* value, BString& _output)
 {

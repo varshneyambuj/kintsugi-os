@@ -1,7 +1,40 @@
 /*
- * Copyright 2015, Rene Gollent, rene@gollent.com.
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2015, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file AddressValueNode.cpp
+ * @brief Implementation of AddressValueNode and its dereference child.
+ *
+ * Renders any address-typed variable (pointers, references, function
+ * pointers) as an AddressValue (hex). Non-function-pointer nodes also expose
+ * a single dereference child named "*name" so the user can chase the pointer
+ * one level deeper; function pointers do not expand because the printed
+ * address already names the target instruction.
+ *
+ * @see AddressValue, ValueNode
  */
 
 
@@ -21,6 +54,12 @@
 // #pragma mark - AddressValueNode
 
 
+/**
+ * @brief Constructs the node and references its AddressType.
+ *
+ * @param nodeChild  Child this node renders for.
+ * @param type       DWARF address (pointer/reference) type.
+ */
 AddressValueNode::AddressValueNode(ValueNodeChild* nodeChild,
 	AddressType* type)
 	:
@@ -32,6 +71,9 @@ AddressValueNode::AddressValueNode(ValueNodeChild* nodeChild,
 }
 
 
+/**
+ * @brief Releases the dereference child (if any) and the type.
+ */
 AddressValueNode::~AddressValueNode()
 {
 	if (fChild != NULL)
@@ -40,6 +82,11 @@ AddressValueNode::~AddressValueNode()
 }
 
 
+/**
+ * @brief Returns the wrapped AddressType.
+ *
+ * @return The DWARF address type.
+ */
 Type*
 AddressValueNode::GetType() const
 {
@@ -47,6 +94,17 @@ AddressValueNode::GetType() const
 }
 
 
+/**
+ * @brief Loads the pointer's bytes and wraps them in an AddressValue.
+ *
+ * @param valueLoader  Loader used to read target memory.
+ * @param _location    Receives a re-referenced copy of the parent location.
+ * @param _value       Set to a freshly allocated AddressValue on success.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When the parent location is missing.
+ * @retval B_NO_MEMORY  On allocation failure.
+ * @return Other status_t propagated from the loader.
+ */
 status_t
 AddressValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 	ValueLocation*& _location, Value*& _value)
@@ -87,6 +145,20 @@ AddressValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 }
 
 
+/**
+ * @brief Lazily creates the single dereference child named "*name".
+ *
+ * For function-pointer types this is a no-op: there is no useful payload to
+ * show beyond the address itself (which is already the function's
+ * instruction pointer).
+ *
+ * @param info  Unused.
+ * @retval B_OK         On success or when no child is needed.
+ * @retval B_NO_MEMORY  On allocation failure.
+ * @todo An eventual future possibility might be for a child node to indicate
+ *       the name of the function being pointed to, if the target address is
+ *       valid.
+ */
 status_t
 AddressValueNode::CreateChildren(TeamTypeInformation* info)
 {
@@ -123,6 +195,11 @@ AddressValueNode::CreateChildren(TeamTypeInformation* info)
 }
 
 
+/**
+ * @brief Reports 1 when a dereference child exists, 0 otherwise.
+ *
+ * @return 0 or 1.
+ */
 int32
 AddressValueNode::CountChildren() const
 {
@@ -130,6 +207,12 @@ AddressValueNode::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the single dereference child or NULL.
+ *
+ * @param index  Must be 0 to obtain the child.
+ * @return The child, or NULL when @a index != 0 or no child was created.
+ */
 ValueNodeChild*
 AddressValueNode::ChildAt(int32 index) const
 {
@@ -140,6 +223,13 @@ AddressValueNode::ChildAt(int32 index) const
 // #pragma mark - AddressValueNodeChild
 
 
+/**
+ * @brief Constructs the dereference child for an AddressValueNode.
+ *
+ * @param parent  Owning AddressValueNode.
+ * @param name    Display name (typically "*originalName").
+ * @param type    Pointee type.
+ */
 AddressValueNodeChild::AddressValueNodeChild(AddressValueNode* parent,
 	const BString& name, Type* type)
 	:
@@ -151,12 +241,20 @@ AddressValueNodeChild::AddressValueNodeChild(AddressValueNode* parent,
 }
 
 
+/**
+ * @brief Releases the reference held on the pointee type.
+ */
 AddressValueNodeChild::~AddressValueNodeChild()
 {
 	fType->ReleaseReference();
 }
 
 
+/**
+ * @brief Returns the dereference child's display name.
+ *
+ * @return Reference to the cached name.
+ */
 const BString&
 AddressValueNodeChild::Name() const
 {
@@ -164,6 +262,11 @@ AddressValueNodeChild::Name() const
 }
 
 
+/**
+ * @brief Returns the pointee type.
+ *
+ * @return The pointee Type.
+ */
 Type*
 AddressValueNodeChild::GetType() const
 {
@@ -171,6 +274,11 @@ AddressValueNodeChild::GetType() const
 }
 
 
+/**
+ * @brief Returns the owning AddressValueNode.
+ *
+ * @return The parent node.
+ */
 ValueNode*
 AddressValueNodeChild::Parent() const
 {
@@ -178,6 +286,15 @@ AddressValueNodeChild::Parent() const
 }
 
 
+/**
+ * @brief Computes the location of the pointee using the parent's address.
+ *
+ * @param valueLoader  Loader (passed through to the type system).
+ * @param _location    Set to the resolved location on success.
+ * @retval B_OK         On success.
+ * @retval B_BAD_VALUE  When the parent's value is not an AddressValue.
+ * @return Other status_t propagated from Type::ResolveObjectDataLocation().
+ */
 status_t
 AddressValueNodeChild::ResolveLocation(ValueLoader* valueLoader,
 	ValueLocation*& _location)

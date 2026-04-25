@@ -1,9 +1,38 @@
 /*
- * Copyright 2012, Alex Smith, alex@alex-smith.me.uk.
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2008, François Revol, revol@free.fr
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012, Alex Smith, alex@alex-smith.me.uk.
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2008, François Revol, revol@free.fr
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DisassemblerX8664.cpp
+ * @brief x86_64 disassembler wrapper around the Zydis library.
+ *
+ * Walks a contiguous code buffer producing AT&T-style disassembly text and
+ * decoded InstructionInfo records. Used by ArchitectureX8664 to render
+ * source views and to introspect call/jump targets during stack walking.
  */
 
 #include "DisassemblerX8664.h"
@@ -20,6 +49,15 @@
 #include "InstructionInfo.h"
 
 
+/**
+ * @brief Copy general-purpose register values from a CpuStateX8664 into a Zydis context.
+ *
+ * Used so Zydis can compute absolute target addresses for RIP-relative and
+ * register-relative operands.
+ *
+ * @param state    Source CPU state.
+ * @param context  Output Zydis register context populated with RIP/RSP/RAX/etc.
+ */
 void
 CpuStateToZydisRegContext(CpuStateX8664* state, ZydisRegisterContext* context)
 {
@@ -44,6 +82,7 @@ CpuStateToZydisRegContext(CpuStateX8664* state, ZydisRegisterContext* context)
 }
 
 
+/** @brief Opaque holder for the Zydis decoder/formatter and current decode offset. */
 struct DisassemblerX8664::ZydisData {
 	ZydisDecoder decoder ;
 	ZydisFormatter formatter;
@@ -51,6 +90,7 @@ struct DisassemblerX8664::ZydisData {
 };
 
 
+/** @brief Construct an uninitialized disassembler; call Init() before use. */
 DisassemblerX8664::DisassemblerX8664()
 	:
 	fAddress(0),
@@ -61,12 +101,25 @@ DisassemblerX8664::DisassemblerX8664()
 }
 
 
+/** @brief Destroy the disassembler and release the Zydis state. */
 DisassemblerX8664::~DisassemblerX8664()
 {
 	delete fZydisData;
 }
 
 
+/**
+ * @brief Initialize the disassembler over a code buffer.
+ *
+ * Configures Zydis for AT&T-style 64-bit decoding with no operand padding.
+ * Subsequent GetNextInstruction() calls advance through @a code.
+ *
+ * @param address   Absolute address corresponding to the first byte of @a code.
+ * @param code      Pointer to the code bytes (already read from the target).
+ * @param codeSize  Number of bytes in @a code.
+ * @retval B_OK         Initialized.
+ * @retval B_NO_MEMORY  Could not allocate the Zydis state.
+ */
 status_t
 DisassemblerX8664::Init(target_addr_t address, const void* code, size_t codeSize)
 {
@@ -104,6 +157,18 @@ DisassemblerX8664::Init(target_addr_t address, const void* code, size_t codeSize
 }
 
 
+/**
+ * @brief Decode and format the next instruction in the buffer.
+ *
+ * Produces a line of the form "0xADDRESS: hex-bytes  mnemonic operands".
+ *
+ * @param line                 Output BString that receives the formatted line.
+ * @param _address             Output address of the decoded instruction.
+ * @param _size                Output instruction length in bytes.
+ * @param _breakpointAllowed   Output flag; currently always set to true.
+ * @retval B_OK               Instruction decoded.
+ * @retval B_ENTRY_NOT_FOUND  No more bytes remain or decoding failed.
+ */
 status_t
 DisassemblerX8664::GetNextInstruction(BString& line, target_addr_t& _address,
 	target_size_t& _size, bool& _breakpointAllowed)
@@ -144,6 +209,20 @@ DisassemblerX8664::GetNextInstruction(BString& line, target_addr_t& _address,
 }
 
 
+/**
+ * @brief Find the address and size of the instruction that ends at @a nextAddress.
+ *
+ * Walks instructions linearly until the offset matches @a nextAddress, used
+ * by ArchitectureX8664::UpdateStackFrameCpuState() to back up RIP from a
+ * return address to the calling instruction.
+ *
+ * @param nextAddress  Address at which the previous instruction ends.
+ * @param _address     Output address (currently equals @a nextAddress on success).
+ * @param _size        Output size of the previous instruction.
+ * @retval B_OK               Previous instruction located.
+ * @retval B_BAD_VALUE        @a nextAddress lies outside the buffer.
+ * @retval B_ENTRY_NOT_FOUND  Decoding failed before reaching @a nextAddress.
+ */
 status_t
 DisassemblerX8664::GetPreviousInstruction(target_addr_t nextAddress,
 	target_addr_t& _address, target_size_t& _size)
@@ -172,6 +251,19 @@ DisassemblerX8664::GetPreviousInstruction(target_addr_t nextAddress,
 }
 
 
+/**
+ * @brief Decode the next instruction into an InstructionInfo (rather than just text).
+ *
+ * Recognizes call and jmp mnemonics so the resulting record carries the
+ * correct INSTRUCTION_TYPE_*. When @a state is non-NULL, populates the
+ * Zydis register context so absolute target addresses are resolved.
+ *
+ * @param _info  Output info record describing address, target, size, and text.
+ * @param state  Optional CPU state used for absolute-target resolution.
+ * @retval B_OK               Instruction decoded.
+ * @retval B_NO_MEMORY        SetTo() on @a _info failed.
+ * @retval B_ENTRY_NOT_FOUND  No more bytes remain or decoding failed.
+ */
 status_t
 DisassemblerX8664::GetNextInstructionInfo(InstructionInfo& _info,
 	CpuState* state)

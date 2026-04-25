@@ -1,9 +1,28 @@
 /*
- * Copyright 2012, Alex Smith, alex@alex-smith.me.uk.
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009-2013, Haiku.
+ * Original authors: Alex Smith, Ingo Weinhold, Rene Gollent.
  */
+
+/** @file CpuStateX8664.h
+    @brief x86_64 CPU state declaration plus register-index enumeration. */
+
 #ifndef CPU_STATE_X86_64_H
 #define CPU_STATE_X86_64_H
 
@@ -14,6 +33,7 @@
 #include "CpuState.h"
 
 
+/** @brief Native register indices for the x86_64 CPU state. */
 enum {
 	X86_64_REGISTER_RIP = 0,
 	X86_64_REGISTER_RSP,
@@ -99,11 +119,13 @@ enum {
 	- X86_64_MMX_REGISTER_END)
 
 
+/** @brief 256-bit YMM register payload (4 x 64-bit words). */
 struct x86_64_ymm_register {
 	unsigned long value[4];
 };
 
 
+/** @brief x86_64 implementation of the CpuState interface. */
 class CpuStateX8664 : public CpuState {
 public:
 								CpuStateX8664();
@@ -125,6 +147,7 @@ public:
 	virtual	bool				SetRegisterValue(const Register* reg,
 									const BVariant& value);
 
+			/** @brief Return the interrupt vector that produced this state. */
 			uint64				InterruptVector() const
 									{ return fInterruptVector; }
 

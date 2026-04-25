@@ -1,7 +1,37 @@
 /*
- * Copyright 2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2012-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2012-2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file UiUtils.cpp
+ * @brief Display-formatting helpers used across the debugger's UI layers.
+ *
+ * Collects string-formatting routines for thread states, BVariant values,
+ * stack-frame names, area protection bitmasks, signal names/dispositions,
+ * type codes, value-node graphs, and memory dumps. The helpers are static
+ * so any UI front end (Tracker-based, ncurses, headless) can share them.
  */
 
 
@@ -31,6 +61,13 @@
 #include "ValueNode.h"
 
 
+/**
+ * @brief Convert a thread state and stop reason into a short label.
+ *
+ * @param state          One of THREAD_STATE_*.
+ * @param stoppedReason  One of THREAD_STOPPED_* (only consulted when stopped).
+ * @return Pointer to a static string describing the thread.
+ */
 /*static*/ const char*
 UiUtils::ThreadStateToString(int state, int stoppedReason)
 {
@@ -61,6 +98,18 @@ UiUtils::ThreadStateToString(int state, int stoppedReason)
 }
 
 
+/**
+ * @brief Format a numeric BVariant in a width-appropriate hex/float style.
+ *
+ * Floats use "%.3g"; integers fall back to width-specific hex
+ * (e.g. "0x%02x" for 8-bit values). Non-numeric values are returned via
+ * BVariant::ToString() unchanged.
+ *
+ * @param value       Value to format.
+ * @param buffer      Working buffer for numeric formats.
+ * @param bufferSize  Capacity of @a buffer.
+ * @return Pointer to either @a buffer or BVariant::ToString().
+ */
 /*static*/ const char*
 UiUtils::VariantToString(const BVariant& value, char* buffer,
 	size_t bufferSize)
@@ -98,6 +147,18 @@ UiUtils::VariantToString(const BVariant& value, char* buffer,
 }
 
 
+/**
+ * @brief Render the function/image name plus offset for a stack frame.
+ *
+ * Falls back to the image name when no FunctionInstance is available, and
+ * to "?" when neither is known. The offset is the IP minus the function
+ * (or image text) base, formatted as hex.
+ *
+ * @param frame       Frame whose label is being rendered.
+ * @param buffer      Output buffer.
+ * @param bufferSize  Capacity of @a buffer.
+ * @return Pointer to @a buffer.
+ */
 /*static*/ const char*
 UiUtils::FunctionNameForFrame(StackFrame* frame, char* buffer,
 	size_t bufferSize)
@@ -126,6 +187,14 @@ UiUtils::FunctionNameForFrame(StackFrame* frame, char* buffer,
 }
 
 
+/**
+ * @brief Convert an image_type enum into a short label.
+ *
+ * @param type        Image type.
+ * @param buffer      Output buffer.
+ * @param bufferSize  Capacity of @a buffer.
+ * @return Pointer to @a buffer.
+ */
 /*static*/ const char*
 UiUtils::ImageTypeToString(image_type type, char* buffer, size_t bufferSize)
 {
@@ -151,6 +220,14 @@ UiUtils::ImageTypeToString(image_type type, char* buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Convert an area locking-flag value into a short label.
+ *
+ * @param flags       Locking flag (B_NO_LOCK, B_FULL_LOCK, ...).
+ * @param buffer      Output buffer.
+ * @param bufferSize  Capacity of @a buffer.
+ * @return Pointer to @a buffer.
+ */
 /*static*/ const char*
 UiUtils::AreaLockingFlagsToString(uint32 flags, char* buffer,
 	size_t bufferSize)
@@ -186,6 +263,18 @@ UiUtils::AreaLockingFlagsToString(uint32 flags, char* buffer,
 }
 
 
+/**
+ * @brief Render an area-protection bitmask as a permission string (e.g. "rwxs").
+ *
+ * Shows user vs kernel protection bits separately, suppressing kernel
+ * variants when an equivalent user variant is already present. Trailing
+ * "s/o/c/S/k" letters denote stack/overcommit/cloneable/shared/kernel
+ * areas. Unknown leftover bits are dumped in hex.
+ *
+ * @param protection  Protection bitmask.
+ * @param _output     Output BString. Truncated and rewritten.
+ * @return Reference to @a _output for chaining.
+ */
 /*static*/ const BString&
 UiUtils::AreaProtectionFlagsToString(uint32 protection, BString& _output)
 {
@@ -244,6 +333,16 @@ UiUtils::AreaProtectionFlagsToString(uint32 protection, BString& _output)
 }
 
 
+/**
+ * @brief Build a default report-file name for @a team using the current date/time.
+ *
+ * Produces "<leaf>-<id>-debug-DD-MM-YYYY-HH-MM-SS.report".
+ *
+ * @param team        Team being reported on.
+ * @param buffer      Output buffer.
+ * @param bufferSize  Capacity of @a buffer.
+ * @return Pointer to @a buffer.
+ */
 /*static*/ const char*
 UiUtils::ReportNameForTeam(::Team* team, char* buffer, size_t bufferSize)
 {
@@ -261,6 +360,16 @@ UiUtils::ReportNameForTeam(::Team* team, char* buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Build a default core-file name for @a team using the current date/time.
+ *
+ * Produces "<leaf>-<id>-debug-DD-MM-YYYY-HH-MM-SS.core".
+ *
+ * @param team        Team whose core is being saved.
+ * @param buffer      Output buffer.
+ * @param bufferSize  Capacity of @a buffer.
+ * @return Pointer to @a buffer.
+ */
 /*static*/ const char*
 UiUtils::CoreFileNameForTeam(::Team* team, char* buffer, size_t bufferSize)
 {
@@ -279,6 +388,19 @@ UiUtils::CoreFileNameForTeam(::Team* team, char* buffer, size_t bufferSize)
 }
 
 
+/**
+ * @brief Recursively render a ValueNode and its children into a textual tree.
+ *
+ * Honors @a maxDepth so very deep object graphs do not flood the output.
+ * For pointer-to-compound nodes, the intermediate compound layer is
+ * collapsed and the children are printed directly. Unresolved nodes are
+ * marked as such.
+ *
+ * @param _output      BString that the rendered tree is appended to.
+ * @param child        Child node to render.
+ * @param indentLevel  Current indent depth in tabs.
+ * @param maxDepth     Maximum recursion depth; 0 stops traversal.
+ */
 /*static*/ void
 UiUtils::PrintValueNodeGraph(BString& _output, ValueNodeChild* child,
 	int32 indentLevel, int32 maxDepth)
@@ -346,6 +468,21 @@ UiUtils::PrintValueNodeGraph(BString& _output, ValueNodeChild* child,
 }
 
 
+/**
+ * @brief Render a hexdump-style memory listing into @a _output.
+ *
+ * Each row begins with the address and the printable-ASCII rendition of
+ * the row, then the hex bytes/words. Rows are wrapped at @a displayWidth
+ * items.
+ *
+ * @param _output       BString that the dump is appended to.
+ * @param indentLevel   Indent depth in tabs at the start of each line.
+ * @param block         Memory block being dumped.
+ * @param address       Starting address.
+ * @param itemSize      Size of each item in bytes (1, 2, 4, or 8).
+ * @param displayWidth  Number of items per row.
+ * @param count         Number of items to dump.
+ */
 /*static*/ void
 UiUtils::DumpMemory(BString& _output, int32 indentLevel,
 	TeamMemoryBlock* block, target_addr_t address, int32 itemSize,
@@ -412,6 +549,15 @@ UiUtils::DumpMemory(BString& _output, int32 indentLevel,
 }
 
 
+/**
+ * @brief Parse a single "low" or "low-high" token into two integers.
+ *
+ * @param rangeString  Token to parse. Trimmed of whitespace by the caller.
+ * @param lowerBound   Output lower bound.
+ * @param upperBound   Output upper bound (equals @a lowerBound for "low").
+ * @retval B_OK         Parsed successfully.
+ * @retval B_BAD_VALUE  @a lowerBound exceeds @a upperBound.
+ */
 static status_t ParseRangeString(BString& rangeString, int32& lowerBound,
 	int32& upperBound)
 {
@@ -430,6 +576,22 @@ static status_t ParseRangeString(BString& rangeString, int32& lowerBound,
 }
 
 
+/**
+ * @brief Parse a comma-separated list of ranges into a RangeList.
+ *
+ * Tokens are of the form "N" or "N-M". When @a fixedRange is true any value
+ * outside [lowerBound, upperBound] makes the whole expression fail.
+ *
+ * @param rangeExpression  Input expression (e.g. "1,3-5,7").
+ * @param lowerBound       Inclusive lower bound for validation.
+ * @param upperBound       Inclusive upper bound for validation.
+ * @param fixedRange       Whether to enforce the validation bounds.
+ * @param _output          RangeList that receives the parsed ranges.
+ * @retval B_OK         Parsed successfully.
+ * @retval B_BAD_DATA   Input was empty.
+ * @retval B_BAD_VALUE  Token was malformed or out of bounds.
+ * @return Other status codes propagated from RangeList::AddRange().
+ */
 /*static*/ status_t
 UiUtils::ParseRangeExpression(const BString& rangeExpression, int32 lowerBound,
 	int32 upperBound, bool fixedRange, RangeList& _output)
@@ -476,6 +638,13 @@ UiUtils::ParseRangeExpression(const BString& rangeExpression, int32 lowerBound,
 }
 
 
+/**
+ * @brief Map a BVariant type_code into its short C type-name string.
+ *
+ * @param type  Type code (e.g. B_INT32_TYPE).
+ * @return Pointer to a static string ("int32", "double", ...) or
+ *         "unknown" for unrecognized values.
+ */
 /*static*/ const char*
 UiUtils::TypeCodeToString(type_code type)
 {
@@ -508,6 +677,14 @@ UiUtils::TypeCodeToString(type_code type)
 }
 
 
+/**
+ * @brief Read the @a index-th element of @a data interpreted as type @a T.
+ *
+ * @tparam T     Lane type.
+ * @param data   Raw SIMD register buffer.
+ * @param index  Lane index.
+ * @return The lane value.
+ */
 template<typename T>
 T GetSIMDValueAtOffset(char* data, int32 index)
 {
@@ -515,6 +692,12 @@ T GetSIMDValueAtOffset(char* data, int32 index)
 }
 
 
+/**
+ * @brief Return the byte size corresponding to a SIMD render format.
+ *
+ * @param format  One of SIMD_RENDER_FORMAT_*.
+ * @return Element size in bytes, or 0 for unknown formats.
+ */
 static int32 GetSIMDFormatByteSize(uint32 format)
 {
 	switch (format) {
@@ -536,6 +719,18 @@ static int32 GetSIMDFormatByteSize(uint32 format)
 }
 
 
+/**
+ * @brief Render a SIMD register value as a comma-separated brace-enclosed list.
+ *
+ * The element format (int8/int16/.../float/double) controls both the lane
+ * width and the per-lane formatting.
+ *
+ * @param value    Raw SIMD register value (BVariant of pointer type).
+ * @param bitSize  Total width of the register in bits.
+ * @param format   Lane interpretation (one of SIMD_RENDER_FORMAT_*).
+ * @param _output  BString that receives the formatted string.
+ * @return Reference to @a _output.
+ */
 /*static*/
 const BString&
 UiUtils::FormatSIMDValue(const BVariant& value, uint32 bitSize,
@@ -582,6 +777,16 @@ UiUtils::FormatSIMDValue(const BVariant& value, uint32 bitSize,
 }
 
 
+/**
+ * @brief Convert a signal number into its conventional symbolic name.
+ *
+ * Recognizes the standard POSIX signals plus Haiku-specific extensions
+ * (SIGKILLTHR, SIGRTMIN+N).
+ *
+ * @param signal   Signal number.
+ * @param _output  BString that receives the name.
+ * @return Pointer to @c _output.String() for convenience.
+ */
 const char*
 UiUtils::SignalNameToString(int32 signal, BString& _output)
 {
@@ -637,6 +842,12 @@ UiUtils::SignalNameToString(int32 signal, BString& _output)
 }
 
 
+/**
+ * @brief Convert a signal disposition value into a short label.
+ *
+ * @param disposition  One of SIGNAL_DISPOSITION_*.
+ * @return Pointer to a static string describing the disposition.
+ */
 const char*
 UiUtils::SignalDispositionToString(int disposition)
 {

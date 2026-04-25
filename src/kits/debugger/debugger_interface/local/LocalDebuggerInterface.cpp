@@ -1,8 +1,41 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2010-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2010-2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file LocalDebuggerInterface.cpp
+ * @brief DebuggerInterface implementation talking to the local kernel debugger nub.
+ *
+ * Owns one debugger port for events plus a pool of short-lived debug contexts
+ * that get borrowed for synchronous control calls (read/write memory,
+ * install breakpoint, get CPU state, ...). The pool is needed because the
+ * kernel-side debug syscalls hold per-context reply ports for the duration of
+ * a request and serializing them all through one context would block the
+ * event stream.
+ */
+
 
 #include "LocalDebuggerInterface.h"
 
@@ -35,17 +68,23 @@
 #include "ThreadInfo.h"
 
 
-// number of debug contexts the pool does initially create
+/** @brief Initial size of the debug-context pool created at Init() time. */
 static const int kInitialDebugContextCount = 3;
 
-// maximum number of debug contexts in the pool
+/** @brief Hard cap on debug-context pool size; threads block once it is reached. */
 static const int kMaxDebugContextCount = 10;
 
 
 // #pragma mark - LocalDebuggerInterface::DebugContext
 
+/**
+ * @brief Wrapper around the kernel debug_context structure that keeps it
+ *        teardown-safe and provides an Init/Close pair tied to the parent's
+ *        port lifetime.
+ */
 struct LocalDebuggerInterface::DebugContext : debug_context,
 		DoublyLinkedListLinkImpl<DebugContext> {
+	/** @brief Default-constructs a context with all kernel ids cleared. */
 	DebugContext()
 	{
 		team = -1;
@@ -53,17 +92,26 @@ struct LocalDebuggerInterface::DebugContext : debug_context,
 		reply_port = -1;
 	}
 
+	/** @brief Destroys the kernel debug context if still live. */
 	~DebugContext()
 	{
 		if (reply_port >= 0)
 			destroy_debug_context(this);
 	}
 
+	/**
+	 * @brief Initializes the underlying kernel debug context.
+	 *
+	 * @param team     Team this context targets.
+	 * @param nubPort  Port of the team's debugger nub.
+	 * @return Status from init_debug_context().
+	 */
 	status_t Init(team_id team, port_id nubPort)
 	{
 		return init_debug_context(this, team, nubPort);
 	}
 
+	/** @brief Tears down the kernel debug context and resets the ids. */
 	void Close()
 	{
 		if (reply_port >= 0) {
@@ -77,7 +125,17 @@ struct LocalDebuggerInterface::DebugContext : debug_context,
 
 // #pragma mark - LocalDebuggerInterface::DebugContextPool
 
+/**
+ * @brief Bounded pool of DebugContext objects that callers borrow for
+ *        synchronous nub requests and return when finished.
+ *
+ * Grows on demand up to kMaxDebugContextCount; threads requesting a context
+ * once the cap is reached block on a semaphore until one is returned.
+ */
 struct LocalDebuggerInterface::DebugContextPool {
+	/**
+	 * @brief Constructs an empty pool bound to a specific team and nub port.
+	 */
 	DebugContextPool(team_id team, port_id nubPort)
 		:
 		fLock("debug context pool"),
@@ -90,6 +148,7 @@ struct LocalDebuggerInterface::DebugContextPool {
 	{
 	}
 
+	/** @brief Drains the free list and deletes the blocking semaphore. */
 	~DebugContextPool()
 	{
 		AutoLocker<BLocker> locker(fLock);
@@ -101,6 +160,12 @@ struct LocalDebuggerInterface::DebugContextPool {
 			delete_sem(fBlockSem);
 	}
 
+	/**
+	 * @brief Performs late initialization, pre-creating kInitialDebugContextCount contexts.
+	 *
+	 * @return B_OK on success, or any error from the locker, semaphore, or
+	 *         per-context init.
+	 */
 	status_t Init()
 	{
 		status_t error = fLock.InitCheck();
@@ -123,6 +188,12 @@ struct LocalDebuggerInterface::DebugContextPool {
 		return B_OK;
 	}
 
+	/**
+	 * @brief Marks the pool closed and tears down every contained kernel context.
+	 *
+	 * Used during shutdown so that any thread still holding a borrowed context
+	 * can release it without re-acquiring kernel resources.
+	 */
 	void Close()
 	{
 		AutoLocker<BLocker> locker(fLock);
@@ -139,6 +210,12 @@ struct LocalDebuggerInterface::DebugContextPool {
 		}
 	}
 
+	/**
+	 * @brief Borrows a free context, creating a new one or blocking as required.
+	 *
+	 * @return Pointer to a borrowed DebugContext; never NULL because the call
+	 *         blocks on @c fBlockSem until one becomes available.
+	 */
 	DebugContext* GetContext()
 	{
 		AutoLocker<BLocker> locker(fLock);
@@ -163,6 +240,11 @@ struct LocalDebuggerInterface::DebugContextPool {
 		return context;
 	}
 
+	/**
+	 * @brief Returns @a context to the free list and wakes one waiter if present.
+	 *
+	 * @param context  Context previously borrowed via GetContext().
+	 */
 	void PutContext(DebugContext* context)
 	{
 		AutoLocker<BLocker> locker(fLock);
@@ -177,6 +259,14 @@ private:
 	typedef DoublyLinkedList<DebugContext> DebugContextList;
 
 private:
+	/**
+	 * @brief Allocates a fresh debug context, optionally initializing it
+	 *        against the kernel nub.
+	 *
+	 * @param _context  Output pointer to the new context.
+	 * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+	 *         from DebugContext::Init().
+	 */
 	status_t _CreateDebugContext(DebugContext*& _context)
 	{
 		DebugContext* context = new(std::nothrow) DebugContext;
@@ -210,7 +300,12 @@ private:
 };
 
 
+/**
+ * @brief RAII helper that borrows a DebugContext on construction and returns
+ *        it on destruction, simplifying error paths in synchronous calls.
+ */
 struct LocalDebuggerInterface::DebugContextGetter {
+	/** @brief Borrows a context from @a pool. */
 	DebugContextGetter(DebugContextPool* pool)
 		:
 		fPool(pool),
@@ -218,11 +313,13 @@ struct LocalDebuggerInterface::DebugContextGetter {
 	{
 	}
 
+	/** @brief Returns the borrowed context to the pool. */
 	~DebugContextGetter()
 	{
 		fPool->PutContext(fContext);
 	}
 
+	/** @brief Returns the borrowed context. */
 	DebugContext* Context() const
 	{
 		return fContext;
@@ -235,6 +332,11 @@ private:
 
 // #pragma mark - LocalDebuggerInterface
 
+/**
+ * @brief Constructs the interface bound to a specific team; Init() must follow.
+ *
+ * @param team  Team id this interface will debug.
+ */
 LocalDebuggerInterface::LocalDebuggerInterface(team_id team)
 	:
 	DebuggerInterface(),
@@ -247,6 +349,10 @@ LocalDebuggerInterface::LocalDebuggerInterface(team_id team)
 }
 
 
+/**
+ * @brief Releases the architecture, removes the team debugger, and tears
+ *        down the debug-context pool.
+ */
 LocalDebuggerInterface::~LocalDebuggerInterface()
 {
 	if (fArchitecture != NULL)
@@ -258,6 +364,13 @@ LocalDebuggerInterface::~LocalDebuggerInterface()
 }
 
 
+/**
+ * @brief Initializes architecture, debugger port, team-debugger registration,
+ *        thread-property watching, and the debug-context pool.
+ *
+ * @return B_OK on success, B_UNSUPPORTED on unrecognized architectures,
+ *         B_NO_MEMORY for allocation failures, or any underlying kernel error.
+ */
 status_t
 LocalDebuggerInterface::Init()
 {
@@ -307,6 +420,12 @@ LocalDebuggerInterface::Init()
 }
 
 
+/**
+ * @brief Detaches the debugger from the team and releases ports.
+ *
+ * @param killTeam  If true the team is killed; otherwise debugging is simply
+ *                  removed and the team continues to run.
+ */
 void
 LocalDebuggerInterface::Close(bool killTeam)
 {
@@ -326,6 +445,11 @@ LocalDebuggerInterface::Close(bool killTeam)
 }
 
 
+/**
+ * @brief Reports whether the team is currently being debugged via this interface.
+ *
+ * @return true if the kernel nub port is live, false otherwise.
+ */
 bool
 LocalDebuggerInterface::Connected() const
 {
@@ -333,6 +457,9 @@ LocalDebuggerInterface::Connected() const
 }
 
 
+/**
+ * @brief Returns the team id this interface is bound to.
+ */
 team_id
 LocalDebuggerInterface::TeamID() const
 {
@@ -340,6 +467,9 @@ LocalDebuggerInterface::TeamID() const
 }
 
 
+/**
+ * @brief Returns the Architecture object associated with the team.
+ */
 Architecture*
 LocalDebuggerInterface::GetArchitecture() const
 {
@@ -347,6 +477,18 @@ LocalDebuggerInterface::GetArchitecture() const
 }
 
 
+/**
+ * @brief Reads the next event from the debugger port and converts it to a
+ *        DebugEvent the rest of the debugger understands.
+ *
+ * Loops past events the higher layers should ignore (for example transient
+ * thread state changes) and past synthetic system-watch messages, which are
+ * unpacked through _GetNextSystemWatchEvent().
+ *
+ * @param _event  On success, set to a freshly-allocated DebugEvent owned by
+ *                the caller.
+ * @return B_OK on success or any port/event-construction error.
+ */
 status_t
 LocalDebuggerInterface::GetNextDebugEvent(DebugEvent*& _event)
 {
@@ -397,6 +539,12 @@ LocalDebuggerInterface::GetNextDebugEvent(DebugEvent*& _event)
 }
 
 
+/**
+ * @brief Updates the team's kernel-side debug flags.
+ *
+ * @param flags  Bitmask of B_TEAM_DEBUG_* flags.
+ * @return Result from set_team_debugging_flags().
+ */
 status_t
 LocalDebuggerInterface::SetTeamDebuggingFlags(uint32 flags)
 {
@@ -404,6 +552,12 @@ LocalDebuggerInterface::SetTeamDebuggingFlags(uint32 flags)
 }
 
 
+/**
+ * @brief Resumes a stopped thread.
+ *
+ * @param thread  Thread id to resume.
+ * @return Result from continue_thread().
+ */
 status_t
 LocalDebuggerInterface::ContinueThread(thread_id thread)
 {
@@ -411,6 +565,12 @@ LocalDebuggerInterface::ContinueThread(thread_id thread)
 }
 
 
+/**
+ * @brief Stops a running thread by asking the kernel to debug it.
+ *
+ * @param thread  Thread id to stop.
+ * @return Result from debug_thread().
+ */
 status_t
 LocalDebuggerInterface::StopThread(thread_id thread)
 {
@@ -418,6 +578,12 @@ LocalDebuggerInterface::StopThread(thread_id thread)
 }
 
 
+/**
+ * @brief Single-steps a thread by issuing a continue with the single-step flag.
+ *
+ * @param thread  Thread id to step.
+ * @return Result from write_port() to the nub.
+ */
 status_t
 LocalDebuggerInterface::SingleStepThread(thread_id thread)
 {
@@ -431,6 +597,15 @@ LocalDebuggerInterface::SingleStepThread(thread_id thread)
 }
 
 
+/**
+ * @brief Installs a breakpoint at @a address via the kernel nub.
+ *
+ * Borrows a debug context from the pool to receive the synchronous reply.
+ *
+ * @param address  Target address to break on.
+ * @return B_OK on success, the nub's error if the install failed, or any
+ *         transport error from send_debug_message().
+ */
 status_t
 LocalDebuggerInterface::InstallBreakpoint(target_addr_t address)
 {
@@ -449,6 +624,14 @@ LocalDebuggerInterface::InstallBreakpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief Removes a breakpoint at @a address via the kernel nub.
+ *
+ * Fire-and-forget: the kernel's clear-breakpoint path needs no reply.
+ *
+ * @param address  Target address whose breakpoint should be removed.
+ * @return Result from write_port().
+ */
 status_t
 LocalDebuggerInterface::UninstallBreakpoint(target_addr_t address)
 {
@@ -460,6 +643,15 @@ LocalDebuggerInterface::UninstallBreakpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief Installs a hardware watchpoint via the kernel nub.
+ *
+ * @param address  Target address to watch.
+ * @param type     B_DEBUG_WATCHPOINT_* trigger type (read, write, access).
+ * @param length   Watch length in bytes.
+ * @return B_OK on success, the nub's error if the install failed, or any
+ *         transport error from send_debug_message().
+ */
 status_t
 LocalDebuggerInterface::InstallWatchpoint(target_addr_t address, uint32 type,
 	int32 length)
@@ -481,6 +673,12 @@ LocalDebuggerInterface::InstallWatchpoint(target_addr_t address, uint32 type,
 }
 
 
+/**
+ * @brief Removes a hardware watchpoint via the kernel nub.
+ *
+ * @param address  Target address whose watchpoint should be removed.
+ * @return Result from write_port().
+ */
 status_t
 LocalDebuggerInterface::UninstallWatchpoint(target_addr_t address)
 {
@@ -494,6 +692,13 @@ LocalDebuggerInterface::UninstallWatchpoint(target_addr_t address)
 }
 
 
+/**
+ * @brief Populates @a info with the host's system information and uname data.
+ *
+ * @param info  Output parameter populated on success.
+ * @return B_OK on success, otherwise the first failing status from
+ *         get_system_info() or uname().
+ */
 status_t
 LocalDebuggerInterface::GetSystemInfo(SystemInfo& info)
 {
@@ -512,6 +717,12 @@ LocalDebuggerInterface::GetSystemInfo(SystemInfo& info)
 }
 
 
+/**
+ * @brief Populates @a info from the team's kernel-side team_info.
+ *
+ * @param info  Output parameter populated on success.
+ * @return B_OK on success or any error from get_team_info().
+ */
 status_t
 LocalDebuggerInterface::GetTeamInfo(TeamInfo& info)
 {
@@ -525,6 +736,12 @@ LocalDebuggerInterface::GetTeamInfo(TeamInfo& info)
 }
 
 
+/**
+ * @brief Builds a list of ThreadInfo objects for every thread in the team.
+ *
+ * @param infos  Output list; ownership of the appended ThreadInfo objects transfers.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 LocalDebuggerInterface::GetThreadInfos(BObjectList<ThreadInfo, true>& infos)
 {
@@ -543,6 +760,12 @@ LocalDebuggerInterface::GetThreadInfos(BObjectList<ThreadInfo, true>& infos)
 }
 
 
+/**
+ * @brief Builds a list of ImageInfo objects for every image loaded in the team.
+ *
+ * @param infos  Output list; ownership of the appended ImageInfo objects transfers.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 LocalDebuggerInterface::GetImageInfos(BObjectList<ImageInfo, true>& infos)
 {
@@ -563,6 +786,12 @@ LocalDebuggerInterface::GetImageInfos(BObjectList<ImageInfo, true>& infos)
 }
 
 
+/**
+ * @brief Builds a list of AreaInfo objects for every area mapped by the team.
+ *
+ * @param infos  Output list; ownership of the appended AreaInfo objects transfers.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 LocalDebuggerInterface::GetAreaInfos(BObjectList<AreaInfo, true>& infos)
 {
@@ -583,6 +812,12 @@ LocalDebuggerInterface::GetAreaInfos(BObjectList<AreaInfo, true>& infos)
 }
 
 
+/**
+ * @brief Builds a list of SemaphoreInfo objects for every semaphore owned by the team.
+ *
+ * @param infos  Output list; ownership of the appended SemaphoreInfo objects transfers.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 LocalDebuggerInterface::GetSemaphoreInfos(BObjectList<SemaphoreInfo, true>& infos)
 {
@@ -602,6 +837,17 @@ LocalDebuggerInterface::GetSemaphoreInfos(BObjectList<SemaphoreInfo, true>& info
 }
 
 
+/**
+ * @brief Enumerates every symbol in @a image into a list via the kernel's
+ *        debug-symbol APIs.
+ *
+ * @param team   Team id (passed for API symmetry; the kernel uses the
+ *               interface's bound team).
+ * @param image  Image identifier to iterate over.
+ * @param infos  Output list; ownership of the appended SymbolInfo objects transfers.
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails, or any error
+ *         from the debug_*_symbol_lookup APIs.
+ */
 status_t
 LocalDebuggerInterface::GetSymbolInfos(team_id team, image_id image,
 	BObjectList<SymbolInfo, true>& infos)
@@ -649,6 +895,17 @@ LocalDebuggerInterface::GetSymbolInfos(team_id team, image_id image,
 }
 
 
+/**
+ * @brief Looks up a single symbol in @a image by name via the kernel's
+ *        debug-symbol APIs.
+ *
+ * @param team        Team id (passed for API symmetry).
+ * @param image       Image identifier to search.
+ * @param name        Symbol name to look up.
+ * @param symbolType  Filter for the symbol type (B_SYMBOL_TYPE_*).
+ * @param info        Output parameter populated on success.
+ * @return B_OK on success or any error from debug_get_symbol().
+ */
 status_t
 LocalDebuggerInterface::GetSymbolInfo(team_id team, image_id image, const char* name,
 	int32 symbolType, SymbolInfo& info)
@@ -680,6 +937,13 @@ LocalDebuggerInterface::GetSymbolInfo(team_id team, image_id image, const char* 
 }
 
 
+/**
+ * @brief Returns the per-thread info (team id, thread id, name) for @a thread.
+ *
+ * @param thread  Thread id to query.
+ * @param info    Output parameter populated on success.
+ * @return B_OK on success or any error from get_thread_info().
+ */
 status_t
 LocalDebuggerInterface::GetThreadInfo(thread_id thread, ThreadInfo& info)
 {
@@ -693,6 +957,14 @@ LocalDebuggerInterface::GetThreadInfo(thread_id thread, ThreadInfo& info)
 }
 
 
+/**
+ * @brief Reads the kernel's CPU state for a thread and wraps it as a CpuState.
+ *
+ * @param thread  Thread id to query.
+ * @param _state  On success, set to a freshly-allocated CpuState owned by the caller.
+ * @return B_OK on success, or any error from the kernel/getter or
+ *         Architecture::CreateCpuState().
+ */
 status_t
 LocalDebuggerInterface::GetCpuState(thread_id thread, CpuState*& _state)
 {
@@ -705,6 +977,16 @@ LocalDebuggerInterface::GetCpuState(thread_id thread, CpuState*& _state)
 }
 
 
+/**
+ * @brief Writes a CpuState back to the kernel for a thread.
+ *
+ * Reads the current debug_cpu_state, asks @a state to merge its values into
+ * it, then sends it to the nub.
+ *
+ * @param thread  Thread id to update.
+ * @param state   New CPU state.
+ * @return B_OK on success, or any error from the kernel APIs or the merge.
+ */
 status_t
 LocalDebuggerInterface::SetCpuState(thread_id thread, const CpuState* state)
 {
@@ -730,6 +1012,12 @@ LocalDebuggerInterface::SetCpuState(thread_id thread, const CpuState* state)
 }
 
 
+/**
+ * @brief Reports CPU feature flags as discovered by the Architecture object.
+ *
+ * @param flags  Output parameter populated by the Architecture.
+ * @return Whatever Architecture::GetCpuFeatures() returns.
+ */
 status_t
 LocalDebuggerInterface::GetCpuFeatures(uint32& flags)
 {
@@ -737,6 +1025,13 @@ LocalDebuggerInterface::GetCpuFeatures(uint32& flags)
 }
 
 
+/**
+ * @brief Asks the kernel nub to write the team's state to a core file at @a path.
+ *
+ * @param path  Filesystem path the kernel will write to.
+ * @return B_OK on success, the nub's error if the write failed, or any
+ *         transport error from send_debug_message().
+ */
 status_t
 LocalDebuggerInterface::WriteCoreFile(const char* path)
 {
@@ -758,6 +1053,14 @@ LocalDebuggerInterface::WriteCoreFile(const char* path)
 }
 
 
+/**
+ * @brief Returns the protection and locking flags for the area covering @a address.
+ *
+ * @param address     Target-side address to look up.
+ * @param protection  Output parameter; receives the area's protection flags.
+ * @param locking     Output parameter; receives the area's locking flags.
+ * @return Result from get_memory_properties().
+ */
 status_t
 LocalDebuggerInterface::GetMemoryProperties(target_addr_t address,
 	uint32& protection, uint32& locking)
@@ -767,6 +1070,14 @@ LocalDebuggerInterface::GetMemoryProperties(target_addr_t address,
 }
 
 
+/**
+ * @brief Reads up to @a size bytes from the team's address space at @a address.
+ *
+ * @param address  Target-side starting address.
+ * @param buffer   Destination buffer; must hold @a size bytes.
+ * @param size     Number of bytes to read.
+ * @return Number of bytes read, or a negative error code on failure.
+ */
 ssize_t
 LocalDebuggerInterface::ReadMemory(target_addr_t address, void* buffer, size_t size)
 {
@@ -777,6 +1088,14 @@ LocalDebuggerInterface::ReadMemory(target_addr_t address, void* buffer, size_t s
 }
 
 
+/**
+ * @brief Writes up to @a size bytes into the team's address space at @a address.
+ *
+ * @param address  Target-side starting address.
+ * @param buffer   Source buffer.
+ * @param size     Number of bytes to write.
+ * @return Number of bytes written, or a negative error code on failure.
+ */
 ssize_t
 LocalDebuggerInterface::WriteMemory(target_addr_t address, void* buffer,
 	size_t size)
@@ -788,6 +1107,24 @@ LocalDebuggerInterface::WriteMemory(target_addr_t address, void* buffer,
 }
 
 
+/**
+ * @brief Converts a raw kernel debugger message into the appropriate
+ *        DebugEvent subclass.
+ *
+ * Handles every B_DEBUGGER_MESSAGE_* code by allocating the right event type
+ * and copying out the relevant payload (CPU state, signal info, image info,
+ * syscall info, ...). Sets @a _ignore for events the higher layers should
+ * filter out (for example pre-syscall stops with no payload of interest).
+ *
+ * @param messageCode  Original debugger-message code.
+ * @param message      Raw message payload from the debugger port.
+ * @param _ignore      Output flag; true if the caller should drop the event
+ *                     and read another.
+ * @param _event       On success and when not ignoring, set to a freshly-
+ *                     allocated DebugEvent owned by the caller.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+ *         from CpuState construction.
+ */
 status_t
 LocalDebuggerInterface::_CreateDebugEvent(int32 messageCode,
 	const debug_debugger_message_data& message, bool& _ignore,
@@ -940,6 +1277,18 @@ LocalDebuggerInterface::_CreateDebugEvent(int32 messageCode,
 }
 
 
+/**
+ * @brief Decodes a B_SYSTEM_OBJECT_UPDATE message into a synthetic DebugEvent.
+ *
+ * Currently only B_THREAD_NAME_CHANGED is mapped (to a ThreadRenamedEvent);
+ * other opcodes return B_BAD_DATA so the caller can keep reading events.
+ *
+ * @param _event   On success, set to a freshly-allocated DebugEvent owned by
+ *                 the caller; left untouched on error.
+ * @param message  Parsed system-watch KMessage.
+ * @return B_OK on a successful conversion, B_BAD_DATA for unsupported codes
+ *         or malformed messages, or any error from get_thread_info().
+ */
 status_t
 LocalDebuggerInterface::_GetNextSystemWatchEvent(DebugEvent*& _event,
 	KMessage& message)
@@ -985,6 +1334,14 @@ LocalDebuggerInterface::_GetNextSystemWatchEvent(DebugEvent*& _event,
 }
 
 
+/**
+ * @brief Synchronously fetches the kernel debug_cpu_state for a thread.
+ *
+ * @param thread  Thread id to query.
+ * @param _state  Output parameter filled with the kernel's CPU state on success.
+ * @return B_OK on success, the nub's error if the request failed, or any
+ *         transport error from send_debug_message().
+ */
 status_t
 LocalDebuggerInterface::_GetDebugCpuState(thread_id thread, debug_cpu_state& _state)
 {

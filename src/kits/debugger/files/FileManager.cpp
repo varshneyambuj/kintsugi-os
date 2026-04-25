@@ -1,7 +1,40 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2017, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2011-2017, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file FileManager.cpp
+ * @brief Maps target-side and source-side paths to local on-disk locations.
+ *
+ * Maintains two LocatableEntry domains (target and source) plus a cache of
+ * loaded SourceFile objects. When debugging a remote or relocated build
+ * the user can supply explicit mappings; the FileManager attempts to
+ * propagate those mappings down hierarchies of LocatableDirectory entries
+ * so subsequently looked-up files are auto-located.
+ *
+ * @see LocatableEntry, LocatableDirectory, LocatableFile, SourceFile
  */
 
 #include "FileManager.h"
@@ -20,6 +53,12 @@
 // #pragma mark - EntryPath
 
 
+/**
+ * @brief Lightweight (directory, name) pair used as a hash-table key.
+ *
+ * Stores raw pointers so it can wrap either a (BString, BString) pair or an
+ * existing LocatableEntry without copying. Comparison is value-based.
+ */
 struct FileManager::EntryPath {
 	const char*	directory;
 	const char*	name;
@@ -77,6 +116,12 @@ struct FileManager::EntryPath {
 // #pragma mark - EntryHashDefinition
 
 
+/**
+ * @brief Hash-table policy that lets the locatable-entry table key by EntryPath.
+ *
+ * Provides hash and comparison using the (directory, name) pair, plus
+ * GetLink() so the BOpenHashTable can chain entries through fNext.
+ */
 struct FileManager::EntryHashDefinition {
 	typedef EntryPath		KeyType;
 	typedef	LocatableEntry	ValueType;
@@ -106,6 +151,15 @@ struct FileManager::EntryHashDefinition {
 // #pragma mark - Domain
 
 
+/**
+ * @brief One side of a target/source path universe owned by the FileManager.
+ *
+ * Maintains a LocatableEntry table keyed by (directory, name) and
+ * implements the locate-by-mapping logic (auto-locating sibling and
+ * descendant entries when a path is resolved). Locking is delegated back
+ * to the owning FileManager so callers can hold the lock across entire
+ * path-locating operations.
+ */
 class FileManager::Domain : private LocatableEntryOwner {
 public:
 	Domain(FileManager* manager, bool isLocal)
@@ -481,6 +535,12 @@ private:
 // #pragma mark - SourceFileEntry
 
 
+/**
+ * @brief Cache entry tying a source path to a loaded SourceFile.
+ *
+ * Implements SourceFileOwner so the loaded SourceFile can call back when
+ * its reference count drops to zero or it is destroyed.
+ */
 struct FileManager::SourceFileEntry : public SourceFileOwner {
 
 	FileManager*		manager;
@@ -512,6 +572,9 @@ struct FileManager::SourceFileEntry : public SourceFileOwner {
 // #pragma mark - SourceFileHashDefinition
 
 
+/**
+ * @brief Hash-table policy that lets the source-file cache key by source path.
+ */
 struct FileManager::SourceFileHashDefinition {
 	typedef BString			KeyType;
 	typedef	SourceFileEntry	ValueType;
@@ -541,6 +604,7 @@ struct FileManager::SourceFileHashDefinition {
 // #pragma mark - FileManager
 
 
+/** @brief Construct an unconfigured FileManager; call Init() before use. */
 FileManager::FileManager()
 	:
 	fLock("file manager"),
@@ -551,6 +615,7 @@ FileManager::FileManager()
 }
 
 
+/** @brief Destroy both domains and the source-file cache. */
 FileManager::~FileManager()
 {
 	delete fTargetDomain;
@@ -566,6 +631,16 @@ FileManager::~FileManager()
 }
 
 
+/**
+ * @brief Bring the FileManager online: lock, target/source domains, file cache.
+ *
+ * @param targetIsLocal  When true, target paths are auto-located against the
+ *                       host filesystem (typical for local debugging).
+ * @retval B_OK         All sub-objects were initialized.
+ * @retval B_NO_MEMORY  Allocation of a domain or table failed.
+ * @return Other status codes propagated from BLocker::InitCheck() or
+ *         BOpenHashTable::Init().
+ */
 status_t
 FileManager::Init(bool targetIsLocal)
 {
@@ -604,6 +679,13 @@ FileManager::Init(bool targetIsLocal)
 }
 
 
+/**
+ * @brief Look up or create a target-domain file from a directory plus relative path.
+ *
+ * @param directory     Directory portion (or empty for an absolute @a relativePath).
+ * @param relativePath  File path relative to @a directory or absolute.
+ * @return A referenced LocatableFile, or NULL on allocation failure.
+ */
 LocatableFile*
 FileManager::GetTargetFile(const BString& directory,
 	const BString& relativePath)
@@ -613,6 +695,12 @@ FileManager::GetTargetFile(const BString& directory,
 }
 
 
+/**
+ * @brief Look up or create a target-domain file from a single path.
+ *
+ * @param path  Absolute or relative path.
+ * @return A referenced LocatableFile, or NULL on allocation failure.
+ */
 LocatableFile*
 FileManager::GetTargetFile(const BString& path)
 {
@@ -621,6 +709,12 @@ FileManager::GetTargetFile(const BString& path)
 }
 
 
+/**
+ * @brief Tell the target domain that @a path now resolves to @a locatedPath.
+ *
+ * @param path         Original (target-side) path.
+ * @param locatedPath  Local path the user has supplied for it.
+ */
 void
 FileManager::TargetEntryLocated(const BString& path,
 	const BString& locatedPath)
@@ -630,6 +724,13 @@ FileManager::TargetEntryLocated(const BString& path,
 }
 
 
+/**
+ * @brief Look up or create a source-domain file from a directory plus relative path.
+ *
+ * @param directory     Directory portion (or empty for an absolute @a relativePath).
+ * @param relativePath  File path relative to @a directory or absolute.
+ * @return A referenced LocatableFile, or NULL on allocation failure.
+ */
 LocatableFile*
 FileManager::GetSourceFile(const BString& directory,
 	const BString& relativePath)
@@ -641,6 +742,12 @@ FileManager::GetSourceFile(const BString& directory,
 }
 
 
+/**
+ * @brief Look up or create a source-domain file from a single path.
+ *
+ * @param path  Absolute or relative path.
+ * @return A referenced LocatableFile, or NULL on allocation failure.
+ */
 LocatableFile*
 FileManager::GetSourceFile(const BString& path)
 {
@@ -651,6 +758,19 @@ FileManager::GetSourceFile(const BString& path)
 }
 
 
+/**
+ * @brief Record a source-path mapping and invalidate any prior loaded copy.
+ *
+ * Clears any cached SourceFileEntry for @a path so a subsequent
+ * LoadSourceFile() reads from the new location, then forwards the mapping
+ * to the source domain and stores it in fSourceLocationMappings for
+ * persistence across sessions.
+ *
+ * @param path         Original source path.
+ * @param locatedPath  Local path the user has supplied for it.
+ * @retval B_OK         Mapping recorded.
+ * @retval B_NO_MEMORY  Out of memory while updating the map.
+ */
 status_t
 FileManager::SourceEntryLocated(const BString& path,
 	const BString& locatedPath)
@@ -676,6 +796,20 @@ FileManager::SourceEntryLocated(const BString& path,
 }
 
 
+/**
+ * @brief Load (or fetch from cache) the SourceFile contents for @a file.
+ *
+ * Resolves the file's located path, applying any lazy mapping, then either
+ * acquires a reference to a cached SourceFile or constructs a new one and
+ * inserts it into the table.
+ *
+ * @param file         File whose contents are to be loaded.
+ * @param _sourceFile  Output that receives a referenced SourceFile.
+ * @retval B_OK               Loaded successfully.
+ * @retval B_ENTRY_NOT_FOUND  No located path is known for @a file.
+ * @retval B_NO_MEMORY        Allocation failed.
+ * @return Other status codes propagated from SourceFile::Init().
+ */
 status_t
 FileManager::LoadSourceFile(LocatableFile* file, SourceFile*& _sourceFile)
 {
@@ -727,6 +861,13 @@ FileManager::LoadSourceFile(LocatableFile* file, SourceFile*& _sourceFile)
 }
 
 
+/**
+ * @brief Restore source-path mappings from a TeamFileManagerSettings instance.
+ *
+ * @param settings  Settings record to read from.
+ * @retval B_OK         All mappings restored.
+ * @retval B_NO_MEMORY  Out of memory while updating the map.
+ */
 status_t
 FileManager::LoadLocationMappings(TeamFileManagerSettings* settings)
 {
@@ -749,6 +890,13 @@ FileManager::LoadLocationMappings(TeamFileManagerSettings* settings)
 }
 
 
+/**
+ * @brief Persist the in-memory source-path mappings to @a settings.
+ *
+ * @param settings  Settings record to write to.
+ * @return The first non-OK status from TeamFileManagerSettings::AddSourceMapping(),
+ *         or B_OK on success.
+ */
 status_t
 FileManager::SaveLocationMappings(TeamFileManagerSettings* settings)
 {
@@ -765,6 +913,15 @@ FileManager::SaveLocationMappings(TeamFileManagerSettings* settings)
 }
 
 
+/**
+ * @brief Find an existing source-file cache entry for @a path.
+ *
+ * Removes the entry from the table when its underlying SourceFile has
+ * already lost all references.
+ *
+ * @param path  Original source-side path.
+ * @return The matching entry, or NULL if none exists or it was stale.
+ */
 FileManager::SourceFileEntry*
 FileManager::_LookupSourceFile(const BString& path)
 {
@@ -782,6 +939,13 @@ FileManager::_LookupSourceFile(const BString& path)
 }
 
 
+/**
+ * @brief Callback fired when a cached SourceFile is no longer referenced.
+ *
+ * Removes the entry from the table so the next load reads a fresh copy.
+ *
+ * @param entry  Entry whose underlying SourceFile is unused.
+ */
 void
 FileManager::_SourceFileUnused(SourceFileEntry* entry)
 {
@@ -793,6 +957,17 @@ FileManager::_SourceFileUnused(SourceFileEntry* entry)
 }
 
 
+/**
+ * @brief Apply a stored source-path mapping to @a file when one matches.
+ *
+ * Used by LoadSourceFile() so users can leave mappings registered without
+ * having to explicitly call SourceEntryLocated() up front.
+ *
+ * @param sourcePath  Original source path being looked up.
+ * @param file        Locatable file to update if a mapping is found.
+ * @return true when a mapping existed and was applied, false otherwise.
+ * @note Callers must hold the FileManager lock.
+ */
 bool
 FileManager::_LocateFileIfMapped(const BString& sourcePath,
 	LocatableFile* file)

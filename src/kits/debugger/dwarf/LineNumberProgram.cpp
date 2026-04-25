@@ -1,6 +1,38 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file LineNumberProgram.cpp
+ * @brief Interpreter for DWARF .debug_line line-number programs.
+ *
+ * The DWARF line number program is a tiny VM whose state is the matrix
+ * row (address, file, line, column, flags) and whose instruction stream
+ * advances or emits new rows.  This file implements row-by-row playback:
+ * the caller starts with @ref GetInitialState and then repeatedly calls
+ * @ref GetNextRow to enumerate every (address -> file:line) mapping for a
+ * compilation unit.
  */
 
 #include "LineNumberProgram.h"
@@ -14,11 +46,19 @@
 #include "Tracing.h"
 
 
+/** @brief Expected operand count for each DW_LNS_* standard opcode. */
 static const uint8 kLineNumberStandardOpcodeOperands[]
 	= { 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
+/** @brief Number of standard opcodes the interpreter knows. */
 static const uint32 kLineNumberStandardOpcodeCount = 12;
 
 
+/**
+ * @brief Constructs an uninitialised line program.
+ *
+ * @param addressSize Width of a target address in bytes.
+ * @param isBigEndian @c true if the target uses big-endian byte order.
+ */
 LineNumberProgram::LineNumberProgram(uint8 addressSize, bool isBigEndian)
 	:
 	fProgram(NULL),
@@ -35,11 +75,31 @@ LineNumberProgram::LineNumberProgram(uint8 addressSize, bool isBigEndian)
 }
 
 
+/**
+ * @brief Destroys the line program.  Does not own the byte stream.
+ */
 LineNumberProgram::~LineNumberProgram()
 {
 }
 
 
+/**
+ * @brief Binds the interpreter to a parsed line-program prologue.
+ *
+ * Validates that each standard-opcode operand count matches DWARF's
+ * specification before retaining pointers into the section.
+ *
+ * @param program                Pointer to the program byte stream.
+ * @param programSize            Size of @a program in bytes.
+ * @param minInstructionLength   DW_LNS prologue field controlling pc advance.
+ * @param defaultIsStatement     Default value of the @c is_stmt flag.
+ * @param lineBase               Signed bias for special-opcode line decoding.
+ * @param lineRange              Range divisor for special-opcode decoding.
+ * @param opcodeBase             First special-opcode value.
+ * @param standardOpcodeLengths  Operand counts for each DW_LNS_* opcode.
+ * @retval B_OK         Program accepted; interpreter is ready.
+ * @retval B_BAD_DATA   Operand-length table disagrees with the DWARF spec.
+ */
 status_t
 LineNumberProgram::Init(const void* program, size_t programSize,
 	uint8 minInstructionLength, bool defaultIsStatement, int8 lineBase,
@@ -69,6 +129,13 @@ LineNumberProgram::Init(const void* program, size_t programSize,
 }
 
 
+/**
+ * @brief Resets @a state to the initial row defined by the DWARF spec.
+ *
+ * Also rewinds the embedded DataReader to the start of the program.
+ *
+ * @param state State object to reset.
+ */
 void
 LineNumberProgram::GetInitialState(State& state) const
 {
@@ -80,6 +147,18 @@ LineNumberProgram::GetInitialState(State& state) const
 }
 
 
+/**
+ * @brief Advances the interpreter until the next matrix row is emitted.
+ *
+ * Decodes special, standard, and extended opcodes in turn.  When an
+ * end-of-sequence is observed the interpreter resets to the initial
+ * state on the next call so that multiple concatenated programs can be
+ * walked back-to-back.
+ *
+ * @param state In/out state describing the current row.
+ * @return @c true when @a state holds a freshly produced row;
+ *         @c false when the program is exhausted or has overflowed.
+ */
 bool
 LineNumberProgram::GetNextRow(State& state) const
 {
@@ -204,6 +283,13 @@ LineNumberProgram::GetNextRow(State& state) const
 }
 
 
+/**
+ * @brief Initialises @a state to the canonical starting row.
+ *
+ * Mirrors the values listed in DWARF v5 section 6.2.2.
+ *
+ * @param state State object to initialise.
+ */
 void
 LineNumberProgram::_SetToInitial(State& state) const
 {

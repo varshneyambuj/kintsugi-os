@@ -1,7 +1,42 @@
 /*
- * Copyright 2012, Rene Gollent, rene@gollent.com.
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfStackFrameDebugInfo.cpp
+ * @brief Implementation of DwarfStackFrameDebugInfo plus the per-stack-frame
+ *        ObjectID subclasses used to identify parameters, locals, and
+ *        return values.
+ *
+ * Each Variable produced by this object carries an ObjectID derived from
+ * the surrounding function and the variable's source-level coordinates so
+ * UI bookkeeping (watch-list selection, UI persistence) survives across
+ * frames. The actual type construction is delegated to a DwarfTypeFactory
+ * created during Init().
+ *
+ * @see StackFrameDebugInfo, DwarfTypeFactory, DwarfTypeContext
  */
 
 
@@ -34,9 +69,14 @@
 // #pragma mark - DwarfFunctionParameterID
 
 
+/**
+ * @brief Stable identifier for a function parameter, keyed on function ID
+ *        and parameter name.
+ */
 struct DwarfStackFrameDebugInfo::DwarfFunctionParameterID
 	: public FunctionParameterID {
 
+	/** @brief Constructs the ID and acquires a reference on @a functionID. */
 	DwarfFunctionParameterID(FunctionID* functionID, const BString& name)
 		:
 		fFunctionID(functionID),
@@ -45,11 +85,13 @@ struct DwarfStackFrameDebugInfo::DwarfFunctionParameterID
 		fFunctionID->AcquireReference();
 	}
 
+	/** @brief Releases the held FunctionID reference. */
 	virtual ~DwarfFunctionParameterID()
 	{
 		fFunctionID->ReleaseReference();
 	}
 
+	/** @brief Equality across ObjectID hierarchy via dynamic_cast. */
 	virtual bool operator==(const ObjectID& other) const
 	{
 		const DwarfFunctionParameterID* parameterID
@@ -59,6 +101,7 @@ struct DwarfStackFrameDebugInfo::DwarfFunctionParameterID
 	}
 
 protected:
+	/** @brief Combines the function and parameter name hashes. */
 	virtual uint32 ComputeHashValue() const
 	{
 		uint32 hash = fFunctionID->HashValue();
@@ -74,8 +117,13 @@ private:
 // #pragma mark - DwarfLocalVariableID
 
 
+/**
+ * @brief Stable identifier for a local variable, keyed on function, name
+ *        and declaration line/column.
+ */
 struct DwarfStackFrameDebugInfo::DwarfLocalVariableID : public LocalVariableID {
 
+	/** @brief Constructs the ID and acquires a reference on @a functionID. */
 	DwarfLocalVariableID(FunctionID* functionID, const BString& name,
 		int32 line, int32 column)
 		:
@@ -87,11 +135,13 @@ struct DwarfStackFrameDebugInfo::DwarfLocalVariableID : public LocalVariableID {
 		fFunctionID->AcquireReference();
 	}
 
+	/** @brief Releases the held FunctionID reference. */
 	virtual ~DwarfLocalVariableID()
 	{
 		fFunctionID->ReleaseReference();
 	}
 
+	/** @brief Equality across ObjectID hierarchy via dynamic_cast. */
 	virtual bool operator==(const ObjectID& other) const
 	{
 		const DwarfLocalVariableID* otherID
@@ -102,6 +152,7 @@ struct DwarfStackFrameDebugInfo::DwarfLocalVariableID : public LocalVariableID {
 	}
 
 protected:
+	/** @brief Combines the function, name, line and column hashes. */
 	virtual uint32 ComputeHashValue() const
 	{
 		uint32 hash = fFunctionID->HashValue();
@@ -122,9 +173,13 @@ private:
 // #pragma mark - DwarfReturnValueID
 
 
+/**
+ * @brief Stable identifier for a function's synthetic return-value entry.
+ */
 struct DwarfStackFrameDebugInfo::DwarfReturnValueID
 	: public ReturnValueID {
 
+	/** @brief Constructs the ID with a fixed sentinel name "(returned)". */
 	DwarfReturnValueID(FunctionID* functionID)
 		:
 		fFunctionID(functionID),
@@ -133,11 +188,13 @@ struct DwarfStackFrameDebugInfo::DwarfReturnValueID
 		fFunctionID->AcquireReference();
 	}
 
+	/** @brief Releases the held FunctionID reference. */
 	virtual ~DwarfReturnValueID()
 	{
 		fFunctionID->ReleaseReference();
 	}
 
+	/** @brief Equality across ObjectID hierarchy via dynamic_cast. */
 	virtual bool operator==(const ObjectID& other) const
 	{
 		const DwarfReturnValueID* returnValueID
@@ -148,6 +205,7 @@ struct DwarfStackFrameDebugInfo::DwarfReturnValueID
 	}
 
 protected:
+	/** @brief Combines the function and sentinel name hashes. */
 	virtual uint32 ComputeHashValue() const
 	{
 		uint32 hash = fFunctionID->HashValue();
@@ -163,6 +221,27 @@ private:
 // #pragma mark - DwarfStackFrameDebugInfo
 
 
+/**
+ * @brief Constructs the DWARF-driven stack frame debug info.
+ *
+ * Builds a DwarfTypeContext that holds the live PC/FP for the frame; the
+ * type factory is created later in Init() with a stripped-down context so
+ * type construction does not depend on the frame.
+ *
+ * @param architecture          Target architecture.
+ * @param imageID               Image identifier of the function's image.
+ * @param file                  DWARF file containing the data.
+ * @param compilationUnit       Compilation unit for @a subprogramEntry.
+ * @param subprogramEntry       Subprogram DIE for the active function.
+ * @param typeLookup            Cross-image type resolver.
+ * @param typeCache             Global type cache; reference acquired.
+ * @param instructionPointer    Live PC, used by location expressions.
+ * @param framePointer          Live FP, used by location expressions.
+ * @param relocationDelta       Image relocation offset.
+ * @param targetInterface       Target memory/register access interface.
+ * @param fromDwarfRegisterMap  Mapping from DWARF register numbers to the
+ *                              architecture's register numbering.
+ */
 DwarfStackFrameDebugInfo::DwarfStackFrameDebugInfo(Architecture* architecture,
 	image_id imageID, DwarfFile* file, CompilationUnit* compilationUnit,
 	DIESubprogram* subprogramEntry, GlobalTypeLookup* typeLookup,
@@ -181,6 +260,10 @@ DwarfStackFrameDebugInfo::DwarfStackFrameDebugInfo(Architecture* architecture,
 }
 
 
+/**
+ * @brief Destroys the object, releasing the type cache, type context and
+ *        deleting the type factory.
+ */
 DwarfStackFrameDebugInfo::~DwarfStackFrameDebugInfo()
 {
 	fTypeCache->ReleaseReference();
@@ -192,6 +275,16 @@ DwarfStackFrameDebugInfo::~DwarfStackFrameDebugInfo()
 }
 
 
+/**
+ * @brief Allocates the per-frame type factory.
+ *
+ * Builds a sibling DwarfTypeContext without PC/FP/subprogram so type
+ * resolution uses the right architecture and register map without
+ * depending on transient frame state.
+ *
+ * @retval B_OK         Initialization succeeded.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfStackFrameDebugInfo::Init()
 {
@@ -218,6 +311,23 @@ DwarfStackFrameDebugInfo::Init()
 }
 
 
+/**
+ * @brief Constructs a Variable describing one function parameter.
+ *
+ * Resolves the parameter's name and type, then creates a
+ * DwarfFunctionParameterID and delegates to _CreateVariable() to compute
+ * its location.
+ *
+ * @param functionID      Identifier of the enclosing function.
+ * @param parameterEntry  DWARF formal parameter DIE.
+ * @param _parameter      Out parameter receiving the new Variable;
+ *                        reference transferred to caller.
+ * @retval B_OK              Variable created successfully.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval B_BAD_VALUE       The parameter has no associated DIEType.
+ * @retval other             Errors from the type factory or location
+ *                           resolution.
+ */
 status_t
 DwarfStackFrameDebugInfo::CreateParameter(FunctionID* functionID,
 	DIEFormalParameter* parameterEntry, Variable*& _parameter)
@@ -242,6 +352,19 @@ DwarfStackFrameDebugInfo::CreateParameter(FunctionID* functionID,
 }
 
 
+/**
+ * @brief Constructs a Variable describing one local variable.
+ *
+ * Resolves declaration source location for ID stability, builds a
+ * DwarfLocalVariableID, then delegates to _CreateVariable() for type and
+ * location resolution.
+ *
+ * @param functionID     Identifier of the enclosing function.
+ * @param variableEntry  DWARF variable DIE.
+ * @param _variable      Out parameter receiving the new Variable;
+ *                       reference transferred to caller.
+ * @return Status; same conventions as CreateParameter().
+ */
 status_t
 DwarfStackFrameDebugInfo::CreateLocalVariable(FunctionID* functionID,
 	DIEVariable* variableEntry, Variable*& _variable)
@@ -277,6 +400,25 @@ DwarfStackFrameDebugInfo::CreateLocalVariable(FunctionID* functionID,
 }
 
 
+/**
+ * @brief Constructs a Variable describing the function's return value.
+ *
+ * Builds a DwarfType for @a returnType and a DwarfReturnValueID, then
+ * wraps them together with the supplied location and CPU state in a new
+ * Variable.
+ *
+ * @param functionID   Identifier of the function whose return is described.
+ * @param returnType   DIEType describing the return type.
+ * @param location     ValueLocation describing where the return value
+ *                     resides; ownership convention follows Variable.
+ * @param state        CPU state captured at the return point.
+ * @param _variable    Out parameter receiving the new Variable; reference
+ *                     transferred to caller.
+ * @retval B_OK         Variable created.
+ * @retval B_BAD_VALUE  @a returnType is @c NULL.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Errors from the type factory.
+ */
 status_t
 DwarfStackFrameDebugInfo::CreateReturnValue(FunctionID* functionID,
 	DIEType* returnType, ValueLocation* location, CpuState* state,
@@ -311,6 +453,27 @@ DwarfStackFrameDebugInfo::CreateReturnValue(FunctionID* functionID,
 }
 
 
+/**
+ * @brief Shared back-end used by CreateParameter() and
+ *        CreateLocalVariable() to build a Variable.
+ *
+ * Constructs a DwarfType from @a typeEntry, allocates a ValueLocation
+ * matching the architecture's endianness, and invokes the type's
+ * ResolveLocation() if the DWARF location description is valid. The
+ * resulting Variable adopts ownership of @a id and the constructed type.
+ *
+ * @param id                   ObjectID identifying the variable; ownership
+ *                             passed to Variable on success.
+ * @param name                 Variable name for display.
+ * @param typeEntry            DIE describing the variable's type.
+ * @param locationDescription  DWARF location description; may be invalid.
+ * @param _variable            Out parameter receiving the new Variable;
+ *                             reference transferred to caller.
+ * @retval B_OK         Variable created successfully.
+ * @retval B_BAD_VALUE  @a typeEntry is @c NULL.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Errors from the type factory or location resolution.
+ */
 status_t
 DwarfStackFrameDebugInfo::_CreateVariable(ObjectID* id, const BString& name,
 	DIEType* typeEntry, LocationDescription* locationDescription,
@@ -352,6 +515,17 @@ DwarfStackFrameDebugInfo::_CreateVariable(ObjectID* id, const BString& name,
 }
 
 
+/**
+ * @brief Returns the DIEType associated with a DWARF entry, following
+ *        @c DW_AT_abstract_origin and @c DW_AT_specification chains when
+ *        the entry itself does not carry a type attribute.
+ *
+ * @tparam EntryType  Either DIEFormalParameter or DIEVariable; the only
+ *                    instantiations used by this translation unit.
+ * @param entry       Entry whose type is being resolved.
+ * @return DIEType pointer or @c NULL when no type is available anywhere
+ *         along the chain.
+ */
 template<typename EntryType>
 /*static*/ DIEType*
 DwarfStackFrameDebugInfo::_GetDIEType(EntryType* entry)

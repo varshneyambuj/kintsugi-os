@@ -1,13 +1,49 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013-2018, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2013-2018, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file AttributeClasses.cpp
+ * @brief Static tables describing every DWARF DIE attribute name and form.
+ *
+ * For each DW_AT_* attribute the table records its textual name, the
+ * setter on @ref DebugInfoEntry that consumes its parsed value, and a bit
+ * mask of permissible attribute classes.  A parallel table covers the
+ * DW_FORM_* form codes.  Both tables are indexed by their numeric value
+ * via dense arrays initialised at static construction time.
  */
 
 #include "AttributeClasses.h"
 #include "Dwarf.h"
 
 
+/**
+ * @brief Bit-flag aliases for the attribute classes (one bit per class).
+ *
+ * The classes-bitmask in each table entry is a logical OR of these flags.
+ */
 enum {
 	AC_ADDRESS		= 1 << (ATTRIBUTE_CLASS_ADDRESS - 1),
 	AC_ADDRPTR		= 1 << (ATTRIBUTE_CLASS_ADDRPTR - 1),
@@ -26,12 +62,14 @@ enum {
 };
 
 
+/** @brief Static record describing a single DW_FORM_* form code. */
 struct attribute_info_entry {
 	const char*	name;
 	uint16		value;
 	uint16		classes;
 };
 
+/** @brief Static record describing a single DW_AT_* attribute name. */
 struct attribute_name_info_entry {
 	const char*				name;
 	DebugInfoEntrySetter	setter;
@@ -44,6 +82,7 @@ struct attribute_name_info_entry {
 #define ENTRY(name)	"DW_AT_" #name, &DebugInfoEntry::AddAttribute_##name, \
 	DW_AT_##name
 
+/** @brief Sparse list of every supported DW_AT_* attribute. */
 static const attribute_name_info_entry kAttributeNameInfos[] = {
 	{ ENTRY(sibling),				AC_REFERENCE },
 	{ ENTRY(location),				AC_BLOCK | AC_LOCLIST },
@@ -182,13 +221,16 @@ static const attribute_name_info_entry kAttributeNameInfos[] = {
 	{}
 };
 
+/** @brief Size of the dense @c sAttributeNameInfos table. */
 static const uint32 kAttributeNameInfoCount = DW_AT_loclists_base + 9;
+/** @brief Dense lookup table indexed by attribute code (DW_AT_*). */
 static attribute_name_info_entry sAttributeNameInfos[kAttributeNameInfoCount];
 
 
 #undef ENTRY
 #define ENTRY(name)	"DW_FORM_" #name, DW_FORM_##name
 
+/** @brief Sparse list of every supported DW_FORM_* attribute form. */
 static const attribute_info_entry kAttributeFormInfos[] = {
 	{ ENTRY(addr),			AC_ADDRESS },
 	{ ENTRY(block2),		AC_BLOCK },
@@ -243,9 +285,14 @@ static const attribute_info_entry kAttributeFormInfos[] = {
 	{}
 };
 
+/** @brief Size of the dense @c sAttributeFormInfos table. */
 static const uint32 kAttributeFormInfoCount = DW_FORM_addrx4 + 1;
+/** @brief Dense lookup table indexed by form code (DW_FORM_*). */
 static attribute_info_entry sAttributeFormInfos[kAttributeFormInfoCount];
 
+/**
+ * @brief One-shot static initialiser populating both dense lookup tables.
+ */
 static struct InitAttributeInfos {
 	InitAttributeInfos()
 	{
@@ -267,6 +314,13 @@ static struct InitAttributeInfos {
 } sInitAttributeInfos;
 
 
+/**
+ * @brief Returns the bitmask of valid attribute classes for an attribute name.
+ *
+ * @param name DW_AT_* attribute code.
+ * @return Bitmask whose bits correspond to the AC_* aliases above; zero
+ *         if @a name is not a recognised attribute.
+ */
 uint16
 get_attribute_name_classes(uint32 name)
 {
@@ -282,6 +336,12 @@ get_attribute_name_classes(uint32 name)
 }
 
 
+/**
+ * @brief Returns the bitmask of attribute classes that a given form may carry.
+ *
+ * @param form DW_FORM_* form code.
+ * @return Bitmask of AC_* class flags, or zero if @a form is unknown.
+ */
 uint16
 get_attribute_form_classes(uint32 form)
 {
@@ -290,6 +350,17 @@ get_attribute_form_classes(uint32 form)
 }
 
 
+/**
+ * @brief Resolves the unique attribute class for a (name, form) pair.
+ *
+ * Computes the intersection of the name's allowed classes with the form's
+ * allowed classes; the result must be a single class.
+ *
+ * @param name DW_AT_* attribute code.
+ * @param form DW_FORM_* form code.
+ * @return The corresponding ATTRIBUTE_CLASS_* value, or
+ *         ATTRIBUTE_CLASS_UNKNOWN when the pair is invalid or ambiguous.
+ */
 uint8
 get_attribute_class(uint32 name, uint32 form)
 {
@@ -306,6 +377,12 @@ get_attribute_class(uint32 name, uint32 form)
 }
 
 
+/**
+ * @brief Resolves the textual DW_AT_* name for an attribute code.
+ *
+ * @param name DW_AT_* attribute code.
+ * @return Pointer to a static string ("DW_AT_xxx") or NULL if unknown.
+ */
 const char*
 get_attribute_name_name(uint32 name)
 {
@@ -321,6 +398,12 @@ get_attribute_name_name(uint32 name)
 }
 
 
+/**
+ * @brief Resolves the textual DW_FORM_* name for a form code.
+ *
+ * @param form DW_FORM_* form code.
+ * @return Pointer to a static string ("DW_FORM_xxx") or NULL if unknown.
+ */
 const char*
 get_attribute_form_name(uint32 form)
 {
@@ -329,6 +412,13 @@ get_attribute_form_name(uint32 form)
 }
 
 
+/**
+ * @brief Returns the DebugInfoEntry member-function pointer that consumes an attribute.
+ *
+ * @param name DW_AT_* attribute code.
+ * @return Pointer to the setter on @ref DebugInfoEntry to invoke when the
+ *         attribute appears in a DIE; NULL if no setter exists for @a name.
+ */
 DebugInfoEntrySetter
 get_attribute_name_setter(uint32 name)
 {

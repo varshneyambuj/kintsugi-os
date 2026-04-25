@@ -1,6 +1,37 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file Demangler.cpp
+ * @brief Thin wrapper around the system demangle helpers used by the debugger.
+ *
+ * Tries gcc3+ Itanium-ABI demangling first when the symbol begins with
+ * "_Z", then falls back to gcc2 demangling (still needed for legacy
+ * binaries). When the gcc2 demangler succeeds it walks each argument and
+ * synthesizes a friendly type name even when the upstream helper could
+ * not recover one.
  */
 
 #include "Demangler.h"
@@ -10,6 +41,15 @@
 #include "demangle.h"
 
 
+/**
+ * @brief Demangle a C++ symbol name into a human-readable form.
+ *
+ * Falls back to the original @a mangledName when the symbol is not mangled.
+ *
+ * @param mangledName  Possibly mangled C++ symbol.
+ * @return The demangled name (with parameter list if available), or the
+ *         original input when no demangler recognizes it.
+ */
 /*static*/ BString
 Demangler::Demangle(const BString& mangledName)
 {

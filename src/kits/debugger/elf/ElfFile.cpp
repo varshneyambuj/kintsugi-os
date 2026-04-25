@@ -1,6 +1,41 @@
 /*
- * Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2010, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file ElfFile.cpp
+ * @brief Implementation of ElfFile, ElfSection, and ElfSegment: the
+ *        debugger's read-only ELF parser.
+ *
+ * @c ElfFile::Init() opens an ELF binary, reads the e_ident magic to
+ * detect endianness and bitness, then dispatches to the templated
+ * @c _LoadFile<ElfClass32|ElfClass64>() worker which decodes the
+ * section and program-header tables into in-memory @c ElfSection and
+ * @c ElfSegment objects. @c CreateSymbolLookup() builds an
+ * @c ElfSymbolLookup walker over the file's symbol and string tables;
+ * the walker reads via the embedded @c SymbolLookupSource which
+ * @c pread()s from the open file descriptor on demand.
  */
 
 #include "ElfFile.h"
@@ -25,6 +60,21 @@
 // #pragma mark - ElfSection
 
 
+/**
+ * @brief Constructs an ElfSection descriptor referencing data inside the file.
+ *
+ * The data buffer is not loaded yet; callers must invoke @c Load() before
+ * accessing @c Data().
+ *
+ * @param name        Section name (interned by the caller).
+ * @param type        Section type (one of @c SHT_*).
+ * @param fd          Open ELF file descriptor.
+ * @param offset      File offset of the section's bytes.
+ * @param size        Section size in bytes.
+ * @param loadAddress Run-time virtual address of the section.
+ * @param flags       Section flags (@c SHF_*).
+ * @param linkIndex   Index of an associated section (e.g. string table).
+ */
 ElfSection::ElfSection(const char* name, uint32 type, int fd, uint64 offset,
 	uint64 size, target_addr_t loadAddress, uint32 flags, uint32 linkIndex)
 	:
@@ -42,12 +92,24 @@ ElfSection::ElfSection(const char* name, uint32 type, int fd, uint64 offset,
 }
 
 
+/**
+ * @brief Frees the section's loaded byte buffer if any remains.
+ */
 ElfSection::~ElfSection()
 {
 	free(fData);
 }
 
 
+/**
+ * @brief Pages the section's bytes into memory; reference-counted.
+ *
+ * Each call increments the load count; the first call performs the actual
+ * read. Pair every successful call with @c Unload().
+ *
+ * @return @c B_OK on success, @c B_NO_MEMORY on allocation failure, an
+ *          @c errno code on read failure, or @c B_ERROR on a short read.
+ */
 status_t
 ElfSection::Load()
 {
@@ -72,6 +134,9 @@ ElfSection::Load()
 }
 
 
+/**
+ * @brief Decrements the load count; frees the buffer when it reaches zero.
+ */
 void
 ElfSection::Unload()
 {
@@ -88,6 +153,16 @@ ElfSection::Unload()
 // #pragma mark - ElfSegment
 
 
+/**
+ * @brief Constructs an ElfSegment describing one program-header entry.
+ *
+ * @param type        Segment type (@c PT_LOAD, @c PT_NOTE, etc.).
+ * @param fileOffset  Offset of the segment's bytes inside the ELF file.
+ * @param fileSize    Number of bytes the segment occupies in the file.
+ * @param loadAddress Run-time virtual address of the segment.
+ * @param loadSize    Number of bytes the segment occupies in memory.
+ * @param flags       Segment flags (@c PF_*).
+ */
 ElfSegment::ElfSegment(uint32 type, uint64 fileOffset, uint64 fileSize,
 	target_addr_t loadAddress, target_size_t loadSize, uint32 flags)
 	:
@@ -101,6 +176,9 @@ ElfSegment::ElfSegment(uint32 type, uint64 fileOffset, uint64 fileSize,
 }
 
 
+/**
+ * @brief Destroys the ElfSegment.
+ */
 ElfSegment::~ElfSegment()
 {
 }
@@ -109,7 +187,20 @@ ElfSegment::~ElfSegment()
 // #pragma mark - SymbolLookupSource
 
 
+/**
+ * @brief In-file ElfSymbolLookupSource backed by a list of file segments.
+ *
+ * Each registered segment maps a (file-offset, length) range to a memory
+ * address as seen by the symbol-table consumer. @c Read() finds the
+ * segment covering the requested address and @c pread()s from the
+ * underlying file descriptor.
+ */
 struct ElfFile::SymbolLookupSource : public ElfSymbolLookupSource {
+	/**
+	 * @brief Constructs the source over file descriptor @a fd.
+	 *
+	 * @param fd Open ELF file descriptor; SymbolLookupSource does not own it.
+	 */
 	SymbolLookupSource(int fd)
 		:
 		fFd(fd),
@@ -117,6 +208,14 @@ struct ElfFile::SymbolLookupSource : public ElfSymbolLookupSource {
 	{
 	}
 
+	/**
+	 * @brief Registers a (file-offset, length, memory-address) mapping.
+	 *
+	 * @param fileOffset    Offset inside the ELF file.
+	 * @param fileLength    Length of the mapping in bytes.
+	 * @param memoryAddress Address as seen by the symbol-table consumer.
+	 * @return             True on success, false on allocation failure.
+	 */
 	bool AddSegment(uint64 fileOffset, uint64 fileLength, uint64 memoryAddress)
 	{
 		Segment* segment = new(std::nothrow) Segment(fileOffset, fileLength,
@@ -128,6 +227,18 @@ struct ElfFile::SymbolLookupSource : public ElfSymbolLookupSource {
 		return true;
 	}
 
+	/**
+	 * @brief Reads bytes from the file at @a address via the segment table.
+	 *
+	 * Locates the registered segment whose memory range covers @a address
+	 * and translates the request into a @c pread() on the file descriptor.
+	 *
+	 * @param address Memory-space address of the data.
+	 * @param buffer  Destination buffer.
+	 * @param size    Maximum byte count to read.
+	 * @return       Bytes read, or @c B_BAD_VALUE if no segment matches,
+	 *                or an @c errno code on read failure.
+	 */
 	virtual ssize_t Read(uint64 address, void* buffer, size_t size)
 	{
 		for (int32 i = 0; Segment* segment = fSegments.ItemAt(i); i++) {
@@ -154,11 +265,21 @@ struct ElfFile::SymbolLookupSource : public ElfSymbolLookupSource {
 	}
 
 private:
+	/**
+	 * @brief One registered (file-offset, length, memory-address) mapping.
+	 */
 	struct Segment {
 		uint64	fFileOffset;
 		uint64	fFileLength;
 		uint64	fMemoryAddress;
 
+		/**
+		 * @brief Constructs a Segment mapping.
+		 *
+		 * @param fileOffset    File offset.
+		 * @param fileLength    Mapping length in bytes.
+		 * @param memoryAddress Memory-space address of the mapping.
+		 */
 		Segment(uint64 fileOffset, uint64 fileLength, uint64 memoryAddress)
 			:
 			fFileOffset(fileOffset),
@@ -177,6 +298,11 @@ private:
 // #pragma mark - ElfFile
 
 
+/**
+ * @brief Constructs an empty, uninitialised ElfFile.
+ *
+ * @c Init() must be called before any accessor returns meaningful data.
+ */
 ElfFile::ElfFile()
 	:
 	fFileSize(0),
@@ -191,6 +317,9 @@ ElfFile::ElfFile()
 }
 
 
+/**
+ * @brief Closes the underlying file descriptor; sections are freed by the lists.
+ */
 ElfFile::~ElfFile()
 {
 	if (fFD >= 0)
@@ -198,6 +327,19 @@ ElfFile::~ElfFile()
 }
 
 
+/**
+ * @brief Opens @a fileName, validates the ELF magic, and parses headers.
+ *
+ * Reads the ELF identification bytes to determine endianness and bitness,
+ * then dispatches to either @c _LoadFile<ElfClass32>() or
+ * @c _LoadFile<ElfClass64>() to populate the section and segment lists.
+ *
+ * @param fileName Path to the ELF file to open.
+ * @return        @c B_OK on success, an @c errno code on open/stat
+ *                 failure, @c B_ERROR on a short identification read,
+ *                 @c B_BAD_DATA on missing magic or invalid class/data
+ *                 fields, or a propagated load error.
+ */
 status_t
 ElfFile::Init(const char* fileName)
 {
@@ -253,6 +395,14 @@ ElfFile::Init(const char* fileName)
 }
 
 
+/**
+ * @brief Finds the section named @a name and pages it in via @c Load().
+ *
+ * Pair every successful call with @c PutSection().
+ *
+ * @param name Section name (e.g. ".symtab").
+ * @return    The loaded section on success, NULL if missing or load failed.
+ */
 ElfSection*
 ElfFile::GetSection(const char* name)
 {
@@ -264,6 +414,11 @@ ElfFile::GetSection(const char* name)
 }
 
 
+/**
+ * @brief Releases a section previously returned from @c GetSection().
+ *
+ * @param section Section to release; NULL is tolerated.
+ */
 void
 ElfFile::PutSection(ElfSection* section)
 {
@@ -272,6 +427,12 @@ ElfFile::PutSection(ElfSection* section)
 }
 
 
+/**
+ * @brief Looks up a section by name without loading it.
+ *
+ * @param name Section name to search for.
+ * @return    The matching section, or NULL if absent.
+ */
 ElfSection*
 ElfFile::FindSection(const char* name) const
 {
@@ -286,6 +447,12 @@ ElfFile::FindSection(const char* name) const
 }
 
 
+/**
+ * @brief Looks up the first section with the given type.
+ *
+ * @param type Section type (one of @c SHT_*).
+ * @return    The first matching section, or NULL.
+ */
 ElfSection*
 ElfFile::FindSection(uint32 type) const
 {
@@ -300,6 +467,11 @@ ElfFile::FindSection(uint32 type) const
 }
 
 
+/**
+ * @brief Returns the first non-writable @c PT_LOAD segment (the text segment).
+ *
+ * @return The text segment, or NULL if none found.
+ */
 ElfSegment*
 ElfFile::TextSegment() const
 {
@@ -314,6 +486,11 @@ ElfFile::TextSegment() const
 }
 
 
+/**
+ * @brief Returns the first writable @c PT_LOAD segment (the data segment).
+ *
+ * @return The data segment, or NULL if none found.
+ */
 ElfSegment*
 ElfFile::DataSegment() const
 {
@@ -328,6 +505,15 @@ ElfFile::DataSegment() const
 }
 
 
+/**
+ * @brief Creates a SymbolLookupSource over a single file-offset range.
+ *
+ * @param fileOffset    File offset of the data.
+ * @param fileLength    Length of the data in bytes.
+ * @param memoryAddress Memory-space address as seen by the consumer.
+ * @return             Newly allocated source on success, NULL on failure.
+ *                      Caller owns one reference.
+ */
 ElfSymbolLookupSource*
 ElfFile::CreateSymbolLookupSource(uint64 fileOffset, uint64 fileLength,
 	uint64 memoryAddress) const
@@ -343,6 +529,20 @@ ElfFile::CreateSymbolLookupSource(uint64 fileOffset, uint64 fileLength,
 }
 
 
+/**
+ * @brief Builds an ElfSymbolLookup over the file's symbol and string sections.
+ *
+ * Prefers the non-dynamic @c .symtab section when present; falls back to
+ * the dynamic @c .dynsym. The returned walker reads from a freshly
+ * allocated SymbolLookupSource that knows both section ranges.
+ *
+ * @param textDelta Address adjustment applied to each symbol address.
+ * @param _lookup   On success, receives the new walker; ownership transfers
+ *                   to the caller.
+ * @return         @c B_OK on success, @c B_ENTRY_NOT_FOUND when neither
+ *                  symbol section is present, @c B_NO_MEMORY on
+ *                  allocation failure, or a propagated init error.
+ */
 status_t
 ElfFile::CreateSymbolLookup(uint64 textDelta, ElfSymbolLookup*& _lookup) const
 {
@@ -382,6 +582,19 @@ ElfFile::CreateSymbolLookup(uint64 textDelta, ElfSymbolLookup*& _lookup) const
 }
 
 
+/**
+ * @brief Templated worker that decodes the ELF section and program tables.
+ *
+ * Templated on @c ElfClass32 or @c ElfClass64 to handle both bitnesses
+ * with the same code. Validates header offsets, allocates @c ElfSection
+ * objects for each section header, then walks the program-header table
+ * to allocate @c ElfSegment objects.
+ *
+ * @param fileName File name used for diagnostic output.
+ * @return        @c B_OK on success, @c B_BAD_DATA on header validation
+ *                 failure, @c B_NO_MEMORY on allocation failure, or an
+ *                 @c errno code on read failure.
+ */
 template<typename ElfClass>
 status_t
 ElfFile::_LoadFile(const char* fileName)
@@ -535,6 +748,15 @@ ElfFile::_LoadFile(const char* fileName)
 }
 
 
+/**
+ * @brief Finds a symbol section of the given type and its linked string section.
+ *
+ * @param _symbolSection On success, receives the symbol section.
+ * @param _stringSection On success, receives the linked string section.
+ * @param type           Section type (@c SHT_SYMTAB or @c SHT_DYNSYM).
+ * @return              True on success, false if either section is missing
+ *                       or the link target is not a string table.
+ */
 bool
 ElfFile::_FindSymbolSections(ElfSection*& _symbolSection,
 	ElfSection*& _stringSection, uint32 type) const
@@ -555,6 +777,13 @@ ElfFile::_FindSymbolSections(ElfSection*& _symbolSection,
 }
 
 
+/**
+ * @brief Tests whether @c [offset, offset + size) lies inside the file.
+ *
+ * @param offset Byte offset.
+ * @param size   Range size in bytes.
+ * @return      True if the range fits inside the file.
+ */
 bool
 ElfFile::_CheckRange(uint64 offset, uint64 size) const
 {
@@ -562,6 +791,14 @@ ElfFile::_CheckRange(uint64 offset, uint64 size) const
 }
 
 
+/**
+ * @brief Validates section/program header table fields in @a elfHeader.
+ *
+ * Templated worker shared by 32-bit and 64-bit headers.
+ *
+ * @param elfHeader ELF header to validate.
+ * @return         True if the header is internally consistent.
+ */
 template<typename ElfClass>
 bool
 ElfFile::_CheckElfHeader(typename ElfClass::Ehdr& elfHeader)

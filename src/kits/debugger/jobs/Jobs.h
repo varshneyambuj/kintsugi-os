@@ -1,8 +1,31 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold; Copyright 2011-2016, Rene
+ * Gollent.
  */
+
+/** @file Jobs.h
+    @brief Declarations of all worker jobs used by the Kintsugi debugger
+           (CPU/thread state, stack traces, debug-info loading, source/code
+           retrieval, value-node resolve and write, memory I/O, expression
+           evaluation, and core-file generation). */
+
 #ifndef JOBS_H
 #define JOBS_H
 
@@ -43,7 +66,7 @@ class ValueNodeManager;
 class Variable;
 
 
-// job types
+/** @brief Identifiers used to dedupe jobs in the worker queue by type. */
 enum {
 	JOB_TYPE_GET_THREAD_STATE,
 	JOB_TYPE_GET_CPU_STATE,
@@ -60,6 +83,10 @@ enum {
 };
 
 
+/**
+ * @brief Determines whether a debugged thread is running or stopped and,
+ *        when stopped, captures its CPU register state.
+ */
 class GetThreadStateJob : public Job {
 public:
 								GetThreadStateJob(
@@ -77,6 +104,10 @@ private:
 };
 
 
+/**
+ * @brief Captures a snapshot of a thread's CPU registers and stores it on
+ *        the Thread model when the thread is currently stopped.
+ */
 class GetCpuStateJob : public Job {
 public:
 								GetCpuStateJob(
@@ -94,6 +125,10 @@ private:
 };
 
 
+/**
+ * @brief Builds a stack trace for a thread, lazily loading per-image debug
+ *        info as needed via the ImageDebugInfoProvider interface.
+ */
 class GetStackTraceJob : public Job, private ImageDebugInfoProvider {
 public:
 								GetStackTraceJob(
@@ -121,6 +156,10 @@ private:
 };
 
 
+/**
+ * @brief Loads (parses) debug information for a debugged Image and attaches
+ *        it to the Image, or marks the Image as unavailable on failure.
+ */
 class LoadImageDebugInfoJob : public Job {
 public:
 								LoadImageDebugInfoJob(Image* image);
@@ -141,6 +180,8 @@ public:
 										// debug info already failed to load
 										// earlier.
 
+			/** @brief Returns the loading-state object used to surface
+			 *         user-input requests during debug-info parsing. */
 			ImageDebugInfoLoadingState*
 									GetLoadingState()
 										{ return &fState; }
@@ -153,6 +194,10 @@ private:
 };
 
 
+/**
+ * @brief Loads high-level source for a function and/or disassembles a
+ *        FunctionInstance, then attaches the result to the function model.
+ */
 class LoadSourceCodeJob : public Job {
 public:
 								LoadSourceCodeJob(
@@ -175,6 +220,10 @@ private:
 };
 
 
+/**
+ * @brief Resolves the location and value of a debugged ValueNode, scheduling
+ *        recursive resolve jobs for parent nodes and child locations.
+ */
 class ResolveValueNodeValueJob : public Job {
 public:
 								ResolveValueNodeValueJob(
@@ -208,6 +257,10 @@ private:
 };
 
 
+/**
+ * @brief Writes a new Value back into the storage backing a ValueNode and
+ *        updates the node's cached location/value.
+ */
 class WriteValueNodeValueJob : public Job {
 public:
 								WriteValueNodeValueJob(
@@ -234,6 +287,10 @@ private:
 };
 
 
+/**
+ * @brief Reads a block of bytes from the debugged team's memory into a
+ *        TeamMemoryBlock and tags the block with its protection flags.
+ */
 class RetrieveMemoryBlockJob : public Job {
 public:
 								RetrieveMemoryBlockJob(Team* team,
@@ -252,6 +309,10 @@ private:
 };
 
 
+/**
+ * @brief Writes a buffer to a target address in the debugged team's memory
+ *        and notifies the Team so observers can refresh.
+ */
 class WriteMemoryJob : public Job {
 public:
 								WriteMemoryJob(Team* team,
@@ -273,6 +334,10 @@ private:
 };
 
 
+/**
+ * @brief Evaluates a debugger expression in the context of a stack frame and
+ *        thread, scheduling value-node resolves on demand.
+ */
 class ExpressionEvaluationJob : public Job {
 public:
 								ExpressionEvaluationJob(Team* team,
@@ -286,6 +351,8 @@ public:
 	virtual	const JobKey&		Key() const;
 	virtual	status_t			Do();
 
+			/** @brief Returns the most recent evaluation result, or @c NULL
+			 *         if evaluation has not produced a value yet. */
 			ExpressionResult*	GetResult() const { return fResultValue; }
 
 private:
@@ -306,6 +373,10 @@ private:
 };
 
 
+/**
+ * @brief Writes a core dump of the debugged team to a target path and
+ *        notifies the Team that a core file has been generated.
+ */
 class WriteCoreFileJob : public Job {
 public:
 								WriteCoreFileJob(Team* team,

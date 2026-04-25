@@ -1,13 +1,30 @@
 /*
- * Copyright 2006-2014 Haiku, Inc. All Rights Reserved.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
  *
- * Authors:
- *		Stephan Aßmus <superstippi@gmx.de>
- *		Rene Gollent <rene@gollent.com>
- *		John Scipione <jscipione@gmail.com>
- *		Ingo Weinhold <bonefish@cs.tu-berlin.de>
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2006-2014 Haiku, Inc.
+ * Original authors: Stephan Aßmus, Rene Gollent, John Scipione,
+ *                   Ingo Weinhold.
  */
+
+/** @file CLanguageTokenizer.h
+    @brief Token enums, ParseException, Token struct and Tokenizer class
+           used by the C/C++ expression evaluator and syntax highlighter. */
+
 #ifndef C_LANGUAGE_TOKENIZER
 #define C_LANGUAGE_TOKENIZER
 
@@ -20,6 +37,8 @@
 namespace CLanguage {
 
 
+/** @brief Token-type identifiers produced by the C/C++ expression
+ *         tokeniser. */
 enum {
 	TOKEN_NONE					= 0,
 	TOKEN_IDENTIFIER,
@@ -77,6 +96,12 @@ enum {
 };
 
 
+/**
+ * @brief Diagnostic thrown by the tokeniser and the expression evaluator.
+ *
+ * Carries a human-readable message and the column position where the
+ * problem was detected.
+ */
 class ParseException {
  public:
 	ParseException(const char* message, int32 position)
@@ -96,6 +121,12 @@ class ParseException {
 };
 
 
+/**
+ * @brief One unit produced by the tokeniser.
+ *
+ * Carries the source text slice, the @c TOKEN_* type code, an optional
+ * BVariant value (for numeric constants) and the column position.
+ */
 struct Token {
 								Token();
 								Token(const Token& other);
@@ -110,6 +141,13 @@ struct Token {
 };
 
 
+/**
+ * @brief Hand-rolled lexer used by the debugger's C/C++ expression engine.
+ *
+ * Stream-style: SetTo() binds an input string, NextToken() advances and
+ * returns the next token, RewindToken() makes the next call re-emit the
+ * cached token.
+ */
 class Tokenizer {
 public:
 								Tokenizer();

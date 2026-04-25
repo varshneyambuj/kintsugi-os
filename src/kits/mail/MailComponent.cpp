@@ -30,8 +30,8 @@
  * BMailComponent is the abstract base for all MIME body parts: it stores and
  * serialises RFC 822 headers, computes MIME types, and provides the lazy-parse
  * interface used by attachment and container subclasses. BTextMailComponent
- * extends it to handle text/plain (and other text/*) parts with quoted-printable
- * or base64 encoding and charset conversion to/from UTF-8.
+ * extends it to handle text/plain (and other text-typed) parts with
+ * quoted-printable or base64 encoding and charset conversion to/from UTF-8.
  *
  * @see BSimpleMailAttachment, BMIMEMultipartMailContainer, BEmailMessage
  */
@@ -734,8 +734,9 @@ BTextMailComponent::Quote(const char* message, const char* quote_style)
 /**
  * @brief Writes the decoded body text (or binary decoded data) to \a data.
  *
- * For text/* MIME types the UTF-8 converted text string is written. For
- * other types the raw decoded (but not charset-converted) bytes are written.
+ * For text-typed MIME parts the UTF-8 converted text string is written.
+ * For other types the raw decoded (but not charset-converted) bytes are
+ * written.
  *
  * @param data  Destination stream to write the body content to.
  * @return B_OK on success, B_IO_ERROR if \a data is NULL, or an IO error code.

@@ -1,7 +1,37 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2012, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2012, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file IntegerFormatter.cpp
+ * @brief Static helpers that format BVariant integer values for display.
+ *
+ * Maps the requested integer_format together with the BVariant's type code
+ * to a printf-style format string and width-correct integer accessor, so
+ * the debugger UI can render the same integer as signed decimal, unsigned
+ * decimal, or hex of any width.
  */
 
 
@@ -13,6 +43,19 @@
 #include <TypeConstants.h>
 
 
+/**
+ * @brief Build the printf-style format string for a given type and integer format.
+ *
+ * For hex defaults the integer_format is upgraded to a width-specific value
+ * (HEX_8/16/32/64). For signed and unsigned formats the corresponding
+ * B_PRId/B_PRIu width macro is appended into @a _formatString.
+ *
+ * @param type           BVariant type code of the value to format.
+ * @param format         Caller-requested format.
+ * @param _formatString  Buffer the printf format string is written into.
+ * @param formatSize     Capacity of @a _formatString in bytes.
+ * @return The (possibly upgraded) integer_format that should be used by the caller.
+ */
 static integer_format
 GetFormatForTypeAndFormat(type_code type, integer_format format,
 	char* _formatString, int formatSize)
@@ -90,6 +133,19 @@ GetFormatForTypeAndFormat(type_code type, integer_format format,
 }
 
 
+/**
+ * @brief Format an integer BVariant into a textual representation.
+ *
+ * Falls back to signed/unsigned decimal when @a format is INTEGER_FORMAT_DEFAULT,
+ * picking the variant based on the value's signedness.
+ *
+ * @param value       Integer-typed BVariant. Must report IsInteger().
+ * @param format      Desired representation; INTEGER_FORMAT_HEX_DEFAULT is
+ *                    promoted to a width-specific hex format.
+ * @param buffer      Output buffer that receives the formatted string.
+ * @param bufferSize  Capacity of @a buffer in bytes.
+ * @return true on success, false if @a value is not an integer type.
+ */
 /*static*/ bool
 IntegerFormatter::FormatValue(const BVariant& value, integer_format format,
 	char* buffer, size_t bufferSize)

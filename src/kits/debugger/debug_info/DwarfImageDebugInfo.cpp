@@ -1,7 +1,44 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2012-2018, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2012-2018, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfImageDebugInfo.cpp
+ * @brief Implementation of DwarfImageDebugInfo, the per-image DWARF
+ *        backend that drives function enumeration, type lookups,
+ *        statement/source resolution and stack-frame construction.
+ *
+ * The class iterates the DwarfFile's compilation units to materialize
+ * DwarfFunctionDebugInfo objects for each declared subprogram, and
+ * maintains a name-keyed type table so cross-image type lookups can
+ * short-circuit. CreateFrame() unwinds a single frame using the DWARF
+ * frame information, then constructs Variables for the parameters,
+ * locals and return values via DwarfStackFrameDebugInfo.
+ *
+ * @see DwarfFile, DwarfFunctionDebugInfo, DwarfStackFrameDebugInfo,
+ *      ImageDebugInfo
  */
 
 
@@ -68,6 +105,10 @@ namespace {
 // #pragma mark - HasTypePredicate
 
 
+/**
+ * @brief Predicate template selecting DIEs that supply a non-null
+ *        @c DW_AT_type attribute.
+ */
 template<typename EntryType>
 struct HasTypePredicate {
 	inline bool operator()(EntryType* entry) const
@@ -82,7 +123,17 @@ struct HasTypePredicate {
 // #pragma mark - BasicTargetInterface
 
 
+/**
+ * @brief Read-only DwarfTargetInterface used to evaluate DWARF location
+ *        expressions when no live CPU state is needed (e.g. for static
+ *        memory accesses driven by the team-memory interface).
+ *
+ * Register reads always fail; ReadMemory() forwards to the team memory.
+ * This is the base class for UnwindTargetInterface, which adds register
+ * support.
+ */
 struct DwarfImageDebugInfo::BasicTargetInterface : DwarfTargetInterface {
+	/** @brief Caches references and acquires the from-DWARF register map. */
 	BasicTargetInterface(const Register* registers, int32 registerCount,
 		RegisterMap* fromDwarfMap, Architecture* architecture,
 		TeamMemory* teamMemory)
@@ -173,7 +224,14 @@ protected:
 // #pragma mark - UnwindTargetInterface
 
 
+/**
+ * @brief DwarfTargetInterface used during a single frame unwind: layered
+ *        on top of BasicTargetInterface with register access through a
+ *        captured CpuState.
+ */
 struct DwarfImageDebugInfo::UnwindTargetInterface : BasicTargetInterface {
+	/** @brief Acquires references on the to-DWARF register map and the
+	           CPU state. */
 	UnwindTargetInterface(const Register* registers, int32 registerCount,
 		RegisterMap* fromDwarfMap, RegisterMap* toDwarfMap, CpuState* cpuState,
 		Architecture* architecture, TeamMemory* teamMemory)
@@ -218,12 +276,20 @@ private:
 // #pragma mark - EntryListWrapper
 
 
+/**
+ * @brief Wrapper around a DebugInfoEntryList so the type can be referenced
+ *        in DwarfImageDebugInfo's header without including DWARF-internal
+ *        headers there.
+ *
+ * The wrapped list is stored by reference; the caller retains ownership.
+ */
 /*!	Wraps a DebugInfoEntryList, which is a typedef and thus cannot appear in
 	the header, since our policy disallows us to include DWARF headers there.
 */
 struct DwarfImageDebugInfo::EntryListWrapper {
 	const DebugInfoEntryList&	list;
 
+	/** @brief Stores the list reference. */
 	EntryListWrapper(const DebugInfoEntryList& list)
 		:
 		list(list)
@@ -235,20 +301,27 @@ struct DwarfImageDebugInfo::EntryListWrapper {
 // #pragma mark - DwarfImageDebugInfo::TypeNameKey
 
 
+/**
+ * @brief Hashable key wrapping a single type name; used as the lookup key
+ *        for the per-image type-name table.
+ */
 struct DwarfImageDebugInfo::TypeNameKey {
 	BString			typeName;
 
+	/** @brief Stores the name verbatim. */
 	TypeNameKey(const BString& typeName)
 		:
 		typeName(typeName)
 	{
 	}
 
+	/** @brief Hashes the underlying name string. */
 	uint32 HashValue() const
 	{
 		return typeName.HashValue();
 	}
 
+	/** @brief String-equality comparison. */
 	bool operator==(const TypeNameKey& other) const
 	{
 		return typeName == other.typeName;
@@ -259,10 +332,16 @@ struct DwarfImageDebugInfo::TypeNameKey {
 // #pragma mark - DwarfImageDebugInfo::TypeNameEntry
 
 
+/**
+ * @brief Hash-table entry that maps a type name to a list of candidate
+ *        DIE/CU pairs (one entry per matching type definition in the
+ *        image).
+ */
 struct DwarfImageDebugInfo::TypeNameEntry : TypeNameKey {
 	TypeNameEntry* next;
 	TypeEntryList types;
 
+	/** @brief Initializes an empty list of candidates. */
 	TypeNameEntry(const BString& name)
 		:
 		TypeNameKey(name),
@@ -270,6 +349,7 @@ struct DwarfImageDebugInfo::TypeNameEntry : TypeNameKey {
 	{
 	}
 
+	/** @brief Destructor; nothing to release. */
 	~TypeNameEntry()
 	{
 	}
@@ -280,26 +360,33 @@ struct DwarfImageDebugInfo::TypeNameEntry : TypeNameKey {
 // #pragma mark - DwarfImageDebugInfo::TypeNameEntryHashDefinition
 
 
+/**
+ * @brief Hash-table policy keying TypeNameEntry by TypeNameKey.
+ */
 struct DwarfImageDebugInfo::TypeNameEntryHashDefinition {
 	typedef TypeNameKey		KeyType;
 	typedef	TypeNameEntry	ValueType;
 
+	/** @brief Hashes the lookup key. */
 	size_t HashKey(const TypeNameKey& key) const
 	{
 		return key.HashValue();
 	}
 
+	/** @brief Hashes a stored entry. */
 	size_t Hash(const TypeNameEntry* value) const
 	{
 		return value->HashValue();
 	}
 
+	/** @brief Equality test between key and stored entry. */
 	bool Compare(const TypeNameKey& key,
 		const TypeNameEntry* value) const
 	{
 		return key == *value;
 	}
 
+	/** @brief Returns the chain pointer used by the hash table. */
 	TypeNameEntry*& GetLink(TypeNameEntry* value) const
 	{
 		return value->next;
@@ -310,10 +397,15 @@ struct DwarfImageDebugInfo::TypeNameEntryHashDefinition {
 // #pragma mark - DwarfImageDebugInfo::TypeEntryInfo
 
 
+/**
+ * @brief Pair binding a DIEType to its CompilationUnit; one of the
+ *        candidate definitions kept in TypeNameEntry::types.
+ */
 struct DwarfImageDebugInfo::TypeEntryInfo {
 	DIEType* type;
 	CompilationUnit* unit;
 
+	/** @brief Stores both fields verbatim. */
 	TypeEntryInfo(DIEType* type, CompilationUnit* unit)
 		:
 		type(type),
@@ -326,6 +418,22 @@ struct DwarfImageDebugInfo::TypeEntryInfo {
 // #pragma mark - DwarfImageDebugInfo
 
 
+/**
+ * @brief Constructs a DWARF-backed per-image debug-info object.
+ *
+ * Most state (PLT/text section bounds, relocation delta, type name table)
+ * is left zeroed and initialized lazily in Init().
+ *
+ * @param imageInfo     Image identity information.
+ * @param interface     Debugger interface; reference acquired.
+ * @param architecture  Target architecture; reference acquired.
+ * @param fileManager   File manager used to resolve source files.
+ * @param typeLookup    Cross-image type resolver.
+ * @param typeCache     Global type cache; reference acquired.
+ * @param sourceInfo    Shared source-information cache.
+ * @param file          DwarfFile parsed for this image; reference
+ *                      acquired.
+ */
 DwarfImageDebugInfo::DwarfImageDebugInfo(const ImageInfo& imageInfo,
 	DebuggerInterface* interface, Architecture* architecture,
 	FileManager* fileManager, GlobalTypeLookup* typeLookup,
@@ -355,6 +463,9 @@ DwarfImageDebugInfo::DwarfImageDebugInfo(const ImageInfo& imageInfo,
 }
 
 
+/**
+ * @brief Destroys the object and releases all held references.
+ */
 DwarfImageDebugInfo::~DwarfImageDebugInfo()
 {
 	fDebuggerInterface->ReleaseReference();
@@ -371,6 +482,15 @@ DwarfImageDebugInfo::~DwarfImageDebugInfo()
 }
 
 
+/**
+ * @brief Performs deferred initialization.
+ *
+ * Validates the lock, finalizes DwarfFile loading, captures the relocation
+ * delta and the .text/.plt section bounds for later address classification.
+ *
+ * @retval B_OK         Initialization succeeded.
+ * @retval other        Errors from the lock or DwarfFile finalization.
+ */
 status_t
 DwarfImageDebugInfo::Init()
 {
@@ -400,6 +520,19 @@ DwarfImageDebugInfo::Init()
 }
 
 
+/**
+ * @brief Enumerates DWARF-described functions and their address ranges.
+ *
+ * Walks every CU and namespace, descending into namespace DIEs. For each
+ * subprogram with non-empty PC ranges a DwarfFunctionDebugInfo is emitted.
+ * Symbols not covered by DWARF fall back to BasicFunctionDebugInfo.
+ *
+ * @param symbols    Image symbol list (sorted by address).
+ * @param functions  Out parameter receiving the function descriptors.
+ * @retval B_OK         Enumeration completed.
+ * @retval B_NO_MEMORY  Allocation failure.
+ * @retval other        Errors from helpers.
+ */
 status_t
 DwarfImageDebugInfo::GetFunctions(const BObjectList<SymbolInfo, true>& symbols,
 	BObjectList<FunctionDebugInfo>& functions)
@@ -463,6 +596,22 @@ DwarfImageDebugInfo::GetFunctions(const BObjectList<SymbolInfo, true>& symbols,
 }
 
 
+/**
+ * @brief Resolves a type by name within this image's DWARF data.
+ *
+ * Lazily populates the per-image name table on first call; the table maps
+ * names to DIE/CU pairs. Each candidate is fed through DwarfTypeFactory
+ * and matched against @a constraints. The first matching type is returned.
+ *
+ * @param cache       Type cache to consult and populate.
+ * @param name        Type name.
+ * @param constraints Optional kind/subkind constraints.
+ * @param _type       Out parameter receiving the resolved Type.
+ * @retval B_OK              A matching type was returned.
+ * @retval B_ENTRY_NOT_FOUND No DWARF entry matches.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval other             Errors from DwarfTypeFactory.
+ */
 status_t
 DwarfImageDebugInfo::GetType(GlobalTypeCache* cache, const BString& name,
 	const TypeLookupConstraints& constraints, Type*& _type)
@@ -535,6 +684,16 @@ DwarfImageDebugInfo::GetType(GlobalTypeCache* cache, const BString& name,
 }
 
 
+/**
+ * @brief Reports whether a type with the given name exists in this image
+ *        and matches optional constraints.
+ *
+ * Cheaper than GetType() because the type need not be constructed.
+ *
+ * @param name        Type name.
+ * @param constraints Optional kind/subkind constraints.
+ * @return @c true if a matching DIE exists in this image.
+ */
 bool
 DwarfImageDebugInfo::HasType(const BString& name,
 	const TypeLookupConstraints& constraints) const
@@ -568,6 +727,14 @@ DwarfImageDebugInfo::HasType(const BString& name,
 }
 
 
+/**
+ * @brief Classifies an image-relative address into a section type
+ *        (function code, PLT entry, ...).
+ *
+ * @param address  Image-relative address.
+ * @return AddressSectionType describing the section, or
+ *         @c ADDRESS_SECTION_TYPE_UNKNOWN.
+ */
 AddressSectionType
 DwarfImageDebugInfo::GetAddressSectionType(target_addr_t address)
 {
@@ -581,6 +748,34 @@ DwarfImageDebugInfo::GetAddressSectionType(target_addr_t address)
 }
 
 
+/**
+ * @brief Unwinds one stack frame and constructs the StackFrame object
+ *        plus the predecessor's CpuState.
+ *
+ * Uses the DwarfFile's CFI data to compute the previous frame's PC, FP,
+ * and register state. When @a getFullFrameInfo is set, also materializes
+ * Variable objects for the function's parameters, locals and return
+ * value via DwarfStackFrameDebugInfo.
+ *
+ * @param image                 Image owning the function.
+ * @param functionInstance      Function instance whose frame is being
+ *                              produced.
+ * @param cpuState              Current frame's CpuState; reference
+ *                              acquired during evaluation.
+ * @param getFullFrameInfo      Whether to populate locals and return
+ *                              values.
+ * @param returnValueInfos      Optional list of return-value descriptions
+ *                              from previous calls.
+ * @param _previousFrame        Out parameter receiving the new
+ *                              StackFrame; reference transferred to
+ *                              caller.
+ * @param _previousCpuState     Out parameter receiving the unwound
+ *                              CpuState; reference transferred to caller.
+ * @retval B_OK              Frame produced.
+ * @retval B_UNSUPPORTED     CFI data is missing for the address.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval other             Errors from CFI evaluation.
+ */
 status_t
 DwarfImageDebugInfo::CreateFrame(Image* image,
 	FunctionInstance* functionInstance, CpuState* cpuState,
@@ -752,6 +947,22 @@ DwarfImageDebugInfo::CreateFrame(Image* image,
 }
 
 
+/**
+ * @brief Returns the source statement covering a runtime address.
+ *
+ * Walks the DwarfFile's line program for the function's CU until the
+ * statement that contains @a address is found. Falls back to the
+ * architecture's instruction-level decoding when no DWARF statement
+ * applies.
+ *
+ * @param _function  Function (must be a DwarfFunctionDebugInfo).
+ * @param address    Runtime address inside the function.
+ * @param _statement Out parameter receiving the new Statement.
+ * @retval B_OK              Statement returned.
+ * @retval B_BAD_VALUE       @a _function is not a DwarfFunctionDebugInfo.
+ * @retval other             Errors from line-table evaluation or the
+ *                           architecture's fallback.
+ */
 status_t
 DwarfImageDebugInfo::GetStatement(FunctionDebugInfo* _function,
 	target_addr_t address, Statement*& _statement)
@@ -849,6 +1060,17 @@ DwarfImageDebugInfo::GetStatement(FunctionDebugInfo* _function,
 }
 
 
+/**
+ * @brief Returns the first source statement at or after a given source
+ *        location within a function.
+ *
+ * @param _function       Function (must be a DwarfFunctionDebugInfo).
+ * @param sourceLocation  Source line/column of interest.
+ * @param _statement      Out parameter receiving the matching Statement.
+ * @retval B_OK              Statement found.
+ * @retval B_BAD_VALUE       @a _function is not a DwarfFunctionDebugInfo.
+ * @retval B_ENTRY_NOT_FOUND No statement matches.
+ */
 status_t
 DwarfImageDebugInfo::GetStatementAtSourceLocation(FunctionDebugInfo* _function,
 	const SourceLocation& sourceLocation, Statement*& _statement)
@@ -944,6 +1166,19 @@ DwarfImageDebugInfo::GetStatementAtSourceLocation(FunctionDebugInfo* _function,
 }
 
 
+/**
+ * @brief Identifies the source language of a function based on the
+ *        DW_AT_language attribute on its compilation unit.
+ *
+ * Returns CLanguage, CppLanguage or UnsupportedLanguage as appropriate.
+ *
+ * @param _function  Function (must be a DwarfFunctionDebugInfo).
+ * @param _language  Out parameter receiving the language object;
+ *                   reference transferred to caller.
+ * @retval B_OK         Language identified.
+ * @retval B_BAD_VALUE  @a _function is not a DwarfFunctionDebugInfo.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfImageDebugInfo::GetSourceLanguage(FunctionDebugInfo* _function,
 	SourceLanguage*& _language)
@@ -978,6 +1213,14 @@ DwarfImageDebugInfo::GetSourceLanguage(FunctionDebugInfo* _function,
 }
 
 
+/**
+ * @brief Reads instruction bytes from the live target at @a address.
+ *
+ * @param address  Runtime address to read from.
+ * @param buffer   Destination buffer.
+ * @param size     Number of bytes requested.
+ * @return Number of bytes read, or a negative error code.
+ */
 ssize_t
 DwarfImageDebugInfo::ReadCode(target_addr_t address, void* buffer, size_t size)
 {
@@ -988,6 +1231,18 @@ DwarfImageDebugInfo::ReadCode(target_addr_t address, void* buffer, size_t size)
 }
 
 
+/**
+ * @brief Annotates a FileSourceCode with the line/statement records for a
+ *        given source file present in this image's DWARF data.
+ *
+ * Iterates every CU and dispatches to _AddSourceCodeInfo() for each CU
+ * that lists @a file. Returns @c B_ENTRY_NOT_FOUND when no CU references
+ * the file.
+ *
+ * @param file        Source file to annotate.
+ * @param sourceCode  FileSourceCode to populate.
+ * @return Status as described above.
+ */
 status_t
 DwarfImageDebugInfo::AddSourceCodeInfo(LocatableFile* file,
 	FileSourceCode* sourceCode)
@@ -1009,6 +1264,15 @@ DwarfImageDebugInfo::AddSourceCodeInfo(LocatableFile* file,
 }
 
 
+/**
+ * @brief Annotates a FileSourceCode using one CU's line program.
+ *
+ * @param unit        Compilation unit whose line program is consulted.
+ * @param sourceCode  FileSourceCode to populate.
+ * @param fileIndex   Index of the file in @a unit's file list.
+ * @retval B_OK         Annotations added.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfImageDebugInfo::_AddSourceCodeInfo(CompilationUnit* unit,
 	FileSourceCode* sourceCode, int32 fileIndex)
@@ -1068,6 +1332,13 @@ DwarfImageDebugInfo::_AddSourceCodeInfo(CompilationUnit* unit,
 }
 
 
+/**
+ * @brief Locates a source file's index within a CU's file table.
+ *
+ * @param unit        Compilation unit to search.
+ * @param sourceFile  File to find.
+ * @return Zero-based file index, or -1 if @a sourceFile is not listed.
+ */
 int32
 DwarfImageDebugInfo::_GetSourceFileIndex(CompilationUnit* unit,
 	LocatableFile* sourceFile) const
@@ -1090,6 +1361,28 @@ DwarfImageDebugInfo::_GetSourceFileIndex(CompilationUnit* unit,
 }
 
 
+/**
+ * @brief Creates Variable objects for the formal parameters and local
+ *        variables visible at @a instructionPointer.
+ *
+ * Iterates the supplied variable and lexical-block DIE lists, recursively
+ * descending into blocks whose PC range covers the instruction pointer.
+ * Each visible variable is added to @a frame.
+ *
+ * @param unit               CU containing the variables.
+ * @param frame              StackFrame receiving the new Variables.
+ * @param functionID         Identifier of the enclosing function.
+ * @param factory            Stack-frame factory used to construct each
+ *                           Variable.
+ * @param instructionPointer Address used to filter visible blocks.
+ * @param lowPC              Function start address (used to compute live
+ *                           ranges).
+ * @param variableEntries    Variables declared at function scope.
+ * @param blockEntries       Lexical blocks declared at function scope.
+ * @retval B_OK              Variables added.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval other             Errors from factory routines.
+ */
 status_t
 DwarfImageDebugInfo::_CreateLocalVariables(CompilationUnit* unit,
 	StackFrame* frame, FunctionID* functionID,
@@ -1167,6 +1460,22 @@ DwarfImageDebugInfo::_CreateLocalVariables(CompilationUnit* unit,
 }
 
 
+/**
+ * @brief Creates Variable objects for any pending return values to display
+ *        in the active stack frame.
+ *
+ * Each entry in @a returnValueInfos describes a captured return value;
+ * this helper resolves the corresponding subprogram, looks up its return
+ * type, and asks @a factory to build the Variable.
+ *
+ * @param returnValueInfos  List of captured return values.
+ * @param image             Image owning the call site.
+ * @param frame             Frame receiving the Variables.
+ * @param factory           Stack-frame factory used for construction.
+ * @retval B_OK              Return values added.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval other             Errors from address resolution or the factory.
+ */
 status_t
 DwarfImageDebugInfo::_CreateReturnValues(ReturnValueInfoList* returnValueInfos,
 	Image* image, StackFrame* frame, DwarfStackFrameDebugInfo& factory)
@@ -1280,6 +1589,17 @@ DwarfImageDebugInfo::_CreateReturnValues(ReturnValueInfoList* returnValueInfos,
 }
 
 
+/**
+ * @brief Recursively evaluates whether a DIE-described type satisfies the
+ *        given lookup constraints.
+ *
+ * Walks through typedef and modifier chains so a constraint stated in
+ * the abstract model maps to the matching DWARF tag.
+ *
+ * @param type         DIE to evaluate.
+ * @param constraints  Constraints to satisfy.
+ * @return @c true if @a type matches; @c false otherwise.
+ */
 bool
 DwarfImageDebugInfo::_EvaluateBaseTypeConstraints(DIEType* type,
 	const TypeLookupConstraints& constraints) const
@@ -1326,6 +1646,15 @@ DwarfImageDebugInfo::_EvaluateBaseTypeConstraints(DIEType* type,
 }
 
 
+/**
+ * @brief Recursively walks a namespace DIE and emits FunctionDebugInfo for
+ *        every subprogram found.
+ *
+ * @param nsEntry    Namespace DIE to descend into.
+ * @param unit       Owning compilation unit.
+ * @param functions  Output list of function descriptors.
+ * @return Status from _AddFunction() / recursive calls.
+ */
 status_t
 DwarfImageDebugInfo::_RecursiveTraverseNamespaceForFunctions(
 	DIENamespace* nsEntry, CompilationUnit* unit,
@@ -1369,6 +1698,20 @@ DwarfImageDebugInfo::_RecursiveTraverseNamespaceForFunctions(
 }
 
 
+/**
+ * @brief Constructs a DwarfFunctionDebugInfo for a single subprogram and
+ *        appends it to @a functions.
+ *
+ * Resolves the subprogram's PC ranges, name (potentially via abstract
+ * origin/specification), source file and declaration location.
+ *
+ * @param subprogramEntry  DIE describing the subprogram.
+ * @param unit             Owning compilation unit.
+ * @param functions        Output list receiving the new descriptor.
+ * @retval B_OK              Function added.
+ * @retval B_NO_MEMORY       Allocation failure.
+ * @retval B_BAD_VALUE       Subprogram has no PC ranges.
+ */
 status_t
 DwarfImageDebugInfo::_AddFunction(DIESubprogram* subprogramEntry,
 	CompilationUnit* unit, BObjectList<FunctionDebugInfo>& functions)
@@ -1434,6 +1777,15 @@ DwarfImageDebugInfo::_AddFunction(DIESubprogram* subprogramEntry,
 }
 
 
+/**
+ * @brief Constructs the per-image type-name hash table on first use.
+ *
+ * Walks every CU and namespace, descending into namespace DIEs, and
+ * inserts an entry per declared type.
+ *
+ * @retval B_OK         Table built.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfImageDebugInfo::_BuildTypeNameTable()
 {
@@ -1475,6 +1827,17 @@ DwarfImageDebugInfo::_BuildTypeNameTable()
 }
 
 
+/**
+ * @brief Recursively registers a DIE and any nested types into the
+ *        type-name table.
+ *
+ * Anonymous and synthetic types are ignored.
+ *
+ * @param type  Type DIE to register.
+ * @param unit  Owning compilation unit.
+ * @retval B_OK         Insertion succeeded.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfImageDebugInfo::_RecursiveAddTypeNames(DIEType* type, CompilationUnit* unit)
 {
@@ -1521,6 +1884,15 @@ DwarfImageDebugInfo::_RecursiveAddTypeNames(DIEType* type, CompilationUnit* unit
 }
 
 
+/**
+ * @brief Recursively walks a namespace DIE and registers every declared
+ *        type into the type-name table.
+ *
+ * @param nsEntry  Namespace DIE to descend into.
+ * @param unit     Owning compilation unit.
+ * @retval B_OK         Traversal completed.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfImageDebugInfo::_RecursiveTraverseNamespaceForTypes(DIENamespace* nsEntry,
 	CompilationUnit* unit)

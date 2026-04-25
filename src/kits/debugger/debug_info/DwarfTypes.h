@@ -1,8 +1,30 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2012-2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009-2013, Haiku.
+ * Original authors: Ingo Weinhold, Rene Gollent.
  */
+
+/** @file DwarfTypes.h
+    @brief DWARF-specific Type subclasses and the DwarfTypeContext that ties
+           them to a compilation unit, target interface, and live target
+           state for location resolution. */
+
 #ifndef DWARF_TYPES_H
 #define DWARF_TYPES_H
 
@@ -44,10 +66,15 @@ class ValueLocation;
 
 
 // conversion functions between model types and dwarf types
+/** @brief Maps a DWARF tag to its abstract @c type_kind (struct, array, ...). */
 type_kind dwarf_tag_to_type_kind(int32 tag);
+/** @brief Maps a DWARF tag to its abstract subtype kind, where applicable. */
 int32 dwarf_tag_to_subtype_kind(int32 tag);
 
 
+/** @brief Reference-counted context bundling the architecture, DwarfFile,
+           compilation unit, register map and live PC/FP needed to resolve
+           DWARF location expressions. */
 class DwarfTypeContext : public BReferenceable {
 public:
 								DwarfTypeContext(Architecture* architecture,
@@ -98,6 +125,8 @@ private:
 };
 
 
+/** @brief Common base for every DWARF-derived Type implementation; binds a
+           Type to its DwarfTypeContext and caches name/ID/byte-size. */
 class DwarfType : public virtual Type {
 public:
 								DwarfType(DwarfTypeContext* typeContext,
@@ -150,6 +179,8 @@ private:
 };
 
 
+/** @brief BaseType node representing a DWARF inheritance edge between
+           compound types. */
 class DwarfInheritance : public BaseType {
 public:
 								DwarfInheritance(DIEInheritance* entry,
@@ -169,6 +200,8 @@ private:
 };
 
 
+/** @brief DataMember backed by a DIEMember; pairs a member name with its
+           DwarfType. */
 class DwarfDataMember : public DataMember {
 public:
 								DwarfDataMember(DIEMember* entry,
@@ -190,6 +223,7 @@ private:
 };
 
 
+/** @brief EnumeratorValue backed by a DIEEnumerator entry. */
 class DwarfEnumeratorValue : public EnumeratorValue {
 public:
 								DwarfEnumeratorValue(DIEEnumerator* entry,
@@ -209,6 +243,7 @@ private:
 };
 
 
+/** @brief ArrayDimension whose element type is described by a DwarfType. */
 class DwarfArrayDimension : public ArrayDimension {
 public:
 								DwarfArrayDimension(DwarfType* type);
@@ -225,6 +260,7 @@ private:
 };
 
 
+/** @brief FunctionParameter backed by a DIEFormalParameter entry. */
 class DwarfFunctionParameter : public FunctionParameter {
 public:
 								DwarfFunctionParameter(
@@ -246,6 +282,8 @@ private:
 };
 
 
+/** @brief TemplateParameter (type or value) decoded from a DWARF template
+           parameter DIE. */
 class DwarfTemplateParameter : public TemplateParameter {
 public:
 								DwarfTemplateParameter(
@@ -265,6 +303,8 @@ private:
 };
 
 
+/** @brief Primitive (scalar) DWARF type identified by a numeric type
+           constant such as @c B_INT32_TYPE. */
 class DwarfPrimitiveType : public PrimitiveType, public DwarfType {
 public:
 								DwarfPrimitiveType(
@@ -284,6 +324,8 @@ private:
 };
 
 
+/** @brief Compound DWARF type (struct, class or union) holding inheritance
+           edges, data members and template parameters. */
 class DwarfCompoundType : public CompoundType, public DwarfType {
 public:
 								DwarfCompoundType(DwarfTypeContext* typeContext,
@@ -341,6 +383,7 @@ private:
 };
 
 
+/** @brief DWARF array type with one or more DwarfArrayDimension children. */
 class DwarfArrayType : public ArrayType, public DwarfType {
 public:
 								DwarfArrayType(DwarfTypeContext* typeContext,
@@ -377,6 +420,7 @@ private:
 };
 
 
+/** @brief Type modifier (const, volatile, ...) wrapping a DwarfType base. */
 class DwarfModifiedType : public ModifiedType, public DwarfType {
 public:
 								DwarfModifiedType(DwarfTypeContext* typeContext,
@@ -399,6 +443,8 @@ private:
 };
 
 
+/** @brief @c typedef alias resolved from DIETypedef and pointing at its
+           target DwarfType. */
 class DwarfTypedefType : public TypedefType, public DwarfType {
 public:
 								DwarfTypedefType(DwarfTypeContext* typeContext,
@@ -419,6 +465,7 @@ private:
 };
 
 
+/** @brief Pointer or reference type wrapping a DwarfType pointee. */
 class DwarfAddressType : public AddressType, public DwarfType {
 public:
 								DwarfAddressType(DwarfTypeContext* typeContext,
@@ -443,6 +490,7 @@ private:
 };
 
 
+/** @brief Enumeration type listing DwarfEnumeratorValue children. */
 class DwarfEnumerationType : public EnumerationType, public DwarfType {
 public:
 								DwarfEnumerationType(
@@ -474,6 +522,7 @@ private:
 };
 
 
+/** @brief Subrange type carrying explicit lower and upper bound variants. */
 class DwarfSubrangeType : public SubrangeType, public DwarfType {
 public:
 								DwarfSubrangeType(DwarfTypeContext* typeContext,
@@ -501,6 +550,7 @@ private:
 };
 
 
+/** @brief Placeholder for DWARF unspecified types (e.g. @c std::nullptr_t). */
 struct DwarfUnspecifiedType : public UnspecifiedType, public DwarfType {
 public:
 								DwarfUnspecifiedType(
@@ -520,6 +570,7 @@ private:
 };
 
 
+/** @brief Subroutine type with its return type and parameter list. */
 class DwarfFunctionType : public FunctionType, public DwarfType {
 public:
 								DwarfFunctionType(DwarfTypeContext* typeContext,
@@ -557,6 +608,8 @@ private:
 };
 
 
+/** @brief C++ pointer-to-member type linking a DwarfCompoundType
+           container to a DwarfType pointee. */
 class DwarfPointerToMemberType : public PointerToMemberType, public DwarfType {
 public:
 								DwarfPointerToMemberType(

@@ -1,8 +1,28 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2011-2014, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009-2014, Haiku.
+ * Original authors: Ingo Weinhold, Rene Gollent.
  */
+
+/** @file CpuStateX86.h
+    @brief IA-32 CPU state declaration plus register-index enumeration. */
+
 #ifndef CPU_STATE_X86_H
 #define CPU_STATE_X86_H
 
@@ -13,6 +33,7 @@
 #include "CpuState.h"
 
 
+/** @brief Native register indices for the IA-32 CPU state. */
 enum {
 	X86_REGISTER_EIP = 0,
 	X86_REGISTER_ESP,
@@ -78,6 +99,7 @@ enum {
 #define X86_XMM_REGISTER_COUNT (X86_XMM_REGISTER_END - X86_MMX_REGISTER_END)
 
 
+/** @brief IA-32 implementation of the CpuState interface. */
 class CpuStateX86 : public CpuState {
 public:
 								CpuStateX86();
@@ -99,6 +121,7 @@ public:
 	virtual	bool				SetRegisterValue(const Register* reg,
 									const BVariant& value);
 
+			/** @brief Return the interrupt vector that produced this state. */
 			uint32				InterruptVector() const
 									{ return fInterruptVector; }
 

@@ -1,7 +1,47 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2010-2017, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2010-2017, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file TeamDebugger.cpp
+ * @brief Top-level orchestrator for an entire debugged team.
+ *
+ * One TeamDebugger instance owns: a DebuggerInterface back-end, a Team model
+ * object, the BreakpointManager / WatchpointManager / TeamMemoryBlockManager
+ * / DebugReportGenerator helpers, the Worker that runs background Jobs, the
+ * UserInterface, and a per-thread map of ThreadHandlers. It runs on its own
+ * BLooper. Two threads cooperate inside the debugger:
+ *
+ *  - the looper (this object) consumes UI requests and delegates to the
+ *    appropriate manager or per-thread handler;
+ *  - the debug-event listener thread blocks in
+ *    DebuggerInterface::GetNextDebugEvent() and posts each event to the
+ *    looper for ordered processing.
+ *
+ * The class also acts as the listener back-end for Team model events, Job
+ * lifecycle, UserInterfaceListener requests, and Worker job completion.
  */
 
 
@@ -68,9 +108,17 @@
 // #pragma mark - ImageHandler
 
 
+/**
+ * @brief Per-image bookkeeping helper that listens for changes to the
+ *        underlying file and notifies the owning TeamDebugger when they happen.
+ *
+ * Stored in fImageHandlers (a hash table keyed by image_id) so that the
+ * debugger can correlate images with their LocatableFile lifecycle.
+ */
 struct TeamDebugger::ImageHandler : public BReferenceable,
 	private LocatableFile::Listener {
 public:
+	/** @brief Captures the image and registers as a file listener if applicable. */
 	ImageHandler(TeamDebugger* teamDebugger, Image* image)
 		:
 		fTeamDebugger(teamDebugger),
@@ -81,6 +129,7 @@ public:
 			fImage->ImageFile()->AddListener(this);
 	}
 
+	/** @brief Detaches from the file and releases the image reference. */
 	~ImageHandler()
 	{
 		if (fImage->ImageFile() != NULL)
@@ -88,11 +137,13 @@ public:
 		fImage->ReleaseReference();
 	}
 
+	/** @brief Returns the wrapped image. */
 	Image* GetImage() const
 	{
 		return fImage;
 	}
 
+	/** @brief Returns the image's identifier (used as the hash key). */
 	image_id ImageID() const
 	{
 		return fImage->ID();
@@ -100,6 +151,7 @@ public:
 
 private:
 	// LocatableFile::Listener
+	/** @brief Posts an MSG_IMAGE_FILE_CHANGED message when the underlying file changes on disk. */
 	virtual void LocatableFileChanged(LocatableFile* file)
 	{
 		BMessage message(MSG_IMAGE_FILE_CHANGED);
@@ -119,25 +171,32 @@ public:
 // #pragma mark - ImageHandlerHashDefinition
 
 
+/**
+ * @brief Hash-table policy for storing ImageHandler entries by image_id.
+ */
 struct TeamDebugger::ImageHandlerHashDefinition {
 	typedef image_id		KeyType;
 	typedef	ImageHandler	ValueType;
 
+	/** @brief Returns the hash for an image id (identity cast). */
 	size_t HashKey(image_id key) const
 	{
 		return (size_t)key;
 	}
 
+	/** @brief Returns the hash for a stored handler. */
 	size_t Hash(const ImageHandler* value) const
 	{
 		return HashKey(value->ImageID());
 	}
 
+	/** @brief Compares an image id key against a stored handler. */
 	bool Compare(image_id key, const ImageHandler* value) const
 	{
 		return value->ImageID() == key;
 	}
 
+	/** @brief Provides chained-bucket linkage to the hash table. */
 	ImageHandler*& GetLink(ImageHandler* value) const
 	{
 		return value->fNext;
@@ -148,8 +207,13 @@ struct TeamDebugger::ImageHandlerHashDefinition {
 // #pragma mark - ImageInfoPendingThread
 
 
+/**
+ * @brief Pairs an image id with the thread that's waiting for the image's
+ *        debug info to load before continuing.
+ */
 struct TeamDebugger::ImageInfoPendingThread {
 public:
+	/** @brief Captures the (image, thread) pair. */
 	ImageInfoPendingThread(image_id image, thread_id thread)
 		:
 		fImage(image),
@@ -157,15 +221,18 @@ public:
 	{
 	}
 
+	/** @brief Trivial destructor. */
 	~ImageInfoPendingThread()
 	{
 	}
 
+	/** @brief Returns the image being waited on. */
 	image_id ImageID() const
 	{
 		return fImage;
 	}
 
+	/** @brief Returns the thread that's waiting. */
 	thread_id ThreadID() const
 	{
 		return fThread;
@@ -183,25 +250,32 @@ public:
 // #pragma mark - ImageHandlerHashDefinition
 
 
+/**
+ * @brief Hash-table policy for storing ImageInfoPendingThread entries by image_id.
+ */
 struct TeamDebugger::ImageInfoPendingThreadHashDefinition {
 	typedef image_id				KeyType;
 	typedef	ImageInfoPendingThread	ValueType;
 
+	/** @brief Returns the hash for an image id key. */
 	size_t HashKey(image_id key) const
 	{
 		return (size_t)key;
 	}
 
+	/** @brief Returns the hash for a stored entry. */
 	size_t Hash(const ImageInfoPendingThread* value) const
 	{
 		return HashKey(value->ImageID());
 	}
 
+	/** @brief Compares an image id key against a stored entry. */
 	bool Compare(image_id key, const ImageInfoPendingThread* value) const
 	{
 		return value->ImageID() == key;
 	}
 
+	/** @brief Provides chained-bucket linkage to the hash table. */
 	ImageInfoPendingThread*& GetLink(ImageInfoPendingThread* value) const
 	{
 		return value->fNext;
@@ -212,6 +286,17 @@ struct TeamDebugger::ImageInfoPendingThreadHashDefinition {
 // #pragma mark - TeamDebugger
 
 
+/**
+ * @brief Constructs the looper and stashes the listener, UI, and settings manager.
+ *
+ * Most resources are initialized lazily in Init(); this constructor only sets
+ * up the BLooper name and zeroes member pointers so destruction is safe even
+ * if Init() never runs.
+ *
+ * @param listener         Object notified of debugger lifecycle changes.
+ * @param userInterface    User interface to drive; the debugger acquires a reference.
+ * @param settingsManager  Settings backing store; if NULL a NoOpSettingsManager is used.
+ */
 TeamDebugger::TeamDebugger(Listener* listener, UserInterface* userInterface,
 	SettingsManager* settingsManager)
 	:
@@ -242,6 +327,11 @@ TeamDebugger::TeamDebugger(Listener* listener, UserInterface* userInterface,
 }
 
 
+/**
+ * @brief Tears down the debugger session: saves settings, closes the back-end,
+ *        terminates the UI, drains the per-thread/per-image handler maps,
+ *        deletes the helpers, and finally notifies the listener.
+ */
 TeamDebugger::~TeamDebugger()
 {
 	if (fTeam != NULL)
@@ -323,6 +413,25 @@ TeamDebugger::~TeamDebugger()
 }
 
 
+/**
+ * @brief Wires up every collaborator and starts the debugger session.
+ *
+ * Builds the FileManager, Team model, manager helpers, ThreadHandlers, the
+ * Worker pool, the DebugReportGenerator, the debug-event listener thread, and
+ * the user interface. Loads any stored settings, registers user breakpoints
+ * and watchpoints, primes the team's image and thread state, and either
+ * stops at main() or starts running depending on @a stopInMain.
+ *
+ * @param interface     Already-initialized DebuggerInterface; the debugger
+ *                      acquires a reference.
+ * @param threadID      Initial thread to focus on.
+ * @param argc          Number of command-line args (saved for restart).
+ * @param argv          Command-line args (saved for restart); each string is
+ *                      duplicated.
+ * @param stopInMain    If true, ask the back-end to halt at main().
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+ *         from collaborator initialization.
+ */
 status_t
 TeamDebugger::Init(DebuggerInterface* interface, thread_id threadID, int argc,
 	const char* const* argv, bool stopInMain)
@@ -555,6 +664,7 @@ TeamDebugger::Init(DebuggerInterface* interface, thread_id threadID, int argc,
 }
 
 
+/** @brief Brings the debugger's user interface to the front. */
 void
 TeamDebugger::Activate()
 {
@@ -562,6 +672,18 @@ TeamDebugger::Activate()
 }
 
 
+/**
+ * @brief BLooper hook: routes MSG_* codes to the appropriate handler.
+ *
+ * This switch is the central dispatcher between the UI/back-end and the
+ * underlying managers. Some codes (MSG_THREAD_*) are forwarded to a
+ * per-thread ThreadHandler, others mutate breakpoint/watchpoint/inspect
+ * state, settings, debug-event delivery, or the report generator. The
+ * function intentionally keeps each case short and pushes the heavy lifting
+ * into the corresponding _Handle* helper.
+ *
+ * @param message  Incoming message; codes not understood are forwarded to BLooper.
+ */
 void
 TeamDebugger::MessageReceived(BMessage* message)
 {
@@ -976,6 +1098,12 @@ TeamDebugger::MessageReceived(BMessage* message)
 }
 
 
+/**
+ * @brief UI request: associate @a sourcePath with @a locatedPath in the file manager.
+ *
+ * @param sourcePath   Original source path recorded in debug info.
+ * @param locatedPath  User-supplied filesystem path to use instead.
+ */
 void
 TeamDebugger::SourceEntryLocateRequested(const char* sourcePath,
 	const char* locatedPath)
@@ -985,6 +1113,11 @@ TeamDebugger::SourceEntryLocateRequested(const char* sourcePath,
 }
 
 
+/**
+ * @brief UI request: forget any cached locate-mapping for @a sourceFile.
+ *
+ * @param sourceFile  Source file whose mapping should be cleared.
+ */
 void
 TeamDebugger::SourceEntryInvalidateRequested(LocatableFile* sourceFile)
 {
@@ -994,6 +1127,17 @@ TeamDebugger::SourceEntryInvalidateRequested(LocatableFile* sourceFile)
 }
 
 
+/**
+ * @brief UI request: load (or disassemble) source code for a function instance.
+ *
+ * Marks the relevant Function/FunctionInstance source-code state as loading
+ * and schedules a LoadSourceCodeJob; if scheduling fails the state is
+ * downgraded to UNAVAILABLE.
+ *
+ * @param functionInstance  Function instance to load source for.
+ * @param forceDisassembly  When true, skip the source-file path entirely and
+ *                          fetch only disassembly.
+ */
 void
 TeamDebugger::FunctionSourceCodeRequested(FunctionInstance* functionInstance,
 	bool forceDisassembly)
@@ -1037,6 +1181,7 @@ TeamDebugger::FunctionSourceCodeRequested(FunctionInstance* functionInstance,
 }
 
 
+/** @brief UI request: schedule a LoadImageDebugInfoJob for @a image if not already in flight. */
 void
 TeamDebugger::ImageDebugInfoRequested(Image* image)
 {
@@ -1044,6 +1189,16 @@ TeamDebugger::ImageDebugInfoRequested(Image* image)
 }
 
 
+/**
+ * @brief UI request: resolve a value node's location and value asynchronously.
+ *
+ * Deduplicates against any in-progress ResolveValueNodeValueJob for the same
+ * node. On scheduling failure the node is marked invalid with the failing status.
+ *
+ * @param cpuState   CPU state context for the resolution.
+ * @param container  Container the value node belongs to.
+ * @param valueNode  Node whose value should be resolved.
+ */
 void
 TeamDebugger::ValueNodeValueRequested(CpuState* cpuState,
 	ValueNodeContainer* container, ValueNode* valueNode)
@@ -1070,6 +1225,15 @@ TeamDebugger::ValueNodeValueRequested(CpuState* cpuState,
 	}
 }
 
+/**
+ * @brief UI request: schedule a job to write @a newValue back into @a node 's storage.
+ *
+ * On scheduling failure the user is notified via the UI's error dialog.
+ *
+ * @param node      Value node to update.
+ * @param state     CPU state used to compute the storage location.
+ * @param newValue  New value to write.
+ */
 void
 TeamDebugger::ValueNodeWriteRequested(ValueNode* node, CpuState* state,
 	Value* newValue)
@@ -1089,6 +1253,13 @@ TeamDebugger::ValueNodeWriteRequested(ValueNode* node, CpuState* state,
 }
 
 
+/**
+ * @brief UI request: forward a thread action (run/step/stop/...) to the looper.
+ *
+ * @param threadID  Thread to operate on.
+ * @param action    MSG_THREAD_* action code.
+ * @param address   Optional target address (set-IP, run-to).
+ */
 void
 TeamDebugger::ThreadActionRequested(thread_id threadID,
 	uint32 action, target_addr_t address)
@@ -1100,6 +1271,13 @@ TeamDebugger::ThreadActionRequested(thread_id threadID,
 }
 
 
+/**
+ * @brief UI request: install a user breakpoint at @a address.
+ *
+ * @param address  Target address.
+ * @param enabled  Whether the breakpoint should be enabled.
+ * @param hidden   Whether the breakpoint should be hidden from the UI.
+ */
 void
 TeamDebugger::SetBreakpointRequested(target_addr_t address, bool enabled,
 	bool hidden)
@@ -1112,6 +1290,12 @@ TeamDebugger::SetBreakpointRequested(target_addr_t address, bool enabled,
 }
 
 
+/**
+ * @brief UI request: change the enabled state of an existing user breakpoint.
+ *
+ * @param breakpoint  Breakpoint to update; reference detached on successful post.
+ * @param enabled     Desired enabled state.
+ */
 void
 TeamDebugger::SetBreakpointEnabledRequested(UserBreakpoint* breakpoint,
 	bool enabled)
@@ -1126,6 +1310,12 @@ TeamDebugger::SetBreakpointEnabledRequested(UserBreakpoint* breakpoint,
 }
 
 
+/**
+ * @brief UI request: attach a conditional expression to a user breakpoint.
+ *
+ * @param breakpoint  Breakpoint to update.
+ * @param condition   Source-language expression evaluated on each hit.
+ */
 void
 TeamDebugger::SetBreakpointConditionRequested(UserBreakpoint* breakpoint,
 	const char* condition)
@@ -1140,6 +1330,7 @@ TeamDebugger::SetBreakpointConditionRequested(UserBreakpoint* breakpoint,
 }
 
 
+/** @brief UI request: remove the conditional expression from a user breakpoint. */
 void
 TeamDebugger::ClearBreakpointConditionRequested(UserBreakpoint* breakpoint)
 {
@@ -1152,6 +1343,7 @@ TeamDebugger::ClearBreakpointConditionRequested(UserBreakpoint* breakpoint)
 }
 
 
+/** @brief UI request: remove any user breakpoint at @a address. */
 void
 TeamDebugger::ClearBreakpointRequested(target_addr_t address)
 {
@@ -1161,6 +1353,13 @@ TeamDebugger::ClearBreakpointRequested(target_addr_t address)
 }
 
 
+/**
+ * @brief UI request: enable/disable the "stop on image load" feature.
+ *
+ * @param enabled        Whether the feature is on.
+ * @param useImageNames  When on, only stop for images whose names appear in
+ *                       the configured list.
+ */
 void
 TeamDebugger::SetStopOnImageLoadRequested(bool enabled, bool useImageNames)
 {
@@ -1171,6 +1370,7 @@ TeamDebugger::SetStopOnImageLoadRequested(bool enabled, bool useImageNames)
 }
 
 
+/** @brief UI request: add @a name to the stop-on-image-load name list. */
 void
 TeamDebugger::AddStopImageNameRequested(const char* name)
 {
@@ -1180,6 +1380,7 @@ TeamDebugger::AddStopImageNameRequested(const char* name)
 }
 
 
+/** @brief UI request: remove @a name from the stop-on-image-load name list. */
 void
 TeamDebugger::RemoveStopImageNameRequested(const char* name)
 {
@@ -1189,6 +1390,7 @@ TeamDebugger::RemoveStopImageNameRequested(const char* name)
 }
 
 
+/** @brief UI request: change the default signal disposition for the team. */
 void
 TeamDebugger::SetDefaultSignalDispositionRequested(int32 disposition)
 {
@@ -1198,6 +1400,12 @@ TeamDebugger::SetDefaultSignalDispositionRequested(int32 disposition)
 }
 
 
+/**
+ * @brief UI request: set a per-signal disposition override.
+ *
+ * @param signal       Signal number being overridden.
+ * @param disposition  New disposition for that signal.
+ */
 void
 TeamDebugger::SetCustomSignalDispositionRequested(int32 signal,
 	int32 disposition)
@@ -1209,6 +1417,7 @@ TeamDebugger::SetCustomSignalDispositionRequested(int32 signal,
 }
 
 
+/** @brief UI request: clear the custom disposition for @a signal so it falls back to default. */
 void
 TeamDebugger::RemoveCustomSignalDispositionRequested(int32 signal)
 {
@@ -1218,6 +1427,7 @@ TeamDebugger::RemoveCustomSignalDispositionRequested(int32 signal)
 }
 
 
+/** @brief UI request: remove a user breakpoint object (the by-pointer overload). */
 void
 TeamDebugger::ClearBreakpointRequested(UserBreakpoint* breakpoint)
 {
@@ -1230,6 +1440,14 @@ TeamDebugger::ClearBreakpointRequested(UserBreakpoint* breakpoint)
 }
 
 
+/**
+ * @brief UI request: install a watchpoint with the given type/length.
+ *
+ * @param address  Address to watch.
+ * @param type     B_DATA_*_WATCHPOINT trigger type.
+ * @param length   Watch length in bytes.
+ * @param enabled  Whether the watchpoint should be enabled.
+ */
 void
 TeamDebugger::SetWatchpointRequested(target_addr_t address, uint32 type,
 	int32 length, bool enabled)
@@ -1243,6 +1461,7 @@ TeamDebugger::SetWatchpointRequested(target_addr_t address, uint32 type,
 }
 
 
+/** @brief UI request: change the enabled state of an existing watchpoint. */
 void
 TeamDebugger::SetWatchpointEnabledRequested(Watchpoint* watchpoint,
 	bool enabled)
@@ -1257,6 +1476,7 @@ TeamDebugger::SetWatchpointEnabledRequested(Watchpoint* watchpoint,
 }
 
 
+/** @brief UI request: remove any watchpoint at @a address. */
 void
 TeamDebugger::ClearWatchpointRequested(target_addr_t address)
 {
@@ -1266,6 +1486,7 @@ TeamDebugger::ClearWatchpointRequested(target_addr_t address)
 }
 
 
+/** @brief UI request: remove a specific watchpoint object (the by-pointer overload). */
 void
 TeamDebugger::ClearWatchpointRequested(Watchpoint* watchpoint)
 {
@@ -1278,6 +1499,12 @@ TeamDebugger::ClearWatchpointRequested(Watchpoint* watchpoint)
 }
 
 
+/**
+ * @brief UI request: read a memory page near @a address and notify @a listener.
+ *
+ * @param address   Address whose containing page should be fetched.
+ * @param listener  Listener that will receive the resulting TeamMemoryBlock.
+ */
 void
 TeamDebugger::InspectRequested(target_addr_t address,
 	TeamMemoryBlock::Listener *listener)
@@ -1289,6 +1516,14 @@ TeamDebugger::InspectRequested(target_addr_t address,
 }
 
 
+/**
+ * @brief UI request: write @a size bytes from @a data into the team's memory at @a address.
+ *
+ * @param address  Target-side address.
+ * @param data     Source bytes; pointer is stashed in the message and must
+ *                 remain valid until the looper handles it.
+ * @param size     Number of bytes to write.
+ */
 void
 TeamDebugger::MemoryWriteRequested(target_addr_t address, const void* data,
 	target_size_t size)
@@ -1301,6 +1536,14 @@ TeamDebugger::MemoryWriteRequested(target_addr_t address, const void* data,
 }
 
 
+/**
+ * @brief UI request: schedule an asynchronous expression evaluation.
+ *
+ * @param language  Source language used to parse @a info 's expression.
+ * @param info      ExpressionInfo describing the expression and listener.
+ * @param frame     Optional stack frame providing context (may be NULL).
+ * @param thread    Optional thread providing context (may be NULL).
+ */
 void
 TeamDebugger::ExpressionEvaluationRequested(SourceLanguage* language,
 	ExpressionInfo* info, StackFrame* frame, ::Thread* thread)
@@ -1322,6 +1565,7 @@ TeamDebugger::ExpressionEvaluationRequested(SourceLanguage* language,
 }
 
 
+/** @brief UI request: ask the DebugReportGenerator to write a report to @a targetPath. */
 void
 TeamDebugger::DebugReportRequested(entry_ref* targetPath)
 {
@@ -1331,6 +1575,7 @@ TeamDebugger::DebugReportRequested(entry_ref* targetPath)
 }
 
 
+/** @brief UI request: ask the back-end to write a core file at @a targetPath. */
 void
 TeamDebugger::WriteCoreFileRequested(entry_ref* targetPath)
 {
@@ -1340,6 +1585,7 @@ TeamDebugger::WriteCoreFileRequested(entry_ref* targetPath)
 }
 
 
+/** @brief UI request: re-run the debugged program from scratch with the original args. */
 void
 TeamDebugger::TeamRestartRequested()
 {
@@ -1347,6 +1593,16 @@ TeamDebugger::TeamRestartRequested()
 }
 
 
+/**
+ * @brief UI request: ask the user (when needed) what to do with the team and quit.
+ *
+ * Depending on @a quitOption either jumps straight to quit, sets the
+ * kill-on-quit flag, or shows an "Ask user" dialog with kill/cancel/resume
+ * choices. Posts B_QUIT_REQUESTED if the user did not cancel.
+ *
+ * @param quitOption  How to disposition the team on quit.
+ * @return true if the quit request was accepted, false if the user cancelled.
+ */
 bool
 TeamDebugger::UserInterfaceQuitRequested(QuitOption quitOption)
 {
@@ -1404,6 +1660,7 @@ TeamDebugger::UserInterfaceQuitRequested(QuitOption quitOption)
 }
 
 
+/** @brief JobListener hook: shows a "X..." progress string when @a job carries a description. */
 void
 TeamDebugger::JobStarted(Job* job)
 {
@@ -1415,6 +1672,7 @@ TeamDebugger::JobStarted(Job* job)
 }
 
 
+/** @brief JobListener hook: clears the progress string when no jobs remain. */
 void
 TeamDebugger::JobDone(Job* job)
 {
@@ -1423,6 +1681,13 @@ TeamDebugger::JobDone(Job* job)
 }
 
 
+/**
+ * @brief JobListener hook: routes input requests for LoadImageDebugInfoJob to
+ *        the looper so the UI can be prompted on the right thread.
+ *
+ * @param job  Job currently waiting for user input; ignored unless it is a
+ *             LoadImageDebugInfoJob.
+ */
 void
 TeamDebugger::JobWaitingForInput(Job* job)
 {
@@ -1438,6 +1703,7 @@ TeamDebugger::JobWaitingForInput(Job* job)
 }
 
 
+/** @brief JobListener hook: clears the progress string when @a job fails. */
 void
 TeamDebugger::JobFailed(Job* job)
 {
@@ -1447,6 +1713,7 @@ TeamDebugger::JobFailed(Job* job)
 }
 
 
+/** @brief JobListener hook: clears the progress string when @a job is aborted. */
 void
 TeamDebugger::JobAborted(Job* job)
 {
@@ -1457,6 +1724,7 @@ TeamDebugger::JobAborted(Job* job)
 }
 
 
+/** @brief Team listener hook: forwards thread state changes onto the looper. */
 void
 TeamDebugger::ThreadStateChanged(const ::Team::ThreadEvent& event)
 {
@@ -1466,6 +1734,7 @@ TeamDebugger::ThreadStateChanged(const ::Team::ThreadEvent& event)
 }
 
 
+/** @brief Team listener hook: forwards thread CPU state changes onto the looper. */
 void
 TeamDebugger::ThreadCpuStateChanged(const ::Team::ThreadEvent& event)
 {
@@ -1475,6 +1744,7 @@ TeamDebugger::ThreadCpuStateChanged(const ::Team::ThreadEvent& event)
 }
 
 
+/** @brief Team listener hook: forwards stack-trace changes onto the looper. */
 void
 TeamDebugger::ThreadStackTraceChanged(const ::Team::ThreadEvent& event)
 {
@@ -1484,6 +1754,7 @@ TeamDebugger::ThreadStackTraceChanged(const ::Team::ThreadEvent& event)
 }
 
 
+/** @brief Team listener hook: forwards image-debug-info changes onto the looper. */
 void
 TeamDebugger::ImageDebugInfoChanged(const ::Team::ImageEvent& event)
 {
@@ -1493,6 +1764,12 @@ TeamDebugger::ImageDebugInfoChanged(const ::Team::ImageEvent& event)
 }
 
 
+/**
+ * @brief Trampoline for the debug-event listener thread; forwards to the instance method.
+ *
+ * @param data  Pointer to the owning TeamDebugger.
+ * @return Status returned by _DebugEventListener().
+ */
 /*static*/ status_t
 TeamDebugger::_DebugEventListenerEntry(void* data)
 {
@@ -1500,6 +1777,16 @@ TeamDebugger::_DebugEventListenerEntry(void* data)
 }
 
 
+/**
+ * @brief Main loop of the debug-event listener thread.
+ *
+ * Repeatedly reads events from the back-end and posts each one to the looper
+ * for ordered processing. Exits when fTerminating is set or when the back-end
+ * returns an error.
+ *
+ * @return B_OK on graceful exit; the function does not propagate back-end
+ *         errors as failure since they only mean the team has gone away.
+ */
 status_t
 TeamDebugger::_DebugEventListener()
 {
@@ -1529,6 +1816,18 @@ TeamDebugger::_DebugEventListener()
 }
 
 
+/**
+ * @brief Dispatches a single DebugEvent to the right ThreadHandler or
+ *        TeamDebugger handler based on its event type.
+ *
+ * For thread-targeted events the per-thread handler returns whether the
+ * thread should remain stopped; if it indicates the thread is still running
+ * the event is silently consumed. Otherwise, the function transitions the
+ * thread to STOPPED with the corresponding reason. The CPU state attached to
+ * the event (when present) is updated atomically with the state transition.
+ *
+ * @param event  Event to dispatch; takes ownership at function exit.
+ */
 void
 TeamDebugger::_HandleDebuggerMessage(DebugEvent* event)
 {
@@ -1719,6 +2018,15 @@ TeamDebugger::_HandleDebuggerMessage(DebugEvent* event)
 }
 
 
+/**
+ * @brief Handles the team's exit by closing the back-end and prompting the user.
+ *
+ * Asks whether to do nothing, quit the debugger, or restart the team
+ * (offered only when the original argv is available).
+ *
+ * @param event  Team-deleted event.
+ * @return Always true (the event has been handled).
+ */
 bool
 TeamDebugger::_HandleTeamDeleted(TeamDeletedEvent* event)
 {
@@ -1753,6 +2061,12 @@ TeamDebugger::_HandleTeamDeleted(TeamDeletedEvent* event)
 }
 
 
+/**
+ * @brief Adds the new thread to the Team model and creates a ThreadHandler for it.
+ *
+ * @param event  Thread-created event.
+ * @return false; new threads are not stopped by default.
+ */
 bool
 TeamDebugger::_HandleThreadCreated(ThreadCreatedEvent* event)
 {
@@ -1777,6 +2091,7 @@ TeamDebugger::_HandleThreadCreated(ThreadCreatedEvent* event)
 }
 
 
+/** @brief Updates the renamed thread's name in the Team model. */
 bool
 TeamDebugger::_HandleThreadRenamed(ThreadRenamedEvent* event)
 {
@@ -1791,6 +2106,12 @@ TeamDebugger::_HandleThreadRenamed(ThreadRenamedEvent* event)
 }
 
 
+/**
+ * @brief Stub for thread-priority-changed events.
+ *
+ * @return Always false.
+ * @todo Track and surface thread priority changes once the model exposes them.
+ */
 bool
 TeamDebugger::_HandleThreadPriorityChanged(ThreadPriorityChangedEvent*)
 {
@@ -1800,6 +2121,7 @@ TeamDebugger::_HandleThreadPriorityChanged(ThreadPriorityChangedEvent*)
 }
 
 
+/** @brief Removes the thread's ThreadHandler and Team model entry. */
 bool
 TeamDebugger::_HandleThreadDeleted(ThreadDeletedEvent* event)
 {
@@ -1813,6 +2135,14 @@ TeamDebugger::_HandleThreadDeleted(ThreadDeletedEvent* event)
 }
 
 
+/**
+ * @brief Adds the newly-loaded image to the Team and remembers the thread that
+ *        triggered the load so it can be resumed once debug info is ready.
+ *
+ * @param event  Image-created event.
+ * @return true if a pending thread record was created; the caller will keep
+ *         the thread stopped until image debug info is loaded.
+ */
 bool
 TeamDebugger::_HandleImageCreated(ImageCreatedEvent* event)
 {
@@ -1829,6 +2159,7 @@ TeamDebugger::_HandleImageCreated(ImageCreatedEvent* event)
 }
 
 
+/** @brief Removes the unloaded image and any breakpoints that pointed into it. */
 bool
 TeamDebugger::_HandleImageDeleted(ImageDeletedEvent* event)
 {
@@ -1851,6 +2182,15 @@ TeamDebugger::_HandleImageDeleted(ImageDeletedEvent* event)
 }
 
 
+/**
+ * @brief Sniffs SYSCALL_WRITE traffic on stdout/stderr to surface console output
+ *        in the debugger UI.
+ *
+ * @param event  Post-syscall event with the syscall arguments and return value.
+ * @return Always false; syscalls don't keep the thread stopped on their own.
+ * @note Currently x86/x86_64 only — argument decoding is endian-sensitive
+ *       and the pure-host path is fine for those targets.
+ */
 bool
 TeamDebugger::_HandlePostSyscall(PostSyscallEvent* event)
 {
@@ -1906,6 +2246,17 @@ TeamDebugger::_HandlePostSyscall(PostSyscallEvent* event)
 }
 
 
+/**
+ * @brief Resets per-team state ahead of an exec() so the new image starts clean.
+ *
+ * Saves settings (so user breakpoints survive), tears down image breakpoints,
+ * removes user breakpoints from the team list (the addresses won't apply to
+ * the new image), and clears the image and signal-disposition tables. Sets
+ * fExecPending so _HandleImageDebugInfoChanged() can finish post-exec setup.
+ *
+ * @param event  Team-exec event (currently only used for tracing).
+ * @note Must be called with the team lock held.
+ */
 void
 TeamDebugger::_PrepareForTeamExec(TeamExecEvent* event)
 {
@@ -1943,6 +2294,19 @@ TeamDebugger::_PrepareForTeamExec(TeamExecEvent* event)
 }
 
 
+/**
+ * @brief Reacts to image-debug-info state changes by reconciling breakpoints
+ *        and resuming or stopping the thread that triggered the load.
+ *
+ * Once the image's debug info has settled (LOADED or UNAVAILABLE) this
+ * function: re-runs the breakpoint-image association, optionally renames the
+ * team and reloads settings on a post-exec app load, and either continues or
+ * stops the originating thread according to the user's stop-on-image-load
+ * preference. For exec, it also re-installs the implicit "stop in main"
+ * breakpoint once the address is resolvable.
+ *
+ * @param imageID  Image whose debug-info state has changed.
+ */
 void
 TeamDebugger::_HandleImageDebugInfoChanged(image_id imageID)
 {
@@ -2023,6 +2387,12 @@ TeamDebugger::_HandleImageDebugInfoChanged(image_id imageID)
 }
 
 
+/**
+ * @brief Stub for "image's underlying file changed on disk".
+ *
+ * @param imageID  Image whose file has changed.
+ * @todo Reload debug info and reconcile breakpoints when the file changes.
+ */
 void
 TeamDebugger::_HandleImageFileChanged(image_id imageID)
 {
@@ -2032,6 +2402,17 @@ TeamDebugger::_HandleImageFileChanged(image_id imageID)
 }
 
 
+/**
+ * @brief Implements MSG_SET_BREAKPOINT for the address-only overload.
+ *
+ * Resolves the image, function instance, and source location at @a address,
+ * builds a UserBreakpointLocation, and either installs a new UserBreakpoint
+ * or just updates the existing one's enabled state.
+ *
+ * @param address  Target address.
+ * @param enabled  Desired enabled state.
+ * @param hidden   Whether the new breakpoint should be hidden in the UI.
+ */
 void
 TeamDebugger::_HandleSetUserBreakpoint(target_addr_t address, bool enabled,
 	bool hidden)
@@ -2173,6 +2554,13 @@ TeamDebugger::_HandleSetUserBreakpoint(target_addr_t address, bool enabled,
 }
 
 
+/**
+ * @brief Asks the BreakpointManager to (re)install @a breakpoint and
+ *        notifies the user on failure.
+ *
+ * @param breakpoint  Breakpoint to install or update.
+ * @param enabled     Desired enabled state.
+ */
 void
 TeamDebugger::_HandleSetUserBreakpoint(UserBreakpoint* breakpoint, bool enabled)
 {
@@ -2185,6 +2573,7 @@ TeamDebugger::_HandleSetUserBreakpoint(UserBreakpoint* breakpoint, bool enabled)
 }
 
 
+/** @brief Looks up a user breakpoint at @a address and forwards to the by-pointer overload. */
 void
 TeamDebugger::_HandleClearUserBreakpoint(target_addr_t address)
 {
@@ -2206,6 +2595,7 @@ TeamDebugger::_HandleClearUserBreakpoint(target_addr_t address)
 }
 
 
+/** @brief Asks the BreakpointManager to remove @a breakpoint. */
 void
 TeamDebugger::_HandleClearUserBreakpoint(UserBreakpoint* breakpoint)
 {
@@ -2213,6 +2603,14 @@ TeamDebugger::_HandleClearUserBreakpoint(UserBreakpoint* breakpoint)
 }
 
 
+/**
+ * @brief Allocates a Watchpoint and forwards to the by-pointer overload.
+ *
+ * @param address  Address to watch.
+ * @param type     B_DATA_*_WATCHPOINT trigger type.
+ * @param length   Watch length in bytes.
+ * @param enabled  Desired enabled state.
+ */
 void
 TeamDebugger::_HandleSetWatchpoint(target_addr_t address, uint32 type,
 	int32 length, bool enabled)
@@ -2228,6 +2626,13 @@ TeamDebugger::_HandleSetWatchpoint(target_addr_t address, uint32 type,
 }
 
 
+/**
+ * @brief Asks the WatchpointManager to (re)install @a watchpoint and notifies
+ *        the user on failure.
+ *
+ * @param watchpoint  Watchpoint to install or update.
+ * @param enabled     Desired enabled state.
+ */
 void
 TeamDebugger::_HandleSetWatchpoint(Watchpoint* watchpoint, bool enabled)
 {
@@ -2240,6 +2645,7 @@ TeamDebugger::_HandleSetWatchpoint(Watchpoint* watchpoint, bool enabled)
 }
 
 
+/** @brief Looks up a watchpoint at @a address and forwards to the by-pointer overload. */
 void
 TeamDebugger::_HandleClearWatchpoint(target_addr_t address)
 {
@@ -2259,6 +2665,7 @@ TeamDebugger::_HandleClearWatchpoint(target_addr_t address)
 }
 
 
+/** @brief Asks the WatchpointManager to remove @a watchpoint. */
 void
 TeamDebugger::_HandleClearWatchpoint(Watchpoint* watchpoint)
 {
@@ -2266,6 +2673,17 @@ TeamDebugger::_HandleClearWatchpoint(Watchpoint* watchpoint)
 }
 
 
+/**
+ * @brief Implements MSG_INSPECT_ADDRESS by retrieving (or starting retrieval
+ *        of) the memory block covering @a address and adding @a listener.
+ *
+ * If the cached block is already valid, the listener is fired synchronously.
+ * Otherwise a RetrieveMemoryBlockJob is scheduled and the listener is added
+ * for later notification.
+ *
+ * @param address   Address to inspect.
+ * @param listener  Listener that wants the block; never NULL.
+ */
 void
 TeamDebugger::_HandleInspectAddress(target_addr_t address,
 	TeamMemoryBlock::Listener* listener)
@@ -2307,6 +2725,13 @@ TeamDebugger::_HandleInspectAddress(target_addr_t address,
 }
 
 
+/**
+ * @brief Implements MSG_WRITE_TARGET_MEMORY by scheduling a WriteMemoryJob.
+ *
+ * @param address  Target-side address.
+ * @param data     Source bytes.
+ * @param size     Number of bytes to write.
+ */
 void
 TeamDebugger::_HandleWriteMemory(target_addr_t address, void* data,
 	target_size_t size)
@@ -2327,6 +2752,14 @@ TeamDebugger::_HandleWriteMemory(target_addr_t address, void* data,
 }
 
 
+/**
+ * @brief Implements MSG_EVALUATE_EXPRESSION by scheduling an ExpressionEvaluationJob.
+ *
+ * @param language  Source language used to parse the expression.
+ * @param info      Expression info; the listener attached to it receives the result.
+ * @param frame     Optional stack frame providing context.
+ * @param thread    Optional thread providing context.
+ */
 void
 TeamDebugger::_HandleEvaluateExpression(SourceLanguage* language,
 	ExpressionInfo* info, StackFrame* frame, ::Thread* thread)
@@ -2341,6 +2774,11 @@ TeamDebugger::_HandleEvaluateExpression(SourceLanguage* language,
 }
 
 
+/**
+ * @brief Implements MSG_WRITE_CORE_FILE by scheduling a WriteCoreFileJob.
+ *
+ * @param targetPath  Filesystem path the kernel/back-end will write to.
+ */
 void
 TeamDebugger::_HandleWriteCoreFile(const entry_ref& targetPath)
 {
@@ -2354,6 +2792,13 @@ TeamDebugger::_HandleWriteCoreFile(const entry_ref& targetPath)
 }
 
 
+/**
+ * @brief Stores a deep copy of the original argv so the team can be restarted.
+ *
+ * @param argc  Argument count.
+ * @param argv  Argument vector; each string is duplicated with strdup().
+ * @return B_OK on success, B_NO_MEMORY if any allocation fails.
+ */
 status_t
 TeamDebugger::_HandleSetArguments(int argc, const char* const* argv)
 {
@@ -2374,6 +2819,11 @@ TeamDebugger::_HandleSetArguments(int argc, const char* const* argv)
 }
 
 
+/**
+ * @brief Routes a debug-info job's input request to the appropriate state handler.
+ *
+ * @param state  Loading state carrying the question that needs user input.
+ */
 void
 TeamDebugger::_HandleDebugInfoJobUserInput(ImageDebugInfoLoadingState* state)
 {
@@ -2392,6 +2842,13 @@ TeamDebugger::_HandleDebugInfoJobUserInput(ImageDebugInfoLoadingState* state)
 }
 
 
+/**
+ * @brief Looks up the per-thread handler for @a threadID and acquires a reference.
+ *
+ * @param threadID  Thread to find.
+ * @return Pointer to the handler with a fresh reference (owner must release),
+ *         or NULL if no handler exists for that thread.
+ */
 ThreadHandler*
 TeamDebugger::_GetThreadHandler(thread_id threadID)
 {
@@ -2404,6 +2861,16 @@ TeamDebugger::_GetThreadHandler(thread_id threadID)
 }
 
 
+/**
+ * @brief Adds @a imageInfo to the Team and creates an ImageHandler for it.
+ *
+ * Resolves the on-disk file path (when present), schedules a debug-info load,
+ * and registers an ImageHandler so file changes flow back into the debugger.
+ *
+ * @param imageInfo  Image descriptor.
+ * @param _image     Optional output pointer for the newly-added Image.
+ * @return B_OK on success or any error from Team::AddImage().
+ */
 status_t
 TeamDebugger::_AddImage(const ImageInfo& imageInfo, Image** _image)
 {
@@ -2430,6 +2897,13 @@ TeamDebugger::_AddImage(const ImageInfo& imageInfo, Image** _image)
 }
 
 
+/**
+ * @brief Loads persisted settings (breakpoints, watchpoints, signal dispositions, UI)
+ *        into the running team.
+ *
+ * Best-effort: any individual failure is logged via TRACE_* and the rest of
+ * the load continues so the user gets as much state restored as possible.
+ */
 void
 TeamDebugger::_LoadSettings()
 {
@@ -2501,6 +2975,14 @@ TeamDebugger::_LoadSettings()
 }
 
 
+/**
+ * @brief Persists the current team settings (breakpoints, watchpoints, UI,
+ *        signal dispositions) through the SettingsManager.
+ *
+ * Preserves UI settings for other UI ids by copying them from the cached
+ * fTeamSettings, so multiple front-ends can coexist on the same team without
+ * trampling each other's state.
+ */
 void
 TeamDebugger::_SaveSettings()
 {
@@ -2534,6 +3016,13 @@ TeamDebugger::_SaveSettings()
 }
 
 
+/**
+ * @brief printf-style helper that pops a USER_NOTIFICATION_WARNING dialog.
+ *
+ * @param title  Dialog title.
+ * @param text   printf-style format string.
+ * @param ...    Format arguments.
+ */
 void
 TeamDebugger::_NotifyUser(const char* title, const char* text,...)
 {
@@ -2549,6 +3038,10 @@ TeamDebugger::_NotifyUser(const char* title, const char* text,...)
 }
 
 
+/**
+ * @brief Posts a status-reset message when the worker has fully drained,
+ *        causing the UI to clear the background-work indicator.
+ */
 void
 TeamDebugger::_ResetUserBackgroundStatusIfNeeded()
 {
@@ -2560,6 +3053,7 @@ TeamDebugger::_ResetUserBackgroundStatusIfNeeded()
 // #pragma mark - Listener
 
 
+/** @brief Virtual destructor for the TeamDebugger listener interface. */
 TeamDebugger::Listener::~Listener()
 {
 }

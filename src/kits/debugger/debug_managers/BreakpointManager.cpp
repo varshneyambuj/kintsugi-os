@@ -1,7 +1,39 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file BreakpointManager.cpp
+ * @brief Drives breakpoint installation and lifecycle for a debugged Team.
+ *
+ * Tracks the relationships between user-facing UserBreakpoint objects, the
+ * per-address Breakpoint records they expand into, and the underlying
+ * DebuggerInterface installation. Also reconciles breakpoints when images are
+ * loaded (creating instances at newly-resolved addresses) or unloaded
+ * (removing the now-stale instances and uninstalling).
+ */
+
 
 #include "BreakpointManager.h"
 
@@ -19,6 +51,13 @@
 #include "Tracing.h"
 
 
+/**
+ * @brief Constructs the manager and acquires a reference on the debugger interface.
+ *
+ * @param team              The Team whose breakpoint set is being managed.
+ * @param debuggerInterface Back-end used to install/uninstall breakpoints; the
+ *                          manager holds a reference for its lifetime.
+ */
 BreakpointManager::BreakpointManager(Team* team,
 	DebuggerInterface* debuggerInterface)
 	:
@@ -30,12 +69,20 @@ BreakpointManager::BreakpointManager(Team* team,
 }
 
 
+/**
+ * @brief Releases the debugger-interface reference held by the manager.
+ */
 BreakpointManager::~BreakpointManager()
 {
 	fDebuggerInterface->ReleaseReference();
 }
 
 
+/**
+ * @brief Performs late initialization of the manager's lock.
+ *
+ * @return Result of the lock's InitCheck (B_OK on success).
+ */
 status_t
 BreakpointManager::Init()
 {
@@ -43,6 +90,21 @@ BreakpointManager::Init()
 }
 
 
+/**
+ * @brief Installs (or updates the enabled state of) a user breakpoint.
+ *
+ * Walks the user breakpoint's instances, ensures each one has a Breakpoint
+ * record bound to it (creating a new record if needed), then reconciles the
+ * actual installation state by calling _UpdateBreakpointInstallation(). On
+ * any error, fully reverts to the prior state so the team's view stays
+ * consistent.
+ *
+ * @param userBreakpoint  User-visible breakpoint to install or update.
+ * @param enabled         Desired enabled state.
+ * @return B_OK on success, B_BAD_ADDRESS if any instance lies outside any
+ *         loaded image, B_NO_MEMORY on allocation failure, or any error
+ *         returned by the debugger interface.
+ */
 status_t
 BreakpointManager::InstallUserBreakpoint(UserBreakpoint* userBreakpoint,
 	bool enabled)
@@ -181,6 +243,15 @@ BreakpointManager::InstallUserBreakpoint(UserBreakpoint* userBreakpoint,
 }
 
 
+/**
+ * @brief Uninstalls a previously-installed user breakpoint and its instances.
+ *
+ * Marks the user breakpoint invalid, detaches each instance from its
+ * Breakpoint record, uninstalls the underlying breakpoints whose last user
+ * just went away, and releases the reference taken at install time.
+ *
+ * @param userBreakpoint  User-visible breakpoint to remove. No-op if invalid.
+ */
 void
 BreakpointManager::UninstallUserBreakpoint(UserBreakpoint* userBreakpoint)
 {
@@ -228,6 +299,20 @@ BreakpointManager::UninstallUserBreakpoint(UserBreakpoint* userBreakpoint)
 }
 
 
+/**
+ * @brief Installs a short-lived breakpoint owned by a runtime client.
+ *
+ * Used for things like step-over and step-out, where the debugger needs to
+ * stop at a known address but no user-visible breakpoint should appear. If a
+ * Breakpoint record already exists at @a address it is reused; otherwise a
+ * new one is created and added to the team.
+ *
+ * @param address  Target-side instruction address to break on.
+ * @param client   Client object that will own the breakpoint reference.
+ * @return B_OK on success, B_BAD_ADDRESS if no image covers the address,
+ *         B_NO_MEMORY on allocation failure, or any error returned by the
+ *         debugger interface during installation.
+ */
 status_t
 BreakpointManager::InstallTemporaryBreakpoint(target_addr_t address,
 	BreakpointClient* client)
@@ -281,6 +366,16 @@ BreakpointManager::InstallTemporaryBreakpoint(target_addr_t address,
 }
 
 
+/**
+ * @brief Removes a temporary breakpoint previously installed for @a client.
+ *
+ * Drops @a client from the breakpoint's owner set; if no users remain and the
+ * underlying breakpoint is no longer needed, uninstalls the hardware site and
+ * removes the team-level record.
+ *
+ * @param address  Address of the temporary breakpoint.
+ * @param client   Client originally passed to InstallTemporaryBreakpoint().
+ */
 void
 BreakpointManager::UninstallTemporaryBreakpoint(target_addr_t address,
 	BreakpointClient* client)
@@ -313,6 +408,15 @@ BreakpointManager::UninstallTemporaryBreakpoint(target_addr_t address,
 }
 
 
+/**
+ * @brief Reconciles breakpoints with the contents of a freshly-loaded image.
+ *
+ * Removes stale instances that pointed at unloaded code and creates new
+ * instances for any user breakpoint that names a function present in the
+ * incoming image.
+ *
+ * @param image  Image whose load just completed.
+ */
 void
 BreakpointManager::UpdateImageBreakpoints(Image* image)
 {
@@ -320,6 +424,11 @@ BreakpointManager::UpdateImageBreakpoints(Image* image)
 }
 
 
+/**
+ * @brief Removes breakpoint instances that referenced an image being unloaded.
+ *
+ * @param image  Image about to be unloaded.
+ */
 void
 BreakpointManager::RemoveImageBreakpoints(Image* image)
 {
@@ -327,6 +436,20 @@ BreakpointManager::RemoveImageBreakpoints(Image* image)
 }
 
 
+/**
+ * @brief Internal implementation shared by UpdateImageBreakpoints() and
+ *        RemoveImageBreakpoints().
+ *
+ * Walks all known user breakpoints, drops instances that referenced
+ * @a image, and (when @a removeOnly is false) re-creates instances for
+ * functions in @a image's debug info — picking the address from the source
+ * statement when available, otherwise from the same relative offset within
+ * the function.
+ *
+ * @param image       Image to add or remove breakpoints for.
+ * @param removeOnly  If true, only stale removal is performed; if false the
+ *                    function also adds new instances using @a image 's debug info.
+ */
 void
 BreakpointManager::_UpdateImageBreakpoints(Image* image, bool removeOnly)
 {
@@ -480,6 +603,18 @@ BreakpointManager::_UpdateImageBreakpoints(Image* image, bool removeOnly)
 }
 
 
+/**
+ * @brief Brings the hardware install state of @a breakpoint in line with its
+ *        ShouldBeInstalled() flag.
+ *
+ * If the desired state already matches reality the call is a no-op. When
+ * installation is needed but the back-end is not yet connected, the request
+ * is silently accepted so settings can be saved for later use.
+ *
+ * @param breakpoint  Breakpoint to reconcile; must be non-NULL.
+ * @return B_OK on success or any error returned by the debugger interface.
+ * @note Caller must hold fLock.
+ */
 status_t
 BreakpointManager::_UpdateBreakpointInstallation(Breakpoint* breakpoint)
 {

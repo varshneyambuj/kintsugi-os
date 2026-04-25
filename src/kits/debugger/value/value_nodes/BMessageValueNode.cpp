@@ -1,6 +1,44 @@
 /*
- * Copyright 2011-2015, Rene Gollent, rene@gollent.com
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2011-2015, Rene Gollent, rene@gollent.com
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file BMessageValueNode.cpp
+ * @brief Implementation of BMessageValueNode -- renders a BMessage with one child per field.
+ *
+ * The most complex value-node in the debugger: it pulls the BMessage header,
+ * field table, and data buffer out of target memory, replays them through
+ * BMessage::Unflatten() to recover a working copy in the debugger's address
+ * space, and then walks @c GetInfo() to expose one child per named field.
+ * Each field child can spawn an internal "field group" node when @c count > 1
+ * so multi-value fields appear as expandable arrays.
+ *
+ * The node also supports a "flat message" mode, where the parent location is
+ * itself a BMessage flat buffer rather than a BMessage object; this is used
+ * for nested BMessages stored as B_MESSAGE_TYPE field data.
+ *
+ * @see BMessageTypeHandler, ValueNode
  */
 
 
@@ -23,14 +61,29 @@
 #include "ValueNodeContainer.h"
 
 
+/** @brief Maximum number of bytes shown when rendering a B_STRING_TYPE field. */
 static const int64 kMaxStringSize = 64;
 
 
 // #pragma mark - BMessageWhatNodeChild
 
 
+/**
+ * @brief Pseudo-child that exposes the BMessage's @c what code as a sibling field.
+ *
+ * Resolves to the @c what data member of the parent BMessage object, or to
+ * the second uint32 word inside the flat header when the parent is a flat
+ * message.
+ */
 class BMessageWhatNodeChild : public ValueNodeChild {
 public:
+	/**
+	 * @brief Constructs the @c what pseudo-child.
+	 *
+	 * @param parent  Owning BMessageValueNode.
+	 * @param member  DataMember describing the @c what field (used for the non-flat case).
+	 * @param type    Type of the @c what field (typically uint32).
+	 */
 	BMessageWhatNodeChild(BMessageValueNode* parent, DataMember* member,
 		Type* type)
 		:
@@ -44,27 +97,58 @@ public:
 		fType->AcquireReference();
 	}
 
+	/**
+	 * @brief Releases the references held on the parent and field type.
+	 */
 	virtual ~BMessageWhatNodeChild()
 	{
 		fParent->ReleaseReference();
 		fType->ReleaseReference();
 	}
 
+	/**
+	 * @brief Returns the literal display name "what".
+	 *
+	 * @return Reference to the cached name string.
+	 */
 	virtual const BString& Name() const
 	{
 		return fName;
 	}
 
+	/**
+	 * @brief Returns the @c what field's type.
+	 *
+	 * @return The cached Type.
+	 */
 	virtual Type* GetType() const
 	{
 		return fType;
 	}
 
+	/**
+	 * @brief Returns the owning BMessageValueNode.
+	 *
+	 * @return The parent node.
+	 */
 	virtual ValueNode* Parent() const
 	{
 		return fParent;
 	}
 
+	/**
+	 * @brief Computes the location of the @c what field.
+	 *
+	 * For a flat message, the @c what occupies the second uint32 of the
+	 * header (immediately after the format code). Otherwise, the BMessage
+	 * compound type knows where to find @c what relative to the object.
+	 *
+	 * @param valueLoader  Unused.
+	 * @param _location    Set to a freshly allocated location on success.
+	 * @retval B_OK         On success.
+	 * @retval B_NO_MEMORY  On allocation failure.
+	 * @return Other status_t propagated from CompoundType::ResolveDataMemberLocation().
+	 */
 	virtual status_t ResolveLocation(ValueLoader* valueLoader,
 		ValueLocation*& _location)
 	{
@@ -105,6 +189,12 @@ private:
 // #pragma mark - BMessageValueNode
 
 
+/**
+ * @brief Constructs the node and references its DWARF type.
+ *
+ * @param nodeChild  Child this node renders for.
+ * @param type       Compound type for BMessage.
+ */
 BMessageValueNode::BMessageValueNode(ValueNodeChild* nodeChild,
 	Type* type)
 	:
@@ -119,6 +209,9 @@ BMessageValueNode::BMessageValueNode(ValueNodeChild* nodeChild,
 }
 
 
+/**
+ * @brief Releases all children, the type, and the cached header/field/data buffers.
+ */
 BMessageValueNode::~BMessageValueNode()
 {
 	fType->ReleaseReference();
@@ -131,6 +224,11 @@ BMessageValueNode::~BMessageValueNode()
 }
 
 
+/**
+ * @brief Returns the wrapped DWARF type.
+ *
+ * @return The compound BMessage type.
+ */
 Type*
 BMessageValueNode::GetType() const
 {
@@ -138,6 +236,27 @@ BMessageValueNode::GetType() const
 }
 
 
+/**
+ * @brief Pulls the BMessage's header, field table, and data buffer out of the target.
+ *
+ * Detects flat-message mode (when the owning child is a BMessageFieldNodeChild)
+ * by dynamic_cast; in that case the parent location is the start of a flat
+ * BMessage buffer and addresses are computed from offsets. Otherwise, walks
+ * the BMessage compound's data members @c fHeader, @c what, @c fFields, and
+ * @c fData and reads them via the loader. The complete flat byte stream is
+ * then rebuilt and fed through BMessage::Unflatten() so subsequent calls
+ * (CreateChildren, _FindField, _FindDataLocation) can use the standard
+ * BMessage API.
+ *
+ * @param valueLoader  Loader used to read target memory.
+ * @param _location    Receives a re-referenced copy of the parent location.
+ * @param _value       Always set to NULL -- this node has no scalar value.
+ * @retval B_OK             On success.
+ * @retval B_BAD_VALUE      When the parent location is missing.
+ * @retval B_NO_MEMORY      On allocation failure.
+ * @retval B_NOT_A_MESSAGE  When the loaded header does not look like a Haiku BMessage.
+ * @return Other status_t propagated from the loader or from BMessage::Unflatten().
+ */
 status_t
 BMessageValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 	ValueLocation*& _location, Value*& _value)
@@ -323,6 +442,18 @@ BMessageValueNode::ResolvedLocationAndValue(ValueLoader* valueLoader,
 }
 
 
+/**
+ * @brief Materialises one child for each named field plus the @c what pseudo-child.
+ *
+ * Walks the BMessage compound type to locate the @c what data member (so a
+ * BMessageWhatNodeChild can be allocated for it), then iterates fields via
+ * BMessage::GetInfo() to produce one BMessageFieldNodeChild per named field.
+ *
+ * @param info  Type-information service used to resolve B_*_TYPE codes to
+ *              concrete debug types.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ */
 status_t
 BMessageValueNode::CreateChildren(TeamTypeInformation* info)
 {
@@ -376,6 +507,11 @@ BMessageValueNode::CreateChildren(TeamTypeInformation* info)
 }
 
 
+/**
+ * @brief Returns the number of currently materialised children.
+ *
+ * @return Count of children (one per field plus the @c what pseudo-child).
+ */
 int32
 BMessageValueNode::CountChildren() const
 {
@@ -383,6 +519,12 @@ BMessageValueNode::CountChildren() const
 }
 
 
+/**
+ * @brief Returns the child at @a index, or NULL if out of range.
+ *
+ * @param index  Zero-based index.
+ * @return The child reference, or NULL.
+ */
 ValueNodeChild*
 BMessageValueNode::ChildAt(int32 index) const
 {
@@ -390,6 +532,19 @@ BMessageValueNode::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Maps a BMessage @c type_code to a concrete debug Type.
+ *
+ * Handles all primitive type codes by name lookup against the type
+ * information service. B_STRING_TYPE is special-cased to produce a derived
+ * char[kMaxStringSize] array type so the variables view shows a C-style
+ * string. Unknown or pointer-like codes resolve to @c void*.
+ *
+ * @param info   Type-information service.
+ * @param type   The BMessage field's type code.
+ * @param _type  Set to the resolved Type on success.
+ * @return Status of the lookup; B_OK on success.
+ */
 status_t
 BMessageValueNode::_GetTypeForTypeCode(TeamTypeInformation* info,
 	type_code type, Type*& _type)
@@ -519,6 +674,21 @@ BMessageValueNode::_GetTypeForTypeCode(TeamTypeInformation* info,
 }
 
 
+/**
+ * @brief Looks up the field-header for a name/type pair using the cached header's hash table.
+ *
+ * Mirrors BMessage's own internal lookup so the debugger can compute byte
+ * offsets without re-running BMessage code on the cached buffer.
+ *
+ * @param name    Field name.
+ * @param type    Expected field type, or B_ANY_TYPE.
+ * @param result  Set to the matching field_header on success.
+ * @retval B_OK              On a match.
+ * @retval B_BAD_VALUE       When @a name is NULL.
+ * @retval B_NO_INIT         When the header has not been loaded yet.
+ * @retval B_NAME_NOT_FOUND  When no field with that name exists.
+ * @retval B_BAD_TYPE        When the matching field has a different type than @a type.
+ */
 status_t
 BMessageValueNode::_FindField(const char* name, type_code type,
 	BMessage::field_header** result) const
@@ -556,6 +726,12 @@ BMessageValueNode::_FindField(const char* name, type_code type,
 }
 
 
+/**
+ * @brief Computes the BMessage hash of @a name (matches private BMessage code).
+ *
+ * @param name  NUL-terminated field name.
+ * @return Hash value used to probe the field hash table.
+ */
 uint32
 BMessageValueNode::_HashName(const char* name) const
 {
@@ -572,6 +748,22 @@ BMessageValueNode::_HashName(const char* name) const
 }
 
 
+/**
+ * @brief Builds an in-target ValueLocation for a particular field/index payload byte range.
+ *
+ * Handles both fixed-size fields (offsets advance by @c data_size / count)
+ * and variable-size fields (each element is preceded by a uint32 length
+ * prefix, walked element-by-element).
+ *
+ * @param name      Field name.
+ * @param type      Field type, or B_ANY_TYPE.
+ * @param index     Element index within the field.
+ * @param location  Cleared and populated with one memory piece on success.
+ * @retval B_OK              On success.
+ * @retval B_BAD_INDEX       When @a index is out of range.
+ * @retval B_NAME_NOT_FOUND  When the field is missing.
+ * @retval B_BAD_TYPE        When the field's type does not match @a type.
+ */
 status_t
 BMessageValueNode::_FindDataLocation(const char* name, type_code type,
 	int32 index, ValueLocation& location) const
@@ -614,6 +806,18 @@ BMessageValueNode::_FindDataLocation(const char* name, type_code type,
 // #pragma mark - BMessageValueNode::BMessageFieldNode
 
 
+/**
+ * @brief Constructs the inner node that groups multi-element field children.
+ *
+ * Used when a single BMessage field carries multiple values; the inner node
+ * presents one indexed child per element.
+ *
+ * @param child   Owning BMessageFieldNodeChild.
+ * @param parent  Top-level BMessageValueNode.
+ * @param name    Field name.
+ * @param type    Field type.
+ * @param count   Number of elements in the field.
+ */
 BMessageValueNode::BMessageFieldNode::BMessageFieldNode(
 	BMessageFieldNodeChild *child, BMessageValueNode* parent,
 	const BString &name, type_code type, int32 count)
@@ -630,6 +834,9 @@ BMessageValueNode::BMessageFieldNode::BMessageFieldNode(
 }
 
 
+/**
+ * @brief Releases the references held on the parent and BMessage type.
+ */
 BMessageValueNode::BMessageFieldNode::~BMessageFieldNode()
 {
 	fParent->ReleaseReference();
@@ -637,6 +844,11 @@ BMessageValueNode::BMessageFieldNode::~BMessageFieldNode()
 }
 
 
+/**
+ * @brief Returns the BMessage compound type from the parent.
+ *
+ * @return The DWARF BMessage type.
+ */
 Type*
 BMessageValueNode::BMessageFieldNode::GetType() const
 {
@@ -644,6 +856,14 @@ BMessageValueNode::BMessageFieldNode::GetType() const
 }
 
 
+/**
+ * @brief Materialises one indexed child per element of the underlying field.
+ *
+ * @param info  Type-information service used to resolve the field's element type.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ * @return Status_t propagated from BMessageValueNode::_GetTypeForTypeCode().
+ */
 status_t
 BMessageValueNode::BMessageFieldNode::CreateChildren(TeamTypeInformation* info)
 {
@@ -676,12 +896,23 @@ BMessageValueNode::BMessageFieldNode::CreateChildren(TeamTypeInformation* info)
 }
 
 
+/**
+ * @brief Returns the number of indexed element children.
+ *
+ * @return Count of children (one per element).
+ */
 int32
 BMessageValueNode::BMessageFieldNode::CountChildren() const
 {
 	return fChildren.CountItems();
 }
 
+/**
+ * @brief Returns the indexed child at @a index, or NULL if out of range.
+ *
+ * @param index  Zero-based index.
+ * @return The child reference, or NULL.
+ */
 ValueNodeChild*
 BMessageValueNode::BMessageFieldNode::ChildAt(int32 index) const
 {
@@ -689,6 +920,14 @@ BMessageValueNode::BMessageFieldNode::ChildAt(int32 index) const
 }
 
 
+/**
+ * @brief Inner field-group node has no scalar value of its own.
+ *
+ * @param loader     Unused.
+ * @param _location  Set to NULL.
+ * @param _value     Set to NULL.
+ * @retval B_OK  Always.
+ */
 status_t
 BMessageValueNode::BMessageFieldNode::ResolvedLocationAndValue(
 	ValueLoader* loader, ValueLocation *& _location, Value*& _value)
@@ -703,6 +942,22 @@ BMessageValueNode::BMessageFieldNode::ResolvedLocationAndValue(
 // #pragma mark - BMessageValueNode::BMessageFieldNodeChild
 
 
+/**
+ * @brief Constructs a BMessage field child.
+ *
+ * Two roles depending on @a count and @a index:
+ * - When @c count > 1 and @c index < 0: this child wraps a multi-element
+ *   field and spawns an internal BMessageFieldNode.
+ * - When @c index >= 0: this child wraps a single element of a multi-element
+ *   field; the display name becomes "[index]".
+ *
+ * @param parent     Top-level BMessageValueNode.
+ * @param nodeType   Type of the field (or its element type).
+ * @param name       Field name.
+ * @param type       Field type code.
+ * @param count      Element count for the field.
+ * @param index      Element index, or -1 for the field-group itself.
+ */
 BMessageValueNode::BMessageFieldNodeChild::BMessageFieldNodeChild(
 	BMessageValueNode* parent, Type* nodeType, const BString &name,
 	type_code type, int32 count, int32 index)
@@ -724,6 +979,9 @@ BMessageValueNode::BMessageFieldNodeChild::BMessageFieldNodeChild(
 }
 
 
+/**
+ * @brief Releases the references held on the parent and field type.
+ */
 BMessageValueNode::BMessageFieldNodeChild::~BMessageFieldNodeChild()
 {
 	fParent->ReleaseReference();
@@ -731,6 +989,11 @@ BMessageValueNode::BMessageFieldNodeChild::~BMessageFieldNodeChild()
 }
 
 
+/**
+ * @brief Returns the user-visible name (field name or "[index]").
+ *
+ * @return Reference to the cached presentation name.
+ */
 const BString&
 BMessageValueNode::BMessageFieldNodeChild::Name() const
 {
@@ -738,6 +1001,11 @@ BMessageValueNode::BMessageFieldNodeChild::Name() const
 }
 
 
+/**
+ * @brief Returns the field's element type.
+ *
+ * @return The cached Type.
+ */
 Type*
 BMessageValueNode::BMessageFieldNodeChild::GetType() const
 {
@@ -745,6 +1013,11 @@ BMessageValueNode::BMessageFieldNodeChild::GetType() const
 }
 
 
+/**
+ * @brief Returns the top-level BMessageValueNode.
+ *
+ * @return The parent node.
+ */
 ValueNode*
 BMessageValueNode::BMessageFieldNodeChild::Parent() const
 {
@@ -752,6 +1025,12 @@ BMessageValueNode::BMessageFieldNodeChild::Parent() const
 }
 
 
+/**
+ * @brief Reports whether this child needs an internal field-group node.
+ *
+ * @return true when the field has more than one element and the child is not
+ *         already an indexed element.
+ */
 bool
 BMessageValueNode::BMessageFieldNodeChild::IsInternal() const
 {
@@ -759,6 +1038,13 @@ BMessageValueNode::BMessageFieldNodeChild::IsInternal() const
 }
 
 
+/**
+ * @brief Allocates a BMessageFieldNode to expose multi-element fields.
+ *
+ * @param _node  Set to the freshly allocated node on success.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ */
 status_t
 BMessageValueNode::BMessageFieldNodeChild::CreateInternalNode(
 	ValueNode*& _node)
@@ -773,6 +1059,18 @@ BMessageValueNode::BMessageFieldNodeChild::CreateInternalNode(
 }
 
 
+/**
+ * @brief Computes the in-target byte range for this field/element.
+ *
+ * Defers to BMessageValueNode::_FindDataLocation() with index 0 when the
+ * child wraps a multi-element field as a whole, otherwise uses fFieldIndex.
+ *
+ * @param valueLoader  Unused.
+ * @param _location    Set to a freshly allocated ValueLocation on success.
+ * @retval B_OK         On success.
+ * @retval B_NO_MEMORY  On allocation failure.
+ * @return Other status_t propagated from _FindDataLocation().
+ */
 status_t
 BMessageValueNode::BMessageFieldNodeChild::ResolveLocation(
 	ValueLoader* valueLoader, ValueLocation*& _location)

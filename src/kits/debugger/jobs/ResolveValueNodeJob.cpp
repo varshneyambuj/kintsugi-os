@@ -1,8 +1,40 @@
 /*
- * Copyright 2012-2015, Rene Gollent, rene@gollent.com.
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2012-2015, Rene Gollent, rene@gollent.com.
+ *   Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Distributed under the terms of the MIT License.
  */
+
+
+/**
+ * @file ResolveValueNodeJob.cpp
+ * @brief Job that resolves the location and value of a debugged value node.
+ *
+ * ResolveValueNodeValueJob walks a node's parent chain on demand, scheduling
+ * recursive resolution jobs when the parent's value has not yet been
+ * computed. Once parent and child-location dependencies are satisfied, the
+ * node is asked to compute its own location and value through a ValueLoader,
+ * and the result is committed back into the value node container.
+ */
+
 
 #include "Jobs.h"
 
@@ -22,6 +54,19 @@
 #include "VariableValueNodeChild.h"
 
 
+/**
+ * @brief Construct a ResolveValueNodeValueJob for the given value node.
+ *
+ * Acquires references to the optional CPU state, container, and value node
+ * so they remain valid until the job completes.
+ *
+ * @param debuggerInterface  Debugger backend used by the loader.
+ * @param architecture       Target architecture.
+ * @param cpuState           CPU state for the active frame, or @c NULL.
+ * @param typeInformation    Team type-information service for the loader.
+ * @param container          Container the node belongs to.
+ * @param valueNode          Node whose location and value should be resolved.
+ */
 ResolveValueNodeValueJob::ResolveValueNodeValueJob(
 	DebuggerInterface* debuggerInterface, Architecture* architecture,
 	CpuState* cpuState, TeamTypeInformation* typeInformation,
@@ -42,6 +87,9 @@ ResolveValueNodeValueJob::ResolveValueNodeValueJob(
 }
 
 
+/**
+ * @brief Releases references on CPU state, container, and value node.
+ */
 ResolveValueNodeValueJob::~ResolveValueNodeValueJob()
 {
 	if (fCpuState != NULL)
@@ -51,6 +99,11 @@ ResolveValueNodeValueJob::~ResolveValueNodeValueJob()
 }
 
 
+/**
+ * @brief Returns the worker-queue key identifying this resolve job.
+ *
+ * @return Reference to the job key keyed on the value node.
+ */
 const JobKey&
 ResolveValueNodeValueJob::Key() const
 {
@@ -58,6 +111,17 @@ ResolveValueNodeValueJob::Key() const
 }
 
 
+/**
+ * @brief Resolves the node's location and value, scheduling parents as needed.
+ *
+ * Short-circuits if the node is already resolved or no longer belongs to the
+ * container. On failure, the node is marked with the resulting error so
+ * observers are not left waiting on a stale node.
+ *
+ * @retval B_OK          On success or when resolution is already complete.
+ * @retval B_BAD_VALUE   When the node no longer belongs to its container.
+ * @return Otherwise an error from the underlying loader/parent resolution.
+ */
 status_t
 ResolveValueNodeValueJob::Do()
 {
@@ -90,6 +154,16 @@ ResolveValueNodeValueJob::Do()
 }
 
 
+/**
+ * @brief Drives the resolve sequence: parent value, child location, own value.
+ *
+ * Recursively schedules resolution of the parent node when needed, then asks
+ * the node child to resolve its location, and finally calls
+ * ValueNode::ResolvedLocationAndValue() through a ValueLoader. The final
+ * location/value are committed under the container lock.
+ *
+ * @return B_OK on success or the first error encountered along the chain.
+ */
 status_t
 ResolveValueNodeValueJob::_ResolveNodeValue()
 {
@@ -181,6 +255,15 @@ ResolveValueNodeValueJob::_ResolveNodeValue()
 }
 
 
+/**
+ * @brief Resolves the location of a value node child via ValueLoader.
+ *
+ * Sets the resolved location on the node child while honouring the case
+ * where another resolver already raced ahead and set a final state.
+ *
+ * @param nodeChild  Child whose location should be resolved.
+ * @return B_OK on success or the underlying ResolveLocation() error.
+ */
 status_t
 ResolveValueNodeValueJob::_ResolveNodeChildLocation(ValueNodeChild* nodeChild)
 {
@@ -202,6 +285,19 @@ ResolveValueNodeValueJob::_ResolveNodeChildLocation(ValueNodeChild* nodeChild)
 }
 
 
+/**
+ * @brief Ensures @a parentNode has a resolved value, scheduling a job if not.
+ *
+ * If a sibling job is already resolving @a parentNode this routine simply
+ * waits on it; otherwise a new ResolveValueNodeValueJob is scheduled and the
+ * caller blocks via WaitFor() until it completes. Race conditions where the
+ * job vanishes between scheduling and waiting are handled gracefully.
+ *
+ * @param parentNode  Parent node whose value must be resolved.
+ * @retval B_OK         On success or when the dependency is already active.
+ * @retval B_BAD_VALUE  When the parent no longer belongs to the container.
+ * @retval B_ERROR      When the dependency job failed or was aborted.
+ */
 status_t
 ResolveValueNodeValueJob::_ResolveParentNodeValue(ValueNode* parentNode)
 {

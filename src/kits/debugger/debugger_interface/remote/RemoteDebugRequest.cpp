@@ -1,6 +1,37 @@
 /*
- * Copyright 2016, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2016, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file RemoteDebugRequest.cpp
+ * @brief Marshalling implementation for the network debugger transport's
+ *        request/response objects.
+ *
+ * Each concrete request and response subclass plus the two abstract bases
+ * implement LoadFromMessage()/SaveToMessage() to round-trip themselves
+ * through a BMessage. Type() returns the wire-protocol id used by the remote
+ * dispatcher to route a request to its handler.
  */
 
 
@@ -21,6 +52,9 @@
 // #pragma mark - RemoteDebugRequest
 
 
+/**
+ * @brief Default-constructs a request with no associated architecture.
+ */
 RemoteDebugRequest::RemoteDebugRequest()
 	:
 	BReferenceable(),
@@ -29,6 +63,9 @@ RemoteDebugRequest::RemoteDebugRequest()
 }
 
 
+/**
+ * @brief Releases the architecture reference if one was set.
+ */
 RemoteDebugRequest::~RemoteDebugRequest()
 {
 	if (fArchitecture != NULL)
@@ -36,6 +73,13 @@ RemoteDebugRequest::~RemoteDebugRequest()
 }
 
 
+/**
+ * @brief Validates the message type and forwards to the subclass loader.
+ *
+ * @param data  Message previously produced by SaveToMessage().
+ * @return B_OK on success, B_BAD_VALUE if the type field doesn't match,
+ *         or any error from LoadSpecificInfoFromMessage().
+ */
 status_t
 RemoteDebugRequest::LoadFromMessage(const BMessage& data)
 {
@@ -46,6 +90,13 @@ RemoteDebugRequest::LoadFromMessage(const BMessage& data)
 }
 
 
+/**
+ * @brief Empties @a _output, writes the type tag, and forwards to the subclass writer.
+ *
+ * @param _output  Message to populate; cleared on entry.
+ * @return B_OK on success, otherwise the first failing AddInt32() or
+ *         SaveSpecificInfoToMessage() error.
+ */
 status_t
 RemoteDebugRequest::SaveToMessage(BMessage& _output) const
 {
@@ -59,6 +110,11 @@ RemoteDebugRequest::SaveToMessage(BMessage& _output) const
 }
 
 
+/**
+ * @brief Sets the architecture used for CpuState marshalling and acquires a reference.
+ *
+ * @param architecture  Architecture to associate; must be non-NULL.
+ */
 void
 RemoteDebugRequest::SetArchitecture(Architecture* architecture)
 {
@@ -70,6 +126,9 @@ RemoteDebugRequest::SetArchitecture(Architecture* architecture)
 // #pragma mark - RemoteDebugResponse
 
 
+/**
+ * @brief Default-constructs a response with no request and a B_OK result.
+ */
 RemoteDebugResponse::RemoteDebugResponse()
 	:
 	BReferenceable(),
@@ -79,6 +138,9 @@ RemoteDebugResponse::RemoteDebugResponse()
 }
 
 
+/**
+ * @brief Releases the request reference if one was set.
+ */
 RemoteDebugResponse::~RemoteDebugResponse()
 {
 	if (fRequest != NULL)
@@ -86,6 +148,12 @@ RemoteDebugResponse::~RemoteDebugResponse()
 }
 
 
+/**
+ * @brief Binds the response to its originating request and result code.
+ *
+ * @param request  Originating request; the response acquires a reference.
+ * @param result   Outcome of the request.
+ */
 void
 RemoteDebugResponse::SetRequestInfo(RemoteDebugRequest* request,
 	status_t result)
@@ -96,6 +164,14 @@ RemoteDebugResponse::SetRequestInfo(RemoteDebugRequest* request,
 }
 
 
+/**
+ * @brief Validates the type tag, checks the result, and forwards to the
+ *        subclass loader on success.
+ *
+ * @param data  Message previously produced by SaveToMessage().
+ * @return B_OK if loaded (or if the call failed remotely with no payload),
+ *         B_BAD_VALUE on type mismatch, or any error from the subclass loader.
+ */
 status_t
 RemoteDebugResponse::LoadFromMessage(const BMessage& data)
 {
@@ -109,6 +185,13 @@ RemoteDebugResponse::LoadFromMessage(const BMessage& data)
 }
 
 
+/**
+ * @brief Empties @a _output and writes the type, result, and (on success) payload.
+ *
+ * @param _output  Message to populate; cleared on entry.
+ * @return B_OK on success, otherwise the first failing AddInt32() or
+ *         SaveSpecificInfoToMessage() error.
+ */
 status_t
 RemoteDebugResponse::SaveToMessage(BMessage& _output) const
 {
@@ -129,6 +212,12 @@ RemoteDebugResponse::SaveToMessage(BMessage& _output) const
 }
 
 
+/**
+ * @brief Default no-op loader for responses that carry no payload beyond status.
+ *
+ * @param data  Ignored.
+ * @return Always B_OK.
+ */
 status_t
 RemoteDebugResponse::LoadSpecificInfoFromMessage(const BMessage& data)
 {
@@ -136,6 +225,12 @@ RemoteDebugResponse::LoadSpecificInfoFromMessage(const BMessage& data)
 }
 
 
+/**
+ * @brief Default no-op writer for responses that carry no payload beyond status.
+ *
+ * @param _output  Ignored.
+ * @return Always B_OK.
+ */
 status_t
 RemoteDebugResponse::SaveSpecificInfoToMessage(BMessage& _output) const
 {
@@ -146,6 +241,7 @@ RemoteDebugResponse::SaveSpecificInfoToMessage(BMessage& _output) const
 // #pragma mark - RemoteDebugReadMemoryRequest
 
 
+/** @brief Default-constructs an empty read-memory request. */
 RemoteDebugReadMemoryRequest::RemoteDebugReadMemoryRequest()
 	:
 	RemoteDebugRequest(),
@@ -155,11 +251,18 @@ RemoteDebugReadMemoryRequest::RemoteDebugReadMemoryRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugReadMemoryRequest::~RemoteDebugReadMemoryRequest()
 {
 }
 
 
+/**
+ * @brief Configures the request with target address and length to read.
+ *
+ * @param address  Target-side address.
+ * @param size     Number of bytes to read.
+ */
 void
 RemoteDebugReadMemoryRequest::SetTo(target_addr_t address, target_size_t size)
 {
@@ -168,6 +271,7 @@ RemoteDebugReadMemoryRequest::SetTo(target_addr_t address, target_size_t size)
 }
 
 
+/** @brief Returns the wire type code for read-memory requests. */
 remote_request_type
 RemoteDebugReadMemoryRequest::Type() const
 {
@@ -175,6 +279,12 @@ RemoteDebugReadMemoryRequest::Type() const
 }
 
 
+/**
+ * @brief Reads address and size fields from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_BAD_VALUE if any field is missing.
+ */
 status_t
 RemoteDebugReadMemoryRequest::LoadSpecificInfoFromMessage(const BMessage& data)
 {
@@ -188,6 +298,12 @@ RemoteDebugReadMemoryRequest::LoadSpecificInfoFromMessage(const BMessage& data)
 }
 
 
+/**
+ * @brief Writes address and size fields into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return B_OK on success or any error from BMessage::AddUInt64().
+ */
 status_t
 RemoteDebugReadMemoryRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -203,6 +319,7 @@ RemoteDebugReadMemoryRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugWriteMemoryRequest
 
 
+/** @brief Default-constructs an empty write-memory request. */
 RemoteDebugWriteMemoryRequest::RemoteDebugWriteMemoryRequest()
 	:
 	RemoteDebugRequest(),
@@ -213,6 +330,7 @@ RemoteDebugWriteMemoryRequest::RemoteDebugWriteMemoryRequest()
 }
 
 
+/** @brief Frees the buffered payload, if any. */
 RemoteDebugWriteMemoryRequest::~RemoteDebugWriteMemoryRequest()
 {
 	if (fData != NULL)
@@ -220,6 +338,15 @@ RemoteDebugWriteMemoryRequest::~RemoteDebugWriteMemoryRequest()
 }
 
 
+/**
+ * @brief Configures the request and copies the payload to be written.
+ *
+ * @param address  Target-side address to write to.
+ * @param data     Source bytes; must be non-NULL when @a size > 0.
+ * @param size     Number of bytes to copy.
+ * @return B_OK on success, B_BAD_VALUE for invalid arguments, or B_NO_MEMORY
+ *         on allocation failure.
+ */
 status_t
 RemoteDebugWriteMemoryRequest::SetTo(target_addr_t address, const void* data,
 	target_size_t size)
@@ -239,6 +366,7 @@ RemoteDebugWriteMemoryRequest::SetTo(target_addr_t address, const void* data,
 }
 
 
+/** @brief Returns the wire type code for write-memory requests. */
 remote_request_type
 RemoteDebugWriteMemoryRequest::Type() const
 {
@@ -246,6 +374,14 @@ RemoteDebugWriteMemoryRequest::Type() const
 }
 
 
+/**
+ * @brief Reads the address, size, and raw payload from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_BAD_VALUE if a field is missing, B_NO_MEMORY on
+ *         allocation failure, or B_MISMATCHED_VALUES if the payload size
+ *         doesn't match the declared size.
+ */
 status_t
 RemoteDebugWriteMemoryRequest::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -276,6 +412,12 @@ RemoteDebugWriteMemoryRequest::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes address, size, and raw payload into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return B_OK on success or any error from BMessage::AddUInt64()/AddData().
+ */
 status_t
 RemoteDebugWriteMemoryRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -295,6 +437,7 @@ RemoteDebugWriteMemoryRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugSetTeamFlagsRequest
 
 
+/** @brief Default-constructs an empty set-team-flags request. */
 RemoteDebugSetTeamFlagsRequest::RemoteDebugSetTeamFlagsRequest()
 	:
 	RemoteDebugRequest(),
@@ -303,11 +446,17 @@ RemoteDebugSetTeamFlagsRequest::RemoteDebugSetTeamFlagsRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugSetTeamFlagsRequest::~RemoteDebugSetTeamFlagsRequest()
 {
 }
 
 
+/**
+ * @brief Configures the request with the team-debug flag bitmask to apply.
+ *
+ * @param flags  Bitmask of B_TEAM_DEBUG_* flags.
+ */
 void
 RemoteDebugSetTeamFlagsRequest::SetTo(int32 flags)
 {
@@ -315,6 +464,7 @@ RemoteDebugSetTeamFlagsRequest::SetTo(int32 flags)
 }
 
 
+/** @brief Returns the wire type code for set-team-flags requests. */
 remote_request_type
 RemoteDebugSetTeamFlagsRequest::Type() const
 {
@@ -322,6 +472,12 @@ RemoteDebugSetTeamFlagsRequest::Type() const
 }
 
 
+/**
+ * @brief Reads the flags field from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_BAD_VALUE if "flags" is missing.
+ */
 status_t
 RemoteDebugSetTeamFlagsRequest::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -333,6 +489,12 @@ RemoteDebugSetTeamFlagsRequest::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes the flags field into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return Result from BMessage::AddInt32().
+ */
 status_t
 RemoteDebugSetTeamFlagsRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -344,6 +506,7 @@ RemoteDebugSetTeamFlagsRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugSetThreadFlagsRequest
 
 
+/** @brief Default-constructs an empty set-thread-flags request. */
 RemoteDebugSetThreadFlagsRequest::RemoteDebugSetThreadFlagsRequest()
 	:
 	RemoteDebugRequest(),
@@ -353,11 +516,18 @@ RemoteDebugSetThreadFlagsRequest::RemoteDebugSetThreadFlagsRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugSetThreadFlagsRequest::~RemoteDebugSetThreadFlagsRequest()
 {
 }
 
 
+/**
+ * @brief Configures the request with the target thread and flag bitmask.
+ *
+ * @param thread  Thread id to update.
+ * @param flags   Bitmask of B_THREAD_DEBUG_* flags.
+ */
 void
 RemoteDebugSetThreadFlagsRequest::SetTo(thread_id thread, int32 flags)
 {
@@ -402,6 +572,7 @@ RemoteDebugSetThreadFlagsRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugThreadActionRequest
 
 
+/** @brief Default-constructs an empty thread-action request. */
 RemoteDebugThreadActionRequest::RemoteDebugThreadActionRequest()
 	:
 	RemoteDebugRequest(),
@@ -410,11 +581,17 @@ RemoteDebugThreadActionRequest::RemoteDebugThreadActionRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugThreadActionRequest::~RemoteDebugThreadActionRequest()
 {
 }
 
 
+/**
+ * @brief Sets the target thread id for the action.
+ *
+ * @param thread  Thread id this action targets.
+ */
 void
 RemoteDebugThreadActionRequest::SetTo(thread_id thread)
 {
@@ -422,6 +599,12 @@ RemoteDebugThreadActionRequest::SetTo(thread_id thread)
 }
 
 
+/**
+ * @brief Reads the thread id from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_BAD_VALUE if "thread" is missing.
+ */
 status_t
 RemoteDebugThreadActionRequest::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -433,6 +616,12 @@ RemoteDebugThreadActionRequest::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes the thread id into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return Result from BMessage::AddInt32().
+ */
 status_t
 RemoteDebugThreadActionRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -444,6 +633,7 @@ RemoteDebugThreadActionRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugContinueThreadRequest
 
 
+/** @brief Default-constructs a continue-thread request. */
 RemoteDebugContinueThreadRequest::RemoteDebugContinueThreadRequest()
 	:
 	RemoteDebugThreadActionRequest()
@@ -451,10 +641,12 @@ RemoteDebugContinueThreadRequest::RemoteDebugContinueThreadRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugContinueThreadRequest::~RemoteDebugContinueThreadRequest()
 {
 }
 
+/** @brief Returns the wire type code for continue-thread requests. */
 remote_request_type
 RemoteDebugContinueThreadRequest::Type() const
 {
@@ -465,6 +657,7 @@ RemoteDebugContinueThreadRequest::Type() const
 // #pragma mark - RemoteDebugStopThreadRequest
 
 
+/** @brief Default-constructs a stop-thread request. */
 RemoteDebugStopThreadRequest::RemoteDebugStopThreadRequest()
 	:
 	RemoteDebugThreadActionRequest()
@@ -472,10 +665,12 @@ RemoteDebugStopThreadRequest::RemoteDebugStopThreadRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugStopThreadRequest::~RemoteDebugStopThreadRequest()
 {
 }
 
+/** @brief Returns the wire type code for stop-thread requests. */
 remote_request_type
 RemoteDebugStopThreadRequest::Type() const
 {
@@ -486,6 +681,7 @@ RemoteDebugStopThreadRequest::Type() const
 // #pragma mark - RemoteDebugSingleStepThreadRequest
 
 
+/** @brief Default-constructs a single-step-thread request. */
 RemoteDebugSingleStepThreadRequest::RemoteDebugSingleStepThreadRequest()
 	:
 	RemoteDebugThreadActionRequest()
@@ -493,10 +689,12 @@ RemoteDebugSingleStepThreadRequest::RemoteDebugSingleStepThreadRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugSingleStepThreadRequest::~RemoteDebugSingleStepThreadRequest()
 {
 }
 
+/** @brief Returns the wire type code for single-step-thread requests. */
 remote_request_type
 RemoteDebugSingleStepThreadRequest::Type() const
 {
@@ -507,6 +705,7 @@ RemoteDebugSingleStepThreadRequest::Type() const
 // #pragma mark - RemoteDebugGetCpuStateRequest
 
 
+/** @brief Default-constructs a get-CPU-state request. */
 RemoteDebugGetCpuStateRequest::RemoteDebugGetCpuStateRequest()
 	:
 	RemoteDebugThreadActionRequest()
@@ -514,11 +713,13 @@ RemoteDebugGetCpuStateRequest::RemoteDebugGetCpuStateRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugGetCpuStateRequest::~RemoteDebugGetCpuStateRequest()
 {
 }
 
 
+/** @brief Returns the wire type code for get-CPU-state requests. */
 remote_request_type
 RemoteDebugGetCpuStateRequest::Type() const
 {
@@ -529,6 +730,7 @@ RemoteDebugGetCpuStateRequest::Type() const
 // #pragma mark - RemoteDebugSetCpuStateRequest
 
 
+/** @brief Default-constructs an empty set-CPU-state request. */
 RemoteDebugSetCpuStateRequest::RemoteDebugSetCpuStateRequest()
 	:
 	RemoteDebugRequest(),
@@ -538,6 +740,7 @@ RemoteDebugSetCpuStateRequest::RemoteDebugSetCpuStateRequest()
 }
 
 
+/** @brief Releases the held CPU state reference, if any. */
 RemoteDebugSetCpuStateRequest::~RemoteDebugSetCpuStateRequest()
 {
 	if (fCpuState != NULL)
@@ -545,6 +748,12 @@ RemoteDebugSetCpuStateRequest::~RemoteDebugSetCpuStateRequest()
 }
 
 
+/**
+ * @brief Configures the request with the target thread and a CPU state.
+ *
+ * @param thread  Thread id whose state is being overwritten.
+ * @param state   New CPU state; the request acquires a reference.
+ */
 void
 RemoteDebugSetCpuStateRequest::SetTo(thread_id thread, CpuState* state)
 {
@@ -555,6 +764,7 @@ RemoteDebugSetCpuStateRequest::SetTo(thread_id thread, CpuState* state)
 }
 
 
+/** @brief Returns the wire type code for set-CPU-state requests. */
 remote_request_type
 RemoteDebugSetCpuStateRequest::Type() const
 {
@@ -562,6 +772,13 @@ RemoteDebugSetCpuStateRequest::Type() const
 }
 
 
+/**
+ * @brief Reads thread id and architecture-sized CPU state blob from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_BAD_VALUE if any field is missing or malformed,
+ *         or any error from Architecture::CreateCpuState().
+ */
 status_t
 RemoteDebugSetCpuStateRequest::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -586,6 +803,13 @@ RemoteDebugSetCpuStateRequest::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes thread id and architecture-sized CPU state blob into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+ *         from CpuState::UpdateDebugState() or BMessage::AddInt32()/AddData().
+ */
 status_t
 RemoteDebugSetCpuStateRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -611,6 +835,7 @@ RemoteDebugSetCpuStateRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugAddressActionRequest
 
 
+/** @brief Default-constructs an empty address-action request. */
 RemoteDebugAddressActionRequest::RemoteDebugAddressActionRequest()
 	:
 	RemoteDebugRequest(),
@@ -619,11 +844,17 @@ RemoteDebugAddressActionRequest::RemoteDebugAddressActionRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugAddressActionRequest::~RemoteDebugAddressActionRequest()
 {
 }
 
 
+/**
+ * @brief Sets the target address for the action.
+ *
+ * @param address  Target-side address this action operates on.
+ */
 void
 RemoteDebugAddressActionRequest::SetTo(target_addr_t address)
 {
@@ -631,6 +862,12 @@ RemoteDebugAddressActionRequest::SetTo(target_addr_t address)
 }
 
 
+/**
+ * @brief Reads the address field from @a data.
+ *
+ * @param data  Source message.
+ * @return Result from BMessage::FindUInt64().
+ */
 status_t
 RemoteDebugAddressActionRequest::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -639,6 +876,12 @@ RemoteDebugAddressActionRequest::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes the address field into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return Result from BMessage::AddUInt64().
+ */
 status_t
 RemoteDebugAddressActionRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -650,6 +893,7 @@ RemoteDebugAddressActionRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugInstallBreakpointRequest
 
 
+/** @brief Default-constructs an install-breakpoint request. */
 RemoteDebugInstallBreakpointRequest::RemoteDebugInstallBreakpointRequest()
 	:
 	RemoteDebugAddressActionRequest()
@@ -657,11 +901,13 @@ RemoteDebugInstallBreakpointRequest::RemoteDebugInstallBreakpointRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugInstallBreakpointRequest::~RemoteDebugInstallBreakpointRequest()
 {
 }
 
 
+/** @brief Returns the wire type code for install-breakpoint requests. */
 remote_request_type
 RemoteDebugInstallBreakpointRequest::Type() const
 {
@@ -672,6 +918,7 @@ RemoteDebugInstallBreakpointRequest::Type() const
 // #pragma mark - RemoteDebugUninstallBreakpointRequest
 
 
+/** @brief Default-constructs an uninstall-breakpoint request. */
 RemoteDebugUninstallBreakpointRequest::RemoteDebugUninstallBreakpointRequest()
 	:
 	RemoteDebugAddressActionRequest()
@@ -679,10 +926,12 @@ RemoteDebugUninstallBreakpointRequest::RemoteDebugUninstallBreakpointRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugUninstallBreakpointRequest::~RemoteDebugUninstallBreakpointRequest()
 {
 }
 
+/** @brief Returns the wire type code for uninstall-breakpoint requests. */
 remote_request_type
 RemoteDebugUninstallBreakpointRequest::Type() const
 {
@@ -693,6 +942,7 @@ RemoteDebugUninstallBreakpointRequest::Type() const
 // #pragma mark - RemoteDebugInstallWatchpointRequest
 
 
+/** @brief Default-constructs an empty install-watchpoint request. */
 RemoteDebugInstallWatchpointRequest::RemoteDebugInstallWatchpointRequest()
 	:
 	RemoteDebugRequest(),
@@ -703,11 +953,19 @@ RemoteDebugInstallWatchpointRequest::RemoteDebugInstallWatchpointRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugInstallWatchpointRequest::~RemoteDebugInstallWatchpointRequest()
 {
 }
 
 
+/**
+ * @brief Configures the request with watch parameters.
+ *
+ * @param address  Target address to watch.
+ * @param type     B_DATA_*_WATCHPOINT trigger type.
+ * @param length   Watch length in bytes.
+ */
 void
 RemoteDebugInstallWatchpointRequest::SetTo(target_addr_t address, uint32 type,
 	int32 length)
@@ -718,6 +976,7 @@ RemoteDebugInstallWatchpointRequest::SetTo(target_addr_t address, uint32 type,
 }
 
 
+/** @brief Returns the wire type code for install-watchpoint requests. */
 remote_request_type
 RemoteDebugInstallWatchpointRequest::Type() const
 {
@@ -725,6 +984,12 @@ RemoteDebugInstallWatchpointRequest::Type() const
 }
 
 
+/**
+ * @brief Reads address, watch-type, and length fields from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success or any error from BMessage::Find*().
+ */
 status_t
 RemoteDebugInstallWatchpointRequest::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -741,6 +1006,12 @@ RemoteDebugInstallWatchpointRequest::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes address, watch-type, and length fields into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return B_OK on success or any error from BMessage::Add*().
+ */
 status_t
 RemoteDebugInstallWatchpointRequest::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -760,6 +1031,7 @@ RemoteDebugInstallWatchpointRequest::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugUninstallWatchpointRequest
 
 
+/** @brief Default-constructs an uninstall-watchpoint request. */
 RemoteDebugUninstallWatchpointRequest::RemoteDebugUninstallWatchpointRequest()
 	:
 	RemoteDebugAddressActionRequest()
@@ -767,11 +1039,13 @@ RemoteDebugUninstallWatchpointRequest::RemoteDebugUninstallWatchpointRequest()
 }
 
 
+/** @brief Trivial destructor. */
 RemoteDebugUninstallWatchpointRequest::~RemoteDebugUninstallWatchpointRequest()
 {
 }
 
 
+/** @brief Returns the wire type code for uninstall-watchpoint requests. */
 remote_request_type
 RemoteDebugUninstallWatchpointRequest::Type() const
 {
@@ -782,6 +1056,7 @@ RemoteDebugUninstallWatchpointRequest::Type() const
 // #pragma mark - RemoteDebugReadMemoryResponse
 
 
+/** @brief Default-constructs an empty read-memory response. */
 RemoteDebugReadMemoryResponse::RemoteDebugReadMemoryResponse()
 	:
 	RemoteDebugResponse(),
@@ -791,6 +1066,7 @@ RemoteDebugReadMemoryResponse::RemoteDebugReadMemoryResponse()
 }
 
 
+/** @brief Frees the buffered payload, if any. */
 RemoteDebugReadMemoryResponse::~RemoteDebugReadMemoryResponse()
 {
 	if (fData != NULL)
@@ -798,6 +1074,12 @@ RemoteDebugReadMemoryResponse::~RemoteDebugReadMemoryResponse()
 }
 
 
+/**
+ * @brief Sets the buffer and size returned from a read-memory request.
+ *
+ * @param data  Pointer to the buffer; ownership transfers to the response.
+ * @param size  Number of bytes in @a data.
+ */
 void
 RemoteDebugReadMemoryResponse::SetTo(void* data, target_size_t size)
 {
@@ -806,6 +1088,13 @@ RemoteDebugReadMemoryResponse::SetTo(void* data, target_size_t size)
 }
 
 
+/**
+ * @brief Reads the size and raw payload from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or
+ *         B_MISMATCHED_VALUES if the payload size doesn't match the size field.
+ */
 status_t
 RemoteDebugReadMemoryResponse::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -832,6 +1121,13 @@ RemoteDebugReadMemoryResponse::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes size and raw payload into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return B_OK on success or any error from BMessage::AddUInt64()/AddData().
+ *         If fData is NULL the call returns B_OK without writing anything.
+ */
 status_t
 RemoteDebugReadMemoryResponse::SaveSpecificInfoToMessage(
 	BMessage& _output) const
@@ -850,6 +1146,7 @@ RemoteDebugReadMemoryResponse::SaveSpecificInfoToMessage(
 // #pragma mark - RemoteDebugGetCpuStateResponse
 
 
+/** @brief Default-constructs an empty get-CPU-state response. */
 RemoteDebugGetCpuStateResponse::RemoteDebugGetCpuStateResponse()
 	:
 	RemoteDebugResponse(),
@@ -858,6 +1155,7 @@ RemoteDebugGetCpuStateResponse::RemoteDebugGetCpuStateResponse()
 }
 
 
+/** @brief Releases the held CPU state reference, if any. */
 RemoteDebugGetCpuStateResponse::~RemoteDebugGetCpuStateResponse()
 {
 	if (fCpuState != NULL)
@@ -865,6 +1163,11 @@ RemoteDebugGetCpuStateResponse::~RemoteDebugGetCpuStateResponse()
 }
 
 
+/**
+ * @brief Sets the CPU state returned by the request.
+ *
+ * @param state  CPU state instance; the response acquires a reference.
+ */
 void
 RemoteDebugGetCpuStateResponse::SetTo(CpuState* state)
 {
@@ -874,6 +1177,13 @@ RemoteDebugGetCpuStateResponse::SetTo(CpuState* state)
 }
 
 
+/**
+ * @brief Reads an architecture-sized CPU state blob from @a data.
+ *
+ * @param data  Source message.
+ * @return B_OK on success, B_BAD_VALUE if the payload is missing or wrong size,
+ *         or any error from Architecture::CreateCpuState().
+ */
 status_t
 RemoteDebugGetCpuStateResponse::LoadSpecificInfoFromMessage(
 	const BMessage& data)
@@ -895,6 +1205,13 @@ RemoteDebugGetCpuStateResponse::LoadSpecificInfoFromMessage(
 }
 
 
+/**
+ * @brief Writes an architecture-sized CPU state blob into @a _output.
+ *
+ * @param _output  Destination message.
+ * @return B_OK on success, B_NO_MEMORY on allocation failure, or any error
+ *         from CpuState::UpdateDebugState() or BMessage::AddData().
+ */
 status_t
 RemoteDebugGetCpuStateResponse::SaveSpecificInfoToMessage(
 	BMessage& _output) const

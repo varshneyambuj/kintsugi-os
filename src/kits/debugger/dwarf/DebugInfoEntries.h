@@ -1,8 +1,28 @@
 /*
- * Copyright 2009, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013-2018, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2025, Kintsugi OS Contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Author: Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * Incorporates work from the Haiku project, originally licensed under the
+ * MIT License. Copyright 2009, Ingo Weinhold; Copyright 2013-2018, Rene
+ * Gollent.
  */
+
+/** @file DebugInfoEntries.h
+    @brief Concrete DIE class hierarchy mirroring every DWARF DW_TAG_* tag. */
+
 #ifndef DEBUG_INFO_ENTRIES_H
 #define DEBUG_INFO_ENTRIES_H
 
@@ -134,6 +154,7 @@
 // DW_AT_small
 
 
+/** @brief Common base for DW_TAG_compile_unit, DW_TAG_partial_unit, DW_TAG_type_unit. */
 class DIECompileUnitBase : public DebugInfoEntry {
 public:
 								DIECompileUnitBase();
@@ -219,6 +240,7 @@ protected:
 };
 
 
+/** @brief Abstract base for every DIE that represents a type. */
 class DIEType : public DebugInfoEntry {
 public:
 								DIEType();
@@ -248,6 +270,7 @@ protected:
 };
 
 
+/** @brief Type DIE that wraps another type with a modifier (const, volatile, ...). */
 class DIEModifiedType : public DIEType {
 public:
 								DIEModifiedType();
@@ -262,6 +285,7 @@ protected:
 };
 
 
+/** @brief Modified type that also carries a DW_AT_address_class. */
 class DIEAddressingType : public DIEModifiedType {
 public:
 								DIEAddressingType();
@@ -274,6 +298,7 @@ protected:
 };
 
 
+/** @brief Type DIE with an explicit DW_AT_name and access/visibility/declaration attrs. */
 class DIEDeclaredType : public DIEType {
 public:
 								DIEDeclaredType();
@@ -317,6 +342,7 @@ protected:
 };
 
 
+/** @brief Declared type derived from an underlying DW_AT_type referent. */
 class DIEDerivedType : public DIEDeclaredType {
 public:
 								DIEDerivedType();
@@ -331,6 +357,7 @@ protected:
 };
 
 
+/** @brief Declared type with a DW_AT_byte_size and a list of member DIEs. */
 class DIECompoundType : public DIEDeclaredType {
 public:
 								DIECompoundType();
@@ -360,6 +387,7 @@ protected:
 };
 
 
+/** @brief Base for class/struct/union types adding inheritance and friend lists. */
 class DIEClassBaseType : public DIECompoundType {
 public:
 								DIEClassBaseType();
@@ -385,6 +413,7 @@ protected:
 };
 
 
+/** @brief DIE base that only contributes a DW_AT_name. */
 class DIENamedBase : public DebugInfoEntry {
 public:
 								DIENamedBase();
@@ -403,6 +432,7 @@ protected:
 };
 
 
+/** @brief DIE base contributing decl-file/line/column plus access/visibility flags. */
 class DIEDeclaredBase : public DebugInfoEntry {
 public:
 								DIEDeclaredBase();
@@ -415,6 +445,7 @@ protected:
 };
 
 
+/** @brief DIE base combining @ref DIEDeclaredBase with a DW_AT_name. */
 class DIEDeclaredNamedBase : public DIEDeclaredBase {
 public:
 								DIEDeclaredNamedBase();
@@ -444,6 +475,7 @@ protected:
 };
 
 
+/** @brief Index/range type used by array DIEs (DW_TAG_subrange_type, DW_TAG_enumeration_type). */
 class DIEArrayIndexType : public DIEDerivedType {
 public:
 								DIEArrayIndexType();
@@ -472,6 +504,7 @@ private:
 // #pragma mark -
 
 
+/** @brief DW_TAG_array_type DIE describing a multi-dimensional array. */
 class DIEArrayType : public DIEDerivedType {
 public:
 								DIEArrayType();
@@ -513,6 +546,7 @@ private:
 };
 
 
+/** @brief DW_TAG_class_type DIE (C++ class). */
 class DIEClassType : public DIEClassBaseType {
 public:
 								DIEClassType();
@@ -521,6 +555,7 @@ public:
 };
 
 
+/** @brief DW_TAG_entry_point DIE (alternate program entry point). */
 class DIEEntryPoint : public DebugInfoEntry {
 public:
 // TODO: Maybe introduce a common base class for DIEEntryPoint and
@@ -542,6 +577,7 @@ public:
 };
 
 
+/** @brief DW_TAG_enumeration_type DIE (C/C++ enum). */
 class DIEEnumerationType : public DIEArrayIndexType {
 public:
 								DIEEnumerationType();
@@ -564,6 +600,7 @@ private:
 };
 
 
+/** @brief DW_TAG_formal_parameter DIE (function/method parameter). */
 class DIEFormalParameter : public DIEDeclaredNamedBase {
 public:
 								DIEFormalParameter();
@@ -606,6 +643,7 @@ private:
 };
 
 
+/** @brief DW_TAG_imported_declaration DIE (using-directive / using-declaration). */
 class DIEImportedDeclaration : public DIEDeclaredNamedBase {
 public:
 								DIEImportedDeclaration();
@@ -618,6 +656,7 @@ public:
 };
 
 
+/** @brief DW_TAG_label DIE (named code label, e.g. goto target). */
 class DIELabel : public DIEDeclaredNamedBase {
 public:
 								DIELabel();
@@ -632,6 +671,7 @@ public:
 };
 
 
+/** @brief DW_TAG_lexical_block DIE (nested scope inside a subprogram). */
 class DIELexicalBlock : public DIENamedBase {
 public:
 								DIELexicalBlock();
@@ -674,6 +714,7 @@ protected:
 };
 
 
+/** @brief DW_TAG_member DIE (data member of a class/struct/union). */
 class DIEMember : public DIEDeclaredNamedBase {
 public:
 								DIEMember();
@@ -720,6 +761,7 @@ private:
 };
 
 
+/** @brief DW_TAG_pointer_type DIE. */
 class DIEPointerType : public DIEAddressingType {
 public:
 								DIEPointerType();
@@ -736,6 +778,7 @@ private:
 };
 
 
+/** @brief DW_TAG_reference_type DIE (C++ lvalue reference). */
 class DIEReferenceType : public DIEAddressingType {
 public:
 								DIEReferenceType();
@@ -744,6 +787,7 @@ public:
 };
 
 
+/** @brief DW_TAG_compile_unit DIE (root of a complete compilation unit). */
 class DIECompileUnit : public DIECompileUnitBase {
 public:
 								DIECompileUnit();
@@ -752,6 +796,7 @@ public:
 };
 
 
+/** @brief DW_TAG_string_type DIE (Pascal/Fortran string type). */
 class DIEStringType : public DIEDeclaredType {
 public:
 								DIEStringType();
@@ -770,6 +815,7 @@ private:
 };
 
 
+/** @brief DW_TAG_structure_type DIE (C struct / C++ struct). */
 class DIEStructureType : public DIEClassBaseType {
 public:
 								DIEStructureType();
@@ -778,6 +824,7 @@ public:
 };
 
 
+/** @brief DW_TAG_subroutine_type DIE (function-pointer signature type). */
 class DIESubroutineType : public DIEDeclaredType {
 public:
 								DIESubroutineType();
@@ -805,6 +852,7 @@ protected:
 };
 
 
+/** @brief DW_TAG_typedef DIE (C/C++ typedef alias). */
 class DIETypedef : public DIEDerivedType {
 public:
 								DIETypedef();
@@ -813,6 +861,7 @@ public:
 };
 
 
+/** @brief DW_TAG_union_type DIE (C/C++ union). */
 class DIEUnionType : public DIECompoundType {
 public:
 								DIEUnionType();
@@ -821,6 +870,7 @@ public:
 };
 
 
+/** @brief DW_TAG_unspecified_parameters DIE (variadic "..." marker). */
 class DIEUnspecifiedParameters : public DIEDeclaredBase {
 public:
 								DIEUnspecifiedParameters();
@@ -833,6 +883,7 @@ public:
 };
 
 
+/** @brief DW_TAG_variant DIE (Pascal variant case inside a variant_part). */
 class DIEVariant : public DIEDeclaredBase {
 public:
 								DIEVariant();
@@ -848,6 +899,7 @@ public:
 };
 
 
+/** @brief DW_TAG_common_block DIE (Fortran COMMON block). */
 class DIECommonBlock : public DIEDeclaredNamedBase {
 public:
 								DIECommonBlock();
@@ -864,6 +916,7 @@ private:
 };
 
 
+/** @brief DW_TAG_common_inclusion DIE (Fortran COMMON inclusion). */
 class DIECommonInclusion : public DIEDeclaredBase {
 public:
 								DIECommonInclusion();
@@ -878,6 +931,7 @@ public:
 };
 
 
+/** @brief DW_TAG_inheritance DIE (C++ base class link). */
 class DIEInheritance : public DIEDeclaredBase {
 public:
 								DIEInheritance();
@@ -904,6 +958,7 @@ private:
 };
 
 
+/** @brief DW_TAG_inlined_subroutine DIE (an inlined call site). */
 class DIEInlinedSubroutine : public DebugInfoEntry {
 public:
 								DIEInlinedSubroutine();
@@ -926,6 +981,7 @@ public:
 };
 
 
+/** @brief DW_TAG_module DIE (Modula/Fortran module). */
 class DIEModule : public DIEDeclaredNamedBase {
 public:
 								DIEModule();
@@ -943,6 +999,7 @@ public:
 };
 
 
+/** @brief DW_TAG_ptr_to_member_type DIE (C++ pointer-to-member). */
 class DIEPointerToMemberType : public DIEDerivedType {
 public:
 								DIEPointerToMemberType();
@@ -970,6 +1027,7 @@ protected:
 };
 
 
+/** @brief DW_TAG_set_type DIE (Pascal set type). */
 class DIESetType : public DIEDerivedType {
 public:
 								DIESetType();
@@ -986,6 +1044,7 @@ private:
 };
 
 
+/** @brief DW_TAG_subrange_type DIE (array dimension or numeric subrange). */
 class DIESubrangeType : public DIEArrayIndexType {
 public:
 								DIESubrangeType();
@@ -1017,6 +1076,7 @@ private:
 };
 
 
+/** @brief DW_TAG_with_stmt DIE (Pascal with-statement scope). */
 class DIEWithStatement : public DebugInfoEntry {
 public:
 								DIEWithStatement();
@@ -1046,6 +1106,7 @@ private:
 };
 
 
+/** @brief DW_TAG_access_declaration DIE (C++ access declaration). */
 class DIEAccessDeclaration : public DIEDeclaredNamedBase {
 public:
 								DIEAccessDeclaration();
@@ -1054,6 +1115,7 @@ public:
 };
 
 
+/** @brief DW_TAG_base_type DIE (primitive type: int, float, ...). */
 class DIEBaseType : public DIEType {
 public:
 								DIEBaseType();
@@ -1103,6 +1165,7 @@ private:
 };
 
 
+/** @brief DW_TAG_catch_block DIE (C++ catch handler block). */
 class DIECatchBlock : public DebugInfoEntry {
 public:
 								DIECatchBlock();
@@ -1118,6 +1181,7 @@ public:
 };
 
 
+/** @brief DW_TAG_const_type DIE (C/C++ const-qualified type). */
 class DIEConstType : public DIEModifiedType {
 public:
 								DIEConstType();
@@ -1126,6 +1190,7 @@ public:
 };
 
 
+/** @brief DW_TAG_constant DIE (named compile-time constant). */
 class DIEConstant : public DIEDeclaredNamedBase {
 public:
 								DIEConstant();
@@ -1153,6 +1218,7 @@ private:
 };
 
 
+/** @brief DW_TAG_enumerator DIE (single enumeration constant). */
 class DIEEnumerator : public DIEDeclaredNamedBase {
 public:
 								DIEEnumerator();
@@ -1170,6 +1236,7 @@ private:
 };
 
 
+/** @brief DW_TAG_file_type DIE (Pascal file type). */
 class DIEFileType : public DIEDerivedType {
 public:
 								DIEFileType();
@@ -1186,6 +1253,7 @@ private:
 };
 
 
+/** @brief DW_TAG_friend DIE (C++ friend declaration). */
 class DIEFriend : public DIEDeclaredBase {
 public:
 								DIEFriend();
@@ -1198,6 +1266,7 @@ public:
 };
 
 
+/** @brief DW_TAG_namelist DIE (Fortran NAMELIST). */
 class DIENameList : public DIEDeclaredNamedBase {
 public:
 								DIENameList();
@@ -1209,6 +1278,7 @@ public:
 };
 
 
+/** @brief DW_TAG_namelist_item DIE (Fortran NAMELIST element). */
 class DIENameListItem : public DIEDeclaredBase {
 public:
 								DIENameListItem();
@@ -1220,6 +1290,7 @@ public:
 };
 
 
+/** @brief DW_TAG_namespace DIE (C++ namespace; also base for subprograms). */
 class DIENamespace : public DIEDeclaredNamedBase {
 public:
 								DIENamespace();
@@ -1242,6 +1313,7 @@ private:
 };
 
 
+/** @brief DW_TAG_packed_type DIE (Ada/Pascal packed-storage type). */
 class DIEPackedType : public DIEModifiedType {
 public:
 								DIEPackedType();
@@ -1250,6 +1322,7 @@ public:
 };
 
 
+/** @brief DW_TAG_subprogram DIE (function or method). */
 class DIESubprogram : public DIENamespace {
 public:
 								DIESubprogram();
@@ -1361,6 +1434,7 @@ protected:
 };
 
 
+/** @brief DW_TAG_template_type_parameter DIE (C++ template type parameter). */
 class DIETemplateTypeParameter : public DIEDeclaredNamedBase {
 public:
 								DIETemplateTypeParameter();
@@ -1377,6 +1451,7 @@ private:
 };
 
 
+/** @brief DW_TAG_template_value_parameter DIE (C++ non-type template parameter). */
 class DIETemplateValueParameter : public DIEDeclaredNamedBase {
 public:
 								DIETemplateValueParameter();
@@ -1399,6 +1474,7 @@ private:
 };
 
 
+/** @brief DW_TAG_thrown_type DIE (exception type listed in a throw spec). */
 class DIEThrownType : public DIEDeclaredBase {
 public:
 								DIEThrownType();
@@ -1420,6 +1496,7 @@ private:
 };
 
 
+/** @brief DW_TAG_try_block DIE (C++ try block). */
 class DIETryBlock : public DebugInfoEntry {
 public:
 								DIETryBlock();
@@ -1435,6 +1512,7 @@ public:
 };
 
 
+/** @brief DW_TAG_variant_part DIE (Pascal variant-record part). */
 class DIEVariantPart : public DIEDeclaredBase {
 public:
 								DIEVariantPart();
@@ -1457,6 +1535,7 @@ private:
 };
 
 
+/** @brief DW_TAG_variable DIE (named variable, global or local). */
 class DIEVariable : public DIEDeclaredNamedBase {
 public:
 								DIEVariable();
@@ -1508,6 +1587,7 @@ private:
 };
 
 
+/** @brief DW_TAG_volatile_type DIE (C/C++ volatile-qualified type). */
 class DIEVolatileType : public DIEModifiedType {
 public:
 								DIEVolatileType();
@@ -1526,6 +1606,7 @@ private:
 };
 
 
+/** @brief DW_TAG_dwarf_procedure DIE (a DWARF expression-as-procedure). */
 class DIEDwarfProcedure : public DebugInfoEntry {
 public:
 								DIEDwarfProcedure();
@@ -1539,6 +1620,7 @@ private:
 };
 
 
+/** @brief DW_TAG_restrict_type DIE (C99 restrict-qualified type). */
 class DIERestrictType : public DIEModifiedType {
 public:
 								DIERestrictType();
@@ -1547,6 +1629,7 @@ public:
 };
 
 
+/** @brief DW_TAG_interface_type DIE (Java/COM interface). */
 class DIEInterfaceType : public DIEClassBaseType {
 public:
 								DIEInterfaceType();
@@ -1555,6 +1638,7 @@ public:
 };
 
 
+/** @brief DW_TAG_imported_module DIE (using-namespace / using-module). */
 class DIEImportedModule : public DIEDeclaredBase {
 public:
 								DIEImportedModule();
@@ -1567,6 +1651,7 @@ public:
 };
 
 
+/** @brief DW_TAG_unspecified_type DIE (placeholder for unknown type). */
 class DIEUnspecifiedType : public DIEType {
 public:
 								DIEUnspecifiedType();
@@ -1588,6 +1673,7 @@ private:
 };
 
 
+/** @brief DW_TAG_partial_unit DIE (partial compilation unit, imported elsewhere). */
 class DIEPartialUnit : public DIECompileUnitBase {
 public:
 								DIEPartialUnit();
@@ -1599,6 +1685,7 @@ public:
 };
 
 
+/** @brief DW_TAG_imported_unit DIE (reference to a partial unit). */
 class DIEImportedUnit : public DebugInfoEntry {
 public:
 								DIEImportedUnit();
@@ -1610,6 +1697,7 @@ public:
 };
 
 
+/** @brief DW_TAG_condition DIE (COBOL level-88 condition). */
 class DIECondition : public DIEDeclaredNamedBase {
 public:
 								DIECondition();
@@ -1618,6 +1706,7 @@ public:
 };
 
 
+/** @brief DW_TAG_shared_type DIE (UPC shared-type qualifier). */
 class DIESharedType : public DIEModifiedType {
 public:
 								DIESharedType();
@@ -1639,6 +1728,7 @@ private:
 };
 
 
+/** @brief DW_TAG_type_unit DIE (root of a deduplicated type unit). */
 class DIETypeUnit : public DIECompileUnitBase {
 public:
 								DIETypeUnit();
@@ -1647,6 +1737,7 @@ public:
 };
 
 
+/** @brief DW_TAG_rvalue_reference_type DIE (C++11 rvalue reference). */
 class DIERValueReferenceType : public DIEReferenceType {
 public:
 								DIERValueReferenceType();
@@ -1655,6 +1746,7 @@ public:
 };
 
 
+/** @brief DW_TAG_template_alias / template-template parameter DIE. */
 class DIETemplateTemplateParameter : public DIEDeclaredBase {
 public:
 								DIETemplateTemplateParameter();
@@ -1671,6 +1763,7 @@ private:
 };
 
 
+/** @brief DW_TAG_GNU_template_parameter_pack DIE for type parameter packs. */
 class DIETemplateTypeParameterPack : public DIEDeclaredBase {
 public:
 								DIETemplateTypeParameterPack();
@@ -1693,6 +1786,7 @@ private:
 };
 
 
+/** @brief DW_TAG_GNU_formal_parameter_pack DIE for value parameter packs. */
 class DIETemplateValueParameterPack : public DIEDeclaredBase {
 public:
 								DIETemplateValueParameterPack();
@@ -1715,6 +1809,7 @@ private:
 };
 
 
+/** @brief DW_TAG_call_site / DW_TAG_GNU_call_site DIE (DWARF v5 call site). */
 class DIECallSite : public DIEDeclaredBase {
 public:
 								DIECallSite();
@@ -1737,6 +1832,7 @@ private:
 };
 
 
+/** @brief DW_TAG_call_site_parameter DIE (parameter passed at a call site). */
 class DIECallSiteParameter : public DIEDeclaredBase {
 public:
 								DIECallSiteParameter();
@@ -1762,6 +1858,12 @@ private:
 // #pragma mark - DebugInfoEntryFactory
 
 
+/**
+ * @brief Factory mapping DWARF tag codes to concrete DebugInfoEntry subclasses.
+ *
+ * Used by the parser to instantiate the right DIE class for each
+ * abbreviation it encounters.
+ */
 class DebugInfoEntryFactory {
 public:
 								DebugInfoEntryFactory();

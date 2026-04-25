@@ -1,7 +1,41 @@
 /*
- * Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
- * Copyright 2013, Rene Gollent, rene@gollent.com.
- * Distributed under the terms of the MIT License.
+ * Copyright 2026 Kintsugi OS Project. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Authors:
+ *     Ambuj Varshney, ambuj@kintsugi-os.org
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *   Copyright 2009-2012, Ingo Weinhold, ingo_weinhold@gmx.de.
+ *   Copyright 2013, Rene Gollent, rene@gollent.com.
+ *   Distributed under the terms of the MIT License.
+ */
+
+
+/**
+ * @file DwarfExpressionEvaluator.cpp
+ * @brief Stack-machine interpreter for DWARF DW_OP_* expressions.
+ *
+ * DWARF location and value expressions are encoded as a small bytecode
+ * executed against a target_addr_t-sized stack.  This evaluator reads
+ * the byte stream, dispatches each opcode to a switch arm, and feeds
+ * memory or register reads through a pluggable DwarfTargetInterface.
+ * Two top-level entry points cover the two ways DWARF uses these
+ * expressions: @ref Evaluate produces a final value and
+ * @ref EvaluateLocation produces a ValueLocation that may name registers
+ * or composite "piece" descriptors.
  */
 
 
@@ -22,12 +56,15 @@
 #include "ValueLocation.h"
 
 
+/** @brief Number of stack slots added each time the value stack grows. */
 // number of elements to increase the stack capacity when the stack is full
 static const size_t kStackCapacityIncrement = 64;
 
+/** @brief Hard upper bound on the value-stack depth (defends against runaway expressions). */
 // maximum number of elements we allow to be pushed on the stack
 static const size_t kMaxStackCapacity			= 1024;
 
+/** @brief Maximum number of opcodes interpreted before bailing out (anti-loop). */
 // maximum number of operations we allow to be performed for a single expression
 // (to avoid running infinite loops forever)
 static const uint32 kMaxOperationCount			= 10000;
@@ -36,6 +73,14 @@ static const uint32 kMaxOperationCount			= 10000;
 // #pragma mark - DwarfExpressionEvaluationContext
 
 
+/**
+ * @brief Constructs the evaluation context with target metadata.
+ *
+ * @param targetInterface  Provider of register and memory reads.
+ * @param addressSize      Width of a target address in bytes.
+ * @param isBigEndian      @c true for big-endian targets.
+ * @param relocationDelta  Adjustment added to DW_OP_addr operands.
+ */
 DwarfExpressionEvaluationContext::DwarfExpressionEvaluationContext(
 	const DwarfTargetInterface* targetInterface, uint8 addressSize,
 	bool isBigEndian, target_addr_t relocationDelta)
@@ -48,6 +93,9 @@ DwarfExpressionEvaluationContext::DwarfExpressionEvaluationContext(
 }
 
 
+/**
+ * @brief Destroys the context.  Anchors the vtable.
+ */
 DwarfExpressionEvaluationContext::~DwarfExpressionEvaluationContext()
 {
 }
@@ -56,6 +104,11 @@ DwarfExpressionEvaluationContext::~DwarfExpressionEvaluationContext()
 // #pragma mark - EvaluationException
 
 
+/**
+ * @brief Thrown internally to abort an in-progress expression evaluation.
+ *
+ * Caught by the public entry points and translated into a @c status_t.
+ */
 struct DwarfExpressionEvaluator::EvaluationException {
 	const char* message;
 
@@ -70,6 +123,11 @@ struct DwarfExpressionEvaluator::EvaluationException {
 // #pragma mark - DwarfExpressionEvaluator
 
 
+/**
+ * @brief Throws if the stack contains fewer than @a size elements.
+ *
+ * @param size Minimum stack depth required by the next opcode.
+ */
 void
 DwarfExpressionEvaluator::_AssertMinStackSize(size_t size) const
 {
@@ -78,6 +136,14 @@ DwarfExpressionEvaluator::_AssertMinStackSize(size_t size) const
 }
 
 
+/**
+ * @brief Pushes @a value onto the stack, growing it on demand.
+ *
+ * Throws @c EvaluationException on overflow and @c std::bad_alloc on
+ * allocation failure.
+ *
+ * @param value Word to push.
+ */
 void
 DwarfExpressionEvaluator::_Push(target_addr_t value)
 {
@@ -100,6 +166,12 @@ DwarfExpressionEvaluator::_Push(target_addr_t value)
 }
 
 
+/**
+ * @brief Pops and returns the top of the stack.
+ *
+ * @return Top stack value.
+ * @note Throws @c EvaluationException on underflow.
+ */
 target_addr_t
 DwarfExpressionEvaluator::_Pop()
 {
@@ -108,6 +180,11 @@ DwarfExpressionEvaluator::_Pop()
 }
 
 
+/**
+ * @brief Constructs the evaluator bound to a given context.
+ *
+ * @param context Provider of target memory, registers, frame info, etc.
+ */
 DwarfExpressionEvaluator::DwarfExpressionEvaluator(
 	DwarfExpressionEvaluationContext* context)
 	:
@@ -119,12 +196,26 @@ DwarfExpressionEvaluator::DwarfExpressionEvaluator(
 }
 
 
+/**
+ * @brief Destroys the evaluator and releases the value stack.
+ */
 DwarfExpressionEvaluator::~DwarfExpressionEvaluator()
 {
 	free(fStack);
 }
 
 
+/**
+ * @brief Pushes a value onto the stack from outside the evaluator.
+ *
+ * Used by callers that want to seed the stack (e.g. with a known frame
+ * address) before calling @ref Evaluate.
+ *
+ * @param value Value to push.
+ * @retval B_OK         Pushed successfully.
+ * @retval B_BAD_VALUE  Stack overflow.
+ * @retval B_NO_MEMORY  Allocation failure.
+ */
 status_t
 DwarfExpressionEvaluator::Push(target_addr_t value)
 {
@@ -139,6 +230,18 @@ DwarfExpressionEvaluator::Push(target_addr_t value)
 }
 
 
+/**
+ * @brief Evaluates a value-producing DWARF expression.
+ *
+ * Runs the bytecode interpreter and returns the final top-of-stack value.
+ *
+ * @param expression Pointer to the expression byte stream.
+ * @param size       Length of the expression in bytes.
+ * @param _result    Output value left on the stack at end of execution.
+ * @retval B_OK         Expression produced a value.
+ * @retval B_BAD_VALUE  Malformed bytecode or runtime exception.
+ * @retval B_NO_MEMORY  Allocation failure during stack growth.
+ */
 status_t
 DwarfExpressionEvaluator::Evaluate(const void* expression, size_t size,
 	target_addr_t& _result)
@@ -161,6 +264,21 @@ DwarfExpressionEvaluator::Evaluate(const void* expression, size_t size,
 }
 
 
+/**
+ * @brief Evaluates a location-producing DWARF expression.
+ *
+ * Recognises composite-location operators (DW_OP_piece, DW_OP_bit_piece)
+ * and packages each piece into the supplied ValueLocation, preserving
+ * register references so callers can read register-resident values.
+ *
+ * @param expression Pointer to the expression byte stream.
+ * @param size       Length of the expression in bytes (zero is valid).
+ * @param _location  Output location populated with one or more pieces.
+ * @retval B_OK         Location decoded successfully.
+ * @retval B_BAD_DATA   Malformed composite-location stream.
+ * @retval B_BAD_VALUE  Runtime evaluation exception.
+ * @retval B_NO_MEMORY  Allocation failure adding a piece.
+ */
 status_t
 DwarfExpressionEvaluator::EvaluateLocation(const void* expression, size_t size,
 	ValueLocation& _location)
@@ -265,6 +383,23 @@ DwarfExpressionEvaluator::EvaluateLocation(const void* expression, size_t size,
 }
 
 
+/**
+ * @brief Inner expression interpreter loop.
+ *
+ * Drains the DataReader one opcode at a time, dispatching each DW_OP_*
+ * to its handler.  Many handlers manipulate the value stack directly
+ * (constants, arithmetic, comparisons, dup/swap/...) while a few
+ * delegate to helpers (memory dereference, register read, expression
+ * call).  Decoding stops at end of stream, an error opcode, or one of
+ * the location-producing terminators (DW_OP_reg*, DW_OP_implicit_*).
+ *
+ * @param _piece  Optional output piece descriptor populated when a
+ *                location-producing opcode is encountered.  May be NULL
+ *                for value-producing evaluation.
+ * @retval B_OK        Interpreter halted normally.
+ * @retval B_BAD_DATA  Bytecode contained an unknown opcode or overflow.
+ * @retval B_NO_MEMORY Stack growth failed.
+ */
 status_t
 DwarfExpressionEvaluator::_Evaluate(ValuePieceLocation* _piece)
 {
@@ -702,6 +837,15 @@ DwarfExpressionEvaluator::_Evaluate(ValuePieceLocation* _piece)
 }
 
 
+/**
+ * @brief Reads an integer of @a addressSize bytes from the popped address.
+ *
+ * Implements DW_OP_deref / DW_OP_deref_size by mapping the requested
+ * width to a BVariant value type, asking the target interface to read
+ * the value, and pushing the result.
+ *
+ * @param addressSize Width of the value to read (1, 2, 4, or 8 bytes).
+ */
 void
 DwarfExpressionEvaluator::_DereferenceAddress(uint8 addressSize)
 {
@@ -737,6 +881,14 @@ DwarfExpressionEvaluator::_DereferenceAddress(uint8 addressSize)
 }
 
 
+/**
+ * @brief Reads from an address in a specific address space.
+ *
+ * Implements DW_OP_xderef / DW_OP_xderef_size by popping (address space,
+ * address) and asking the target interface to perform a read.
+ *
+ * @param addressSize Width of the value to read in bytes.
+ */
 void
 DwarfExpressionEvaluator::_DereferenceAddressSpaceAddress(uint8 addressSize)
 {
@@ -773,6 +925,14 @@ DwarfExpressionEvaluator::_DereferenceAddressSpaceAddress(uint8 addressSize)
 }
 
 
+/**
+ * @brief Reads register @a reg, adds @a offset, and pushes the result.
+ *
+ * Implements the DW_OP_breg* family.
+ *
+ * @param reg    Architectural register number to read.
+ * @param offset Signed offset added to the register value.
+ */
 void
 DwarfExpressionEvaluator::_PushRegister(uint32 reg, target_addr_t offset)
 {
@@ -784,6 +944,16 @@ DwarfExpressionEvaluator::_PushRegister(uint32 reg, target_addr_t offset)
 }
 
 
+/**
+ * @brief Implements the DW_OP_call* family by recursively evaluating a target.
+ *
+ * Asks the context to resolve the call target (a referenced DIE's
+ * location attribute), saves and restores the data-reader state across
+ * the recursive call, and shares the value stack with the caller.
+ *
+ * @param offset   Section-relative offset of the called DIE.
+ * @param refType  Reference form indicator (DW_OP_call2/4/ref).
+ */
 void
 DwarfExpressionEvaluator::_Call(uint64 offset, uint8 refType)
 {
